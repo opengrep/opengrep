@@ -1,0 +1,11 @@
+[
+  {
+    "package": "appdirs",
+    "version": "1.4.4",
+    "ecosystem": "pypi",
+    "allowed_hashes": {},
+    "transitivity": "unknown",
+    "lockfile_path": "targets/dependency_aware/osv_parsing/poetry/source-legacy/poetry.lock",
+    "line_number": 2
+  }
+]

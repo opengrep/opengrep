@@ -1,0 +1,95 @@
+=== exit code
+0
+=== end of exit code
+
+=== stdout - plain
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/dependency_aware/dart/pubspec.lock"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.dependency_aware.dart-parity",
+      "end": {
+        "col": 1,
+        "line": 13,
+        "offset": 1
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "oh no",
+        "metadata": {},
+        "sca_info": {
+          "dependency_match": {
+            "dependency_pattern": {
+              "ecosystem": "pub",
+              "package": "async",
+              "semver_range": "== 2.11.0"
+            },
+            "found_dependency": {
+              "allowed_hashes": {},
+              "ecosystem": "pub",
+              "line_number": 13,
+              "lockfile_path": "targets/dependency_aware/dart/pubspec.lock",
+              "manifest_path": "targets/dependency_aware/dart/pubspec.yaml",
+              "package": "async",
+              "transitivity": "transitive",
+              "version": "2.11.0"
+            },
+            "lockfile": "targets/dependency_aware/dart/pubspec.lock"
+          },
+          "reachability_rule": false,
+          "reachable": false,
+          "sca_finding_schema": 20220913
+        },
+        "severity": "WARNING"
+      },
+      "path": "targets/dependency_aware/dart/pubspec.lock",
+      "start": {
+        "col": 1,
+        "line": 13,
+        "offset": 1
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}
+=== end of stdout - plain
+
+=== stderr - plain
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 2 files tracked by git with 0 Code rules, 1 Supply Chain rule:
+
+
+  CODE RULES
+  Nothing to scan.
+
+  SUPPLY CHAIN RULES
+  Nothing to scan.
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+
+Ran 1 rule on 1 file: 1 finding.
+
+=== end of stderr - plain
+
+=== stdout - color
+<same as above: stdout - plain>
+=== end of stdout - color
+
+=== stderr - color
+<same as above: stderr - plain>
+=== end of stderr - color

@@ -1,0 +1,2 @@
+https://github.com/semgrep/semgrep-go.git
+https://github.com/semgrep/semgrep-ruby.git

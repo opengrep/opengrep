@@ -1,0 +1,38 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/basic/regex-nosemgrep.txt"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.regex.detected-aws-account-id",
+      "end": {
+        "col": 28,
+        "line": 3,
+        "offset": 71
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "AWS Account ID detected",
+        "metadata": {
+          "shortlink": "https://sg.run/xyz2",
+          "source-rule-url": "https://github.com/grab/secret-scanner/blob/master/scanner/signatures/pattern.go"
+        },
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/regex-nosemgrep.txt",
+      "start": {
+        "col": 1,
+        "line": 3,
+        "offset": 44
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

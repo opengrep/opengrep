@@ -1,0 +1,20 @@
+[
+  {
+    "package": "proto-plus",
+    "version": "1.22.0",
+    "ecosystem": "pypi",
+    "allowed_hashes": {},
+    "transitivity": "unknown",
+    "lockfile_path": "targets/dependency_aware/osv_parsing/poetry/two-packages/poetry.lock",
+    "line_number": 2
+  },
+  {
+    "package": "protobuf",
+    "version": "4.21.5",
+    "ecosystem": "pypi",
+    "allowed_hashes": {},
+    "transitivity": "unknown",
+    "lockfile_path": "targets/dependency_aware/osv_parsing/poetry/two-packages/poetry.lock",
+    "line_number": 16
+  }
+]

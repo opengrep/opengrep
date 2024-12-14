@@ -1,0 +1,60 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/basic/nested-patterns.js",
+      "targets/basic/nosem.js",
+      "targets/basic/stupid.js"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.test",
+      "end": {
+        "col": 35,
+        "line": 2,
+        "offset": 52
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "test",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/nested-patterns.js",
+      "start": {
+        "col": 5,
+        "line": 2,
+        "offset": 22
+      }
+    },
+    {
+      "check_id": "rules.test",
+      "end": {
+        "col": 35,
+        "line": 3,
+        "offset": 87
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "test",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/nested-patterns.js",
+      "start": {
+        "col": 5,
+        "line": 3,
+        "offset": 57
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

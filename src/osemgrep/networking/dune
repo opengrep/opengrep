@@ -1,0 +1,33 @@
+; This library should contain all the entry points to access the internet.
+(library
+  (public_name semgrep.osemgrep_networking)
+  (name osemgrep_networking)
+  (wrapped false)
+  (libraries
+    lwt
+    networking.http_mock_client
+    networking.http_helpers
+    lwt_platform
+    ocolor
+
+    commons
+
+    profiling
+    networking
+
+    semgrep.core
+    semgrep.parsing
+
+    osemgrep_configuring
+    osemgrep_jsonnet
+  )
+ (preprocess
+   (pps
+     profiling.ppx
+     ppx_deriving.show
+     ppx_deriving.eq
+     ppx_hash
+     lwt_ppx
+   )
+ )
+)

@@ -1,0 +1,58 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/aliengrep/long-match.txt"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.aliengrep.begin-end",
+      "end": {
+        "col": 18,
+        "line": 1,
+        "offset": 17
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "found something",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aliengrep/long-match.txt",
+      "start": {
+        "col": 1,
+        "line": 1,
+        "offset": 0
+      }
+    },
+    {
+      "check_id": "rules.aliengrep.begin-end",
+      "end": {
+        "col": 4,
+        "line": 36,
+        "offset": 178
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "found something",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aliengrep/long-match.txt",
+      "start": {
+        "col": 1,
+        "line": 5,
+        "offset": 106
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

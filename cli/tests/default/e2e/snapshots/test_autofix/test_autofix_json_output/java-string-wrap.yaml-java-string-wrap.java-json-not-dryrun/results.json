@@ -1,0 +1,60 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/autofix/java-string-wrap.java"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.autofix.wrap-strings",
+      "end": {
+        "col": 19,
+        "line": 3,
+        "offset": 52
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "wrap(\"a\")",
+        "lines": "requires login",
+        "message": "Wrap strings",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/java-string-wrap.java",
+      "start": {
+        "col": 16,
+        "line": 3,
+        "offset": 49
+      }
+    },
+    {
+      "check_id": "rules.autofix.wrap-strings",
+      "end": {
+        "col": 25,
+        "line": 3,
+        "offset": 58
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "wrap(\"b\")",
+        "lines": "requires login",
+        "message": "Wrap strings",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/java-string-wrap.java",
+      "start": {
+        "col": 22,
+        "line": 3,
+        "offset": 55
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

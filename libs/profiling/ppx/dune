@@ -1,0 +1,9 @@
+(library
+ (public_name profiling.ppx)
+ (name ppx_profiling)
+ (kind ppx_deriver)
+ (libraries
+   commons
+   ppxlib
+ )
+)

@@ -1,0 +1,31 @@
+; OCaml implementation of the 'semgrep show' subcommand.
+
+(library
+  (public_name semgrep.osemgrep_cli_show)
+  (name osemgrep_cli_show)
+;  (flags (:standard -open TCB -open Commons_TCB))
+  (flags (:standard -open No_TCB))
+  (wrapped false)
+  (libraries
+    cmdliner
+    commons
+    lwt
+    networking.http_helpers
+    lwt_platform
+
+    semgrep.parsing
+    semgrep.parsing.tests ; Test_parsing.dump_tree_sitter_cst
+    osemgrep_core
+    osemgrep_configuring
+    osemgrep_networking
+  )
+ (preprocess
+   (pps
+     ppx_profiling
+     ppx_deriving.show
+     ppx_deriving.eq
+     ppx_hash
+     lwt_ppx
+   )
+ )
+)

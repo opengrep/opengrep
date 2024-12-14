@@ -1,0 +1,35 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/basic.py"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.critical",
+      "end": {
+        "col": 14,
+        "line": 2,
+        "offset": 35
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "do not use print",
+        "metadata": {},
+        "severity": "CRITICAL",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic.py",
+      "start": {
+        "col": 1,
+        "line": 2,
+        "offset": 22
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

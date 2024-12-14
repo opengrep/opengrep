@@ -1,0 +1,2 @@
+let $A = open_file "file" in
+close $A

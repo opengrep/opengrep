@@ -1,0 +1,33 @@
+(library
+ (public_name semgrep.engine)
+ (name semgrep_engine)
+ (wrapped false)
+ (libraries
+   pcre
+   alcotest
+   calendar
+
+   commons
+   tracing
+   pfff-lang_GENERIC-analyze
+
+   parser_regexp
+   spacegrep
+   aliengrep
+
+   semgrep_core
+   semgrep_fixing
+   semgrep_matching
+   semgrep_tainting
+   ; the engine used to not depend on the language-specific parsers
+   ; (only the test code used semgrep_parsing), but with metavariable-pattern
+   ; we now call Parse_target from Match_search_rules (we actually also
+   ; call Parse_pattern from Eval_generic)
+   semgrep_parsing
+   ; TODO: we should get rid of this dependency
+   semgrep_targeting
+   semgrep_reporting; for Test_engine.ml, we should split in tests/ separate dir
+ )
+ (inline_tests)
+ (preprocess (pps ppx_deriving.show ppx_profiling ppx_inline_test tracing.ppx))
+)

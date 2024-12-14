@@ -1,0 +1,11 @@
+(library
+ (public_name semgrep.parsing.tests)
+ (name semgrep_parsing_tests)
+ (wrapped false)
+ (libraries
+   semgrep.parsing
+   semgrep.parsing_languages
+   semgrep.targeting ; for Test_parsing.ml
+ )
+ (preprocess (pps ppx_profiling ppx_deriving.show))
+)

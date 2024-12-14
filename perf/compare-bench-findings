@@ -1,0 +1,75 @@
+#! /usr/bin/env python3
+#
+# Compare the findings for two different versions of semgrep.
+# It's meant to run within a semgrep pull request.
+#
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+from typing import Dict
+
+
+def findings_differ(expected: Dict[str, Any], findings: Dict[str, Any]) -> bool:
+    name = findings["name"]
+    baseline = {json.dumps(result) for result in expected["findings"]["results"]}
+    latest = {json.dumps(result) for result in findings["findings"]["results"]}
+
+    def output_diff(diff: set) -> None:
+        for d in sorted(diff):
+            print(d)
+
+    b_diff = baseline.difference(latest)
+    l_diff = latest.difference(baseline)
+    bd_len = len(b_diff)
+    ld_len = len(l_diff)
+    if bd_len > 0 or ld_len > 0:
+        print("*" * 70)
+        print(f"Error running benchmark {name}")
+        print(f"Missing {bd_len} findings:")
+        output_diff(b_diff)
+        print(f"Extra {ld_len} findings:")
+        output_diff(l_diff)
+        print(f"*" * 70)
+        return True
+    return False
+
+
+def read_findings(filename: Path) -> Dict[str, Any]:
+    print(f"Reading {filename}")
+    with open(filename) as f:
+        return json.load(f)
+
+
+def expected_snapshot_for_findings(findings_path: Path):
+    # Finding snapshot should have path `dir/configname_findings.json`
+    # Return the snapshot path `file_dir/configname_baseline.json`
+    file_dir = os.path.dirname(os.path.abspath(__file__))
+
+    dir, filename = os.path.split(findings_path)
+    configname = "_".join(filename.split("_")[0:-1])
+    return os.path.join(file_dir, f"snapshots/{configname}_baseline.json")
+
+
+def main() -> None:
+    findings_path = Path(sys.argv[1])
+    findings = read_findings(findings_path)
+    expected = read_findings(Path(expected_snapshot_for_findings(findings_path)))
+
+    errors = 0
+
+    if len(expected) != len(findings):
+        print(f"Error: expected {len(expected)} results, got {len(findings)}")
+        errors += 1
+
+    for expected, findings in zip(expected, findings):
+        if findings_differ(expected, findings):
+            errors += 1
+
+    # Fail only after printing and sending all messages
+    assert not errors
+
+
+if __name__ == "__main__":
+    main()

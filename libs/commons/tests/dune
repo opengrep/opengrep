@@ -1,0 +1,9 @@
+(library
+ (public_name commons.tests)
+ (name commons_tests)
+ (libraries
+   alcotest
+   testo
+   commons
+ )
+)

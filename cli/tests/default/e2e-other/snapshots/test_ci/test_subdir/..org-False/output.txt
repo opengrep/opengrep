@@ -1,0 +1,21 @@
+=== exit code
+0
+=== end of exit code
+
+=== stdout - plain
+
+=== end of stdout - plain
+
+=== stderr - plain
+`semgrep ci --subdir` must be given a directory that is actually a subdirectory of the current directory
+There were errors during analysis but Semgrep will succeed because there were no blocking findings, use --no-suppress-errors if you want Semgrep to fail when there are errors.
+
+=== end of stderr - plain
+
+=== stdout - color
+<same as above: stdout - plain>
+=== end of stdout - color
+
+=== stderr - color
+<same as above: stderr - plain>
+=== end of stderr - color

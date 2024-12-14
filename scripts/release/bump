@@ -1,0 +1,126 @@
+#! /usr/bin/env bash
+#
+# Create a release branch for semgrep
+#
+# This script relies on the SEMGREP_RELEASE_NEXT_VERSION env variable being set.
+# This script is usually called by 'make release', which is itself called by
+# .github/workflows/start-release.jsonnet which sets SEMGREP_RELEASE_NEXT_VERSION.
+
+case "$(uname -s)" in
+  Linux)
+    os_type=linux
+    ;;
+  *)
+    os_type=Darwin
+esac
+
+sed_in_place() {
+  if [[ "$os_type" = linux ]]; then
+    sed -i -e "$@"
+  else
+    sed -i '' "$@"
+  fi
+}
+
+error() {
+  echo "Error:" "$@" >&2
+  cat >&2
+  exit 1
+}
+
+update_init_py() {
+  target=cli/src/semgrep/__init__.py
+  targets+=" $target"
+  echo "Updating $target"
+  sed_in_place 's/__VERSION__ = ".*"/__VERSION__ = "'"$release"'"/g' "$target"
+  git add "$target"
+}
+
+# coupling: .github/workflows/pro-release.jsonnet
+# coupling: OSS/.github/workflows/start-release.jsonnet
+update_version_ml() {
+  # The coupled files check for this exact path for the presence
+  # of the version string below.
+  target=src/core/Version.ml
+  targets+=" $target"
+  echo "Updating $target"
+  # The coupled files check for this exact string formatting.
+  sed_in_place 's/let version = ".*"/let version = "'"$release"'"/g' "$target"
+  git add "$target"
+}
+
+update_setup_py() {
+  target=setup.py
+  targets+=" $target"
+  echo "Updating $target"
+  sed_in_place \
+    's/^    install_requires=\["semgrep==.*"\],$/    install_requires=["semgrep=='"$release"'"],/g' \
+    "$target"
+  sed_in_place \
+    's/^    version=".*",$/    version="'"$release"'",/g' \
+    "$target"
+  git add "$target"
+}
+
+update_cli_setup_py() {
+  target=cli/setup.py
+  targets+=" $target"
+  echo "Updating $target"
+  sed_in_place \
+    's/^    version=".*",$/    version="'"$release"'",/g' \
+    "$target"
+  git add "$target"
+}
+
+update_dune_project() {
+  target=dune-project
+  echo "Updating $target"
+  sed_in_place 's/^(version .*)$/(version '"$release"')/' "$target"
+  git add "$target"
+}
+
+# Update files containing the release ID.
+#
+# Ideally this shouldn't modify source files,
+# but only write purely-generated files for simplicity and robustness.
+bump() {
+  update_init_py
+  update_setup_py
+  update_cli_setup_py
+  update_version_ml
+  update_dune_project
+}
+
+release="${SEMGREP_RELEASE_NEXT_VERSION}"
+
+case "$release" in
+  *.*.*)
+    ;;
+  '')
+    error "empty release ID"
+    ;;
+  *)
+    error "suspicious release ID"
+esac
+
+rel_branch=release-$release
+cur_branch=$(git branch --show-current)
+
+if [[ "$cur_branch" = "$rel_branch" ]]; then
+  echo "Already on branch $rel_branch, great."
+else
+  error <<EOF
+Please switch to a clean git branch named $rel_branch:
+- git checkout develop
+- git submodule update --init --recursive
+- git checkout -b $rel_branch
+EOF
+fi
+
+bump
+
+if git status -s | grep -vq 'cli/src/semgrep/__init__.py\|cli/setup.py\|setup.py\|src/core/Version.ml\|dune-project'; then
+  error <<EOF
+The release branch contains unexpected changes, cancelling release.
+EOF
+fi

@@ -1,0 +1,15 @@
+(library
+ (public_name parallelism)
+ (wrapped false)
+ (libraries
+   TCB
+   parmap
+   commons
+ )
+ (preprocess
+   (pps
+     ppx_deriving.show
+     profiling.ppx
+   )
+ )
+)

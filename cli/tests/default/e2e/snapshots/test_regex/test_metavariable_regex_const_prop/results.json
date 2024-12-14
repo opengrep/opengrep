@@ -1,0 +1,78 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/metavariable_propagation/metavariable-regex-const-prop.dockerfile"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.metavariable-regex.use-absolute-workdir",
+      "end": {
+        "col": 20,
+        "line": 4,
+        "offset": 64
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "WORKDIR /$WORD",
+        "lines": "requires login",
+        "message": "Detected a relative WORKDIR. Use absolute paths. This prevents issues based on assumptions about the WORKDIR of previous containers.",
+        "metadata": {
+          "category": "best-practice",
+          "references": [
+            "https://github.com/hadolint/hadolint/wiki/DL3000"
+          ],
+          "source-rule-url": "https://github.com/hadolint/hadolint/wiki/DL3000",
+          "technology": [
+            "dockerfile"
+          ]
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/metavariable_propagation/metavariable-regex-const-prop.dockerfile",
+      "start": {
+        "col": 1,
+        "line": 4,
+        "offset": 45
+      }
+    },
+    {
+      "check_id": "rules.metavariable-regex.use-absolute-workdir",
+      "end": {
+        "col": 19,
+        "line": 11,
+        "offset": 180
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "WORKDIR /$WORD",
+        "lines": "requires login",
+        "message": "Detected a relative WORKDIR. Use absolute paths. This prevents issues based on assumptions about the WORKDIR of previous containers.",
+        "metadata": {
+          "category": "best-practice",
+          "references": [
+            "https://github.com/hadolint/hadolint/wiki/DL3000"
+          ],
+          "source-rule-url": "https://github.com/hadolint/hadolint/wiki/DL3000",
+          "technology": [
+            "dockerfile"
+          ]
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/metavariable_propagation/metavariable-regex-const-prop.dockerfile",
+      "start": {
+        "col": 1,
+        "line": 11,
+        "offset": 162
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

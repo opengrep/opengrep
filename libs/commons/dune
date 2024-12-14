@@ -1,0 +1,49 @@
+(library
+ (public_name commons)
+ (wrapped false)
+ (flags (:standard -open TCB))
+ (libraries
+   TCB
+   ; stdlib
+   str
+   unix
+   ; popular libs
+   fpath
+   yojson
+   atdgen-runtime
+   fmt
+   ocolor
+   ANSITerminal
+   logs logs.fmt
+   alcotest
+   testo
+   timedesc
+   cmdliner
+   bos
+   re
+   pcre
+   pcre2
+   digestif.ocaml
+   sexplib
+   semver
+   ; web stuff
+   uri uuidm
+   ; async stuff
+   lwt
+   alcotest-lwt
+ )
+ (inline_tests)
+ ; can't use profiling.ppx because of circular dependencies :(
+ (preprocess
+   (pps
+     ppx_deriving.show
+     ppx_deriving.eq
+     ppx_deriving.ord
+     ppx_deriving_yojson
+     ppx_hash
+     ppx_sexp_conv
+     ppx_inline_test
+     lwt_ppx
+   )
+ )
+)

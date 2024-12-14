@@ -1,0 +1,14 @@
+
+(library
+ (public_name tracing.js)
+ (name tracing_js)
+ (libraries
+   trace
+   commons
+   logs
+ )
+ (implements tracing)
+  (preprocess (pps
+      ppx_deriving.show
+   ))
+)

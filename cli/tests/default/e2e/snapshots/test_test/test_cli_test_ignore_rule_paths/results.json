@@ -1,0 +1,17 @@
+{
+  "config_missing_fixtests": [],
+  "config_missing_tests": [],
+  "config_with_errors": [],
+  "fixtest_results": {},
+  "results": {
+    "rules/test_test/rule_with_paths_include_bar_xml.yaml": {
+      "checks": {
+        "bar-inside-foo-element": {
+          "errors": [],
+          "matches": "<masked in tests>",
+          "passed": true
+        }
+      }
+    }
+  }
+}

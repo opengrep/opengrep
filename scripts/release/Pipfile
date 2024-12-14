@@ -1,0 +1,8 @@
+[dev-packages]
+sh = "*"
+click = "*"
+requests = "*"
+towncrier = "~=21.9.0"
+
+[packages]
+pre-commit = "*"

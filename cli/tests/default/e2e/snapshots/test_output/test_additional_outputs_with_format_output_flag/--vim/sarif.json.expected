@@ -1,0 +1,51 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "toolExecutionNotifications": []
+        }
+      ],
+      "results": [
+        {
+          "fingerprints": {
+            "matchBasedId/v1": "requires login"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "targets/basic/stupid.py",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "endColumn": 26,
+                  "endLine": 3,
+                  "snippet": {
+                    "text": "    return a + b == a + b"
+                  },
+                  "startColumn": 12,
+                  "startLine": 3
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "useless comparison operation `a + b == a + b` or `a + b != a + b`"
+          },
+          "properties": {},
+          "ruleId": "rules.eqeq-is-bad"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "name": "Semgrep OSS",
+          "semanticVersion": "<MASKED>"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

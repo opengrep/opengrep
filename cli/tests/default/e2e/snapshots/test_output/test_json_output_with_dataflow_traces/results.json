@@ -1,0 +1,37 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/taint/taint_trace.cpp"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.taint-trace",
+      "end": {
+        "col": 14,
+        "line": 17,
+        "offset": 522
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "found an error",
+        "metadata": {
+          "interfile": true
+        },
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/taint/taint_trace.cpp",
+      "start": {
+        "col": 10,
+        "line": 17,
+        "offset": 518
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

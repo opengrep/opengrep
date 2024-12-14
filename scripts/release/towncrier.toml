@@ -1,0 +1,23 @@
+[tool.towncrier]
+    directory = "../../changelog.d"
+    filename = "../../CHANGELOG.md"
+    name = "semgrep"
+    title_format = "## [{version}](https://github.com/semgrep/semgrep/releases/tag/v{version}) - {project_date}"
+    start_string = "<!-- insertion point -->\n"
+    underlines = ["", ""]
+    [[tool.towncrier.type]]
+        directory = "added"
+        name = "### Added"
+        showcontent = true
+    [[tool.towncrier.type]]
+        directory = "changed"
+        name = "### Changed"
+        showcontent = true
+    [[tool.towncrier.type]]
+        directory = "fixed"
+        name = "### Fixed"
+        showcontent = true
+    [[tool.towncrier.type]]
+        directory = "infra"
+        name = "### Infra/Release Changes"
+        showcontent = true

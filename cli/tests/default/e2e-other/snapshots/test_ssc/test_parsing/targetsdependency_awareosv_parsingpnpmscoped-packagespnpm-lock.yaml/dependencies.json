@@ -1,0 +1,11 @@
+[
+  {
+    "package": "@typescript-eslint/types",
+    "version": "5.13.0",
+    "ecosystem": "npm",
+    "allowed_hashes": {},
+    "transitivity": "direct",
+    "lockfile_path": "targets/dependency_aware/osv_parsing/pnpm/scoped-packages/pnpm-lock.yaml",
+    "line_number": 11
+  }
+]

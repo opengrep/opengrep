@@ -1,0 +1,13 @@
+rules:
+  - id: test-taint-echo
+    mode: taint
+    languages:
+      - php
+    message: Working!
+    pattern-sources:
+      - pattern: $_GET[...]
+    pattern-sanitizers:
+      - pattern: htmlspecialchars(...)
+    pattern-sinks:
+      - pattern: echo ...;
+    severity: ERROR

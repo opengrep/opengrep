@@ -1,0 +1,221 @@
+# coupling: if you modify this file from the pro repo, you'll have
+# to also update .dockerignore
+
+# dune
+_build/
+# starting from dune 2.8.2, those are actually not generated anymore
+.merlin
+
+# opam files are now generated from dune-project when running 'dune build':
+/*.opam
+# but we keep the one used for installing the project dependencies with
+# 'opam install --deps-only .':
+!/semgrep.opam
+
+# local opam switch
+_opam/
+
+# bisect_ppx
+_coverage/
+*.coverage
+
+# pad's stuff (but better to put in ~pad/config/commons/gitignore)
+/top.ml
+# codegraph serialized database
+*.marshall
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+#lib/ No! pad: used for ocaml
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# src/targeting/Unit_guess_lang.ml creates a top-level tmp folder
+# "We don't delete the files when we're done because it's easier when troubleshooting tests."
+/tmp/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+#target/
+#pad: commented because we now have also src/target/ which is valid code
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+#Pipfile.lock
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Vim
+.*.sw*
+
+# Pycharm
+.idea/
+
+# OSX
+*.DS_Store
+
+### custom stuff
+
+# JS stuff
+*.vscode-test
+out
+
+# semgrep-core build artifacts
+TAGS
+log_config.json
+.vscode/settings.json
+/scripts/oncall-email/today.json
+/scripts/oncall-email/yesterday.json
+
+# Do not check in compiled binaries
+/cli/src/semgrep/bin/*
+!/cli/src/semgrep/bin/__init__.py
+
+# Ignore bench files
+perf/bench
+
+# The following instructions have no effect because 'perf/bench' is a parent
+# directory that is gitignored by the pattern above, causing git's scanner
+# to stop without inspecting the children paths.
+#
+# TODO: If we want to not gitignore these paths, they should
+# go in a separate folder i.e. not side-by-side with temporary folders.
+#
+# !perf/bench/dogfood
+# !perf/bench/gitlab
+# !perf/bench/dummy
+
+# Local actions testing
+act/
+
+# editor
+*.code-workspace
+.vscode
+
+# .history is here twice because if you ignore history you are doomed to repeat it
+/.history/
+/.history/
+
+# Artifacts from CI
+scripts/release/release_body.txt
+
+# nix
+result
+# direnv
+.direnv
+# Personal symlink to semgrep-proprietary used by 'make pro'
+/semgrep-proprietary

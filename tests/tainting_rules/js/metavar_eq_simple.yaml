@@ -1,0 +1,13 @@
+rules:
+  - id: test-metavar-eq
+    languages:
+      - javascript
+    message: Matched on $X!
+    options:
+      taint_unify_mvars: true
+    mode: taint
+    pattern-sinks:
+      - pattern: sink($X,...)
+    pattern-sources:
+      - pattern: get($X)
+    severity: WARNING

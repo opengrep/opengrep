@@ -1,0 +1,51 @@
+#! /usr/bin/env bash
+#
+# Re-indent an OCaml file passed as argument. This is meant to be invoked
+# by 'pre-commit' as part of a pre-commit hook.
+#
+set -eu
+
+# Note that if the version of ocamlformat you use locally and the one
+# used in CI differ, you will get your PR rejected by CI and it will
+# be hard to fix, because different versions of ocamlformat have conflicting
+# indentation rules. That is why we need to pin and use everywhere the
+# same exact version.
+
+# Note that sometimes we use the same ocamlformat version, and there
+# are still problems ... go figure.
+# In case of problems in CI, uncomment the #to debug: lines below.
+# That way you can know which files were reformated in CI.
+# Note however that the pre-commit CI action may loop forever if
+# you leave those commands uncommented (no idea why, go figure again).
+
+if [[ -v SKIP_OCAMLFORMAT ]]; then
+  echo "*** SKIP_OCAMLFORMAT is set. Skipping ocamlformat step!"
+  exit 0
+fi
+
+eval $(opam env)
+
+#coupling: must be the same than in dev/required.opam
+required_version=0.26.2
+
+if version=$(ocamlformat --version); then
+  if [[ "$version" =~ ^"$required_version"$ ]]; then
+    ocamlformat --inplace --enable-outside-detected-project "$@"
+  else
+    cat <<EOF
+*** ocamlformat is in the wrong version:
+  - expecting ocamlformat $required_version
+  - found ocamlformat $version
+
+Run 'make setup' to install the correct version.
+EOF
+    exit 1
+  fi
+else
+  cat <<EOF
+*** ocamlformat was not found. ***
+
+It's normally installed as part of 'make setup'.
+EOF
+  exit 1
+fi

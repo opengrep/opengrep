@@ -1,0 +1,41 @@
+; This library contains all the "core" data structures used by semgrep
+; except the Rule (now in ../rule/) and the generic AST (now in ../libs/ast_generic)
+
+(library
+ (public_name semgrep.core)
+ (name semgrep_core)
+ (wrapped false)
+ (libraries
+   ; standard libraries
+   str
+   uri
+   uuidm
+   yaml
+   sexplib
+
+   ; in libs/
+   commons
+   tracing
+
+   semgrep_core_rule
+   semgrep_core_target
+ )
+ (preprocess
+   (pps
+     ppx_profiling
+     ppx_deriving.show
+     ppx_deriving.eq
+     ppx_deriving.ord
+     ppx_hash
+     visitors.ppx
+     ppx_sexp_conv
+   )
+ )
+)
+
+; this is for Lockfile_xtarget.ml and Pattern_match.ml which used multiple
+; times the same field names
+; TODO: fix the code
+(env
+  (_
+    (flags (:standard  -w -30))))

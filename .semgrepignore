@@ -1,0 +1,46 @@
+# Items added to this file will be ignored by Semgrep.
+#
+# This file uses .gitignore syntax:
+#
+# To ignore a file anywhere it occurs in your project, enter a
+# glob pattern here. E.g. "*.min.js".
+#
+# To ignore a directory anywhere it occurs in your project, add
+# a trailing slash to the file name. E.g. "dist/".
+#
+# To ignore a file or directory only relative to the project root,
+# include a slash anywhere except the last character. E.g.
+# "/dist/", or "src/generated".
+#
+# Some parts of .gitignore syntax are not supported, and patterns
+# using this syntax will be dropped from the ignore list:
+# - Explicit "include syntax", e.g. "!kept/".
+# - Multi-character expansion syntax, e.g. "*.py[cod]"
+# To include ignore patterns from another file, start a line
+# with ':include', followed by the path of the file. E.g.
+# ":include path/to/other/ignore/file".
+# UPDATE: this will not be be needed in osemgrep which supports
+# all of the .gitignore syntax (!kept/, *.py[cod])
+#
+# To ignore a file with a literal ':' character, escape it with
+# a backslash, e.g. "\:foo".
+
+# Test data
+/tests
+/cli/tests/default/e2e/targets/
+/cli/tests/default/e2e/snapshots/
+/cli/tests/performance/targets/
+# This generates lots of timeout for osemgrep ci so better to skip
+/cli/tests/performance/targets_perf_sca/
+/cli/tests/default/e2e/rules/long_message.yaml
+
+# has some constructs that AST_to_IL has trouble translating ('...' in target code)
+/cli/stubs/
+*.pyi
+
+# rules being tested for performance
+/perf/rules/
+/perf/r2c-rules/
+
+# fixpoint is sometimes timing out on this file
+/src/data/Entropy_data.ml

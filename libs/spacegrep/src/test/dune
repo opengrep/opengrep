@@ -1,0 +1,10 @@
+(library
+  (name spacegrep_tests)
+  (libraries
+     spacegrep
+     alcotest
+     testo
+     ppx_deriving
+  )
+  (preprocess (pps ppx_deriving.show ppx_deriving.eq))
+)

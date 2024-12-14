@@ -1,0 +1,14 @@
+(library
+ (public_name parser_cpp.menhir)
+ (name parser_cpp_menhir)
+ (wrapped false)
+ (libraries
+   commons
+   lib_parsing
+   parser_cpp.ast
+ )
+ (preprocess (pps ppx_deriving.show))
+)
+(ocamllex lexer_cpp)
+(menhir (modules parser_cpp)
+        (flags --unused-tokens --explain --fixed-exception))

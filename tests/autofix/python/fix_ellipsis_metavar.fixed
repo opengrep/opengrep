@@ -1,0 +1,14 @@
+# MATCH:
+foo(bar =  False), foo(bar =  False)
+
+foo(bar=False)
+
+foo(baz=True)
+
+# MATCH:
+foo(bar =  False)
+
+# MATCH:
+foo(x, bar =  False)
+# MATCH:
+foo(x, bar =  False, baz=True)

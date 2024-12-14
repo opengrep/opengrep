@@ -1,0 +1,29 @@
+[
+  {
+    "package": "zope.interface",
+    "version": "5.4.0",
+    "ecosystem": "pypi",
+    "allowed_hashes": {},
+    "transitivity": "unknown",
+    "lockfile_path": "targets/dependency_aware/osv_parsing/requirements/non-normalized-names/requirements.txt",
+    "line_number": 1
+  },
+  {
+    "package": "pillow",
+    "version": "1.0.0",
+    "ecosystem": "pypi",
+    "allowed_hashes": {},
+    "transitivity": "unknown",
+    "lockfile_path": "targets/dependency_aware/osv_parsing/requirements/non-normalized-names/requirements.txt",
+    "line_number": 6
+  },
+  {
+    "package": "twisted",
+    "version": "20.3.0",
+    "ecosystem": "pypi",
+    "allowed_hashes": {},
+    "transitivity": "unknown",
+    "lockfile_path": "targets/dependency_aware/osv_parsing/requirements/non-normalized-names/requirements.txt",
+    "line_number": 8
+  }
+]

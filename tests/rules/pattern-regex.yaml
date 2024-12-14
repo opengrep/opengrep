@@ -1,0 +1,6 @@
+rules:
+- id: hey
+  pattern-regex: "hello.*"
+  languages: [py]
+  severity: WARNING 
+  message: "test"

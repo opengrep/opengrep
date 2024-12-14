@@ -1,0 +1,46 @@
+; This library should not depend on languages/ (parsing_languages/ can though).
+; This allows to generate a smaller engine.js file.
+(library
+ (public_name semgrep.parsing)
+ (name semgrep_parsing)
+ (wrapped false)
+ (libraries
+   pcre
+
+   base
+   commons
+   git_wrapper
+   paths
+   lib_parsing
+   process_limits
+   spacegrep
+   uri ; for Parse_lockfile.ml
+
+   pfff-lang_GENERIC-naming
+
+   ; remaining lang dependencies (the main one are in ../parsing_languages/)
+   ojsonnet
+   parser_yaml.ast_generic
+   ;TODO: use lighter JSON parser at some point or move
+   ; also out of Parse_rule.ml to reduce even more JS size
+   parser_json.menhir parser_json.ast_generic
+
+   semgrep_core
+   semgrep_optimizing
+   semgrep.typing
+   pfff_lang_GENERIC_analyze ; =~ semgrep_analyzing ; Constant_propagation in Parse_target.ml
+   semgrep_targeting ; for Input_to_core.atd
+
+ )
+ (preprocess (pps ppx_profiling ppx_deriving.show))
+)
+
+(rule
+ (targets Parsing_stats_j.ml Parsing_stats_j.mli)
+ (deps    Parsing_stats.atd)
+ (action  (run atdgen -j -j-std %{deps})))
+
+(rule
+ (targets Parsing_stats_t.ml Parsing_stats_t.mli)
+ (deps    Parsing_stats.atd)
+ (action  (run atdgen -t %{deps})))

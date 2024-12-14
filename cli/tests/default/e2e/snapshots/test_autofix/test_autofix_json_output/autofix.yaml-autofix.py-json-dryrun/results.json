@@ -1,0 +1,66 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/autofix/autofix.py"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.autofix.use-dict-get",
+      "end": {
+        "col": 12,
+        "line": 5,
+        "offset": 54
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "inputs.get(x)",
+        "fixed_lines": [
+          "  inputs.get(x) = 1"
+        ],
+        "lines": "requires login",
+        "message": "Use `.get()` method to avoid a KeyNotFound error",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/autofix.py",
+      "start": {
+        "col": 3,
+        "line": 5,
+        "offset": 45
+      }
+    },
+    {
+      "check_id": "rules.autofix.use-dict-get",
+      "end": {
+        "col": 19,
+        "line": 6,
+        "offset": 77
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "inputs.get((x + 1))",
+        "fixed_lines": [
+          "  if inputs.get((x + 1)) == True:"
+        ],
+        "lines": "requires login",
+        "message": "Use `.get()` method to avoid a KeyNotFound error",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/autofix.py",
+      "start": {
+        "col": 6,
+        "line": 6,
+        "offset": 64
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

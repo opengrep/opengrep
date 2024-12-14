@@ -1,0 +1,34 @@
+; This library packages the command line parser for use by either the
+; semgrep-core or semgrep-core-proprietary executables.
+; LATER: ultimately once osemgrep is done we should get rid of this library
+(library
+ (public_name semgrep.core_cli)
+ (name semgrep_core_cli)
+ (wrapped false)
+ (libraries
+    str
+    ppx_deriving.runtime
+
+    ; in libs/
+    commons
+    lib_parsing
+    process_limits
+    ; we now also depends on spacegrep with full-rule-in-ocaml
+    spacegrep
+
+    ; internal deps in src/
+    semgrep.core
+    semgrep.core_scan
+    semgrep.metachecking
+    semgrep.parsing.tests ; Test_parsing.parsing_stats
+    semgrep.analyzing.tests ; Test_analyze_generic.actions
+    semgrep.engine.tests
+    semgrep.data
+    semgrep_rpc
+
+    ; experiments
+    semgrep.synthesizing
+    ojsonnet ; ojsonnet dumper
+    otarzan
+ )
+)

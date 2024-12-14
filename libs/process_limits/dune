@@ -1,0 +1,14 @@
+;
+; OS-sensitive stuff. Might split into Unix and Windows when we get there.
+;
+; Time_limit.ml used to be in pfff in commons/Common.ml
+
+(library
+ (public_name process_limits)
+ (wrapped false)
+ (libraries
+   unix
+   commons
+   tracing
+ )
+)

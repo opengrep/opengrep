@@ -1,0 +1,314 @@
+=== exit code
+0
+=== end of exit code
+
+=== stdout - plain
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/dependency_aware/nuget-large/packages.lock.json"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.dependency_aware.detect-CodePagesEncodingProvider",
+      "end": {
+        "col": 1,
+        "line": 35,
+        "offset": 1
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Usage of CodePagesEncodingProvider.Instance detected",
+        "metadata": {},
+        "sca_info": {
+          "dependency_match": {
+            "dependency_pattern": {
+              "ecosystem": "nuget",
+              "package": "System.Text.Encoding.CodePages",
+              "semver_range": ">= 7.0.0"
+            },
+            "found_dependency": {
+              "allowed_hashes": {},
+              "ecosystem": "nuget",
+              "line_number": 35,
+              "lockfile_path": "targets/dependency_aware/nuget-large/packages.lock.json",
+              "package": "System.Text.Encoding.CodePages",
+              "transitivity": "direct",
+              "version": "7.1.0"
+            },
+            "lockfile": "targets/dependency_aware/nuget-large/packages.lock.json"
+          },
+          "reachability_rule": true,
+          "reachable": false,
+          "sca_finding_schema": 20220913
+        },
+        "severity": "WARNING"
+      },
+      "path": "targets/dependency_aware/nuget-large/packages.lock.json",
+      "start": {
+        "col": 1,
+        "line": 35,
+        "offset": 1
+      }
+    },
+    {
+      "check_id": "rules.dependency_aware.System.Linq.Expressions-2023-08-14",
+      "end": {
+        "col": 1,
+        "line": 88,
+        "offset": 1
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "let's assume System.Linq.Expressions has a vulnerability",
+        "metadata": {},
+        "sca_info": {
+          "dependency_match": {
+            "dependency_pattern": {
+              "ecosystem": "nuget",
+              "package": "System.Runtime.CompilerServices.Unsafe",
+              "semver_range": ">= 4.3.0"
+            },
+            "found_dependency": {
+              "allowed_hashes": {},
+              "ecosystem": "nuget",
+              "line_number": 88,
+              "lockfile_path": "targets/dependency_aware/nuget-large/packages.lock.json",
+              "package": "System.Runtime.CompilerServices.Unsafe",
+              "transitivity": "transitive",
+              "version": "6.0.0"
+            },
+            "lockfile": "targets/dependency_aware/nuget-large/packages.lock.json"
+          },
+          "reachability_rule": false,
+          "reachable": false,
+          "sca_finding_schema": 20220913
+        },
+        "severity": "INFO"
+      },
+      "path": "targets/dependency_aware/nuget-large/packages.lock.json",
+      "start": {
+        "col": 1,
+        "line": 88,
+        "offset": 1
+      }
+    },
+    {
+      "check_id": "rules.dependency_aware.detect-CodePagesEncodingProvider",
+      "end": {
+        "col": 1,
+        "line": 133,
+        "offset": 1
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Usage of CodePagesEncodingProvider.Instance detected",
+        "metadata": {},
+        "sca_info": {
+          "dependency_match": {
+            "dependency_pattern": {
+              "ecosystem": "nuget",
+              "package": "System.Text.Encoding.CodePages",
+              "semver_range": ">= 7.0.0"
+            },
+            "found_dependency": {
+              "allowed_hashes": {},
+              "ecosystem": "nuget",
+              "line_number": 133,
+              "lockfile_path": "targets/dependency_aware/nuget-large/packages.lock.json",
+              "package": "System.Text.Encoding.CodePages",
+              "transitivity": "direct",
+              "version": "7.0.0"
+            },
+            "lockfile": "targets/dependency_aware/nuget-large/packages.lock.json"
+          },
+          "reachability_rule": true,
+          "reachable": false,
+          "sca_finding_schema": 20220913
+        },
+        "severity": "WARNING"
+      },
+      "path": "targets/dependency_aware/nuget-large/packages.lock.json",
+      "start": {
+        "col": 1,
+        "line": 133,
+        "offset": 1
+      }
+    },
+    {
+      "check_id": "rules.dependency_aware.System.Linq.Expressions-2023-08-14",
+      "end": {
+        "col": 1,
+        "line": 186,
+        "offset": 1
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "let's assume System.Linq.Expressions has a vulnerability",
+        "metadata": {},
+        "sca_info": {
+          "dependency_match": {
+            "dependency_pattern": {
+              "ecosystem": "nuget",
+              "package": "System.Runtime.CompilerServices.Unsafe",
+              "semver_range": ">= 4.3.0"
+            },
+            "found_dependency": {
+              "allowed_hashes": {},
+              "ecosystem": "nuget",
+              "line_number": 186,
+              "lockfile_path": "targets/dependency_aware/nuget-large/packages.lock.json",
+              "package": "System.Runtime.CompilerServices.Unsafe",
+              "transitivity": "transitive",
+              "version": "6.0.0"
+            },
+            "lockfile": "targets/dependency_aware/nuget-large/packages.lock.json"
+          },
+          "reachability_rule": false,
+          "reachable": false,
+          "sca_finding_schema": 20220913
+        },
+        "severity": "INFO"
+      },
+      "path": "targets/dependency_aware/nuget-large/packages.lock.json",
+      "start": {
+        "col": 1,
+        "line": 186,
+        "offset": 1
+      }
+    },
+    {
+      "check_id": "rules.dependency_aware.detect-CodePagesEncodingProvider",
+      "end": {
+        "col": 1,
+        "line": 211,
+        "offset": 1
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Usage of CodePagesEncodingProvider.Instance detected",
+        "metadata": {},
+        "sca_info": {
+          "dependency_match": {
+            "dependency_pattern": {
+              "ecosystem": "nuget",
+              "package": "System.Text.Encoding.CodePages",
+              "semver_range": ">= 7.0.0"
+            },
+            "found_dependency": {
+              "allowed_hashes": {},
+              "ecosystem": "nuget",
+              "line_number": 211,
+              "lockfile_path": "targets/dependency_aware/nuget-large/packages.lock.json",
+              "package": "System.Text.Encoding.CodePages",
+              "transitivity": "direct",
+              "version": "7.0.0"
+            },
+            "lockfile": "targets/dependency_aware/nuget-large/packages.lock.json"
+          },
+          "reachability_rule": true,
+          "reachable": false,
+          "sca_finding_schema": 20220913
+        },
+        "severity": "WARNING"
+      },
+      "path": "targets/dependency_aware/nuget-large/packages.lock.json",
+      "start": {
+        "col": 1,
+        "line": 211,
+        "offset": 1
+      }
+    },
+    {
+      "check_id": "rules.dependency_aware.System.Linq.Expressions-2023-08-14",
+      "end": {
+        "col": 1,
+        "line": 260,
+        "offset": 1
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "let's assume System.Linq.Expressions has a vulnerability",
+        "metadata": {},
+        "sca_info": {
+          "dependency_match": {
+            "dependency_pattern": {
+              "ecosystem": "nuget",
+              "package": "System.Runtime.CompilerServices.Unsafe",
+              "semver_range": ">= 4.3.0"
+            },
+            "found_dependency": {
+              "allowed_hashes": {},
+              "ecosystem": "nuget",
+              "line_number": 260,
+              "lockfile_path": "targets/dependency_aware/nuget-large/packages.lock.json",
+              "package": "System.Runtime.CompilerServices.Unsafe",
+              "transitivity": "transitive",
+              "version": "6.0.0"
+            },
+            "lockfile": "targets/dependency_aware/nuget-large/packages.lock.json"
+          },
+          "reachability_rule": false,
+          "reachable": false,
+          "sca_finding_schema": 20220913
+        },
+        "severity": "INFO"
+      },
+      "path": "targets/dependency_aware/nuget-large/packages.lock.json",
+      "start": {
+        "col": 1,
+        "line": 260,
+        "offset": 1
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}
+=== end of stdout - plain
+
+=== stderr - plain
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 0 Code rules, 4 Supply Chain rules:
+
+
+  CODE RULES
+  Nothing to scan.
+
+  SUPPLY CHAIN RULES
+  Nothing to scan.
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+
+Ran 4 rules on 1 file: 6 findings.
+
+=== end of stderr - plain
+
+=== stdout - color
+<same as above: stdout - plain>
+=== end of stdout - color
+
+=== stderr - color
+<same as above: stderr - plain>
+=== end of stderr - color

@@ -1,0 +1,45 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/basic/inside.py",
+      "targets/basic/metavariable-comparison-bad-content.py",
+      "targets/basic/metavariable-comparison-base.py",
+      "targets/basic/metavariable-comparison-strip.py",
+      "targets/basic/metavariable-comparison.py",
+      "targets/basic/metavariable-regex-multi-regex.py",
+      "targets/basic/metavariable-regex-multi-rule.py",
+      "targets/basic/metavariable-regex.py",
+      "targets/basic/nosem.py",
+      "targets/basic/regex.py",
+      "targets/basic/stupid.py"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.metavariable-comparison.metavar-comparison-test-base",
+      "end": {
+        "col": 40,
+        "line": 1,
+        "offset": 39
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Metavariable regex test",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/metavariable-comparison-base.py",
+      "start": {
+        "col": 1,
+        "line": 1,
+        "offset": 0
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

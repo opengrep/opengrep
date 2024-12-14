@@ -1,0 +1,39 @@
+=== exit code
+1
+=== end of exit code
+
+=== stdout - plain
+{
+  "config_missing_fixtests": [],
+  "config_missing_tests": [],
+  "config_with_errors": [],
+  "fixtest_results": {
+    "targets/fixtest/test4.py": {
+      "passed": false
+    }
+  },
+  "results": {
+    "rules/fixtest/other_pattern.yaml": {
+      "checks": {
+        "other-pattern": {
+          "errors": [],
+          "matches": "<masked in tests>",
+          "passed": false
+        }
+      }
+    }
+  }
+}
+=== end of stdout - plain
+
+=== stderr - plain
+
+=== end of stderr - plain
+
+=== stdout - color
+<same as above: stdout - plain>
+=== end of stdout - color
+
+=== stderr - color
+<same as above: stderr - plain>
+=== end of stderr - color

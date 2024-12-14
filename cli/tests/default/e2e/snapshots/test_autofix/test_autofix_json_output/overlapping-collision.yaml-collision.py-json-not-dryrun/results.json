@@ -1,0 +1,60 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/autofix/collision.py"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.autofix.first-rule",
+      "end": {
+        "col": 6,
+        "line": 4,
+        "offset": 18
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "once",
+        "lines": "requires login",
+        "message": "Semgrep found a match",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/collision.py",
+      "start": {
+        "col": 1,
+        "line": 2,
+        "offset": 1
+      }
+    },
+    {
+      "check_id": "rules.autofix.second-rule",
+      "end": {
+        "col": 6,
+        "line": 5,
+        "offset": 24
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "twice",
+        "lines": "requires login",
+        "message": "Semgrep found a match",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/collision.py",
+      "start": {
+        "col": 1,
+        "line": 3,
+        "offset": 7
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

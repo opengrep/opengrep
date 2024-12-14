@@ -1,0 +1,127 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/basic/regex-any-language.html"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.pattern-not-regex.test-regex",
+      "end": {
+        "col": 5,
+        "line": 1,
+        "offset": 4
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "test regex message",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/regex-any-language.html",
+      "start": {
+        "col": 1,
+        "line": 1,
+        "offset": 0
+      }
+    },
+    {
+      "check_id": "rules.pattern-not-regex.test-regex",
+      "end": {
+        "col": 5,
+        "line": 2,
+        "offset": 36
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "test regex message",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/regex-any-language.html",
+      "start": {
+        "col": 1,
+        "line": 2,
+        "offset": 32
+      }
+    },
+    {
+      "check_id": "rules.pattern-not-regex.test-regex",
+      "end": {
+        "col": 5,
+        "line": 7,
+        "offset": 131
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "test regex message",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/regex-any-language.html",
+      "start": {
+        "col": 1,
+        "line": 7,
+        "offset": 127
+      }
+    },
+    {
+      "check_id": "rules.pattern-not-regex.test-regex",
+      "end": {
+        "col": 10,
+        "line": 14,
+        "offset": 342
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "test regex message",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/regex-any-language.html",
+      "start": {
+        "col": 5,
+        "line": 14,
+        "offset": 337
+      }
+    },
+    {
+      "check_id": "rules.pattern-not-regex.test-regex",
+      "end": {
+        "col": 5,
+        "line": 16,
+        "offset": 370
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "test regex message",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/regex-any-language.html",
+      "start": {
+        "col": 1,
+        "line": 16,
+        "offset": 366
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

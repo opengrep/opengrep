@@ -1,0 +1,37 @@
+; The default combination of flags is ':standard', which is made of the
+; following options:
+;  -w @1..3@5..28@30..39@43@46..47@49..57@61..62-40 -strict-sequence
+;  -strict-formats -short-paths -keep-locs
+; The documentation for the warning numbers is available at:
+; https://v2.ocaml.org/manual/comp.html#s%3Acomp-options
+;
+; We considered disabling the '-short-paths' option due to bad aliases
+; being shown in type hints and error messages, but the alternative also
+; picks arbitrary aliases. Instead, we use '-short-paths' and prefix
+; our type aliases with 'a_' as a workaround.
+; See issue https://github.com/ocaml/ocaml/issues/10432 for details.
+;
+(env
+  (_
+    ; -6 is to allow to omit labels in function application
+    ; -52 is to allow to match on Failure "precise_string"
+    ; -67 is to allow unused functor paramaters (introduced by dune 3.7)
+    ; -69 allows unused structure fields (introduced by dune 3.7)
+    (flags (:standard  -w -6-52-67-69))
+    ; TODO: I've tried this, but this does not work so I've added --table in
+    ; the few dune files using menhir
+    ;(menhir_flags (--table))
+    )
+)
+
+; List of relevant directories to look for dune files for building. By omitting
+; tests/ and stats/, which contain many files, we can speedup a little bit dune.
+; coupling: if you modify this, you probably need to modify the core-cache
+; regexps in .github/workflow/tests.yml passed to the hashFiles function
+(dirs
+  TCB
+  libs
+  languages
+  src
+  tools
+)

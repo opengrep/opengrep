@@ -1,0 +1,11 @@
+(library
+ (public_name lib_parsing_tree_sitter)
+ (name lib_parsing_tree_sitter)
+ (wrapped false)
+ (libraries
+   commons
+   lib_parsing
+   tree-sitter.run
+ )
+ (preprocess (pps profiling.ppx ppx_deriving.show))
+)

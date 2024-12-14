@@ -1,0 +1,34 @@
+;LATER: to merge with semgrep_reporting at some point
+(library
+ (public_name semgrep.osemgrep_reporting)
+ (name osemgrep_reporting)
+ (wrapped false)
+ (libraries
+   commons
+   fmt
+   terminal_size
+   digestif
+   xmlm
+   sarif
+   python-str-repr
+   ; for Console_spinner
+   lwt
+   lwt_platform
+
+   murmur3
+   osemgrep_configuring
+   osemgrep_core
+   osemgrep_core_runner
+   semgrep.reporting
+   semgrep.targeting
+ )
+ (preprocess
+   (pps
+     ppx_profiling
+     ppx_deriving.show
+     ppx_deriving.eq
+     ppx_hash
+     lwt_ppx
+   )
+ )
+)

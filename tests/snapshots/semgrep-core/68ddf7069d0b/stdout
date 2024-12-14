@@ -1,0 +1,12 @@
+--- All files ---
+.gitignore
+a/b
+dir/a
+--- Filtered files ---
+Selection events for path /.gitignore:
+SEL ppath /.gitignore
+Selection events for path /a/b:
+ignored at <TMP>/<MASKED>/.gitignore, line 1: a/
+IGN ppath /a/b
+Selection events for path /dir/a:
+SEL ppath /dir/a

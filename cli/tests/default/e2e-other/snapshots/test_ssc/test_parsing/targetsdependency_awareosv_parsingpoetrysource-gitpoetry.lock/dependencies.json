@@ -1,0 +1,11 @@
+[
+  {
+    "package": "ike",
+    "version": "0.2.0",
+    "ecosystem": "pypi",
+    "allowed_hashes": {},
+    "transitivity": "unknown",
+    "lockfile_path": "targets/dependency_aware/osv_parsing/poetry/source-git/poetry.lock",
+    "line_number": 2
+  }
+]

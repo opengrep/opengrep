@@ -1,0 +1,35 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/basic/simple_python_no_extension"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "-",
+      "end": {
+        "col": 6,
+        "line": 1,
+        "offset": 5
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "hello",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/basic/simple_python_no_extension",
+      "start": {
+        "col": 1,
+        "line": 1,
+        "offset": 0
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

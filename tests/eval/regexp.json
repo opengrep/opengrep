@@ -1,0 +1,7 @@
+{
+  "metavars": {
+    "$X": "0"
+  },
+  "language": "python",
+  "code": "re.match('0|null|false', $X)"
+}

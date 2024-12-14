@@ -1,0 +1,108 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/autofix/ocaml_paren_expr.ml"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.autofix.wrap-afunc-arguments",
+      "end": {
+        "col": 39,
+        "line": 1,
+        "offset": 38
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "a_function_call (wrap (the_argument))",
+        "lines": "requires login",
+        "message": "Wrap the arguments to `a_function_call` with `wrap` first",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/ocaml_paren_expr.ml",
+      "start": {
+        "col": 11,
+        "line": 1,
+        "offset": 10
+      }
+    },
+    {
+      "check_id": "rules.autofix.wrap-afunc-arguments",
+      "end": {
+        "col": 41,
+        "line": 3,
+        "offset": 80
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "a_function_call (wrap (the_argument))",
+        "lines": "requires login",
+        "message": "Wrap the arguments to `a_function_call` with `wrap` first",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/ocaml_paren_expr.ml",
+      "start": {
+        "col": 11,
+        "line": 3,
+        "offset": 50
+      }
+    },
+    {
+      "check_id": "rules.autofix.wrap-afunc-arguments",
+      "end": {
+        "col": 56,
+        "line": 5,
+        "offset": 137
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "a_function_call (wrap ((another_func the_argument)))",
+        "lines": "requires login",
+        "message": "Wrap the arguments to `a_function_call` with `wrap` first",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/ocaml_paren_expr.ml",
+      "start": {
+        "col": 13,
+        "line": 5,
+        "offset": 94
+      }
+    },
+    {
+      "check_id": "rules.autofix.wrap-afunc-arguments",
+      "end": {
+        "col": 60,
+        "line": 7,
+        "offset": 198
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "a_function_call (wrap ((tuple_member, threeple_member)))",
+        "lines": "requires login",
+        "message": "Wrap the arguments to `a_function_call` with `wrap` first",
+        "metadata": {},
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/ocaml_paren_expr.ml",
+      "start": {
+        "col": 13,
+        "line": 7,
+        "offset": 151
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

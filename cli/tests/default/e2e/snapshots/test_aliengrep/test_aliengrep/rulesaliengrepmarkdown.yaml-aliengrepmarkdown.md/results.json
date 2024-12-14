@@ -1,0 +1,150 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/aliengrep/markdown.md"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.aliengrep.header-2",
+      "end": {
+        "col": 11,
+        "line": 62,
+        "offset": 2591
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Detected h2 Markdown header",
+        "metadata": {},
+        "severity": "INFO",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aliengrep/markdown.md",
+      "start": {
+        "col": 1,
+        "line": 62,
+        "offset": 2581
+      }
+    },
+    {
+      "check_id": "rules.aliengrep.header-2",
+      "end": {
+        "col": 12,
+        "line": 97,
+        "offset": 3702
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Detected h2 Markdown header",
+        "metadata": {},
+        "severity": "INFO",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aliengrep/markdown.md",
+      "start": {
+        "col": 1,
+        "line": 97,
+        "offset": 3691
+      }
+    },
+    {
+      "check_id": "rules.aliengrep.header-2",
+      "end": {
+        "col": 13,
+        "line": 145,
+        "offset": 8847
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Detected h2 Markdown header",
+        "metadata": {},
+        "severity": "INFO",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aliengrep/markdown.md",
+      "start": {
+        "col": 1,
+        "line": 145,
+        "offset": 8835
+      }
+    },
+    {
+      "check_id": "rules.aliengrep.header-2",
+      "end": {
+        "col": 9,
+        "line": 159,
+        "offset": 9242
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Detected h2 Markdown header",
+        "metadata": {},
+        "severity": "INFO",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aliengrep/markdown.md",
+      "start": {
+        "col": 1,
+        "line": 159,
+        "offset": 9234
+      }
+    },
+    {
+      "check_id": "rules.aliengrep.header-2",
+      "end": {
+        "col": 16,
+        "line": 188,
+        "offset": 9805
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Detected h2 Markdown header",
+        "metadata": {},
+        "severity": "INFO",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aliengrep/markdown.md",
+      "start": {
+        "col": 1,
+        "line": 188,
+        "offset": 9790
+      }
+    },
+    {
+      "check_id": "rules.aliengrep.header-2",
+      "end": {
+        "col": 14,
+        "line": 203,
+        "offset": 10946
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "lines": "requires login",
+        "message": "Detected h2 Markdown header",
+        "metadata": {},
+        "severity": "INFO",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/aliengrep/markdown.md",
+      "start": {
+        "col": 1,
+        "line": 203,
+        "offset": 10933
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

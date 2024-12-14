@@ -1,0 +1,60 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/autofix/add-metadata-hcl.hcl"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.autofix.ec2-instance-metadata-options",
+      "end": {
+        "col": 2,
+        "line": 4,
+        "offset": 109
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "resource \"aws_instance\" \"example1\" {\n  ami           = \"ami-005e54dee72cc1d01\"\n  instance_type = \"t2.micro\"\n\n  metadata_options {\n    http_tokens = \"required\"\n  }\n}",
+        "lines": "requires login",
+        "message": "EC2 instance does not set metadata options",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/add-metadata-hcl.hcl",
+      "start": {
+        "col": 1,
+        "line": 1,
+        "offset": 0
+      }
+    },
+    {
+      "check_id": "rules.autofix.ec2-instance-metadata-options",
+      "end": {
+        "col": 2,
+        "line": 9,
+        "offset": 220
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "resource \"aws_instance\" \"example2\" {\n  ami           = \"ami-005e54dee72cc1d02\"\n  instance_type = \"t2.micro\"\n\n  metadata_options {\n    http_tokens = \"required\"\n  }\n}",
+        "lines": "requires login",
+        "message": "EC2 instance does not set metadata options",
+        "metadata": {},
+        "severity": "WARNING",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/add-metadata-hcl.hcl",
+      "start": {
+        "col": 1,
+        "line": 6,
+        "offset": 111
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}

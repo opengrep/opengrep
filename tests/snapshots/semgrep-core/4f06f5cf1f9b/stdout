@@ -1,0 +1,71 @@
+--- begin input files ---
+rule.yml
+--- end input files ---
+{ Rule_fetching.rules =
+  [{ Rule.id = ("eqeq-bad", ());
+     mode =
+     `Search ({ Rule.f =
+                (Rule.And ((),
+                   [{ Rule.f =
+                      (Rule.P
+                         { Xpattern.pat =
+                           (Xpattern.Sem (
+                              (E
+                                 { e =
+                                   (Call (
+                                      { e = (IdSpecial ((Op Eq), ()));
+                                        e_id = 0; e_range = None;
+                                        is_implicit_return = false;
+                                        facts = <opaque> },
+                                      ((),
+                                       [(Arg
+                                           { e =
+                                             (N
+                                                (Id (("$X", ()),
+                                                   { id_resolved = ref (None);
+                                                     id_resolved_alternatives =
+                                                     ref ([]);
+                                                     id_type = ref (None);
+                                                     id_svalue = ref (None);
+                                                     id_flags = ref (0);
+                                                     id_info_id = <MASKED> }
+                                                   )));
+                                             e_id = 0; e_range = None;
+                                             is_implicit_return = false;
+                                             facts = <opaque> });
+                                         (Arg
+                                            { e =
+                                              (N
+                                                 (Id (("$X", ()),
+                                                    { id_resolved =
+                                                      ref (None);
+                                                      id_resolved_alternatives =
+                                                      ref ([]);
+                                                      id_type = ref (None);
+                                                      id_svalue = ref (None);
+                                                      id_flags = ref (0);
+                                                      id_info_id = <MASKED> }
+                                                    )));
+                                              e_id = 0; e_range = None;
+                                              is_implicit_return = false;
+                                              facts = <opaque> })
+                                         ],
+                                       ())
+                                      ));
+                                   e_id = 0; e_range = None;
+                                   is_implicit_return = false;
+                                   facts = <opaque> }),
+                              Python));
+                           pstr = ("$X == $X", ()); pid = <MASKED> });
+                      conditions = []; focus = []; fix = None; as_ = None }
+                     ]
+                   ));
+                conditions = []; focus = []; fix = None; as_ = None });
+     message = "useless comparison"; severity = `Error;
+     target_selector = (Some [Python]);
+     target_analyzer = (Xlang.L (Python, [])); options = None;
+     equivalences = None; fix = None; fix_regexp = None; paths = None;
+     product = `SAST; dependency_formula = None; validators = None;
+     metadata = None; min_version = None; max_version = None }
+    ];
+  invalid_rules = []; origin = (Rule_fetching.Local_file rule.yml) }

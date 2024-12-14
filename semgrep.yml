@@ -1,0 +1,373 @@
+# This file contains Semgrep rules. See https://semgrep.dev for more info.
+#
+# You can use this file locally either with:
+#  - docker run --rm -v "${PWD}:/home/repo" returntocorp/semgrep:develop --config semgrep.yml
+# or if you have already installed semgrep:
+#  - semgrep --config semgrep.yml .
+#
+# This file is also used in CI, see .circleci/config.yml
+#
+# Put semgrep-specific rules here.
+# Put general OCaml or Python rules in the semgrep-rules repository
+# under ocaml/ or python/.
+
+rules:
+  - id: no-print-in-semgrep
+    match:
+      all:
+        - any:
+            - UCommon.pr ...
+            - pr ...
+            - print_string ...
+        - not:
+            inside: |
+              if !Flag.debug
+              then ...
+        - not:
+            inside: |
+              let $F ... =
+              ...
+              [@@action]
+    message: you should not print anything on stdout as it may interfere with
+      the JSON output we must return to pysemgrep from semgrep-core, or it may
+      interfere with the output of osemgrep.
+      Use Logs.debug() for debugging, UConsole.print() for actual valid output
+      in semgrep-core, or Logs.app() and CapConsole.print() in osemgrep.
+    languages: [ocaml]
+    severity: ERROR
+    paths:
+      exclude:
+        - Test.ml
+        - Check_*.ml
+        - Unit_*.ml
+        - Test_*.ml
+        - libs/*
+        - languages/*
+        - scripts/*
+        - tools/*
+
+  - id: use-state-for-global-settings
+    pattern: global $VAR
+    message: |
+      Instead of setting global variables,
+      keep your variables around on the semgrep.state.SemgrepState class.
+      You'll then be able to access this anywhere with:
+
+      from semgrep.state import get_state
+      $VAR = get_state().$VAR
+    languages: [python]
+    severity: ERROR
+
+  - id: not-using-our-pcre-wrappers
+    patterns:
+      - pattern-either:
+          - pattern: $PCRE.regexp
+          - pattern: $PCRE.pmatch
+          - pattern: $PCRE.exec
+          - pattern: $PCRE.exec_all
+          - pattern: $PCRE.split
+      - metavariable-pattern:
+          metavariable: $PCRE
+          pattern-either:
+            - pattern: Pcre
+            - pattern: Pcre2
+    message: >-
+      You should use one of the equivalent functions in Pcre2_ (or
+      Pcre_), which automatically sets some flags and handles
+      exceptions.
+    languages: [ocaml]
+    severity: ERROR
+    paths:
+      exclude:
+        - Pcre_.ml
+        - Pcre2_.ml
+
+  - id: no-list-map2
+    pattern: List.map2
+    message: >-
+      `List.map2` creates O(N) stack depth, and can lead to a
+      stack overflow. Use `List_.map2` instead.
+    fix: List_.map2
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: no-list-map
+    pattern: List.map
+    message: >-
+      `List.map` creates O(N) stack depth, and can lead to a
+      stack overflow. Use `List_.map` instead.
+    fix: List_.map
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: no-list-filter-map
+    pattern: List.filter_map
+    message: >-
+      `List.filter_map` creates O(N) stack depth, and can lead to a
+      stack overflow. Use `List_.filter_map` instead.
+    fix: List_.filter_map
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: no-list-mapi
+    pattern: List.mapi
+    message: >-
+      `List.mapi` creates O(N) stack depth, and can lead to a
+      stack overflow. Use `List_.mapi` instead.
+    fix: List_.mapi
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: no-list-fold-right
+    pattern: List.fold_right
+    fix: List_.fold_right
+    message: >-
+      `List.fold_right` creates O(N) stack depth, and can lead to a
+      stack overflow. Use `List_.fold_right` instead.
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: no-list-combine
+    pattern: List.combine
+    fix: List_.combine
+    message: >-
+      `List.combine` creates O(N) stack depth, and can lead to a
+      stack overflow. Use `List_.combine` instead.
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: no-list-split
+    pattern: List.split
+    fix: List_.split
+    message: >-
+      `List.split` creates O(N) stack depth, and can lead to a
+      stack overflow. Use `List_.split` instead.
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: no-list-concat
+    pattern-either:
+      - pattern: List.concat
+      - pattern: List.flatten
+    message: >-
+      `List.concat` and `List.flatten` create O(N) stack depth, and can lead to a
+      stack overflow. Use `List_.flatten` instead.
+    fix: List_.flatten
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: use-concat-map
+    pattern-either:
+      - pattern: List.map ... |> List.flatten
+      - pattern: List_.map ... |> List.flatten
+      - pattern: List.map ... |> List.concat
+      - pattern: List_.map ... |> List.concat
+      - pattern: ... |> List.map ... |> List.flatten
+      - pattern: ... |> List_.map ... |> List.flatten
+      - pattern: ... |> List.map ... |> List.concat
+      - pattern: ... |> List_.map ... |> List.concat
+      - pattern: List.flatten ( List.map ... )
+      - pattern: List.flatten ( List_.map ... )
+      - pattern: List.concat ( List.map ... )
+      - pattern: List.concat ( List_.map ... )
+    message: >-
+      `List.concat_map` is more efficient and more readable than a `map` followed
+      by `concat`.
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: no-exit-code-1-in-semgrep
+    pattern: sys.exit(1)
+    fix: sys.exit(2)
+    message: >-
+      Exit code 1 is reserved for notifying users that blocking findings were found.
+      Please use a different exit code, or better yet, a SemgrepError exception.
+      For generic fatal errors, we use exit code 2.
+    languages: [python]
+    severity: ERROR
+    paths:
+      include:
+        - cli/*
+
+  - id: no-env-vars-on-top-level
+    patterns:
+      - pattern-either:
+          - pattern: os.getenv
+          - pattern: os.environ
+      - pattern-not-inside: "def $F(...): ..."
+    message: >-
+      If you access environment variables on the top level of a module,
+      it'll be near impossible to mock the value of that variable in tests.
+
+      Please make sure to only access environment variables in functions,
+      preferably in semgrep.env.Env
+    languages: [python]
+    severity: ERROR
+    paths:
+      include:
+        - cli/src/*
+
+  - id: typehint-run-semgrep
+    patterns:
+      - focus-metavariable: $FIXTURE
+      - pattern-inside: |
+          def $FUNC(..., $FIXTURE, ...): ...
+      - pattern-not-inside: |
+          def $FUNC(..., $FIXTURE: tests.fixtures.RunSemgrep, ...): ...
+      - metavariable-regex:
+          metavariable: $FIXTURE
+          regex: ^run_semgrep.*$
+    message: >-
+      Please add a type hint for your use of $FIXTURE.
+      It should look like this: `$FIXTURE: RunSemgrep`,
+      and you should import it like this: `from tests.fixtures import RunSemgrep`.
+    languages: [python]
+    severity: ERROR
+    paths:
+      include:
+        - cli/tests/*
+
+  - id: use-git-check-output-helper
+    pattern-either:
+      - pattern: subprocess.$METHOD(["git", ...], ...)
+      - pattern: semgrep.util.sub_check_output(["git", ...], ...)
+    message: >-
+      We have a helper function git_check_output in meta.py that
+      handles printing nice error+debug messages on failure. Use
+      that instead of using subprocess
+    languages: [python]
+    severity: ERROR
+    paths:
+      include:
+        - cli/src/*
+
+  # Rules that used to be in pfff.yml and could be put in p/ocaml at some point
+  - id: bad-pervasives
+    pattern: Pervasives.$X
+    message: Pervasives is deprecated and not available after 4.10. Use Stdlib.
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: physical-inequality
+    pattern: $X != $Y
+    message: You probably want structural inequality with <>
+    languages: [ocaml]
+    severity: WARNING
+
+  - id: stupid-equal
+    pattern: $X = $X
+    message: this will always be true
+    languages: [ocaml]
+    severity: ERROR
+
+  - id: length-vs-equal
+    pattern: List.length $X = 0
+    message: you probably want $X = [], which is faster
+    languages: [ocaml]
+    severity: WARNING
+
+  - id: not-portable-tmp
+    pattern: |
+      "=~/\/tmp/"
+    message: you should probably use Filename.get_temp_dirname().
+    languages: [ocaml]
+    severity: WARNING
+    #TODO: fix at some point
+    paths:
+      exclude:
+        - libs/commons2/common2.ml
+
+  - id: bad-changelog-extension
+    pattern-regex: .*
+    message: |
+      This file has an invalid extension. Please choose from one of the allowed
+      extensions: .added, .changed, .fixed, or .infra
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - changelog.d/*
+      exclude:
+        - changelog.d/.gitignore
+        - changelog.d/README
+        - changelog.d/gh-1234.example
+        - changelog.d/*.added
+        - changelog.d/*.changed
+        - changelog.d/*.fixed
+        - changelog.d/*.infra
+
+  - id: pass-console-to-rich-progress
+    patterns:
+      - pattern: rich.progress.track(...)
+      - pattern-not: rich.progress.track(..., console=semgrep.console.console)
+    message: >-
+      You need to pass our custom console to rich progress bars
+      so that it progress to the correct output stream (usually stderr).
+    languages: [python]
+    severity: ERROR
+
+  - id: list-hd
+    pattern: List.hd
+    message: >-
+      Don't use 'List.hd' because it raises an unhelpful exception if its
+      argument is an empty list. Prefer a match-with, possibly combined with
+      'assert false' e.g. 'match xs with [] -> assert false | x :: _ -> ...'.
+    fix: List_.hd_exn "unexpected empty list"
+    languages: [ocaml]
+    severity: WARNING
+
+  - id: list-tl
+    pattern: List.tl
+    message: >-
+      Don't use 'List.tl' because it raises an unhelpful exception if its
+      argument is an empty list. Prefer a match-with, possibly combined with
+      'assert false' e.g. 'match xs with [] -> assert false | _ :: xs -> ...'.
+    fix: List_.tl_exn "unexpected empty list"
+    languages: [ocaml]
+    severity: WARNING
+
+  - id: no-direct-assign-to-id_svalue
+    patterns:
+      - pattern-not-inside: |
+          if no_cycles_in_svalue ... then
+            ...
+      # FIXME: This doesn't work: $X.id_svalue := Some $E
+      - pattern-regex: \s([a-z0-5_]+)\.id_svalue\s+:=\s+Some\s+([a-z0-5_]+)
+    message: >-
+      Dot not set '$1.id_svalue' directly, instead use
+      'Dataflow_svalue.set_svalue_ref' which performs a cycle check.
+    fix: Dataflow_svalue.set_svalue_ref $1 $2
+    languages: [ocaml]
+    severity: WARNING
+
+  - id: no-logger-flash
+    pattern-either:
+      - pattern-regex: "logger#flash"
+      - pattern-regex: "_logger#flash"
+    message: >-
+      logger#flash is just for debuggging purposes.
+    fix: ""
+    languages: [ocaml]
+    severity: WARNING
+
+  - id: no-match-x-x-with
+    pattern: match $X, $X with ... -> ...
+    message: >-
+      Pattern matching on ($X, $X) is pointless, you are comparing $X with itself.
+      You probably meant ($X, something-else) and this is due to a typo.
+    languages: [ocaml]
+    severity: WARNING
+
+  - id: no-fun-protect
+    pattern: Fun.protect
+    message: >-
+      `Fun.protect` does not block SIGALRM, which we use to implement timeouts (see
+      module 'Time_limit'). The alarm could trigger while we are executing a 'finally'
+      ths causing Semgrep to crash. Use `Common.protect` instead.
+    fix: Common.protect
+    languages: [ocaml]
+    severity: ERROR
+    paths:
+      include:
+        - src/*
+        - libs/*

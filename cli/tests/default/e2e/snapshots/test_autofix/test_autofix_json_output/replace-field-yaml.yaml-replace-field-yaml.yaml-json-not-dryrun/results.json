@@ -1,0 +1,38 @@
+{
+  "errors": [],
+  "paths": {
+    "scanned": [
+      "targets/autofix/replace-field-yaml.yaml"
+    ]
+  },
+  "results": [
+    {
+      "check_id": "rules.autofix.yaml-excessive-capture",
+      "end": {
+        "col": 14,
+        "line": 4,
+        "offset": 56
+      },
+      "extra": {
+        "engine_kind": "OSS",
+        "fingerprint": "0x42",
+        "fix": "y: false",
+        "lines": "requires login",
+        "message": "If semgrep is not smart enough, it will match beyond the specified pattern and capture all text until `z`. So the fix will result in `y: falsez: \"z\"`\n",
+        "metadata": {
+          "issue": "https://github.com/returntocorp/semgrep/issues/5698"
+        },
+        "severity": "ERROR",
+        "validation_state": "NO_VALIDATOR"
+      },
+      "path": "targets/autofix/replace-field-yaml.yaml",
+      "start": {
+        "col": 3,
+        "line": 3,
+        "offset": 40
+      }
+    }
+  ],
+  "skipped_rules": [],
+  "version": "0.42"
+}
