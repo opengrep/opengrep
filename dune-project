@@ -520,7 +520,8 @@ For more information see https://semgrep.dev
     (ocurl (= 0.9.1))
     opentelemetry-client-ocurl
     ambient-context-lwt
-    (conf-libcurl (= 1)) ; force older version of conf-libcurl to make windows work
+    ; (conf-libcurl (= 1)) ; force older version of conf-libcurl to make windows work
+    conf-libcurl ; present in ocaml 5 on windows too
     ; web stuff
     uri
     (uuidm (>= 0.9.9))

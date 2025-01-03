@@ -19,3 +19,7 @@ tests/** linguist-documentation
 tree-sitter-version text eol=lf
 # TODO: this is probably not enough
 scripts/check-bash-version text eol=lf
+# Maybe use this?
+scripts/*[^.]* text eol=lf
+# for submodule files, in ocaml-tree-sitter-core, but confirm this works at the root repo...
+*.patch text eol=lf
