@@ -15,3 +15,5 @@ tests/** linguist-documentation
 
 # for building on windows
 *.sh text eol=lf
+# for ocaml-tree-sitter scripts to work in cygwin env
+tree-sitter-version text eol=lf
