@@ -17,3 +17,5 @@ tests/** linguist-documentation
 *.sh text eol=lf
 # for ocaml-tree-sitter scripts to work in cygwin env
 tree-sitter-version text eol=lf
+# TODO: this is probably not enough
+scripts/check-bash-version text eol=lf
