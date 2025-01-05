@@ -12,14 +12,3 @@
 # https://github.com/github/linguist/blob/master/docs/overrides.md
 # Don't consider test files in language stats for the repository on Github
 tests/** linguist-documentation
-
-# for building on windows
-*.sh text eol=lf
-# for ocaml-tree-sitter scripts to work in cygwin env
-tree-sitter-version text eol=lf
-# TODO: this is probably not enough
-scripts/check-bash-version text eol=lf
-# Maybe use this?
-scripts/*[^.]* text eol=lf
-# for submodule files, in ocaml-tree-sitter-core, but confirm this works at the root repo...
-*.patch text eol=lf
