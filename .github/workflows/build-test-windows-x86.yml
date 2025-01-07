@@ -49,7 +49,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-4.14.0-${{ hashFiles('semgrep.opam') }}
           path: _opam
       - name: Debug stuff
-        run: |
+        run: >-
           ls
           # to see the bin symlink for example
           ls -l
@@ -71,7 +71,7 @@ jobs:
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Build tree-sitter
-        run: |
+        run: >-
           cd libs/ocaml-tree-sitter-core
           ./configure
           ./scripts/download-tree-sitter --lazy
@@ -85,7 +85,7 @@ jobs:
         run: |
           setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4 --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
       - name: Install OPAM deps
-        run: |
+        run: >-
           echo "PATH = $PATH"
           export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
@@ -95,7 +95,7 @@ jobs:
           make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
       - name: Build semgrep-core
-        run: |
+        run: >-
           export PATH=\"${CYGWIN_ROOT_BIN}:${PATH}\"
           export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include
           export TREESITTER_LIBDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/lib
