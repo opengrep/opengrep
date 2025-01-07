@@ -82,7 +82,7 @@ jobs:
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Add libcurl deps
-        run: |
+        run: >-
           setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4 --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
       - name: Install OPAM deps
         run: >-
@@ -108,7 +108,7 @@ jobs:
           done
           opam exec -- dune build _build/install/default/bin/semgrep-core.exe
       - name: Test semgrep-core
-        run: |
+        run: >-
           _build/install/default/bin/semgrep-core.exe -l python -rules tests/windows/rules.yml -json tests/windows/test.py
       - name: Package semgrep-core
         run: |
