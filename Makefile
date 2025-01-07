@@ -492,7 +492,8 @@ nix-update:
 
 # used in build-test-windows-x86.jsonnet
 install-deps-WINDOWS-for-semgrep-core:
-	opam depext $(WINDOWS_OPAM_DEPEXT_DEPS)
+  # depext => install because OPAM 2.2+ has integrated support for depexts.
+	opam install -y $(WINDOWS_OPAM_DEPEXT_DEPS)
 
 ###############################################################################
 # Developer targets
