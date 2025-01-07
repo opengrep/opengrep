@@ -86,6 +86,7 @@ jobs:
       - name: Install OPAM deps
         run: |
           echo "PATH = $PATH"
+          export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
           echo "CYGWIN_ROOT_BIN = $CYGWIN_ROOT_BIN"
           echo "PATH = $PATH"
