@@ -279,8 +279,8 @@ install-deps-for-semgrep-core:
 # Per the note above install-deps-ALPINE-for-semgrep-core, we may want
 # to keep it and add `--no-cache`
 install-opam-deps:
-	# opam update -y
-	OPAMSOLVERTIMEOUT=1200 opam install -y --assume-depexts --deps-only $(REQUIRED_DEPS)
+	opam update -y
+	OPAMSOLVERTIMEOUT=1200 opam install -vv -y --assume-depexts --deps-only $(REQUIRED_DEPS)
 
 # This will fail if semgrep.opam isn't up-to-date (in git),
 # and dune isn't installed yet. You can always install dune with
