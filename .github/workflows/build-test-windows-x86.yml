@@ -85,7 +85,9 @@ jobs:
           setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4 --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
       - name: Install OPAM deps
         run: |
-          export PATH=\"${CYGWIN_ROOT_BIN}:${PATH}\"
+          echo $PATH
+          export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
+          echo $CYGWIN_ROOT_BIN
           echo $PATH
           make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
