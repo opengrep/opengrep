@@ -93,8 +93,7 @@ jobs:
           echo "PATH = $PATH";
           opam install -vvv ocamlfind;
           make install-deps-WINDOWS-for-semgrep-core;
-          shopt -s igncr;
-          make install-opam-deps
+          env SHELLOPTS=ingr make install-opam-deps
       - name: Build semgrep-core
         run: >-
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}";
