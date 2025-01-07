@@ -90,6 +90,7 @@ jobs:
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
           echo "CYGWIN_ROOT_BIN = $CYGWIN_ROOT_BIN"
           echo "PATH = $PATH"
+          opam install -vvv ocamlfind
           make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
       - name: Build semgrep-core
