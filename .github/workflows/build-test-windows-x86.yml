@@ -36,7 +36,7 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: 5
-          # opam-local-packages: dont_install_local_packages.opam
+          opam-local-packages: dont_install_local_packages.opam
           # opam-repositories: |
           #   opam-repository-mingw: https://github.com/ocaml-opam/opam-repository-mingw.git#sunset
           #   default: https://github.com/ocaml/opam-repository.git
@@ -62,10 +62,10 @@ jobs:
           which ar
           ar --version
           which opam
-          # this should be fdopen's opan, so 2.0.10
+          # this should be 2.3.0 ?
           opam --version
           opam repo
-          # we should be on 4.14.0~mingw
+          # we should be on 5.2.1
           opam switch
       - env:
           CC: x86_64-w64-mingw32-gcc
