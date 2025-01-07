@@ -80,7 +80,7 @@ jobs:
           make PREFIX="$prefix" install
       - name: Add libcurl deps
         run: |
-            setup-x86_64.exe --packages=mingw64-x86_64-curl --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
+            setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4 --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
       - name: Install OPAM deps
         run: |
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
