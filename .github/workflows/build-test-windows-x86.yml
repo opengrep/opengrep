@@ -78,7 +78,9 @@ jobs:
           cd downloads/tree-sitter
           make PREFIX="$prefix" CFLAGS="-O3 -Wall -Wextra"
           make PREFIX="$prefix" install
-      - name: Add libcurl deps
+      - env:
+          CC: x86_64-w64-mingw32-gcc
+        name: Add libcurl deps
         run: |
             setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4 --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
       - name: Install OPAM deps
