@@ -51,22 +51,16 @@ jobs:
       - name: Debug stuff
         run: >-
           ls;
-          # to see the bin symlink for example
           ls -l;
           set;
-          # tree-sitter fails to compile without an ar, you can use
-          # CC=x86_64-w64-mingw32-gcc but there is no AR=x86_64-w64-mingw32-ar
           which ar;
           ar --version;
-          # GHA installs cygwin in a special place
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}";
           which ar;
           ar --version;
           which opam;
-          # this should be 2.3.0 ?
           opam --version;
           opam repo;
-          # we should be on 5.2.1
           opam switch
       - env:
           CC: x86_64-w64-mingw32-gcc
@@ -106,10 +100,7 @@ jobs:
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}";
           export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include;
           export TREESITTER_LIBDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/lib;
-          for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do
-            grep -v rpath $filename > $filename.new
-            mv $filename.new $filename
-          done;
+          for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do grep -v rpath $filename > $filename.new; mv $filename.new $filename; done;
           opam exec -- dune build _build/install/default/bin/semgrep-core.exe
       - name: Test semgrep-core
         run: >-
