@@ -88,10 +88,6 @@ jobs:
           echo "PATH = $PATH";
           make install-deps-WINDOWS-for-semgrep-core;
           make install-opam-deps
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
-        # with:
-        #   limit-access-to-actor: true
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Build semgrep-core
@@ -108,6 +104,11 @@ jobs:
           for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do grep -v rpath $filename > $filename.new; mv $filename.new $filename; done;
           echo "Running dune build...";
           opam exec -- dune build --debug-backtraces --debug-dependency-path _build/install/default/bin/semgrep-core.exe
+      - name: Setup tmate session
+        if: ${{ failure() }}
+        uses: mxschmitt/action-tmate@v3
+        # with:
+        #   limit-access-to-actor: true
       - name: Test semgrep-core
         run: >-
           _build/install/default/bin/semgrep-core.exe -l python -rules tests/windows/rules.yml -json tests/windows/test.py
