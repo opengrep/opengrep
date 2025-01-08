@@ -36,7 +36,7 @@ jobs:
           submodules: true
       - uses: ocaml/setup-ocaml@v3.1.5
         with:
-          ocaml-compiler: 5
+          ocaml-compiler: 5.2.1
           opam-local-packages: dont_install_local_packages.opam
           # opam-repositories: |
           #   opam-repository-mingw: https://github.com/ocaml-opam/opam-repository-mingw.git#sunset
@@ -90,6 +90,7 @@ jobs:
           make install-opam-deps
       - env:
           CC: x86_64-w64-mingw32-gcc
+          SHELLOPTS: igncr
         name: Build semgrep-core
         # We have to strip rpath from the tree-sitter projects because there's no
         # equivalent in Windows
