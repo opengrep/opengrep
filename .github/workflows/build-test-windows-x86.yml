@@ -95,6 +95,7 @@ jobs:
           make install-deps-WINDOWS-for-semgrep-core;
           ls /usr/include/curl;
           export PATH="/usr/include/curl:${PATH}";
+          file /usr/include/curl/curl.h;
           opam install -vvv ocurl.0.9.1;
           make install-opam-deps
       - name: Build semgrep-core
