@@ -103,7 +103,8 @@ jobs:
           export TREESITTER_LIBDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/lib;
           echo $(which grep); echo $(grep --version);
           for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do grep -v rpath $filename > $filename.new; mv $filename.new $filename; done;
-          opam exec -- dune build _build/install/default/bin/semgrep-core.exe
+          echo "Running dune build...";
+          opam exec -- dune build --verbose _build/install/default/bin/semgrep-core.exe
       - name: Test semgrep-core
         run: >-
           _build/install/default/bin/semgrep-core.exe -l python -rules tests/windows/rules.yml -json tests/windows/test.py
