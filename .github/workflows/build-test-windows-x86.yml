@@ -93,10 +93,7 @@ jobs:
           echo "PATH = $PATH";
           opam install ocamlfind;
           make install-deps-WINDOWS-for-semgrep-core;
-          ls /usr/include/curl;
-          export PATH="/usr/include/curl:${PATH}";
-          file /usr/include/curl/curl.h;
-          opam install -vvv ocurl.0.9.1;
+          CFLAGS="-I/usr/include" LDFLAGS="-L/usr/lib" opam install -vvv ocurl.0.9.1;
           make install-opam-deps
       - name: Build semgrep-core
         run: >-
