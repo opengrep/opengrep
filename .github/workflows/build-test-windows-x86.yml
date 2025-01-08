@@ -88,9 +88,12 @@ jobs:
           echo "PATH = $PATH";
           make install-deps-WINDOWS-for-semgrep-core;
           make install-opam-deps
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        # with:
+        #   limit-access-to-actor: true
       - env:
           CC: x86_64-w64-mingw32-gcc
-          SHELLOPTS: igncr
         name: Build semgrep-core
         # We have to strip rpath from the tree-sitter projects because there's no
         # equivalent in Windows
@@ -145,7 +148,7 @@ jobs:
       - build-core
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - uses: actions/download-artifact@v4
