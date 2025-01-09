@@ -50,6 +50,7 @@ jobs:
           path: _opam
       - name: Debug stuff
         run: |
+          cygcheck --version
           ls
           # to see the bin symlink for example
           ls -l
@@ -62,6 +63,7 @@ jobs:
           opam repo
           # we should be on 5.2.1
           opam switch
+          exit 1
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Build tree-sitter
