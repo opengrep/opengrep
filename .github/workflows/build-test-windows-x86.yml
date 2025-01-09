@@ -28,13 +28,13 @@ jobs:
       run:
         shell: bash
     # if: "false"
-    runs-on: windows-latest
+    runs-on: windows-latest # windows-2022
     steps:
-      - run: git config --global core.autocrlf input
+      # - run: git config --global core.autocrlf input
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: ocaml/setup-ocaml@v3.1.5
+      - uses: ocaml/setup-ocaml@v3.2.3
         with:
           ocaml-compiler: 5.2.1
           opam-local-packages: dont_install_local_packages.opam
@@ -104,11 +104,11 @@ jobs:
           for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do grep -v rpath $filename > $filename.new; mv $filename.new $filename; done;
           echo "Running dune build...";
           opam exec -- dune build --debug-backtraces --debug-dependency-path _build/install/default/bin/semgrep-core.exe
-      - name: Setup tmate session
-        if: ${{ failure() }}
-        uses: mxschmitt/action-tmate@v3
-        # with:
-        #   limit-access-to-actor: true
+      # - name: Setup tmate session
+      #   if: ${{ failure() }}
+      #   uses: mxschmitt/action-tmate@v3
+      #   # with:
+      #   #   limit-access-to-actor: true
       - name: Test semgrep-core
         run: >-
           _build/install/default/bin/semgrep-core.exe -l python -rules tests/windows/rules.yml -json tests/windows/test.py
