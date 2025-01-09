@@ -106,10 +106,10 @@ jobs:
             mv $filename.new $filename
           done
           opam exec -- dune build --verbose _build/install/default/bin/semgrep-core.exe
-        - name: Check build log
-          if: ${{ failure() }}
-          run: |
-            cat _build/log | grep ppx.exe
+      - name: Check build log
+        if: ${{ failure() }}
+        run: |
+          cat _build/log | grep ppx.exe
       # - name: Setup tmate session
       #   if: ${{ failure() }}
       #   uses: mxschmitt/action-tmate@v3
