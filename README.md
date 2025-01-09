@@ -8,39 +8,39 @@
     </picture>
   </a>
 </p>
-<h2 align="center">
-  Code scanning at ludicrous speed.
-</h2>
-<p align="center">
-  <a href="https://formulae.brew.sh/formula/semgrep">
-    <img src="https://img.shields.io/homebrew/v/semgrep?style=flat-square" alt="Homebrew" />
-  </a>
-  <a href="https://pypi.org/project/semgrep/">
-    <img alt="PyPI" src="https://img.shields.io/pypi/v/semgrep?style=flat-square&color=blue">
-  </a>
-  <a href="https://semgrep.dev/docs/">
-      <img src="https://img.shields.io/badge/docs-semgrep.dev-purple?style=flat-square" alt="Documentation" />
-  </a>
-  <a href="https://go.semgrep.dev/slack">
-    <img src="https://img.shields.io/badge/slack-3.5k%20members-green?style=flat-square" alt="Join Semgrep community Slack" />
-  </a>
-  <a href="https://github.com/semgrep/semgrep/issues/new/choose">
-    <img src="https://img.shields.io/badge/issues-welcome-green?style=flat-square" alt="Issues welcome!" />
-  </a>
-  <a href="https://github.com/semgrep/semgrep#readme">
-    <img src="https://img.shields.io/github/stars/semgrep/semgrep?label=GitHub%20Stars&style=flat-square" alt="Star Semgrep on GitHub" />
-  </a>
-  <a href="https://hub.docker.com/r/semgrep/semgrep">
-    <img src="https://img.shields.io/docker/pulls/semgrep/semgrep.svg?style=flat-square" alt="Docker Pulls" />
-  </a>
-  <a href="https://hub.docker.com/r/semgrep/semgrep">
-    <img src="https://img.shields.io/docker/pulls/semgrep/semgrep.svg?style=flat-square" alt="Docker Pulls (Old)" />
-  </a>
-  <a href="https://twitter.com/intent/follow?screen_name=semgrep">
-    <img src="https://img.shields.io/twitter/follow/semgrep?label=Follow%20semgrep&style=social&color=blue" alt="Follow @semgrep on Twitter" />
-  </a>
-</p>
-</br>
+<!-- <h2 align="center"> -->
+<!--   Code scanning at ludicrous speed. -->
+<!-- </h2> -->
+<!-- <p align="center"> -->
+<!--   <a href="https://formulae.brew.sh/formula/semgrep"> -->
+<!--     <img src="https://img.shields.io/homebrew/v/semgrep?style=flat-square" alt="Homebrew" /> -->
+<!--   </a> -->
+<!--   <a href="https://pypi.org/project/semgrep/"> -->
+<!--     <img alt="PyPI" src="https://img.shields.io/pypi/v/semgrep?style=flat-square&color=blue"> -->
+<!--   </a> -->
+<!--   <a href="https://semgrep.dev/docs/"> -->
+<!--       <img src="https://img.shields.io/badge/docs-semgrep.dev-purple?style=flat-square" alt="Documentation" /> -->
+<!--   </a> -->
+<!--   <a href="https://go.semgrep.dev/slack"> -->
+<!--     <img src="https://img.shields.io/badge/slack-3.5k%20members-green?style=flat-square" alt="Join Semgrep community Slack" /> -->
+<!--   </a> -->
+<!--   <a href="https://github.com/semgrep/semgrep/issues/new/choose"> -->
+<!--     <img src="https://img.shields.io/badge/issues-welcome-green?style=flat-square" alt="Issues welcome!" /> -->
+<!--   </a> -->
+<!--   <a href="https://github.com/semgrep/semgrep#readme"> -->
+<!--     <img src="https://img.shields.io/github/stars/semgrep/semgrep?label=GitHub%20Stars&style=flat-square" alt="Star Semgrep on GitHub" /> -->
+<!--   </a> -->
+<!--   <a href="https://hub.docker.com/r/semgrep/semgrep"> -->
+<!--     <img src="https://img.shields.io/docker/pulls/semgrep/semgrep.svg?style=flat-square" alt="Docker Pulls" /> -->
+<!--   </a> -->
+<!--   <a href="https://hub.docker.com/r/semgrep/semgrep"> -->
+<!--     <img src="https://img.shields.io/docker/pulls/semgrep/semgrep.svg?style=flat-square" alt="Docker Pulls (Old)" /> -->
+<!--   </a> -->
+<!--   <a href="https://twitter.com/intent/follow?screen_name=semgrep"> -->
+<!--     <img src="https://img.shields.io/twitter/follow/semgrep?label=Follow%20semgrep&style=social&color=blue" alt="Follow @semgrep on Twitter" /> -->
+<!--   </a> -->
+<!-- </p> -->
+<!-- </br> -->
 
 ### Welcome to Opengrep, a fork of Semgrep, under the LGPL 2.1 license
 
