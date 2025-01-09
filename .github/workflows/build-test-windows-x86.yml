@@ -28,7 +28,7 @@ jobs:
       run:
         shell: bash
     # if: "false"
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
       # - run: git config --global core.autocrlf input
       - uses: actions/checkout@v4
@@ -106,7 +106,7 @@ jobs:
             grep -v rpath $filename > $filename.new
             mv $filename.new $filename
           done
-          opam exec -- dune build --verbose _build/install/default/bin/semgrep-core.exe
+          opam exec -- dune build _build/install/default/bin/semgrep-core.exe
       - name: Check build log
         if: ${{ failure() }}
         run: |
