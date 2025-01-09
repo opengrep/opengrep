@@ -105,8 +105,7 @@ jobs:
             grep -v rpath $filename > $filename.new
             mv $filename.new $filename
           done
-          # opam exec --
-          dune build _build/install/default/bin/semgrep-core.exe
+          opam exec -- dune build _build/install/default/bin/semgrep-core.exe
       # - name: Setup tmate session
       #   if: ${{ failure() }}
       #   uses: mxschmitt/action-tmate@v3
