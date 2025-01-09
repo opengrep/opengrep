@@ -28,7 +28,7 @@ jobs:
       run:
         shell: bash
     # if: "false"
-    runs-on: windows-latest # windows-2022
+    runs-on: windows-2022
     steps:
       # - run: git config --global core.autocrlf input
       - uses: actions/checkout@v4
@@ -63,7 +63,6 @@ jobs:
           opam repo
           # we should be on 5.2.1
           opam switch
-          exit 1
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Build tree-sitter
