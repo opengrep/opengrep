@@ -28,7 +28,7 @@ jobs:
       run:
         shell: bash
     # if: "false"
-    runs-on: windows-2022
+    runs-on: windows-latest # windows-2022
     steps:
       # - run: git config --global core.autocrlf input
       - uses: actions/checkout@v4
@@ -49,45 +49,45 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-5-${{ hashFiles('semgrep.opam') }}
           path: _opam
       - name: Debug stuff
-        run: >-
-          ls;
-          ls -l;
-          set;
-          which ar;
-          ar --version;
-          export PATH="${CYGWIN_ROOT_BIN}:${PATH}";
-          which ar;
-          ar --version;
-          which opam;
-          opam --version;
-          opam repo;
+        run: |
+          ls
+          # to see the bin symlink for example
+          ls -l
+          set
+          which ar
+          ar --version
+          which opam
+          # this should be 2+
+          opam --version
+          opam repo
+          # we should be on 5.2.1
           opam switch
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Build tree-sitter
-        run: >-
-          cd libs/ocaml-tree-sitter-core;
-          ./configure;
-          ./scripts/download-tree-sitter --lazy;
-          prefix="$(pwd)/tree-sitter";
-          cd downloads/tree-sitter;
-          make PREFIX="$prefix" CFLAGS="-O3 -Wall -Wextra";
+        run: |
+          cd libs/ocaml-tree-sitter-core
+          ./configure
+          ./scripts/download-tree-sitter --lazy
+          prefix="$(pwd)/tree-sitter"
+          cd downloads/tree-sitter
+          make PREFIX="$prefix" CFLAGS="-O3 -Wall -Wextra"
           make PREFIX="$prefix" install
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Add libcurl deps
-        run: >-
+        run: |
           setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4 --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Install OPAM deps
         # CYGWIN_ROOT_BIN could be more robust.
         # `/cygdrive/c/mingw64/bin` is already in PATH though... do we need in front?
-        run: >-
-          export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin;
-          export PATH="${CYGWIN_ROOT_BIN}:${PATH}";
-          echo "PATH = $PATH";
-          make install-deps-WINDOWS-for-semgrep-core;
+        run: |
+          # export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
+          # export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
+          echo "PATH = $PATH"
+          make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
       - env:
           CC: x86_64-w64-mingw32-gcc
@@ -95,16 +95,18 @@ jobs:
         # We have to strip rpath from the tree-sitter projects because there's no
         # equivalent in Windows
         # TODO: investigate removing rpath from the tree-sitter projects
-        run: >-
-          export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin;
-          export PATH="${CYGWIN_ROOT_BIN}:${PATH}";
-          export PATH="/usr/x86_64-w64-mingw32/sys-root/mingw/bin:$PATH";
-          echo "PATH == $PATH";
-          export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include;
-          export TREESITTER_LIBDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/lib;
-          for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do grep -v rpath $filename > $filename.new; mv $filename.new $filename; done;
-          echo "Running dune build...";
-          opam exec -- dune build --debug-backtraces --debug-dependency-path _build/install/default/bin/semgrep-core.exe
+        run: |
+          # export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
+          # export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
+          # export PATH="/usr/x86_64-w64-mingw32/sys-root/mingw/bin:$PATH"
+          # echo "PATH == $PATH"
+          export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include
+          export TREESITTER_LIBDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/lib
+          for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do
+            grep -v rpath $filename > $filename.new
+            mv $filename.new $filename
+          done
+          opam exec -- dune build _build/install/default/bin/semgrep-core.exe
       # - name: Setup tmate session
       #   if: ${{ failure() }}
       #   uses: mxschmitt/action-tmate@v3
