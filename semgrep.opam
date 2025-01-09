@@ -17,7 +17,7 @@ homepage: "https://semgrep.dev"
 bug-reports: "https://github.com/semgrep/semgrep/issues"
 depends: [
   "ocaml" {>= "4.13.0"}
-  "dune" {>= "3.7" & = "3.16.1"}
+  "dune" {>= "3.7" & >= "3.17.1"}
   "base"
   "menhir" {= "20230608"}
   "base" {>= "v0.15.1"}

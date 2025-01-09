@@ -451,7 +451,7 @@ For more information see https://semgrep.dev
   (depends
     ; core deps
     (ocaml (>= 4.13.0))
-    (dune (= 3.16.1)) ; Just testing.
+    (dune (>= 3.17.1)) ; Just testing.
     base
     ; parser generators
     (menhir (= 20230608))
