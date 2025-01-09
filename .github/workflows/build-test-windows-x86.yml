@@ -87,9 +87,9 @@ jobs:
           # export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
           # export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
           echo "PATH = $PATH"
-          opam exec -- dune --version
           make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
+          opam exec -- dune --version
       - name: Build semgrep-core
         # We have to strip rpath from the tree-sitter projects because there's no
         # equivalent in Windows
