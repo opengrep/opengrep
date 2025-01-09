@@ -1,10 +1,10 @@
 <br />
 <p align="center">
-  <a href="https://semgrep.dev">
+  <a href="https://opengrep.dev">
     <picture>
-      <source media="(prefers-color-scheme: light)" srcset="images/semgrep-logo-light.svg">
-      <source media="(prefers-color-scheme: dark)" srcset="images/semgrep-logo-dark.svg">
-      <img src="https://raw.githubusercontent.com/semgrep/semgrep/develop/images/semgrep-logo-light.svg" height="100" alt="Semgrep logo"/>
+      <source media="(prefers-color-scheme: light)" srcset="images/opengrep-modern-banner-dark.png">
+      <source media="(prefers-color-scheme: dark)" srcset="images/opengrep-modern-banner-dark.png">
+      <img src="https://raw.githubusercontent.com/semgrep/semgrep/main/images/opengrep-modern-banner-dark.png" height="100" alt="Semgrep logo"/>
     </picture>
   </a>
 </p>
