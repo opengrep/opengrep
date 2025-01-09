@@ -79,7 +79,7 @@ jobs:
         run: |
           setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4 --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
       - env:
-          CC: x86_64-w64-mingw32-gcc
+          CC: x86_64-w64-mingw32-gcc # for ocurl
         name: Install OPAM deps
         # CYGWIN_ROOT_BIN could be more robust.
         # `/cygdrive/c/mingw64/bin` is already in PATH though... do we need in front?
@@ -87,11 +87,10 @@ jobs:
           # export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
           # export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
           echo "PATH = $PATH"
+          opam exec -- dune --version
           make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
-      - env:
-          CC: x86_64-w64-mingw32-gcc
-        name: Build semgrep-core
+      - name: Build semgrep-core
         # We have to strip rpath from the tree-sitter projects because there's no
         # equivalent in Windows
         # TODO: investigate removing rpath from the tree-sitter projects
