@@ -96,8 +96,8 @@ jobs:
         # equivalent in Windows
         # TODO: investigate removing rpath from the tree-sitter projects
         run: |
-          # export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
-          # export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
+          export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
+          export PATH=\"${CYGWIN_ROOT_BIN}:${PATH}\"
           # export PATH="/usr/x86_64-w64-mingw32/sys-root/mingw/bin:$PATH"
           # echo "PATH == $PATH"
           export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include
@@ -107,10 +107,10 @@ jobs:
             mv $filename.new $filename
           done
           opam exec -- dune build _build/install/default/bin/semgrep-core.exe
-      - name: Check build log
-        if: ${{ failure() }}
-        run: |
-          cat _build/log | grep ppx.exe
+      # - name: Check build log
+      #   if: ${{ failure() }}
+      #   run: |
+      #     cat _build/log | grep ppx.exe
       # - name: Setup tmate session
       #   if: ${{ failure() }}
       #   uses: mxschmitt/action-tmate@v3
