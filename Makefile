@@ -48,19 +48,8 @@
 #       SED = sed -i ''
 #     endif
 
-# This is to deal with paths that change depending on whether we're in the
-# semgrep-proprietary monorepo or detached as a standalone semgrep project.
-# The script 'scripts/make-symlinks' also deals with such issues.
-PROJECT_ROOT = $(shell git rev-parse --show-toplevel || pwd)
-ifeq ($(shell pwd),$(PROJECT_ROOT))
-  # The root is here.
-  BUILD = _build
-  BUILD_DEFAULT = _build/default
-else
-  # Assume we're in the semgrep-proprietary repo where OSS/ = semgrep.
-  BUILD = ../_build
-  BUILD_DEFAULT = ../_build/default/OSS
-endif
+BUILD = _build
+BUILD_DEFAULT = _build/default
 
 ifeq ($(shell uname -o),Cygwin)
   EXE = .exe
@@ -200,7 +189,6 @@ test-all:
 #coupling: this is run by .github/workflow/tests.yml
 .PHONY: core-test
 core-test:
-	./scripts/make-symlinks
 	$(MAKE) build-core-test
 # The following command ensures that we can call 'test.exe --help'
 # from the directory of the checkout
@@ -492,7 +480,8 @@ nix-update:
 
 # used in build-test-windows-x86.jsonnet
 install-deps-WINDOWS-for-semgrep-core:
-	opam depext $(WINDOWS_OPAM_DEPEXT_DEPS)
+	# We will use OPAM 2.1+ which has integrated support for depexts.
+	opam install -y $(WINDOWS_OPAM_DEPEXT_DEPS)
 
 ###############################################################################
 # Developer targets
@@ -503,7 +492,6 @@ install-deps-WINDOWS-for-semgrep-core:
 # important dependencies change.
 .PHONY: setup
 setup: semgrep.opam
-	./scripts/make-symlinks
 	./scripts/check-bash-version
 	$(MAKE) install-deps-for-semgrep-core
 
