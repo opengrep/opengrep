@@ -97,7 +97,7 @@ jobs:
         # TODO: investigate removing rpath from the tree-sitter projects
         run: |
           export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
-          export PATH=\"${CYGWIN_ROOT_BIN}:${PATH}\"
+          export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
           # export PATH="/usr/x86_64-w64-mingw32/sys-root/mingw/bin:$PATH"
           # echo "PATH == $PATH"
           export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include
