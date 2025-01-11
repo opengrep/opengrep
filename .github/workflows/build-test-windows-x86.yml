@@ -85,13 +85,14 @@ jobs:
           OPAMCONFIRMLEVEL: unsafe-yes
         name: Install OPAM deps
         run: |
+          export CYGWIN_ROOT_BIN=/cygdrive/d/cygwin/bin
           export CYGWIN_MINGW_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
-          export PATH="${PATH}:${CYGWIN_MINGW_BIN}"
+          export PATH="${CYGWIN_ROOT_BIN}:${PATH}:${CYGWIN_MINGW_BIN}"
           echo "PATH = $PATH"
           make install-deps-WINDOWS-for-semgrep-core
           echo "MINGW DLLS"
           ls /usr/x86_64-w64-mingw32/sys-root/mingw/bin
-          echo "CYGWIN DLLS"
+          echo "CYGWIN ROOT DIR"
           ls /cygdrive/d/cygwin/bin
           make install-opam-deps
       - name: Build semgrep-core
