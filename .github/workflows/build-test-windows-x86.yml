@@ -88,6 +88,10 @@ jobs:
           export CYGWIN_MINGW_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
           export PATH="${PATH}:${CYGWIN_MINGW_BIN}"
           echo "PATH = $PATH"
+          echo "MINGW DLLS"
+          ls /usr/x86_64-w64-mingw32/sys-root/mingw/bin | grep *.dll
+          echo "CYGWIN DLLS"
+          ls /cygdrive/d/cygwin/bin | grep *.dll
           make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
       - name: Build semgrep-core
