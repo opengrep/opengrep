@@ -64,7 +64,6 @@ jobs:
           # we should be on 5.2.1
           opam switch
           ls /usr/x86_64-w64-mingw32/sys-root/mingw/bin
-          exit 1
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Build tree-sitter
@@ -76,29 +75,27 @@ jobs:
           cd downloads/tree-sitter
           make PREFIX="$prefix" CFLAGS="-O3 -Wall -Wextra"
           make PREFIX="$prefix" install
-      - env:
-          CC: x86_64-w64-mingw32-gcc
-        name: Add libcurl deps
-        run: |
-          setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4,libgmp-devel,libpcre-devel,libpcre2-devel --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
+      # - env:
+      #     CC: x86_64-w64-mingw32-gcc
+      #   name: Add libcurl deps
+      #   run: |
+      #     setup-x86_64.exe --packages=mingw64-x86_64-curl,libcurl-devel,libcurl4,libgmp-devel,libpcre-devel,libpcre2-devel --quiet-mode --site=https://cygwin.mirror.constant.com/ --symlink-type=sys
       - env:
           CC: x86_64-w64-mingw32-gcc # for ocurl
+          OPAMCONFIRMLEVEL: unsafe-yes
         name: Install OPAM deps
-        # CYGWIN_ROOT_BIN could be more robust.
-        # `/cygdrive/c/mingw64/bin` is already in PATH though... do we need in front?
         run: |
-          export CYGWIN_ROOT_BIN=/cygdrive/d/cygwin/bin
+          export CYGWIN_ROOT_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
           echo "PATH = $PATH"
           make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
-          opam exec -- dune --version
       - name: Build semgrep-core
         # We have to strip rpath from the tree-sitter projects because there's no
         # equivalent in Windows
         # TODO: investigate removing rpath from the tree-sitter projects
         run: |
-          export CYGWIN_ROOT_BIN=/cygdrive/d/cygwin/bin
+          export CYGWIN_ROOT_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
           export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include
           export TREESITTER_LIBDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/lib
