@@ -112,7 +112,7 @@ jobs:
             grep -v rpath $filename > $filename.new
             mv $filename.new $filename
           done
-          opam exec -- dune build _build/install/default/bin/semgrep-core.exe
+          opam exec -- dune build --sandbox=none _build/install/default/bin/semgrep-core.exe
       # - name: Check build log
       #   if: ${{ failure() }}
       #   run: |
