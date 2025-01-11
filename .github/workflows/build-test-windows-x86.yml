@@ -63,6 +63,8 @@ jobs:
           opam repo
           # we should be on 5.2.1
           opam switch
+          ls /usr/x86_64-w64-mingw32/sys-root/mingw/bin
+          exit 1
       - env:
           CC: x86_64-w64-mingw32-gcc
         name: Build tree-sitter
