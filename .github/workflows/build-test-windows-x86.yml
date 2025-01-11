@@ -85,8 +85,8 @@ jobs:
         # CYGWIN_ROOT_BIN could be more robust.
         # `/cygdrive/c/mingw64/bin` is already in PATH though... do we need in front?
         run: |
-          # export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
-          # export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
+          export CYGWIN_ROOT_BIN=/cygdrive/c/cygwin/bin
+          export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
           echo "PATH = $PATH"
           make install-deps-WINDOWS-for-semgrep-core
           make install-opam-deps
@@ -96,10 +96,8 @@ jobs:
         # equivalent in Windows
         # TODO: investigate removing rpath from the tree-sitter projects
         run: |
-          export CYGWIN_ROOT_BIN=/cygdrive/c/mingw64/bin
+          export CYGWIN_ROOT_BIN=/cygdrive/c/cygwin/bin
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}"
-          # export PATH="/usr/x86_64-w64-mingw32/sys-root/mingw/bin:$PATH"
-          # echo "PATH == $PATH"
           export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include
           export TREESITTER_LIBDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/lib
           for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do
