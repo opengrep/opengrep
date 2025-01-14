@@ -435,29 +435,30 @@ let check_rules ~match_hook
   in
 
   rules
-  |> List_.map (fun rule ->
-         let%trace_debug sp = "Match_tainting_mode.check_rules.rule" in
-         Tracing.add_data_to_span sp
-           [
-             ("rule_id", `String (fst rule.R.id |> Rule_ID.to_string));
-             ("taint", `Bool true);
-           ];
-
-         let xconf =
-           Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
-         in
-         (* This boilerplate function will take care of things like
-             timing out if this rule takes too long, and returning a dummy
-             result for the timed-out rule.
-         *)
-         per_rule_boilerplate_fn
-           (rule :> R.rule)
-           (fun () ->
-             Logs_.with_debug_trace ~__FUNCTION__
-               ~pp_input:(fun _ ->
-                 "target: "
-                 ^ !!(xtarget.path.internal_path_to_content)
-                 ^ "\nruleid: "
-                 ^ (rule.id |> fst |> Rule_ID.to_string))
-               (fun () ->
-                 check_rule per_file_formula_cache rule match_hook xconf xtarget)))
+  |> (List_.map
+       (fun rule ->
+          (Tracing.with_span ~level:Tracing.Debug ~__FILE__ ~__LINE__
+             "Match_tainting_mode.check_rules.rule")
+            @@
+            (fun sp ->
+               Tracing.add_data_to_span sp
+                 [("rule_id",
+                    (`String ((fst rule.R.id) |> Rule_ID.to_string)));
+                 ("taint", (`Bool true))];
+               (let xconf =
+                  Match_env.adjust_xconfig_with_rule_options xconf
+                    rule.R.options in
+                per_rule_boilerplate_fn (rule :> R.rule)
+                  (fun () ->
+                     Logs_.with_debug_trace ~__FUNCTION__
+                       ~pp_input:(fun _ ->
+                                    "target: " ^
+                                      ((!!
+                                          ((xtarget.path).internal_path_to_content))
+                                         ^
+                                         ("\nruleid: " ^
+                                            ((rule.id |> fst) |>
+                                               Rule_ID.to_string))))
+                       (fun () ->
+                          check_rule per_file_formula_cache rule match_hook
+                            xconf xtarget))))))
