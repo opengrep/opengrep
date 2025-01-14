@@ -255,11 +255,11 @@ R = TypeVar("R")
 
 def trace() -> Callable[[Callable[P, R]], Callable[P, R]]:
     def outer(f: Callable[P, R]) -> Callable[P, R]:
-        span_name = f"{f.__module__}.{f.__name__}"
+        # span_name = f"{f.__module__}.{f.__name__}"
 
         @functools.wraps(f)
         def inner(*args: P.args, **kwargs: P.kwargs) -> R:
-            with TRACER.start_as_current_span(span_name):
+            # with TRACER.start_as_current_span(span_name):
                 return f(*args, **kwargs)
 
         return inner
