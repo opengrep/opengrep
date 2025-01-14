@@ -102,7 +102,7 @@ let default : conf =
     incremental_output = false;
     rewrite_rule_ids = true;
     (* will send metrics only if the user uses the registry or the app *)
-    metrics = Metrics_.Auto;
+    metrics = Metrics_.Off;
     version_check = true;
     (* ugly: should be separate subcommands *)
     version = false;

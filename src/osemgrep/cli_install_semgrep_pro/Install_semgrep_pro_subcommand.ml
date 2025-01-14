@@ -132,7 +132,7 @@ let run_conf (caps : < caps ; .. >) (conf : Install_semgrep_pro_CLI.conf) :
   CLI_common.setup_logging ~force_color:false ~level:conf.common.logging_level;
   Logs.debug (fun m -> m "conf = %s" (Install_semgrep_pro_CLI.show_conf conf));
   (* stricter: this command was actually not tracked in pysemgrep *)
-  Metrics_.configure Metrics_.On;
+  Metrics_.configure Metrics_.Off;
 
   (* We want to install to basically wherever the current executable is,
      but to the name `semgrep-core-proprietary`, which is where the ultimate

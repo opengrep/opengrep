@@ -22,7 +22,7 @@ let run_conf (caps : caps) (conf : Logout_CLI.conf) : Exit_code.t =
   CLI_common.setup_logging ~force_color:false ~level:conf.common.logging_level;
   Logs.debug (fun m -> m "conf = %s" (Logout_CLI.show_conf conf));
   (* stricter: the login/logout metrics are actually not tracked in pysemgrep *)
-  Metrics_.configure Metrics_.On;
+  Metrics_.configure Metrics_.Off;
   let settings = Semgrep_settings.load ~include_env:false () in
   match settings.Semgrep_settings.api_token with
   | None ->

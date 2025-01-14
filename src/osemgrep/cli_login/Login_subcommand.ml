@@ -141,7 +141,7 @@ let run_conf (caps : < caps ; .. >) (conf : Login_CLI.conf) : Exit_code.t =
   CLI_common.setup_logging ~force_color:false ~level:conf.common.logging_level;
   Logs.debug (fun m -> m "conf = %s" (Login_CLI.show_conf conf));
   (* stricter: the login/logout metrics are actually not tracked in pysemgrep *)
-  Metrics_.configure Metrics_.On;
+  Metrics_.configure Metrics_.Off;
   (* don't include env here since we care if the token comes from the env or a
      file, and Semgrep_setting.load will check for either if include_env is
      true (the default)*)
