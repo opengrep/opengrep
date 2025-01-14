@@ -1,0 +1,207 @@
+# NOTE: This workflow is adapted from `build-test-windows-x86.yml` in Semgrep v1.100.0.
+# NOTE: Do *NOT* generate from jsonnet, this is written direct in .yml for now.
+
+name: build-test-windows-x86
+on:
+  push:
+      branches:
+        - main
+        - windows/**
+        # - dm/disable-tracing-pt-i # branch where this change was introduced
+  workflow_call:
+    inputs:
+      use-cache:
+        default: true
+        description: Use Opam Cache - uncheck the box to disable use of the opam cache, meaning a long-running but completely from-scratch build.
+        required: false
+        type: boolean
+  workflow_dispatch:
+    inputs:
+      use-cache:
+        default: true
+        description: Use Opam Cache - uncheck the box to disable use of the opam cache, meaning a long-running but completely from-scratch build.
+        required: true
+        type: boolean
+
+jobs:
+
+  build-core:
+    defaults:
+      run:
+        shell: bash
+
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.2.1
+          opam-local-packages: dont_install_local_packages.opam
+
+      - name: Add extra cygwin packages
+        shell: pwsh
+        # NOTE: The openssl install is a hack but it's needed... for now.
+        run: C:\hostedtoolcache\windows\cygwin\3.5.5\x86_64\setup-x86_64.exe --packages=mingw64-x86_64-curl,mingw64-x86_64-gmp,mingw64-x86_64-pcre,mingw64-x86_64-pcre2,mingw64-x86_64-openssl=1.0.2u+za-1 --quiet-mode --root=D:\cygwin --site=https://mirrors.kernel.org/sourceware/cygwin/ --symlink-type=sys
+
+      - env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2
+        name: Restore GHA cache for OPAM in _opam
+        id: cache-opam-win32-amd64
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-5.2.1-${{ hashFiles('semgrep.opam') }}
+          path: _opam
+
+      - name: Debug stuff
+        run: |
+          cygcheck --version
+          ls
+          # to see the bin symlink for example
+          ls -l
+          set
+          which ar
+          ar --version
+          which opam
+          # this should be 2.2.* or later
+          opam --version
+          opam repo
+          # we should be on 5.2.1
+          opam switch
+          opam var
+          echo $PATH | tr ':' '\n'
+          
+      - env:
+          CC: x86_64-w64-mingw32-gcc
+        name: Build tree-sitter
+        run: |
+          cd libs/ocaml-tree-sitter-core
+          ./configure
+          ./scripts/download-tree-sitter --lazy
+          PREFIX_TS="$(pwd)/tree-sitter"
+          cd downloads/tree-sitter
+          make PREFIX="$PREFIX_TS" CFLAGS="-O3 -Wall -Wextra"
+          make PREFIX="$PREFIX_TS" install
+
+      - env:
+          CC: x86_64-w64-mingw32-gcc # Needed for ocurl
+          OPAMCONFIRMLEVEL: unsafe-yes
+        name: Install OPAM deps
+        # if: steps.cache-opam-win32-amd64.outputs.cache-hit != 'true'
+        run: |
+          export CYGWIN_ROOT_BIN=/cygdrive/d/cygwin/bin
+          export CYGWIN_MINGW_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
+          export PATH="${CYGWIN_ROOT_BIN}:${PATH}:${CYGWIN_MINGW_BIN}"
+          make install-deps-WINDOWS-for-semgrep-core
+          make install-opam-deps
+
+      # NOTE: This makes testing stuff faster, because the cache is saved even on
+      # # failed runs of the workflow. Not sure how this interacts with setup-ocaml's
+      # # caching though.
+      # - name: Save GHA cache for OPAM in _opam
+      #   # if: steps.cache-opam-win32-amd64.outputs.cache-hit != 'true'
+      #   uses: actions/cache/save@v4
+      #   with:
+      #     path: _opam
+      #     key: ${{ steps.cache-opam-win32-amd64.outputs.cache-primary-key }}
+          
+      - name: Build semgrep-core
+        run: |
+          export TREESITTER_INCDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/include
+          export TREESITTER_LIBDIR=$(pwd)/libs/ocaml-tree-sitter-core/tree-sitter/lib
+          # NOTE: This should not be needeed, should investigate.
+          export PCRE2_INCDIR="/usr/x86_64-w64-mingw32/sys-root/mingw/include/"
+          export CYGWIN_ROOT_BIN="/usr/bin"
+          export PATH="${PATH}:${PCRE2_INCDIR}"
+
+          for filename in $(find ./languages/ ./libs/ocaml-tree-sitter-core/ -name dune); do
+            grep -v rpath $filename > $filename.new
+            mv $filename.new $filename
+          done
+
+          # HACK: /usr/bin must take precedence over all paths in the opam env.
+          # Else one get's weird linking errors, because of the length of the
+          # argument list. And `opam exec` will always re-arrange the path and
+          # make this fail to compile.
+          PATH="${CYGWIN_ROOT_BIN}:$(opam exec -- printenv PATH)" dune build _build/install/default/bin/semgrep-core.exe
+
+      - name: Test semgrep-core
+        run: |
+          _build/install/default/bin/semgrep-core.exe -l python -rules tests/windows/rules.yml -json tests/windows/test.py
+
+      - name: Package semgrep-core
+        run: |
+          mkdir artifacts
+          cp _build/install/default/bin/semgrep-core.exe artifacts/
+
+          # TODO (sg): somehow upgrade to the latest flexdll, which should allow us
+          # to statically link these libraries
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libstdc++-6.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libgcc_s_seh-1.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libwinpthread-1.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libpcre-1.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libgmp-10.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libcurl-4.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libpcre2-8-0.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libeay32.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libidn2-0.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libnghttp2-14.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libssh2-1.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/ssleay32.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libzstd-1.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/zlib1.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/iconv.dll artifacts/
+          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libintl-8.dll artifacts/
+
+          tar czvf artifacts.tgz artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-core-and-dependent-libs-w64-artifact-${{ github.sha }}
+          path: artifacts.tgz
+
+  build-wheels:
+    defaults:
+      run:
+        shell: bash
+    needs:
+      - build-core
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: semgrep-core-and-dependent-libs-w64-artifact-${{ github.sha }}
+      - env:
+          SEMGREP_FORCE_INSTALL: 1
+        run: |
+          tar xvfz artifacts.tgz
+          cp artifacts/* cli/src/semgrep/bin
+          ./scripts/build-wheels.sh --plat-name win_amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86-wheel
+          path: cli/dist.tgz
+
+  test-wheels:
+    defaults:
+      run:
+        shell: bash
+    needs:
+      - build-wheels
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x86-wheel
+      - run: tar xzvf dist.tgz
+      - name: install package
+        run: pip3 install dist/*.whl
+      - name: test package
+        run: semgrep --version
+      - name: e2e semgrep-core test
+        run: echo '1 == 1' > test.py; semgrep -l python -e '$X == $X' test.py
