@@ -19,7 +19,7 @@ let handle_call (caps : < Cap.exec ; Cap.tmp >) :
       let modified_file_count, fixed_lines = RPC_return.autofix dryrun edits in
       Ok (`RetApplyFixes { modified_file_count; fixed_lines })
   | `CallSarifFormat
-      ( ctx,
+      ( _,
         {
           hide_nudge;
           engine_label;
@@ -31,7 +31,7 @@ let handle_call (caps : < Cap.exec ; Cap.tmp >) :
       let output, format_time_seconds =
         RPC_return.sarif_format
           (caps :> < Cap.tmp >)
-          rules ctx hide_nudge engine_label show_dataflow_traces cli_matches
+          rules hide_nudge engine_label show_dataflow_traces cli_matches
           cli_errors
       in
       Ok (`RetSarifFormat { output; format_time_seconds })

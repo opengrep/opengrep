@@ -1,1 +1,0 @@
-let msg = "requires login"

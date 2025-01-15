@@ -44,7 +44,7 @@ let format (kind : Out.output_format) (ctx : Out.format_context)
   let xs = Output.format kind ctx cli_output in
   String.concat "\n" xs
 
-let sarif_format _caps (rules : Out.fpath) (ctx : Out.format_context) hide_nudge
+let sarif_format _caps (rules : Out.fpath) hide_nudge
     engine_label show_dataflow_traces (cli_matches : Out.cli_match list)
     (cli_errors : Out.cli_error list) =
   let fake_config =
@@ -87,7 +87,7 @@ let sarif_format _caps (rules : Out.fpath) (ctx : Out.format_context) hide_nudge
   let output, format_time_seconds =
     Common.with_time (fun () ->
         let sarif_json =
-          Sarif_output.sarif_output hrules ctx cli_output hide_nudge
+          Sarif_output.sarif_output hrules cli_output hide_nudge
             engine_label show_dataflow_traces
         in
         Sarif.Sarif_v_2_1_0_j.string_of_sarif_json_schema sarif_json)

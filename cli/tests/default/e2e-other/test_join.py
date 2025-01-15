@@ -34,9 +34,6 @@ def test_basic(run_semgrep_in_tmp: RunSemgrep, snapshot, rule, target):
         run_semgrep_in_tmp(
             rule,
             target_name=target,
-            # we now need to be logged in to access metavariables
-            # which are needed for join mode to work
-            is_logged_in_weak=True,
         ).stdout,
         "results.json",
     )
