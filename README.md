@@ -35,12 +35,14 @@ Get started in seconds with our pre-built packages. Requires Python 3.9+.
 
 ```bash
 # For macOS (Apple Silicon)
-pip install opengrep --find-links https://github.com/opengrep/opengrep/releases/download/v1.0.0-alpha.2/opengrep-1.0.0a1-cp39.cp310.cp311.cp312.cp313.py39.py310.py311.py312.py313-none-macosx_11_0_arm64.whl
+python3 -m venv venv
+ . venv/bin/activate
+python -m pip install https://github.com/opengrep/opengrep/releases/download/v1.0.0-alpha.2/opengrep-1.0.0a1-cp39.cp310.cp311.cp312.cp313.py39.py310.py311.py312.py313-none-macosx_11_0_arm64.whl
 ```
 
 ```bash
 # For Linux (x86_64)
-pip install opengrep --find-links https://github.com/opengrep/opengrep/releases/download/v1.0.0-alpha.2/opengrep-1.0.0a1-cp39.cp310.cp311.cp312.cp313.py39.py310.py311.py312.py313-none-musllinux_1_0_x86_64.manylinux2014_x86_64.whl
+pip install https://github.com/opengrep/opengrep/releases/download/v1.0.0-alpha.2/opengrep-1.0.0a1-cp39.cp310.cp311.cp312.cp313.py39.py310.py311.py312.py313-none-musllinux_1_0_x86_64.manylinux2014_x86_64.whl
 ```
  
 ## Getting started
