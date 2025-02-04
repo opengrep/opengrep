@@ -486,7 +486,7 @@ class OutputHandler:
                 and state.metrics.is_using_registry
                 and (not auth.is_logged_in_weak())
             ):
-                suggestion_line = "\n(Want to share your rules? Create a PR on: https://github.com/opengrep/opengrep-rules) and contribute with the Opengrep community\n"
+                suggestion_line = ""
             stats_line = ""
             if print_summary:
                 stats_line = f"\nRan {unit_str(num_rules, 'rule')} on {unit_str(num_targets, 'file')}: {unit_str(num_findings, 'finding')}."
