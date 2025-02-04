@@ -13,7 +13,7 @@ Rules:
   Scanning 1 file with 3 python rules.
 [31m[22m[24mWarning: 2 timeout error(s) in targets/equivalence/open_redirect.py when running the following rules:
 [rules.forcetimeout, rules.forcetimeout2]
-Semgrep stopped running rules on targets/equivalence/open_redirect.py after 2 timeout error(s). See `--timeout-
+Opengrep stopped running rules on targets/equivalence/open_redirect.py after 2 timeout error(s). See `--timeout-
 threshold` for more info.[0m
 
 ========================================

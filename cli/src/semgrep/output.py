@@ -496,9 +496,9 @@ class OutputHandler:
                 ):
                     missed_count_line = f"💎 Missed out on {unit_str(missed_rule_count, 'pro rule')} since you aren't logged in!"
                     learn_more_url = with_color(
-                        Colors.cyan, "https://github.com/opengrep", underline=True
+                        Colors.cyan, "https://github.com/opengrep/opengrep", underline=True
                     )
-                    learn_more_line = f"⚡ Contribute with Opengrep OSS at {learn_more_url}."
+                    learn_more_line = f"⚡ Contribute with Opengrep at {learn_more_url}."
                     stats_line = f"{stats_line}\n{missed_count_line}\n{learn_more_line}"
             if ignore_log is not None:
                 too_many_entries = self.settings.max_log_list_entries
