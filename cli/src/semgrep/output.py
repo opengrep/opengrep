@@ -290,7 +290,7 @@ class OutputHandler:
             errors[path].sort()
             error_msg = f"Warning: {num_errs} timeout error(s) in {path} when running the following rules: [{separator.join(errors[path])}]"
             if num_errs == self.settings.timeout_threshold:
-                error_msg += f"\nSemgrep stopped running rules on {path} after {num_errs} timeout error(s). See `--timeout-threshold` for more info."
+                error_msg += f"\nOpengrep stopped running rules on {path} after {num_errs} timeout error(s). See `--timeout-threshold` for more info."
             print_threshold_hint = print_threshold_hint or (
                 num_errs > 5 and not self.settings.timeout_threshold
             )
@@ -486,7 +486,7 @@ class OutputHandler:
                 and state.metrics.is_using_registry
                 and (not auth.is_logged_in_weak())
             ):
-                suggestion_line = "\n(need more rules? `semgrep login` for additional free Semgrep Registry rules)\n"
+                suggestion_line = "\n(Want to share your rules? Create a PR on: https://github.com/opengrep/opengrep-rules) and contribute with the Opengrep community\n"
             stats_line = ""
             if print_summary:
                 stats_line = f"\nRan {unit_str(num_rules, 'rule')} on {unit_str(num_targets, 'file')}: {unit_str(num_findings, 'finding')}."
@@ -496,9 +496,9 @@ class OutputHandler:
                 ):
                     missed_count_line = f"💎 Missed out on {unit_str(missed_rule_count, 'pro rule')} since you aren't logged in!"
                     learn_more_url = with_color(
-                        Colors.cyan, "https://sg.run/rules", underline=True
+                        Colors.cyan, "https://github.com/opengrep", underline=True
                     )
-                    learn_more_line = f"⚡ Supercharge Semgrep OSS when you create a free account at {learn_more_url}."
+                    learn_more_line = f"⚡ Contribute with Opengrep OSS at {learn_more_url}."
                     stats_line = f"{stats_line}\n{missed_count_line}\n{learn_more_line}"
             if ignore_log is not None:
                 too_many_entries = self.settings.max_log_list_entries
