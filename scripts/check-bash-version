@@ -7,7 +7,7 @@
 #
 set -eu -o pipefail
 
-if ! { bash --version | grep -q 'version [56789]'; }; then
+if ! { bash --version | grep -iq 'version [56789]'; }; then
   cat >&2 <<EOF
 Error: Bash >= 5.0 is required.
 If you're on a Mac, run:
