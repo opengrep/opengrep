@@ -1,12 +1,22 @@
 # Build instructions for developers
 
-## Manual development
+First, clone the repository and fetch the submodules:
 
-Developers should consult the makefiles, which are documented.
+```sh
+$ git clone --recursive https://github.com/opengrep/opengrep 
+```
+if you've already cloned the repository, you can fetch the submodules with:
+```sh
+$ git submodule update --init --recursive
+```
+
+
+## Local development
+
+Developers should consult the `Makefile`s, which are documented.
 The steps to set up and build everything are normally:
 
 ```
-$ git submodule update --init --recursive
 $ make setup       # meant to be run infrequently, may not be sufficient
 $ make             # routine build
 $ make test        # test everything
@@ -46,7 +56,7 @@ The Semgrep project has two main parts:
 
 The main [`Dockerfile`](Dockerfile) serves as a reference on how to
 build Opengrep for Linux. The usual instructions for building a Docker
-image apply. It should be:
+image apply. Once you've cloned the repository and fetched the submodules(see above), it should be:
 
 ```
 $ docker build -t opengrep .
