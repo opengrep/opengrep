@@ -37,7 +37,7 @@
 # semgrep-core. This is done in a multi-stage build so that the final COPY
 # happens in a single layer.
 
-FROM busybox:stable as semgrep-core-files
+FROM busybox:stable AS semgrep-core-files
 WORKDIR /src/semgrep
 
 # copy over the entire semgrep repository
@@ -98,7 +98,7 @@ COPY cli/src/semgrep/semgrep_interfaces cli/src/semgrep/semgrep_interfaces
 #    add a package or we wanted to switch to a different OCaml version.
 #    Being able to control everything from a single Dockerfile is simpler.
 
-FROM alpine:3.19 as semgrep-core-container
+FROM alpine:3.19 AS semgrep-core-container
 
 # Install opam and basic build tools
 RUN apk add --no-cache bash build-base git make opam
