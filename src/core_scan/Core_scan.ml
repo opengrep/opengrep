@@ -168,10 +168,15 @@ let print_cli_additional_targets (config : Core_scan_config.t) (n : int) : unit
    safe to write a dot on stdout in a child process and why it's mixed with
    JSON output.
 *)
+(* HACK: This sometimes fails with Domains. We get newlines, and sometimes .. then
+ * newline with no dot. Exit code is 0 but because of this the scan fails. This
+ * is a little weird since we flush on the string, but it seems it can be interleaved
+ * so it does not always work. *)
+let print_progress_mutex = Mutex.create ()
 let print_cli_progress (config : Core_scan_config.t) : unit =
   (* Print when each file is done so the Python progress bar knows *)
   match config.output_format with
-  | Json true -> UConsole.print "."
+  | Json true -> Mutex.protect print_progress_mutex (fun () -> UConsole.print ".")
   | _ -> ()
 
 (*****************************************************************************)
