@@ -20,6 +20,7 @@ module RP = Core_result
 module E = Core_error
 module OutJ = Semgrep_output_v1_t
 module Log = Log_engine.Log
+module TLS= Thread_local_storage
 
 (*****************************************************************************)
 (* Prelude *)
@@ -138,7 +139,7 @@ let per_rule_boilerplate_fn (timeout : timeout_config option) =
   let rule_timeouts = ref [] in
   fun (file : Fpath.t) (rule : Rule.t) f ->
     let rule_id = fst rule.R.id in
-    Rule.last_matched_rule := Some rule_id;
+    TLS.set Rule.last_matched_rule (Some rule_id);
     let res_opt =
       Profiling.profile_code
         (spf "real_rule:%s" (Rule_ID.to_string rule_id))

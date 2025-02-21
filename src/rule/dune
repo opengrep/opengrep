@@ -15,6 +15,7 @@
    ; standard libraries
    semver
    atdgen-runtime
+   thread-local-storage
 
    ; in libs/
    commons

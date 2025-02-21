@@ -24,6 +24,7 @@ module Flag = Flag_semgrep
 module Options = Rule_options_t
 module MG = Matching_generic
 module Log = Log_matching.Log
+module TLS = Thread_local_storage
 
 let profile_mini_rules = ref false
 
@@ -50,10 +51,10 @@ type env = {
 (* This is used to let the user know which rule the engine was using when
  * a Timeout or OutOfMemory exn occured.
  *)
-let (last_matched_rule : Mini_rule.t option ref) = ref None
+let (last_matched_rule : Mini_rule.t option TLS.t) = TLS.create ()
 
 let set_last_matched_rule (rule : Mini_rule.t) f =
-  last_matched_rule := Some rule;
+  TLS.set last_matched_rule (Some rule);
   (* note that if this raise an exn, last_matched_rule will not be
    * reset to None and that's what we want!
    *)
@@ -62,7 +63,7 @@ let set_last_matched_rule (rule : Mini_rule.t) f =
       Profiling.profile_code ("rule:" ^ Rule_ID.to_string rule.id) f
     else f ()
   in
-  last_matched_rule := None;
+  TLS.set last_matched_rule None;
   res
 
 (*****************************************************************************)

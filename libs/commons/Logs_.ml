@@ -14,6 +14,8 @@
  *)
 open Common
 
+module TLS = Thread_local_storage
+
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -334,20 +336,21 @@ let debug_trace_src = Logs.Src.create "debug_trace"
    minimal. This could cause backtraces to not show up if someone
    catches and handles them between the first and the last
    with_debug_trace call. *)
-let is_in_debug_trace_context = ref false
+let is_in_debug_trace_context = TLS.create () 
 
 let with_debug_trace ?(src = debug_trace_src) ~__FUNCTION__
     ?(pp_input : (unit -> string) option) (f : unit -> 'a) : 'a =
   let name = __FUNCTION__ in
-  let currently_in_debug_trace = !is_in_debug_trace_context in
+  let currently_in_debug_trace =
+    (TLS.get_default ~default:(fun () -> false) is_in_debug_trace_context) in
   (match pp_input with
   | None -> Logs.debug ~src (fun m -> m "starting %s" name)
   | Some pp_input ->
       Logs.debug ~src (fun m ->
           m "starting %s with input:\n%s" name (pp_input ())));
   try
-    is_in_debug_trace_context := true;
-    let finally () = is_in_debug_trace_context := currently_in_debug_trace in
+    TLS.set is_in_debug_trace_context true;
+    let finally () = TLS.set is_in_debug_trace_context currently_in_debug_trace in
     let res = Common.protect ~finally f in
     Logs.debug ~src (fun m -> m "finished %s" name);
     res

@@ -31,6 +31,7 @@
    ; async stuff
    lwt
    alcotest-lwt
+   thread-local-storage
  )
  (inline_tests)
  ; can't use profiling.ppx because of circular dependencies :(
