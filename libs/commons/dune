@@ -14,7 +14,7 @@
    fmt
    ocolor
    ANSITerminal
-   logs logs.fmt
+   logs logs.fmt logs.threaded
    alcotest
    testo
    timedesc

@@ -256,6 +256,9 @@ let read_level_from_env (vars : string list) : Logs.level option option =
 (* Entry points *)
 (*****************************************************************************)
 
+(* Enable threaded logging. *)
+let _ = Logs_threaded.enable ()
+
 (* Enable basic logging so that you can use Logging calls even before a
  * precise call to setup_logging.
  *)
