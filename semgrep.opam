@@ -88,6 +88,8 @@ depends: [
   "integers_stubs_js"
   "git-unix"
   "memprof-limits" {= "dev"}
+  "thread-local-storage"
+  "domainslib"
   "odoc" {with-doc}
 ]
 build: [
