@@ -92,11 +92,10 @@ type t = {
 (* Helpers *)
 (*****************************************************************************)
 
-let count = ref 0
+let count = Atomic.make 0
 
 let mk_xpat pat pstr =
-  incr count;
-  { pat; pstr; pid = !count }
+  { pat; pstr; pid = (Atomic.fetch_and_add count 1) + 1 } (* XXX: Maybe drop [+ 1]. *)
 
 let is_regexp xpat =
   match xpat.pat with
