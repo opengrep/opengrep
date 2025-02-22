@@ -30,7 +30,34 @@ Apex · Bash · C · C++ · C# · Clojure · Dart · Dockerfile · Elixir · HTM
 ## Installation
 
 Binaries available in the latest alpha [release](https://github.com/opengrep/opengrep/releases).
- 
+
+* Method 1: Direct curl to shell (one-liner)
+``` bash
+curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | sh
+```
+* Method 2: Download and run (more secure)
+
+``` bash
+curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh -o install.sh
+chmod +x install.sh
+./install.sh
+```
+* Method 3: With sudo (if needed)
+``` bash
+curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | sudo sh
+```
+
+### Other Options that can be passed to this install.sh script are
+
+* Lists available versions
+``` bash
+./install.sh -l
+```
+* Install specific version
+``` bash
+./install.sh -v v1.0.0-alpha.14
+```
+
 ## Getting started
 
 Create `rules/demo-rust-unwrap.yaml` with the following content:
