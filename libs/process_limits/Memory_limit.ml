@@ -34,6 +34,8 @@ open Common
 
 exception ExceededMemoryLimit of string
 
+module M = Memprof_limits
+
 (* Why those values? *)
 let default_stack_warning_kb = 100
 let default_heap_warning_mb = 400
@@ -55,7 +57,49 @@ let default_heap_warning_mb = 400
    See https://discuss.ocaml.org/t/todays-trick-memory-limits-with-gc-alarms/4431
    for detailed explanations.
 
+   NOTE: caveat, from the above link:
+   This is not reliable with multi-threaded programs, because we do not know in
+   which thread the exception must be raised.
+
+   So maybe try to adapt so it uses memprof-limits instead.
+
 *)
+
+(* We should not pass the limit as parameter because it's global. *)
+let set_global_memory_limit_mb mem_limit_mb =
+  (* NOTE: We get 0 from somewhere... memprof-limits takes -1 to mean 'no limit.' *)
+  let mem_limit_mb = if Int.equal mem_limit_mb 0 then -1 else mem_limit_mb in
+  M.set_global_memory_limit (mem_limit_mb * 1024) 
+
+(* TODO: The [mem_limit_mb] is global, and should not be a parameter, but the
+ * whole thing is a mess and it requires too many changes right now. In any
+ * case, the value does not change per invocation. *)
+let run_with_global_memory_limit _caps ?get_context ~mem_limit_mb f =
+  match mem_limit_mb with
+  | 0 -> f ()
+  | _ ->
+    (* NOTE: Known race condition... see comment above. *)
+    set_global_memory_limit_mb mem_limit_mb;
+    let context () =
+      match get_context with
+      | None -> ""
+      | Some get_context ->
+          let context_str = get_context () in
+          spf "[%s] " context_str
+    in
+    match M.limit_global_memory f with
+    | Ok res -> res
+    | Error _exn ->
+        Logs.err (fun m ->
+            m "%sexceeded heap memory limit of %d MiB" (context ()) mem_limit_mb);
+        Gc.compact ();
+        raise (ExceededMemoryLimit (spf "Exceeded memory limit of %d MiB" mem_limit_mb))
+    | exception exn ->
+        let e = Exception.catch exn in
+        Logs.err (fun m -> m "exn while in run_with_global_memory_limit");
+        (* Try to free up some space. Expensive operation. *)
+        Gc.compact ();
+        Exception.reraise e
 let run_with_memory_limit _caps ?get_context
     ?(stack_warning_kb = default_stack_warning_kb)
     ?(heap_warning_mb = default_heap_warning_mb) ~mem_limit_mb f =

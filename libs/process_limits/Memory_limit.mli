@@ -75,4 +75,11 @@ val run_with_memory_limit :
   (unit -> 'a) ->
   'a
 
+val run_with_global_memory_limit :
+  < Cap.memory_limit > ->
+  ?get_context:(unit -> string) ->
+  mem_limit_mb:int ->
+  (unit -> 'a) ->
+  'a
+
 val default_stack_warning_kb : int

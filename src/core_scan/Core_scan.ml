@@ -570,7 +570,7 @@ let iter_targets_and_get_matches_and_exn_to_errors
            let (res, was_scanned), run_time =
              Common.with_time (fun () ->
                  try
-                   Memory_limit.run_with_memory_limit
+                   Memory_limit.run_with_global_memory_limit
                      (caps :> < Cap.memory_limit >)
                      ~get_context:(get_context_for_memory_limit target)
                      ~mem_limit_mb:config.max_memory_mb
