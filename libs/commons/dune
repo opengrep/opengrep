@@ -33,6 +33,7 @@
    alcotest-lwt
    thread-local-storage
    kcas_data
+   batteries
  )
  (inline_tests)
  ; can't use profiling.ppx because of circular dependencies :(

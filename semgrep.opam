@@ -91,6 +91,7 @@ depends: [
   "thread-local-storage"
   "domainslib"
   "kcas_data"
+  "batteries"
   "odoc" {with-doc}
 ]
 build: [

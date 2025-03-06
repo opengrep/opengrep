@@ -169,3 +169,7 @@ val with_debug_trace :
 val list : ('a -> string) -> 'a list -> string
 val option : ('a -> string) -> 'a option -> string
 val array : ('a -> string) -> 'a array -> string
+
+(* The reentrant mutex used for logging, exposed so it can
+ * be shared by pretty-printing functions. *)
+val reentrant_mutex : BatteriesThread.RMutex.t

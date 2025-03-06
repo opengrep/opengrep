@@ -258,7 +258,17 @@ let read_level_from_env (vars : string list) : Logs.level option option =
 (*****************************************************************************)
 
 (* Enable threaded logging. *)
-let _ = Logs_threaded.enable ()
+module Mutex = BatteriesThread.RMutex
+
+let reentrant_mutex = Mutex.create ()
+let _ =
+  let lock () = Mutex.lock reentrant_mutex
+  and unlock () = Mutex.unlock reentrant_mutex in
+Logs.set_reporter_mutex ~lock ~unlock
+
+(* We use a re-entrant mutex above because otherwise tests using [make core-test]
+ * deadlock. *)
+(* let _ = Logs_threaded.enable () *)
 
 (* Enable basic logging so that you can use Logging calls even before a
  * precise call to setup_logging.
