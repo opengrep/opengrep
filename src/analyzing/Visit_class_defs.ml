@@ -30,11 +30,12 @@ class ['self] visitor =
       super#visit_class_definition f def
   end
 
-let visitor_instance = lazy (new visitor)
+(* NOTE: Removed [lazy] because it can crash when using domains. *)
+let visitor_instance = new visitor
 
 (* Visit all class definitions in an AST. *)
 let visit (f : G.entity option -> G.class_definition -> unit) (ast : G.program)
     : unit =
-  let (lazy v) = visitor_instance in
+  let v = visitor_instance in
   (* Check each class definition. *)
   v#visit_program f ast
