@@ -1,6 +1,7 @@
 import contextlib
 import json
 import tempfile
+import platform
 import os
 from typing import Any
 from typing import Iterable
@@ -15,6 +16,7 @@ from semgrep.error import SemgrepError
 from semgrep.rule import Rule
 from semgrep.rule_match import RuleMatch
 
+IS_WINDOWS = platform.system() == "Windows"
 
 class SarifFormatter(base.BaseFormatter):
     def keep_ignores(self) -> bool:
@@ -37,7 +39,7 @@ class SarifFormatter(base.BaseFormatter):
             rule_file = None
             try: 
               rule_file = exit_stack.enter_context(
-                  tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False)
+                  tempfile.NamedTemporaryFile("w+", suffix=".json", delete=(not IS_WINDOWS))
               )
               rule_file_contents = json.dumps(
                   {"rules": [rule._raw for rule in rules]}, indent=2, sort_keys=True
