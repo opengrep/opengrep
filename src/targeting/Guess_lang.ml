@@ -103,8 +103,12 @@ let get_first_block ?(block_size = 4096) path =
       let len = min block_size (in_channel_length ic) in
       really_input_string ic len)
 
+(* XXX: Need thread-safe solution, or just [force] it now. However, it does not
+ * seem to be used concurrently. *)
 let shebang_re = lazy (Pcre2_.regexp "^#![ \t]*([^ \t]*)[ \t]*([^ \t].*)?$")
 let split_cmd_re = lazy (Pcre2_.regexp "[ \t]+")
+(* This is not needed, but let's play safe. Too small an optimisation. *)
+let _ = Lazy.force shebang_re, Lazy.force split_cmd_re
 
 (*
    A shebang supports at most the name of the script and one argument:
