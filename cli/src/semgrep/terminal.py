@@ -81,7 +81,9 @@ class Terminal:
         env = Env()
         # env.user_log_file dir must exist
         env.user_log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(env.user_log_file, "w")
+        # adding `encoding="utf-8"` to ensure that special unicode characters
+        # render properly on windows:
+        file_handler = logging.FileHandler(env.user_log_file, "w", encoding="utf-8")
         file_formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
