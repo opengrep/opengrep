@@ -39,8 +39,8 @@ class SarifFormatter(base.BaseFormatter):
             rule_file = None
             try: 
               rule_file = exit_stack.enter_context(
-                  tempfile.NamedTemporaryFile("w+", suffix=".json", delete=(not IS_WINDOWS))
-              )
+                  tempfile.NamedTemporaryFile("w+", suffix=".json", delete=False)
+              ) # (not IS_WINDOWS) causes failures.
               rule_file_contents = json.dumps(
                   {"rules": [rule._raw for rule in rules]}, indent=2, sort_keys=True
               )
