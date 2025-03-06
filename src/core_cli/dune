@@ -8,6 +8,7 @@
  (libraries
     str
     ppx_deriving.runtime
+    kcas_data
 
     ; in libs/
     commons

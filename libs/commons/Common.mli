@@ -241,7 +241,7 @@ val input_text_line : in_channel -> string
 (* Optimizations *)
 (*****************************************************************************)
 
-val memoized : ?use_cache:bool -> ('a, 'b) Hashtbl.t -> 'a -> (unit -> 'b) -> 'b
+val memoized : ?use_cache:bool -> ('a, 'b) Kcas_data.Hashtbl.t -> 'a -> (unit -> 'b) -> 'b
 
 (*****************************************************************************)
 (* Profiling *)

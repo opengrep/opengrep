@@ -578,7 +578,7 @@ let run_cnf_step2 cnf big_str =
 type prefilter = Semgrep_prefilter_t.formula * (string -> bool)
 
 (* see mli *)
-type prefilter_cache = (Rule_ID.t, prefilter option) Hashtbl.t
+type prefilter_cache = (Rule_ID.t, prefilter option) Kcas_data.Hashtbl.t
 
 let prefilter_formula_of_prefilter (pre : prefilter) :
     Semgrep_prefilter_t.formula =
@@ -682,4 +682,5 @@ let regexp_prefilter_of_rule ~cache (r : R.rule) =
   in
   match cache with
   | None -> regex_prefilter_fun ()
+  (* Race, hence Kcas Hashtbl. From [is_relevant_rule_from_xtarget]. *)
   | Some cache -> Common.memoized cache key regex_prefilter_fun

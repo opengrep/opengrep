@@ -884,7 +884,9 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   log_scan_inputs config ~targets ~skipped ~valid_rules ~invalid_rules;
   let prefilter_cache_opt =
     if config.filter_irrelevant_rules then
-      Match_env.PrefilterWithCache (Hashtbl.create (List.length valid_rules))
+      (* NOTE: In the fork based Parmap model, this is not really shared between
+       * cores, but is shared on a per-core basis. Now it's shared between all cores. *)
+      Match_env.PrefilterWithCache (Kcas_data.Hashtbl.create () (* (List.length valid_rules) *))
     else NoPrefiltering
   in
   let file_results, scanned_targets =

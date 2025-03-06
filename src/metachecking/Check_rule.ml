@@ -364,7 +364,7 @@ let stat_files (caps : < Cap.stdout >) xs =
   in
   let good = ref 0 in
   let bad = ref 0 in
-  let cache = Some (Hashtbl.create 101) in
+  let cache = Some (Kcas_data.Hashtbl.create () (* 101 *)) in
   fullxs
   |> List.iter (fun file ->
          Logs.info (fun m -> m "stat_files: processing rule file %s" !!file);

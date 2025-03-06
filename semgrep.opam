@@ -90,6 +90,7 @@ depends: [
   "memprof-limits" {= "dev"}
   "thread-local-storage"
   "domainslib"
+  "kcas_data"
   "odoc" {with-doc}
 ]
 build: [

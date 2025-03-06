@@ -5,6 +5,7 @@
  (wrapped false)
  (libraries
     parallelism
+    kcas_data
 
     commons
     tracing

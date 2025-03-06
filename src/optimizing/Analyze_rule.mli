@@ -13,7 +13,7 @@ type prefilter = Semgrep_prefilter_t.formula * (string -> bool)
       confusing to debug. To prevent that from happening again, the table is
       now passed to this function. For convenience you can also choose not to
        memoize. *)
-type prefilter_cache = (Rule_ID.t, prefilter option) Hashtbl.t
+type prefilter_cache = (Rule_ID.t, prefilter option) Kcas_data.Hashtbl.t
 
 (* This function analyzes a rule and returns optionaly a prefilter.
  *
@@ -28,7 +28,7 @@ type prefilter_cache = (Rule_ID.t, prefilter option) Hashtbl.t
  * This function returns None when it was not able to extract
  * a formula of regexps (it bailed out), which can happen because
  * the formula is too general (e.g., pattern: $XX($YY)).
- * In that case, None is really the same than returning a function
+ * In that case, None is really the same as returning a function
  * that always return true (which means we should analyze the target file).
  *
  * Note that this function use Common.memoized on the rule id

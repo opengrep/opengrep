@@ -105,12 +105,12 @@ let (matches_of_matcher :
         RP.mk_match_result res Core_error.ErrorSet.empty
           { Core_profiling.parse_time; match_time }
 
-let hmemo : (Fpath.t, Pos.bytepos_linecol_converters) Hashtbl.t =
-  Hashtbl.create 101
+let hmemo : (Fpath.t, Pos.bytepos_linecol_converters) Kcas_data.Hashtbl.t =
+  Kcas_data.Hashtbl.create () (* 101 *)
 
 let () =
   (* nosemgrep: forbid-tmp *)
-  UTmp.register_temp_file_cleanup_hook (fun file -> Hashtbl.remove hmemo file)
+  UTmp.register_temp_file_cleanup_hook (fun file -> Kcas_data.Hashtbl.remove hmemo file)
 
 let line_col_of_charpos (file : Fpath.t) (charpos : int) : int * int =
   let conv =

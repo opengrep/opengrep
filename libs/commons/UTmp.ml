@@ -27,8 +27,8 @@ module Log = Log_commons.Log
 (* Globals *)
 (*****************************************************************************)
 
-(* TODO: eliminate this global and enforce the use of 'with_temp_file' *)
-let temp_files_created : (Fpath.t, unit) Hashtbl.t = Hashtbl.create 101
+let temp_files_created : (Fpath.t, unit) Kcas_data.Hashtbl.t =
+  Kcas_data.Hashtbl.create () (* 101 *)
 
 (* old: was in Common2.cmdline_flags_devel()
     ( "-keep_tmp_files",
@@ -38,13 +38,14 @@ let temp_files_created : (Fpath.t, unit) Hashtbl.t = Hashtbl.create 101
 
 let save_temp_files = ref false
 
+(* XXX: This is called outside of the domainslib loop, so it should be ok. *)
 let erase_temp_files () =
   if not !save_temp_files then (
     temp_files_created
-    |> Hashtbl.iter (fun path () ->
+    |> Kcas_data.Hashtbl.iter (fun path () ->
            Log.info (fun m -> m "deleting: %s" !!path);
            USys.remove !!path);
-    Hashtbl.clear temp_files_created)
+    Kcas_data.Hashtbl.clear temp_files_created)
 
 (* hooks for with_temp_file() *)
 let temp_file_cleanup_hooks = ref []
@@ -67,21 +68,37 @@ let register_temp_file_cleanup_hook f = Stack_.push f temp_file_cleanup_hooks
 
 let default_temp_file_prefix = USys.argv.(0) |> Filename.basename
 
+(* TODO: To avoid collusions, we could set the DLS key for the temp folder
+ * on each domain. See [Filename.temp_file] in ocaml/filename.ml.
+ * See also [{get, set}_temp_dir_name]. We could get the dir name and add a new
+ * subdirectory based on the domain-id, which means there should be no collusions?
+ * We can also use the thread-id. Note that collusions can happen since the function
+ * is recursive and it can choose a name that is also chosen by another thread,
+ * and then both will write to the file, quite possibly with different contents!
+ * Or just use thread-id instead of the pid? Not enough with domainslib in general
+ * but in our case with [chunk_size = 1] it should be ok. *)
+let tmp_file_counter = Atomic.make 0 (* Ensure that we never create the same filename. *)
 let new_temp_file ?(prefix = default_temp_file_prefix) ?(suffix = "") ?temp_dir
     () =
-  let pid = if !Common.jsoo then 42 else UUnix.getpid () in
+  let cnt = Atomic.fetch_and_add tmp_file_counter 1 in
+  let pid = if !Common.jsoo then 42 else (Thread.id (Thread.self ())) (* UUnix.getpid () *) in
   let temp_file =
     UFilename.temp_file
       ?temp_dir:(Option.map Fpath.to_string temp_dir)
-      (spf "%s%d-" prefix pid) suffix
+      (spf "%s%d-%d-" prefix pid cnt) suffix
     |> Fpath.v
   in
-  Hashtbl.add temp_files_created temp_file ();
+  (* NOTE: Scan works with the statement below uncommented...! So this is not used?
+   * At least for opengrep-cli (osemgrep). But it's used in other places like Autofix. *)
+  (* ignore ( assert false ); *)
+  Log.debug (fun m -> m "creating temp file %s" (Fpath.to_string temp_file));
+  Kcas_data.Hashtbl.replace (* because we don't need > 1 bindings per key *)
+    temp_files_created temp_file ();
   temp_file
 
 let erase_this_temp_file f =
   if not !save_temp_files then (
-    Hashtbl.remove temp_files_created f;
+    Kcas_data.Hashtbl.remove temp_files_created f;
     Log.info (fun m -> m "deleting: %s" !!f);
     USys.remove !!f)
 
