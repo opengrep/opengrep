@@ -290,7 +290,7 @@ let get_facts_of_stmt stmt =
  * matching expressions, this is e.g. used for optimizing `pattern: $X`.
  * Note that traversing the Generic AST is generally fairly cheap, what could
  * be more expensive is to do the matching (due to combinatorics) and all the
- * allocations associatiated, especially when the pattern causaes a lot of
+ * allocations associated, especially when the pattern causes a lot of
  * matches. This filter allows us to avoid all that expensive stuff when
  * matching expressions unless they fall in specific regions of the code.
  * See also docs for {!check} in Match_pattern.mli.

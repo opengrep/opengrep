@@ -19,7 +19,7 @@
 (* The goal of this module is mostly to document the "dangerous" globals
  * used inside Semgrep.
  *
- * Ultimately, we want to elimitate all globals. Until now, those globals did
+ * Ultimately, we want to eliminate all globals. Until now, those globals did
  * not create too many issues because of the use of Parmap and fork
  * in Core_scan.ml (the modifications of those globals in the child process
  * do not affect the state in the parent process), but as soon as we migrate to

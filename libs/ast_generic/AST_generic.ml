@@ -199,7 +199,7 @@ let version = "1.93.0"
  *    use AST hashing in Autofix_printer.ASTTable and we also hash
  *    formulas (which contains patterns, which contains AST_generic constructs)
  *    in Match_tainting_mode.Formula_tbl
- * - 'deriving visitors' to generator visitor and mapper boilerplate code
+ * - 'deriving visitors' to generate visitor and mapper boilerplate code
  *    automatically
  * - 'deriving sexp' because the Type.t type uses `alternate_name`, and itself
  *    derives sexp because it is used by semgrep-pro's SIG.type_.
@@ -2208,7 +2208,7 @@ let error tok msg = raise (Error (msg, tok))
 (* Fake tokens *)
 (*****************************************************************************)
 
-(* Try avoid using them! if you build new constructs, you should try
+(* Try to avoid using them! if you build new constructs, you should try
  * to derive the tokens in those new constructs from existing constructs
  * and use the Parse_info.fake_info variant, not the unsafe_xxx one.
  *)
@@ -2262,7 +2262,7 @@ let p x = x
 (* ------------------------------------------------------------------------- *)
 
 (* For Naming_SAST.ml in semgrep-pro.
- * This can be reseted to 0 before parsing each file, or not. It does
+ * This can be reset to 0 before parsing each file, or not. It does
  * not matter as the couple (filename, id_info_id) is unique.
  *)
 let id_info_id = IdInfoId.mk

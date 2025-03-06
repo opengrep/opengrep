@@ -253,7 +253,7 @@ let ( let* ) = Option.bind
     | None -> Lazy.force default
 *)
 
-(* not sure why but can't use let (?:) a b = ... then at use time ocaml yells*)
+(* not sure why but can't use let (?:) a b = ... then at use time ocaml yells *)
 let ( ||| ) a b =
   match a with
   | Some x -> x

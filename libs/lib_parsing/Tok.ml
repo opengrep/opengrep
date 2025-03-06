@@ -99,7 +99,7 @@ type t =
    * use '='. See also the 'al_info' function below.
    *
    * Ab means AbstractLineTok. I Use a short name to not
-   * polluate in debug mode.
+   * pollute in debug mode.
    *
    * update: this constructor is not that useful anymore; You should prefer to
    * use t_always_equal instead to compare big AST elements and not care
