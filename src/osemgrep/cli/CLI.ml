@@ -319,6 +319,7 @@ let main (caps : caps) (argv : string array) : Exit_code.t =
   Data_init.init ();
   Http_helpers_.set_client_ref (module Cohttp_lwt_unix.Client);
 
+  (* TODO: Remove. *)
   metrics_init (caps :> < Cap.random >);
 
   (* TOPORT: maybe_set_git_safe_directories() *)

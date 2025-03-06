@@ -149,6 +149,7 @@ let create_formatter opt_file =
              Semgrep. *)
           UStdlib.open_out (Fpath.to_string out_file)
         in
+        (* XXX: Do we need [UFormat.synchronized_formatter_of_out_channel] ? *)
         (oc, UFormat.formatter_of_out_channel oc)
   in
   (isatty chan, fmt)

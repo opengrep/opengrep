@@ -61,9 +61,12 @@ let trace_endpoint = ref None
 (* ------------------------------------------------------------------------- *)
 
 (* -rules *)
+(* XXX: This needs to be thread-local or in DLS or not a reference at all? Maybe
+ * not, it's just a CLI argument. *)
 let rule_source = ref None
 
 (* -targets (takes the list of files in a file given by pysemgrep) *)
+(* TODO: Check if this needs to be in TLS. *)
 let target_file : Fpath.t option ref = ref None
 
 (* used for `semgrep-core -l <lang> <single file>` instead of

@@ -25,6 +25,8 @@ module Eq = Equivalence
 (*****************************************************************************)
 
 let match_e_e_for_equivalences _ruleid env a b =
+  (* XXX: [Flag.equivalence_mode] is global, so this is not thread-safe, but it
+   * seems unused so it's ok. *)
   Common.save_excursion Flag.equivalence_mode true (fun () ->
       Generic_vs_generic.m_expr_root a b env)
 

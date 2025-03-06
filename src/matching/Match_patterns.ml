@@ -26,6 +26,7 @@ module MG = Matching_generic
 module Log = Log_matching.Log
 module TLS = Thread_local_storage
 
+(* XXX: Not thread-safe but also not set anywhere except here. *)
 let profile_mini_rules = ref false
 
 (*****************************************************************************)

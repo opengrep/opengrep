@@ -182,6 +182,7 @@ let pr_xxxxxxxxxxxxxxxxx () =
 let pr2_xxxxxxxxxxxxxxxxx () =
   pr2 "-----------------------------------------------------------------------"
 
+(* NOTE: Seems dangerous in OCaml 5, but does not seem used anywhere. *)
 let reset_pr_indent () = _tab_level_print := 0
 
 (* old:
@@ -828,6 +829,8 @@ let (run_hooks_action : 'a -> ('a -> unit) list ref -> unit) =
 
 type 'a mylazy = unit -> 'a
 
+(* TODO: Check non thread-safe use of references below. *)
+
 (* a la emacs.
  * bugfix: add finalize, otherwise exns can mess up the reference
  *)
@@ -1386,6 +1389,7 @@ let _memo_compiled_regexp = Kcas_data.Hashtbl.create () (* 101 *)
 let candidate_match_func s re =
   (* old: Str.string_match (Str.regexp re) s 0 *)
   let compile_re =
+    (* TODO: Use PCRE2? *)
     memoized _memo_compiled_regexp re (fun () -> Str.regexp re)
   in
   Str.string_match compile_re s 0
@@ -3902,6 +3906,7 @@ let most_recurring_element xs =
 (* Hash sets *)
 (*****************************************************************************)
 
+(* TODO: Check usage. *)
 type 'a hashset = ('a, bool) Hashtbl.t
 (* with sexp *)
 

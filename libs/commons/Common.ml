@@ -146,6 +146,7 @@ let finalize f cleanup =
     res)
   else protect f ~finally:cleanup
 
+(* NOTE: This is everywhere, and it's not thread-safe when the ref is non-local. *)
 let save_excursion reference newv f =
   let old = !reference in
   reference := newv;
@@ -281,6 +282,8 @@ let ( let/ ) = Result.bind
 (* Regexp, can also use PCRE *)
 (*****************************************************************************)
 
+(* NOTE: This is used from visitors concurrently I think, is [Str.matched_group]
+ * thread-safe? No, but it is domain-safe and we use 1 thread per domain. *)
 let (matched : int -> string -> string) = fun i s -> Str.matched_group i s
 let matched1 s = matched 1 s
 let matched2 s = (matched 1 s, matched 2 s)

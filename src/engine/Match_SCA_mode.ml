@@ -29,6 +29,7 @@ module Log = Log_engine.Log
 (*****************************************************************************)
 
 (* TODO? could move to SCA_match.ml *)
+(* TODO? Ensure that this is not shared concurrently, as it seems to be the case. *)
 type dependency_match_table = (Rule_ID.t, SCA_match.t list) Hashtbl.t
 
 (*****************************************************************************)

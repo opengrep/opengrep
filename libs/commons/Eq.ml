@@ -1,7 +1,7 @@
 let phys_equal = ( == )
 let phys_not_equal = ( != )
 
-type hidden_by_your_nanny = unit
+type hidden_by_your_nanny = unit (* why not | ? *)
 
 module Operators = struct
   let ( =|= ) : int -> int -> bool = ( = )

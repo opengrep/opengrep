@@ -133,6 +133,7 @@ val s_to_i : string -> int
 (* Shortcut for Printf.sprintf *)
 val spf : ('a, unit, string) format -> 'a
 
+(* NOTE: Not thread-safe in general. *)
 (* Perl-like regexp pattern matching. We need the many matchedxxx()
  * because OCaml does not support polytypic functions (same problem
  * with zip1/zip2/etc.).

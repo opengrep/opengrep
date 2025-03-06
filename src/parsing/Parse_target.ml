@@ -53,6 +53,7 @@ let undefined_just_parse_with_lang _lang _file =
 (* TODO: factorize with Parsing_plugin mechanism
  * hack to reduce the engine.js file. Set in Parsing_init.init().
  *)
+(* TODO: Should be in TLS? *)
 let just_parse_with_lang_ref = ref undefined_just_parse_with_lang
 
 let just_parse_with_lang (lang : Lang.t) (file : Fpath.t) : Res.t =

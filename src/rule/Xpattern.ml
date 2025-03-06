@@ -39,7 +39,7 @@ type xpattern_kind =
   | Sem of Pattern.t * Lang.t (* language used for parsing the pattern *)
   | Spacegrep of Spacegrep.Pattern_AST.t
   | Aliengrep of Aliengrep.Pat_compile.t
-  | Regexp of regexp_string
+  | Regexp of regexp_string (* TODO: Use compiled Regex in OCaml 5 w/ Domains. *)
       (** NOTE "Regexp":
       * We used to keep the compiled regexp of type `Regexp_engine.t', but
       * that is not a pure OCaml data structure and it cannot be serialized.
