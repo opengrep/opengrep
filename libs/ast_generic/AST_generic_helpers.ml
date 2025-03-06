@@ -568,12 +568,10 @@ class ['self] range_visitor =
 let extract_ranges_with_anys :
     AST_generic.any list -> (Tok.location * Tok.location) option =
   let v = new range_visitor in
-  let ranges = ref None in
   fun anys ->
+    let ranges = ref None in
     List.iter (v#visit_any ranges) anys;
-    let res = !ranges in
-    ranges := None;
-    res
+    !ranges
 
 let extract_ranges any = extract_ranges_with_anys [ any ]
 
