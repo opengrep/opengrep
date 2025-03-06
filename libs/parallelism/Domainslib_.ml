@@ -23,15 +23,16 @@ let wrap_result f ~exception_handler x =
          datatype etc. *)
       Error (exception_handler x e)
 
-(* This is a bit misleading. And I suspect it's not true, for example with
- * hyperthreading we might / could get e.g. 8 when the cores are 4? *)
+(* This is a bit misleading. In fact ocaml's [runtime/domain.c] defines this
+ * to return the number of CPUs the process is allowed to run on, which may
+ * be less than the real number of CPUs. *)
 let get_cpu_count () = Domain.recommended_domain_count ()
 
 (* WARNING: Do not pass any [f] that does not expect to be uniquely
  * executing in a [Thread.t] until it produces a result. For example,
  * do not pass [f] that makes use of [Domainslib] functions that create
- * tasks. Our functions use Mutexes which do not work as expected in such
- * a context. Moreover, as explained below we make use of memprof-limits
+ * nested tasks. Our functions use Mutexes which do not work as expected in
+ * such a context. Moreover, as explained below we make use of memprof-limits
  * and this will also not work in this context, for the same reasons for
  * which it will not work in [Lwt]. 
  * See https://github.com/ocaml-multicore/domainslib/issues/127. *)

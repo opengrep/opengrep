@@ -109,7 +109,7 @@ let parmap _caps ?init ?finalize ~ncores ~chunksize ~exception_handler f xs =
                      raised before parmap could reap its own children. See the
                      comment for Parmap_marshalling_failure for more info on
                      this. the other option is that sometime before this parmap
-                     call, a child process was spawned and never reaped.*)
+                     call, a child process was spawned and never reaped. *)
                   (* nosemgrep here as this is almost always a fatal error so
                      let's always print it *)
                   (* nosemgrep: no-logs-in-library *)
@@ -158,9 +158,12 @@ let parmap _caps ?init ?finalize ~ncores ~chunksize ~exception_handler f xs =
 (* this is just because we forget every call to Parmap.$F in
  * TCB/forbid_process.jsonnet so we need that
  *)
-let disable_core_pinning = Parmap.disable_core_pinning
+let disable_core_pinning () = () (* Parmap.disable_core_pinning *)
 
 let get_cpu_count () : int =
   (* Parmap subtracts 1 from the number of detected cores.
      This comes with no guarantees. *)
-  max 1 (Parmap.get_default_ncores () + 1)
+  (* Don't use all cores, not sure it will improve performance if the
+   * kernel cannot schedule anything because opengrep is using all cores.
+   * By removing [+ 1], we leave 1 core to the OS. This should be tested. *)
+  max 1 (Parmap.get_default_ncores () (* + 1 *)) 
