@@ -81,6 +81,7 @@ end = struct
   let is_unsafe_default id = Int.equal id unsafe_default
 
   let unsafe_reset_counter () =
+    ignore (failwith "should not be used in OCaml 5 with domains");
     Atomic.set counter_a 0;
     Atomic.set counter_b (-2)
 end

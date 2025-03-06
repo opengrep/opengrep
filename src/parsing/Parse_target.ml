@@ -99,7 +99,9 @@ let just_resolve_name lang ast =
    * used only for local per-file analysis, so no need to have a unique ID
    * among a set of files in a project like codegraph.
    *)
-  AST_generic.SId.unsafe_reset_counter ();
+  (* NOTE: It's better not to use this any more, since we are sharing the
+   * module instance in AST_generic. *)
+  (* AST_generic.SId.unsafe_reset_counter (); *)
   Naming_AST.resolve lang ast;
   run_analyses_after_name_resolution lang ast
 
