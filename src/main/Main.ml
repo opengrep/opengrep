@@ -90,6 +90,30 @@ let eprint_experimental_windows (cap : Cap.Console.stderr) : unit =
   epr "!!!https://github.com/opengrep/opengrep/issues!!!";
   ()
 
+let first_hyphen_in_argv argv =
+  Array.find_index
+    (fun arg -> String.starts_with ~prefix:"-" arg)
+    argv
+
+let position_for_experimental_flag argv =
+  match first_hyphen_in_argv argv with
+  | None -> Array.length argv - 1
+  | Some i -> i
+
+(* TODO: Add some expoectation tests for such functions. *)
+let with_experimental_flag argv =
+  let len = position_for_experimental_flag argv in
+  Array.concat [
+    Array.sub argv 0 len;
+    [| "--experimental" |];
+    Array.sub argv len (Array.length argv - len);
+  ]
+
+(* let _ = assert (with_experimental_flag [| "opengrep"; "scan"; "--help" |]
+                   = [| "opengrep"; "scan"; "--experimental"; "--help" |])
+   let _ = assert (with_experimental_flag [| "opengrep"; "-c"; "rules"; "libs" |]
+                   = [| "opengrep"; "--experimental"; "-c"; "rules"; "libs" |]) *)
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -114,16 +138,16 @@ let () =
        * wrapper script such as cli/bin/semgrep around it.
        *)
       | "opengrep" ->
+          let _ = if Sys.win32 then eprint_experimental_windows caps#stderr in
           let exit_code =
             match argv0 with
             | "opengrep" ->
-                eprint_experimental_windows caps#stderr;
                 (* adding --experimental so we don't default back to pysemgrep *)
                 CLI.main
                   (caps :> CLI.caps)
-                  (Array.concat [[|argv.(0)|];
-                     [| "--experimental" |];
-                     Array.sub argv 1 (Array.length argv - 1)])
+                  (* XXX: Should be after "scan" or similar.
+                   * See line 161 in: src/osemgrep/cli/CLI.ml. *)
+                  (with_experimental_flag argv)
             | _else_ -> CLI.main (caps :> CLI.caps) argv
           in
           if not (Exit_code.Equal.ok exit_code) then
