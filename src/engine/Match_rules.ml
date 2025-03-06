@@ -250,7 +250,7 @@ let check
                  (fun () ->
                    (* dispatching *)
                    match r.R.mode with
-                   | `Search _ as mode ->
+                   | `Search _formula as mode ->
                        Match_search_mode.check_rule { r with mode } match_hook
                          xconf xtarget
                    | `Extract extract_spec ->
