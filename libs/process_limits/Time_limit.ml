@@ -53,8 +53,7 @@ let string_of_timeout_info { Exception.name; max_duration } =
  * the granularity parameter should be set also by CLI flag. *)
 let set_timeout (_caps : < Cap.time_limit >) ?(granularity_float_s=0.1) ~name max_duration f =
   let token = M.Token.create () in
-  (* TODO:
-   * - Is there a more efficient way do this?
+  (* - Is there a more efficient way do this?
    * - Should we calculate actual elapsed time? *)
   let finished_work = Atomic.make false in
   let rec timeout duration =

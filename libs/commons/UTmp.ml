@@ -48,10 +48,9 @@ let erase_temp_files () =
     Kcas_data.Hashtbl.clear temp_files_created)
 
 (* hooks for with_temp_file() *)
-(* FIXME? This does not look like it's used in a single thread.
- * Use a [Kcas_data] stack? But it seems the hooks are only added
- * at the top level in a couple of modules: core/Range.ml and
- * engine/Xpattern_matcher. *)
+(* TODO[Issue #128] This does not look like it's used in a single thread.
+ * Use a [Kcas_data] stack? But it seems the hooks are only added at the
+ * top level only, in a couple of modules: core/Range.ml and engine/Xpattern_matcher. *)
 let temp_file_cleanup_hooks = ref []
 
 (* See the .mli for a long explanation.
@@ -123,8 +122,8 @@ let with_temp_file ?(contents = "") ?(persist = false) ?prefix ?suffix ?temp_dir
         |> List.iter (fun cleanup -> cleanup temp_file_path);
         erase_this_temp_file temp_file_path))
 
-(* FIXME? Is [Filename.open_temp_file] thread-safe? See comments on
- * [new_temp_file] above. Note that the function does not seem used,
+(* TODO[Issue #129] Is [Filename.open_temp_file] thread-safe? See comments
+ * on [new_temp_file] above. Note that the function does not seem used,
  * transitively following the usage. *)
 let write_temp_file_with_autodelete ~prefix ~suffix ~data : Fpath.t =
   let tmp_path, oc =

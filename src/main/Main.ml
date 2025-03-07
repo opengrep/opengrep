@@ -94,7 +94,7 @@ let position_for_experimental_flag argv =
   | None -> Array.length argv - 1
   | Some i -> i
 
-(* TODO: Add some expoectation tests for such functions. *)
+(* TODO[Issue #131]: Add some expectation tests for such functions. *)
 let with_experimental_flag argv =
   let len = position_for_experimental_flag argv in
   Array.concat [
@@ -125,7 +125,7 @@ let () =
         Fpath.v argv.(0) |> Fpath.base |> Fpath.rem_ext |> Fpath.to_string
       in
       match argv0 with
-      (* FIXME: Why does invoking [opengrep-cli] has argv0 = 'opengrep-core'?
+      (* TODO[Issue #125]: Why does invoking [opengrep-cli] has argv0 = 'opengrep-core'?
        * This happens if the experimental flag is not passed. *)
       (* opengrep-cli a.k.a. osemgrep *)
       | "osemgrep" | "semgrep" | "opengrep-cli"
