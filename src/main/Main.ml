@@ -125,6 +125,8 @@ let () =
         Fpath.v argv.(0) |> Fpath.base |> Fpath.rem_ext |> Fpath.to_string
       in
       match argv0 with
+      (* FIXME: Why does invoking [opengrep-cli] has argv0 = 'opengrep-core'?
+       * This happens if the experimental flag is not passed. *)
       (* opengrep-cli a.k.a. osemgrep *)
       | "osemgrep" | "semgrep" | "opengrep-cli"
       (* in the long term (and in the short term on windows) we want to ship

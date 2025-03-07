@@ -100,6 +100,10 @@ let run_with_global_memory_limit _caps ?get_context ~mem_limit_mb f =
         (* Try to free up some space. Expensive operation. *)
         Gc.compact ();
         Exception.reraise e
+
+(* FIXME: This is no longer used, except for tests. Remove.
+ * Having said that, we lose the ability to monitor the stack size
+ * and also to emit warnings. *)
 let run_with_memory_limit _caps ?get_context
     ?(stack_warning_kb = default_stack_warning_kb)
     ?(heap_warning_mb = default_heap_warning_mb) ~mem_limit_mb f =

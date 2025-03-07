@@ -36,6 +36,8 @@ module H = Eval_jsonnet_common
 (* Standard library *)
 (*****************************************************************************)
 
+(* FIXME: Check all those [Lazy.t] for possible concurrent access. *)
+
 (* Creates std so that we can add it to the environment when we switch back to
  * environment model for handling standard library functions
  *)
