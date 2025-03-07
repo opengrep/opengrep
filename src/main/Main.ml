@@ -83,12 +83,6 @@
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
-let eprint_experimental_windows (cap : Cap.Console.stderr) : unit =
-  let epr = CapConsole.eprint cap in
-  epr "!!!This is an experimental version of opengrep for Windows.!!!";
-  epr "!!!Some features may not work.!!!";
-  epr "!!!https://github.com/opengrep/opengrep/issues!!!";
-  ()
 
 let first_hyphen_in_argv argv =
   Array.find_index
@@ -138,7 +132,7 @@ let () =
        * wrapper script such as cli/bin/semgrep around it.
        *)
       | "opengrep" ->
-          let _ = if Sys.win32 then eprint_experimental_windows caps#stderr in
+          (* let _ = if Sys.win32 then eprint_experimental_windows caps#stderr in *)
           let exit_code =
             match argv0 with
             | "opengrep" ->
