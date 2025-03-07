@@ -40,23 +40,48 @@ let run_main (caps : Cap.all_caps) (cmd : string) : (unit, exn_res) result =
   (* Relay the output of the child process to stdout, else it's not
    * captured by Testo. *)
   let buffer = Bytes.create 1024 in
+
+  let rec safe_read fd buffer offset len =
+    try Unix.read fd buffer offset len
+    with Unix.Unix_error (Unix.EINTR, "read", _) ->
+      (* Read was interrupted, retry *)
+      safe_read fd buffer offset len
+  in
+
   let rec relay_output () =
-    match Unix.read input buffer 0 (Bytes.length buffer) with
+    match safe_read input buffer 0 (Bytes.length buffer) with
     | 0 -> ()  (* EOF: Child process closed stdout *)
     | n ->
-      Stdlib.output stdout buffer 0 n;
-      flush stdout;
-      relay_output ()
+        Stdlib.output stdout buffer 0 n;
+        flush stdout;
+        relay_output ()
   in
+
   relay_output ();
   Unix.close input;
-  let _pid, process_status =
-    CapUnix.waitpid caps#exec [(* Unix.WUNTRACED ; *) Unix.WNOHANG] pid
+
+  let rec wait_for_process pid =
+  try
+    match CapUnix.waitpid caps#exec [Unix.WUNTRACED; Unix.WNOHANG] pid with
+    | 0, _ ->
+        Unix.sleepf 0.01;
+        wait_for_process pid
+    | _, Unix.WEXITED 0 -> Ok ()
+    | _, Unix.WEXITED n -> Error (ExnExit n)
+    | _, _ -> Error (ExnExit 1)
+  with
+  | Unix.Unix_error (Unix.ECHILD, "waitpid", _) ->
+      (* No child process found, assume it has already exited *)
+      Ok ()
+  | Unix.Unix_error (Unix.EINTR, _, _) ->
+      (* Retry on EINTR (interrupted system call) *)
+      wait_for_process pid
+  | _exn ->
+      (* Unexpected error *)
+      Error (ExnExit 1)
+
   in
-  match process_status with
-  | Unix.WEXITED 0 -> Ok ()
-  | Unix.WEXITED n -> Error (ExnExit n)
-  | _ -> Error (ExnExit 1)
+  wait_for_process pid
 
 let assert_Ok res =
   match res with
