@@ -5,6 +5,7 @@
    TCB
    parmap
    commons
+   domainslib
  )
  (preprocess
    (pps

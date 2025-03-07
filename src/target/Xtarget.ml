@@ -18,7 +18,7 @@
 type t = {
   path : Target.path;
   xlang : Xlang.t;
-  lazy_content : string lazy_t;
+  lazy_content : string lazy_t; (* TODO: Check concurrent usage; also below. *)
   lazy_ast_and_errors : (AST_generic.program * Tok.location list) lazy_t;
 }
 
@@ -42,6 +42,8 @@ let resolve_with_ast ast (target : Target.regular) : t =
   {
     path = target.path;
     xlang = target.analyzer;
+    (* TODO: Check if used concurrently, lazy is not thread-safe. However, we
+     * only spawn one parallel task per target. *)
     lazy_content = lazy (UFile.read_file target.path.internal_path_to_content);
     lazy_ast_and_errors = ast;
   }

@@ -107,7 +107,7 @@ let recognise_and_collect ~rex (line_num, line) =
 
 (*
    Try to recognize a possible [nosem] tag into the given [match].
-   If [strict:true], we returns possible errors when [nosem] is used with an
+   If [strict:true], we return possible errors when [nosem] is used with an
    ID which is not equal to the rule's ID.
 *)
 let rule_match_nosem (pm : Core_match.t) : bool * Core_error.t list =
@@ -124,6 +124,7 @@ let rule_match_nosem (pm : Core_match.t) : bool * Core_error.t list =
     (* bugfix: This is only needed in relatively rare cases, and it's costly to
      * compute both in time and memory. Making it lazy avoids this computation
      * when it's not needed. *)
+    (* TODO: Check if thread-safe. *)
     lazy (Pos.full_converters_large path).linecol_to_bytepos_fun
   in
 
@@ -188,7 +189,7 @@ let rule_match_nosem (pm : Core_match.t) : bool * Core_error.t list =
           *)
           let id = Common2.strip '"' id in
           let loc =
-            lazy
+            lazy (* TODO: Check if thread-safe. *)
               Tok.
                 {
                   str = id;

@@ -540,7 +540,7 @@ let start_search (session : Session.t) (params : Jsonrpc.Structured.t option) =
           let xconf =
             {
               Match_env.default_xconfig with
-              filter_irrelevant_rules = PrefilterWithCache (Hashtbl.create 10);
+              filter_irrelevant_rules = PrefilterWithCache (Kcas_data.Hashtbl.create () (* 10 *));
             }
           in
           (* !!calling the engine!! *)

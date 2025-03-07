@@ -8,7 +8,7 @@ type tin = {
   lang : Lang.t;
   config : Rule_options.t;
   deref_sym_vals : int;
-      (** Counts the number of times that we "follow" symbollically propagated
+      (** Counts the number of times that we "follow" symbolically propagated
     * values. This is bound to prevent potential infinite loops. *)
   wildcard_imports : AST_generic.dotted_ident list;
       (** Stores the "wildcard imports" that import everything from a given

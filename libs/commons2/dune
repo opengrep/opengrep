@@ -5,6 +5,7 @@
  (libraries
     TCB
     commons
+    kcas_data
  )
  (preprocess
    (pps

@@ -33,6 +33,7 @@ let max_taint_set_size = ref Limits_semgrep.taint_MAX_TAINT_SET_SIZE
 let skip_minified_files = ref true
 
 (* Disabling this lets us measure the effectiveness of our GC tuning. *)
+(* TODO: Remove, not used. *)
 let gc_tuning = ref true
 
 (* special mode to set before using generic_vs_generic to match

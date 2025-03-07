@@ -6,6 +6,8 @@
    pcre
    alcotest
    calendar
+   thread-local-storage
+   kcas_data
 
    commons
    tracing

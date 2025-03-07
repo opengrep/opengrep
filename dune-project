@@ -558,6 +558,12 @@ For more information see https://opengrep.dev.
     ; packages that would avoid this effect.
     git-unix
     (memprof-limits (= "dev")) ; NOTE: Just to invalidate CI cache for now.
+    thread-local-storage ; NOTE: We should not mess with memprof-limits, but in
+                         ; fact there is a TLS module in there also; however, it's
+                         ; not exposed in the public interface.
+    domainslib
+    kcas_data ; lock-free data structures, also makes life easier for refactoring.
+    batteries ; for reentrant mutex, used in logging.
   )
 )
 

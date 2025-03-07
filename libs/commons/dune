@@ -14,7 +14,7 @@
    fmt
    ocolor
    ANSITerminal
-   logs logs.fmt
+   logs logs.fmt logs.threaded
    alcotest
    testo
    timedesc
@@ -31,6 +31,9 @@
    ; async stuff
    lwt
    alcotest-lwt
+   thread-local-storage
+   kcas_data
+   batteries
  )
  (inline_tests)
  ; can't use profiling.ppx because of circular dependencies :(

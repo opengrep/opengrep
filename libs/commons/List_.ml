@@ -400,14 +400,6 @@ let join_gen a xs =
   in
   aux [] xs
 
-let enum x n =
-  if not (x <= n) then
-    failwith (Printf.sprintf "bad values in enum, expect %d <= %d" x n);
-  let rec enum_aux acc x n =
-    if x =|= n then n :: acc else enum_aux (x :: acc) (x + 1) n
-  in
-  List.rev (enum_aux [] x n)
-
 (* for 'open List_.Operators' *)
 module Operators = struct
   let ( @ ) = ( @ )

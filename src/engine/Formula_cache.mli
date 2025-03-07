@@ -2,7 +2,7 @@ type formula_matches = Range_with_metavars.t list * Matching_explanation.t list
 
 type t
 (**
-   The type of the specialized formual cache used for inter-rule
+   The type of the specialized formula cache used for inter-rule
    match sharing.
 *)
 

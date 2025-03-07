@@ -167,7 +167,7 @@ let dump_rule (file : Fpath.t) : unit =
 (*****************************************************************************)
 
 let prefilter_of_rules file =
-  let cache = Some (Hashtbl.create 101) in
+  let cache = Some (Kcas_data.Hashtbl.create () (* 101 *)) in
   match Parse_rule.parse file with
   | Ok rules ->
       let xs =

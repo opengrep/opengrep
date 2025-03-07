@@ -96,7 +96,7 @@ type bytepos_linecol_converters = {
   linecol_to_bytepos_fun : int * int -> int;
 }
 
-(* Lexing.ml in the standard OCaml libray does not handle
+(* Lexing.ml in the standard OCaml library does not handle
  * the line number position.
  * Even if there are certain fields in the Lexing.position structure, they are
  * not maintained by the lexing engine so the following code does not work:

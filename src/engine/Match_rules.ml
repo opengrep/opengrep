@@ -20,6 +20,7 @@ module RP = Core_result
 module E = Core_error
 module OutJ = Semgrep_output_v1_t
 module Log = Log_engine.Log
+module TLS= Thread_local_storage
 
 (*****************************************************************************)
 (* Prelude *)
@@ -78,11 +79,14 @@ let is_relevant_rule_for_xtarget r xconf xtarget =
         match Analyze_rule.regexp_prefilter_of_rule ~cache:(Some cache) r with
         | None -> true
         | Some (prefilter_formula, func) ->
-            let content = Lazy.force lazy_content in
-            let s = Semgrep_prefilter_j.string_of_formula prefilter_formula in
-            Log.info (fun m ->
-                m "looking for %s in %s" s !!internal_path_to_content);
-            func content)
+          (* NOTE: If [lazy_content] is shared in > 1 thread, then this is not
+           * thread-safe. However, each [Xtarget.t] is only acessed in 1 worker
+           * task, so there should be no race. *)
+          let content = Lazy.force lazy_content in
+          let s = Semgrep_prefilter_j.string_of_formula prefilter_formula in
+          Log.info (fun m ->
+              m "looking for %s in %s" s !!internal_path_to_content);
+          func content)
   in
   if not is_relevant then
     Log.info (fun m ->
@@ -138,7 +142,7 @@ let per_rule_boilerplate_fn (timeout : timeout_config option) =
   let rule_timeouts = ref [] in
   fun (file : Fpath.t) (rule : Rule.t) f ->
     let rule_id = fst rule.R.id in
-    Rule.last_matched_rule := Some rule_id;
+    TLS.set Rule.last_matched_rule (Some rule_id);
     let res_opt =
       Profiling.profile_code
         (spf "real_rule:%s" (Rule_ID.to_string rule_id))
@@ -205,6 +209,9 @@ let check
   | Profiling.ProfAll, Xlang.L (_lang, []) ->
       Log.debug (fun m ->
           m "forcing parsing of AST outside of rules, for better profile");
+      (* XXX: Can result in [CamlinternalLazy.Undefined] error.
+       * But it should not be the case, as we parse in the worker thread, which
+       * is running alone in the domain. *)
       Lazy.force lazy_ast_and_errors |> ignore
   | _else_ -> ());
 
@@ -243,7 +250,7 @@ let check
                  (fun () ->
                    (* dispatching *)
                    match r.R.mode with
-                   | `Search _ as mode ->
+                   | `Search _formula as mode ->
                        Match_search_mode.check_rule { r with mode } match_hook
                          xconf xtarget
                    | `Extract extract_spec ->

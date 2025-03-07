@@ -525,7 +525,7 @@ type bool3 = True3 | False3 | TrueFalsePb3 of string
 (* strings take space in memory. Better when can share the space used by
  * similar strings.
  *)
-val _shareds : (string, string) Hashtbl.t
+val _shareds : (string, string) Kcas_data.Hashtbl.t
 val shared_string : string -> string
 val chop : string -> string
 val chop_dirsymbol : string -> string
@@ -558,7 +558,7 @@ val strip : char -> string -> string
 
 val regexp_alpha : Str.regexp
 val regexp_word : Str.regexp
-val _memo_compiled_regexp : (string, Str.regexp) Hashtbl.t
+val _memo_compiled_regexp : (string, Str.regexp) Kcas_data.Hashtbl.t
 val ( ==~ ) : string -> Str.regexp -> bool
 val regexp_match : string -> string -> string
 val matched : int -> string -> string

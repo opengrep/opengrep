@@ -13,6 +13,7 @@
  * LICENSE for more details.
  *)
 module Out = Semgrep_output_v1_t
+module TLS = Thread_local_storage
 
 (* for deriving hash *)
 open Ppx_hash_lib.Std.Hash.Builtin
@@ -788,7 +789,7 @@ let show_id rule = rule.id |> fst |> Rule_ID.to_string
  * a Timeout or OutOfMemory exn occured.
  * TODO: relation with Match_patterns.last_matched_rule?
  *)
-let last_matched_rule : Rule_ID.t option ref = ref None
+let last_matched_rule : Rule_ID.t option TLS.t = TLS.create ()
 
 (*****************************************************************************)
 (* Visitor/extractor *)

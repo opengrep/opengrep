@@ -32,6 +32,7 @@ module OutJ = Semgrep_output_v1_j
 (* Refs *)
 (*****************************************************************************)
 
+(* XXX: Why is that a reference, it is not set anywhere. *)
 let scan_config_parser_ref = ref OutJ.scan_config_of_string
 
 (*****************************************************************************)

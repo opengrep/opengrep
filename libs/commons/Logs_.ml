@@ -14,6 +14,8 @@
  *)
 open Common
 
+module TLS = Thread_local_storage
+
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -147,6 +149,7 @@ let create_formatter opt_file =
              Semgrep. *)
           UStdlib.open_out (Fpath.to_string out_file)
         in
+        (* XXX: Do we need [UFormat.synchronized_formatter_of_out_channel] ? *)
         (oc, UFormat.formatter_of_out_channel oc)
   in
   (isatty chan, fmt)
@@ -254,6 +257,19 @@ let read_level_from_env (vars : string list) : Logs.level option option =
 (* Entry points *)
 (*****************************************************************************)
 
+(* Enable threaded logging. *)
+module Mutex = BatteriesThread.RMutex
+
+let reentrant_mutex = Mutex.create ()
+let _ =
+  let lock () = Mutex.lock reentrant_mutex
+  and unlock () = Mutex.unlock reentrant_mutex in
+Logs.set_reporter_mutex ~lock ~unlock
+
+(* We use a re-entrant mutex above because otherwise tests using [make core-test]
+ * deadlock. *)
+(* let _ = Logs_threaded.enable () *)
+
 (* Enable basic logging so that you can use Logging calls even before a
  * precise call to setup_logging.
  *)
@@ -334,20 +350,21 @@ let debug_trace_src = Logs.Src.create "debug_trace"
    minimal. This could cause backtraces to not show up if someone
    catches and handles them between the first and the last
    with_debug_trace call. *)
-let is_in_debug_trace_context = ref false
+let is_in_debug_trace_context = TLS.create () 
 
 let with_debug_trace ?(src = debug_trace_src) ~__FUNCTION__
     ?(pp_input : (unit -> string) option) (f : unit -> 'a) : 'a =
   let name = __FUNCTION__ in
-  let currently_in_debug_trace = !is_in_debug_trace_context in
+  let currently_in_debug_trace =
+    (TLS.get_default ~default:(fun () -> false) is_in_debug_trace_context) in
   (match pp_input with
   | None -> Logs.debug ~src (fun m -> m "starting %s" name)
   | Some pp_input ->
       Logs.debug ~src (fun m ->
           m "starting %s with input:\n%s" name (pp_input ())));
   try
-    is_in_debug_trace_context := true;
-    let finally () = is_in_debug_trace_context := currently_in_debug_trace in
+    TLS.set is_in_debug_trace_context true;
+    let finally () = TLS.set is_in_debug_trace_context currently_in_debug_trace in
     let res = Common.protect ~finally f in
     Logs.debug ~src (fun m -> m "finished %s" name);
     res

@@ -98,7 +98,11 @@ let default_conf : conf =
      * TODO: figure out a solution for Windows multi-processing (OCaml 5 in
      * the worst case)
      *)
-    num_jobs = min 16 (if Sys.unix then Parmap_.get_cpu_count () else 1);
+    (* TODO: What if we are executing on a very large machine? The upper bound
+     * should be configurable, especially since for very large repos we might
+     * want to use all available cores. At least add environment variable or
+     * a parameter on the CLI. Why not 50% of cores on a 64 or 128 core machine? *)
+    num_jobs = min 16 (Domainslib_.get_cpu_count ());
     timeout = 5.0;
     (* ^ seconds, keep up-to-date with User_settings.ml and constants.py *)
     timeout_threshold = 3;

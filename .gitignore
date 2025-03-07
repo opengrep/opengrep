@@ -15,6 +15,9 @@ _build/
 # local opam switch
 _opam/
 
+# thread sanitizer logs
+_tsan/
+
 # bisect_ppx
 _coverage/
 *.coverage

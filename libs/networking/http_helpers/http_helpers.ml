@@ -39,6 +39,7 @@ type client_result = (server_response, string) result
 
 (* Create a client reference so we can swap it out with a testing version *)
 
+(* TODO: Check if we need to adapt for OCaml 5. *)
 let client_ref : (module Cohttp_lwt.S.Client) option ref = ref None
 let in_mock_context = ref false
 let set_client_ref v = if not !in_mock_context then client_ref := Some v

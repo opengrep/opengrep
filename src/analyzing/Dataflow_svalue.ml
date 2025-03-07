@@ -188,6 +188,7 @@ let no_cycles_in_svalue (id_info : G.id_info) svalue =
     let ff = ref (fun _ -> assert false) in
     let ok = ref true in
     let vout =
+      (* TODO: Create class. *)
       object (self : 'self)
         inherit [_] G.iter_no_id_info
 

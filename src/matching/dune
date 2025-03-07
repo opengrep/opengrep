@@ -4,6 +4,8 @@
  (wrapped false)
  (libraries
    yaml ppx_deriving.runtime re
+   thread-local-storage
+   kcas_data
 
    commons
    lib_parsing

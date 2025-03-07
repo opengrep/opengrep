@@ -119,10 +119,12 @@ end
 module Initial_processor =
   MkPairProcessor (Nosemgrep_processor) (Autofix_processor)
 
+(* TODO: Check if thread-safe usage. *)
 let hook_processor = ref (module Initial_processor : Processor)
 
 let push_processor (module P : Processor) =
   let module Paired = MkPairProcessor (P) ((val !hook_processor)) in
+  (* TODO: Check thread-safe. *)
   hook_processor := (module Paired)
 
 (*****************************************************************************)

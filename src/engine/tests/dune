@@ -4,6 +4,7 @@
  (wrapped false)
  (libraries
    commons
+   kcas_data
 
    semgrep.core
    semgrep.il

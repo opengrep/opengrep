@@ -53,6 +53,7 @@ let undefined_just_parse_with_lang _lang _file =
 (* TODO: factorize with Parsing_plugin mechanism
  * hack to reduce the engine.js file. Set in Parsing_init.init().
  *)
+(* TODO: Should be in TLS? *)
 let just_parse_with_lang_ref = ref undefined_just_parse_with_lang
 
 let just_parse_with_lang (lang : Lang.t) (file : Fpath.t) : Res.t =
@@ -99,7 +100,9 @@ let just_resolve_name lang ast =
    * used only for local per-file analysis, so no need to have a unique ID
    * among a set of files in a project like codegraph.
    *)
-  AST_generic.SId.unsafe_reset_counter ();
+  (* NOTE: It's better not to use this any more, since we are sharing the
+   * module instance in AST_generic. *)
+  (* AST_generic.SId.unsafe_reset_counter (); *)
   Naming_AST.resolve lang ast;
   run_analyses_after_name_resolution lang ast
 

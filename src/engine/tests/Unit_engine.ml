@@ -551,7 +551,7 @@ let eval_regression_tests () =
 (*****************************************************************************)
 
 let test_irrelevant_rule rule_file target_file =
-  let cache = Some (Hashtbl.create 101) in
+  let cache = Some (Kcas_data.Hashtbl.create () (* 101 *)) in
   (* TODO: fail more gracefully for invalid rules? *)
   let rules = Parse_rule.parse rule_file |> Result.get_ok in
   rules

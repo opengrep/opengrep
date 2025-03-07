@@ -4,6 +4,7 @@
  (wrapped false)
  (libraries
     ast_generic
+    kcas_data
     semgrep.core
  )
  (preprocess

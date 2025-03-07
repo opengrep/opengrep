@@ -182,6 +182,7 @@ let pr_xxxxxxxxxxxxxxxxx () =
 let pr2_xxxxxxxxxxxxxxxxx () =
   pr2 "-----------------------------------------------------------------------"
 
+(* NOTE: Seems dangerous in OCaml 5, but does not seem used anywhere. *)
 let reset_pr_indent () = _tab_level_print := 0
 
 (* old:
@@ -828,6 +829,8 @@ let (run_hooks_action : 'a -> ('a -> unit) list ref -> unit) =
 
 type 'a mylazy = unit -> 'a
 
+(* TODO: Check non thread-safe use of references below. *)
+
 (* a la emacs.
  * bugfix: add finalize, otherwise exns can mess up the reference
  *)
@@ -845,10 +848,12 @@ let save_excursion_and_enable reference f =
 let memoized ?(use_cache = true) h k f =
   if not use_cache then f ()
   else
-    try Hashtbl.find h k with
-    | Not_found ->
+    match Kcas_data.Hashtbl.find_opt h k with
+    | Some v -> v
+    | None ->
         let v = f () in
-        Hashtbl.add h k v;
+        (* Ok to repeat work occassionaly, if 2 domains are in this section. *)
+        Kcas_data.Hashtbl.replace h k v;
         v
 
 let cache_in_ref myref f =
@@ -1377,12 +1382,14 @@ type bool3 = True3 | False3 | TrueFalsePb3 of string
 
 (* let gsubst = global_replace *)
 
+(* These hashtables are used concurrently. *)
 let ( ==~ ) s re = Str.string_match re s 0
-let _memo_compiled_regexp = Hashtbl.create 101
+let _memo_compiled_regexp = Kcas_data.Hashtbl.create () (* 101 *)
 
 let candidate_match_func s re =
   (* old: Str.string_match (Str.regexp re) s 0 *)
   let compile_re =
+    (* TODO: Use PCRE2? *)
     memoized _memo_compiled_regexp re (fun () -> Str.regexp re)
   in
   Str.string_match compile_re s 0
@@ -1532,13 +1539,14 @@ let compile_regexp_union xs =
 
 (* strings take space in memory. Better when can share the space used by
    similar strings *)
-let _shareds = Hashtbl.create 100
+(* TODO: Remove this, it seems unused. *)
+let _shareds = Kcas_data.Hashtbl.create () (* 100 *)
 
 let (shared_string : string -> string) =
  fun s ->
-  try Hashtbl.find _shareds s with
+  try Kcas_data.Hashtbl.find _shareds s with
   | Not_found ->
-      Hashtbl.add _shareds s s;
+      Kcas_data.Hashtbl.add _shareds s s;
       s
 
 let chop = function
@@ -2462,8 +2470,8 @@ let nblines_file file = cat file |> List.length
 (* ---------------------------------------------------------------------- *)
 (* _eff variant *)
 (* ---------------------------------------------------------------------- *)
-let _hmemo_unix_lstat_eff = Hashtbl.create 101
-let _hmemo_unix_stat_eff = Hashtbl.create 101
+let _hmemo_unix_lstat_eff = Kcas_data.Hashtbl.create () (* 101 *)
+let _hmemo_unix_stat_eff = Kcas_data.Hashtbl.create () (* 101 *)
 
 let unix_lstat_eff file =
   if is_absolute file then
@@ -3898,6 +3906,7 @@ let most_recurring_element xs =
 (* Hash sets *)
 (*****************************************************************************)
 
+(* TODO: Check usage. *)
 type 'a hashset = ('a, bool) Hashtbl.t
 (* with sexp *)
 

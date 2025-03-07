@@ -20,6 +20,7 @@ module ESet = Core_error.ErrorSet
 module MR = Mini_rule
 module R = Rule
 module Out = Semgrep_output_v1_j
+module TLS = Thread_local_storage
 
 (*****************************************************************************)
 (* Purpose *)
@@ -167,10 +168,15 @@ let print_cli_additional_targets (config : Core_scan_config.t) (n : int) : unit
    safe to write a dot on stdout in a child process and why it's mixed with
    JSON output.
 *)
+(* HACK: This sometimes fails with Domains. We get newlines, and sometimes .. then
+ * newline with no dot. Exit code is 0 but because of this the scan fails. This
+ * is a little weird since we flush on the string, but it seems it can be interleaved
+ * so it does not always work. *)
+let print_progress_mutex = Mutex.create ()
 let print_cli_progress (config : Core_scan_config.t) : unit =
   (* Print when each file is done so the Python progress bar knows *)
   match config.output_format with
-  | Json true -> UConsole.print "."
+  | Json true -> Mutex.protect print_progress_mutex (fun () -> UConsole.print ".")
   | _ -> ()
 
 (*****************************************************************************)
@@ -467,7 +473,7 @@ let log_scan_results (config : Core_scan_config.t) (res : Core_result.t)
  *)
 let get_context_for_memory_limit target () =
   let origin = Target.origin target in
-  match !Rule.last_matched_rule with
+  match TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule with
   | None -> Origin.to_string origin
   | Some rule_id ->
       spf "%s on %s" (Rule_ID.to_string rule_id) (Origin.to_string origin)
@@ -476,7 +482,7 @@ let log_critical_exn_and_last_rule () =
   (* TODO? why we use Match_patters.last_matched_rule here
      * and below Rule.last_matched_rule?
   *)
-  match !Match_patterns.last_matched_rule with
+  match (TLS.get_default ~default:(fun () -> None) Match_patterns.last_matched_rule) with
   | None -> ()
   | Some rule ->
       Logs.warn (fun m ->
@@ -508,11 +514,15 @@ let errors_of_timeout_or_memory_exn (exn : exn) (target : Target.t) : ESet.t =
   | Out_of_memory ->
       Logs.warn (fun m -> m "OutOfMemory on %s" (Origin.to_string origin));
       ESet.singleton
-        (E.mk_error ?rule_id:!Rule.last_matched_rule ~loc Out.OutOfMemory)
+        (E.mk_error
+           ?rule_id:(TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule)
+           ~loc Out.OutOfMemory)
   | Stack_overflow ->
       Logs.warn (fun m -> m "StackOverflow on %s" (Origin.to_string origin));
       ESet.singleton
-        (E.mk_error ?rule_id:!Rule.last_matched_rule ~loc Out.StackOverflow)
+        (E.mk_error
+           ?rule_id:(TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule)
+           ~loc Out.StackOverflow)
   | _ -> raise Impossible
 
 (*****************************************************************************)
@@ -560,7 +570,7 @@ let iter_targets_and_get_matches_and_exn_to_errors
            let (res, was_scanned), run_time =
              Common.with_time (fun () ->
                  try
-                   Memory_limit.run_with_memory_limit
+                   Memory_limit.run_with_global_memory_limit
                      (caps :> < Cap.memory_limit >)
                      ~get_context:(get_context_for_memory_limit target)
                      ~mem_limit_mb:config.max_memory_mb
@@ -874,7 +884,9 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   log_scan_inputs config ~targets ~skipped ~valid_rules ~invalid_rules;
   let prefilter_cache_opt =
     if config.filter_irrelevant_rules then
-      Match_env.PrefilterWithCache (Hashtbl.create (List.length valid_rules))
+      (* NOTE: In the fork based Parmap model, this is not really shared between
+       * cores, but is shared on a per-core basis. Now it's shared between all cores. *)
+      Match_env.PrefilterWithCache (Kcas_data.Hashtbl.create () (* (List.length valid_rules) *))
     else NoPrefiltering
   in
   let file_results, scanned_targets =

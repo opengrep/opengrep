@@ -490,7 +490,7 @@ let rec all_splits = function
 
 (* Since all_elem_and_rest_of_list computes the rest of list lazily,
  * we want to still keep track of how much time we're spending on
-  * computing the rest of the list *)
+ * computing the rest of the list *)
 let lazy_rest_of_list v =
   Profiling.profile_code "Matching_generic.eval_rest_of_list" (fun () ->
       Lazy.force v)

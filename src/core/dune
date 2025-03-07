@@ -12,6 +12,7 @@
    uuidm
    yaml
    sexplib
+   kcas_data
 
    ; in libs/
    commons

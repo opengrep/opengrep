@@ -48,9 +48,10 @@ end = struct
   type t = int [@@deriving show, eq, hash, sexp]
   type partition = A | B
 
-  let partition = ref A
-  let set_partition p = partition := p
-  let counter_a = ref 0
+  (* XXX: [partition] and [set_partition] do not seem used anywhere. *)
+  let partition = Atomic.make A
+  let set_partition p = Atomic.set partition p
+  let counter_a = Atomic.make 0
 
   (* Why not just type t [@@deriving ord]?
    *
@@ -66,22 +67,21 @@ end = struct
    * represented more compactly both in string-based serialization formats and
    * in OCaml's binary marshalling format. So, start with -2 (-1 is the unsafe
    * default) and move downward. *)
-  let counter_b = ref (-2)
+  let counter_b = Atomic.make (-2)
 
   let mk () =
-    match !partition with
+    match Atomic.get partition with
     | A ->
-        incr counter_a;
-        !counter_a
+        (Atomic.fetch_and_add counter_a 1) + 1
     | B ->
-        decr counter_b;
-        !counter_b
+        (Atomic.fetch_and_add counter_b (-1)) - 1
 
   let to_int = Fun.id
   let unsafe_default = -1
-  let is_unsafe_default id = id = unsafe_default
+  let is_unsafe_default id = Int.equal id unsafe_default
 
   let unsafe_reset_counter () =
-    counter_a := 0;
-    counter_b := -2
+    ignore (failwith "should not be used in OCaml 5 with domains");
+    Atomic.set counter_a 0;
+    Atomic.set counter_b (-2)
 end

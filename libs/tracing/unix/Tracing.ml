@@ -89,7 +89,9 @@ type config = {
 (* The endpoint that otel traces will be sent to. This should only ever be set
    in configure_tracing, which is called once, at the beginning. The ref isn't
    nice, but we need it to start and stop tracing without having to pass around
-   an env. See [with_tracing_paused]*)
+   an env. See [with_tracing_paused]. *)
+(* NOTE [ocaml5]: This does not seem to create concurrency issues in OCaml 5,
+ * especially since we disabled tracing. But we should remove it completely asap. *)
 let active_endpoint = ref None
 
 (* Coupling: these need to be kept in sync with tracing.py *)
@@ -199,6 +201,10 @@ let add_yojson_to_span sp yojson =
          (key, `String (Yojson.Safe.to_string yojson)))
   |> add_data_to_span sp
 
+(* NOTE: Probably not thread-safe, should protect with mutex if this is to be kept.
+ * But in fact, we want this to be thread-local? Or global?
+ * In any case, if we were to keep state, we should avoid [Otel.Globals] and make
+ * use of TLS or DLS storage. *)
 let add_global_attribute = Otel.Globals.add_global_attribute
 
 (*****************************************************************************)

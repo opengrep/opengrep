@@ -38,6 +38,23 @@ let any_to_str ast = OCaml.string_of_v (Meta_AST.vof_any ast)
 exception Found of G.any
 exception FoundExpr of G.expr
 
+class ['self] expr_at_range_visitor r1 =
+  object (_self : 'self)
+    inherit [_] AST_generic.iter_no_id_info as super
+
+    val r1 = r1
+
+    method! visit_expr env e =
+      let r2_opt = range_of_ast (G.E e) in
+      match r2_opt with
+      (* NoTokenLocation issue for the expression, should fix! *)
+      | None -> ()
+      | Some r2 ->
+          if not (r1 $<>$ r2) then
+            if r2 $<=$ r1 then raise (FoundExpr e) (* recurse *)
+            else super#visit_expr env e
+  end
+
 let expr_at_range r1 ast =
   (* This could probably be implemented more efficiently ... but should be
    * good enough in practice.
@@ -45,20 +62,7 @@ let expr_at_range r1 ast =
    * associated with it, or at least a special id so we could memoize
    * range for subexpressions.
    *)
-  let visitor =
-    object (_self : 'self)
-      inherit [_] AST_generic.iter_no_id_info as super
-
-      method! visit_expr env e =
-        let r2_opt = range_of_ast (G.E e) in
-        match r2_opt with
-        (* NoTokenLocation issue for the expression, should fix! *)
-        | None -> ()
-        | Some r2 ->
-            if not (r1 $<>$ r2) then
-              if r2 $<=$ r1 then raise (FoundExpr e) (* recurse *)
-              else super#visit_expr env e
-    end
+  let visitor = new expr_at_range_visitor r1
   in
 
   try
@@ -66,6 +70,26 @@ let expr_at_range r1 ast =
     None
   with
   | FoundExpr e -> Some e
+
+class ['self] function_at_range_visitor r1 find_function_name_in_entity =
+  object (_self : 'self)
+    inherit [_] AST_generic.iter_no_id_info as super
+
+    val r1 = r1
+
+    method! visit_stmt env s =
+      match s.G.s with
+      | G.DefStmt (entity, FuncDef _def) -> (
+          let r2_opt = range_of_ast (G.S s) in
+          match r2_opt with
+          (* NoTokenLocation issue for the expression, should fix! *)
+          | None -> ()
+          | Some r2 ->
+              if r1 $<=$ r2 then find_function_name_in_entity entity
+                (* recurse *)
+              else super#visit_stmt env s)
+      | _ -> super#visit_stmt env s
+  end
 
 let function_at_range r1 ast =
   let find_function_name_in_entity { G.name; _ } =
@@ -80,23 +104,7 @@ let function_at_range r1 ast =
    * associated with it, or at least a special id so we could memoize
    * range for subexpressions.
    *)
-  let visitor =
-    object (_self : 'self)
-      inherit [_] AST_generic.iter_no_id_info as super
-
-      method! visit_stmt env s =
-        match s.G.s with
-        | G.DefStmt (entity, FuncDef _def) -> (
-            let r2_opt = range_of_ast (G.S s) in
-            match r2_opt with
-            (* NoTokenLocation issue for the expression, should fix! *)
-            | None -> ()
-            | Some r2 ->
-                if r1 $<=$ r2 then find_function_name_in_entity entity
-                  (* recurse *)
-                else super#visit_stmt env s)
-        | _ -> super#visit_stmt env s
-    end
+  let visitor = new function_at_range_visitor r1 find_function_name_in_entity
   in
 
   try
@@ -105,6 +113,23 @@ let function_at_range r1 ast =
   with
   | Found a -> Some a
 
+class ['self] any_at_range_visitor r1 =
+  object (_self : 'self)
+    inherit [_] AST_generic.iter_no_id_info as super
+
+    val r1 = r1
+
+    method! visit_stmt env s =
+      let r2_opt = range_of_ast (G.S s) in
+      match r2_opt with
+      (* NoTokenLocation issue for the expression, should fix! *)
+      | None -> ()
+      | Some r2 ->
+          if not (r1 $<>$ r2) then
+            if r2 $<=$ r1 then raise (Found (G.S s)) (* recurse *)
+            else super#visit_stmt env s
+  end
+
 let any_at_range_first r1 ast =
   (* This could probably be implemented more efficiently ... but should be
    * good enough in practice.
@@ -112,20 +137,7 @@ let any_at_range_first r1 ast =
    * associated with it, or at least a special id so we could memoize
    * range for subexpressions.
    *)
-  let visitor =
-    object (_self : 'self)
-      inherit [_] AST_generic.iter_no_id_info as super
-
-      method! visit_stmt env s =
-        let r2_opt = range_of_ast (G.S s) in
-        match r2_opt with
-        (* NoTokenLocation issue for the expression, should fix! *)
-        | None -> ()
-        | Some r2 ->
-            if not (r1 $<>$ r2) then
-              if r2 $<=$ r1 then raise (Found (G.S s)) (* recurse *)
-              else super#visit_stmt env s
-    end
+  let visitor = new any_at_range_visitor r1
   in
 
   try

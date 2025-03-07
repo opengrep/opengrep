@@ -1,4 +1,4 @@
-executing: semgrep-core -rules tests/semgrep-core-e2e/rules/basic.yaml  -targets tests/semgrep-core-e2e/targets.json -debug
+executing: opengrep-core -rules tests/semgrep-core-e2e/rules/basic.yaml  -targets tests/semgrep-core-e2e/targets.json -debug
 tests/semgrep-core-e2e/targets/basic.py:3 with rule basic
      return a + b == a + b
 tests/semgrep-core-e2e/targets/basic.py:8 with rule basic

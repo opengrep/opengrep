@@ -43,18 +43,22 @@ type mvars = MvarSet.t
 (* Entry points *)
 (*****************************************************************************)
 
-let extract_strings_and_mvars ?lang any =
-  let strings = ref [] in
-  let mvars = ref [] in
-  let visitor =
+class ['self] extract_strings_and_mvars_visitor ?lang () =
     object (_self : 'self)
-      inherit [_] AST_generic.iter_no_id_info as super
+      inherit ['self] AST_generic.iter_no_id_info as super
+
+      val mutable strings = []
+      val mutable mvars = []
+
+      method get_strings = strings
+      method get_mvars = mvars
 
       method! visit_ident _env (str, _tok) =
         match () with
-        | _ when Mvar.is_metavar_name str -> Stack_.push str mvars
+        | _ when Mvar.is_metavar_name str -> mvars <- str :: mvars (* Stack_.push str mvars *)
         | _ when not (Pattern.is_special_identifier ?lang str) ->
-            Stack_.push str strings
+            strings <- str :: strings
+            (* Stack_.push str strings *)
         | _ -> ()
 
       method! visit_name env x =
@@ -78,7 +82,7 @@ let extract_strings_and_mvars ?lang any =
              * overapproximate taking the sub-strings, see
              * Generic_vs_generic.m_module_name_prefix. *)
             String_.split ~sep:{|/\|\\|} str
-            |> List.iter (fun s -> Stack_.push s strings);
+            |> List.iter (fun s -> strings <- s :: strings (* Stack_.push s strings *));
             super#visit_directive env x
         | _ -> super#visit_directive env x
 
@@ -99,10 +103,10 @@ let extract_strings_and_mvars ?lang any =
             ( { e = IdSpecial (Require, _); _ },
               (_, [ Arg { e = L (String (_, (str, _tok), _)); _ } ], _) ) ->
             if not (Pattern.is_special_string_literal str) then
-              Stack_.push str strings
+              strings <- str :: strings (* Stack_.push str strings *)
         | IdSpecial (Eval, t) ->
             if Tok.is_origintok t then
-              Stack_.push (Tok.content_of_tok t) strings
+              strings <- (Tok.content_of_tok t) :: strings (* Stack_.push (Tok.content_of_tok t) strings *)
         | TypedMetavar (_, _, type_) -> (
             match type_ with
             | { t = TyN (IdQualified _ as name); _ } ->
@@ -125,9 +129,12 @@ let extract_strings_and_mvars ?lang any =
         | DisjExpr _ -> ()
         | _ -> super#visit_expr env x
     end
+
+let extract_strings_and_mvars ?lang any =
+  let visitor = new extract_strings_and_mvars_visitor ?lang ()
   in
   visitor#visit_any () any;
-  (Common2.uniq !strings, Common2.uniq !mvars)
+  (Common2.uniq visitor#get_strings, Common2.uniq visitor#get_mvars)
 
 let extract_specific_strings ?lang any =
   extract_strings_and_mvars ?lang any |> fst
@@ -146,11 +153,13 @@ let extract_specific_strings ?lang any =
  * alt: We could do the opposite and find the metavariables in a position
  *      where we expect constant-folding to be a problem, e.g. "$MVAR" or
  *      $FUNC(..., $MVAR, ...). *)
-let extract_mvars_in_id_position ?lang:_ any =
-  let mvars = ref MvarSet.empty in
-  let visitor =
+class ['self] extract_mvars_in_id_position_visitor =
     object (_self : 'self)
       inherit [_] AST_generic.iter_no_id_info as super
+
+      val mutable mvars = MvarSet.empty
+
+      method get_mvars = mvars
 
       method! visit_directive env x =
         match x with
@@ -158,14 +167,16 @@ let extract_mvars_in_id_position ?lang:_ any =
         | { d = ImportAs (_, FileName (str, _), _); _ }
         | { d = ImportAll (_, FileName (str, _), _); _ }
           when Mvar.is_metavar_name str ->
-            mvars := MvarSet.add str !mvars;
+            mvars <- MvarSet.add str mvars;
+            (* mvars := MvarSet.add str !mvars; *)
             super#visit_directive env x
         | _ -> super#visit_directive env x
 
       method! visit_type_kind env x =
         match x with
         | TyN (Id ((str, _tok), _ii)) when Mvar.is_metavar_name str ->
-            mvars := MvarSet.add str !mvars
+            mvars <- MvarSet.add str mvars
+            (* mvars := MvarSet.add str !mvars *)
         | _ -> super#visit_type_kind env x
 
       method! visit_expr env x =
@@ -174,9 +185,15 @@ let extract_mvars_in_id_position ?lang:_ any =
         | New (_, { t = TyN (Id ((str, _tok), _ii)); _ }, _, _)
         | DotAccess (_, _, FN (Id ((str, _tok), _ii)))
           when Mvar.is_metavar_name str ->
-            mvars := MvarSet.add str !mvars
+            mvars <- MvarSet.add str mvars
+            (* mvars := MvarSet.add str !mvars *)
         | _ -> super#visit_expr env x
     end
+
+let extract_mvars_in_id_position ?lang:_ any =
+  (* let mvars = ref MvarSet.empty in *)
+  let visitor = new extract_mvars_in_id_position_visitor
   in
   visitor#visit_any () any;
-  !mvars
+  visitor#get_mvars
+  (* !mvars *)
