@@ -32,6 +32,7 @@
    parser_dockerfile.tree_sitter parser_dockerfile.ast_generic
    parser_jsonnet.tree_sitter parser_jsonnet.ast_generic
    parser_terraform.tree_sitter parser_terraform.ast_generic
+   parser_elixir.tree_sitter parser_elixir.ast_generic
    parser_ruby.tree_sitter parser_ruby.ast_generic
    parser_ql.tree_sitter parser_ql.ast_generic
    ; directly to generic AST
