@@ -76,7 +76,7 @@ url = https://github.com/opengrep/semgrep-python.git
 
 [submodule "OSS/languages/elixir/tree-sitter/semgrep-elixir"]
 path = languages/elixir/tree-sitter/semgrep-elixir
-url = https://github.com/returntocorp/semgrep-elixir.git
+url = https://github.com/opengrep/semgrep-elixir.git
 
 [submodule "OSS/languages/swift/tree-sitter/semgrep-swift"]
 path = languages/swift/tree-sitter/semgrep-swift
