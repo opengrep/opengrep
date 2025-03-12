@@ -1,5 +1,5 @@
 (*
-   External parsers to be registered here by proprietary extensions of semgrep.
+   External parsers (referenced here as "plugins") registered in semgrep-pro.
 *)
 
 type pattern_parser =
@@ -9,19 +9,12 @@ type pattern_parser =
 type target_file_parser =
   Fpath.t -> (AST_generic.program, unit) Tree_sitter_run.Parsing_result.t
 
-(* Return an error message in case of a missing plugin. *)
-val check_if_missing : Lang.t -> (unit, string) Result.t
-
-(* Call 'check_is_missing' if any target programming language with a missing
-   plugin is involved with this analyzer. *)
-val check_if_missing_analyzer : Xlang.t -> (unit, string) Result.t
-
 module type T = sig
   (* If true, the plugin provides only an alternate implementation to
      one that is available by default. *)
   val is_optional : bool
 
-  (* Register parsing functions for a language. *)
+  (* Register parsing functions for a language (called in semgrep-pro). *)
   val register_parsers :
     parse_pattern:pattern_parser -> parse_target:target_file_parser -> unit
 
@@ -34,7 +27,12 @@ module type T = sig
   val parse_target : target_file_parser
 end
 
+(* Plugins for the current external parsers. Those plugins are
+ * referenced in parsing_languages/Parse_target2.ml and Parse_pattern2.ml
+ * and raise Missing_plugin when the plugin is not registered.
+ *)
 module Apex : T
+module Csharp : T
 module Elixir : T
 
 (* Exception indicating that a plugin is missing. The argument is

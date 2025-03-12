@@ -14,6 +14,15 @@
  *)
 module G = AST_generic
 
+(* should probably use Either_ *)
+module Either = struct
+  include Stdlib.Either
+
+  let pp pp_left pp_right fmt = function
+    | Left l -> Format.fprintf fmt "Left (%a)" pp_left l
+    | Right r -> Format.fprintf fmt "Right (%a)" pp_right r
+end
+
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -98,7 +107,7 @@ type operator =
   | OOther of string
 [@@deriving show { with_path = false }]
 
-type ident_or_operator = (ident, operator wrap) Common.either [@@deriving show]
+type ident_or_operator = (ident, operator wrap) Either.t [@@deriving show]
 
 (* ------------------------------------------------------------------------- *)
 (* Visitor *)
@@ -127,8 +136,8 @@ class virtual ['self] map_parent =
 
     method visit_either f1 f2 env x =
       match x with
-      | Common.Left a -> Common.Left (f1 env a)
-      | Common.Right b -> Common.Right (f2 env b)
+      | Either.Left a -> Either.Left (f1 env a)
+      | Either.Right b -> Either.Right (f2 env b)
 
     (* Stubs *)
     method visit_t _env x = x
@@ -162,7 +171,7 @@ and keyword = string__wrap__or_quoted * Tok.t (* : *)
  * so we monomorphize it instead.
  *)
 and string__wrap__or_quoted = X1 of string wrap | Quoted1 of quoted
-and quoted = (string wrap, expr bracket) Common.either list bracket
+and quoted = (string wrap, expr bracket) Either.t list bracket
 
 (* ------------------------------------------------------------------------- *)
 (* Keywords and arguments *)
