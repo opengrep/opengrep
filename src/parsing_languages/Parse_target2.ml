@@ -169,6 +169,10 @@ let just_parse_with_lang lang file : Parsing_result2.t =
    *)
   | Lang.Cairo ->
       run file [ TreeSitter Parse_cairo_tree_sitter.parse ] (fun x -> x)
+  | Lang.Elixir ->
+      run file
+        [ TreeSitter Parse_elixir_tree_sitter.parse ]
+        Elixir_to_generic.program
   | Lang.Ruby ->
       run file
         [ TreeSitter Parse_ruby_tree_sitter.parse ]
@@ -224,4 +228,3 @@ let just_parse_with_lang lang file : Parsing_result2.t =
       in
       run file [ TreeSitter parse_target ] (fun x -> x)
   | Lang.Elixir -> run_external_parser file Parsing_plugin.Elixir.parse_target
-(* TODO *)

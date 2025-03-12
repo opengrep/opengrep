@@ -1,24 +1,5 @@
-(* Martin Jambon
- *
- * Copyright (C) 2023 Semgrep Inc.
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public License
- * version 2.1 as published by the Free Software Foundation, with the
- * special exception on linking described in file LICENSE.
- *
- * This library is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the file
- * LICENSE for more details.
- *)
-open Common
-
-(*****************************************************************************)
-(* Prelude *)
-(*****************************************************************************)
 (*
-   External parsers to be registered here by semgrep-pro.
+   External parsers to be registered here by proprietary extensions of semgrep.
 *)
 
 (*****************************************************************************)
@@ -48,9 +29,10 @@ exception Missing_plugin of string
 (* Table of missing plugins that are not optional *)
 let missing_plugins : (Lang.t, unit) Hashtbl.t = Hashtbl.create 10
 
-(*****************************************************************************)
-(* Helpers *)
-(*****************************************************************************)
+type pattern_parser = string -> AST_generic.any Tree_sitter_run.Parsing_result.t
+
+type target_file_parser =
+  string (* filename *) -> AST_generic.program Tree_sitter_run.Parsing_result.t
 
 let missing_plugin_msg lang =
   spf
@@ -127,20 +109,18 @@ let make ?(optional = false) lang =
   in
   (optional, register, is_available, parse_pattern, parse_target)
 
-(*****************************************************************************)
-(* Plugins *)
-(*****************************************************************************)
+module type T = sig
+  val register_parsers :
+    parse_pattern:pattern_parser -> parse_target:target_file_parser -> unit
+
+  val is_available : unit -> bool
+  val parse_pattern : pattern_parser
+  val parse_target : target_file_parser
+end
 
 module Apex = struct
   let is_optional, register_parsers, is_available, parse_pattern, parse_target =
     make Lang.Apex
-end
-
-(* Parsing Csharp can be done with the default open-source parser which
-   is not as good as this one. *)
-module Csharp = struct
-  let is_optional, register_parsers, is_available, parse_pattern, parse_target =
-    make ~optional:true Lang.Csharp
 end
 
 module Elixir = struct
