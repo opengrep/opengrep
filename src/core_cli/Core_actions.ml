@@ -41,6 +41,7 @@ let json_of_v (v : OCaml.v) =
   in
   aux v
 
+<<<<<<< HEAD
 (* used to be in Core_error.mli but better here as should be used
  * only in test code.
  * val try_with_log_exn_and_reraise : Fpath.t -> (unit -> 'a) -> 'a
@@ -57,6 +58,20 @@ let try_with_log_exn_and_reraise (file : Fpath.t) f =
 (*****************************************************************************)
 (* Dumpers *)
 (*****************************************************************************)
+(* temporary *)
+let dump_elixir_raw_ast file =
+  let x = Parse_elixir_tree_sitter.parse file in
+  match x.program with
+  | Some x -> pr (AST_elixir.show_program x)
+  | None -> failwith (spf "could not parse %s" file)
+
+let dump_elixir_ast file =
+  let x = Parse_elixir_tree_sitter.parse file in
+  match x.program with
+  | Some x ->
+      let x = Elixir_to_elixir.map_program x in
+      pr (AST_elixir.show_program x)
+  | None -> failwith (spf "could not parse %s" file)
 
 (* mostly a copy paste of Test_analyze_generic.ml *)
 let dump_il_all (caps : < Cap.stdout >) file =

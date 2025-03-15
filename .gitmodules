@@ -74,6 +74,10 @@ url = https://github.com/opengrep/semgrep-solidity.git
 path = languages/python/tree-sitter/semgrep-python
 url = https://github.com/opengrep/semgrep-python.git
 
+[submodule "OSS/languages/elixir/tree-sitter/semgrep-elixir"]
+path = languages/elixir/tree-sitter/semgrep-elixir
+url = https://github.com/opengrep/semgrep-elixir.git
+
 [submodule "OSS/languages/swift/tree-sitter/semgrep-swift"]
 path = languages/swift/tree-sitter/semgrep-swift
 url = https://github.com/opengrep/semgrep-swift.git
@@ -145,4 +149,3 @@ url = https://github.com/opengrep/semgrep-move-on-sui.git
 [submodule "OSS/languages/circom/tree-sitter/semgrep-circom"]
 path = languages/circom/tree-sitter/semgrep-circom
 url = https://github.com/opengrep/semgrep-circom.git
-
