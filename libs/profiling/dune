@@ -7,5 +7,7 @@
    unix
    commons
    process_limits ; for Time_limit.Timeout special handling
+   kcas
+   kcas_data
  )
 )

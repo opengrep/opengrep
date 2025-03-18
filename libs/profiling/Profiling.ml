@@ -43,20 +43,20 @@ let check_profile category =
   | ProfNone -> false
   | ProfSome l -> List.mem category l
 
-let _profile_table = ref (Hashtbl.create 100)
+let _profile_table = Kcas_data.Hashtbl.create () (* 100 *)
 
 let adjust_profile_entry category difftime =
-  let xtime, xcount =
-    try Hashtbl.find !_profile_table category with
-    | Not_found ->
-        let xtime = ref 0.0 in
-        let xcount = ref 0 in
-        Hashtbl.add !_profile_table category (xtime, xcount);
-        (xtime, xcount)
-  in
-  xtime := !xtime +. difftime;
-  incr xcount;
-  ()
+  let open Kcas in
+  let open Kcas_data in
+  Xt.commit {tx = (fun ~xt ->
+    match Hashtbl.Xt.find_opt ~xt _profile_table category with
+    | Some (xtime, xcount) ->
+        Xt.modify ~xt xtime (fun xtime -> xtime +. difftime);
+        Xt.incr ~xt xcount
+    | None ->
+        let xtime = Loc.make 0.0 in
+        let xcount = Loc.make 0 in
+        Hashtbl.Xt.add ~xt _profile_table category (xtime, xcount))}
 
 (*****************************************************************************)
 (* Entry points *)
@@ -91,22 +91,6 @@ let profile_code category f =
     | Ok res -> res
     | Error e -> Exception.reraise e)
 
-let _is_in_exclusif = ref (None : string option)
-
-let profile_code_exclusif category f =
-  if not (check_profile category) then f ()
-  else
-    match !_is_in_exclusif with
-    | Some s ->
-        failwith (spf "profile_code_exclusif: %s but already in %s " category s)
-    | None ->
-        _is_in_exclusif := Some category;
-        protect
-          (fun () -> profile_code category f)
-          ~finally:(fun () -> _is_in_exclusif := None)
-
-let profile_code_inside_exclusif_ok _category _f = failwith "Todo"
-
 (*****************************************************************************)
 (* Diagnostic *)
 (*****************************************************************************)
@@ -116,9 +100,12 @@ let profile_diagnostic () : string =
   if !profile =*= ProfNone then ""
   else
     let xs =
-      Hashtbl.fold (fun k v acc -> (k, v) :: acc) !_profile_table []
+      Kcas_data.Hashtbl.fold
+        (fun k (t, n) acc ->
+           (k, ((Kcas.Loc.get t), (Kcas.Loc.get n))) :: acc) _profile_table []
       |> List.sort (fun (_k1, (t1, _n1)) (_k2, (t2, _n2)) -> compare t2 t1)
     in
+    let max_key_len = List.fold_left (fun acc (k, _) -> max acc (String.length k)) 0 xs in
     Buffer_.with_buffer_to_string (fun buf ->
         let prf fmt = Printf.bprintf buf fmt in
         prf "\n";
@@ -127,7 +114,7 @@ let profile_diagnostic () : string =
         prf "---------------------\n";
         xs
         |> List.iter (fun (k, (t, n)) ->
-               prf "%-40s : %10.3f sec %10d count\n" k !t !n))
+               prf "%-*s : %10.3f sec %10d count\n" max_key_len k t n))
 
 let warn_if_take_time timethreshold s f =
   let t = Unix.gettimeofday () in

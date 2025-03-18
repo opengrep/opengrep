@@ -5,11 +5,9 @@ type prof = ProfAll | ProfNone | ProfSome of string list
 
 val profile : prof ref
 val show_trace_profile : bool ref
-val _profile_table : (string, float ref * int ref) Hashtbl.t ref
+val _profile_table : (string, float Kcas.Loc.t * int Kcas.Loc.t) Kcas_data.Hashtbl.t
 val profile_code : string -> (unit -> 'a) -> 'a
 val profile_diagnostic : unit -> string
-val profile_code_exclusif : string -> (unit -> 'a) -> 'a
-val profile_code_inside_exclusif_ok : string -> (unit -> 'a) -> 'a
 val warn_if_take_time : int -> string -> (unit -> 'a) -> 'a
 
 (* similar to profile_code but log some information during execution too *)
