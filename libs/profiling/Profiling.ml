@@ -56,7 +56,7 @@ let adjust_profile_entry category difftime =
     | None ->
         let xtime = Loc.make 0.0 in
         let xcount = Loc.make 0 in
-        Hashtbl.Xt.add ~xt _profile_table category (xtime, xcount))}
+        Hashtbl.Xt.replace ~xt _profile_table category (xtime, xcount))}
 
 (*****************************************************************************)
 (* Entry points *)
