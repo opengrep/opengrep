@@ -41,6 +41,7 @@ type conf = {
   (* Other configuration options *)
   error_on_findings : bool;
   rewrite_rule_ids : bool;
+  output_enclosing_context : bool;
   (* Engine selection *)
   engine_type : Engine_type.t;
   autofix : bool;
@@ -102,6 +103,7 @@ let default : conf =
     incremental_output = false;
     rewrite_rule_ids = true;
     (* will send metrics only if the user uses the registry or the app *)
+    output_enclosing_context = false;
     metrics = Metrics_.Off;
     version_check = true;
     (* ugly: should be separate subcommands *)
@@ -601,6 +603,12 @@ let o_gitlab_secrets_outputs =
   make_o_format_outputs ~fancy:"GitLab Secrets" "gitlab-secrets"
 
 let o_junit_xml_outputs = make_o_format_outputs ~fancy:"JUnit XML" "junit-xml"
+
+let o_output_enclosing_context : bool Term.t =
+  H.negatable_flag [ "output-enclosing-context" ] ~neg_options:[ "no-output-enclosing-context" ]
+    ~default:default.output_enclosing_context
+    ~doc:
+      {|Include information about the syntactic context of the matched fragmetns of code, such as the function or the class in which the match is defined.|}
 
 (* ------------------------------------------------------------------ *)
 (* Run Secrets Post Processors                                  *)
@@ -1293,7 +1301,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       _historical_secrets include_ incremental_output json json_outputs
       junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_memory_mb max_target_bytes
-      metrics num_jobs no_secrets_validation nosem optimizations oss output
+      metrics num_jobs no_secrets_validation nosem optimizations oss output output_enclosing_context
       pattern pro project_root pro_intrafile pro_lang pro_path_sensitive remote
       replacement rewrite_rule_ids sarif sarif_outputs scan_unknown_extensions
       secrets severity show_supported_languages strict target_roots test
@@ -1486,6 +1494,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       incremental_output;
       engine_type;
       rewrite_rule_ids;
+      output_enclosing_context;
       common;
       (* ugly: *)
       version;
@@ -1515,7 +1524,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_memory_mb $ o_max_target_bytes $ o_metrics
     $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_optimizations $ o_oss
-    $ o_output $ o_pattern $ o_pro $ o_project_root $ o_pro_intrafile
+    $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root $ o_pro_intrafile
     $ o_pro_languages $ o_pro_path_sensitive $ o_remote $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
     $ o_secrets $ o_severity $ o_show_supported_languages $ o_strict
