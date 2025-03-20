@@ -41,7 +41,6 @@ let json_of_v (v : OCaml.v) =
   in
   aux v
 
-<<<<<<< HEAD
 (* used to be in Core_error.mli but better here as should be used
  * only in test code.
  * val try_with_log_exn_and_reraise : Fpath.t -> (unit -> 'a) -> 'a
