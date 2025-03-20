@@ -16,6 +16,5 @@ type delimiter_info = {
 type t = delimiter_info list
 [@@deriving show, eq]
 
-val is_stmt_named_delimiter : AST_generic.stmt -> bool
-val delimiter_info_of_stmt : AST_generic.stmt -> delimiter_info
+val delimiter_info_of_stmt : AST_generic.stmt -> delimiter_info option
 val delimiter_kind_for_output : delimiter_kind -> string

@@ -17,32 +17,31 @@ type delimiter_info = {
 type t = delimiter_info list
 [@@deriving show, eq]
 
-let human_readable_entity_name (name : AST.entity_name) : string =
+
+let human_readable_entity_name (name : AST.entity_name) : string option =
   match name with
-  | AST.EN (Id ((i, _tok), _)) -> i
-  | AST.EN (IdQualified {name_last = ((i, _tok), _type_args); _}) -> i
-  | _ -> failwith "impossible"
+  | AST.EN (Id ((i, _tok), _)) -> Some i
+  | AST.EN (IdQualified {name_last = ((i, _tok), _type_args); _}) -> Some i
+  | _ -> None
 
-let delimiter_kind_of_definition_kind (kind : AST.definition_kind) : delimiter_kind =
+let delimiter_kind_of_definition_kind (kind : AST.definition_kind)
+  : delimiter_kind option =
   match kind with
-  | AST.FuncDef _ -> Func
-  | AST.ClassDef _ -> Class
-  | AST.ModuleDef _ -> Module
-  | _ -> failwith "impossible"
+  | AST.FuncDef _ -> Some Func
+  | AST.ClassDef _ -> Some Class
+  | AST.ModuleDef _ -> Some Module
+  | _ -> None
 
-let delimiter_info_of_stmt (stmt : AST.stmt) : delimiter_info =
-  match stmt.s with
-  | AST.DefStmt (entity, kind) ->
-      { kind = delimiter_kind_of_definition_kind kind;
-        name = human_readable_entity_name entity.name;
-        range = AST_generic_helpers.range_of_any_opt (S stmt) }
-  | _ -> failwith "impossible"
+let (let*) = Option.bind
 
-let is_stmt_named_delimiter (stmt : AST.stmt) : bool =
+let delimiter_info_of_stmt (stmt : AST.stmt) : delimiter_info option =
   match stmt.s with
-  | AST.DefStmt ({name = EN _; _},
-      (AST.FuncDef _ | AST.ClassDef _ | AST.ModuleDef _)) -> true
-  | _ -> false
+  | AST.DefStmt ({name = EN _; _} as ast_entity, ast_kind) ->
+      let* kind = delimiter_kind_of_definition_kind ast_kind in
+      let* name = human_readable_entity_name ast_entity.name in
+      let range = AST_generic_helpers.range_of_any_opt (S stmt) in
+      Some {kind; name; range}
+  | _ -> None
 
 let delimiter_kind_for_output (k : delimiter_kind) : string =
   match k with

@@ -402,65 +402,59 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
 
     (* mostly copy paste of expr code but with the _st functions *)
     method! visit_stmt env x =
-      (* old:
-       *   match_rules_and_recurse (file, hook, matches)
-       *   !stmt_rules match_st_st k (fun x -> S x) x
-       * but inlined to handle specially Bloom filter in stmts for now.
-       * TODO: bloom filter was removed, undo this inlining?
-       *)
-      let visit_stmt () =
-        stmt_rules
-        |> List.iter (fun (pattern, rule) ->
-               let matches_with_env = match_st_st rule pattern x m_env in
-               matches_with_env
-               |> List.iter (fun (env : MG.tin) ->
-                      let mv = env.mv in
-                      match AST_generic_helpers.range_of_any_opt (S x) with
-                      | None ->
-                          (* TODO: Report a warning to the user? *)
-                          Log.warn (fun m ->
-                              m
-                                "Cannot report match because we lack range \
-                                 info: %s"
-                                (show_stmt x));
-                          ()
-                      | Some range_loc ->
-                          let tokens =
-                            lazy (AST_generic_helpers.ii_of_any (S x))
-                          in
-                          let facts = get_facts_of_stmt x in
-                          let rule_id = rule_id_of_mini_rule rule in
-                          let pm =
-                            {
-                              PM.rule_id;
-                              path;
-                              env = mv;
-                              range_loc;
-                              (* as-metavariable: *)
-                              ast_node =
-                                (if has_as_metavariable then Some (S x)
-                                 else None);
-                              enclosure = Some !enclosure;
-                              tokens;
-                              taint_trace = None;
-                              engine_of_match = `OSS;
-                              validation_state = `No_validator;
-                              severity_override = None;
-                              metadata_override = None;
-                              sca_match = None;
-                              fix_text = None;
-                              facts;
-                            }
-                          in
-                          Stack_.push pm mp_env.matches;
-                          hook pm));
+      stmt_rules
+      |> List.iter (fun (pattern, rule) ->
+             let matches_with_env = match_st_st rule pattern x m_env in
+             matches_with_env
+             |> List.iter (fun (env : MG.tin) ->
+                    let mv = env.mv in
+                    match AST_generic_helpers.range_of_any_opt (S x) with
+                    | None ->
+                        (* TODO: Report a warning to the user? *)
+                        Log.warn (fun m ->
+                            m
+                              "Cannot report match because we lack range \
+                               info: %s"
+                              (show_stmt x));
+                        ()
+                    | Some range_loc ->
+                        let tokens =
+                          lazy (AST_generic_helpers.ii_of_any (S x))
+                        in
+                        let facts = get_facts_of_stmt x in
+                        let rule_id = rule_id_of_mini_rule rule in
+                        let pm =
+                          {
+                            PM.rule_id;
+                            path;
+                            env = mv;
+                            range_loc;
+                            (* as-metavariable: *)
+                            ast_node =
+                              (if has_as_metavariable then Some (S x)
+                               else None);
+                            enclosure = Some !enclosure;
+                            tokens;
+                            taint_trace = None;
+                            engine_of_match = `OSS;
+                            validation_state = `No_validator;
+                            severity_override = None;
+                            metadata_override = None;
+                            sca_match = None;
+                            fix_text = None;
+                            facts;
+                          }
+                        in
+                        Stack_.push pm mp_env.matches;
+                        hook pm));
 
-        let track_enclosure = Enclosure.is_stmt_named_delimiter x in
-        (if track_enclosure then Stack_.push (Enclosure.delimiter_info_of_stmt x) enclosure);
-        super#visit_stmt env x;
-        (if track_enclosure then ignore (Stack_.pop enclosure))
-      in
-      visit_stmt ()
+      match Enclosure.delimiter_info_of_stmt x with
+      | Some delim ->
+          Stack_.push delim enclosure;
+          super#visit_stmt env x;
+          ignore (Stack_.pop enclosure)
+      | _ ->
+          super#visit_stmt env x;
 
     method! v_stmts env x =
       (* this is potentially slower than what we did in Coccinelle with
