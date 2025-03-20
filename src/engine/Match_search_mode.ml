@@ -421,6 +421,7 @@ let apply_focus_on_ranges (env : env) (focus_mvars_list : R.focus_mv_list list)
                ast_node =
                  (if env.has_as_metavariable then Some (MV.mvalue_to_any mval)
                   else None);
+               enclosure = None;
                tokens = lazy (MV.ii_of_mval mval);
                env = range.mvars;
                taint_trace = None;

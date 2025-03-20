@@ -65,6 +65,7 @@ let cli_match_of_finding_with_actions
         validation_state;
         historical_info = None;
         extra_extra = None;
+        enclosure = None;
       };
   }
 

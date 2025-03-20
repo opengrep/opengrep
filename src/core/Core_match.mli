@@ -7,6 +7,7 @@ type t = {
   (* location info *)
   path : Target.path;
   range_loc : Tok.location * Tok.location;
+  enclosure : Enclosure.t option;
   ast_node : AST_generic.any option;
   tokens : Tok.t list Lazy.t;
   (* trace *)

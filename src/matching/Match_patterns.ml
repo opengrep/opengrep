@@ -153,7 +153,7 @@ let (rule_id_of_mini_rule : Mini_rule.t -> Core_match.rule_id) =
 
 let match_rules_and_recurse
     ({ m_env; path; hook; matches (* Core_match.t list ref *); has_as_metavariable } : env)
-    rules matcher k any x =
+    rules matcher k any enclosure x =
   rules
   |> List.iter (fun (pattern, rule) ->
          let matches_with_env = matcher rule pattern x m_env in
@@ -179,6 +179,7 @@ let match_rules_and_recurse
                         (* as-metavariable: *)
                         ast_node =
                           (if has_as_metavariable then Some (any x) else None);
+                        enclosure = Some !enclosure;
                         tokens;
                         taint_trace = None;
                         (* This will be overrided later on by the Pro engine, if this is
@@ -312,6 +313,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
     val mvar_context = mvar_context
     val hook = hook
     val mp_env = mp_env
+    val enclosure = (ref [] : Enclosure.delimiter_info Stack_.t)
 
     val expr_rules = expr_rules
     val stmt_rules = stmt_rules
@@ -369,6 +371,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                             ast_node =
                               (if has_as_metavariable then Some (E x)
                                else None);
+                            enclosure = Some !enclosure;
                             tokens;
                             taint_trace = None;
                             engine_of_match = `OSS;
@@ -437,6 +440,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                               ast_node =
                                 (if has_as_metavariable then Some (S x)
                                  else None);
+                              enclosure = Some !enclosure;
                               tokens;
                               taint_trace = None;
                               engine_of_match = `OSS;
@@ -450,7 +454,11 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                           in
                           Stack_.push pm mp_env.matches;
                           hook pm));
-        super#visit_stmt env x
+
+        let track_enclosure = Enclosure.is_stmt_named_delimiter x in
+        (if track_enclosure then Stack_.push (Enclosure.delimiter_info_of_stmt x) enclosure);
+        super#visit_stmt env x;
+        (if track_enclosure then ignore (Stack_.pop enclosure))
       in
       visit_stmt ()
 
@@ -492,6 +500,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                                   (if has_as_metavariable then
                                      Some (Ss matched)
                                    else None);
+                                enclosure = Some !enclosure;
                                 tokens;
                                 taint_trace = None;
                                 engine_of_match = `OSS;
@@ -511,18 +520,21 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
       match_rules_and_recurse mp_env type_rules match_t_t
         (super#visit_type_ env)
         (fun x -> T x)
+        enclosure
         x
 
     method! visit_pattern env x =
       match_rules_and_recurse mp_env pattern_rules match_p_p
         (super#visit_pattern env)
         (fun x -> P x)
+        enclosure
         x
 
     method! visit_attribute env x =
       match_rules_and_recurse mp_env attribute_rules match_at_at
         (super#visit_attribute env)
         (fun x -> At x)
+        enclosure
         x
 
     method! visit_xml_attribute env x =
@@ -530,12 +542,14 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
         match_xml_attribute_xml_attribute
         (super#visit_xml_attribute env)
         (fun x -> XmlAt x)
+        enclosure
         x
 
     method! visit_field env x =
       match_rules_and_recurse mp_env fld_rules match_fld_fld
         (super#visit_field env)
         (fun x -> Fld x)
+        enclosure
         x
 
     method! v_fields env x =
@@ -592,6 +606,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                                   (if has_as_metavariable then
                                      Some (Ss matched)
                                    else None);
+                                enclosure = Some !enclosure;
                                 tokens;
                                 taint_trace = None;
                                 engine_of_match = `OSS;
@@ -608,24 +623,28 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
       match_rules_and_recurse mp_env flds_rules match_flds_flds
         (super#v_fields env)
         (fun x -> Flds x)
+        enclosure
         x
 
     method! v_partial ~recurse env x =
       match_rules_and_recurse mp_env partial_rules match_partial_partial
         (super#v_partial ~recurse env)
         (fun x -> Partial x)
+        enclosure
         x
 
     method! visit_name env x =
       match_rules_and_recurse mp_env name_rules match_name_name
         (super#visit_name env)
         (fun x -> Name x)
+        enclosure
         x
 
     method! visit_raw_tree env x =
       match_rules_and_recurse mp_env raw_rules match_raw_raw
         (super#visit_raw_tree env)
         (fun x -> Raw x)
+        enclosure
         x
   end
 
