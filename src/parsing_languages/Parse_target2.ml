@@ -224,4 +224,10 @@ let just_parse_with_lang lang file : Parsing_result2.t =
       in
       run file [ TreeSitter parse_target ] (fun x -> x)
   | Lang.Elixir -> run_external_parser file Parsing_plugin.Elixir.parse_target
-(* TODO *)
+  (* this is how semgrep used to call Elixir right before they moved it into Pro. *)
+  (*
+  | Lang.Elixir ->
+      run file
+        [ TreeSitter Parse_elixir_tree_sitter.parse ]
+        Elixir_to_generic.program
+  *)

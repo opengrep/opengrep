@@ -198,6 +198,13 @@ let parse_pattern options lang str =
   | Lang.Apex ->
       let res = Parsing_plugin.Apex.parse_pattern str in
       extract_pattern_from_tree_sitter_result res
+  (* this is how semgrep used to call it before Elixir support moved into Pro. *)
+  (*
+  | Lang.Elixir ->
+      let res = Parse_elixir_tree_sitter.parse_pattern str in
+      let pattern = extract_pattern_from_tree_sitter_result res in
+      Elixir_to_generic.any pattern
+  *)
   | Lang.Elixir ->
       let res = Parsing_plugin.Elixir.parse_pattern str in
       extract_pattern_from_tree_sitter_result res
@@ -210,7 +217,6 @@ let parse_pattern options lang str =
   | Lang.Circom ->
       let res = Parse_circom_tree_sitter.parse_pattern str in
       extract_pattern_from_tree_sitter_result res
-(* TODO *)
 
 let dump_tree_sitter_pattern_cst (lang : Lang.t) (path : Fpath.t) : unit =
   let file = !!path in
