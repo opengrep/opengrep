@@ -323,7 +323,7 @@ let unsafe_match_to_match
     Metavar_replacement.interpolate_metavars x.rule_id.message
       (Metavar_replacement.of_bindings x.env)
   in
-  let enclosure =
+  let enclosing_context =
     x.enclosure |>
     Option.map
       (List.map
@@ -332,7 +332,7 @@ let unsafe_match_to_match
           ({name = d.Enclosure.name;
             kind = Enclosure.delimiter_kind_for_output d.Enclosure.kind;
             start = Option.map fst locs;
-            end_ = Option.map snd locs} : Out.enclosure_elem)))
+            end_ = Option.map snd locs} : Out.enclosing_context_elem)))
   in
   let path, historical_info =
     match x.path.origin with
@@ -394,7 +394,7 @@ let unsafe_match_to_match
         extra_extra = None;
         (* TODO: use pm.sca_match! *)
         sca_match = None;
-        enclosure;
+        enclosing_context;
       };
   }
 

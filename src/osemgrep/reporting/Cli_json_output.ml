@@ -274,7 +274,7 @@ let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
        is_ignored;
        dataflow_trace;
        sca_match;
-       enclosure
+       enclosing_context
      };
   } ->
       let rule =
@@ -340,7 +340,7 @@ let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
             validation_state;
             historical_info;
             extra_extra;
-            enclosure;
+            enclosing_context;
           };
       }
 
