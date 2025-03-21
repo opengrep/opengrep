@@ -42,6 +42,7 @@ type func = {
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     conf ->
     Find_targets.conf ->
+    Match_patterns.matching_conf ->
     Rule_error.rules_and_invalid ->
     Fpath.t list ->
     Core_result.result_or_exn;

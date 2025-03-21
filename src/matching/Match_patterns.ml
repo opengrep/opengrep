@@ -36,6 +36,15 @@ let profile_mini_rules = ref false
  * the expr/stmt/... visitor, while generic_vs_generic does the matching.
  *)
 
+type matching_conf = {
+  track_enclosing_context : bool;
+}
+[@@deriving show]
+
+let default_matching_conf : matching_conf = {
+  track_enclosing_context = false;
+}
+
 (* environment of stuff common to each matcher *)
 type env = {
   m_env : MG.tin;
@@ -179,7 +188,7 @@ let match_rules_and_recurse
                         (* as-metavariable: *)
                         ast_node =
                           (if has_as_metavariable then Some (any x) else None);
-                        enclosure = Some !enclosure;
+                        enclosure = Option.map (!) enclosure;
                         tokens;
                         taint_trace = None;
                         (* This will be overrided later on by the Pro engine, if this is
@@ -300,9 +309,10 @@ let get_facts_of_stmt stmt =
  *)
 
 class ['self] check_visitor range_filter m_env has_as_metavariable
-  mvar_context hook path mp_env expr_rules stmt_rules stmts_rules
-  type_rules pattern_rules attribute_rules xml_attribute_rules
-  fld_rules flds_rules partial_rules name_rules raw_rules 
+  mvar_context hook path mp_env track_enclosing_context expr_rules
+  stmt_rules stmts_rules type_rules pattern_rules attribute_rules
+  xml_attribute_rules fld_rules flds_rules partial_rules name_rules
+  raw_rules
   =
   object (_self : 'self)
     inherit [_] Matching_visitor.matching_visitor as super
@@ -313,7 +323,10 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
     val mvar_context = mvar_context
     val hook = hook
     val mp_env = mp_env
-    val enclosure = (ref [] : Enclosure.delimiter_info Stack_.t)
+
+    val enclosure = if track_enclosing_context
+                      then Some (ref [] : Enclosure.delimiter_info Stack_.t)
+                      else None
 
     val expr_rules = expr_rules
     val stmt_rules = stmt_rules
@@ -371,7 +384,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                             ast_node =
                               (if has_as_metavariable then Some (E x)
                                else None);
-                            enclosure = Some !enclosure;
+                            enclosure = Option.map (!) enclosure;
                             tokens;
                             taint_trace = None;
                             engine_of_match = `OSS;
@@ -433,7 +446,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                             ast_node =
                               (if has_as_metavariable then Some (S x)
                                else None);
-                            enclosure = Some !enclosure;
+                            enclosure = Option.map (!) enclosure;
                             tokens;
                             taint_trace = None;
                             engine_of_match = `OSS;
@@ -448,11 +461,11 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                         Stack_.push pm mp_env.matches;
                         hook pm));
 
-      match Enclosure.delimiter_info_of_stmt x with
-      | Some delim ->
-          Stack_.push delim enclosure;
+      match enclosure, Enclosure.delimiter_info_of_stmt x with
+      | Some enclosure_stack, Some delim ->
+          Stack_.push delim enclosure_stack;
           super#visit_stmt env x;
-          ignore (Stack_.pop enclosure)
+          ignore (Stack_.pop enclosure_stack)
       | _ ->
           super#visit_stmt env x;
 
@@ -494,7 +507,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                                   (if has_as_metavariable then
                                      Some (Ss matched)
                                    else None);
-                                enclosure = Some !enclosure;
+                                enclosure = Option.map (!) enclosure;
                                 tokens;
                                 taint_trace = None;
                                 engine_of_match = `OSS;
@@ -600,7 +613,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                                   (if has_as_metavariable then
                                      Some (Ss matched)
                                    else None);
-                                enclosure = Some !enclosure;
+                                enclosure = Option.map (!) enclosure;
                                 tokens;
                                 taint_trace = None;
                                 engine_of_match = `OSS;
@@ -643,7 +656,9 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
   end
 
 let check ~hook ?(has_as_metavariable = false) ?mvar_context
-    ?(range_filter = fun _ -> true) (config, equivs) rules
+    ?(range_filter = fun _ -> true)
+    ?(matching_conf = default_matching_conf)
+    (config, equivs) rules
     (internal_path_to_content, origin, lang, ast) =
   Log.info (fun m ->
       m "checking %s with %d mini rules" !!internal_path_to_content
@@ -747,9 +762,10 @@ let check ~hook ?(has_as_metavariable = false) ?mvar_context
 
     let visitor = new check_visitor
       range_filter m_env has_as_metavariable
-      mvar_context hook path mp_env !expr_rules !stmt_rules !stmts_rules
-      !type_rules !pattern_rules !attribute_rules !xml_attribute_rules
-      !fld_rules !flds_rules !partial_rules !name_rules !raw_rules
+      mvar_context hook path mp_env matching_conf.track_enclosing_context
+      !expr_rules !stmt_rules !stmts_rules !type_rules !pattern_rules
+      !attribute_rules !xml_attribute_rules !fld_rules !flds_rules
+      !partial_rules !name_rules !raw_rules
     in
     let visitor_env =
       let vardef_assign = config.Options.vardef_assign in

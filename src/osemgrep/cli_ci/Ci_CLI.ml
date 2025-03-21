@@ -269,7 +269,9 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         exclude_products = [];
       }
     in
-
+    let matching_conf =
+      {Match_patterns.track_enclosing_context = output_enclosing_context}
+    in
     (* warnings.
      * ugly: TODO: remove the Default guard once we get the warning message
      * in osemgrep equal to the one in pysemgrep or when we remove
@@ -297,7 +299,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         incremental_output;
         engine_type;
         rewrite_rule_ids;
-        output_enclosing_context;
+        matching_conf;
         common;
         (* trace;
            trace_endpoint; *)

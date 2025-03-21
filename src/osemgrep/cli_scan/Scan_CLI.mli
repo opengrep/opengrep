@@ -17,7 +17,7 @@ type conf = {
   (* Other configuration options *)
   error_on_findings : bool;
   rewrite_rule_ids : bool;
-  output_enclosing_context : bool;
+  matching_conf : Match_patterns.matching_conf;
   engine_type : Engine_type.t;
   autofix : bool;
   (* Performance options *)

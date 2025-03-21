@@ -190,8 +190,10 @@ let check_targets_rules (caps : < caps ; .. >) ~token_opt targets_rules
     Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
   in
   let result_or_exn =
-    core_run_func.run core_runner_conf Find_targets.default_conf (metarules, [])
-      targets_rules
+    core_run_func.run core_runner_conf
+      (* These two configs are irrelevant to the "validate" subcommand *)
+      Find_targets.default_conf Match_patterns.default_matching_conf
+      (metarules, []) targets_rules
   in
 
   let results =

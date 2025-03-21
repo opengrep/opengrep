@@ -144,8 +144,10 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
             m "Running Semgrep with %d rules" (List.length rules));
         let res_or_exn =
           (fun () ->
-            core_run_func.run runner_conf Find_targets.default_conf (rules, [])
-              targets)
+            core_run_func.run runner_conf
+              (* TODO: when running with LSP, could the config of matching be needed? *)
+              Find_targets.default_conf Match_patterns.default_matching_conf
+              (rules, []) targets)
           |> Profiler.record profiler ~name:"core_run"
         in
         match res_or_exn with

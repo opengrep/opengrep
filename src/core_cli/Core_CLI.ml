@@ -318,6 +318,7 @@ let mk_config () : Core_scan_config.t =
       | Some file -> Target_file file);
     output_format = !output_format;
     strict = !strict;
+    matching_conf = Match_patterns.default_matching_conf; (* XXX Maciej add a ref here as well? *)
     report_time = !report_time;
     matching_explanations = !matching_explanations;
     respect_rule_paths = !respect_rule_paths;

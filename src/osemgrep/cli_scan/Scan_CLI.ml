@@ -41,7 +41,7 @@ type conf = {
   (* Other configuration options *)
   error_on_findings : bool;
   rewrite_rule_ids : bool;
-  output_enclosing_context : bool;
+  matching_conf : Match_patterns.matching_conf;
   (* Engine selection *)
   engine_type : Engine_type.t;
   autofix : bool;
@@ -102,8 +102,8 @@ let default : conf =
     output_conf = Output.default;
     incremental_output = false;
     rewrite_rule_ids = true;
+    matching_conf = Match_patterns.default_matching_conf;
     (* will send metrics only if the user uses the registry or the app *)
-    output_enclosing_context = false;
     metrics = Metrics_.Off;
     version_check = true;
     (* ugly: should be separate subcommands *)
@@ -606,7 +606,7 @@ let o_junit_xml_outputs = make_o_format_outputs ~fancy:"JUnit XML" "junit-xml"
 
 let o_output_enclosing_context : bool Term.t =
   H.negatable_flag [ "output-enclosing-context" ] ~neg_options:[ "no-output-enclosing-context" ]
-    ~default:default.output_enclosing_context
+    ~default:Match_patterns.default_matching_conf.track_enclosing_context
     ~doc:
       {|Include information about the syntactic context of the matched fragmetns of code, such as the function or the class in which the match is defined.|}
 
@@ -1479,6 +1479,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       else if x_ls then (true, Ls_subcommand.default_format)
       else (false, Ls_subcommand.default_format)
     in
+    let matching_conf = {Match_patterns.track_enclosing_context = output_enclosing_context} in
     {
       rules_source;
       target_roots;
@@ -1494,7 +1495,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       incremental_output;
       engine_type;
       rewrite_rule_ids;
-      output_enclosing_context;
+      matching_conf;
       common;
       (* ugly: *)
       version;

@@ -834,6 +834,7 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
           Match_env.config = Rule_options.default;
           equivs = parse_equivalences config.equivalences_file;
           nested_formula = false;
+          matching_conf = config.matching_conf;
           matching_explanations = config.matching_explanations;
           filter_irrelevant_rules = prefilter_cache_opt;
         }

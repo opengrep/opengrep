@@ -55,6 +55,7 @@ type t = {
   report_time : bool;
   matching_explanations : bool;
   strict : bool;
+  matching_conf : Match_patterns.matching_conf;
   (* respect or not the paths: directive in a rule. Useful to set to false
    * in a testing context as in `semgrep test`
    *)
@@ -102,6 +103,7 @@ let default =
     report_time = false;
     matching_explanations = false;
     strict = false;
+    matching_conf = Match_patterns.default_matching_conf;
     respect_rule_paths = true;
     file_match_hook = None;
     (* Limits *)
