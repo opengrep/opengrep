@@ -8,7 +8,7 @@ on:
       - '**.md'
   pull_request:
     branches:
-      - main # TODO: Remove this.
+      - main # FIXME: Remove this.
     paths-ignore:
       - '**.md'
   workflow_call: null
@@ -20,7 +20,7 @@ jobs:
     strategy:
       matrix:
         ocaml_version: ["5.3.0"]
-        arch: ["aarch64"] # [x86_64, aarch64]
+        # arch: ["aarch64"] # Later: [x86_64, aarch64]
     
     runs-on: ubuntu-24.04-arm
     steps:
@@ -71,12 +71,13 @@ jobs:
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: opengrep-core-aarch64
+          name: opengrep-core-aarch64 # Can use matrix.arch here when we unify the workflows.
           path: artifacts.tgz
 
-  build-wheels:
-    needs: build-core
-    container: quay.io/pypa/manylinux_2_28_aarch64
+  build-musllinux-aarch64:
+    needs:
+      - build-core
+    container: quay.io/pypa/musllinux_1_2_aarch64
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Make checkout speedy
@@ -85,27 +86,26 @@ jobs:
         with:
           submodules: true
       - run: |
-          yum update -y
-          yum install -y zip python3-pip python3.9
-          alternatives --remove-all python3
-          alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
-          alternatives --auto python3
+          apk update
+          apk add --no-cache zip python3 py3-pip py3-virtualenv python3-dev gcc musl-dev
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
           name: opengrep-core-aarch64
       - run: |
           tar xf artifacts.tgz
           cp artifacts/opengrep-core cli/src/semgrep/bin
+          python3 -m venv venv
+          . venv/bin/activate
           ./scripts/build-wheels.sh
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: manylinux-aarch64-wheel
+          name: musllinux-aarch64-wheel
           path: cli/dist.zip
 
-  # TODO: Parameterise this with arch:
-  # 
-  # build-test-manylinux-x86:
-  #   needs:
-  #     - build-core
-  #     # - build-musllinux-x86 # NOTE: This is not really necessary.
-  #   uses: ./.github/workflows/build-test-manylinux-x86.yml
+  build-test-manylinux-aarch64:
+    needs:
+      - build-core
+      # - build-musllinux-aarch64 # NOTE: This is not really necessary.
+    uses: ./.github/workflows/build-test-manylinux.yml
+    with:
+      arch: aarch64
