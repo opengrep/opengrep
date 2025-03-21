@@ -186,7 +186,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
       json json_outputs junit_xml junit_xml_outputs matching_explanations
       max_chars_per_line max_lines_per_finding max_log_list_entries
       max_memory_mb max_target_bytes metrics num_jobs no_secrets_validation
-      nosem optimizations oss output pro pro_intrafile pro_lang
+      nosem optimizations oss output output_enclosing_context pro pro_intrafile pro_lang
       pro_path_sensitive rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions secrets text text_outputs timeout
       _timeout_interfileTODO timeout_threshold (* trace trace_endpoint *) use_git
@@ -269,7 +269,9 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         exclude_products = [];
       }
     in
-
+    let matching_conf =
+      {Match_patterns.track_enclosing_context = output_enclosing_context}
+    in
     (* warnings.
      * ugly: TODO: remove the Default guard once we get the warning message
      * in osemgrep equal to the one in pysemgrep or when we remove
@@ -297,6 +299,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         incremental_output;
         engine_type;
         rewrite_rule_ids;
+        matching_conf;
         common;
         (* trace;
            trace_endpoint; *)
@@ -328,7 +331,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
     $ SC.o_max_lines_per_finding $ SC.o_max_log_list_entries
     $ SC.o_max_memory_mb $ SC.o_max_target_bytes $ SC.o_metrics $ SC.o_num_jobs
     $ SC.o_no_secrets_validation $ SC.o_nosem $ SC.o_optimizations $ SC.o_oss
-    $ SC.o_output $ SC.o_pro $ SC.o_pro_intrafile $ SC.o_pro_languages
+    $ SC.o_output $ SC.o_output_enclosing_context $ SC.o_pro $ SC.o_pro_intrafile $ SC.o_pro_languages
     $ SC.o_pro_path_sensitive $ SC.o_rewrite_rule_ids $ SC.o_sarif
     $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ SC.o_secrets
     $ SC.o_text $ SC.o_text_outputs $ SC.o_timeout $ SC.o_timeout_interfile

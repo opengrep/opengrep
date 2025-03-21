@@ -17,6 +17,7 @@ type conf = {
   (* Other configuration options *)
   error_on_findings : bool;
   rewrite_rule_ids : bool;
+  matching_conf : Match_patterns.matching_conf;
   engine_type : Engine_type.t;
   autofix : bool;
   (* Performance options *)
@@ -112,6 +113,7 @@ val o_nosem : bool Cmdliner.Term.t
 val o_optimizations : bool Cmdliner.Term.t
 val o_oss : bool Cmdliner.Term.t
 val o_output : string option Cmdliner.Term.t
+val o_output_enclosing_context : bool Cmdliner.Term.t
 val o_pro : bool Cmdliner.Term.t
 val o_pro_intrafile : bool Cmdliner.Term.t
 val o_pro_languages : bool Cmdliner.Term.t

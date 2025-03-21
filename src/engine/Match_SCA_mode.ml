@@ -136,6 +136,7 @@ let check_rule (rule : Rule.t) (xtarget : Lockfile_xtarget.t)
                range_loc = dep.loc;
                (* TODO? *)
                ast_node = None;
+               enclosure = None;
                tokens = lazy dep.toks;
                env = [];
                taint_trace = None;

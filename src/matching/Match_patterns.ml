@@ -36,6 +36,15 @@ let profile_mini_rules = ref false
  * the expr/stmt/... visitor, while generic_vs_generic does the matching.
  *)
 
+type matching_conf = {
+  track_enclosing_context : bool;
+}
+[@@deriving show]
+
+let default_matching_conf : matching_conf = {
+  track_enclosing_context = false;
+}
+
 (* environment of stuff common to each matcher *)
 type env = {
   m_env : MG.tin;
@@ -153,7 +162,7 @@ let (rule_id_of_mini_rule : Mini_rule.t -> Core_match.rule_id) =
 
 let match_rules_and_recurse
     ({ m_env; path; hook; matches (* Core_match.t list ref *); has_as_metavariable } : env)
-    rules matcher k any x =
+    rules matcher k any enclosure x =
   rules
   |> List.iter (fun (pattern, rule) ->
          let matches_with_env = matcher rule pattern x m_env in
@@ -179,6 +188,7 @@ let match_rules_and_recurse
                         (* as-metavariable: *)
                         ast_node =
                           (if has_as_metavariable then Some (any x) else None);
+                        enclosure = Option.map (!) enclosure;
                         tokens;
                         taint_trace = None;
                         (* This will be overrided later on by the Pro engine, if this is
@@ -299,9 +309,10 @@ let get_facts_of_stmt stmt =
  *)
 
 class ['self] check_visitor range_filter m_env has_as_metavariable
-  mvar_context hook path mp_env expr_rules stmt_rules stmts_rules
-  type_rules pattern_rules attribute_rules xml_attribute_rules
-  fld_rules flds_rules partial_rules name_rules raw_rules 
+  mvar_context hook path mp_env track_enclosing_context expr_rules
+  stmt_rules stmts_rules type_rules pattern_rules attribute_rules
+  xml_attribute_rules fld_rules flds_rules partial_rules name_rules
+  raw_rules
   =
   object (_self : 'self)
     inherit [_] Matching_visitor.matching_visitor as super
@@ -312,6 +323,10 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
     val mvar_context = mvar_context
     val hook = hook
     val mp_env = mp_env
+
+    val enclosure = if track_enclosing_context
+                      then Some (ref [] : Enclosure.delimiter_info Stack_.t)
+                      else None
 
     val expr_rules = expr_rules
     val stmt_rules = stmt_rules
@@ -369,6 +384,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                             ast_node =
                               (if has_as_metavariable then Some (E x)
                                else None);
+                            enclosure = Option.map (!) enclosure;
                             tokens;
                             taint_trace = None;
                             engine_of_match = `OSS;
@@ -399,60 +415,59 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
 
     (* mostly copy paste of expr code but with the _st functions *)
     method! visit_stmt env x =
-      (* old:
-       *   match_rules_and_recurse (file, hook, matches)
-       *   !stmt_rules match_st_st k (fun x -> S x) x
-       * but inlined to handle specially Bloom filter in stmts for now.
-       * TODO: bloom filter was removed, undo this inlining?
-       *)
-      let visit_stmt () =
-        stmt_rules
-        |> List.iter (fun (pattern, rule) ->
-               let matches_with_env = match_st_st rule pattern x m_env in
-               matches_with_env
-               |> List.iter (fun (env : MG.tin) ->
-                      let mv = env.mv in
-                      match AST_generic_helpers.range_of_any_opt (S x) with
-                      | None ->
-                          (* TODO: Report a warning to the user? *)
-                          Log.warn (fun m ->
-                              m
-                                "Cannot report match because we lack range \
-                                 info: %s"
-                                (show_stmt x));
-                          ()
-                      | Some range_loc ->
-                          let tokens =
-                            lazy (AST_generic_helpers.ii_of_any (S x))
-                          in
-                          let facts = get_facts_of_stmt x in
-                          let rule_id = rule_id_of_mini_rule rule in
-                          let pm =
-                            {
-                              PM.rule_id;
-                              path;
-                              env = mv;
-                              range_loc;
-                              (* as-metavariable: *)
-                              ast_node =
-                                (if has_as_metavariable then Some (S x)
-                                 else None);
-                              tokens;
-                              taint_trace = None;
-                              engine_of_match = `OSS;
-                              validation_state = `No_validator;
-                              severity_override = None;
-                              metadata_override = None;
-                              sca_match = None;
-                              fix_text = None;
-                              facts;
-                            }
-                          in
-                          Stack_.push pm mp_env.matches;
-                          hook pm));
-        super#visit_stmt env x
-      in
-      visit_stmt ()
+      stmt_rules
+      |> List.iter (fun (pattern, rule) ->
+             let matches_with_env = match_st_st rule pattern x m_env in
+             matches_with_env
+             |> List.iter (fun (env : MG.tin) ->
+                    let mv = env.mv in
+                    match AST_generic_helpers.range_of_any_opt (S x) with
+                    | None ->
+                        (* TODO: Report a warning to the user? *)
+                        Log.warn (fun m ->
+                            m
+                              "Cannot report match because we lack range \
+                               info: %s"
+                              (show_stmt x));
+                        ()
+                    | Some range_loc ->
+                        let tokens =
+                          lazy (AST_generic_helpers.ii_of_any (S x))
+                        in
+                        let facts = get_facts_of_stmt x in
+                        let rule_id = rule_id_of_mini_rule rule in
+                        let pm =
+                          {
+                            PM.rule_id;
+                            path;
+                            env = mv;
+                            range_loc;
+                            (* as-metavariable: *)
+                            ast_node =
+                              (if has_as_metavariable then Some (S x)
+                               else None);
+                            enclosure = Option.map (!) enclosure;
+                            tokens;
+                            taint_trace = None;
+                            engine_of_match = `OSS;
+                            validation_state = `No_validator;
+                            severity_override = None;
+                            metadata_override = None;
+                            sca_match = None;
+                            fix_text = None;
+                            facts;
+                          }
+                        in
+                        Stack_.push pm mp_env.matches;
+                        hook pm));
+
+      match enclosure, Enclosure.delimiter_info_of_stmt x with
+      | Some enclosure_stack, Some delim ->
+          Stack_.push delim enclosure_stack;
+          super#visit_stmt env x;
+          ignore (Stack_.pop enclosure_stack)
+      | _ ->
+          super#visit_stmt env x;
 
     method! v_stmts env x =
       (* this is potentially slower than what we did in Coccinelle with
@@ -492,6 +507,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                                   (if has_as_metavariable then
                                      Some (Ss matched)
                                    else None);
+                                enclosure = Option.map (!) enclosure;
                                 tokens;
                                 taint_trace = None;
                                 engine_of_match = `OSS;
@@ -511,18 +527,21 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
       match_rules_and_recurse mp_env type_rules match_t_t
         (super#visit_type_ env)
         (fun x -> T x)
+        enclosure
         x
 
     method! visit_pattern env x =
       match_rules_and_recurse mp_env pattern_rules match_p_p
         (super#visit_pattern env)
         (fun x -> P x)
+        enclosure
         x
 
     method! visit_attribute env x =
       match_rules_and_recurse mp_env attribute_rules match_at_at
         (super#visit_attribute env)
         (fun x -> At x)
+        enclosure
         x
 
     method! visit_xml_attribute env x =
@@ -530,12 +549,14 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
         match_xml_attribute_xml_attribute
         (super#visit_xml_attribute env)
         (fun x -> XmlAt x)
+        enclosure
         x
 
     method! visit_field env x =
       match_rules_and_recurse mp_env fld_rules match_fld_fld
         (super#visit_field env)
         (fun x -> Fld x)
+        enclosure
         x
 
     method! v_fields env x =
@@ -592,6 +613,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
                                   (if has_as_metavariable then
                                      Some (Ss matched)
                                    else None);
+                                enclosure = Option.map (!) enclosure;
                                 tokens;
                                 taint_trace = None;
                                 engine_of_match = `OSS;
@@ -608,29 +630,35 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
       match_rules_and_recurse mp_env flds_rules match_flds_flds
         (super#v_fields env)
         (fun x -> Flds x)
+        enclosure
         x
 
     method! v_partial ~recurse env x =
       match_rules_and_recurse mp_env partial_rules match_partial_partial
         (super#v_partial ~recurse env)
         (fun x -> Partial x)
+        enclosure
         x
 
     method! visit_name env x =
       match_rules_and_recurse mp_env name_rules match_name_name
         (super#visit_name env)
         (fun x -> Name x)
+        enclosure
         x
 
     method! visit_raw_tree env x =
       match_rules_and_recurse mp_env raw_rules match_raw_raw
         (super#visit_raw_tree env)
         (fun x -> Raw x)
+        enclosure
         x
   end
 
 let check ~hook ?(has_as_metavariable = false) ?mvar_context
-    ?(range_filter = fun _ -> true) (config, equivs) rules
+    ?(range_filter = fun _ -> true)
+    ?(matching_conf = default_matching_conf)
+    (config, equivs) rules
     (internal_path_to_content, origin, lang, ast) =
   Log.info (fun m ->
       m "checking %s with %d mini rules" !!internal_path_to_content
@@ -734,9 +762,10 @@ let check ~hook ?(has_as_metavariable = false) ?mvar_context
 
     let visitor = new check_visitor
       range_filter m_env has_as_metavariable
-      mvar_context hook path mp_env !expr_rules !stmt_rules !stmts_rules
-      !type_rules !pattern_rules !attribute_rules !xml_attribute_rules
-      !fld_rules !flds_rules !partial_rules !name_rules !raw_rules
+      mvar_context hook path mp_env matching_conf.track_enclosing_context
+      !expr_rules !stmt_rules !stmts_rules !type_rules !pattern_rules
+      !attribute_rules !xml_attribute_rules !fld_rules !flds_rules
+      !partial_rules !name_rules !raw_rules
     in
     let visitor_env =
       let vardef_assign = config.Options.vardef_assign in

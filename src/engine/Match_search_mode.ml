@@ -262,6 +262,7 @@ let matches_of_patterns ~has_as_metavariable ?mvar_context ?range_filter rule
     xtarget
   in
   let config = (xconf.config, xconf.equivs) in
+  let matching_conf = xconf.matching_conf in
   match xlang with
   | Xlang.L (lang, _) ->
       let (ast, skipped_tokens), parse_time =
@@ -282,8 +283,9 @@ let matches_of_patterns ~has_as_metavariable ?mvar_context ?range_filter rule
               (* regular path *)
               Match_patterns.check
                 ~hook:(fun _ -> ())
-                ~has_as_metavariable ?mvar_context ?range_filter config
-                mini_rules
+                ~has_as_metavariable ?mvar_context ?range_filter
+                ~matching_conf
+                config mini_rules
                 (internal_path_to_content, origin, lang, ast))
       in
       let errors = Parse_target.errors_from_skipped_tokens skipped_tokens in
@@ -421,6 +423,7 @@ let apply_focus_on_ranges (env : env) (focus_mvars_list : R.focus_mv_list list)
                ast_node =
                  (if env.has_as_metavariable then Some (MV.mvalue_to_any mval)
                   else None);
+               enclosure = None;
                tokens = lazy (MV.ii_of_mval mval);
                env = range.mvars;
                taint_trace = None;

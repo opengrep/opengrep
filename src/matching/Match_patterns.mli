@@ -11,6 +11,13 @@
  * expression is strictly inside your area(s) of interest, no need to
  * worry about sub-expressions, they will be visited regardless.
  *)
+type matching_conf = {
+  track_enclosing_context : bool;
+}
+[@@deriving show]
+
+val default_matching_conf : matching_conf
+
 val check :
   hook:(Core_match.t -> unit) ->
   (* as-metavariable: whether this rule whose patterns we are matching
@@ -19,6 +26,7 @@ val check :
   ?has_as_metavariable:bool ->
   ?mvar_context:Metavariable.bindings ->
   ?range_filter:(Tok.location * Tok.location -> bool) ->
+  ?matching_conf:matching_conf ->
   Rule_options.t * Equivalence.equivalences ->
   Mini_rule.rules ->
   Fpath.t * Origin.t * Lang.t * AST_generic.program ->

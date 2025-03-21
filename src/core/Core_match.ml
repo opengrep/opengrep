@@ -42,7 +42,6 @@
  * even if it returns the same match than a similar match coming
  * from a pattern:, we should not merge them!
  *)
-
 type t = {
   (* rule (or mini rule) responsible for the pattern match found *)
   rule_id : rule_id; [@equal fun a b -> a.id = b.id]
@@ -84,6 +83,7 @@ type t = {
      `has_as_metavariable` is true of the originating rule.
      Otherwise, we leave it at `None`.
   *)
+  enclosure : Enclosure.t option;
   ast_node : AST_generic.any option;
   (* less: do we need to be lazy? *)
   tokens : Tok.t list Lazy.t; [@equal fun _a _b -> true]

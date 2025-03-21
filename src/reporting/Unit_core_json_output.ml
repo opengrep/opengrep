@@ -48,6 +48,7 @@ let make_core_match ?(check_id = "fake-rule-id") ?annotated_rule_id
         validation_state = None;
         historical_info = None;
         extra_extra = None;
+        enclosing_context = None;
       }
   in
   Out.

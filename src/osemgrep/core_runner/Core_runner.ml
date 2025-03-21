@@ -82,6 +82,7 @@ type func = {
     (* TODO alt: pass a bool alongside each target path that indicates whether
        the target is explicit i.e. occurs directly on the command line *)
     Find_targets.conf ->
+    Match_patterns.matching_conf ->
     (* LATER? alt: use Config_resolve.rules_and_origin instead? *)
     Rule_error.rules_and_invalid ->
     (* Takes a list of target files, not scanning roots. *)
@@ -370,6 +371,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         strict;
         report_time = time_flag;
         (* set later in mk_core_run_for_osemgrep *)
+        matching_conf = Match_patterns.default_matching_conf;
         target_source = Targets [];
         rule_source = Rules [];
         file_match_hook = None;
@@ -411,6 +413,7 @@ let mk_result (all_rules : Rule.rule list) (res : Core_result.t) : result =
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
   let run ?file_match_hook (conf : conf) (targeting_conf : Find_targets.conf)
+      (matching_conf : Match_patterns.matching_conf)
       (rules_and_invalid : Rule_error.rules_and_invalid)
       (targets : Fpath.t list) : Core_result.result_or_exn =
     (*
@@ -465,6 +468,11 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
         config with
         target_source = Targets final_targets;
         rule_source = Rules applicable_rules;
+      }
+    in
+    let config =
+      {
+        config with matching_conf;
       }
     in
 

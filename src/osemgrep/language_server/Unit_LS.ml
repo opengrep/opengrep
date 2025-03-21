@@ -67,6 +67,7 @@ let mock_run_results (files : string list) : Core_runner.result =
         validation_state = Some `No_validator;
         historical_info = None;
         extra_extra = None;
+        enclosing_context = None;
       }
     in
     let (m : Out.core_match) =

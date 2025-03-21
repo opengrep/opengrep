@@ -44,6 +44,7 @@ type xconfig = {
   config : Rule_options.t; (* corresponds to rule `options` key *)
   equivs : Equivalence.equivalences;
   nested_formula : bool;
+  matching_conf : Match_patterns.matching_conf;
   (* ^^^ i.e. we are evaluating a nested formula within `metavariable-pattern`. *)
   (* Fields coming from Runner_config.t used by the engine.
    * We could just include the whole Runner_config.t, but it's
@@ -52,6 +53,7 @@ type xconfig = {
    *)
   matching_explanations : bool;
   filter_irrelevant_rules : prefilter_config;
+
 }
 
 type env = {
@@ -107,6 +109,7 @@ let default_xconfig =
     config = Rule_options.default;
     equivs = [];
     nested_formula = false;
+    matching_conf = Match_patterns.default_matching_conf;
     matching_explanations = false;
     (* TODO: set to true by default?
      * Anyway it's set to true in Runner_config.default so it will default to
