@@ -21,7 +21,10 @@ jobs:
       matrix:
         ocaml_version: ["5.3.0"]
         # arch: ["aarch64"] # Later: [x86_64, aarch64]
-    
+
+    # FIXME: This needs to be ALPINE / MUSL for static build,
+    # which is not the case for our aarch64 build, we must use a
+    # container like ocamlpro but aarch64.
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Make checkout speedy
@@ -77,31 +80,40 @@ jobs:
   build-musllinux-aarch64:
     needs:
       - build-core
-    container: quay.io/pypa/musllinux_1_2_aarch64
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Make checkout speedy
         run: git config --global fetch.parallel 50
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           submodules: true
-      - run: |
-          apk update
-          apk add --no-cache zip python3 py3-pip py3-virtualenv python3-dev gcc musl-dev
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
+
+      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # v4
         with:
           name: opengrep-core-aarch64
-      - run: |
-          tar xf artifacts.tgz
-          cp artifacts/opengrep-core cli/src/semgrep/bin
-          python3 -m venv venv
-          . venv/bin/activate
-          ./scripts/build-wheels.sh
-      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
+
+      - name: Build inside container
+        run: |
+          docker run --rm \
+            --volume ${{ github.workspace }}:/workspace \
+            --workdir /workspace \
+            quay.io/pypa/musllinux_1_2_aarch64 \
+            /bin/sh -c "
+              apk update &&
+              apk add --no-cache zip python3 py3-pip py3-virtualenv python3-dev gcc musl-dev &&
+              tar xf artifacts.tgz &&
+              cp artifacts/opengrep-core cli/src/semgrep/bin &&
+              python3 -m venv venv &&
+              . venv/bin/activate &&
+              ./scripts/build-wheels.sh
+            "
+
+      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
         with:
           name: musllinux-aarch64-wheel
           path: cli/dist.zip
-
+  
   build-test-manylinux-aarch64:
     needs:
       - build-core
