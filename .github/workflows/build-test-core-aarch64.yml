@@ -20,10 +20,8 @@ jobs:
     strategy:
       matrix:
         ocaml_version: ["5.3.0"]
-    container:
-      image: ocaml/opam:alpine-ocaml-5.3 # ${{ matrix.ocaml_version }}
-      options: --user root
     runs-on: ubuntu-24.04-arm
+
     steps:
       - name: Make checkout speedy
         run: git config --global fetch.parallel 50
@@ -35,60 +33,36 @@ jobs:
       - name: Configure git safedir properly
         run: git config --global --add safe.directory $(pwd)
 
-      - name: Add system packages
+      # - name: Set GHA cache for OPAM
+      #   uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
+      #   with:
+      #     key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('opam/*.opam') }}
+      #     path: _opam
+        
+      - name: Run build inside container
         run: |
-          # gnu tar and zstd needed for cache, see:
-          # https://github.com/actions/cache/issues/580
-          apk add --no-cache build-base zip bash libffi-dev \
-            libpsl-static zstd-static libidn2-static \
-            libunistring-static tar zstd
+          docker run -e OPAMROOT=/home/opam/.opam --rm \
+            --volume ${{ github.workspace }}:/home/opam/workspace \
+            --workdir /home/opam/workspace \
+            ocaml/opam:alpine-ocaml-5.3 \
+            sh -c "
+              sudo apk add --no-cache build-base zip bash libffi-dev \
+                libpsl-static zstd-static libidn2-static \
+                libunistring-static tar zstd && \
 
-      - name: Set GHA cache for OPAM
-        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
-        with:
-          key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('opam/*.opam') }}
-          path: _opam
+              eval \$(opam env) && \
+              opam var && \
+              opam exec -- ocaml -version && \
 
-      # - name: Create switch
-      #   run: |
-      #     if [ ! -d "_opam" ]; then
-      #       opam switch --no-install create . ocaml-system
-      #     else
-      #       echo "OPAM switch already exists, skipping creation."
-      #     fi
-          
-      #     eval $(opam env)
-      #     opam exec -- ocaml -version
+              sudo -u opam sudo make install-deps-ALPINE-for-semgrep-core && \
+              sudo -u opam sudo make install-deps-for-semgrep-core && \
+              opam exec -- make core && \
+              opam exec -- make core-test && \
 
-      - run: |
-          eval $(opam env)
-          opam var
-          ocaml -version
-      
-      # TODO: Remove `opam update` to make it faster, it's not needed
-      # for these images since they are frequently updated.
-      - name: Install dependencies
-        run: |
-          eval $(opam env)
-          # TODO: Try without the scripts/build-static-libcurl.sh part,
-          # in which case we can embed the new apk deps into the previous
-          # step and just execute the second command.
-          make install-deps-ALPINE-for-semgrep-core
-          make install-deps-for-semgrep-core
-
-      - name: Build opengrep-core
-        run: |
-          opam exec -- make core
-  
-      - name: Test opengrep-core
-        run: |
-          opam exec -- make core-test
-
-      - name: Make artifact for bin/opengrep-core
-        run: |
-          mkdir artifacts
-          cp bin/opengrep-core artifacts/
-          tar czf artifacts.tgz artifacts
+              mkdir artifacts && \
+              cp bin/opengrep-core artifacts/ && \
+              tar czf artifacts.tgz artifacts
+            "
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
