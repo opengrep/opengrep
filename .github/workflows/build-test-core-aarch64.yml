@@ -20,11 +20,9 @@ jobs:
     strategy:
       matrix:
         ocaml_version: ["5.3.0"]
-        # arch: ["aarch64"] # Later: [x86_64, aarch64]
-
-    # FIXME: This needs to be ALPINE / MUSL for static build,
-    # which is not the case for our aarch64 build, we must use a
-    # container like ocamlpro but aarch64.
+    container:
+      image: ocaml/opam:alpine-ocaml-5.3 # ${{ matrix.ocaml_version }}
+      options: --user root
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Make checkout speedy
@@ -37,25 +35,45 @@ jobs:
       - name: Configure git safedir properly
         run: git config --global --add safe.directory $(pwd)
 
-      # gnu tar and zstd needed for cache, see:
-      # https://github.com/actions/cache/issues/580
       - name: Add system packages
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential zip bash libffi-dev \
-            libpsl-dev zstd libidn2-dev \
-            libunistring-dev tar
+          # gnu tar and zstd needed for cache, see:
+          # https://github.com/actions/cache/issues/580
+          apk add --no-cache build-base zip bash libffi-dev \
+            libpsl-static zstd-static libidn2-static \
+            libunistring-static tar zstd
 
-      - name: Set-up OCaml
-        uses: ocaml/setup-ocaml@v3
+      - name: Set GHA cache for OPAM
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
         with:
-          ocaml-compiler: ${{ matrix.ocaml_version }}
+          key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('opam/*.opam') }}
+          path: _opam
 
+      # - name: Create switch
+      #   run: |
+      #     if [ ! -d "_opam" ]; then
+      #       opam switch --no-install create . ocaml-system
+      #     else
+      #       echo "OPAM switch already exists, skipping creation."
+      #     fi
+          
+      #     eval $(opam env)
+      #     opam exec -- ocaml -version
+
+      - run: |
+          eval $(opam env)
+          opam var
+          ocaml -version
+      
+      # TODO: Remove `opam update` to make it faster, it's not needed
+      # for these images since they are frequently updated.
       - name: Install dependencies
         run: |
           eval $(opam env)
-          sudo make install-deps-UBUNTU-for-semgrep-core
+          # TODO: Try without the scripts/build-static-libcurl.sh part,
+          # in which case we can embed the new apk deps into the previous
+          # step and just execute the second command.
+          make install-deps-ALPINE-for-semgrep-core
           make install-deps-for-semgrep-core
 
       - name: Build opengrep-core
@@ -74,7 +92,7 @@ jobs:
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: opengrep-core-aarch64 # Can use matrix.arch here when we unify the workflows.
+          name: opengrep-core-aarch64
           path: artifacts.tgz
 
   build-musllinux-aarch64:
