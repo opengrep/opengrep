@@ -131,4 +131,4 @@ jobs:
     needs:
       - build-core
       # - build-musllinux-x86 # NOTE: This is not really necessary.
-    uses: ./.github/workflows/build-test-manylinux-x86.yml
+    uses: ./.github/workflows/build-test-manylinux.yml

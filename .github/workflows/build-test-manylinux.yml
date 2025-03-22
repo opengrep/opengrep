@@ -1,6 +1,12 @@
-name: build-test-manylinux-x86
+name: build-test-manylinux
 on:
-  workflow_call: null
+  workflow_call:
+    inputs:
+      arch:
+        description: "Architecture (x86_64 or aarch64)"
+        required: false
+        default: "x86_64"
+        type: string
   workflow_dispatch: null
   # workflow_run:
   #   workflows:
@@ -20,8 +26,8 @@ on:
 jobs:
 
   build-wheels:
-    container: quay.io/pypa/manylinux_2_28_x86_64
-    runs-on: ubuntu-latest
+    container: ${{ inputs.arch == 'x86_64' && 'quay.io/pypa/manylinux_2_28_x86_64' || 'quay.io/pypa/manylinux_2_28_aarch64' }} 
+    runs-on: ${{ inputs.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
     steps:
       - name: Make checkout speedy
         run: git config --global fetch.parallel 50
@@ -36,25 +42,25 @@ jobs:
           alternatives --auto python3
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
-          name: opengrep-core-x86
+          name: opengrep-core-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}
       - run: |
           tar xf artifacts.tgz
           cp artifacts/opengrep-core cli/src/semgrep/bin
           ./scripts/build-wheels.sh
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: manylinux-x86-wheel
+          name: manylinux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}-wheel
           path: cli/dist.zip
 
   test-wheels:
-    container: quay.io/pypa/manylinux_2_28_x86_64
+    container: ${{ inputs.arch == 'x86_64' && 'quay.io/pypa/manylinux_2_28_x86_64' || 'quay.io/pypa/manylinux_2_28_aarch64' }} 
     needs:
       - build-wheels
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
     steps:
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
-          name: manylinux-x86-wheel
+          name: manylinux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}-wheel
       - run: unzip dist.zip
       - name: install package
         run: /opt/python/cp39-cp39/bin/pip install dist/*.whl
@@ -68,6 +74,7 @@ jobs:
           echo '1 == 1' | opengrep -l python -e '$X == $X' -
 
   test-wheels-venv:
+    if: inputs.arch == 'x86_64' 
     container: quay.io/pypa/manylinux_2_28_x86_64
     needs:
       - build-wheels
@@ -89,6 +96,7 @@ jobs:
           echo '1 == 1' | env/bin/opengrep -l python -e '$X == $X' -
 
   test-wheels-wsl:
+    if: inputs.arch == 'x86_64' 
     needs:
       - build-wheels
     runs-on: windows-latest
