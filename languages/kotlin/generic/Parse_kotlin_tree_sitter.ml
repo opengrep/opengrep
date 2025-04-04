@@ -1933,20 +1933,6 @@ and string_literal (env : env) (v1, v2, v3) : expr =
   let l = token env v1 in
   let r = token env v3 in
   match v2 with
-  | [ `Interp (`DOLLAR_simple_id (v1, v2)) ] when in_pattern env ->
-      (* This is something of the form "$X". This is interpreted as an interpolated
-         string of a single identifier, but if this is the pattern,
-         it's probably not what the person writing the rule meant.
-         Instead, we interpret it as a string literal containing a metavariable,
-         which allows the existing literal metavariable machinery to run.
-
-         This does not affect Semgrep's expressive power, because a string containing
-         an interpolated identifier `X` can also be expressed in a Semgrep pattern via
-         `"{X}"`.
-      *)
-      let s1, t1 = str env v1 (* "$" *) in
-      let s2, t2 = simple_identifier env v2 in
-      G.L (G.String (l, (s1 ^ s2, Tok.combine_toks l [ t1; t2; r ]), r)) |> G.e
   | _ ->
       let v2 =
         List_.map
@@ -1955,6 +1941,10 @@ and string_literal (env : env) (v1, v2, v3) : expr =
             | `Str_content tok ->
                 (* string_content *)
                 Either_.Left3 (str env tok)
+            | `Interp (`DOLLAR_simple_id (v1, v2)) when in_pattern env ->
+                let s1, t1 = str env v1 (* "$" *) in
+                let s2, t2 = simple_identifier env v2 in
+                Either_.Left3 (s1 ^ s2, Tok.combine_toks t1 [t2])
             | `Interp x -> interpolation env x)
           v2
       in
