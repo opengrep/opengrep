@@ -1932,23 +1932,19 @@ and statements (env : env) ((v1, v2, v3) : CST.statements) =
 and string_literal (env : env) (v1, v2, v3) : expr =
   let l = token env v1 in
   let r = token env v3 in
-  match v2 with
-  | _ ->
-      let v2 =
-        List_.map
-          (fun x ->
-            match x with
-            | `Str_content tok ->
-                (* string_content *)
-                Either_.Left3 (str env tok)
-            | `Interp (`DOLLAR_simple_id (v1, v2)) when in_pattern env ->
-                let s1, t1 = str env v1 (* "$" *) in
-                let s2, t2 = simple_identifier env v2 in
-                Either_.Left3 (s1 ^ s2, Tok.combine_toks t1 [t2])
-            | `Interp x -> interpolation env x)
-          v2
-      in
-      G.interpolated (l, v2, r)
+  let v2 =
+    List_.map
+      (function
+        | `Str_content tok ->
+            Either_.Left3 (str env tok)
+        | `Interp (`DOLLAR_simple_id (v1, v2)) when in_pattern env ->
+            let s1, t1 = str env v1 (* "$" *) in
+            let s2, t2 = simple_identifier env v2 in
+            Either_.Left3 (s1 ^ s2, Tok.combine_toks t1 [t2])
+        | `Interp x -> interpolation env x)
+      v2
+  in
+  G.interpolated (l, v2, r)
 
 and type_ (env : env) ((v1, v2) : CST.type_) : type_ =
   let v1 =
