@@ -1,1 +1,1 @@
-"hi $THERE"
+"hi ${THERE}"
