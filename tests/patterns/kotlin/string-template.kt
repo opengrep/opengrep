@@ -1,10 +1,14 @@
+"abc"
 
-val x = "anything"
+// MATCH:     
+"${i}abc"
 
-val x = "hi there"
+// MATCH:     
+"${i}${j}abc"
+     
+// MATCH:     
+"xyz${i}qwe${j}abc"
 
-// ERROR: match
-val x = "hi $THERE"
-
-// ERROR: match
-val x = "hi ${THERE}"
+"abc${i}"
+     
+"${i}${j}"
