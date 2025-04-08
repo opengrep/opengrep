@@ -134,6 +134,7 @@ let check_experimental_flags (argv : string array) : unit =
  * semgrep-core or osemgrep (or semgrep) behavior.
  *)
 let () =
+  Memprof_limits.start_memprof_limits ();
   Cap.main (fun (caps : Cap.all_caps) ->
       let argv = CapSys.argv caps#argv in
       let argv0 =
