@@ -47,6 +47,7 @@ type conf = {
   ls : bool;
   (* --x-ls-long: *)
   ls_format : Ls_subcommand.format;
+  semgrepignore_filename : string option;
 }
 [@@deriving show]
 
@@ -135,10 +136,11 @@ val o_use_git : bool Cmdliner.Term.t
 val o_version_check : bool Cmdliner.Term.t
 val o_vim : bool Cmdliner.Term.t
 val o_vim_outputs : string list Cmdliner.Term.t
+val o_semgrepignore_filename : string option Cmdliner.Term.t
 
 val engine_type_conf :
   oss:bool ->
-  pro_lang:bool ->
+  pro_languages:bool ->
   pro_intrafile:bool ->
   pro:bool ->
   secrets:bool ->

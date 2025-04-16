@@ -66,7 +66,7 @@ let pp_summary ~respect_gitignore ~(maturity : Maturity.t) ~max_target_bytes
         opt_msg "files not matching --include patterns" include_ignored;
         opt_msg "files matching --exclude patterns" exclude_ignored;
         opt_msg ("files larger than " ^ mb ^ " MB") file_size_ignored;
-        opt_msg "files matching .semgrepignore patterns" semgrep_ignored;
+        opt_msg "files matching ignore file patterns" semgrep_ignored;
         (match maturity with
         | Develop -> opt_msg "other files ignored" other_ignored
         | Default

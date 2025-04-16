@@ -212,6 +212,10 @@ type conf = {
   (* TODO? remove it? This is now done in Diff_scan.ml instead? *)
   baseline_commit : string option;
   diff_depth : int;
+  semgrepignore_filename : string option;
+  exclude_patterns : string list;
+  include_patterns : string list;
+  find_in_git_submodules : bool;
 }
 [@@deriving show]
 
@@ -236,6 +240,10 @@ let default_conf : conf =
     exclude_minified_files = false;
     baseline_commit = None;
     diff_depth = 2;
+    semgrepignore_filename = None;
+    exclude_patterns = [];
+    include_patterns = [];
+    find_in_git_submodules = false;
   }
 
 (*************************************************************************)
@@ -728,6 +736,7 @@ let setup_path_filters conf (project_roots : Project.roots) :
     Semgrepignore.create ~cli_patterns:conf.exclude
       ~default_semgrepignore_patterns:Semgrep_scan_legacy ~exclusion_mechanism
       ~project_root:(Rfpath.to_fpath project_root)
+      ~custom_semgrepignore_filename:conf.semgrepignore_filename
       ()
   in
   let include_filter =

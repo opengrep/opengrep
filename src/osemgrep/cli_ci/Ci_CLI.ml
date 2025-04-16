@@ -186,7 +186,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
       json json_outputs junit_xml junit_xml_outputs matching_explanations
       max_chars_per_line max_lines_per_finding max_log_list_entries
       max_memory_mb max_target_bytes metrics num_jobs no_secrets_validation
-      nosem optimizations oss output output_enclosing_context pro pro_intrafile pro_lang
+      nosem optimizations oss output output_enclosing_context pro pro_intrafile pro_languages
       pro_path_sensitive rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions secrets text text_outputs timeout
       _timeout_interfileTODO timeout_threshold (* trace trace_endpoint *) use_git
@@ -225,7 +225,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
     in
 
     let engine_type : Engine_type.t =
-      Scan_CLI.engine_type_conf ~oss ~pro_lang ~pro_intrafile ~pro ~secrets
+      Scan_CLI.engine_type_conf ~oss ~pro_languages ~pro_intrafile ~pro ~secrets
         ~no_secrets_validation ~allow_untrusted_validators ~pro_path_sensitive
     in
     let rules_source = Rules_source.Configs config in
@@ -263,6 +263,10 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         respect_gitignore = use_git;
         respect_semgrepignore_files = not ignore_semgrepignore_files;
         exclude_minified_files;
+        semgrepignore_filename = None;
+        exclude_patterns = [];
+        include_patterns = [];
+        find_in_git_submodules = false;
       }
     in
     let rule_filtering_conf =
@@ -315,6 +319,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         allow_local_builds;
         ls = false;
         ls_format = Ls_subcommand.default_format;
+        semgrepignore_filename = None;
       }
   in
   (* Term defines 'const' but also the '$' operator *)
@@ -378,13 +383,13 @@ let cmdline_term : conf Term.t =
     }
   in
   Term.(
-    const combine $ scan_subset_cmdline_term $ o_audit_on 
+    const combine $ scan_subset_cmdline_term $ o_audit_on
     $ o_dry_run $ o_internal_ci_scan_results
     $ o_x_dump_n_rule_partitions $ o_x_dump_rule_partitions_dir
     $ o_x_merge_partial_results_dir $ o_x_merge_partial_results_output
     $ o_x_partial_config $ o_x_partial_output
     $ o_x_validate_partial_results_actual
-    $ o_x_validate_partial_results_expected $ o_subdir 
+    $ o_x_validate_partial_results_expected $ o_subdir
     $ o_suppress_errors $ Git_metadata.env $ Github_metadata.env)
 
 let doc = "the recommended way to run opengrep in CI"

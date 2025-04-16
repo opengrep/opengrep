@@ -1,40 +1,21 @@
 (*
-   Parse and interpret '.semgrepignore' files.
+   Parse and interpret '.semgrepignore' files in addition to '.gitignore'
+   files.
 
-   Original implementation: ignores.py
+   The patterns they contain specify file paths to exclude from Semgrep scans.
 
-   The legacy semgrepignore behavior is irregular and we're trying to move
-   away from it and align closely with gitignore behavior.
-
-   Old behavior:
-   Here are the differences with gitignore listed in the legacy documentation:
-   - '!' pattern negations aren't supported
-   - character range patterns aren't supported
-   - ':include' directives are a semgrepignore addition
-   - '.semgrepignore' files placed anywhere in the tree are ignored (?)
-
-   New behavior:
-   - support '!' and character ranges to conform to gitignore syntax
-   - don't support ':include' to conform to gitignore syntax
-   - automatically use any '.gitignore' and use '.semgrepignore' additionally
-     as if the latter was appended to the former.
-   Support for negated patterns ('!') allows a .semgrepignore to
-   undo exclusions made in a .gitignore.
-
-   Migration plan:
-   - print a deprecation notice if an ':include' directive is found in the
-     root .semgrepignore.
-   - stay silent otherwise: this is problematic only in the case of a
-     .semgrepignore that doesn't include the .gitignore explicitly and
-     contains fewer exclusions that the .gitignore. The new behavior will
-     exclude more files than before.
-
-   Questions:
-   - Do some people really run semgrep on purpose on files that are excluded
-     from source control?
-     (we need to answer this to figure out the consequences of the migration
-     plan)
+   See the ml file for compatibility issues.
 *)
+
+(*
+   We have to support the legacy built-in semgrepignore patterns
+   when scanning for source code but we want something different
+   or empty when scanning for secrets.
+
+   The 'Empty' case is useful for testing.
+*)
+open Gitignore
+
 type default_semgrepignore_patterns = Empty | Semgrep_scan_legacy
 
 (*
@@ -90,10 +71,10 @@ testsuite/
 
 let gitignore_files = Gitignore.default_gitignore_filename
 
-let semgrepignore_files : Gitignore.gitignore_filename =
+let semgrepignore_files ?(custom_filename=".semgrepignore") () : Gitignore.gitignore_filename =
   {
     source_kind = "semgrepignore";
-    filename = ".semgrepignore";
+    filename = custom_filename;
     format = Gitignore.Legacy_semgrepignore;
   }
 
@@ -102,7 +83,7 @@ let contents_of_builtin_semgrepignore = function
   | Semgrep_scan_legacy -> default_semgrepignore_for_semgrep_scan
 
 let create ?(cli_patterns = []) ~default_semgrepignore_patterns
-    ~exclusion_mechanism ~project_root () =
+    ~exclusion_mechanism ~project_root ?(custom_semgrepignore_filename=None) () =
   let root_anchor = Glob.Pattern.root_pattern in
   let default_patterns =
     Parse_gitignore.from_string ~name:"default semgrepignore patterns"
@@ -129,32 +110,76 @@ let create ?(cli_patterns = []) ~default_semgrepignore_patterns
       patterns = cli_patterns;
     }
   in
+
+  (* Process the custom semgrepignore file parameter *)
+  let (custom_filename, custom_semgrepignore_path, is_custom_path) =
+    match custom_semgrepignore_filename with
+    | Some path when Sys.file_exists path ->
+        let filename = Filename.basename path in
+        (filename, path, true)
+    | Some name -> (name, "", false)
+    | None -> (".semgrepignore", "", false)
+  in
+
+  let semgrepignore_files = semgrepignore_files ~custom_filename () in
   let kinds_of_ignore_files_to_consult =
     (* order matters: first gitignore then semgrepignore *)
     (if exclusion_mechanism.use_gitignore_files then [ gitignore_files ] else [])
     @
-    if exclusion_mechanism.use_semgrepignore_files then [ semgrepignore_files ]
+    (if exclusion_mechanism.use_semgrepignore_files then [ semgrepignore_files ]
+     else [])
+  in
+
+  (* Check if custom path exists directly *)
+  let custom_path_exists =
+    is_custom_path && Sys.file_exists custom_semgrepignore_path
+  in
+
+  (* Check if there is a top-level '.semgrepignore'. If not, use builtins. *)
+  let root_semgrepignore_exists =
+    if custom_path_exists then
+      true
+    else
+      let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
+      let semgrepignore_path = Fpath.add_seg root_dir custom_filename in
+      Sys.file_exists (Fpath.to_string semgrepignore_path)
+  in
+
+  (* This condition determines whether the default semgrepignore rules should apply. *)
+  let use_default_semgrepignore =
+    exclusion_mechanism.use_semgrepignore_files
+    && (not root_semgrepignore_exists)
+    && (not custom_path_exists)
+  in
+
+  (* If custom path exists, load patterns from it *)
+  let custom_patterns =
+    if custom_path_exists then
+      let content =
+        try
+          UChan.with_open_in custom_semgrepignore_path (fun ic ->
+            really_input_string ic (in_channel_length ic))
+        with
+          _ -> ""
+      in
+      Parse_gitignore.from_string
+        ~name:"custom semgrepignore file"
+        ~source_kind:"semgrepignore"
+        ~anchor:root_anchor
+        content
     else []
   in
-  (*
-     Check if there is a top-level '.semgrepignore'. If not, use builtins.
 
-     We don't check for '.semgrepignore' down the tree, so if a user needs
-     to override the default semgrepignore rules, they need at least an
-     empty root '.semgrepignore' file.
-  *)
-  let root_semgrepignore_exists =
-    let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
-    let semgrepignore_path = Fpath.add_seg root_dir ".semgrepignore" in
-    Sys.file_exists (Fpath.to_string semgrepignore_path)
-  in
-
-  (*
-     This condition determines whether the default semgrepignore rules
-     should apply.
-  *)
-  let use_default_semgrepignore =
-    exclusion_mechanism.use_semgrepignore_files && not root_semgrepignore_exists
+  (* Add custom patterns as a higher priority level if they exist *)
+  let custom_level =
+    if custom_path_exists then
+      Some {
+        level_kind = "custom semgrepignore file";
+        source_name = custom_semgrepignore_path;
+        patterns = custom_patterns;
+      }
+    else
+      None
   in
 
   let higher_priority_levels =
@@ -162,10 +187,19 @@ let create ?(cli_patterns = []) ~default_semgrepignore_patterns
       (* use the built-in semgrepignore rules in the absence of a root
          '.semgrepignore' file *)
       [ default_semgrepignore_file_level; cli_level ]
-    else [ cli_level ]
+    else
+      match custom_level with
+      | Some level -> [ level; cli_level ]
+      | None -> [ cli_level ]
   in
+
   let gitignore_filter =
-    Gitignore_filter.create ~higher_priority_levels
-      ~gitignore_filenames:kinds_of_ignore_files_to_consult ~project_root ()
+    Gitignore_filter.create
+      ~higher_priority_levels
+      ~gitignore_filenames:(
+        if custom_path_exists
+        then []
+        else kinds_of_ignore_files_to_consult)
+      ~project_root ()
   in
   gitignore_filter

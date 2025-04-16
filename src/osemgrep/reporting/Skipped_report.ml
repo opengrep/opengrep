@@ -158,7 +158,18 @@ let pp_skipped ~too_many_entries ppf
 
   Fmt.pf ppf "  %a@.  %a@.@."
     Fmt.(styled `Bold string)
-    (esc ^ "Skipped by .semgrepignore:")
+    (esc ^ "Skipped by .gitignore:")
+    Fmt.(styled `Bold string)
+    (esc ^ "(Disable by passing --no-git-ignore)");
+  if respect_git_ignore then (
+    Fmt.pf ppf "   • <all files not listed by `git ls-files` were skipped>@.")
+  else (
+    Fmt.pf ppf "   • <none>@.");
+  Fmt.pf ppf "@.";
+
+  Fmt.pf ppf "  %a@.  %a@.@."
+    Fmt.(styled `Bold string)
+    (esc ^ "Skipped by ignore file patterns:")
     Fmt.(styled `Bold string)
     (esc
    ^ "(See: \

@@ -36,5 +36,6 @@ val create :
   default_semgrepignore_patterns:default_semgrepignore_patterns ->
   exclusion_mechanism:exclusion_mechanism ->
   project_root:Fpath.t ->
+  ?custom_semgrepignore_filename:string option ->
   unit ->
   Gitignore.filter

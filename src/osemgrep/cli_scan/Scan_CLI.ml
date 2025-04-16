@@ -66,6 +66,7 @@ type conf = {
   allow_local_builds : bool;
   ls : bool;
   ls_format : Ls_subcommand.format;
+  semgrepignore_filename : string option;
 }
 [@@deriving show]
 
@@ -114,6 +115,7 @@ let default : conf =
     allow_local_builds = false;
     ls = false;
     ls_format = Ls_subcommand.default_format;
+    semgrepignore_filename = Some ".semgrepignore";
   }
 
 (*************************************************************************)
@@ -250,6 +252,18 @@ CHANGE OR DISAPPEAR WITHOUT NOTICE.
 |}
   in
   Arg.value (Arg.flag info)
+
+let o_semgrepignore_filename : string option Term.t =
+  let info =
+    Arg.info
+      [ "ignore-file" ]
+      ~doc:
+        {|Specify a custom ignore file to use instead of the default '.semgrepignore'.
+This allows you to use a different ignore file while keeping your standard
+'.semgrepignore' intact. Patterns follow the same format as .gitignore files.
+REQUIRES --experimental|}
+  in
+  Arg.value (Arg.opt Arg.(some string) (Some ".semgrepignore") info)
 
 let o_scan_unknown_extensions : bool Term.t =
   let default = default.targeting_conf.always_select_explicit_targets in
@@ -1153,14 +1167,14 @@ let outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
        Map_.empty
 
 (* reused in Ci_CLI.ml *)
-let engine_type_conf ~oss ~pro_lang ~pro_intrafile ~pro ~secrets
+let engine_type_conf ~oss ~pro_languages ~pro_intrafile ~pro ~secrets
     ~no_secrets_validation ~allow_untrusted_validators ~pro_path_sensitive :
     Engine_type.t =
   (* This first bit just rules out mutually exclusive options. *)
   if oss && secrets then
     Error.abort "Cannot run secrets scan with OSS engine (--oss specified).";
   if
-    [ oss; pro_lang; pro_intrafile; pro ]
+    [ oss; pro_languages; pro_intrafile; pro ]
     |> List.filter Fun.id |> List.length > 1
   then
     Error.abort
@@ -1175,14 +1189,14 @@ let engine_type_conf ~oss ~pro_lang ~pro_intrafile ~pro ~secrets
         | _ when pro_intrafile -> Interprocedural
         | _ -> Intraprocedural)
     in
-    let extra_languages = pro || pro_lang || pro_intrafile in
+    let extra_languages = pro || pro_languages || pro_intrafile in
     let secrets_config =
       if secrets && not no_secrets_validation then
         Some Engine_type.{ allow_all_origins = allow_untrusted_validators }
       else None
     in
     let code_config =
-      if pro || pro_lang || pro_intrafile then Some () else None
+      if pro || pro_languages || pro_intrafile then Some () else None
     in
     (* Currently we don't run SCA in osemgrep *)
     let supply_chain_config = None in
@@ -1293,22 +1307,22 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
      of the corresponding '$ o_xx $' further below!
   *)
-  let combine allow_local_builds allow_untrusted_validators autofix
-      baseline_commit common config dataflow_traces diff_depth dryrun dump_ast
-      dump_command_for_core dump_engine_path emacs emacs_outputs error exclude_
+  let combine allow_local_builds allow_untrusted_validators autofix baseline_commit
+      common config dataflow_traces diff_depth _error dump_ast
+      dump_command_for_core dump_engine_path emacs emacs_outputs error exclude
       exclude_minified_files exclude_rule_ids files_with_matches force_color
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
-      _historical_secrets include_ incremental_output json json_outputs
-      junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
+      _historical_secrets include_ incremental_output json json_outputs junit_xml
+      junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_memory_mb max_target_bytes
-      metrics num_jobs no_secrets_validation nosem optimizations oss output output_enclosing_context
-      pattern pro project_root pro_intrafile pro_lang pro_path_sensitive remote
-      replacement rewrite_rule_ids sarif sarif_outputs scan_unknown_extensions
-      secrets severity show_supported_languages strict target_roots test
-      test_ignore_todo text text_outputs time_flag timeout
-      _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
-      validate version version_check vim vim_outputs
-      x_ignore_semgrepignore_files x_ls x_ls_long =
+      metrics num_jobs no_secrets_validation nosem optimizations oss output
+      output_enclosing_context pattern pro project_root pro_intrafile pro_languages
+      pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
+      scan_unknown_extensions secrets severity show_supported_languages strict
+      target_roots test test_ignore_todo text text_outputs time timeout
+      _timeout_interfile timeout_threshold (* trace trace_endpoint *) use_git validate
+      version version_check vim vim_outputs x_ignore_semgrepignore_files x_ls
+      x_ls_long semgrepignore_filename =
     (* Print a warning if any of the internal or experimental options.
        We don't want users to start relying on these. *)
     if x_ignore_semgrepignore_files || x_ls || x_ls_long then
@@ -1354,7 +1368,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         force_color;
         show_dataflow_traces = dataflow_traces;
         strict;
-        fixed_lines = dryrun;
+        fixed_lines = error;
         skipped_files =
           (match common.logging_level with
           | Some (Info | Debug) -> true
@@ -1364,7 +1378,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     in
 
     let engine_type : Engine_type.t =
-      engine_type_conf ~oss ~pro_lang ~pro_intrafile ~pro ~secrets
+      engine_type_conf ~oss ~pro_languages ~pro_intrafile ~pro ~secrets
         ~no_secrets_validation ~allow_untrusted_validators ~pro_path_sensitive
     in
     let rules_source : Rules_source.t =
@@ -1393,7 +1407,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         dataflow_traces;
         nosem;
         strict;
-        time_flag;
+        time_flag = time;
         matching_explanations;
       }
     in
@@ -1408,7 +1422,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       {
         force_project_root;
         force_novcs_project;
-        exclude = exclude_;
+        exclude = exclude;
         include_;
         baseline_commit;
         diff_depth;
@@ -1419,6 +1433,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         respect_gitignore;
         respect_semgrepignore_files = not x_ignore_semgrepignore_files;
         exclude_minified_files;
+        semgrepignore_filename;
+        exclude_patterns = [];
+        include_patterns = [];
+        find_in_git_submodules = false;
       }
     in
     let rule_filtering_conf : Rule_filtering.conf =
@@ -1464,7 +1482,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
      * in osemgrep equal to the one in pysemgrep or when we remove
      * this sanity checks in pysemgrep and just rely on osemgrep to do it.
      *)
-    if include_ <> None && exclude_ <> [] && common.maturity <> Maturity.Default
+    if include_ <> None && exclude <> [] && common.maturity <> Maturity.Default
     then
       Logs.warn (fun m ->
           m
@@ -1511,6 +1529,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       allow_local_builds;
       ls;
       ls_format;
+      semgrepignore_filename;
     }
   in
   (* Term defines 'const' but also the '$' operator *)
@@ -1537,7 +1556,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
     $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate
     $ o_version $ o_version_check $ o_vim $ o_vim_outputs
-    $ o_ignore_semgrepignore_files $ o_ls $ o_ls_long)
+    $ o_ignore_semgrepignore_files $ o_ls $ o_ls_long $ o_semgrepignore_filename)
 
 let doc = "run opengrep rules on files"
 

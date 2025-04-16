@@ -75,6 +75,10 @@ type conf = {
   (* TODO: not used for now *)
   baseline_commit : string option;
   diff_depth : int;
+  semgrepignore_filename : string option;
+  exclude_patterns : string list;
+  include_patterns : string list;
+  find_in_git_submodules : bool;
 }
 [@@deriving show]
 
