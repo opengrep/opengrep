@@ -256,9 +256,9 @@ CHANGE OR DISAPPEAR WITHOUT NOTICE.
 let x_semgrepignore_filename : string option Term.t =
   let info =
     Arg.info
-      [ "ignore-config" ]
+      [ "opengrepignore-file" ]
       ~doc:
-        {|Specify a custom ignore configuration file instead of the default.
+        {|Specify a custom ignore file to use instead of the default '.semgrepignore'.
 This option allows using a custom file for ignoring files during scanning.
 REQUIRES --experimental|}
   in
