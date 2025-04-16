@@ -1,5 +1,8 @@
 (*
-   Parse and interpret '.semgrepignore' files.
+   Parse and interpret ignore files in addition to '.gitignore'
+   files.
+
+   The patterns they contain specify file paths to exclude from Opengrep scans.
 
    Original implementation: ignores.py
 
@@ -11,26 +14,26 @@
    - '!' pattern negations aren't supported
    - character range patterns aren't supported
    - ':include' directives are a semgrepignore addition
-   - '.semgrepignore' files placed anywhere in the tree are ignored (?)
+   - ignore files placed anywhere in the tree are ignored (?)
 
    New behavior:
    - support '!' and character ranges to conform to gitignore syntax
    - don't support ':include' to conform to gitignore syntax
-   - automatically use any '.gitignore' and use '.semgrepignore' additionally
+   - automatically use any '.gitignore' and use ignore files additionally
      as if the latter was appended to the former.
-   Support for negated patterns ('!') allows a .semgrepignore to
+   Support for negated patterns ('!') allows an ignore file to
    undo exclusions made in a .gitignore.
 
    Migration plan:
    - print a deprecation notice if an ':include' directive is found in the
-     root .semgrepignore.
+     root ignore file.
    - stay silent otherwise: this is problematic only in the case of a
-     .semgrepignore that doesn't include the .gitignore explicitly and
+     ignore file that doesn't include the .gitignore explicitly and
      contains fewer exclusions that the .gitignore. The new behavior will
      exclude more files than before.
 
    Questions:
-   - Do some people really run semgrep on purpose on files that are excluded
+   - Do some people really run opengrep on purpose on files that are excluded
      from source control?
      (we need to answer this to figure out the consequences of the migration
      plan)
@@ -49,7 +52,7 @@ type exclusion_mechanism = {
 }
 
 (*
-   The default semgrepignore used when no .semgrepignore exists
+   The default semgrepignore used when no ignore file exists
    at the project root (osemgrep) or in the current folder (legacy pysemgrep).
 
    It was copied from templates/.semgrepignore in the Python source.
@@ -102,8 +105,7 @@ let contents_of_builtin_semgrepignore = function
   | Semgrep_scan_legacy -> default_semgrepignore_for_semgrep_scan
 
 let create ?(cli_patterns = []) ?(semgrepignore_filename = None)
-    ~default_semgrepignore_patterns
-    ~exclusion_mechanism ~project_root () =
+    ~default_semgrepignore_patterns ~exclusion_mechanism ~project_root () =
   let root_anchor = Glob.Pattern.root_pattern in
   let default_patterns =
     Parse_gitignore.from_string ~name:"default semgrepignore patterns"
@@ -137,7 +139,7 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = None)
     | Some filename ->
         {
           Gitignore.source_kind = "semgrepignore";
-          filename = filename;
+          filename;
           format = Gitignore.Legacy_semgrepignore;
         }
     | None -> semgrepignore_files
@@ -147,12 +149,13 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = None)
     (* order matters: first gitignore then semgrepignore *)
     (if exclusion_mechanism.use_gitignore_files then [ gitignore_files ] else [])
     @
-    if exclusion_mechanism.use_semgrepignore_files then [ custom_semgrepignore_files ]
+    if exclusion_mechanism.use_semgrepignore_files then
+      [ custom_semgrepignore_files ]
     else []
   in
 
   (*
-     If custom semgrepignore file is provided, check if it exists.
+     If a custom semgrepignore file is provided, check if it exists.
      Otherwise, check for the default .semgrepignore file.
   *)
   let root_semgrepignore_exists =

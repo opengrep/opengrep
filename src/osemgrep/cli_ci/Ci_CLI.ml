@@ -186,15 +186,16 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
       json json_outputs junit_xml junit_xml_outputs matching_explanations
       max_chars_per_line max_lines_per_finding max_log_list_entries
       max_memory_mb max_target_bytes metrics num_jobs no_secrets_validation
-      nosem optimizations oss output output_enclosing_context pro pro_intrafile pro_lang
-      pro_path_sensitive rewrite_rule_ids sarif sarif_outputs
+      nosem optimizations oss output output_enclosing_context pro pro_intrafile
+      pro_lang pro_path_sensitive rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions secrets text text_outputs timeout
-      _timeout_interfileTODO timeout_threshold (* trace trace_endpoint *) use_git
-      version_check vim vim_outputs =
+      _timeout_interfileTODO timeout_threshold
+      (* trace trace_endpoint *) use_git version_check vim vim_outputs =
     if output_enclosing_context && not json then
       Logs.warn (fun m ->
           m
-            "The --output-enclosing-context option has no effect without --json.");
+            "The --output-enclosing-context option has no effect without \
+             --json.");
     let output_format : Output_format.t =
       Scan_CLI.output_format_conf ~text ~files_with_matches ~json ~emacs ~vim
         ~sarif ~gitlab_sast ~gitlab_secrets ~junit_xml
@@ -275,7 +276,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
       }
     in
     let matching_conf =
-      {Match_patterns.track_enclosing_context = output_enclosing_context}
+      { Match_patterns.track_enclosing_context = output_enclosing_context }
     in
     (* warnings.
      * ugly: TODO: remove the Default guard once we get the warning message
@@ -337,12 +338,14 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
     $ SC.o_max_lines_per_finding $ SC.o_max_log_list_entries
     $ SC.o_max_memory_mb $ SC.o_max_target_bytes $ SC.o_metrics $ SC.o_num_jobs
     $ SC.o_no_secrets_validation $ SC.o_nosem $ SC.o_optimizations $ SC.o_oss
-    $ SC.o_output $ SC.o_output_enclosing_context $ SC.o_pro $ SC.o_pro_intrafile $ SC.o_pro_languages
-    $ SC.o_pro_path_sensitive $ SC.o_rewrite_rule_ids $ SC.o_sarif
-    $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ SC.o_secrets
-    $ SC.o_text $ SC.o_text_outputs $ SC.o_timeout $ SC.o_timeout_interfile
-    $ SC.o_timeout_threshold $ (* SC.o_trace $ SC.o_trace_endpoint $ *) SC.o_use_git
-    $ SC.o_version_check $ SC.o_vim $ SC.o_vim_outputs)
+    $ SC.o_output $ SC.o_output_enclosing_context $ SC.o_pro
+    $ SC.o_pro_intrafile $ SC.o_pro_languages $ SC.o_pro_path_sensitive
+    $ SC.o_rewrite_rule_ids $ SC.o_sarif $ SC.o_sarif_outputs
+    $ SC.o_scan_unknown_extensions $ SC.o_secrets $ SC.o_text
+    $ SC.o_text_outputs $ SC.o_timeout $ SC.o_timeout_interfile
+    $ SC.o_timeout_threshold
+    $ (* SC.o_trace $ SC.o_trace_endpoint $ *)
+    SC.o_use_git $ SC.o_version_check $ SC.o_vim $ SC.o_vim_outputs)
 
 (*************************************************************************)
 (* Turn argv into conf *)
@@ -354,12 +357,12 @@ let cmdline_term : conf Term.t =
    * it below so we can get a nice man page documenting those environment
    * variables (Romain's idea).
    *)
-  let combine scan_conf audit_on (* code secrets *) dry_run _internal_ci_scan_results
-      _x_dump_n_rule_partitions _x_dump_rule_partitions_dir
-      x_merge_partial_results_dir x_merge_partial_results_output
-      _x_partial_config _x_partial_output x_validate_partial_results_actual
-      x_validate_partial_results_expected subdir (*  supply_chain *) suppress_errors
-      _git_meta _github_meta =
+  let combine scan_conf audit_on (* code secrets *) dry_run
+      _internal_ci_scan_results _x_dump_n_rule_partitions
+      _x_dump_rule_partitions_dir x_merge_partial_results_dir
+      x_merge_partial_results_output _x_partial_config _x_partial_output
+      x_validate_partial_results_actual x_validate_partial_results_expected
+      subdir (*  supply_chain *) suppress_errors _git_meta _github_meta =
     {
       scan_conf;
       audit_on;
@@ -380,14 +383,13 @@ let cmdline_term : conf Term.t =
     }
   in
   Term.(
-    const combine $ scan_subset_cmdline_term $ o_audit_on
-    $ o_dry_run $ o_internal_ci_scan_results
-    $ o_x_dump_n_rule_partitions $ o_x_dump_rule_partitions_dir
-    $ o_x_merge_partial_results_dir $ o_x_merge_partial_results_output
-    $ o_x_partial_config $ o_x_partial_output
+    const combine $ scan_subset_cmdline_term $ o_audit_on $ o_dry_run
+    $ o_internal_ci_scan_results $ o_x_dump_n_rule_partitions
+    $ o_x_dump_rule_partitions_dir $ o_x_merge_partial_results_dir
+    $ o_x_merge_partial_results_output $ o_x_partial_config $ o_x_partial_output
     $ o_x_validate_partial_results_actual
-    $ o_x_validate_partial_results_expected $ o_subdir
-    $ o_suppress_errors $ Git_metadata.env $ Github_metadata.env)
+    $ o_x_validate_partial_results_expected $ o_subdir $ o_suppress_errors
+    $ Git_metadata.env $ Github_metadata.env)
 
 let doc = "the recommended way to run opengrep in CI"
 

@@ -253,11 +253,14 @@ CHANGE OR DISAPPEAR WITHOUT NOTICE.
   in
   Arg.value (Arg.flag info)
 
-let o_semgrepignore_filename : string option Term.t =
+let x_semgrepignore_filename : string option Term.t =
   let info =
-    Arg.info [ "semgrepignore-filename" ]
+    Arg.info
+      [ "ignore-config" ]
       ~doc:
-        {|Specify a custom file to use as .semgrepignore instead of the default.|}
+        {|Specify a custom ignore configuration file instead of the default.
+This option allows using a custom file for ignoring files during scanning.
+REQUIRES --experimental|}
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
@@ -615,7 +618,9 @@ let o_gitlab_secrets_outputs =
 let o_junit_xml_outputs = make_o_format_outputs ~fancy:"JUnit XML" "junit-xml"
 
 let o_output_enclosing_context : bool Term.t =
-  H.negatable_flag [ "output-enclosing-context" ] ~neg_options:[ "no-output-enclosing-context" ]
+  H.negatable_flag
+    [ "output-enclosing-context" ]
+    ~neg_options:[ "no-output-enclosing-context" ]
     ~default:Match_patterns.default_matching_conf.track_enclosing_context
     ~doc:
       {|Include information about the syntactic context of the matched fragments of code, such as the function or the class in which the match is defined.|}
@@ -1303,35 +1308,35 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
      of the corresponding '$ o_xx $' further below!
   *)
-  let combine allow_local_builds allow_untrusted_validators autofix baseline_commit
-      common config dataflow_traces diff_depth dryrun dump_ast
+  let combine allow_local_builds allow_untrusted_validators autofix
+      baseline_commit common config dataflow_traces diff_depth dryrun dump_ast
       dump_command_for_core dump_engine_path emacs emacs_outputs error exclude
       exclude_minified_files exclude_rule_ids files_with_matches force_color
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
-      _historical_secrets include_ incremental_output json json_outputs junit_xml
-      junit_xml_outputs lang matching_explanations max_chars_per_line
+      _historical_secrets include_ incremental_output json json_outputs
+      junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_memory_mb max_target_bytes
       metrics num_jobs no_secrets_validation nosem optimizations oss output
-      output_enclosing_context pattern pro project_root pro_intrafile pro_languages
-      pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
-      scan_unknown_extensions secrets severity show_supported_languages strict
-      target_roots test test_ignore_todo text text_outputs time timeout
-      _timeout_interfile timeout_threshold use_git validate
-      version version_check vim vim_outputs x_ignore_semgrepignore_files x_ls
-      x_ls_long
-      o_semgrepignore_filename =
+      output_enclosing_context pattern pro project_root pro_intrafile
+      pro_languages pro_path_sensitive remote replacement rewrite_rule_ids sarif
+      sarif_outputs scan_unknown_extensions secrets severity
+      show_supported_languages strict target_roots test test_ignore_todo text
+      text_outputs time timeout _timeout_interfile timeout_threshold use_git
+      validate version version_check vim vim_outputs
+      x_ignore_semgrepignore_files x_ls x_ls_long x_semgrepignore_filename =
     (* Print a warning if any of the internal or experimental options.
        We don't want users to start relying on these. *)
-    if x_ignore_semgrepignore_files || x_ls || x_ls_long then
+    if x_ignore_semgrepignore_files || x_ls || x_ls_long || x_semgrepignore_filename <> None then
       Logs.warn (fun m ->
           m
             "!!! You're using one or more options starting with '--x-'. These \
-             options are not part of the opengrep API. They will change or will \
-             be removed without notice !!! ");
+             options are not part of the opengrep API. They will change or \
+             will be removed without notice !!! ");
     if output_enclosing_context && not json then
       Logs.warn (fun m ->
           m
-            "The --output-enclosing-context option has no effect without --json.");
+            "The --output-enclosing-context option has no effect without \
+             --json.");
     let target_roots, imply_always_select_explicit_targets =
       replace_target_roots_by_regular_files_where_needed caps
         ~experimental:(common.CLI_common.maturity =*= Maturity.Experimental)
@@ -1419,7 +1424,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       {
         force_project_root;
         force_novcs_project;
-        exclude = exclude;
+        exclude;
         include_;
         baseline_commit;
         diff_depth;
@@ -1430,7 +1435,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         respect_gitignore;
         respect_semgrepignore_files = not x_ignore_semgrepignore_files;
         exclude_minified_files;
-        semgrepignore_filename = o_semgrepignore_filename;
+        semgrepignore_filename = x_semgrepignore_filename;
       }
     in
     let rule_filtering_conf : Rule_filtering.conf =
@@ -1495,7 +1500,9 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       else if x_ls then (true, Ls_subcommand.default_format)
       else (false, Ls_subcommand.default_format)
     in
-    let matching_conf = {Match_patterns.track_enclosing_context = output_enclosing_context} in
+    let matching_conf =
+      { Match_patterns.track_enclosing_context = output_enclosing_context }
+    in
     {
       rules_source;
       target_roots;
@@ -1523,7 +1530,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       allow_local_builds;
       ls;
       ls_format;
-      semgrepignore_filename = o_semgrepignore_filename;
+      semgrepignore_filename = x_semgrepignore_filename;
     }
   in
   (* Term defines 'const' but also the '$' operator *)
@@ -1542,15 +1549,16 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_memory_mb $ o_max_target_bytes $ o_metrics
     $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_optimizations $ o_oss
-    $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root $ o_pro_intrafile
-    $ o_pro_languages $ o_pro_path_sensitive $ o_remote $ o_replacement
-    $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
-    $ o_secrets $ o_severity $ o_show_supported_languages $ o_strict
-    $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
-    $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
-    $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate
-    $ o_version $ o_version_check $ o_vim $ o_vim_outputs
-    $ o_ignore_semgrepignore_files $ o_ls $ o_ls_long $ o_semgrepignore_filename)
+    $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root
+    $ o_pro_intrafile $ o_pro_languages $ o_pro_path_sensitive $ o_remote
+    $ o_replacement $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs
+    $ o_scan_unknown_extensions $ o_secrets $ o_severity
+    $ o_show_supported_languages $ o_strict $ o_target_roots $ o_test
+    $ Test_CLI.o_test_ignore_todo $ o_text $ o_text_outputs $ o_time $ o_timeout
+    $ o_timeout_interfile $ o_timeout_threshold
+    $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate $ o_version
+    $ o_version_check $ o_vim $ o_vim_outputs $ o_ignore_semgrepignore_files
+    $ o_ls $ o_ls_long $ x_semgrepignore_filename)
 
 let doc = "run opengrep rules on files"
 

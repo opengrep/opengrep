@@ -1,8 +1,8 @@
 (*
-   Parse and interpret '.semgrepignore' files in addition to '.gitignore'
+   Parse and interpret ignore configuration files in addition to '.gitignore'
    files.
 
-   The patterns they contain specify file paths to exclude from Semgrep scans.
+   The patterns they contain specify file paths to exclude from Opengrep scans.
 
    See the ml file for compatibility issues.
 *)
@@ -24,9 +24,9 @@ type exclusion_mechanism = {
 (*
    Initialize the data used to filter paths.
    The project_root path must exist. It is used to
-   locate .gitignore and .semgrepignore files.
+   locate .gitignore and ignore configuration files.
 
-   This is an instantiation of Gitignore_filter.t specific to Semgrep.
+   This is an instantiation of Gitignore_filter.t specific to Opengrep.
 
    Use Git_project.find_project_root to determine the root of the
    git project.
