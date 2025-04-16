@@ -21,7 +21,7 @@ let t = Testo.create
    Similar to Unit_gitignore.test_filter, but using Semgrepignore.create
    and the includes/excludes extra parameters.
 *)
-let test_filter ?excludes:cli_patterns (files : F.t list) selection () =
+let test_filter ?excludes:cli_patterns ?semgrepignore_filename (files : F.t list) selection () =
   F.with_tempdir ~chdir:true (fun root ->
       let files = F.sort files in
       printf "--- All files ---\n";
@@ -31,7 +31,7 @@ let test_filter ?excludes:cli_patterns (files : F.t list) selection () =
       assert (files2 = files);
       printf "--- Filtered files ---\n";
       let filter =
-        Semgrepignore.create ?cli_patterns ~default_semgrepignore_patterns:Empty
+        Semgrepignore.create ?cli_patterns ?semgrepignore_filename ~default_semgrepignore_patterns:Empty
           ~exclusion_mechanism:
             { use_gitignore_files = true; use_semgrepignore_files = true }
           ~project_root:root ()
@@ -134,5 +134,53 @@ let tests =
              ("/a.c", true);
              ("/b/a.ml", false);
              ("/b/a.c", true);
+           ]);
+      t "custom ignore file"
+        (test_filter ~semgrepignore_filename:(Some ".customignore")
+           [ 
+             (* Create a custom ignore file instead of .semgrepignore *)
+             File (".customignore", "*.json\ndocs/");
+             (* Create a regular .semgrepignore that should be ignored *)
+             File (".semgrepignore", "*.ml");
+             file "config.json"; 
+             file "main.ml";
+             dir "docs" [ file "readme.md"; ];
+             dir "src" [ file "data.json"; file "util.ml"; ];
+           ]
+           [
+             (* These should be ignored per the custom ignore file *)
+             ("/config.json", false);
+             ("/docs/readme.md", false);
+             ("/src/data.json", false);
+             
+             (* These should NOT be ignored since .semgrepignore is not used *)
+             ("/main.ml", true);
+             ("/src/util.ml", true);
+           ]);
+      t "custom ignore file with gitignore"
+        (test_filter ~semgrepignore_filename:(Some ".opengrep-ignore")
+           [
+             (* Regular gitignore file that should still be used *)
+             File (".gitignore", "*.txt");
+             
+             (* Custom ignore file instead of .semgrepignore *)
+             File (".opengrep-ignore", "*.json");
+             
+             (* Regular .semgrepignore that should be ignored *)
+             File (".semgrepignore", "*.ml");
+             
+             file "notes.txt";
+             file "config.json";
+             file "main.ml";
+           ]
+           [
+             (* Ignored by gitignore *)
+             ("/notes.txt", false);
+             
+             (* Ignored by custom ignore *)
+             ("/config.json", false);
+             
+             (* Should NOT be ignored since .semgrepignore is not used *)
+             ("/main.ml", true);
            ]);
     ]
