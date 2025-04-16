@@ -21,6 +21,9 @@ jobs:
   build-osx-arm64:
     uses: ./.github/workflows/build-test-osx-arm64.yml
 
+  build-osx-x86:
+    uses: ./.github/workflows/build-test-osx-x86.yml
+
   build-windows-x86:
     uses: ./.github/workflows/build-test-windows-x86.yml
 
@@ -48,10 +51,14 @@ jobs:
     needs: build-osx-arm64
     uses: ./.github/workflows/build-osx-binary-arm64.yml
 
+  build-osx-binary-x86:
+    needs: build-osx-x86
+    uses: ./.github/workflows/build-osx-binary-x86.yml
+
   build-windows-binary-x86:
     needs: build-windows-x86
     uses: ./.github/workflows/build-windows-binary-x86.yml
-    
+
   release:
     runs-on: ubuntu-latest
 
@@ -64,6 +71,8 @@ jobs:
       - build-musllinux-binary-aarch64
       - build-osx-arm64 # redundant
       - build-osx-binary-arm64
+      - build-osx-x86 # redundant
+      - build-osx-binary-x86
       - build-windows-x86 # redundant
       - build-windows-binary-x86
 
@@ -104,6 +113,10 @@ jobs:
           pushd opengrep_osx_binary_arm64; mv opengrep opengrep_osx_arm64; popd
           ls -l opengrep_osx_binary_arm64
 
+          unzip ./opengrep_osx_binary_x86/opengrep.zip -d ./opengrep_osx_binary_x86
+          pushd opengrep_osx_binary_x86; mv opengrep opengrep_osx_x86; popd
+          ls -l opengrep_osx_binary_x86
+
           pushd opengrep_windows_binary_x86; mv opengrep.exe opengrep_windows_x86.exe; popd
 
           popd
@@ -123,6 +136,7 @@ jobs:
             artifacts/opengrep_musllinux_binary_x86_64/opengrep_musllinux_x86
             artifacts/opengrep_musllinux_binary_aarch64/opengrep_musllinux_aarch64
             artifacts/opengrep_osx_binary_arm64/opengrep_osx_arm64
+            artifacts/opengrep_osx_binary_x86/opengrep_osx_x86
             artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
