@@ -137,12 +137,12 @@ let tests =
            ]);
       t "custom ignore file"
         (test_filter ~semgrepignore_filename:(Some ".customignore")
-           [ 
+           [
              (* Create a custom ignore file instead of .semgrepignore *)
              File (".customignore", "*.json\ndocs/");
              (* Create a regular .semgrepignore that should be ignored *)
              File (".semgrepignore", "*.ml");
-             file "config.json"; 
+             file "config.json";
              file "main.ml";
              dir "docs" [ file "readme.md"; ];
              dir "src" [ file "data.json"; file "util.ml"; ];
@@ -152,7 +152,7 @@ let tests =
              ("/config.json", false);
              ("/docs/readme.md", false);
              ("/src/data.json", false);
-             
+
              (* These should NOT be ignored since .semgrepignore is not used *)
              ("/main.ml", true);
              ("/src/util.ml", true);
@@ -162,13 +162,13 @@ let tests =
            [
              (* Regular gitignore file that should still be used *)
              File (".gitignore", "*.txt");
-             
+
              (* Custom ignore file instead of .semgrepignore *)
              File (".opengrep-ignore", "*.json");
-             
+
              (* Regular .semgrepignore that should be ignored *)
              File (".semgrepignore", "*.ml");
-             
+
              file "notes.txt";
              file "config.json";
              file "main.ml";
@@ -176,10 +176,10 @@ let tests =
            [
              (* Ignored by gitignore *)
              ("/notes.txt", false);
-             
+
              (* Ignored by custom ignore *)
              ("/config.json", false);
-             
+
              (* Should NOT be ignored since .semgrepignore is not used *)
              ("/main.ml", true);
            ]);
