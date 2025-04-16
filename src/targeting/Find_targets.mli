@@ -75,6 +75,7 @@ type conf = {
   (* TODO: not used for now *)
   baseline_commit : string option;
   diff_depth : int;
+  semgrepignore_filename : string option;
 }
 [@@deriving show]
 

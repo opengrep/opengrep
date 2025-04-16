@@ -101,7 +101,8 @@ let contents_of_builtin_semgrepignore = function
   | Empty -> ""
   | Semgrep_scan_legacy -> default_semgrepignore_for_semgrep_scan
 
-let create ?(cli_patterns = []) ~default_semgrepignore_patterns
+let create ?(cli_patterns = []) ?(semgrepignore_filename = None)
+    ~default_semgrepignore_patterns
     ~exclusion_mechanism ~project_root () =
   let root_anchor = Glob.Pattern.root_pattern in
   let default_patterns =
@@ -129,24 +130,39 @@ let create ?(cli_patterns = []) ~default_semgrepignore_patterns
       patterns = cli_patterns;
     }
   in
+
+  (* If a custom semgrepignore filename is provided, use it instead of the default *)
+  let custom_semgrepignore_files =
+    match semgrepignore_filename with
+    | Some filename ->
+        {
+          Gitignore.source_kind = "semgrepignore";
+          filename = filename;
+          format = Gitignore.Legacy_semgrepignore;
+        }
+    | None -> semgrepignore_files
+  in
+
   let kinds_of_ignore_files_to_consult =
     (* order matters: first gitignore then semgrepignore *)
     (if exclusion_mechanism.use_gitignore_files then [ gitignore_files ] else [])
     @
-    if exclusion_mechanism.use_semgrepignore_files then [ semgrepignore_files ]
+    if exclusion_mechanism.use_semgrepignore_files then [ custom_semgrepignore_files ]
     else []
   in
-  (*
-     Check if there is a top-level '.semgrepignore'. If not, use builtins.
 
-     We don't check for '.semgrepignore' down the tree, so if a user needs
-     to override the default semgrepignore rules, they need at least an
-     empty root '.semgrepignore' file.
+  (*
+     If custom semgrepignore file is provided, check if it exists.
+     Otherwise, check for the default .semgrepignore file.
   *)
   let root_semgrepignore_exists =
-    let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
-    let semgrepignore_path = Fpath.add_seg root_dir ".semgrepignore" in
-    Sys.file_exists (Fpath.to_string semgrepignore_path)
+    match semgrepignore_filename with
+    | Some filename ->
+        Sys.file_exists filename
+    | None ->
+        let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
+        let semgrepignore_path = Fpath.add_seg root_dir ".semgrepignore" in
+        Sys.file_exists (Fpath.to_string semgrepignore_path)
   in
 
   (*

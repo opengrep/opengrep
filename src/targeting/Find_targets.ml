@@ -212,6 +212,7 @@ type conf = {
   (* TODO? remove it? This is now done in Diff_scan.ml instead? *)
   baseline_commit : string option;
   diff_depth : int;
+  semgrepignore_filename : string option;
 }
 [@@deriving show]
 
@@ -236,6 +237,7 @@ let default_conf : conf =
     exclude_minified_files = false;
     baseline_commit = None;
     diff_depth = 2;
+    semgrepignore_filename = None;
   }
 
 (*************************************************************************)
@@ -726,6 +728,7 @@ let setup_path_filters conf (project_roots : Project.roots) :
    *)
   let semgrepignore_filter =
     Semgrepignore.create ~cli_patterns:conf.exclude
+      ~semgrepignore_filename:conf.semgrepignore_filename
       ~default_semgrepignore_patterns:Semgrep_scan_legacy ~exclusion_mechanism
       ~project_root:(Rfpath.to_fpath project_root)
       ()

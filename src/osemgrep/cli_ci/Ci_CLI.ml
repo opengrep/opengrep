@@ -263,6 +263,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         respect_gitignore = use_git;
         respect_semgrepignore_files = not ignore_semgrepignore_files;
         exclude_minified_files;
+        semgrepignore_filename = None;
       }
     in
     let rule_filtering_conf =
@@ -315,6 +316,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         allow_local_builds;
         ls = false;
         ls_format = Ls_subcommand.default_format;
+        semgrepignore_filename = None;
       }
   in
   (* Term defines 'const' but also the '$' operator *)
@@ -378,13 +380,13 @@ let cmdline_term : conf Term.t =
     }
   in
   Term.(
-    const combine $ scan_subset_cmdline_term $ o_audit_on 
+    const combine $ scan_subset_cmdline_term $ o_audit_on
     $ o_dry_run $ o_internal_ci_scan_results
     $ o_x_dump_n_rule_partitions $ o_x_dump_rule_partitions_dir
     $ o_x_merge_partial_results_dir $ o_x_merge_partial_results_output
     $ o_x_partial_config $ o_x_partial_output
     $ o_x_validate_partial_results_actual
-    $ o_x_validate_partial_results_expected $ o_subdir 
+    $ o_x_validate_partial_results_expected $ o_subdir
     $ o_suppress_errors $ Git_metadata.env $ Github_metadata.env)
 
 let doc = "the recommended way to run opengrep in CI"
