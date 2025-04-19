@@ -44,6 +44,7 @@ let rule_id_re_str = {|(?:[:=][\s]?(?P<ids>([^,\s](?:[,\s]+)?)+))?|}
    ' nosemgrep: example-pattern-id'
    ' nosem: pattern-id1,pattern-id2'
    ' NOSEMGREP:pattern-id1,pattern-id2'
+   ' noopengrep: example-pattern-id' (if --opengrep-ignore-pattern=noopengrep is set)
 
    * We do not want to capture the ': ' that follows 'nosem'
    * We do not care about the casing of 'nosem'
@@ -52,8 +53,26 @@ let rule_id_re_str = {|(?:[:=][\s]?(?P<ids>([^,\s](?:[,\s]+)?)+))?|}
      Python comments that begin with '# '
    * nosem and nosemgrep should be interchangeable
 *)
-let nosem_inline_re_str = {| nosem(?:grep)?|} ^ rule_id_re_str
-let nosem_inline_re = Pcre2_.regexp nosem_inline_re_str ~flags:[ `CASELESS ]
+
+let get_nosem_pattern_choices () =
+  let patterns =
+    match !Flag_semgrep.custom_ignore_pattern with
+    | None -> ["nosem"; "nosemgrep"]
+    | Some pattern -> [pattern]  (* Now only using the custom pattern *)
+  in
+  let pattern_str = patterns
+    |> List.map (fun p -> "\\b" ^ p ^ "\\b")
+    |> String.concat "|"
+  in
+  (* nosemgrep: no-logs-in-library *)
+  Logs.debug (fun m -> m "Using dynamic patterns: %s (custom pattern: %s)"
+    pattern_str
+    (match !Flag_semgrep.custom_ignore_pattern with None -> "None" | Some p -> p));
+  pattern_str
+
+let get_nosem_inline_re () =
+  let pattern_str = {| |} ^ "(?:" ^ get_nosem_pattern_choices () ^ ")" ^ rule_id_re_str in
+  Pcre2_.regexp pattern_str ~flags:[ `CASELESS ]
 
 (*
    A nosemgrep comment alone on its line.
@@ -67,10 +86,9 @@ let nosem_inline_re = Pcre2_.regexp nosem_inline_re_str ~flags:[ `CASELESS ]
      # nosemgrep
      print('nosemgrep');
 *)
-let nosem_previous_line_re =
-  Pcre2_.regexp
-    ({|^[^a-zA-Z0-9]* nosem(?:grep)?|} ^ rule_id_re_str)
-    ~flags:[ `CASELESS ]
+let get_nosem_previous_line_re () =
+  let pattern_str = {|^[^a-zA-Z0-9]*\s*|} ^ "(?:" ^ get_nosem_pattern_choices () ^ ")" in
+  Pcre2_.regexp (pattern_str ^ rule_id_re_str) ~flags:[ `CASELESS ]
 
 (*****************************************************************************)
 (* Helpers *)
@@ -137,6 +155,10 @@ let rule_match_nosem (pm : Core_match.t) : bool * Core_error.t list =
   in
 
   let no_ids = List.for_all Option.is_none in
+
+  (* Get the regexes fresh each time to ensure we use the latest custom pattern *)
+  let nosem_inline_re = get_nosem_inline_re () in
+  let nosem_previous_line_re = get_nosem_previous_line_re () in
 
   let ids_line =
     match line with

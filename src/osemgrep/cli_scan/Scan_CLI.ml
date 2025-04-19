@@ -496,6 +496,15 @@ let o_nosem : bool Term.t =
       {|Enables 'nosem'. Findings will not be reported on lines containing
           a 'nosem' comment at the end. Enabled by default.|}
 
+let o_opengrep_ignore_pattern : string option Term.t =
+  let info =
+    Arg.info [ "opengrep-ignore-pattern" ]
+      ~doc:
+        {|Set a custom pattern to replace the default 'nosem' and 'nosemgrep' prefixes for comments to be ignored by opengrep.
+          For example, use '--opengrep-ignore-pattern=noopengrep' to make opengrep only recognize lines with 'noopengrep' comments instead of 'nosem' or 'nosemgrep'.|}
+  in
+  Arg.value (Arg.opt Arg.(some string) None info)
+
 let o_output : string option Term.t =
   let info =
     Arg.info [ "o"; "output" ]
@@ -1301,7 +1310,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       _historical_secrets include_ incremental_output json json_outputs
       junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_memory_mb max_target_bytes
-      metrics num_jobs no_secrets_validation nosem optimizations oss output output_enclosing_context
+      metrics num_jobs no_secrets_validation nosem opengrep_ignore_pattern optimizations oss output output_enclosing_context
       pattern pro project_root pro_intrafile pro_lang pro_path_sensitive remote
       replacement rewrite_rule_ids sarif sarif_outputs scan_unknown_extensions
       secrets severity show_supported_languages strict target_roots test
@@ -1317,6 +1326,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
             "!!! You're using one or more options starting with '--x-'. These \
              options are not part of the opengrep API. They will change or will \
              be removed without notice !!! ");
+
+    (* Set the custom ignore pattern if specified *)
+    Flag_semgrep.custom_ignore_pattern := opengrep_ignore_pattern;
+
     if output_enclosing_context && not json then
       Logs.warn (fun m ->
           m
@@ -1528,7 +1541,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_memory_mb $ o_max_target_bytes $ o_metrics
-    $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_optimizations $ o_oss
+    $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations $ o_oss
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root $ o_pro_intrafile
     $ o_pro_languages $ o_pro_path_sensitive $ o_remote $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions

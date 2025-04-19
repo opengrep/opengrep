@@ -1,7 +1,44 @@
 import pytest
+import tempfile
+from pathlib import Path
 from tests.conftest import _clean_stdout
 from tests.fixtures import RunSemgrep
 
+TEST_CONTENT = """
+function test() {
+    // This should be ignored by default patterns
+    if (x == y) { // nosem
+        console.log("Equal");
+    }
+
+    if (a == b) { // nosemgrep
+        console.log("Also equal");
+    }
+}
+"""
+
+TEST_CONTENT_WITH_CUSTOM = """
+function test() {
+    // This should NOT be ignored by default patterns
+    if (x == y) { // nosem
+        console.log("Equal");
+    }
+
+    // This should be ignored by the custom pattern
+    if (a == b) { // mycustom
+        console.log("Also equal");
+    }
+}
+"""
+
+EQEQ_RULE = """
+rules:
+  - id: eqeq-basic
+    pattern: $X == $Y
+    message: "useless comparison"
+    languages: [javascript]
+    severity: ERROR
+"""
 
 @pytest.mark.kinda_slow
 def test_regex_rule__nosemgrep(run_semgrep_in_tmp: RunSemgrep, snapshot):
@@ -44,3 +81,41 @@ def test_nosem_rule__with_disable_nosem(run_semgrep_in_tmp: RunSemgrep, snapshot
         run_semgrep_in_tmp("rules/nosem.yaml", options=["--disable-nosem"]).stdout,
         "results.json",
     )
+
+
+@pytest.mark.kinda_slow
+def test_custom_ignore_pattern(run_semgrep_in_tmp: RunSemgrep, tmp_path: Path, snapshot):
+    # Create temporary files for the test
+    test_file = tmp_path / "test.js"
+    test_file.write_text(TEST_CONTENT)
+    
+    test_file_custom = tmp_path / "test_custom.js"
+    test_file_custom.write_text(TEST_CONTENT_WITH_CUSTOM)
+    
+    rule_file = tmp_path / "rule.yaml"
+    rule_file.write_text(EQEQ_RULE)
+
+    # First run with default patterns (nosem/nosemgrep) - should find nothing due to nosem comments
+    stdout1 = run_semgrep_in_tmp(
+        str(rule_file),
+        target_name=str(test_file)
+    ).stdout
+
+    # Then run with custom pattern that replaces default patterns - should find something 
+    # because it no longer recognizes nosem/nosemgrep
+    stdout2 = run_semgrep_in_tmp(
+        str(rule_file),
+        target_name=str(test_file),
+        options=["--opengrep-ignore-pattern=mycustom"]
+    ).stdout
+
+    # Finally run with code that uses the custom pattern - should find nothing for the mycustom line
+    stdout3 = run_semgrep_in_tmp(
+        str(rule_file),
+        target_name=str(test_file_custom),
+        options=["--opengrep-ignore-pattern=mycustom"]
+    ).stdout
+
+    snapshot.assert_match(stdout1, "results_default.json")
+    snapshot.assert_match(stdout2, "results_custom_pattern.json")
+    snapshot.assert_match(stdout3, "results_with_custom_pattern.json")

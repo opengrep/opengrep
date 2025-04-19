@@ -43,6 +43,25 @@ let equivalence_mode = ref false
 
 let output_enclosing_context = ref false
 
+(* Custom pattern to replace or supplement the default 'nosem' or 'nosemgrep' prefixes
+ * for comments that should be ignored by opengrep. By default this is None, which means
+ * the system will use only the standard 'nosem' or 'nosemgrep' prefixes.
+ *)
+let custom_ignore_pattern : string option ref = ref None
+
+(* The list of patterns to use for ignoring lines. Always includes the standard patterns,
+ * plus any custom pattern that has been set.
+ *)
+let get_ignore_patterns () : string list =
+  (* nosemgrep: no-logs-in-library *)
+  Logs.info (fun m -> m "Custom ignore pattern: %s" 
+    (match !custom_ignore_pattern with 
+     | None -> "None" 
+     | Some pattern -> pattern));
+  match !custom_ignore_pattern with
+  | None -> ["nosem"; "nosemgrep"]
+  | Some pattern -> [pattern]
+
 (* Note that an important flag used during parsing is actually in pfff in
  * Flag_parsing.sgrep_mode
  *)

@@ -65,6 +65,20 @@ class RuleScanSource(Enum):
 
 RULE_ID_RE_STR = r"(?:[:=][\s]?(?P<ids>([^,\s](?:[,\s]+)?)+))?"
 
+# Custom ignore pattern can be set using --opengrep-ignore-pattern option
+# When set, this pattern replaces the default 'nosem' and 'nosemgrep' patterns
+CUSTOM_IGNORE_PATTERN = None
+
+# Function to get the appropriate pattern choice based on custom ignore pattern
+def get_nosem_pattern_choices():
+    """Returns either the custom pattern or the default 'nosem(?:grep)?' pattern"""
+    if CUSTOM_IGNORE_PATTERN:
+        # When custom pattern is set, use only this pattern 
+        return CUSTOM_IGNORE_PATTERN
+    else:
+        # When no custom pattern, use the original pattern
+        return "nosem(?:grep)?"
+
 # Inline 'noqa' implementation modified from flake8:
 # https://github.com/PyCQA/flake8/blob/master/src/flake8/defaults.py
 # We're looking for items that look like this:
@@ -80,7 +94,9 @@ RULE_ID_RE_STR = r"(?:[:=][\s]?(?P<ids>([^,\s](?:[,\s]+)?)+))?"
 #   Python comments that begin with '# '
 # * nosem and nosemgrep should be interchangeable
 #
-NOSEM_INLINE_RE_STR = r" nosem(?:grep)?" + RULE_ID_RE_STR
+
+# Define regex patterns using the pattern choices
+NOSEM_INLINE_RE_STR = r" " + get_nosem_pattern_choices() + RULE_ID_RE_STR
 NOSEM_INLINE_RE = re.compile(NOSEM_INLINE_RE_STR, re.IGNORECASE)
 
 # As a hack adapted from semgrep-agent,
@@ -98,7 +114,7 @@ NOSEM_INLINE_COMMENT_RE = re.compile(rf"[:#/]+{NOSEM_INLINE_RE_STR}$", re.IGNORE
 #   # nosemgrep
 #   print('nosemgrep');
 NOSEM_PREVIOUS_LINE_RE = re.compile(
-    r"^[^a-zA-Z0-9]* nosem(?:grep)?" + RULE_ID_RE_STR,
+    r"^[^a-zA-Z0-9]* " + get_nosem_pattern_choices() + RULE_ID_RE_STR,
     re.IGNORECASE,
 )
 

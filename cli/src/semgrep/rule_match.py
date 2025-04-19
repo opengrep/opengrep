@@ -19,8 +19,8 @@ from attrs import field
 from attrs import frozen
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
-from semgrep.constants import NOSEM_INLINE_COMMENT_RE
 from semgrep.constants import RuleScanSource
+from semgrep.constants import NOSEM_INLINE_COMMENT_RE
 from semgrep.external.pymmh3 import hash128  # type: ignore[attr-defined]
 from semgrep.rule import Rule
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Direct
