@@ -949,6 +949,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
 let scan (caps : < caps ; .. >) (config : Core_scan_config.t) :
     Core_result.result_or_exn =
   try
+    Gc.set { (Gc.get ()) with Gc.space_overhead = 300; };
     let timed_rules =
       Common.with_time (fun () ->
           rules_of_config ~filter_by_targets:true config)

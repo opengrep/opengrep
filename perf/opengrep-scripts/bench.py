@@ -17,12 +17,14 @@ changes_while_running = False
 # (TODO: make some of these cli options?)
 
 repositories = [ ("https://github.com/jellyfin/jellyfin","a0931baa8eb879898f4bc4049176ed3bdb4d80d1")
-               , ("https://github.com/grafana/grafana", "afcb55156260fe1887c4731e6cc4c155cc8281a2")
-               , ("https://gitlab.com/gitlab-org/gitlab", "915627de697e2dd71fe8205853de51ad3794f3ac")
-               , ("https://github.com/Netflix/lemur", "28b9a73a83d350b1c7ab71fdd739d64eec5d06aa")
-               , ("https://github.com/pythongosssss/ComfyUI-Custom-Scripts","943e5cc7526c601600150867a80a02ab008415e7")
+               , ("https://github.com/golang/go","93e3d5dc5f2af317c874fd61cbd354409ea9fd33")
+               , ("https://github.com/rust-lang/rust","0f73f0f3941e6be6b19721548fab4e2bf919a525")
+               #, ("https://github.com/grafana/grafana", "afcb55156260fe1887c4731e6cc4c155cc8281a2")
+               # , ("https://gitlab.com/gitlab-org/gitlab", "915627de697e2dd71fe8205853de51ad3794f3ac")
+               #, ("https://github.com/Netflix/lemur", "28b9a73a83d350b1c7ab71fdd739d64eec5d06aa")
+               #, ("https://github.com/pythongosssss/ComfyUI-Custom-Scripts","943e5cc7526c601600150867a80a02ab008415e7")
                , ("https://github.com/pmd/pmd", "81739da5caff948dbcd2136c17532b65c726c781")
-               , ("https://github.com/square/leakcanary", "bf5086da26952e3627f18865bb232963e4d019c5")
+               #, ("https://github.com/square/leakcanary", "bf5086da26952e3627f18865bb232963e4d019c5")
                ]
 
 def regular_cmd(repo):
@@ -41,7 +43,7 @@ def _python_cmd(repo):
     return ["pipenv", "run", "opengrep",
             "scan", "-c", "rules", repo, "-j", num_cpus]
 
-repeat_each_test_n_times = 5
+repeat_each_test_n_times = 2
 
 # Implementation
 
