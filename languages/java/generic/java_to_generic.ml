@@ -244,6 +244,18 @@ and literal = function
       let v1 = wrap bool v1 in
       G.Bool v1
 
+(* AST generic does not contain a bracket for a call of an infix operation,
+ * so the parentheses on the outside of an infix expression are not taken
+ * into account if range is calculated based on the tokens inside (as is
+ * the case here). Hence, we "manually" fix the range based on the '(' and ')'
+ * tokens, before they are lost in the translation to AST generic. *)
+and adjust_range_of_parenthesized_expr (orig : expr) (e : G.expr) : G.expr =
+  (match orig with
+   | Paren (t1, _, t2) ->
+       e.e_range <- Some (Tok.unsafe_loc_of_tok t1, Tok.unsafe_loc_of_tok t2);
+   | _ -> ());
+  e
+
 and expr e =
   (match e with
   | This t -> G.IdSpecial (G.This, t)
@@ -263,6 +275,7 @@ and expr e =
   | Literal v1 ->
       let v1 = literal v1 in
       G.L v1
+  | Paren (_v1, v2, _v3) -> (expr v2).e
   | ClassLiteral (v1, v2) ->
       let v1 = typ v1 in
       G.OtherExpr (("ClassLiteral", v2), [ G.T v1 ])
@@ -392,6 +405,7 @@ and expr e =
       let x = G.stmt_to_expr (G.Switch (v0, Some (Cond v1), v2) |> G.s) in
       x.G.e)
   |> G.e
+  |> adjust_range_of_parenthesized_expr e
 
 and class_parent v : G.class_parent =
   let v = ref_type v in

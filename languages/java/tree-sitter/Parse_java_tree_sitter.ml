@@ -525,7 +525,7 @@ and primary_expression (env : env) (x : CST.primary_expression) =
       | `This tok -> This (token env tok) (* "this" *)
       | `Id tok -> name_of_id env tok (* pattern [a-zA-Z_]\w* *)
       | `Choice_open x -> choice_open env name_of_id x
-      | `Paren_exp x -> parenthesized_expression env x
+      | `Paren_exp x -> parenthesized_expression ~keep_parens:true env x
       | `Obj_crea_exp x -> object_creation_expression env x
       | `Field_access x -> (
           let e = field_access env x in
@@ -622,12 +622,20 @@ and dimensions (env : env) (xs : CST.dimensions) =
       (v2, (), v3))
     xs
 
-and parenthesized_expression (env : env)
+(* TODO: Java AST is inconsequential about which tokens to keep,
+ * which makes the produced ranges unreliable. We fix it step-by-step
+ * in places where it could lead to problems with reporting of
+ * matches, so we let the user of this function forget the parens
+ * (which is actually the default) if they have nowhere to put them
+ * in the AST at the moment. *)
+and parenthesized_expression ?(keep_parens=false) (env : env)
     ((v1, v2, v3) : CST.parenthesized_expression) =
-  let _v1 = token env v1 (* "(" *) in
+  let v1 = token env v1 (* "(" *) in
   let v2 = expression env v2 in
-  let _v3 = token env v3 (* ")" *) in
-  v2
+  let v3 = token env v3 (* ")" *) in
+  if keep_parens
+      then Paren (v1, v2, v3)
+      else v2
 
 and object_creation_expression (env : env) (x : CST.object_creation_expression)
     =

@@ -535,7 +535,7 @@ primary:
 primary_no_new_array:
  | literal                            { $1 }
  | THIS                               { This $1 }
- | "(" expression ")"                 { $2 }
+ | "(" expression ")"                 { Paren ($1, $2, $3) }
  | class_instance_creation_expression { $1 }
  | field_access                       { $1 }
  | method_invocation                  { $1 }

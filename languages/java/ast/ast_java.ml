@@ -183,6 +183,7 @@ and expr =
   (* This is used only in the context of annotations *)
   | NameOrClassType of name_or_class_type
   | Literal of literal
+  | Paren of Tok.t * expr * Tok.t
   (* Xxx.class *)
   | ClassLiteral of typ * Tok.t (* 'class' *)
   (* tree-sitter-only: not that ident can be the special "new" *)
