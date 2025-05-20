@@ -16,6 +16,5 @@ val produce_ignored :
 *)
 val filter_ignored :
   keep_ignored:bool ->
-  ?config:Engine_config.t ->
   Semgrep_output_v1_t.core_match list ->
   Semgrep_output_v1_t.core_match list

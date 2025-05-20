@@ -493,12 +493,12 @@ let trim_core_match_fix (r : Out.core_match) =
   let extra = { r.extra with fix } in
   { r with extra }
 
-let adjust_nosemgrep_and_autofix ~keep_ignored ~engine_config (res : Core_runner.result) :
+let adjust_nosemgrep_and_autofix ~keep_ignored (res : Core_runner.result) :
     Core_runner.result =
   let filtered_matches =
     res.core.results
     |> List_.map trim_core_match_fix
-    |> Nosemgrep.filter_ignored ~keep_ignored ~config:engine_config
+    |> Nosemgrep.filter_ignored ~keep_ignored
   in
   { res with core = { res.core with results = filtered_matches } }
 
@@ -638,7 +638,7 @@ let check_targets_with_rules
             (* --disable-nosem *)
             || Output_format.keep_ignores output_format
           in
-          let res = adjust_nosemgrep_and_autofix ~keep_ignored ~engine_config:conf.core_runner_conf.engine_config res in
+          let res = adjust_nosemgrep_and_autofix ~keep_ignored res in
 
           (* step 4: adjust the skipped_targets *)
           let res = adjust_skipped skipped res in
