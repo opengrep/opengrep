@@ -229,10 +229,16 @@ let mk_file_match_hook (conf : Scan_CLI.conf) (rules : Rule.rules)
      * get something that Matches_report.pp_text_outputs can operate on
      *)
     let pms : Core_match.t list = match_results.matches in
-    let core_matches : Out.core_match list =
+    (* First process matches with the correct engine_config for nosem filtering *)
+    let processed_matches = 
       pms
-      (* OK, because we don't need the postprocessing to report the matches. *)
       |> List_.map Core_result.mk_processed_match
+    in
+    let processed_matches, _errors =
+      Nosemgrep.produce_ignored ~config:conf.core_runner_conf.engine_config processed_matches
+    in
+    let core_matches : Out.core_match list =
+      processed_matches
       |> Result_.partition Core_json_output.match_to_match
       |> fst |> Core_json_output.dedup_and_sort
     in
@@ -487,12 +493,12 @@ let trim_core_match_fix (r : Out.core_match) =
   let extra = { r.extra with fix } in
   { r with extra }
 
-let adjust_nosemgrep_and_autofix ~keep_ignored (res : Core_runner.result) :
+let adjust_nosemgrep_and_autofix ~keep_ignored ~engine_config (res : Core_runner.result) :
     Core_runner.result =
   let filtered_matches =
     res.core.results
     |> List_.map trim_core_match_fix
-    |> Nosemgrep.filter_ignored ~keep_ignored
+    |> Nosemgrep.filter_ignored ~keep_ignored ~config:engine_config
   in
   { res with core = { res.core with results = filtered_matches } }
 
@@ -632,7 +638,7 @@ let check_targets_with_rules
             (* --disable-nosem *)
             || Output_format.keep_ignores output_format
           in
-          let res = adjust_nosemgrep_and_autofix ~keep_ignored res in
+          let res = adjust_nosemgrep_and_autofix ~keep_ignored ~engine_config:conf.core_runner_conf.engine_config res in
 
           (* step 4: adjust the skipped_targets *)
           let res = adjust_skipped skipped res in

@@ -96,12 +96,16 @@ let position_for_experimental_flag argv =
 
 (* TODO[Issue #131]: Add some expectation tests for such functions. *)
 let with_experimental_flag argv =
-  let len = position_for_experimental_flag argv in
-  Array.concat [
-    Array.sub argv 0 len;
-    [| "--experimental" |];
-    Array.sub argv len (Array.length argv - len);
-  ]
+  (* Only add the flag if it's not already present *)
+  if Array.mem "--experimental" argv then
+    argv
+  else
+    let len = position_for_experimental_flag argv in
+    Array.concat [
+      Array.sub argv 0 len;
+      [| "--experimental" |];
+      Array.sub argv len (Array.length argv - len);
+    ]
 
 (* let _ = assert (with_experimental_flag [| "opengrep"; "scan"; "--help" |]
                    = [| "opengrep"; "scan"; "--experimental"; "--help" |])
@@ -109,7 +113,7 @@ let with_experimental_flag argv =
                    = [| "opengrep"; "--experimental"; "-c"; "rules"; "libs" |]) *)
 
 let flags_that_require_experimental : string list =
-  [ "--output-enclosing-context" ]
+  [ "--output-enclosing-context"; "--opengrep-ignore-pattern"; "--incremental-output"; "--files-with-matches" ]
 
 let experimental_flags_error_msg : string =
   "The --experimental option required for the following flags: "

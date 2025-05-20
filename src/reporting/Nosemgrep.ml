@@ -301,7 +301,12 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
   in
   (matches, List_.flatten wide_errors)
 
-let filter_ignored ~keep_ignored (matches : OutJ.core_match list) =
+let filter_ignored ~keep_ignored ?(config=Engine_config.default) (matches : OutJ.core_match list) =
+  (* Note: config is not used directly here since filter_ignored acts on 
+   * already processed matches that have the is_ignored field set.
+   * The config parameter exists for consistency with the produce_ignored function.
+   *)
+  let [@warning "-27"] _unused = config in
   matches
   |> List.filter (fun (m : OutJ.core_match) ->
          keep_ignored || not m.extra.is_ignored)
