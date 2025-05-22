@@ -301,6 +301,15 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
   in
   (matches, List_.flatten wide_errors)
 
+(* Process raw Core_match.t objects to mark them as ignored based on comments.
+ * This is useful for incremental output to handle nosem comments properly.
+ *)
+let process_raw_matches ?(config=Engine_config.default) (matches : Core_match.t list) :
+    Core_result.processed_match list * Core_error.t list =
+  matches
+  |> List_.map Core_result.mk_processed_match
+  |> produce_ignored ~config
+
 let filter_ignored ~keep_ignored (matches : OutJ.core_match list) =
   matches
   |> List.filter (fun (m : OutJ.core_match) ->
