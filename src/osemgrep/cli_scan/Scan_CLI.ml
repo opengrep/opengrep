@@ -51,7 +51,7 @@ type conf = {
   output : string option;
   output_conf : Output.conf;
   incremental_output : bool;
-  enable_ignore : bool;
+  apply_ignore_pattern : bool;
   (* Networking options *)
   metrics : Metrics_.config;
   version_check : bool;
@@ -102,7 +102,7 @@ let default : conf =
     output = None;
     output_conf = Output.default;
     incremental_output = false;
-    enable_ignore = false;
+    apply_ignore_pattern = false;
     rewrite_rule_ids = true;
     matching_conf = Match_patterns.default_matching_conf;
     (* will send metrics only if the user uses the registry or the app *)
@@ -536,9 +536,9 @@ let o_incremental_output : bool Term.t =
   in
   Arg.value (Arg.flag info)
 
-let o_enable_ignore : bool Term.t =
+let o_apply_ignore_pattern : bool Term.t =
   let info =
-    Arg.info [ "enable-ignore" ]
+    Arg.info [ "apply-ignore-pattern" ]
       ~doc:{|When used with --incremental-output, ignore findings with nosem or nosemgrep comments (or custom patterns set with --opengrep-ignore-pattern). Without this flag, all findings are shown.|}
   in
   Arg.value (Arg.flag info)
@@ -1313,7 +1313,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   *)
   let combine allow_local_builds allow_untrusted_validators autofix
       baseline_commit common config dataflow_traces diff_depth dryrun dump_ast
-      dump_command_for_core dump_engine_path emacs emacs_outputs enable_ignore error exclude_
+      dump_command_for_core dump_engine_path emacs emacs_outputs apply_ignore_pattern error exclude_
       exclude_minified_files exclude_rule_ids files_with_matches force_color
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       _historical_secrets include_ incremental_output json json_outputs
@@ -1522,7 +1522,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       output;
       output_conf;
       incremental_output;
-      enable_ignore;
+      apply_ignore_pattern;
       engine_type;
       rewrite_rule_ids;
       matching_conf;
@@ -1547,7 +1547,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_autofix $ o_baseline_commit $ CLI_common.o_common $ o_config
     $ o_dataflow_traces $ o_diff_depth $ o_dryrun $ o_dump_ast
     $ o_dump_command_for_core $ o_dump_engine_path $ o_emacs $ o_emacs_outputs
-    $ o_enable_ignore $ o_error $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
+    $ o_apply_ignore_pattern $ o_error $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
     $ o_files_with_matches $ o_force_color $ o_gitlab_sast
     $ o_gitlab_sast_outputs $ o_gitlab_secrets $ o_gitlab_secrets_outputs
     $ o_historical_secrets $ o_include $ o_incremental_output $ o_json

@@ -254,7 +254,7 @@ let mk_file_match_hook (conf : Scan_CLI.conf) (rules : Rule.rules)
     
     (* Filter out ignored matches if --enable-ignore is set *)
     let matches = 
-      if conf.enable_ignore then
+      if conf.apply_ignore_pattern then
         matches |> List.filter (fun (m : Out.cli_match) -> 
           not (m.extra.is_ignored ||| false))
       else

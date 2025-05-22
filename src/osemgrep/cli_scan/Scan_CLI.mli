@@ -27,7 +27,7 @@ type conf = {
   output_conf : Output.conf;
   (* osemgrep-only: *)
   incremental_output : bool;
-  enable_ignore : bool;
+  apply_ignore_pattern : bool;
   (* Networking options *)
   metrics : Metrics_.config;
   version_check : bool;
@@ -97,7 +97,7 @@ val o_gitlab_secrets_outputs : string list Cmdliner.Term.t
 val o_historical_secrets : bool Cmdliner.Term.t
 val o_ignore_semgrepignore_files : bool Cmdliner.Term.t
 val o_incremental_output : bool Cmdliner.Term.t
-val o_enable_ignore : bool Cmdliner.Term.t
+val o_apply_ignore_pattern : bool Cmdliner.Term.t
 val o_json : bool Cmdliner.Term.t
 val o_json_outputs : string list Cmdliner.Term.t
 val o_junit_xml : bool Cmdliner.Term.t
