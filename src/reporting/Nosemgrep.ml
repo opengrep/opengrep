@@ -304,4 +304,6 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
 let filter_ignored ~keep_ignored (matches : OutJ.core_match list) =
   matches
   |> List.filter (fun (m : OutJ.core_match) ->
+         (* If keep_ignored is true, include all matches regardless of is_ignored flag.
+            Otherwise, only include matches that don't have is_ignored set to true *)
          keep_ignored || not m.extra.is_ignored)

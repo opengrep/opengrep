@@ -14,6 +14,7 @@ let default = {
 
 (* Get the list of patterns to use for ignoring lines *)
 let get_ignore_patterns config : string list =
+  let default_patterns = ["nosem"; "nosemgrep"] in
   match config.custom_ignore_pattern with
-  | None -> ["nosem"; "nosemgrep"]
-  | Some pattern -> [pattern] 
+  | None -> default_patterns
+  | Some pattern -> pattern :: default_patterns
