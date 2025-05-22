@@ -229,20 +229,38 @@ let mk_file_match_hook (conf : Scan_CLI.conf) (rules : Rule.rules)
      * get something that Matches_report.pp_text_outputs can operate on
      *)
     let pms : Core_match.t list = match_results.matches in
+    
+    (* Process matches to set is_ignored flag based on nosem comments
+     * using the dedicated utility function in Nosemgrep module
+     *)
+    let processed_matches, _errors =
+      Nosemgrep.process_raw_matches ~config:conf.core_runner_conf.engine_config pms
+    in
+    
+    (* Convert to core matches *)
     let core_matches : Out.core_match list =
-      pms
-      (* OK, because we don't need the postprocessing to report the matches. *)
-      |> List_.map Core_result.mk_processed_match
+      processed_matches
       |> Result_.partition Core_json_output.match_to_match
       |> fst |> Core_json_output.dedup_and_sort
     in
+    
     let hrules = Rule.hrules_of_rules rules in
     let fixed_env = Fixed_lines.mk_env () in
-    core_matches
+    let matches = core_matches
     |> List_.map
          (Cli_json_output.cli_match_of_core_match
             ~fixed_lines:conf.output_conf.fixed_lines fixed_env hrules)
-    |> List_.exclude (fun (m : Out.cli_match) -> m.extra.is_ignored ||| false)
+    in
+    
+    (* Filter out ignored matches if --enable-ignore is set *)
+    let matches = 
+      if conf.apply_ignore_pattern then
+        matches |> List.filter (fun (m : Out.cli_match) -> 
+          not (m.extra.is_ignored ||| false))
+      else
+        matches
+    in
+    matches
   in
   if cli_matches <> [] then (
     Mutex.protect file_match_hook_mutex (fun () -> printer conf cli_matches))

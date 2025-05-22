@@ -10,6 +10,14 @@ val produce_ignored :
   Core_result.processed_match list ->
   Core_result.processed_match list * Core_error.t list
 
+(* Process raw Core_match.t objects to mark them as ignored based on comments.
+ * This is useful for incremental output to handle nosem comments properly.
+ *)
+val process_raw_matches :
+  ?config:Engine_config.t ->
+  Core_match.t list ->
+  Core_result.processed_match list * Core_error.t list
+
 (* remove the matches in that were whitelisted by a 'nosemgrep:' comment in
    the code by the user.
    requires the ignores to have been "produced" via [produce_ignored] above first!

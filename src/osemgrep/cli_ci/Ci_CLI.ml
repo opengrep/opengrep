@@ -302,6 +302,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         output;
         output_conf;
         incremental_output;
+        apply_ignore_pattern = false;
         engine_type;
         rewrite_rule_ids;
         matching_conf;
