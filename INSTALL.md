@@ -17,7 +17,7 @@ There's no simple installation of the development version of the
 `opengrep` without installing it, use `pipenv`:
 
 ```
-$ cd semgrep
+$ cd opengrep
 $ pipenv shell
 $ opengrep --help
 ```
