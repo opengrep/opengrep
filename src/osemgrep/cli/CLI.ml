@@ -132,7 +132,7 @@ let known_subcommands =
     "interactive";
   ]
 
-let dispatch_subcommand (caps : caps) (argv : string array) =
+let dispatch_subcommand (caps : caps) ?(allow_fallback=true) (argv : string array) =
   match Array.to_list argv with
   (* impossible because argv[0] contains the program name *)
   | [] -> assert false
@@ -212,7 +212,12 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
               Error.abort (Printf.sprintf "unknown opengrep command: %s" subcmd)
             else raise Pysemgrep.Fallback
       with
-      | Pysemgrep.Fallback -> Pysemgrep.pysemgrep (caps :> < Cap.exec >) argv)
+      | Pysemgrep.Fallback ->
+          if allow_fallback then
+            Pysemgrep.pysemgrep (caps :> < Cap.exec >) argv
+          else
+            Error.abort ("This command requires fallback on python-cli. Consider using opengrep-cli instead."))
+
 [@@profiling]
 
 (*****************************************************************************)
@@ -263,7 +268,7 @@ let before_exit ~profile caps : unit =
  * profiling, debugging, and metrics initializations before calling
  * dispatch_subcommand().
  *)
-let main (caps : caps) (argv : string array) : Exit_code.t =
+let main (caps : caps) ?(allow_fallback=true) (argv : string array) : Exit_code.t =
   Printexc.record_backtrace true;
   let debug = Array.mem "--debug" argv in
   let profile = Array.mem "--profile" argv in
@@ -326,7 +331,7 @@ let main (caps : caps) (argv : string array) : Exit_code.t =
   (* TOADAPT? adapt more of Common.boilerplate? *)
 
   (* !The main call! dispatching a subcommand *)
-  let exit_code = safe_run ~debug (fun () -> dispatch_subcommand caps argv) in
+  let exit_code = safe_run ~debug (fun () -> dispatch_subcommand caps ~allow_fallback argv) in
 
   Metrics_.add_exit_code exit_code;
   send_metrics (caps :> < Cap.network >);
