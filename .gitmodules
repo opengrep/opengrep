@@ -149,3 +149,7 @@ url = https://github.com/opengrep/semgrep-move-on-sui.git
 [submodule "OSS/languages/circom/tree-sitter/semgrep-circom"]
 path = languages/circom/tree-sitter/semgrep-circom
 url = https://github.com/opengrep/semgrep-circom.git
+
+[submodule "languages/apex/tree-sitter/semgrep-apex"]
+path = languages/apex/tree-sitter/semgrep-apex
+url = https://github.com/opengrep/semgrep-apex.git
