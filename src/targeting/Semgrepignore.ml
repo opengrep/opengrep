@@ -134,7 +134,7 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = None) ~default_semgre
       patterns = cli_patterns;
     }
   in
-  let semgrepignore_files = 
+  let semgrepignore_files =
     match semgrepignore_filename with
     | Some custom_filename ->
         {

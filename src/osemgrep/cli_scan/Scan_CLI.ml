@@ -1355,7 +1355,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
             "!!! You're using one or more options starting with '--x-'. These \
              options are not part of the opengrep API. They will change or will \
              be removed without notice !!! ");
-    
+
     (* Create engine configuration *)
     let engine_config = {
       Engine_config.custom_ignore_pattern = opengrep_ignore_pattern;
