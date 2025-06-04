@@ -109,7 +109,7 @@ let with_experimental_flag argv =
                    = [| "opengrep"; "--experimental"; "-c"; "rules"; "libs" |]) *)
 
 let flags_that_require_experimental : string list =
-  [ "--output-enclosing-context" ]
+  [ "--output-enclosing-context"; "--semgrepignore-filename" ]
 
 let experimental_flags_error_msg : string =
   "The --experimental option required for the following flags: "

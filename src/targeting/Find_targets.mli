@@ -44,6 +44,8 @@ type conf = {
   (* Whether to respect or ignore the '.semgrepignore' files found
      in the project. *)
   respect_semgrepignore_files : bool;
+  (* Custom semgrepignore filename to use instead of '.semgrepignore' *)
+  semgrepignore_filename : string option;
   (* Language-specific filtering: CLI option '--scan-unknown-extensions'
      allows explicit targets (files on the command line) to bypass
      normal language detection.
