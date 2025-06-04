@@ -134,11 +134,53 @@ let create ?(cli_patterns = []) ~default_semgrepignore_patterns
       patterns = cli_patterns;
     }
   in
+
+  (* Check for SEMGREP_R2C_INTERNAL_EXPLICIT_SEMGREPIGNORE environment variable *)
+  let explicit_semgrepignore_level = 
+    match Sys.getenv_opt "SEMGREP_R2C_INTERNAL_EXPLICIT_SEMGREPIGNORE" with
+    | None -> None
+    | Some explicit_path -> (
+        match Fpath.of_string explicit_path with
+        | Error _ ->
+            (* nosemgrep: no-logs-in-library *)
+            Logs.warn (fun m -> m "Invalid path in SEMGREP_R2C_INTERNAL_EXPLICIT_SEMGREPIGNORE: %s" explicit_path);
+            None
+        | Ok explicit_fpath -> (
+            try
+              if Sys.file_exists explicit_path then (
+                (* nosemgrep: no-logs-in-library *)
+                Logs.info (fun m -> m "Using explicit semgrepignore file from environment variable: %s" explicit_path);
+                let content = UFile.read_file explicit_fpath in
+                let patterns = Parse_gitignore.from_string 
+                  ~name:("explicit semgrepignore: " ^ explicit_path)
+                  ~source_kind:"semgrepignore" 
+                  ~anchor:root_anchor 
+                  content in
+                Some ({
+                  level_kind = "explicit semgrepignore file";
+                  source_name = explicit_path;
+                  patterns = patterns;
+                } : Gitignore.level)
+              ) else (
+                (* nosemgrep: no-logs-in-library *)
+                Logs.warn (fun m -> m "Explicit semgrepignore file not found: %s" explicit_path);
+                None
+              )
+            with
+            | exn ->
+                (* nosemgrep: no-logs-in-library *)
+                Logs.warn (fun m -> m "Error reading explicit semgrepignore file %s: %s" explicit_path (Printexc.to_string exn));
+                None
+        )
+    )
+  in
+
   let kinds_of_ignore_files_to_consult =
     (* order matters: first gitignore then semgrepignore *)
     (if exclusion_mechanism.use_gitignore_files then [ gitignore_files ] else [])
     @
-    if exclusion_mechanism.use_semgrepignore_files then [ semgrepignore_files ]
+    (* Only look for .semgrepignore files if no explicit file was provided *)
+    if exclusion_mechanism.use_semgrepignore_files && explicit_semgrepignore_level = None then [ semgrepignore_files ]
     else []
   in
   (*
@@ -147,11 +189,15 @@ let create ?(cli_patterns = []) ~default_semgrepignore_patterns
      We don't check for '.semgrepignore' down the tree, so if a user needs
      to override the default semgrepignore rules, they need at least an
      empty root '.semgrepignore' file.
+     
+     If an explicit semgrepignore file is provided, we don't use the default patterns.
   *)
   let root_semgrepignore_exists =
-    let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
-    let semgrepignore_path = Fpath.add_seg root_dir ".semgrepignore" in
-    Sys.file_exists (Fpath.to_string semgrepignore_path)
+    if explicit_semgrepignore_level <> None then true (* explicit file overrides defaults *)
+    else
+      let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
+      let semgrepignore_path = Fpath.add_seg root_dir ".semgrepignore" in
+      Sys.file_exists (Fpath.to_string semgrepignore_path)
   in
 
   (*
@@ -163,11 +209,17 @@ let create ?(cli_patterns = []) ~default_semgrepignore_patterns
   in
 
   let higher_priority_levels =
-    if use_default_semgrepignore then
-      (* use the built-in semgrepignore rules in the absence of a root
-         '.semgrepignore' file *)
-      [ default_semgrepignore_file_level; cli_level ]
-    else [ cli_level ]
+    let base_levels = 
+      if use_default_semgrepignore then
+        (* use the built-in semgrepignore rules in the absence of a root
+           '.semgrepignore' file *)
+        [ default_semgrepignore_file_level; cli_level ]
+      else [ cli_level ]
+    in
+    (* Add explicit semgrepignore level with highest priority if provided *)
+    match explicit_semgrepignore_level with
+    | None -> base_levels
+    | Some level -> level :: base_levels
   in
   let gitignore_filter =
     Gitignore_filter.create ~higher_priority_levels
