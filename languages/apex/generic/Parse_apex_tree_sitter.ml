@@ -3,8 +3,8 @@
    to another type of tree.
 *)
 
-open Common
-open Either_
+(*  open Common *)
+(*  open Either_ *)
 open Fpath_.Operators
 module H = Parse_tree_sitter_helpers
 open AST_generic
@@ -25,11 +25,9 @@ module R = Tree_sitter_run.Raw_tree
 (*****************************************************************************)
 type env = unit H.env
 
-let _token = H.token
-let _str = H.str
-let _fb = Tok.unsafe_fake_bracket
-
-
+let token_ = H.token
+let str = H.str
+let fb = Tok.unsafe_fake_bracket
 
 let token (env : env) (tok : Tree_sitter_run.Token.t) =
   R.Token tok
@@ -755,8 +753,14 @@ let map_using_scope_type (env : env) (x : CST.using_scope_type) =
     )
   )
 
+(* OLD *)
 let map_this (env : env) (x : CST.this) =
   map_pat_this env x
+
+(* NEW *)
+let this (env : env) (x : CST.this) : G.expr =
+  let t = token_ env x (* "this" *) in
+  IdSpecial (This, t) |> G.e
 
 let map_order_direction (env : env) (x : CST.order_direction) =
   (match x with
@@ -768,8 +772,13 @@ let map_order_direction (env : env) (x : CST.order_direction) =
     )
   )
 
+(* OLD *)
 let map_null_literal (env : env) (x : CST.null_literal) =
   map_pat_null env x
+
+(* NEW *)
+let null_literal (env : env) (x : CST.null_literal) : literal =
+  G.Null (token_ env x)
 
 let map_all_rows_clause (env : env) ((v1, v2) : CST.all_rows_clause) =
   let v1 = map_pat_all env v1 in
@@ -808,6 +817,7 @@ let map_in_type (env : env) (x : CST.in_type) =
     )
   )
 
+(* OLD *)
 let map_identifier (env : env) (x : CST.identifier) =
   (match x with
   | `Semg_meta tok -> R.Case ("Semg_meta",
@@ -817,6 +827,14 @@ let map_identifier (env : env) (x : CST.identifier) =
       (* pattern [\p{L}_$][\p{L}\p{Nd}_$]* *) token env tok
     )
   )
+
+(* NEW *)
+let identifier (env : env) (x : CST.identifier) : G.ident =
+  match x with
+  | `Semg_meta tok (* pattern \$[A-Z_][A-Z_0-9]* *) ->
+      str env tok
+  | `Apex_id_ tok (* pattern [\p{L}_$][\p{L}\p{Nd}_$]* *) ->
+      str env tok
 
 let map_set_comparison_operator (env : env) (x : CST.set_comparison_operator) =
   (match x with
@@ -836,6 +854,7 @@ let map_set_comparison_operator (env : env) (x : CST.set_comparison_operator) =
     )
   )
 
+(* OLD *)
 let map_boolean (env : env) (x : CST.boolean) =
   (match x with
   | `Pat_true x -> R.Case ("Pat_true",
@@ -845,6 +864,12 @@ let map_boolean (env : env) (x : CST.boolean) =
       map_pat_false env x
     )
   )
+
+(* NEW *)
+let boolean (env : env) (x : CST.boolean) : literal =
+  match x with
+  | `Pat_true tok -> G.Bool (true, token_ env tok)
+  | `Pat_false tok -> G.Bool (false, token_ env tok)
 
 let map_date_literal (env : env) (x : CST.date_literal) =
   (match x with
@@ -1210,6 +1235,7 @@ let map_inferred_parameters (env : env) ((v1, v2, v3, v4) : CST.inferred_paramet
   let v4 = (* ")" *) token env v4 in
   R.Tuple [v1; v2; v3; v4]
 
+(* OLD *)
 let map_literal (env : env) (x : CST.literal) =
   (match x with
   | `Int tok -> R.Case ("Int",
@@ -1228,6 +1254,21 @@ let map_literal (env : env) (x : CST.literal) =
       map_null_literal env x
     )
   )
+
+(* NEW *)
+let literal (env : env) (x : CST.literal) : literal =
+  match x with
+  | `Int tok ->
+      G.Int (Parsed_int.parse (str env tok))
+  | `Deci_floa_point_lit tok ->
+      let s, t = str env tok in
+      G.Float (float_of_string_opt s, t)
+  | `Bool tok ->
+      boolean env tok
+  | `Str_lit tok ->
+      G.String (G.fake "'", str env tok, G.fake "'") (* FIXME: Isn't string delimiter captured by the parser? *)
+  | `Null_lit x ->
+      null_literal env x
 
 let map_with_record_visibility_param (env : env) (x : CST.with_record_visibility_param) =
   (match x with
@@ -1728,6 +1769,7 @@ and map_array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) =
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_binary_expression (env : env) (x : CST.binary_expression) =
   (match x with
   | `Exp_GT_exp (v1, v2, v3) -> R.Case ("Exp_GT_exp",
@@ -1863,6 +1905,120 @@ and map_binary_expression (env : env) (x : CST.binary_expression) =
       R.Tuple [v1; v2; v3]
     )
   )
+
+(* NEW *)
+and binary_expression (env : env) (x : CST.binary_expression) : G.expr =
+  match x with
+  | `Exp_AMPAMP_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "&&" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op And, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_BARBAR_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "||" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Or, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_GTGT_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* ">>" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op ASR, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_GTGTGT_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* ">>>" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op LSR, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_LTLT_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "<<" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op LSL, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_AMP_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "&" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op BitAnd, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_HAT_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "^" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op BitXor, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_BAR_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "|" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op BitOr, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_PLUS_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "+" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Plus, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_DASH_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "-" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Minus, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_STAR_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "*" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Mult, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_SLASH_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "/" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Div, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_PERC_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "%" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Mod, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_LT_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "<" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Lt, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_LTEQ_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "<=" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op LtE, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_EQEQ_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "==" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Eq, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_BANGEQ_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "!=" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op NotEq, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_GTEQ_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* ">=" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op GtE, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_GT_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* ">" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op Gt, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_EQEQEQ_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "===" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op PhysEq, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_BANGEQEQ_exp (v1, v2, v3) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "!==" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op NotPhysEq, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
+  | `Exp_LTGT_exp (v1, v2, v3) -> (* FIXME: not in Apex documentation! *)
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "<>" *) in
+      let v3 = expression env v3 in
+      Call (IdSpecial (Op NotEq, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
 
 and map_block (env : env) ((v1, v2, v3) : CST.block) =
   let v1 = (* "{" *) token env v1 in
@@ -2361,6 +2517,7 @@ and map_explicit_constructor_invocation (env : env) ((v1, v2, v3) : CST.explicit
   let v3 = (* ";" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD  *)
 and map_expression (env : env) (x : CST.expression) =
   (match x with
   | `Assign_exp (v1, v2, v3) -> R.Case ("Assign_exp",
@@ -2460,6 +2617,54 @@ and map_expression (env : env) (x : CST.expression) =
       map_switch_expression env x
     )
   )
+
+(* NEW *)
+and expression (env : env) (x : CST.expression) : G.expr =
+  match x with
+  | `Assign_exp (v1, v2, v3) ->
+      let v1 =
+        (match v1 with
+        | `Id x -> failwith "NOT IMPLEMENTED"
+        | `Field_access x -> failwith "NOT IMPLEMENTED"
+        | `Array_access x -> failwith "NOT IMPLEMENTED"
+        )
+      in
+      let v2 =
+        (match v2 with
+        | `EQ tok (* "=" *) -> token env tok
+        | `PLUSEQ tok (* "+=" *) -> token env tok
+        | `DASHEQ tok (* "-=" *) -> token env tok
+        | `STAREQ tok (* "*=" *) -> token env tok
+        | `SLASHEQ tok (* "/=" *) -> token env tok
+        | `AMPEQ tok (* "&=" *) -> token env tok
+        | `BAREQ tok (* "|=" *) -> token env tok
+        | `HATEQ tok (* "^=" *) -> token env tok
+        | `PERCEQ tok (* "%=" *) -> token env tok
+        | `LTLTEQ tok (* "<<=" *) -> token env tok
+        | `GTGTEQ tok (* ">>=" *) -> token env tok
+        | `GTGTGTEQ tok (* ">>>=" *) -> token env tok
+        )
+      in
+      let v3 = map_expression env v3 in
+      failwith "NOT IMPLEMENTED"
+  | `Bin_exp x ->
+      binary_expression env x
+  | `Inst_exp (v1, v2, v3) ->
+      failwith "NOT IMPLEMENTED"
+  | `Tern_exp (v1, v2, v3, v4, v5) ->
+      failwith "NOT IMPLEMENTED"
+  | `Update_exp x ->
+      failwith "NOT IMPLEMENTED"
+  | `Prim_exp x ->
+      primary_expression env x
+  | `Un_exp x ->
+      failwith "NOT IMPLEMENTED"
+  | `Cast_exp (v1, v2, v3, v4) ->
+      failwith "NOT IMPLEMENTED"
+  | `Dml_exp x ->
+      failwith "NOT IMPLEMENTED"
+  | `Switch_exp x ->
+      failwith "NOT IMPLEMENTED"
 
 and map_expression_statement (env : env) ((v1, v2) : CST.expression_statement) =
   let v1 = map_expression env v1 in
@@ -3043,8 +3248,13 @@ and map_modifiers (env : env) (xs : CST.modifiers) =
     )
   ) xs)
 
+(* OLD *)
 and map_object_creation_expression (env : env) (x : CST.object_creation_expression) =
   map_unqualified_object_creation_expression env x
+
+(* NEW *)
+and object_creation_expression (env : env) (x : CST.object_creation_expression) : G.expr =
+  unqualified_object_creation_expression env x
 
 and map_offset_clause (env : env) ((v1, v2) : CST.offset_clause) =
   let v1 = map_pat_offset env v1 in
@@ -3082,11 +3292,25 @@ and map_order_expression (env : env) ((v1, v2, v3) : CST.order_expression) =
   in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_parenthesized_expression (env : env) ((v1, v2, v3) : CST.parenthesized_expression) =
   let v1 = (* "(" *) token env v1 in
   let v2 = map_expression env v2 in
   let v3 = (* ")" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* AUX *)
+and adjust_range_of_parenthesized_expr (env : env)
+    (l : Tree_sitter_run.Token.t) (r : Tree_sitter_run.Token.t) (e : G.expr) : G.expr =
+  let lloc = Tok.unsafe_loc_of_tok (token_ env l) in
+  let rloc = Tok.unsafe_loc_of_tok (token_ env r) in
+  e.e_range <- Some (lloc, rloc);
+  e
+(* NEW *)
+and parenthesized_expression (env : env)
+    ((v1, v2, v3) : CST.parenthesized_expression) : G.expr =
+  expression env v2
+  |> adjust_range_of_parenthesized_expr env v1 v3
 
 and map_partial_catch (env : env) (x : CST.partial_catch) =
   map_catch_clause env x
@@ -3094,6 +3318,7 @@ and map_partial_catch (env : env) (x : CST.partial_catch) =
 and map_partial_finally (env : env) (x : CST.partial_finally) =
   map_finally_clause env x
 
+(* OLD *)
 and map_primary_expression (env : env) (x : CST.primary_expression) =
   (match x with
   | `Choice_lit x -> R.Case ("Choice_lit",
@@ -3143,6 +3368,32 @@ and map_primary_expression (env : env) (x : CST.primary_expression) =
       R.Tuple [v1; v2; v3]
     )
   )
+
+(* NEW *)
+and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
+  match x with
+  | `Choice_lit x ->
+      (match x with
+      | `Lit x ->
+          let lit = literal env x in
+          G.L lit |> G.e
+      | `Class_lit x -> failwith "NOT IMPLEMENTED"
+      | `This x ->
+          this env x
+      | `Id x ->
+          G.N (H2.name_of_ids_with_opt_typeargs [ identifier env x, None ]) |> G.e
+      | `Paren_exp x ->
+          parenthesized_expression env x
+      | `Obj_crea_exp x ->
+          object_creation_expression env x
+      | `Field_access x -> failwith "NOT IMPLEMENTED"
+      | `Array_access x -> failwith "NOT IMPLEMENTED"
+      | `Meth_invo x -> failwith "NOT IMPLEMENTED"
+      | `Array_crea_exp x -> failwith "NOT IMPLEMENTED"
+      | `Map_crea_exp x -> failwith "NOT IMPLEMENTED"
+      | `Query_exp x -> failwith "NOT IMPLEMENTED"
+      )
+  | `Semg_deep_exp (v1, v2, v3) -> failwith "NOT IMPLEMENTED"
 
 and map_query_expression (env : env) ((v1, v2, v3) : CST.query_expression) =
   let v1 = (* "[" *) token env v1 in
@@ -3822,6 +4073,7 @@ and map_unary_expression (env : env) (x : CST.unary_expression) =
     )
   )
 
+(* OLD *)
 and map_unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5) : CST.unqualified_object_creation_expression) =
   let v1 = map_pat_new env v1 in
   let v2 =
@@ -3841,6 +4093,10 @@ and map_unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5)
     | None -> R.Option None)
   in
   R.Tuple [v1; v2; v3; v4; v5]
+
+(* NEW *)
+and unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5) : CST.unqualified_object_creation_expression) : G.expr =
+  failwith "NOT IMPLEMENTED"
 
 and map_update_expression (env : env) (x : CST.update_expression) =
   (match x with
@@ -3921,6 +4177,7 @@ and map_while_statement (env : env) ((v1, v2, v3) : CST.while_statement) =
   let v3 = map_statement env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 let map_parser_output (env : env) (x : CST.parser_output) =
   (match x with
   | `Rep_stmt xs -> R.Case ("Rep_stmt",
@@ -3973,6 +4230,25 @@ let map_parser_output (env : env) (x : CST.parser_output) =
     )
   )
 
+(* NEW *)
+let parser_output (env : env) (x : CST.parser_output) : G.any =
+  match x with
+  | `Rep_stmt xs -> failwith "NOT IMPLEMENTED"
+  | `Cons_decl x -> failwith "NOT IMPLEMENTED"
+  | `Exp x ->
+      G.E (expression env x)
+  | `Anno x -> failwith "NOT IMPLEMENTED"
+  | `Meth_decl x -> failwith "NOT IMPLEMENTED"
+  | `Local_var_decl x -> failwith "NOT IMPLEMENTED"
+  | `Class_header x -> failwith "NOT IMPLEMENTED"
+  | `Full_meth_header (v1, v2) -> failwith "NOT IMPLEMENTED"
+  | `Part_if (v1, v2) -> failwith "NOT IMPLEMENTED"
+  | `Part_try (v1, v2) -> failwith "NOT IMPLEMENTED"
+  | `Part_catch x -> failwith "NOT IMPLEMENTED"
+  | `Part_fina x -> failwith "NOT IMPLEMENTED"
+
+ (* FIXME: what does this do? *)
+(*
 let dump_tree root =
   map_parser_output () root
   |> Tree_sitter_run.Raw_tree.to_channel stdout
@@ -3994,7 +4270,7 @@ let dump_extras (extras : CST.extras) =
     Printf.printf "%s%s:\n" ts_rule_name details;
     Tree_sitter_run.Raw_tree.to_channel stdout raw_tree
   ) extras
-
+*)
 
 (*****************************************************************************)
 (* Entry points *)
@@ -4004,10 +4280,21 @@ let parse file =
     (fun () -> Tree_sitter_apex.Parse.file !!file)
     (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
-      match compilation_unit env cst with
+      match parser_output env cst with
       | G.Pr xs -> xs
       | _ -> failwith "not a program")
 
+
+let parse_expr file =
+  H.wrap_parser
+    (fun () -> Tree_sitter_apex.Parse.file !!file)
+    (fun cst _extras ->
+      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
+      match parser_output env cst with
+      | G.E xs -> xs
+      | _ -> failwith "not an expression")
+
+ (*
 let parse_pattern_aux str =
   (* ugly: coupling: see grammar.js of csharp.
    * todo: will need to adjust position information in parsing errors! *)
@@ -4028,3 +4315,4 @@ let parse_pattern str =
       let file = Fpath.v "<pattern>" in
       let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
       compilation_unit env cst)
+*)
