@@ -3744,7 +3744,11 @@ and map_run_as_statement (env : env) ((v1, v2, v3) : CST.run_as_statement) =
 
 (* NEW *)
 and run_as_statement (env : env) ((v1, v2, v3) : CST.run_as_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (run_as_statement)"
+  let v1 = token_ env v1 (* "System.runAs" *) in
+  let v2 = parenthesized_expression env v2 in
+  let v3 = trigger_body env v3 in
+  G.RawStmt (Raw_tree.Case ("System.runAs", Raw_tree.Any (G.Raw (Raw_tree.Tuple
+    [Raw_tree.Any (G.Tk v1); Raw_tree.Any (G.E v2); Raw_tree.Any (G.S v3)])))) |> G.s
 
 and map_scoped_type_identifier (env : env) ((v1, v2, v3, v4) : CST.scoped_type_identifier) =
   let v1 =
@@ -4195,9 +4199,9 @@ and statement (env : env) (x : CST.statement) : G.stmt =
       | `Throw_stmt x ->
           throw_statement env x (* V *)
       | `Try_stmt x ->
-          try_statement env x
+          try_statement env x (* V *)
       | `Run_as_stmt x ->
-          run_as_statement env x
+          run_as_statement env x (* V *)
       )
   | `Semg_ellips tok ->
       let v1 = token_ env tok (* "..." *) in
