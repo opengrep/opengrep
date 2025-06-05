@@ -1683,6 +1683,7 @@ and map_anon_choice_trig_body_f78fea4 (env : env) (x : CST.anon_choice_trig_body
     )
   )
 
+(* OLD *)
 and map_anon_exp_rep_COMMA_exp_0bb260c (env : env) ((v1, v2) : CST.anon_exp_rep_COMMA_exp_0bb260c) =
   let v1 = map_expression env v1 in
   let v2 =
@@ -1693,6 +1694,19 @@ and map_anon_exp_rep_COMMA_exp_0bb260c (env : env) ((v1, v2) : CST.anon_exp_rep_
     ) v2)
   in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and anon_exp_rep_COMMA_exp_0bb260c (env : env) ((v1, v2) : CST.anon_exp_rep_COMMA_exp_0bb260c)
+  : G.expr * ((G.tok * G.expr) list) =
+  let v1 = expression env v1 in
+  let vs =
+    List.map (fun (v1, v2) ->
+        let v1 = (* "," *) token_ env v1 in
+        let v2 = expression env v2 in
+        v1, v2)
+      v2
+  in
+  v1, vs
 
 and map_argument_list (env : env) ((v1, v2, v3) : CST.argument_list) =
   let v1 = (* "(" *) token env v1 in
@@ -2020,11 +2034,19 @@ and binary_expression (env : env) (x : CST.binary_expression) : G.expr =
       let v3 = expression env v3 in
       Call (IdSpecial (Op NotEq, v2) |> G.e, fb [ Arg v1; Arg v3 ]) |> G.e
 
+(* OLD *)
 and map_block (env : env) ((v1, v2, v3) : CST.block) =
   let v1 = (* "{" *) token env v1 in
   let v2 = R.List (List.map (map_statement env) v2) in
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and block (env : env) ((v1, v2, v3) : CST.block) : G.stmt =
+  let v1 = token_ env v1 (* "{" *) in
+  let v2 = List_.map (statement env) v2 in
+  let v3 = token_ env v3 (* "}" *) in
+  G.Block (v1, v2, v3) |> G.s
 
 and map_boolean_expression (env : env) (x : CST.boolean_expression) =
   (match x with
@@ -2652,24 +2674,36 @@ and expression (env : env) (x : CST.expression) : G.expr =
   | `Inst_exp (v1, v2, v3) ->
       failwith "NOT IMPLEMENTED"
   | `Tern_exp (v1, v2, v3, v4, v5) ->
-      failwith "NOT IMPLEMENTED"
+      let v1 = expression env v1 in
+      let v2 = (* "?" *) token_ env v2 in
+      let v3 = expression env v3 in
+      let v4 = (* ":" *) token_ env v4 in
+      let v5 = expression env v5 in
+      G.Conditional (v1, v3, v5) |> G.e
   | `Update_exp x ->
-      failwith "NOT IMPLEMENTED"
+      update_expression env x
   | `Prim_exp x ->
       primary_expression env x
   | `Un_exp x ->
-      failwith "NOT IMPLEMENTED"
+      unary_expression env x
   | `Cast_exp (v1, v2, v3, v4) ->
       failwith "NOT IMPLEMENTED"
   | `Dml_exp x ->
       failwith "NOT IMPLEMENTED"
   | `Switch_exp x ->
-      failwith "NOT IMPLEMENTED"
+      switch_expression env x
 
+(* OLD *)
 and map_expression_statement (env : env) ((v1, v2) : CST.expression_statement) =
   let v1 = map_expression env v1 in
   let v2 = (* ";" *) token env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and expression_statement (env : env) ((v1, v2) : CST.expression_statement) : G.stmt =
+  let v1 = expression env v1 in
+  let v2 = (* ";" *) token_ env v2 in
+  G.ExprStmt (v1, v2) |> G.s
 
 and map_extends_interfaces (env : env) ((v1, v2) : CST.extends_interfaces) =
   let v1 = map_pat_extends env v1 in
@@ -3787,6 +3821,7 @@ and map_sosl_with_type (env : env) (x : CST.sosl_with_type) =
     )
   )
 
+(* OLD *)
 and map_statement (env : env) (x : CST.statement) =
   (match x with
   | `Choice_decl x -> R.Case ("Choice_decl",
@@ -3852,6 +3887,10 @@ and map_statement (env : env) (x : CST.statement) =
     )
   )
 
+(* NEW *)
+and statement (env : env) (x : CST.statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (statement)"
+
 and map_static_initializer (env : env) ((v1, v2) : CST.static_initializer) =
   let v1 = map_pat_static env v1 in
   let v2 = map_trigger_body env v2 in
@@ -3868,12 +3907,21 @@ and map_superclass (env : env) ((v1, v2) : CST.superclass) =
   let v2 = map_type_ env v2 in
   R.Tuple [v1; v2]
 
+(* OLD *)
 and map_switch_block (env : env) ((v1, v2, v3) : CST.switch_block) =
   let v1 = (* "{" *) token env v1 in
   let v2 = R.List (List.map (map_switch_rule env) v2) in
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and switch_block (env : env) ((v1, v2, v3) : CST.switch_block) : case_and_body list =
+  let _v1 = token env v1 (* "{" *) in
+  let v2 = List_.map (switch_rule env) v2 in
+  let _v3 = token env v3 (* "}" *) in
+  v2
+
+(* OLD *)
 and map_switch_expression (env : env) ((v1, v2, v3, v4) : CST.switch_expression) =
   let v1 = map_pat_switch env v1 in
   let v2 = map_pat_on env v2 in
@@ -3881,6 +3929,17 @@ and map_switch_expression (env : env) ((v1, v2, v3, v4) : CST.switch_expression)
   let v4 = map_switch_block env v4 in
   R.Tuple [v1; v2; v3; v4]
 
+(* NEW *)
+and switch_expression (env : env) ((v1, v2, v3, v4) : CST.switch_expression) : G.expr =
+  let v1 = token_ env v1 (* "switch" *) in
+  let v2 = token_ env v2 (* "on" *) in
+  let v3 = expression env v3 in
+  let v4 = switch_block env v4 in
+  G.Switch (Tok.combine_toks v1 [v2], Some (G.Cond v3), v4)
+  |> G.s
+  |> G.stmt_to_expr (* FIXME: "switch" is expr in parser, while it should be stmt *)
+
+ (* OLD *)
 and map_switch_label (env : env) ((v1, v2) : CST.switch_label) =
   let v1 = map_pat_when env v1 in
   let v2 =
@@ -3920,6 +3979,21 @@ and map_switch_label (env : env) ((v1, v2) : CST.switch_label) =
   in
   R.Tuple [v1; v2]
 
+(* NEW *)
+and switch_label (env : env) ((v1, v2) : CST.switch_label) : G.case list =
+  let v1 = token_ env v1 in
+  match v2 with
+  | `Opt_unan_type_id_rep_COMMA_opt_unan_type_id (v1, v2, v3) ->
+      failwith "NOT IMPLEMENTED (switch_label)"
+  | `Exp_rep_COMMA_exp x ->
+      let c1, cs = anon_exp_rep_COMMA_exp_0bb260c env x in
+      G.Case (v1, H2.expr_to_pattern c1) ::
+        List.map (fun (t, e) -> G.Case (t, H2.expr_to_pattern e)) cs
+  | `Pat_else x ->
+      let else_token = token_ env x in
+      [G.Default (Tok.combine_toks v1 [else_token])]
+
+(* OLD *)
 and map_switch_rule (env : env) (x : CST.switch_rule) =
   (match x with
   | `Semg_ellips tok -> R.Case ("Semg_ellips",
@@ -3932,14 +4006,29 @@ and map_switch_rule (env : env) (x : CST.switch_rule) =
     )
   )
 
+(* NEW *)
+and switch_rule (env : env) (x : CST.switch_rule) : G.case_and_body =
+  match x with
+  | `Semg_ellips tok (* "..." *) ->
+      G.CaseEllipsis (token_ env tok)
+  | `Switch_label_blk (v1, v2) ->
+      let v1 = switch_label env v1 in
+      let v2 = trigger_body env v2 in
+      G.CasesAndBody (v1, v2)
+
 and map_throw_statement (env : env) ((v1, v2, v3) : CST.throw_statement) =
   let v1 = map_pat_throw env v1 in
   let v2 = map_expression env v2 in
   let v3 = (* ";" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_trigger_body (env : env) (x : CST.trigger_body) =
   map_block env x
+
+(* NEW *)
+and trigger_body (env : env) (x : CST.trigger_body) : G.stmt =
+  block env x
 
 and map_try_statement (env : env) ((v1, v2, v3) : CST.try_statement) =
   let v1 = map_pat_try env v1 in
@@ -4049,6 +4138,7 @@ and map_unannotated_type (env : env) (x : CST.unannotated_type) =
     )
   )
 
+(* OLD *)
 and map_unary_expression (env : env) (x : CST.unary_expression) =
   (match x with
   | `PLUS_exp (v1, v2) -> R.Case ("PLUS_exp",
@@ -4072,6 +4162,26 @@ and map_unary_expression (env : env) (x : CST.unary_expression) =
       R.Tuple [v1; v2]
     )
   )
+
+(* NEW *)
+and unary_expression (env : env) (x : CST.unary_expression) : G.expr =
+  match x with
+  | `PLUS_exp (v1, v2) ->
+      let v1 = token_ env v1 (* "+" *) in
+      let v2 = expression env v2 in
+      Call (IdSpecial (Op Plus, v1) |> G.e, fb [ Arg v2 ]) |> G.e
+  | `DASH_exp (v1, v2) ->
+      let v1 = token_ env v1 (* "-" *) in
+      let v2 = expression env v2 in
+      Call (IdSpecial (Op Minus, v1) |> G.e, fb [ Arg v2 ]) |> G.e
+  | `BANG_exp (v1, v2) ->
+      let v1 = token_ env v1 (* "!" *) in
+      let v2 = expression env v2 in
+      Call (IdSpecial (Op Not, v1) |> G.e, fb [ Arg v2 ]) |> G.e
+  | `TILDE_exp (v1, v2) ->
+      let v1 = token_ env v1 (* "~" *) in
+      let v2 = expression env v2 in
+      Call (IdSpecial (Op BitNot, v1) |> G.e, fb [ Arg v2 ]) |> G.e
 
 (* OLD *)
 and map_unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5) : CST.unqualified_object_creation_expression) =
@@ -4098,6 +4208,7 @@ and map_unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5)
 and unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5) : CST.unqualified_object_creation_expression) : G.expr =
   failwith "NOT IMPLEMENTED"
 
+(* OLD *)
 and map_update_expression (env : env) (x : CST.update_expression) =
   (match x with
   | `Exp_PLUSPLUS (v1, v2) -> R.Case ("Exp_PLUSPLUS",
@@ -4121,6 +4232,30 @@ and map_update_expression (env : env) (x : CST.update_expression) =
       R.Tuple [v1; v2]
     )
   )
+
+(* NEW *)
+and update_expression (env : env) (x : CST.update_expression) : G.expr =
+  match x with
+  | `PLUSPLUS_exp (v1, v2) ->
+      let v1 = token_ env v1 (* "++" *) in
+      let v2 = expression env v2 in
+      Call (IdSpecial (IncrDecr (Incr, Prefix), v1) |> G.e, fb [ Arg v2 ])
+      |> G.e
+  | `DASHDASH_exp (v1, v2) ->
+      let v1 = token_ env v1 (* "--" *) in
+      let v2 = expression env v2 in
+      Call (IdSpecial (IncrDecr (Decr, Prefix), v1) |> G.e, fb [ Arg v2 ])
+      |> G.e
+  | `Exp_PLUSPLUS (v1, v2) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "++" *) in
+      Call (IdSpecial (IncrDecr (Incr, Postfix), v2) |> G.e, fb [ Arg v1 ])
+      |> G.e
+  | `Exp_DASHDASH (v1, v2) ->
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "--" *) in
+      Call (IdSpecial (IncrDecr (Decr, Postfix), v2) |> G.e, fb [ Arg v1 ])
+      |> G.e
 
 and map_value_expression (env : env) (x : CST.value_expression) =
   (match x with
