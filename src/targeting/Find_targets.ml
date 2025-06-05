@@ -733,8 +733,9 @@ let setup_path_filters conf (project_roots : Project.roots) :
    * the .gitignore of all the parents of the scan_root.
    *)
   let semgrepignore_filter =
+    let semgrepignore_filename = Option.value conf.semgrepignore_filename ~default:".semgrepignore" in
     Semgrepignore.create ~cli_patterns:conf.exclude
-      ~semgrepignore_filename:conf.semgrepignore_filename
+      ~semgrepignore_filename
       ~default_semgrepignore_patterns:Semgrep_scan_legacy
       ~exclusion_mechanism
       ~project_root:(Rfpath.to_fpath project_root)

@@ -33,7 +33,7 @@ type exclusion_mechanism = {
 *)
 val create :
   ?cli_patterns:string list ->
-  ?semgrepignore_filename:string option ->
+  ?semgrepignore_filename:string ->
   default_semgrepignore_patterns:default_semgrepignore_patterns ->
   exclusion_mechanism:exclusion_mechanism ->
   project_root:Fpath.t ->
