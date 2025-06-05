@@ -1189,6 +1189,7 @@ let map_variable_declarator_id (env : env) ((v1, v2) : CST.variable_declarator_i
   in
   R.Tuple [v1; v2]
 
+(* OLD *)
 let map_break_statement (env : env) ((v1, v2, v3) : CST.break_statement) =
   let v1 = map_pat_brk env v1 in
   let v2 =
@@ -1201,6 +1202,11 @@ let map_break_statement (env : env) ((v1, v2, v3) : CST.break_statement) =
   let v3 = (* ";" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+let break_statement (env : env) ((v1, v2, v3) : CST.break_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (break_statement)"
+
+(* OLD *)
 let map_continue_statement (env : env) ((v1, v2, v3) : CST.continue_statement) =
   let v1 = map_pat_cont env v1 in
   let v2 =
@@ -1212,6 +1218,10 @@ let map_continue_statement (env : env) ((v1, v2, v3) : CST.continue_statement) =
   in
   let v3 = (* ";" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+let continue_statement (env : env) ((v1, v2, v3) : CST.continue_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (continue_statement)"
 
 let rec map_name (env : env) (x : CST.name) =
   (match x with
@@ -2318,6 +2328,7 @@ and map_constructor_declarator (env : env) ((v1, v2, v3) : CST.constructor_decla
   let v3 = map_formal_parameters env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_declaration (env : env) (x : CST.declaration) =
   (match x with
   | `Class_decl x -> R.Case ("Class_decl",
@@ -2348,6 +2359,10 @@ and map_declaration (env : env) (x : CST.declaration) =
       map_enum_declaration env x
     )
   )
+
+(* NEW *)
+and declaration (env : env) (x : CST.declaration) : G.stmt =
+  failwith "NOT IMPLEMENTED (declaration)"
 
 and map_dimensions_expr (env : env) ((v1, v2, v3) : CST.dimensions_expr) =
   let v1 = (* "[" *) token env v1 in
@@ -2383,6 +2398,7 @@ and map_dml_expression (env : env) (x : CST.dml_expression) =
     )
   )
 
+(* OLD *)
 and map_do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) =
   let v1 = map_pat_do env v1 in
   let v2 = map_statement env v2 in
@@ -2390,6 +2406,10 @@ and map_do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) =
   let v4 = map_parenthesized_expression env v4 in
   let v5 = (* ";" *) token env v5 in
   R.Tuple [v1; v2; v3; v4; v5]
+
+(* OLD *)
+and do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (do_statement)"
 
 and map_element_value (env : env) (x : CST.element_value) =
   (match x with
@@ -2428,6 +2448,7 @@ and map_element_value (env : env) (x : CST.element_value) =
     )
   )
 
+(* OLD *)
 and map_enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9) : CST.enhanced_for_statement) =
   let v1 = map_pat_for env v1 in
   let v2 = (* "(" *) token env v2 in
@@ -2445,6 +2466,10 @@ and map_enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9)
   let v8 = (* ")" *) token env v8 in
   let v9 = map_statement env v9 in
   R.Tuple [v1; v2; v3; v4; v5; v6; v7; v8; v9]
+
+(* NEW  *)
+and enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9) : CST.enhanced_for_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (enchanced_for_statement)"
 
 and map_enum_body (env : env) ((v1, v2, v3) : CST.enum_body) =
   let v1 = (* "{" *) token env v1 in
@@ -2697,6 +2722,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
       failwith "NOT IMPLEMENTED (expression)"
   | `Switch_exp x ->
       switch_expression env x
+      |> G.stmt_to_expr (* FIXME: "switch" is expr in parser, while it should be stmt *)
 
 (* AUX *)
 and assignment_operator (env : env) x : G.operator G.wrap =
@@ -2804,6 +2830,7 @@ and map_find_clause (env : env) ((v1, v2) : CST.find_clause) =
   in
   R.Tuple [v1; v2]
 
+(* OLD *)
 and map_for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) =
   let v1 = map_pat_for env v1 in
   let v2 = (* "(" *) token env v2 in
@@ -2853,6 +2880,10 @@ and map_for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) =
   let v4 = (* ")" *) token env v4 in
   let v5 = map_statement env v5 in
   R.Tuple [v1; v2; v3; v4; v5]
+
+(* NEW *)
+and for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (for_statement)"
 
 and map_formal_parameter (env : env) (x : CST.formal_parameter) =
   (match x with
@@ -3090,6 +3121,7 @@ and map_having_condition_expression (env : env) (x : CST.having_condition_expres
     )
   )
 
+(* OLD *)
 and map_if_statement (env : env) ((v1, v2, v3, v4) : CST.if_statement) =
   let v1 = map_pat_if env v1 in
   let v2 = map_parenthesized_expression env v2 in
@@ -3104,6 +3136,21 @@ and map_if_statement (env : env) ((v1, v2, v3, v4) : CST.if_statement) =
     | None -> R.Option None)
   in
   R.Tuple [v1; v2; v3; v4]
+
+(* NEW *)
+and if_statement (env : env) ((v1, v2, v3, v4) : CST.if_statement) : G.stmt =
+  let v1 = token_ env v1 (* "if" *) in
+  let v2 = parenthesized_expression env v2 in
+  let v3 = statement env v3 in
+  let v4 =
+    match v4 with
+    | Some (v1, v2) ->
+        let _v1 = token_ env v1 (* "else" *) in
+        let v2 = statement env v2 in
+        Some v2
+    | None -> None
+  in
+  G.If (v1, G.Cond v2, v3, v4) |> G.s
 
 and map_interface_body (env : env) ((v1, v2, v3) : CST.interface_body) =
   let v1 = (* "{" *) token env v1 in
@@ -3169,17 +3216,26 @@ and map_interfaces (env : env) ((v1, v2) : CST.interfaces) =
   let v2 = map_type_list env v2 in
   R.Tuple [v1; v2]
 
+(* OLD *)
 and map_labeled_statement (env : env) ((v1, v2, v3) : CST.labeled_statement) =
   let v1 = map_identifier env v1 in
   let v2 = (* ":" *) token env v2 in
   let v3 = map_statement env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and labeled_statement (env : env) ((v1, v2, v3) : CST.labeled_statement) : G.stmt =
+  let v1 = identifier env v1 (* identifier *) in
+  let _v2 = token_ env v2 (* ":" *) in
+  let v3 = statement env v3 in
+  G.Label (v1, v3) |> G.s
+
 and map_limit_clause (env : env) ((v1, v2) : CST.limit_clause) =
   let v1 = map_pat_limit env v1 in
   let v2 = map_anon_choice_int_1466488 env v2 in
   R.Tuple [v1; v2]
 
+(* OLD *)
 and map_local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration) =
   let v1 =
     (match v1 with
@@ -3192,6 +3248,10 @@ and map_local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_var
   let v3 = map_variable_declarator_list env v3 in
   let v4 = (* ";" *) token env v4 in
   R.Tuple [v1; v2; v3; v4]
+
+(* NEW *)
+and local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration) : G.stmt =
+  failwith "NOT IMPLEMENTED (local_variable_declaration)"
 
 and map_map_creation_expression (env : env) ((v1, v2, v3) : CST.map_creation_expression) =
   let v1 = map_pat_new env v1 in
@@ -3455,7 +3515,11 @@ and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
       | `Map_crea_exp x -> failwith "NOT IMPLEMENTED"
       | `Query_exp x -> failwith "NOT IMPLEMENTED"
       )
-  | `Semg_deep_exp (v1, v2, v3) -> failwith "NOT IMPLEMENTED"
+  | `Semg_deep_exp (v1, v2, v3) ->
+      let v1 = token_ env v1 in
+      let v2 = expression env v2 in
+      let v3 = token_ env v3 in
+      G.DeepEllipsis (v1, v2, v3) |> G.e
 
 and map_query_expression (env : env) ((v1, v2, v3) : CST.query_expression) =
   let v1 = (* "[" *) token env v1 in
@@ -3475,6 +3539,7 @@ and map_query_expression (env : env) ((v1, v2, v3) : CST.query_expression) =
 and map_query_expression_ (env : env) (x : CST.query_expression_) =
   map_sosl_query_body env x
 
+(* OLD *)
 and map_return_statement (env : env) ((v1, v2, v3) : CST.return_statement) =
   let v1 = map_pat_ret env v1 in
   let v2 =
@@ -3486,6 +3551,10 @@ and map_return_statement (env : env) ((v1, v2, v3) : CST.return_statement) =
   in
   let v3 = (* ";" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and return_statement (env : env) ((v1, v2, v3) : CST.return_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (return_statement)"
 
 and map_returning_clause (env : env) ((v1, v2, v3) : CST.returning_clause) =
   let v1 = map_pat_retu env v1 in
@@ -3499,11 +3568,16 @@ and map_returning_clause (env : env) ((v1, v2, v3) : CST.returning_clause) =
   in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_run_as_statement (env : env) ((v1, v2, v3) : CST.run_as_statement) =
   let v1 = map_pat_e8c36c5 env v1 in
   let v2 = map_parenthesized_expression env v2 in
   let v3 = map_trigger_body env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and run_as_statement (env : env) ((v1, v2, v3) : CST.run_as_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (run_as_statement)"
 
 and map_scoped_type_identifier (env : env) ((v1, v2, v3, v4) : CST.scoped_type_identifier) =
   let v1 =
@@ -3917,7 +3991,51 @@ and map_statement (env : env) (x : CST.statement) =
 
 (* NEW *)
 and statement (env : env) (x : CST.statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (statement)"
+  match x with
+  | `Choice_decl x ->
+      (match x with
+      | `Decl x ->
+          declaration env x
+      | `Exp_stmt x ->
+          expression_statement env x (* V *)
+      | `Labe_stmt x ->
+          labeled_statement env x (* V *)
+      | `If_stmt x ->
+          if_statement env x (* V *)
+      | `While_stmt x ->
+          while_statement env x (* V *)
+      | `For_stmt x ->
+          for_statement env x
+      | `Enha_for_stmt x ->
+          enhanced_for_statement env x
+      | `Blk x ->
+          trigger_body env x
+      | `SEMI tok ->
+          let v1 = token_ env tok (* ";" *) in
+          Block (v1, [], v1) |> G.s
+      | `Do_stmt x ->
+          do_statement env x
+      | `Brk_stmt x ->
+          break_statement env x
+      | `Cont_stmt x ->
+          continue_statement env x
+      | `Ret_stmt x ->
+          return_statement env x
+      | `Switch_exp x ->
+          switch_expression env x
+      | `Local_var_decl x ->
+          local_variable_declaration env x
+      | `Throw_stmt x ->
+          throw_statement env x
+      | `Try_stmt x ->
+          try_statement env x
+      | `Run_as_stmt x ->
+          run_as_statement env x
+      )
+  | `Semg_ellips tok ->
+      let v1 = token_ env tok (* "..." *) in
+      let v2 = G.sc in
+      G.ExprStmt (G.Ellipsis v1 |> G.e, v2) |> G.s
 
 and map_static_initializer (env : env) ((v1, v2) : CST.static_initializer) =
   let v1 = map_pat_static env v1 in
@@ -3958,14 +4076,13 @@ and map_switch_expression (env : env) ((v1, v2, v3, v4) : CST.switch_expression)
   R.Tuple [v1; v2; v3; v4]
 
 (* NEW *)
-and switch_expression (env : env) ((v1, v2, v3, v4) : CST.switch_expression) : G.expr =
+and switch_expression (env : env) ((v1, v2, v3, v4) : CST.switch_expression) : G.stmt =
   let v1 = token_ env v1 (* "switch" *) in
   let v2 = token_ env v2 (* "on" *) in
   let v3 = expression env v3 in
   let v4 = switch_block env v4 in
   G.Switch (Tok.combine_toks v1 [v2], Some (G.Cond v3), v4)
   |> G.s
-  |> G.stmt_to_expr (* FIXME: "switch" is expr in parser, while it should be stmt *)
 
  (* OLD *)
 and map_switch_label (env : env) ((v1, v2) : CST.switch_label) =
@@ -4044,11 +4161,16 @@ and switch_rule (env : env) (x : CST.switch_rule) : G.case_and_body =
       let v2 = trigger_body env v2 in
       G.CasesAndBody (v1, v2)
 
+(* OLD *)
 and map_throw_statement (env : env) ((v1, v2, v3) : CST.throw_statement) =
   let v1 = map_pat_throw env v1 in
   let v2 = map_expression env v2 in
   let v3 = (* ";" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and throw_statement (env : env) ((v1, v2, v3) : CST.throw_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (throw_statement)"
 
 (* OLD *)
 and map_trigger_body (env : env) (x : CST.trigger_body) =
@@ -4058,6 +4180,7 @@ and map_trigger_body (env : env) (x : CST.trigger_body) =
 and trigger_body (env : env) (x : CST.trigger_body) : G.stmt =
   block env x
 
+(* OLD *)
 and map_try_statement (env : env) ((v1, v2, v3) : CST.try_statement) =
   let v1 = map_pat_try env v1 in
   let v2 = map_trigger_body env v2 in
@@ -4074,6 +4197,10 @@ and map_try_statement (env : env) ((v1, v2, v3) : CST.try_statement) =
     )
   in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and try_statement (env : env) ((v1, v2, v3) : CST.try_statement) : G.stmt =
+  failwith "NOT IMPLEMENTED (try_statement)"
 
 (* OLD *)
 and map_type_ (env : env) (x : CST.type_) =
@@ -4339,11 +4466,19 @@ and map_where_clause (env : env) ((v1, v2) : CST.where_clause) =
   let v2 = map_boolean_expression env v2 in
   R.Tuple [v1; v2]
 
+(* OLD *)
 and map_while_statement (env : env) ((v1, v2, v3) : CST.while_statement) =
   let v1 = map_pat_while env v1 in
   let v2 = map_parenthesized_expression env v2 in
   let v3 = map_statement env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and while_statement (env : env) ((v1, v2, v3) : CST.while_statement) : G.stmt =
+  let v1 = token_ env v1 (* "while" *) in
+  let v2 = parenthesized_expression env v2 in
+  let v3 = statement env v3 in
+  G.While (v1, G.Cond v2, v3) |> G.s
 
 (* OLD *)
 let map_parser_output (env : env) (x : CST.parser_output) =
@@ -4460,6 +4595,15 @@ let parse_expr file =
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       match parser_output env cst with
       | G.E xs -> xs
+      | _ -> failwith "not an expression")
+
+let parse_stmt file =
+  H.wrap_parser
+    (fun () -> Tree_sitter_apex.Parse.file !!file)
+    (fun cst _extras ->
+      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
+      match parser_output env cst with
+      | G.S xs -> xs
       | _ -> failwith "not an expression")
 
  (*
