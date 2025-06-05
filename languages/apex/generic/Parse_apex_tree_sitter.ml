@@ -836,6 +836,10 @@ let identifier (env : env) (x : CST.identifier) : G.ident =
   | `Apex_id_ tok (* pattern [\p{L}_$][\p{L}\p{Nd}_$]* *) ->
       str env tok
 
+(* AUX *)
+let identifier_to_expression (env : env) (x : CST.identifier) : G.expr =
+  G.N (H2.name_of_id (identifier env x)) |> G.e
+
 let map_set_comparison_operator (env : env) (x : CST.set_comparison_operator) =
   (match x with
   | `Pat_in x -> R.Case ("Pat_in",
@@ -1728,12 +1732,21 @@ and map_argument_list (env : env) ((v1, v2, v3) : CST.argument_list) =
   let v3 = (* ")" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_array_access (env : env) ((v1, v2, v3, v4) : CST.array_access) =
   let v1 = map_primary_expression env v1 in
   let v2 = (* "[" *) token env v2 in
   let v3 = map_expression env v3 in
   let v4 = (* "]" *) token env v4 in
   R.Tuple [v1; v2; v3; v4]
+
+(* NEW *)
+and array_access (env : env) ((v1, v2, v3, v4) : CST.array_access) : G.expr =
+  let v1 = primary_expression env v1 in
+  let v2 = (* "[" *) token_ env v2 in
+  let v3 = expression env v3 in
+  let v4 = (* "]" *) token_ env v4 in
+  G.ArrayAccess (v1, (v2, v3, v4)) |> G.e
 
 and map_array_creation_expression (env : env) ((v1, v2, v3) : CST.array_creation_expression) =
   let v1 = map_pat_new env v1 in
@@ -2646,33 +2659,21 @@ and expression (env : env) (x : CST.expression) : G.expr =
   | `Assign_exp (v1, v2, v3) ->
       let v1 =
         (match v1 with
-        | `Id x -> failwith "NOT IMPLEMENTED"
-        | `Field_access x -> failwith "NOT IMPLEMENTED"
-        | `Array_access x -> failwith "NOT IMPLEMENTED"
+        | `Id x -> identifier_to_expression env x
+        | `Field_access x -> field_access env x
+        | `Array_access x -> array_access env x
         )
       in
-      let v2 =
-        (match v2 with
-        | `EQ tok (* "=" *) -> token env tok
-        | `PLUSEQ tok (* "+=" *) -> token env tok
-        | `DASHEQ tok (* "-=" *) -> token env tok
-        | `STAREQ tok (* "*=" *) -> token env tok
-        | `SLASHEQ tok (* "/=" *) -> token env tok
-        | `AMPEQ tok (* "&=" *) -> token env tok
-        | `BAREQ tok (* "|=" *) -> token env tok
-        | `HATEQ tok (* "^=" *) -> token env tok
-        | `PERCEQ tok (* "%=" *) -> token env tok
-        | `LTLTEQ tok (* "<<=" *) -> token env tok
-        | `GTGTEQ tok (* ">>=" *) -> token env tok
-        | `GTGTGTEQ tok (* ">>>=" *) -> token env tok
-        )
-      in
-      let v3 = map_expression env v3 in
-      failwith "NOT IMPLEMENTED"
+      let v2 = assignment_operator env v2 in
+      let v3 = expression env v3 in
+      G.AssignOp (v1, v2, v3) |> G.e
   | `Bin_exp x ->
       binary_expression env x
   | `Inst_exp (v1, v2, v3) ->
-      failwith "NOT IMPLEMENTED"
+      let v1 = expression env v1 in
+      let v2 = token_ env v2 (* "is" *) in
+      let v3 = type_ env v3 in
+      Call (IdSpecial (Instanceof, v2) |> G.e, fb [ Arg v1; ArgType v3 ]) |> G.e
   | `Tern_exp (v1, v2, v3, v4, v5) ->
       let v1 = expression env v1 in
       let v2 = (* "?" *) token_ env v2 in
@@ -2687,11 +2688,31 @@ and expression (env : env) (x : CST.expression) : G.expr =
   | `Un_exp x ->
       unary_expression env x
   | `Cast_exp (v1, v2, v3, v4) ->
-      failwith "NOT IMPLEMENTED"
+      let v1 = token_ env v1 (* "(" *) in
+      let v2 = type_ env v2 in
+      let _v3 = token env v3 (* ")" *) in
+      let v4 = expression env v4 in
+      G.Cast (v2, v1, v4) |> G.e
   | `Dml_exp x ->
-      failwith "NOT IMPLEMENTED"
+      failwith "NOT IMPLEMENTED (expression)"
   | `Switch_exp x ->
       switch_expression env x
+
+(* AUX *)
+and assignment_operator (env : env) x : G.operator G.wrap =
+  match x with
+  | `EQ tok -> (Eq, token_ env tok) (* "=" *)
+  | `PLUSEQ tok -> (Plus, token_ env tok) (* "+=" *)
+  | `DASHEQ tok -> (Minus, token_ env tok) (* "-=" *)
+  | `STAREQ tok -> (Mult, token_ env tok) (* "*=" *)
+  | `SLASHEQ tok -> (Div, token_ env tok) (* "/=" *)
+  | `AMPEQ tok -> (BitAnd, token_ env tok) (* "&=" *)
+  | `BAREQ tok -> (BitOr, token_ env tok) (* "|=" *)
+  | `HATEQ tok -> (BitXor, token_ env tok) (* "^=" *)
+  | `PERCEQ tok -> (Mod, token_ env tok) (* "%=" *)
+  | `LTLTEQ tok -> (LSL, token_ env tok) (* "<<=" *)
+  | `GTGTEQ tok -> (ASR, token_ env tok) (* ">>=" *)
+  | `GTGTGTEQ tok -> (LSR, token_ env tok) (* ">>>=" *)
 
 (* OLD *)
 and map_expression_statement (env : env) ((v1, v2) : CST.expression_statement) =
@@ -2710,6 +2731,7 @@ and map_extends_interfaces (env : env) ((v1, v2) : CST.extends_interfaces) =
   let v2 = map_type_list env v2 in
   R.Tuple [v1; v2]
 
+(* OLD *)
 and map_field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) =
   let v1 = map_anon_choice_prim_exp_bbf4eda env v1 in
   let v2 =
@@ -2733,6 +2755,10 @@ and map_field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) =
     )
   in
   R.Tuple [v1; v2; v3; v4]
+
+(* NEW *)
+and field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) : G.expr =
+  failwith "NOT IMPLEMENTED (field_access)"
 
 and map_field_declaration (env : env) ((v1, v2, v3, v4) : CST.field_declaration) =
   let v1 =
@@ -3415,13 +3441,15 @@ and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
       | `This x ->
           this env x
       | `Id x ->
-          G.N (H2.name_of_ids_with_opt_typeargs [ identifier env x, None ]) |> G.e
+          identifier_to_expression env x
       | `Paren_exp x ->
           parenthesized_expression env x
       | `Obj_crea_exp x ->
           object_creation_expression env x
-      | `Field_access x -> failwith "NOT IMPLEMENTED"
-      | `Array_access x -> failwith "NOT IMPLEMENTED"
+      | `Field_access x ->
+          field_access env x
+      | `Array_access x ->
+          array_access env x
       | `Meth_invo x -> failwith "NOT IMPLEMENTED"
       | `Array_crea_exp x -> failwith "NOT IMPLEMENTED"
       | `Map_crea_exp x -> failwith "NOT IMPLEMENTED"
@@ -4047,6 +4075,7 @@ and map_try_statement (env : env) ((v1, v2, v3) : CST.try_statement) =
   in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_type_ (env : env) (x : CST.type_) =
   (match x with
   | `Unan_type x -> R.Case ("Unan_type",
@@ -4058,6 +4087,10 @@ and map_type_ (env : env) (x : CST.type_) =
       R.Tuple [v1; v2]
     )
   )
+
+(* NEW *)
+and type_ (env : env) (x : CST.type_) : G.type_ =
+  failwith "NOT IMPLEMENTED (type_)"
 
 and map_type_arguments (env : env) ((v1, v2, v3) : CST.type_arguments) =
   let v1 = (* "<" *) token env v1 in
