@@ -948,6 +948,7 @@ let map_date_literal (env : env) (x : CST.date_literal) =
     )
   )
 
+(* OLD *)
 let map_modifier (env : env) (x : CST.modifier) =
   (match x with
   | `Pat_global x -> R.Case ("Pat_global",
@@ -999,6 +1000,44 @@ let map_modifier (env : env) (x : CST.modifier) =
       R.Tuple [v1; v2]
     )
   )
+
+(* NEW *)
+let modifier (env : env) (x : CST.modifier) : G.attribute =
+  match x with
+  | `Pat_global x ->
+      G.OtherAttribute (("Global", token_ env x), [])
+  | `Pat_public x ->
+      G.KeywordAttr (G.Public, token_ env x)
+  | `Pat_test x ->
+      G.OtherAttribute (("testMethod", token_ env x), [])
+  | `Pat_prot x ->
+      G.KeywordAttr (G.Protected, token_ env x)
+  | `Pat_over x ->
+      G.KeywordAttr (G.Override, token_ env x)
+  | `Pat_priv x ->
+      G.KeywordAttr (G.Private, token_ env x)
+  | `Pat_virt x ->
+      G.OtherAttribute (("virtual", token_ env x), [])
+  | `Pat_abst x ->
+      G.KeywordAttr (G.Abstract, token_ env x)
+  | `Pat_static x ->
+      G.KeywordAttr (G.Static, token_ env x)
+  | `Pat_final x ->
+      G.KeywordAttr (G.Final, token_ env x)
+  | `Pat_tran x ->
+      G.OtherAttribute (("transient", token_ env x), [])
+  | `Pat_with_pat_shar (v1, v2) ->
+      let v1 = token_ env v1 in
+      let v2 = token_ env v2 in
+      G.OtherAttribute (("withSharing", Tok.combine_toks v1 [v2]), [])
+  | `Pat_with__pat_shar (v1, v2) ->
+      let v1 = token_ env v1 in
+      let v2 = token_ env v2 in
+      G.OtherAttribute (("withoutSharing", Tok.combine_toks v1 [v2]), [])
+  | `Pat_inhe_pat_shar (v1, v2) ->
+      let v1 = token_ env v1 in
+      let v2 = token_ env v2 in
+      G.OtherAttribute (("inheritSharing", Tok.combine_toks v1 [v2]), [])
 
 let map_function_name (env : env) (x : CST.function_name) =
   (match x with
@@ -1178,6 +1217,7 @@ let map_using_clause (env : env) ((v1, v2, v3, v4) : CST.using_clause) =
   let v4 = map_identifier env v4 in
   R.Tuple [v1; v2; v3; v4]
 
+(* OLD *)
 let map_variable_declarator_id (env : env) ((v1, v2) : CST.variable_declarator_id) =
   let v1 = map_identifier env v1 in
   let v2 =
@@ -1188,6 +1228,11 @@ let map_variable_declarator_id (env : env) ((v1, v2) : CST.variable_declarator_i
     | None -> R.Option None)
   in
   R.Tuple [v1; v2]
+
+(* NEW *)
+(* FIXME: what doeas v2 do? *)
+let variable_declarator_id (env : env) ((v1, _v2) : CST.variable_declarator_id) : G.ident =
+  identifier env v1
 
 (* OLD *)
 let map_break_statement (env : env) ((v1, v2, v3) : CST.break_statement) =
@@ -1229,6 +1274,7 @@ let continue_statement (env : env) ((v1, v2, v3) : CST.continue_statement) : G.s
   let v3 = token_ env v3 (* ";" *) in
   G.Continue (v1, v2, v3) |> G.s
 
+(* OLD *)
 let rec map_name (env : env) (x : CST.name) =
   (match x with
   | `Id x -> R.Case ("Id",
@@ -1241,6 +1287,18 @@ let rec map_name (env : env) (x : CST.name) =
       R.Tuple [v1; v2; v3]
     )
   )
+
+(* NEW *)
+let rec name (env : env) (x : CST.name) : G.name =
+  match x with
+  | `Id x ->
+      let i = identifier env x in
+      H2.name_of_id i
+  | `Scoped_id (v1, v2, v3) ->
+      let v1 = name env v1 in
+      let _v2 = token_ env v2 (* "." *) in
+      let v3 = identifier env v3 in
+      H2.add_id_opt_type_args_to_name v1 (v3, None) (* FIXME: None? *)
 
 let map_inferred_parameters (env : env) ((v1, v2, v3, v4) : CST.inferred_parameters) =
   let v1 = (* "(" *) token env v1 in
@@ -1573,6 +1631,7 @@ and map_alias_expression (env : env) ((v1, v2, v3) : CST.alias_expression) =
   let v3 = map_identifier env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_annotation (env : env) ((v1, v2, v3) : CST.annotation) =
   let v1 = (* "@" *) token env v1 in
   let v2 = map_name env v2 in
@@ -1585,6 +1644,18 @@ and map_annotation (env : env) ((v1, v2, v3) : CST.annotation) =
   in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and annotation (env : env) ((v1, v2, v3) : CST.annotation) : G.attribute =
+  let v1 = (* "@" *) token_ env v1 in
+  let v2 = name env v2 in
+  match v3 with
+  | Some x ->
+      let args = annotation_argument_list env x in
+      G.NamedAttr (v1, v2, args)
+  | None ->
+      G.NamedAttr (v1, v2, fb [])
+
+(* OLD *)
 and map_annotation_argument_list (env : env) ((v1, v2, v3) : CST.annotation_argument_list) =
   let v1 = (* "(" *) token env v1 in
   let v2 =
@@ -1613,6 +1684,35 @@ and map_annotation_argument_list (env : env) ((v1, v2, v3) : CST.annotation_argu
   in
   let v3 = (* ")" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and annotation_argument_list (env : env) ((v1, v2, v3) : CST.annotation_argument_list) : G.arguments =
+  let v1 = (* "(" *) token_ env v1 in
+  let v2 (* : G.argument list *) =
+    match v2 with
+    | `Elem_value x -> R.Case ("Elem_value",
+        map_element_value env x
+      )
+    | `Anno_key_value_rep_opt_COMMA_anno_key_value (v1, v2) -> R.Case ("Anno_key_value_rep_opt_COMMA_anno_key_value",
+        let v1 = map_annotation_key_value env v1 in
+        let v2 =
+          R.List (List.map (fun (v1, v2) ->
+            let v1 =
+              (match v1 with
+              | Some tok -> R.Option (Some (
+                  (* "," *) token env tok
+                ))
+              | None -> R.Option None)
+            in
+            let v2 = map_annotation_key_value env v2 in
+            R.Tuple [v1; v2]
+          ) v2)
+        in
+        R.Tuple [v1; v2]
+      )
+  in
+  let v3 = (* ")" *) token_ env v3 in
+  (v1, failwith "NOT IMPLEMENTED (annotation_Argument_list)", v3)
 
 and map_annotation_key_value (env : env) (x : CST.annotation_key_value) =
   (match x with
@@ -2116,6 +2216,7 @@ and map_bound_apex_expression (env : env) ((v1, v2) : CST.bound_apex_expression)
   let v2 = map_expression env v2 in
   R.Tuple [v1; v2]
 
+(* OLD *)
 and map_catch_clause (env : env) ((v1, v2, v3, v4, v5) : CST.catch_clause) =
   let v1 = map_pat_catch env v1 in
   let v2 = (* "(" *) token env v2 in
@@ -2124,6 +2225,16 @@ and map_catch_clause (env : env) ((v1, v2, v3, v4, v5) : CST.catch_clause) =
   let v5 = map_trigger_body env v5 in
   R.Tuple [v1; v2; v3; v4; v5]
 
+(* NEW *)
+and catch_clause (env : env) ((v1, v2, v3, v4, v5) : CST.catch_clause) : G.catch =
+  let v1 = token_ env v1 (* "catch" *)in
+  let _v2 = (* "(" *) token env v2 in
+  let v3 = catch_formal_parameter env v3 in
+  let _v4 = (* ")" *) token env v4 in
+  let v5 = trigger_body env v5 in
+  (v1, v3, v5)
+
+(* OLD *)
 and map_catch_formal_parameter (env : env) (x : CST.catch_formal_parameter) =
   (match x with
   | `Semg_ellips tok -> R.Case ("Semg_ellips",
@@ -2142,6 +2253,22 @@ and map_catch_formal_parameter (env : env) (x : CST.catch_formal_parameter) =
       R.Tuple [v1; v2; v3]
     )
   )
+
+(* NEW *)
+and catch_formal_parameter (env : env) (x : CST.catch_formal_parameter) : G.catch_exn =
+  match x with
+  | `Semg_ellips tok ->
+      let t = token_ env tok (* "..." *) in
+      G.CatchPattern (G.PatEllipsis t)
+  | `Opt_modifs_unan_type_var_decl_id (v1, v2, v3) ->
+      let v1 =
+        match v1 with
+        | Some x -> modifiers env x
+        | None -> []
+      in
+      let v2 = make_type v1 (unannotated_type env v2) in
+      let v3 = variable_declarator_id env v3 in
+      G.CatchParam (G.param_of_type v2 ?pname:(Some v3))
 
 and map_class_body (env : env) ((v1, v2, v3) : CST.class_body) =
   let v1 = (* "{" *) token env v1 in
@@ -2819,10 +2946,17 @@ and map_field_declaration (env : env) ((v1, v2, v3, v4) : CST.field_declaration)
   in
   R.Tuple [v1; v2; v3; v4]
 
+(* OLD *)
 and map_finally_clause (env : env) ((v1, v2) : CST.finally_clause) =
   let v1 = map_pat_fina env v1 in
   let v2 = map_trigger_body env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and finally_clause (env : env) ((v1, v2) : CST.finally_clause) : G.finally =
+  let v1 = token_ env v1 (* "finally" *) in
+  let v2 = trigger_body env v2 in
+  (v1, v2)
 
 and map_find_clause (env : env) ((v1, v2) : CST.find_clause) =
   let v1 = map_pat_find env v1 in
@@ -3367,6 +3501,7 @@ and map_method_invocation (env : env) ((v1, v2) : CST.method_invocation) =
   let v2 = map_argument_list env v2 in
   R.Tuple [v1; v2]
 
+(* OLD *)
 and map_modifiers (env : env) (xs : CST.modifiers) =
   R.List (List.map (fun x ->
     (match x with
@@ -3379,7 +3514,15 @@ and map_modifiers (env : env) (xs : CST.modifiers) =
     )
   ) xs)
 
-(* OLD *)
+(* NEW *)
+and modifiers (env : env) (xs : CST.modifiers) : attribute list =
+  List.map (fun x ->
+    match x with
+    | `Anno x -> annotation env x (* G.NamedAttr *)
+    | `Modi x -> modifier env x (* G.KeywordAttr or G.OtherAttribute *)
+  ) xs
+
+ (* OLD *)
 and map_object_creation_expression (env : env) (x : CST.object_creation_expression) =
   map_unqualified_object_creation_expression env x
 
@@ -3443,11 +3586,21 @@ and parenthesized_expression (env : env)
   expression env v2
   |> adjust_range_of_parenthesized_expr env v1 v3
 
+(* OLD *)
 and map_partial_catch (env : env) (x : CST.partial_catch) =
   map_catch_clause env x
 
+(* NEW *)
+and partial_catch (env : env) (x : CST.partial_catch) : G.catch =
+  catch_clause env x
+
+(* OLD *)
 and map_partial_finally (env : env) (x : CST.partial_finally) =
   map_finally_clause env x
+
+(* NEW *)
+and partial_finally (env : env) (x : CST.partial_finally) : G.finally =
+  finally_clause env x
 
 (* OLD *)
 and map_primary_expression (env : env) (x : CST.primary_expression) =
@@ -4217,7 +4370,16 @@ and map_try_statement (env : env) ((v1, v2, v3) : CST.try_statement) =
 
 (* NEW *)
 and try_statement (env : env) ((v1, v2, v3) : CST.try_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (try_statement)"
+  let v1 = token_ env v1 (* "try" *) in
+  let v2 = trigger_body env v2 in
+  match v3 with
+  | `Rep1_catch_clause xs ->
+      let cs = List.map (partial_catch env) xs in
+      G.Try (v1, v2, cs, None, None) |> G.s
+  | `Rep_catch_clause_fina_clause (xs, fly) ->
+      let cs = List.map (partial_catch env) xs in
+      let fly = partial_finally env fly in
+      G.Try (v1, v2, cs, None, Some fly) |> G.s
 
 (* OLD *)
 and map_type_ (env : env) (x : CST.type_) =
@@ -4234,7 +4396,17 @@ and map_type_ (env : env) (x : CST.type_) =
 
 (* NEW *)
 and type_ (env : env) (x : CST.type_) : G.type_ =
-  failwith "NOT IMPLEMENTED (type_)"
+  match x with
+  | `Unan_type x ->
+      unannotated_type env x |> G.t
+  | `Anno_type (v1, v2) ->
+      let v1 = List.map (annotation env) v1 in
+      let v2 = unannotated_type env v2 in
+      make_type v1 v2
+
+(* AUX *)
+and make_type (a : G.attribute list) (t : G.type_kind) : G.type_=
+  {G.t = t; G.t_attrs = a}
 
 and map_type_arguments (env : env) ((v1, v2, v3) : CST.type_arguments) =
   let v1 = (* "<" *) token env v1 in
@@ -4303,6 +4475,7 @@ and map_type_parameters (env : env) ((v1, v2, v3, v4) : CST.type_parameters) =
   let v4 = (* ">" *) token env v4 in
   R.Tuple [v1; v2; v3; v4]
 
+(* OLD *)
 and map_unannotated_type (env : env) (x : CST.unannotated_type) =
   (match x with
   | `Choice_void_type x -> R.Case ("Choice_void_type",
@@ -4314,6 +4487,10 @@ and map_unannotated_type (env : env) (x : CST.unannotated_type) =
       R.Tuple [v1; v2]
     )
   )
+
+(* NEW *)
+and unannotated_type (env : env) (x : CST.unannotated_type) : G.type_kind =
+  failwith "NOT IMPLEMENTED (unannotated_type)"
 
 (* OLD *)
 and map_unary_expression (env : env) (x : CST.unary_expression) =
