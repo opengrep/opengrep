@@ -1204,7 +1204,10 @@ let map_break_statement (env : env) ((v1, v2, v3) : CST.break_statement) =
 
 (* NEW *)
 let break_statement (env : env) ((v1, v2, v3) : CST.break_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (break_statement)"
+  let v1 = token_ env v1 (* "break" *) in
+  let v2 = H2.opt_to_label_ident (Option.map (identifier env) v2) in
+  let v3 = token_ env v3 (* ";" *) in
+  G.Break (v1, v2, v3) |> G.s
 
 (* OLD *)
 let map_continue_statement (env : env) ((v1, v2, v3) : CST.continue_statement) =
@@ -1221,7 +1224,10 @@ let map_continue_statement (env : env) ((v1, v2, v3) : CST.continue_statement) =
 
 (* NEW *)
 let continue_statement (env : env) ((v1, v2, v3) : CST.continue_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (continue_statement)"
+  let v1 = token_ env v1 (* "break" *) in
+  let v2 = H2.opt_to_label_ident (Option.map (identifier env) v2) in
+  let v3 = token_ env v3 (* ";" *) in
+  G.Continue (v1, v2, v3) |> G.s
 
 let rec map_name (env : env) (x : CST.name) =
   (match x with
@@ -2409,7 +2415,12 @@ and map_do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) =
 
 (* OLD *)
 and do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (do_statement)"
+  let v1 = token_ env v1 (* "do" *) in
+  let v2 = statement env v2 in
+  let _v3 = token_ env v3 (* "while" *) in
+  let v4 = parenthesized_expression env v4 in
+  let _v7 = token_ env v5 (* ";" *) in
+  DoWhile (v1, v2, v4) |> G.s
 
 and map_element_value (env : env) (x : CST.element_value) =
   (match x with
@@ -3554,7 +3565,10 @@ and map_return_statement (env : env) ((v1, v2, v3) : CST.return_statement) =
 
 (* NEW *)
 and return_statement (env : env) ((v1, v2, v3) : CST.return_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (return_statement)"
+  let v1 = token_ env v1 (* "return" *) in
+  let v2 = Option.map (expression env) v2 in
+  let v3 = token_ env v3 (* ";" *) in
+  Return (v1, v2, v3) |> G.s
 
 and map_returning_clause (env : env) ((v1, v2, v3) : CST.returning_clause) =
   let v1 = map_pat_retu env v1 in
@@ -4009,24 +4023,24 @@ and statement (env : env) (x : CST.statement) : G.stmt =
       | `Enha_for_stmt x ->
           enhanced_for_statement env x
       | `Blk x ->
-          trigger_body env x
+          trigger_body env x (* V *)
       | `SEMI tok ->
           let v1 = token_ env tok (* ";" *) in
           Block (v1, [], v1) |> G.s
       | `Do_stmt x ->
-          do_statement env x
+          do_statement env x (* V  *)
       | `Brk_stmt x ->
-          break_statement env x
+          break_statement env x (* V *)
       | `Cont_stmt x ->
-          continue_statement env x
+          continue_statement env x (* V *)
       | `Ret_stmt x ->
-          return_statement env x
+          return_statement env x (* V *)
       | `Switch_exp x ->
-          switch_expression env x
+          switch_expression env x (* V *)
       | `Local_var_decl x ->
           local_variable_declaration env x
       | `Throw_stmt x ->
-          throw_statement env x
+          throw_statement env x (* V *)
       | `Try_stmt x ->
           try_statement env x
       | `Run_as_stmt x ->
@@ -4170,7 +4184,10 @@ and map_throw_statement (env : env) ((v1, v2, v3) : CST.throw_statement) =
 
 (* NEW *)
 and throw_statement (env : env) ((v1, v2, v3) : CST.throw_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (throw_statement)"
+      let v1 = token_ env v1 (* "throw" *) in
+      let v2 = expression env v2 in
+      let v3 = token_ env v3 (* ";" *) in
+      G.Throw (v1, v2, v3) |> G.s
 
 (* OLD *)
 and map_trigger_body (env : env) (x : CST.trigger_body) =
