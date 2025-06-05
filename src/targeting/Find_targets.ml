@@ -206,7 +206,6 @@ type conf = {
   max_target_bytes : int;
   respect_gitignore : bool;
   respect_semgrepignore_files : bool;
-  (* Custom semgrepignore filename to use instead of '.semgrepignore' *)
   semgrepignore_filename : string option;
   always_select_explicit_targets : bool;
   explicit_targets : Explicit_targets.t;

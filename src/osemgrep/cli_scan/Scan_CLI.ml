@@ -267,8 +267,7 @@ let o_semgrepignore_filename : string option Term.t =
     Arg.info
       [ "semgrepignore-filename" ]
       ~doc:
-        {|Override the default ignore file name instead of '.semgrepignore'.
-This file will be treated like the .semgrepignore just with a custom path.
+        {|Override the default '.semgrepignore' with the specified file path.
 REQUIRES --experimental|}
   in
   Arg.value (Arg.opt Arg.(some string) None info)
