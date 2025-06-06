@@ -1712,7 +1712,7 @@ and annotation_argument_list (env : env) ((v1, v2, v3) : CST.annotation_argument
       )
   in
   let v3 = (* ")" *) token_ env v3 in
-  (v1, failwith "NOT IMPLEMENTED (annotation_Argument_list)", v3)
+  (v1, failwith "NOT IMPLEMENTED (annotation_argument_list)", v3)
 
 and map_annotation_key_value (env : env) (x : CST.annotation_key_value) =
   (match x with
@@ -1892,6 +1892,7 @@ and map_array_creation_expression (env : env) ((v1, v2, v3) : CST.array_creation
   in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) =
   let v1 = (* "{" *) token env v1 in
   let v2 =
@@ -1912,7 +1913,11 @@ and map_array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) =
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
-(* OLD *)
+(* NEW *)
+and array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) : G.expr =
+  failwith "NOT IMPLEMENTED (array_initializer)"
+
+   (* OLD *)
 and map_binary_expression (env : env) (x : CST.binary_expression) =
   (match x with
   | `Exp_GT_exp (v1, v2, v3) -> R.Case ("Exp_GT_exp",
@@ -3028,7 +3033,45 @@ and map_for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) =
 
 (* NEW *)
 and for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (for_statement)"
+  let v1 = (* "for" *) token_ env v1 in
+  let v2 = (* "(" *) token_ env v2 in
+  let v3 =
+    match v3 with
+    | `Semg_ellips tok ->
+        let t = (* "..." *) token_ env tok in
+        G.ForEllipsis t
+    | `Choice_local_var_decl_opt_exp_SEMI_opt_exp_rep_COMMA_exp (v1, v2, v3, v4) ->
+        let v1 (* : G.for_var_or_expr list *) =
+          match v1 with
+          | `Local_var_decl x ->
+               local_variable_declaration_data_only env x
+               |> List.map (fun (t1, t2) -> G.ForInitVar (t1, t2))
+          | `Opt_exp_rep_COMMA_exp_SEMI (v1, v2) ->
+              let v1 =
+                match v1 with
+                | Some x ->
+                    let (e, tes) = anon_exp_rep_COMMA_exp_0bb260c env x in
+                    (e :: List.map snd tes)
+                    |> List.map (fun f -> ForInitExpr f)
+                | None -> []
+              in
+              let _v2 = (* ";" *) token env v2 in
+              v1
+        in
+        let v2 = Option.map (expression env) v2 in
+        let v3 = (* ";" *) token env v3 in
+        let v4 =
+          match v4 with
+          | Some x ->
+              let (e, _) = anon_exp_rep_COMMA_exp_0bb260c env x in
+              Some e
+          | None -> None
+        in
+        G.ForClassic (v1, v2, v4)
+  in
+  let v4 = (* ")" *) token_ env v4 in
+  let v5 = statement env v5 in
+  For (v1, v3, v5) |> G.s
 
 and map_formal_parameter (env : env) (x : CST.formal_parameter) =
   (match x with
@@ -3395,8 +3438,35 @@ and map_local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_var
   R.Tuple [v1; v2; v3; v4]
 
 (* NEW *)
-and local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration) : G.stmt =
-  failwith "NOT IMPLEMENTED (local_variable_declaration)"
+and local_variable_declaration (env : env) ((v1, v2, v3, v4) as v : CST.local_variable_declaration) : G.stmt =
+  let d = local_variable_declaration_data_only env v in
+  let v4 = (* ";" *) token_ env v4 in
+  var_def_stmt v4 d
+
+(* AUX *)
+and local_variable_declaration_data_only (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration)
+    : (entity * variable_definition) list =
+  let v1 =
+    (match v1 with
+    | Some x -> modifiers env x
+    | None -> [])
+  in
+  let v2 = unannotated_type env v2 in
+  let v3 = variable_declarator_list env v3 in
+  let v4 = (* ";" *) token_ env v4 in
+  List_.map
+    (fun (ent, vardef) ->
+      (ent, { vinit = vardef.vinit; vtype = Some (make_type v1 v2); vtok = G.no_sc }))
+    v3 (* t *)
+
+(* AUX *)
+and var_def_stmt (sc : Tok.t)
+    (decls : (entity * variable_definition) list) : G.stmt =
+  let stmts =
+    decls
+    |> H2.add_semicolon_to_last_var_def_and_convert_to_stmts sc
+  in
+  G.stmt1 stmts
 
 and map_map_creation_expression (env : env) ((v1, v2, v3) : CST.map_creation_expression) =
   let v1 = map_pat_new env v1 in
@@ -3661,7 +3731,7 @@ and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
       | `Lit x ->
           let lit = literal env x in
           G.L lit |> G.e
-      | `Class_lit x -> failwith "NOT IMPLEMENTED"
+      | `Class_lit x -> failwith "NOT IMPLEMENTED (primary_expression)"
       | `This x ->
           this env x
       | `Id x ->
@@ -3674,10 +3744,10 @@ and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
           field_access env x
       | `Array_access x ->
           array_access env x
-      | `Meth_invo x -> failwith "NOT IMPLEMENTED"
-      | `Array_crea_exp x -> failwith "NOT IMPLEMENTED"
-      | `Map_crea_exp x -> failwith "NOT IMPLEMENTED"
-      | `Query_exp x -> failwith "NOT IMPLEMENTED"
+      | `Meth_invo x -> failwith "NOT IMPLEMENTED (primary_expression)"
+      | `Array_crea_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
+      | `Map_crea_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
+      | `Query_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
       )
   | `Semg_deep_exp (v1, v2, v3) ->
       let v1 = token_ env v1 in
@@ -4564,7 +4634,7 @@ and map_unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5)
 
 (* NEW *)
 and unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5) : CST.unqualified_object_creation_expression) : G.expr =
-  failwith "NOT IMPLEMENTED"
+  failwith "NOT IMPLEMENTED (unqualified_object_creation_expression)"
 
 (* OLD *)
 and map_update_expression (env : env) (x : CST.update_expression) =
@@ -4625,6 +4695,7 @@ and map_value_expression (env : env) (x : CST.value_expression) =
     )
   )
 
+(* OLD *)
 and map_variable_declarator (env : env) ((v1, v2) : CST.variable_declarator) =
   let v1 = map_variable_declarator_id env v1 in
   let v2 =
@@ -4638,6 +4709,24 @@ and map_variable_declarator (env : env) ((v1, v2) : CST.variable_declarator) =
   in
   R.Tuple [v1; v2]
 
+(* NEW *)
+and variable_declarator (env : env) ((v1, v2) : CST.variable_declarator)
+    : entity * variable_definition =
+  let v1 = variable_declarator_id env v1 in
+  let vinit =
+    Option.map
+      (fun (w1, w2) ->
+        let _r1 = (* "=" *) token_ env w1 in
+        let r2 = variable_initializer env w2 in
+        r2
+      )
+      v2
+  in
+  let ent = G.basic_entity v1 in
+  let vardef = { vinit; vtype = None; vtok = G.no_sc } in
+  (ent, vardef)
+
+(* OLD *)
 and map_variable_declarator_list (env : env) ((v1, v2) : CST.variable_declarator_list) =
   let v1 = map_variable_declarator env v1 in
   let v2 =
@@ -4649,6 +4738,22 @@ and map_variable_declarator_list (env : env) ((v1, v2) : CST.variable_declarator
   in
   R.Tuple [v1; v2]
 
+(* NEW *)
+and variable_declarator_list (env : env) ((v1, v2) : CST.variable_declarator_list)
+    : (entity * variable_definition) list =
+  let v1 = variable_declarator env v1 in
+  let
+    v2 = List.map
+      (fun (w1, w2) ->
+         let _r1 = token_ env w1 (* "," *) in
+         let r2 = variable_declarator env w2 in
+         r2
+      )
+      v2
+  in
+  v1 :: v2
+
+(* OLD *)
 and map_variable_initializer (env : env) (x : CST.variable_initializer) =
   (match x with
   | `Exp x -> R.Case ("Exp",
@@ -4658,6 +4763,12 @@ and map_variable_initializer (env : env) (x : CST.variable_initializer) =
       map_array_initializer env x
     )
   )
+
+(* NEW *)
+and variable_initializer (env : env) (x : CST.variable_initializer) : G.expr =
+  match x with
+  | `Exp x -> expression env x
+  | `Array_init x -> array_initializer env x
 
 and map_where_clause (env : env) ((v1, v2) : CST.where_clause) =
   let v1 = map_pat_where env v1 in
@@ -4734,13 +4845,14 @@ let map_parser_output (env : env) (x : CST.parser_output) =
 (* NEW *)
 let parser_output (env : env) (x : CST.parser_output) : G.any =
   match x with
-  | `Rep_stmt xs -> failwith "NOT IMPLEMENTED"
-  | `Cons_decl x -> failwith "NOT IMPLEMENTED"
+  | `Rep_stmt xs ->
+      G.Ss (List.map (statement env) xs)
+  | `Cons_decl x -> failwith "NOT IMPLEMENTED (c_dcl_)"
   | `Exp x ->
       G.E (expression env x)
-  | `Anno x -> failwith "NOT IMPLEMENTED"
-  | `Meth_decl x -> failwith "NOT IMPLEMENTED"
-  | `Local_var_decl x -> failwith "NOT IMPLEMENTED"
+  | `Anno x -> failwith "NOT IMPLEMENTED (anno)"
+  | `Meth_decl x -> failwith "NOT IMPLEMENTED (met_decl)"
+  | `Local_var_decl x -> failwith "NOT IMPLEMENTED (lvar_decl)"
   | `Class_header x -> failwith "NOT IMPLEMENTED"
   | `Full_meth_header (v1, v2) -> failwith "NOT IMPLEMENTED"
   | `Part_if (v1, v2) -> failwith "NOT IMPLEMENTED"
@@ -4801,8 +4913,8 @@ let parse_stmt file =
     (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       match parser_output env cst with
-      | G.S xs -> xs
-      | _ -> failwith "not an expression")
+      | G.Ss xs -> xs
+      | _ -> failwith "not a statement")
 
  (*
 let parse_pattern_aux str =
