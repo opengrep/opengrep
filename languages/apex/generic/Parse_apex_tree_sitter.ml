@@ -3078,6 +3078,7 @@ and for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) : G.stm
         let v4 =
           match v4 with
           | Some x ->
+              (* FIXME: What to do with the other expressions here? *)
               let (e, _) = anon_exp_rep_COMMA_exp_0bb260c env x in
               Some e
           | None -> None
