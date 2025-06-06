@@ -70,7 +70,7 @@ let test_filter ?excludes:cli_patterns (files : F.t list) selection () =
 (* The tests *)
 (*****************************************************************************)
 
-gi(*
+(*
    Test helper for custom semgrepignore filename
 *)
 let test_filter_custom_filename ~semgrepignore_filename (files : F.t list) selection () =

@@ -264,11 +264,10 @@ CHANGE OR DISAPPEAR WITHOUT NOTICE.
 
 let o_semgrepignore_filename : string option Term.t =
   let info =
-    Arg.info
+    Arg.info ~docv:"FILENAME"
       [ "semgrepignore-filename" ]
       ~doc:
-        {|Override the default '.semgrepignore' with the specified file path.
-REQUIRES --experimental|}
+        {|Use the file $(docv) instead of the default .semgrepignore to specify targets skipped during the scan. REQUIRES --experimental|}
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
