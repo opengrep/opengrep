@@ -192,10 +192,10 @@ let tests =
              file "test.c";
            ]
            [ ("/test.temp", false); ("/test.c", true) ]);
-      t "custom semgrepignore filename with path"
-        (test_filter_custom_filename ~semgrepignore_filename:"config/ignore.txt"
+      t "custom semgrepignore filename - different name"
+        (test_filter_custom_filename ~semgrepignore_filename:"myignore"
            [
-             dir "config" [ File ("ignore.txt", "build/*") ];
+             File ("myignore", "build/*");
              dir "build" [ file "output.txt" ];
              file "source.c";
            ]
@@ -204,7 +204,24 @@ let tests =
         (test_filter_custom_filename ~semgrepignore_filename:"nonexistent.ignore"
            [
              file "test.c";
-             file "build/temp.txt";
+             dir "build" [ file "temp.txt" ];
            ]
            [ ("/test.c", true); ("/build/temp.txt", true) ]);
+      t "custom semgrepignore filename rejects paths with slashes"
+        (fun () ->
+           F.with_tempdir ~chdir:true (fun root ->
+             try
+               let _filter =
+                 Semgrepignore.create ~semgrepignore_filename:"config/ignore.txt"
+                   ~default_semgrepignore_patterns:Empty
+                   ~exclusion_mechanism:
+                     { use_gitignore_files = true; use_semgrepignore_files = true }
+                   ~project_root:root ()
+               in
+               Alcotest.fail "Expected Invalid_argument exception for path with slash"
+             with
+             | Invalid_argument msg when String.contains msg '/' ->
+                 printf "[OK] Correctly rejected filename with slash: %s\n" msg
+             | exn ->
+                 Alcotest.fail (Printf.sprintf "Unexpected exception: %s" (Printexc.to_string exn))));
     ]
