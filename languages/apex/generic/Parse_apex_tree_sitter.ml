@@ -1230,7 +1230,7 @@ let map_variable_declarator_id (env : env) ((v1, v2) : CST.variable_declarator_i
   R.Tuple [v1; v2]
 
 (* NEW *)
-(* FIXME: what doeas v2 do? *)
+(* FIXME: what does v2 do? *)
 let variable_declarator_id (env : env) ((v1, _v2) : CST.variable_declarator_id) : G.ident =
   identifier env v1
 
@@ -2610,9 +2610,24 @@ and map_enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9)
   let v9 = map_statement env v9 in
   R.Tuple [v1; v2; v3; v4; v5; v6; v7; v8; v9]
 
-(* NEW  *)
+(* NEW *)
 and enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9) : CST.enhanced_for_statement) : G.stmt =
-  failwith "NOT IMPLEMENTED (enchanced_for_statement)"
+  let v1 = (* "for" *) token_ env v1 in
+  let v2 = (* "(" *) token env v2 in
+  let v3 =
+    match v3 with
+    | Some x -> modifiers env x
+    | None -> []
+  in
+  let v4 = unannotated_type env v4 in
+  let ty = make_type v3 v4 in
+  let v5 = variable_declarator_id env v5 in
+  let pat = G.PatId (v5, empty_id_info ()) in
+  let v6 = (* ":" *) token_ env v6 in
+  let v7 = expression env v7 in
+  let v8 = (* ")" *) token_ env v8 in
+  let v9 = statement env v9 in
+  G.For (v1, G.ForEach (G.PatTyped (pat, ty), v6, v7), v9) |> G.s
 
 and map_enum_body (env : env) ((v1, v2, v3) : CST.enum_body) =
   let v1 = (* "{" *) token env v1 in
@@ -3063,6 +3078,7 @@ and for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) : G.stm
         let v4 =
           match v4 with
           | Some x ->
+              (* FIXME: What to do with the other expressions here? *)
               let (e, _) = anon_exp_rep_COMMA_exp_0bb260c env x in
               Some e
           | None -> None
@@ -4246,9 +4262,9 @@ and statement (env : env) (x : CST.statement) : G.stmt =
       | `While_stmt x ->
           while_statement env x (* V *)
       | `For_stmt x ->
-          for_statement env x
+          for_statement env x (* V *)
       | `Enha_for_stmt x ->
-          enhanced_for_statement env x
+          enhanced_for_statement env x (* V *)
       | `Blk x ->
           trigger_body env x (* V *)
       | `SEMI tok ->
@@ -4265,7 +4281,7 @@ and statement (env : env) (x : CST.statement) : G.stmt =
       | `Switch_exp x ->
           switch_expression env x (* V *)
       | `Local_var_decl x ->
-          local_variable_declaration env x
+          local_variable_declaration env x (* V *)
       | `Throw_stmt x ->
           throw_statement env x (* V *)
       | `Try_stmt x ->
