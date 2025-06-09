@@ -34,7 +34,7 @@ More information: https://semgrep.dev/docs/metrics
 └─────────────┘
   Scanning 3 files tracked by git with 1 Code rule:
   Scanning 3 files.
-{"version":"1.3.1","results":[],"errors":[],"paths":{"scanned":["stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"1.4.0","results":[],"errors":[],"paths":{"scanned":["stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}
 
 
 ┌──────────────┐
