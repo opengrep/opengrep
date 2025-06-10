@@ -131,12 +131,10 @@ let translate_root pat =
 (*****************************************************************************)
 
 (* Compile a pattern into an ocaml-re regexp for fast matching *)
-(* TODO: For windows, we should probably make lowecase since it's not
- * case sensitive. Then paths should also be transformed in the same
- * way. *)
 let compile ~source pat =
   let pcre = translate_root pat in
-  let re = Pcre2_.regexp pcre in
+  let flags = if Sys.os_type = "Win32" then [`CASELESS] else [] in
+  let re = Pcre2_.regexp ~flags pcre in
   { source; re }
 [@@profiling "Glob.Match.compile"]
 

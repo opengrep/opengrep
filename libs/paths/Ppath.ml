@@ -205,6 +205,12 @@ let of_string_for_tests string = create (String.split_on_char '/' string)
 let to_string_for_tests = to_string_fast
 
 let relativize ~root:orig_root orig_ppath =
+  let string_equal_case_insensitive_on_windows s1 s2 =
+    if Sys.win32 then
+      String.equal (String.lowercase_ascii s1) (String.lowercase_ascii s2)
+    else
+      String.equal s1 s2
+  in
   let rec aux root ppath =
     match (root, ppath) with
     | [ "" ], [ "" ] -> Fpath.v "."
@@ -219,7 +225,7 @@ let relativize ~root:orig_root orig_ppath =
              (to_string_for_tests orig_root)
              (to_string_for_tests orig_ppath))
     | x :: xs, y :: ys ->
-        if x = y then aux xs ys
+        if string_equal_case_insensitive_on_windows x y then aux xs ys
         else
           invalid_arg
             (spf "Ppath.relativize: %S is not a prefix of %S"
@@ -240,6 +246,33 @@ let make_matchable_relative_path path =
   | "" :: _ -> (* absolute *) path
   | "." :: _ -> (* keep as is *) path
   | _rel -> Fpath.v "." // path
+
+(*
+   Windows-specific case-insensitive path comparison.
+   On Windows, paths are case-insensitive, so we need to normalize
+   the case for comparison purposes.
+*)
+let normalize_path_case_for_windows path =
+  if Sys.win32 then
+    Fpath.v (String.lowercase_ascii (Fpath.to_string path))
+  else
+    path
+
+let fpath_equal_case_insensitive_on_windows path1 path2 =
+  if Sys.win32 then
+    let norm1 = normalize_path_case_for_windows path1 in
+    let norm2 = normalize_path_case_for_windows path2 in
+    Fpath.equal norm1 norm2
+  else
+    Fpath.equal path1 path2
+
+let fpath_rem_prefix_case_insensitive_on_windows root path =
+  if Sys.win32 then
+    let norm_root = normalize_path_case_for_windows root in
+    let norm_path = normalize_path_case_for_windows path in
+    Fpath.rem_prefix norm_root norm_path
+  else
+    Fpath.rem_prefix root path
 
 (*
    This is a collection of fixes on top of Fpath.rem_prefix to make it
@@ -273,8 +306,8 @@ let remove_prefix root path =
   (* add a trailing slash as required by Fpath.rem_prefix (why?) *)
   let path = Fpath.to_dir_path path in
   (* now we can call this function to remove the root prefix from path *)
-  match Fpath.rem_prefix root path with
-  | None -> if Fpath.equal root path then Some (Fpath.v ".") else None
+  match fpath_rem_prefix_case_insensitive_on_windows root path with
+  | None -> if fpath_equal_case_insensitive_on_windows root path then Some (Fpath.v ".") else None
   | Some rel_path ->
       (* remove the trailing slash if we added one *)
       let rel_path =
@@ -324,7 +357,7 @@ let in_project_unsafe_for_tests ~(phys_root : Fpath.t) (path : Fpath.t) =
            "cannot make path %S relative to project root %S.\n\
             cwd: %s\n\
             realpath for .: %s\n\
-            Sys.argv: %s" !!path !!phys_root (Sys.getcwd ())
+            Sys.argv: %s" !!path !!phys_root (Unix.getcwd ())
            (Rfpath.of_string_exn "." |> Rfpath.show)
            (Sys.argv |> Array.to_list |> String.concat " "))
   | Some rel_path -> Ok (of_relative_fpath rel_path)
