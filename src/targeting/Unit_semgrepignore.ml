@@ -70,6 +70,54 @@ let test_filter ?excludes:cli_patterns (files : F.t list) selection () =
 (* The tests *)
 (*****************************************************************************)
 
+(*
+   Test helper for custom semgrepignore filename
+*)
+let test_filter_custom_filename ~semgrepignore_filename (files : F.t list) selection () =
+  F.with_tempdir ~chdir:true (fun root ->
+      let files = F.sort files in
+      printf "--- All files ---\n";
+      print_files files;
+      F.write root files;
+      let files2 = F.read root |> F.sort in
+      assert (files2 = files);
+      printf "--- Filtered files (custom filename: %s) ---\n" semgrepignore_filename;
+      let filter =
+        Semgrepignore.create ~semgrepignore_filename ~default_semgrepignore_patterns:Empty
+          ~exclusion_mechanism:
+            { use_gitignore_files = true; use_semgrepignore_files = true }
+          ~project_root:root ()
+      in
+      let error = ref false in
+      selection
+      |> List.iter (fun (path, should_be_selected) ->
+             let path = Ppath.of_string_for_tests path in
+             let status, selection_events =
+               Gitignore_filter.select filter path
+             in
+             printf "Selection events for ppath %s:\n"
+               (Ppath.to_string_for_tests path);
+             print_string (Gitignore.show_selection_events selection_events);
+             if should_be_selected then (
+               match status with
+               | Not_ignored ->
+                   printf "[OK] ppath %s: not ignored\n"
+                     (Ppath.to_string_for_tests path)
+               | Ignored ->
+                   printf "[FAIL] ppath %s: ignored\n"
+                     (Ppath.to_string_for_tests path);
+                   error := true)
+             else
+               match status with
+               | Not_ignored ->
+                   printf "[FAIL] ppath %s: not ignored\n"
+                     (Ppath.to_string_for_tests path);
+                   error := true
+               | Ignored ->
+                   printf "[OK] ppath %s: ignored\n"
+                     (Ppath.to_string_for_tests path));
+      if !error then Alcotest.fail "there were some unexpected results")
+
 let tests =
   Testo.categorize "Semgrepignore"
     [
@@ -135,4 +183,45 @@ let tests =
              ("/b/a.ml", false);
              ("/b/a.c", true);
            ]);
+      (* Tests for custom semgrepignore filename feature *)
+      t "custom semgrepignore filename"
+        (test_filter_custom_filename ~semgrepignore_filename:"custom.ignore"
+           [
+             File ("custom.ignore", "*.temp");
+             file "test.temp";
+             file "test.c";
+           ]
+           [ ("/test.temp", false); ("/test.c", true) ]);
+      t "custom semgrepignore filename - different name"
+        (test_filter_custom_filename ~semgrepignore_filename:"myignore"
+           [
+             File ("myignore", "build/*");
+             dir "build" [ file "output.txt" ];
+             file "source.c";
+           ]
+           [ ("/build/output.txt", false); ("/source.c", true) ]);
+      t "custom semgrepignore filename - file not found uses defaults"
+        (test_filter_custom_filename ~semgrepignore_filename:"nonexistent.ignore"
+           [
+             file "test.c";
+             dir "build" [ file "temp.txt" ];
+           ]
+           [ ("/test.c", true); ("/build/temp.txt", true) ]);
+      t "custom semgrepignore filename rejects paths with slashes"
+        (fun () ->
+           F.with_tempdir ~chdir:true (fun root ->
+             try
+               let _filter =
+                 Semgrepignore.create ~semgrepignore_filename:"config/ignore.txt"
+                   ~default_semgrepignore_patterns:Empty
+                   ~exclusion_mechanism:
+                     { use_gitignore_files = true; use_semgrepignore_files = true }
+                   ~project_root:root ()
+               in
+               Alcotest.fail "Expected Invalid_argument exception for path with slash"
+             with
+             | Invalid_argument msg when String.contains msg '/' ->
+                 printf "[OK] Correctly rejected filename with slash: %s\n" msg
+             | exn ->
+                 Alcotest.fail (Printf.sprintf "Unexpected exception: %s" (Printexc.to_string exn))));
     ]

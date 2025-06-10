@@ -126,64 +126,66 @@ else
     # together with opengrep.
     macosx)
         langs=$(cat "${TREE_SITTER_LANGS}")
-        FLAGS=()
+        FLAGS=("-noautolink")
         CCOPT=()
         # TODO: ideally much of this could be generated from dune/opam.
         CCLIB=(
-            # "-lANSITerminal_stubs"
-            # "-lalcotest_stubs"
-            # "-lbase_internalhash_types_stubs"
-            # "-lbase_stubs"
-            # "-lbigstringaf_stubs"
-            # "-lca_certs_stubs"
-            # "-lcheckseum_c_stubs"
-            # "-lcstruct_stubs"
-            # "-lctypes_stubs"
-            # "-lcurl-helper"
-            # "-lintegers_stubs"
-            # "-ljs_of_ocaml_stubs"
-            # "-ljsoo_runtime_stubs"
-            # "-llwt_unix_stubs"
-            # "-lmirage_crypto_ec_stubs"
-            # "-lmirage_crypto_rng_unix_stubs"
-            # "-lmirage_crypto_stubs"
-            # "-lmtime_clock_stubs"
-            # "-lmurmur3_stubs"
-            # "-lparmap_stubs"
-            # "-lpbrt_stubs"
-            # "-lpcre_stubs"
-            # "-lpcre2_stubs"
-            # "-lptime_clock_stubs"
-            # "-lstdc++"
-            # "-lterminal_size_stubs"
-            # "-lthreadsnat"
-            # "-ltime_now_stubs"
-            # "-ltree_sitter_bindings_stubs"
-            # "-lyaml_c_stubs"
-            # "-lyaml_ffi_stubs"
-            # "-lzarith"
-            # "-lcurl"
-            # "$(pkg-config gmp --variable libdir)/libgmp.a"
-            # "$(pkg-config tree-sitter --variable libdir)/libtree-sitter.a"
-            # "$(pkg-config libpcre --variable libdir)/libpcre.a"
-            # "$(pkg-config libpcre2-8 --variable libdir)/libpcre2-8.a"
+            "-lANSITerminal_stubs"
+            "-lalcotest_stubs"
+            "-lbase_internalhash_types_stubs"
+            "-lbase_stubs"
+            "-locaml_intrinsics_kernel_stubs"
+            "-lbigstringaf_stubs"
+            "-lca_certs_stubs"
+            "-lcamlstrnat"
+            "-lcheckseum_c_stubs"
+            "-lcomprmarsh"
+            "-lcstruct_stubs"
+            "-lctypes_stubs"
+            "-lcurl-helper"
+            "-lintegers_stubs"
+            "-llwt_unix_stubs"
+            "-lmirage_crypto_ec_stubs"
+            "-lmirage_crypto_rng_unix_stubs"
+            "-lmirage_crypto_stubs"
+            "-lmtime_clock_stubs"
+            "-lmurmur3_stubs"
+            "-lpbrt_stubs"
+            "-lpcre_stubs"
+            "-lpcre2_stubs"
+            "-lptime_clock_stubs"
+            "-lstdc++"
+            "-lterminal_size_stubs"
+            "-lthreadsnat"
+            "-ltime_now_stubs"
+            "-ltree_sitter_bindings_stubs"
+            "-lunixnat"
+            "-lyaml_c_stubs"
+            "-lyaml_ffi_stubs"
+            "-lzarith"
+            "-lcurl"
+            "$(pkg-config gmp --variable libdir)/libgmp.a"
+            "$(pkg-config tree-sitter --variable libdir)/libtree-sitter.a"
+            "$(pkg-config libpcre --variable libdir)/libpcre.a"
+            "$(pkg-config libpcre2-8 --variable libdir)/libpcre2-8.a"
+            "$(brew --prefix zstd)/lib/libzstd.a"
             # "-lpthread"
         )
 
-        # # Libev does not support pkg-config. See, e.g.,
-        # # <https://www.mail-archive.com/libev@lists.schmorp.de/msg02088.html>,
-        # # <http://lists.schmorp.de/pipermail/libev/2024q1/002940.html>. As a
-        # # result we still use the brew prefix, but with the option of an
-        # # environment variable for the build to override the location.
-        # if [ -z ${SEMGREP_LIBEV_ARCHIVE_PATH+set} ]; then
-        #     CCLIB+=("$(brew --prefix libev)/lib/libev.a")
-        # else
-        #     CCLIB+=("${SEMGREP_LIBEV_ARCHIVE_PATH}")
-        # fi
+        # Libev does not support pkg-config. See, e.g.,
+        # <https://www.mail-archive.com/libev@lists.schmorp.de/msg02088.html>,
+        # <http://lists.schmorp.de/pipermail/libev/2024q1/002940.html>. As a
+        # result we still use the brew prefix, but with the option of an
+        # environment variable for the build to override the location.
+        if [ -z ${SEMGREP_LIBEV_ARCHIVE_PATH+set} ]; then
+            CCLIB+=("$(brew --prefix libev)/lib/libev.a")
+        else
+            CCLIB+=("${SEMGREP_LIBEV_ARCHIVE_PATH}")
+        fi
 
-        # for lang in $langs; do
-        #     CCLIB+=("-ltree_sitter_${lang}_stubs")
-        # done
+        for lang in $langs; do
+            CCLIB+=("-ltree_sitter_${lang}_stubs")
+        done
         ;;
     # TODO: dedicated branch for Windows?
     *)

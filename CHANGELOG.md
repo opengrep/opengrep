@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.0](https://github.com/opengrep/opengrep/releases/tag/v1.4.0) - 09-06-2025
+
+### New features
+
+* Add new `--semgrepignore-filename` flag by @tom-paz in #288
+
+### Improvements
+
+* Static linking for Mac OSX by @dimitris-m in #279
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.3.1...v1.4.0
+
+
 ## [1.3.1](https://github.com/opengrep/opengrep/releases/tag/v1.3.1) - 03-06-2025
 
 ### Bug fixes

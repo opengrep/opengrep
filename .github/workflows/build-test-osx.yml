@@ -77,53 +77,53 @@ jobs:
           
           cp ./bin/opengrep-core artifacts/
 
-          pushd artifacts
+          # pushd artifacts
 
-          install_name_tool -change \
-            ${{ env.DYLIB_DIR }}/opt/zstd/lib/libzstd.1.dylib \
-            @loader_path/libzstd.1.dylib \
-            opengrep-core
+          # install_name_tool -change \
+          #   ${{ env.DYLIB_DIR }}/opt/zstd/lib/libzstd.1.dylib \
+          #   @loader_path/libzstd.1.dylib \
+          #   opengrep-core
 
-          install_name_tool -change \
-            ${{ env.DYLIB_DIR }}/opt/gmp/lib/libgmp.10.dylib \
-            @loader_path/libgmp.10.dylib \
-            opengrep-core
+          # install_name_tool -change \
+          #   ${{ env.DYLIB_DIR }}/opt/gmp/lib/libgmp.10.dylib \
+          #   @loader_path/libgmp.10.dylib \
+          #   opengrep-core
           
-          install_name_tool -change \
-            ${{ env.DYLIB_DIR }}/opt/libev/lib/libev.4.dylib \
-            @loader_path/libev.4.dylib \
-            opengrep-core
+          # install_name_tool -change \
+          #   ${{ env.DYLIB_DIR }}/opt/libev/lib/libev.4.dylib \
+          #   @loader_path/libev.4.dylib \
+          #   opengrep-core
 
-          install_name_tool -change \
-            ${{ env.DYLIB_DIR }}/opt/pcre2/lib/libpcre2-8.0.dylib \
-            @loader_path/libpcre2-8.0.dylib \
-            opengrep-core
+          # install_name_tool -change \
+          #   ${{ env.DYLIB_DIR }}/opt/pcre2/lib/libpcre2-8.0.dylib \
+          #   @loader_path/libpcre2-8.0.dylib \
+          #   opengrep-core
 
-          install_name_tool -change \
-            ${{ env.DYLIB_DIR }}/opt/pcre/lib/libpcre.1.dylib \
-            @loader_path/libpcre.1.dylib \
-            opengrep-core
+          # install_name_tool -change \
+          #   ${{ env.DYLIB_DIR }}/opt/pcre/lib/libpcre.1.dylib \
+          #   @loader_path/libpcre.1.dylib \
+          #   opengrep-core
 
-          install_name_tool -change \
-            /Users/runner/work/opengrep/opengrep/libs/ocaml-tree-sitter-core/tree-sitter/lib/libtree-sitter.0.dylib \
-            @loader_path/libtree-sitter.0.dylib \
-            opengrep-core
+          # install_name_tool -change \
+          #   /Users/runner/work/opengrep/opengrep/libs/ocaml-tree-sitter-core/tree-sitter/lib/libtree-sitter.0.dylib \
+          #   @loader_path/libtree-sitter.0.dylib \
+          #   opengrep-core
 
-          install_name_tool -delete_rpath \
-            /Users/runner/work/opengrep/opengrep/libs/ocaml-tree-sitter-core/tree-sitter/lib \
-            opengrep-core
+          # install_name_tool -delete_rpath \
+          #   /Users/runner/work/opengrep/opengrep/libs/ocaml-tree-sitter-core/tree-sitter/lib \
+          #   opengrep-core
           
-          # otool -l opengrep-core
-          otool -L opengrep-core | grep -v "^\\s*/usr/lib/"
+          # # otool -l opengrep-core
+          # otool -L opengrep-core | grep -v "^\\s*/usr/lib/"
 
-          cp ${{ env.DYLIB_DIR }}/opt/zstd/lib/libzstd.1.dylib . 
-          cp ${{ env.DYLIB_DIR }}/opt/gmp/lib/libgmp.10.dylib . 
-          cp ${{ env.DYLIB_DIR }}/opt/libev/lib/libev.4.dylib . 
-          cp ${{ env.DYLIB_DIR }}/opt/pcre2/lib/libpcre2-8.0.dylib . 
-          cp ${{ env.DYLIB_DIR }}/opt/pcre/lib/libpcre.1.dylib .
-          cp /Users/runner/work/opengrep/opengrep/libs/ocaml-tree-sitter-core/tree-sitter/lib/libtree-sitter.0.dylib .
+          # cp ${{ env.DYLIB_DIR }}/opt/zstd/lib/libzstd.1.dylib . 
+          # cp ${{ env.DYLIB_DIR }}/opt/gmp/lib/libgmp.10.dylib . 
+          # cp ${{ env.DYLIB_DIR }}/opt/libev/lib/libev.4.dylib . 
+          # cp ${{ env.DYLIB_DIR }}/opt/pcre2/lib/libpcre2-8.0.dylib . 
+          # cp ${{ env.DYLIB_DIR }}/opt/pcre/lib/libpcre.1.dylib .
+          # cp /Users/runner/work/opengrep/opengrep/libs/ocaml-tree-sitter-core/tree-sitter/lib/libtree-sitter.0.dylib .
 
-          popd
+          # popd
           tar czf artifacts.tgz artifacts
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:

@@ -93,12 +93,14 @@ testsuite/
 *_test.go
 |}
 
+let default_semgrepignore_filename = ".semgrepignore"
+
 let gitignore_files = Gitignore.default_gitignore_filename
 
-let semgrepignore_files : Gitignore.gitignore_filename =
+let semgrepignore_files ~filename : Gitignore.gitignore_filename =
   {
     source_kind = "semgrepignore";
-    filename = ".semgrepignore";
+    filename;
     format = Gitignore.Legacy_semgrepignore;
   }
 
@@ -106,7 +108,7 @@ let contents_of_builtin_semgrepignore = function
   | Empty -> ""
   | Semgrep_scan_legacy -> default_semgrepignore_for_semgrep_scan
 
-let create ?(cli_patterns = []) ~default_semgrepignore_patterns
+let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore_filename) ~default_semgrepignore_patterns
     ~exclusion_mechanism ~project_root () =
   let root_anchor = Glob.Pattern.root_pattern in
   let default_patterns =
@@ -134,6 +136,8 @@ let create ?(cli_patterns = []) ~default_semgrepignore_patterns
       patterns = cli_patterns;
     }
   in
+  let semgrepignore_files = semgrepignore_files ~filename:semgrepignore_filename
+  in
   let kinds_of_ignore_files_to_consult =
     (* order matters: first gitignore then semgrepignore *)
     (if exclusion_mechanism.use_gitignore_files then [ gitignore_files ] else [])
@@ -150,7 +154,7 @@ let create ?(cli_patterns = []) ~default_semgrepignore_patterns
   *)
   let root_semgrepignore_exists =
     let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
-    let semgrepignore_path = Fpath.add_seg root_dir ".semgrepignore" in
+    let semgrepignore_path = Fpath.add_seg root_dir semgrepignore_filename in
     Sys.file_exists (Fpath.to_string semgrepignore_path)
   in
 
