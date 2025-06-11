@@ -418,12 +418,21 @@ let map_pat_day_in_month (env : env) (tok : CST.pat_day_in_month) =
 let map_pat_last_90_days (env : env) (tok : CST.pat_last_90_days) =
   (* pattern [lL][aA][sS][tT][__][99][00][__][dD][aA][yY][sS] *) token env tok
 
+(* OLD *)
 let map_dimensions (env : env) (xs : CST.dimensions) =
   R.List (List.map (fun (v1, v2) ->
     let v1 = (* "[" *) token env v1 in
     let v2 = (* "]" *) token env v2 in
     R.Tuple [v1; v2]
   ) xs)
+
+(* NEW *)
+let dimensions (env : env) (xs : CST.dimensions) : (G.tok * G.tok) list =
+  List.map (fun (v1, v2) ->
+    let v1 = (* "[" *) token_ env v1 in
+    let v2 = (* "]" *) token_ env v2 in
+    v1, v2)
+    xs
 
 let map_pat_cale_year (env : env) (tok : CST.pat_cale_year) =
   (* pattern [cC][aA][lL][eE][nN][dD][aA][rR][__][yY][eE][aA][rR] *) token env tok
@@ -1915,7 +1924,23 @@ and map_array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) =
 
 (* NEW *)
 and array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) : G.expr =
-  failwith "NOT IMPLEMENTED (array_initializer)"
+  let v1 = (* "{" *) token_ env v1 in
+  let v2 =
+    match v2 with
+    | Some (w1, w2) ->
+        let z1 = variable_initializer env w1 in
+        let z2 =
+          List.map (fun (y1, y2) ->
+            let _r1 = (* "," *) token_ env y1 in
+            let r2 = variable_initializer env y2 in
+            r2
+          ) w2
+        in
+        z1 :: z2
+    | None -> []
+  in
+  let v3 = (* "}" *) token_ env v3 in
+  Container (Array, (v1, v2, v3)) |> G.e
 
    (* OLD *)
 and map_binary_expression (env : env) (x : CST.binary_expression) =
@@ -4661,7 +4686,10 @@ and unannotated_type (env : env) (x : CST.unannotated_type) : G.type_kind =
   match x with
   | `Choice_void_type x -> simple_type env x
   | `Array_type (v1, v2) ->
-      failwith "NOT IMPLEMENTED (unannotated_type)"
+      (* FIXME: parser never seems to produce this *)
+      let v1 = unannotated_type env v1 in
+      let v2 = dimensions env v2 in
+      List.fold_left (fun t (t1, t2) -> G.TyArray ((t1, None, t2), G.t t)) v1 v2
 
 (* OLD *)
 and map_unary_expression (env : env) (x : CST.unary_expression) =
