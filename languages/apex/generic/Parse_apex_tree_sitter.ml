@@ -1873,6 +1873,7 @@ and array_access (env : env) ((v1, v2, v3, v4) : CST.array_access) : G.expr =
   let v4 = (* "]" *) token_ env v4 in
   G.ArrayAccess (v1, (v2, v3, v4)) |> G.e
 
+(* OLD *)
 and map_array_creation_expression (env : env) ((v1, v2, v3) : CST.array_creation_expression) =
   let v1 = map_pat_new env v1 in
   let v2 = map_simple_type env v2 in
@@ -1901,6 +1902,45 @@ and map_array_creation_expression (env : env) ((v1, v2, v3) : CST.array_creation
   in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and array_creation_expression (env : env) ((v1, v2, v3) : CST.array_creation_expression)
+  : G.expr =
+  let v1 = token_ env v1 in
+  let t0 = simple_type env v2 |> G.t in
+  let t1, v3 =
+    match v3 with
+    | `Rep1_dimens_expr_opt_dimens (w1, w2) ->
+        let dim_exprs =
+          List.map (dimensions_expr env) w1
+          |> List.map (fun (t1, e, t2) -> (t1, Some e, t2))
+        in
+        let dims =
+          (match w2 with
+          | Some x -> dimensions env x
+          | None -> [])
+          |> List.map (fun (t1, t2) -> (t1, None, t2))
+        in
+        let nt =
+          List.fold_left
+            (fun t (l,e,r) -> TyArray ((l, e, r), t) |> G.t) t0
+            (dim_exprs @ dims)
+        in
+        nt, fb []
+    | `Dimens_array_init (w1, w2) ->
+        let dims = dimensions env w1 in
+        let nt =
+          List.fold_left
+            (fun t (l,r) -> TyArray ((l, None, r), t) |> G.t) t0 dims
+        in
+        let c = array_initializer_content env w2 in
+        (nt, c)
+    | `Array_init x ->
+        t0, array_initializer_content env x
+  in
+  let lb, _, rb = v3 in
+  let args = (lb, [ Arg (G.Container (G.Tuple, v3) |> G.e) ], rb) in
+  New (v1, t1, empty_id_info (), args) |> G.e
+
 (* OLD *)
 and map_array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) =
   let v1 = (* "{" *) token env v1 in
@@ -1923,7 +1963,13 @@ and map_array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) =
   R.Tuple [v1; v2; v3]
 
 (* NEW *)
-and array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) : G.expr =
+and array_initializer (env : env) (x : CST.array_initializer) : G.expr =
+  let v1, v2, v3 = array_initializer_content env x in
+  Container (Array, (v1, v2, v3)) |> G.e
+
+(* AUX *)
+and array_initializer_content (env : env) ((v1, v2, v3) : CST.array_initializer)
+  : expr list bracket =
   let v1 = (* "{" *) token_ env v1 in
   let v2 =
     match v2 with
@@ -1940,9 +1986,9 @@ and array_initializer (env : env) ((v1, v2, v3) : CST.array_initializer) : G.exp
     | None -> []
   in
   let v3 = (* "}" *) token_ env v3 in
-  Container (Array, (v1, v2, v3)) |> G.e
+  v1, v2, v3
 
-   (* OLD *)
+(* OLD *)
 and map_binary_expression (env : env) (x : CST.binary_expression) =
   (match x with
   | `Exp_GT_exp (v1, v2, v3) -> R.Case ("Exp_GT_exp",
@@ -2527,11 +2573,20 @@ and map_declaration (env : env) (x : CST.declaration) =
 and declaration (env : env) (x : CST.declaration) : G.stmt =
   failwith "NOT IMPLEMENTED (declaration)"
 
+(* OLD *)
 and map_dimensions_expr (env : env) ((v1, v2, v3) : CST.dimensions_expr) =
   let v1 = (* "[" *) token env v1 in
   let v2 = map_expression env v2 in
   let v3 = (* "]" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and dimensions_expr (env : env) ((v1, v2, v3) : CST.dimensions_expr)
+  : G.expr bracket =
+  let v1 = (* "[" *) token_ env v1 in
+  let v2 = expression env v2 in
+  let v3 = (* "]" *) token_ env v3 in
+  v1, v2, v3
 
 and map_dml_expression (env : env) (x : CST.dml_expression) =
   (match x with
@@ -3798,7 +3853,8 @@ and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
       | `Array_access x ->
           array_access env x
       | `Meth_invo x -> failwith "NOT IMPLEMENTED (primary_expression)"
-      | `Array_crea_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
+      | `Array_crea_exp x ->
+          array_creation_expression env x
       | `Map_crea_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
       | `Query_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
       )
@@ -3907,7 +3963,7 @@ and scoped_type_identifier (env : env) ((v1, v2, v3, v4) : CST.scoped_type_ident
    * occur only on the toplevel of a type, while in Apex we can have them in the
    * path in a scoped type, whic is represented by G.name, in which we only keep
    * a list of idents, without attrs. *)
-  let _v3 = R.List (List.map (map_annotation env) v3) in
+  let _v3 = List.map (annotation env) v3 in
   let v4 = identifier env v4 in
   v1 @ [v4, None]
 
