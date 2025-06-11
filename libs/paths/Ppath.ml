@@ -356,8 +356,10 @@ let in_project_unsafe_for_tests ~(phys_root : Fpath.t) (path : Fpath.t) =
         (Common.spf
            "cannot make path %S relative to project root %S.\n\
             cwd: %s\n\
+            abs_path: %s\n\
             realpath for .: %s\n\
             Sys.argv: %s" !!path !!phys_root (Unix.getcwd ())
+           !!abs_path
            (Rfpath.of_string_exn "." |> Rfpath.show)
            (Sys.argv |> Array.to_list |> String.concat " "))
   | Some rel_path -> Ok (of_relative_fpath rel_path)
