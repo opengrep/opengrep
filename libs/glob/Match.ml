@@ -133,7 +133,7 @@ let translate_root pat =
 (* Compile a pattern into an ocaml-re regexp for fast matching *)
 let compile ~source pat =
   let pcre = translate_root pat in
-  let flags = if Sys.os_type = "Win32" then [`CASELESS] else [] in
+  let flags = if Sys.win32 then [`CASELESS] else [] in
   let re = Pcre2_.regexp ~flags pcre in
   { source; re }
 [@@profiling "Glob.Match.compile"]
