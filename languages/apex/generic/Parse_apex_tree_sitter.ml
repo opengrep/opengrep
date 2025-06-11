@@ -3164,6 +3164,7 @@ and map_function_expression (env : env) (x : CST.function_expression) =
     )
   )
 
+(* OLD *)
 and map_generic_type (env : env) ((v1, v2) : CST.generic_type) =
   let v1 =
     (match v1 with
@@ -3177,6 +3178,16 @@ and map_generic_type (env : env) ((v1, v2) : CST.generic_type) =
   in
   let v2 = map_type_arguments env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and generic_type (env : env) ((v1, v2) : CST.generic_type) : (G.ident * G.type_arguments option) list =
+  match v1 with
+    | `Id x ->
+        let i = identifier env x in
+        let ta = type_arguments env v2 in
+        [i, Some ta]
+    | `Scoped_type_id x ->
+        scoped_type_identifier env x
 
 and map_geo_location_type (env : env) (x : CST.geo_location_type) =
   (match x with
@@ -3460,6 +3471,7 @@ and local_variable_declaration (env : env) ((v1, v2, v3, v4) as v : CST.local_va
   var_def_stmt v4 d
 
 (* AUX *)
+(* data-only = without semicolon *)
 and local_variable_declaration_data_only (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration)
     : (entity * variable_definition) list =
   let v1 =
@@ -3836,6 +3848,7 @@ and run_as_statement (env : env) ((v1, v2, v3) : CST.run_as_statement) : G.stmt 
   G.RawStmt (Raw_tree.Case ("System.runAs", Raw_tree.Any (G.Raw (Raw_tree.Tuple
     [Raw_tree.Any (G.Tk v1); Raw_tree.Any (G.E v2); Raw_tree.Any (G.S v3)])))) |> G.s
 
+(* OLD *)
 and map_scoped_type_identifier (env : env) ((v1, v2, v3, v4) : CST.scoped_type_identifier) =
   let v1 =
     (match v1 with
@@ -3854,6 +3867,24 @@ and map_scoped_type_identifier (env : env) ((v1, v2, v3, v4) : CST.scoped_type_i
   let v3 = R.List (List.map (map_annotation env) v3) in
   let v4 = map_identifier env v4 in
   R.Tuple [v1; v2; v3; v4]
+
+(* NEW *)
+and scoped_type_identifier (env : env) ((v1, v2, v3, v4) : CST.scoped_type_identifier)
+  : (G.ident * G.type_arguments option) list =
+  let v1 =
+    match v1 with
+    | `Id x -> [identifier env x, None]
+    | `Scoped_type_id x -> scoped_type_identifier env x
+    | `Gene_type x -> generic_type env x
+  in
+  let v2 = (* "." *) token_ env v2 in
+  (* FIXME: There is no place in the AST to put these attributes, as in AST attrs
+   * occur only on the toplevel of a type, while in Apex we can have them in the
+   * path in a scoped type, whic is represented by G.name, in which we only keep
+   * a list of idents, without attrs. *)
+  let _v3 = R.List (List.map (map_annotation env) v3) in
+  let v4 = identifier env v4 in
+  v1 @ [v4, None]
 
 and map_select_clause (env : env) ((v1, v2) : CST.select_clause) =
   let v1 = map_pat_select env v1 in
@@ -3909,6 +3940,7 @@ and map_selected_fields (env : env) ((v1, v2) : CST.selected_fields) =
   in
   R.Tuple [v1; v2]
 
+(* old *)
 and map_simple_type (env : env) (x : CST.simple_type) =
   (match x with
   | `Void_type x -> R.Case ("Void_type",
@@ -3927,6 +3959,28 @@ and map_simple_type (env : env) (x : CST.simple_type) =
       map_generic_type env x
     )
   )
+
+(* new *)
+and simple_type (env : env) (x : CST.simple_type) : G.type_kind =
+  match x with
+  | `Void_type x ->
+      let i = ("void", token_ env x) in
+      let n = H2.name_of_id i in
+      TyN n
+  | `Bool_type x ->
+      let i = ("boolean", token_ env x) in
+      let n = H2.name_of_id i in
+      TyN n
+  | `Id x ->
+      let i = identifier env x in
+      let n = H2.name_of_id i in
+      TyN n
+  | `Scoped_type_id x ->
+      let i = scoped_type_identifier env x in
+      TyN (H2.name_of_ids_with_opt_typeargs i)
+  | `Gene_type x ->
+      let i = generic_type env x in
+      TyN (H2.name_of_ids_with_opt_typeargs i)
 
 and map_sobject_return (env : env) ((v1, v2) : CST.sobject_return) =
   let v1 = map_identifier env v1 in
@@ -4498,6 +4552,7 @@ and type_ (env : env) (x : CST.type_) : G.type_ =
 and make_type (a : G.attribute list) (t : G.type_kind) : G.type_=
   {G.t = t; G.t_attrs = a}
 
+(* OLD *)
 and map_type_arguments (env : env) ((v1, v2, v3) : CST.type_arguments) =
   let v1 = (* "<" *) token env v1 in
   let v2 =
@@ -4509,6 +4564,17 @@ and map_type_arguments (env : env) ((v1, v2, v3) : CST.type_arguments) =
   in
   let v3 = (* ">" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and type_arguments (env : env) ((v1, v2, v3) : CST.type_arguments) : G.type_arguments =
+  let v1 = (* "<" *) token_ env v1 in
+  let v2 =
+    (match v2 with
+    | Some x -> List.map (fun x -> G.TA x) (type_list env x)
+    | None -> [])
+  in
+  let v3 = (* ">" *) token_ env v3 in
+  v1, v2, v3
 
 and map_type_bound (env : env) ((v1, v2, v3) : CST.type_bound) =
   let v1 = map_pat_extends env v1 in
@@ -4522,6 +4588,7 @@ and map_type_bound (env : env) ((v1, v2, v3) : CST.type_bound) =
   in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_type_list (env : env) ((v1, v2) : CST.type_list) =
   let v1 = map_type_ env v1 in
   let v2 =
@@ -4532,6 +4599,17 @@ and map_type_list (env : env) ((v1, v2) : CST.type_list) =
     ) v2)
   in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and type_list (env : env) ((v1, v2) : CST.type_list) : G.type_ list=
+  let v1 = type_ env v1 in
+  let v2 = List.map (fun (v1, v2) ->
+    let _v1 = (* "," *) token_ env v1 in
+    let v2 = type_ env v2 in
+    v2
+    ) v2
+  in
+  v1 :: v2
 
 and map_type_parameter (env : env) (x : CST.type_parameter) =
   (match x with
@@ -4580,7 +4658,10 @@ and map_unannotated_type (env : env) (x : CST.unannotated_type) =
 
 (* NEW *)
 and unannotated_type (env : env) (x : CST.unannotated_type) : G.type_kind =
-  failwith "NOT IMPLEMENTED (unannotated_type)"
+  match x with
+  | `Choice_void_type x -> simple_type env x
+  | `Array_type (v1, v2) ->
+      failwith "NOT IMPLEMENTED (unannotated_type)"
 
 (* OLD *)
 and map_unary_expression (env : env) (x : CST.unary_expression) =
