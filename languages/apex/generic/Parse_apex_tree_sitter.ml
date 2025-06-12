@@ -128,6 +128,7 @@ let map_decimal_floating_point_literal (env : env) (tok : CST.decimal_floating_p
 let map_pat_last_month (env : env) (tok : CST.pat_last_month) =
   (* pattern [lL][aA][sS][tT][__][mM][oO][nN][tT][hH] *) token env tok
 
+(* OLD *)
 let map_property_navigation (env : env) ((v1, v2) : CST.property_navigation) =
   let v1 =
     (match v1 with
@@ -138,6 +139,13 @@ let map_property_navigation (env : env) ((v1, v2) : CST.property_navigation) =
   in
   let v2 = (* "." *) token env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+let property_navigation (env : env) ((v1, v2) : CST.property_navigation)
+    : G.tok option * G.tok =
+  let v1 = Option.map ((* "?" *) token_ env) v1 in
+  let v2 = (* "." *) token_ env v2 in
+  (v1, v2)
 
 let map_pat_cale_month (env : env) (tok : CST.pat_cale_month) =
   (* pattern [cC][aA][lL][eE][nN][dD][aA][rR][__][mM][oO][nN][tT][hH] *) token env tok
@@ -672,8 +680,19 @@ let map_value_comparison_operator (env : env) (x : CST.value_comparison_operator
 let map_with_highlight (env : env) (x : CST.with_highlight) =
   map_pat_high env x
 
+(* OLD *)
 let map_super (env : env) (x : CST.super) =
   map_pat_super env x
+
+(* NEW *)
+let super (env : env) (x : CST.super) : G.expr =
+  let t = (* "super" *) token_ env x in
+  G.IdSpecial (G.Super, t) |> G.e
+
+(* AUX*)
+let super_to_field_name (env : env) (x : CST.super) : G.field_name =
+  let i = (* "super" *) str env x in
+  G.FN (H2.name_of_id i)
 
 let map_order_null_direciton (env : env) (x : CST.order_null_direciton) =
   (match x with
@@ -1769,6 +1788,7 @@ and map_anon_choice_int_1466488 (env : env) (x : CST.anon_choice_int_1466488) =
     )
   )
 
+(* OLD *)
 and map_anon_choice_prim_exp_bbf4eda (env : env) (x : CST.anon_choice_prim_exp_bbf4eda) =
   (match x with
   | `Prim_exp x -> R.Case ("Prim_exp",
@@ -1779,6 +1799,15 @@ and map_anon_choice_prim_exp_bbf4eda (env : env) (x : CST.anon_choice_prim_exp_b
     )
   )
 
+(* NEW *)
+and anon_choice_prim_exp_bbf4eda (env : env) (x : CST.anon_choice_prim_exp_bbf4eda) =
+  match x with
+  | `Prim_exp x ->
+      primary_expression env x
+  | `Super x ->
+      super env x
+
+(* OLD *)
 and map_anon_choice_semg_ellips_d10ab47 (env : env) (x : CST.anon_choice_semg_ellips_d10ab47) =
   (match x with
   | `Semg_ellips tok -> R.Case ("Semg_ellips",
@@ -1791,6 +1820,20 @@ and map_anon_choice_semg_ellips_d10ab47 (env : env) (x : CST.anon_choice_semg_el
       map_expression env x
     )
   )
+
+(* NEW *)
+and anon_choice_semg_ellips_d10ab47 (env : env) (x : CST.anon_choice_semg_ellips_d10ab47)
+    : G.argument =
+  match x with
+  | `Semg_ellips tok ->
+      let t = (* "..." *) token_ env tok in
+      Arg (G.Ellipsis t |> G.e)
+  | `Semg_meta_ellips tok ->
+      (* pattern \$\.\.\.[A-Z_][A-Z_0-9]* *)
+      let id = str env tok in
+      G.Arg (N (H2.name_of_id id) |> G.e)
+  | `Exp x ->
+      Arg (expression env x)
 
 and map_anon_choice_soql_lit_3019e24 (env : env) (x : CST.anon_choice_soql_lit_3019e24) =
   (match x with
@@ -1838,6 +1881,7 @@ and anon_exp_rep_COMMA_exp_0bb260c (env : env) ((v1, v2) : CST.anon_exp_rep_COMM
   in
   v1, vs
 
+(* OLD *)
 and map_argument_list (env : env) ((v1, v2, v3) : CST.argument_list) =
   let v1 = (* "(" *) token env v1 in
   let v2 =
@@ -1857,6 +1901,27 @@ and map_argument_list (env : env) ((v1, v2, v3) : CST.argument_list) =
   in
   let v3 = (* ")" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and argument_list (env : env) ((v1, v2, v3) : CST.argument_list) : G.arguments =
+  let v1 = token_ env v1 (* "(" *) in
+  let v2 =
+    match v2 with
+    | Some (v1, v2) ->
+        let v1 = anon_choice_semg_ellips_d10ab47 env v1 in
+        let v2 =
+          List.map
+            (fun (v1, v2) ->
+              let _v1 = token env v1 (* "," *) in
+              let v2 = anon_choice_semg_ellips_d10ab47 env v2 in
+              v2)
+            v2
+        in
+        v1 :: v2
+    | None -> []
+  in
+  let v3 = token_ env v3 (* ")" *) in
+  (v1, v2, v3)
 
 (* OLD *)
 and map_array_access (env : env) ((v1, v2, v3, v4) : CST.array_access) =
@@ -2436,11 +2501,19 @@ and map_class_header (env : env) ((v1, v2, v3, v4, v5, v6) : CST.class_header) =
   in
   R.Tuple [v1; v2; v3; v4; v5; v6]
 
+(* OLD *)
 and map_class_literal (env : env) ((v1, v2, v3) : CST.class_literal) =
   let v1 = map_unannotated_type env v1 in
   let v2 = (* "." *) token env v2 in
   let v3 = map_pat_class env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and class_literal (env : env) ((v1, v2, v3) : CST.class_literal) : G.expr =
+  let v1 = unannotated_type env v1 |> G.t in
+  let v2 = (* "." *) token_ env v2 in
+  let v3 = (* "class" *) token_ env v3 in
+  Call (IdSpecial (Typeof, v2) |> G.e, fb [ ArgType v1 ]) |> G.e
 
 and map_comparison (env : env) (x : CST.comparison) =
   (match x with
@@ -3894,6 +3967,7 @@ and make_method (env : env) (mods : G.attribute list) (body : G.function_body)
   in
   G.DefStmt (ent, def) |> G.s
 
+(* OLD *)
 and map_method_invocation (env : env) ((v1, v2) : CST.method_invocation) =
   let v1 =
     (match v1 with
@@ -3926,6 +4000,42 @@ and map_method_invocation (env : env) ((v1, v2) : CST.method_invocation) =
   in
   let v2 = map_argument_list env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and method_invocation (env : env) ((v1, v2) : CST.method_invocation) =
+  let v1 =
+    match v1 with
+    | `Id x -> identifier_to_expression env x
+    | `Choice_prim_exp_prop_navi_opt_super_prop_navi_opt_type_args_id (v1, v2, v3, v4, v5) ->
+        let v1 = anon_choice_prim_exp_bbf4eda env v1 in
+        let e, t = property_navigation env v2 in
+        let v1 = add_elvis e v1 in
+        let v3, e', t' =
+          match v3 with
+          | Some (w1, w2) ->
+              let s = (* "super" *) super_to_field_name env w1 in
+              let e', t' = property_navigation env v2 in
+              G.DotAccess (v1, t', s) |> G.e, e', t'
+          | None -> v1, e, t
+        in
+        let targs =
+          match v4 with
+          | Some x -> type_arguments env x
+          | None -> fb []
+        in
+        let v5 = identifier env v5 in
+        let b = add_elvis e' v3 in
+        G.DotAccess (b, t', G.FN (H2.name_of_id v5)) |> G.e
+  in
+  let v2 = argument_list env v2 in
+  G.Call (v1, v2) |> G.e
+
+(* AUX *)
+and add_elvis (b : G.tok option) (e : G.expr) : G.expr =
+  match b with
+  | Some t ->
+      G.Call (G.IdSpecial (G.Op G.Elvis, t) |> G.e, fb [ G.Arg e ]) |> G.e
+  | None -> e
 
 (* OLD *)
 and map_modifiers (env : env) (xs : CST.modifiers) =
@@ -4087,7 +4197,8 @@ and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
       | `Lit x ->
           let lit = literal env x in
           G.L lit |> G.e
-      | `Class_lit x -> failwith "NOT IMPLEMENTED (primary_expression)"
+      | `Class_lit x ->
+          class_literal env x
       | `This x ->
           this env x
       | `Id x ->
@@ -4100,7 +4211,8 @@ and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
           field_access env x
       | `Array_access x ->
           array_access env x
-      | `Meth_invo x -> failwith "NOT IMPLEMENTED (primary_expression)"
+      | `Meth_invo x ->
+          method_invocation env x
       | `Array_crea_exp x ->
           array_creation_expression env x
       | `Map_crea_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
