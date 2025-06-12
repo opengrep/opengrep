@@ -269,7 +269,6 @@ and stmt env st acc =
       A.Label (ident env id, tok, stmt1 tok (stmt env st [])) :: acc
   | Goto (tok, id, _) -> A.Goto (tok, ident env id) :: acc
   | Return (tok, eopt, _) -> A.Return (tok, opt expr env eopt) :: acc
-  | Throw (tok, e, sc) -> A.Expr (A.Throw (tok, expr env e), sc) :: acc
   | Try (tok, (lb, stl, rb), cl, fl) ->
       let stl = List_.fold_right (stmt_and_def env) stl [] in
       let cl = List_.map (catch env) cl in
@@ -354,6 +353,7 @@ and stmt_and_def env st acc = stmt env st acc
 and expr env = function
   | DeepEllipsis x -> A.DeepEllipsis (bracket (expr env) x)
   | Sc sc -> scalar env sc
+  | Throw (tok, e) -> A.Throw (tok, expr env e)
   | Id n -> name_expr env n
   | IdVar dn -> A.Var (dname dn)
   | This tok -> A.IdSpecial (A.This, tok)
@@ -537,6 +537,7 @@ and arith_op = function
   | And -> G.BitAnd
   | Or -> G.BitOr
   | Xor -> G.BitXor
+  | Nullish -> G.Nullish
 
 and logical_op = function
   | Inf -> G.Lt

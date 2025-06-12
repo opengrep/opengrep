@@ -190,6 +190,7 @@ let str_of_info x = Tok.content_of_tok x
  TCOLON ":" TCOMMA "," TDOT "." TBANG TTILDE TQUESTION "?"
  TOBRA "["
  TPLUS TMINUS TMUL TDIV TMOD TPOW
+ T_NULL_COALLESCING
  TAND TOR "|" TXOR
  TEQ
  (* now also used for types/generics, as in vector<int> *)
@@ -407,7 +408,6 @@ statement:
      { let try_block = ($2,$3,$4) in
        Try($1, try_block, [], [$5])
      }
- | T_THROW expr_or_dots ";" { Throw($1,$2,$3) }
 
  | T_ECHO listc(expr_or_dots) ";" { Echo($1,$2,$3) }
  | T_INLINE_HTML                  { InlineHtml($1) }
@@ -938,6 +938,9 @@ expr:
  | simple_expr T_AND_EQUAL    expr { AssignOp($1,(AssignOpArith And,$2),$3) }
  | simple_expr T_OR_EQUAL     expr { AssignOp($1,(AssignOpArith Or,$2),$3) }
  | simple_expr T_XOR_EQUAL    expr { AssignOp($1,(AssignOpArith Xor,$2),$3) }
+ | T_THROW expr_or_dots  { Throw($1,$2) }
+
+ | simple_expr T_NULL_COALLESCING  expr { AssignOp($1,(AssignOpArith Nullish,$2),$3) }
  | simple_expr T_SL_EQUAL     expr { AssignOp($1,(AssignOpArith DecLeft,$2),$3) }
  | simple_expr T_SR_EQUAL     expr { AssignOp($1,(AssignOpArith DecRight,$2),$3) }
 
