@@ -3838,12 +3838,22 @@ and var_def_stmt (sc : Tok.t)
   in
   G.stmt1 stmts
 
+(* OLD *)
 and map_map_creation_expression (env : env) ((v1, v2, v3) : CST.map_creation_expression) =
   let v1 = map_pat_new env v1 in
   let v2 = map_simple_type env v2 in
   let v3 = map_map_initializer env v3 in
   R.Tuple [v1; v2; v3]
 
+ (* NEW *)
+and new_map_creation_expression (env : env) ((v1, v2, v3) : CST.map_creation_expression)
+    : G.expr =
+  let _v1 = (* "new" *) token_ env v1 in
+  let _v2 = simple_type env v2 in
+  let v3 = new_map_initializer env v3 in
+  v3
+
+(* OLD *)
 and map_map_initializer (env : env) ((v1, v2, v3) : CST.map_initializer) =
   let v1 = (* "{" *) token env v1 in
   let v2 =
@@ -3864,11 +3874,41 @@ and map_map_initializer (env : env) ((v1, v2, v3) : CST.map_initializer) =
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and new_map_initializer (env : env) ((v1, v2, v3) : CST.map_initializer)
+    : G.expr =
+  let v1 = (* "{" *) token_ env v1 in
+  let v2 =
+    (match v2 with
+    | Some (v1, v2) ->
+        let v1 = new_map_initializer_ env v1 in
+        let v2 =
+          List.map (fun (v1, v2) ->
+            let _v1 = (* "," *) token_ env v1 in
+            let v2 = new_map_initializer_ env v2 in
+            v2
+          ) v2
+        in
+        v1 :: v2
+    | None -> [])
+  in
+  let v3 = (* "}" *) token_ env v3 in
+  G.Container (G.Dict, (v1, v2, v3)) |> G.e
+
+(* OLD *)
 and map_map_initializer_ (env : env) ((v1, v2, v3) : CST.map_initializer_) =
   let v1 = map_expression env v1 in
   let v2 = (* "=>" *) token env v2 in
   let v3 = map_expression env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and new_map_initializer_ (env : env) ((v1, v2, v3) : CST.map_initializer_)
+    : G.expr =
+  let v1 = expression env v1 in
+  let _v2 = (* "=>" *) token_ env v2 in
+  let v3 = expression env v3 in
+  G.Container (G.Tuple, fb [v1; v3]) |> G.e
 
 (* OLD *)
 and map_method_declaration (env : env) ((v1, v2, v3) : CST.method_declaration) =
@@ -4215,7 +4255,8 @@ and primary_expression (env : env) (x : CST.primary_expression) : G.expr =
           method_invocation env x
       | `Array_crea_exp x ->
           array_creation_expression env x
-      | `Map_crea_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
+      | `Map_crea_exp x ->
+          new_map_creation_expression env x
       | `Query_exp x -> failwith "NOT IMPLEMENTED (primary_expression)"
       )
   | `Semg_deep_exp (v1, v2, v3) ->
