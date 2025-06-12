@@ -2492,6 +2492,7 @@ and map_condition_expression (env : env) (x : CST.condition_expression) =
     )
   )
 
+(* OLD *)
 and map_constant_declaration (env : env) ((v1, v2, v3, v4) : CST.constant_declaration) =
   let v1 =
     (match v1 with
@@ -2504,6 +2505,11 @@ and map_constant_declaration (env : env) ((v1, v2, v3, v4) : CST.constant_declar
   let v3 = map_variable_declarator_list env v3 in
   let v4 = (* ";" *) token env v4 in
   R.Tuple [v1; v2; v3; v4]
+
+(* NEW *)
+and constant_declaration (env : env) ((v1, v2, v3, v4) : CST.constant_declaration)
+    : G.stmt =
+  local_variable_declaration env (v1, v2, v3, v4)
 
 and map_constructor_body (env : env) ((v1, v2, v3, v4) : CST.constructor_body) =
   let v1 = (* "{" *) token env v1 in
@@ -2789,12 +2795,34 @@ and enum_constant (env : env) (x : CST.enum_constant) : G.or_type_element =
       let t = (* "..." *) token_ env tok in
       OrEllipsis t
   | `Opt_modifs_id (v1, v2) ->
-      let m = Option.map (modifiers env) v1 in
+      (* FIXME: Not sure where to put the modifiers *)
+      let _m = Option.map (modifiers env) v1 in
       let i = identifier env v2 in
-      OrEnum (m, i)
+      OrEnum (i, None)
 
-(* OLD *)
+ (* OLD *)
 and map_enum_declaration (env : env) ((v1, v2, v3, v4, v5) : CST.enum_declaration) =
+  let v1 =
+    (match v1 with
+    | Some x -> R.Option (Some (
+        map_modifiers env x
+      ))
+    | None -> R.Option None)
+  in
+  let v2 = map_pat_enum env v2 in
+  let v3 = map_identifier env v3 in
+  let v4 =
+    (match v4 with
+    | Some x -> R.Option (Some (
+        map_interfaces env x
+      ))
+    | None -> R.Option None)
+  in
+  let v5 = map_enum_body env v5 in
+  R.Tuple [v1; v2; v3; v4; v5]
+
+(* NEW *)
+and enum_declaration (env : env) ((v1, v2, v3, v4, v5) : CST.enum_declaration) : G.stmt =
   let v1 =
     match v1 with
     | Some x -> modifiers env x
@@ -2803,18 +2831,15 @@ and map_enum_declaration (env : env) ((v1, v2, v3, v4, v5) : CST.enum_declaratio
   let v2 = token_ (* "enum" *) env v2 in
   let v3 = identifier env v3 in
   (* FIXME: not sure where to put it. This part is ignored e.g. in C# *)
-  let v4 =
+  let _v4 =
     match v4 with
-    | Some x -> [] (* interfaces env x *)
+    | Some x -> []
     | None -> []
   in
   let v5 = enum_body env v5 in
   let idinfo = empty_id_info () in
   let ent = { name = EN (Id (v3, idinfo)); attrs = v1; tparams = None } in
   G.DefStmt (ent, G.TypeDef { tbody = OrType v5 }) |> G.s
-
-and enum_declaration (env : env) ((v1, v2, v3, v4, v5) : CST.enum_declaration) : G.stmt =
-  failwith "NOT IMPLEMENTED (enum_declaration)"
 
 and map_explicit_constructor_invocation (env : env) ((v1, v2, v3) : CST.explicit_constructor_invocation) =
   let v1 =
@@ -3039,10 +3064,17 @@ and expression_statement (env : env) ((v1, v2) : CST.expression_statement) : G.s
   let v2 = (* ";" *) token_ env v2 in
   G.ExprStmt (v1, v2) |> G.s
 
+(* OLD *)
 and map_extends_interfaces (env : env) ((v1, v2) : CST.extends_interfaces) =
   let v1 = map_pat_extends env v1 in
   let v2 = map_type_list env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and extends_interfaces (env : env) ((v1, v2) : CST.extends_interfaces) : G.type_ list =
+  let v1 = (* "extends "*) token_ env v1 in
+  let v2 = type_list env v2 in
+  v2
 
 (* OLD *)
 and map_field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) =
@@ -3496,6 +3528,7 @@ and if_statement (env : env) ((v1, v2, v3, v4) : CST.if_statement) : G.stmt =
   in
   G.If (v1, G.Cond v2, v3, v4) |> G.s
 
+(* OLD *)
 and map_interface_body (env : env) ((v1, v2, v3) : CST.interface_body) =
   let v1 = (* "{" *) token env v1 in
   let v2 =
@@ -3528,6 +3561,35 @@ and map_interface_body (env : env) ((v1, v2, v3) : CST.interface_body) =
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and interface_body (env : env) ((v1, v2, v3) : CST.interface_body)
+    : G.stmt list bracket =
+  let v1 = (* "{" *) token_ env v1 in
+  let v2 =
+    List.filter_map (fun x ->
+      match x with
+      | `Semg_ellips tok ->
+          let t = (* "..." *) token_ env tok in
+          let v2 = G.sc in
+          Some (G.ExprStmt (G.Ellipsis v1 |> G.e, v2) |> G.s)
+      | `Cst_decl x ->
+          Some (constant_declaration env x)
+      | `Enum_decl x ->
+          Some (enum_declaration env x)
+      | `Meth_decl x ->
+          Some (method_declaration env x)
+      | `Class_decl x ->
+          Some (class_declaration env x)
+      | `Inte_decl x ->
+          Some (interface_declaration env x)
+      | `SEMI tok ->
+          let _t = (* ";" *) token env tok
+          in None
+    ) v2
+  in
+  let v3 = (* "}" *) token_ env v3 in
+  v1, v2, v3
+
 (* OLD *)
 and map_interface_declaration (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interface_declaration) =
   let v1 =
@@ -3558,7 +3620,36 @@ and map_interface_declaration (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interf
 
 (* NEW *)
 and interface_declaration (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interface_declaration) : G.stmt =
-  failwith "NOT IMPLEMENTED (interface_declaration)"
+  let v1 =
+    match v1 with
+    | Some x -> modifiers env x
+    | None -> []
+  in
+  let v2 = (* "interface" *) token_ env v2 in
+  let v3 = identifier env v3 in
+  let v4 = Option.map (type_parameters env) v4 in
+  let v5 =
+    match v5 with
+    | Some x -> extends_interfaces env x
+                |> List.map (fun x -> (x, None))
+    | None -> []
+  in
+  let lb, v6, rb = interface_body env v6 in
+  let fields = List_.map (fun x -> G.F x) v6 in
+  let idinfo = empty_id_info () in
+  let ent = { name = EN (Id (v3, idinfo)); attrs = v1; tparams = v4 } in
+  G.DefStmt
+    ( ent,
+      G.ClassDef
+        {
+          ckind = (Interface, v2);
+          cextends = v5;
+          cimplements = [];
+          cmixins = [];
+          cparams = fb [];
+          cbody = (lb, fields, rb);
+        } )
+  |> G.s
 
 and map_interfaces (env : env) ((v1, v2) : CST.interfaces) =
   let v1 = map_pat_imples env v1 in
@@ -3662,6 +3753,7 @@ and map_map_initializer_ (env : env) ((v1, v2, v3) : CST.map_initializer_) =
   let v3 = map_expression env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_method_declaration (env : env) ((v1, v2, v3) : CST.method_declaration) =
   let v1 =
     (match v1 with
@@ -3673,6 +3765,10 @@ and map_method_declaration (env : env) ((v1, v2, v3) : CST.method_declaration) =
   let v2 = map_method_header env v2 in
   let v3 = map_anon_choice_trig_body_f78fea4 env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and method_declaration (env : env) ((v1, v2, v3) : CST.method_declaration) : G.stmt =
+  failwith "NOT IMPLEMENTED (method_declaration)"
 
 and map_method_declarator (env : env) ((v1, v2, v3) : CST.method_declarator) =
   let v1 = map_identifier env v1 in
@@ -4711,6 +4807,7 @@ and type_arguments (env : env) ((v1, v2, v3) : CST.type_arguments) : G.type_argu
   let v3 = (* ">" *) token_ env v3 in
   v1, v2, v3
 
+(* OLD *)
 and map_type_bound (env : env) ((v1, v2, v3) : CST.type_bound) =
   let v1 = map_pat_extends env v1 in
   let v2 = map_type_ env v2 in
@@ -4723,7 +4820,20 @@ and map_type_bound (env : env) ((v1, v2, v3) : CST.type_bound) =
   in
   R.Tuple [v1; v2; v3]
 
-(* OLD *)
+(* NEW *)
+and type_bound (env : env) ((v1, v2, v3) : CST.type_bound) : G.type_ list =
+  let v1 = (* "extends" *) token_ env v1 in
+  let v2 = type_ env v2 in
+  let v3 =
+    List.map (fun (v1, v2) ->
+      let _v1 = (* "&" *) token_ env v1 in
+      let v2 = type_ env v2 in
+      v2
+    ) v3
+  in
+  v2 :: v3
+
+ (* OLD *)
 and map_type_list (env : env) ((v1, v2) : CST.type_list) =
   let v1 = map_type_ env v1 in
   let v2 =
@@ -4746,6 +4856,7 @@ and type_list (env : env) ((v1, v2) : CST.type_list) : G.type_ list=
   in
   v1 :: v2
 
+(* OLD *)
 and map_type_parameter (env : env) (x : CST.type_parameter) =
   (match x with
   | `Semg_ellips tok -> R.Case ("Semg_ellips",
@@ -4765,6 +4876,29 @@ and map_type_parameter (env : env) (x : CST.type_parameter) =
     )
   )
 
+(* NEW *)
+and type_parameter (env : env) (x : CST.type_parameter) : G.type_parameter =
+  match x with
+  | `Semg_ellips tok ->
+      let t = (* "..." *) token_ env tok in
+      G.TParamEllipsis t
+  | `Rep_anno_id_opt_type_bound (v1, v2, v3) ->
+      let v1 = List.map (annotation env) v1 in
+      let v2 = identifier env v2 in
+      let v3 =
+        match Option.map (type_bound env) v3 with
+        | Some xs -> xs
+        | None -> []
+      in
+      G.TP
+        { tp_id = v2;
+          tp_attrs = v1;
+          tp_bounds = v3;
+          tp_default = None;
+          tp_variance = None;
+        }
+
+(* OLD *)
 and map_type_parameters (env : env) ((v1, v2, v3, v4) : CST.type_parameters) =
   let v1 = (* "<" *) token env v1 in
   let v2 = map_type_parameter env v2 in
@@ -4777,6 +4911,21 @@ and map_type_parameters (env : env) ((v1, v2, v3, v4) : CST.type_parameters) =
   in
   let v4 = (* ">" *) token env v4 in
   R.Tuple [v1; v2; v3; v4]
+
+(* NEW *)
+and type_parameters (env : env) ((v1, v2, v3, v4) : CST.type_parameters)
+    : G.type_parameter list bracket =
+  let v1 = (* "<" *) token_ env v1 in
+  let v2 = type_parameter env v2 in
+  let v3 =
+    List.map (fun (v1, v2) ->
+      let _v1 = (* "," *) token env v1 in
+      let v2 = type_parameter env v2 in
+      v2
+    ) v3
+  in
+  let v4 = (* ">" *) token_ env v4 in
+  (v1, v2 :: v3, v4)
 
 (* OLD *)
 and map_unannotated_type (env : env) (x : CST.unannotated_type) =
