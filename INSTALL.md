@@ -1,3 +1,23 @@
+# Installing Opengrep (for users)
+
+Install the Opengrep CLI is with our install script:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install_opengrep.sh | bash
+```
+
+- This will install Opengrep to `~/.opengrep/cli/<version>` and set up a `latest` symlink.
+- To install a specific version, use:
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install_opengrep.sh | bash -s -- -v v1.0.0
+  ```
+- To list available versions:
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install_opengrep.sh | bash -s -- -l
+  ```
+
+---
+
 # Build instructions for developers
 
 ## Manual development
