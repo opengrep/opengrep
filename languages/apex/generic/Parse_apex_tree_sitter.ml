@@ -1802,6 +1802,7 @@ and map_anon_choice_soql_lit_3019e24 (env : env) (x : CST.anon_choice_soql_lit_3
     )
   )
 
+(* OLD *)
 and map_anon_choice_trig_body_f78fea4 (env : env) (x : CST.anon_choice_trig_body_f78fea4) =
   (match x with
   | `Blk x -> R.Case ("Blk",
@@ -3250,6 +3251,7 @@ and for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) : G.stm
   let v5 = statement env v5 in
   For (v1, v3, v5) |> G.s
 
+(* OLD *)
 and map_formal_parameter (env : env) (x : CST.formal_parameter) =
   (match x with
   | `Opt_modifs_unan_type_var_decl_id (v1, v2, v3) -> R.Case ("Opt_modifs_unan_type_var_decl_id",
@@ -3272,6 +3274,27 @@ and map_formal_parameter (env : env) (x : CST.formal_parameter) =
     )
   )
 
+(* NEW *)
+and formal_parameter (env : env) (x : CST.formal_parameter) : G.parameter =
+  match x with
+  | `Opt_modifs_unan_type_var_decl_id (v1, v2, v3) ->
+      let t_attrs =
+        match v1 with
+        | Some x -> modifiers env x
+        | None -> []
+      in
+      let t = unannotated_type env v2 in
+      let v3 = variable_declarator_id env v3 in
+      G.Param (G.param_of_id v3 ~ptype:{t; t_attrs})
+  | `Semg_ellips tok ->
+      let t = (* "..." *) token_ env tok in
+      G.ParamEllipsis t
+  | `Semg_meta_ellips tok ->
+      (* FIXME: double-check if this is correct *)
+      let id = str env tok in
+      G.Param (G.param_of_id id)
+
+(* OLD *)
 and map_formal_parameters (env : env) ((v1, v2, v3) : CST.formal_parameters) =
   let v1 = (* "(" *) token env v1 in
   let v2 =
@@ -3291,6 +3314,27 @@ and map_formal_parameters (env : env) ((v1, v2, v3) : CST.formal_parameters) =
   in
   let v3 = (* ")" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and formal_parameters (env : env) ((v1, v2, v3) : CST.formal_parameters)
+    : G.parameter list bracket =
+  let v1 = (* "(" *) token_ env v1 in
+  let v2 =
+    match v2 with
+    | Some (v1, v2) ->
+        let v1 = formal_parameter env v1 in
+        let v2 =
+          List.map (fun (v1, v2) ->
+            let _v1 = (* "," *) token_ env v1 in
+            let v2 = formal_parameter env v2 in
+            v2
+          ) v2
+        in
+        v1 :: v2
+    | None -> []
+  in
+  let v3 = (* ")" *) token_ env v3 in
+  v1, v2, v3
 
 and map_function_expression (env : env) (x : CST.function_expression) =
   (match x with
@@ -3768,8 +3812,22 @@ and map_method_declaration (env : env) ((v1, v2, v3) : CST.method_declaration) =
 
 (* NEW *)
 and method_declaration (env : env) ((v1, v2, v3) : CST.method_declaration) : G.stmt =
-  failwith "NOT IMPLEMENTED (method_declaration)"
+  let v1 =
+    match v1 with
+    | Some x -> modifiers env x
+    | None -> []
+  in
+  let body =
+    match v3 with
+    | `Blk x ->
+        G.FBStmt (trigger_body env x)
+    | `SEMI tok ->
+        let t = (* ";" *) token_ env tok in
+        G.FBDecl t
+  in
+  make_method env v1 body v2
 
+(* OLD *)
 and map_method_declarator (env : env) ((v1, v2, v3) : CST.method_declarator) =
   let v1 = map_identifier env v1 in
   let v2 = map_formal_parameters env v2 in
@@ -3782,6 +3840,19 @@ and map_method_declarator (env : env) ((v1, v2, v3) : CST.method_declarator) =
   in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and method_declarator (env : env) ((v1, v2, v3) : CST.method_declarator)
+    : G.ident * G.parameter list bracket * (G.tok * G.tok) list =
+  let v1 = identifier env v1 in
+  let v2 = formal_parameters env v2 in
+  let v3 =
+    match v3 with
+    | Some x -> dimensions env x
+    | None -> []
+  in
+  v1, v2, v3
+
+(* OLD *)
 and map_method_header (env : env) ((v1, v2, v3) : CST.method_header) =
   let v1 =
     (match v1 with
@@ -3795,6 +3866,33 @@ and map_method_header (env : env) ((v1, v2, v3) : CST.method_header) =
   let v2 = map_unannotated_type env v2 in
   let v3 = map_method_declarator env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and make_method (env : env) (mods : G.attribute list) (body : G.function_body)
+    ((v1, v2, v3) : CST.method_header) =
+  let (tparams, annots) =
+    match v1 with
+    | None -> None, []
+    | Some (v1, v2) ->
+        let tp = type_parameters env v1 in
+        Some tp, List.map (annotation env) v2
+  in
+  let v2 = unannotated_type env v2 in
+  (* FIXME: What do dimensions do here? *)
+  let i, params, _dim = method_declarator env v3 in
+  let _, tok = i in
+  let idinfo = empty_id_info () in
+  let ent = { name = EN (Id (i, idinfo)); attrs = mods; tparams } in
+  let def =
+    G.FuncDef
+    {
+      fkind = (G.Method, tok);
+      fparams = params;
+      frettype = Some (make_type annots v2);
+      fbody = body;
+    }
+  in
+  G.DefStmt (ent, def) |> G.s
 
 and map_method_invocation (env : env) ((v1, v2) : CST.method_invocation) =
   let v1 =
