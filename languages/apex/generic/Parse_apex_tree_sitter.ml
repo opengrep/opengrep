@@ -1179,6 +1179,7 @@ let map_trigger_event (env : env) (x : CST.trigger_event) =
     )
   )
 
+(* OLD *)
 let map_dml_type (env : env) (x : CST.dml_type) =
   (match x with
   | `Pat_insert x -> R.Case ("Pat_insert",
@@ -1194,6 +1195,15 @@ let map_dml_type (env : env) (x : CST.dml_type) =
       map_pat_unde env x
     )
   )
+
+(* NEW *)
+let dml_type (env : env) (x : CST.dml_type) : G.ident =
+  match x with
+  | `Pat_insert x
+  | `Pat_update x
+  | `Pat_delete x
+  | `Pat_unde x ->
+      str env x
 
 let map_for_clause (env : env) ((v1, v2, v3) : CST.for_clause) =
   let v1 = map_pat_for env v1 in
@@ -2681,6 +2691,7 @@ and dimensions_expr (env : env) ((v1, v2, v3) : CST.dimensions_expr)
   let v3 = (* "]" *) token_ env v3 in
   v1, v2, v3
 
+(* OLD *)
 and map_dml_expression (env : env) (x : CST.dml_expression) =
   (match x with
   | `Dml_type_exp (v1, v2) -> R.Case ("Dml_type_exp",
@@ -2708,6 +2719,29 @@ and map_dml_expression (env : env) (x : CST.dml_expression) =
       R.Tuple [v1; v2; v3; v4]
     )
   )
+
+(* NEW *)
+and dml_expression (env : env) (x : CST.dml_expression) : G.expr =
+  match x with
+  | `Dml_type_exp (v1, v2) ->
+      let v1 = G.N (dml_type env v1 |> H2.name_of_id) |> G.e in
+      let v2 = expression env v2 in
+      G.Call (v1, fb [Arg v2]) |> G.e
+  | `Pat_upsert_exp_opt_unan_type (v1, v2, v3) ->
+      let v1 = G.N ((* "upsert" *) str env v1 |> H2.name_of_id) |> G.e in
+      let v2 = expression env v2 in
+      (match v3 with
+      | Some x ->
+          let t = unannotated_type env x in
+          G.Call (v1, fb [Arg v2; ArgType (G.t t)]) |> G.e
+      | None ->
+          G.Call (v1, fb [Arg v2]) |> G.e)
+  | `Pat_merge_exp_SPACE_exp (v1, v2, v3, v4) ->
+      let v1 = G.N ((* "merge" *) str env v1 |> H2.name_of_id) |> G.e in
+      let v2 = expression env v2 in
+      let v3 = (* " " *) token_ env v3 in
+      let v4 = expression env v4 in
+      G.Call (v1, fb [Arg v2; Arg v4]) |> G.e
 
 (* OLD *)
 and map_do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) =
@@ -3105,7 +3139,7 @@ and expression (env : env) (x : CST.expression) : G.expr =
       let v4 = expression env v4 in
       G.Cast (v2, v1, v4) |> G.e
   | `Dml_exp x ->
-      failwith "NOT IMPLEMENTED (expression)"
+      dml_expression env x
   | `Switch_exp x ->
       switch_expression env x
       |> G.stmt_to_expr (* FIXME: "switch" is expr in parser, while it should be stmt *)
