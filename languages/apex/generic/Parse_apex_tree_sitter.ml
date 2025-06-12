@@ -2392,10 +2392,15 @@ and map_class_body_declaration (env : env) (x : CST.class_body_declaration) =
     )
   )
 
+(* OLD *)
 and map_class_declaration (env : env) ((v1, v2) : CST.class_declaration) =
   let v1 = map_class_header env v1 in
   let v2 = map_class_body env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and class_declaration (env : env) ((v1, v2) : CST.class_declaration) : G.stmt =
+  failwith "NOT IMPLEMENTED (class_declaration)"
 
 and map_class_header (env : env) ((v1, v2, v3, v4, v5, v6) : CST.class_header) =
   let v1 =
@@ -2571,7 +2576,15 @@ and map_declaration (env : env) (x : CST.declaration) =
 
 (* NEW *)
 and declaration (env : env) (x : CST.declaration) : G.stmt =
-  failwith "NOT IMPLEMENTED (declaration)"
+  match x with
+  | `Class_decl x ->
+      class_declaration env x
+  | `Trig_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9) ->
+      failwith "NOT IMPLEMENTED (declaration)"
+  | `Inte_decl x ->
+      interface_declaration env x
+  | `Enum_decl x ->
+      enum_declaration env x
 
 (* OLD *)
 and map_dimensions_expr (env : env) ((v1, v2, v3) : CST.dimensions_expr) =
@@ -2709,6 +2722,7 @@ and enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9) : C
   let v9 = statement env v9 in
   G.For (v1, G.ForEach (G.PatTyped (pat, ty), v6, v7), v9) |> G.s
 
+(* OLD *)
 and map_enum_body (env : env) ((v1, v2, v3) : CST.enum_body) =
   let v1 = (* "{" *) token env v1 in
   let v2 =
@@ -2729,6 +2743,27 @@ and map_enum_body (env : env) ((v1, v2, v3) : CST.enum_body) =
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and enum_body (env : env) ((v1, v2, v3) : CST.enum_body) : G.or_type_element list =
+  let _v1 = (* "{" *) token_ env v1 in
+  let v2 =
+    match v2 with
+    | Some (v1, v2) ->
+        let v1 = enum_constant env v1 in
+        let v2 =
+          List.map (fun (v1, v2) ->
+            let _v1 = (* "," *) token_ env v1 in
+            let v2 = enum_constant env v2 in
+            v2
+          ) v2
+        in
+        v1 :: v2
+    | None -> []
+  in
+  let _v3 = (* "}" *) token_ env v3 in
+  v2
+
+(* OLD *)
 and map_enum_constant (env : env) (x : CST.enum_constant) =
   (match x with
   | `Semg_ellips tok -> R.Case ("Semg_ellips",
@@ -2747,25 +2782,39 @@ and map_enum_constant (env : env) (x : CST.enum_constant) =
     )
   )
 
+(* NEW *)
+and enum_constant (env : env) (x : CST.enum_constant) : G.or_type_element =
+  match x with
+  | `Semg_ellips tok ->
+      let t = (* "..." *) token_ env tok in
+      OrEllipsis t
+  | `Opt_modifs_id (v1, v2) ->
+      let m = Option.map (modifiers env) v1 in
+      let i = identifier env v2 in
+      OrEnum (m, i)
+
+(* OLD *)
 and map_enum_declaration (env : env) ((v1, v2, v3, v4, v5) : CST.enum_declaration) =
   let v1 =
-    (match v1 with
-    | Some x -> R.Option (Some (
-        map_modifiers env x
-      ))
-    | None -> R.Option None)
+    match v1 with
+    | Some x -> modifiers env x
+    | None -> []
   in
-  let v2 = map_pat_enum env v2 in
-  let v3 = map_identifier env v3 in
+  let v2 = token_ (* "enum" *) env v2 in
+  let v3 = identifier env v3 in
+  (* FIXME: not sure where to put it. This part is ignored e.g. in C# *)
   let v4 =
-    (match v4 with
-    | Some x -> R.Option (Some (
-        map_interfaces env x
-      ))
-    | None -> R.Option None)
+    match v4 with
+    | Some x -> [] (* interfaces env x *)
+    | None -> []
   in
-  let v5 = map_enum_body env v5 in
-  R.Tuple [v1; v2; v3; v4; v5]
+  let v5 = enum_body env v5 in
+  let idinfo = empty_id_info () in
+  let ent = { name = EN (Id (v3, idinfo)); attrs = v1; tparams = None } in
+  G.DefStmt (ent, G.TypeDef { tbody = OrType v5 }) |> G.s
+
+and enum_declaration (env : env) ((v1, v2, v3, v4, v5) : CST.enum_declaration) : G.stmt =
+  failwith "NOT IMPLEMENTED (enum_declaration)"
 
 and map_explicit_constructor_invocation (env : env) ((v1, v2, v3) : CST.explicit_constructor_invocation) =
   let v1 =
@@ -3479,6 +3528,7 @@ and map_interface_body (env : env) ((v1, v2, v3) : CST.interface_body) =
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_interface_declaration (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interface_declaration) =
   let v1 =
     (match v1 with
@@ -3505,6 +3555,10 @@ and map_interface_declaration (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interf
   in
   let v6 = map_interface_body env v6 in
   R.Tuple [v1; v2; v3; v4; v5; v6]
+
+(* NEW *)
+and interface_declaration (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interface_declaration) : G.stmt =
+  failwith "NOT IMPLEMENTED (interface_declaration)"
 
 and map_interfaces (env : env) ((v1, v2) : CST.interfaces) =
   let v1 = map_pat_imples env v1 in
@@ -4389,40 +4443,40 @@ and statement (env : env) (x : CST.statement) : G.stmt =
       | `Decl x ->
           declaration env x
       | `Exp_stmt x ->
-          expression_statement env x (* V *)
+          expression_statement env x
       | `Labe_stmt x ->
-          labeled_statement env x (* V *)
+          labeled_statement env x
       | `If_stmt x ->
-          if_statement env x (* V *)
+          if_statement env x
       | `While_stmt x ->
-          while_statement env x (* V *)
+          while_statement env x
       | `For_stmt x ->
-          for_statement env x (* V *)
+          for_statement env x
       | `Enha_for_stmt x ->
-          enhanced_for_statement env x (* V *)
+          enhanced_for_statement env x
       | `Blk x ->
-          trigger_body env x (* V *)
+          trigger_body env x
       | `SEMI tok ->
           let v1 = token_ env tok (* ";" *) in
           Block (v1, [], v1) |> G.s
       | `Do_stmt x ->
-          do_statement env x (* V  *)
+          do_statement env x
       | `Brk_stmt x ->
-          break_statement env x (* V *)
+          break_statement env x
       | `Cont_stmt x ->
-          continue_statement env x (* V *)
+          continue_statement env x
       | `Ret_stmt x ->
-          return_statement env x (* V *)
+          return_statement env x
       | `Switch_exp x ->
-          switch_expression env x (* V *)
+          switch_expression env x
       | `Local_var_decl x ->
-          local_variable_declaration env x (* V *)
+          local_variable_declaration env x
       | `Throw_stmt x ->
-          throw_statement env x (* V *)
+          throw_statement env x
       | `Try_stmt x ->
-          try_statement env x (* V *)
+          try_statement env x
       | `Run_as_stmt x ->
-          run_as_statement env x (* V *)
+          run_as_statement env x
       )
   | `Semg_ellips tok ->
       let v1 = token_ env tok (* "..." *) in
