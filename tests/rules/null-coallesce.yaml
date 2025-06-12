@@ -1,0 +1,24 @@
+rules:
+- id: Throw
+  languages:
+    - php
+  message: "throw"
+  pattern: |
+    $BB ?? $AA
+  severity: ERROR
+- id: embedded_word
+  message: "The web server executes a command on potential unescaped user input, which may lead to remote command execution."
+  languages:
+    - php
+  severity: ERROR
+  mode: taint
+  options:
+    taint_assume_safe_numbers: true
+  pattern-sinks:
+  - patterns:  
+    - pattern: $SOURCE
+  pattern-sources:
+  - patterns:
+    - focus-metavariable: $SOURCE
+    - pattern-either:
+        - pattern: function $FUNC(..., $SOURCE, ...) { ... }
