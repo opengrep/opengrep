@@ -2714,6 +2714,7 @@ and constant_declaration (env : env) ((v1, v2, v3, v4) : CST.constant_declaratio
     : G.stmt =
   local_variable_declaration env (v1, v2, v3, v4)
 
+(* OLD *)
 and map_constructor_body (env : env) ((v1, v2, v3, v4) : CST.constructor_body) =
   let v1 = (* "{" *) token env v1 in
   let v2 =
@@ -2727,6 +2728,20 @@ and map_constructor_body (env : env) ((v1, v2, v3, v4) : CST.constructor_body) =
   let v4 = (* "}" *) token env v4 in
   R.Tuple [v1; v2; v3; v4]
 
+(* NEW *)
+and constructor_body (env : env) ((v1, v2, v3, v4) : CST.constructor_body)
+    : G.stmt =
+  let v1 = (* "{" *) token_ env v1 in
+  let v2 =
+    match v2 with
+    | Some x -> [explicit_constructor_invocation env x]
+    | None -> []
+  in
+  let v3 = List.map (statement env) v3 in
+  let v4 = (* "}" *) token_ env v4 in
+  G.Block (v1, v2 @ v3, v4) |> G.s
+
+(* OLD *)
 and map_constructor_declaration (env : env) ((v1, v2, v3) : CST.constructor_declaration) =
   let v1 =
     (match v1 with
@@ -2739,6 +2754,31 @@ and map_constructor_declaration (env : env) ((v1, v2, v3) : CST.constructor_decl
   let v3 = map_constructor_body env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and constructor_declaration (env : env) ((v1, v2, v3) : CST.constructor_declaration)
+    : G.stmt =
+  let tparams, (_, t as i), fparams = constructor_declarator env v2 in
+  let attrs =
+    G.KeywordAttr (G.Ctor, t) ::
+    match v1 with
+    | Some x -> modifiers env x
+    | None -> []
+  in
+  let fbody = G.FBStmt (constructor_body env v3) in
+  let idinfo = empty_id_info () in
+  let ent = { name = EN (Id (i, idinfo)); attrs; tparams } in
+  let def =
+    G.FuncDef
+    {
+      fkind = (G.Method, t);
+      fparams;
+      frettype = None;
+      fbody;
+    }
+  in
+  G.DefStmt (ent, def) |> G.s
+
+(* OLD *)
 and map_constructor_declarator (env : env) ((v1, v2, v3) : CST.constructor_declarator) =
   let v1 =
     (match v1 with
@@ -2750,6 +2790,14 @@ and map_constructor_declarator (env : env) ((v1, v2, v3) : CST.constructor_decla
   let v2 = map_identifier env v2 in
   let v3 = map_formal_parameters env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and constructor_declarator (env : env) ((v1, v2, v3) : CST.constructor_declarator)
+    : G.type_parameters option * G.ident * G.parameters =
+  let v1 = Option.map (type_parameters env) v1 in
+  let v2 = identifier env v2 in
+  let v3 = formal_parameters env v3 in
+  v1, v2, v3
 
 (* OLD *)
 and map_declaration (env : env) (x : CST.declaration) =
@@ -3068,6 +3116,7 @@ and enum_declaration (env : env) ((v1, v2, v3, v4, v5) : CST.enum_declaration) :
   let ent = { name = EN (Id (v3, idinfo)); attrs = v1; tparams = None } in
   G.DefStmt (ent, G.TypeDef { tbody = OrType v5 }) |> G.s
 
+(* OLD *)
 and map_explicit_constructor_invocation (env : env) ((v1, v2, v3) : CST.explicit_constructor_invocation) =
   let v1 =
     (match v1 with
@@ -3115,6 +3164,38 @@ and map_explicit_constructor_invocation (env : env) ((v1, v2, v3) : CST.explicit
   let v2 = map_argument_list env v2 in
   let v3 = (* ";" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+ (* NEW *)
+and explicit_constructor_invocation (env : env) ((v1, v2, v3) : CST.explicit_constructor_invocation)
+    : G.stmt =
+  let v1 =
+    match v1 with
+    | `Opt_type_args_choice_this (v1, v2) ->
+        (* FIXME: Not sure where to put type args here: Application of type args is
+         * possible in QualifiedId, but here we have SpecialId. *)
+        let _v1 = Option.map (type_arguments env) v1 in
+        let v2 =
+          match v2 with
+          | `This x ->
+              this env x
+          | `Super x ->
+              super env x
+        in
+        v2
+    | `Choice_prim_exp_DOT_opt_type_args_super (v1, v2, v3, v4) ->
+        let v1 =
+          match v1 with
+          | `Prim_exp x ->
+              primary_expression env x
+        in
+        let v2 = (* "." *) token_ env v2 in
+        let _v3 = Option.map (type_arguments env) v3 in
+        let v4 = super_to_field_name env v4 in
+        G.DotAccess (v1, v2, v4) |> G.e
+  in
+  let v2 = argument_list env v2 in
+  let v3 = (* ";" *) token_ env v3 in
+  G.ExprStmt (G.Call (v1, v2) |> G.e, v3) |> G.s
 
 (* OLD  *)
 and map_expression (env : env) (x : CST.expression) =
@@ -4207,7 +4288,7 @@ and map_method_header (env : env) ((v1, v2, v3) : CST.method_header) =
 
 (* NEW *)
 and make_method (env : env) (mods : G.attribute list) (body : G.function_body)
-    ((v1, v2, v3) : CST.method_header) =
+    ((v1, v2, v3) : CST.method_header) : G.stmt =
   let (tparams, annots) =
     match v1 with
     | None -> None, []
@@ -5072,7 +5153,6 @@ and static_initializer (env : env) ((v1, v2) : CST.static_initializer) : G.stmt 
       { fkind = (G.Method, t); fparams = fb []; frettype = None; fbody = G.FBStmt v2 }
   in
   G.DefStmt (ent, def) |> G.s
-
 
 and map_subquery (env : env) ((v1, v2, v3) : CST.subquery) =
   let v1 = (* "(" *) token env v1 in
