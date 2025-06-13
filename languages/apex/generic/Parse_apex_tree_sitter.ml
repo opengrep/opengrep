@@ -1664,17 +1664,15 @@ and accessor_declaration (env : env) ((v1, v2, v3) : CST.accessor_declaration)
         modifiers env x
     | None -> []
   in
-  let v2 =
+  let a, (_, t as v2) =
     match v2 with
     | `Pat_get tok ->
-      (* str env tok, G.KeywordAttr (G.Getter, token_ env tok)*) (* "get" *)
-        str env tok
+        G.Getter, str env tok
     | `Pat_set tok ->
-      (* str env tok, G.KeywordAttr (G.Setter, token_ env tok)*) (* "get" *)
-        str env tok
+        G.Setter, str env tok
   in
   let v3 = anon_choice_trig_body_f78fea4 env v3 in
-  v1, v2, v3
+  (G.KeywordAttr (a, t) :: v1), v2, v3
 
 (* OLD *)
 and map_accessor_list (env : env) ((v1, v2, v3) : CST.accessor_list) =
@@ -5057,10 +5055,24 @@ and statement (env : env) (x : CST.statement) : G.stmt =
       let v2 = G.sc in
       G.ExprStmt (G.Ellipsis v1 |> G.e, v2) |> G.s
 
+(* OLD *)
 and map_static_initializer (env : env) ((v1, v2) : CST.static_initializer) =
   let v1 = map_pat_static env v1 in
   let v2 = map_trigger_body env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and static_initializer (env : env) ((v1, v2) : CST.static_initializer) : G.stmt =
+  let _, t as v1 = str env v1 in
+  let v2 = trigger_body env v2 in
+  let attrs = [KeywordAttr (G.Static, t)] in
+  let ent = basic_entity v1 ~attrs in
+  let def =
+    G.FuncDef
+      { fkind = (G.Method, t); fparams = fb []; frettype = None; fbody = G.FBStmt v2 }
+  in
+  G.DefStmt (ent, def) |> G.s
+
 
 and map_subquery (env : env) ((v1, v2, v3) : CST.subquery) =
   let v1 = (* "(" *) token env v1 in
