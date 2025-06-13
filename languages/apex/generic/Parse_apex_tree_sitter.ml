@@ -1628,6 +1628,7 @@ let map_from_clause (env : env) ((v1, v2, v3) : CST.from_clause) =
   in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 let rec map_accessor_declaration (env : env) ((v1, v2, v3) : CST.accessor_declaration) =
   let v1 =
     (match v1 with
@@ -1649,6 +1650,28 @@ let rec map_accessor_declaration (env : env) ((v1, v2, v3) : CST.accessor_declar
   let v3 = map_anon_choice_trig_body_f78fea4 env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and accessor_declaration (env : env) ((v1, v2, v3) : CST.accessor_declaration)
+    : G.attribute list * G.ident * G.function_body =
+  let v1 =
+    match v1 with
+    | Some x ->
+        modifiers env x
+    | None -> []
+  in
+  let v2 =
+    match v2 with
+    | `Pat_get tok ->
+      (* str env tok, G.KeywordAttr (G.Getter, token_ env tok)*) (* "get" *)
+        str env tok
+    | `Pat_set tok ->
+      (* str env tok, G.KeywordAttr (G.Setter, token_ env tok)*) (* "get" *)
+        str env tok
+  in
+  let v3 = anon_choice_trig_body_f78fea4 env v3 in
+  v1, v2, v3
+
+(* OLD *)
 and map_accessor_list (env : env) ((v1, v2, v3) : CST.accessor_list) =
   let v1 = (* "{" *) token env v1 in
   let v2 =
@@ -1656,6 +1679,16 @@ and map_accessor_list (env : env) ((v1, v2, v3) : CST.accessor_list) =
   in
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
+
+(* NEW *)
+and accessor_list (env : env) ((v1, v2, v3) : CST.accessor_list)
+    : (G.attribute list * G.ident * G.function_body) list bracket =
+  let v1 = (* "{" *) token_ env v1 in
+  let v2 =
+    List.map (accessor_declaration env) v2
+  in
+  let v3 = (* "}" *) token_ env v3 in
+  v1, v2, v3
 
 and map_alias_expression (env : env) ((v1, v2, v3) : CST.alias_expression) =
   let v1 = map_value_expression env v1 in
@@ -1866,7 +1899,16 @@ and map_anon_choice_trig_body_f78fea4 (env : env) (x : CST.anon_choice_trig_body
     )
   )
 
-(* OLD *)
+(* NEW *)
+and anon_choice_trig_body_f78fea4 (env : env) (x : CST.anon_choice_trig_body_f78fea4) : G.function_body =
+  match x with
+  | `Blk x ->
+      G.FBStmt (trigger_body env x)
+  | `SEMI tok ->
+      let _t = (* ";" *) token_ env tok in
+      FBNothing
+
+ (* OLD *)
 and map_anon_exp_rep_COMMA_exp_0bb260c (env : env) ((v1, v2) : CST.anon_exp_rep_COMMA_exp_0bb260c) =
   let v1 = map_expression env v1 in
   let v2 =
@@ -2422,6 +2464,7 @@ and catch_formal_parameter (env : env) (x : CST.catch_formal_parameter) : G.catc
       let v3 = variable_declarator_id env v3 in
       G.CatchParam (G.param_of_type v2 ?pname:(Some v3))
 
+(* OLD *)
 and map_class_body (env : env) ((v1, v2, v3) : CST.class_body) =
   let v1 = (* "{" *) token env v1 in
   let v2 =
@@ -2430,6 +2473,16 @@ and map_class_body (env : env) ((v1, v2, v3) : CST.class_body) =
   let v3 = (* "}" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* NEW *)
+and class_body (env : env) ((v1, v2, v3) : CST.class_body) : G.stmt list bracket =
+  let v1 = (* "{" *) token_ env v1 in
+  let v2 =
+    List.filter_map (class_body_declaration env) v2
+  in
+  let v3 = (* "}" *) token_ env v3 in
+  v1, v2, v3
+
+(* OLD *)
 and map_class_body_declaration (env : env) (x : CST.class_body_declaration) =
   (match x with
   | `Semg_ellips tok -> R.Case ("Semg_ellips",
@@ -2468,6 +2521,35 @@ and map_class_body_declaration (env : env) (x : CST.class_body_declaration) =
     )
   )
 
+(* NEW *)
+and class_body_declaration (env : env) (x : CST.class_body_declaration) : G.stmt option =
+  match x with
+  | `Semg_ellips tok ->
+      let t = (* "..." *) token_ env tok in
+      let v2 = G.sc in
+      Some (G.ExprStmt (G.Ellipsis t |> G.e, v2) |> G.s)
+  | `Choice_field_decl x ->
+      match x with
+      | `Field_decl x ->
+          Some (field_declaration env x)
+      | `Meth_decl x ->
+          Some (method_declaration env x)
+      | `Class_decl x ->
+          Some (class_declaration env x)
+      | `Inte_decl x ->
+          Some (interface_declaration env x)
+      | `Enum_decl x ->
+          Some (enum_declaration env x)
+      | `Blk x ->
+          failwith "NOT IMPLEMENTED (class_body_Declaration)"
+      | `Static_init x ->
+          failwith "NOT IMPLEMENTED (class_body_Declaration)"
+      | `Cons_decl x ->
+          failwith "NOT IMPLEMENTED (class_body_Declaration)"
+      | `SEMI tok ->
+          let _t = (* ";" *) token_ env tok
+          in None
+
 (* OLD *)
 and map_class_declaration (env : env) ((v1, v2) : CST.class_declaration) =
   let v1 = map_class_header env v1 in
@@ -2475,9 +2557,43 @@ and map_class_declaration (env : env) ((v1, v2) : CST.class_declaration) =
   R.Tuple [v1; v2]
 
 (* NEW *)
-and class_declaration (env : env) ((v1, v2) : CST.class_declaration) : G.stmt =
-  failwith "NOT IMPLEMENTED (class_declaration)"
+and class_declaration (env : env) (((v1, v2, v3, v4, v5, v6), b) : CST.class_declaration) : G.stmt =
+  let v1 =
+    match v1 with
+    | Some x -> modifiers env x
+    | None -> []
+  in
+  let v2 = (* "class" *) token_ env v2 in
+  let v3 = identifier env v3 in
+  let v4 = Option.map (type_parameters env) v4 in
+  let v5 =
+    match v5 with
+    | Some v5 -> superclass env v5
+    | None -> []
+  in
+  let v6 =
+    match v6 with
+    | Some v6 -> interfaces env v6
+    | None -> []
+  in
+  let lb, v7, rb = class_body env b in
+  let fields = List_.map (fun x -> G.F x) v7 in
+  let idinfo = empty_id_info () in
+  let ent = { name = EN (Id (v3, idinfo)); attrs = v1; tparams = v4 } in
+  G.DefStmt
+    ( ent,
+      G.ClassDef
+        {
+          ckind = (G.Class, v2);
+          cextends = v5;
+          cimplements = v6;
+          cmixins = [];
+          cparams = fb [];
+          cbody = (lb, fields, rb);
+        } )
+  |> G.s
 
+(* OLD *)
 and map_class_header (env : env) ((v1, v2, v3, v4, v5, v6) : CST.class_header) =
   let v1 =
     (match v1 with
@@ -3213,6 +3329,7 @@ and map_field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) =
 and field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) : G.expr =
   failwith "NOT IMPLEMENTED (field_access)"
 
+(* OLD *)
 and map_field_declaration (env : env) ((v1, v2, v3, v4) : CST.field_declaration) =
   let v1 =
     (match v1 with
@@ -3234,6 +3351,55 @@ and map_field_declaration (env : env) ((v1, v2, v3, v4) : CST.field_declaration)
     )
   in
   R.Tuple [v1; v2; v3; v4]
+
+(* NEW *)
+and field_declaration (env : env) ((v1, v2, v3, v4) : CST.field_declaration) : G.stmt =
+match v4 with
+  | `SEMI tok ->
+      local_variable_declaration env (v1, v2, v3, tok)
+  | `Acce_list x ->
+      let fname, _ = v3 |> fst |> fst |> fst |> identifier env in
+      let attrs = Option.map (modifiers env) v1 in
+      let typ = unannotated_type env v2 in
+      let ptype = Some (make_type_opt attrs typ) in
+      let varStmt = local_variable_declaration_data_only env (v1, v2, v3) |> var_def_stmt (fake ";") in
+      let lb, accessors, rb = accessor_list env x in
+      let funcs =
+        accessors |>
+        List.map
+          (fun (attrs, id, fbody) ->
+            let iname, itok = id in
+            let iname = String.lowercase_ascii iname in
+            let has_params = iname <> "get" in
+            let has_return = iname = "get" in
+            let ent = basic_entity (iname ^ "_" ^ fname, itok) ~attrs in
+            let funcdef =
+              FuncDef
+                {
+                  fkind = (Method, itok);
+                  fparams =
+                    fb
+                      (if has_params then
+                          [
+                            Param
+                              {
+                                pname = Some ("value", fake "value");
+                                ptype;
+                                pdefault = None;
+                                pattrs = [];
+                                pinfo = empty_id_info ();
+                              };
+                          ]
+                        else []);
+                  frettype = (if has_return then ptype else None);
+                  (* TODO Should this be "void"? *)
+                  fbody;
+                }
+            in
+            DefStmt (ent, funcdef) |> G.s)
+      in
+      Block (lb, varStmt :: funcs, rb)
+      |> G.s
 
 (* OLD *)
 and map_finally_clause (env : env) ((v1, v2) : CST.finally_clause) =
@@ -3327,8 +3493,8 @@ and for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) : G.stm
     | `Choice_local_var_decl_opt_exp_SEMI_opt_exp_rep_COMMA_exp (v1, v2, v3, v4) ->
         let v1 (* : G.for_var_or_expr list *) =
           match v1 with
-          | `Local_var_decl x ->
-               local_variable_declaration_data_only env x
+          | `Local_var_decl (v1, v2, v3, _) ->
+               local_variable_declaration_data_only env (v1, v2, v3)
                |> List.map (fun (t1, t2) -> G.ForInitVar (t1, t2))
           | `Opt_exp_rep_COMMA_exp_SEMI (v1, v2) ->
               let v1 =
@@ -3734,7 +3900,7 @@ and interface_body (env : env) ((v1, v2, v3) : CST.interface_body)
       | `Inte_decl x ->
           Some (interface_declaration env x)
       | `SEMI tok ->
-          let _t = (* ";" *) token env tok
+          let _t = (* ";" *) token_ env tok
           in None
     ) v2
   in
@@ -3802,12 +3968,19 @@ and interface_declaration (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interface_
         } )
   |> G.s
 
+(* OLD *)
 and map_interfaces (env : env) ((v1, v2) : CST.interfaces) =
   let v1 = map_pat_imples env v1 in
   let v2 = map_type_list env v2 in
   R.Tuple [v1; v2]
 
-(* OLD *)
+(* NEW *)
+and interfaces (env : env) ((v1, v2) : CST.interfaces) : G.type_ list =
+  let _v1 = (* "implementes" *) token_ env v1 in
+  let v2 = type_list env v2 in
+  v2
+
+ (* OLD *)
 and map_labeled_statement (env : env) ((v1, v2, v3) : CST.labeled_statement) =
   let v1 = map_identifier env v1 in
   let v2 = (* ":" *) token env v2 in
@@ -3841,14 +4014,14 @@ and map_local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_var
   R.Tuple [v1; v2; v3; v4]
 
 (* NEW *)
-and local_variable_declaration (env : env) ((v1, v2, v3, v4) as v : CST.local_variable_declaration) : G.stmt =
-  let d = local_variable_declaration_data_only env v in
+and local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration) : G.stmt =
+  let d = local_variable_declaration_data_only env (v1, v2, v3) in
   let v4 = (* ";" *) token_ env v4 in
   var_def_stmt v4 d
 
 (* AUX *)
-(* data-only = without semicolon *)
-and local_variable_declaration_data_only (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration)
+(* without semicolon *)
+and local_variable_declaration_data_only (env : env) ((v1, v2, v3))
     : (entity * variable_definition) list =
   let v1 =
     (match v1 with
@@ -3857,7 +4030,6 @@ and local_variable_declaration_data_only (env : env) ((v1, v2, v3, v4) : CST.loc
   in
   let v2 = unannotated_type env v2 in
   let v3 = variable_declarator_list env v3 in
-  let v4 = (* ";" *) token_ env v4 in
   List_.map
     (fun (ent, vardef) ->
       (ent, { vinit = vardef.vinit; vtype = Some (make_type v1 v2); vtok = G.no_sc }))
@@ -4875,10 +5047,17 @@ and map_subquery (env : env) ((v1, v2, v3) : CST.subquery) =
   let v3 = (* ")" *) token env v3 in
   R.Tuple [v1; v2; v3]
 
+(* OLD *)
 and map_superclass (env : env) ((v1, v2) : CST.superclass) =
   let v1 = map_pat_extends env v1 in
   let v2 = map_type_ env v2 in
   R.Tuple [v1; v2]
+
+(* NEW *)
+and superclass (env : env) ((v1, v2) : CST.superclass) : G.class_parent list =
+  let _v1 = (* ""extends *) token_ env v1 in
+  let v2 = type_ env v2 in
+  [v2, None]
 
 (* OLD *)
 and map_switch_block (env : env) ((v1, v2, v3) : CST.switch_block) =
@@ -5068,7 +5247,13 @@ and type_ (env : env) (x : CST.type_) : G.type_ =
 and make_type (a : G.attribute list) (t : G.type_kind) : G.type_=
   {G.t = t; G.t_attrs = a}
 
-(* OLD *)
+(* AUX *)
+and make_type_opt (a : G.attribute list option) (t : G.type_kind) : G.type_=
+  match a with
+  | None -> make_type [] t
+  | Some a -> make_type a t
+
+ (* OLD *)
 and map_type_arguments (env : env) ((v1, v2, v3) : CST.type_arguments) =
   let v1 = (* "<" *) token env v1 in
   let v2 =
