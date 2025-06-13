@@ -5488,7 +5488,40 @@ and map_unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5)
 
 (* NEW *)
 and unqualified_object_creation_expression (env : env) ((v1, v2, v3, v4, v5) : CST.unqualified_object_creation_expression) : G.expr =
-  failwith "NOT IMPLEMENTED (unqualified_object_creation_expression)"
+  let v1 = (* "new" *) token_ env v1 in
+  (* FIXME: Where to put these type arguments? *)
+  let v2 =
+    match v2 with
+    | Some x -> type_arguments env x
+    | None -> fb []
+  in
+  let v3 = simple_type env v3 in
+  let v4 = argument_list env v4 in
+  match v5 with
+  | Some v5 ->
+      let lb, v5, rb = class_body env v5 in
+      let v5 = List.map (fun x -> G.F x) v5 in
+      G.AnonClass
+            {
+              ckind = (G.Class, v1);
+              cextends = [];
+              cimplements = [];
+              cmixins = [];
+              cparams = fb [];
+              cbody = (lb, v5, rb);
+            }
+      |> G.e
+  | None -> (* FIXME: an unqualified object without a body? *)
+      G.AnonClass
+            {
+              ckind = (G.Class, v1);
+              cextends = [];
+              cimplements = [];
+              cmixins = [];
+              cparams = fb [];
+              cbody = fb [];
+            }
+      |> G.e
 
 (* OLD *)
 and map_update_expression (env : env) (x : CST.update_expression) =
