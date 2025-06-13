@@ -2546,9 +2546,9 @@ and class_body_declaration (env : env) (x : CST.class_body_declaration) : G.stmt
       | `Blk x ->
           Some (block env x)
       | `Static_init x ->
-          static_initializer env x
+          Some (static_initializer env x)
       | `Cons_decl x ->
-          constructor_declaration env x
+          Some (constructor_declaration env x)
       | `SEMI tok ->
           let _t = (* ";" *) token_ env tok
           in None
@@ -5245,17 +5245,36 @@ and map_switch_label (env : env) ((v1, v2) : CST.switch_label) =
 
 (* NEW *)
 and switch_label (env : env) ((v1, v2) : CST.switch_label) : G.case list =
-  let v1 = token_ env v1 in
+  let t1 = token_ env v1 in
   match v2 with
   | `Opt_unan_type_id_rep_COMMA_opt_unan_type_id (v1, v2, v3) ->
-      failwith "NOT IMPLEMENTED (switch_label)"
+      let t = Option.map (unannotated_type env) v1 in
+      let i = identifier env v2 in
+      let tis =
+        List.map (fun (w1, w2, w3) ->
+          let tok = (* "," *) token_ env w1 in
+          let t = Option.map (unannotated_type env) w2 in
+          let i = identifier env v2 in
+          tok, t, i) v3
+      in
+      List.map
+        (fun (tok, t,i) -> make_switch_label_obj env tok t i)
+        ((t1, t, i) :: tis)
   | `Exp_rep_COMMA_exp x ->
       let c1, cs = anon_exp_rep_COMMA_exp_0bb260c env x in
-      G.Case (v1, H2.expr_to_pattern c1) ::
+      G.Case (t1, H2.expr_to_pattern c1) ::
         List.map (fun (t, e) -> G.Case (t, H2.expr_to_pattern e)) cs
   | `Pat_else x ->
       let else_token = token_ env x in
-      [G.Default (Tok.combine_toks v1 [else_token])]
+      [G.Default (Tok.combine_toks t1 [else_token])]
+
+(* AUX *)
+and make_switch_label_obj (env : env) (tok : G.tok) (t : G.type_kind option) (i : G.ident)
+    : G.case =
+  let pat = G.PatId (i, empty_id_info ()) in
+  match t with
+  | Some t -> G.Case (tok, G.PatTyped (pat, t |> G.t))
+  | None -> G.Case (tok, pat)
 
 (* OLD *)
 and map_switch_rule (env : env) (x : CST.switch_rule) =
