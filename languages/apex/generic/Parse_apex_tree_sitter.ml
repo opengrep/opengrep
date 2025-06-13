@@ -2541,7 +2541,7 @@ and class_body_declaration (env : env) (x : CST.class_body_declaration) : G.stmt
       | `Enum_decl x ->
           Some (enum_declaration env x)
       | `Blk x ->
-          failwith "NOT IMPLEMENTED (class_body_Declaration)"
+          Some (block env x)
       | `Static_init x ->
           failwith "NOT IMPLEMENTED (class_body_Declaration)"
       | `Cons_decl x ->
@@ -5253,7 +5253,7 @@ and make_type_opt (a : G.attribute list option) (t : G.type_kind) : G.type_=
   | None -> make_type [] t
   | Some a -> make_type a t
 
- (* OLD *)
+(* OLD *)
 and map_type_arguments (env : env) ((v1, v2, v3) : CST.type_arguments) =
   let v1 = (* "<" *) token env v1 in
   let v2 =
@@ -5303,7 +5303,7 @@ and type_bound (env : env) ((v1, v2, v3) : CST.type_bound) : G.type_ list =
   in
   v2 :: v3
 
- (* OLD *)
+(* OLD *)
 and map_type_list (env : env) ((v1, v2) : CST.type_list) =
   let v1 = map_type_ env v1 in
   let v2 =
