@@ -1,6 +1,6 @@
 rules:
 - id: test
-  message: "The web server executes a command on potential unescaped user input, which may lead to remote command execution."
+  message: "Test"
   languages:
     - php
   severity: ERROR
