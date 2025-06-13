@@ -2546,9 +2546,9 @@ and class_body_declaration (env : env) (x : CST.class_body_declaration) : G.stmt
       | `Blk x ->
           Some (block env x)
       | `Static_init x ->
-          failwith "NOT IMPLEMENTED (class_body_Declaration)"
+          static_initializer env x
       | `Cons_decl x ->
-          failwith "NOT IMPLEMENTED (class_body_Declaration)"
+          constructor_declaration env x
       | `SEMI tok ->
           let _t = (* ";" *) token_ env tok
           in None
@@ -2919,7 +2919,7 @@ and map_do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) =
   let v5 = (* ";" *) token env v5 in
   R.Tuple [v1; v2; v3; v4; v5]
 
-(* OLD *)
+(* NEW *)
 and do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) : G.stmt =
   let v1 = token_ env v1 (* "do" *) in
   let v2 = statement env v2 in
@@ -2987,7 +2987,7 @@ and map_enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9)
 (* NEW *)
 and enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9) : CST.enhanced_for_statement) : G.stmt =
   let v1 = (* "for" *) token_ env v1 in
-  let v2 = (* "(" *) token env v2 in
+  let _v2 = (* "(" *) token_ env v2 in
   let v3 =
     match v3 with
     | Some x -> modifiers env x
@@ -2999,7 +2999,7 @@ and enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9) : C
   let pat = G.PatId (v5, empty_id_info ()) in
   let v6 = (* ":" *) token_ env v6 in
   let v7 = expression env v7 in
-  let v8 = (* ")" *) token_ env v8 in
+  let _v8 = (* ")" *) token_ env v8 in
   let v9 = statement env v9 in
   G.For (v1, G.ForEach (G.PatTyped (pat, ty), v6, v7), v9) |> G.s
 
