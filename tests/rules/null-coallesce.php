@@ -1,11 +1,11 @@
 <?php
 
 function f($filename) {
-    // ruleid: AIK_exec-use
+    // ruleid: embed_word
     "convert " . $filename;
 }
 function f1($filename) {
-    // ruleid: AIK_exec-use
+    // ruleid: throw
     return shell_exec($filename)
             ?? throw new RuntimeException('Failed to get filename');
 }
