@@ -940,7 +940,6 @@ expr:
  | simple_expr T_XOR_EQUAL    expr { AssignOp($1,(AssignOpArith Xor,$2),$3) }
  | T_THROW expr_or_dots  { Throw($1,$2) }
 
- | simple_expr T_NULL_COALLESCING  expr { AssignOp($1,(AssignOpArith Nullish,$2),$3) }
  | simple_expr T_SL_EQUAL     expr { AssignOp($1,(AssignOpArith DecLeft,$2),$3) }
  | simple_expr T_SR_EQUAL     expr { AssignOp($1,(AssignOpArith DecRight,$2),$3) }
 
@@ -969,7 +968,7 @@ expr:
  | expr TXOR expr   { Binary($1,(Arith Xor,$2),$3) }
  | expr T_SL expr   { Binary($1,(Arith DecLeft,$2),$3) }
  | expr T_SR expr   { Binary($1,(Arith DecRight,$2),$3) }
-
+ | expr T_NULL_COALLESCING  expr { Binary($1,(Arith Nullish,$2),$3) } 
  | expr "." expr    { Binary($1,(BinaryConcat,$2),$3) }
 
  | expr T_IS_IDENTICAL        expr { Binary($1,(Logical Identical,$2),$3) }
