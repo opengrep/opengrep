@@ -694,6 +694,11 @@ let super_to_field_name (env : env) (x : CST.super) : G.field_name =
   let i = (* "super" *) str env x in
   G.FN (H2.name_of_id i)
 
+(* AUX *)
+let this_to_field_name (env : env) (x : CST.this) : G.field_name =
+  let i = (* "this" *) str env x in
+  G.FN (H2.name_of_id i)
+
 let map_order_null_direciton (env : env) (x : CST.order_null_direciton) =
   (match x with
   | `Pat_nulls_pat_first (v1, v2) -> R.Case ("Pat_nulls_pat_first",
@@ -1843,7 +1848,7 @@ and map_anon_choice_prim_exp_bbf4eda (env : env) (x : CST.anon_choice_prim_exp_b
   )
 
 (* NEW *)
-and anon_choice_prim_exp_bbf4eda (env : env) (x : CST.anon_choice_prim_exp_bbf4eda) =
+and anon_choice_prim_exp_bbf4eda (env : env) (x : CST.anon_choice_prim_exp_bbf4eda) : G.expr =
   match x with
   | `Prim_exp x ->
       primary_expression env x
@@ -3327,7 +3332,23 @@ and map_field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) =
 
 (* NEW *)
 and field_access (env : env) ((v1, v2, v3, v4) : CST.field_access) : G.expr =
-  failwith "NOT IMPLEMENTED (field_access)"
+  let v1 = anon_choice_prim_exp_bbf4eda env v1 in
+  let v =
+    match v2 with
+    | Some (w1, w2) ->
+        let e, t = property_navigation env w1 in
+        let v1 = add_elvis e v1 in
+        let sup = (* "super" *) super_to_field_name env w2 in
+        G.DotAccess (v1, t, sup) |> G.e
+    | None -> v1
+  in
+  let e, t = property_navigation env v3 in
+  let v = add_elvis e v in
+  let v4 = match v4 with
+    | `Id x -> G.FN (H2.name_of_id (identifier env x ))
+    | `This x -> (* "this"*) this_to_field_name env x
+  in
+  G.DotAccess (v, t, v4) |> G.e
 
 (* OLD *)
 and map_field_declaration (env : env) ((v1, v2, v3, v4) : CST.field_declaration) =
