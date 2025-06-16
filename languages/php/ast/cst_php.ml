@@ -207,6 +207,7 @@ and expr =
    *)
   | IdVar of dname
   | This of tok
+  | Throw of tok * expr
   | Call of expr * arguments
   | ObjGet of expr * tok (* -> *) * expr
   | ClassGet of class_name_reference * tok (* :: *) * expr
@@ -347,6 +348,7 @@ and arithOp =
   | And
   | Or
   | Xor
+  | Nullish
 
 and logicalOp =
   | Inf
@@ -476,7 +478,6 @@ and stmt =
   | Label of ident * tok (* : *) * stmt
   | Goto of tok * ident * tok (* ; *)
   | Return of tok * expr option * tok
-  | Throw of tok * expr * tok
   | Try of tok * stmt_and_def list brace * catch list * finally list
   | Echo of tok * expr comma_list * tok
   | Globals of tok * global_var comma_list * tok

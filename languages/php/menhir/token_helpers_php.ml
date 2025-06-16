@@ -156,6 +156,7 @@ let visitor_info_of_tok f = function
   | TCOLCOL ii -> TCOLCOL (f ii)
   | T_EXIT ii -> T_EXIT (f ii)
   | T_IF ii -> T_IF (f ii)
+  | T_NULL_COALLESCING ii -> T_NULL_COALLESCING (f ii)
   | TCOLON ii -> TCOLON (f ii)
   | TCOMMA ii -> TCOMMA (f ii)
   | TDOT ii -> TDOT (f ii)

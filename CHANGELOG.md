@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.1](https://github.com/opengrep/opengrep/releases/tag/v1.4.1) - 16-06-2025
+
+### Bug fixes
+
+* Fix #295: PHP interpolated strings parsed as normal strings by @corneliuhoffman in https://github.com/opengrep/opengrep/pull/296
+
+### New Contributors
+
+* @corneliuhoffman made their first contribution in https://github.com/opengrep/opengrep/pull/296
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.4.0...v1.4.1
+
+
 ## [1.4.0](https://github.com/opengrep/opengrep/releases/tag/v1.4.0) - 09-06-2025
 
 ### New features

@@ -435,6 +435,7 @@ rule st_in_scripting state = parse
     | '%' { TMOD(tokinfo lexbuf) }       | "**" { TPOW(tokinfo lexbuf) }
 
     | "++" { T_INC(tokinfo lexbuf) }   | "--" { T_DEC(tokinfo lexbuf) }
+    | "??" { T_NULL_COALLESCING(tokinfo lexbuf)}
 
     | "="  { TEQ(tokinfo lexbuf) }
 
