@@ -127,6 +127,7 @@ let keyword_table = Hashtbl_.hash_of_list [
   "elseif",   (fun ii -> T_ELSEIF ii); "endif",      (fun ii -> T_ENDIF ii);
   "break",    (fun ii -> T_BREAK ii);  "continue",   (fun ii -> T_CONTINUE ii);
   "switch",   (fun ii -> T_SWITCH ii); "endswitch",(fun ii -> T_ENDSWITCH ii);
+  "match",    (fun ii ->T_MATCH ii);
   "case",       (fun ii -> T_CASE ii); "default",    (fun ii -> T_DEFAULT ii);
 
   "goto",     (fun ii -> T_GOTO ii);

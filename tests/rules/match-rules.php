@@ -8,6 +8,6 @@ function f2($filename) {
     // ruleid: test
     return match($filename) {
               1 => 'one',
-              2 => 'two',
+              2 => 'two'
 };
 }

@@ -347,6 +347,11 @@ and new_else tok env = function
 
 and stmt_and_def env st acc = stmt env st acc
 
+and match_case_list env m = List.map (match_case env) m
+
+and match_case env = function 
+  | MCase(e,c) -> A.MCase(List.map (expr env) e, expr env c)
+  | MDefault(tok,c) -> A.MDefault(tok, expr env c)
 (* ------------------------------------------------------------------------- *)
 (* Expression *)
 (* ------------------------------------------------------------------------- *)
@@ -462,6 +467,7 @@ and expr env = function
       let e = expr env e in
       let cn = class_name_reference env cn in
       A.InstanceOf (tok, e, cn)
+    | Match(tok, e,c) -> A.Match(tok, expr env  e, match_case_list env c)
   | Eval (tok, (lp, e, rp)) ->
       let id = A.IdSpecial (A.FuncLike A.Eval, wrap tok) in
       A.Call (id, (lp, [ A.Arg (expr env e) ], rp))
