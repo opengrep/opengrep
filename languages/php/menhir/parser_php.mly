@@ -151,7 +151,7 @@ let str_of_info x = Tok.content_of_tok x
 %token <Tok.t>
  T_IF T_ELSE T_ELSEIF T_ENDIF
  T_DO  T_WHILE   T_ENDWHILE  T_FOR     T_ENDFOR T_FOREACH T_ENDFOREACH
- T_SWITCH  T_ENDSWITCH T_CASE T_DEFAULT    T_BREAK T_CONTINUE
+ T_MATCH T_SWITCH  T_ENDSWITCH T_CASE T_DEFAULT    T_BREAK T_CONTINUE
  T_RETURN  T_TRY  T_CATCH  T_FINALLY  T_THROW
  T_EXIT T_DECLARE T_ENDDECLARE T_USE T_GLOBAL T_AS T_FUNCTION T_FN T_CONST T_VAR
 (* ugly: because of my hack around the implicit echo when use <?=,
@@ -381,6 +381,8 @@ statement:
  | T_SWITCH "(" expr_or_dots ")"    switch_case_list
      { Switch($1,($2,$3,$4),$5) }
 
+
+
  | T_FOREACH "(" expr T_AS foreach_pattern ")" foreach_statement
      { Foreach($1,$2,$3,None, $4,$5,$6,$7) }
  | T_FOREACH "(" expr T_AWAIT T_AS foreach_pattern ")" foreach_statement
@@ -453,6 +455,22 @@ foreach_pattern:
   | foreach_variable                      { ForeachVar $1 }
   | foreach_variable "=>" foreach_pattern { ForeachArrow(ForeachVar $1,$2,$3) }
   | T_LIST "(" assignment_list ")"        { ForeachList($1,($2,$3,$4)) }
+
+match_cases:
+  "{" match_case_list "}" { $2 }
+
+match_case_list:
+  arms = separated_nonempty_list(",", match_case)ioption(",") {
+    arms
+  }
+
+match_case:
+    | expr T_ARROW expr {MCase([$1], $3)}  
+    
+    (* | T_DEFAULT T_ARROW expr { MDefault($1, $3)} *)
+
+ 
+
 
 switch_case_list:
  | "{"            case_list "}"
@@ -1004,6 +1022,8 @@ expr:
  | T_STRING_CAST expr   { Cast((StringTy,$1),$2) }
  | T_ARRAY_CAST  expr   { Cast((ArrayTy,$1),$2) }
  | T_OBJECT_CAST expr   { Cast((ObjectTy,$1),$2) }
+  | T_MATCH "(" expr_or_dots ")" match_cases
+  { Match ($1,$3,$5)}
 
  | T_UNSET_CAST  expr   { CastUnset($1,$2) }
 

@@ -248,6 +248,8 @@ let visitor_info_of_tok f = function
   | T_NAMESPACE_C ii -> T_NAMESPACE_C (f ii)
   | EOF ii -> EOF (f ii)
   | T_ROCKET ii -> T_ROCKET (f ii)
+  | T_MATCH ii -> T_MATCH (f ii)
+
 
 let info_of_tok tok =
   let res = ref None in
