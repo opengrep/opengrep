@@ -457,19 +457,23 @@ foreach_pattern:
   | T_LIST "(" assignment_list ")"        { ForeachList($1,($2,$3,$4)) }
 
 match_cases:
-  "{" match_case_list "}" { $2 }
+  |"{" match_case_list "}" { $2 }
 
 match_case_list:
-  arms = separated_nonempty_list(",", match_case)ioption(",") {
-    arms
+  head = match_case tail = match_case_list_tail  {
+    head :: tail
   }
-
 match_case:
     | expr T_ARROW expr {MCase([$1], $3)}  
     
-    (* | T_DEFAULT T_ARROW expr { MDefault($1, $3)} *)
+    | T_DEFAULT T_ARROW expr { MDefault($1, $3)}
 
- 
+ match_case_list_tail:
+    | "," next = match_case next_tail = match_case_list_tail {
+      next :: next_tail
+    }
+    | "," {[]}
+    | {[]}
 
 
 switch_case_list:
