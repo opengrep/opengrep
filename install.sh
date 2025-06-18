@@ -17,7 +17,7 @@ get_available_versions() {
 # Function to get latest release version
 get_latest_version() {
     command -v curl >/dev/null 2>&1 || { echo >&2 "Required tool curl could not be found. Aborting."; exit 1; }
-    curl -s https://api.github.com/repos/opengrep/opengrep/releases | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/'
+    curl -s https://api.github.com/repos/opengrep/opengrep/releases/latest | grep '"tag_name":' | head -1 | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
 # Function to validate version
