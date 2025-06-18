@@ -171,17 +171,26 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               let baseline_targets, baseline_diff_targets =
                 match conf.engine_type with
                 | PRO Engine_type.{ analysis = Interprocedural; _ } ->
-                    let all_in_baseline, _ =
-                      Find_targets.get_target_fpaths conf.targeting_conf
-                        conf.target_roots
-                    in
-                    (* Performing a scan on the same set of files for the
-                       baseline that were previously scanned for the head.
-                       In Interfile mode, the matches are influenced not
-                       only by the file displaying matches but also by its
-                       dependencies. Hence, merely rescanning files with
-                       matches is insufficient. *)
-                    (all_in_baseline, paths_in_scanned)
+                    (* When enable_semgrep_ignore is true, we should use the filtered
+                       targets from the head scan instead of re-scanning all files
+                       in the baseline. This ensures semgrepignore filtering is
+                       consistently applied in both head and baseline scans. *)
+                    if conf.targeting_conf.enable_semgrep_ignore then
+                      (* Use the scanned files from the head as the baseline targets.
+                         These have already been filtered according to semgrepignore. *)
+                      (paths_in_scanned, paths_in_scanned)
+                    else
+                      let all_in_baseline, _ =
+                        Find_targets.get_target_fpaths conf.targeting_conf
+                          conf.target_roots
+                      in
+                      (* Performing a scan on the same set of files for the
+                         baseline that were previously scanned for the head.
+                         In Interfile mode, the matches are influenced not
+                         only by the file displaying matches but also by its
+                         dependencies. Hence, merely rescanning files with
+                         matches is insufficient. *)
+                      (all_in_baseline, paths_in_scanned)
                 | _ -> (paths_in_match, [])
               in
               core
@@ -200,7 +209,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 (*****************************************************************************)
 
 let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) (baseline_commit : string) (targets : Fpath.t list)
+    (profiler : Profiler.t) (baseline_commit : string) (_targets : Fpath.t list)
     (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
     Core_result.result_or_exn =
   Logs.info (fun m ->
@@ -213,9 +222,36 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
     let added_or_modified =
       status.added @ status.modified |> List_.map Fpath.v
     in
+    let filtered_added_or_modified =
+      (* Apply semgrepignore filtering to the changed files if flag is set *)
+      if conf.targeting_conf.enable_semgrep_ignore then (
+        Logs.info (fun m -> m "Applying semgrepignore filtering to %d changed files" (List.length added_or_modified));
+        Logs.info (fun m -> m "Targeting conf - respect_semgrepignore_files: %b" conf.targeting_conf.respect_semgrepignore_files);
+        Logs.info (fun m -> m "Targeting conf - semgrepignore_filename: %s" (match conf.targeting_conf.semgrepignore_filename with Some f -> f | None -> "<default>"));
+        List.iter (fun f -> Logs.info (fun m -> m "Changed file: %s" (Fpath.to_string f))) added_or_modified;
+        let scanning_roots = List_.map Scanning_root.of_fpath added_or_modified in
+        (* Create a modified targeting conf that applies filters to individual files *)
+        let targeting_conf_with_file_filtering = 
+          { conf.targeting_conf with 
+            apply_includes_excludes_to_file_targets = true;
+          } in
+        let selected_files, skipped = Find_targets.get_targets targeting_conf_with_file_filtering scanning_roots in
+        let filtered_fpaths = List_.map (fun fppath -> fppath.Fppath.fpath) selected_files in
+        Logs.info (fun m -> m "After filtering: %d files selected, %d files skipped" (List.length filtered_fpaths) (List.length skipped));
+        List.iter (fun f -> Logs.info (fun m -> m "Selected file: %s" (Fpath.to_string f))) filtered_fpaths;
+        List.iter (fun (skipped_file : Semgrep_output_v1_t.skipped_target) -> 
+          Logs.info (fun m -> m "Skipped file: %s, reason: %s" 
+            (Fpath.to_string skipped_file.path)
+            (Semgrep_output_v1_t.show_skip_reason skipped_file.reason))) skipped;
+        filtered_fpaths
+      ) else (
+        Logs.info (fun m -> m "Semgrepignore filtering disabled, using all %d changed files" (List.length added_or_modified));
+        added_or_modified
+      )
+    in
     match conf.engine_type with
-    | PRO Engine_type.{ analysis = Interfile; _ } -> (targets, added_or_modified)
-    | _ -> (added_or_modified, [])
+    | PRO Engine_type.{ analysis = Interfile; _ } -> (filtered_added_or_modified, filtered_added_or_modified)
+    | _ -> (filtered_added_or_modified, [])
   in
   let (head_scan_result : Core_result.result_or_exn) =
     Profiler.record profiler ~name:"head_core_time" (fun () ->

@@ -78,6 +78,8 @@ type conf = {
   (* TODO: not used for now *)
   baseline_commit : string option;
   diff_depth : int;
+  (* Enable semgrepignore filtering for baseline scans *)
+  enable_semgrep_ignore : bool;
 }
 [@@deriving show]
 

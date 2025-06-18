@@ -303,6 +303,18 @@ given baseline hash doesn't exist.
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
+let o_enable_semgrep_ignore : bool Term.t =
+  let info =
+    Arg.info [ "enable-semgrep-ignore" ]
+      ~doc:
+        {|Apply .semgrepignore filtering to changed files in baseline scans.
+Only applies when used with --baseline-commit.
+|}
+  in
+  Arg.value (Arg.flag info)
+
+
+
 let o_diff_depth : int Term.t =
   let info =
     Arg.info [ "diff-depth" ]
@@ -1331,7 +1343,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   *)
   let combine allow_local_builds allow_untrusted_validators apply_includes_excludes_to_files
       autofix baseline_commit common config dataflow_traces diff_depth dryrun dump_ast
-      dump_command_for_core dump_engine_path emacs emacs_outputs error exclude_
+      dump_command_for_core dump_engine_path emacs emacs_outputs enable_semgrep_ignore error exclude_
       exclude_minified_files exclude_rule_ids files_with_matches force_color
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       _historical_secrets include_ incremental_output incremental_output_postprocess
@@ -1464,6 +1476,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         respect_semgrepignore_files = not x_ignore_semgrepignore_files;
         semgrepignore_filename;
         exclude_minified_files;
+        enable_semgrep_ignore;
       }
     in
     let rule_filtering_conf : Rule_filtering.conf =
@@ -1503,6 +1516,11 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       Error.abort
         "Cannot create auto config when metrics are off. Please allow metrics \
          or run with a specific config.";
+
+    (* Validate --enable-semgrep-ignore requires --baseline-commit *)
+    if enable_semgrep_ignore && baseline_commit =*= None then
+      Error.abort
+        "--enable-semgrep-ignore can only be used with --baseline-commit";
 
     (* warnings.
      * ugly: TODO: remove the Default guard once we get the warning message
@@ -1569,7 +1587,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_autofix $ o_baseline_commit $ CLI_common.o_common $ o_config
     $ o_dataflow_traces $ o_diff_depth $ o_dryrun $ o_dump_ast
     $ o_dump_command_for_core $ o_dump_engine_path $ o_emacs $ o_emacs_outputs
-    $ o_error $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
+    $ o_enable_semgrep_ignore $ o_error $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
     $ o_files_with_matches $ o_force_color $ o_gitlab_sast
     $ o_gitlab_sast_outputs $ o_gitlab_secrets $ o_gitlab_secrets_outputs
     $ o_historical_secrets $ o_include $ o_incremental_output $ o_incremental_output_postprocess
