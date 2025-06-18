@@ -38,7 +38,7 @@
  (enabled_if
   (= %{os_type} Win32))
  (action
-  (write-file %{targets} "( )")))
+  (write-file %{targets} "(-ccopt -subsystem -ccopt console)")))
 
 (rule
  (deps
