@@ -1,5 +1,5 @@
 (executables
- (names Main)
+ (names Main Main_exp)
  (flags
   (:standard
    (:include flags.sexp))
@@ -15,8 +15,6 @@
   (pps ppx_profiling))
  ; 'byte' is for ocamldebug
  (modes native byte))
-
-; use flags.sh to generate the OS specific build flags
 
 (rule
  (targets flags.sexp)
@@ -60,6 +58,8 @@
   ; in the long term (and in the short term on windows) we want to ship
   ; opengrep-cli as "opengrep"
   (Main.exe as opengrep)
+  (Main_exp.exe as opengrep-exp)
   ; useful to debug opengrep, see ../../debug and ocamldebug
   (Main.bc as opengrep-core.bc)
-  (Main.bc as opengrep.bc)))
+  (Main.bc as opengrep.bc)
+))
