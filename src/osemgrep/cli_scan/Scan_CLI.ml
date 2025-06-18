@@ -308,6 +308,8 @@ let o_enable_semgrep_ignore : bool Term.t =
     Arg.info [ "enable-semgrep-ignore" ]
       ~doc:
         {|Apply .semgrepignore filtering to changed files in baseline scans.
+When enabled, files matching .semgrepignore patterns will be excluded from
+both the head and baseline scans, ensuring consistent results.
 Only applies when used with --baseline-commit.
 |}
   in

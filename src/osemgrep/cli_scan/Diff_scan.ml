@@ -171,13 +171,15 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               let baseline_targets, baseline_diff_targets =
                 match conf.engine_type with
                 | PRO Engine_type.{ analysis = Interprocedural; _ } ->
-                    (* When enable_semgrep_ignore is true, we should use the filtered
-                       targets from the head scan instead of re-scanning all files
-                       in the baseline. This ensures semgrepignore filtering is
+                    (* In Interprocedural mode, we need to scan dependencies in addition
+                       to changed files. When enable_semgrep_ignore is true, we should
+                       use the filtered targets from the head scan instead of re-scanning
+                       all files in the baseline. This ensures semgrepignore filtering is
                        consistently applied in both head and baseline scans. *)
                     if conf.targeting_conf.enable_semgrep_ignore then
                       (* Use the scanned files from the head as the baseline targets.
-                         These have already been filtered according to semgrepignore. *)
+                         These have already been filtered according to semgrepignore,
+                         ensuring consistency between head and baseline scans. *)
                       (paths_in_scanned, paths_in_scanned)
                     else
                       let all_in_baseline, _ =
@@ -223,24 +225,30 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
       status.added @ status.modified |> List_.map Fpath.v
     in
     let filtered_added_or_modified =
-      (* Apply semgrepignore filtering to the changed files if flag is set *)
+      (* Apply semgrepignore filtering to the changed files if flag is set.
+         This ensures that files ignored by .semgrepignore (or custom ignore file)
+         are excluded from both the head and baseline scans in differential mode. *)
       if conf.targeting_conf.enable_semgrep_ignore then (
         Logs.info (fun m -> m "Applying semgrepignore filtering to %d changed files" (List.length added_or_modified));
         Logs.info (fun m -> m "Targeting conf - respect_semgrepignore_files: %b" conf.targeting_conf.respect_semgrepignore_files);
         Logs.info (fun m -> m "Targeting conf - semgrepignore_filename: %s" (match conf.targeting_conf.semgrepignore_filename with Some f -> f | None -> "<default>"));
         List.iter (fun f -> Logs.info (fun m -> m "Changed file: %s" (Fpath.to_string f))) added_or_modified;
         let scanning_roots = List_.map Scanning_root.of_fpath added_or_modified in
-        (* Create a modified targeting conf that applies filters to individual files *)
-        let targeting_conf_with_file_filtering = 
-          { conf.targeting_conf with 
+        (* Create a modified targeting conf that applies filters to individual files.
+           By default, Find_targets.get_targets does not apply semgrepignore patterns
+           to individual file targets (only to directories). Since diff_scan passes
+           individual changed files as targets, we need to enable this flag to ensure
+           semgrepignore patterns are respected. *)
+        let targeting_conf_with_file_filtering =
+          { conf.targeting_conf with
             apply_includes_excludes_to_file_targets = true;
           } in
         let selected_files, skipped = Find_targets.get_targets targeting_conf_with_file_filtering scanning_roots in
         let filtered_fpaths = List_.map (fun fppath -> fppath.Fppath.fpath) selected_files in
         Logs.info (fun m -> m "After filtering: %d files selected, %d files skipped" (List.length filtered_fpaths) (List.length skipped));
         List.iter (fun f -> Logs.info (fun m -> m "Selected file: %s" (Fpath.to_string f))) filtered_fpaths;
-        List.iter (fun (skipped_file : Semgrep_output_v1_t.skipped_target) -> 
-          Logs.info (fun m -> m "Skipped file: %s, reason: %s" 
+        List.iter (fun (skipped_file : Semgrep_output_v1_t.skipped_target) ->
+          Logs.info (fun m -> m "Skipped file: %s, reason: %s"
             (Fpath.to_string skipped_file.path)
             (Semgrep_output_v1_t.show_skip_reason skipped_file.reason))) skipped;
         filtered_fpaths
