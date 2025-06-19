@@ -111,7 +111,7 @@ let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
    scan. Subsequently, eliminate any previously identified matches
    from the results of the head checkout scan. *)
 let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
-    (_conf : Scan_CLI.conf) (profiler : Profiler.t)
+    (conf : Scan_CLI.conf) (profiler : Profiler.t)
     (result_or_exn : Core_result.result_or_exn) (rules : Rule.rules)
     (commit : string) (status : Git_wrapper.status)
     (core :
@@ -162,7 +162,27 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                        !!(pm.path.internal_path_to_content))
                 |> prepare_targets
               in
-              let baseline_targets, baseline_diff_targets = (paths_in_match, [])
+              let paths_in_scanned =
+                r.scanned
+                |> List_.map (fun p ->
+                       p |> Target.internal_path |> Fpath.to_string)
+                |> prepare_targets
+              in
+              let baseline_targets, baseline_diff_targets =
+                match conf.engine_type with
+                | PRO Engine_type.{ analysis = Interprocedural; _ } ->
+                    let all_in_baseline, _ =
+                      Find_targets.get_target_fpaths conf.targeting_conf
+                        conf.target_roots
+                    in
+                    (* Performing a scan on the same set of files for the
+                       baseline that were previously scanned for the head.
+                       In Interfile mode, the matches are influenced not
+                       only by the file displaying matches but also by its
+                       dependencies. Hence, merely rescanning files with
+                       matches is insufficient. *)
+                    (all_in_baseline, paths_in_scanned)
+                | _ -> (paths_in_match, [])
               in
               core
                 ~diff_config:
@@ -180,8 +200,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 (*****************************************************************************)
 
 let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) (baseline_commit : string)
-    (_targets : Fpath.t list) (* Original scan targets - not used in diff mode *)
+    (profiler : Profiler.t) (baseline_commit : string) (targets : Fpath.t list)
     (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
     Core_result.result_or_exn =
   Logs.info (fun m ->
@@ -190,12 +209,7 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
   let commit = Git_wrapper.merge_base baseline_commit in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
   let diff_depth = Differential_scan_config.default_depth in
-  (* NOTE: The 'targets' parameter is not used here because differential scanning
-     determines its own targets by computing the diff between the baseline commit
-     and the current HEAD. The passed targets are the original scan targets, but
-     for baseline comparison we need to scan only the files that have changed
-     between commits, which is computed from git status below. *)
-  let diff_scan_targets, diff_targets =
+  let targets, diff_targets =
     let added_or_modified =
       status.added @ status.modified |> List_.map Fpath.v
     in
@@ -205,9 +219,6 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
          are excluded from both the head and baseline scans in differential mode. *)
       if conf.targeting_conf.enable_semgrep_ignore then (
         Logs.info (fun m -> m "Applying semgrepignore filtering to %d changed files" (List.length added_or_modified));
-        Logs.info (fun m -> m "Targeting conf - respect_semgrepignore_files: %b" conf.targeting_conf.respect_semgrepignore_files);
-        Logs.info (fun m -> m "Targeting conf - semgrepignore_filename: %s" (match conf.targeting_conf.semgrepignore_filename with Some f -> f | None -> "<default>"));
-        List.iter (fun f -> Logs.info (fun m -> m "Changed file: %s" (Fpath.to_string f))) added_or_modified;
         let scanning_roots = List_.map Scanning_root.of_fpath added_or_modified in
         (* Create a modified targeting conf that applies filters to individual files.
            By default, Find_targets.get_targets does not apply semgrepignore patterns
@@ -218,29 +229,48 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
           { conf.targeting_conf with
             apply_includes_excludes_to_file_targets = true;
           } in
-        let selected_files, skipped = Find_targets.get_targets targeting_conf_with_file_filtering scanning_roots in
+        let selected_files, _skipped = Find_targets.get_targets targeting_conf_with_file_filtering scanning_roots in
         let filtered_fpaths = List_.map (fun fppath -> fppath.Fppath.fpath) selected_files in
-        Logs.info (fun m -> m "After filtering: %d files selected, %d files skipped" (List.length filtered_fpaths) (List.length skipped));
-        List.iter (fun f -> Logs.info (fun m -> m "Selected file: %s" (Fpath.to_string f))) filtered_fpaths;
-        List.iter (fun (skipped_file : Semgrep_output_v1_t.skipped_target) ->
-          Logs.info (fun m -> m "Skipped file: %s, reason: %s"
-            (Fpath.to_string skipped_file.path)
-            (Semgrep_output_v1_t.show_skip_reason skipped_file.reason))) skipped;
+        Logs.info (fun m -> m "After filtering: %d files selected" (List.length filtered_fpaths));
         filtered_fpaths
       ) else (
-        Logs.info (fun m -> m "Semgrepignore filtering disabled, using all %d changed files" (List.length added_or_modified));
         added_or_modified
       )
     in
-    (filtered_added_or_modified, [])
+    match conf.engine_type with
+    | PRO Engine_type.{ analysis = Interfile; _ } -> (targets, filtered_added_or_modified)
+    | _ -> (filtered_added_or_modified, [])
   in
   let (head_scan_result : Core_result.result_or_exn) =
     Profiler.record profiler ~name:"head_core_time" (fun () ->
         diff_scan_func
           ~diff_config:
             (Differential_scan_config.Depth (diff_targets, diff_depth))
-          diff_scan_targets rules)
+          targets rules)
   in
-
+  (match (head_scan_result, conf.engine_type) with
+  | Ok r, PRO Engine_type.{ analysis = Interfile; _ } ->
+      let count_by_lang = Hashtbl.create 10 in
+      r.scanned
+      |> List.iter (function
+           | Target.Regular { analyzer = L (lang, _); _ } ->
+               let count =
+                 match Hashtbl.find_opt count_by_lang lang with
+                 | Some c -> c
+                 | None -> 0
+               in
+               Hashtbl.replace count_by_lang lang (count + 1)
+           | _ -> ());
+      Metrics_.g.payload.value.proFeatures <-
+        Some
+          {
+            diffDepth = Some diff_depth;
+            numInterfileDiffScanned =
+              Some
+                (count_by_lang |> Hashtbl.to_seq
+                |> Seq.map (fun (lang, count) -> (Lang.to_string lang, count))
+                |> List.of_seq);
+          }
+  | _ -> ());
   scan_baseline_and_remove_duplicates caps conf profiler head_scan_result rules
     commit status diff_scan_func
