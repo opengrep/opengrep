@@ -1,0 +1,18 @@
+rules:
+- id: test
+  message: "Test"
+  languages:
+    - php
+  severity: ERROR
+  mode: taint
+  pattern-sinks:
+  - patterns:
+    - pattern: $SOURCE
+    - pattern-inside: bad($SOURCE)
+  - patterns:  
+    - pattern: $SOURCE
+  pattern-sources:
+  - patterns:
+    - focus-metavariable: $SOURCE
+    - pattern-either:
+        - pattern: function $_(..., $SOURCE, ...) { ... }
