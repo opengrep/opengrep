@@ -71,6 +71,8 @@ let mk_param s =
     p_modifier = None;
     p_variadic = None;
   }
+let mk_comm_list list =  List.rev (List.fold_left (fun acc x -> Right(Tok.FakeTok(",", None)) :: Left(x) :: acc) [] list)
+let make_class_var tok1 body tok2 =ClassVariables (NoModifiers(tok1), None, mk_comm_list body,tok2 )
 
 let mk_var (s, tok) =
   match s with
@@ -299,7 +301,6 @@ let str_of_info x = Tok.content_of_tok x
 %start main semgrep_pattern
 %type <Cst_php.toplevel list> main
 %type <Cst_php.any>           semgrep_pattern
-
 %%
 (*************************************************************************)
 (* Macros *)
@@ -475,7 +476,7 @@ match_case:
     | "," {[]}
     | {[]}
 
-
+  
 switch_case_list:
  | "{"            case_list "}"
      { CaseList($1,None,$2,$3) }
@@ -720,6 +721,18 @@ unticked_class_declaration:
          c_enum_type = Some { e_tok = $3; e_base = $4; e_constraint = $5; }
        }
      }
+  | T_ENUM ident_class_name 
+    "{" enum_single* "}"
+     { { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
+  c_implements = None; c_body = ($3, [make_class_var $3 $4 $5], $5);
+         c_attrs = None;
+         c_enum_type = None
+       }
+     }
+
+enum_single: T_CASE ident TSEMICOLON 
+    { (DName $2, None)  }
+
 
 
 class_entry_type:
@@ -788,7 +801,6 @@ member_declaration:
 
 enum_statement: class_constant_declaration ";"
      { ClassConstants([], $2, None, [Left $1], $2) }
-
 method_declaration:
   member_modifier* T_FUNCTION is_reference ident_method_name type_params_opt
      "(" parameter_list ")"
