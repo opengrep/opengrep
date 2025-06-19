@@ -171,7 +171,10 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               let baseline_targets, baseline_diff_targets =
                 match conf.engine_type with
                 | PRO Engine_type.{ analysis = Interprocedural; _ } ->
-                    (* In Interprocedural mode, we need to scan dependencies in addition
+                    (* NOTE: This path is only executed when using the PRO engine with
+                       Interprocedural analysis mode (--pro-intrafile flag).
+                       
+                       In Interprocedural mode, we need to scan dependencies in addition
                        to changed files. When enable_semgrep_ignore is true, we should
                        use the filtered targets from the head scan instead of re-scanning
                        all files in the baseline. This ensures semgrepignore filtering is
@@ -188,7 +191,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                       in
                       (* Performing a scan on the same set of files for the
                          baseline that were previously scanned for the head.
-                         In Interfile mode, the matches are influenced not
+                         In Interprocedural mode, the matches are influenced not
                          only by the file displaying matches but also by its
                          dependencies. Hence, merely rescanning files with
                          matches is insufficient. *)
@@ -211,7 +214,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 (*****************************************************************************)
 
 let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) (baseline_commit : string) (_targets : Fpath.t list)
+    (profiler : Profiler.t) (baseline_commit : string) (targets : Fpath.t list)
     (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
     Core_result.result_or_exn =
   Logs.info (fun m ->
@@ -220,6 +223,11 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
   let commit = Git_wrapper.merge_base baseline_commit in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
   let diff_depth = Differential_scan_config.default_depth in
+  (* NOTE: The 'targets' parameter is not used here because differential scanning
+     determines its own targets by computing the diff between the baseline commit
+     and the current HEAD. The passed targets are the original scan targets, but
+     for baseline comparison we need to scan only the files that have changed
+     between commits, which is computed from git status below. *)
   let targets, diff_targets =
     let added_or_modified =
       status.added @ status.modified |> List_.map Fpath.v
