@@ -225,5 +225,6 @@ scripts/release/release_body.txt
 result
 # direnv
 .direnv
-# Personal symlink to semgrep-proprietary used by 'make pro'
-/semgrep-proprietary
+
+# User to hold Windows artifacts such as DLLs
+artifacts/

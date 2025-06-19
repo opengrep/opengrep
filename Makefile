@@ -163,7 +163,6 @@ install:
 
 .PHONY: uninstall
 uninstall:
-	-python3 -m pip uninstall --yes semgrep # TODO: Remove.
 	-python3 -m pip uninstall --yes opengrep
 
 ###############################################################################

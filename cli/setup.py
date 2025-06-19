@@ -59,11 +59,6 @@ if WHEEL_CMD in sys.argv:
 else:
     cmdclass = {}
 
-if IS_WINDOWS and not SEMGREP_FORCE_INSTALL:
-    raise Exception(
-        "Opengrep does not support Windows yet, please try again with WSL."
-    )
-
 try:
     with open(os.path.join(REPO_ROOT, "README.md"), "r", encoding="utf-8") as f:
         long_description = f.read()
