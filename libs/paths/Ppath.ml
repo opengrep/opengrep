@@ -287,12 +287,26 @@ let remove_prefix root path =
 (* Builder entry points *)
 (*****************************************************************************)
 
+let capitalize_drive_letter path =
+  if String.length path >= 2 &&
+     Char.equal path.[1] ':' &&
+     path.[0] >= 'a' && path.[0] <= 'z'
+  then
+    String.capitalize_ascii path
+  else
+    path
+
+let cwd () =
+  let cwd = Unix.getcwd () in
+  if not Sys.win32 then cwd
+  else capitalize_drive_letter cwd
+
 (*
    Make a path absolute, using getcwd() if needed.
    I hesitated to put this into Fpath_ since Fpath is purely syntactic.
 *)
 let make_absolute path =
-  if Fpath.is_rel path then Fpath.(v (Unix.getcwd ()) // path)
+  if Fpath.is_rel path then Fpath.(v (cwd ()) // path)
   else
     (* Here, we must make a syscall, because we are making an unnormalized path absolute
        so that we can compare it to a normalized path.
