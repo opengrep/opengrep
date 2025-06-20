@@ -73,7 +73,7 @@ main () {
 
     URL="https://github.com/opengrep/opengrep/releases/download/${VERSION}/${DIST}"
     echo
-    echo "*** Installing Opengrep version ${VERSION} for ${DIST} ***"
+    echo "*** Installing Opengrep ${VERSION} for ${OS} (${ARCH}) ***"
     echo
 
     # check if binary already exists
@@ -106,37 +106,34 @@ main () {
         echo
         echo "Successfully installed Opengrep binary to ${INST}/opengrep"
         
+        rm -f "${LATEST}" || exit 1
         ln -s "${INST}" "${LATEST}" || exit 1
         echo "with a symlink from ${LATEST}/opengrep"
     fi
 
     LOCALBIN="${HOME}/.local/bin"
-    SYMLINK_CREATED=0
-
-    if [ -d "${LOCALBIN}" ] && [ -w "${LOCALBIN}" ] && [ ! -f "${LOCALBIN}/opengrep" ]; then
-        ln -s "${LATEST}/opengrep" "${LOCALBIN}/opengrep" && SYMLINK_CREATED=1
-        if [ $SYMLINK_CREATED -eq 1 ]; then
-            echo "Created a symlink: ${LOCALBIN}/opengrep → ${LATEST}/opengrep"
+    
+    # only need create the symlink from .local/bin once if not created before
+    # for all subsequent installations, the ./local/bin symlink will still point to the updated symlink (created above)
+    if [ -d "${LOCALBIN}" ] && [ -w "${LOCALBIN}" ]; then
+        # Only create the symlink if it doesn't already exist
+        if [ ! -f "${LOCALBIN}/opengrep" ]; then
+            ln -s "${LATEST}/opengrep" "${LOCALBIN}/opengrep"
+            echo "Created symlink from ${LATEST}/opengrep to ${LOCALBIN}/opengrep"
         fi
-    fi
-
-    if [ $SYMLINK_CREATED -eq 0 ]; then
+        echo
+        echo "To launch Opengrep now, type:"
+        echo "opengrep"
+        echo
+        echo "To check Opengrep version, type:"
+        echo "opengrep --version"
+        echo
+    else
         echo
         echo "Hint: Append the following line to your shell profile:"
         echo "export PATH='${LATEST}':\$PATH"
         echo
     fi
-
-    if [ $SYMLINK_CREATED -eq 1 ]; then
-        echo
-        echo "To launch Opengrep now, type"
-        echo "opengrep"
-    else
-        echo
-        echo "To launch Opengrep now, type"
-        echo "${LATEST}/opengrep"
-    fi
-
 }
 
 # Argument parsing
