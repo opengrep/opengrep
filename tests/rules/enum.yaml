@@ -1,8 +1,9 @@
 rules:
 - id: enum_rule
-  pattern: "enum Status {
-    ...}"
-  message: "Called on $SOME"  
+  pattern: "enum $ENUM {
+   case Active;
+   ... }"
+  message: "Called on $ENUM"  
   metadata:
     some_object: $SOME     
   languages: [php]
@@ -15,10 +16,7 @@ rules:
   mode: taint
   pattern-sinks:
   - patterns:
-    - pattern: $SOURCE
-    - pattern-inside: bad($SOURCE)
-  - patterns:  
-    - pattern: $SOURCE
+    - pattern: bad($SOURCE)
   pattern-sources:
   - patterns:
     - focus-metavariable: $SOURCE

@@ -714,7 +714,7 @@ unticked_class_declaration:
          c_enum_type = None;
        }
      }
-  (* in the following we assum that the cases of a statement appear before constants,  methods and use constructs.*)
+  (* in the following we assume that the cases of a statement appear before constants,  methods and use constructs.*)
    | T_ENUM ident_class_name implements_list 
     "{" enum_single* member_declaration* "}"
   {let members = $5 @ $6 in  { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
