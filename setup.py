@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
     name="semgrep_pre_commit_package",
-    version="1.4.1",
+    version="1.4.2",
     # install_requires=["opengrep==1.2.0"], # Commented out since we're not on pypi.
     packages=[],
 )

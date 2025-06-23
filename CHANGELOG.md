@@ -1,14 +1,23 @@
 # Changelog
 
+## [1.4.2](https://github.com/opengrep/opengrep/releases/tag/v1.4.2) - 23-06-2025
+
+### Bug fixes
+
+* Fix #291: cwd can begin with lowecase drive letter on windows by @dimitris-m in #300
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.4.1...v1.4.2
+
+
 ## [1.4.1](https://github.com/opengrep/opengrep/releases/tag/v1.4.1) - 16-06-2025
 
 ### Bug fixes
 
-* Fix #295: PHP interpolated strings parsed as normal strings by @corneliuhoffman in https://github.com/opengrep/opengrep/pull/296
+* Fix #295: PHP interpolated strings parsed as normal strings by @corneliuhoffman in #296
 
 ### New Contributors
 
-* @corneliuhoffman made their first contribution in https://github.com/opengrep/opengrep/pull/296
+* @corneliuhoffman made their first contribution in #296
 
 **Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.4.0...v1.4.1
 
