@@ -1,4 +1,12 @@
 rules:
+- id: enum_rule
+  pattern: "enum Status {
+    ...}"
+  message: "Called on $SOME"  
+  metadata:
+    some_object: $SOME     
+  languages: [php]
+  severity: ERROR
 - id: test
   message: "Test"
   languages:

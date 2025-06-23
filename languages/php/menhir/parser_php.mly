@@ -71,8 +71,9 @@ let mk_param s =
     p_modifier = None;
     p_variadic = None;
   }
-let mk_comm_list list =  List.rev (List.fold_left (fun acc x -> Right(Tok.FakeTok(",", None)) :: Left(x) :: acc) [] list)
-let make_class_var tok1 body tok2 =ClassVariables (NoModifiers(tok1), None, mk_comm_list body,tok2 )
+
+let make_class_vars single = 
+  ClassVariables(NoModifiers(Tok.FakeTok("", None)),None, [Left(single)],Tok.FakeTok("", None))
 
 let mk_var (s, tok) =
   match s with
@@ -713,25 +714,34 @@ unticked_class_declaration:
          c_enum_type = None;
        }
      }
- | T_ENUM ident_class_name ":" type_php type_constr_opt
-    "{" enum_statement* "}"
-     { { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
-         c_implements = None; c_body = ($6, $7, $8);
-         c_attrs = None;
-         c_enum_type = Some { e_tok = $3; e_base = $4; e_constraint = $5; }
-       }
-     }
-  | T_ENUM ident_class_name 
-    "{" enum_single* "}"
-     { { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
-  c_implements = None; c_body = ($3, [make_class_var $3 $4 $5], $5);
+  (* in the following we assum that the cases of a statement appear before constants,  methods and use constructs.*)
+   | T_ENUM ident_class_name implements_list 
+    "{" enum_single* member_declaration* "}"
+  {let members = $5 @ $6 in  { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
+  c_implements = $3; c_body =  ($4, members, $7);
          c_attrs = None;
          c_enum_type = None
        }
      }
+  | T_ENUM ident_class_name ":" type_php implements_list 
+    "{" backed_enum_single* member_declaration* "}"
+    {let members = $7 @ $8 in
+  { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
+  c_implements = $5; c_body =  ($6, members, $9);
+         c_attrs = None;
+         c_enum_type  = Some { e_tok = $3; e_base = $4; e_constraint = None; }       }
+     }
 
-enum_single: T_CASE ident TSEMICOLON 
-    { (DName $2, None)  }
+  backed_enum_single: 
+  | T_CASE ident TEQ static_scalar TSEMICOLON {make_class_vars (DName $2, Some ($3, $4)) }
+  | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
+
+
+
+enum_single: 
+    | T_CASE ident TSEMICOLON { make_class_vars (DName $2, None)  }
+    | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
+
 
 
 
@@ -799,8 +809,6 @@ member_declaration:
  (* semgrep-ext: *)
  | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
-enum_statement: class_constant_declaration ";"
-     { ClassConstants([], $2, None, [Left $1], $2) }
 method_declaration:
   member_modifier* T_FUNCTION is_reference ident_method_name type_params_opt
      "(" parameter_list ")"
