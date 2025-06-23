@@ -11,6 +11,10 @@ enum Status
     return $this === self::Published;
   }
 }
+// Note that we use bad to make sure we are not finding $s. 
+// the idea is that we need to make sure the code is parsed with menir and so the 
+// treesitter problem of string parsing does not propagate. See https://github.com/opengrep/opengrep/issues/297
+
 function greet(Status $s, $t): string
 {
     return match ($s) {
