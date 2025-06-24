@@ -4,10 +4,12 @@ rules:
   languages:
     - php
   severity: ERROR
-  pattern: match($filename) {
-             ... 
-              2 => 'two',
-             ... }
+  pattern:
+    match($filename) {
+      ... 
+      2 => 'two',
+      ...
+    }
 - id: test
   message: "Test"
   languages:
