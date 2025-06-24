@@ -289,7 +289,7 @@ and expr =
   (* unparser: *)
   | ParenExpr of expr paren
 
-and match_ = MCase of expr list * expr | MDefault of tok * expr
+and match_ = MCase of expr list * expr | MDefault of tok * expr | MEllipsis of tok
 
 
 and scalar =
@@ -510,6 +510,8 @@ and switch_case_list =
 and case =
   | Case of tok * expr * tok * stmt_and_def list
   | Default of tok * tok * stmt_and_def list
+  | CaseEllipsis of (* ... *) tok
+
 
 and if_elseif = tok * expr paren * stmt
 and if_else = tok * stmt

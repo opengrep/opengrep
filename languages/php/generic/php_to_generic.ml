@@ -113,7 +113,7 @@ let rec stmt_aux = function
       [ G.If (t, G.Cond v1, v2, Some (* TODO *) v3) |> G.s ]
   | Switch (t, v1, v2) ->
       let v1 = expr v1
-      and v2 = list case v2 |> List_.map (fun x -> G.CasesAndBody x) in
+      and v2 = list case v2  in
       [ G.Switch (t, Some (G.Cond v1), v2) |> G.s ]
   | While (t, v1, v2) ->
       let v1 = expr v1 and v2 = stmt v2 in
@@ -226,14 +226,14 @@ and opt_expr_to_label_ident = function
       | _ ->
           let e = expr e in
           G.LDynamic e)
-
 and case = function
   | Case (t, v1, v2) ->
       let v1 = expr v1 and v2 = list stmt v2 in
-      ([ G.Case (t, H.expr_to_pattern v1) ], G.stmt1 v2)
+      G.CasesAndBody ([ G.Case (t, H.expr_to_pattern v1) ], G.stmt1 v2)
   | Default (t, v1) ->
       let v1 = list stmt v1 in
-      ([ G.Default t ], G.stmt1 v1)
+      G.CasesAndBody ([ G.Default t ], G.stmt1 v1)
+  | CaseEllipsis tok -> G.CaseEllipsis tok
 
 and catch (t, v1, v2, v3) =
   let v1 = hint_type v1 and v2 = var v2 and v3 = stmt v3 in
@@ -463,6 +463,7 @@ and match_ = function
   | MDefault (tok, e) ->
       let e = expr e in
       G.CasesAndBody ([ G.Default tok ], G.ExprStmt (e, G.sc) |> G.s)
+  | MEllipsis tok -> G.CaseEllipsis tok
 
 and argument = function
   | Arg e -> expr e |> G.arg

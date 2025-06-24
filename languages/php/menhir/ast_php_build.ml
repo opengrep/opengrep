@@ -356,6 +356,7 @@ and match_case_list env m = List.map (match_case env) m
 and match_case env = function
   | MCase (e, c) -> A.MCase (List.map (expr env) e, expr env c)
   | MDefault (tok, c) -> A.MDefault (tok, expr env c)
+  | MEllipsis tok ->A.MEllipsis tok
 
 (* ------------------------------------------------------------------------- *)
 (* Expression *)
@@ -968,6 +969,7 @@ and case env = function
   | Default (tok, _, stl) ->
       let stl = List_.fold_right (stmt_and_def env) stl [] in
       A.Default (tok, stl)
+  | CaseEllipsis tok -> A.CaseEllipsis tok
 
 and foreach_variable tok env (r, lv) =
   let e = lvalue env lv in

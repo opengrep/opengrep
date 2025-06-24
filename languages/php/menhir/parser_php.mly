@@ -298,7 +298,7 @@ let str_of_info x = Tok.content_of_tok x
 
 (*************************************************************************)
 (* Rules type declaration *)
-(*************************************************************************)
+(************************************************************************)
 %start main semgrep_pattern
 %type <Cst_php.toplevel list> main
 %type <Cst_php.any>           semgrep_pattern
@@ -462,20 +462,18 @@ match_cases:
   |"{" match_case_list "}" { $2 }
 
 match_case_list:
-  head = match_case tail = match_case_list_tail  {
-    head :: tail
-  }
+  |  {[]}
+  | head = match_case "," tail = match_case_list  {head :: tail}
+  | head = mellipse tail = match_case_list {head :: tail}
+  | match_case {[$1]}
+
 match_case:
     | expr T_ARROW expr {MCase([$1], $3)}  
     
     | T_DEFAULT T_ARROW expr { MDefault($1, $3)}
 
- match_case_list_tail:
-    | "," next = match_case next_tail = match_case_list_tail {
-      next :: next_tail
-    }
-    | "," {[]}
-    | {[]}
+mellipse: "..." {MEllipsis $1} 
+
 
   
 switch_case_list:
@@ -487,6 +485,7 @@ switch_case_list:
      { CaseColonList($1,None,$2, $3, $4) }
  | ":" ";"  case_list T_ENDSWITCH ";"
      { CaseColonList($1, Some $2, $3, $4, $5) }
+    
 
 case_list: case_list_rev { List.rev $1 }
 case_list_rev:
@@ -495,6 +494,9 @@ case_list_rev:
      { Case($2,$3,$4,$5)::$1   }
  | case_list_rev    T_DEFAULT   case_separator inner_statement*
      { Default($2,$3,$4)::$1 }
+  | case_list_rev "..."  {CaseEllipsis($2)::$1 } 
+
+
 
 case_separator:
  | ":"     { $1 }

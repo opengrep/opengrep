@@ -1,13 +1,11 @@
 rules:
-- id: match_test
-  message: "match_test"
+- id: switch_test
+  message: "switch_test"
   languages:
     - php
   severity: ERROR
-  pattern: match($filename) {
-             ... 
-              2 => 'two',
-             ... }
+  pattern: switch ($F) {
+             ...  }
 - id: test
   message: "Test"
   languages:
