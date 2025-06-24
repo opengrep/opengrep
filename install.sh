@@ -1,5 +1,7 @@
 #!/usr/bin/env bash -e
-# Opengrep installation script 
+set -euo pipefail
+
+# Opengrep installation script
 
 print_usage() {
     echo "Usage: $0 [-v version] [-l] [-h]"
@@ -8,33 +10,75 @@ print_usage() {
     echo "  -h    Show this help message"
 }
 
+retry() {
+    # This facilitatess arbitrary retry logic for the provided command
+    #
+    # USAGE:
+    #  # Use the defaults
+    #  retry curl --fail https://example.com
+    #  # Provide an updated count
+    #  retry 10 curl --fail https://example.com
+    #  # Provide an updated count and delay
+    #  retry 5 10 curl --fail https://example.com
+    local retry_count=3
+    local retry_delay=2
+
+    # Update the default values if provided
+    [[ $1 =~ ^[0-9]+$ ]] && { retry_count=$1; shift; }
+    [[ $1 =~ ^[0-9]+$ ]] && { retry_delay=$1; shift; }
+
+    local n=1
+    until "$@"; do
+        if (( n >= retry_count )); then
+            printf '⚠️  attempt %d/%d failed for: %s\n' "$n" "$retry_count" "$*" >&2
+            return 1
+        fi
+        printf '⚠️  attempt %d/%d failed for: %s; retrying in %ds\n' "$n" "$retry_count" "$*" "$retry_delay" >&2
+        sleep "$retry_delay"
+        ((n++))
+    done
+}
+
+
 # Function to get available versions - already checked when running main
 get_available_versions() {
     command -v curl >/dev/null 2>&1 || { echo >&2 "Required tool curl could not be found. Aborting."; exit 1; }
-    curl -s https://api.github.com/repos/opengrep/opengrep/releases | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+    # This extracts and validates the version tag(s) without requiring jq
+    retry curl -s --fail https://api.github.com/repos/opengrep/opengrep/releases \
+      | grep '"tag_name":' \
+      | sed -E 's/.*"([^"]+)".*/\1/' \
+      | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$'
 }
 
 # Function to validate version
 validate_version() {
     local version="$1"
-    local available_versions
-    available_versions=$(get_available_versions)
-    if echo "$available_versions" | grep -q "^$version$"; then
-        return 0
+
+    # Fetch available versions
+    AVAILABLE_VERSIONS="$(get_available_versions 2>/dev/null || echo "")"
+
+    if [ -z "$AVAILABLE_VERSIONS" ]; then
+        echo "Error: Unable to fetch available versions. Please check your internet connection." 1>&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$AVAILABLE_VERSIONS" | grep -qx "$version"; then
+        echo "Error: Version $version does not appear to be a valid opengrep release" 1>&2
+        echo "Available versions (latest 3):" 1>&2
+        printf '%s\n' "$AVAILABLE_VERSIONS" | head -3 1>&2
+        return 1
     else
-        echo "Error: Version $version not found"
-        echo "Available versions (latest 3):"
-        echo "$available_versions" | head -3
-        exit 1
+        echo "Error: Version $version appears to be valid, but the installation failed for unknown reassons" 1>&2
+        return 1
     fi
 }
 
 
 main () {
-    local VERSION="$1"
+    local REQUESTED_VERSION="$1"
+    local FINAL_VERSION="$REQUESTED_VERSION"
 
     PREFIX="${HOME}/.opengrep/cli"
-    INST="${PREFIX}/${VERSION}"
     LATEST="${PREFIX}/latest"
 
     OS="${OS:-$(uname -s)}"
@@ -71,22 +115,64 @@ main () {
         exit 1
     fi
 
-    URL="https://github.com/opengrep/opengrep/releases/download/${VERSION}/${DIST}"
-    echo
-    echo "*** Installing Opengrep ${VERSION} for ${OS} (${ARCH}) ***"
-    echo
+    if [ "$REQUESTED_VERSION" = "latest" ]; then
+        # Use GitHub's latest release redirect
+        URL="https://github.com/opengrep/opengrep/releases/latest/download/${DIST}"
+
+        # Get the final version from the redirect
+        REDIRECT_URL=$(curl -sI "$URL" 2>/dev/null | grep -i '^location:' | sed 's/location: //i' | tr -d '\r\n' || true)
+        if [ -n "$REDIRECT_URL" ]; then
+            # Extract version from the redirect URL
+            FINAL_VERSION=$(echo "$REDIRECT_URL" | sed -E 's|.*/download/([^/]+)/.*|\1|')
+        else
+            echo "Failed to resolve latest version. The redirect from $URL did not work." 1>&2
+            echo "Please check your internet connection or specify a version with -v" 1>&2
+            exit 1
+        fi
+
+        echo
+        echo "*** Installing Opengrep ${FINAL_VERSION} for ${OS} (${ARCH}) ***"
+        echo
+    else
+        URL="https://github.com/opengrep/opengrep/releases/download/${REQUESTED_VERSION}/${DIST}"
+        echo
+        echo "*** Installing Opengrep ${REQUESTED_VERSION} for ${OS} (${ARCH}) ***"
+        echo
+    fi
+
+    # Now set INST with the final version
+    INST="${PREFIX}/${FINAL_VERSION}"
 
     # check if binary already exists
     if [ -f "${INST}/opengrep" ]; then
         echo "Destination binary ${INST}/opengrep already exists."
     else
-        mkdir -p "${INST}"
-        if [ ! -d "${INST}" ]; then
-            echo "Failed to create install directory ${INST}." 1>&2
+        # Download to temp file first
+        TEMP_FILE=$(mktemp)
+        trap "rm -f $TEMP_FILE" EXIT
+
+        if ! retry curl --fail --location --progress-bar "${URL}" > "${TEMP_FILE}"; then
+            # Download failed - if user provided a version, validate it to show available versions
+            if [ "$REQUESTED_VERSION" != "latest" ]; then
+                echo
+                echo "Error: Failed to download version ${REQUESTED_VERSION}" 1>&2
+                # This will show available versions and exit
+                validate_version "$REQUESTED_VERSION"
+            fi
+            rm -f "$TEMP_FILE"
             exit 1
         fi
 
-        curl --fail --location --progress-bar "${URL}" > "${INST}/opengrep"
+        # Only create directory after successful download
+        mkdir -p "${INST}"
+        if [ ! -d "${INST}" ]; then
+            echo "Failed to create install directory ${INST}." 1>&2
+            rm -f "$TEMP_FILE"
+            exit 1
+        fi
+
+        # Move temp file to final location
+        mv "$TEMP_FILE" "${INST}/opengrep"
 
         # make executable by all users
         chmod a+x "${INST}/opengrep" || exit 1
@@ -105,14 +191,14 @@ main () {
 
         echo
         echo "Successfully installed Opengrep binary to ${INST}/opengrep"
-        
-        rm -f "${LATEST}" || exit 1
-        ln -s "${INST}" "${LATEST}" || exit 1
-        echo "with a symlink from ${LATEST}/opengrep"
     fi
 
+    # Always update the symlink to point to the requested version
+    rm -f "${LATEST}" || exit 1
+    ln -s "${INST}" "${LATEST}" || exit 1
+
     LOCALBIN="${HOME}/.local/bin"
-    
+
     # only need create the symlink from .local/bin once if not created before
     # for all subsequent installations, the ./local/bin symlink will still point to the updated symlink (created above)
     if [ -d "${LOCALBIN}" ] && [ -w "${LOCALBIN}" ]; then
@@ -164,18 +250,19 @@ if [ "$SHOW_HELP" -eq 1 ]; then
     exit 0
 fi
 
+# Only fetch available versions if listing
 if [ "$SHOW_LIST" -eq 1 ]; then
+    AVAILABLE_VERSIONS="$(get_available_versions)"
     echo "Available versions (latest 3):"
-    get_available_versions | head -3
+    printf '%s\n' "$AVAILABLE_VERSIONS" | head -3
     exit 0
 fi
 
 shift $((OPTIND -1))
 
+# If no version specified, we'll use "latest" and let curl resolve it
 if [ -z "$VERSION" ]; then
-    VERSION=$(get_available_versions | head -1)
-else
-    validate_version "$VERSION"
+    VERSION="latest"
 fi
 
 
