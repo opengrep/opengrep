@@ -1,4 +1,4 @@
-#!/usr/bin/env bash -e
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Opengrep installation script
@@ -149,7 +149,7 @@ main () {
     else
         # Download to temp file first
         TEMP_FILE=$(mktemp)
-        trap "rm -f $TEMP_FILE" EXIT
+        trap 'rm -f $TEMP_FILE' EXIT
 
         if ! retry curl --fail --location --progress-bar "${URL}" > "${TEMP_FILE}"; then
             # Download failed - if user provided a version, validate it to show available versions
