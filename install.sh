@@ -68,7 +68,7 @@ validate_version() {
         printf '%s\n' "$AVAILABLE_VERSIONS" | head -3 1>&2
         return 1
     else
-        echo "Error: Version $version appears to be valid, but the installation failed for unknown reassons" 1>&2
+        echo "Error: Version $version appears to be valid, but the installation failed for unknown reasons" 1>&2
         return 1
     fi
 }
