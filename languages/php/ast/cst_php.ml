@@ -257,6 +257,7 @@ and expr =
   (* Woohoo, viva PHP 5.3 *)
   | Lambda of lambda_def
   | ShortLambda of short_lambda_def
+  | Match of tok * expr * match_ list
   (* should be a statement ... *)
   | Exit of tok * expr option paren option
   | At of tok (* @ *) * expr
@@ -287,6 +288,9 @@ and expr =
   | DeepEllipsis of expr bracket
   (* unparser: *)
   | ParenExpr of expr paren
+
+and match_ = MCase of expr list * expr | MDefault of tok * expr | MEllipsis of tok
+
 
 and scalar =
   | C of constant
@@ -506,6 +510,8 @@ and switch_case_list =
 and case =
   | Case of tok * expr * tok * stmt_and_def list
   | Default of tok * tok * stmt_and_def list
+  | CaseEllipsis of (* ... *) tok
+
 
 and if_elseif = tok * expr paren * stmt
 and if_else = tok * stmt

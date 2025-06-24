@@ -208,18 +208,23 @@ and qualified_ident env xs =
     |> List_.filter_map (function
          | QITok _ -> None
          | QI id -> Some (ident env id)))
+(* *)
 
-and dname = function
+and dname ?(add_dollar = true) = function
   | DName (s, tok) ->
       if s.[0] =$= '$' then
-        if (Domain.DLS.get Flag_parsing.sgrep_mode) then (s, wrap tok)
+        if Domain.DLS.get Flag_parsing.sgrep_mode then (s, wrap tok)
         else failwith "dname: the string has a dollar, weird"
-      else
+      else if
         (* We abuse Id to represent both variables and functions/classes
          * identifiers in ast_php_simple, so to avoid collision
-         * we prepend a $ (the $ was removed in ast_php.ml and parse_php.ml)
+         * we prepend a $ (the $ was removed in ast_php.ml and parse_php.ml).
+         moreover as above we have the case of enums in which we make sure not 
+         to add $ to dname
          *)
-        ("$" ^ s, wrap tok)
+        add_dollar
+      then ("$" ^ s, wrap tok)
+      else (s, wrap tok)
 
 (* ------------------------------------------------------------------------- *)
 (* Statement *)
@@ -346,6 +351,12 @@ and new_else tok env = function
   | Some (tok, _, st) -> stmt1 tok (List_.fold_right (stmt_and_def env) st [])
 
 and stmt_and_def env st acc = stmt env st acc
+and match_case_list env m = List.map (match_case env) m
+
+and match_case env = function
+  | MCase (e, c) -> A.MCase (List.map (expr env) e, expr env c)
+  | MDefault (tok, c) -> A.MDefault (tok, expr env c)
+  | MEllipsis tok -> A.MEllipsis tok
 
 (* ------------------------------------------------------------------------- *)
 (* Expression *)
@@ -462,6 +473,7 @@ and expr env = function
       let e = expr env e in
       let cn = class_name_reference env cn in
       A.InstanceOf (tok, e, cn)
+  | Match (tok, e, c) -> A.Match (tok, expr env e, match_case_list env c)
   | Eval (tok, (lp, e, rp)) ->
       let id = A.IdSpecial (A.FuncLike A.Eval, wrap tok) in
       A.Call (id, (lp, [ A.Arg (expr env e) ], rp))
@@ -619,8 +631,7 @@ and hint_type env = function
   | HintQuestion (tok, t) -> A.HintQuestion (tok, hint_type env t)
   | HintTuple (t1, v1, t2) ->
       A.HintTuple (t1, List_.map (hint_type env) (comma_list v1), t2)
-  | HintUnion v1 ->
-      A.HintUnion (List_.map (hint_type env) (comma_list v1))
+  | HintUnion v1 -> A.HintUnion (List_.map (hint_type env) (comma_list v1))
   | HintCallback (_, (_, args, ret), _) ->
       let args = List_.map (hint_type env) (comma_list_dots (brace args)) in
       let ret = Option.map (fun (_, t) -> hint_type env t) ret in
@@ -725,6 +736,16 @@ and class_def env c =
     List_.fold_right (class_body env) body ([], [])
   in
   let kind, modifiers = class_type env c.c_type in
+  (* this is a bit ugly, in the case of enums we do not add $ to the names of vars
+     This matches the treesitter solution but creates class defs (of type Enum) in
+     which the variables do not start with $.*)
+
+  let add_dollar =
+    match fst kind with
+    | A.Enum -> false
+    | _ -> true
+  in
+
   {
     A.c_kind = kind;
     A.c_modifiers = modifiers;
@@ -741,7 +762,8 @@ and class_def env c =
       | Some x -> interfaces env x);
     A.c_constants = List_.fold_right (class_constants env) body [];
     A.c_variables =
-      implicit_fields @ List_.fold_right (class_variables env) body [];
+      implicit_fields
+      @ List_.fold_right (class_variables env ~add_dollar) body [];
     A.c_methods = methods;
     A.c_enum_type =
       (match c.c_enum_type with
@@ -788,7 +810,8 @@ and class_constants env st acc =
         (comma_list cl) acc
   | _ -> acc
 
-and class_variables env st acc =
+(* as above we have the case of enums in which we make sure not to add $ to dname*)
+and class_variables env ?(add_dollar = true) st acc =
   match st with
   | ClassVariables (m, ht, cvl, _) ->
       let cvl = comma_list cvl in
@@ -800,7 +823,7 @@ and class_variables env st acc =
       let ht = opt hint_type env ht in
       List_.map
         (fun (n, ss) ->
-          let name = dname n in
+          let name = dname ~add_dollar n in
           let value = opt static_scalar_affect env ss in
           {
             A.cv_name = name;
@@ -946,6 +969,7 @@ and case env = function
   | Default (tok, _, stl) ->
       let stl = List_.fold_right (stmt_and_def env) stl [] in
       A.Default (tok, stl)
+  | CaseEllipsis tok -> A.CaseEllipsis tok
 
 and foreach_variable tok env (r, lv) =
   let e = lvalue env lv in

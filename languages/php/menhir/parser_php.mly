@@ -72,6 +72,9 @@ let mk_param s =
     p_variadic = None;
   }
 
+let make_class_vars single = 
+  ClassVariables(NoModifiers(Tok.FakeTok("", None)),None, [Left(single)],Tok.FakeTok("", None))
+
 let mk_var (s, tok) =
   match s with
   | "this" -> This tok
@@ -151,7 +154,7 @@ let str_of_info x = Tok.content_of_tok x
 %token <Tok.t>
  T_IF T_ELSE T_ELSEIF T_ENDIF
  T_DO  T_WHILE   T_ENDWHILE  T_FOR     T_ENDFOR T_FOREACH T_ENDFOREACH
- T_SWITCH  T_ENDSWITCH T_CASE T_DEFAULT    T_BREAK T_CONTINUE
+ T_MATCH T_SWITCH  T_ENDSWITCH T_CASE T_DEFAULT    T_BREAK T_CONTINUE
  T_RETURN  T_TRY  T_CATCH  T_FINALLY  T_THROW
  T_EXIT T_DECLARE T_ENDDECLARE T_USE T_GLOBAL T_AS T_FUNCTION T_FN T_CONST T_VAR
 (* ugly: because of my hack around the implicit echo when use <?=,
@@ -295,11 +298,10 @@ let str_of_info x = Tok.content_of_tok x
 
 (*************************************************************************)
 (* Rules type declaration *)
-(*************************************************************************)
+(************************************************************************)
 %start main semgrep_pattern
 %type <Cst_php.toplevel list> main
 %type <Cst_php.any>           semgrep_pattern
-
 %%
 (*************************************************************************)
 (* Macros *)
@@ -381,6 +383,8 @@ statement:
  | T_SWITCH "(" expr_or_dots ")"    switch_case_list
      { Switch($1,($2,$3,$4),$5) }
 
+
+
  | T_FOREACH "(" expr T_AS foreach_pattern ")" foreach_statement
      { Foreach($1,$2,$3,None, $4,$5,$6,$7) }
  | T_FOREACH "(" expr T_AWAIT T_AS foreach_pattern ")" foreach_statement
@@ -454,6 +458,24 @@ foreach_pattern:
   | foreach_variable "=>" foreach_pattern { ForeachArrow(ForeachVar $1,$2,$3) }
   | T_LIST "(" assignment_list ")"        { ForeachList($1,($2,$3,$4)) }
 
+match_cases:
+  |"{" match_case_list "}" { $2 }
+
+match_case_list:
+  |  {[]}
+  | head = match_case "," tail = match_case_list  {head :: tail}
+  | head = mellipse tail = match_case_list {head :: tail}
+  | match_case {[$1]}
+
+match_case:
+    | expr T_ARROW expr {MCase([$1], $3)}  
+    
+    | T_DEFAULT T_ARROW expr { MDefault($1, $3)}
+
+mellipse: "..." {MEllipsis $1} 
+
+
+  
 switch_case_list:
  | "{"            case_list "}"
      { CaseList($1,None,$2,$3) }
@@ -463,6 +485,7 @@ switch_case_list:
      { CaseColonList($1,None,$2, $3, $4) }
  | ":" ";"  case_list T_ENDSWITCH ";"
      { CaseColonList($1, Some $2, $3, $4, $5) }
+    
 
 case_list: case_list_rev { List.rev $1 }
 case_list_rev:
@@ -471,6 +494,9 @@ case_list_rev:
      { Case($2,$3,$4,$5)::$1   }
  | case_list_rev    T_DEFAULT   case_separator inner_statement*
      { Default($2,$3,$4)::$1 }
+  | case_list_rev "..."  {CaseEllipsis($2)::$1 } 
+
+
 
 case_separator:
  | ":"     { $1 }
@@ -690,14 +716,35 @@ unticked_class_declaration:
          c_enum_type = None;
        }
      }
- | T_ENUM ident_class_name ":" type_php type_constr_opt
-    "{" enum_statement* "}"
-     { { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
-         c_implements = None; c_body = ($6, $7, $8);
+  (* in the following we assume that the cases of a statement appear before constants,  methods and use constructs.*)
+   | T_ENUM ident_class_name implements_list 
+    "{" enum_single* member_declaration* "}"
+  {let members = $5 @ $6 in  { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
+  c_implements = $3; c_body =  ($4, members, $7);
          c_attrs = None;
-         c_enum_type = Some { e_tok = $3; e_base = $4; e_constraint = $5; }
+         c_enum_type = None
        }
      }
+  | T_ENUM ident_class_name ":" type_php implements_list 
+    "{" backed_enum_single* member_declaration* "}"
+    {let members = $7 @ $8 in
+  { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
+  c_implements = $5; c_body =  ($6, members, $9);
+         c_attrs = None;
+         c_enum_type  = Some { e_tok = $3; e_base = $4; e_constraint = None; }       }
+     }
+
+  backed_enum_single: 
+  | T_CASE ident TEQ static_scalar TSEMICOLON {make_class_vars (DName $2, Some ($3, $4)) }
+  | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
+
+
+
+enum_single: 
+    | T_CASE ident TSEMICOLON { make_class_vars (DName $2, None)  }
+    | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
+
+
 
 
 class_entry_type:
@@ -763,9 +810,6 @@ member_declaration:
 
  (* semgrep-ext: *)
  | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
-
-enum_statement: class_constant_declaration ";"
-     { ClassConstants([], $2, None, [Left $1], $2) }
 
 method_declaration:
   member_modifier* T_FUNCTION is_reference ident_method_name type_params_opt
@@ -1004,6 +1048,8 @@ expr:
  | T_STRING_CAST expr   { Cast((StringTy,$1),$2) }
  | T_ARRAY_CAST  expr   { Cast((ArrayTy,$1),$2) }
  | T_OBJECT_CAST expr   { Cast((ObjectTy,$1),$2) }
+  | T_MATCH "(" expr_or_dots ")" match_cases
+  { Match ($1,$3,$5)}
 
  | T_UNSET_CAST  expr   { CastUnset($1,$2) }
 

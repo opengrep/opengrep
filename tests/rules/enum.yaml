@@ -1,0 +1,24 @@
+rules:
+- id: enum_rule
+  pattern: "enum $ENUM {
+   case Active;
+   ... }"
+  message: "Called on $ENUM"  
+  metadata:
+    some_object: $SOME     
+  languages: [php]
+  severity: ERROR
+- id: test
+  message: "Test"
+  languages:
+    - php
+  severity: ERROR
+  mode: taint
+  pattern-sinks:
+  - patterns:
+    - pattern: bad($SOURCE)
+  pattern-sources:
+  - patterns:
+    - focus-metavariable: $SOURCE
+    - pattern-either:
+        - pattern: function $_(..., $SOURCE, ...) { ... }

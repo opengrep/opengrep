@@ -213,7 +213,7 @@ type expr =
   | Ellipsis of tok
   | DeepEllipsis of expr bracket
 
-and match_ = MCase of expr list * expr | MDefault of tok * expr
+and match_ = MCase of expr list * expr | MDefault of tok * expr | MEllipsis of tok
 
 and cast_type =
   | BoolTy
@@ -311,7 +311,7 @@ and stmt =
   (* expr is most of the time a simple variable name *)
   | Global of tok * expr list
 
-and case = Case of tok * expr * stmt list | Default of tok * stmt list
+and case = Case of tok * expr * stmt list | Default of tok * stmt list | CaseEllipsis of (* ... *) tok 
 
 (* catch(Exception $exn) { ... } => ("Exception", "$exn", [...])
  * TODO: can now be a list of hint_type, Exn1 | Exn2 like in Java.
