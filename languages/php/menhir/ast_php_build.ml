@@ -356,7 +356,7 @@ and match_case_list env m = List.map (match_case env) m
 and match_case env = function
   | MCase (e, c) -> A.MCase (List.map (expr env) e, expr env c)
   | MDefault (tok, c) -> A.MDefault (tok, expr env c)
-  | MEllipsis tok ->A.MEllipsis tok
+  | MEllipsis tok -> A.MEllipsis tok
 
 (* ------------------------------------------------------------------------- *)
 (* Expression *)
