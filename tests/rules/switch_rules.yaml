@@ -1,11 +1,13 @@
 rules:
 - id: switch_test
-  message: "switch_test"
+  message: "Switch test"
   languages:
     - php
   severity: ERROR
-  pattern: switch ($F) {
-             ...  }
+  pattern:
+    switch ($F) {
+      ...
+    }
 - id: test
   message: "Test"
   languages:
