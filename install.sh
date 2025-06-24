@@ -11,7 +11,7 @@ print_usage() {
 }
 
 retry() {
-    # This facilitatess arbitrary retry logic for the provided command
+    # This facilitates arbitrary retry logic for the provided command
     #
     # USAGE:
     #  # Use the defaults
