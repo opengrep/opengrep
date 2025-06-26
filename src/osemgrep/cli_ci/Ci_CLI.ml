@@ -266,6 +266,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         respect_semgrepignore_files = not ignore_semgrepignore_files;
         semgrepignore_filename;
         exclude_minified_files;
+        enable_semgrep_ignore = false; (* CI doesn't support this flag yet *)
       }
     in
     let rule_filtering_conf =
