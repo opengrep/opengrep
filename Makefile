@@ -112,7 +112,7 @@ minimal-build:
 # debuggability of OCaml executables.
 # See discussion at https://github.com/semgrep/semgrep/pull/9471
 	chmod +w bin/opengrep-core$(EXE)
-	strip bin/opengrep-core$(EXE)
+	# strip bin/opengrep-core$(EXE)
 
 #coupling: The 'semgrep-oss' is the name of the step in the Dockerfile, the
 # 'semgrep' the name of the docker image produced (will be semgrep:latest)
