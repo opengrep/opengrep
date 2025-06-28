@@ -402,9 +402,7 @@ jobs:
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
           name: opengrep-core-and-dependent-libs-w64-artifact
-      - env:
-          SEMGREP_FORCE_INSTALL: 1
-        run: |
+      - run: |
           tar xvfz artifacts.tgz
           cp artifacts/* cli/src/semgrep/bin
           ./scripts/build-wheels.sh --plat-name win_amd64
@@ -440,7 +438,6 @@ jobs:
         with:
           submodules: false
       - name: include paths test
-        # NOTE: Add `SEMGREP_LOG_SRCS="semgrep.targeting"` and `--debug` for debugging.
         run: PYTHONIOENCODING=utf-8 opengrep scan -f tests/windows/rules.yml tests/windows/test.py
       - name: sarif output test
         run: PYTHONIOENCODING=utf-8 opengrep scan --sarif -f tests/windows/rules.yml tests/windows/test.py
