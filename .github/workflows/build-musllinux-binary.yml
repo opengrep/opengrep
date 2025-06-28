@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
-          fetch-depth: 0
+          submodules: true
 
       - name: Set ALPINE_CONTAINER based on inputs.arch
         env:
@@ -57,6 +57,10 @@ jobs:
       #     gh run download ${{ steps.get-run-id.outputs.run_id }} \
       #       -R opengrep/opengrep -n musllinux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}-wheel
 
+      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
+        with:
+          name: opengrep-core-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}
+
       - name: Create binary inside container
         run: |
           docker run --rm \
@@ -65,24 +69,24 @@ jobs:
             ${{ env.ALPINE_CONTAINER }} \
             /bin/sh -c "
               apk update &&
-              apk add --no-cache zip python3 py3-pip py3-virtualenv python3-dev gcc musl-dev &&
+              apk add --no-cache zip python3 py3-pip py3-virtualenv python3-dev gcc musl-dev ccache patchelf &&
+              tar xf artifacts.tgz &&
+              cp artifacts/opengrep-core cli/src/semgrep/bin &&
               unzip dist.zip &&
               python3 -m venv venv &&
               . venv/bin/activate &&
-              python3 -m pip install pyinstaller &&
-              python3 -m pip install dist/*.whl --target ./_opengrepinstall   
-              cp ./_opengrepinstall/semgrep/console_scripts/entrypoint.py \
-               ./_opengrepinstall/semgrep/__main__.py &&
+              python3 -m pip install nuitka &&
+              python3 -m pip install dist/*.whl &&  
               python3 -m pip install --upgrade setuptools && 
               python3 -m pip install protobuf && 
               python3 -m pip install chardet charset-normalizer &&
-              cp cli/spec/opengrep.spec . &&
-              pyinstaller opengrep.spec &&
-              chown -R $(id -u):$(id -g) /workspace/dist
+              ./scripts/build-nuitka.sh v\$(opengrep --version) true &&
+              chown -R $(id -u):$(id -g) /workspace/dist &&
+              chown -R $(id -u):$(id -g) /workspace/cli
             "
 
       - name: Zip artifact
-        run: zip -j opengrep.zip dist/opengrep
+        run: zip -j opengrep.zip cli/opengrep
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
 
         with:
