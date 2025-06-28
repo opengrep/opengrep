@@ -34,7 +34,7 @@ jobs:
     uses: ./.github/workflows/build-manylinux-binary.yml
 
   build-manylinux-binary-aarch64:
-    needs: build-linux-x86
+    needs: build-linux-aarch64
     uses: ./.github/workflows/build-manylinux-binary.yml
     with:
       arch: aarch64
