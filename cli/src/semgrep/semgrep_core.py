@@ -1,6 +1,5 @@
 import importlib.resources
 import os
-import platform
 import shutil
 import sys
 from pathlib import Path
@@ -10,8 +9,6 @@ from semgrep.constants import IS_WINDOWS
 from semgrep.verbose_logging import getLogger
 
 logger = getLogger(__name__)
-
-VERSION_STAMP_FILENAME = "pro-installed-by.txt"
 
 
 def compute_executable_path(exec_name: str) -> Optional[str]:
@@ -23,12 +20,18 @@ def compute_executable_path(exec_name: str) -> Optional[str]:
     if IS_WINDOWS:
         exec_name += ".exe"
 
+    if "__compiled__" in globals():
+        base_path = os.path.dirname(__file__)
+        path = os.path.join(base_path, "bin", exec_name)
+        if os.path.isfile(path):
+            return path
+
     # First, try packaged binaries
     try:
         with importlib.resources.path("semgrep.bin", exec_name) as path:
             if path.is_file():
                 return str(path)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, ModuleNotFoundError) as e:
         logger.debug(f"Failed to open resource {exec_name}: {e}.")
 
     # Second, try system binaries in PATH.
