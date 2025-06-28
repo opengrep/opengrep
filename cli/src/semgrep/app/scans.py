@@ -19,7 +19,7 @@ from typing import Union
 import click
 import requests
 from boltons.iterutils import partition
-from opentelemetry import trace as otel_trace
+# from opentelemetry import trace as otel_trace
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semdep.parsers.util import DependencyParserError
@@ -293,7 +293,7 @@ class ScanHandler:
         logger.debug(f"Scan started: {json.dumps(x.to_json(), indent=4)}")
         x.config.rules = save
 
-        otel_trace.get_current_span()
+        # otel_trace.get_current_span()
         # get_state().traces.set_scan_info(self.scan_response.info)
 
     def report_failure(self, exit_code: int) -> None:
