@@ -1,4 +1,4 @@
-# Install the Opengrep CLI with our install script:
+# Install the Opengrep CLI with our install script
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
@@ -7,14 +7,12 @@ curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh |
 - This will install Opengrep to `~/.opengrep/cli/<version>` and set up a `latest` symlink.
 - To install a specific version, use:
   ```sh
-  curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash -s -- -v v1.0.0
+  curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash -s -- -v v1.4.0
   ```
 - To list available versions:
   ```sh
   curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash -s -- -l
   ```
-
----
 
 # Build instructions for developers
 
@@ -35,7 +33,7 @@ There's no simple installation of the development version of the
 `opengrep` without installing it, use `pipenv`:
 
 ```
-$ cd semgrep
+$ cd cli
 $ pipenv shell
 $ opengrep --help
 ```
@@ -48,24 +46,14 @@ code in your `~/.bashrc` file and then use `opengrep-dev` as your
 
 ```
 opengrep-dev() {
-  PIPENV_PIPFILE=~/semgrep/cli/Pipfile pipenv run opengrep "$@"
+  PIPENV_PIPFILE=~/opengrep/cli/Pipfile pipenv run opengrep "$@"
 }
 ```
 
-The Semgrep project has two main parts:
+The Opengrep project has two main parts:
 
 - The Python wrapper in the [`cli/`](cli) folder, which has its own
   makefile needed for some preprocessing and for testing.
   Read the makefile to see what targets are available.
-- The OCaml core in the [`src/`](semgrep-core) folder.
+- The OCaml core in the [`src/`](src) folder.
   Read the toplevel makefile to see what's available to the developer.
-
-## Reproducible and standalone build with Docker
-
-The main [`Dockerfile`](Dockerfile) serves as a reference on how to
-build Opengrep for Linux. The usual instructions for building a Docker
-image apply. It should be:
-
-```
-$ docker build -t opengrep .
-```
