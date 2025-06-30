@@ -1145,6 +1145,7 @@ let map_function_name (env : env) (x : CST.function_name) =
     )
   )
 
+(* OLD *)
 let map_trigger_event (env : env) (x : CST.trigger_event) =
   (match x with
   | `Pat_before_pat_insert (v1, v2) -> R.Case ("Pat_before_pat_insert",
@@ -1183,6 +1184,20 @@ let map_trigger_event (env : env) (x : CST.trigger_event) =
       R.Tuple [v1; v2]
     )
   )
+
+(* NEW *)
+let trigger_event (env : env) (x : CST.trigger_event) : G.argument =
+  match x with
+  | `Pat_before_pat_insert (v1, v2)
+  | `Pat_before_pat_update (v1, v2)
+  | `Pat_before_pat_delete (v1, v2)
+  | `Pat_after_pat_insert (v1, v2)
+  | `Pat_after_pat_update (v1, v2)
+  | `Pat_after_pat_delete (v1, v2)
+  | `Pat_after_pat_unde (v1, v2) ->
+      let e1 = G.N (G.Id (str env v1, G.empty_id_info ())) |> G.e in
+      let e2 = G.N (G.Id (str env v2, G.empty_id_info ())) |> G.e in
+      G.Arg (G.Container (G.Tuple, fb [e1; e2]) |> G.e)
 
 (* OLD *)
 let map_dml_type (env : env) (x : CST.dml_type) =
@@ -2842,7 +2857,42 @@ and declaration (env : env) (x : CST.declaration) : G.stmt =
   | `Class_decl x ->
       class_declaration env x
   | `Trig_decl (v1, v2, v3, v4, v5, v6, v7, v8, v9) ->
-      failwith "NOT IMPLEMENTED (declaration)"
+      let v1 = (* "trigger" *) token_ env v1 in
+      let v2 = identifier env v2 in
+      let _v3 = map_pat_on env v3 in
+      let v4 = identifier env v4 in
+      let v5 = (* "(" *) token_ env v5 in
+      let v6 = trigger_event env v6 in
+      let v7 =
+        List.map (fun (v1, v2) ->
+          let v1 = (* "," *) token_ env v1 in
+          let v2 = trigger_event env v2 in
+          v2
+        ) v7
+      in
+      let events = v6 :: v7 in
+      let v8 = (* ")" *) token_ env v8 in
+      let v9 = trigger_body env v9 in
+      let entity =
+        { name = G.EN (G.Id (v2, G.empty_id_info ()));
+          attrs = [G.NamedAttr
+                     (fake "@",
+                      G.Id (("__trigger_events", fake ""), empty_id_info ()),
+                      (v5, events, v8));
+                   G.NamedAttr
+                     (fake "@",
+                      G.Id (("__trigger_object", fake ""), empty_id_info ()),
+                      fb [G.Arg (G.N (G.Id (v4, empty_id_info ())) |> G.e)])];
+          tparams = None }
+      in
+      let f =
+        { fkind = (G.Function, v1);
+          fparams = fb [];
+          frettype = None;
+          fbody = G.FBStmt v9
+        }
+      in
+      G.DefStmt (entity, G.FuncDef f) |> G.s
   | `Inte_decl x ->
       interface_declaration env x
   | `Enum_decl x ->
