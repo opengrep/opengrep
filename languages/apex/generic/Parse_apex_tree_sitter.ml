@@ -1760,34 +1760,26 @@ and map_annotation_argument_list (env : env) ((v1, v2, v3) : CST.annotation_argu
   R.Tuple [v1; v2; v3]
 
 (* NEW *)
-and annotation_argument_list (env : env) ((v1, v2, v3) : CST.annotation_argument_list) : G.arguments =
+and annotation_argument_list (env : env) ((v1, v2, v3) : CST.annotation_argument_list)
+  : G.arguments =
   let v1 = (* "(" *) token_ env v1 in
   let v2 (* : G.argument list *) =
     match v2 with
-    | `Elem_value x -> R.Case ("Elem_value",
-        map_element_value env x
-      )
-    | `Anno_key_value_rep_opt_COMMA_anno_key_value (v1, v2) -> R.Case ("Anno_key_value_rep_opt_COMMA_anno_key_value",
-        let v1 = map_annotation_key_value env v1 in
+    | `Elem_value x ->
+        [G.Arg (element_value env x)]
+    | `Anno_key_value_rep_opt_COMMA_anno_key_value (v1, v2) ->
+        let v1 = annotation_key_value env v1 in
         let v2 =
-          R.List (List.map (fun (v1, v2) ->
-            let v1 =
-              (match v1 with
-              | Some tok -> R.Option (Some (
-                  (* "," *) token env tok
-                ))
-              | None -> R.Option None)
-            in
-            let v2 = map_annotation_key_value env v2 in
-            R.Tuple [v1; v2]
-          ) v2)
+          List.map (fun (_v1 (* "," *), v2) ->
+            annotation_key_value env v2
+          ) v2
         in
-        R.Tuple [v1; v2]
-      )
+        v1 :: v2
   in
   let v3 = (* ")" *) token_ env v3 in
-  (v1, failwith "NOT IMPLEMENTED (annotation_argument_list)", v3)
+  (v1, v2, v3)
 
+(* OLD *)
 and map_annotation_key_value (env : env) (x : CST.annotation_key_value) =
   (match x with
   | `Semg_ellips tok -> R.Case ("Semg_ellips",
@@ -1800,6 +1792,19 @@ and map_annotation_key_value (env : env) (x : CST.annotation_key_value) =
       R.Tuple [v1; v2; v3]
     )
   )
+
+(* NEW *)
+and annotation_key_value (env : env) (x : CST.annotation_key_value)
+  : G.argument =
+  match x with
+  | `Semg_ellips tok ->
+      let t = (* "..." *) token_ env tok in
+      G.Arg (G.Ellipsis t |> G.e)
+  | `Id_EQ_elem_value (v1, v2, v3) ->
+      let v1 = identifier env v1 in
+      let _v2 = (* "=" *) token_ env v2 in
+      let v3 = element_value env v3 in
+      G.ArgKwd (v1, v3)
 
 and map_anon_LPAR_choice_soql_lit_rep_COMMA_choice_soql_lit_RPAR_bea6d78 (env : env) ((v1, v2, v3, v4) : CST.anon_LPAR_choice_soql_lit_rep_COMMA_choice_soql_lit_RPAR_bea6d78) =
   let v1 = (* "(" *) token env v1 in
@@ -2928,6 +2933,7 @@ and do_statement (env : env) ((v1, v2, v3, v4, v5) : CST.do_statement) : G.stmt 
   let _v7 = token_ env v5 (* ";" *) in
   DoWhile (v1, v2, v4) |> G.s
 
+(* OLD *)
 and map_element_value (env : env) (x : CST.element_value) =
   (match x with
   | `Exp x -> R.Case ("Exp",
@@ -2964,6 +2970,33 @@ and map_element_value (env : env) (x : CST.element_value) =
       map_annotation env x
     )
   )
+
+(* NEW *)
+and element_value (env : env) (x : CST.element_value) : G.expr =
+  match x with
+  | `Exp x ->
+      expression env x
+  | `Elem_value_array_init (v1, v2, _v3, v4) -> (* v3 is optional comma token *)
+      let v1 = (* "{" *) token_ env v1 in
+      let v2 =
+        (match v2 with
+        | Some (v1, v2) ->
+            let v1 = G.Arg (element_value env v1) |> H2.argument_to_expr in
+            let v2 =
+              List.map (fun (v1, v2) ->
+                let _v1 = (* "," *) token_ env v1 in
+                let v2 = G.Arg (element_value env v2) |> H2.argument_to_expr in
+                v2
+              ) v2
+            in
+            v1 :: v2
+        | None -> [])
+      in
+      let v4 = (* "}" *) token_ env v4 in
+      G.Container (G.Array, (v1, v2, v4)) |> G.e
+  | `Anno x -> (* TODO: not sure what this does *)
+      let a = annotation env x in
+      G.RawExpr (Raw_tree.Any (G.At a)) |> G.e
 
 (* OLD *)
 and map_enhanced_for_statement (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9) : CST.enhanced_for_statement) =
@@ -4728,7 +4761,7 @@ and map_selected_fields (env : env) ((v1, v2) : CST.selected_fields) =
   in
   R.Tuple [v1; v2]
 
-(* old *)
+(* OLD *)
 and map_simple_type (env : env) (x : CST.simple_type) =
   (match x with
   | `Void_type x -> R.Case ("Void_type",
@@ -4748,7 +4781,7 @@ and map_simple_type (env : env) (x : CST.simple_type) =
     )
   )
 
-(* new *)
+(* NEW *)
 and simple_type (env : env) (x : CST.simple_type) : G.type_kind =
   match x with
   | `Void_type x ->
