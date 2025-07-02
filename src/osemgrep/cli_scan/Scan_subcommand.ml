@@ -642,7 +642,7 @@ let check_targets_with_rules
           (* TOADAPT? Runner_exit.exit_semgrep (Unknown_exception e) instead *)
           Exception.reraise exn
       | Ok result ->
-          let (res : Core_runner.result) = Core_runner.mk_result rules result in
+          let (res : Core_runner.result) = Core_runner.mk_result ~inline:conf.core_runner_conf.inline_metavariables rules result in
           (* step 3'': adjust the matches, filter via nosemgrep and part1 autofix *)
           let keep_ignored =
             (not conf.core_runner_conf.nosem)

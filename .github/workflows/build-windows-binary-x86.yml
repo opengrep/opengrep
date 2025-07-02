@@ -4,6 +4,11 @@ on:
   workflow_call: null
   workflow_dispatch: null
 
+env:
+  CYGWIN: winsymlinks:native
+  PYTHONUTF8: "1"
+  NUITKA_CACHE_DIR: D:/_nuitka
+
 jobs:
 
   build-self-contained-windows-binary:
@@ -12,20 +17,67 @@ jobs:
         shell: bash
     runs-on: windows-latest
     steps:
+
+      - name: Set up Python 3.12.1
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Query and set SymlinkEvaluation
+        shell: pwsh
+        run: |
+          # Query the current SymlinkEvaluation settings
+          fsutil behavior query SymlinkEvaluation
+
+          # Set SymlinkEvaluation to enable R2L and R2R
+          fsutil behavior set symlinkEvaluation R2L:1 R2R:1
+
+          # Query the updated SymlinkEvaluation settings
+          fsutil behavior query SymlinkEvaluation
+
+      - name: Set-up Git
+        run: >-
+          git config --global core.autocrlf input;
+          git config --system core.longpaths true;
+          git config --global fetch.parallel 50
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - run: mkdir ${{ env.NUITKA_CACHE_DIR }}
+        shell: bash
+
+      - name: Make GHA cache invariant to opengrep version
+        shell: bash
+        run: rm cli/src/semgrep/__init__.py
+
+      - name: Set GHA cache for Nuitka
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-v1-nuitka-${{ hashFiles('cli/src/semgrep/**/*.py') }}
+          path: ${{ env.NUITKA_CACHE_DIR }}
+
+      - name: Set-up cygwin
+        uses: cygwin/cygwin-install-action@f61179d72284ceddc397ed07ddb444d82bf9e559 # ratchet:cygwin/cygwin-install-action@master
+        with:
+          install-dir: D:/cygwin
+          packages: diffutils,m4,make,mingw64-i686-gcc-core,mingw64-i686-gcc-g++,mingw64-i686-openssl,mingw64-x86_64-gcc-core,mingw64-x86_64-gcc-g++,mingw64-x86_64-openssl=1.0.2u+za-1,patch,perl,rsync,unzip,mingw64-x86_64-libssh2,mingw64-x86_64-nghttp2,mingw64-x86_64-pcre,mingw64-x86_64-pcre2,mingw64-x86_64-win-iconv,mingw64-x86_64-zstd,mingw64-x86_64-gettext,mingw64-x86_64-libidn2,mingw64-x86_64-curl,gnupg2,mingw64-x86_64-gmp,ccache
+
       - name: Create BASH_ENV configuration
         shell: bash
         run: >-
           echo "set -o igncr" >> bash_env.sh;
           echo "set -eo pipefail" >> bash_env.sh
 
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Export BASH_ENV so it's loaded automatically
+        run: echo "BASH_ENV=$PWD/bash_env.sh" >> $GITHUB_ENV
+        shell: bash
 
       - name: Install setuptools with --upgrade
         run: pip3 install --upgrade setuptools
-      - name: Install pyinstaller
-        run: pip3 install pyinstaller protobuf
+      - name: Install nuitka
+        run: pip3 install nuitka protobuf
 
       - uses: actions/download-artifact@v4
         with:
@@ -57,24 +109,31 @@ jobs:
         run: pip3 install chardet charset-normalizer requests
 
       - name: Install package
-        run: pip3 install dist/*.whl --target ./_opengrepinstall
-      - name: Rename file 
         run: |
-          cp ./_opengrepinstall/semgrep/console_scripts/entrypoint.py \
-          ./_opengrepinstall/semgrep/__main__.py
+          pip3 install dist/*.whl
+          unzip dist/*.whl -d _wheel
+
+      - name: Export OPENGREP_VERSION
+        run: echo "OPENGREP_VERSION=$(opengrep --version | tr -d '\r')" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Set SRC_SEMGREP_DIR with wheel contents
+        run: |
+          echo \
+          "SRC_SEMGREP_DIR=\
+          ${GITHUB_WORKSPACE}/_wheel/opengrep-$OPENGREP_VERSION.data/purelib/semgrep" \
+          >> $GITHUB_ENV
 
       - name: Build executable
+        env:
+          BASH_ENV: ${{ github.workspace }}/bash_env.sh
         run: |
-          cp cli/spec/opengrep.spec .
-          cp cli/spec/opengrep.ico .
-          pyinstaller opengrep.spec
-
-      - run: cp dist/opengrep opengrep.exe
+          ./scripts/build-nuitka.sh "v$OPENGREP_VERSION" true $SRC_SEMGREP_DIR
 
       - uses: actions/upload-artifact@v4
         with:
           name: opengrep_windows_binary_x86
-          path: opengrep.exe 
+          path: cli/opengrep.exe 
 
   test-windows-binary:
     defaults:

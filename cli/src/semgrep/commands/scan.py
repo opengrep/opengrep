@@ -134,6 +134,13 @@ _scan_options: List[Callable] = [
         help="Apply include and exclude filters also to TARGETs that are files, not only folders.",
     ),
     optgroup.option(
+        "--inline-metavariables",
+        "inline_metavariables",
+        is_flag=True,
+        default=False,
+        help="Inlines metavarible references in metadata strings the same way it is done in message. This can be costly so use with care especially if the metadata is very deep.",
+    ),
+    optgroup.option(
         "--max-target-bytes",
         type=bytesize.ByteSizeType(),
         default=DEFAULT_MAX_TARGET_SIZE,
@@ -595,7 +602,8 @@ def scan(
     path_sensitive: bool,
     allow_local_builds: bool,
     opengrep_ignore_pattern: Optional[str],
-    bypass_includes_excludes_for_files: bool = True
+    bypass_includes_excludes_for_files: bool = True,
+    inline_metavariables: bool = False
 ) -> Optional[Tuple[RuleMatchMap, List[SemgrepError], List[Rule], Set[Path]]]:
     if version:
         print(__VERSION__)
@@ -871,6 +879,7 @@ def scan(
                     allow_local_builds=allow_local_builds,
                     opengrep_ignore_pattern=opengrep_ignore_pattern,
                     bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
+                    inline_metavariables=inline_metavariables,
                 )
             except SemgrepError as e:
                 output_handler.handle_semgrep_errors([e])

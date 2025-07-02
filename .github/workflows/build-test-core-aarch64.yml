@@ -50,6 +50,7 @@ jobs:
             alpine:3.22 \
             sh -c \
             "set -e;
+             mkdir -p _opam;
              chown -R root:root /workspace/_opam;
              ./scripts/workflow-build-inside-alpine-container.sh;
              chown -R $(id -u):$(id -g) /workspace/_opam"

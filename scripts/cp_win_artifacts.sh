@@ -13,7 +13,6 @@ cp $BASE/libgcc_s_seh-1.dll artifacts/
 cp $BASE/libwinpthread-1.dll artifacts/
 cp $BASE/libpcre-1.dll artifacts/
 cp $BASE/libgmp-10.dll artifacts/
-cp $BASE/libcurl-4.dll artifacts/
 cp $BASE/libpcre2-8-0.dll artifacts/
 cp $BASE/libeay32.dll artifacts/
 cp $BASE/libidn2-0.dll artifacts/

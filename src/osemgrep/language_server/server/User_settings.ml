@@ -74,5 +74,6 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       strict = false;
       matching_explanations = false;
       time_flag = false;
+      inline_metavariables = false;
       engine_config = Engine_config.default;
     }

@@ -30,19 +30,30 @@
 
 # Should be done before requests is imported...
 import sys
-if __name__ == "__main__" and getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):  # PyInstaller
+
+IS_NUITKA = False
+
+if __name__ == "__main__":
     import multiprocessing
-    multiprocessing.freeze_support()
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # PyInstaller binary
+        multiprocessing.freeze_support()
+
+    elif "__compiled__" in globals():
+        # Nuitka compiled binary
+        IS_NUITKA = True
+        multiprocessing.freeze_support()
+
+    else:
+        # Normal run (e.g., wheel, pip install, dev mode)
+        pass
 
 import importlib.resources
 import os
-import platform
 import shutil
 import sysconfig
 import warnings
 import subprocess
-# import unicodedata
-# import requests
 import semgrep.main
 import semgrep.cli
 from semgrep.constants import IS_WINDOWS
@@ -77,33 +88,20 @@ class CoreNotFound(Exception):
         return self.value
 
 
-# Similar to cli/src/semgrep/engine.py check_is_correct_pro_version
-def is_correct_pro_version(core_path):
-    """
-    We want to be careful about what we import here in order to keep this
-    script lightweight. However, this file just defines a single constant and
-    it takes well under a millisecond to import this.
-
-    This can be verified with `time python -c 'import semgrep; print(semgrep.__VERSION__)'`
-    """
-    from semgrep import __VERSION__
-
-    # Duplicate of cli/src/semgrep/semgrep_core.py pro_version_stamp_path
-    stamp_path = core_path.parent / "pro-installed-by.txt"
-    if stamp_path.is_file():
-        with stamp_path.open("r") as f:
-            version_at_install = f.readline().strip()
-            return version_at_install == __VERSION__
-    else:
-        return False
-
-
 # similar to cli/src/semgrep/semgrep_core.py compute_executable_path()
-def find_semgrep_core_path(pro=False, extra_message=""):
+def find_semgrep_core_path():
     core = "opengrep-core"
 
     if IS_WINDOWS:
         core += ".exe"
+
+    # First check if IS_NUITKA.
+    # Look under semgrep/bin since it's only a data diretory:
+    if IS_NUITKA:
+        base_path = os.path.dirname(__file__)
+        path = os.path.join(base_path, "semgrep", "bin", core)
+        if os.path.isfile(path):
+            return path
 
     # First, try the packaged binary.
     try:
@@ -111,10 +109,6 @@ def find_semgrep_core_path(pro=False, extra_message=""):
         # filterwarnings above
         with importlib.resources.path("semgrep.bin", core) as path:
             if path.is_file():
-                if pro and not is_correct_pro_version(path):
-                    raise CoreNotFound(
-                        f"The installed version of {core} is out of date.{extra_message}"
-                    )
                 return str(path)
     except (FileNotFoundError, ModuleNotFoundError):
         pass
@@ -130,7 +124,7 @@ def find_semgrep_core_path(pro=False, extra_message=""):
         return path
 
     raise CoreNotFound(
-        f"Failed to find {core} in PATH or in the opengrep package.{extra_message}"
+        f"Failed to find {core} in PATH or in the opengrep package."
     )
 
 
@@ -144,7 +138,9 @@ def find_semgrep_core_path(pro=False, extra_message=""):
 def exec_pysemgrep():
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):  # PyInstaller
         os.environ["SEMGREP_NEW_CLI_UX"] = f"{int(sys.stdout.isatty())}"
-    # import semgrep.main
+
+    if IS_NUITKA:
+        os.environ["SEMGREP_NEW_CLI_UX"] = f"{int(sys.stdout.isatty())}"
 
     sys.exit(semgrep.main.main())
 
@@ -188,12 +184,17 @@ def exec_osemgrep():
       os.execvp(str(path), sys.argv)
 
 # Needed for similar reasons as in pysemgrep, but only for the legacy
-# flag to work
+# flag to work.
 def main():
 
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):  # PyInstaller
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # PyInstaller
         os.environ["_OPENGREP_BINARY"] = sys.executable
     
+    if IS_NUITKA:
+        # Nuitka compiled binary
+        os.environ["_OPENGREP_BINARY"] = sys.executable
+
     # escape hatch for users to pysemgrep in case of problems (they
     # can also call directly 'pysemgrep').
     if "--legacy" in sys.argv:

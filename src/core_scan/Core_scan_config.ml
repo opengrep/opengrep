@@ -52,6 +52,7 @@ type t = {
   equivalences_file : Fpath.t option;
   (* output and result tweaking *)
   output_format : output_format;
+  inline_metavariables : bool;
   report_time : bool;
   matching_explanations : bool;
   strict : bool;
@@ -78,8 +79,6 @@ type t = {
   filter_irrelevant_rules : bool;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
-  (* telemetry *)
-  tracing : Tracing.config option;
 }
 [@@deriving show]
 
@@ -102,6 +101,7 @@ let default =
     equivalences_file = None;
     (* alt: NoOutput but then would need a -text in Core_CLI.ml *)
     output_format = Text;
+    inline_metavariables = false;
     report_time = false;
     matching_explanations = false;
     strict = false;
@@ -120,6 +120,4 @@ let default =
     filter_irrelevant_rules = true;
     (* Engine configuration *)
     engine_config = Engine_config.default;
-    (* debugging and telemetry flags *)
-    tracing = None;
   }

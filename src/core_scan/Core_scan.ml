@@ -398,39 +398,20 @@ let parse_equivalences equivalences_file =
 (*****************************************************************************)
 (* logging/telemetry *)
 (*****************************************************************************)
-let handle_target_with_trace (handle_target : Target.t -> 'a) (t : Target.t) :
-    'a =
-  let target_name = Target.internal_path t in
-  let data () =
-    [
-      ("filename", `String !!target_name);
-      ("num_bytes", `Int (UFile.filesize target_name));
-      ("target", `String (Target.show t));
-    ]
-  in
-  Tracing.with_span ~__FILE__ ~__LINE__ ~data "scan.handle_target" (fun _sp ->
-      handle_target t)
 
-let log_scan_inputs (config : Core_scan_config.t) ~targets ~skipped ~valid_rules
+let log_scan_inputs (_config : Core_scan_config.t) ~targets ~skipped ~valid_rules
     ~invalid_rules =
   (* Add information to the trace *)
   let num_rules = List.length valid_rules in
   let num_targets = List.length targets in
   let num_skipped = List.length skipped in
-  config.tracing
-  |> Tracing.add_data
-       [
-         ("num_rules", `Int num_rules);
-         ("num_targets", `Int num_targets);
-         ("num_skipped_targets", `Int num_skipped);
-       ];
   Logs.info (fun m ->
       m "scan: processing %d files (skipping %d), with %d rules (skipping %d )"
         num_targets num_skipped num_rules
         (List.length invalid_rules));
   ()
 
-let log_scan_results (config : Core_scan_config.t) (res : Core_result.t)
+let log_scan_results (_config : Core_scan_config.t) (res : Core_result.t)
     ~scanned_targets ~skipped_targets =
   (* TODO: delete this comment and -stat_matches.
    * note: uncomment the following and use semgrep-core -stat_matches
@@ -439,9 +420,6 @@ let log_scan_results (config : Core_scan_config.t) (res : Core_result.t)
    *)
   let num_matches = List.length res.processed_matches in
   let num_errors = List.length res.errors in
-  config.tracing
-  |> Tracing.add_data
-       [ ("num_matches", `Int num_matches); ("num_errors", `Int num_errors) ];
   Logs.debug (fun m ->
       m "scan: found %d matches, %d errors (scanned %d targets, skipped %d)"
         num_matches num_errors
@@ -546,7 +524,6 @@ let iter_targets_and_get_matches_and_exn_to_errors
             * Hopefully, Ocaml5 with multithread support will resolve this issue.
             * For now, just turn off tracing when we use more than 1 core.
             *)
-           let handle_target = handle_target_with_trace handle_target in
 
            let (res, was_scanned), run_time =
              Common.with_time (fun () ->

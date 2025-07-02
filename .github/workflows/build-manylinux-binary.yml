@@ -19,7 +19,7 @@ jobs:
     steps:
       - run: |
           yum update -y
-          yum install -y zip python3-pip python3.9
+          yum install -y zip python3-pip python3.9 python39-devel ccache patchelf
           alternatives --remove-all python3
           alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
           alternatives --auto python3
@@ -29,7 +29,20 @@ jobs:
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Set Nuitka cache dir
+        run: echo "NUITKA_CACHE_DIR=${{ github.workspace }}/_nuitka" >> $GITHUB_ENV
+
+      - name: Make GHA cache invariant to opengrep version
+        run: |
+          rm cli/src/semgrep/__init__.py
+
+      - name: Set GHA cache for Nuitka
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-v1-nuitka-glibc-${{ hashFiles('cli/src/semgrep/**/*.py') }}
+          path: "${{ env.NUITKA_CACHE_DIR }}"
 
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
@@ -68,37 +81,47 @@ jobs:
 
       - run: unzip dist.zip
 
-      - name: install pyinstaller
+      - name: Install nuitka
         run: |
-          python3 -m pip install pyinstaller
+          python3 -m pip install nuitka
           # /opt/python/cp39-cp39/bin/pip install pyinstaller
-      - name: Install package
+
+      - name: Install opengrep
         run: |
-          python3 -m pip install dist/*.whl --target ./_opengrepinstall
+          python3 -m pip install dist/*.whl
+          unzip dist/*.whl -d _wheel
           # /opt/python/cp39-cp39/bin/pip install dist/*.whl --target ./_opengrepinstall
 
+      - name: Export OPENGREP_VERSION
+        run: echo "OPENGREP_VERSION=$(opengrep --version)" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Set SRC_SEMGREP_DIR with wheel contents
+        run: |
+          echo \
+          "SRC_SEMGREP_DIR=\
+          ${GITHUB_WORKSPACE}/_wheel/opengrep-$OPENGREP_VERSION.data/purelib/semgrep" \
+          >> $GITHUB_ENV
+
       - name: Create executable
+        env:
+          PYTHON_BIN: python3
         run: |
           # export PATH=/opt/python/cp39-cp39/bin:$PATH
           # export LD_LIBRARY_PATH=/__t/Python/3.9.21/x64/lib/:$LD_LIBRARY_PATH
 
-          cp ./_opengrepinstall/semgrep/console_scripts/entrypoint.py \
-             ./_opengrepinstall/semgrep/__main__.py
-
-          # Package Opengrep using PyInstaller 
+          # Package Opengrep using Nuitka
 
           python3 -m pip install --upgrade setuptools
           python3 -m pip install protobuf
 
           # install some dependencies for windows (pyinstaller only)
           python3 -m pip install chardet charset-normalizer
-          
-          cp cli/spec/opengrep.spec .
 
-          pyinstaller opengrep.spec
+          ./scripts/build-nuitka.sh "v$(opengrep --version)" true $SRC_SEMGREP_DIR
 
       - name: Zip artifact
-        run: zip -j opengrep.zip dist/opengrep
+        run: zip -j opengrep.zip cli/opengrep
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:

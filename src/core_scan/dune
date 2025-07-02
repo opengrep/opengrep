@@ -8,7 +8,6 @@
     kcas_data
 
     commons
-    tracing
 
     semgrep.core
     semgrep.parsing

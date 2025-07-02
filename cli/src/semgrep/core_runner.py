@@ -788,7 +788,8 @@ class CoreRunner:
         target_mode_config: TargetModeConfig,
         sca_subprojects: Dict[out.Ecosystem, List[ResolvedSubproject]],
         opengrep_ignore_pattern: Optional[str],
-        bypass_includes_excludes_for_files: bool = True
+        bypass_includes_excludes_for_files: bool = True,
+        inline_metavariables: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         state = get_state()
         logger.debug(f"Passing whole rules directly to semgrep_core")
@@ -1023,6 +1024,9 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
             if opengrep_ignore_pattern:
                 cmd += ["-ignore_pattern", opengrep_ignore_pattern]
 
+            if inline_metavariables:
+                cmd += ["-inline_metavariables"]
+
             runner = StreamingSemgrepCore(
                 cmd,
                 total=total,
@@ -1103,7 +1107,8 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
         target_mode_config: TargetModeConfig,
         sca_subprojects: Dict[out.Ecosystem, List[ResolvedSubproject]],
         opengrep_ignore_pattern: Optional[str] = None,
-        bypass_includes_excludes_for_files: bool = True
+        bypass_includes_excludes_for_files: bool = True,
+        inline_metavariables: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Sometimes we may run into synchronicity issues with the latest DeepSemgrep binary.
@@ -1128,6 +1133,7 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 sca_subprojects,
                 opengrep_ignore_pattern=opengrep_ignore_pattern,
                 bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
+                inline_metavariables=inline_metavariables,
             )
         except SemgrepError as e:
             # Handle Semgrep errors normally
@@ -1169,7 +1175,8 @@ Exception raised: `{e}`
         target_mode_config: TargetModeConfig,
         sca_subprojects: Dict[out.Ecosystem, List[ResolvedSubproject]],
         opengrep_ignore_pattern: Optional[str] = None,
-        bypass_includes_excludes_for_files: bool = True
+        bypass_includes_excludes_for_files: bool = True,
+        inline_metavariables: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Takes in rules and targets and returns object with findings
@@ -1194,6 +1201,7 @@ Exception raised: `{e}`
             sca_subprojects,
             opengrep_ignore_pattern=opengrep_ignore_pattern,
             bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
+            inline_metavariables = inline_metavariables,
         )
 
         logger.debug(

@@ -404,27 +404,6 @@ functions.
   )
 )
 
-(package
-  (name tracing)
-  (version "1.5.5")
-  (synopsis "Small library to help trace code")
-  (description "\
-This is a small library of utilities used by Semgrep to
-trace functions for the purpose of reporting them in
-metrics
-"
-  )
-  (maintainers "Emma Jin <emma@semgrep.com>")
-  (authors "Emma Jin <emma@semgrep.com>")
-  (license "LGPL-2.1-only")
-
-  (depends
-    (ocaml (>= "4.13.0"))
-    (dune (>= "3.2.0" ))
-    (commons (>= "1.5.5"))
-  )
-)
-
 ;; coupling: if you modify this package, type 'make semgrep.opam'
 (package (name semgrep)
   (synopsis "Like grep but for code: fast and syntax-aware semantic code pattern for many languages")
@@ -517,16 +496,7 @@ For more information see https://opengrep.dev.
     (lsp (= 1.22.0))
     git
     ; tracing
-    trace
-    ppx_trace
-    (opentelemetry (= 0.10)) ; TODO: Remove ppx_trace which forces trace = 0.9.
-    ; needed by opentelemetry-client-ocurl but the latest, 0.9.2
-    ; does not work under windows (see https://github.com/ygrek/ocurl/issues/77)
-    ; hence the pin to 0.9.1
-    (ocurl (= 0.9.1))
-    opentelemetry-client-ocurl
     ambient-context-lwt
-    conf-libcurl  ; works in ocaml 5 for windows so no need to pin to (= 1)
     ; web stuff
     uri
     (uuidm (>= 0.9.9))

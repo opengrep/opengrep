@@ -9,7 +9,6 @@
  (libraries
    unix
    commons
-   tracing
    memprof-limits
  )
 )

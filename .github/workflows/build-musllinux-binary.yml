@@ -16,7 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+
+      - name: Set Nuitka cache dir
+        run: echo "NUITKA_CACHE_DIR=${{ github.workspace }}/_nuitka" >> $GITHUB_ENV
+
+      - name: Make GHA cache invariant to opengrep version
+        run: |
+          rm cli/src/semgrep/__init__.py
+
+      - name: Set GHA cache for Nuitka
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
+        with:
+          key: ${{ runner.os }}-${{ runner.arch }}-v1-nuitka-musl-${{ hashFiles('cli/src/semgrep/**/*.py') }}
+          path: "${{ env.NUITKA_CACHE_DIR }}"
 
       - name: Set ALPINE_CONTAINER based on inputs.arch
         env:
@@ -65,24 +78,28 @@ jobs:
             ${{ env.ALPINE_CONTAINER }} \
             /bin/sh -c "
               apk update &&
-              apk add --no-cache zip python3 py3-pip py3-virtualenv python3-dev gcc musl-dev &&
+              apk add --no-cache zip python3 py3-pip py3-virtualenv python3-dev gcc musl-dev ccache patchelf &&
+              export NUITKA_CACHE_DIR=/workspace/_nuitka &&
+              mkdir -p _nuitka &&
+              chown -R root:root \$NUITKA_CACHE_DIR &&
               unzip dist.zip &&
               python3 -m venv venv &&
               . venv/bin/activate &&
-              python3 -m pip install pyinstaller &&
-              python3 -m pip install dist/*.whl --target ./_opengrepinstall   
-              cp ./_opengrepinstall/semgrep/console_scripts/entrypoint.py \
-               ./_opengrepinstall/semgrep/__main__.py &&
+              python3 -m pip install nuitka &&
+              python3 -m pip install dist/*.whl &&
+              unzip dist/*.whl -d _wheel &&
+              export OPENGREP_VERSION=\$(opengrep --version) &&
+              export SRC_SEMGREP_DIR=/workspace/_wheel/opengrep-\$OPENGREP_VERSION.data/purelib/semgrep &&
               python3 -m pip install --upgrade setuptools && 
               python3 -m pip install protobuf && 
               python3 -m pip install chardet charset-normalizer &&
-              cp cli/spec/opengrep.spec . &&
-              pyinstaller opengrep.spec &&
-              chown -R $(id -u):$(id -g) /workspace/dist
+              ./scripts/build-nuitka.sh v\$OPENGREP_VERSION true \$SRC_SEMGREP_DIR &&
+              chown -R $(id -u):$(id -g) \$NUITKA_CACHE_DIR &&
+              chown -R $(id -u):$(id -g) /workspace/cli
             "
 
       - name: Zip artifact
-        run: zip -j opengrep.zip dist/opengrep
+        run: zip -j opengrep.zip cli/opengrep
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
 
         with:

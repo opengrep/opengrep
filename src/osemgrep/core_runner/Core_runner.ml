@@ -38,6 +38,7 @@ type conf = {
   strict : bool;
   (* useful for debugging rules *)
   time_flag : bool;
+  inline_metavariables : bool;
   matching_explanations : bool;
   (* TODO: actually seems like semgrep-core always return them,
    * even if it was not requested by the CLI
@@ -114,6 +115,7 @@ let default_conf : conf =
     dataflow_traces = false;
     matching_explanations = false;
     time_flag = false;
+    inline_metavariables = false;
     nosem = true;
     strict = false;
     engine_config = Engine_config.default;
@@ -357,6 +359,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    nosem = _TODO;
    strict;
    time_flag;
+   inline_metavariables;
    engine_config;
    (* TODO *)
    dataflow_traces = _;
@@ -367,6 +370,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
       {
         ncores = num_jobs;
         output_format;
+        inline_metavariables;
         timeout;
         timeout_threshold;
         max_memory_mb;
@@ -387,17 +391,16 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         equivalences_file = None;
         respect_rule_paths = true;
         max_match_per_file = Core_scan_config.default.max_match_per_file;
-        tracing = None;
       }
 
 (* output adapter to Core_scan.scan.
  * LATER: we want to avoid this intermediate data structure but
  * for now that's what pysemgrep used to get so simpler to return it.
  *)
-let mk_result (all_rules : Rule.rule list) (res : Core_result.t) : result =
+let mk_result ?(inline = false) (all_rules : Rule.rule list) (res : Core_result.t) : result =
   (* similar to Core_command.output_core_results code *)
   let scanned = res.scanned |> List_.map Target.internal_path |> Set_.of_list in
-  let match_results = Core_json_output.core_output_of_matches_and_errors res in
+  let match_results = Core_json_output.core_output_of_matches_and_errors ~inline res in
   (* TOPORT? or move in semgrep-core so get info ASAP
      if match_results.skipped_targets:
          for skip in match_results.skipped_targets:

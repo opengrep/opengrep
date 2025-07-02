@@ -1142,23 +1142,16 @@ and matches_of_formula xconf rule xtarget formula opt_context :
 
 let check_rule ({ R.mode = `Search formula;_} as r) hook xconf xtarget =
   let rule_id = fst r.id in
-  (Tracing.with_span ~level:Tracing.Debug ~__FILE__ ~__LINE__
-     "Match_search_mode.check_rule")
-    @@
-    (fun sp ->
-       Tracing.add_data_to_span sp
-         [("rule_id", (`String (rule_id |> Rule_ID.to_string)));
-         ("taint", (`Bool false))];
-       (let (res, final_ranges) =
-          matches_of_formula xconf r xtarget formula None in
-        let errors =
-          res.errors |> (E.ErrorSet.map (error_with_rule_id rule_id)) in
-        {
-          res with
-          RP.matches =
-            (((final_ranges |>
-                 (List_.map (RM.range_to_pattern_match_adjusted r)))
-                |> PM.uniq)
-               |> hook);
-          errors
-        }))
+  let (res, final_ranges) =
+     matches_of_formula xconf r xtarget formula None in
+   let errors =
+     res.errors |> (E.ErrorSet.map (error_with_rule_id rule_id)) in
+   {
+     res with
+     RP.matches =
+       (((final_ranges |>
+            (List_.map (RM.range_to_pattern_match_adjusted r)))
+           |> PM.uniq)
+          |> hook);
+     errors
+   }

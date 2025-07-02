@@ -16,7 +16,6 @@
 
    ; in libs/
    commons
-   tracing
 
    semgrep_core_rule
    semgrep_core_target

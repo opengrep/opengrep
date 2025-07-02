@@ -78,8 +78,9 @@ let map_targets caps (ncores : int)
     Logs.debug (fun m ->
         m "running in parallel with %d cores on %d targets" ncores
           (List.length targets));
-    (* We must pause tracing here as forking with tracing on causes segfaults.
-       See comments on this function in Tracing.ml *)
-    Tracing.with_tracing_paused (fun () ->
-        Domainslib_.parmap caps ~num_domains:ncores ~chunksize:1
-          ~exception_handler f targets))
+    Domainslib_.parmap caps
+      ~num_domains:ncores
+      ~chunksize:1
+      ~exception_handler
+      f
+      targets)

@@ -261,7 +261,8 @@ def run_rules(
     allow_local_builds: bool = False,
     prioritize_dependency_graph_generation: bool = False,
     opengrep_ignore_pattern: Optional[str] = None,
-    bypass_includes_excludes_for_files: bool = True
+    bypass_includes_excludes_for_files: bool = True,
+    inline_metavariables: bool = False,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -362,6 +363,7 @@ def run_rules(
         resolved_subprojects,
         opengrep_ignore_pattern=opengrep_ignore_pattern,
         bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
+        inline_metavariables=inline_metavariables,
     )
 
     if join_rules:
@@ -544,7 +546,8 @@ def run_scan(
     dump_rule_partitions_dir: Optional[Path] = None,
     prioritize_dependency_graph_generation: bool = False,
     opengrep_ignore_pattern: Optional[str] = None,
-    bypass_includes_excludes_for_files: bool = True
+    bypass_includes_excludes_for_files: bool = True,
+    inline_metavariables: bool = False,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -822,6 +825,7 @@ def run_scan(
         prioritize_dependency_graph_generation=prioritize_dependency_graph_generation,
         opengrep_ignore_pattern=opengrep_ignore_pattern,
         bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
+        inline_metavariables=inline_metavariables,
     )
     profiler.save("core_time", core_start_time)
     semgrep_errors: List[SemgrepError] = config_errors + scan_errors

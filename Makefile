@@ -329,7 +329,6 @@ ALPINE_APK_DEPS_CORE=\
   gmp-dev \
   gmp-static \
   libev-dev \
-  curl-dev \
   openssl-libs-static \
   zlib-static
 
@@ -342,7 +341,6 @@ UBUNTU_DEPS=\
   libpcre2-dev \
   libgmp-dev \
   libev-dev \
-  libcurl4-gnutls-dev
 
 #TODO: ARCH_DEPS=??
 
@@ -359,7 +357,6 @@ BREW_DEPS=\
   pcre2 \
   gmp \
   libev \
-  curl \
   coreutils \
   gettext
 
@@ -370,7 +367,6 @@ WINDOWS_OPAM_DEPEXT_DEPS=\
   conf-gmp \
   conf-libpcre \
   conf-libpcre2-8 \
-  conf-libcurl
 
 # -------------------------------------------------
 # Alpine
@@ -391,8 +387,6 @@ install-deps-ALPINE: install-deps-ALPINE-for-semgrep-core
 # the final image, so we don't really need --no-cache)
 install-deps-ALPINE-for-semgrep-core:
 	apk add $(ALPINE_APK_DEPS_CORE)
-# Look at its top comment for why it's necessary
-	./scripts/build-static-libcurl.sh
 
 # -------------------------------------------------
 # Ubuntu

@@ -177,7 +177,7 @@ let o_x_validate_partial_results_actual : string option Term.t =
 let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine allow_local_builds allow_untrusted_validators autofix
+  let combine allow_local_builds allow_untrusted_validators autofix inline_metavariables
       baseline_commit common config dataflow_traces diff_depth dryrun
       _dump_command_for_core emacs emacs_outputs exclude_ exclude_minified_files
       exclude_rule_ids files_with_matches force_color gitlab_sast
@@ -241,6 +241,7 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
         (* TODO: default value in semgrep ci? *)
         strict = false;
         time_flag = false;
+        inline_metavariables;
         matching_explanations;
         engine_config = Engine_config.default;
       }
@@ -326,9 +327,9 @@ let scan_subset_cmdline_term : Scan_CLI.conf Term.t =
     (* !the o_xxx must be in alphabetic orders to match the parameters of
      * combine above! *)
     const combine $ SC.o_allow_local_builds $ SC.o_allow_untrusted_validators
-    $ SC.o_autofix $ SC.o_baseline_commit $ CLI_common.o_common $ o_config
-    $ SC.o_dataflow_traces $ SC.o_diff_depth $ SC.o_dryrun
-    $ SC.o_dump_command_for_core $ SC.o_emacs $ SC.o_emacs_outputs
+    $ SC.o_autofix $ SC.o_inline_metavariables  $ SC.o_baseline_commit
+    $ CLI_common.o_common $ o_config $ SC.o_dataflow_traces $ SC.o_diff_depth
+    $ SC.o_dryrun $ SC.o_dump_command_for_core $ SC.o_emacs $ SC.o_emacs_outputs
     $ SC.o_exclude $ SC.o_exclude_minified_files $ SC.o_exclude_rule_ids
     $ SC.o_files_with_matches $ SC.o_force_color $ SC.o_gitlab_sast
     $ SC.o_gitlab_sast_outputs $ SC.o_gitlab_secrets

@@ -272,7 +272,8 @@ def ci(
     partial_config: Optional[Path],
     partial_output: Optional[Path],
     opengrep_ignore_pattern: Optional[str],
-    bypass_includes_excludes_for_files: bool = True
+    bypass_includes_excludes_for_files: bool = True,
+    inline_metavariables: bool = False
 ) -> None:
     state = get_state()
 
@@ -300,6 +301,11 @@ def ci(
         logger.info(
             "WARNING: --force-exclude is set but will be ignored: "
             "no explicit targets are passed to the ci command"
+        )
+
+    if inline_metavariables:
+        logger.info(
+            "WARNING: --inline-metavariables is set but will be ignored."
         )
 
     state.metrics.configure(metrics)

@@ -79,7 +79,7 @@ jobs:
         uses: cygwin/cygwin-install-action@f61179d72284ceddc397ed07ddb444d82bf9e559 # ratchet:cygwin/cygwin-install-action@master
         with:
           install-dir: D:/cygwin
-          packages: curl,diffutils,m4,make,mingw64-i686-gcc-core,mingw64-i686-gcc-g++,mingw64-i686-openssl=1.0.2u+za-1,mingw64-x86_64-gcc-core,mingw64-x86_64-gcc-g++,mingw64-x86_64-openssl=1.0.2u+za-1,patch,perl,rsync,unzip,mingw64-x86_64-libssh2,mingw64-x86_64-nghttp2,mingw64-x86_64-pcre,mingw64-x86_64-pcre2,mingw64-x86_64-win-iconv,mingw64-x86_64-zstd,mingw64-x86_64-gettext,mingw64-x86_64-libidn2,mingw64-x86_64-curl,gnupg2,mingw64-x86_64-gmp
+          packages: curl,diffutils,m4,make,mingw64-i686-gcc-core,mingw64-i686-gcc-g++,mingw64-i686-openssl,mingw64-x86_64-gcc-core,mingw64-x86_64-gcc-g++,mingw64-x86_64-openssl=1.0.2u+za-1,patch,perl,rsync,unzip,mingw64-x86_64-libssh2,mingw64-x86_64-nghttp2,mingw64-x86_64-pcre,mingw64-x86_64-pcre2,mingw64-x86_64-win-iconv,mingw64-x86_64-zstd,mingw64-x86_64-gettext,mingw64-x86_64-libidn2,mingw64-x86_64-curl,gnupg2,mingw64-x86_64-gmp
 
       - name: Create BASH_ENV configuration
         shell: bash
@@ -367,7 +367,6 @@ jobs:
           cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libwinpthread-1.dll artifacts/
           cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libpcre-1.dll artifacts/
           cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libgmp-10.dll artifacts/
-          cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libcurl-4.dll artifacts/
           cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libpcre2-8-0.dll artifacts/
           cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libeay32.dll artifacts/
           cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libidn2-0.dll artifacts/
@@ -402,9 +401,7 @@ jobs:
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
           name: opengrep-core-and-dependent-libs-w64-artifact
-      - env:
-          SEMGREP_FORCE_INSTALL: 1
-        run: |
+      - run: |
           tar xvfz artifacts.tgz
           cp artifacts/* cli/src/semgrep/bin
           ./scripts/build-wheels.sh --plat-name win_amd64
@@ -440,7 +437,6 @@ jobs:
         with:
           submodules: false
       - name: include paths test
-        # NOTE: Add `SEMGREP_LOG_SRCS="semgrep.targeting"` and `--debug` for debugging.
         run: PYTHONIOENCODING=utf-8 opengrep scan -f tests/windows/rules.yml tests/windows/test.py
       - name: sarif output test
         run: PYTHONIOENCODING=utf-8 opengrep scan --sarif -f tests/windows/rules.yml tests/windows/test.py
