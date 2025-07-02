@@ -1987,6 +1987,7 @@ and map_anon_choice_field_id_cb081aa (env : env) (x : CST.anon_choice_field_id_c
     )
   )
 
+(* OLD QUERY *)
 and map_anon_choice_int_1466488 (env : env) (x : CST.anon_choice_int_1466488) =
   (match x with
   | `Int tok -> R.Case ("Int",
@@ -1996,6 +1997,15 @@ and map_anon_choice_int_1466488 (env : env) (x : CST.anon_choice_int_1466488) =
       map_bound_apex_expression env x
     )
   )
+
+(* RAW QUERY *)
+and anon_choice_int_1466488 (env : env) (x : CST.anon_choice_int_1466488) : G.expr =
+  match x with
+  | `Int tok ->
+      let s, t = (* int *) str env tok in
+      G.L (G.Int (Parsed_int.parse (s, t))) |> G.e
+  | `Bound_apex_exp x ->
+      bound_apex_expression env x
 
 (* OLD *)
 and map_anon_choice_prim_exp_bbf4eda (env : env) (x : CST.anon_choice_prim_exp_bbf4eda) =
@@ -4386,10 +4396,18 @@ and labeled_statement (env : env) ((v1, v2, v3) : CST.labeled_statement) : G.stm
   let v3 = statement env v3 in
   G.Label (v1, v3) |> G.s
 
+(* OLD QUERY *)
 and map_limit_clause (env : env) ((v1, v2) : CST.limit_clause) =
   let v1 = map_pat_limit env v1 in
   let v2 = map_anon_choice_int_1466488 env v2 in
   R.Tuple [v1; v2]
+
+(* RAW QUERY *)
+and limit_clause (env : env) ((v1, v2) : CST.limit_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "limit" *) str env v1 in
+  let v2 = anon_choice_int_1466488 env v2 in
+  R.Tuple [R.Token v1; R.Any (G.E v2)]
 
 (* OLD *)
 and map_local_variable_declaration (env : env) ((v1, v2, v3, v4) : CST.local_variable_declaration) =
@@ -4704,10 +4722,18 @@ and map_object_creation_expression (env : env) (x : CST.object_creation_expressi
 and object_creation_expression (env : env) (x : CST.object_creation_expression) : G.expr =
   unqualified_object_creation_expression env x
 
+(* OLD QUERY *)
 and map_offset_clause (env : env) ((v1, v2) : CST.offset_clause) =
   let v1 = map_pat_offset env v1 in
   let v2 = map_anon_choice_int_1466488 env v2 in
   R.Tuple [v1; v2]
+
+(* RAW QUERY *)
+and offset_clause (env : env) ((v1, v2) : CST.offset_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "offset" *) str env v1 in
+  let v2 = anon_choice_int_1466488 env v2 in
+  R.Tuple [R.Token v1; R.Any (G.E v2)]
 
 and map_order_by_clause (env : env) ((v1, v2, v3, v4) : CST.order_by_clause) =
   let v1 = map_pat_order env v1 in
@@ -5303,21 +5329,22 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
         map_order_by_clause env x
       ))
     | None -> R.Option None)
-  in
+  in *)
   let v8 =
-    (match v8 with
+    match v8 with
     | Some x -> R.Option (Some (
-        map_limit_clause env x
+        limit_clause env x
       ))
-    | None -> R.Option None)
+    | None -> R.Option None
   in
   let v9 =
-    (match v9 with
+    match v9 with
     | Some x -> R.Option (Some (
-        map_offset_clause env x
+        offset_clause env x
       ))
-    | None -> R.Option None)
+    | None -> R.Option None
   in
+  (*
   let v10 =
     (match v10 with
     | Some x -> R.Option (Some (
@@ -5339,7 +5366,7 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
       ))
     | None -> R.Option None)
   in *)
-  R.Tuple [v1]
+  R.Tuple [v1; v8; v9]
 
 (* OLD QUERY *)
 and map_soql_query_expression (env : env) (x : CST.soql_query_expression) =
