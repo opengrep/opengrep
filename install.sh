@@ -72,9 +72,7 @@ validate_version() {
     if [ -z "$AVAILABLE_VERSIONS" ]; then
         echo "Error: Unable to fetch available versions. Please check your internet connection." 1>&2
         return 1
-    fi
-
-    if echo "$AVAILABLE_VERSIONS" | grep -q "^$VERSION$"; then
+    elif echo "$AVAILABLE_VERSIONS" | grep -q "^$VERSION$"; then
         return 0
     else
         echo "Error: Version $VERSION not found"
@@ -396,11 +394,9 @@ if "$HELP"; then
     exit 0
 fi
 
-# Only fetch available versions if listing
 if $LIST; then
-    AVAILABLE_VERSIONS="$(get_available_versions)"
     echo "Available versions (latest 3):"
-    printf '%s\n' "$AVAILABLE_VERSIONS" | head -3
+    get_available_versions | head -3
     exit 0
 fi
 
