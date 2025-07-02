@@ -294,10 +294,6 @@ main() {
         echo "with a symlink from ${LATEST}/opengrep"
     fi
 
-    # Always update the symlink to point to the requested version
-    rm -f "${LATEST}" || exit 1
-    ln -s "${INST}" "${LATEST}" || exit 1
-
     LOCALBIN="${HOME}/.local/bin"
 
     # Only need to create the symlink from .local/bin once if not created before.
