@@ -1,4 +1,4 @@
-#!/usr/bin/env bash 
+#!/usr/bin/env bash
 # Opengrep installation script
 
 set -euo pipefail
@@ -39,29 +39,16 @@ check_has_curl() {
 }
 
 retry() {
-    # This facilitates arbitrary retry logic for the provided command
-    #
-    # USAGE:
-    #  # Use the defaults
-    #  retry curl --fail https://example.com
-    #  # Provide an updated count
-    #  retry 10 curl --fail https://example.com
-    #  # Provide an updated count and delay
-    #  retry 5 10 curl --fail https://example.com
     local retry_count=3
     local retry_delay=2
-
-    # Update the default values if provided
-    [[ $1 =~ ^[0-9]+$ ]] && { retry_count=$1; shift; }
-    [[ $1 =~ ^[0-9]+$ ]] && { retry_delay=$1; shift; }
 
     local n=1
     until "$@"; do
         if (( n >= retry_count )); then
-            printf '⚠️  attempt %d/%d failed for: %s\n' "$n" "$retry_count" "$*" >&2
+            printf 'attempt %d/%d failed for: %s\n' "$n" "$retry_count" "$*" >&2
             return 1
         fi
-        printf '⚠️  attempt %d/%d failed for: %s; retrying in %ds\n' "$n" "$retry_count" "$*" "$retry_delay" >&2
+        printf 'attempt %d/%d failed for: %s; retrying in %ds\n' "$n" "$retry_count" "$*" "$retry_delay" >&2
         sleep "$retry_delay"
         ((n++))
     done
@@ -73,7 +60,7 @@ get_available_versions() {
     check_has_curl
     retry curl -s --fail https://api.github.com/repos/opengrep/opengrep/releases \
       | grep '"tag_name":' \
-      | sed -E 's/.*"([^"]+)".*/\1/' \
+      | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
 # Function to validate version
@@ -216,7 +203,7 @@ main() {
     else
         # cleanup on error
         trap '[ "$?" -eq 0 ] || cleanup_on_failure $INST' EXIT
-        
+
         # Download to temp file first
         TEMP_FILE=$(mktemp)
         trap 'rm -f $TEMP_FILE' EXIT
