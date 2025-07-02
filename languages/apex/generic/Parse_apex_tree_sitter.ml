@@ -745,6 +745,7 @@ let map_for_type (env : env) (x : CST.for_type) =
     )
   )
 
+(* OLD QUERY *)
 let map_update_type (env : env) (x : CST.update_type) =
   (match x with
   | `Pat_trac x -> R.Case ("Pat_trac",
@@ -754,6 +755,15 @@ let map_update_type (env : env) (x : CST.update_type) =
       map_pat_view_ env x
     )
   )
+
+(* RAW QUERY *)
+let update_type (env : env) (x : CST.update_type) : raw =
+  let module R = Raw_tree in
+  match x with
+  | `Pat_trac x ->
+      R.Token ( (* "tracking" *) str env x)
+  | `Pat_view_ x ->
+      R.Token ( (* "viewStat" *) str env x)
 
 let map_with_data_cat_filter_type (env : env) (x : CST.with_data_cat_filter_type) =
   (match x with
@@ -823,10 +833,18 @@ let map_null_literal (env : env) (x : CST.null_literal) =
 let null_literal (env : env) (x : CST.null_literal) : literal =
   G.Null (token_ env x)
 
+(* OLD QUERY *)
 let map_all_rows_clause (env : env) ((v1, v2) : CST.all_rows_clause) =
   let v1 = map_pat_all env v1 in
   let v2 = map_pat_rows env v2 in
   R.Tuple [v1; v2]
+
+(* RAW QUERY *)
+let all_rows_clause (env : env) ((v1, v2) : CST.all_rows_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "all" *) str env v1 in
+  let v2 = (* "rows" *) str env v2 in
+  R.Tuple [R.Token v1; R.Token v2]
 
 (* OLD QUERY *)
 let map_fields_type (env : env) (x : CST.fields_type) =
@@ -1285,6 +1303,7 @@ let map_for_clause (env : env) ((v1, v2, v3) : CST.for_clause) =
   in
   R.Tuple [v1; v2; v3]
 
+(* OLD QUERY *)
 let map_update_clause (env : env) ((v1, v2, v3) : CST.update_clause) =
   let v1 = map_pat_update env v1 in
   let v2 = map_update_type env v2 in
@@ -1296,6 +1315,20 @@ let map_update_clause (env : env) ((v1, v2, v3) : CST.update_clause) =
     ) v3)
   in
   R.Tuple [v1; v2; v3]
+
+(* RAW QUERY *)
+let update_clause (env : env) ((v1, v2, v3) : CST.update_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "update" *) str env v1 in
+  let v2 = update_type env v2 in
+  let v3 =
+    List.map (fun (v1, v2) ->
+      let _v1 = (* "," *) token_ env v1 in
+      let v2 = update_type env v2 in
+      v2
+    ) v3
+  in
+  R.Tuple [R.Token v1; R.List (v2 :: v3)]
 
 let map_soql_using_clause (env : env) ((v1, v2, v3) : CST.soql_using_clause) =
   let v1 = map_pat_using env v1 in
@@ -5351,22 +5384,22 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
         map_for_clause env x
       ))
     | None -> R.Option None)
-  in
+  in*)
   let v11 =
-    (match v11 with
+    match v11 with
     | Some x -> R.Option (Some (
-        map_update_clause env x
+        update_clause env x
       ))
-    | None -> R.Option None)
+    | None -> R.Option None
   in
   let v12 =
-    (match v12 with
+    match v12 with
     | Some x -> R.Option (Some (
-        map_all_rows_clause env x
+        all_rows_clause env x
       ))
-    | None -> R.Option None)
-  in *)
-  R.Tuple [v1; v8; v9]
+    | None -> R.Option None
+  in
+  R.Tuple [v1; v8; v9; v11; v12]
 
 (* OLD QUERY *)
 and map_soql_query_expression (env : env) (x : CST.soql_query_expression) =
