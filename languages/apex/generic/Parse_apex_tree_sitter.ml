@@ -732,6 +732,7 @@ let count_expression (env : env) ((v1, v2, v3) : CST.count_expression) : raw =
   let v3 = (* ")" *) str env v3 in (* keeping this for ranges *)
   R.Tuple [v1; R.Token v3]
 
+(* OLD QUERY *)
 let map_for_type (env : env) (x : CST.for_type) =
   (match x with
   | `Pat_update x -> R.Case ("Pat_update",
@@ -744,6 +745,16 @@ let map_for_type (env : env) (x : CST.for_type) =
       map_pat_view env x
     )
   )
+
+(* RAW QUERY *)
+let for_type (env : env) (x : CST.for_type) : raw =
+  let module R = Raw_tree in
+  match x with
+  | `Pat_update x
+  | `Pat_ref x
+  | `Pat_view x ->
+      let v = str env x in
+      R.Token v
 
 (* OLD QUERY *)
 let map_update_type (env : env) (x : CST.update_type) =
@@ -1291,6 +1302,7 @@ let dml_type (env : env) (x : CST.dml_type) : G.ident =
   | `Pat_unde x ->
       str env x
 
+(* OLD QUERY *)
 let map_for_clause (env : env) ((v1, v2, v3) : CST.for_clause) =
   let v1 = map_pat_for env v1 in
   let v2 = map_for_type env v2 in
@@ -1302,6 +1314,20 @@ let map_for_clause (env : env) ((v1, v2, v3) : CST.for_clause) =
     ) v3)
   in
   R.Tuple [v1; v2; v3]
+
+(* RAW QUERY *)
+let for_clause (env : env) ((v1, v2, v3) : CST.for_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "for" *) str env v1 in
+  let v2 = for_type env v2 in
+  let v3 =
+    List.map (fun (v1, v2) ->
+      let _v1 = (* "," *) token_ env v1 in
+      let v2 = for_type env v2 in
+      v2
+    ) v3
+  in
+  R.Tuple [R.Token v1; R.List (v2 :: v3)]
 
 (* OLD QUERY *)
 let map_update_clause (env : env) ((v1, v2, v3) : CST.update_clause) =
@@ -5377,14 +5403,13 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
       ))
     | None -> R.Option None
   in
-  (*
   let v10 =
-    (match v10 with
+    match v10 with
     | Some x -> R.Option (Some (
-        map_for_clause env x
+        for_clause env x
       ))
-    | None -> R.Option None)
-  in*)
+    | None -> R.Option None
+  in
   let v11 =
     match v11 with
     | Some x -> R.Option (Some (
@@ -5399,7 +5424,7 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
       ))
     | None -> R.Option None
   in
-  R.Tuple [v1; v8; v9; v11; v12]
+  R.Tuple [v1; v8; v9; v10; v11; v12]
 
 (* OLD QUERY *)
 and map_soql_query_expression (env : env) (x : CST.soql_query_expression) =
