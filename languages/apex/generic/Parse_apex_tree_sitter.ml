@@ -847,6 +847,7 @@ let with_data_cat_filter_type (env : env) (x : CST.with_data_cat_filter_type) : 
   | `Pat_above_or_below x ->
       R.Token (str env x)
 
+(* OLD QUERY *)
 let map_using_scope_type (env : env) (x : CST.using_scope_type) =
   (match x with
   | `Pat_dele x -> R.Case ("Pat_dele",
@@ -871,6 +872,19 @@ let map_using_scope_type (env : env) (x : CST.using_scope_type) =
       map_pat_team env x
     )
   )
+
+(* RAW QUERY *)
+let using_scope_type (env : env) (x : CST.using_scope_type) : raw =
+  let module R = Raw_tree in
+  match x with
+  | `Pat_dele x
+  | `Pat_ever x
+  | `Pat_mine x
+  | `Pat_mine_and_my_groups x
+  | `Pat_my_terr x
+  | `Pat_my_team_terr x
+  | `Pat_team x ->
+      R.Token (str env x)
 
 (* OLD *)
 let map_this (env : env) (x : CST.this) =
@@ -1466,11 +1480,20 @@ let update_clause (env : env) ((v1, v2, v3) : CST.update_clause) : raw =
   in
   R.Tuple [R.Token v1; R.List (v2 :: v3)]
 
+(* OLD QUERY *)
 let map_soql_using_clause (env : env) ((v1, v2, v3) : CST.soql_using_clause) =
   let v1 = map_pat_using env v1 in
   let v2 = map_pat_scope env v2 in
   let v3 = map_using_scope_type env v3 in
   R.Tuple [v1; v2; v3]
+
+(* RAW QUERY *)
+let soql_using_clause (env : env) ((v1, v2, v3) : CST.soql_using_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "using" *) str env v1 in
+  let v2 = (* "scope" *) str env v2 in
+  let v3 = using_scope_type env v3 in
+  R.Tuple [R.Token v1; R.Token v2; v3]
 
 (* OLD QUERY *)
 let map_fields_expression (env : env) ((v1, v2, v3, v4) : CST.fields_expression) =
@@ -5902,14 +5925,14 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
   let module R = Raw_tree in
   let v1 = select_clause env v1 in
   (* TODO
-  let v2 = map_from_clause env v2 in
+     let v2 = map_from_clause env v2 in *)
   let v3 =
-    (match v3 with
+    match v3 with
     | Some x -> R.Option (Some (
-        map_soql_using_clause env x
+        soql_using_clause env x
       ))
-    | None -> R.Option None)
-     in *)
+    | None -> R.Option None
+  in
   let v4 =
     match v4 with
     | Some x -> R.Option (Some (
