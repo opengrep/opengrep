@@ -957,6 +957,7 @@ let fields_type (env : env) (x : CST.fields_type) : G.ident =
   | `Pat_stan x ->
       str env x
 
+(* OLD QUERY *)
 let map_in_type (env : env) (x : CST.in_type) =
   (match x with
   | `Pat_all x -> R.Case ("Pat_all",
@@ -975,6 +976,17 @@ let map_in_type (env : env) (x : CST.in_type) =
       map_pat_side env x
     )
   )
+
+(* RAW QUERY *)
+let in_type (env : env) (x : CST.in_type) : raw =
+  let module R = Raw_tree in
+  match x with
+  | `Pat_all x
+  | `Pat_email x
+  | `Pat_name x
+  | `Pat_phone x
+  | `Pat_side x ->
+      R.Token (str env x)
 
 (* OLD *)
 let map_identifier (env : env) (x : CST.identifier) =
@@ -1512,11 +1524,20 @@ let fields_expression (env : env) ((v1, v2, v3, v4) : CST.fields_expression) =
   let v4 = (* ")" *) str env v4 in (* keeping this for ranges *)
   R.Tuple [R.Token v1; R.Token v3; R.Token v4]
 
+(* OLD QUERY *)
 let map_in_clause (env : env) ((v1, v2, v3) : CST.in_clause) =
   let v1 = map_pat_in env v1 in
   let v2 = map_in_type env v2 in
   let v3 = map_pat_fields env v3 in
   R.Tuple [v1; v2; v3]
+
+(* RAW QUERY *)
+let in_clause (env : env) ((v1, v2, v3) : CST.in_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "in" *) str env v1 in
+  let v2 = in_type env v2 in
+  let v3 = (* "fields" *) str env v3 in
+  R.Tuple [R.Token v1; v2; R.Token v3]
 
 let map_using_clause (env : env) ((v1, v2, v3, v4) : CST.using_clause) =
   let v1 = map_pat_using env v1 in
@@ -4260,6 +4281,7 @@ and finally_clause (env : env) ((v1, v2) : CST.finally_clause) : G.finally =
   let v2 = trigger_body env v2 in
   (v1, v2)
 
+(* OLD QUERY *)
 and map_find_clause (env : env) ((v1, v2) : CST.find_clause) =
   let v1 = map_pat_find env v1 in
   let v2 =
@@ -4276,6 +4298,23 @@ and map_find_clause (env : env) ((v1, v2) : CST.find_clause) =
     )
   in
   R.Tuple [v1; v2]
+
+(* RAW QUERY *)
+and find_clause (env : env) ((v1, v2) : CST.find_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "find" *) str env v1 in
+  let v2 =
+    (match v2 with
+    | `Bound_apex_exp x ->
+        bound_apex_expression env x
+    | `Term_sepa_start_term_term_sepa_end (v1, v2, v3) ->
+        let v1 = (* "'" *) token_ env v1 in
+        let v2 = (* pattern "(\\\\\\'|[^'])+" *) str env v2 in
+        let v3 = (* "'" *) token_ env v3 in
+        G.L (G.String (v1, v2 ,v3)) |> G.e
+    )
+  in
+  R.Tuple [R.Token v1; R.Any (G.E v2)]
 
 (* OLD *)
 and map_for_statement (env : env) ((v1, v2, v3, v4, v5) : CST.for_statement) =
@@ -6112,15 +6151,15 @@ and map_sosl_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.sosl_que
 and sosl_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.sosl_query_body)
     : raw =
   let module R = Raw_tree in
-  (* TODO
-  let v1 = map_find_clause env v1 in
+  let v1 = find_clause env v1 in
   let v2 =
-    (match v2 with
+    match v2 with
     | Some x -> R.Option (Some (
-        map_in_clause env x
+        in_clause env x
       ))
-    | None -> R.Option None)
+    | None -> R.Option None
   in
+  (* TODO
   let v3 =
     (match v3 with
     | Some xs -> R.Option (Some (
@@ -6156,7 +6195,7 @@ and sosl_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.sosl_query_b
       ))
     | None -> R.Option None
   in
-  R.Tuple [v5; v6; v7]
+  R.Tuple [v1; v2; v5; v6; v7]
 
 and map_sosl_with_clause (env : env) ((v1, v2) : CST.sosl_with_clause) =
   let v1 = map_pat_with env v1 in
