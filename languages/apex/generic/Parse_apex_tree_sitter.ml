@@ -1874,6 +1874,7 @@ let with_data_cat_filter (env : env) ((v1, v2, v3) : CST.with_data_cat_filter) :
   in
   R.Tuple [R.Token v1; v2; R.Any (G.E v3)]
 
+(* OLD QUERY *)
 let map_storage_identifier (env : env) (x : CST.storage_identifier) =
   (match x with
   | `Semg_ellips tok -> R.Case ("Semg_ellips",
@@ -1886,6 +1887,19 @@ let map_storage_identifier (env : env) (x : CST.storage_identifier) =
       map_field_identifier env x
     )
   )
+
+(* RAW QUERY *)
+let storage_identifier (env : env) (x : CST.storage_identifier) : G.expr =
+  match x with
+  | `Semg_ellips tok ->
+      let t = (* "..." *) token_ env tok in
+      G.Ellipsis t |> G.e
+  | `Semg_meta_ellips tok ->
+      (* pattern \$\.\.\.[A-Z_][A-Z_0-9]* *)
+      let id = str env tok in
+      G.N (H2.name_of_id id) |> G.e
+  | `Choice_id x ->
+      field_identifier env x
 
 (* OLD QUERY *)
 let map_field_list (env : env) ((v1, v2) : CST.field_list) =
@@ -2045,6 +2059,7 @@ let soql_with_type (env : env) (x : CST.soql_with_type) : raw =
       in
       R.Tuple [R.Token v1; R.Token v3]
 
+(* OLD QUERY *)
 let map_anon_choice_stor_id_355c95c (env : env) (x : CST.anon_choice_stor_id_355c95c) =
   (match x with
   | `Stor_id x -> R.Case ("Stor_id",
@@ -2063,6 +2078,18 @@ let map_anon_choice_stor_id_355c95c (env : env) (x : CST.anon_choice_stor_id_355
       R.Tuple [v1; v2; v3]
     )
   )
+
+(* RAW QUERY *)
+let anon_choice_stor_id_355c95c (env : env) (x : CST.anon_choice_stor_id_355c95c)
+    : G.expr =
+  match x with
+  | `Stor_id x ->
+      storage_identifier env x
+  | `Stor_alias (v1, v2, v3) ->
+      let v1 = storage_identifier env v1 in
+      (* v2 is a token "as" *)
+      let v3 = identifier env v3 in
+      G.LetPattern (G.PatId (v3, G.empty_id_info ()), v1) |> G.e
 
 (* OLD QUERY *)
 let map_type_of_clause (env : env) ((v1, v2, v3, v4, v5) : CST.type_of_clause) =
@@ -2113,6 +2140,7 @@ let soql_with_clause (env : env) ((v1, v2) : CST.soql_with_clause) : raw =
   let v2 = soql_with_type env v2 in
   R.Tuple [R.Token v1; v2]
 
+(* OLD QUERY *)
 let map_from_clause (env : env) ((v1, v2, v3) : CST.from_clause) =
   let v1 = map_pat_from env v1 in
   let v2 = map_anon_choice_stor_id_355c95c env v2 in
@@ -2124,6 +2152,21 @@ let map_from_clause (env : env) ((v1, v2, v3) : CST.from_clause) =
     ) v3)
   in
   R.Tuple [v1; v2; v3]
+
+(* RAW QUERY *)
+let from_clause (env : env) ((v1, v2, v3) : CST.from_clause) :raw =
+  let module R = Raw_tree in
+  let v1 = (* "str" *) str env v1 in
+  let v2 = anon_choice_stor_id_355c95c env v2 in
+  let v3 =
+    List.map (fun (v1, v2) ->
+      let _v1 = (* "," *) token_ env v1 in
+      let v2 = anon_choice_stor_id_355c95c env v2 in
+      v2
+    ) v3
+  in
+  let c = G.Container (G.List, fb (v2 :: v3)) |> G.e in
+  R.Tuple [R.Token v1; R.Any (G.E c)]
 
 (* OLD *)
 let rec map_accessor_declaration (env : env) ((v1, v2, v3) : CST.accessor_declaration) =
@@ -2419,7 +2462,7 @@ and anon_choice_semg_ellips_d10ab47 (env : env) (x : CST.anon_choice_semg_ellips
   | `Semg_meta_ellips tok ->
       (* pattern \$\.\.\.[A-Z_][A-Z_0-9]* *)
       let id = str env tok in
-      G.Arg (N (H2.name_of_id id) |> G.e)
+      G.Arg (G.N (H2.name_of_id id) |> G.e)
   | `Exp x ->
       Arg (expression env x)
 
@@ -5924,8 +5967,7 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
     : raw =
   let module R = Raw_tree in
   let v1 = select_clause env v1 in
-  (* TODO
-     let v2 = map_from_clause env v2 in *)
+  let v2 = from_clause env v2 in
   let v3 =
     match v3 with
     | Some x -> R.Option (Some (
@@ -5996,7 +6038,7 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
       ))
     | None -> R.Option None
   in
-  R.Tuple [v1; v6; v7; v8; v9; v10; v11; v12]
+  R.Tuple [v1; v2; v3; v4; v5; v6; v7; v8; v9; v10; v11; v12]
 
 (* OLD QUERY *)
 and map_soql_query_expression (env : env) (x : CST.soql_query_expression) =
