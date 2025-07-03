@@ -5593,8 +5593,13 @@ and query_expression (env : env) ((v1, v2, v3) : CST.query_expression)
   let _v3 = (* "]" *) token_ env v3 in
   G.RawExpr v2 |> G.e
 
+(* OLD QUERY *)
 and map_query_expression_ (env : env) (x : CST.query_expression_) =
   map_sosl_query_body env x
+
+(* RAW QUERY *)
+and query_expression_ (env : env) (x : CST.query_expression_) : raw =
+  sosl_query_body env x
 
 (* OLD *)
 and map_return_statement (env : env) ((v1, v2, v3) : CST.return_statement) =
@@ -6054,8 +6059,9 @@ and map_sosl_query (env : env) (v1 : CST.sosl_query) =
 
 (* RAW QUERY *)
 and sosl_query (env : env) (v1 : CST.sosl_query) : raw =
-  failwith "NOT IMPLEMENTED sosl query"
+  query_expression_ env v1
 
+(* OLD QUERY *)
 and map_sosl_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.sosl_query_body) =
   let v1 = map_find_clause env v1 in
   let v2 =
@@ -6101,6 +6107,56 @@ and map_sosl_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.sosl_que
     | None -> R.Option None)
   in
   R.Tuple [v1; v2; v3; v4; v5; v6; v7]
+
+(* RAW QUERY *)
+and sosl_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.sosl_query_body)
+    : raw =
+  let module R = Raw_tree in
+  (* TODO
+  let v1 = map_find_clause env v1 in
+  let v2 =
+    (match v2 with
+    | Some x -> R.Option (Some (
+        map_in_clause env x
+      ))
+    | None -> R.Option None)
+  in
+  let v3 =
+    (match v3 with
+    | Some xs -> R.Option (Some (
+        R.List (List.map (map_returning_clause env) xs)
+      ))
+    | None -> R.Option None)
+  in
+  let v4 =
+    (match v4 with
+    | Some xs -> R.Option (Some (
+        R.List (List.map (map_sosl_with_clause env) xs)
+      ))
+    | None -> R.Option None)
+  in *)
+  let v5 =
+    match v5 with
+    | Some x -> R.Option (Some (
+        limit_clause env x
+      ))
+    | None -> R.Option None
+  in
+  let v6 =
+    match v6 with
+    | Some x -> R.Option (Some (
+        offset_clause env x
+      ))
+    | None -> R.Option None
+  in
+  let v7 =
+    match v7 with
+    | Some x -> R.Option (Some (
+        update_clause env x
+      ))
+    | None -> R.Option None
+  in
+  R.Tuple [v5; v6; v7]
 
 and map_sosl_with_clause (env : env) ((v1, v2) : CST.sosl_with_clause) =
   let v1 = map_pat_with env v1 in
