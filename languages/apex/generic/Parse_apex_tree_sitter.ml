@@ -2903,6 +2903,7 @@ and block (env : env) ((v1, v2, v3) : CST.block) : G.stmt =
   let v3 = token_ env v3 (* "}" *) in
   G.Block (v1, v2, v3) |> G.s
 
+(* OLD QUERY *)
 and map_boolean_expression (env : env) (x : CST.boolean_expression) =
   (match x with
   | `And_exp (v1, v2) -> R.Case ("And_exp",
@@ -2936,6 +2937,40 @@ and map_boolean_expression (env : env) (x : CST.boolean_expression) =
       map_condition_expression env x
     )
   )
+
+(* RAW QUERY *)
+and boolean_expression (env : env) (x : CST.boolean_expression) : G.expr =
+  match x with
+  | `And_exp (v1, v2) ->
+      let v1 = condition_expression env v1 in
+      let v2 =
+        List.map (fun (v1, v2) ->
+          let _v1 = (* "and" *) token_ env v1 in
+          let v2 = condition_expression env v2 in
+          v2
+        ) v2
+      in
+      let es = v1 :: v2 in
+      let args = List.map (fun e -> G.Arg e) es in
+      G.Call (G.IdSpecial (G.Op G.And, fake "") |> G.e, fb args) |> G.e
+  | `Or_exp (v1, v2) ->
+      let v1 = condition_expression env v1 in
+      let v2 =
+        List.map (fun (v1, v2) ->
+          let _v1 = (* "or" *) token_ env v1 in
+          let v2 = condition_expression env v2 in
+          v2
+        ) v2
+      in
+      let es = v1 :: v2 in
+      let args = List.map (fun e -> G.Arg e) es in
+      G.Call (G.IdSpecial (G.Op G.Or, fake "") |> G.e, fb args) |> G.e
+  | `Not_exp (v1, v2) ->
+      let v1 = (* "not" *) token_ env v1 in
+      let v2 = condition_expression env v2 in
+      G.Call (G.IdSpecial (G.Op G.Not, v1) |> G.e, fb [G.Arg v2]) |> G.e
+  | `Cond_exp x ->
+      condition_expression env x
 
 (* OLD QUERY *)
 and map_bound_apex_expression (env : env) ((v1, v2) : CST.bound_apex_expression) =
@@ -3181,6 +3216,7 @@ and class_literal (env : env) ((v1, v2, v3) : CST.class_literal) : G.expr =
   let v3 = (* "class" *) token_ env v3 in
   Call (IdSpecial (Typeof, v2) |> G.e, fb [ ArgType v1 ]) |> G.e
 
+(* OLD QUERY *)
 and map_comparison (env : env) (x : CST.comparison) =
   (match x with
   | `Value_comp (v1, v2) -> R.Case ("Value_comp",
@@ -3207,11 +3243,39 @@ and map_comparison (env : env) (x : CST.comparison) =
     )
   )
 
+(* RAW QUERY *)
+and comparison (env : env) (e1 : G.expr) (x : CST.comparison) : G.expr =
+  match x with
+  | `Value_comp (v1, v2) ->
+      let v1 = value_comparison_operator env v1 in
+      let v2 = anon_choice_soql_lit_3019e24 env v2 in
+      G.Call (v1, fb [G.Arg e1; G.Arg v2]) |> G.e
+  | `Set_comp (v1, v2) ->
+      let v1 = set_comparison_operator env v1 in
+      let v2 =
+        match v2 with
+        | `Subq x ->
+            G.RawExpr (subquery env x) |> G.e
+        | `LPAR_choice_soql_lit_rep_COMMA_choice_soql_lit_RPAR x ->
+            anon_LPAR_choice_soql_lit_rep_COMMA_choice_soql_lit_RPAR_bea6d78 env x
+        | `Bound_apex_exp x ->
+            bound_apex_expression env x
+      in
+      G.Call (v1, fb [G.Arg e1; G.Arg v2]) |> G.e
+
+(* OLD QUERY *)
 and map_comparison_expression (env : env) ((v1, v2) : CST.comparison_expression) =
   let v1 = map_value_expression env v1 in
   let v2 = map_comparison env v2 in
   R.Tuple [v1; v2]
 
+(* RAW QUERY *)
+and comparison_expression (env : env) ((v1, v2) : CST.comparison_expression) : G.expr =
+  let v1 = value_expression env v1 in
+  let v2 = comparison env v1 v2 in
+  v2
+
+(* OLD QUERY *)
 and map_condition_expression (env : env) (x : CST.condition_expression) =
   (match x with
   | `Semg_meta tok -> R.Case ("Semg_meta",
@@ -3231,6 +3295,23 @@ and map_condition_expression (env : env) (x : CST.condition_expression) =
       )
     )
   )
+
+(* RAW QUERY *)
+and condition_expression (env : env) (x : CST.condition_expression) : G.expr =
+  match x with
+  | `Semg_meta tok ->
+      let v = (* pattern \$[A-Z_][A-Z_0-9]* *) str env tok in
+      G.N (G.Id (v, empty_id_info ())) |> G.e
+  | `Choice_LPAR_bool_exp_RPAR x ->
+      (match x with
+      | `LPAR_bool_exp_RPAR (v1, v2, v3) ->
+          let _v1 = (* "(" *) token_ env v1 in
+          let v2 = boolean_expression env v2 in
+          let _v3 = (* ")" *) token_ env v3 in
+          v2
+      | `Comp_exp x ->
+          comparison_expression env x
+      )
 
 (* OLD *)
 and map_constant_declaration (env : env) ((v1, v2, v3, v4) : CST.constant_declaration) =
@@ -5828,14 +5909,14 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
         map_soql_using_clause env x
       ))
     | None -> R.Option None)
-  in
+     in *)
   let v4 =
     match v4 with
     | Some x -> R.Option (Some (
         where_clause env x
       ))
-    | None -> R.Option None)
-  in *)
+    | None -> R.Option None
+  in
   let v5 =
     match v5 with
     | Some x -> R.Option (Some (
@@ -6814,10 +6895,18 @@ and variable_initializer (env : env) (x : CST.variable_initializer) : G.expr =
   | `Exp x -> expression env x
   | `Array_init x -> array_initializer env x
 
+(* OLD QUERY *)
 and map_where_clause (env : env) ((v1, v2) : CST.where_clause) =
   let v1 = map_pat_where env v1 in
   let v2 = map_boolean_expression env v2 in
   R.Tuple [v1; v2]
+
+(* NEW QUERY *)
+and where_clause (env : env) ((v1, v2) : CST.where_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "where" *) str env v1 in
+  let v2 = boolean_expression env v2 in
+  R.Tuple [R.Token v1; R.Any (G.E v2)]
 
 (* OLD *)
 and map_while_statement (env : env) ((v1, v2, v3) : CST.while_statement) =
