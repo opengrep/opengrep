@@ -820,6 +820,7 @@ let update_type (env : env) (x : CST.update_type) : raw =
   | `Pat_view_ x ->
       R.Token ( (* "viewStat" *) str env x)
 
+(* OLD QUERY *)
 let map_with_data_cat_filter_type (env : env) (x : CST.with_data_cat_filter_type) =
   (match x with
   | `Pat_at x -> R.Case ("Pat_at",
@@ -835,6 +836,16 @@ let map_with_data_cat_filter_type (env : env) (x : CST.with_data_cat_filter_type
       map_pat_above_or_below env x
     )
   )
+
+(* NEW QUERY *)
+let with_data_cat_filter_type (env : env) (x : CST.with_data_cat_filter_type) : raw =
+  let module R = Raw_tree in
+  match x with
+  | `Pat_at x
+  | `Pat_above x
+  | `Pat_below x
+  | `Pat_above_or_below x ->
+      R.Token (str env x)
 
 let map_using_scope_type (env : env) (x : CST.using_scope_type) =
   (match x with
@@ -1574,6 +1585,7 @@ let rec name (env : env) (x : CST.name) : G.name =
       let v3 = identifier env v3 in
       H2.add_id_opt_type_args_to_name v1 (v3, None) (* FIXME: None? *)
 
+(* OLD QUERY *)
 let map_inferred_parameters (env : env) ((v1, v2, v3, v4) : CST.inferred_parameters) =
   let v1 = (* "(" *) token env v1 in
   let v2 = map_identifier env v2 in
@@ -1586,6 +1598,22 @@ let map_inferred_parameters (env : env) ((v1, v2, v3, v4) : CST.inferred_paramet
   in
   let v4 = (* ")" *) token env v4 in
   R.Tuple [v1; v2; v3; v4]
+
+(* RAW QUERY *)
+let inferred_parameters (env : env) ((v1, v2, v3, v4) : CST.inferred_parameters)
+    : G.expr =
+  let v1 = (* "(" *) token_ env v1 in
+  let v2 = identifier_to_expression env v2 in
+  let v3 =
+    List.map (fun (v1, v2) ->
+      let v1 = (* "," *) token env v1 in
+      let v2 = identifier_to_expression env v2 in
+      v2
+    ) v3
+  in
+  let es = v2 :: v3 in
+  let v4 = (* ")" *) token_ env v4 in
+  G.Container (G.Tuple, (v1, es, v4)) |> G.e
 
 (* OLD *)
 let map_literal (env : env) (x : CST.literal) =
@@ -1622,6 +1650,7 @@ let literal (env : env) (x : CST.literal) : literal =
   | `Null_lit x ->
       null_literal env x
 
+(* OLD QUERY *)
 let map_with_record_visibility_param (env : env) (x : CST.with_record_visibility_param) =
   (match x with
   | `Pat_maxd_EQ_int (v1, v2, v3) -> R.Case ("Pat_maxd_EQ_int",
@@ -1643,6 +1672,30 @@ let map_with_record_visibility_param (env : env) (x : CST.with_record_visibility
       R.Tuple [v1; v2; v3]
     )
   )
+
+(* RAW QUERY *)
+let with_record_visibility_param (env : env) (x : CST.with_record_visibility_param)
+    : raw =
+  let module R = Raw_tree in
+  match x with
+  | `Pat_maxd_EQ_int (v1, v2, v3) ->
+      let v1 = (* maxDescriptorPerRecord *) str env v1 in
+      let _v2 = (* "=" *) token_ env v2 in
+      let s, t = (* int *) str env v3 in
+      let i = G.L (G.Int (Parsed_int.parse (s, t))) |> G.e in
+      R.Tuple [R.Token v1; R.Any (G.E i)]
+  | `Pat_suppos_EQ_bool (v1, v2, v3) ->
+      let v1 = (* "supportsDomains" *) str env v1 in
+      let _v2 = (* "=" *) token_ env v2 in
+      let v3 = boolean env v3 in
+      let b = G.L v3 |> G.e in
+      R.Tuple [R.Token v1; R.Any (G.E b)]
+  | `Pat_suppos__EQ_bool (v1, v2, v3) ->
+      let v1 = (* "supportsDelegates" *) str env v1 in
+      let _v2 = (* "=" *) token_ env v2 in
+      let v3 = boolean env v3 in
+      let b = G.L v3 |> G.e in
+      R.Tuple [R.Token v1; R.Any (G.E b)]
 
 (* OLD QUERY *)
 let map_soql_literal (env : env) (x : CST.soql_literal) =
@@ -1768,6 +1821,7 @@ let map_anon_choice_id_73106c9 (env : env) (x : CST.anon_choice_id_73106c9) =
     )
   )
 
+(* OLD QUERY *)
 let map_with_data_cat_filter (env : env) ((v1, v2, v3) : CST.with_data_cat_filter) =
   let v1 = map_identifier env v1 in
   let v2 = map_with_data_cat_filter_type env v2 in
@@ -1782,6 +1836,20 @@ let map_with_data_cat_filter (env : env) ((v1, v2, v3) : CST.with_data_cat_filte
     )
   in
   R.Tuple [v1; v2; v3]
+
+(* RAW QUERY *)
+let with_data_cat_filter (env : env) ((v1, v2, v3) : CST.with_data_cat_filter) : raw =
+  let module R = Raw_tree in
+  let v1 = identifier env v1 in
+  let v2 = with_data_cat_filter_type env v2 in
+  let v3 =
+    match v3 with
+    | `Id x ->
+        identifier_to_expression env x
+    | `LPAR_id_rep_COMMA_id_RPAR x ->
+        inferred_parameters env x
+  in
+  R.Tuple [R.Token v1; v2; R.Any (G.E v3)]
 
 let map_storage_identifier (env : env) (x : CST.storage_identifier) =
   (match x with
@@ -1820,6 +1888,7 @@ let field_list (env : env) ((v1, v2) : CST.field_list) : G.expr list =
   in
   v1 :: v2
 
+(* OLD QUERY *)
 let map_with_data_cat_expression (env : env) ((v1, v2, v3, v4) : CST.with_data_cat_expression) =
   let v1 = map_pat_data env v1 in
   let v2 = map_pat_cate env v2 in
@@ -1832,6 +1901,22 @@ let map_with_data_cat_expression (env : env) ((v1, v2, v3, v4) : CST.with_data_c
     ) v4)
   in
   R.Tuple [v1; v2; v3; v4]
+
+(* RAW QUERY *)
+let with_data_cat_expression (env : env) ((v1, v2, v3, v4) : CST.with_data_cat_expression)
+    : raw =
+  let module R = Raw_tree in
+  let v1 = (* "data" *) str env v1 in
+  let v2 = (* "category" *) str env v2 in
+  let v3 = with_data_cat_filter env v3 in
+  let v4 =
+    List.map (fun (v1, v2) ->
+      let _v1 = token_ env v1 in
+      let v2 = with_data_cat_filter env v2 in
+      v2
+    ) v4
+  in
+  R.Tuple [R.Token v1; R.Token v2; R.List (v3 :: v4)]
 
 (* OLD QUERY *)
 let map_when_expression (env : env) ((v1, v2, v3, v4) : CST.when_expression) =
@@ -1867,6 +1952,7 @@ let else_expression (env : env) ((v1, v2) : CST.else_expression) =
   let v2 = field_list env v2 in
   R.Tuple [R.Token v1; R.List (List.map (fun e -> R.Any (G.E e)) v2)]
 
+(* OLD QUERY *)
 let map_soql_with_type (env : env) (x : CST.soql_with_type) =
   (match x with
   | `Pat_secu_enfo x -> R.Case ("Pat_secu_enfo",
@@ -1904,6 +1990,37 @@ let map_soql_with_type (env : env) (x : CST.soql_with_type) =
       R.Tuple [v1; v2; v3]
     )
   )
+
+(* RAW QUERY *)
+let soql_with_type (env : env) (x : CST.soql_with_type) : raw =
+  let module R = Raw_tree in
+  match x with
+  | `Pat_secu_enfo x
+  | `Pat_user_mode x
+  | `Pat_system_mode x ->
+      R.Token (str env x)
+  | `With_data_cat_exp x ->
+      with_data_cat_expression env x
+  | `With_record_visi_exp (v1, v2, v3, v4, v5) ->
+      let v1 = (* "recordVisibilityContext" *) str env v1 in
+      let _v2 = (* "(" *) token_ env v2 in
+      let v3 = with_record_visibility_param env v3 in
+      let v4 =
+        List.map (fun (v1, v2) ->
+          let _v1 = (* "," *) token_ env v1 in
+          let v2 = with_record_visibility_param env v2 in
+          v2
+        ) v4
+      in
+      let _v5 = (* ")" *) token_ env v5 in
+      R.Tuple [R.Token v1; R.List (v3 :: v4)]
+  | `With_user_id_type (v1, v2, v3) ->
+      let v1 = (* "userId" *) str env v1 in
+      let _v2 = (* "=" *) token_ env v2 in
+      let v3 =
+        (* pattern "'(\\\\[nNrRtTbBfFuU\"'_%\\\\]|[^\\\\'])*'" *) str env v3
+      in
+      R.Tuple [R.Token v1; R.Token v3]
 
 let map_anon_choice_stor_id_355c95c (env : env) (x : CST.anon_choice_stor_id_355c95c) =
   (match x with
@@ -1960,10 +2077,18 @@ let type_of_clause (env : env) ((v1, v2, v3, v4, v5) : CST.type_of_clause) : raw
       v4;
       R.Token v5]
 
+(* OLD QUERY *)
 let map_soql_with_clause (env : env) ((v1, v2) : CST.soql_with_clause) =
   let v1 = map_pat_with env v1 in
   let v2 = map_soql_with_type env v2 in
   R.Tuple [v1; v2]
+
+(* RAW QUERY *)
+let soql_with_clause (env : env) ((v1, v2) : CST.soql_with_clause) : raw =
+  let module R = Raw_tree in
+  let v1 = (* "with" *) str env v1 in
+  let v2 = soql_with_type env v2 in
+  R.Tuple [R.Token v1; v2]
 
 let map_from_clause (env : env) ((v1, v2, v3) : CST.from_clause) =
   let v1 = map_pat_from env v1 in
@@ -5705,19 +5830,19 @@ and soql_query_body (env : env) ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, 
     | None -> R.Option None)
   in
   let v4 =
-    (match v4 with
+    match v4 with
     | Some x -> R.Option (Some (
-        map_where_clause env x
+        where_clause env x
       ))
     | None -> R.Option None)
-  in
+  in *)
   let v5 =
-    (match v5 with
+    match v5 with
     | Some x -> R.Option (Some (
-        map_soql_with_clause env x
+        soql_with_clause env x
       ))
-    | None -> R.Option None)
-     in*)
+    | None -> R.Option None
+     in
   let v6 =
     match v6 with
     | Some x -> R.Option (Some (
