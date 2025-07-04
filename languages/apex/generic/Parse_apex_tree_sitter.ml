@@ -15,7 +15,7 @@ module CST = Tree_sitter_apex.CST
 module R = Tree_sitter_run.Raw_tree
 
 (* Disable warnings against unused variables *)
-[@@@warning "-26-27"]
+[@@@warning "-26-27-32"]
 
 (* Disable warning against unused 'rec' *)
 [@@@warning "-39"]
@@ -3233,40 +3233,13 @@ and map_class_declaration (env : env) ((v1, v2) : CST.class_declaration) =
   R.Tuple [v1; v2]
 
 (* NEW *)
-and class_declaration (env : env) (((v1, v2, v3, v4, v5, v6), b) : CST.class_declaration) : G.stmt =
-  let v1 =
-    match v1 with
-    | Some x -> modifiers env x
-    | None -> []
-  in
-  let v2 = (* "class" *) token_ env v2 in
-  let v3 = identifier env v3 in
-  let v4 = Option.map (type_parameters env) v4 in
-  let v5 =
-    match v5 with
-    | Some v5 -> superclass env v5
-    | None -> []
-  in
-  let v6 =
-    match v6 with
-    | Some v6 -> interfaces env v6
-    | None -> []
-  in
-  let lb, v7, rb = class_body env b in
-  let fields = List_.map (fun x -> G.F x) v7 in
-  let idinfo = empty_id_info () in
-  let ent = { name = EN (Id (v3, idinfo)); attrs = v1; tparams = v4 } in
+and class_declaration (env : env) ((h, b) : CST.class_declaration) : G.stmt =
+  let (ent, d) = class_header env h in
+  let lb, b, rb = class_body env b in
+  let fields = List_.map (fun x -> G.F x) b in
   G.DefStmt
-    ( ent,
-      G.ClassDef
-        {
-          ckind = (G.Class, v2);
-          cextends = v5;
-          cimplements = v6;
-          cmixins = [];
-          cparams = fb [];
-          cbody = (lb, fields, rb);
-        } )
+    (ent,
+     G.ClassDef { d with cbody = (lb, fields, rb); })
   |> G.s
 
 (* OLD *)
@@ -3302,6 +3275,38 @@ and map_class_header (env : env) ((v1, v2, v3, v4, v5, v6) : CST.class_header) =
     | None -> R.Option None)
   in
   R.Tuple [v1; v2; v3; v4; v5; v6]
+
+(* NEW *)
+and class_header (env : env) ((v1, v2, v3, v4, v5, v6) : CST.class_header) : G.entity * G.class_definition =
+  let v1 =
+    match v1 with
+    | Some x -> modifiers env x
+    | None -> []
+  in
+  let v2 = (* "class" *) token_ env v2 in
+  let v3 = identifier env v3 in
+  let v4 = Option.map (type_parameters env) v4 in
+  let v5 =
+    match v5 with
+    | Some v5 -> superclass env v5
+    | None -> []
+  in
+  let v6 =
+    match v6 with
+    | Some v6 -> interfaces env v6
+    | None -> []
+  in
+  let idinfo = empty_id_info () in
+  let ent = { name = EN (Id (v3, idinfo)); attrs = v1; tparams = v4 } in
+  ( ent,
+    {
+      ckind = (G.Class, v2);
+      cextends = v5;
+      cimplements = v6;
+      cmixins = [];
+      cparams = fb [];
+      cbody = fb [];
+    } )
 
 (* OLD *)
 and map_class_literal (env : env) ((v1, v2, v3) : CST.class_literal) =
@@ -5287,9 +5292,9 @@ and map_method_header (env : env) ((v1, v2, v3) : CST.method_header) =
   R.Tuple [v1; v2; v3]
 
 (* NEW *)
-and make_method (env : env) (mods : G.attribute list) (body : G.function_body)
-    ((v1, v2, v3) : CST.method_header) : G.stmt =
-  let (tparams, annots) =
+and method_header (env : env) ((v1, v2, v3) : CST.method_header)
+  : G.entity * G.function_definition =
+let (tparams, annots) =
     match v1 with
     | None -> None, []
     | Some (v1, v2) ->
@@ -5301,16 +5306,21 @@ and make_method (env : env) (mods : G.attribute list) (body : G.function_body)
   let i, params, _dim = method_declarator env v3 in
   let _, tok = i in
   let idinfo = empty_id_info () in
-  let ent = { name = EN (Id (i, idinfo)); attrs = mods; tparams } in
-  let def =
-    G.FuncDef
+  let ent = { name = EN (Id (i, idinfo)); attrs = []; tparams } in
+  (ent,
     {
       fkind = (G.Method, tok);
       fparams = params;
       frettype = Some (make_type annots v2);
-      fbody = body;
-    }
-  in
+      fbody = G.FBNothing;
+    })
+
+(* NEW *)
+and make_method (env : env) (mods : G.attribute list) (body : G.function_body)
+    (h : CST.method_header) : G.stmt =
+  let ent, d = method_header env h in
+  let ent = { ent with attrs = mods } in
+  let def = G.FuncDef { d with fbody = body } in
   G.DefStmt (ent, def) |> G.s
 
 (* OLD *)
@@ -5507,6 +5517,7 @@ and adjust_range_of_parenthesized_expr (env : env)
   let rloc = Tok.unsafe_loc_of_tok (token_ env r) in
   e.e_range <- Some (lloc, rloc);
   e
+
 (* NEW *)
 and parenthesized_expression (env : env)
     ((v1, v2, v3) : CST.parenthesized_expression) : G.expr =
@@ -7292,47 +7303,46 @@ let parser_output (env : env) (x : CST.parser_output) : G.any =
   match x with
   | `Rep_stmt xs ->
       G.Ss (List.map (statement env) xs)
-  | `Cons_decl x -> failwith "NOT IMPLEMENTED (c_dcl_)"
+  | `Cons_decl x ->
+      G.S (constructor_declaration env x)
   | `Exp x ->
       G.E (expression env x)
-  | `Anno x -> failwith "NOT IMPLEMENTED (anno)"
-  | `Meth_decl x -> failwith "NOT IMPLEMENTED (met_decl)"
-  | `Local_var_decl x -> failwith "NOT IMPLEMENTED (lvar_decl)"
-  | `Class_header x -> failwith "NOT IMPLEMENTED"
-  | `Full_meth_header (v1, v2) -> failwith "NOT IMPLEMENTED"
-  | `Part_if (v1, v2) -> failwith "NOT IMPLEMENTED"
-  | `Part_try (v1, v2) -> failwith "NOT IMPLEMENTED"
-  | `Part_catch x -> failwith "NOT IMPLEMENTED"
-  | `Part_fina x -> failwith "NOT IMPLEMENTED"
-
- (* FIXME: what does this do? *)
-(*
-let dump_tree root =
-  map_parser_output () root
-  |> Tree_sitter_run.Raw_tree.to_channel stdout
-
-let map_extra (env : env) (x : CST.extra) =
-  match x with
-  | `Line_comment (_loc, x) -> ("line_comment", "line_comment", map_line_comment env x)
-  | `Block_comment (_loc, x) -> ("block_comment", "block_comment", map_block_comment env x)
-
-let dump_extras (extras : CST.extras) =
-  List.iter (fun extra ->
-    let ts_rule_name, ocaml_type_name, raw_tree = map_extra () extra in
-    let details =
-      if ocaml_type_name <> ts_rule_name then
-        Printf.sprintf " (OCaml type '%s')" ocaml_type_name
-      else
-        ""
-    in
-    Printf.printf "%s%s:\n" ts_rule_name details;
-    Tree_sitter_run.Raw_tree.to_channel stdout raw_tree
-  ) extras
-*)
+  | `Anno x ->
+      G.At (annotation env x)
+  | `Meth_decl x ->
+      G.S (method_declaration env x)
+  | `Local_var_decl x ->
+      G.S (local_variable_declaration env x)
+  | `Class_header x ->
+      let ent, d = class_header env x in
+      G.Partial (G.PartialDef (ent, G.ClassDef d))
+  | `Full_meth_header (v1, v2) ->
+      let v1 =
+        match v1 with
+        | Some x -> modifiers env x
+        | None -> []
+      in
+      let ent, d = method_header env v2 in
+      let ent = { ent with attrs = v1 } in
+      G.Partial (G.PartialDef (ent, G.FuncDef d))
+  | `Part_if (v1, v2) ->
+      let t = token_ env v1 in
+      let s = parenthesized_expression env v2 in
+      G.Partial (G.PartialIf (t, s))
+  | `Part_try (v1, v2) ->
+      let t = token_ env v1 in
+      let s = trigger_body env v2 in
+      G.Partial (G.PartialTry (t, s))
+  | `Part_catch x ->
+      G.Partial (G.PartialCatch (partial_catch env x))
+  | `Part_fina x ->
+      let t, s = partial_finally env x in
+      G.Partial (G.PartialFinally (t, s))
 
 (*****************************************************************************)
 (* Entry points *)
 (*****************************************************************************)
+
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_apex.Parse.file !!file)
@@ -7342,44 +7352,10 @@ let parse file =
       | G.Pr xs -> xs
       | _ -> failwith "not a program")
 
-
-let parse_expr file =
-  H.wrap_parser
-    (fun () -> Tree_sitter_apex.Parse.file !!file)
-    (fun cst _extras ->
-      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
-      match parser_output env cst with
-      | G.E xs -> xs
-      | _ -> failwith "not an expression")
-
-let parse_stmt file =
-  H.wrap_parser
-    (fun () -> Tree_sitter_apex.Parse.file !!file)
-    (fun cst _extras ->
-      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
-      match parser_output env cst with
-      | G.Ss xs -> xs
-      | _ -> failwith "not a statement")
-
- (*
-let parse_pattern_aux str =
-  (* ugly: coupling: see grammar.js of csharp.
-   * todo: will need to adjust position information in parsing errors! *)
-  let expr_str = "__SEMGREP_EXPRESSION " ^ str in
-  (* If possible, we always prefer to parse a pattern as an expression than
-   * as a program, since an expression is also a statement, but a statement
-   * is not an expression! E.g., `Foo()` as an statement will not match
-   * `if (null == Foo()) ...` whereas as an expression it does. *)
-  let res = Tree_sitter_apex.Parse.string expr_str in
-  match res.errors with
-  | [] -> res
-  | _ -> Tree_sitter_apex.Parse.string str
-
 let parse_pattern str =
   H.wrap_parser
-    (fun () -> parse_pattern_aux str)
+    (fun () -> Tree_sitter_apex.Parse.string str)
     (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env = { H.file; conv = H.line_col_to_pos_pattern str; extra = () } in
-      compilation_unit env cst)
-*)
+      parser_output env cst)
