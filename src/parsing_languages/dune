@@ -54,5 +54,6 @@
    parser_move_on_sui.ast_generic
    parser_move_on_aptos.ast_generic
    parser_circom.ast_generic
+   parser_apex.ast_generic
  )
 )
