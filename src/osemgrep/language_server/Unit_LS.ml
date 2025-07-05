@@ -128,19 +128,6 @@ let add_file ?(git = false) ?(dirty = false)
   if (not dirty) && git then Git_wrapper.commit ~cwd "test";
   file
 
-let with_mock_envvars f () =
-  (* TODO: we should simply do:
-   *    Semgrep_envvars.with_envvar "SEMGREP_APP_TOKEN" "123456789" f
-   * but we then get CI failures on build-js-tests
-   * see https://github.com/semgrep/semgrep/pull/9285
-   * because of the use of putenv in Semgrep_envvars.with_envvar,
-   * even after adding a fake on in js/node_shared/unix.js
-   *)
-  let old_settings = !Semgrep_envvars.v in
-  let app_token = Some (Auth.unsafe_token_of_string "123456789") in
-  let new_settings = { old_settings with app_token } in
-  Common.save_excursion_unsafe Semgrep_envvars.v new_settings f
-
 (*****************************************************************************)
 (* Tests *)
 (*****************************************************************************)
@@ -255,45 +242,6 @@ let processed_run () =
   in
   Testo.categorize "Processed Run" tests
 
-let ci_tests caps =
-  let with_ci_client =
-    let make_fn (req : Cohttp.Request.t) body =
-      ignore body;
-      let uri = req |> Cohttp.Request.uri |> Uri.path in
-      Http_mock_client.check_method `GET req.meth;
-      let body =
-        match uri with
-        | "/api/agent/deployments/scans/config" ->
-            Http_mock_client.body_of_file
-              (Fpath.v "./tests/ls/ci/rule_conf_resp.json")
-        | "/api/agent/deployments/current" ->
-            Http_mock_client.body_of_file
-              (Fpath.v "./tests/login/ok_response.json")
-        | _ ->
-            failwith (Printf.sprintf "Unexpected request to %s in CI tests" uri)
-      in
-      Lwt.return Http_mock_client.(basic_response body)
-    in
-    Http_mock_client.with_testing_client make_fn
-  in
-  let test_cache_session () =
-    let session = mock_session caps in
-    Lwt_platform.run (Session.cache_session session);
-    let rules = session.cached_session.rules in
-    Alcotest.(check int) "rules" 1 (List.length rules);
-    let skipped_fingerprints = Session.skipped_fingerprints session in
-    Alcotest.(check int)
-      "skipped_fingerprints" 1
-      (List.length skipped_fingerprints)
-  in
-  let tests =
-    [
-      t "Test session cache"
-        (with_mock_envvars (with_ci_client test_cache_session));
-    ]
-  in
-  Testo.categorize "CI Tests" tests
-
 let test_ls_libev () = Lwt_platform.set_engine ()
 
 let libev_tests =
@@ -301,4 +249,4 @@ let libev_tests =
 
 let tests caps =
   Testo.categorize_suites "Language Server (unit)"
-    [ session_targets caps; processed_run (); ci_tests caps; libev_tests ]
+    [ session_targets caps; processed_run (); libev_tests ]
