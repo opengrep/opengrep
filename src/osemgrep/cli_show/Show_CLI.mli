@@ -18,8 +18,6 @@ type conf = {
 and show_kind =
   | Version
   | SupportedLanguages
-  | Identity
-  | Deployment
   (* dumpers *)
   | DumpPattern of string * Lang.t
   | DumpCST of Fpath.t * Lang.t
