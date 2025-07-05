@@ -59,7 +59,6 @@ val langs_of_pattern : string * Xlang.t option -> Xlang.t list
  * Note that this also handles the experiment rules in jsonnet!
  *)
 val rules_from_rules_source :
-  token_opt:Auth.token option ->
   rewrite_rule_ids:bool ->
   strict:bool ->
   < Cap.network ; Cap.tmp > ->
@@ -68,7 +67,6 @@ val rules_from_rules_source :
 
 (* TODO: make cap network an option (with token) *)
 val rules_from_rules_source_async :
-  token_opt:Auth.token option ->
   rewrite_rule_ids:bool ->
   strict:bool ->
   < Cap.network ; Cap.tmp > ->
@@ -79,7 +77,6 @@ val rules_from_rules_source_async :
 
 val rules_from_dashdash_config_async :
   rewrite_rule_ids:bool ->
-  token_opt:Auth.token option ->
   < Cap.network ; Cap.tmp ; .. > ->
   Rules_config.t ->
   (rules_and_origin list * Rule_error.t list) Lwt.t
@@ -90,7 +87,6 @@ val rules_from_dashdash_config_async :
  *)
 val rules_from_dashdash_config :
   rewrite_rule_ids:bool ->
-  token_opt:Auth.token option ->
   < Cap.network ; Cap.tmp ; .. > ->
   Rules_config.t ->
   rules_and_origin list * Rule_error.t list
@@ -105,7 +101,6 @@ val load_rules_from_file :
 
 val load_rules_from_url :
   origin:origin ->
-  ?token_opt:Auth.token ->
   ?ext:string ->
   < Cap.network ; Cap.tmp ; .. > ->
   Uri.t ->

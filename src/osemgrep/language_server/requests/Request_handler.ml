@@ -47,8 +47,6 @@ let handle_custom_request session (meth : string) (params : Structured.t option)
         (* Methods which cannot alter the server. *)
         [
           (ShowAst.meth, ShowAst.on_request);
-          (Login.meth, Login.on_request);
-          (LoginStatus.meth, LoginStatus.on_request);
         ]
         |> List.assoc_opt meth
       with
@@ -111,18 +109,10 @@ let on_request (type r) server (req_id : Id.t) (request : r CR.t) :
       ({ server with session }, Option.value reply_opt ~default:Reply.empty)
   | CR.UnknownRequest { meth; params } ->
       (* Could be handled better but :shrug: *)
-      if meth = Login.meth && Semgrep_login.is_logged_in_weak () then
-        let reply =
-          Reply.now
-            (Lsp_.notify_show_message ~kind:MessageType.Info
-               "Already logged in to Semgrep Code")
-        in
-        (server, reply)
-      else
-        let session, yojson_opt =
-          handle_custom_request server.session meth params
-        in
-        process_json_result (yojson_opt, { server with session })
+      let session, yojson_opt =
+        handle_custom_request server.session meth params
+      in
+      process_json_result (yojson_opt, { server with session })
   | CR.Shutdown ->
       Logs.app (fun m -> m "Shutting down server");
       Session.save_local_skipped_fingerprints server.session;
