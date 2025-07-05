@@ -6,7 +6,6 @@
     commons
 
     osemgrep_cli
-    osemgrep_cli_login
   )
  (preprocess
    (pps

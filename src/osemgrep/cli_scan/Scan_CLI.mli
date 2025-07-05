@@ -29,7 +29,6 @@ type conf = {
   incremental_output : bool;
   incremental_output_postprocess : bool;
   (* Networking options *)
-  metrics : Metrics_.config;
   version_check : bool;
   (* Debugging/logging/profiling options *)
   common : CLI_common.conf;
@@ -108,7 +107,6 @@ val o_max_lines_per_finding : int Cmdliner.Term.t
 val o_max_log_list_entries : int Cmdliner.Term.t
 val o_max_memory_mb : int Cmdliner.Term.t
 val o_max_target_bytes : int Cmdliner.Term.t
-val o_metrics : Metrics_.config Cmdliner.Term.t
 val o_num_jobs : int Cmdliner.Term.t
 val o_no_secrets_validation : bool Cmdliner.Term.t
 val o_nosem : bool Cmdliner.Term.t

@@ -206,7 +206,8 @@ let output f (matches : Out.cli_match list) : JSON.yojson =
         ("vendor", `Assoc [ ("name", `String "Opengrep") ]);
       ]
   in
-  let start_time = Metrics_.g.payload.started_at in
+  (* FIXME: Add proper start time. *)
+  let start_time = Timedesc.Timestamp.now () in (* Metrics_.g.payload.started_at in *)
   let end_time = Timedesc.Timestamp.now () in
   (* bugfix: gitlab does not use the RFC 3339 date format but instead a
    * yyyy-mm-ddThh:mm:ss custom format.

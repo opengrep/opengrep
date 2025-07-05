@@ -74,39 +74,6 @@ let hook_semgrep_interactive =
 *)
 
 (*****************************************************************************)
-(* Metrics start and end *)
-(*****************************************************************************)
-
-let metrics_init (caps : < Cap.random >) : unit =
-  let settings = Semgrep_settings.load () in
-  let api_token = settings.Semgrep_settings.api_token in
-  let anonymous_user_id = settings.Semgrep_settings.anonymous_user_id in
-  Metrics_.init caps ~anonymous_user_id ~ci:!Env.v.is_ci;
-  api_token
-  |> Option.iter (fun (_token : Auth.token) ->
-         Metrics_.g.payload.environment.isAuthenticated <- true);
-  !Env.v.user_agent_append |> Option.iter Metrics_.add_user_agent_tag;
-  Metrics_.g.payload.environment.integrationName <- !Env.v.integration_name;
-  ()
-
-(* For debugging customer issues, we append the CLI flags for each subcommand,
-   handling the logic in this base CLI entry point pre- subcommand dispatch.
-*)
-let log_cli_feature (flag : string) : unit =
-  Metrics_.add_feature "cli-flag"
-    (flag (* TODO: don't use Base unless there's some agreement about it. *)
-    |> Base.String.chop_prefix_if_exists ~prefix:"-"
-    |> Base.String.chop_prefix_if_exists ~prefix:"-")
-
-(* CLI subcmds need to call Metrics_.configure conf.metrics
-   otherwise metrics will not be send as Metrics.g.config default
-   to Off
-*)
-let send_metrics (caps : < Cap.network ; .. >) : unit =
-  if Metrics_.is_enabled () then Semgrep_Metrics.send caps
-  else Logs.info (fun m -> m "Metrics not enabled, skip sending metrics")
-
-(*****************************************************************************)
 (* Subcommands dispatch *)
 (*****************************************************************************)
 
@@ -116,12 +83,7 @@ let send_metrics (caps : < Cap.network ; .. >) : unit =
  *)
 let known_subcommands =
   [
-    "ci";
-    (* "install-semgrep-pro";
-       "login";
-       "logout"; *)
     "lsp";
-    "publish";
     "scan";
     (* osemgrep-only *)
     "install-ci";
@@ -170,16 +132,6 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
         subcmd_argv0 :: subcmd_args |> Array.of_list
       in
       let experimental = Array.mem "--experimental" argv in
-      (* basic metrics on what was the command *)
-      Metrics_.add_feature "subcommand" subcmd;
-      (* osemgrep-only: *)
-      Metrics_.add_user_agent_tag "osemgrep";
-      Metrics_.add_user_agent_tag (Printf.sprintf "command/%s" subcmd);
-      subcmd_argv |> Array.to_list
-      |> List_.exclude (fun x ->
-             (* TODO: don't use JaneStreet Base until we agree to do so *)
-             not (Base.String.is_prefix ~prefix:"-" x))
-      |> List.iter log_cli_feature;
       (* coupling: with known_subcommands if you add an entry below.
        * coupling: with Help.ml if you add an entry below.
        *)
@@ -189,12 +141,8 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
          * we progress in osemgrep port (or use Pysemgrep.Fallback further
          * down when we know we don't handle certain kind of arguments).
          *)
-        | "publish" when experimental ->
-            Publish_subcommand.main caps subcmd_argv
-        (* | "login" when experimental -> Login_subcommand.main caps subcmd_argv *)
         (* partial support, still use Pysemgrep.Fallback in it *)
         | "scan" -> Scan_subcommand.main caps subcmd_argv
-        | "ci" -> Ci_subcommand.main caps subcmd_argv
         (* osemgrep-only: and by default! no need for experimental! *)
         | "lsp" -> Lsp_subcommand.main caps subcmd_argv
         (* | "logout" ->
@@ -319,16 +267,11 @@ let main (caps : caps) (argv : string array) : Exit_code.t =
   Data_init.init ();
   Http_helpers_.set_client_ref (module Cohttp_lwt_unix.Client);
 
-  (* TODO: Remove. *)
-  metrics_init (caps :> < Cap.random >);
-
   (* TOPORT: maybe_set_git_safe_directories() *)
   (* TOADAPT? adapt more of Common.boilerplate? *)
 
   (* !The main call! dispatching a subcommand *)
   let exit_code = safe_run ~debug (fun () -> dispatch_subcommand caps argv) in
 
-  Metrics_.add_exit_code exit_code;
-  send_metrics (caps :> < Cap.network >);
   before_exit ~profile (caps :> < Cap.tmp >);
   exit_code

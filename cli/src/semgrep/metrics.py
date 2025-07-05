@@ -543,7 +543,7 @@ class Metrics:
         state = get_state()
         self.payload.anonymous_user_id = state.settings.get("anonymous_user_id")
 
-        self._post_metrics(
-            user_agent=str(state.app_session.user_agent),
-            local_scan_id=str(state.local_scan_id),
-        )
+        # self._post_metrics(
+        #     user_agent=str(state.app_session.user_agent),
+        #     local_scan_id=str(state.local_scan_id),
+        # )

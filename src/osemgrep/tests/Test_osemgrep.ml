@@ -15,7 +15,6 @@
 
 open Printf
 open Fpath_.Operators
-module TL = Test_login_subcommand
 
 (*****************************************************************************)
 (* Prelude *)
@@ -51,55 +50,6 @@ let test_scan_config_registry_no_token (caps : CLI.caps) =
               |]
           in
           Exit_code.Check.ok exit_code))
-
-(* Remaining part of test_login.py (see also Test_login_subcommand.ml) *)
-let test_scan_config_registry_with_invalid_token caps : Testo.t =
-  Testo.create ~checked_output:(Testo.stderr ()) __FUNCTION__
-    ~normalize:[ Testo.mask_not_substrings [ "Saved access token" ] ]
-    (Testutil_login.with_login_test_env (fun () ->
-         Semgrep_envvars.with_envvar "SEMGREP_APP_TOKEN" TL.fake_token
-           (fun () ->
-             TL.with_fake_deployment_response TL.fake_deployment (fun () ->
-                 (* log back in *)
-                 (* we're not calling CLI.main() because it would also do
-                  * some metrics call, so simpler to call directly
-                  * Login_subcommand.
-                  *)
-                 let exit_code =
-                   Login_subcommand.main
-                     (caps :> Login_subcommand.caps)
-                     [| "semgrep-login" |]
-                 in
-                 Exit_code.Check.ok exit_code));
-
-         (* Even if we are allowed to login with a fake token (because
-          * of the with_fake_deployment_response), outside of it
-          * we can't use the registry with an invalid token.
-          *
-          * alt: call CLI.main, but that would require to intercept
-          * the regular output of the program as CLI.main intercept
-          * exn in CLI.safe_run and transform them in output.
-          * TODO: test_login.py assert exit_code == 7
-          *)
-         try
-           Scan_subcommand.main
-             (caps :> Scan_subcommand.caps)
-             [|
-               "opengrep-scan";
-               "--experimental";
-               "--config";
-               "r/python.lang.correctness.useless-eqeq.useless-eqeq";
-             |]
-           |> ignore;
-           failwith "scan should fail when the token is invalid"
-         with
-         | Error.Semgrep_error (msg, _) ->
-             (* we got the exn as intended, good *)
-             Alcotest.(check string)
-               __LOC__
-               {|Failed to download config from https://semgrep.dev/c/r/python.lang.correctness.useless-eqeq.useless-eqeq, returned code 401: {"error":"Not authorized"}|}
-               msg;
-             ()))
 
 let test_absolute_target_path caps =
   let func () =
@@ -189,7 +139,6 @@ let tests (caps : CLI.caps) =
   Testo.categorize "Osemgrep multi subcommands (e2e)"
     [
       test_scan_config_registry_no_token caps;
-      test_scan_config_registry_with_invalid_token caps;
       test_absolute_target_path scan_caps;
       test_named_pipe scan_caps;
     ]

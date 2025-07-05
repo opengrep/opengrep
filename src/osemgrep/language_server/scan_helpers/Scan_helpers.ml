@@ -182,8 +182,6 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
           m "Semgrep skipped %d rules" (List.length cli_output.skipped_rules));
       Logs.app (fun m -> m "Scanned %d files" (List.length scanned));
       Logs.app (fun m -> m "Found %d matches" (List.length matches));
-      Session.send_metrics session ?core_time:res.core.time ~profiler
-        ~cli_output;
       (matches, scanned)
 
 let run_semgrep_detached ?targets ?rules ?git_ref (session : Session.t) =

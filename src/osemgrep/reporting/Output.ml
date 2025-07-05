@@ -75,10 +75,8 @@ let string_of_severity (severity : Out.match_severity) : string =
 (*****************************************************************************)
 
 (* called also from RPC_return.ml *)
-let format (kind : Output_format.t) (ctx : Out.format_context)
+let format (kind : Output_format.t)
     (cli_output : Out.cli_output) : string list =
-  (* TODO: use is_logged_in for the logged_in gated export fields *)
-  ignore ctx;
   match kind with
   | Text
   | Sarif
@@ -162,18 +160,18 @@ let format (kind : Output_format.t) (ctx : Out.format_context)
                  String.concat ":" parts)
 
 let dispatch_output_format (caps : < Cap.stdout >) (conf : conf)
-    (ctx : Out.format_context) (cli_output : Out.cli_output)
+    (cli_output : Out.cli_output)
     (hrules : Rule.hrules) : unit =
   let print = CapConsole.print caps#stdout in
   match conf.output_format with
   (* matches have already been displayed in a file_match_results_hook *)
   | Incremental -> ()
-  | Vim -> format Vim ctx cli_output |> List.iter print
-  | Emacs -> format Emacs ctx cli_output |> List.iter print
-  | Junit_xml -> format Junit_xml ctx cli_output |> List.iter print
-  | Gitlab_sast -> format Gitlab_sast ctx cli_output |> List.iter print
-  | Gitlab_secrets -> format Gitlab_secrets ctx cli_output |> List.iter print
-  | Json -> format Json ctx cli_output |> List.iter print
+  | Vim -> format Vim cli_output |> List.iter print
+  | Emacs -> format Emacs cli_output |> List.iter print
+  | Junit_xml -> format Junit_xml cli_output |> List.iter print
+  | Gitlab_sast -> format Gitlab_sast cli_output |> List.iter print
+  | Gitlab_secrets -> format Gitlab_secrets cli_output |> List.iter print
+  | Json -> format Json cli_output |> List.iter print
   | Text ->
       (* TODO: we should switch to Fmt_.with_buffer_to_string +
        * some CapConsole.print_no_nl, but then is_atty fail on
@@ -184,15 +182,14 @@ let dispatch_output_format (caps : < Cap.stdout >) (conf : conf)
           (* nosemgrep: forbid-console *)
         ~color_output:conf.force_color Format.std_formatter cli_output
   | Sarif ->
-      let engine_label, is_pro =
+      let engine_label =
         match cli_output.engine_requested with
         | Some `OSS
-        | None ->
-            ("OSS", false)
-        | Some `PRO -> ("PRO", true)
+        | None -> "OSS"
+        (* FIXME: Remove. *)
+        | Some `PRO -> "PRO"
       in
-      let hide_nudge =
-        ctx.is_logged_in || is_pro || not ctx.is_using_registry
+      let hide_nudge = true
       in
       let sarif_json =
         Sarif_output.sarif_output hrules cli_output hide_nudge engine_label
@@ -229,7 +226,7 @@ let preprocess_result ~fixed_lines (res : Core_runner.result) : Out.cli_output =
  * output.output() all at once.
  *)
 let output_result (caps : < Cap.stdout >) (conf : conf)
-    (runtime_params : Out.format_context) (profiler : Profiler.t)
+    (profiler : Profiler.t)
     (res : Core_runner.result) : Out.cli_output =
   (* In theory, we should build the JSON CLI output only for the
    * Json conf.output_format, but cli_output contains lots of data-structures
@@ -250,7 +247,7 @@ let output_result (caps : < Cap.stdout >) (conf : conf)
     else cli_output
   in
   (* the actual output on stdout *)
-  dispatch_output_format caps conf runtime_params cli_output res.hrules;
+  dispatch_output_format caps conf cli_output res.hrules;
   (* we return cli_output as the caller might use it *)
   cli_output
 [@@profiling]
