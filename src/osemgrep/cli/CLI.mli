@@ -24,7 +24,7 @@ type caps =
    Exceptions are caught and turned into an appropriate exit code
    (unless you used --debug).
 *)
-val main : caps -> string array -> Exit_code.t
+val main : caps -> ?allow_fallback:bool -> string array -> Exit_code.t
 
 (* set in semgrep-pro *)
 val hook_semgrep_interactive : (string array -> Exit_code.t) ref
