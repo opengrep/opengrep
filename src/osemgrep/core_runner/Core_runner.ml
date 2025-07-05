@@ -160,11 +160,7 @@ let report_status_and_add_metrics_languages ~respect_gitignore
              perhaps set respect_git_ignore to false otherwise *)
           Status_report.pp_status ~num_rules:(List.length rules)
             ~num_targets:(List.length targets) ~respect_gitignore lang_jobs ppf)
-        ());
-  lang_jobs
-  |> List.iter (fun { Lang_job.xlang; _ } ->
-         Metrics_.add_feature "language" (Xlang.to_string xlang));
-  ()
+        ())
 
 (*************************************************************************)
 (* Extract mode *)
@@ -493,13 +489,6 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
         rules_with_targets;
       }
     in
-
-    let scanned =
-      res.scanned |> List_.map Target.internal_path |> Set_.of_list
-    in
-
-    Metrics_.add_max_memory_bytes res.profiling;
-    Metrics_.add_targets_stats scanned res.profiling;
     Ok res
   in
   { run }

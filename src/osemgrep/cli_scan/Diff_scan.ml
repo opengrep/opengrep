@@ -207,7 +207,6 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
     Core_result.result_or_exn =
   Logs.info (fun m ->
       m "running differential scan on base commit %s" baseline_commit);
-  Metrics_.g.payload.environment.isDiffScan <- true;
   let commit = Git_wrapper.merge_base baseline_commit in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
   let diff_depth = Differential_scan_config.default_depth in
@@ -245,17 +244,7 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
                  | None -> 0
                in
                Hashtbl.replace count_by_lang lang (count + 1)
-           | _ -> ());
-      Metrics_.g.payload.value.proFeatures <-
-        Some
-          {
-            diffDepth = Some diff_depth;
-            numInterfileDiffScanned =
-              Some
-                (count_by_lang |> Hashtbl.to_seq
-                |> Seq.map (fun (lang, count) -> (Lang.to_string lang, count))
-                |> List.of_seq);
-          }
+           | _ -> ())
   | _ -> ());
   scan_baseline_and_remove_duplicates caps conf profiler head_scan_result rules
     commit status diff_scan_func
