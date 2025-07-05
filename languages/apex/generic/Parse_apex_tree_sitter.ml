@@ -7349,6 +7349,8 @@ let parse file =
     (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       match parser_output env cst with
+      | G.S s -> [s]
+      | G.Ss ss -> ss
       | G.Pr xs -> xs
       | _ -> failwith "not a program")
 
