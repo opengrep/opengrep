@@ -96,7 +96,7 @@ let metarules_pack = "p/semgrep-rule-lints"
 (*****************************************************************************)
 (* Targeting (finding the semgrep yaml files to validate) *)
 (*****************************************************************************)
-let find_targets_rules (caps : < caps ; .. >) ~(strict : bool) ~token_opt
+let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
     (rules_source : Rules_source.t) : Fpath.t list * int * int * int =
   (* Checking (1) and (2). Parsing the rules is already a form of validation.
    * Before running metachecks on those rules, we make sure we can parse them.
@@ -110,7 +110,7 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool) ~token_opt
    * to be backward compatible.
    *)
   let rules_and_origin, fatal_errors =
-    Rule_fetching.rules_from_rules_source ~token_opt ~rewrite_rule_ids:true
+    Rule_fetching.rules_from_rules_source ~rewrite_rule_ids:true
       ~strict
       (caps :> < Cap.network ; Cap.tmp >)
       rules_source
@@ -166,7 +166,7 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool) ~token_opt
 (*****************************************************************************)
 
 (* Checking (3) *)
-let check_targets_rules (caps : < caps ; .. >) ~token_opt targets_rules
+let check_targets_rules (caps : < caps ; .. >) targets_rules
     core_runner_conf =
   let in_docker = !Semgrep_envvars.v.in_docker in
   let (config : Rules_config.t) =
@@ -174,7 +174,7 @@ let check_targets_rules (caps : < caps ; .. >) ~token_opt targets_rules
   in
   (* There should not be any errors, because we got these rules online. *)
   let metarules_and_origin, _errors =
-    Rule_fetching.rules_from_dashdash_config ~token_opt
+    Rule_fetching.rules_from_dashdash_config
       ~rewrite_rule_ids:true (* default *)
       (caps :> < Cap.network ; Cap.tmp >)
       config
@@ -270,21 +270,15 @@ let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
   Logs.debug (fun m -> m "conf = %s" (Validate_CLI.show_conf conf));
   (* if conf.pro then !hook_pro_init (); *)
 
-  let settings = Semgrep_settings.load () in
-  (* needed for fetching the metachecking rules ? those are not public?
-   * TODO: remove the need for a token
-   *)
-  let token_opt = settings.api_token in
-
   (* step1: getting the targets (which contain rules) *)
   let targets_rules, num_rules, num_fatal_errors, num_invalid_rules =
-    find_targets_rules caps ~strict:conf.core_runner_conf.strict ~token_opt
+    find_targets_rules caps ~strict:conf.core_runner_conf.strict
       conf.rules_source
   in
 
   (* step2: checking the rules *)
   let metacheck_errors =
-    check_targets_rules caps ~token_opt targets_rules conf.core_runner_conf
+    check_targets_rules caps targets_rules conf.core_runner_conf
   in
 
   (* step3: summarizing findings (errors) *)
