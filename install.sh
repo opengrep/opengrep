@@ -112,7 +112,7 @@ main() {
 
     # check and set "os_arch"
     if [ "$OS" = "Linux" ]; then
-        if ldd --version 2> /dev/null | grep -qi musl || [ -f /lib/ld-musl-*.so.* ]; then
+        if ldd /bin/sh 2>&1 | grep -qi musl; then
             if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
                 DIST="opengrep_musllinux_x86"
             elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
