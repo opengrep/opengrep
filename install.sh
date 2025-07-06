@@ -151,7 +151,7 @@ main() {
         fi
     else
         echo
-        echo "*** Installing ${DIST} ${VERSION} for ${OS} (${ARCH}) ***"
+        echo "*** Installing Opengrep ${VERSION} for ${OS} (${ARCH}) ***"
 
         # cleanup on error
         trap '[ "$?" -eq 0 ] || cleanup_on_failure $INST' EXIT
