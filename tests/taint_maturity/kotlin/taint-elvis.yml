@@ -1,0 +1,12 @@
+rules:
+- id: taint-elvis
+  mode: taint
+  pattern-sources:
+    - pattern: my_input(...)
+  pattern-sinks:
+    - pattern: my_sink(...)
+  pattern-sanitizers:
+    - pattern: my_sanitizer(...)
+  message: Elvis operator taint analysis test
+  languages: [kotlin]
+  severity: INFO
