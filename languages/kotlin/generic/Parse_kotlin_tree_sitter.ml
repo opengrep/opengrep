@@ -542,11 +542,37 @@ and binary_expression (env : env) (x : CST.binary_expression) =
       let v2_id = N (H2.name_of_id v2) |> G.e in
       let v3 = expression env v3 in
       Call (v2_id, fb [ Arg v1; Arg v3 ]) |> G.e
-  | `Elvis_exp (v1, v2, v3) ->
-      let v1 = expression env v1 in
-      let v2, tok = (Elvis, token env v2) (* "?:" *) in
-      let v3 = expression env v3 in
-      G.opcall (v2, tok) [ v1; v3 ]
+| `Elvis_exp (v1, v2, v3) ->
+      (*
+       * "Desugar" the Elvis operator directly into a standard Conditional
+       * expression at the parser level.
+      *)
+      let lhs_expr = expression env v1 in
+      let rhs_expr = expression env v3 in
+      
+      (* Create a generic AST node for 'null' to use in the comparison *)
+      let null_tok = G.fake "null" in
+      let null_literal = G.L (G.Null null_tok) |> G.e in
+      
+      (* Reuse the '?:' token for the '!=' operator's location info *)
+      let neq_tok = token env v2 in
+
+      (* Construct the arguments tuple for the call *)
+      let args_list = [ G.Arg lhs_expr; G.Arg null_literal ] in
+      let fake_lparen = G.fake "(" in
+      let fake_rparen = G.fake ")" in
+      let arguments = (fake_lparen, args_list, fake_rparen) in
+
+      (* 1. Create the condition: lhs != null *)
+      let condition_expr =
+        G.Call
+          ( G.IdSpecial (G.Op G.NotEq, neq_tok) |> G.e,
+            arguments
+          ) |> G.e
+      in
+
+      (* 2. Create the final generic conditional expression node *)
+      G.Conditional (condition_expr, lhs_expr, rhs_expr) |> G.e
   | `Check_exp (v1, v2) ->
       let v1 = expression env v1 in
       let v2 =
@@ -1424,10 +1450,15 @@ and lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) =
         (* use this to delimit the Block below. *)
         let v2 = token env v2 (* "->" *) in
         (v1, v2)
-    (* note that even without parameters, 'it' can be used to
-     * represent an anonymous parameter.
-     *)
-    | None -> ([], v1)
+    | None ->
+        (*
+         * If a lambda has no explicit parameters, Kotlin provides an implicit 'it'.
+         * We create a synthetic parameter in the AST to represent it, which allows
+         * the dataflow engine to track taint into the lambda body.
+        *)
+        let fake_it_tok = Tok.fake_tok v1 "it" in
+        let it_param = G.Param (G.param_of_id ("it", fake_it_tok)) in
+        ([it_param], v1)
   in
   let v3 =
     match v3 with
