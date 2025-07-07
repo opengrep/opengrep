@@ -1,0 +1,12 @@
+rules:
+- id: taint-scope-fn
+  mode: taint
+  pattern-sources:
+    - pattern: my_source(...)
+  pattern-sinks:
+    - pattern: my_sink(...)
+  pattern-sanitizers:
+    - pattern: my_sanitizer(...)
+  message: Scope functions taint analysis test
+  languages: [kotlin]
+  severity: INFO
