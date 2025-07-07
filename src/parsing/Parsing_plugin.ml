@@ -129,11 +129,6 @@ let make ?(optional = false) lang =
 (* Plugins *)
 (*****************************************************************************)
 
-module Apex = struct
-  let is_optional, register_parsers, is_available, parse_pattern, parse_target =
-    make Lang.Apex
-end
-
 (* Parsing Csharp can be done with the default open-source parser which
    is not as good as this one. *)
 module Csharp = struct
