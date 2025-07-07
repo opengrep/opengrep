@@ -1450,6 +1450,9 @@ and lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) =
         (* use this to delimit the Block below. *)
         let v2 = token env v2 (* "->" *) in
         (v1, v2)
+    (* note that even without parameters, 'it' can be used to
+     * represent an anonymous parameter.
+     *)
     | None -> ([], v1)
   in
   let v3 =
