@@ -1693,6 +1693,13 @@ let map_literal (env : env) (x : CST.literal) =
     )
   )
 
+(* AUX *)
+let strip_quotes s =
+  let len = String.length s in
+  if len >= 2 && s.[0] = '\'' && s.[len - 1] = '\''
+  then String.sub s 1 (len - 2)
+  else s
+
 (* NEW *)
 let literal (env : env) (x : CST.literal) : literal =
   match x with
@@ -1704,7 +1711,8 @@ let literal (env : env) (x : CST.literal) : literal =
   | `Bool tok ->
       boolean env tok
   | `Str_lit tok ->
-      G.String (G.fake "'", str env tok, G.fake "'") (* FIXME: Isn't string delimiter captured by the parser? *)
+      let s, t = str env tok in
+      G.String (G.fake "'", (strip_quotes s, t), G.fake "'") (* FIXME: Isn't string delimiter captured by the parser? *)
   | `Null_lit x ->
       null_literal env x
 
