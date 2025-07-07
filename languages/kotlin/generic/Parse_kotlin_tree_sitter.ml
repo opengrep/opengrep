@@ -1450,15 +1450,7 @@ and lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) =
         (* use this to delimit the Block below. *)
         let v2 = token env v2 (* "->" *) in
         (v1, v2)
-    | None ->
-        (*
-         * If a lambda has no explicit parameters, Kotlin provides an implicit 'it'.
-         * We create a synthetic parameter in the AST to represent it, which allows
-         * the dataflow engine to track taint into the lambda body.
-        *)
-        let fake_it_tok = Tok.fake_tok v1 "it" in
-        let it_param = G.Param (G.param_of_id ("it", fake_it_tok)) in
-        ([it_param], v1)
+    | None -> ([], v1)
   in
   let v3 =
     match v3 with
