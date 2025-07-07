@@ -88,56 +88,14 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
           let pro_intrafile =
             session.user_settings.pro_intrafile
           in
-          match !Core_runner.hook_mk_pro_core_run_for_osemgrep with
-          | Some pro_scan_func when pro_intrafile ->
-              (* THINK: files or folders?
-                 Note that converting many target files to scanning roots
-                 is expensive due to having to find the project root
-                 for each of them. If they're all regular files, we might
-                 want to create a way to pass them directly as "target files"
-                 rather than "scanning roots".
-              *)
-              let roots = List_.map Scanning_root.of_fpath targets in
-              (* TODO: maybe be smarter about this?*)
-              (* if we've already called this function then we don't want extra *)
-              (* languages as the parsers are already registered. This is a bit *)
-              (* of a hack *)
-              let extra_languages = Parsing_plugin.Apex.is_available () in
-              (* For now, we're going to just hard-code it at a whole scan, and
-                 using the intrafile pro engine.
-                 Interfile would likely be too intensive (and require us to
-                 target folders, not the affected files)
-              *)
-              pro_scan_func
-                {
-                  roots;
-                  diff_config = Differential_scan_config.WholeScan;
-                  engine_type =
-                    Engine_type.(
-                      PRO
-                        {
-                          extra_languages;
-                          (* TODO Interfile? *)
-                          analysis = Interprocedural;
-                          (* TODO *)
-                          secrets_config = None;
-                          code_config = Some ();
-                          (* TODO *)
-                          supply_chain_config = None;
-                          path_sensitive = false;
-                        });
-                }
-          | _ ->
-              (* TODO: improve this error message depending on what the
-               * instructions should be *)
-              if pro_intrafile then
-                Logs.warn (fun m ->
-                    m
-                      "Pro intrafile is enabled, but the pro engine is not \
-                       available, as the user is not logged in, or there is no \
-                       pro binary available. Running with the OSS engine \
-                       instead.");
-              Core_runner.mk_core_run_for_osemgrep (Core_scan.scan session.caps)
+            if pro_intrafile then
+              Logs.warn (fun m ->
+                  m
+                    "Pro intrafile is enabled, but the pro engine is not \
+                      available, as the user is not logged in, or there is no \
+                      pro binary available. Running with the OSS engine \
+                      instead.");
+            Core_runner.mk_core_run_for_osemgrep (Core_scan.scan session.caps)
         in
         Logs.debug (fun m ->
             m "Running Semgrep with %d rules" (List.length rules));
