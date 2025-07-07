@@ -854,22 +854,6 @@ let semgrep_rules_repo_tests () : Testo.t list =
                     *)
                     s =~ ".*/unicode/security/bidi.yml"
                     || s =~ ".*/dockerfile/security/dockerd-socket-mount.yaml"
-                    (* Apex requires Pro *)
-                    || s =~ ".*/apex/lang/.*"
-                       (* but the following are generic rules ... *)
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/best-practice/ncino/tests/UseAssertClass.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidNativeDmlInLoops.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidSoqlInLoops.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidSoslInLoops.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidOperationsWithLimitsInLoops.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/security/ncino/dml/ApexCSRFStaticConstructor.yaml"
-                    (* ?? *)
                     || s =~ ".*/yaml/semgrep/consistency/.*" ->
                  Some "XFAIL"
              (* not rule files *)
