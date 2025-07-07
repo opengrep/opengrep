@@ -570,68 +570,25 @@ and expr_aux env ?(void = false) g_expr =
       expr_lazy_op env op tok arg0 args eorig
   (* args_with_pre_stmts *)
   | G.Call ({ e = G.IdSpecial (G.Op op, tok); _ }, args) -> (
-    match op with
-    | G.Elvis when env.lang =*= Lang.Kotlin -> (
-        match Tok.unbracket args with
-        | [ G.Arg lhs_gen; G.Arg rhs_gen ] ->
-            begin
-              (* This translates 'lhs ?: rhs' into the IL equivalent of:
-               *
-               * if (lhs != null) {
-               * result = lhs;
-               * } else {
-               * result = rhs;
-               * }
-               *
-               * This structure allows the dataflow engine to see that 'result'
-               * can be tainted by either 'lhs' or 'rhs'.
-              *)
-              let result_lval = fresh_lval env tok in
-              (* Evaluate the left-hand side and handle any preceding statements *)
-              let ss_for_lhs, lhs_exp = expr_with_pre_stmts env lhs_gen in
-              (* The condition is 'lhs != null' *)
-              let null_literal = mk_e (Literal (G.Null tok)) (related_tok tok) in
-              let condition_exp =
-                mk_e (Operator ((G.NotEq, tok), [ Unnamed lhs_exp; Unnamed null_literal ])) (related_tok tok)
-              in
-              (* The 'then' branch: if lhs is not null, the result is the lhs. *)
-              let then_branch =
-                [ mk_s (Instr (mk_i (Assign (result_lval, lhs_exp)) NoOrig)) ]
-              in
-              (* The 'else' branch: if lhs is null, evaluate rhs and assign it to the result. *)
-              let ss_for_rhs, rhs_exp = expr_with_pre_stmts env rhs_gen in
-              let else_branch =
-                ss_for_rhs @ [ mk_s (Instr (mk_i (Assign (result_lval, rhs_exp)) NoOrig)) ]
-              in
-              (* Add all the generated statements to the environment *)
-              add_stmts env ss_for_lhs;
-              add_stmt env (mk_s (If (tok, condition_exp, then_branch, else_branch)));
-              (* The final value of the expression is the value of the temporary result variable *)
-              mk_e (Fetch result_lval) eorig
-            end
-        | _ ->
-            (* Elvis operator should always have two arguments *)
-            impossible (G.E g_expr))
-    | _ ->
-        let args = arguments env (Tok.unbracket args) in
-        if not void then mk_e (Operator ((op, tok), args)) eorig
-        else
-          (* The operation's result is not being used, so it may have side-effects.
-           * We then assume this is just syntax sugar for a method call. E.g. in
-           * Ruby `s << "hello"` is syntax sugar for `s.<<("hello")` and it mutates
-           * the string `s` appending "hello" to it. *)
-          match args with
-          | [] -> impossible (G.E g_expr)
-          | obj :: args' ->
-              let obj_var, _obj_lval =
-                mk_aux_var env tok (IL_helpers.exp_of_arg obj)
-              in
-              let method_name = fresh_var env tok ~str:(Tok.content_of_tok tok) in
-              let offset = { o = Dot method_name; oorig = NoOrig } in
-              let method_lval = { base = Var obj_var; rev_offset = [ offset ] } in
-              let method_ = { e = Fetch method_lval; eorig = related_tok tok } in
-              add_call env tok eorig ~void (fun res -> Call (res, method_, args'))
-        )
+      let args = arguments env (Tok.unbracket args) in
+      if not void then mk_e (Operator ((op, tok), args)) eorig
+      else
+        (* The operation's result is not being used, so it may have side-effects.
+         * We then assume this is just syntax sugar for a method call. E.g. in
+         * Ruby `s << "hello"` is syntax sugar for `s.<<("hello")` and it mutates
+         * the string `s` appending "hello" to it. *)
+        match args with
+        | [] -> impossible (G.E g_expr)
+        | obj :: args' ->
+            let obj_var, _obj_lval =
+              mk_aux_var env tok (IL_helpers.exp_of_arg obj)
+            in
+            let method_name = fresh_var env tok ~str:(Tok.content_of_tok tok) in
+            let offset = { o = Dot method_name; oorig = NoOrig } in
+            let method_lval = { base = Var obj_var; rev_offset = [ offset ] } in
+            let method_ = { e = Fetch method_lval; eorig = related_tok tok } in
+            add_call env tok eorig ~void (fun res -> Call (res, method_, args'))
+      )
   | G.Call
       ( ({ e = G.IdSpecial ((G.This | G.Super | G.Self | G.Parent), tok); _ } as
          e),
