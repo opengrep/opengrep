@@ -852,10 +852,12 @@ let semgrep_rules_repo_tests () : Testo.t list =
                        the file to decide which language to use instead of what
                        is in the rule
                     *)
-                    s =~ ".*/unicode/security/bidi.yml"
+                       s =~ ".*/unicode/security/bidi.yml"
                     || s =~ ".*/dockerfile/security/dockerd-socket-mount.yaml"
                     || s =~ ".*/yaml/semgrep/consistency/.*" ->
                  Some "XFAIL"
+             (* FIXME: the following test seems to have an error in the pattern (has $M(){} should have $T $M(){}) *)
+             | s when s =~ ".*/apex/lang/security/ncino/injection/ApexSOQLInjectionUnescapedParam.yaml" -> None
              (* not rule files *)
              | s when s =~ ".*.test.yml" -> None
              (* not languages tests *)
