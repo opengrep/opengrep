@@ -74,9 +74,13 @@ let empty_env (lang : Lang.t) : env =
 
 exception Fixme of stmts * fixme_kind * G.any
 
-let sgrep_construct stmts any_generic = raise (Fixme (stmts, Sgrep_construct, any_generic))
+let sgrep_construct stmts any_generic =
+  raise (Fixme (stmts, Sgrep_construct, any_generic))
+
 let todo stmts any_generic = raise (Fixme (stmts, ToDo, any_generic))
-let impossible stmts any_generic = raise (Fixme (stmts, Impossible, any_generic))
+
+let impossible stmts any_generic =
+  raise (Fixme (stmts, Impossible, any_generic))
 
 let log_fixme kind gany =
   let toks = AST_generic_helpers.ii_of_any gany in
@@ -204,7 +208,7 @@ let pop_stmts (env, stmts) =
 
 let with_pre_stmts (env, stmts) f =
   let (env, stmts1), r = f (env, []) in
-  
+
   ((env, stmts), List.rev stmts1, r)
 
 let ident_of_entity_opt ent =
@@ -226,13 +230,15 @@ let name_of_entity ent =
       Some name
   | _____else_____ -> None
 
-let composite_of_container ~g_expr : G.container_operator -> IL.composite_kind =
-  function
+let composite_of_container ~g_expr :
+    G.container_operator -> stmts -> IL.composite_kind =
+ fun cont stmts ->
+  match cont with
   | Array -> CArray
   | List -> CList
   | Tuple -> CTuple
   | Set -> CSet
-  | Dict -> impossible  [] (E g_expr)
+  | Dict -> impossible stmts (E g_expr)
 
 let mk_unnamed_args (exps : IL.exp list) = List_.map (fun x -> Unnamed x) exps
 
@@ -388,7 +394,8 @@ and pattern_assign_statements (env, stmts) ?(eorig = NoOrig) exp pat :
     let (env, stmts), lval, ss = pattern (env, stmts) pat in
     ((env, stmts), [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ] @ ss)
   with
-  | Fixme ( stmts, kind, any_generic) -> ((env, stmts), fixme_stmt kind any_generic)
+  | Fixme (stmts, kind, any_generic) ->
+      ((env, stmts), fixme_stmt kind any_generic)
 
 (*****************************************************************************)
 (* Exceptions *)
@@ -475,7 +482,8 @@ and assign (env, stmts) ~g_expr lhs tok rhs_exp =
       ( (env, stmts),
         mk_e
           (Composite
-             (composite_of_container ~g_expr ckind, (tok1, tup_elems, tok2)))
+             ( composite_of_container ~g_expr ckind stmts,
+               (tok1, tup_elems, tok2) ))
           (related_exp lhs) )
   | G.Record (tok1, fields, tok2) ->
       assign_to_record (env, stmts) (tok1, fields, tok2) rhs_exp
@@ -687,8 +695,8 @@ and expr_aux (env, stmts) ?(void = false) g_expr =
          * one in the RHS. *)
         | Lang.Ruby -> (
             try lval (env, stmts) obj with
-            | Fixme _ -> ((env, stmts), fresh_lval ~str:"Fixme" (env, stmts) tok)
-            )
+            | Fixme (stmts, _, _) ->
+                ((env, stmts), fresh_lval ~str:"Fixme" (env, stmts) tok))
         | _ -> ((env, stmts), fresh_lval (env, stmts) tok)
       in
       let env, stmts =
@@ -742,7 +750,7 @@ and expr_aux (env, stmts) ?(void = false) g_expr =
         add_call (env, stmts) tok eorig ~void (fun res ->
             CallSpecial (res, special, args))
       with
-      | Fixme ( stmts, kind, any_generic) ->
+      | Fixme (stmts, kind, any_generic) ->
           let fixme = fixme_exp kind any_generic (related_exp g_expr) in
           add_call (env, stmts) tok eorig ~void (fun res ->
               Call (res, fixme, args)))
@@ -1340,7 +1348,7 @@ and xml_expr (env, stmts) ~void eorig xml =
           (Related (G.Xmls xml.G.xml_body)) )
 
 and stmt_expr (env, stmts) ?g_expr st =
-  let todo stmts  =
+  let todo stmts =
     match g_expr with
     | None -> todo stmts (G.E (G.e (G.StmtExpr st)))
     | Some e_gen -> todo stmts (G.E e_gen)
@@ -1437,7 +1445,7 @@ and stmt_expr (env, stmts) ?g_expr st =
        * so that e.g. taint can do its job. *)
       let (env, stmts), new_stmts = stmt (env, stmts) st in
       let env, stmts = add_stmts (env, stmts) new_stmts in
-      (env, stmts), todo stmts
+      ((env, stmts), todo stmts)
 
 (*****************************************************************************)
 (* Exprs and instrs *)
@@ -1466,7 +1474,7 @@ and lval_of_ent (env, stmts) ent =
       | x :: _ -> ((env, stmts), fresh_lval (env, stmts) x))
 
 and expr_with_pre_stmts (env, stmts) ?void e =
-  with_pre_stmts (env, stmts) (fun (env, stmts) -> print_endline "%%%%%%%%expr%%%%%"; expr (env, stmts) ?void e)
+  with_pre_stmts (env, stmts) (fun (env, stmts) -> expr (env, stmts) ?void e)
 
 and stmt_expr_with_pre_stmts (env, stmts) st =
   with_pre_stmts (env, stmts) (fun (env, stmts) -> stmt_expr (env, stmts) st)
@@ -1819,18 +1827,20 @@ and stmt_aux (env, stmts) st =
             in
             ( (env, stmts),
               ss,
-              switch_expr_and_cases_to_exp (env, stmts) tok
+              switch_expr_and_cases_to_exp tok
                 (H.cond_to_expr switch_expr)
                 switch_expr' )
-        | None -> ((env, stmts), [], cases_to_exp (env, stmts) tok)
+        | None -> ((env, stmts), [], cases_to_exp tok)
       in
       let break_label, break_label_s, (switch_env, switch_stmts) =
         mk_switch_break_label (env, stmts) tok
       in
+
       let (env, stmts), jumps, bodies =
         cases_and_bodies_to_stmts (switch_env, switch_stmts) tok break_label
           translate_cases cases_and_bodies
       in
+
       ((env, stmts), ss @ jumps @ bodies @ break_label_s)
   | G.While (tok, e, st) ->
       let cont_label_s, break_label_s, (st_env, st_stmts) =
@@ -1854,7 +1864,8 @@ and stmt_aux (env, stmts) st =
   | G.For (tok, G.ForEach (pat, tok2, e), st) ->
       for_each (env, stmts) tok (pat, tok2, e) st
   | G.For (_, G.MultiForEach [], st) -> stmt (env, stmts) st
-  | G.For (_, G.MultiForEach (FEllipsis _ :: _), _) -> sgrep_construct stmts (G.S st)
+  | G.For (_, G.MultiForEach (FEllipsis _ :: _), _) ->
+      sgrep_construct stmts (G.S st)
   | G.For (tok, G.MultiForEach (FECond (fr, tok2, e) :: for_eachs), st) ->
       let loop = G.For (tok, G.MultiForEach for_eachs, st) |> G.s in
       let st = G.If (tok2, Cond e, loop, None) |> G.s in
@@ -2043,7 +2054,7 @@ and for_each (env, stmts) tok (pat, tok2, e) st =
     @ break_label_s )
 
 (* TODO: Maybe this and the following function could be merged *)
-and switch_expr_and_cases_to_exp (env, stmts) tok switch_expr_orig switch_expr
+and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr (env, stmts)
     cases =
   (* If there is a scrutinee, the cases are expressions we need to check for equality with the scrutinee  *)
   let (env, stmts), ss, es =
@@ -2092,7 +2103,7 @@ and switch_expr_and_cases_to_exp (env, stmts) tok switch_expr_orig switch_expr
       eorig = SameAs switch_expr_orig;
     } )
 
-and cases_to_exp (env, stmts) tok cases =
+and cases_to_exp tok (env, stmts) cases =
   (* If we have no scrutinee, the cases are boolean expressions, so we Or them together *)
   let (env, stmts), ss, es =
     List.fold_left
@@ -2125,6 +2136,7 @@ and cases_and_bodies_to_stmts (env, stmts) tok break_label translate_cases =
   | G.CaseEllipsis tok :: _ -> sgrep_construct stmts (G.Tk tok)
   | [ G.CasesAndBody ([ G.Default dtok ], body) ] ->
       let label = fresh_label ~label:"__switch_default" (env, stmts) tok in
+
       let (env, stmts), new_stmts = stmt (env, stmts) body in
       ( (env, stmts),
         [ mk_s (Goto (dtok, label)) ],
@@ -2135,12 +2147,12 @@ and cases_and_bodies_to_stmts (env, stmts) tok break_label translate_cases =
           xs (* TODO this is not tail recursive *)
       in
       let label = fresh_label ~label:"__switch_case" (env, stmts) tok in
-      let (env, stmts), case_ss, case = translate_cases cases in
+      let (env, stmts), case_ss, case = translate_cases (env, stmts) cases in
       let jump =
         mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps))
       in
       let (env, stmts), new_stmts = stmt (env, stmts) body in
-      
+
       let body = mk_s (Label label) :: new_stmts in
       let break_if_no_fallthrough =
         if no_switch_fallthrough env.lang then
@@ -2151,7 +2163,8 @@ and cases_and_bodies_to_stmts (env, stmts) tok break_label translate_cases =
 
 and stmt (env, stmts) st : (env * stmts) * stmt list =
   try stmt_aux (env, stmts) st with
-  | Fixme (stmts, kind, any_generic) -> ((env, stmts), fixme_stmt kind any_generic)
+  | Fixme (stmts, kind, any_generic) ->
+      ((env, stmts), fixme_stmt kind any_generic)
 
 and function_body (env, stmts) fbody =
   let body_stmt = H.funcbody_to_stmt fbody in
@@ -2229,7 +2242,7 @@ let stmt lang st =
   let _, stmts = stmt (env, stmts) st in
   stmts
 
-let expr1 lang e =
+let expr lang e =
   let env, stmts = (empty_env lang, []) in
   let _, e = expr (env, stmts) e in
   e
