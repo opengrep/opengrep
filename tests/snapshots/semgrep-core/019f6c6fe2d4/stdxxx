@@ -20,20 +20,14 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [32m✔[39m [1mOpengrep OSS[0m
   [32m✔[39m Basic security coverage for first-party code vulnerabilities.
 
-METRICS: Using configs from the Registry (like --config=p/ci) reports pseudonymous rule metrics to semgrep.dev.
-To disable Registry rule metrics, use "--metrics=off".
-Using configs only from local files (like --config=xyz.yml) does not enable metrics.
-
-More information: https://semgrep.dev/docs/metrics
-
 [1m  Loading rules from local config...[0m
 
 
 ┌─────────────┐
 │ Scan Status │
 └─────────────┘
-  Scanning 3 files tracked by git with 1 Code rule:
-  Scanning 3 files.
+  Scanning 2 files tracked by git with 1 Code rule:
+  Scanning 2 files.
 {"check_id":"eqeq-bad","path":"stupid.py","start":{"line":7,"col":12,"offset":82},"end":{"line":7,"col":26,"offset":96},"extra":{"metavars":{"$X":{"start":{"line":7,"col":12,"offset":82},"end":{"line":7,"col":17,"offset":87},"abstract_content":"a+b"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"cfc8e5ceba21000327d781a28bf2a412c742bed8ec9a31ece927343d6535aa6ca6e2794961e84804f828e8442447c4c3690def9f507f9126a6168d9d5e1e8bb2","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}
 
 

@@ -27,8 +27,6 @@ open Fpath_.Operators
 (* Constants *)
 (*****************************************************************************)
 
-let settings_filename = "settings.yml"
-
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
@@ -83,30 +81,23 @@ let env_truthy var =
  *)
 type t = {
   semgrep_url : Uri.t;
-  (* fail_open_url : Uri.t; *)
-  metrics_url : Uri.t;
-  app_token : Auth.token option;
-  integration_name : string option;
   version_check_url : Uri.t;
   version_check_timeout : int;
   version_check_cache_path : Fpath.t;
   git_command_timeout : int;
   src_directory : Fpath.t;
-  user_agent_append : string option;
   user_home_dir : Fpath.t;
   user_dot_semgrep_dir : Fpath.t;
   user_log_file : Fpath.t;
-  user_settings_file : Fpath.t;
   no_color : bool;
   is_ci : bool;
   in_docker : bool;
   in_gh_action : bool;
-  sms_scan_id : string option;
   (* deprecated *)
-  in_agent : bool;
   min_fetch_depth : int;
   (* TODO(reynir): is this deprecated?! *)
   mock_using_registry : bool;
+  in_test: bool;
 }
 
 (* What about temp? Well we use ocaml stdlib definition of a temp directory.
@@ -140,12 +131,7 @@ let of_current_sys_env () : t =
     (* fail_open_url =
          env_or Uri.of_string "SEMGREP_FAIL_OPEN_URL"
            (Uri.of_string "https://fail-open.prod.semgrep.dev/failure"); *)
-    metrics_url =
-      env_or Uri.of_string "SEMGREP_METRICS_URL" Metrics_.metrics_url;
-    app_token =
-      Option.map Auth.unsafe_token_of_string (env_opt "SEMGREP_APP_TOKEN");
     (* integration_name can take a label like "funkyintegration" for custom partner integrations *)
-    integration_name = env_opt "SEMGREP_INTEGRATION_NAME";
     version_check_url =
       env_or Uri.of_string "OPENGREP_VERSION_CHECK_URL"
         (Uri.of_string "https://opengrep.dev/api/check-version");
@@ -156,23 +142,17 @@ let of_current_sys_env () : t =
         (Fpath.v (Sys.getcwd ()) / ".cache" / "opengrep_version");
     git_command_timeout = env_or int_of_string "SEMGREP_GIT_COMMAND_TIMEOUT" 300;
     src_directory = env_or Fpath.v "SEMGREP_SRC_DIRECTORY" (Fpath.v "/src");
-    (* user_agent_append is a literal string like "(Docker)" for inclusion in our metrics user agent field *)
-    user_agent_append = env_opt "SEMGREP_USER_AGENT_APPEND";
     user_home_dir;
     user_dot_semgrep_dir;
     user_log_file =
-      env_or Fpath.v "SEMGREP_LOG_FILE" (user_dot_semgrep_dir / "semgrep.log");
-    user_settings_file =
-      env_or Fpath.v "SEMGREP_SETTINGS_FILE"
-        (user_dot_semgrep_dir / settings_filename);
+      env_or Fpath.v "OPENGREEP_LOG_FILE" (user_dot_semgrep_dir / "semgrep.log");
     no_color = env_truthy "NO_COLOR" || env_truthy "SEMGREP_COLOR_NO_COLOR";
     is_ci = in_env "CI";
     in_docker = in_env "SEMGREP_IN_DOCKER";
     in_gh_action = in_env "GITHUB_WORKSPACE";
-    sms_scan_id = env_opt "SEMGREP_MANAGED_SCAN_ID";
-    in_agent = in_env "SEMGREP_AGENT";
     min_fetch_depth = env_or int_of_string "SEMGREP_GHA_MIN_FETCH_DEPTH" 0;
     mock_using_registry = in_env "MOCK_USING_REGISTRY";
+    in_test = in_env "OPENGREP_IN_TEST";
   }
 
 (* less: make it Lazy? so at least not run in ocaml init time before main() *)

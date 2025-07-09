@@ -39,9 +39,9 @@ let autofix (dryrun : bool) (edits : Out.edit list) :
     in
     (List.length modified_files, [])
 
-let format (kind : Out.output_format) (ctx : Out.format_context)
+let format (kind : Out.output_format)
     (cli_output : Out.cli_output) : string =
-  let xs = Output.format kind ctx cli_output in
+  let xs = Output.format kind cli_output in
   String.concat "\n" xs
 
 let sarif_format _caps (rules : Out.fpath) hide_nudge

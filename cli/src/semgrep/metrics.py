@@ -528,22 +528,17 @@ class Metrics:
         Will if is_enabled is True
         """
 
-        logger.verbose(
-            f"{'Sending' if self.is_enabled else 'Not sending'} pseudonymous metrics since metrics are configured to {self.metrics_state.name} and registry usage is {self.is_using_registry}"
-        )
+        return
 
-        if not self.is_enabled:
-            return
+        # self.gather_click_params()
+        # self.payload.sent_at = Datetime(datetime.now().astimezone().isoformat())
 
-        self.gather_click_params()
-        self.payload.sent_at = Datetime(datetime.now().astimezone().isoformat())
+        # from semgrep.state import get_state  # avoiding circular import
 
-        from semgrep.state import get_state  # avoiding circular import
+        # state = get_state()
+        # self.payload.anonymous_user_id = state.settings.get("anonymous_user_id")
 
-        state = get_state()
-        self.payload.anonymous_user_id = state.settings.get("anonymous_user_id")
-
-        self._post_metrics(
-            user_agent=str(state.app_session.user_agent),
-            local_scan_id=str(state.local_scan_id),
-        )
+        # self._post_metrics(
+        #     user_agent=str(state.app_session.user_agent),
+        #     local_scan_id=str(state.local_scan_id),
+        # )

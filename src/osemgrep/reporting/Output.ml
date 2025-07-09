@@ -70,15 +70,21 @@ let string_of_severity (severity : Out.match_severity) : string =
   Out.string_of_match_severity severity
   |> JSON.remove_enclosing_quotes_of_jstring
 
+let start_time_from_profiler_opt (profiler : Profiler.t) : Timedesc.Timestamp.t option =
+  match Hashtbl.find_opt profiler "total_time" with
+  | Some (Profiler.Start t) -> Some (Timedesc.Timestamp.of_float_s t)
+  | _ -> None
+
 (*****************************************************************************)
 (* Format dispatcher *)
 (*****************************************************************************)
 
 (* called also from RPC_return.ml *)
-let format (kind : Output_format.t) (ctx : Out.format_context)
+let format
+    (* XXX: This is only passed in --experimental mode. *)
+    ?(profiler : Profiler.t option)
+    (kind : Output_format.t)
     (cli_output : Out.cli_output) : string list =
-  (* TODO: use is_logged_in for the logged_in gated export fields *)
-  ignore ctx;
   match kind with
   | Text
   | Sarif
@@ -89,11 +95,13 @@ let format (kind : Output_format.t) (ctx : Out.format_context)
       [ Out.string_of_cli_output cli_output ]
   | Junit_xml -> [ Junit_xml_output.junit_xml_output cli_output ]
   | Gitlab_sast ->
-      let gitlab_sast_json = Gitlab_output.sast_output cli_output.results in
+      let start_time = Option.map start_time_from_profiler_opt profiler |> Option.join in
+      let gitlab_sast_json = Gitlab_output.sast_output ?start_time cli_output.results in
       [ Yojson.Basic.to_string gitlab_sast_json ]
   | Gitlab_secrets ->
+      let start_time = Option.map start_time_from_profiler_opt profiler |> Option.join in
       let gitlab_secrets_json =
-        Gitlab_output.secrets_output cli_output.results
+        Gitlab_output.secrets_output ?start_time cli_output.results
       in
       [ Yojson.Basic.to_string gitlab_secrets_json ]
   | Vim ->
@@ -161,19 +169,22 @@ let format (kind : Output_format.t) (ctx : Out.format_context)
                  in
                  String.concat ":" parts)
 
-let dispatch_output_format (caps : < Cap.stdout >) (conf : conf)
-    (ctx : Out.format_context) (cli_output : Out.cli_output)
+let dispatch_output_format
+    (caps : < Cap.stdout >)
+    (profiler : Profiler.t)
+    (conf : conf)
+    (cli_output : Out.cli_output)
     (hrules : Rule.hrules) : unit =
   let print = CapConsole.print caps#stdout in
   match conf.output_format with
   (* matches have already been displayed in a file_match_results_hook *)
   | Incremental -> ()
-  | Vim -> format Vim ctx cli_output |> List.iter print
-  | Emacs -> format Emacs ctx cli_output |> List.iter print
-  | Junit_xml -> format Junit_xml ctx cli_output |> List.iter print
-  | Gitlab_sast -> format Gitlab_sast ctx cli_output |> List.iter print
-  | Gitlab_secrets -> format Gitlab_secrets ctx cli_output |> List.iter print
-  | Json -> format Json ctx cli_output |> List.iter print
+  | Vim -> format Vim cli_output |> List.iter print
+  | Emacs -> format Emacs cli_output |> List.iter print
+  | Junit_xml -> format Junit_xml cli_output |> List.iter print
+  | Gitlab_sast -> format ~profiler Gitlab_sast cli_output |> List.iter print
+  | Gitlab_secrets -> format ~profiler Gitlab_secrets cli_output |> List.iter print
+  | Json -> format Json cli_output |> List.iter print
   | Text ->
       (* TODO: we should switch to Fmt_.with_buffer_to_string +
        * some CapConsole.print_no_nl, but then is_atty fail on
@@ -184,15 +195,14 @@ let dispatch_output_format (caps : < Cap.stdout >) (conf : conf)
           (* nosemgrep: forbid-console *)
         ~color_output:conf.force_color Format.std_formatter cli_output
   | Sarif ->
-      let engine_label, is_pro =
+      let engine_label =
         match cli_output.engine_requested with
         | Some `OSS
-        | None ->
-            ("OSS", false)
-        | Some `PRO -> ("PRO", true)
+        | None -> "OSS"
+        (* FIXME: Remove. *)
+        | Some `PRO -> "PRO"
       in
-      let hide_nudge =
-        ctx.is_logged_in || is_pro || not ctx.is_using_registry
+      let hide_nudge = true
       in
       let sarif_json =
         Sarif_output.sarif_output hrules cli_output hide_nudge engine_label
@@ -229,7 +239,7 @@ let preprocess_result ~fixed_lines (res : Core_runner.result) : Out.cli_output =
  * output.output() all at once.
  *)
 let output_result (caps : < Cap.stdout >) (conf : conf)
-    (runtime_params : Out.format_context) (profiler : Profiler.t)
+    (profiler : Profiler.t)
     (res : Core_runner.result) : Out.cli_output =
   (* In theory, we should build the JSON CLI output only for the
    * Json conf.output_format, but cli_output contains lots of data-structures
@@ -250,7 +260,7 @@ let output_result (caps : < Cap.stdout >) (conf : conf)
     else cli_output
   in
   (* the actual output on stdout *)
-  dispatch_output_format caps conf runtime_params cli_output res.hrules;
+  dispatch_output_format caps profiler conf cli_output res.hrules;
   (* we return cli_output as the caller might use it *)
   cli_output
 [@@profiling]

@@ -11,13 +11,6 @@
 type t = {
   (* $SEMGREP_URL | $SEMGREP_APP_URL *)
   semgrep_url : Uri.t;
-  (* $SEMGREP_FAIL_OPEN_URL *)
-  (* fail_open_url : Uri.t; *)
-  (* $SEMGREP_METRICS_URL *)
-  metrics_url : Uri.t;
-  app_token : Auth.token option;
-  (* $SEMGREP_INTEGRATION_NAME *)
-  integration_name : string option;
   (* $SEMGREP_VERSION_CHECK_URL *)
   version_check_url : Uri.t;
   version_check_timeout : int;
@@ -26,16 +19,12 @@ type t = {
   git_command_timeout : int;
   (* "/src" *)
   src_directory : Fpath.t;
-  (* $SEMGREP_USER_AGENT_APPEND -> "(Docker)" *)
-  user_agent_append : string option;
   (* XDG_CONFIG_HOME on *nix, USERPROFILE on windows, or default to HOME or / *)
   user_home_dir : Fpath.t;
   (* user_home_dir/.semgrep *)
   user_dot_semgrep_dir : Fpath.t;
   (* $SEMGREP_LOG_FILE or ~/.semgrep/semgrep.log  *)
   user_log_file : Fpath.t;
-  (* $SEMGREP_SETTINGS_FILE ~/.semgrep/settings.yml *)
-  user_settings_file : Fpath.t;
   (* TODO: Reconcile $SEMGREP_FORCE_COLOR via o_force_color *)
   (* ($NO_COLOR | $SEMGREP_COLOR_NO_COLOR) *)
   no_color : bool;
@@ -43,16 +32,11 @@ type t = {
   in_docker : bool;
   (* $GITHUB_WORKSPACE *)
   in_gh_action : bool;
-  (* Unique identifier for the managed_scan in semgrep-app
-   * $SEMGREP_MANAGED_SCAN_ID
-   *)
-  sms_scan_id : string option;
-  (* $SEMGREP_AGENT (deprecated) *)
-  in_agent : bool;
   (* $SEMGREP_xxx *)
   min_fetch_depth : int;
   (* $MOCK_USING_REGISTRY *)
   mock_using_registry : bool;
+  in_test : bool;
 }
 
 val v : t ref

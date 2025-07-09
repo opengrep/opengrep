@@ -47,14 +47,7 @@ let command_handler (session : Session.t) (arg_list : Yojson.Safe.t list) =
   match of_yojson args with
   | Ok { path; fingerprint } ->
       let session =
-        let session = Session.add_skipped_fingerprint session fingerprint in
-        let metrics =
-          {
-            session.metrics with
-            ignore_count = session.metrics.ignore_count + 1;
-          }
-        in
-        { session with metrics }
+        Session.add_skipped_fingerprint session fingerprint
       in
       (session, Some (Scan_helpers.scan_file session Lsp.Uri.(of_path path)))
   | Error e ->

@@ -53,7 +53,6 @@ type conf = {
   incremental_output : bool;
   incremental_output_postprocess : bool;
   (* Networking options *)
-  metrics : Metrics_.config;
   version_check : bool;
   (* Debugging/logging/profiling options *)
   common : CLI_common.conf;
@@ -106,7 +105,6 @@ let default : conf =
     rewrite_rule_ids = true;
     matching_conf = Match_patterns.default_matching_conf;
     (* will send metrics only if the user uses the registry or the app *)
-    metrics = Metrics_.Off;
     version_check = true;
     (* ugly: should be separate subcommands *)
     version = false;
@@ -126,21 +124,6 @@ let default : conf =
 (* ------------------------------------------------------------------ *)
 (* Networking related options *)
 (* ------------------------------------------------------------------ *)
-
-let o_metrics : Metrics_.config Term.t =
-  let info =
-    Arg.info [ "metrics" ]
-      ~env:(Cmd.Env.info "SEMGREP_SEND_METRICS")
-      ~doc:
-        {|Configures how usage metrics are sent to the Opengrep server. If
-'auto', metrics are sent whenever the --config value pulls from the
-Opengrep server. If 'on', metrics are always sent. If 'off', metrics
-are disabled altogether and not sent. If absent, the
-SEMGREP_SEND_METRICS environment variable value will be used. If no
-environment variable, defaults to 'auto'.
-|}
-  in
-  Arg.value (Arg.opt Metrics_.converter default.metrics info)
 
 (* alt: was in "Performance and memory options" before *)
 let o_version_check : bool Term.t =
@@ -1346,7 +1329,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       _historical_secrets include_ incremental_output incremental_output_postprocess
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_memory_mb max_target_bytes
-      metrics num_jobs no_secrets_validation nosem opengrep_ignore_pattern optimizations oss
+      num_jobs no_secrets_validation nosem opengrep_ignore_pattern optimizations oss
       output output_enclosing_context pattern pro project_root pro_intrafile pro_lang
       pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions secrets semgrepignore_filename severity show_supported_languages
@@ -1504,16 +1487,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
         ~test_ignore_todo ~strict ~pro ~common
     in
-    (* more sanity checks *)
-    if
-      (List.mem "auto" config
-      || rules_source =*= Rules_source.Configs [ "auto" ])
-      && metrics =*= Metrics_.Off
-    then
-      Error.abort
-        "Cannot create auto config when metrics are off. Please allow metrics \
-         or run with a specific config.";
-
     (* warnings.
      * ugly: TODO: remove the Default guard once we get the warning message
      * in osemgrep equal to the one in pysemgrep or when we remove
@@ -1548,7 +1521,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       core_runner_conf;
       error_on_findings = error;
       autofix;
-      metrics;
       version_check;
       output;
       output_conf;
@@ -1585,7 +1557,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_historical_secrets $ o_include $ o_incremental_output $ o_incremental_output_postprocess
     $ o_json $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
-    $ o_max_log_list_entries $ o_max_memory_mb $ o_max_target_bytes $ o_metrics
+    $ o_max_log_list_entries $ o_max_memory_mb $ o_max_target_bytes
     $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations $ o_oss
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root $ o_pro_intrafile
     $ o_pro_languages $ o_pro_path_sensitive $ o_remote $ o_replacement

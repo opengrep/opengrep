@@ -111,14 +111,11 @@ let partition_rules_and_invalid (xs : rules_and_origin list) :
   in
   (rules, invalid_rules)
 
-let fetch_content_from_url_async ?token_opt caps (url : Uri.t) : string Lwt.t =
+let fetch_content_from_url_async caps (url : Uri.t) : string Lwt.t =
   (* TOPORT? _nice_semgrep_url() *)
   Logs.info (fun m -> m "trying to download from %s" (Uri.to_string url));
   let content =
-    let headers =
-      match token_opt with
-      | None -> None
-      | Some token -> Some [ Auth.auth_header_of_token token ]
+    let headers = None
     in
     match%lwt Http_helpers.get ?headers caps#network url with
     | Ok { body = Ok body; _ } -> Lwt.return body
@@ -134,12 +131,11 @@ let fetch_content_from_url_async ?token_opt caps (url : Uri.t) : string Lwt.t =
   Logs.info (fun m -> m "finished downloading from %s" (Uri.to_string url));
   content
 
-let fetch_content_from_registry_url_async ~token_opt caps url =
-  Metrics_.g.is_using_registry <- true;
-  fetch_content_from_url_async ?token_opt caps url
+let fetch_content_from_registry_url_async caps url =
+  fetch_content_from_url_async caps url
 
-let fetch_content_from_registry_url ~token_opt caps url =
-  Lwt_platform.run (fetch_content_from_registry_url_async ~token_opt caps url)
+let fetch_content_from_registry_url caps url =
+  Lwt_platform.run (fetch_content_from_registry_url_async caps url)
 [@@profiling]
 
 (*****************************************************************************)
@@ -200,7 +196,7 @@ let mk_import_callback (caps : < Cap.network ; Cap.tmp ; .. >) base str =
               * parse_rule should take an import_callback as a parameter.
               *)
              let contents =
-               fetch_content_from_registry_url ~token_opt:None caps url
+               fetch_content_from_registry_url caps url
              in
              (* TODO: this assumes every URLs are for yaml, but maybe we could
               * also import URLs to jsonnet files or gist! or look at the
@@ -320,9 +316,9 @@ let load_rules_from_file ~rewrite_rule_ids ~origin caps (file : Fpath.t) :
      *)
     Error.abort (spf "file %s does not exist anymore" !!file)
 
-let load_rules_from_url_async ~origin ?token_opt ?(ext = "yaml") caps url :
+let load_rules_from_url_async ~origin ?(ext = "yaml") caps url :
     (rules_and_origin, Rule_error.t) result Lwt.t =
-  let%lwt contents = fetch_content_from_url_async ?token_opt caps url in
+  let%lwt contents = fetch_content_from_url_async caps url in
   let ext, contents =
     if ext = "policy" then
       (* project rule_config, from config_resolver.py in _make_config_request *)
@@ -341,13 +337,13 @@ let load_rules_from_url_async ~origin ?token_opt ?(ext = "yaml") caps url :
       load_rules_from_file ~rewrite_rule_ids:false ~origin caps file)
   |> Lwt.return
 
-let load_rules_from_url ~origin ?token_opt ?(ext = "yaml") caps url :
+let load_rules_from_url ~origin ?(ext = "yaml") caps url :
     (rules_and_origin, Rule_error.t) result =
-  Lwt_platform.run (load_rules_from_url_async ~origin ?token_opt ~ext caps url)
+  Lwt_platform.run (load_rules_from_url_async ~origin ~ext caps url)
 [@@profiling]
 
 (* TODO: merge caps and token_opt and caps_opt? *)
-let rules_from_dashdash_config_async ~rewrite_rule_ids ~token_opt caps kind :
+let rules_from_dashdash_config_async ~rewrite_rule_ids caps kind :
     (* alt: (rules_and_origin list, Rule.Error.t list) result
        here and below:
        we could do this, but it lacks flexibility compared with this output type
@@ -392,38 +388,23 @@ let rules_from_dashdash_config_async ~rewrite_rule_ids ~token_opt caps kind :
   | C.R rkind ->
       let url = Semgrep_Registry.url_of_registry_config_kind rkind in
       let%lwt contents =
-        fetch_content_from_registry_url_async ~token_opt caps url
+        fetch_content_from_registry_url_async caps url
       in
       CapTmp.with_temp_file caps#tmp ~contents ~suffix:".yaml" (fun file ->
           [ load_rules_from_file ~rewrite_rule_ids ~origin:Registry caps file ])
       |> Result_.partition Fun.id |> Lwt.return
   | C.A Policy ->
-      let token =
-        match token_opt with
-        | None ->
-            Error.abort
-              (spf
-                 "Cannot to download rules from policy without authorization \
-                  token")
-        | Some token -> token
-      in
-      let caps' = Auth.cap_token_and_network token caps in
-      let uri = Semgrep_App.url_for_policy caps' in
-      let caps'' = Auth.cap_token_and_network_and_tmp token caps in
-      let%lwt rules_and_errors =
-        load_rules_from_url_async ?token_opt ~ext:"policy" ~origin:Registry
-          caps'' uri
-      in
-      Metrics_.g.is_using_app <- true;
-      [ rules_and_errors ] |> Result_.partition Fun.id |> Lwt.return
+    Error.abort
+      (spf
+         "Cannot to download rules from policy without authorization \
+          token")
   | C.A SupplyChain ->
-      Metrics_.g.is_using_app <- true;
       failwith "TODO: SupplyChain not handled yet"
 
-let rules_from_dashdash_config ~rewrite_rule_ids ~token_opt caps kind :
+let rules_from_dashdash_config ~rewrite_rule_ids caps kind :
     rules_and_origin list * Rule_error.t list =
   Lwt_platform.run
-    (rules_from_dashdash_config_async ~rewrite_rule_ids ~token_opt caps kind)
+    (rules_from_dashdash_config_async ~rewrite_rule_ids caps kind)
 [@@profiling]
 
 (*****************************************************************************)
@@ -474,7 +455,7 @@ let rules_and_origin_of_rule rule =
   { rules = [ rule ]; invalid_rules = []; origin = CLI_argument }
 
 (* python: mix of resolver_config.get_config() and get_rules() *)
-let rules_from_rules_source_async ~token_opt ~rewrite_rule_ids ~strict:_ caps
+let rules_from_rules_source_async ~rewrite_rule_ids ~strict:_ caps
     (src : Rules_source.t) : (rules_and_origin list * Rule_error.t list) Lwt.t =
   let%lwt rules_and_origins, errors =
     match src with
@@ -484,7 +465,7 @@ let rules_from_rules_source_async ~token_opt ~rewrite_rule_ids ~strict:_ caps
           |> Lwt_list.map_p (fun str ->
                  let in_docker = !Semgrep_envvars.v.in_docker in
                  let config = Rules_config.parse_config_string ~in_docker str in
-                 rules_from_dashdash_config_async ~rewrite_rule_ids ~token_opt
+                 rules_from_dashdash_config_async ~rewrite_rule_ids
                    caps config)
         in
         let rules_and_origins_nested, errors_nested =
@@ -548,8 +529,8 @@ let rules_from_rules_source_async ~token_opt ~rewrite_rule_ids ~strict:_ caps
  * to use the _async variant above mixed with a spinner as in
  * Scan_subcommand.rules_from_rules_source()
  *)
-let rules_from_rules_source ~token_opt ~rewrite_rule_ids ~strict caps
+let rules_from_rules_source ~rewrite_rule_ids ~strict caps
     (src : Rules_source.t) : rules_and_origin list * Rule_error.t list =
   Lwt_platform.run
-    (rules_from_rules_source_async ~token_opt ~rewrite_rule_ids ~strict caps src)
+    (rules_from_rules_source_async ~rewrite_rule_ids ~strict caps src)
 [@@profiling]

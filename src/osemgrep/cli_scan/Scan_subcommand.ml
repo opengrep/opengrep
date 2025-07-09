@@ -50,81 +50,6 @@ type caps =
     Cap.memory_limit >
 
 (*****************************************************************************)
-(* Metrics *)
-(*****************************************************************************)
-
-let add_project_and_config_metrics (conf : Scan_CLI.conf) : unit =
-  (* TODO? why guard this one with is_enabled? because calling
-   * git can take time (and generate errors on stderr)?
-   *)
-  if Metrics_.is_enabled () then
-    Git_wrapper.project_url () |> Option.iter Metrics_.add_project_url_hash;
-  match conf.rules_source with
-  | Configs configs -> Metrics_.add_configs_hash configs
-  | Pattern _ -> ()
-
-(* TODO: Remove, since metrics are no more. *)
-let notify_user_about_metrics_once (settings : Semgrep_settings.t) : unit =
-  if not (settings.has_shown_metrics_notification =*= Some true) then (
-    (* python compatibility: the 22m and 24m are "normal color or intensity",
-       and "underline off". It doesn't change how the text is rendered
-       but allows us to produce the same exact output as pysemgrep.
-       Remove the insertion of pysemgrep_hack once pysemgrep is gone.
-       Tip: to visualize special characters that are otherwise invisible
-       in a diff, use something like this:
-         grep 'METRICS: Using' path/to/output | LESS="X-E"
-    *)
-    let pysemgrep_hack1, pysemgrep_hack2 =
-      (*
-         1: make the line yellow using pysemgrep's exact escape sequence
-         2: ???
-      *)
-      match Console.get_highlight () with
-      | On -> ("\027[33m\027[22m\027[24m", "\027[0m")
-      | Off -> ("", "")
-    in
-    Logs.app (fun m ->
-        m
-          "%sMETRICS: Using configs from the Registry (like --config=p/ci) \
-           reports pseudonymous rule metrics to semgrep.dev."
-          pysemgrep_hack1);
-    Logs.app (fun m ->
-        m
-          "To disable Registry rule metrics, use \"--metrics=off\".@.Using \
-           configs only from local files (like --config=xyz.yml) does not \
-           enable metrics.@.@.More information: \
-           https://semgrep.dev/docs/metrics");
-    Logs.app (fun m -> m "%s" pysemgrep_hack2);
-    Semgrep_settings.save
-      { settings with has_shown_metrics_notification = Some true }
-    |> ignore)
-
-(* This function counts how many matches we got by rules:
-   [(Rule.t, number of matches : int) list].
-   This is use for rule metrics.
-*)
-let rules_and_counted_matches (res : Core_runner.result) : (Rule.t * int) list =
-  let update = function
-    | Some n -> Some (succ n)
-    | None -> Some 1
-  in
-  let fold acc (core_match : Out.core_match) =
-    Map_.update core_match.check_id update acc
-  in
-  let xmap = List.fold_left fold Map_.empty res.core.results in
-  Map_.fold
-    (fun rule_id n acc ->
-      let res =
-        try Hashtbl.find res.hrules rule_id with
-        | Not_found ->
-            failwith
-              (spf "could not find rule_id %s in hash"
-                 (Rule_ID.to_string rule_id))
-      in
-      (res, n) :: acc)
-    xmap []
-
-(*****************************************************************************)
 (* Error management *)
 (*****************************************************************************)
 
@@ -191,15 +116,6 @@ let output_and_exit_from_fatal_core_errors_exn ~exit_code
                   (List_.map Core_error.string_of_error errors)),
              Some (Exit_code.missing_config ~__LOC__) ))
   | _ ->
-      let runtime_params : Out.format_context =
-        {
-          is_logged_in = Semgrep_login.is_logged_in_weak ();
-          is_using_registry =
-            Metrics_.g.is_using_registry
-            || !Semgrep_envvars.v.mock_using_registry;
-          is_ci_invocation = false;
-        }
-      in
       let res =
         Core_runner.mk_result [] (Core_result.mk_result_with_just_errors errors)
       in
@@ -207,7 +123,7 @@ let output_and_exit_from_fatal_core_errors_exn ~exit_code
       Output.output_result
         (caps :> < Cap.stdout >)
         (* TODO: choose output conf? *)
-        conf.output_conf runtime_params profiler res
+        conf.output_conf profiler res
       |> ignore;
       exit_code
 
@@ -313,15 +229,6 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
 (*****************************************************************************)
 (* Printing stuff for CLI UX *)
 (*****************************************************************************)
-
-(* TODO: Update pysemgrep and osemgrep snapshot tests to match new output *)
-let new_cli_ux =
-  match !Env.v.user_agent_append with
-  | Some x -> (
-      match String.lowercase_ascii x with
-      | "pytest" -> false
-      | _ -> true)
-  | _ -> true
 
 let print_logo () : unit =
   let logo =
@@ -445,7 +352,7 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >)
   in
   core_run_for_osemgrep
 
-let rules_from_rules_source ~token_opt ~rewrite_rule_ids ~strict caps
+let rules_from_rules_source ~rewrite_rule_ids ~strict caps
     rules_source =
   (* Create the wait hook for our progress indicator *)
   let spinner_ls =
@@ -455,7 +362,7 @@ let rules_from_rules_source ~token_opt ~rewrite_rule_ids ~strict caps
   in
   (* Fetch the rules *)
   let rules_and_origins =
-    Rule_fetching.rules_from_rules_source_async ~token_opt ~rewrite_rule_ids
+    Rule_fetching.rules_from_rules_source_async ~rewrite_rule_ids
       ~strict
       (caps :> < Cap.network ; Cap.tmp >)
       rules_source
@@ -473,9 +380,7 @@ let adjust_skipped (skipped : Out.skipped_target list)
   let skipped =
     let skipped = skipped @ List_.optlist_to_list res.core.paths.skipped in
     let in_test =
-      !Semgrep_envvars.v.user_agent_append
-      |> Option.map (fun s -> String.equal s "pytest")
-      |> Option.value ~default:false
+      !Semgrep_envvars.v.in_test
     in
     let skipped =
       if in_test then
@@ -531,7 +436,6 @@ let check_targets_with_rules
     (rules_and_origins : Rule_fetching.rules_and_origin list)
     (targets_and_skipped : Fpath.t list * Out.skipped_target list) :
     (Rule.rule list * Core_runner.result * Out.cli_output, Exit_code.t) result =
-  Metrics_.add_engine_type conf.engine_type;
   (* step 1: last touch on rules *)
   let rules, invalid_rules =
     Rule_fetching.partition_rules_and_invalid rules_and_origins
@@ -658,22 +562,10 @@ let check_targets_with_rules
           Logs.info (fun m -> m "reporting matches if any");
           (* outputting the result on stdout! in JSON/Text/... depending on conf *)
           let cli_output =
-            let runtime_params : Out.format_context =
-              {
-                is_logged_in = Semgrep_login.is_logged_in_weak ();
-                is_using_registry =
-                  Metrics_.g.is_using_registry
-                  || !Semgrep_envvars.v.mock_using_registry;
-                (* TODO: add an extra arg to check_targets_with_rules to
-                 * give the context (Scan | CI)
-                 *)
-                is_ci_invocation = false;
-              }
-            in
             Output.output_result
               (caps :> < Cap.stdout >)
               { conf.output_conf with output_format }
-              runtime_params profiler res
+              profiler res
           in
           Profiler.stop_ign profiler ~name:"total_time";
 
@@ -687,14 +579,6 @@ let check_targets_with_rules
                        Rule_ID.to_string (fst rv.id))
             | Error _ -> []
           in
-
-          if Metrics_.is_enabled () then (
-            Metrics_.add_errors cli_output.errors;
-            Metrics_.add_rules_hashes_and_rules_profiling
-              ?profiling:res.core.time rules;
-            Metrics_.add_rules_hashes_and_findings_count
-              (rules_and_counted_matches res);
-            Metrics_.add_profiling profiler);
 
           let skipped_groups = Skipped_report.group_skipped skipped in
           Logs.info (fun m ->
@@ -747,7 +631,7 @@ let check_targets_with_rules
 let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
   (* Print The logo ASAP to minimize time to first meaningful content paint *)
-  if new_cli_ux then print_logo ();
+  print_logo ();
 
   (* imitate pysemgrep for backward compatible profiling metrics ? *)
   let profiler = Profiler.make () in
@@ -756,44 +640,29 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
 
   Core_profiling.profiling := conf.core_runner_conf.time_flag;
 
-  (* Metrics initialization (and finalization) is done in CLI.ml,
-   * but here we "configure" it (enable or disable it) based on CLI flags.
-   *)
-  Metrics_.configure conf.metrics;
-  let settings : Semgrep_settings.t =
-    (fun () ->
-      let settings = Semgrep_settings.load ~maturity:conf.common.maturity () in
-      add_project_and_config_metrics conf;
-      settings)
-    |> Profiler.record profiler ~name:"config_time"
-  in
-
   (* Print feature section for enabled products if pattern mode is not used.
      Ideally, pattern mode should be a different subcommand, but for now we will
      conditionally print the feature section.
   *)
-  (if new_cli_ux then
-     match conf.rules_source with
-     | Pattern _ ->
-         Logs.app (fun m ->
-             m "%s"
-               (Ocolor_format.asprintf {|@{<bold>  %s@}|}
-                  "Code scanning.\n"))
-     | _ ->
-         print_feature_section
-           (* ~includes_token:(settings.api_token <> None) *)
-           (* ~engine:conf.engine_type) *) ());
-
-  notify_user_about_metrics_once settings;
+  (match conf.rules_source with
+  | Pattern _ ->
+      Logs.app (fun m ->
+          m "%s"
+            (Ocolor_format.asprintf {|@{<bold>  %s@}|}
+               "Code scanning.\n"))
+  | _ ->
+      print_feature_section
+        (* ~includes_token:(settings.api_token <> None) *)
+        (* ~engine:conf.engine_type) *) ());
 
   (* step1: getting the rules *)
   Logs.info (fun m -> m "Getting the rules");
   (* Display a (possibly interactive) message to denote rule fetching *)
-  if new_cli_ux then display_rule_source ~rule_source:conf.rules_source;
+  display_rule_source ~rule_source:conf.rules_source;
   let rules_and_origins, fatal_errors =
     rules_from_rules_source
       (caps :> < Cap.network ; Cap.tmp >)
-      ~token_opt:settings.api_token ~rewrite_rule_ids:conf.rewrite_rule_ids
+      ~rewrite_rule_ids:conf.rewrite_rule_ids
       ~strict:conf.core_runner_conf.strict conf.rules_source
   in
 

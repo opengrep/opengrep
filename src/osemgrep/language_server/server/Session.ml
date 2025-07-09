@@ -72,7 +72,6 @@ type t = {
   skipped_local_fingerprints : string list;
   user_settings : User_settings.t;
   search_config : Search_config.t option;
-  metrics : LS_metrics.t;
   is_intellij : bool;
   caps : caps; [@opaque]
 }
@@ -102,7 +101,6 @@ let create caps capabilities =
     skipped_local_fingerprints = [];
     user_settings = User_settings.default;
     search_config = None;
-    metrics = LS_metrics.default;
     is_intellij = false;
     caps;
   }
@@ -113,25 +111,6 @@ let dirty_paths_of_folder folder =
     let dirty_paths = Git_wrapper.dirty_paths ~cwd:folder () in
     Some (List_.map (fun x -> folder // x) dirty_paths)
   else None
-
-(* TODO: registry caching is not anymore in semgrep-OSS! *)
-let decode_rules caps data =
-  CapTmp.with_temp_file caps#tmp ~contents:data ~suffix:".json" (fun file ->
-      match
-        Rule_fetching.load_rules_from_file ~rewrite_rule_ids:false ~origin:App
-          caps file
-      with
-      | Ok res ->
-          Logs.app (fun m ->
-              m "Loaded %d rules from Semgrep Deployment"
-                (List.length res.rules));
-          Logs.app (fun m ->
-              m "Got %d errors from Semgrep Deployment"
-                (List.length res.invalid_rules));
-          res
-      | Error _err ->
-          (* There shouldn't be any errors, because we got these rules from CI. *)
-          failwith "impossible: received invalid rules from Deployment")
 
 let get_targets session (root : Fpath.t) =
   let targets_conf =
@@ -146,86 +125,9 @@ let get_targets session (root : Fpath.t) =
     [ Scanning_root.of_fpath root ]
   |> fst
 
-let send_metrics ?core_time ?profiler ?cli_output session =
-  if session.metrics.client_metrics.enabled then (
-    let settings = Semgrep_settings.load () in
-    let api_token = settings.Semgrep_settings.api_token in
-    let anonymous_user_id = settings.Semgrep_settings.anonymous_user_id in
-    Metrics_.init session.caps ~anonymous_user_id ~ci:false;
-    api_token
-    |> Option.iter (fun (_token : Auth.token) ->
-           Metrics_.g.payload.environment.isAuthenticated <- true);
-    Git_wrapper.project_url () |> Option.iter Metrics_.add_project_url_hash;
-    cli_output
-    |> Option.iter (fun (o : OutJ.cli_output) -> Metrics_.add_errors o.errors);
-    profiler |> Option.iter Metrics_.add_profiling;
-    Metrics_.add_rules_hashes_and_rules_profiling ?profiling:core_time
-      session.cached_session.rules;
-    Metrics_.g.payload.extension.machineId <-
-      session.metrics.client_metrics.machineId;
-    Metrics_.g.payload.extension.isNewAppInstall <-
-      Some session.metrics.client_metrics.isNewAppInstall;
-    Metrics_.g.payload.extension.sessionId <-
-      session.metrics.client_metrics.sessionId;
-    Metrics_.g.payload.extension.version <-
-      session.metrics.client_metrics.extensionVersion;
-    Metrics_.g.payload.extension.ty <-
-      Some session.metrics.client_metrics.extensionType;
-    Metrics_.g.payload.extension.ignoreCount <-
-      Some session.metrics.ignore_count;
-    Metrics_.g.payload.extension.autofixCount <-
-      Some session.metrics.autofix_count;
-    Metrics_.g.payload.environment.deployment_id <-
-      session.cached_session.deployment_id;
-    Metrics_.prepare_to_send ();
-    (* Lwt.async really ok here since we hope metrics send but it doesn't
-       impact state at all so *)
-    Lwt.dont_wait
-      (fun () ->
-        (* Don't worry if metrics fail to send, and don't notify user *)
-        Semgrep_Metrics.send_async session.caps)
-      (fun exn ->
-        Logs.err (fun m ->
-            m "Failed to send metrics: %s" (Printexc.to_string exn))))
-
 (*****************************************************************************)
 (* State getters *)
 (*****************************************************************************)
-
-let auth_token () =
-  match !Semgrep_envvars.v.app_token with
-  | Some token -> Some token
-  | None ->
-      let settings = Semgrep_settings.load () in
-      settings.api_token
-
-let scan_config_of_token caps = function
-  | Some token -> (
-      let caps = Auth.cap_token_and_network token caps in
-      let%lwt config_string =
-        Semgrep_App.fetch_scan_config_string caps ~sca:false ~dry_run:true
-          ~full_scan:true ~repository:""
-      in
-      match config_string with
-      | Ok config_string ->
-          (* TODO: Check config string hash, and update rules iff its different, and cache rules in file *)
-          (* See [scan_config_parser] declaration for why we do this *)
-          let scan_config = scan_config_parser config_string in
-          Lwt.return_some scan_config
-      | Error e ->
-          Logs.warn (fun m -> m "Failed to fetch scan config: %s" e);
-          Lwt.return_none)
-  | _ -> Lwt.return_none
-
-let fetch_ci_rules_and_origins caps =
-  let token = auth_token () in
-  let%lwt scan_config_opt = scan_config_of_token caps token in
-
-  let rules_opt =
-    Option.bind scan_config_opt (fun scan_config ->
-        Some (decode_rules caps scan_config.rule_config))
-  in
-  Lwt.return rules_opt
 
 let cache_workspace_targets session =
   let folders = session.workspace_folders in
@@ -273,9 +175,7 @@ let targets session =
   targets |> List.filter member_workspaces
 
 let fetch_rules session =
-  let%lwt ci_rules =
-    if session.user_settings.ci then fetch_ci_rules_and_origins session.caps
-    else Lwt.return_none
+  let%lwt ci_rules = Lwt.return_none
   in
   let home = !Semgrep_envvars.v.user_home_dir in
   let rules_source =
@@ -303,7 +203,7 @@ let fetch_rules session =
         (* TODO: registry_caching is not anymore in semgrep-OSS! *)
         Rule_fetching.rules_from_dashdash_config_async
           ~rewrite_rule_ids:true (* default *)
-          ~token_opt:(auth_token ()) session.caps config)
+          session.caps config)
       rules_source
   in
 
@@ -346,13 +246,9 @@ let fetch_rules session =
 
   Lwt.return (rules, invalid_rules)
 
-let fetch_skipped_app_fingerprints caps =
+let fetch_skipped_app_fingerprints _caps =
   (* At some point we should allow users to ignore ids locally *)
-  let auth_token = auth_token () in
-  let%lwt deployment_opt = scan_config_of_token caps auth_token in
-  match deployment_opt with
-  | Some deployment -> Lwt.return deployment.triage_ignored_match_based_ids
-  | None -> Lwt.return []
+  Lwt.return_nil
 
 (* Useful for when we need to reset diagnostics, such as when changing what
  * rules we've run *)
@@ -406,18 +302,8 @@ let load_local_skipped_fingerprints session =
     in
     { session with skipped_local_fingerprints }
 
-let fetch_deployment_id caps =
-  let auth_token = auth_token () in
-  match auth_token with
-  | Some token -> (
-      let caps = Auth.cap_token_and_network token caps in
-      let%lwt deployment_opt =
-        Semgrep_App.get_deployment_from_token_async caps
-      in
-      match deployment_opt with
-      | Some deployment -> Lwt.return_some deployment.id
-      | None -> Lwt.return None)
-  | None -> Lwt.return None
+let fetch_deployment_id _caps =
+  Lwt.return_none
 
 (*****************************************************************************)
 (* State setters *)

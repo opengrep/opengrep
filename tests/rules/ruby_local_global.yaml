@@ -1,0 +1,24 @@
+rules:
+  - id: test
+    message: Possible command injection via exec()-type functions
+    languages:
+      - ruby
+    severity: ERROR
+    mode: taint
+    options:
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern-either:
+          - patterns:
+              - focus-metavariable: $SOURCE
+              - pattern-inside: def $METHOD(..., $SOURCE, ...) ...
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - metavariable-regex:
+                      regex: (system)$
+                      metavariable: $METHOD
+                  - focus-metavariable: $SOURCE
+                  - pattern-either:
+                      - pattern: $METHOD($SOURCE, ...)

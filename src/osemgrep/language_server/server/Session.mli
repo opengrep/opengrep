@@ -45,7 +45,6 @@ type t = {
   skipped_local_fingerprints : string list;
   user_settings : User_settings.t;
   search_config : Search_config.t option;
-  metrics : LS_metrics.t;
   is_intellij : bool;
   caps : caps; [@opaque]
 }
@@ -55,14 +54,6 @@ val show : t -> string
 
 val create : caps -> ServerCapabilities.t -> t
 (** [create caps capabilities] creates a [Session.t] given server capabilities *)
-
-val send_metrics :
-  ?core_time:Semgrep_output_v1_j.profile ->
-  ?profiler:Profiler.t ->
-  ?cli_output:Semgrep_output_v1_j.cli_output ->
-  t ->
-  unit
-(** [send_metrics t] sends metrics to the server *)
 
 val save_local_skipped_fingerprints : t -> unit
 (** [save_local_skipped_fingerprints t] saves the skipped fingerprints in the session to disk *)

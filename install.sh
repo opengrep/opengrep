@@ -82,6 +82,7 @@ validate_version() {
     fi
 }
 
+# pre: $SIG_EXISTS == "true"
 validate_signature() {
     local P="$1"
     if $HAS_COSIGN; then
@@ -93,17 +94,15 @@ validate_signature() {
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${P}/opengrep"; then
             echo "Signature valid."
-            exit 0
         else
-            if [[ "$VERIFY_SIGNATURES" == true ]]; then
-                echo "Error: Signature validation error. Deleting downloaded package ${P}."
-                exit 1
-            else
-                echo "Warning: Signature validation error; the package is still installed."
-                echo "If this was not intended, delete and rerun with --verify-signatures"
-                exit 0
-            fi
+            # if we have signatures and we also have cosign installed, then always
+            # verify, even without --verify-signatures.
+            echo "Error: Signature validation error."
+            exit 1
         fi
+    else
+      echo "Warning: cosign needed for signature validation; the package will still be installed."
+      echo "If this was not intended, delete and rerun with --verify-signatures or install cosign."
     fi
 }
 
@@ -135,7 +134,7 @@ main() {
 
     # check and set "os_arch"
     if [ "$OS" = "Linux" ]; then
-        if ldd --version 2>&1 | grep -qi musl; then
+        if ldd /bin/sh 2>&1 | grep -qi musl; then
             if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
                 DIST="opengrep_musllinux_x86"
             elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
@@ -250,7 +249,7 @@ main() {
             if [[ "$SIG_STATUS" == "404" ]]; then
                 SIG_EXISTS=false
                 echo "Error: Signature file not found at ${URL}.sig, but ${URL}.cert was found."
-                exit 1  # we donwloaded .cert, so exit with error
+                exit 1  # we downloaded .cert, so exit with error
             elif [[ "$SIG_STATUS" != 200 ]]; then
               echo "Error: Failed to download ${URL}.sig: HTTP status $SIG_STATUS."
               exit 1
@@ -263,10 +262,11 @@ main() {
         else
             if [[ "$VERIFY_SIGNATURES" == true ]]; then
                 echo "Error: No signature / certificate found for ${VERSION} but --verify-signatures was requested."
+                echo "Error: It is likely that signature verification was added after this version."
                 exit 1
             else
                 echo "Warning: No signature / certificate found for ${VERSION}. Skipping signature verification."
-                echo "Warning: The package is still installed. It is likely that signature verification was added after this version."
+                echo "Warning: The package will still be installed. It is likely that signature verification was added after this version."
             fi
         fi
 

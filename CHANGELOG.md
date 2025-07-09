@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.5.0](https://github.com/opengrep/opengrep/releases/tag/v1.5.0) - 03-07-2025
+
+### New features
+
+* Binary install script for Mac OSX and Linux by @Gable-github in #294 with improvements by @dimitris-m in #309
+* Optionally expand metavariables in output metadata using `--inline-metavariables` by @corneliuhoffman in #310
+
+### Improvements
+
+* Build self-contained binaries using Nuitka by @dimitris-m in #311
+* Add Cosign signing of binaries by @corneliuhoffman in #315
+* Associate Containerfiles with the dockerfile language by @chrisnovakovic in #314
+* Add match and enum in the primary PHP parser by @corneliuhoffman in #306
+
+### Bug fixes
+
+* Fix a segfault: replace pcre with pcre2 in Eval_generic by @dimitris-m in #308
+* Create _opam in container when no GHA cache hit by @dimitris-m in #318
+* Windows: fix settings.yml permission issue by @dimitris-m in #319
+
+### Tech debt
+
+* Remove opentelemetry and curl dependencies by @dimitris-m in #317
+
+### New Contributors
+* @Gable-github made their first contribution in #294
+* @chrisnovakovic made their first contribution in #314
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.4.2...v1.5.0
+
+
 ## [1.4.2](https://github.com/opengrep/opengrep/releases/tag/v1.4.2) - 23-06-2025
 
 ### Bug fixes

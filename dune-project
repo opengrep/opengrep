@@ -4,7 +4,7 @@
 ;; to autogenerate the semgrep.opam for 'opam'.
 
 (pin
- (url "git+https://gitlab.com/dimitris-m/memprof-limits.git#dm/ocaml-5.3.0")
+ (url "git+https://gitlab.com/dimitris-m/memprof-limits.git#dm/ocaml-5.3.0-opengrep")
  (package (name memprof-limits)))
 
 ;; classic dune-project settings

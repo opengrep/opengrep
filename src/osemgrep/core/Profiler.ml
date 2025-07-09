@@ -40,7 +40,7 @@ let start profiler ~name =
   | Some (Start start_time) ->
       let now = Unix.gettimeofday () in
       Hashtbl.replace profiler name (Recorded (now -. start_time))
-  | Some (Recorded _) -> invalid_arg "%s was already profiled"
+  | Some (Recorded _) -> Fmt.invalid_arg "%s was already profiled" name
   | None ->
       let now = Unix.gettimeofday () in
       Hashtbl.add profiler name (Start now)

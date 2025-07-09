@@ -81,14 +81,6 @@ let initialize_server server
   Lwt_platform.init_preemptive 1 user_settings.jobs (fun msg ->
       (* Ocsigen, WTF is this logging thing??? *)
       Logs.debug (fun m -> m "[Language Server Threads]: %s" msg));
-  let metrics =
-    let client_metrics =
-      initializationOptions |> member "metrics"
-      |> LS_metrics.client_metrics_of_yojson
-      |> Result.value ~default:LS_metrics.client_metrics_default
-    in
-    { server.session.metrics with client_metrics }
-  in
   let server =
     {
       session =
@@ -97,7 +89,6 @@ let initialize_server server
           workspace_folders;
           user_settings;
           is_intellij;
-          metrics;
         };
       state = Lsp_.State.Running;
     }

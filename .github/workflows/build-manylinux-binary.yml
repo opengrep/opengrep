@@ -19,9 +19,9 @@ jobs:
     steps:
       - run: |
           yum update -y
-          yum install -y zip python3-pip python3.9 python39-devel ccache patchelf
+          yum install -y zip python3.12-pip python3.12 python3.12-devel ccache patchelf
           alternatives --remove-all python3
-          alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+          alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
           alternatives --auto python3
       
       # - run: find / -name "libpython*" #; exit 1
@@ -118,6 +118,7 @@ jobs:
           # install some dependencies for windows (pyinstaller only)
           python3 -m pip install chardet charset-normalizer
 
+          PYTHON_BIN=python3 \
           ./scripts/build-nuitka.sh "v$(opengrep --version)" true $SRC_SEMGREP_DIR
 
       - name: Zip artifact

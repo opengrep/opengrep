@@ -36,7 +36,4 @@ let create () = Command.create ~title:"Apply Fix" ~command ()
 let command_handler (session : Session.t) _arg_list =
   (* the actual edit is handled by the client. We run this command just so
      we can record it *)
-  let metrics =
-    { session.metrics with autofix_count = session.metrics.autofix_count + 1 }
-  in
-  ({ session with metrics }, None)
+  ( session , None)

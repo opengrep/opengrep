@@ -35,9 +35,6 @@ and show_kind =
    * accessible also as `semgrep scan --show-supported-languages
    *)
   | SupportedLanguages
-  (* a.k.a whoami *)
-  | Identity
-  | Deployment
   (* 'semgrep show dump-pattern'
    * accessible also as 'semgrep scan --dump-ast -e <pattern>'
    * alt: we could accept XLang.t to dump extended patterns *)
@@ -114,8 +111,6 @@ let cmdline_term : conf Term.t =
           let lang = Lang.of_string lang_str in
           DumpPattern (pattern, lang)
       | [ "supported-languages" ] -> SupportedLanguages
-      | [ "identity" ] -> Identity
-      | [ "deployment" ] -> Deployment
       | [] ->
           Error.abort
             (spf
@@ -139,10 +134,6 @@ let man : Cmdliner.Manpage.block list =
     (* the sub(sub)commands *)
     `Pre "opengrep show version";
     `P "Print the Opengrep version";
-    `Pre "opengrep show identity";
-    `P "Print the current logged-in token identity";
-    `Pre "opengrep show deployment";
-    `P "Print the current logged-in deployment";
     `Pre "opengrep show supported-languages";
     (* coupling: Scan_CLI.o_show_supported_languages help *)
     `P "Print a list of languages that are currently supported by Opengrep.";

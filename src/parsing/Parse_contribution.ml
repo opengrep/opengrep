@@ -26,3 +26,12 @@ let get_contributions (caps : < Cap.exec >) :
    *)
   let last_30_days = Common2.today () |> Common2.month_before in
   Git_wrapper.logs caps ~since:last_30_days |> List_.map contrib_to_contrib
+
+(* let sanity_check_contributions (contribs : Out.contribution list) : unit =
+     match contribs with
+     | [] -> Logs.warn (fun m -> m "no contribution found from git log, weird")
+     | x :: _xs ->
+         Logs.debug (fun m ->
+             m "found %d contribs in the last 30 days, last is %s"
+               (List.length contribs)
+               (Out.string_of_contribution x)) *)

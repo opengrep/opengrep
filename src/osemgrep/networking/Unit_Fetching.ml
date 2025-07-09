@@ -27,7 +27,7 @@ let real_fetch_tests caps =
   let fetch_ocaml_rules () =
     match
       Rule_fetching.rules_from_dashdash_config ~rewrite_rule_ids:false
-        ~token_opt:None caps (Rules_config.R (Pack "ocaml"))
+        caps (Rules_config.R (Pack "ocaml"))
     with
     | [ { rules; _ } ], [] ->
         Alcotest.(check bool) "fetch ocaml rules" true (not @@ List_.null rules)

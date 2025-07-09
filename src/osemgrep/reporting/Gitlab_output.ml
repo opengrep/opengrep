@@ -186,7 +186,7 @@ let secrets_format_cli_match (cli_match : Out.cli_match) =
 (* Entry points *)
 (*****************************************************************************)
 
-let output f (matches : Out.cli_match list) : JSON.yojson =
+let output ?(start_time: Timedesc.Timestamp.t option) f (matches : Out.cli_match list) : JSON.yojson =
   let header =
     [
       ( "$schema",
@@ -206,8 +206,10 @@ let output f (matches : Out.cli_match list) : JSON.yojson =
         ("vendor", `Assoc [ ("name", `String "Opengrep") ]);
       ]
   in
-  let start_time = Metrics_.g.payload.started_at in
-  let end_time = Timedesc.Timestamp.now () in
+  let now = Timedesc.Timestamp.now () in
+  (* NOTE: This only really works for --experimental mode. *)
+  let start_time = Option.value start_time ~default:now in (* Metrics_.g.payload.started_at in *)
+  let end_time = now in
   (* bugfix: gitlab does not use the RFC 3339 date format but instead a
    * yyyy-mm-ddThh:mm:ss custom format.
    * See https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/blob/941f497a3824d4393eb8a7efced497f738895ab4/dist/sast-report-format.json#L710
@@ -245,8 +247,12 @@ let output f (matches : Out.cli_match list) : JSON.yojson =
   `Assoc
     (header @ [ ("scan", scan); ("vulnerabilities", `List vulnerabilities) ])
 
-let sast_output (matches : Out.cli_match list) : JSON.yojson =
-  output format_cli_match matches
+let sast_output
+    ?(start_time: Timedesc.Timestamp.t option)
+    (matches : Out.cli_match list) : JSON.yojson =
+  output ?start_time format_cli_match matches
 
-let secrets_output (matches : Out.cli_match list) : JSON.yojson =
-  output secrets_format_cli_match matches
+let secrets_output
+    ?(start_time: Timedesc.Timestamp.t option)
+    (matches : Out.cli_match list) : JSON.yojson =
+  output ?start_time secrets_format_cli_match matches

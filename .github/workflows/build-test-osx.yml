@@ -45,9 +45,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
           submodules: true
-      - name: Debug use-cache input
-        run: |
-          echo "use-cache value: ${{ inputs.use-cache }}"
       - env:
           SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2
         # if: ${{ inputs.use-cache == 'true' || inputs.use-cache == '' }}

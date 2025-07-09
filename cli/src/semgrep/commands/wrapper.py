@@ -57,10 +57,6 @@ def handle_command_errors(func: Callable) -> Callable:
         else:
             exit_code = 0
         finally:
-            metrics = state.get_state().metrics
-            metrics.add_exit_code(exit_code)
-            metrics.send()
-
             error_handler = state.get_state().error_handler
             error_handler.capture_error(exc)
             exit_code = error_handler.send(exit_code)

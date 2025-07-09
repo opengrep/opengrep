@@ -58,7 +58,7 @@ let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
       !!(m.path.internal_path_to_content) |> fun p ->
       Option.bind renamed
         (List_.find_some_opt (fun (before, after) ->
-             if after = p then Some before else None))
+             if String.equal after p then Some before else None))
       |> Option.value ~default:p
     in
     let start_range, end_range = m.range_loc in
@@ -171,6 +171,8 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               let baseline_targets, baseline_diff_targets =
                 match conf.engine_type with
                 | PRO Engine_type.{ analysis = Interprocedural; _ } ->
+                    (* Keeping all the PRO stuff since we will probably need
+                     * these code paths. *)
                     let all_in_baseline, _ =
                       Find_targets.get_target_fpaths conf.targeting_conf
                         conf.target_roots
@@ -205,7 +207,6 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
     Core_result.result_or_exn =
   Logs.info (fun m ->
       m "running differential scan on base commit %s" baseline_commit);
-  Metrics_.g.payload.environment.isDiffScan <- true;
   let commit = Git_wrapper.merge_base baseline_commit in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
   let diff_depth = Differential_scan_config.default_depth in
@@ -215,7 +216,14 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
     in
     match conf.engine_type with
     | PRO Engine_type.{ analysis = Interfile; _ } -> (targets, added_or_modified)
-    | _ -> (added_or_modified, [])
+    | _ ->
+      let targets_modified_or_added =
+        let added_or_modified_set = Fpath.Set.of_list added_or_modified in
+        List.filter
+          (fun p -> Fpath.Set.mem p added_or_modified_set)
+          targets
+      in
+      (targets_modified_or_added, [])
   in
   let (head_scan_result : Core_result.result_or_exn) =
     Profiler.record profiler ~name:"head_core_time" (fun () ->
@@ -236,17 +244,7 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
                  | None -> 0
                in
                Hashtbl.replace count_by_lang lang (count + 1)
-           | _ -> ());
-      Metrics_.g.payload.value.proFeatures <-
-        Some
-          {
-            diffDepth = Some diff_depth;
-            numInterfileDiffScanned =
-              Some
-                (count_by_lang |> Hashtbl.to_seq
-                |> Seq.map (fun (lang, count) -> (Lang.to_string lang, count))
-                |> List.of_seq);
-          }
+           | _ -> ())
   | _ -> ());
   scan_baseline_and_remove_duplicates caps conf profiler head_scan_result rules
     commit status diff_scan_func

@@ -35,15 +35,9 @@ module Conv = Convert_utils
 (*****************************************************************************)
 
 (* Dispatch to the various custom request handlers. *)
-let handle_custom_notification session (meth : string)
-    (params : Jsonrpc.Structured.t option) : Reply.t option =
-  match
-    [ (LoginFinish.meth, LoginFinish.on_notification) ] |> List.assoc_opt meth
-  with
-  | None ->
-      Logs.warn (fun m -> m "Unhandled custom notification %s" meth);
-      None
-  | Some handler -> Some (handler session params)
+let handle_custom_notification (meth : string) : Reply.t option =
+  Logs.warn (fun m -> m "Unhandled custom notification %s" meth);
+  None
 
 let on_notification (server : RPC_server.t) notification =
   Logs.debug (fun m ->
@@ -57,43 +51,7 @@ let on_notification (server : RPC_server.t) notification =
         Logs.warn (fun m -> m "Server is uninitialized");
         (server, None)
     | CN.Initialized ->
-        (* Check the validity of the current API token here.
-           We do this asynchronously, since this is purely side-effecting,
-           and we don't care to percolate the monad.
-        *)
-        let check_token =
-          Reply.later (fun send ->
-              Logs.debug (fun m -> m "Checking API token exists");
-              let settings = Semgrep_settings.load () in
-              match settings.api_token with
-              | Some token ->
-                  Logs.debug (fun m -> m "Checking API token validity");
-                  let caps =
-                    Auth.cap_token_and_network token server.session.caps
-                  in
-                  (* "if not valid", basically *)
-                  if%lwt Semgrep_login.verify_token_async caps |> Lwt.map not
-                  then (
-                    Logs.warn (fun m -> m "Invalid Semgrep token detected");
-                    Semgrep_settings.save { settings with api_token = None }
-                    |> ignore;
-                    send
-                      (Lsp_.notify_show_message ~kind:MessageType.Error
-                         "Invalid Semgrep token detected, please log in again."))
-              | None ->
-                  Logs.info (fun m -> m "No API token detected");
-                  (* Check if pro_intrafile requested *)
-                  if session.user_settings.pro_intrafile then
-                    send
-                      (Lsp_.notify_show_message Lsp.Types.MessageType.Error
-                         "Semgrep's Pro engine is enabled, but no API token is \
-                          set. Semgrep Language Server will default to the OSS \
-                          engine. Please login to enable the Pro engine, or \
-                          disable the setting to stop seeing this message.")
-                  else Lwt.return_unit)
-        in
-        let reply =
-          Reply.both check_token (Scan_helpers.refresh_rules session)
+        let reply = Scan_helpers.refresh_rules session
         in
         let session = Session.load_local_skipped_fingerprints session in
         let server = { server with session } in
@@ -171,24 +129,6 @@ let on_notification (server : RPC_server.t) notification =
         ({ server with state = State.Stopped }, None)
     | CN.UnknownNotification { method_ = "semgrep/refreshRules"; _ } ->
         (server, Some (Scan_helpers.refresh_rules session))
-    | CN.UnknownNotification { method_ = "semgrep/logout"; _ } ->
-        let reply =
-          if
-            Semgrep_settings.save
-              { (Semgrep_settings.load ()) with api_token = None }
-          then
-            let notif_reply =
-              Reply.now
-                (notify_show_message ~kind:MessageType.Info
-                   "Logged out of Semgrep Code")
-            in
-            let refresh_reply = Scan_helpers.refresh_rules session in
-            Reply.both notif_reply refresh_reply
-          else
-            Reply.now
-              (notify_show_message ~kind:MessageType.Error "Failed to log out")
-        in
-        (server, Some reply)
     | CN.UnknownNotification
         { method_ = "semgrep/scanWorkspace"; params = Some json } -> (
         match session.cached_session.initialized with
@@ -215,7 +155,7 @@ let on_notification (server : RPC_server.t) notification =
             let reply =
               Reply.later (fun send ->
                   let%lwt () =
-                    if session.metrics.client_metrics.isNewAppInstall && full
+                    if full
                     then
                       send
                         (notify_show_message ~kind:MessageType.Info
@@ -234,8 +174,8 @@ let on_notification (server : RPC_server.t) notification =
                   Lwt.return_unit)
             in
             ({ server with session }, Some reply))
-    | CN.UnknownNotification { method_; params } ->
-        (server, handle_custom_notification session method_ params)
+    | CN.UnknownNotification { method_; _ } ->
+        (server, handle_custom_notification method_)
     | _ ->
         Logs.debug (fun m ->
             m "Unhandled notification %s"

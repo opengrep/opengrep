@@ -93,8 +93,16 @@ class Settings:
         if not os.access(self.path, os.R_OK) or not self.path.is_file():
             return default_settings
 
-        with self.path.open() as fd:
-            yaml_contents = yaml.load(fd)
+        try:
+            with self.path.open() as fd:
+                yaml_contents = yaml.load(fd)
+        except PermissionError as e:
+            # This happens on Windows for some reason, and since we will
+            # remove the file anyway, we can fix in this hacky way:
+            logger.warning(
+                f"Error reading {self.path}: {e}. \nReturning default settings."
+            )
+            return default_settings
 
         if not isinstance(yaml_contents, Mapping):
             logger.warning(

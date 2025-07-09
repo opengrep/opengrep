@@ -70,10 +70,6 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
       print Version.version;
       (* TODO? opportunity to perform version-check? *)
       Exit_code.ok ~__LOC__
-  | Identity ->
-      Whoami.print (caps :> < Cap.network ; Cap.stdout >) Whoami.Identity
-  | Deployment ->
-      Whoami.print (caps :> < Cap.network ; Cap.stdout >) Whoami.Deployment
   | SupportedLanguages ->
       print (spf "supported languages are: %s" Xlang.supported_xlangs);
       Exit_code.ok ~__LOC__ (* dumpers *)
@@ -135,14 +131,11 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
                 |> String.concat ", "));
           Exit_code.invalid_code ~__LOC__)
   | DumpConfig config_str ->
-      let settings = Semgrep_settings.load () in
-      let token_opt = settings.api_token in
       let in_docker = !Semgrep_envvars.v.in_docker in
       let config = Rules_config.parse_config_string ~in_docker config_str in
       let rules_and_errors, errors =
         Rule_fetching.rules_from_dashdash_config
           ~rewrite_rule_ids:true (* command-line default *)
-          ~token_opt
           (caps :> < Cap.network ; Cap.tmp >)
           config
       in

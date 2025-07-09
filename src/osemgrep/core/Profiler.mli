@@ -23,7 +23,8 @@
     and needed by {!module:Metrics_}.
 *)
 
-type t
+type t = (string, value) Hashtbl.t
+and value = Start of float | Recorded of float
 (** The type of profilers. *)
 
 val make : unit -> t

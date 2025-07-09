@@ -455,7 +455,6 @@ let run_conf (caps : < caps ; .. >) (conf : Install_ci_CLI.conf) : Exit_code.t =
      revisit whether we should even support disabling metrics for this
      command at a later date.
   *)
-  Metrics_.configure Metrics_.Off;
   Logs.debug (fun m -> m "conf = %s" (Install_ci_CLI.show_conf conf));
   (* let settings = Semgrep_settings.load () in *)
   (* let api_token = settings.Semgrep_settings.api_token in *)

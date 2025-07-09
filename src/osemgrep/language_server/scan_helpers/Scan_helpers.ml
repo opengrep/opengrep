@@ -87,7 +87,6 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
         let core_run_func =
           let pro_intrafile =
             session.user_settings.pro_intrafile
-            && Semgrep_login.is_logged_in_weak ()
           in
           match !Core_runner.hook_mk_pro_core_run_for_osemgrep with
           | Some pro_scan_func when pro_intrafile ->
@@ -182,8 +181,6 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
           m "Semgrep skipped %d rules" (List.length cli_output.skipped_rules));
       Logs.app (fun m -> m "Scanned %d files" (List.length scanned));
       Logs.app (fun m -> m "Found %d matches" (List.length matches));
-      Session.send_metrics session ?core_time:res.core.time ~profiler
-        ~cli_output;
       (matches, scanned)
 
 let run_semgrep_detached ?targets ?rules ?git_ref (session : Session.t) =

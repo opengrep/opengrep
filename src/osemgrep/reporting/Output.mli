@@ -39,7 +39,6 @@ val too_much_data : string
 val output_result :
   < Cap.stdout > ->
   conf ->
-  Out.format_context ->
   Profiler.t ->
   Core_runner.result ->
   Out.cli_output
@@ -51,4 +50,5 @@ val preprocess_result : fixed_lines:bool -> Core_runner.result -> Out.cli_output
 
 (* used by RPC_return.ml for Vim/Emacs/Junit_xml/Gitlab_xxx for now *)
 val format :
-  Output_format.t -> Out.format_context -> Out.cli_output -> string list
+  ?profiler : Profiler.t ->
+  Output_format.t -> Out.cli_output -> string list
