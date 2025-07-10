@@ -569,41 +569,41 @@ and expr_aux env ?(void = false) g_expr =
     when not void ->
       expr_lazy_op env op tok arg0 args eorig
   (* args_with_pre_stmts *)
-| G.Call ({ e = G.IdSpecial (G.Op op, tok); _ }, args) -> (
-  match op with
-  | G.Elvis when env.lang =*= Lang.Kotlin -> (
-      (* This implements the logic:
-       * result = lhs;
-       * if (result == null) { result = rhs; }
-       * This ensures the lhs expression is evaluated exactly once.
-      *)
-      match Tok.unbracket args with
-      | [ G.Arg lhs_gen; G.Arg rhs_gen ] ->
-          begin
-            let result_lval = fresh_lval env tok in
-            (* Evaluate lhs and assign its value to a temp var ('result = lhs;') *)
-            let ss_for_lhs, lhs_exp = expr_with_pre_stmts env lhs_gen in
-            add_stmts env ss_for_lhs;
-            add_instr env (mk_i (Assign (result_lval, lhs_exp)) NoOrig);
-            let result_val_exp = mk_e (Fetch result_lval) (related_tok tok) in
-            (* Create the condition 'result == null' *)
-            let null_literal = mk_e (Literal (G.Null tok)) (related_tok tok) in
-            let condition_exp =
-              mk_e (Operator ((G.Eq, tok), [ Unnamed result_val_exp; Unnamed null_literal ])) (related_tok tok)
-            in
-            (* Define the 'then' branch, which evaluates rhs and updates the temp var. *)
-            let ss_for_rhs, rhs_exp = expr_with_pre_stmts env rhs_gen in
-            let then_branch =
-              ss_for_rhs @ [ mk_s (Instr (mk_i (Assign (result_lval, rhs_exp)) NoOrig)) ]
-            in
-            (* Add the 'if' statement to the instruction list. *)
-            add_stmt env (mk_s (If (tok, condition_exp, then_branch, [])));
-            mk_e (Fetch result_lval) eorig
-          end
-      | _ -> impossible (G.E g_expr)
-    )
-  | _ ->
-      (* All other operators *)
+  | G.Call ({ e = G.IdSpecial (G.Op op, tok); _ }, args) -> (
+    match op with
+    | G.Elvis when env.lang =*= Lang.Kotlin -> (
+        (* This implements the logic:
+        * result = lhs;
+        * if (result == null) { result = rhs; }
+        * This ensures the lhs expression is evaluated exactly once.
+        *)
+        match Tok.unbracket args with
+        | [ G.Arg lhs_gen; G.Arg rhs_gen ] ->
+            begin
+              let result_lval = fresh_lval env tok in
+              (* Evaluate lhs and assign its value to a temp var ('result = lhs;') *)
+              let ss_for_lhs, lhs_exp = expr_with_pre_stmts env lhs_gen in
+              add_stmts env ss_for_lhs;
+              add_instr env (mk_i (Assign (result_lval, lhs_exp)) NoOrig);
+              let result_val_exp = mk_e (Fetch result_lval) (related_tok tok) in
+              (* Create the condition 'result == null' *)
+              let null_literal = mk_e (Literal (G.Null tok)) (related_tok tok) in
+              let condition_exp =
+                mk_e (Operator ((G.Eq, tok), [ Unnamed result_val_exp; Unnamed null_literal ])) (related_tok tok)
+              in
+              (* Define the 'then' branch, which evaluates rhs and updates the temp var. *)
+              let ss_for_rhs, rhs_exp = expr_with_pre_stmts env rhs_gen in
+              let then_branch =
+                ss_for_rhs @ [ mk_s (Instr (mk_i (Assign (result_lval, rhs_exp)) NoOrig)) ]
+              in
+              (* Add the 'if' statement to the instruction list. *)
+              add_stmt env (mk_s (If (tok, condition_exp, then_branch, [])));
+              mk_e (Fetch result_lval) eorig
+            end
+        | _ -> impossible (G.E g_expr)
+      )
+    | _ ->
+        (* All other operators *)
       let args = arguments env (Tok.unbracket args) in
       if not void then mk_e (Operator ((op, tok), args)) eorig
       else
