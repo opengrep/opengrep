@@ -571,7 +571,7 @@ and expr_aux env ?(void = false) g_expr =
   (* args_with_pre_stmts *)
 | G.Call ({ e = G.IdSpecial (G.Op op, tok); _ }, args) -> (
   match op with
-  | G.Elvis -> (
+  | G.Elvis when env.lang =*= Lang.Kotlin -> (
       (* This implements the logic:
        * result = lhs;
        * if (result == null) { result = rhs; }
@@ -581,7 +581,7 @@ and expr_aux env ?(void = false) g_expr =
       | [ G.Arg lhs_gen; G.Arg rhs_gen ] ->
           begin
             let result_lval = fresh_lval env tok in
-            (* Evaluate lhs and assign its value to our temp var ('result = lhs;') *)
+            (* Evaluate lhs and assign its value to a temp var ('result = lhs;') *)
             let ss_for_lhs, lhs_exp = expr_with_pre_stmts env lhs_gen in
             add_stmts env ss_for_lhs;
             add_instr env (mk_i (Assign (result_lval, lhs_exp)) NoOrig);
