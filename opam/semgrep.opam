@@ -74,7 +74,7 @@ depends: [
   "conf-libev" {os != "win32"}
   "integers_stubs_js"
   "git-unix"
-  "memprof-limits" {= "dev"}
+  "memprof-limits"
   "thread-local-storage"
   "domainslib"
   "kcas_data"
@@ -95,3 +95,6 @@ build: [
   ]
 ]
 dev-repo: "git+https://github.com/opengrep/opengrep.git"
+pin-depends: [
+  ["memprof-limits.dev" "git+https://gitlab.com/dimitris-m/memprof-limits.git#c2cced325a93d2271379f0712db85867b29dbee1"]
+]
