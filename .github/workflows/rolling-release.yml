@@ -95,10 +95,17 @@ jobs:
         run: |
           pushd artifacts/
 
-          mv ./opengrep-core-x86/artifacts.tgz opengrep-core_linux_x86.tar.gz
-          mv ./opengrep-core-aarch64/artifacts.tgz opengrep-core_linux_aarch64.tar.gz
-          mv ./opengrep-osx-x86/artifacts.tgz opengrep-core_osx_x86.tar.gz
-          mv ./opengrep-osx-arm64/artifacts.tgz opengrep-core_osx_aarch64.tar.gz
+          tar xzf ./opengrep-core-x86/artifacts.tgz --strip=1
+          tar czf opengrep-core_linux_x86.tar.gz opengrep-core
+
+          tar xzf ./opengrep-core-aarch64/artifacts.tgz --strip=1
+          tar czf opengrep-core_linux_aarch64.tar.gz opengrep-core
+
+          tar xzf ./opengrep-osx-x86/artifacts.tgz --strip=1
+          tar czf opengrep-core_osx_x86.tar.gz opengrep-core
+
+          tar xzf ./opengrep-osx-arm64/artifacts.tgz --strip=1
+          tar czf opengrep-core_osx_aarch64.tar.gz opengrep-core
 
           unzip -j ./manylinux-x86-wheel/dist.zip "*.whl"
           unzip -j ./osx-arm64-wheel/dist.zip "*.whl"
