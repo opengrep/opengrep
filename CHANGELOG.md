@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.7.0](https://github.com/opengrep/opengrep/releases/tag/v1.7.0) - 14-07-2025
+
+### New features
+
+* Add support for Apex by @maciejpirog in #337
+
+### Improvements
+
+* Kotlin: enable taint tracking through the Elvis operator (`?:`) by @fxbru in #334
+* Elixir: add `defp` private functions by @dimitris-m in #346
+
+### Bug fixes
+
+* Fix: ensure we fallback to python for `ci` by @dimitris-m in #345
+* Remove metrics in the bench command by @corneliuhoffman in #352
+* Cleanup metrics and settings related code on the Python CLI by @dimitris-m in #342
+
+### Tech debt
+
+* Refactor: remove duplicate `metavar_string_of_any` by @dimitris-m in #344
+
+### New Contributors
+* @fxbru made their first contribution in #334
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.6.0...v1.7.0
+
+
 ## [1.6.0](https://github.com/opengrep/opengrep/releases/tag/v1.6.0) - 10-07-2025
 
 ### Removed features
