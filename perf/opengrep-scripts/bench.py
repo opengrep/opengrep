@@ -32,7 +32,6 @@ def regular_cmd(repo):
             "-j", num_cpus,
             "--timeout", "0",
             "--max-memory", "4000",
-            "--metrics", "off",
             "--max-target-bytes", "200000",
             "--quiet"]
 
