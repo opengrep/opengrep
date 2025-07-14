@@ -718,6 +718,12 @@ let lang_tainting_tests () =
 
          let lang = Lang.Php in
          tainting_tests_for_lang files lang);
+      Testo.categorize "tainting Apex"
+        (let dir = taint_tests_path / "apex" in
+         let files = Common2.glob (spf "%s/*.trigger" !!dir) |> Fpath_.of_strings in
+
+         let lang = Lang.Apex in
+         tainting_tests_for_lang files lang);
       Testo.categorize "tainting Python"
         (let dir = taint_tests_path / "python" in
          let files = Common2.glob (spf "%s/*.py" !!dir) |> Fpath_.of_strings in
