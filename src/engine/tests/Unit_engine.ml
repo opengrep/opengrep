@@ -718,6 +718,12 @@ let lang_tainting_tests () =
 
          let lang = Lang.Php in
          tainting_tests_for_lang files lang);
+      Testo.categorize "tainting Apex"
+        (let dir = taint_tests_path / "apex" in
+         let files = Common2.glob (spf "%s/*.trigger" !!dir) |> Fpath_.of_strings in
+
+         let lang = Lang.Apex in
+         tainting_tests_for_lang files lang);
       Testo.categorize "tainting Python"
         (let dir = taint_tests_path / "python" in
          let files = Common2.glob (spf "%s/*.py" !!dir) |> Fpath_.of_strings in
@@ -852,26 +858,12 @@ let semgrep_rules_repo_tests () : Testo.t list =
                        the file to decide which language to use instead of what
                        is in the rule
                     *)
-                    s =~ ".*/unicode/security/bidi.yml"
+                       s =~ ".*/unicode/security/bidi.yml"
                     || s =~ ".*/dockerfile/security/dockerd-socket-mount.yaml"
-                    (* Apex requires Pro *)
-                    || s =~ ".*/apex/lang/.*"
-                       (* but the following are generic rules ... *)
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/best-practice/ncino/tests/UseAssertClass.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidNativeDmlInLoops.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidSoqlInLoops.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidSoslInLoops.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/performance/ncino/operationsInLoops/AvoidOperationsWithLimitsInLoops.yaml"
-                       && s
-                          <> "tests/semgrep-rules/apex/lang/security/ncino/dml/ApexCSRFStaticConstructor.yaml"
-                    (* ?? *)
                     || s =~ ".*/yaml/semgrep/consistency/.*" ->
                  Some "XFAIL"
+             (* FIXME: the following test seems to have an error in the pattern (has $M(){} should have $T $M(){}) *)
+             | s when s =~ ".*/apex/lang/security/ncino/injection/ApexSOQLInjectionUnescapedParam.yaml" -> None
              (* not rule files *)
              | s when s =~ ".*.test.yml" -> None
              (* not languages tests *)

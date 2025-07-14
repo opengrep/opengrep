@@ -31,7 +31,6 @@ end
  * referenced in parsing_languages/Parse_target2.ml and Parse_pattern2.ml
  * and raise Missing_plugin when the plugin is not registered.
  *)
-module Apex : T
 module Csharp : T
 (* module Elixir : T *)
 

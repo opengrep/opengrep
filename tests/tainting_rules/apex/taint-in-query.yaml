@@ -1,0 +1,14 @@
+rules:
+  - id: taint-in-query-test
+    mode: taint
+    message: "potential injection found!"
+    severity: WARNING
+    languages:
+      - apex
+    pattern-sources:
+      - pattern: unsafeGetData()
+    pattern-sinks:
+      - pattern-either:	
+        - pattern: sink($P)
+        - pattern: |
+            [<... $P ...>]

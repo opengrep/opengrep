@@ -216,9 +216,7 @@ let just_parse_with_lang lang file : Parsing_result2.t =
       run file
         [ TreeSitter Parse_elixir_tree_sitter.parse ]
         Elixir_to_generic.program
-  (* External proprietary parsers. The parsers need to register themselves
-   * for parsing to take place.
-   *)
-  | Lang.Apex -> run_external_parser file Parsing_plugin.Apex.parse_target
+  | Lang.Apex ->
+      run file [ TreeSitter Parse_apex_tree_sitter.parse ] (fun x -> x)
   | Lang.Csharp ->
       run file [ TreeSitter Parse_csharp_tree_sitter.parse ] (fun x -> x)
