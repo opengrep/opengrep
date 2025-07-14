@@ -2393,6 +2393,19 @@ and query_expression (env : env) ((v1, v2, v3) : CST.query_expression)
         soql_query env x
     | `Sosl_query x ->
         sosl_query env x
+    | `Semg_ellips tok ->
+        let t = (* "..." *) token env tok in
+        [G.Ellipsis t |> G.e]
+    | `Semg_meta_ellips tok ->
+        let i = (* pattern \$\.\.\.[A-Z_][A-Z_0-9]* *) str env tok in
+        [G.N (G.Id (i, G.empty_id_info ())) |> G.e]
+    | `Semg_deep_exp (v1, v2, v3) ->
+        let v1 = token env v1 in
+        let v2 = expression env v2 in
+        let v3 = token env v3 in
+        [G.Ellipsis (G.fake "...") |> G.e;
+         G.DeepEllipsis (v1, v2, v3) |> G.e;
+         G.Ellipsis (G.fake "...") |> G.e]
   in
   let _v3 = (* "]" *) token env v3 in
   G.Call
