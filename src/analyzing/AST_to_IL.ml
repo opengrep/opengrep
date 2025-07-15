@@ -388,8 +388,8 @@ and pattern_assign_statements env ?(eorig = NoOrig) exp pat : env * stmt list =
     let env, lval, ss = pattern env pat in
     (env, [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ] @ ss)
   with
-  | Fixme (stmts1, kind, any_generic) ->
-      ({ env with stmts = stmts1 }, fixme_stmt kind any_generic)
+  | Fixme (stmts, kind, any_generic) ->
+      ({ env with stmts}, fixme_stmt kind any_generic)
 
 (*****************************************************************************)
 (* Exceptions *)
@@ -669,7 +669,7 @@ and expr_aux env ?(void = false) g_expr =
       (* in theory in expr() we should return each time a list of pre-instr
        * and a list of post-instrs to execute before and after the use
        * of the expression. However this complicates the interface of 'expr()'.
-       * Right now, for the pre-instr we agglomerate them instead in (env, stmts)
+       * Right now, for the pre-instr we agglomerate them instead in env
        * and use them in 'expr_with_pre_instr()' below, but for the post
        * we dont. Anyway, for our static analysis purpose it should not matter.
        * We don't do fancy path-sensitive-evaluation-order-sensitive analysis.
@@ -721,8 +721,8 @@ and expr_aux env ?(void = false) g_expr =
          * one in the RHS. *)
         | Lang.Ruby -> (
             try lval env obj with
-            | Fixme (stmts1, _, _) ->
-                let env = { env with stmts = stmts1 } in
+            | Fixme (stmts, _, _) ->
+                let env = { env with stmts} in
                 (env, fresh_lval ~str:"Fixme" env tok))
         | _ -> (env, fresh_lval env tok)
       in
@@ -1059,7 +1059,7 @@ and expr_lazy_op env op tok arg0 args eorig =
 and call_generic env ?(void = false) tok eorig e args =
   let env, e = expr env e in
   (* In theory, instrs in args could have side effect on the value in 'e',
-   * but we will agglomerate all those instrs in the (env, stmts)ironment and
+   * but we will agglomerate all those instrs in the environment and
    * the caller will call them in sequence (see expr_with_pre_instr).
    * In theory, we should not execute those instrs before getting the
    * value in 'e' in the caller, but for our static analysis purpose
@@ -1600,7 +1600,7 @@ and type_opt_with_pre_stmts env opt_ty =
 
 (* NOTE: There should not be direct calls to 'expr' from here on, instead
  * use 'expr_with_pre_stmts' or other '*_pre_stmts*' functions. Just so that
- * we don't forget about '(env, stmts).stmts'! *)
+ * we don't forget about 'env.stmts'! *)
 
 and no_switch_fallthrough : Lang.t -> bool = function
   | Go
@@ -1866,7 +1866,7 @@ and stmt_aux env st =
         @ [ mk_s (Loop (tok, cond, st @ cont_label_s @ next @ ss2)) ]
         @ break_label_s )
   | G.For (_, G.ForEllipsis _, _) -> sgrep_construct env.stmts (G.S st)
-  (* TODO: repeat (env, stmts) work of controlflow_build.ml *)
+  (* TODO: repeat env work of controlflow_build.ml *)
   | G.Continue (tok, lbl_ident, _) -> (
       match lbl_ident with
       | G.LNone -> (
@@ -1969,8 +1969,8 @@ and stmt_aux env st =
 and for_each env tok (pat, tok2, e) st =
   let cont_label_s, break_label_s, st_env = mk_break_continue_labels env tok in
   let env, ss, e' = expr_with_pre_stmts env e in
-  let _, st = stmt st_env st in
-
+  let env1, st = stmt st_env st in
+  let env = {env with stmts = env1.stmts} in
   let next_lval = fresh_lval env tok2 in
   let hasnext_lval = fresh_lval env tok2 in
   let hasnext_call =
