@@ -22,7 +22,6 @@ import semgrep.run_scan
 import semgrep.test
 from semgrep import __VERSION__
 from semgrep import bytesize
-# from semgrep import tracing
 from semgrep.app.version import get_no_findings_msg
 from semgrep.app.version import get_too_many_findings_msg
 from semgrep.app.version import TOO_MANY_FINDINGS_THRESHOLD
@@ -40,7 +39,6 @@ from semgrep.engine import EngineType
 from semgrep.error import SemgrepError
 from semgrep.git import get_project_url
 from semgrep.metrics import MetricsState
-from semgrep.notifications import possibly_notify_user
 from semgrep.output import OutputHandler
 from semgrep.output import OutputSettings
 from semgrep.rule import Rule
@@ -96,12 +94,6 @@ _scan_options: List[Callable] = [
     click.option(
         "--baseline-commit",
         envvar=["SEMGREP_BASELINE_COMMIT", "SEMGREP_BASELINE_REF"],
-    ),
-    click.option(
-        "--metrics",
-        "metrics",
-        type=METRICS_STATE_TYPE,
-        envvar="SEMGREP_SEND_METRICS",
     ),
     optgroup.group(
         "Path options",
@@ -562,7 +554,6 @@ def scan(
     max_log_list_entries: int,
     max_memory: Optional[int],
     max_target_bytes: int,
-    metrics: Optional[MetricsState],
     optimizations: str,
     dataflow_traces: bool,
     output: Optional[str],
@@ -658,7 +649,7 @@ def scan(
     if dataflow_traces is None:
         dataflow_traces = engine_type.has_dataflow_traces
 
-    state.metrics.configure(metrics)
+    state.metrics.configure(None)
     state.terminal.configure(
         verbose=verbose,
         debug=debug,
@@ -687,9 +678,6 @@ def scan(
         max_memory = 0  # unlimited
     if not interfile_timeout:
         interfile_timeout = 0  # unlimited
-
-    # Note this must be after the call to `terminal.configure` so that verbosity is respected
-    possibly_notify_user()
 
     # change cwd if using docker
     if not targets:

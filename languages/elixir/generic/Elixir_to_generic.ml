@@ -317,9 +317,14 @@ and map_stmt env (v : stmt) : G.stmt =
 
 and map_definition env (v : definition) : G.definition =
   match v with
-  | FuncDef { f_def; f_name; f_params; f_body } ->
+  | FuncDef { f_def; f_name; f_params; f_body; f_is_private } ->
       let id = map_ident_should_not_use env f_name in
-      let ent = G.basic_entity id in
+      let ent = G.basic_entity
+          ~attrs:(if f_is_private
+                  then [G.KeywordAttr (G.Private, Tok.fake_tok f_def "" (* vs. [G.fake ""] *))]
+                  else [])
+          id
+      in
       let fparams = map_parameters env f_params in
       let body = map_compound env f_body in
       let def =

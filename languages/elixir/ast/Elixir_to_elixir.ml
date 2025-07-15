@@ -75,7 +75,7 @@ class ['self] visitor =
       (* https://hexdocs.pm/elixir/Kernel.html#def/2
        * TODO: handle "implicit try" form
        *)
-      | ( I (Id ("def", tdef)),
+      | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ Call (I ident, args, None) ], []), _),
           Some (tdo, (Body body, []), tend) ) ->
           let body = self#visit_body env body in
@@ -86,6 +86,7 @@ class ['self] visitor =
               f_name = ident;
               f_params = params;
               f_body = (tdo, body, tend);
+              f_is_private = String.equal def_str "defp";
             }
           in
           S (D (FuncDef def))

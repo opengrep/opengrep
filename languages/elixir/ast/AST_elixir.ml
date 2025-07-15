@@ -325,6 +325,7 @@ and function_definition = {
   f_params : parameters;
   (* bracket is do/end *)
   f_body : stmts bracket;
+  f_is_private : bool;
 }
 
 and parameters = parameter list bracket

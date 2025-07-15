@@ -64,6 +64,7 @@ logger = getLogger(__name__)
 
 METRICS_ENDPOINT = "https://metrics.semgrep.dev"
 
+# FIXME: Remove.
 
 class MetricsState(Enum):
     """
@@ -167,7 +168,7 @@ class Metrics:
         and their values are different
         """
 
-        self.metrics_state = metrics_state or MetricsState.AUTO
+        self.metrics_state = metrics_state or MetricsState.OFF
 
     # TODO(cooper): It would really be best if EngineType included all of the
     # information here, but I am a bit concerned about changing it, since it is
@@ -469,23 +470,7 @@ class Metrics:
           - on, sends
           - off, doesn't send
         """
-        # import here to prevent circular import
-        from semgrep.state import get_state
-
-        state = get_state()
-
-        if self.metrics_state == MetricsState.AUTO:
-            # When running logged in with `semgrep ci`, configs are
-            # resolved before `self.is_using_registry` is set.
-            # However, these scans are still pulling from the registry
-            # TODO?
-            # using_app = (
-            #    state.command.get_subcommand() == "ci"
-            #    and state.app_session.is_authenticated
-            # )
-            using_app = state.app_session.is_authenticated
-            return self.is_using_registry or using_app
-        return self.metrics_state == MetricsState.ON
+        return False
 
     @suppress_errors
     def gather_click_params(self) -> None:
@@ -506,19 +491,7 @@ class Metrics:
     def _post_metrics(self, *, user_agent: str, local_scan_id: str) -> None:
         # old: was also logging {self.as_json()}
         # alt: save it in ~/.semgrep/logs/metrics.json?
-        logger.debug(f"Sending to {METRICS_ENDPOINT}")
-        r = requests.post(
-            METRICS_ENDPOINT,
-            data=self.as_json(),
-            headers={
-                "Content-Type": "application/json",
-                "User-Agent": user_agent,
-                "X-Semgrep-Scan-ID": local_scan_id,
-            },
-            timeout=3,
-        )
-        logger.debug(f"response from {METRICS_ENDPOINT} {r.json()}")
-        r.raise_for_status()
+        return
 
     @suppress_errors
     def send(self) -> None:
@@ -527,18 +500,4 @@ class Metrics:
 
         Will if is_enabled is True
         """
-
         return
-
-        # self.gather_click_params()
-        # self.payload.sent_at = Datetime(datetime.now().astimezone().isoformat())
-
-        # from semgrep.state import get_state  # avoiding circular import
-
-        # state = get_state()
-        # self.payload.anonymous_user_id = state.settings.get("anonymous_user_id")
-
-        # self._post_metrics(
-        #     user_agent=str(state.app_session.user_agent),
-        #     local_scan_id=str(state.local_scan_id),
-        # )

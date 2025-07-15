@@ -235,7 +235,6 @@ def ci(
     max_log_list_entries: int,
     max_memory: Optional[int],
     max_target_bytes: int,
-    metrics: Optional[MetricsState],
     optimizations: str,
     dataflow_traces: Optional[bool],
     output: Optional[str],
@@ -308,7 +307,7 @@ def ci(
             "WARNING: --inline-metavariables is set but will be ignored."
         )
 
-    state.metrics.configure(metrics)
+    state.metrics.configure(None)
     state.error_handler.configure(suppress_errors)
     scan_handler = None
     capture_core_stderr = not debug

@@ -1,7 +1,8 @@
+
 defmodule MyAppWeb.UserController do
   use MyAppWeb, :controller
 
-  #ERROR: match
+  # This will not be matched by a "defp" pattern.
   def show(conn, %{"id" => id}) do
     user = Repo.get(User, id)
     render(conn, :show, user: user)

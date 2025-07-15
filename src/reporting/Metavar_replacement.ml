@@ -32,7 +32,7 @@ let metavar_string_of_any any =
      Handle such cases *)
   any |> AST_generic_helpers.ii_of_any
   |> List.filter Tok.is_origintok
-  |> List.sort Tok.compare_pos
+  |> List.sort_uniq Tok.compare_pos
   |> List_.map Tok.content_of_tok
   |> Core_text_output.join_with_space_if_needed
 

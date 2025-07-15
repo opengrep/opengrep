@@ -74,6 +74,7 @@ class Env:
     sms_scan_id: Optional[str] = field(default=EnvFactory("SEMGREP_MANAGED_SCAN_ID"))
 
     version_check_url: str = field(
+        # TODO: Use Github releases when this is re-activated.
         default=EnvFactory(
             "SEMGREP_VERSION_CHECK_URL", "https://opengrep.dev/api/check-version"
         )
@@ -128,7 +129,7 @@ class Env:
             parent_dir = Path.home()
         else:
             parent_dir = Path(config_home)
-        return parent_dir / ".semgrep"
+        return parent_dir / ".opengrep"
 
     @user_log_file.default
     def user_log_file_default(self) -> Path:

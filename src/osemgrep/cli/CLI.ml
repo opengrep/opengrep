@@ -83,6 +83,7 @@ let hook_semgrep_interactive =
  *)
 let known_subcommands =
   [
+    "ci";
     "lsp";
     "scan";
     (* osemgrep-only *)

@@ -59,6 +59,7 @@ and pl_type =
   | Csharp
   | ObjectiveC of string
   | Swift
+  | Apex
   (* advanced script *)
   | Julia
   | Perl
@@ -402,6 +403,7 @@ let file_type_of_file file =
   | "lua" -> PL Lua
   | "r" -> PL R
   | "ex" | "exs" -> PL Elixir
+  | "cls" | "trigger" -> PL Apex
   | _ when UFile.is_executable file -> Binary e
   | _ when b = "Makefile" || b = "mkfile" || b = "Imakefile" -> Config Makefile
   | _ when b = "Dockerfile" || b = "Containerfile" -> Config Dockerfile

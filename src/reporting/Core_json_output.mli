@@ -9,11 +9,6 @@ val core_output_of_matches_and_errors : ?inline:bool -> Core_result.t -> Out.cor
 val match_to_match :
  ?inline:bool -> Core_result.processed_match -> (Out.core_match, Core_error.t) result
 
-(* for abstract_content and subpatterns matching-explanations
- * TODO: should not use! the result may miss some commas
- *)
-val metavar_string_of_any : AST_generic.any -> string
-
 (* now used also in osemgrep *)
 val error_to_error : Core_error.t -> Out.core_error
 val dedup_and_sort : Out.core_match list -> Out.core_match list

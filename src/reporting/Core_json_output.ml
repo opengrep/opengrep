@@ -18,6 +18,7 @@ open AST_generic
 module E = Core_error
 module J = JSON
 module MV = Metavariable
+module MR = Metavar_replacement
 module RP = Core_result
 module PM = Core_match
 open Core_match
@@ -184,19 +185,6 @@ let dedup_and_sort (xs : Out.core_match list) : Out.core_match list =
 (* Converters *)
 (*****************************************************************************)
 
-let metavar_string_of_any any =
-  (* TODO: metavar_string_of_any is used in get_propagated_value
-      to get the string for propagated values. Not all propagated
-      values will have origintoks. For example, in
-          x = 1; y = x + 1; ...
-     we have y = 2 but there is no source location for 2.
-     Handle such cases *)
-  any |> AST_generic_helpers.ii_of_any
-  |> List.filter Tok.is_origintok
-  |> List.sort Tok.compare_pos
-  |> List_.map Tok.content_of_tok
-  |> Core_text_output.join_with_space_if_needed
-
 let get_propagated_value default_start mvalue =
   let any_to_svalue_value any =
     match range_of_any_opt default_start any with
@@ -206,7 +194,7 @@ let get_propagated_value default_start mvalue =
             {
               svalue_start = Some start;
               svalue_end = Some end_;
-              svalue_abstract_content = metavar_string_of_any any;
+              svalue_abstract_content = MR.metavar_string_of_any any;
             }
     | None ->
         Some
@@ -214,7 +202,7 @@ let get_propagated_value default_start mvalue =
             {
               svalue_start = None;
               svalue_end = None;
-              svalue_abstract_content = metavar_string_of_any any;
+              svalue_abstract_content = MR.metavar_string_of_any any;
             }
   in
   match mvalue with
@@ -243,7 +231,7 @@ let metavars startp_of_match_range (s, mval) =
           {
             start = startp;
             end_ = endp;
-            abstract_content = metavar_string_of_any any;
+            abstract_content = MR.metavar_string_of_any any;
             propagated_value = get_propagated_value startp_of_match_range any;
           } )
 

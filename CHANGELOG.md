@@ -1,5 +1,59 @@
 # Changelog
 
+## [1.7.0](https://github.com/opengrep/opengrep/releases/tag/v1.7.0) - 14-07-2025
+
+### New features
+
+* Add support for Apex by @maciejpirog in #337
+
+### Improvements
+
+* Kotlin: enable taint tracking through the Elvis operator (`?:`) by @fxbru in #334
+* Elixir: add `defp` private functions by @dimitris-m in #346
+
+### Bug fixes
+
+* Fix: ensure we fallback to python for `ci` by @dimitris-m in #345
+* Remove metrics in the bench command by @corneliuhoffman in #352
+* Cleanup metrics and settings related code on the Python CLI by @dimitris-m in #342
+
+### Tech debt
+
+* Refactor: remove duplicate `metavar_string_of_any` by @dimitris-m in #344
+
+### New Contributors
+* @fxbru made their first contribution in #334
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.6.0...v1.7.0
+
+
+## [1.6.0](https://github.com/opengrep/opengrep/releases/tag/v1.6.0) - 10-07-2025
+
+### Removed features
+
+* Remove semgrep-specific functionality including the `--metrics` parameter by @dimitris-m in #329 and #336
+
+### Improvements
+
+* Ensure that python has the expected version in the manylinux binary by @dimitris-m in #322
+* Make tests invariant to version by @dimitris-m in #325
+* Align --profile table output by @dimitris-m in #327
+
+### Bug fixes
+
+* Fix: install script flow for cosign by @dimitris-m in #321
+* Improve Ruby tainting by @corneliuhoffman in #324
+* Fix baseline scan when using --experimental by @dimitris-m in #326
+* Fix: pin memprof-limits by @dimitris-m in #328
+* fix: detect musl in install script by @securityPirate in #330
+* Ensure fingerprint is unique by @dimitris-m in #338
+
+### New Contributors
+* @securityPirate made their first contribution in #330
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.5.0...v1.6.0
+
+
 ## [1.5.0](https://github.com/opengrep/opengrep/releases/tag/v1.5.0) - 03-07-2025
 
 ### New features
