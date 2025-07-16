@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 from datetime import datetime
 import statistics
 import resource
+import hashlib
+
 
 num_cpus = str(max(1, os.cpu_count() - 1))
 changes_while_running = False
@@ -34,6 +36,12 @@ def regular_cmd(repo):
             "--max-memory", "4000",
             "--max-target-bytes", "200000",
             "--quiet"]
+
+
+def hash_output(s):
+    s = s.strip()
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
 
 # Not used ATM
 def _python_cmd(repo):
@@ -66,7 +74,8 @@ def run(cmd, cwd=None):
     # my_env["PIPENV_PIPFILE"] = "../opengrep/cli/Pipfile"
     print(f"Running: {' '.join(cmd)}")
     sys.stdout.flush()
-    subprocess.run(cmd, cwd=cwd, check=True)
+    result = subprocess.run(cmd, cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return hash_output(result.stdout)
 
 def clone_specific_commit(repo_url, commit_hash, name):
     if os.path.exists(name):
@@ -110,21 +119,22 @@ def single_run(repo):
     #return t2 - t1
     time.sleep(5)
     usage_start = resource.getrusage(resource.RUSAGE_CHILDREN)
-    run(regular_cmd(repo))
+    results = run(regular_cmd(repo))
     usage_end = resource.getrusage(resource.RUSAGE_CHILDREN)
     time.sleep(5)
     user_time = usage_end.ru_utime - usage_start.ru_utime
     system_time = usage_end.ru_stime - usage_start.ru_stime
     total_cpu_time = user_time + system_time
-    log_to_file(f"- run completed: {repo}. user: {show_num(user_time)}, system: {show_num(system_time)}, total: {show_num(total_cpu_time)}\n")
-    return total_cpu_time
+    log_to_file(f"- run completed: {repo}. user: {show_num(user_time)}, system: {show_num(system_time)}, total: {show_num(total_cpu_time)}, result_sha: {results}\n")
+    return (total_cpu_time, results)
 
 def run_opengrep(repo):
     durs = [single_run(repo) for x in range(0, repeat_each_test_n_times)]
     #if repeat_each_test_n_times >= 5:
     #    durs.remove(max(durs))
     #    durs.remove(max(durs))
-    return statistics.mean(durs)
+    hash = set([y for (x,y) in durs])
+    return (statistics.mean([x for (x, _) in durs]),hash)
 
 def has_changes():
     result = subprocess.run(
@@ -146,11 +156,11 @@ def make_opengrep():
     run(["make"], cwd="../..")
 
 def run_bench():
-    return [{"name": r["name"], "duration": run_opengrep("repos/" + r["name"])}
-     for r in repos]
+    return [{"name": r["name"], "duration": duration, "sha": sha }
+            for r in repos for (duration, sha) in [run_opengrep("repos/" + r["name"])]]
 
 def combine_results(res1, res2):
-    return [{"name": r1["name"], "d1": r1["duration"], "d2": r2["duration"]}
+    return [{"name": r1["name"], "d1": r1["duration"], "d2": r2["duration"], "same-results": r1["sha"]==r2["sha"]}
             for (r1, r2) in zip(res1, res2)]
 
 def report_results(sha1, sha2, res1, res2):
@@ -159,7 +169,8 @@ def report_results(sha1, sha2, res1, res2):
                    sha1: f"{r["d1"]:.2f}",
                    sha2: f"{r["d2"]:.2f}",
                    "diff(s)": f"{(r["d2"] - r["d1"]):.2f}",
-                   "diff(%)": f"{(100 * (r["d2"] - r["d1"]) / r["d1"]):.2f}"}
+                   "diff(%)": f"{(100 * (r["d2"] - r["d1"]) / r["d1"]):.2f}",
+                   "same-results": r["same-results"]}
                   for r in combined]
     # print to screen
     print("--------- BENCHMARK RUN COMPLETED ---------\n")
