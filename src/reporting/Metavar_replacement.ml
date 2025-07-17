@@ -30,11 +30,18 @@ let metavar_string_of_any any =
           x = 1; y = x + 1; ...
      we have y = 2 but there is no source location for 2.
      Handle such cases *)
-  any |> AST_generic_helpers.ii_of_any
-  |> List.filter Tok.is_origintok
-  |> List.sort_uniq Tok.compare_pos
-  |> List_.map Tok.content_of_tok
-  |> Core_text_output.join_with_space_if_needed
+  (* FIXME: If the match is a variable, extract the variable, not the
+     propagated value / definition assigned by name resolution. This is a
+     temporary fix for the nondeterministic behaviour bug (issue #335) *)
+  match any with
+  | G.E { e_range = Some (l1, l2); _ } when Int.equal l1.pos.bytepos l2.pos.bytepos ->
+      l1.str
+  | _ ->
+      any |> AST_generic_helpers.ii_of_any
+      |> List.filter Tok.is_origintok
+      |> List.sort Tok.compare_pos
+      |> List_.map Tok.content_of_tok
+      |> Core_text_output.join_with_space_if_needed
 
 let propagated_value_string_of_mval mval =
   let any = MV.mvalue_to_any mval in
