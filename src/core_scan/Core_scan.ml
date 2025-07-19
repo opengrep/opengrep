@@ -126,7 +126,7 @@ type caps = < Cap.fork ; Cap.time_limit ; Cap.memory_limit >
    alt: baking this flag into match_result type would lead to even worse
    complexity
 
-   Remember that a target handler runs in another process (via Parmap).
+   Remember that a target handler may run in another domain.
 *)
 type target_handler = Target.t -> Core_result.matches_single_file * bool
 
@@ -169,12 +169,15 @@ let print_cli_progress (config : Core_scan_config.t) : unit =
  * a huge number of matches can stress Core_json_output.
  * and anyway is probably a sign that the pattern should be rewritten.
  *)
+(* Changed behaviour: keep up to max matches, but which? Sort by offset?
+ * How about severity? How about per rule? Has nosemgrep been applied?
+ * For now, we keep the first N by position, ascending. *)
 let filter_files_with_too_many_matches_and_transform_as_timeout
     max_match_per_file matches =
   let per_files =
     matches
-    |> List_.map (fun ({ pm; _ } : Core_result.processed_match) ->
-           (pm.path.internal_path_to_content, pm))
+    |> List_.map (fun ({ pm; _ } as m : Core_result.processed_match) ->
+           (pm.path.internal_path_to_content, m))
     |> Assoc.group_assoc_bykey_eff
   in
 
@@ -184,11 +187,36 @@ let filter_files_with_too_many_matches_and_transform_as_timeout
            if List.length xs > max_match_per_file then Some file else None)
   in
   let offending_files = Hashtbl_.hashset_of_list offending_file_list in
-  let new_matches =
-    matches
-    |> List_.exclude (fun ({ pm; _ } : Core_result.processed_match) ->
-           Hashtbl.mem offending_files pm.path.internal_path_to_content)
+
+  let per_files_offending_tbl =
+    Hashtbl_.hash_of_list (List.filter
+                             (Fun.compose (Hashtbl.mem offending_files) fst)
+                             per_files)
   in
+
+  let new_matches =
+    per_files
+    |> List_.map
+      (fun (file, matches) ->
+         if Hashtbl.mem offending_files file
+         then
+           let sorted_matches_by_pos_asc =
+             matches
+             |> List_.sort_by_key
+               (fun ({ pm; _ } : Core_result.processed_match) ->
+                  (fst pm.range_loc).Tok.pos.bytepos)
+               Int.compare
+           in
+           List_.take max_match_per_file sorted_matches_by_pos_asc
+         else matches
+      )
+    |> List_.flatten
+    (* Original behaviour below: *)
+    (* matches
+       |> List_.exclude (fun ({ pm; _ } : Core_result.processed_match) ->
+              Hashtbl.mem offending_files pm.path.internal_path_to_content) *)
+  in
+
   let new_errors, new_skipped =
     offending_file_list
     |> List_.map (fun (file : Fpath.t) ->
@@ -196,9 +224,9 @@ let filter_files_with_too_many_matches_and_transform_as_timeout
            Logs.warn (fun m ->
                m "too many matches on %s, generating exn for it" !!file);
            let sorted_offending_rules =
-             let matches = List.assoc file per_files in
+             let matches = Hashtbl.find per_files_offending_tbl file in
              matches
-             |> List_.map (fun (m : Core_match.t) ->
+             |> List_.map (fun ({pm = m; _} : Core_result.processed_match) ->
                     let rule_id = m.rule_id in
                     ((rule_id.id, rule_id.pattern_string), m))
              |> Assoc.group_assoc_bykey_eff
