@@ -4,6 +4,7 @@ type t = {
   include_ : string list;
   jobs : int;
   max_memory : int;
+  max_match_per_file : int;
   max_target_bytes : int;
   timeout : int;
   timeout_threshold : int;

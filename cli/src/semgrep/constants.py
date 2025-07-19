@@ -117,6 +117,9 @@ ELLIPSIS_STRING = " ... "
 # coupling: src/targeting/Find_targets.ml default_conf.max_target_bytes
 DEFAULT_MAX_TARGET_SIZE = 1000000  # 1 MB
 
+# Coupling: src/core_scan/Core_scan_config.ml
+DEFAULT_MAX_MATCH_PER_FILE = 10_000
+
 # Number of entries (rules, targets) beyond we're not logging anymore
 # coupling: with Output.ml
 DEFAULT_MAX_LOG_LIST_ENTRIES = 100

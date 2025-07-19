@@ -176,7 +176,7 @@ let dedup_and_sort (xs : Out.core_match list) : Out.core_match list =
      This is because we yet again need to enforce that when Pysemgrep receives these
      matches, that they are sorted via sort_core_matches.
      If we don't do this, then stuff like test_baseline will start breaking.
-     So we end up sorting twice. Such is life.
+     So we end up sorting twice.
      LATER: Can optimize if necessary
   *)
   Hashtbl.to_seq_values seen |> List.of_seq |> OutUtils.sort_core_matches

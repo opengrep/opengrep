@@ -10,6 +10,7 @@ type conf = {
   num_jobs : int;
   optimizations : bool;
   max_memory_mb : int;
+  max_match_per_file : int;
   timeout : float;
   timeout_threshold : int; (* output flags *)
   (* features *)

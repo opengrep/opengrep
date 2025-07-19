@@ -33,6 +33,7 @@ from semgrep.constants import DEFAULT_MAX_LINES_PER_FINDING
 from semgrep.constants import DEFAULT_MAX_LOG_LIST_ENTRIES
 from semgrep.constants import DEFAULT_MAX_TARGET_SIZE
 from semgrep.constants import DEFAULT_TIMEOUT
+from semgrep.constants import DEFAULT_MAX_MATCH_PER_FILE
 from semgrep.constants import OutputFormat
 from semgrep.core_runner import CoreRunner
 from semgrep.engine import EngineType
@@ -183,6 +184,11 @@ _scan_options: List[Callable] = [
     optgroup.option(
         "--interfile-timeout",
         type=int,
+    ),
+    optgroup.option(
+        "--max-match-per-file",
+        type=int,
+        default=DEFAULT_MAX_MATCH_PER_FILE,
     ),
     optgroup.group("Display options"),
     optgroup.option(
@@ -594,7 +600,8 @@ def scan(
     allow_local_builds: bool,
     opengrep_ignore_pattern: Optional[str],
     bypass_includes_excludes_for_files: bool = True,
-    inline_metavariables: bool = False
+    inline_metavariables: bool = False,
+    max_match_per_file: Optional[int],
 ) -> Optional[Tuple[RuleMatchMap, List[SemgrepError], List[Rule], Set[Path]]]:
     if version:
         print(__VERSION__)
@@ -861,6 +868,7 @@ def scan(
                     opengrep_ignore_pattern=opengrep_ignore_pattern,
                     bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
                     inline_metavariables=inline_metavariables,
+                    max_match_per_file=max_match_per_file,
                 )
             except SemgrepError as e:
                 output_handler.handle_semgrep_errors([e])
