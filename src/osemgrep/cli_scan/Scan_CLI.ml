@@ -180,8 +180,8 @@ let o_inline_metavariables : bool Term.t =
   let info =
     Arg.info ["inline-metavariables"]
       ~doc:
-        {|Inlines metavarible references in metadata strings the same way it is done in message. 
-          This can be costly so use with care especially if the metadata is very deep.|}
+        {|Inlines metavariable references in metadata strings the same way it is done in the message.
+This can be costly so use with care especially if the metadata is very deep.|}
   in  
   Arg.value (Arg.flag info)
 

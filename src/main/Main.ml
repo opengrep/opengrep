@@ -145,7 +145,7 @@ let () =
        * This happens if the experimental flag is not passed. *)
       (* opengrep-cli a.k.a. osemgrep *)
       | "opengrep-cli"
-      (* in the long term (and in the short term on windows) we want to ship
+      (* In the long term (and in the short term on windows) we want to ship
        * opengrep-cli as the default "opengrep" binary, without any
        * wrapper script such as cli/bin/semgrep around it.
        *)
