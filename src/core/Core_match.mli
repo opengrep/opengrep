@@ -41,8 +41,22 @@ and rule_id = {
   fix_regexp : Rule.fix_regexp option;
   langs : Lang.t list;
   pattern_string : string;
+  options : rule_id_options option
 }
 [@@deriving show, eq]
+
+and rule_id_options  = {
+  max_match_per_file : int option;
+  (* maximum number of matches per file. *)
+}
+[@@deriving show, eq]
+
+val rule_id_options_of_rule_options: Rule_options_t.t -> rule_id_options
+val rule_id_options_of_rule_options_opt: Rule_options_t.t option -> rule_id_options option
+
+val rule_ids_to_map: rule_id list -> rule_id Rule_ID.Map.t
+val rule_ids_to_rule_id_options_map: rule_id list -> rule_id_options Rule_ID.Map.t
+val to_rule_id_options_map: t list -> rule_id_options Rule_ID.Map.t
 
 (* remove duplicate *)
 val uniq : t list -> t list

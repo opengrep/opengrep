@@ -41,6 +41,7 @@ let make_core_result () : Core_result.processed_match =
             fix_regexp = None;
             langs = [];
             pattern_string = "";
+            options = None;
           };
         engine_of_match = `OSS;
         env =

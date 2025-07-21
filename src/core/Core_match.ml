@@ -153,8 +153,34 @@ and rule_id = {
   langs : Lang.t list;
   (* used for debugging (could be removed at some point) *)
   pattern_string : string;
+  options : rule_id_options option
 }
 [@@deriving show, eq]
+
+and rule_id_options  = {
+  max_match_per_file : int option;
+  (* maximum number of matches per file. *)
+}
+[@@deriving show, eq]
+
+let rule_id_options_of_rule_options (opts : Rule_options.t) =
+  { max_match_per_file = opts.max_match_per_file }
+
+let rule_id_options_of_rule_options_opt (opts : Rule_options.t option) =
+  Option.map rule_id_options_of_rule_options opts
+
+let rule_ids_to_map (opts: rule_id list) =
+  Rule_ID.Map.of_list (List_.map (fun r -> (r.id, r)) opts)
+
+let rule_ids_to_rule_id_options_map (opts: rule_id list) =
+  Rule_ID.Map.of_list
+    (List_.filter_map
+       (fun r ->
+          Option.map (fun opts -> (r.id, opts)) r.options)
+       opts)
+
+let to_rule_id_options_map (ms : t list) =
+  rule_ids_to_rule_id_options_map (List_.map (fun m -> m.rule_id) ms)
 
 (*****************************************************************************)
 (* Deduplication *)
