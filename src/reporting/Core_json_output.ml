@@ -137,12 +137,59 @@ let core_unique_key (c : Out.core_match) : key =
        above fields). See also `should_report_instead`.
     *) )
 
+let process_matches_with_rule_options
+    (rule_options: Core_match.rule_id_options Rule_ID.Map.t)
+    (matches: Out.core_match list) : Out.core_match list =
+
+  let restrict_matches_using_options options matches =
+    match options with
+    | Some Core_match.{max_match_per_file = Some limit; _}
+      when List.length matches > limit ->
+      List_.take (max limit 0) (OutUtils.sort_core_matches matches)
+    | _ -> matches
+  in
+
+  let per_files =
+    matches
+    |> List_.map (fun (Out.{path; _} as m : Out.core_match) -> (path, m))
+    |> Assoc.group_assoc_bykey_eff
+  in
+
+  let per_files_and_rules =
+    per_files
+    |> List_.map (fun (path, matches) ->
+          let matches_by_rule =
+            matches
+            |> List_.map (fun (Out.{check_id; _} as m : Out.core_match) -> (check_id, m))
+            |> Assoc.group_assoc_bykey_eff
+            |> List_.map
+              (fun (rid, ms) ->
+                   (rid,
+                    restrict_matches_using_options
+                      (Rule_ID.Map.find_opt rid rule_options)
+                      ms))
+          in
+          (path, matches_by_rule))
+  in
+
+  (* Rebind [per_files] with the restricted matches. *)
+  let per_files =
+    per_files_and_rules
+    |> List_.map
+      (fun (path, ms_by_rule) -> (path, List_.flatten (List_.map snd ms_by_rule)))
+  in
+  per_files
+  |> List_.map snd
+  |> List_.flatten
+
 (*
  # Sort results so as to guarantee the same results across different
  # runs. Results may arrive in a different order due to parallelism
  # (-j option).
 *)
-let dedup_and_sort (xs : Out.core_match list) : Out.core_match list =
+let dedup_and_sort
+    (rule_options: Core_match.rule_id_options Rule_ID.Map.t)
+    (xs : Out.core_match list) : Out.core_match list =
   (* Whether we prefer to report match x over match y.
      This is currently only used for Secrets findings, which prefer a
      finding with a confirmed validation status.
@@ -177,9 +224,12 @@ let dedup_and_sort (xs : Out.core_match list) : Out.core_match list =
      matches, that they are sorted via sort_core_matches.
      If we don't do this, then stuff like test_baseline will start breaking.
      So we end up sorting twice.
-     LATER: Can optimize if necessary
+     LATER: Can optimize if necessary.
   *)
-  Hashtbl.to_seq_values seen |> List.of_seq |> OutUtils.sort_core_matches
+  Hashtbl.to_seq_values seen
+  |> List.of_seq
+  |> process_matches_with_rule_options rule_options
+  |> OutUtils.sort_core_matches
 
 (*****************************************************************************)
 (* Converters *)
@@ -564,7 +614,10 @@ let core_output_of_matches_and_errors ?(inline = false) (res : Core_result.t) : 
   in
   let errs = new_errs @ res.errors in
   {
-    results = matches |> dedup_and_sort;
+    results = matches
+              |> dedup_and_sort
+                (Core_match.to_rule_id_options_map
+                   List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches));
     errors = errs |> List_.map error_to_error;
     paths =
       {

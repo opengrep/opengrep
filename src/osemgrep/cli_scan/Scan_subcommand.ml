@@ -167,7 +167,10 @@ let mk_file_match_hook (conf : Scan_CLI.conf) (rules : Rule.rules)
       |> pps_autofix
       |> pps_nosem
       |> Result_.partition Core_json_output.match_to_match
-      |> fst |> Core_json_output.dedup_and_sort
+      (* TODO: Print errors like in src/core_cli/Core_CLI.ml *)
+      |> fst
+      |> Core_json_output.dedup_and_sort
+           Core_match.(to_rule_id_options_map pms)
     in
     let hrules = Rule.hrules_of_rules rules in
     let fixed_env = Fixed_lines.mk_env () in
