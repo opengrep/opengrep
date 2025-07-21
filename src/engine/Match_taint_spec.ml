@@ -99,15 +99,14 @@ let range_w_metas_of_formula (xconf : Match_env.xconfig) (xtarget : Xtarget.t)
 
 (* =~ List.concat_map with automatic management of matching-explanations *)
 let concat_map_with_expls f xs =
-  let all_expls = ref [] in
-  let res =
-    xs
-    |> List.concat_map (fun x ->
-           let ys, expls = f x in
-           Stack_.push expls all_expls;
-           ys)
+  let lhs, rhs =
+    List.fold_left_map
+      (fun acc x ->
+        let l, r = f x in
+        (l :: acc, r))
+      [] xs
   in
-  (res, List_.flatten (List.rev !all_expls))
+  (List.flatten (List.rev lhs), List.flatten rhs)
 
 let%test _ =
   concat_map_with_expls (fun x -> ([ -x; x ], [ 2 * x; 3 * x ])) [ 0; 1; 2 ]

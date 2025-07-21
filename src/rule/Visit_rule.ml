@@ -28,32 +28,27 @@ let visit_formula f (formula : formula) : unit =
   in
   aux formula
 
-(* OK, this is only a little disgusting, but...
-   Evaluation order means that we will only visit children after parents.
-   So we keep a reference cell around, and set it to true whenever we descend
-   under an inside.
-   That way, pattern leaves underneath an Inside/Anywhere will properly be
-   paired with a true boolean.
-*)
-let visit_xpatterns (func : Xpattern.t -> inside:bool -> unit)
-    (formula : formula) : unit =
-  let bref = ref false in
-  let rec aux func formula =
+
+let visit_xpatterns (func : Xpattern.t -> inside:bool -> 'acc -> 'acc)
+    (formula : formula)
+    (acc : 'acc) : 'acc =
+  let rec aux inside acc formula =
     match formula.f with
-    | P p -> func p ~inside:!bref
-    | Anywhere (_, formula)
-    | Inside (_, formula) ->
-        Common.save_excursion_unsafe bref true (fun () -> aux func formula)
-    | Not (_, x) -> aux func x
+    | P p -> func p ~inside acc
+    | Anywhere (_, subf)
+    | Inside (_, subf) ->
+        aux true acc subf
+    | Not (_, x) ->
+        aux inside acc x
     | Or (_, xs)
     | And (_, xs) ->
-        xs |> List.iter (aux func)
+        List.fold_left (fun acc x -> aux inside acc x) acc xs
   in
-  aux func formula
+  aux false acc formula
+
 
 let xpatterns_of_rule (rule : Rule.t) : Xpattern.t list =
   let xs = formulas_of_mode rule.mode in
-  let xpat_store = ref [] in
-  let visit xpat ~inside:_ = xpat_store := xpat :: !xpat_store in
-  List.iter (visit_xpatterns visit) xs;
-  !xpat_store
+  let collect xpat ~inside:_ acc = xpat :: acc in
+  List.fold_left (fun acc f -> visit_xpatterns collect f acc) [] xs
+  |> List.rev  (* reverse to preserve original order *)
