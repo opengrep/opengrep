@@ -169,9 +169,6 @@ let print_cli_progress (config : Core_scan_config.t) : unit =
  * a huge number of matches can stress Core_json_output.
  * and anyway is probably a sign that the pattern should be rewritten.
  *)
-(* Changed behaviour: keep up to max matches, but which? Sort by offset?
- * How about severity? How about per rule? Has nosemgrep been applied?
- * For now, we keep the first N by position, ascending. *)
 let filter_files_with_too_many_matches_and_transform_as_timeout
     max_match_per_file matches =
   let per_files =
@@ -195,26 +192,9 @@ let filter_files_with_too_many_matches_and_transform_as_timeout
   in
 
   let new_matches =
-    per_files
-    |> List_.map
-      (fun (file, matches) ->
-         if Hashtbl.mem offending_files file
-         then
-           let sorted_matches_by_pos_asc =
-             matches
-             |> List_.sort_by_key
-               (fun ({ pm; _ } : Core_result.processed_match) ->
-                  (fst pm.range_loc).Tok.pos.bytepos)
-               Int.compare
-           in
-           List_.take max_match_per_file sorted_matches_by_pos_asc
-         else matches
-      )
-    |> List_.flatten
-    (* Original behaviour below: *)
-    (* matches
-       |> List_.exclude (fun ({ pm; _ } : Core_result.processed_match) ->
-              Hashtbl.mem offending_files pm.path.internal_path_to_content) *)
+    matches
+    |> List_.exclude (fun ({ pm; _ } : Core_result.processed_match) ->
+           Hashtbl.mem offending_files pm.path.internal_path_to_content)
   in
 
   let new_errors, new_skipped =
