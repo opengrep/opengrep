@@ -46,6 +46,19 @@ rules:
     severity: ERROR
 |}
 
+let eqeq_with_max_match =
+  {|
+rules:
+  - id: eqeq-bad
+    options:
+      max_match_per_file: 1
+    patterns:
+      - pattern: $X == $X
+    message: "useless comparison"
+    languages: [python]
+    severity: ERROR
+|}
+
 (* coupling: similar to cli/tests/.../targets/basic/stupid.py *)
 let stupid_py_content = {|
 def foo(a, b):
@@ -180,6 +193,24 @@ let test_basic_output_max_match (caps : Scan_subcommand.caps) () =
           in
           Exit_code.Check.ok exit_code))
 
+let test_basic_output_max_match_in_rule (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", eqeq_with_max_match);
+          F.File ("code.py", three_findings_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml"
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
 let test_basic_output_ignore_pattern (caps : Scan_subcommand.caps) () =
   with_env_app_token (fun () ->
       let repo_files =
@@ -305,4 +336,6 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~code_content:java_arg_paren_java_content);
       t "basic output with --max-match-per-file" ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_basic_output_max_match caps);
+      t "basic output with max-match-per-file rule option" ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_basic_output_max_match_in_rule caps);
     ]
