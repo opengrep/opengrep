@@ -305,8 +305,9 @@ let unsafe_match_to_match ?(inline = false)
       x.taint_trace
   in
   let metavars = x.env |> List_.map (metavars startp) in
+  let bindings =  Metavar_replacement.(of_bindings x.env) in
   let replacement_fn st =
-    Metavar_replacement.(interpolate_metavars st (of_bindings x.env))
+    Metavar_replacement.(interpolate_metavars st bindings)
   in
   let metadata =
     let* json = x.rule_id.metadata in
@@ -320,7 +321,7 @@ let unsafe_match_to_match ?(inline = false)
   (* message where the metavars have been interpolated *)
   (* TODO(secrets): apply masking logic here *)
   let message =
-    Metavar_replacement.(interpolate_metavars x.rule_id.message (of_bindings x.env))
+    Metavar_replacement.(interpolate_metavars x.rule_id.message bindings)
   in
   let enclosing_context =
     x.enclosure |>
