@@ -912,6 +912,6 @@ let rule_of_xpattern ?fix (xlang : Xlang.t) (xpat : Xpattern.t) : rule =
 
    Currently, we did the choice to **only** hash the [ID.t] of the given rule
    which is clearly not enough comparing to the Python code. But, again, we can
-   improve that by serialize everything and compute a hash from it. *)
+   improve that by serializing everything and compute a hash from it. *)
 let sha256_of_rule rule =
   Digestif.SHA256.digest_string (Rule_ID.to_string (fst rule.id))
