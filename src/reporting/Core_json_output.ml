@@ -149,38 +149,14 @@ let process_matches_with_rule_options
     | _ -> matches
   in
 
-  let per_files =
-    matches
-    |> List_.map (fun (Out.{path; _} as m : Out.core_match) -> (path, m))
-    |> Assoc.group_assoc_bykey_eff
-  in
-
-  let per_files_and_rules =
-    per_files
-    |> List_.map (fun (path, matches) ->
-          let matches_by_rule =
-            matches
-            |> List_.map (fun (Out.{check_id; _} as m : Out.core_match) -> (check_id, m))
-            |> Assoc.group_assoc_bykey_eff
-            |> List_.map
-              (fun (rid, ms) ->
-                   (rid,
-                    restrict_matches_using_options
-                      (Rule_ID.Map.find_opt rid rule_options)
-                      ms))
-          in
-          (path, matches_by_rule))
-  in
-
-  (* Rebind [per_files] with the restricted matches. *)
-  let per_files =
-    per_files_and_rules
-    |> List_.map
-      (fun (path, ms_by_rule) -> (path, List_.flatten (List_.map snd ms_by_rule)))
-  in
-  per_files
-  |> List_.map snd
-  |> List_.flatten
+  matches
+  |> Assoc.group_by (fun (Out.{path; check_id; _} : Out.core_match) -> (path, check_id))
+  |> List_.map
+    (fun ((_path, rid), ms) ->
+       restrict_matches_using_options
+         (Rule_ID.Map.find_opt rid rule_options)
+         ms)
+  |> List.concat
 
 (*
  # Sort results so as to guarantee the same results across different
