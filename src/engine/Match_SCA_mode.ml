@@ -129,6 +129,7 @@ let check_rule (rule : Rule.t) (xtarget : Lockfile_xtarget.t)
                    langs = Xlang.to_langs rule.R.target_analyzer;
                    (* TODO: What should this be? *)
                    pattern_string = "";
+                   options = rule_id_options_of_rule_options_opt rule.options;
                  };
                path = Target.path_of_origin (Origin.File xtarget.target.path);
                (* TODO: should be pro if the pro engine is used in the match *)

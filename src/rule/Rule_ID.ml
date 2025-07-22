@@ -28,9 +28,15 @@
 (* Types *)
 (*****************************************************************************)
 
-type t = string [@@deriving show, eq]
+type t = string [@@deriving show, eq, ord]
 
 exception Malformed_rule_ID of string
+
+module Map = Map.Make (struct
+  type nonrec t = t
+  let compare = compare
+end)
+
 
 (*****************************************************************************)
 (* Entry points *)

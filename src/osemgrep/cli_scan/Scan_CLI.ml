@@ -340,9 +340,12 @@ let o_max_match_per_file : int Term.t =
   let info =
     Arg.info [ "max-match-per-file" ]
       ~doc:
-        {|Maximum number of matches to report per file. Defaults to 10000. If the
-number of matches exceeds this limit, matches beyond this limit are discarded. The
-kept matches are chosen based on the order in which they are found in the file.
+        {|Maximum number of matches to allow per file. Defaults to 10000. If the
+number of matches before deduplication exceeds this limit, an error is reported for
+the target and no matches are returned for it. This should not be used to restrict
+the number of matches, but as a hard limit that can be used to identify problematic
+rules. In such cases, the option can be added to the rule's options section, and it
+will result in a restriction of the number of matches for that rule only.
 |}
   in
   Arg.value (Arg.opt Arg.int default info)

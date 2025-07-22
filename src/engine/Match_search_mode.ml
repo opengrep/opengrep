@@ -326,7 +326,7 @@ let rec remove_selectors (selector, acc) formulas =
                 * - pattern: $Y
             *)
             (* TODO: Should we fail here or just reported as a warning? This
-                * is something to catch with the meta-checker. *)
+             * is something to catch with the meta-checker. *)
             (Some s1, x :: acc)
       in
       remove_selectors (selector, acc) xs
@@ -1105,7 +1105,7 @@ and matches_of_formula xconf rule xtarget formula opt_context :
     |> RP.add_rule rule
   in
   Log.info (fun m -> m "found %d matches" (List.length res.matches));
-  (* match results per minirule id which is the same than pattern_id in
+  (* match results per minirule id which is the same as pattern_id in
    * the formula *)
   let pattern_matches_per_id = group_matches_per_pattern_id res.matches in
   let env =

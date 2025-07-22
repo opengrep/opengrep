@@ -51,6 +51,7 @@ let range_to_pattern_match_adjusted (r : Rule.t) (range : t) : Core_match.t =
       langs;
       message = r.message (* keep pattern_str which can be useful to debug *);
       metadata = r.metadata;
+      options = Core_match.rule_id_options_of_rule_options_opt r.options;
     }
   in
   (* Need env to be the result of evaluate_formula, which propagates metavariables *)
