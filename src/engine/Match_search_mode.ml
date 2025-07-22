@@ -109,11 +109,7 @@ type selector = {
 (* Helpers *)
 (*****************************************************************************)
 let xpatterns_in_formula (e : R.formula) : (Xpattern.t * bool) list =
-  let res = ref [] in
-  e
-  |> Visit_rule.visit_xpatterns (fun xpat ~inside:b ->
-         Stack_.push (xpat, b) res);
-  !res
+  Visit_rule.visit_xpatterns (fun xpat ~inside:b acc -> (xpat, b) :: acc) e []
 
 let partition_xpatterns xs =
   let semgrep = ref [] in
@@ -283,8 +279,7 @@ let matches_of_patterns ~has_as_metavariable ?mvar_context ?range_filter rule
               (* regular path *)
               Match_patterns.check
                 ~hook:(fun _ -> ())
-                ~has_as_metavariable ?mvar_context ?range_filter
-                ~matching_conf
+                ~has_as_metavariable ?mvar_context ?range_filter ~matching_conf
                 config mini_rules
                 (internal_path_to_content, origin, lang, ast))
       in
@@ -1140,18 +1135,15 @@ and matches_of_formula xconf rule xtarget formula opt_context :
 (* Main entry point *)
 (*****************************************************************************)
 
-let check_rule ({ R.mode = `Search formula;_} as r) hook xconf xtarget =
+let check_rule ({ R.mode = `Search formula; _ } as r) hook xconf xtarget =
   let rule_id = fst r.id in
-  let (res, final_ranges) =
-     matches_of_formula xconf r xtarget formula None in
-   let errors =
-     res.errors |> (E.ErrorSet.map (error_with_rule_id rule_id)) in
-   {
-     res with
-     RP.matches =
-       (((final_ranges |>
-            (List_.map (RM.range_to_pattern_match_adjusted r)))
-           |> PM.uniq)
-          |> hook);
-     errors
-   }
+  let res, final_ranges = matches_of_formula xconf r xtarget formula None in
+  let errors = res.errors |> E.ErrorSet.map (error_with_rule_id rule_id) in
+  {
+    res with
+    RP.matches =
+      final_ranges
+      |> List_.map (RM.range_to_pattern_match_adjusted r)
+      |> PM.uniq |> hook;
+    errors;
+  }
