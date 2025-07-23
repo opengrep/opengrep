@@ -1961,7 +1961,9 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
   (* THINK: Why I cannot just update mapping here ? if I do, the mapping gets overwritten later on! *)
   (* DataflowX.display_mapping flow init_mapping show_tainted; *)
   let end_mapping, timeout =
-    DataflowX.fixpoint ~timeout:Limits_semgrep.taint_FIXPOINT_TIMEOUT
+    DataflowX.fixpoint
+      ~timeout:Common.(
+          taint_inst.options.taint_fixpoint_timeout ||| Limits_semgrep.taint_FIXPOINT_TIMEOUT)
       ~eq_env:Lval_env.equal ~init:init_mapping ~trans:(transfer env ~fun_cfg)
       ~forward:true ~flow
   in
