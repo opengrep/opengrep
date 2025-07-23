@@ -42,6 +42,8 @@ jobs:
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
         with:
           key: ${{ runner.os }}-${{ runner.arch }}-v1-nuitka-glibc-${{ hashFiles('cli/src/semgrep/**/*.py') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-v1-nuitka-glibc-
           path: "${{ env.NUITKA_CACHE_DIR }}"
 
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
