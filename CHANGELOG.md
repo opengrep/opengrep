@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.8.0](https://github.com/opengrep/opengrep/releases/tag/v1.8.0) - 23-07-2025
+
+### New features
+
+* Add new rule option `max-match-per-file` by @dimitris-m in #359 and #357
+* Add new rule option `taint-fixpoint-timeout` by @dimitris-m in #360
+* Release opengrep-core by @spotdemo4 in #349
+
+### Bug fixes
+
+* For variables, calculate the range in the `extra` section using the original token by @maciejpirog in #356
+
+### Tech debt
+
+* Eliminated references in `AST_to_IL` by @corneliuhoffman in #351
+* Eliminated more references by @corneliuhoffman in #358
+
+### New Contributors
+* @spotdemo4 made their first contribution in #349
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.7.0...v1.8.0
+
+
 ## [1.7.0](https://github.com/opengrep/opengrep/releases/tag/v1.7.0) - 14-07-2025
 
 ### New features
