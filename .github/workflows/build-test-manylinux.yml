@@ -108,6 +108,7 @@ jobs:
       - uses: Vampire/setup-wsl@3b46b44374d5d0ae94654c45d114a3ed7a0e07a8 # ratchet:Vampire/setup-wsl@v5.0.1
       - name: Install Python
         run: |
+          sudo sed -i '/bullseye-backports/d' /etc/apt/sources.list
           sudo apt update -y
           sudo apt install -y make python3 python3-pip
           sudo ln -s /usr/bin/python3 /usr/bin/python
