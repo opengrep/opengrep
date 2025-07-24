@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.8.1](https://github.com/opengrep/opengrep/releases/tag/v1.8.1) - 24-07-2025
+
+### Bug fixes
+
+* Fix thread-safety bug in Apex parser by @maciejpirog in #365
+* Improve deduplication and sorting of results to remove nondetermism by @maciejpirog in #364
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.0...v1.8.1
+
+
 ## [1.8.0](https://github.com/opengrep/opengrep/releases/tag/v1.8.0) - 23-07-2025
 
 ### New features
