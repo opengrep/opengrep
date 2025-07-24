@@ -6,7 +6,7 @@
 open Common
 
 module Fpath = struct
-  type t = Fpath.t [@@deriving show, eq]
+  type t = Fpath.t [@@deriving show, eq, ord]
 
   let unwrap = Fpath.to_string
   let wrap = Fpath.v

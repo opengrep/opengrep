@@ -213,6 +213,9 @@ end)
 (* API *)
 (*****************************************************************************)
 
+type digest = Rule_ID.t * Target.path * int * int * Metavariable.bindings
+[@@deriving ord]
+
 (* Deduplicate matches *)
 let uniq (pms : t list) : t list =
   let digest (t : t) =
@@ -223,13 +226,13 @@ let uniq (pms : t list) : t list =
      t.env)
   in
   let cmp t1 t2 =
-    let c = compare (digest t1) (digest t2) in
+    let c = compare_digest (digest t1) (digest t2) in
     if c <> 0 then c else
       match t1.taint_trace, t2.taint_trace with
       | None, None -> 0
       | None, _ -> 1
-      | Some _, None -> -1
-      | Some t1, Some t2 -> compare (Lazy.force t1) (Lazy.force t2)
+      | _, None -> -1
+      | Some t1, Some t2 -> Taint_trace.compare (Lazy.force t1) (Lazy.force t2)
   in
   List.sort_uniq cmp pms
 [@@profiling]
