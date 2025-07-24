@@ -25,7 +25,7 @@ module Out = Semgrep_output_v1_j
 (*****************************************************************************)
 
 type path = { origin : Origin.t; internal_path_to_content : Fpath.t }
-[@@deriving show, eq]
+[@@deriving show, eq, ord]
 
 type regular = {
   path : path;
