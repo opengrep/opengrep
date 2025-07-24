@@ -168,7 +168,11 @@ let compare_match (a : core_match) (b : core_match) =
   let (bloc : location) = { path = b.path; start = b.start; end_ = b.end_ } in
 
   let c = compare_location aloc bloc in
-  if c <> 0 then c else compare_match_extra a.extra b.extra
+  if c <> 0 then c else
+  let e = compare_match_extra a.extra b.extra in
+  if e <> 0 then e else
+  (* make a deep comparison to make sure the order is always deterministic *)
+  compare a b
 
 let sort_metavars (metavars : (string * metavar_value) list) =
   List.stable_sort compare_metavar_binding metavars
