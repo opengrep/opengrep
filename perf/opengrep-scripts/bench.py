@@ -18,13 +18,14 @@ changes_while_running = False
 # SETUP
 # (TODO: make some of these cli options?)
 
-repositories = [ ("https://github.com/jellyfin/jellyfin","a0931baa8eb879898f4bc4049176ed3bdb4d80d1")
-               , ("https://github.com/grafana/grafana", "afcb55156260fe1887c4731e6cc4c155cc8281a2")
-               , ("https://gitlab.com/gitlab-org/gitlab", "915627de697e2dd71fe8205853de51ad3794f3ac")
-               , ("https://github.com/Netflix/lemur", "28b9a73a83d350b1c7ab71fdd739d64eec5d06aa")
-               , ("https://github.com/pythongosssss/ComfyUI-Custom-Scripts","943e5cc7526c601600150867a80a02ab008415e7")
-               , ("https://github.com/pmd/pmd", "81739da5caff948dbcd2136c17532b65c726c781")
-               , ("https://github.com/square/leakcanary", "bf5086da26952e3627f18865bb232963e4d019c5")
+# git url, git commit, number of repetitions of the test for a given repo
+repositories = [ ("https://github.com/jellyfin/jellyfin","a0931baa8eb879898f4bc4049176ed3bdb4d80d1", 5)
+               , ("https://github.com/grafana/grafana", "afcb55156260fe1887c4731e6cc4c155cc8281a2", 1)
+               , ("https://gitlab.com/gitlab-org/gitlab", "915627de697e2dd71fe8205853de51ad3794f3ac", 1)
+               , ("https://github.com/Netflix/lemur", "28b9a73a83d350b1c7ab71fdd739d64eec5d06aa", 5)
+               , ("https://github.com/pythongosssss/ComfyUI-Custom-Scripts","943e5cc7526c601600150867a80a02ab008415e7", 5)
+               , ("https://github.com/pmd/pmd", "81739da5caff948dbcd2136c17532b65c726c781", 5)
+               , ("https://github.com/square/leakcanary", "bf5086da26952e3627f18865bb232963e4d019c5", 5)
                ]
 
 def regular_cmd(repo):
@@ -48,8 +49,6 @@ def _python_cmd(repo):
     return ["pipenv", "run", "opengrep",
             "scan", "-c", "rules", repo, "-j", num_cpus]
 
-repeat_each_test_n_times = 5
-
 # Implementation
 
 ts = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -66,8 +65,8 @@ def get_repo_name(repo_url):
     repo_name = os.path.splitext(os.path.basename(path))[0]
     return repo_name
 
-repos = [{"url": url, "sha": sha, "name": get_repo_name(url)}
-         for (url, sha) in repositories]
+repos = [{"url": url, "sha": sha, "name": get_repo_name(url), "reps": reps}
+         for (url, sha, reps) in repositories]
 
 def run(cmd, cwd=None):
     # my_env = os.environ.copy()
@@ -128,13 +127,10 @@ def single_run(repo):
     log_to_file(f"- run completed: {repo}. user: {show_num(user_time)}, system: {show_num(system_time)}, total: {show_num(total_cpu_time)}, result_sha: {results}\n")
     return (total_cpu_time, results)
 
-def run_opengrep(repo):
-    durs = [single_run(repo) for x in range(0, repeat_each_test_n_times)]
-    #if repeat_each_test_n_times >= 5:
-    #    durs.remove(max(durs))
-    #    durs.remove(max(durs))
+def run_opengrep(repo, reps):
+    durs = [single_run(repo) for x in range(0, reps)]
     hash = set([y for (x,y) in durs])
-    return (statistics.mean([x for (x, _) in durs]),hash)
+    return (statistics.mean([x for (x, _) in durs]), hash)
 
 def has_changes():
     result = subprocess.run(
@@ -157,7 +153,7 @@ def make_opengrep():
 
 def run_bench():
     return [{"name": r["name"], "duration": duration, "sha": sha }
-            for r in repos for (duration, sha) in [run_opengrep("repos/" + r["name"])]]
+            for r in repos for (duration, sha) in [run_opengrep("repos/" + r["name"], r["reps"])]]
 
 def combine_results(res1, res2):
     return [{"name": r1["name"], "d1": r1["duration"], "d2": r2["duration"], "same-results": r1["sha"]==r2["sha"]}
