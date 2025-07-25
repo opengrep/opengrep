@@ -86,10 +86,11 @@ type func = {
       (** Best matches for the taint sources/etc, see 'Taint_spec_match'. *)
   used_lambdas : IL.NameSet.t;
       (** Set of lambda names that are *used* within the function. If a lambda
-        is used, we analyze it at use-site, otherwise we analyze it at def site. *)
+          is used, we analyze it at use-site, otherwise we analyze it at def
+          site. *)
 }
-(** Data about the top-level function definition under analysis, this does not
- * vary when analyzing lambdas. *)
+(** Data about the top-level function definition under analysis, this does not *
+    vary when analyzing lambdas. *)
 
 (* REFACTOR: Rename 'Taint_lval_env' as 'Taint_var_env' and create a new module
     for this 'env' type called 'Taint_env' or 'Taint_state' or sth, then we could
@@ -100,9 +101,9 @@ type env = {
   func : func;
   in_lambda : IL.name option;
   needed_vars : IL.NameSet.t;
-      (** Vars that we need to track in the current function/lambda under analysis,
-    other vars can be filtered out, see 'fixpoint_lambda' as well as
-    'Taint_lambda.find_vars_to_track_across_lambdas'. *)
+      (** Vars that we need to track in the current function/lambda under
+          analysis, other vars can be filtered out, see 'fixpoint_lambda' as
+          well as 'Taint_lambda.find_vars_to_track_across_lambdas'. *)
   lval_env : Lval_env.t;
   effects_acc : Effects.t ref;
 }
@@ -741,7 +742,7 @@ let handle_taint_propagators env thing taints shape =
    * the subsequent occurrences of `y` will.
    * TODO: To support that, we may need to introduce taint variables that we can
    *       later substitute, like we do for labels.
-   * *)
+   *)
   let taints =
     taints |> Taints.union (Shape.gather_all_taints_in_shape shape)
   in
@@ -1061,16 +1062,16 @@ and check_tainted_lval_aux env (lval : IL.lval) :
               | (`Clean | `Tainted _) as xtaint' -> xtaint'
               | `None ->
                   (* HACK(field-sensitivity): If we encounter `obj.x` and `obj` has
-                     * polymorphic taint, and we know nothing specific about `obj.x`, then
-                     * we add the same offset `.x` to the polymorphic taint coming from `obj`.
-                     * (See also 'propagate_taint_via_unresolved_java_getters_and_setters'.)
-                     *
-                     * For example, given `function foo(o) { sink(o.x); }`, and being '0 the
-                     * polymorphic taint of `o`, this allows us to record that what goes into
-                     * the sink is '0.x (and not just '0). So if later we encounter `foo(obj)`
-                     * where `obj.y` is tainted but `obj.x` is not tainted, we will not
-                     * produce a finding.
-                  *)
+                   * polymorphic taint, and we know nothing specific about `obj.x`, then
+                   * we add the same offset `.x` to the polymorphic taint coming from `obj`.
+                   * (See also 'propagate_taint_via_unresolved_java_getters_and_setters'.)
+                   *
+                   * For example, given `function foo(o) { sink(o.x); }`, and being '0 the
+                   * polymorphic taint of `o`, this allows us to record that what goes into
+                   * the sink is '0.x (and not just '0). So if later we encounter `foo(obj)`
+                   * where `obj.y` is tainted but `obj.x` is not tainted, we will not
+                   * produce a finding.
+                   *)
                   fix_poly_taint_with_field lval sub_xtaint
             in
             (xtaint', shape)
@@ -1105,10 +1106,10 @@ and check_tainted_lval_aux env (lval : IL.lval) :
       let sinks =
         lval_is_sink env lval
         (* For sub-lvals we require sinks to be exact matches. Why? Let's say
-           * we have `sink(x.a)` and `x' is tainted but `x.a` is clean...
-           * with the normal subset semantics for sinks we would consider `x'
-           * itself to be a sink, and we would report a finding!
-        *)
+         * we have `sink(x.a)` and `x' is tainted but `x.a` is clean...
+         * with the normal subset semantics for sinks we would consider `x'
+         * itself to be a sink, and we would report a finding!
+         *)
         |> List.filter TM.is_exact
         |> List_.map TM.sink_of_match
       in
@@ -1172,7 +1173,15 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
     | Composite ((CTuple | CArray | CList), (_, es, _)) ->
         let taints_and_shapes, lval_env = map_check_expr env check es in
         let tuple_shape = Shape.tuple_like_obj taints_and_shapes in
-        (Taints.empty, tuple_shape, lval_env)
+        let all_taints =
+          taints_and_shapes
+          |> List.fold_left
+               (fun acc (taints, shape) ->
+                 acc |> Taints.union taints
+                 |> Taints.union (Shape.gather_all_taints_in_shape shape))
+               Taints.empty
+        in
+        (all_taints, tuple_shape, lval_env)
     | Composite ((CSet | Constructor _ | Regexp), (_, es, _)) ->
         let taints, lval_env = union_map_taints_and_vars env check es in
         (taints, S.Bot, lval_env)
@@ -1258,12 +1267,21 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                      let e_taints, e_shape, lval_env =
                        check { env with lval_env } e
                      in
+                     let taints_acc =
+                       taints_acc |> Taints.union e_taints
+                       |> Taints.union
+                            (Shape.gather_all_taints_in_shape e_shape)
+                     in
                      ((lval_env, taints_acc), `Field (id, e_taints, e_shape))
                  | Spread e ->
                      let e_taints, e_shape, lval_env =
-                       check { env with lval_env } e
+                       check { env with lval_env } e in
+                     let taints_acc =
+                       taints_acc |> Taints.union e_taints
+                       |> Taints.union
+                            (Shape.gather_all_taints_in_shape e_shape)
                      in
-                     ((lval_env, e_taints), `Spread e_shape)
+                     ((lval_env, taints_acc), `Spread e_shape)
                  | Entry (ke, ve) ->
                      let ke_taints, ke_shape, lval_env =
                        check { env with lval_env } ke
@@ -1275,6 +1293,13 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                      in
                      let ve_taints, ve_shape, lval_env =
                        check { env with lval_env } ve
+                     in
+                     let taints_acc =
+                       taints_acc
+                       |> Taints.union
+                            ve_taints (* ← Now includes value taints! *)
+                       |> Taints.union
+                            (Shape.gather_all_taints_in_shape ve_shape)
                      in
                      ((lval_env, taints_acc), `Entry (ke, ve_taints, ve_shape)))
                (env.lval_env, Taints.empty)
@@ -1489,7 +1514,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                 if not (propagate_through_functions env) then Taints.empty
                 else
                   (* Otherwise assume that the function will propagate
-                     * the taint of its arguments. *)
+                   * the taint of its arguments. *)
                   all_args_taints
               in
               match
@@ -1510,8 +1535,8 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                     effects_of_call_func_arg e e_shape args_taints
                     |> record_effects { env with lval_env };
                     (* If this is a method call, `o.method(...)`, then we fetch the
-                       * taint of the callee object `o`. This is a conservative worst-case
-                       * asumption that any taint in `o` can be tainting the call's effect. *)
+                     * taint of the callee object `o`. This is a conservative worst-case
+                     * asumption that any taint in `o` can be tainting the call's effect. *)
                     let call_taints =
                       match e_obj with
                       | `Fun -> call_taints
@@ -1730,8 +1755,8 @@ let mk_lambda_in_env env lcfg =
        (fun lval_env id id_info _pdefault ->
          let var = AST_to_IL.var_of_id_info id id_info in
          (* This is a *new* variable, so we clean any taint that we may have
-            * attached to it previously. This can happen when a lambda is called
-            * inside a loop. *)
+          * attached to it previously. This can happen when a lambda is called
+          * inside a loop. *)
          let lval_env = Lval_env.clean lval_env (LV.lval_of_var var) in
          (* Now check if the parameter is itself a taint source. *)
          let taints, shape, lval_env =
