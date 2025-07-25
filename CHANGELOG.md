@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.8.2](https://github.com/opengrep/opengrep/releases/tag/v1.8.2) - 25-07-2025
+
+### Bug fixes
+
+* Fix bug in propagating taints through composites and dictionaries by @corneliuhoffman in #367
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.1...v1.8.2
+
+
 ## [1.8.1](https://github.com/opengrep/opengrep/releases/tag/v1.8.1) - 24-07-2025
 
 ### Bug fixes
