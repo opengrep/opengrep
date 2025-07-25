@@ -131,6 +131,7 @@ let propagate_through_indexes env =
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
+let add_taints_from_shape shape = Taints.union (Shape.gather_all_taints_in_shape shape)
 
 let log_timeout_warning (taint_inst : Taint_rule_inst.t) opt_name timeout =
   match timeout with
@@ -156,6 +157,7 @@ let map_check_expr env check_expr xs =
   in
   (List.rev rev_taints_and_shapes, lval_env)
 
+
 let union_map_taints_and_vars env check xs =
   let taints, lval_env =
     xs
@@ -164,7 +166,7 @@ let union_map_taints_and_vars env check xs =
            let taints, shape, lval_env = check { env with lval_env } x in
            let taints_acc =
              taints_acc |> Taints.union taints
-             |> Taints.union (Shape.gather_all_taints_in_shape shape)
+             |> add_taints_from_shape shape
            in
            (taints_acc, lval_env))
          (Taints.empty, env.lval_env)
@@ -666,7 +668,7 @@ let check_orig_if_sink env ?filter_sinks orig taints shape =
    * all taints reachable through its shape.
    *)
   let taints =
-    taints |> Taints.union (Shape.gather_all_taints_in_shape shape)
+    taints |> add_taints_from_shape shape
   in
   let sinks = orig_is_best_sink env orig in
   let sinks =
@@ -744,7 +746,7 @@ let handle_taint_propagators env thing taints shape =
    *       later substitute, like we do for labels.
    *)
   let taints =
-    taints |> Taints.union (Shape.gather_all_taints_in_shape shape)
+    taints |> add_taints_from_shape shape
   in
   let lval_env = env.lval_env in
   let propagators =
@@ -1167,7 +1169,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
     | FixmeExp (_, _, Some e) ->
         let taints, shape, lval_env = check env e in
         let taints =
-          taints |> Taints.union (Shape.gather_all_taints_in_shape shape)
+          taints |>  add_taints_from_shape shape
         in
         (taints, S.Bot, lval_env)
     | Composite ((CTuple | CArray | CList), (_, es, _)) ->
@@ -1178,7 +1180,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
           |> List.fold_left
                (fun acc (taints, shape) ->
                  acc |> Taints.union taints
-                 |> Taints.union (Shape.gather_all_taints_in_shape shape))
+                 |> add_taints_from_shape shape)
                Taints.empty
         in
         (all_taints, tuple_shape, lval_env)
@@ -1269,8 +1271,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                      in
                      let taints_acc =
                        taints_acc |> Taints.union e_taints
-                       |> Taints.union
-                            (Shape.gather_all_taints_in_shape e_shape)
+                       |> add_taints_from_shape e_shape
                      in
                      ((lval_env, taints_acc), `Field (id, e_taints, e_shape))
                  | Spread e ->
@@ -1278,8 +1279,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                        check { env with lval_env } e in
                      let taints_acc =
                        taints_acc |> Taints.union e_taints
-                       |> Taints.union
-                            (Shape.gather_all_taints_in_shape e_shape)
+                       |> add_taints_from_shape e_shape
                      in
                      ((lval_env, taints_acc), `Spread e_shape)
                  | Entry (ke, ve) ->
@@ -1288,8 +1288,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                      in
                      let taints_acc =
                        taints_acc |> Taints.union ke_taints
-                       |> Taints.union
-                            (Shape.gather_all_taints_in_shape ke_shape)
+                       |> add_taints_from_shape ke_shape
                      in
                      let ve_taints, ve_shape, lval_env =
                        check { env with lval_env } ve
@@ -1298,8 +1297,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                        taints_acc
                        |> Taints.union
                             ve_taints (* ← Now includes value taints! *)
-                       |> Taints.union
-                            (Shape.gather_all_taints_in_shape ve_shape)
+                       |>add_taints_from_shape ve_shape
                      in
                      ((lval_env, taints_acc), `Entry (ke, ve_taints, ve_shape)))
                (env.lval_env, Taints.empty)
@@ -1456,7 +1454,7 @@ let check_function_call_callee env e =
         check_tainted_lval env lval
       in
       let obj_taints =
-        sub_taints |> Taints.union (Shape.gather_all_taints_in_shape sub_shape)
+        sub_taints |> add_taints_from_shape sub_shape
       in
       (`Obj obj_taints, taints, shape, lval_env)
   | __else__ ->
