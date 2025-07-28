@@ -144,8 +144,6 @@ let () =
         Array.mem "--experimental" argv
       in
       match argv0, experimental with
-      (* TODO[Issue #125]: Why does invoking [opengrep-cli] has argv0 = 'opengrep-core'?
-       * This happens if the experimental flag is not passed. *)
       (* opengrep-cli a.k.a. osemgrep *)
       | "opengrep-cli", _
       (* In the long term (and in the short term on windows) we want to ship
