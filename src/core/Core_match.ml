@@ -183,33 +183,6 @@ let to_rule_id_options_map (ms : t list) =
   rule_ids_to_rule_id_options_map (List_.map (fun m -> m.rule_id) ms)
 
 (*****************************************************************************)
-(* Deduplication *)
-(*****************************************************************************)
-
-let hash_with_bindings bindings acc0 =
-  bindings
-  |> List.fold_left
-       (fun acc (mvar, mval) ->
-         acc
-         |> Hashtbl_.combine_hash (Hashtbl.hash mvar)
-         |> Hashtbl_.combine_hash (Hashtbl.hash mval))
-       acc0
-
-(* perf: Make sure the 'env' is part of the hash. Otherwise, if we had a pattern
-    generating lots of matches at the same location, but with different 'env's,
-    all those matches would get the same 'hash' causing perf problems. *)
-let hash m =
-  Hashtbl.hash (m.rule_id.id, m.range_loc, m) |> hash_with_bindings m.env
-[@@profiling]
-
-module Tbl = Hashtbl.Make (struct
-  type nonrec t = t
-
-  let equal = equal
-  let hash = hash
-end)
-
-(*****************************************************************************)
 (* API *)
 (*****************************************************************************)
 
@@ -218,7 +191,7 @@ type digest = Rule_ID.t * Target.path * int * int * Metavariable.bindings
 
 (* Deduplicate matches *)
 let uniq (pms : t list) : t list =
-  let digest (t : t) =
+  let digest (t : t) : digest =
     (t.rule_id.id,
      t.path,
      (fst t.range_loc).pos.bytepos,
