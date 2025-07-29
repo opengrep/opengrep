@@ -1,7 +1,36 @@
 (*
-   A special built-in string analyzer that estimates whether a string
-   looks like a secret.
+   Ananalyzer that estimates whether a string looks like a secret.
 *)
+
+(* A specialized trie in which keys are A-Z strings of length 3 *)
+module Trie = struct
+  type t = float option array array array
+
+  let create () : t =
+    let empty = Array.make_matrix 26 26 None in
+    Array.init 26 (fun _ -> Array.map Array.copy empty)
+
+  let index_of_char c = Char.code c - Char.code 'A'
+
+  let insert (trie : t) (k : string) (v : float) : unit =
+      let a = index_of_char k.[0] in
+      let b = index_of_char k.[1] in
+      let c = index_of_char k.[2] in
+      trie.(a).(b).(c) <- Some v
+
+  let is_valid_key s =
+    String.length s = 3 &&
+    String.for_all (fun c -> c >= 'A' && c <= 'Z') s
+
+  let lookup (trie : t) (s : string) : float option =
+    if not (is_valid_key s) then
+      None
+    else
+      let i = index_of_char s.[0] in
+      let j = index_of_char s.[1] in
+      let k = index_of_char s.[2] in
+      trie.(i).(j).(k)
+end
 
 let log2 x = log x /. log 2.
 
@@ -13,21 +42,7 @@ let log2 x = log x /. log 2.
 *)
 let unknown_char_entropy = log2 62.
 
-let normalize_string s =
-  let buf = Buffer.create (String.length s) in
-  s
-  |> String.iter (fun c ->
-         match c with
-         | 'a' .. 'z' -> Buffer.add_char buf (Char.uppercase_ascii c)
-         | 'A' .. 'Z' -> Buffer.add_char buf c
-         | c ->
-             (* everything else, including:
-                - digits
-                - punctuation
-                - non-ascii UTF-8 bytes
-             *)
-             Buffer.add_char buf c);
-  Buffer.contents buf
+let normalize_string s = String.map Char.uppercase_ascii s
 
 (* Set in Data_init.init() from data in Entropy_data.ml
  * The intermediate variable below is used to save space in engine.js
@@ -46,7 +61,7 @@ let english_trigrams_ref = ref [||]
 let load_trigrams () =
   let ar = !english_trigrams_ref in
   (* Load trigram frequencies *)
-  let trigram_entropies = Hashtbl.create (Array.length ar) in
+  let trigram_entropies = Trie.create () in
   (* we explicitly use int64 here to avoid overflow *)
   (* on 32 bit systems (like Js_of_ocaml), trigram_total_count *)
   (* overflows :( *)
@@ -65,7 +80,7 @@ let load_trigrams () =
       in
       (* Ensure is not nan *)
       assert (not Float.(is_nan trigram_entropy));
-      Hashtbl.add trigram_entropies trigram trigram_entropy)
+      Trie.insert trigram_entropies trigram trigram_entropy)
     ar;
   (* Load character frequencies *)
   let char_total_count = Int64.mul 3L trigram_total_count in
@@ -104,12 +119,13 @@ let data_tables = lazy (load_trigrams ())
    overlaps with two other substrings, we divide its entropy by 3 to
    get back the entropy corresponding to a single byte.
 *)
+
 let get_substring_entropy s =
   let trigram_entropies, char_entropies = Lazy.force data_tables in
   match String.length s with
   | 3 ->
       let trigram_entropy =
-        match Hashtbl.find_opt trigram_entropies s with
+        match Trie.lookup trigram_entropies s with
         | Some x -> x
         | None ->
             let e1 = s.[0] |> Char.code |> Array.get char_entropies in
@@ -127,12 +143,12 @@ let get_substring_entropy s =
 
 let iter_substrings s f =
   for i = 0 to String.length s - 3 do
-    String.sub s i 3 |> normalize_string |> f
+    String.sub s i 3 |> f
   done;
   let i = String.length s - 2 in
-  if i >= 0 then String.sub s i 2 |> normalize_string |> f;
+  if i >= 0 then String.sub s i 2 |> f;
   let i = String.length s - 1 in
-  if i >= 0 then String.sub s i 1 |> normalize_string |> f
+  if i >= 0 then String.sub s i 1 |> f
 
 let entropy_from_trigrams s =
   let e = ref 0. in
