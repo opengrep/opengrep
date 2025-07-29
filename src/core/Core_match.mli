@@ -1,4 +1,8 @@
 (* See Core_match.ml for more info *)
+
+type range_loc = Tok.location * Tok.location
+[@@deriving show, eq, ord]
+
 type t = {
   (* rule (or mini rule) responsible for the pattern match found *)
   rule_id : rule_id;
