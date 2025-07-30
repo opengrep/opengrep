@@ -528,6 +528,18 @@ let diff_findings (actual : int list) (expected : int list) : string =
 let compare_actual_to_expected (env : env) (matches : Core_match.t list)
     (annots : (Fpath.t * A.annotations) list)
     (explanations : Matching_explanation.t list option) : test_result list =
+
+  (* cf. src/reporting/Core_json_output.ml, function [process_matches_with_rule_options]. *)
+  let rule_opts =
+    Core_match.to_rule_id_options_map matches
+  in
+  let restrict_matches_using_options options matches =
+    match options with
+    | Some Core_match.{max_match_per_file = Some limit; _}
+      when List.length matches > limit ->
+      List_.take (max limit 0) matches (* pre: already sorted *)
+    | _ -> matches
+  in
   let xtra =
     match env.engine with
     | OSS -> ""
@@ -589,6 +601,7 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
              |> List_.optlist_to_list
            in
            let all_files : Fpath.t list = Assoc.join_keys actual expected in
+           let rule_opts_for_id = (Rule_ID.Map.find_opt id rule_opts) in
            let res : (bool * (Fpath.t * Out.expected_reported)) list =
              all_files
              |> List_.map (fun (target : Fpath.t) ->
@@ -601,6 +614,7 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                              pm.range_loc |> fst |> fun (loc : Loc.t) ->
                              loc.pos.line)
                       |> List.sort_uniq Int.compare
+                      |> (restrict_matches_using_options rule_opts_for_id)
                     in
                     let expected_lines : A.linenb list =
                       expected |> Assoc.find_opt target |> List_.optlist_to_list
