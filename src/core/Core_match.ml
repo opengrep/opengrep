@@ -42,6 +42,10 @@
  * even if it returns the same match than a similar match coming
  * from a pattern:, we should not merge them!
  *)
+
+type range_loc = Tok.location * Tok.location
+[@@deriving show, eq, ord]
+
 type t = {
   (* rule (or mini rule) responsible for the pattern match found *)
   rule_id : rule_id; [@equal fun a b -> a.id = b.id]
@@ -68,7 +72,7 @@ type t = {
   path : Target.path;
   (* less: redundant with location? *)
   (* note that the two Tok.location can be equal *)
-  range_loc : Tok.location * Tok.location;
+  range_loc : range_loc;
   (* Why is this here?
      When we allow pattern matches to be embedded into metavariables, we want
      to be able to assign a faithful mvalue to the new metavariable.
