@@ -354,7 +354,7 @@ and metavarcond_step1 ~is_id_mvar x =
   | R.CondEval _ -> None
   | R.CondNestedFormula _ -> None
   | R.CondRegexp (mvar, re, const_prop) ->
-      if is_id_mvar mvar then Some (MvarRegexp (mvar, re, const_prop)) else None
+      if is_id_mvar mvar then Some (MvarRegexp (mvar, re.pattern, const_prop)) else None
   (* TODO? maybe we should extract the strings from the type constraint *)
   | R.CondType _ -> None
   | R.CondName _ -> None

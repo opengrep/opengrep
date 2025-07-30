@@ -128,7 +128,7 @@ and metavar_cond =
    * the "regexpizer" optimizer (see Analyze_rule.ml).
    *)
   | CondRegexp of
-      Mvar.t * Xpattern.regexp_string * bool (* constant-propagation *)
+      Mvar.t * Xpattern.compiled_regexp * bool (* constant-propagation *)
   | CondType of
       Mvar.t
       * Xlang.t option

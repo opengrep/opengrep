@@ -405,7 +405,9 @@ and parse_pair_old env ((key, value) : key * G.expr) :
         | Right dict -> (
             let process_extra extra =
               match extra with
-              | MetavarRegexp (mvar, regex, b) -> R.CondRegexp (mvar, regex, b)
+              | MetavarRegexp (mvar, regex, b) ->
+                  let regex = Pcre2_.pcre_compile_with_flags ~flags:[ `ANCHORED ] regex in
+                  R.CondRegexp (mvar, regex, b)
               | MetavarType (mvar, xlang_opt, s, t) ->
                   R.CondType (mvar, xlang_opt, s, t)
               | MetavarPattern (mvar, xlang_opt, formula) ->
@@ -878,6 +880,7 @@ and produce_constraint (env : env) (key : key) dict tok indicator =
          fix = None;
          as_ = None;
         } ->
+            let regexp = Pcre2_.pcre_compile_with_flags ~flags:[ `ANCHORED ] regexp in
             [ Left (t, R.CondRegexp (metavar, regexp, true)) ]
         | _ ->
             let pat =
