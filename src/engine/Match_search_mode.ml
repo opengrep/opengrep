@@ -761,7 +761,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
           * which may not always be a string. The regexp is really done on
           * the text representation of the metavar content.
           *)
-         | R.CondRegexp (mvar, re_str, const_prop) -> (
+         | R.CondRegexp (mvar, re, const_prop) -> (
              let config = env.xconf.config in
              let env =
                if const_prop && config.constant_propagation then
@@ -772,7 +772,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
              (* TODO: could return expl for nested matching! *)
              match
                Metavariable_regex.get_metavar_regex_capture_bindings env ~file r
-                 (mvar, re_str)
+                 (mvar, re)
              with
              | None -> None
              (* The bindings we get back are solely the new capture group metavariables. We need

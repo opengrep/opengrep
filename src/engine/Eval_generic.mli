@@ -25,14 +25,23 @@ val eval : env -> code -> value
  *)
 val eval_opt : env -> code -> value option
 
+(* match a compiled regexp *)
 val eval_regexp_matches :
+  ?base_offset:int ->
+  file:Fpath.t ->
+  regexp:Pcre2_.t ->
+  string ->
+  ((Tok.location * Tok.location) * (string * Metavariable.mvalue) list) list
+
+(* match a regexp string *)
+val eval_regexp_pattern_matches :
   ?base_offset:int ->
   file:Fpath.t ->
   regexp:string ->
   string ->
   ((Tok.location * Tok.location) * (string * Metavariable.mvalue) list) list
 
-(* This function will swallow exns and always return a bool.
+ (* This function will swallow exns and always return a bool.
  * This is the function called by Match_rules.ml
  *)
 val eval_bool :

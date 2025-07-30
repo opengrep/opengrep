@@ -26,13 +26,16 @@ let src = Pcre_.src [@@alert "-deprecated"]
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
+(* This is needed for [@@deriving hash] for t below: because of TCB, we're not opening Base here. *)
+let hash_fold_string = Base.hash_fold_string
+
 (* Keep the regexp source around for better error reporting and
    troubleshooting. *)
 type t = {
   pattern : string;
-  regexp : Pcre2.regexp; [@opaque] [@equal fun _ _ -> true]
+  regexp : Pcre2.regexp; [@opaque] [@equal fun _ _ -> true] [@hash.ignore]
 }
-[@@deriving show, eq]
+[@@deriving show, eq, hash]
 
 (* Not sure why we are getting warnings but *)
 let _ = pp

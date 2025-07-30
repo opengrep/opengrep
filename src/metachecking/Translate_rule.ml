@@ -81,7 +81,7 @@ let rec translate_metavar_cond cond : [> `O of (string * Yaml.value) list ] =
             [ ("modules", `A (List_.map (fun n -> `String n) names)) ]
         | None -> [])
   | CondRegexp (mv, re_str, _) ->
-      `O [ ("metavariable", `String mv); ("regex", `String re_str) ]
+      `O [ ("metavariable", `String mv); ("regex", `String re_str.pattern) ]
   | CondAnalysis (mv, analysis) ->
       let analyzer, options =
         match analysis with

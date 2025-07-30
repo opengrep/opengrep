@@ -220,16 +220,19 @@ let value_of_lit ~code x : value =
   | G.Float (Some f, _t) -> Float f
   | _ -> raise (NotHandled code)
 
-let eval_regexp_matches ?(base_offset = 0) ~file ~regexp:re str =
+let eval_regexp_matches ?(base_offset = 0) ~file ~regexp str =
   (* alt: take the text range of the metavariable in the original file,
      * and enforce e1 can only be an Id metavariable.
      * alt: let s = value_to_string v in
      * to convert anything in a string before using regexps on it
   *)
-  let regexp = Pcre2_.regexp ~flags:[ `ANCHORED ] re in
   Xpattern_match_regexp.regexp_matcher ~base_offset
     Xpattern_match_regexp.pcre2_regex_functions str file regexp
 [@@alert "-deprecated"]
+
+let eval_regexp_pattern_matches ?(base_offset = 0) ~file ~regexp str =
+  let compiled = Pcre2_.regexp ~flags:[ `ANCHORED ] regexp in
+    eval_regexp_matches ~base_offset ~file ~regexp:compiled str
 
 let rec eval env code =
   match code.G.e with
@@ -327,7 +330,7 @@ let rec eval env code =
       match eval env e with
       | String str ->
           let v : value =
-            match eval_regexp_matches ~file:env.file ~regexp:re str with
+            match eval_regexp_pattern_matches ~file:env.file ~regexp:re str with
             | [] -> Bool false
             | _ -> Bool true
           in

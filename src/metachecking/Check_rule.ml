@@ -132,7 +132,7 @@ let unknown_metavar_in_comparison r f =
              | CondName _ ->
                  (Set.empty, [])
              | CondRegexp (_, regex, _) ->
-                 (Mvar.mvars_of_regexp_string regex |> Set_.of_list, [])
+                 (Mvar.mvars_of_regexp_string regex.pattern |> Set_.of_list, [])
              | CondNestedFormula (_, _, formula) ->
                  collect_metavars bound_mvs_for_conds formula)
       |> List.fold_left
