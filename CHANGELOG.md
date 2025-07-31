@@ -1,5 +1,21 @@
 # Changelog
 
+
+## [1.8.3](https://github.com/opengrep/opengrep/releases/tag/v1.8.3) - 31-07-2025
+
+### Bug fixes
+
+* The option `max_match_per_file` now works with `--test` by @dimitris-m in #374
+* Inline metavars in incremental json output by @dimitris-m in #375
+
+### Improvements
+
+* Performance improvements by @maciejpirog and @dimitris-m in #369, #372, #373, #376
+* Make `--experimental` bypass the executable name by @dimitris-m in https://github.com/opengrep/opengrep/pull/370
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.2...v1.8.3
+
+
 ## [1.8.2](https://github.com/opengrep/opengrep/releases/tag/v1.8.2) - 25-07-2025
 
 ### Bug fixes
