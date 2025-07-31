@@ -6,7 +6,7 @@ open Ppx_hash_lib.Std.Hash.Builtin
 (* less: could want to remember the position in the pattern of the metavar
  * for error reporting on pattern itself? so use a 'string AST_generic.wrap'?
  *)
-type t = string [@@deriving show, eq, hash]
+type t = string [@@deriving show, eq, hash, ord]
 
 (* ex: $X, $FAIL, $VAR2, $_
  * Note that some languages such as PHP or Javascript allows '$' in identifier

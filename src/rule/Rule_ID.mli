@@ -6,6 +6,8 @@ type t [@@deriving show, eq]
 
 exception Malformed_rule_ID of string
 
+module Map : Map.S with type key = t
+
 (* conversion functions *)
 val to_string : t -> string
 

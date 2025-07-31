@@ -24,7 +24,7 @@ type path = {
           should be used to obtain the contents of the target, but not for
           reporting to the user, other than possibly for debugging purposes. *)
 }
-[@@deriving show, eq]
+[@@deriving show, eq, ord]
 (** Information about where a target from for both the purpose of
    {ul
     {- informing the user: [origin]}

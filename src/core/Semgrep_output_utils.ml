@@ -168,7 +168,10 @@ let compare_match (a : core_match) (b : core_match) =
   let (bloc : location) = { path = b.path; start = b.start; end_ = b.end_ } in
 
   let c = compare_location aloc bloc in
-  if c <> 0 then c else compare_match_extra a.extra b.extra
+  if c <> 0 then c else
+  let e = compare_match_extra a.extra b.extra in
+  if e <> 0 then e else
+  Option.compare Semgrep_output_v1_j.compare_match_dataflow_trace a.extra.dataflow_trace b.extra.dataflow_trace
 
 let sort_metavars (metavars : (string * metavar_value) list) =
   List.stable_sort compare_metavar_binding metavars

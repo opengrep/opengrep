@@ -280,18 +280,14 @@ type is_id_mvar = Metavariable.mvar -> bool
  * in one pattern, and the same $MVAR in a non-identifier position in another one.
  * In those cases we may still end up skipping files that we should not skip. *)
 let id_mvars_of_formula f =
-  let id_mvars = ref MvarSet.empty in
-  f
-  |> Visit_rule.visit_xpatterns (fun xp ~inside:_ ->
+  
+  Visit_rule.visit_xpatterns (fun xp ~inside:_ acc ->
          match xp with
          | { pat = XP.Sem (pat, lang); _ } ->
-             id_mvars :=
+             
                Analyze_pattern.extract_mvars_in_id_position ~lang pat
-               |> MvarSet.union !id_mvars
-         | __else__ -> ());
-  !id_mvars
-
-(* simple for now, don't do any conversion *)
+               |> MvarSet.union acc 
+         | __else__ -> acc) f MvarSet.empty(* simple for now, don't do any conversion *)
 
 (*
 let rec (and_step1: Rule.formula -> cnf_step1) = fun f ->
@@ -358,7 +354,7 @@ and metavarcond_step1 ~is_id_mvar x =
   | R.CondEval _ -> None
   | R.CondNestedFormula _ -> None
   | R.CondRegexp (mvar, re, const_prop) ->
-      if is_id_mvar mvar then Some (MvarRegexp (mvar, re, const_prop)) else None
+      if is_id_mvar mvar then Some (MvarRegexp (mvar, re.pattern, const_prop)) else None
   (* TODO? maybe we should extract the strings from the type constraint *)
   | R.CondType _ -> None
   | R.CondName _ -> None

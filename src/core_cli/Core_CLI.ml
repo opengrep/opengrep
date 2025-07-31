@@ -281,7 +281,12 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
                        None
                    | Ok (match_ : Out.core_match) -> Some match_)
           in
-          let matches = Core_json_output.dedup_and_sort matches in
+          let matches =
+            Core_json_output.dedup_and_sort
+              (Core_match.to_rule_id_options_map
+                 List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches))
+              matches
+          in
           matches
           |> List.iter (Core_text_output.print_match (caps :> < Cap.stdout >));
           if config.matching_explanations then

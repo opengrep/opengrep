@@ -109,11 +109,7 @@ type selector = {
 (* Helpers *)
 (*****************************************************************************)
 let xpatterns_in_formula (e : R.formula) : (Xpattern.t * bool) list =
-  let res = ref [] in
-  e
-  |> Visit_rule.visit_xpatterns (fun xpat ~inside:b ->
-         Stack_.push (xpat, b) res);
-  !res
+  Visit_rule.visit_xpatterns (fun xpat ~inside:b acc -> (xpat, b) :: acc) e []
 
 let partition_xpatterns xs =
   let semgrep = ref [] in
@@ -283,8 +279,7 @@ let matches_of_patterns ~has_as_metavariable ?mvar_context ?range_filter rule
               (* regular path *)
               Match_patterns.check
                 ~hook:(fun _ -> ())
-                ~has_as_metavariable ?mvar_context ?range_filter
-                ~matching_conf
+                ~has_as_metavariable ?mvar_context ?range_filter ~matching_conf
                 config mini_rules
                 (internal_path_to_content, origin, lang, ast))
       in
@@ -331,7 +326,7 @@ let rec remove_selectors (selector, acc) formulas =
                 * - pattern: $Y
             *)
             (* TODO: Should we fail here or just reported as a warning? This
-                * is something to catch with the meta-checker. *)
+             * is something to catch with the meta-checker. *)
             (Some s1, x :: acc)
       in
       remove_selectors (selector, acc) xs
@@ -766,7 +761,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
           * which may not always be a string. The regexp is really done on
           * the text representation of the metavar content.
           *)
-         | R.CondRegexp (mvar, re_str, const_prop) -> (
+         | R.CondRegexp (mvar, re, const_prop) -> (
              let config = env.xconf.config in
              let env =
                if const_prop && config.constant_propagation then
@@ -777,7 +772,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
              (* TODO: could return expl for nested matching! *)
              match
                Metavariable_regex.get_metavar_regex_capture_bindings env ~file r
-                 (mvar, re_str)
+                 (mvar, re)
              with
              | None -> None
              (* The bindings we get back are solely the new capture group metavariables. We need
@@ -1110,7 +1105,7 @@ and matches_of_formula xconf rule xtarget formula opt_context :
     |> RP.add_rule rule
   in
   Log.info (fun m -> m "found %d matches" (List.length res.matches));
-  (* match results per minirule id which is the same than pattern_id in
+  (* match results per minirule id which is the same as pattern_id in
    * the formula *)
   let pattern_matches_per_id = group_matches_per_pattern_id res.matches in
   let env =
@@ -1140,18 +1135,15 @@ and matches_of_formula xconf rule xtarget formula opt_context :
 (* Main entry point *)
 (*****************************************************************************)
 
-let check_rule ({ R.mode = `Search formula;_} as r) hook xconf xtarget =
+let check_rule ({ R.mode = `Search formula; _ } as r) hook xconf xtarget =
   let rule_id = fst r.id in
-  let (res, final_ranges) =
-     matches_of_formula xconf r xtarget formula None in
-   let errors =
-     res.errors |> (E.ErrorSet.map (error_with_rule_id rule_id)) in
-   {
-     res with
-     RP.matches =
-       (((final_ranges |>
-            (List_.map (RM.range_to_pattern_match_adjusted r)))
-           |> PM.uniq)
-          |> hook);
-     errors
-   }
+  let res, final_ranges = matches_of_formula xconf r xtarget formula None in
+  let errors = res.errors |> E.ErrorSet.map (error_with_rule_id rule_id) in
+  {
+    res with
+    RP.matches =
+      final_ranges
+      |> List_.map (RM.range_to_pattern_match_adjusted r)
+      |> PM.uniq |> hook;
+    errors;
+  }

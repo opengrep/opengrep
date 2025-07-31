@@ -176,6 +176,12 @@ type t = {
    *)
   ~decorators_order_matters <ocaml default="false"> : bool;
 
+  (* restrict the number of matches to report on a rule. *)
+  ?max_match_per_file : int option;
+
+  (* override the default taint fixpoint timeout. *)
+  ?taint_fixpoint_timeout : float option;
+
   (* TODO: equivalences:
    *   - require_to_import (but need pass config to Js_to_generic)
    *)

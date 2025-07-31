@@ -98,6 +98,7 @@ let fake_rule_id (id, str) =
     fix = None;
     fix_regexp = None;
     langs = [];
+    options = None;
   }
 
 let adjust_xconfig_with_rule_options xconf options =

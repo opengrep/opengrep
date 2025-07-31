@@ -87,11 +87,8 @@ let length_of_call_trace ct =
 
 let compare_metavar_env env1 env2 =
   (* It's important that we only return 0 if the two bindings are
-     structurally equal. Otherwise, there will be many duplicates.
-     We use Stdlib.compare in the other case because deriving
-     compare is rather difficult and the specific ordering doesn't
-     matter. *)
-  if Metavariable.equal_bindings env1 env2 then 0 else Stdlib.compare env1 env2
+     structurally equal. Otherwise, there will be many duplicates. *)
+  Metavariable.compare_bindings env1 env2
 
 let compare_matches pm1 pm2 =
   match
@@ -100,7 +97,7 @@ let compare_matches pm1 pm2 =
       (Rule_ID.to_string pm2.PM.rule_id.id)
   with
   | 0 ->
-      let compare_range_loc = compare pm1.range_loc pm2.range_loc in
+      let compare_range_loc = Core_match.compare_range_loc pm1.range_loc pm2.range_loc in
       if compare_range_loc <> 0 then compare_range_loc
       else compare_metavar_env pm1.env pm2.env
   | other -> other

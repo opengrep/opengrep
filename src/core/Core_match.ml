@@ -42,6 +42,10 @@
  * even if it returns the same match than a similar match coming
  * from a pattern:, we should not merge them!
  *)
+
+type range_loc = Tok.location * Tok.location
+[@@deriving show, eq, ord]
+
 type t = {
   (* rule (or mini rule) responsible for the pattern match found *)
   rule_id : rule_id; [@equal fun a b -> a.id = b.id]
@@ -68,7 +72,7 @@ type t = {
   path : Target.path;
   (* less: redundant with location? *)
   (* note that the two Tok.location can be equal *)
-  range_loc : Tok.location * Tok.location;
+  range_loc : range_loc;
   (* Why is this here?
      When we allow pattern matches to be embedded into metavariables, we want
      to be able to assign a faithful mvalue to the new metavariable.
@@ -153,58 +157,61 @@ and rule_id = {
   langs : Lang.t list;
   (* used for debugging (could be removed at some point) *)
   pattern_string : string;
+  options : rule_id_options option
 }
 [@@deriving show, eq]
 
-(*****************************************************************************)
-(* Deduplication *)
-(*****************************************************************************)
+and rule_id_options  = {
+  max_match_per_file : int option;
+  (* maximum number of matches per file. *)
+}
+[@@deriving show, eq]
 
-let hash_with_bindings bindings acc0 =
-  bindings
-  |> List.fold_left
-       (fun acc (mvar, mval) ->
-         acc
-         |> Hashtbl_.combine_hash (Hashtbl.hash mvar)
-         |> Hashtbl_.combine_hash (Hashtbl.hash mval))
-       acc0
+let rule_id_options_of_rule_options (opts : Rule_options.t) =
+  { max_match_per_file = opts.max_match_per_file }
 
-(* perf: Make sure the 'env' is part of the hash. Otherwise, if we had a pattern
-    generating lots of matches at the same location, but with different 'env's,
-    all those matches would get the same 'hash' causing perf problems. *)
-let hash m =
-  Hashtbl.hash (m.rule_id.id, m.range_loc, m) |> hash_with_bindings m.env
-[@@profiling]
+let rule_id_options_of_rule_options_opt (opts : Rule_options.t option) =
+  Option.map rule_id_options_of_rule_options opts
 
-module Tbl = Hashtbl.Make (struct
-  type nonrec t = t
+let rule_ids_to_map (opts: rule_id list) =
+  Rule_ID.Map.of_list (List_.map (fun r -> (r.id, r)) opts)
 
-  let equal = equal
-  let hash = hash
-end)
+let rule_ids_to_rule_id_options_map (opts: rule_id list) =
+  Rule_ID.Map.of_list
+    (List_.filter_map
+       (fun r ->
+          Option.map (fun opts -> (r.id, opts)) r.options)
+       opts)
+
+let to_rule_id_options_map (ms : t list) =
+  rule_ids_to_rule_id_options_map (List_.map (fun m -> m.rule_id) ms)
 
 (*****************************************************************************)
 (* API *)
 (*****************************************************************************)
 
+type digest = Rule_ID.t * Target.path * int * int * Metavariable.bindings
+[@@deriving ord]
+
 (* Deduplicate matches *)
 let uniq (pms : t list) : t list =
-  (* perf: Previously used an initial size of 1024 but profiling with memtrace
-      revealed that this was oversized and contributed to 14% of all major heap
-      usage in an interfile run over juice-shop. Setting it to 8 meant it was
-      undersized in some cases and led to additional allocations as the table
-      gets resized. Change this only with some caution.
-      DOUBT(iago): What is the actual observed effect in terms of runtime and
-        peak memory usage?
-  *)
-  let size = List.length pms in
-  let matches_tbl = Tbl.create size in
-  (* dedup matches *)
-  pms
-  |> List.iter (fun match_ ->
-         if not (Tbl.mem matches_tbl match_) then Tbl.add matches_tbl match_ ());
-  (* list matches *)
-  Tbl.fold (fun m () acc -> m :: acc) matches_tbl []
+  let digest (t : t) : digest =
+    (t.rule_id.id,
+     t.path,
+     (fst t.range_loc).pos.bytepos,
+     (snd t.range_loc).pos.bytepos,
+     t.env)
+  in
+  let cmp t1 t2 =
+    let c = compare_digest (digest t1) (digest t2) in
+    if c <> 0 then c else
+      match t1.taint_trace, t2.taint_trace with
+      | None, None -> 0
+      | None, _ -> 1
+      | _, None -> -1
+      | Some t1, Some t2 -> Taint_trace.compare (Lazy.force t1) (Lazy.force t2)
+  in
+  List.sort_uniq cmp pms
 [@@profiling]
 
 let range pm =

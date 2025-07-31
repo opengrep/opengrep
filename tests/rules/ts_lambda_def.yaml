@@ -1,0 +1,19 @@
+ rules:
+  - id: test
+    message: Possible SQL injection
+    languages:
+      - javascript
+    severity: ERROR
+    mode: taint
+    pattern-sinks:
+     - patterns:
+        - pattern: |
+                    `$SQL${$EXPR}...`
+        - metavariable-regex:
+            metavariable: $SQL
+            regex: ^\s*(SELECT|select|DELETE|delete|INSERT|insert|UPDATE|update|CALL|call|REPLACE|replace)\s.*
+    pattern-sources:
+     - patterns:
+        - pattern-inside: (..., $INPUT, ...) => {...}
+        - pattern: $INPUT
+

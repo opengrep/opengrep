@@ -180,8 +180,8 @@ let o_inline_metavariables : bool Term.t =
   let info =
     Arg.info ["inline-metavariables"]
       ~doc:
-        {|Inlines metavarible references in metadata strings the same way it is done in message. 
-          This can be costly so use with care especially if the metadata is very deep.|}
+        {|Inlines metavariable references in metadata strings the same way it is done in the message.
+This can be costly so use with care especially if the metadata is very deep.|}
   in  
   Arg.value (Arg.flag info)
 
@@ -331,6 +331,21 @@ let o_max_memory_mb : int Term.t =
 phase, or when running a rule on a single file. If set to 0, will
 not have memory limit. Defaults to 0. For CI scans that use the Pro Engine,
 defaults to 5000 MiB.
+|}
+  in
+  Arg.value (Arg.opt Arg.int default info)
+
+let o_max_match_per_file : int Term.t =
+  let default = default.core_runner_conf.max_match_per_file in
+  let info =
+    Arg.info [ "max-match-per-file" ]
+      ~doc:
+        {|Maximum number of matches to allow per file. Defaults to 10000. If the
+number of matches before deduplication exceeds this limit, an error is reported for
+the target and no matches are returned for it. This should not be used to restrict
+the number of matches, but as a hard limit that can be used to identify problematic
+rules. In such cases, the option can be added to the rule's options section, and it
+will result in a restriction of the number of matches for that rule only.
 |}
   in
   Arg.value (Arg.opt Arg.int default info)
@@ -1328,7 +1343,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       _historical_secrets include_ incremental_output incremental_output_postprocess
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
-      max_lines_per_finding max_log_list_entries max_memory_mb max_target_bytes
+      max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
       num_jobs no_secrets_validation nosem opengrep_ignore_pattern optimizations oss
       output output_enclosing_context pattern pro project_root pro_intrafile pro_lang
       pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
@@ -1424,6 +1439,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         timeout;
         timeout_threshold;
         max_memory_mb;
+        max_match_per_file;
         dataflow_traces;
         nosem;
         strict;
@@ -1557,7 +1573,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_historical_secrets $ o_include $ o_incremental_output $ o_incremental_output_postprocess
     $ o_json $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
-    $ o_max_log_list_entries $ o_max_memory_mb $ o_max_target_bytes
+    $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes
     $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations $ o_oss
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root $ o_pro_intrafile
     $ o_pro_languages $ o_pro_path_sensitive $ o_remote $ o_replacement

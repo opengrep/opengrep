@@ -62,8 +62,7 @@ type t = {
    *)
   respect_rule_paths : bool;
   (* Hook to display match results incrementally, after a file has been fully
-   * processed. Note that this hook run in a child process of Parmap
-   * in Core_scan.scan(), so the hook should not rely on shared memory!
+   * processed.
    * This is also now used in Runner_service.ml and Git_remote.ml.
    *)
   file_match_hook : (Fpath.t -> Core_result.matches_single_file -> unit) option;

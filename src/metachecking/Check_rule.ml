@@ -132,7 +132,7 @@ let unknown_metavar_in_comparison r f =
              | CondName _ ->
                  (Set.empty, [])
              | CondRegexp (_, regex, _) ->
-                 (Mvar.mvars_of_regexp_string regex |> Set_.of_list, [])
+                 (Mvar.mvars_of_regexp_string regex.pattern |> Set_.of_list, [])
              | CondNestedFormula (_, _, formula) ->
                  collect_metavars bound_mvs_for_conds formula)
       |> List.fold_left
@@ -213,7 +213,7 @@ let check_pattern (lang : Xlang.t) f =
           catamorphism? Would be nice to be able to easily return all the errors
           without needing a ref. *)
        Visit_rule.visit_xpatterns
-         (fun { pat; pstr = _pat_str, t; pid = _ } ~inside:_ ->
+         (fun { pat; pstr = _pat_str, t; pid = _ } ~inside:_ _ ->
            match (pat, lang) with
            | Sem (semgrep_pat, _lang), L (lang, _rest) -> (
                match Check_pattern.check lang semgrep_pat with
@@ -223,7 +223,7 @@ let check_pattern (lang : Xlang.t) f =
            | Aliengrep _aliengrep_pat, LAliengrep -> ()
            | Regexp _, _ -> ()
            | _ -> raise Impossible)
-         f)
+         f ())
   with
   | CheckPatternFailure s -> Error s
 

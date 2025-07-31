@@ -26,6 +26,7 @@ type conf = {
   num_jobs : int;
   optimizations : bool;
   max_memory_mb : int;
+  max_match_per_file : int;
   timeout : float;
   timeout_threshold : int; (* output flags *)
   (* features *)
@@ -111,6 +112,7 @@ let default_conf : conf =
     (* ^ seconds, keep up-to-date with User_settings.ml and constants.py *)
     timeout_threshold = 3;
     max_memory_mb = 0;
+    max_match_per_file = Core_scan_config.default.max_match_per_file;
     optimizations = true;
     dataflow_traces = false;
     matching_explanations = false;
@@ -350,6 +352,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    timeout;
    timeout_threshold;
    max_memory_mb;
+   max_match_per_file;
    optimizations;
    matching_explanations;
    nosem = _TODO;
@@ -386,7 +389,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
          *)
         equivalences_file = None;
         respect_rule_paths = true;
-        max_match_per_file = Core_scan_config.default.max_match_per_file;
+        max_match_per_file;
       }
 
 (* output adapter to Core_scan.scan.

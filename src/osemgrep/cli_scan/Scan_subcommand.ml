@@ -137,9 +137,9 @@ let output_and_exit_from_fatal_core_errors_exn ~exit_code
  * the use of a mutex below. *)
 let file_match_hook_mutex = Mutex.create ()
 
-let mk_file_match_hook (conf : Scan_CLI.conf) (rules : Rule.rules)
-    (printer : Scan_CLI.conf -> Out.cli_match list -> unit) (_file : Fpath.t)
-    (match_results : Core_result.matches_single_file) : unit =
+let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
+    (rules : Rule.rules) (printer : Scan_CLI.conf -> Out.cli_match list -> unit)
+    (_file : Fpath.t) (match_results : Core_result.matches_single_file) : unit =
   let cli_matches : Out.cli_match list =
     (* need to go through a series of transformation so that we can
      * get something that Matches_report.pp_text_outputs can operate on
@@ -166,8 +166,12 @@ let mk_file_match_hook (conf : Scan_CLI.conf) (rules : Rule.rules)
       (* Apply postprocessing but only if asked. *)
       |> pps_autofix
       |> pps_nosem
-      |> Result_.partition Core_json_output.match_to_match
-      |> fst |> Core_json_output.dedup_and_sort
+      |> Result_.partition
+        (Core_json_output.match_to_match ~inline:inline_metavars)
+      (* TODO: Print errors like in src/core_cli/Core_CLI.ml *)
+      |> fst
+      |> Core_json_output.dedup_and_sort
+           Core_match.(to_rule_id_options_map pms)
     in
     let hrules = Rule.hrules_of_rules rules in
     let fixed_env = Fixed_lines.mk_env () in
@@ -216,14 +220,17 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
       _;
     } ->
       ( Output_format.Incremental,
-        Some (mk_file_match_hook conf rules (incremental_text_printer caps)) )
+        Some (mk_file_match_hook ~inline_metavars:false (* because text format *)
+                conf rules (incremental_text_printer caps)) )
   | {
    output_conf = { output_format = Output_format.Json; _ };
    incremental_output = true;
    _;
   } ->
       ( Output_format.Incremental,
-        Some (mk_file_match_hook conf rules (incremental_json_printer caps)) )
+        Some (mk_file_match_hook
+                ~inline_metavars:conf.core_runner_conf.inline_metavariables
+                conf rules (incremental_json_printer caps)) )
   | { output_conf; _ } -> (output_conf.output_format, None)
 
 (*****************************************************************************)
@@ -546,7 +553,12 @@ let check_targets_with_rules
           (* TOADAPT? Runner_exit.exit_semgrep (Unknown_exception e) instead *)
           Exception.reraise exn
       | Ok result ->
-          let (res : Core_runner.result) = Core_runner.mk_result ~inline:conf.core_runner_conf.inline_metavariables rules result in
+          let (res : Core_runner.result) =
+            Core_runner.mk_result
+              ~inline:conf.core_runner_conf.inline_metavariables
+              rules
+              result
+          in
           (* step 3'': adjust the matches, filter via nosemgrep and part1 autofix *)
           let keep_ignored =
             (not conf.core_runner_conf.nosem)

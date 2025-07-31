@@ -56,6 +56,8 @@ jobs:
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
         with:
           key: ${{ runner.os }}-${{ runner.arch }}-v1-nuitka-${{ hashFiles('cli/src/semgrep/**/*.py') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-v1-nuitka-
           path: ${{ env.NUITKA_CACHE_DIR }}
 
       - name: Set-up cygwin

@@ -137,12 +137,35 @@ let core_unique_key (c : Out.core_match) : key =
        above fields). See also `should_report_instead`.
     *) )
 
+let process_matches_with_rule_options
+    (rule_options: Core_match.rule_id_options Rule_ID.Map.t)
+    (matches: Out.core_match list) : Out.core_match list =
+
+  let restrict_matches_using_options options matches =
+    match options with
+    | Some Core_match.{max_match_per_file = Some limit; _}
+      when List.length matches > limit ->
+      List_.take (max limit 0) (OutUtils.sort_core_matches matches)
+    | _ -> matches
+  in
+
+  matches
+  |> Assoc.group_by (fun (Out.{path; check_id; _} : Out.core_match) -> (path, check_id))
+  |> List_.map
+    (fun ((_path, rid), ms) ->
+       restrict_matches_using_options
+         (Rule_ID.Map.find_opt rid rule_options)
+         ms)
+  |> List.concat
+
 (*
  # Sort results so as to guarantee the same results across different
  # runs. Results may arrive in a different order due to parallelism
  # (-j option).
 *)
-let dedup_and_sort (xs : Out.core_match list) : Out.core_match list =
+let dedup_and_sort
+    (rule_options: Core_match.rule_id_options Rule_ID.Map.t)
+    (xs : Out.core_match list) : Out.core_match list =
   (* Whether we prefer to report match x over match y.
      This is currently only used for Secrets findings, which prefer a
      finding with a confirmed validation status.
@@ -176,10 +199,13 @@ let dedup_and_sort (xs : Out.core_match list) : Out.core_match list =
      This is because we yet again need to enforce that when Pysemgrep receives these
      matches, that they are sorted via sort_core_matches.
      If we don't do this, then stuff like test_baseline will start breaking.
-     So we end up sorting twice. Such is life.
-     LATER: Can optimize if necessary
+     So we end up sorting twice.
+     LATER: Can optimize if necessary.
   *)
-  Hashtbl.to_seq_values seen |> List.of_seq |> OutUtils.sort_core_matches
+  Hashtbl.to_seq_values seen
+  |> List.of_seq
+  |> process_matches_with_rule_options rule_options
+  |> OutUtils.sort_core_matches
 
 (*****************************************************************************)
 (* Converters *)
@@ -305,8 +331,9 @@ let unsafe_match_to_match ?(inline = false)
       x.taint_trace
   in
   let metavars = x.env |> List_.map (metavars startp) in
+  let bindings =  Metavar_replacement.(of_bindings x.env) in
   let replacement_fn st =
-    Metavar_replacement.(interpolate_metavars st (of_bindings x.env))
+    Metavar_replacement.(interpolate_metavars st bindings)
   in
   let metadata =
     let* json = x.rule_id.metadata in
@@ -320,7 +347,7 @@ let unsafe_match_to_match ?(inline = false)
   (* message where the metavars have been interpolated *)
   (* TODO(secrets): apply masking logic here *)
   let message =
-    Metavar_replacement.(interpolate_metavars x.rule_id.message (of_bindings x.env))
+    Metavar_replacement.(interpolate_metavars x.rule_id.message bindings)
   in
   let enclosing_context =
     x.enclosure |>
@@ -563,7 +590,10 @@ let core_output_of_matches_and_errors ?(inline = false) (res : Core_result.t) : 
   in
   let errs = new_errs @ res.errors in
   {
-    results = matches |> dedup_and_sort;
+    results = matches
+              |> dedup_and_sort
+                (Core_match.to_rule_id_options_map
+                   List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches));
     errors = errs |> List_.map error_to_error;
     paths =
       {

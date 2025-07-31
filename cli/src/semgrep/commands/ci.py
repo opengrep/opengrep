@@ -30,6 +30,7 @@ from semgrep.app.scans import ScanHandler
 from semgrep.commands.scan import collect_additional_outputs
 from semgrep.commands.scan import scan_options
 from semgrep.commands.wrapper import handle_command_errors
+from semgrep.constants import DEFAULT_MAX_MATCH_PER_FILE
 from semgrep.console import console
 from semgrep.console import Title
 from semgrep.constants import OutputFormat
@@ -272,7 +273,8 @@ def ci(
     partial_output: Optional[Path],
     opengrep_ignore_pattern: Optional[str],
     bypass_includes_excludes_for_files: bool = True,
-    inline_metavariables: bool = False
+    inline_metavariables: bool = False,
+    max_match_per_file: Optional[int] = DEFAULT_MAX_MATCH_PER_FILE,
 ) -> None:
     state = get_state()
 
@@ -625,6 +627,7 @@ def ci(
         "no_git_ignore": (not use_git_ignore),
         "timeout": timeout,
         "max_memory": max_memory,
+        "max_match_per_file": max_match_per_file,
         "interfile_timeout": interfile_timeout,
         # "trace": trace,
         # "trace_endpoint": trace_endpoint,

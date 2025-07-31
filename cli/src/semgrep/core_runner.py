@@ -790,6 +790,7 @@ class CoreRunner:
         opengrep_ignore_pattern: Optional[str],
         bypass_includes_excludes_for_files: bool = True,
         inline_metavariables: bool = False,
+        max_match_per_file: Optional[int] = None,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         state = get_state()
         logger.debug(f"Passing whole rules directly to semgrep_core")
@@ -928,6 +929,8 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                     str(self._max_memory),
                 ]
             )
+            if max_match_per_file is not None:
+                cmd.extend(["-max_match_per_file", str(max_match_per_file)])
             if matching_explanations:
                 cmd.append("-matching_explanations")
             if time_flag:
@@ -1109,6 +1112,7 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
         opengrep_ignore_pattern: Optional[str] = None,
         bypass_includes_excludes_for_files: bool = True,
         inline_metavariables: bool = False,
+        max_match_per_file: Optional[int] = None,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Sometimes we may run into synchronicity issues with the latest DeepSemgrep binary.
@@ -1134,6 +1138,7 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 opengrep_ignore_pattern=opengrep_ignore_pattern,
                 bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
                 inline_metavariables=inline_metavariables,
+                max_match_per_file=max_match_per_file,
             )
         except SemgrepError as e:
             # Handle Semgrep errors normally
@@ -1177,6 +1182,7 @@ Exception raised: `{e}`
         opengrep_ignore_pattern: Optional[str] = None,
         bypass_includes_excludes_for_files: bool = True,
         inline_metavariables: bool = False,
+        max_match_per_file: Optional[int] = None,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Takes in rules and targets and returns object with findings
@@ -1202,6 +1208,7 @@ Exception raised: `{e}`
             opengrep_ignore_pattern=opengrep_ignore_pattern,
             bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
             inline_metavariables = inline_metavariables,
+            max_match_per_file=max_match_per_file,
         )
 
         logger.debug(

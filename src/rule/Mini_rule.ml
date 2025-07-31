@@ -50,6 +50,7 @@ type rule = {
   pattern_string : string;
   fix : string option;
   fix_regexp : Rule.fix_regexp option;
+  (* Do we need the rule options here? *)
 }
 
 and rules = rule list [@@deriving show]

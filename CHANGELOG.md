@@ -1,5 +1,63 @@
 # Changelog
 
+
+## [1.8.3](https://github.com/opengrep/opengrep/releases/tag/v1.8.3) - 31-07-2025
+
+### Bug fixes
+
+* The option `max_match_per_file` now works with `--test` by @dimitris-m in #374
+* Inline metavars in incremental json output by @dimitris-m in #375
+
+### Improvements
+
+* Performance improvements by @maciejpirog and @dimitris-m in #369, #372, #373, #376
+* Make `--experimental` bypass the executable name by @dimitris-m in https://github.com/opengrep/opengrep/pull/370
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.2...v1.8.3
+
+
+## [1.8.2](https://github.com/opengrep/opengrep/releases/tag/v1.8.2) - 25-07-2025
+
+### Bug fixes
+
+* Fix bug in propagating taints through composites and dictionaries by @corneliuhoffman in #367
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.1...v1.8.2
+
+
+## [1.8.1](https://github.com/opengrep/opengrep/releases/tag/v1.8.1) - 24-07-2025
+
+### Bug fixes
+
+* Fix thread-safety bug in Apex parser by @maciejpirog in #365
+* Improve deduplication and sorting of results to remove nondetermism by @maciejpirog in #364
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.0...v1.8.1
+
+
+## [1.8.0](https://github.com/opengrep/opengrep/releases/tag/v1.8.0) - 23-07-2025
+
+### New features
+
+* Add new rule option `max-match-per-file` by @dimitris-m in #359 and #357
+* Add new rule option `taint-fixpoint-timeout` by @dimitris-m in #360
+* Release opengrep-core by @spotdemo4 in #349
+
+### Bug fixes
+
+* For variables, calculate the range in the `extra` section using the original token by @maciejpirog in #356
+
+### Tech debt
+
+* Eliminated references in `AST_to_IL` by @corneliuhoffman in #351
+* Eliminated more references by @corneliuhoffman in #358
+
+### New Contributors
+* @spotdemo4 made their first contribution in #349
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.7.0...v1.8.0
+
+
 ## [1.7.0](https://github.com/opengrep/opengrep/releases/tag/v1.7.0) - 14-07-2025
 
 ### New features

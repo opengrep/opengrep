@@ -140,16 +140,18 @@ let () =
         (* remove the possible ".exe" extension for Windows and ".bc" *)
         Fpath.v argv.(0) |> Fpath.base |> Fpath.rem_ext |> Fpath.to_string
       in
-      match argv0 with
-      (* TODO[Issue #125]: Why does invoking [opengrep-cli] has argv0 = 'opengrep-core'?
-       * This happens if the experimental flag is not passed. *)
+      let experimental =
+        Array.mem "--experimental" argv
+      in
+      match argv0, experimental with
       (* opengrep-cli a.k.a. osemgrep *)
-      | "opengrep-cli"
-      (* in the long term (and in the short term on windows) we want to ship
+      | "opengrep-cli", _
+      (* In the long term (and in the short term on windows) we want to ship
        * opengrep-cli as the default "opengrep" binary, without any
        * wrapper script such as cli/bin/semgrep around it.
        *)
-      | "opengrep" ->
+      | "opengrep", _
+      | _, true ->
           let exit_code =
             match argv0 with
             | "opengrep" ->
@@ -158,7 +160,7 @@ let () =
                   (caps :> CLI.caps)
                   (* XXX: Should be after "scan" or similar.
                    * See line 161 in: src/osemgrep/cli/CLI.ml. *)
-                  (with_experimental_flag argv)
+                  (if experimental then argv else with_experimental_flag argv)
             | _else_ ->
                 check_experimental_flags argv;
                 CLI.main (caps :> CLI.caps) argv

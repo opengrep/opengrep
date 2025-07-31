@@ -95,6 +95,21 @@ jobs:
         run: |
           pushd artifacts/
 
+          tar xzf ./opengrep-core-x86/artifacts.tgz --strip=1
+          tar czf opengrep-core_linux_x86.tar.gz opengrep-core
+
+          tar xzf ./opengrep-core-aarch64/artifacts.tgz --strip=1
+          tar czf opengrep-core_linux_aarch64.tar.gz opengrep-core
+
+          tar xzf ./opengrep-osx-x86/artifacts.tgz --strip=1
+          tar czf opengrep-core_osx_x86.tar.gz opengrep-core
+
+          tar xzf ./opengrep-osx-arm64/artifacts.tgz --strip=1
+          tar czf opengrep-core_osx_aarch64.tar.gz opengrep-core
+
+          tar xzf ./opengrep-core-and-dependent-libs-w64-artifact/artifacts.tgz
+          zip -r -j opengrep-core_windows_x86.zip artifacts
+
           unzip -j ./manylinux-x86-wheel/dist.zip "*.whl"
           unzip -j ./osx-arm64-wheel/dist.zip "*.whl"
 
@@ -158,6 +173,11 @@ jobs:
           prerelease: true
           generate_release_notes: true
           files: |
+            artifacts/opengrep-core_linux_x86.tar.gz
+            artifacts/opengrep-core_linux_aarch64.tar.gz
+            artifacts/opengrep-core_osx_x86.tar.gz
+            artifacts/opengrep-core_osx_aarch64.tar.gz
+            artifacts/opengrep-core_windows_x86.zip
             artifacts/opengrep_manylinux_binary_x86_64/opengrep_manylinux_x86
             artifacts/opengrep_manylinux_binary_x86_64/opengrep_manylinux_x86.cert
             artifacts/opengrep_manylinux_binary_x86_64/opengrep_manylinux_x86.sig

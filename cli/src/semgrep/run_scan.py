@@ -263,6 +263,7 @@ def run_rules(
     opengrep_ignore_pattern: Optional[str] = None,
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
+    max_match_per_file: Optional[int] = None,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -364,6 +365,7 @@ def run_rules(
         opengrep_ignore_pattern=opengrep_ignore_pattern,
         bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
         inline_metavariables=inline_metavariables,
+        max_match_per_file=max_match_per_file,
     )
 
     if join_rules:
@@ -548,6 +550,7 @@ def run_scan(
     opengrep_ignore_pattern: Optional[str] = None,
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
+    max_match_per_file: Optional[int] = None,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -826,6 +829,7 @@ def run_scan(
         opengrep_ignore_pattern=opengrep_ignore_pattern,
         bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
         inline_metavariables=inline_metavariables,
+        max_match_per_file=max_match_per_file,
     )
     profiler.save("core_time", core_start_time)
     semgrep_errors: List[SemgrepError] = config_errors + scan_errors
