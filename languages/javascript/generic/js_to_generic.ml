@@ -62,7 +62,7 @@ type special_result =
   | SR_Other of G.todo_kind
   | SR_Literal of G.literal
   | SR_NeedArgs of (G.expr list -> G.expr_kind)
-  | SR_NeedArgs_Brak of ((Tok.t * G.expr list * Tok.t) -> G.expr_kind)
+  | SR_NeedArgs_Brak of (Tok.t * G.expr list * Tok.t -> G.expr_kind)
   | SR_Expr of G.expr_kind
 
 let special (x, tok) =
@@ -124,7 +124,7 @@ let special (x, tok) =
           (fun (l, args, r) ->
             G.Call
               ( G.IdSpecial (G.ConcatString G.InterpolatedConcat, tok) |> G.e,
-                (l, args |> List_.map (fun e -> G.Arg e), r)))
+                (l, args |> List_.map (fun e -> G.Arg e), r) ))
       else
         SR_NeedArgs_Brak
           (fun (l, args, r) ->
@@ -133,7 +133,7 @@ let special (x, tok) =
             | tag :: rest ->
                 G.Call
                   ( tag,
-                    (l,
+                    ( l,
                       [
                         G.Arg
                           (G.Call
@@ -147,7 +147,7 @@ let special (x, tok) =
                                rest |> List_.map (fun e -> G.Arg e) |> fb )
                           |> G.e);
                       ],
-                     r) ))
+                      r ) ))
   | ArithOp op -> SR_Special (G.Op op, tok)
   | IncrDecr v -> SR_Special (G.IncrDecr v, tok)
 
@@ -256,7 +256,8 @@ and expr (x : expr) =
       (let x = special v1 in
        match x with
        | SR_Special v -> G.IdSpecial v
-       | SR_NeedArgs _ | SR_NeedArgs_Brak _ ->
+       | SR_NeedArgs _
+       | SR_NeedArgs_Brak _ ->
            error (snd v1) "Impossible: should have been matched in Call first"
        | SR_Literal l -> G.L l
        | SR_Other categ -> G.OtherExpr (categ, [])
@@ -681,8 +682,14 @@ and field_classic
         | G.Function -> G.Method
         | x -> x
       in
-      ( { ent with G.attrs = ent.G.attrs @ more_attrs },
-        G.FuncDef { def with G.fkind = (fkind, tok) } )
+      let g_def =
+        match fkind with
+        | G.Arrow ->
+            G.VarDef
+              { G.vinit = option expr v3; vtype = vt; vtok = G.no_sc }
+        | _ -> G.FuncDef { def with G.fkind = (fkind, tok) }
+      in
+      ({ ent with G.attrs = ent.G.attrs @ more_attrs }, g_def)
   | _ ->
       let v3 = option expr v3 in
       (ent, G.VarDef { G.vinit = v3; vtype = vt; vtok = G.no_sc })
