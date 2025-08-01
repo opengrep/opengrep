@@ -60,10 +60,10 @@ type t = {
    *)
   bytepos : int; (* 0-based *)
   (* Those two fields can be derived from bytepos (See complete_position() *)
-  line : int; (* 1-based *)
-  column : int; (* 0-based *)
+  line : int [@eq.ignore]; (* 1-based *)
+  column : int [@eg.ignore]; (* 0-based *)
   (* TODO: use an Src.t/Origin.t instead? (see spacegrep Src_file.source *)
-  file : Fpath_.t;
+  file : Fpath_.t [@eq.ignore];
 }
 [@@deriving show, eq, ord, sexp]
 
