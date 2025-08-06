@@ -112,7 +112,43 @@ type env = {
 (* Hooks *)
 (*****************************************************************************)
 
-let hook_function_taint_signature = ref None
+(*
+val hook_function_taint_signature :
+  (Taint_rule_inst.t -> AST_generic.expr -> Shape_and_sig.Signature.t option)
+  option
+  ref
+ *)
+
+let test_hook ( tr : Taint_rule_inst.t) ast =
+  let _ = print_endline @@ "***\n" ^ AST_generic.show_expr ast ^ "\n***" in
+  let preds = tr.preds.is_sink (G.E ast) in
+  let sinks = List.map
+      (fun pred ->
+          Shape_and_sig.Effect.{pm = pred.Taint_spec_match.spec_pm; rule_sink = pred.spec})
+      preds in
+  let sink_traces = List.map (fun s -> Taint.PM (s.Shape_and_sig.Effect.pm, ()))
+      sinks in
+  let taints = List.map
+      (fun s -> {Taint.orig = Taint.Control; tokens = Lazy.force s.Effect.pm.tokens })
+      sinks in
+  let taint_to_sink_items =
+    List.map2 (fun taint sink_trace -> Effect.{taint; sink_trace})
+      taints sink_traces
+  in
+  let taints_to_sinks = List.map2
+      (fun sink taint_to_sink_item ->
+            Effect.ToSink {taints_with_precondition = ([taint_to_sink_item], Rule.PBool true);
+                   sink;
+                   merged_env = []}
+      )
+      sinks taint_to_sink_items
+  in
+  let effects = Effects.of_list taints_to_sinks in
+  let sign = Signature.{params = []; effects} in
+  let _ = print_endline @@ Signature.show sign in
+  Some sign    
+
+let hook_function_taint_signature = ref (Some test_hook)
 let hook_find_attribute_in_class = ref None
 let hook_check_tainted_at_exit_sinks = ref None
 
@@ -496,6 +532,10 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
       let { Effect.pm = sink_pm; rule_sink = ts } = sink in
       let taints_and_bindings =
         taints_with_traces
+        |> List_.map (fun (item) ->
+            (* ignore @@ raise @@ Invalid_argument "aaa"; *)
+            (* print_endline @@ Effect.show_taint_to_sink_item item; *) item
+                     )
         |> List_.map (fun ({ Effect.taint; _ } as item) ->
                let bindings =
                  match taint.T.orig with
@@ -573,6 +613,9 @@ let effects_of_tainted_sinks env taints sinks : Effect.t list =
     let control_taints = Lval_env.get_control_taints env.lval_env in
     taints |> Taints.union control_taints
   in
+  let _ =
+    List.iter (fun s -> print_endline @@ Effect.show_sink s ) sinks
+  in
   if Taints.is_empty taints then []
   else
     sinks
@@ -617,7 +660,9 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
+(* TODO: Figure out how to implement. *)
 let lookup_signature env fun_exp =
+  (* let _ = print_endline @@ "+++start\n" ^ IL.show_exp fun_exp ^ "\nend+++" in *)
   match (!hook_function_taint_signature, fun_exp) with
   | Some hook, { e = Fetch _f; eorig = SameAs eorig } ->
       hook env.taint_inst eorig
@@ -1084,6 +1129,12 @@ and check_tainted_lval_aux env (lval : IL.lval) :
       let taints_from_sources, lval_env =
         find_lval_taint_sources { env with lval_env } current_taints lval
       in
+      let _ =
+        List.iter
+          (fun tf ->
+             print_endline @@ Taint.show_taint tf)
+          (Taints.elements taints_from_sources)
+      in
       (* Check sub-expressions in the offset. *)
       let taints_from_offset, lval_env =
         match lval.rev_offset with
@@ -1399,10 +1450,14 @@ let check_tainted_var env (var : IL.name) : Taints.t * S.shape * Lval_env.t =
 let check_function_call env fun_exp args
     (args_taints : (Taints.t * S.shape) argument list) :
     (Taints.t * S.shape * Lval_env.t) option =
+  (* ignore @@ raise @@ Invalid_argument "HERE"; *)
+  (* let _ = if List.is_empty args then print_endline "No args" else print_endline @@ "////\n" ^ ( string_of_int @@ List.length args ) in *)
+  (* let _ =  print_endline ( List.map ( IL.show_argument IL.pp_exp ) args  |> String.concat "----\n" ) in *)
   match lookup_signature env fun_exp with
   | Some fun_sig ->
+      (* let _ = print_endline "XXXXXXX" in  *)
       Log.debug (fun m ->
-          m ~tags:sigs_tag "Call to %s : %s"
+          m (* ~tags:sigs_tag *) "Call to %s : %s"
             (Display_IL.string_of_exp fun_exp)
             (Signature.show fun_sig));
       let* call_effects =
