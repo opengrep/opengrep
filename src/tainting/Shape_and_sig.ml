@@ -270,7 +270,7 @@ and Effect : sig
     sink : sink;
     merged_env : Metavariable.bindings;
         (** The metavariable environment that results of merging the environment from
-    * matching the source and the one from matching the sink. *)
+          * matching the source and the one from matching the sink. *)
   }
 
   type taints_to_return = {
@@ -279,7 +279,7 @@ and Effect : sig
     data_shape : Shape.shape;  (** The shape of the data being returned. *)
     control_taints : Taint.taints;
         (** The taints propagated via the control flow (cf., `control: true` sources)
-   * used for reachability queries. *)
+          * used for reachability queries. *)
     return_tok : AST_generic.tok;
   }
 
@@ -350,7 +350,7 @@ and Effect : sig
             (** The function expression being called, it is used for recording a taint trace. *)
         arg : Taint.arg;
             (** The formal parameter corresponding to the function shape,
-                        this is what we instantiate at a specific call site. *)
+                this is what we instantiate at a specific call site. *)
         args_taints : args_taints;
       }
         (** Essentially a preliminary form of "effect variable". It represents
@@ -368,6 +368,7 @@ and Effect : sig
   val show_sink : sink -> string
   val show_args_taints : args_taints -> string
   val show_taints_to_sink : taints_to_sink -> string
+  val show_taint_to_sink_item : taint_to_sink_item -> string
   val show_taints_to_return : taints_to_return -> string
 end = struct
   module Taints = Taint.Taint_set
