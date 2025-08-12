@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.4](https://github.com/opengrep/opengrep/releases/tag/v1.8.4) - 12-08-2025
+
+### Bug fixes
+
+* Typescript lambda bug by @corneliuhoffman in #378
+* When comparing locations, compare only selected fields by @maciejpirog in #379
+* Make entropy data non-lazy by @maciejpirog in #383
+* Check Cosign version in install script by @dimitris-m in #384
+* Fix failure in to-ast-generic for C and C++ by @maciejpirog in #385
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.3...v1.8.4
+
 
 ## [1.8.3](https://github.com/opengrep/opengrep/releases/tag/v1.8.3) - 31-07-2025
 
