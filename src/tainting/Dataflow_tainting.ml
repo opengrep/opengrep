@@ -131,7 +131,8 @@ let propagate_through_indexes env =
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
-let add_taints_from_shape shape = Taints.union (Shape.gather_all_taints_in_shape shape)
+let add_taints_from_shape shape =
+  Taints.union (Shape.gather_all_taints_in_shape shape)
 
 let log_timeout_warning (taint_inst : Taint_rule_inst.t) opt_name timeout =
   match timeout with
@@ -157,7 +158,6 @@ let map_check_expr env check_expr xs =
   in
   (List.rev rev_taints_and_shapes, lval_env)
 
-
 let union_map_taints_and_vars env check xs =
   let taints, lval_env =
     xs
@@ -165,8 +165,7 @@ let union_map_taints_and_vars env check xs =
          (fun (taints_acc, lval_env) x ->
            let taints, shape, lval_env = check { env with lval_env } x in
            let taints_acc =
-             taints_acc |> Taints.union taints
-             |> add_taints_from_shape shape
+             taints_acc |> Taints.union taints |> add_taints_from_shape shape
            in
            (taints_acc, lval_env))
          (Taints.empty, env.lval_env)
@@ -667,9 +666,7 @@ let check_orig_if_sink env ?filter_sinks orig taints shape =
    * `sink` could potentially access "tainted". So we must take into account
    * all taints reachable through its shape.
    *)
-  let taints =
-    taints |> add_taints_from_shape shape
-  in
+  let taints = taints |> add_taints_from_shape shape in
   let sinks = orig_is_best_sink env orig in
   let sinks =
     match filter_sinks with
@@ -745,9 +742,7 @@ let handle_taint_propagators env thing taints shape =
    * TODO: To support that, we may need to introduce taint variables that we can
    *       later substitute, like we do for labels.
    *)
-  let taints =
-    taints |> add_taints_from_shape shape
-  in
+  let taints = taints |> add_taints_from_shape shape in
   let lval_env = env.lval_env in
   let propagators =
     let any =
@@ -1159,6 +1154,34 @@ and check_tainted_lval_offset env offset =
  * report the finding too (by side effect). *)
 and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
   let check env = check_tainted_expr env in
+  let lang = env.taint_inst.lang in
+  (*A bit of a hack, the problem is that, in the case of a Conditinal (which is an expression) the taints of its suexpressions are lost.
+  TODO: think harder about Conditionals in the IL*)
+  let get_taints_for_conditionals orig env =
+    let taints_and_shapes, lval_env =
+      match IL.any_of_orig orig with
+      | E { e; _ } -> (
+          match e with
+          | Conditional (a, b, c) ->
+              map_check_expr env check
+                [
+                  AST_to_IL.expr lang a;
+                  AST_to_IL.expr lang b;
+                  AST_to_IL.expr lang c;
+                ]
+          | _ -> ([], env.lval_env))
+      | _ -> ([], env.lval_env)
+    in
+    let taints =
+      taints_and_shapes
+      |> List.fold_left
+           (fun acc (taints, shape) ->
+             acc |> Taints.union taints |> add_taints_from_shape shape)
+           Taints.empty
+    in
+    (taints, lval_env)
+  in
+
   let check_subexpr exp =
     match exp.e with
     | Fetch _
@@ -1168,9 +1191,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
         (Taints.empty, S.Bot, env.lval_env)
     | FixmeExp (_, _, Some e) ->
         let taints, shape, lval_env = check env e in
-        let taints =
-          taints |>  add_taints_from_shape shape
-        in
+        let taints = taints |> add_taints_from_shape shape in
         (taints, S.Bot, lval_env)
     | Composite ((CTuple | CArray | CList), (_, es, _)) ->
         let taints_and_shapes, lval_env = map_check_expr env check es in
@@ -1179,8 +1200,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
           taints_and_shapes
           |> List.fold_left
                (fun acc (taints, shape) ->
-                 acc |> Taints.union taints
-                 |> add_taints_from_shape shape)
+                 acc |> Taints.union taints |> add_taints_from_shape shape)
                Taints.empty
         in
         (all_taints, tuple_shape, lval_env)
@@ -1276,7 +1296,8 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                      ((lval_env, taints_acc), `Field (id, e_taints, e_shape))
                  | Spread e ->
                      let e_taints, e_shape, lval_env =
-                       check { env with lval_env } e in
+                       check { env with lval_env } e
+                     in
                      let taints_acc =
                        taints_acc |> Taints.union e_taints
                        |> add_taints_from_shape e_shape
@@ -1297,7 +1318,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                        taints_acc
                        |> Taints.union
                             ve_taints (* ← Now includes value taints! *)
-                       |>add_taints_from_shape ve_shape
+                       |> add_taints_from_shape ve_shape
                      in
                      ((lval_env, taints_acc), `Entry (ke, ve_taints, ve_shape)))
                (env.lval_env, Taints.empty)
@@ -1323,6 +1344,10 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
         match exp.e with
         | Fetch lval ->
             let taints, shape, _sub, lval_env = check_tainted_lval env lval in
+            let taints_of_orig, lval_env =
+              get_taints_for_conditionals exp.eorig { env with lval_env }
+            in
+            let taints = Taints.union taints taints_of_orig in
             let shape =
               (* Check if 'exp' is a known top-level function/method and, if it is,
                * give it a proper 'Fun' shape. *)
@@ -1453,9 +1478,7 @@ let check_function_call_callee env e =
       let taints, shape, `Sub (sub_taints, sub_shape), lval_env =
         check_tainted_lval env lval
       in
-      let obj_taints =
-        sub_taints |> add_taints_from_shape sub_shape
-      in
+      let obj_taints = sub_taints |> add_taints_from_shape sub_shape in
       (`Obj obj_taints, taints, shape, lval_env)
   | __else__ ->
       let taints, shape, lval_env = check_tainted_expr env e in
@@ -1985,8 +2008,10 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
   (* DataflowX.display_mapping flow init_mapping show_tainted; *)
   let end_mapping, timeout =
     DataflowX.fixpoint
-      ~timeout:Common.(
-          taint_inst.options.taint_fixpoint_timeout ||| Limits_semgrep.taint_FIXPOINT_TIMEOUT)
+      ~timeout:
+        Common.(
+          taint_inst.options.taint_fixpoint_timeout
+          ||| Limits_semgrep.taint_FIXPOINT_TIMEOUT)
       ~eq_env:Lval_env.equal ~init:init_mapping ~trans:(transfer env ~fun_cfg)
       ~forward:true ~flow
   in
