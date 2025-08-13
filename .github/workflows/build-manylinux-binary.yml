@@ -7,6 +7,10 @@ on:
         required: false
         default: "x86_64"
         type: string
+      fips:
+        description: "Use FIPS OpenSSL"
+        required: false
+        default: 'false'
   workflow_dispatch: null
 
 jobs:
@@ -26,6 +30,24 @@ jobs:
       
       # - run: find / -name "libpython*" #; exit 1
       # - run: yum install -y zip
+
+      - name: Conditionally build FIPS OpenSSL
+        if: ${{ inputs.fips == 'true' }}
+        run: |
+          echo "Building FIPS OpenSSL..."
+          OPENSSL_DIR=/opt/openssl-fips
+          OPENSSL_VERSION=3.1.2
+
+          curl -LO https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz
+          tar xzf openssl-$OPENSSL_VERSION.tar.gz
+          cd openssl-$OPENSSL_VERSION
+
+          ./Configure enable-fips linux-x86_64 --prefix=$OPENSSL_DIR
+          make -j$(nproc)
+          make install_sw
+
+          echo "PATH=/opt/openssl-fips/bin:$PATH" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/opt/openssl-fips/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
