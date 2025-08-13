@@ -1,0 +1,27 @@
+rules:
+  - id: test
+    message: A SQL statement is being concatenated with a potentially user-controllable string, which could lead to a SQL injection vulnerability.
+    mode: taint
+    options:
+      symbolic_propagation: true
+    languages:
+      - javascript
+    severity: ERROR
+    pattern-sinks:
+          - patterns:
+              - pattern: |
+                  $STRING = "$SQL"
+                  ...
+                  $STRING += $EXPR
+              - metavariable-regex:
+                  metavariable: $SQL
+                  regex: (?s)^\s*(SELECT|select|DELETE|delete|INSERT|insert|UPDATE|update|CALL|call|REPLACE|replace)(?:\s+|[\r\n]+|$)([\s\S]*)?$
+              - focus-metavariable: $EXPR
+    pattern-sources:
+      - patterns:
+          - pattern: $SOURCE
+          - pattern-inside: |
+              function $FUNC(..., $SOURCE, ...) {
+                  ...}
+   
+
