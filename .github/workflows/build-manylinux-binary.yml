@@ -44,6 +44,8 @@ jobs:
                 TARGET=linux-aarch64
           fi
 
+          yum install -y perl perl-IPC-Cmd
+
           # Latest FIPS-validated openssl
           curl -LO https://github.com/openssl/openssl/releases/download/openssl-3.1.2/openssl-3.1.2.tar.gz
           tar xzf openssl-3.1.2.tar.gz
