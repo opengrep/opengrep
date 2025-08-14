@@ -53,7 +53,7 @@ jobs:
 
           ./Configure enable-fips $TARGET --prefix=$OPENSSL_DIR
           make -j$(nproc)
-          make install_sw
+          make install
 
           echo "PATH=/opt/openssl-fips/bin:$PATH" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=/opt/openssl-fips/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
