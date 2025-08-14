@@ -10,7 +10,7 @@ on:
       fips:
         description: "Use FIPS OpenSSL"
         required: false
-        default: 'false'
+        default: 'true'
   workflow_dispatch: null
 
 jobs:
