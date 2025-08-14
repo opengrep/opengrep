@@ -38,11 +38,17 @@ jobs:
           OPENSSL_DIR=/opt/openssl-fips
           OPENSSL_VERSION=3.1.2
 
+          if [ "${{ inputs.arch }}" = "x86_64" ]; then
+                TARGET=linux-x86_64
+          else
+                TARGET=linux-aarch64
+          fi
+
           curl -LO https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz
           tar xzf openssl-$OPENSSL_VERSION.tar.gz
           cd openssl-$OPENSSL_VERSION
 
-          ./Configure enable-fips linux-x86_64 --prefix=$OPENSSL_DIR
+          ./Configure enable-fips $TARGET --prefix=$OPENSSL_DIR
           make -j$(nproc)
           make install_sw
 
