@@ -11,6 +11,7 @@ on:
         description: "Use FIPS OpenSSL"
         required: false
         default: 'true'
+        type: string
   workflow_dispatch: null
 
 jobs:
@@ -43,6 +44,7 @@ jobs:
                 TARGET=linux-aarch64
           fi
 
+          # Latest FIPS-validated openssl
           curl -LO https://github.com/openssl/openssl/releases/download/openssl-3.1.2/openssl-3.1.2.tar.gz
           tar xzf openssl-3.1.2.tar.gz
           cd openssl-3.1.2
