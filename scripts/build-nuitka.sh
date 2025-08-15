@@ -48,6 +48,11 @@ fi
 #   )
 # fi
 
+# For testing:
+EXTRA_ARGS+=(
+    --report=compilation-report.xml
+)
+
 pushd cli
 
 "$PYTHON_BIN" -m nuitka \
