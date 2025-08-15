@@ -154,6 +154,15 @@ jobs:
           PYTHON_BIN=python3 \
           ./scripts/build-nuitka.sh "v$(opengrep --version)" true $SRC_SEMGREP_DIR
 
+      - name: show compilation report
+        run: cat cli/compilation-report.xml
+
+      - name: upload compilation report
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
+        with:
+          name: opengrep_manylinux_compilation_report_${{ inputs.arch }}
+          path: cli/compilation-report.xml
+
       - name: Zip artifact
         run: zip -j opengrep.zip cli/opengrep
 
