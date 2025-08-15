@@ -63,8 +63,10 @@ let just_parse_with_lang lang file : Parsing_result2.t =
   | Lang.Cpp ->
       run file
         [
-          TreeSitter Parse_cpp_tree_sitter.parse;
+          TreeSitter (Parse_cpp_tree_sitter.parse_with_preprocessor (Dummy_preprocessors.keep_all));
           Pfff (throw_tokens Parse_cpp.parse);
+          (* More on the dummy preprocessor: see the note in Dummy_preprocessor.mli *)
+          TreeSitterLastResort (Parse_cpp_tree_sitter.parse_with_preprocessor (Dummy_preprocessors.positive));
         ]
         Cpp_to_generic.program
   | Lang.Go ->

@@ -35,6 +35,13 @@ let debug_exn = ref false
 type 'ast parser =
   | Pfff of (Fpath.t -> 'ast * Parsing_stat.t)
   | TreeSitter of (Fpath.t -> ('ast, unit) Tree_sitter_run.Parsing_result.t)
+  (* Prefer recoverable errors from normal parsers over clean results from last-resort parsers *)
+  | TreeSitterLastResort of (Fpath.t -> ('ast, unit) Tree_sitter_run.Parsing_result.t)
+
+let is_last_resort (p : 'ast parser) : bool =
+  match p with
+  | TreeSitterLastResort _ -> true
+  | _ -> false
 
 (*
    This type is parametrized by the AST type because we don't always
@@ -154,7 +161,7 @@ let (run_parser : 'ast parser -> Fpath.t -> 'ast internal_result) =
               Log.warn (fun m ->
                   m "exn (%s) with Pfff parser" (Common.exn_to_s exn));
               ResError e)
-  | TreeSitter f -> (
+  | TreeSitter f | TreeSitterLastResort f -> (
       Log.info (fun m -> m "trying to parse with TreeSitter parser %s" !!file);
       try
         let res = f file in
@@ -166,6 +173,7 @@ let (run_parser : 'ast parser -> Fpath.t -> 'ast internal_result) =
                untyped tree"
             in
             ResError (Exception.trace (Failure msg))
+        | Some ast, None when is_last_resort parser -> ResPartial (ast, stat, res.errors)
         | Some ast, None -> ResOk (ast, stat, res.errors)
         | None, Some ts_error ->
             let e = error_of_tree_sitter_error ts_error in
@@ -248,11 +256,13 @@ let (run :
         xs
         |> List_.exclude (function
              | Pfff _ -> true
-             | TreeSitter _ -> false)
+             | TreeSitter _ -> false
+             | TreeSitterLastResort _ -> false)
     | () when !Flag.pfff_only ->
         xs
         |> List_.exclude (function
              | TreeSitter _ -> true
+             | TreeSitterLastResort _ -> true
              | Pfff _ -> false)
     | () -> xs
   in

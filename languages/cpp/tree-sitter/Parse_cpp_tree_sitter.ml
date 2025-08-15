@@ -4643,9 +4643,12 @@ and map_type_declarator_to_expr (env : env) (x : CST.type_declarator) : expr =
       let v5 = map_type_declarator_to_expr env v5 in
       Unary ((DeRef, v2), v5)
   | `Func_type_decl (v1, v2) ->
-      let _v1 = map_type_declarator_to_expr env v1 in
+      let v1 = map_type_declarator_to_expr env v1 in
       let _v2 = map_parameter_list env v2 in
-      failwith "unallowed declarator as RHS to scope resolution"
+        Log.warn
+          (fun m -> m "incorrect C/C++ syntax: unallowed declarator as\
+                       RHS to scope resolution (possibly non-expanded macros)");
+        v1 (* WARNING: dummy value, not correct *)
   | `Array_type_decl (v1, v2, v3, v4, v5) -> (
       let v1 = map_type_declarator_to_expr env v1 in
       let v2 = token env v2 (* "[" *) in
@@ -4657,7 +4660,11 @@ and map_type_declarator_to_expr (env : env) (x : CST.type_declarator) : expr =
       in
       let v5 = token env v5 (* "]" *) in
       match v4 with
-      | None -> failwith "unallowed declarator as RHS to scope resolution"
+      | None ->
+          Log.warn
+            (fun m -> m "incorrect C/C++ syntax: unallowed declarator as\
+                         RHS to scope resolution (possibly non-expanded macros)");
+          ArrayAccess (v1, (v2, [ ], v5)) (* WARNING: dummy value, not correct *)
       | Some e -> ArrayAccess (v1, (v2, [ InitExpr e ], v5)))
   | `Paren_type_decl (v1, v2, v3) ->
       let v1 = token env v1 (* "(" *) in
@@ -4976,6 +4983,38 @@ and map_variadic_parameter_declaration (env : env)
 let parse file =
   H.wrap_parser
     (fun () -> Tree_sitter_cpp.Parse.file !!file)
+    (fun cst _extras ->
+      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
+      match map_program_or_expr env cst with
+      | Left prog -> prog
+      | Right _ -> failwith "not a program")
+
+(* See the note in Dummy_preprocessor.mli *)
+(* TODO: We run the dummy preprocessor on the read file, before it goes to the
+ * actutal parser. As (for now) we don't fork ocaml-tree-sitter, we can't do it in
+ * there, so we copy-paste-modify some functions from there
+ * (tscp = Tree_sitter_cpp.Parse, tsp = Tree_sitter_parsing).
+ *)
+let parse_with_preprocessor f file =
+  let open Tree_sitter_run in
+  let tsp_parse_source_file ts_parser src_file =
+    let src_data = Util_file.read_file src_file in
+    let preprocessed_data = f src_data in
+    Tree_sitter_parsing.parse_source_string ~src_file ts_parser preprocessed_data
+  in
+  let tscp_parse_source_file src_file =
+    Fun.protect ~finally:Fun.id (* reset_parser *)
+      (fun () ->
+        tsp_parse_source_file
+          (Domain.DLS.get Tree_sitter_cpp.Parse.ts_parser)
+          src_file)
+  in
+  let tscp_file src_file =
+    let input_tree = tscp_parse_source_file src_file in
+    Tree_sitter_cpp.Parse.parse_input_tree input_tree
+  in
+  H.wrap_parser
+    (fun () -> tscp_file !!file)
     (fun cst _extras ->
       let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
       match map_program_or_expr env cst with
