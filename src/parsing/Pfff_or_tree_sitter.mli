@@ -1,6 +1,8 @@
 type 'ast parser =
   | Pfff of (Fpath.t -> 'ast * Parsing_stat.t)
   | TreeSitter of (Fpath.t -> ('ast, unit) Tree_sitter_run.Parsing_result.t)
+  (* Prefer recoverable errors from normal parsers over clean results from last-resort parsers *)
+  | TreeSitterLastResort of (Fpath.t -> ('ast, unit) Tree_sitter_run.Parsing_result.t)
 
 (* TODO: factorize with previous type *)
 type 'ast pattern_parser =
