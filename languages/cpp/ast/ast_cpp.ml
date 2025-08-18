@@ -1169,7 +1169,9 @@ let (string_of_name_tmp : name -> string) =
   let _opt, _qu, id = name in
   match id with
   | IdIdent (s, _) -> s
-  | _ -> failwith "TODO:string_of_name_tmp"
+  | _ ->
+      Log_parser_cpp.Log.warn (fun m -> m "incorrect C/C++ syntax detected (possibly non-expanded macros)");
+      ""
 
 (* TODO: delete, used in highlight_cpp *)
 let (ii_of_id_name : name -> tok list) =
@@ -1179,10 +1181,14 @@ let (ii_of_id_name : name -> tok list) =
     match id with
     | IdIdent (_s, ii) -> [ ii ]
     | IdOperator (_, (_op, ii)) -> [ ii ]
-    | IdConverter (_tok, _ft) -> failwith "ii_of_id_name: IdConverter"
+    | IdConverter (tok, _ft) ->
+        Log_parser_cpp.Log.warn (fun m -> m "incorrect C/C++ syntax detected (possibly non-expanded macros)");
+        [ tok ]
     | IdDestructor (tok, (_s, ii)) -> [ tok; ii ]
     | IdTemplated (x, _args) -> ident_or_op x
-    | IdDeref _ -> failwith "ii_of_id_name: IdDeref"
+    | IdDeref (tok, _) ->
+        Log_parser_cpp.Log.warn (fun m -> m "incorrect C/C++ syntax detected (possibly non-expanded macros)");
+        [ tok ]
   in
   ident_or_op id
 
@@ -1202,7 +1208,9 @@ let (ii_of_name : name -> tok) =
     | IdDestructor (tok, (_s, _ii)) -> tok
     | IdTemplated (x, _args) -> ident_or_op x
     (* TODO? *)
-    | IdDeref _ -> failwith "ii_of_name: IdDeref"
+    | IdDeref (tok, _) ->
+        Log_parser_cpp.Log.warn (fun m -> m "incorrect C/C++ syntax detected (possibly non-expanded macros)");
+        tok
   in
   ident_or_op id
 
