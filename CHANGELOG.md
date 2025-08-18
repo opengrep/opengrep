@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.8.5](https://github.com/opengrep/opengrep/releases/tag/v1.8.5) - 18-08-2025
+
+### Bug fixes
+
+* Fix: install script `sed` call should be posix-compliant by @dimitris-m in #390
+* Make C/C++ parser more lenient by @maciejpirog @dimitris-m @corneliuhoffman in #393
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.4...v1.8.5
+
+
 ## [1.8.4](https://github.com/opengrep/opengrep/releases/tag/v1.8.4) - 12-08-2025
 
 ### Bug fixes
