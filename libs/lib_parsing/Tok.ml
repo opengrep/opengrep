@@ -54,8 +54,9 @@ open Sexplib.Std
  * Note that Loc.t is now an alias for Tok.location.
  *)
 type location = {
-  (* the content of the "token" *)
-  str : string;
+  (* The content of the "token".
+   * No need to use it for comparison, as it is determined by the location. *)
+  str : string [@eq.ignore][@ord.ignore];
   (* TODO? the content of Pos.t used to be inlined in this location type.
    * It is cleaner to factorize things in Pos.t, but this introduces
    * an extra pointer which actually can have real performance implication
