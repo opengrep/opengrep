@@ -265,7 +265,6 @@ let main (caps : caps) (argv : string array) : Exit_code.t =
 
   (* hacks for having a smaller engine.js file *)
   Parsing_init.init ();
-  Data_init.init ();
   Http_helpers_.set_client_ref (module Cohttp_lwt_unix.Client);
 
   (* TOPORT: maybe_set_git_safe_directories() *)

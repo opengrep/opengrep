@@ -35,7 +35,7 @@ module Log = Log_parser_cpp.Log
 
 (* to avoid cascading error effects when code is partially parsed by
  * tree-sitter *)
-let recover_when_partial_error = ref true
+let recover_when_partial_error = true
 
 (*****************************************************************************)
 (* Helpers *)
@@ -61,7 +61,7 @@ let error_unless_partial_error _env t s =
    * parsed and contained some ERROR CST nodes around t instead of
    * using a hardcoded boolean below.
    *)
-  if not !recover_when_partial_error then error t s
+  if not recover_when_partial_error then error t s
   else
     Log.warn (fun m ->
         m "error_unless_partial_error: %s, at %s" s (Tok.stringpos_of_tok t))
@@ -4643,9 +4643,12 @@ and map_type_declarator_to_expr (env : env) (x : CST.type_declarator) : expr =
       let v5 = map_type_declarator_to_expr env v5 in
       Unary ((DeRef, v2), v5)
   | `Func_type_decl (v1, v2) ->
-      let _v1 = map_type_declarator_to_expr env v1 in
+      let v1 = map_type_declarator_to_expr env v1 in
       let _v2 = map_parameter_list env v2 in
-      failwith "unallowed declarator as RHS to scope resolution"
+        Log.warn
+          (fun m -> m "incorrect C/C++ syntax: unallowed declarator as\
+                       RHS to scope resolution (possibly non-expanded macros)");
+        v1 (* WARNING: dummy value, not correct *)
   | `Array_type_decl (v1, v2, v3, v4, v5) -> (
       let v1 = map_type_declarator_to_expr env v1 in
       let v2 = token env v2 (* "[" *) in
@@ -4657,7 +4660,11 @@ and map_type_declarator_to_expr (env : env) (x : CST.type_declarator) : expr =
       in
       let v5 = token env v5 (* "]" *) in
       match v4 with
-      | None -> failwith "unallowed declarator as RHS to scope resolution"
+      | None ->
+          Log.warn
+            (fun m -> m "incorrect C/C++ syntax: unallowed declarator as\
+                         RHS to scope resolution (possibly non-expanded macros)");
+          ArrayAccess (v1, (v2, [ ], v5)) (* WARNING: dummy value, not correct *)
       | Some e -> ArrayAccess (v1, (v2, [ InitExpr e ], v5)))
   | `Paren_type_decl (v1, v2, v3) ->
       let v1 = token env v1 (* "(" *) in

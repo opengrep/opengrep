@@ -44,11 +44,6 @@ let unknown_char_entropy = log2 62.
 
 let normalize_string s = String.map Char.uppercase_ascii s
 
-(* Set in Data_init.init() from data in Entropy_data.ml
- * The intermediate variable below is used to save space in engine.js
- *)
-let english_trigrams_ref = ref [||]
-
 (*
    Load trigrams:
    - determine each trigram's frequency, expressed as an entropy
@@ -59,7 +54,7 @@ let english_trigrams_ref = ref [||]
    end of strings where we don't have full trigrams.
 *)
 let load_trigrams () =
-  let ar = !english_trigrams_ref in
+  let ar = Entropy_data.english_trigrams in
   (* Load trigram frequencies *)
   let trigram_entropies = Trie.create () in
   (* we explicitly use int64 here to avoid overflow *)
@@ -101,7 +96,7 @@ let load_trigrams () =
   in
   (trigram_entropies, char_entropies)
 
-let data_tables = lazy (load_trigrams ())
+let data_tables = load_trigrams ()
 
 (*
    A string is scanned as follows:
@@ -121,7 +116,7 @@ let data_tables = lazy (load_trigrams ())
 *)
 
 let get_substring_entropy s =
-  let trigram_entropies, char_entropies = Lazy.force data_tables in
+  let trigram_entropies, char_entropies = data_tables in
   match String.length s with
   | 3 ->
       let trigram_entropy =

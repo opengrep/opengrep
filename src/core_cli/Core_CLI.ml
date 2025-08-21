@@ -798,7 +798,6 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
    * also tests/Test.ml and osemgrep/cli/CLI.ml
    *)
   Parsing_init.init ();
-  Data_init.init ();
 
   (* must be done after Arg.parse, because Common.profile is set by it *)
   Profiling.profile_code "Main total" (fun () ->

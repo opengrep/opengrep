@@ -213,7 +213,6 @@ let main (caps : Cap.all_caps) : unit =
       (* coupling: partial copy of the content of CLI.main() *)
       Core_CLI.register_exception_printers ();
       Parsing_init.init ();
-      Data_init.init ();
       Http_helpers.set_client_ref (module Cohttp_lwt_unix.Client);
       let reset () =
         (* Some tests change this configuration so we have to reset

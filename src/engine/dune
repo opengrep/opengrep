@@ -17,6 +17,7 @@
    aliengrep
 
    semgrep_core
+   semgrep_data
    semgrep_fixing
    semgrep_matching
    semgrep_tainting

@@ -6,7 +6,4 @@
  (public_name semgrep.data)
  (name semgrep_data)
  (wrapped false)
- (libraries
-   semgrep.engine
- )
 )

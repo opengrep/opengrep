@@ -476,7 +476,6 @@ and map_expr env x : G.expr =
       and l, v2, r = map_bracket env (map_of_list (map_initialiser env)) v2 in
       let v2 =
         match v2 with
-        | [] -> failwith "should not be empty by precondition"
         | [ x ] -> x
         | xs -> Container (List, fb xs) |> G.e
       in
