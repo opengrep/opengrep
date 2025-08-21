@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.8.6](https://github.com/opengrep/opengrep/releases/tag/v1.8.6) - 21-08-2025
+
+### Bug fixes
+
+* Fix naming in the presence of typed patterns in typescript by @corneliuhoffman in #395
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.5...v1.8.6
+
+
 ## [1.8.5](https://github.com/opengrep/opengrep/releases/tag/v1.8.5) - 18-08-2025
 
 ### Bug fixes
