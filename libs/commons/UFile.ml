@@ -313,12 +313,17 @@ let lines_of_file_exn (start_line, end_line) file : string list =
   (* This is the case of the empty file. *)
   | [| "" |] -> []
   | _ ->
+      let max_index = Array.length arr - 1 in
       lines
-      |> List_.map (fun i ->
-             try arr.(i) with
-             | Invalid_argument s ->
-                 let exn =
-                   Common.ErrorOnFile
-                     (spf "lines_of_file(): %s on index %d" s i, file)
-                 in
-                 Exception.catch_and_reraise exn)
+      |> List_.filter_map (fun i ->
+             if i >= 0 && i <= max_index then
+               try Some arr.(i) with
+               | Invalid_argument s ->
+                   let exn =
+                     Common.ErrorOnFile
+                       (spf "lines_of_file(): %s on index %d" s i, file)
+                   in
+                   Exception.catch_and_reraise exn
+             else
+               (* Skip out-of-bounds indices silently to prevent crashes *)
+               None)

@@ -130,7 +130,10 @@ let rule_match_nosem ~nosem_inline_re ~nosem_previous_line_re
     (* Minus one, because we need the preceding line. *)
     let start, end_ = pm.range_loc in
     let start_line = max 0 (start.pos.line - 1) in
-    UFile.lines_of_file_exn (start_line, end_.pos.line) path
+    let end_line = max start_line end_.pos.line in
+    (* Additional safety: limit range to prevent excessive line reading *)
+    let safe_end_line = min end_line (start_line + 1000) in
+    UFile.lines_of_file_exn (start_line, safe_end_line) path
     |> List_.mapi (fun idx x -> (start_line + idx, x))
   in
 
