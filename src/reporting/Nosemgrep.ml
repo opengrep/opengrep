@@ -130,24 +130,8 @@ let rule_match_nosem ~nosem_inline_re ~nosem_previous_line_re
     (* Minus one, because we need the preceding line. *)
     let start, end_ = pm.range_loc in
     let start_line = max 0 (start.pos.line - 1) in
-    let end_line = max start_line end_.pos.line in
-    try
-      UFile.lines_of_file_exn (start_line, end_line) path
-      |> List_.mapi (fun idx x -> (start_line + idx, x))
-    with
-    | Common.ErrorOnFile (msg, _) ->
-        (* Check if this is the specific out-of-bounds error we're trying to fix *)
-        if String.contains msg 'b' && String.contains msg 'o' (* rough check for "bounds" *) then (
-          (* Gracefully handle out-of-bounds line access during baseline scanning.
-             This can occur when match positions reference lines that don't exist
-             in the current file state (e.g., due to differences between baseline
-             and head commits). Return empty list to skip nosemgrep processing
-             for this match rather than crashing. *)
-          Logs.debug (fun m -> m "Skipping nosemgrep processing due to line bounds: %s" msg);
-          []
-        ) else
-          (* Re-raise other ErrorOnFile exceptions *)
-          raise (Common.ErrorOnFile (msg, path))
+    UFile.lines_of_file_exn (start_line, end_.pos.line) path
+    |> List_.mapi (fun idx x -> (start_line + idx, x))
   in
 
   let linecol_to_bytepos_fun =

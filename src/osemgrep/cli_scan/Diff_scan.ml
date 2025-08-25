@@ -62,19 +62,11 @@ let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
       |> Option.value ~default:p
     in
     let start_range, end_range = m.range_loc in
+    (* TODO: what if we get an exn? *)
     let syntactic_ctx =
-      try
-        UFile.lines_of_file_exn
-          (start_range.pos.line, end_range.pos.line)
-          m.path.internal_path_to_content
-      with
-      | Common.ErrorOnFile (msg, _) ->
-          (* Gracefully handle out-of-bounds line access during baseline diff scanning.
-             This can occur when match positions from head commit reference lines that 
-             don't exist in the baseline commit. Use empty context to allow comparison
-             to continue based on rule_id and path only. *)
-          Logs.debug (fun m -> m "Using empty syntactic context due to line bounds: %s" msg);
-          []
+      UFile.lines_of_file_exn
+        (start_range.pos.line, end_range.pos.line)
+        m.path.internal_path_to_content
     in
     (rule_id, path, syntactic_ctx)
   in
