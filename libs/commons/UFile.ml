@@ -308,11 +308,14 @@ let find_first_match_with_whole_line path ?split term =
  *)
 let lines_of_file_exn (start_line, end_line) file : string list =
   let arr = cat_array file in
-  let lines = List_.enum start_line end_line in
   match arr with
   (* This is the case of the empty file. *)
   | [| "" |] -> []
   | _ ->
+      let max_index = Array.length arr - 1 in
+      let safe_start = max 0 (min start_line max_index) in
+      let safe_end = max safe_start (min end_line max_index) in
+      let lines = List_.enum safe_start safe_end in
       lines
       |> List_.map (fun i ->
              try arr.(i) with
