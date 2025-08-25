@@ -317,13 +317,7 @@ let lines_of_file_exn (start_line, end_line) file : string list =
       lines
       |> List_.filter_map (fun i ->
              if i >= 0 && i <= max_index then
-               try Some arr.(i) with
-               | Invalid_argument s ->
-                   let exn =
-                     Common.ErrorOnFile
-                       (spf "lines_of_file(): %s on index %d" s i, file)
-                   in
-                   Exception.catch_and_reraise exn
+               Some arr.(i)
              else
                (* Skip out-of-bounds indices silently to prevent crashes *)
                None)
