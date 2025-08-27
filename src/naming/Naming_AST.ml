@@ -830,6 +830,16 @@ class ['self] resolve_visitor env lang =
       (* do not recurse here, we don't want the PatId case above
        * to overwrite the job done here
        *)
+      | PatTyped (pattern, ty) when Lang.is_js lang ->
+          Common.save_excursion_unsafe env.in_lvalue true (fun () ->
+              super#visit_type_ venv ty);
+          super#visit_pattern venv pattern
+      (* This is used for Ts in the case of typed patterns with records.
+       * For example in a fuction like: 
+       *  function ({foo} :{foo:foo_type}){}
+       * we need to make sure we do it safely for types otherwise they will
+       * be put in the stack. see the test rules/ts_type
+       *)
       | OtherPat _
       (* This interacts badly with implicit JS/TS declarations. It causes
        * `foo` in `function f({ foo }) { ... }` to be resolved as a global

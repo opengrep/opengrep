@@ -1,0 +1,18 @@
+rules:
+- id: test
+  languages:
+  - ts
+  severity: WARNING
+  mode: taint
+  pattern-sources:
+    - patterns:
+        - pattern-either:
+            - pattern-inside: |
+                  function ...({..., $X, ...} : $Y ) { ... }
+        - focus-metavariable: $X
+  pattern-sinks:
+  - patterns:
+    - pattern-either:
+      - pattern-inside: |
+           {__html: $Z}  
+    - focus-metavariable: $Z
