@@ -37,3 +37,5 @@ val range_of_tokens : Tok.t list -> t option
  * content_at_range will not read_file again and again the same file.
  *)
 val content_at_range : Fpath.t -> t -> string
+
+val hmemo : (Fpath.t, string) Kcas_data.Hashtbl.t

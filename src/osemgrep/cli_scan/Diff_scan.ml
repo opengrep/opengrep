@@ -72,6 +72,7 @@ let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
   in
   let sigs = Hashtbl.create 10 in
   Git_wrapper.run_with_worktree caps ~commit (fun () ->
+      Globals.reset ();
       List.iter
         (fun ({ pm; _ } : Core_result.processed_match) ->
           pm |> extract_sig None |> fun x -> Hashtbl.add sigs x true)
@@ -143,6 +144,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
     let baseline_result =
       Profiler.record profiler ~name:"baseline_core_time" (fun () ->
           Git_wrapper.run_with_worktree caps ~commit (fun () ->
+              Globals.reset ();
               let prepare_targets paths =
                 paths |> SS.of_list |> add_renamed |> remove_added |> SS.to_seq
                 |> Seq.filter_map (fun x ->

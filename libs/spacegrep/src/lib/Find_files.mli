@@ -41,3 +41,5 @@ val list :
   string list ->
   string list
 (** Simplified interface to [fold], which lists all the matching paths. *)
+
+val hmemo : (string, Unix.stats) Kcas_data.Hashtbl.t

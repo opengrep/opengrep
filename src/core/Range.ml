@@ -136,6 +136,7 @@ let range_of_tokens xs =
   with
   | Tok.NoTokenLocation _ -> None
 
+(* XXX: This should probably be cleared for baseline scanning, after the head scan! *)
 let hmemo : (Fpath.t, string) Kcas_data.Hashtbl.t = Kcas_data.Hashtbl.create () (* 101 *)
 
 let () =
