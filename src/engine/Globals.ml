@@ -64,6 +64,7 @@ let reset () =
   (* TODO: There is probably more places where we need to do that: *)
   Kcas_data.Hashtbl.clear Xpattern_matcher.hmemo;
   Kcas_data.Hashtbl.clear Range.hmemo;
+  Kcas_data.Hashtbl.clear Spacegrep.Find_files.hmemo;
   (* TODO?
    * - the internal parser refs in Parsing_plugin.ml [TODO]
    * - Http_helpers.client_ref ? [TODO]
