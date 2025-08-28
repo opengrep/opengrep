@@ -61,6 +61,9 @@ let reset () =
   TLS.set Rule.last_matched_rule None; (* DONE *)
   TLS.set Match_patterns.last_matched_rule None; (* NEW, DONE *)
   Pro_hooks.reset_pro_hooks ();
+  (* TODO: There is probably more places where we need to do that: *)
+  Kcas_data.Hashtbl.clear Xpattern_matcher.hmemo;
+  Kcas_data.Hashtbl.clear Range.hmemo;
   (* TODO?
    * - the internal parser refs in Parsing_plugin.ml [TODO]
    * - Http_helpers.client_ref ? [TODO]
