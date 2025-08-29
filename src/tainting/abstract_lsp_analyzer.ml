@@ -100,8 +100,8 @@ let find_function_at_position (prog : AST_generic.program) (line : int)
 (* Language configurations *)
 let python_config =
   {
-    lsp_command = "basedpyright-langserver";
-    lsp_args = [| "basedpyright-langserver"; "--stdio" |];
+    lsp_command = "pyright-langserver";
+    lsp_args = [| "pyright-langserver"; "--stdio"; "--cancellationReceive=file" |];
     file_extension = ".py";
     language_id = "python";
     parse_file =
@@ -261,15 +261,16 @@ let init_lsp_session config workspace_root =
 
   send_lsp_message out_channel init_request;
   let init_response = read_until_response in_channel 1 in
-  let legend =
+  let _legend =
     init_response |> Yojson.Safe.from_string
+    |> fun x -> print_endline @@ Yojson.Safe.show x;x
     |> Yojson.Safe.Util.member "result"
     |> Yojson.Safe.Util.member "capabilities"
-    |> Yojson.Safe.Util.member "semanticTokensProvider"
-    |> Yojson.Safe.Util.member "legend"
-    |> Yojson.Safe.Util.to_assoc
-    |> List.map (fun (x, y) ->
-           (x, Yojson.Safe.Util.to_list y |> List.map Yojson.Safe.Util.to_string))
+    (* |> Yojson.Safe.Util.member "semanticTokensProvider" *)
+    (* |> Yojson.Safe.Util.member "legend" *)
+    (* |> Yojson.Safe.Util.to_assoc *)
+    (* |> List.map (fun (x, y) -> *)
+           (* (x, Yojson.Safe.Util.to_list y |> List.map Yojson.Safe.Util.to_string)) *)
   in
 
   let initialized =
@@ -282,7 +283,7 @@ let init_lsp_session config workspace_root =
   in
   send_lsp_message out_channel initialized;
 
-  (pid, in_channel, out_channel, legend)
+  (pid, in_channel, out_channel, [])
 
 (* Open file in LSP *)
 let open_file_in_lsp config filename out_channel =
