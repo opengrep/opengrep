@@ -68,9 +68,60 @@ let test_combine_sparse_toks () =
   test [ tok "a" 1 0 0; tok "b" 2 1 5 ] (tok "a--\\\n-b" 1 0 0);
   test [ tok "a\n" 1 0 0; tok "b" 2 1 3 ] (tok "a\n-b" 1 0 0)
 
+let test_same_positions () =
+  let same_position (p1 : Pos.t) (p2 : Pos.t) : unit =
+    if not (Pos.equal p1 p2) || Pos.compare p1 p2 <> 0 then assert false
+  in
+    (* we don't compare lines and columns, as they follow from bytepos *)
+    same_position
+      { bytepos = 123; line = 10;  column = 20;  file = Fpath.v "/some/path/file.txt" }
+      { bytepos = 123; line = 100; column = 200; file = Fpath.v "/some/path/file.txt" }
+
+let test_different_positions () =
+  let different_position (p1 : Pos.t) (p2 : Pos.t) : unit =
+    if Pos.equal p1 p2 || Pos.compare p1 p2 = 0 then assert false
+  in
+    different_position
+      { bytepos = 12;  line = 10; column = 20; file = Fpath.v "/some/path/file.txt" }
+      { bytepos = 123; line = 10; column = 20; file = Fpath.v "/some/path/file.txt" };
+    different_position
+      { bytepos = 123; line = 10; column = 20; file = Fpath.v "/some/path/file.txt" }
+      { bytepos = 123; line = 10; column = 20; file = Fpath.v "/some/path/other_file.txt" }
+
+let test_same_locations () =
+  let same_location (p1 : Tok.location) (p2 : Tok.location) : unit =
+    if not (Tok.equal_location p1 p2) || Tok.compare_location p1 p2 <> 0 then assert false
+  in
+    (* we don't compare lines, columns, or content *)
+    same_location
+      { str = "abc"
+      ; pos = { bytepos = 123; line = 10; column = 20; file = Fpath.v "/some/path/file.txt" } }
+      { str = "xyzt"
+      ; pos = { bytepos = 123; line = 10; column = 20; file = Fpath.v "/some/path/file.txt" } }
+
+let test_different_locations () =
+  let different_location (p1 : Tok.location) (p2 : Tok.location) : unit =
+    if Tok.equal_location p1 p2 || Tok.compare_location p1 p2 = 0 then assert false
+  in
+    (* we don't compare lines, columns, or content *)
+    different_location
+      { str = "abc"
+      ; pos = { bytepos = 12;  line = 10; column = 20; file = Fpath.v "/some/path/file.txt" } }
+      { str = "abc"
+      ; pos = { bytepos = 123; line = 10; column = 20; file = Fpath.v "/some/path/file.txt" } };
+    different_location
+      { str = "abc"
+      ; pos = { bytepos = 123; line = 10; column = 20; file = Fpath.v "/some/path/file.txt" } }
+      { str = "abc"
+      ; pos = { bytepos = 123; line = 10; column = 20; file = Fpath.v "/some/path/other_file.txt" } }
+
 let tests =
   Testo.categorize "Tok"
     [
       t "end_pos_of_loc" test_end_pos_of_loc;
       t "combine_sparse_toks" test_combine_sparse_toks;
+      t "same_positions" test_same_positions;
+      t "different_positions" test_different_positions;
+      t "same_locations" test_same_locations;
+      t "different_locations" test_different_locations;
     ]
