@@ -16,7 +16,7 @@ depends: [
   "ocaml" {>= "5.3.0"}
   "dune" {>= "3.8" & >= "3.2.0"}
   "commons" {>= "1.5.5"}
-  "memprof-limits" {= "dev"}
+  "memprof-limits"
   "odoc" {with-doc}
 ]
 build: [
@@ -34,3 +34,6 @@ build: [
   ]
 ]
 dev-repo: "git+https://github.com/opengrep/opengrep.git"
+pin-depends: [
+  ["memprof-limits.dev" "git+https://gitlab.com/dimitris-m/memprof-limits.git#c2cced325a93d2271379f0712db85867b29dbee1"]
+]
