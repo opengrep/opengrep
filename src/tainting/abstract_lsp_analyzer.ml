@@ -22,9 +22,9 @@ module Display = struct
   include G
 
   let vertex_name Tok.{ str; pos } =
+    let file = Fpath.to_string pos.file in
     "\"" ^ str ^ " at l: " ^ string_of_int pos.line ^ " c: "
-    ^ string_of_int pos.column ^ "\n file " ^ Fpath.to_string pos.file^"\""
-
+    ^ string_of_int pos.column ^ "\n file " ^ (String.sub file 75 (String.length file - 75))^ "\""
   let graph_attributes _ = []
   let default_vertex_attributes _ = []
   let vertex_attributes _ = []
@@ -64,7 +64,38 @@ type dependency_analysis = {
   graph : G.t;
 }
 
-let empty_analysis () = { functions = []; call_sites = []; graph = G.create () }
+let getfile str =
+  if String.sub str 0 5 = "file:" then String.sub str 7 (String.length str - 7)
+  else str
+
+let find_function_at_position (prog : AST_generic.program) (line : int)
+    (column : int) file : Tok.location option =
+  let bytepos =
+    Parse_tree_sitter_helpers.line_col_to_pos file (line, column + 1)
+  in
+  let target_pos = Pos.{ file; bytepos; line; column } in
+
+  let position_in_range target_pos (start_loc, end_loc) =
+    Pos.compare target_pos start_loc.Tok.pos >= 0
+    && Pos.compare target_pos end_loc.Tok.pos <= 0
+  in
+
+  let rec find_containing_element = function
+    | [] -> None
+    | any :: rest -> (
+        match AST_generic_helpers.range_of_any_opt (S any) with
+        | Some range when position_in_range target_pos range -> (
+            match any.s with
+            | DefStmt (entity, FuncDef _) -> (
+                match entity.name with
+                | EN (Id ((name, OriginTok tok), _info)) ->
+                    Some Tok.{ str = name; pos = tok.pos }
+                | _ -> None)
+            | _ -> None)
+        | _ -> find_containing_element rest)
+  in
+
+  find_containing_element prog
 
 (* Language configurations *)
 let python_config =
@@ -303,14 +334,21 @@ let request_form ?(request = "textDocument/definition") file_uri line char =
 
 let prepare_class_hierarchy in_channel out_channel file line col =
   let _file_uri = open_file_in_lsp python_config file out_channel in
+
   let request =
-    `Assoc [
-                        ("jsonrpc", `String "2.0");
-                        ("id", `Int 500);
-                        ("method", `String "textDocument/prepareCallHierarchy");
-                        ("params", `Assoc [
-                          ("textDocument", `Assoc [("uri", `String file)]);
-                          ("position", `Assoc [("line", `Int line); ("character", `Int col)]);])]
+    `Assoc
+      [
+        ("jsonrpc", `String "2.0");
+        ("id", `Int 500);
+        ("method", `String "textDocument/prepareCallHierarchy");
+        ( "params",
+          `Assoc
+            [
+              ("textDocument", `Assoc [ ("uri", `String file) ]);
+              ( "position",
+                `Assoc [ ("line", `Int line); ("character", `Int col) ] );
+            ] );
+      ]
   in
   send_lsp_message out_channel request;
   read_until_response in_channel 500
@@ -322,6 +360,7 @@ let get_incoming_calls in_channel out_channel file line col =
   let hierarchy =
     prepare_class_hierarchy in_channel out_channel file line col
   in
+
   let request =
     `Assoc
       [
@@ -338,10 +377,11 @@ let get_incoming_calls in_channel out_channel file line col =
   in
   send_lsp_message out_channel request;
   let response = read_until_response in_channel 500 in
-  response |> Yojson.Safe.from_string
-  |> Yojson.Safe.Util.member "result"
-  |> fun x -> match x with `List _ -> Yojson.Safe.Util.to_list x
-| _ -> []
+  response |> Yojson.Safe.from_string |> Yojson.Safe.Util.member "result"
+  |> fun x ->
+  match x with
+  | `List _ -> Yojson.Safe.Util.to_list x
+  | _ -> []
 
 type location = { line : int; character : int }
 type range = { start : location; end_ : location }
@@ -352,10 +392,6 @@ type node = {
   from : location;
   fromRanges : range list;
 }
-let getfile fpath =
-let str = Fpath.to_string fpath in
-if (String.sub str 0 5) = "file:" then String.sub str 5 (String.length str - 5)
-else str
 
 let extract_vertex_from_out node =
   let from = Yojson.Safe.Util.member "from" node in
@@ -366,31 +402,129 @@ let extract_vertex_from_out node =
     from |> Yojson.Safe.Util.member "name" |> Yojson.Safe.Util.to_string
   in
   let file =
-    from |> Yojson.Safe.Util.member "uri" |> Yojson.Safe.Util.to_string |> Fpath.v
+    from
+    |> Yojson.Safe.Util.member "uri"
+    |> Yojson.Safe.Util.to_string |> Fpath.v
   in
   let pos =
-    from |> Yojson.Safe.Util.member "range"  |> Yojson.Safe.Util.member "start" |> fun x ->
-    Pos.{bytepos = 0;
-      line = Yojson.Safe.Util.member "line" x |> Yojson.Safe.Util.to_int;
-      column =
-        Yojson.Safe.Util.member "character" x |> Yojson.Safe.Util.to_int;
+    from |> Yojson.Safe.Util.member "range" |> Yojson.Safe.Util.member "start"
+    |> fun x ->
+    Pos.
+      {
+        bytepos = 0;
+        line = Yojson.Safe.Util.member "line" x |> Yojson.Safe.Util.to_int;
+        column =
+          Yojson.Safe.Util.member "character" x |> Yojson.Safe.Util.to_int;
         file;
-    }
+      }
   in
-  Tok.{str; pos}
+  Tok.{ str; pos }
 
-let add_to_to_tree_from_v in_channel out_channel tree (v: Tok.location)=
-let results = get_incoming_calls in_channel out_channel (getfile v.pos.file) v.pos.line v.pos.column 
- in
-results  |> List.map  extract_vertex_from_out|> List.fold_left_map (fun _ x -> G.add_vertex tree x; G.add_edge tree v x; ((),x)) ()
-  
+let location_of_result result =
+  let file_name =
+    result
+    |> Yojson.Safe.Util.member "uri"
+    |> Yojson.Safe.Util.to_string |> getfile |> Fpath.v
+  in
+  let lang = Lang.lang_of_filename_exn file_name in
+
+  let program = file_name |> Parse_target2.just_parse_with_lang lang in
+  let range = result |> Yojson.Safe.Util.member "range" in
+  let start = range |> Yojson.Safe.Util.member "start" in
+  let line = Yojson.Safe.Util.member "line" start |> Yojson.Safe.Util.to_int in
+  let character =
+    Yojson.Safe.Util.member "character" start |> Yojson.Safe.Util.to_int
+  in
+  let _loc =
+    Tok.
+      {
+        str = "";
+        pos =
+          {
+            file = file_name;
+            bytepos =
+              Parse_tree_sitter_helpers.line_col_to_pos file_name
+                (line + 1, character + 1);
+            line;
+            column = character;
+          };
+      }
+  in
+  find_function_at_position program.ast (line + 1) character file_name
+
+let extract_refs in_channel out_channel v =
+  let open Tok in
+  let request =
+    `Assoc
+      [
+        ("jsonrpc", `String "2.0");
+        ("id", `Int 500);
+        ("method", `String "textDocument/references");
+        ( "params",
+          `Assoc
+            [
+              ( "textDocument",
+                `Assoc
+                  [
+                    ("uri", `String (getfile @@ Fpath.to_string v.Tok.pos.file));
+                  ] );
+              ( "position",
+                `Assoc
+                  [
+                    ("line", `Int (v.pos.line - 1));
+                    ("character", `Int v.pos.column);
+                  ] );
+              ("context", `Assoc [ ("includeDeclaration", `Bool true) ]);
+            ] );
+      ]
+  in
+  send_lsp_message out_channel request;
+  let r =
+    read_until_response in_channel 500
+    |> Yojson.Safe.from_string
+    |> Yojson.Safe.Util.member "result"
+    |> Yojson.Safe.Util.to_list
+    |> List.map location_of_result
+  in
+
+  r
+
+let add_to_to_tree_from_v in_channel out_channel tree (v : Tok.location) =
+  let results =
+    extract_refs in_channel out_channel v
+    |> List.fold_left_map
+         (fun _ x ->
+           match x with
+           | Some loc when (not (Tok.equal_location loc v)) ->
+               G.add_edge tree v loc;
+               ((), x)
+           | _ -> ((), x))
+         ()
+  in
+  results
+
+module MSet = Set.Make (struct
+  type t = Tok.location
+
+  let compare = Tok.compare_location
+end)
+
 let add_closed in_channel out_channel tree v =
-let rec loop remining  =
-if List.is_empty remining then ()
-else let new_head = List.hd remining in
-let _, new_heads = add_to_to_tree_from_v in_channel out_channel tree new_head in
-loop ((List.tl remining) @ new_heads) in
-loop v
+  let rec loop remining visited =
+    if MSet.is_empty remining then ()
+    else
+      let new_head = MSet.choose remining in
+      let _, new_heads =
+        add_to_to_tree_from_v in_channel out_channel tree new_head
+      in
+      let new_heads = List.filter_map Fun.id new_heads in
+      let really_new = MSet.diff (MSet.of_list new_heads) visited in
+
+      loop
+        (MSet.union (MSet.remove new_head remining) really_new)
+        (MSet.add new_head visited)
+  in
+  loop v MSet.empty
 (* let get all_incomming in_channel out_channel file line col  = *)
 (* let rec loop acc (remaining :node list) = *)
 (* if List.is_empty remaining then acc *)
@@ -488,4 +622,3 @@ let get_semantic_tokens conf file_name in_channel out_channel legend =
     | _ -> acc
   in
   loop ([], 1, 0) response
-
