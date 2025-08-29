@@ -1,13 +1,18 @@
 # Changelog
 
-## [1.8.7](https://github.com/opengrep/opengrep/releases/tag/v1.8.7) - 29-08-2025
+## [1.8.8](https://github.com/opengrep/opengrep/releases/tag/v1.8.8) - 29-08-2025
 
 ### Bug fixes
 
-* Scala: support metavars as elements in interpolated strings by @maciejpirog in #403
+* Scala: Support metavars as elements in interpolated strings by @maciejpirog in #403
 * Fix: reset memoisation hashtables when performing a baseline scan by @dimitris-m in #404
+* Fix: pin ppxlib to 0.35.0 by @dimitris-m in #406
 
-**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.6...v1.8.7
+#### Notes
+
+* Version 1.8.7 (#405) intentionally skipped.
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.6...v1.8.8
 
 
 ## [1.8.6](https://github.com/opengrep/opengrep/releases/tag/v1.8.6) - 21-08-2025
