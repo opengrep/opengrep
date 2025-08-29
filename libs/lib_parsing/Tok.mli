@@ -31,6 +31,10 @@ type location = {
 }
 [@@deriving show, eq, ord, sexp]
 
+val compare_location : location -> location -> int
+
+val equal_location : location -> location -> bool
+
 type t =
   (* Token found in the original file *)
   | OriginTok of location
