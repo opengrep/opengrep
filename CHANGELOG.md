@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.8.7](https://github.com/opengrep/opengrep/releases/tag/v1.8.7) - 29-08-2025
+
+### Bug fixes
+
+* Scala: support metavars as elements in interpolated strings by @maciejpirog in #403
+* Fix: reset memoisation hashtables when performing a baseline scan by @dimitris-m in #404
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.6...v1.8.7
+
+
 ## [1.8.6](https://github.com/opengrep/opengrep/releases/tag/v1.8.6) - 21-08-2025
 
 ### Bug fixes
