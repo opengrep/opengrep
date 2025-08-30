@@ -107,6 +107,7 @@ minimal-build:
 	dune build $(BUILD)/install/default/bin/opengrep-core$(EXE)
 	dune build $(BUILD)/install/default/bin/opengrep-cli$(EXE)
 	dune build $(BUILD)/install/default/bin/opengrep$(EXE)
+	dune build $(BUILD)/install/default/bin/opengrep-exp$(EXE)
 # Remove all symbols with GNU strip. It saves 10-25% on the executable
 # size and it doesn't seem to reduce the functionality or
 # debuggability of OCaml executables.
