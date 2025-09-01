@@ -2491,12 +2491,42 @@ let special_multivardef_pattern = "!MultiVarDef!"
 (* Semgrep hacks *)
 (*****************************************************************************)
 
+let is_metavar_name_body len start s =
+    let check_first c =
+      (c >= 'A' && c <= 'Z') || c = '_'
+    in
+    let check_rest c =
+      (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_'
+    in
+    check_first s.[start] &&
+    (let rec check i =
+       if i >= len then true
+       else if check_rest s.[i] then check (i + 1)
+       else false
+    in
+    check (start + 1))
+
 (* coupling: Metavariable.is_metavar_name *)
-let is_metavar_name s = Common.( =~ ) s "^\\(\\$[A-Z_][A-Z_0-9]*\\)$"
+(* previously: regex "^\\(\\$[A-Z_][A-Z_0-9]*\\)$" *)
+let is_metavar_name s =
+  let len = String.length s in
+  if len < 2 then
+    false
+  else if s.[0] <> '$' then
+    false
+  else
+    is_metavar_name_body len 1 s
 
 (* coupling: Metavariable.is_metavar_ellipsis *)
+(* previously: regex "^\\(\\$\\.\\.\\.[A-Z_][A-Z_0-9]*\\)$" *)
 let is_metavar_ellipsis s =
-  Common.( =~ ) s "^\\(\\$\\.\\.\\.[A-Z_][A-Z_0-9]*\\)$"
+  let len = String.length s in
+  if len < 5 then  (* "$..." + at least 1 valid char *)
+    false
+  else if not (String.sub s 0 4 = "$...") then
+    false
+  else
+    is_metavar_name_body len 4 s
 
 (*****************************************************************************)
 (* Custom visitors *)
