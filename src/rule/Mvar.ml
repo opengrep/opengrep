@@ -18,9 +18,8 @@ type t = string [@@deriving show, eq, hash, ord]
  * the same convention than OCaml).
  * However this conflicts with PHP superglobals, hence the special
  * cases below in is_metavar_name.
- * coupling: AST_generic.is_metavar_name
  *)
-let metavar_regexp_string = "^\\(\\$[A-Z_][A-Z_0-9]*\\)$"
+(* previously: regex "^\\(\\$[A-Z_][A-Z_0-9]*\\)$" *)
 
 (*
  * Hacks abusing existing constructs to encode extra constructions.
@@ -45,13 +44,13 @@ let is_metavar_name s =
     (* todo: there's also "$GLOBALS" but this may interface with existing rules*)
     ->
       false
-  | __else__ -> s =~ metavar_regexp_string
+  | __else__ -> AST_generic.is_metavar_name s
 
 (* $...XXX multivariadic metavariables. Note that I initially chose
  * $X... but this leads to parsing conflicts in Javascript.
  *)
-let metavar_ellipsis_regexp_string = "^\\(\\$\\.\\.\\.[A-Z_][A-Z_0-9]*\\)$"
-let is_metavar_ellipsis s = s =~ metavar_ellipsis_regexp_string
+(* previously: regex "^\\(\\$\\.\\.\\.[A-Z_][A-Z_0-9]*\\)$" *)
+let is_metavar_ellipsis s = AST_generic.is_metavar_ellipsis s
 
 (* TODO: Add version where [pcre_compile] is done in advance, or is memoised. *)
 let mvars_of_regexp_string s =
