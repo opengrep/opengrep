@@ -836,9 +836,9 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
                  *)
                 failwith
                   "this combination of targets and flags is not supported; \
-                   semgrep-core supports either the use of -targets, or -lang \
+                   opengrep-core supports either the use of -targets, or -lang \
                    and a single target file; if you need more complex file \
-                   targeting use semgrep"
+                   targeting use opengrep"
           in
           let engine_config =
             Engine_config.{ custom_ignore_pattern = !Flag.opengrep_ignore_pattern }
