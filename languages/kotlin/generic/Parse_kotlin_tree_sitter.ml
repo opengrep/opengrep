@@ -1424,10 +1424,15 @@ and lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) =
         (* use this to delimit the Block below. *)
         let v2 = token env v2 (* "->" *) in
         (v1, v2)
-    (* note that even without parameters, 'it' can be used to
-     * represent an anonymous parameter.
-     *)
-    | None -> ([], v1)
+    | None ->
+        (*
+         * If a lambda has no explicit parameters, Kotlin provides an implicit 'it'.
+         * We create a synthetic parameter in the AST to represent it, which allows
+         * the dataflow engine to track taint into the lambda body.
+        *)
+        let fake_it_tok = Tok.fake_tok v1 "it" in
+        let it_param = G.Param (G.param_of_id ("it", fake_it_tok)) in
+        ([it_param], v1)
   in
   let v3 =
     match v3 with
@@ -1741,10 +1746,75 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
   | `Super_exp v1 ->
       let tok = token env v1 in
       IdSpecial (Super, tok) |> G.e
-  | `Call_exp (v1, v2) ->
-      let v1 = expression env v1 in
-      let v2 = call_suffix env v2 in
-      Call (v1, v2) |> G.e
+| `Call_exp (v1, v2) ->
+    (* First, translate the call's components into their generic AST representations. *)
+    let g_expr_v1 = expression env v1 in
+    let g_args_v2 = call_suffix env v2 in
+
+    (*
+      Transform the high-level scope function syntax into more fundamental
+      language constructs (an explicit assignment inside the lambda). 
+      
+      The transformation we are performing is:
+      `receiver.let { it -> ... }`
+      becomes
+      `receiver.let { it -> it = receiver; ... }`
+    *)
+    let (g_expr_v1', g_args_v2') =
+      try
+        match g_expr_v1.e, g_args_v2 with
+        (* Pattern match for the specific structure of a scope function call *)
+        | G.DotAccess (receiver_g_expr, _, G.FN (G.Id ((name, _), _))),
+          (l_paren, [ G.Arg ({ e = G.Lambda fdef; _ } as lambda_g_expr) ], r_paren) ->
+            (
+              match name with
+              | "let" | "also" | "use" | "takeIf" | "takeUnless" -> 
+                  (match Tok.unbracket fdef.fparams with
+                  (* The lambda must have exactly one parameter (either explicit or our synthetic 'it'). *)
+                  | [ G.Param { pname = Some param_id; pinfo = param_id_info; _ } ] ->
+                      (
+                        (* Create a new 'Assign' expression node in the AST. *)
+                        let param_g_name = G.Id (param_id, param_id_info) in
+                        let lhs_g_expr = G.e (G.N param_g_name) in
+                        let assign_g_expr = G.e (G.Assign (lhs_g_expr, (G.fake "="), receiver_g_expr)) in
+                        let new_assign_g_stmt = G.s (G.ExprStmt (assign_g_expr, (G.fake ";"))) in
+
+                        (* Prepend the new assignment to the lambda's body. *)
+                        let new_fbody =
+                          match fdef.fbody with
+                          | G.FBStmt { s = G.Block (l, stmts, r); _ } ->
+                              let new_block_stmt = G.s (G.Block (l, new_assign_g_stmt :: stmts, r)) in
+                              G.FBStmt new_block_stmt
+                          | G.FBStmt other_stmt ->
+                              let new_block_stmt = G.s (G.Block (G.fake "{", [new_assign_g_stmt; other_stmt], G.fake "}")) in
+                              G.FBStmt new_block_stmt
+                          | G.FBExpr body_expr ->
+                              let body_stmt = G.s (G.ExprStmt (body_expr, G.fake ";")) in
+                              let new_block_stmt = G.s (G.Block (G.fake "{", [new_assign_g_stmt; body_stmt], G.fake "}")) in
+                              G.FBStmt new_block_stmt
+                          | G.FBDecl _ | G.FBNothing ->
+                              let new_block_stmt = G.s (G.Block (G.fake "{", [new_assign_g_stmt], G.fake "}")) in
+                              G.FBStmt new_block_stmt
+                        in
+                        
+                        (* Reconstruct the AST with the modified lambda. *)
+                        let new_fdef = { fdef with fbody = new_fbody } in
+                        let new_lambda_g_expr = { lambda_g_expr with e = G.Lambda new_fdef } in
+                        let new_arg = G.Arg new_lambda_g_expr in
+
+                        (* Return the original call expression but with the modified arguments tuple. *)
+                        (g_expr_v1, (l_paren, [new_arg], r_paren))
+                      )
+                  | _ -> (g_expr_v1, g_args_v2)
+                  )
+              | _ -> (g_expr_v1, g_args_v2)
+            )
+        | _ -> (g_expr_v1, g_args_v2)
+      with _ -> (g_expr_v1, g_args_v2)
+    in
+    (* Finally, build the Call node using the (potentially modified) expression and arguments. *)
+    Call (g_expr_v1', g_args_v2') |> G.e
+
   | `If_exp (v1, v2, v3, v4, v5) ->
       let v1 = token env v1 (* "if" *) in
       let _v2 = token env v2 (* "(" *) in
