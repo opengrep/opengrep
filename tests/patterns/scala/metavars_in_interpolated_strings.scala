@@ -1,6 +1,15 @@
 
 //ERROR: match
-println(s"$some value comes $here")
+println(s"select $some_userdata")
 
 //ERROR: match
-println(s"${foo(x,2)} comes $here")
+println(s"select ${some_userdata}")
+
+//ERROR: match
+println(s"select ${some_userdata} from table")
+
+//ERROR: match
+println(s"select ${some_userdata} from $table")
+
+//OK:
+println(s"$select ${some_userdata} from $table")
