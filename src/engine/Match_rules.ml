@@ -52,7 +52,24 @@ let timeout_function (rule : Rule.t) (file : Fpath.t)
     match timeout with
     | None -> None
     | Some { timeout; caps; threshold = _ } ->
-        if timeout <= 0. then None else Some (timeout, caps)
+        if timeout <= 0. then None
+        else
+          (* We use Spacegrep's [stat] because it's cached, and we don't want to repeat the call
+           * for each rule. Otherwise we could use [UFile.filesize]. *)
+          let filesize_kb = float_of_int (Spacegrep.Find_files.stat !!file).st_size /. 1024.
+          in
+          (* Multiply timeout by the number of 30kb blocks in the file. *)
+          (* TODO:
+           * - Make the [30.] kb value configurable?
+           * - Add flag for dynamic timeouts?
+           * - Should this be only for taint rules? *)
+          let timeout_factor = Float.div filesize_kb 30. |> max 1.
+          in
+          let size_adjusted_timeout = timeout *. timeout_factor in
+          Log.info (fun m ->
+              m "setting timeout for %s to %.2fs using a factor of %.2f derived from the file size"
+                !!file size_adjusted_timeout timeout_factor);
+          Some (size_adjusted_timeout, caps)
   in
   match
     Time_limit.set_timeout_opt ~name:"Match_rules.timeout_function" timeout f
