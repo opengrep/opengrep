@@ -31,6 +31,7 @@ from semgrep.commands.scan import collect_additional_outputs
 from semgrep.commands.scan import scan_options
 from semgrep.commands.wrapper import handle_command_errors
 from semgrep.constants import DEFAULT_MAX_MATCH_PER_FILE
+from semgrep.constants import DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL
 from semgrep.console import console
 from semgrep.console import Title
 from semgrep.constants import OutputFormat

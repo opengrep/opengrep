@@ -7,6 +7,10 @@ type t = {
   max_match_per_file : int;
   max_target_bytes : int;
   timeout : int;
+  allow_rule_timeout_control : bool;
+  dynamic_timeout : bool;
+  dynamic_timeout_max_multiplier : int;
+  dynamic_timeout_unit_kb : int;
   timeout_threshold : int;
   only_git_dirty : bool;
   ci : bool;

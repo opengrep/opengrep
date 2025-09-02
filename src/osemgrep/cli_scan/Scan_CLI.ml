@@ -384,6 +384,53 @@ seconds. If set to 0 will not have time limit. Defaults to %.1f s.
   (*TOPORT: envvar="SEMGREP_TIMEOUT" *)
   Arg.value (Arg.opt Arg.float default info)
 
+let o_allow_rule_timeout_control : bool Term.t =
+  let info =
+    Arg.info ["allow-rule-timeout-control"]
+      ~doc:
+        {|Allow rule options that control timeout behaviour to be used in the engine.
+An example is:
+  options:
+    dynamic_timeout: true
+which will have no effect unless if this flag is passed.|}
+  in
+  Arg.value (Arg.flag info)
+
+let o_dynamic_timeout : bool Term.t =
+  let default = default.core_runner_conf.dynamic_timeout in
+  let info =
+    Arg.info ["dynamic-timeout"]
+      ~doc:
+        (spf
+           {|Enable dynamic timeouts, based on the size of target files in kb. Defaults to %b|}
+           default)
+  in
+  Arg.value (Arg.flag info)
+
+let o_dynamic_timeout_unit_kb : int Term.t =
+  let default = default.core_runner_conf.dynamic_timeout_unit_kb in
+  let info =
+    Arg.info [ "dynamic-timeout-unit-kb" ]
+      ~doc:
+        (spf
+           {|. Defaults to %d.
+|}
+           default)
+  in
+  Arg.value (Arg.opt Arg.int default info)
+
+let o_dynamic_timeout_max_multiplier : int Term.t =
+  let default = default.core_runner_conf.dynamic_timeout_max_multiplier in
+  let info =
+    Arg.info [ "dynamic-timeout-max-multiplier" ]
+      ~doc:
+        (spf
+           {|. Defaults to %d.
+|}
+           default)
+  in
+  Arg.value (Arg.opt Arg.int default info)
+
 let o_timeout_threshold : int Term.t =
   let default = default.core_runner_conf.timeout_threshold in
   let info =
@@ -756,7 +803,7 @@ your project URL will be used to log in to the Semgrep registry.
 
 To run multiple rule files simultaneously, use --config before every YAML,
 URL, or Semgrep registry entry name.
-For example `semgrep --config p/python --config myrules/myrule.yaml`
+For example `opengrep --config p/python --config myrules/myrule.yaml`
 
 See https://semgrep.dev/docs/writing-rules/rule-syntax for information on
 configuration file format.
@@ -1336,11 +1383,13 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
      of the corresponding '$ o_xx $' further below!
   *)
-  let combine allow_local_builds allow_untrusted_validators apply_includes_excludes_to_files
-      inline_metavariables autofix baseline_commit common config dataflow_traces diff_depth
-      dryrun dump_ast dump_command_for_core dump_engine_path emacs emacs_outputs error
-      exclude_ exclude_minified_files exclude_rule_ids files_with_matches force_color
-      gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
+  let combine
+      allow_local_builds allow_rule_timeout_control allow_untrusted_validators
+      apply_includes_excludes_to_files inline_metavariables autofix baseline_commit common config
+      dataflow_traces diff_depth dryrun dump_ast dump_command_for_core dump_engine_path
+      dynamic_timeout dynamic_timeout_max_multiplier dynamic_timeout_unit_kb 
+      emacs emacs_outputs error exclude_ exclude_minified_files exclude_rule_ids files_with_matches
+      force_color gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       _historical_secrets include_ incremental_output incremental_output_postprocess
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
@@ -1437,6 +1486,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         Core_runner.num_jobs;
         optimizations;
         timeout;
+        dynamic_timeout;
+        dynamic_timeout_max_multiplier;
+        dynamic_timeout_unit_kb;
+        allow_rule_timeout_control;
         timeout_threshold;
         max_memory_mb;
         max_match_per_file;
@@ -1562,11 +1615,13 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   Term.(
     (* !the o_xxx must be in alphabetic orders to match the parameters of
      * combine above! *)
-    const combine $ o_allow_local_builds $ o_allow_untrusted_validators
+    const combine $ o_allow_local_builds $ o_allow_rule_timeout_control $ o_allow_untrusted_validators
     $ o_apply_includes_excludes_to_files $ o_inline_metavariables
     $ o_autofix $ o_baseline_commit $ CLI_common.o_common $ o_config
     $ o_dataflow_traces $ o_diff_depth $ o_dryrun $ o_dump_ast
-    $ o_dump_command_for_core $ o_dump_engine_path $ o_emacs $ o_emacs_outputs
+    $ o_dump_command_for_core $ o_dump_engine_path
+    $ o_dynamic_timeout $ o_dynamic_timeout_max_multiplier $ o_dynamic_timeout_unit_kb
+    $ o_emacs $ o_emacs_outputs
     $ o_error $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
     $ o_files_with_matches $ o_force_color $ o_gitlab_sast
     $ o_gitlab_sast_outputs $ o_gitlab_secrets $ o_gitlab_secrets_outputs

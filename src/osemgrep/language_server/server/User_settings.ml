@@ -30,9 +30,20 @@ type t = {
   include_ : string list; [@key "include"] [@default []]
   jobs : int; [@default Domainslib_.get_cpu_count()]
   max_memory : int; [@key "maxMemory"] [@default 0]
-  max_match_per_file : int; [@key "maxMatchPerFile"] [@default Core_scan_config.default.max_match_per_file]
+  max_match_per_file : int;
+    [@key "maxMatchPerFile"] [@default Core_scan_config.default.max_match_per_file]
   max_target_bytes : int; [@key "maxTargetBytes"] [@default 1000000]
   timeout : int; [@default 30]
+  allow_rule_timeout_control : bool;
+    [@key "allowRuleTimeoutControl"] [@default false]
+  dynamic_timeout : bool
+    [@key "dynamicTimeout"] [@default false];
+  dynamic_timeout_max_multiplier : int
+    [@key "dynamicTimeoutMaxMultiplier"]
+    [@default Core_scan_config.default.dynamic_timeout_max_multiplier];
+  dynamic_timeout_unit_kb : int
+    [@key "dynamicTimeoutUnitKb"]
+    [@default Core_scan_config.default.dynamic_timeout_unit_kb];
   timeout_threshold : int; [@key "timeoutThreshold"] [@default 3]
   only_git_dirty : bool; [@key "onlyGitDirty"] [@default true]
   ci : bool; [@default true]
@@ -70,6 +81,10 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       max_memory_mb = settings.max_memory;
       max_match_per_file = settings.max_match_per_file;
       timeout = float_of_int settings.timeout;
+      dynamic_timeout = settings.dynamic_timeout;
+      dynamic_timeout_max_multiplier = settings.dynamic_timeout_max_multiplier;
+      dynamic_timeout_unit_kb = settings.dynamic_timeout_unit_kb;
+      allow_rule_timeout_control = settings.allow_rule_timeout_control;
       timeout_threshold = settings.timeout_threshold;
       dataflow_traces = false;
       nosem = true;
