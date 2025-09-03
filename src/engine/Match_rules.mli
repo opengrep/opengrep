@@ -4,6 +4,10 @@ exception File_timeout of Rule_ID.t list
 type timeout_config = {
   timeout : float;
   threshold : int;
+  allow_rule_timeout_control : bool;
+  dynamic_timeout : bool;
+  dynamic_timeout_max_multiplier : int;
+  dynamic_timeout_unit_kb : int;
   caps : < Cap.time_limit >;
 }
 

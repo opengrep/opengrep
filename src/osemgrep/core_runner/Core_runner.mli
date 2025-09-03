@@ -12,6 +12,10 @@ type conf = {
   max_memory_mb : int;
   max_match_per_file : int;
   timeout : float;
+  dynamic_timeout : bool;
+  dynamic_timeout_max_multiplier : int;
+  dynamic_timeout_unit_kb : int;
+  allow_rule_timeout_control : bool;
   timeout_threshold : int; (* output flags *)
   (* features *)
   nosem : bool;

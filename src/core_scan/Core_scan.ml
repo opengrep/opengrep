@@ -812,6 +812,10 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
           Match_rules.
             {
               timeout = config.timeout;
+              allow_rule_timeout_control = config.allow_rule_timeout_control;
+              dynamic_timeout = config.dynamic_timeout;
+              dynamic_timeout_max_multiplier = config.dynamic_timeout_max_multiplier;
+              dynamic_timeout_unit_kb = config.dynamic_timeout_unit_kb;
               threshold = config.timeout_threshold;
               caps;
             }

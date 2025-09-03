@@ -93,7 +93,13 @@ let equivalences_file = ref None
 (* ------------------------------------------------------------------------- *)
 
 (* timeout in seconds; 0 or less means no timeout *)
+(* TODO: new param here for timeout_factor? *)
 let timeout = ref Core_scan_config.default.timeout
+let dynamic_timeout = ref Core_scan_config.default.dynamic_timeout
+let dynamic_timeout_unit_kb = ref Core_scan_config.default.dynamic_timeout_unit_kb
+let dynamic_timeout_max_multiplier = ref Core_scan_config.default.dynamic_timeout_max_multiplier
+let allow_rule_timeout_control = ref false
+(* max number of rules that can timeout on a file before giving up on it *)
 let timeout_threshold = ref Core_scan_config.default.timeout_threshold
 let inline_metavariables = ref false
 let max_memory_mb = ref Core_scan_config.default.max_memory_mb (* in MiB *)
@@ -327,6 +333,10 @@ let mk_config () : Core_scan_config.t =
     file_match_hook = None;
     (* limits and perf *)
     timeout = !timeout;
+    dynamic_timeout = !dynamic_timeout;
+    dynamic_timeout_max_multiplier = !dynamic_timeout_max_multiplier;
+    dynamic_timeout_unit_kb = !dynamic_timeout_unit_kb;
+    allow_rule_timeout_control = !allow_rule_timeout_control;
     timeout_threshold = !timeout_threshold;
     max_memory_mb = !max_memory_mb;
     max_match_per_file = !max_match_per_file;
@@ -603,6 +613,18 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
       Arg.Set_float timeout,
       " <float> maxinum time to spend running a rule on a single file (in \
        seconds); 0 disables timeouts (default is 0)" );
+    ( "-allow_rule_timeout_control",
+      Arg.Unit (fun () -> allow_rule_timeout_control := true),
+      " enable dynamic timeouts with parameters defined in rule options" );
+    ( "-dynamic_timeout",
+      Arg.Unit (fun () -> dynamic_timeout := true),
+      " enable dynamic timeouts using the target file size in kb" );
+    ( "-dynamic_timeout_unit_kb",
+      Arg.Set_int dynamic_timeout_unit_kb,
+      " <int> size of one unit for dynamic timeouts in kb (default is 30)" );
+    ( "-dynamic_timeout_max_multiplier",
+      Arg.Set_int dynamic_timeout_max_multiplier,
+      " <int> maximum multiplier for dynamic timeouts (default is 20)" );
     ( "-timeout_threshold",
       Arg.Set_int timeout_threshold,
       " <int> maximum number of rules that can timeout on a file before the \
