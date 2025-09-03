@@ -390,8 +390,10 @@ let o_allow_rule_timeout_control : bool Term.t =
       ~doc:
         {|Allow rule options that control timeout behaviour to be used in the engine.
 An example is:
+
   options:
     dynamic_timeout: true
+
 which will have no effect unless if this flag is passed.|}
   in
   Arg.value (Arg.flag info)
@@ -402,7 +404,7 @@ let o_dynamic_timeout : bool Term.t =
     Arg.info ["dynamic-timeout"]
       ~doc:
         (spf
-           {|Enable dynamic timeouts, based on the size of target files in kb. Defaults to %b|}
+           {|Enable dynamic timeouts, based on the size of target files in kb. Defaults to %b.|}
            default)
   in
   Arg.value (Arg.flag info)
@@ -413,7 +415,9 @@ let o_dynamic_timeout_unit_kb : int Term.t =
     Arg.info [ "dynamic-timeout-unit-kb" ]
       ~doc:
         (spf
-           {|. Defaults to %d.
+           {|Set the size in kb to consider for the calculation of dynamic timeouts. For example,
+if set to 50, a file of size 200kb will have a timeout of 4 times the given timeout passed in the
+cli. Defaults to %d.
 |}
            default)
   in
@@ -425,7 +429,8 @@ let o_dynamic_timeout_max_multiplier : int Term.t =
     Arg.info [ "dynamic-timeout-max-multiplier" ]
       ~doc:
         (spf
-           {|. Defaults to %d.
+           {|Set the maximum multiplier for dynamic timeouts. For example, if set to 10, the
+dynamic timeout will never exceed 10 times the given timeout passed in the cli. Defaults to %d.
 |}
            default)
   in
