@@ -32,6 +32,9 @@ from semgrep.commands.scan import scan_options
 from semgrep.commands.wrapper import handle_command_errors
 from semgrep.constants import DEFAULT_MAX_MATCH_PER_FILE
 from semgrep.constants import DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB
 from semgrep.console import console
 from semgrep.console import Title
 from semgrep.constants import OutputFormat
@@ -276,6 +279,10 @@ def ci(
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
     max_match_per_file: Optional[int] = DEFAULT_MAX_MATCH_PER_FILE,
+    allow_rule_timeout_control: bool = DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL,
+    dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
+    dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
+    dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
 ) -> None:
     state = get_state()
 
@@ -627,6 +634,10 @@ def ci(
         "disable_nosem": True,
         "no_git_ignore": (not use_git_ignore),
         "timeout": timeout,
+        "allow_rule_timeout_control": allow_rule_timeout_control,
+        "dynamic_timeout": dynamic_timeout,
+        "dynamic_timeout_unit_kb": dynamic_timeout_unit_kb,
+        "dynamic_timeout_max_multiplier": dynamic_timeout_max_multiplier,
         "max_memory": max_memory,
         "max_match_per_file": max_match_per_file,
         "interfile_timeout": interfile_timeout,
