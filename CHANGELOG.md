@@ -1,14 +1,27 @@
 # Changelog
 
+## [1.9.1](https://github.com/opengrep/opengrep/releases/tag/v1.9.1) - 04-09-2025
+
+### Bug fixes
+
+* Fix: add docs for dynamic timeout cli parameters by @dimitris-m in #415
+* Fix #416: add dynamic timeout params to `ci` command by @dimitris-m and @maciejpirog in #418
+
+### Documentation
+
+* Add OPENGREP.md by @maciejpirog in #417
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.9.0...v1.9.1
+
 
 ## [1.9.0](https://github.com/opengrep/opengrep/releases/tag/v1.9.0) - 03-09-2025
 
-## New features
+### New features
 
 * Make timeouts dynamic based on file size by @dimitris-m and @maciejpirog in #413
 * Kotlin: Enable taint tracking through scope functions (`let`, `also`, `use`, `takeIf`, `takeUnless`) by @fxbru in #332
 
-## Bug fixes
+### Bug fixes
 
 * Fix comparison of tokens and locations by @maciejpirog in #408
 * Direct implementation of is_metavar_name and `is_metavar_ellipsis`, not via memoized regex by @maciejpirog in #409
