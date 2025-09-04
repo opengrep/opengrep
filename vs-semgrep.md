@@ -6,15 +6,15 @@
 
 ### Main New Features
 
-- Switched to **OCaml 5.3.0**, which includes support for multicore execution.
+- Switched to **OCaml 5.3.0** with large-scale refactoring to support multicore execution.
 
 - Added support for **Windows**.
 
-- Added support for new languages: **Apex** and **Elixir**.
+- Added support for languages that are not available in Semgrep CE: **Apex** and **Elixir**.
 
 ### Features
 
-- **Self-contained binaries** (`opengrep` and `opengrep-core`) for multiple architectures, built using **Nuitka** for fast and self-contained executables.
+- **Self-contained binaries** for multiple architectures, built using **Nuitka** for fast and self-contained executables.
 
 - **Install script** for macOS and Linux.
 
@@ -22,23 +22,23 @@
 
 - **Metavariable values and fingerprints** are now included in both JSON and SARIF outputs.
 
-- Added support for reporting the **enclosing context** of a match (e.g., class, function, module) trported in the JSON output. Use the flag: `--output-enclosing-context`
+- Added support for reporting the **enclosing context** of a match (e.g., class, function, module) in the JSON output. Use the flag: `--output-enclosing-context`
 
 - **Dynamic timeouts** that scale with file size. Enabled via `--dynamic-timeout`, but can also be controlled per rule using `dynamic_timeout: true` together with `--allow-rule-timeout-control`.
 
 - Added a per-rule **limit on the number of reported matches**. Use the rule option: `max-match-per-file`.
 
-- Taint analysis now supports **per-rule timeout configuration**. Use the rule option: `taint-fixpoint-timeout`
+- Taint analysis now supports **per-rule timeout configuration**. Use the rule option: `taint-fixpoint-timeout`. (This should be mostly be reserved for cases where results are not very stable on consecutive runs, and should remain relatively low, for example between 0.2 and 2 seconds.)
 
-- **Postprocessing** (autofix and `nosem` annotations) now works with **incremental output**. Use the flag: `--incremental-output-postprocess`
+- **Postprocessing** (autofix and `nosem` annotations) now works with **incremental output**. Use the flag: `--incremental-output-postprocess.`
 
-- Added option to **inline metavariable values** in the `metadata` section of the JSON output. Use the flag: `--inline-metavariables`
+- Added option to **inline metavariable values** in the `metadata` section of the JSON output. Use the flag: `--inline-metavariables`.
 
-- Support for **custom ignore annotations** (instead of default `nosem` / `nosemgrep`). Use the option: `--opengrep-ignore-pattern=<VAL>`
+- Support for **custom ignore annotations** (instead of default `nosem` / `nosemgrep`). Use the option: `--opengrep-ignore-pattern=<VAL>.`
 
-- Added a CLI option for specifying a custom **ignore file name**: `--semgrepignore-filename=<VAL>`
+- Added a CLI option for specifying a custom **ignore file name**: `--semgrepignore-filename=<VAL>.`
 
-- Improved control over **file inclusion/exclusion**. Use `--force-exclude` to apply `--include` / `--exclude` rules even on explicitly passed file targets.
+- Improved control over **file inclusion/exclusion**. Use `--force-exclude` to apply `--include` / `--exclude` rules even on explicitly passed file targets instead of just on directories.
 
 - The `test` command now accepts **multiple target files**.
 
@@ -60,6 +60,8 @@
 
 - **Kotlin**: Enable taint tracking through the Elvis operator (`?:`) [#334](https://github.com/opengrep/opengrep/pull/334)
 
+- **Kotlin**: Enable taint tracking through scope functions (let, also, use, takeIf, takeUnless) [#332](https://github.com/opengrep/opengrep/pull/332)
+
 - **PHP**: Add union types to PHP menhir parser [#201](https://github.com/opengrep/opengrep/pull/201)
 
 - **PHP**: Add arrow functions to the menhir parser [#205](https://github.com/opengrep/opengrep/pull/205)
@@ -72,6 +74,10 @@
 
 - **Scala**: Support metavariabless as elements in interpolated strings [#403](https://github.com/opengrep/opengrep/pull/403)
 
-- **Typescript**: Lambda bug [#378](https://github.com/opengrep/opengrep/pull/378)
+- **Typescript**: Fix bug related to lambdas [#378](https://github.com/opengrep/opengrep/pull/378)
 
 - **Typescript**: Fix naming in the presence of typed patterns [#395](https://github.com/opengrep/opengrep/pull/395)
+
+## Acknowledgments
+
+We'd like to thank all external contributors and our industry partners for their invaluable support.
