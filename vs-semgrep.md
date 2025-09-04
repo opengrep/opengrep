@@ -24,7 +24,7 @@
 
 - Added support for reporting the **enclosing context** of a match (e.g., class, function, module) in the JSON output. Use the flag: `--output-enclosing-context`
 
-- **Dynamic timeouts** that scale with file size. Enabled via `--dynamic-timeout`, but can also be controlled per rule using `dynamic_timeout: true` together with `--allow-rule-timeout-control`.
+- **Dynamic timeouts** that scale with file size. Enabled via `--dynamic-timeout`, but can also be controlled per rule using `dynamic_timeout: true` together with `--allow-rule-timeout-control`. The behaviour can be finetuned with `--dynamic-timeout-unit-kb` (rule option: `dynamic_timeout_unit_kb`) and `--dynamic-timeout-max-multiplier` (rule option `dynamic_timeout_max_multiplier`); see the CLI man page for details.
 
 - Added a per-rule **limit on the number of reported matches**. Use the rule option: `max-match-per-file`.
 
