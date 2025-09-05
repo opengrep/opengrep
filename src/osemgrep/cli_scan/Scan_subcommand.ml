@@ -449,9 +449,14 @@ let check_targets_with_rules
   in
   (* TODO: we should probably warn the user about rules using the same id *)
   let rules =
-    List_.deduplicate_gen
-      ~get_key:(fun r -> Rule_ID.to_string (fst r.Rule.id))
-      rules
+    rules
+    |> List_.deduplicate_gen_with_warning
+        ~get_key:(fun r -> Rule_ID.to_string (fst r.Rule.id))
+        ~warning:(fun r ->
+          Logs.warn (fun m ->
+            m "Duplicated rule id. Rule '%s' (%s) will be ignored."
+              (Rule_ID.to_string (fst r.Rule.id))
+              (Tok.stringpos_of_tok (snd r.Rule.id))))
   in
   let too_many_entries = conf.output_conf.max_log_list_entries in
   Logs.info (fun m ->

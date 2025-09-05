@@ -376,7 +376,7 @@ let uniq_by eq xs =
   in
   uniq_by [] xs |> List.rev
 
-let deduplicate_gen ~get_key xs =
+let deduplicate_gen_with_warning ~get_key ~warning xs =
   let tbl = Hashtbl.create (List.length xs) in
   (* We could use List.filter but it's not guaranteed to proceed from
      left to right which would result in not necessarily selecting the first
@@ -384,12 +384,18 @@ let deduplicate_gen ~get_key xs =
   List.fold_left
     (fun acc x ->
       let key = get_key x in
-      if Hashtbl.mem tbl key then acc
-      else (
+      if Hashtbl.mem tbl key then begin
+          warning x;
+          acc
+      end else begin
         Hashtbl.add tbl key ();
-        x :: acc))
+        x :: acc
+      end)
     [] xs
   |> List.rev
+
+let deduplicate_gen ~get_key xs =
+  deduplicate_gen_with_warning ~get_key ~warning:(fun _ -> ()) xs
 
 let deduplicate xs = deduplicate_gen (fun x -> x) xs
 
