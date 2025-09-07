@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.10.0](https://github.com/opengrep/opengrep/releases/tag/v1.10.0) - 07-09-2025
+
+### New features
+
+* Add `timeout` rule option and fix dynamic timeout parameter passing by @dimitris-m in #421
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.9.1...v1.10.0
+
+
 ## [1.9.1](https://github.com/opengrep/opengrep/releases/tag/v1.9.1) - 04-09-2025
 
 ### Bug fixes
