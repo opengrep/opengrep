@@ -942,10 +942,10 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 ]
             )
 
-            if allow_rule_timeout_control is not None:
+            if allow_rule_timeout_control:
                 cmd.append("-allow_rule_timeout_control")
 
-            if dynamic_timeout is not None:
+            if dynamic_timeout:
                 cmd.append("-dynamic_timeout")
 
             if max_match_per_file is not None:
@@ -1162,6 +1162,10 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
                 inline_metavariables=inline_metavariables,
                 max_match_per_file=max_match_per_file,
+                allow_rule_timeout_control=allow_rule_timeout_control,
+                dynamic_timeout=dynamic_timeout,
+                dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
+                dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
             )
         except SemgrepError as e:
             # Handle Semgrep errors normally
