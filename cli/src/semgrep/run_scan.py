@@ -957,6 +957,14 @@ def run_scan(
                         baseline_target_mode_config,
                         allow_local_builds=allow_local_builds,
                         prioritize_dependency_graph_generation=prioritize_dependency_graph_generation,
+                        opengrep_ignore_pattern=opengrep_ignore_pattern,
+                        bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
+                        inline_metavariables=inline_metavariables,
+                        max_match_per_file=max_match_per_file,
+                        allow_rule_timeout_control=allow_rule_timeout_control,
+                        dynamic_timeout=dynamic_timeout,
+                        dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
+                        dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
                     )
                     rule_matches_by_rule = remove_matches_in_baseline(
                         rule_matches_by_rule,
