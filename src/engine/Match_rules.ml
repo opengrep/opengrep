@@ -68,6 +68,16 @@ let timeout_function (rule : Rule.t) (file : Fpath.t)
             | _ -> dynamic_timeout
           in
 
+          let timeout =
+            match allow_rule_timeout_control, rule.Rule.options with
+            | true, Some { timeout = Some tm; _ } ->
+              Log.info (fun m ->
+                  m "setting timeout for %s to %.2fs using a rule override"
+                    !!file tm);
+              tm
+            | _ -> timeout
+          in
+
           if not dynamic_timeout
           then
             Some (timeout, caps)

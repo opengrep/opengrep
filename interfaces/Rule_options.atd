@@ -182,6 +182,9 @@ type t = {
   (* override the default taint fixpoint timeout. *)
   ?taint_fixpoint_timeout : float option;
 
+  (* rule-specific timeout. *)
+  ?timeout : float option;
+
   (* adjust timeout according to target file size. *)
   ?dynamic_timeout : bool option;
 
