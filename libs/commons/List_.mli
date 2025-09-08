@@ -113,7 +113,9 @@ val uniq_by : ('a -> 'a -> bool) -> 'a list -> 'a list
 *)
 val deduplicate_gen : get_key:('a -> 'key) -> 'a list -> 'a list
 
-(* Same as 'deduplicate_gen' but use the whole element as a key. *)
+val deduplicate_gen_with_warning : get_key:('a -> 'key) -> warning:('a -> unit) -> 'a list -> 'a list
+
+ (* Same as 'deduplicate_gen' but use the whole element as a key. *)
 val deduplicate : 'a list -> 'a list
 
 (* options and lists *)
