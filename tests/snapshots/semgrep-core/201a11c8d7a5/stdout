@@ -6,7 +6,7 @@ Pr(
      ({
        name=EN(
               Id(("foo", ()),
-                {id_info_id=<MASKED>; 
+                {id_flags=Ref(0); id_flags=Ref(0); 
                  id_resolved_alternative=Ref([]); id_resolved=Ref(None); 
                  id_type=Ref(None); id_svalue=Ref(None); }));
        attrs=[]; tparams=None; },
