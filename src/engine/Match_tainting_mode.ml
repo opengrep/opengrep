@@ -167,12 +167,9 @@ let pms_of_effect ~match_on (effect_ : Effect.t) =
         sink = { pm = sink_pm; _ } as sink;
         merged_env;
       } -> (
-      if
-        not
-          (T.taints_satisfy_requires
-             (List_.map (fun t -> t.Effect.taint) taints)
-             requires)
-      then []
+      let actual_taints = List_.map (fun t -> t.Effect.taint) taints in
+      let satisfies = T.taints_satisfy_requires actual_taints requires in
+      if not satisfies then []
       else
         let preferred_label = preferred_label_of_sink sink in
         let taint_sources = sources_of_taints ?preferred_label taints in
@@ -226,19 +223,22 @@ let pms_of_effect ~match_on (effect_ : Effect.t) =
 (* Main entry points *)
 (*****************************************************************************)
 
-let check_fundef (taint_inst : Taint_rule_inst.t) name ctx ?glob_env fdef =
+let check_fundef (taint_inst : Taint_rule_inst.t) name ctx ?glob_env ?class_name
+    ?signature_db fdef =
   let fdef = AST_to_IL.function_definition taint_inst.lang ~ctx fdef in
   let fcfg = CFG_build.cfg_of_fdef fdef in
   let in_env, env_effects =
     Taint_input_env.mk_fun_input_env taint_inst ?glob_env fdef.fparams
   in
   let effects, mapping =
-    Dataflow_tainting.fixpoint taint_inst ~in_env ?name fcfg
+    Dataflow_tainting.fixpoint taint_inst ~in_env ~name ?class_name
+      ?signature_db fcfg
   in
   let effects = Effects.union env_effects effects in
   (fcfg, effects, mapping)
 
 let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
+    ?(signature_db : Shape_and_sig.signature_database option)
     (xconf : Match_env.xconfig) (xtarget : Xtarget.t) =
   Log.info (fun m ->
       m
@@ -250,7 +250,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
   let matches = ref [] in
   let match_on =
     (* TEMPORARY HACK to support both taint_match_on (DEPRECATED) and
-       * taint_focus_on (preferred name by SR). *)
+     * taint_focus_on (preferred name by SR). *)
     match (xconf.config.taint_focus_on, xconf.config.taint_match_on) with
     | `Source, _
     | _, `Source ->
@@ -288,10 +288,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
       file (ast, []) rule with
   | None -> None
   | Some (taint_inst, _TODO_debug_taint, expls) ->
-        (match !hook_setup_hook_function_taint_signature with
-        | None -> ()
-        | Some setup_hook_function_taint_signature ->
-            setup_hook_function_taint_signature rule taint_inst xtarget);
+        
 
         (* FIXME: This is no longer needed, now we can just check the type 'n'. *)
         let ctx = ref AST_to_IL.empty_ctx in
@@ -306,113 +303,231 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst ast in
         record_matches glob_effects;
 
-        (* Check each function definition. *)
-        Visit_function_defs.visit
-            (fun opt_ent fdef ->
-            match fst fdef.fkind with
-            | LambdaKind
-            | Arrow ->
-                (* We do not need to analyze lambdas here, they will be analyzed
-                    together with their enclosing function. This would just duplicate
-                    work. *)
-                ()
-            | Function
-            | Method
-            | BlockCases ->
-                let opt_name =
+       
+  (* Only use signature database if cross-function taint analysis is enabled *)
+  let final_signature_db =
+  if taint_inst.options.taint_intrafile then (
+    (* Detect object initialization mappings for this file *)
+    let object_mappings = Taint_signature_extractor.detect_object_initialization ast taint_inst.lang in
+    (* Add object mappings to initial signature database *)
+    let initial_signature_db = Shape_and_sig.add_object_mappings (signature_db ||| Shape_and_sig.empty_signature_database ()) object_mappings in
+
+    (* Process each function definition, threading signature database functionally *)
+    let _signature_db =
+      Visit_function_defs.fold_with_class_context
+        (fun signature_db opt_ent class_name fdef ->
+          match fst fdef.fkind with
+          | LambdaKind
+          | Arrow ->
+              (* Only skip anonymous nested lambdas (no entity).
+                 Process named lambdas from assignments (have entity). *)
+              (match opt_ent with
+              | None ->
+                  (* Anonymous nested lambda - skip it *)
+                  signature_db
+              | Some _ent ->
+                  (* Named lambda from assignment - extract signature only.
+                   * Don't run taint analysis here, as the lambda will be analyzed
+                   * as part of its execution context (top-level or enclosing function). *)
+                  let opt_name =
                     let* ent = opt_ent in
                     AST_to_IL.name_of_entity ent
-                in
-                Log.info (fun m ->
-                    m
-                        "Match_tainting_mode:\n\
-                        --------------------\n\
-                        Checking func def: %s\n\
-                        --------------------"
-                        (Option.map IL.str_of_name opt_name ||| "???"));
-                let _flow, fdef_effects, _mapping =
-                    check_fundef taint_inst opt_name !ctx ~glob_env fdef
-                in
-                record_matches fdef_effects)
-            ast;
+                  in
 
-        (* Check execution of statements during object initialization. *)
-        Visit_class_defs.visit
-            (fun opt_ent cdef ->
-            let opt_name =
+                  let class_name_il = Option.map AST_to_IL.var_of_name class_name in
+                  let name = Shape_and_sig.{ class_name = class_name_il; name = opt_name } in
+
+                  Log.info (fun m ->
+                      m
+                        "Match_tainting_mode:\n\
+                         --------------------\n\
+                         Extracting signature for lambda assignment: %s\n\
+                         --------------------"
+                        (Option.map IL.str_of_name opt_name ||| "???"));
+
+                  (* Extract signature for this lambda and add to database *)
+                  let fdef_il =
+                    AST_to_IL.function_definition taint_inst.lang ~ctx:!ctx fdef
+                  in
+                  let fcfg = CFG_build.cfg_of_fdef fdef_il in
+
+                  (* Extract signature (but don't analyze for matches - that happens in context) *)
+                  let updated_db, _signature =
+                    Taint_signature_extractor.extract_signature_with_file_context
+                      ~db:signature_db taint_inst ~name ~method_properties:[] fcfg ast
+                  in
+
+                  (* Return updated signature database for next iteration *)
+                  updated_db)
+          | Function
+          | Method
+          | BlockCases ->
+              let opt_name =
                 let* ent = opt_ent in
                 AST_to_IL.name_of_entity ent
+              in
+
+              let class_name_il = Option.map AST_to_IL.var_of_name class_name in
+              let class_name_str = match class_name with
+                | Some (G.Id ((str, _), _)) -> Some str
+                | _ -> None
+              in
+              let name = Shape_and_sig.{ class_name = class_name_il; name = opt_name } in
+
+              (* Extract this/self properties if this is a method *)
+              let method_properties = match fst fdef.fkind with
+                | Method -> Taint_signature_extractor.extract_method_properties fdef
+                | Function | LambdaKind | Arrow | BlockCases -> []
+              in
+
+              Log.info (fun m ->
+                  m
+                    "Match_tainting_mode:\n\
+                     --------------------\n\
+                     Checking func def: %s\n\
+                     --------------------"
+                    (Option.map IL.str_of_name opt_name ||| "???"));
+
+              (* Extract signature for this function and add to database *)
+              let fdef_il =
+                AST_to_IL.function_definition taint_inst.lang ~ctx:!ctx fdef
+              in
+              let fcfg = CFG_build.cfg_of_fdef fdef_il in
+
+              (* Cross-function taint analysis enabled: extract signatures *)
+              let updated_db, _signature =
+                Taint_signature_extractor.extract_signature_with_file_context
+                  ~db:signature_db taint_inst ~name ~method_properties fcfg ast
+              in
+
+              (* Run normal taint analysis with updated signature database *)
+              let _flow, fdef_effects, _mapping =
+                check_fundef taint_inst name !ctx ~glob_env
+                  ?class_name:class_name_str ~signature_db:updated_db fdef
+              in
+              record_matches fdef_effects;
+
+              (* Return updated signature database for next iteration *)
+              updated_db)
+        initial_signature_db
+        ast
+    in
+    Some _signature_db
+  ) else (
+    (* Cross-function taint analysis disabled: use main branch behavior *)
+    Visit_function_defs.visit
+      (fun opt_ent fdef ->
+        match fst fdef.fkind with
+        | LambdaKind
+        | Arrow ->
+            (* We do not need to analyze lambdas here, they will be analyzed
+               together with their enclosing function. This would just duplicate
+               work. *)
+            ()
+        | Function
+        | Method
+        | BlockCases ->
+            let opt_name =
+              let* ent = opt_ent in
+              AST_to_IL.name_of_entity ent
             in
-            let fields =
-                cdef.G.cbody |> Tok.unbracket
-                |> List_.map (function G.F x -> x)
-                |> G.stmt1
-            in
-            let stmts = AST_to_IL.stmt taint_inst.lang fields in
-            let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
+            let name = Shape_and_sig.{ class_name = None; name = opt_name } in
             Log.info (fun m ->
                 m
-                    "Match_tainting_mode:\n\
-                    --------------------\n\
-                    Checking object initialization: %s\n\
-                    --------------------"
-                    (Option.map IL.str_of_name opt_name ||| "???"));
-            let init_effects, _mapping =
-                Dataflow_tainting.fixpoint taint_inst ?name:opt_name
-                IL.{ params = []; cfg; lambdas }
+                  "Match_tainting_mode:\n\
+                   --------------------\n\
+                   Checking func def: %s\n\
+                   --------------------"
+                  (Option.map IL.str_of_name opt_name ||| "???"));
+            let _flow, fdef_effects, _mapping =
+              check_fundef taint_inst name !ctx ~glob_env fdef
             in
-            record_matches init_effects)
-            ast;
+            record_matches fdef_effects)
+      ast;
+    None
+  )
+  in
 
-        (* Check the top-level statements.
-        * In scripting languages it is not unusual to write code outside
-        * function declarations and we want to check this too. We simply
-        * treat the program itself as an anonymous function. *)
-        let (), match_time =
-            Common.with_time (fun () ->
-                let xs = AST_to_IL.stmt taint_inst.lang (G.stmt1 ast) in
-                let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-                Log.info (fun m ->
-                    m
-                    "Match_tainting_mode:\n\
-                    --------------------\n\
-                    Checking top-level program\n\
-                    --------------------");
-                let top_effects, _mapping =
-                Dataflow_tainting.fixpoint taint_inst IL.{ params = []; cfg; lambdas }
-                in
-                record_matches top_effects)
+  (* Check execution of statements during object initialization. *)
+  Visit_class_defs.visit
+    (fun opt_ent cdef ->
+      let opt_name =
+        let* ent = opt_ent in
+        AST_to_IL.name_of_entity ent
+      in
+      let name = Shape_and_sig.{ class_name = None; name = opt_name } in
+      let fields =
+        cdef.G.cbody |> Tok.unbracket
+        |> List_.map (function G.F x -> x)
+        |> G.stmt1
+      in
+      let stmts = AST_to_IL.stmt taint_inst.lang fields in
+      let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
+      Log.info (fun m ->
+          m
+            "Match_tainting_mode:\n\
+             --------------------\n\
+             Checking object initialization: %s\n\
+             --------------------"
+            (Option.map IL.str_of_name opt_name ||| "???"));
+      let init_effects, _mapping =
+        Dataflow_tainting.fixpoint taint_inst ~name ?signature_db:final_signature_db
+          IL.{ params = []; cfg; lambdas }
+      in
+      record_matches init_effects)
+    ast;
+
+  (* Check the top-level statements.
+   * In scripting languages it is not unusual to write code outside
+   * function declarations and we want to check this too. We simply
+   * treat the program itself as an anonymous function. *)
+  let (), match_time =
+    Common.with_time (fun () ->
+        let xs = AST_to_IL.stmt taint_inst.lang (G.stmt1 ast) in
+        let cfg, lambdas = CFG_build.cfg_of_stmts xs in
+        Log.info (fun m ->
+            m
+              "Match_tainting_mode:\n\
+               --------------------\n\
+               Checking top-level program\n\
+               --------------------");
+        let top_effects, _mapping =
+          Dataflow_tainting.fixpoint taint_inst ?signature_db:final_signature_db
+            IL.{ params = []; cfg; lambdas }
         in
-        let matches =
-            !matches
-            (* same post-processing as for search-mode in Match_rules.ml *)
-            |> PM.uniq
-            |> PM.no_submatches (* see "Taint-tracking via ranges" *) |> match_hook
-        in
-        let errors = Parse_target.errors_from_skipped_tokens skipped_tokens in
-        let report =
-            RP.mk_match_result matches errors
-            {
-                Core_profiling.rule_id = fst rule.R.id;
-                rule_parse_time = parse_time;
-                rule_match_time = match_time;
-            }
-        in
-        let explanations =
-            if xconf.matching_explanations then
-            [
-                {
-                ME.op = OutJ.Taint;
-                children = expls;
-                matches = report.matches;
-                pos = snd rule.id;
-                extra = None;
-                };
-            ]
-            else []
-        in
-        let report = { report with explanations } in
-        Some report
+        record_matches top_effects)
+  in
+  let matches =
+    !matches
+    (* same post-processing as for search-mode in Match_rules.ml *)
+    |> PM.uniq
+    |> PM.no_submatches (* see "Taint-tracking via ranges" *) |> match_hook
+  in
+
+  let errors = Parse_target.errors_from_skipped_tokens skipped_tokens in
+  let report =
+    RP.mk_match_result matches errors
+      {
+        Core_profiling.rule_id = fst rule.R.id;
+        rule_parse_time = parse_time;
+        rule_match_time = match_time;
+      }
+  in
+  let explanations =
+    if xconf.matching_explanations then
+      [
+        {
+          ME.op = OutJ.Taint;
+          children = expls;
+          matches = report.matches;
+          pos = snd rule.id;
+          extra = None;
+        };
+      ]
+    else []
+  in
+  let report = { report with explanations } in
+  Some report
 
 let check_rules ~match_hook
     ~(per_rule_boilerplate_fn :
@@ -422,6 +537,33 @@ let check_rules ~match_hook
     (rules : R.taint_rule list) (xconf : Match_env.xconfig)
     (xtarget : Xtarget.t) :
     Core_profiling.rule_profiling Core_result.match_result list =
+  (* Check for language support warnings when taint_intrafile is enabled *)
+  (match rules with
+  | rule :: _ ->
+      (* Check if any rule has taint_intrafile enabled *)
+      let has_taint_intrafile = 
+        match rule.options with
+        | Some opts -> opts.taint_intrafile
+        | None -> xconf.config.taint_intrafile
+      in
+      if has_taint_intrafile then (
+        (* Warn for unsupported languages *)
+        let lang = xtarget.xlang |> Xlang.to_lang_exn in
+        match lang with
+        | Lang.Apex | Lang.C | Lang.Cpp | Lang.Csharp | Lang.Elixir | Lang.Go 
+        | Lang.Java | Lang.Js | Lang.Julia | Lang.Kotlin | Lang.Lua 
+        | Lang.Python | Lang.Ruby | Lang.Rust | Lang.Scala 
+        | Lang.Swift | Lang.Ts ->
+            (* Known supported languages - no warning *)
+            ()
+        | other_lang ->
+            (* Unknown or unsupported language - warn user *)
+            Logs.warn (fun m ->
+                m "Cross-function taint analysis (--taint-intrafile) may not be fully supported for %s. Results may be limited to intraprocedural analysis only."
+                  (Lang.to_string other_lang))
+      )
+  | [] -> ());
+
   (* We create a "formula cache" here, before dealing with individual rules, to
      permit sharing of matches for sources, sanitizers, propagators, and sinks
      between rules.
@@ -434,23 +576,19 @@ let check_rules ~match_hook
   in
 
   rules
-  |> (List.filter_map
+  |> List.filter_map
        (fun rule ->
          let xconf =
-           Match_env.adjust_xconfig_with_rule_options xconf
-             rule.R.options in
-         per_rule_boilerplate_fn (rule :> R.rule)
+           Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
+         in
+         per_rule_boilerplate_fn
+           (rule :> R.rule)
            (fun () ->
-              Logs_.with_debug_trace ~__FUNCTION__
-                ~pp_input:(fun _ ->
-                    "target: " ^
-                    ((!!
-                        ((xtarget.path).internal_path_to_content))
-                     ^
-                     ("\nruleid: " ^
-                      ((rule.id |> fst) |>
-                       Rule_ID.to_string))))
-                (fun () ->
-                   check_rule per_file_formula_cache rule match_hook
-                     xconf xtarget))))
-         
+             Logs_.with_debug_trace ~__FUNCTION__
+               ~pp_input:(fun _ ->
+                 "target: "
+                 ^ !!(xtarget.path.internal_path_to_content)
+                 ^ "\nruleid: "
+                 ^ (rule.id |> fst |> Rule_ID.to_string))
+               (fun () ->
+                 check_rule per_file_formula_cache rule match_hook xconf xtarget)))

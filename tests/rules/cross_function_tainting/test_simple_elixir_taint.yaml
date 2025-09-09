@@ -1,0 +1,12 @@
+rules:
+  - id: simple_elixir_taint
+    message: Simple Elixir cross-function taint
+    languages:
+      - elixir
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

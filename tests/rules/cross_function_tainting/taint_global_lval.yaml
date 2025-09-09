@@ -1,0 +1,12 @@
+rules:
+  - id: test-global-lval-taint
+    mode: taint
+    languages:
+      - python
+    message: |
+      Global variable taint flow through ToLval effects
+    pattern-sources:
+      - pattern: source1(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

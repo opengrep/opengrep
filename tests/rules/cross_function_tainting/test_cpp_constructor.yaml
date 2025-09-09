@@ -1,0 +1,12 @@
+rules:
+  - id: cpp_constructor_sqli
+    message: SQL injection through constructor
+    languages:
+      - cpp
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

@@ -38,6 +38,7 @@ let recover_when_partial_error = ref true
 (* Helpers *)
 (*****************************************************************************)
 
+
 type scope = InFunction | InClass | TopLevel
 type mode = Pattern | Target
 type cpp_parsing_option = [ `AsFunDef | `AsVarDefWithCtor ]
@@ -1352,7 +1353,7 @@ and map_decl env x : G.stmt list =
         |> G.s;
       ]
   | Func v1 ->
-      let v1 = map_func_definition env v1 in
+      let v1 = map_method_definition env v1 in
       [ G.DefStmt v1 |> G.s ]
   | TemplateDecl (v1, v2, v3, v4) ->
       let _v1 = map_tok env v1
@@ -1659,7 +1660,11 @@ and map_designator env = function
 and map_func_definition env (v1, v2) : G.definition =
   let env = { env with in_scope = InFunction } in
   let v1 = map_entity env v1 and v2 = map_function_definition env v2 in
-  (v1, FuncDef v2)
+  (v1, FuncDef v2) 
+and map_method_definition env (v1, v2) : G.definition =
+  let v1 = map_entity env v1 and v2 = map_function_definition env v2 in
+  (v1, FuncDef v2) 
+
 
 and map_function_definition env
     { f_type = v_f_type; f_body = v_f_body; f_specs = v_f_specs } :
@@ -1667,7 +1672,10 @@ and map_function_definition env
   let _v_f_specsTODO = map_of_list (map_specifier env) v_f_specs in
   let fbody, _attrsTODO = map_function_body env v_f_body in
   let fparams, fret = map_functionType env v_f_type in
-  { G.fkind = (G.Function, G.fake ""); fparams; frettype = Some fret; fbody }
+  let kind = match env.in_scope with
+    InClass -> G.Method
+    |_ -> G.Function in
+  { G.fkind = (kind, G.fake ""); fparams; frettype = Some fret; fbody }
 
 and map_functionType env x : G.parameters * G.type_ =
   match x with

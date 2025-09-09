@@ -1,0 +1,12 @@
+rules:
+  - id: simple_rust_taint
+    message: Simple Rust cross-function taint
+    languages:
+      - rust
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

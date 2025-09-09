@@ -8,12 +8,6 @@ type java_props_cache
 
 val mk_empty_java_props_cache : unit -> java_props_cache
 
-val hook_function_taint_signature :
-  (Taint_rule_inst.t -> AST_generic.expr -> Shape_and_sig.Signature.t option)
-  option
-  ref
-(** Pro inter-file (aka deep) *)
-
 val hook_find_attribute_in_class :
   (AST_generic.name -> string -> AST_generic.name option) option ref
 (** Pro inter-file (aka deep) *)
@@ -30,7 +24,9 @@ val hook_check_tainted_at_exit_sinks :
 val fixpoint :
   Taint_rule_inst.t ->
   ?in_env:Taint_lval_env.t ->
-  ?name:IL.name ->
+  ?name:Shape_and_sig.fn_id ->
+  ?class_name:string ->
+  ?signature_db:Shape_and_sig.signature_database ->
   IL.fun_cfg ->
   Shape_and_sig.Effects.t * mapping
 (** Main entry point, [fixpoint config cfg] returns a mapping (effectively a set)
