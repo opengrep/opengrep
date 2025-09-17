@@ -1,9 +1,0 @@
-Valid suffixes:
-
-- .added
-- .changed
-- .fixed
-- .infra
-
-For details on changelog management, see the online documentation:
-https://semgrep.dev/docs/contributing/contributing-code/#adding-a-changelog-entry
