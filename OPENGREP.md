@@ -6,7 +6,7 @@
 
 ### Main New Features
 
-- Switched to **OCaml 5.3.0** with large-scale refactoring to support multicore execution.
+- Switched to **OCaml 5.3.0** with large-scale refactoring to support multicore execution with shared-memory parallelism. At the time of the fork, the project was using **OCaml 4** and parallelism was achieved using a process forking approach, which did not work on Windows.
 
 - Added support for **Windows**.
 
@@ -14,7 +14,7 @@
 
 ### Features
 
-- **Self-contained binaries** for multiple architectures, built using **Nuitka** for fast and self-contained executables.
+- **Self-contained binaries** for multiple architectures, built using **Nuitka** for fast and self-contained executables. This is a departure from Semgrep, which is typically distributed using python wheels or homebrew. Now user environments do not need to have python installed, and the performance is comparable to the python wheel.
 
 - **Install script** for macOS and Linux.
 
