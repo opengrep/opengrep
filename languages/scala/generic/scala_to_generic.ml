@@ -473,6 +473,11 @@ and v_expr e : G.expr =
   | Apply (v1, v2) ->
       let v1 = v_expr v1 and v2 = v_list v_arguments v2 in
       v2 |> List.fold_left (fun acc xs -> G.Call (acc, xs) |> G.e) v1
+  (* special case to ensure associative string concatenation in matching *)
+  | Infix (v1, ("+", tok), v3) ->
+      let v1 = v_expr v1 in
+      let v3 = v_expr v3 in
+      G.Call (G.IdSpecial (G.Op G.Plus, tok) |> G.e, fb [ G.Arg v1; G.Arg v3 ]) |> G.e
   | Infix (v1, v2, v3) ->
       (* In scala [x f y] means [x.f(y)]  *)
       let v1 = v_expr v1 and v2 = v_ident v2 and v3 = v_expr v3 in
