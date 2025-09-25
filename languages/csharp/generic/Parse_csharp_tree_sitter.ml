@@ -300,7 +300,6 @@ end
    to another type of tree.
 *)
 
-let todo_expr _env tok = G.OtherExpr (("CSharpTodo", tok), []) |> G.e
 let todo_stmt _env tok = G.OtherStmt (G.OS_Todo, [ G.Tk tok ]) |> G.s
 let todo_pat _env tok = G.OtherPat (("Todo", tok), [])
 let todo_attr _env tok = G.OtherAttribute (("Todo", tok), [])
@@ -1482,12 +1481,12 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
       (* old: was New *)
       let e = G.OtherExpr (("NewNoType", v1), []) |> G.e in
       Call (e, args) |> G.e
-  | `Impl_stack_alloc_array_crea_exp (v1, v2, v3, v4) ->
-      let v1 = token env v1 (* "stackalloc" *) in
+  | `Impl_stack_alloc_array_crea_exp (v1, v2, v4, v5) ->
+      let _v1 = token env v1 (* "stackalloc" *) in
       let _v2 = token env v2 (* "[" *) in
-      let _v3 = token env v3 (* "]" *) in
-      let _v4 = initializer_expression env v4 in
-      todo_expr env v1
+      let _v4 = token env v4 (* "]" *) in
+      let v5 = initializer_expression env v5 in
+      Container (Array, v5) |> G.e
   | `Init_exp x -> Container (Tuple, initializer_expression env x) |> G.e
   | `Inte_str_exp x -> interpolated_string_expression env x
   | `Is_exp (v1, v2, v3) ->
@@ -1573,13 +1572,15 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
   | `Size_of_exp x -> size_of_expression env x
   | `Stack_alloc_array_crea_exp (v1, v2, v3) ->
       let v1 = token env v1 (* "stackalloc" *) in
-      let _v2 = array_type env v2 in
-      let _v3 =
+      let v2 = array_type env v2 in
+      let v3 =
         match v3 with
         | Some x -> initializer_expression env x
-        | None -> fb [ todo_expr env v1 ]
+        | None -> fb []
       in
-      todo_expr env v1
+      let lb, _, rb = v3 in
+      let args = (lb, [ Arg (G.Container (G.Tuple, v3) |> G.e) ], rb) in
+      New (v1, v2, empty_id_info (), args) |> G.e
   | `Switch_exp (v1, v2, v3, v4, _vTODO, v5) ->
       let v1 = expression env v1 in
       let v2 = token env v2 (* "switch" *) in
