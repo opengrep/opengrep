@@ -28,6 +28,10 @@ type conf = {
   max_memory_mb : int;
   max_match_per_file : int;
   timeout : float;
+  dynamic_timeout : bool;
+  dynamic_timeout_max_multiplier : int;
+  dynamic_timeout_unit_kb : int;
+  allow_rule_timeout_control: bool;
   timeout_threshold : int; (* output flags *)
   (* features *)
   (* TODO: move nosem in Scan_CLI.conf and handled it Scan_subcommand.ml.
@@ -109,6 +113,10 @@ let default_conf : conf =
      * a parameter on the CLI. Why not 50% of cores on a 64 or 128 core machine? *)
     num_jobs = min 16 (Domainslib_.get_cpu_count ());
     timeout = 5.0;
+    dynamic_timeout = Core_scan_config.default.dynamic_timeout;
+    dynamic_timeout_max_multiplier = Core_scan_config.default.dynamic_timeout_max_multiplier;
+    dynamic_timeout_unit_kb = Core_scan_config.default.dynamic_timeout_unit_kb;
+    allow_rule_timeout_control = Core_scan_config.default.allow_rule_timeout_control;
     (* ^ seconds, keep up-to-date with User_settings.ml and constants.py *)
     timeout_threshold = 3;
     max_memory_mb = 0;
@@ -350,6 +358,10 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
   | {
    num_jobs;
    timeout;
+   dynamic_timeout;
+   dynamic_timeout_max_multiplier;
+   dynamic_timeout_unit_kb;
+   allow_rule_timeout_control;
    timeout_threshold;
    max_memory_mb;
    max_match_per_file;
@@ -371,6 +383,10 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         output_format;
         inline_metavariables;
         timeout;
+        dynamic_timeout;
+        dynamic_timeout_max_multiplier;
+        dynamic_timeout_unit_kb;
+        allow_rule_timeout_control;
         timeout_threshold;
         max_memory_mb;
         filter_irrelevant_rules;

@@ -48,6 +48,10 @@ from semgrep.constants import DEFAULT_DIFF_DEPTH
 from semgrep.constants import DEFAULT_TIMEOUT
 from semgrep.constants import OutputFormat
 from semgrep.constants import TOO_MUCH_DATA
+from semgrep.constants import DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB 
 from semgrep.core_runner import CoreRunner
 from semgrep.core_runner import Plan
 from semgrep.dependency_aware_rule import dependencies_range_match_any
@@ -264,6 +268,10 @@ def run_rules(
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
     max_match_per_file: Optional[int] = None,
+    allow_rule_timeout_control: bool = DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL,
+    dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
+    dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
+    dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -366,6 +374,10 @@ def run_rules(
         bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
         inline_metavariables=inline_metavariables,
         max_match_per_file=max_match_per_file,
+        allow_rule_timeout_control=allow_rule_timeout_control,
+        dynamic_timeout=dynamic_timeout,
+        dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
+        dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
     )
 
     if join_rules:
@@ -551,6 +563,10 @@ def run_scan(
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
     max_match_per_file: Optional[int] = None,
+    allow_rule_timeout_control: bool = DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL,
+    dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
+    dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
+    dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -830,6 +846,10 @@ def run_scan(
         bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
         inline_metavariables=inline_metavariables,
         max_match_per_file=max_match_per_file,
+        allow_rule_timeout_control=allow_rule_timeout_control,
+        dynamic_timeout=dynamic_timeout,
+        dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
+        dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
     )
     profiler.save("core_time", core_start_time)
     semgrep_errors: List[SemgrepError] = config_errors + scan_errors
@@ -937,6 +957,14 @@ def run_scan(
                         baseline_target_mode_config,
                         allow_local_builds=allow_local_builds,
                         prioritize_dependency_graph_generation=prioritize_dependency_graph_generation,
+                        opengrep_ignore_pattern=opengrep_ignore_pattern,
+                        bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
+                        inline_metavariables=inline_metavariables,
+                        max_match_per_file=max_match_per_file,
+                        allow_rule_timeout_control=allow_rule_timeout_control,
+                        dynamic_timeout=dynamic_timeout,
+                        dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
+                        dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
                     )
                     rule_matches_by_rule = remove_matches_in_baseline(
                         rule_matches_by_rule,

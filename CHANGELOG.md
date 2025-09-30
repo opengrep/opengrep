@@ -1,5 +1,60 @@
 # Changelog
 
+## [1.10.0](https://github.com/opengrep/opengrep/releases/tag/v1.10.0) - 07-09-2025
+
+### New features
+
+* Add `timeout` rule option and fix dynamic timeout parameter passing by @dimitris-m in #421
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.9.1...v1.10.0
+
+
+## [1.9.1](https://github.com/opengrep/opengrep/releases/tag/v1.9.1) - 04-09-2025
+
+### Bug fixes
+
+* Fix: add docs for dynamic timeout cli parameters by @dimitris-m in #415
+* Fix #416: add dynamic timeout params to `ci` command by @dimitris-m and @maciejpirog in #418
+
+### Documentation
+
+* Add OPENGREP.md by @maciejpirog in #417
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.9.0...v1.9.1
+
+
+## [1.9.0](https://github.com/opengrep/opengrep/releases/tag/v1.9.0) - 03-09-2025
+
+### New features
+
+* Make timeouts dynamic based on file size by @dimitris-m and @maciejpirog in #413
+* Kotlin: Enable taint tracking through scope functions (`let`, `also`, `use`, `takeIf`, `takeUnless`) by @fxbru in #332
+
+### Bug fixes
+
+* Fix comparison of tokens and locations by @maciejpirog in #408
+* Direct implementation of is_metavar_name and `is_metavar_ellipsis`, not via memoized regex by @maciejpirog in #409
+* Kotlin: change reference to semgrep in error message by @dimitris-m in #411
+* Scala: Make metavariables in interpolated strings match both string segments and embedded expressions by @maciejpirog in #412
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.8...v1.9.0
+
+
+## [1.8.8](https://github.com/opengrep/opengrep/releases/tag/v1.8.8) - 29-08-2025
+
+### Bug fixes
+
+* Scala: Support metavars as elements in interpolated strings by @maciejpirog in #403
+* Fix: reset memoisation hashtables when performing a baseline scan by @dimitris-m in #404
+* Fix: pin ppxlib to 0.35.0 by @dimitris-m in #406
+
+#### Notes
+
+* Version 1.8.7 (#405) intentionally skipped.
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.8.6...v1.8.8
+
+
 ## [1.8.6](https://github.com/opengrep/opengrep/releases/tag/v1.8.6) - 21-08-2025
 
 ### Bug fixes

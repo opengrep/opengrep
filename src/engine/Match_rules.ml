@@ -36,9 +36,14 @@ exception File_timeout of Rule_ID.t list
 (* TODO make this one of the Semgrep_error_code exceptions *)
 exception Multistep_rules_not_available
 
+(* TODO: add here the new factor parameters. *)
 type timeout_config = {
   timeout : float;
   threshold : int;
+  allow_rule_timeout_control : bool;
+  dynamic_timeout : bool;
+  dynamic_timeout_max_multiplier : int;
+  dynamic_timeout_unit_kb : int;
   caps : < Cap.time_limit >;
 }
 
@@ -51,8 +56,60 @@ let timeout_function (rule : Rule.t) (file : Fpath.t)
   let timeout =
     match timeout with
     | None -> None
-    | Some { timeout; caps; threshold = _ } ->
-        if timeout <= 0. then None else Some (timeout, caps)
+    | Some { timeout; caps; threshold = _;
+             allow_rule_timeout_control; dynamic_timeout;
+             dynamic_timeout_max_multiplier; dynamic_timeout_unit_kb } ->
+        if timeout <= 0. then None
+        else
+
+          let dynamic_timeout =
+            match allow_rule_timeout_control, rule.Rule.options with
+            | true, Some { dynamic_timeout = Some dt; _ } -> dt
+            | _ -> dynamic_timeout
+          in
+
+          let timeout =
+            match allow_rule_timeout_control, rule.Rule.options with
+            | true, Some { timeout = Some tm; _ } ->
+              Log.info (fun m ->
+                  m "setting timeout for %s to %.2fs using a rule override"
+                    !!file tm);
+              tm
+            | _ -> timeout
+          in
+
+          if not dynamic_timeout
+          then
+            Some (timeout, caps)
+          else
+
+            let dynamic_timeout_unit_kb =
+              match allow_rule_timeout_control, rule.Rule.options with
+              | true, Some { dynamic_timeout_unit_kb = Some dtk; _ } -> dtk
+              | _ -> dynamic_timeout_unit_kb
+            in
+
+            let dynamic_timeout_max_multiplier =
+              match allow_rule_timeout_control, rule.Rule.options with
+              | true, Some { dynamic_timeout_max_multiplier = Some dtm; _ } -> dtm
+              | _ -> dynamic_timeout_max_multiplier
+            in
+
+            (* We use Spacegrep's [stat] because it's cached, and we don't want to repeat the call
+             * for each rule. Otherwise we could use [UFile.filesize]. *)
+            let filesize_kb = float_of_int (Spacegrep.Find_files.stat !!file).st_size /. 1024.
+            in
+            (* Multiply timeout by the number of [dynamic_timeout_unit_kb] blocks in the file. *)
+            let timeout_multiplier =
+              Float.div filesize_kb (float_of_int dynamic_timeout_unit_kb)
+              |> max 1.
+              |> min (float_of_int dynamic_timeout_max_multiplier)
+            in
+            let size_adjusted_timeout = timeout *. timeout_multiplier in
+            Log.info (fun m ->
+                m "setting timeout for %s to %.2fs using a factor of %.2f derived from the file size"
+                  !!file size_adjusted_timeout timeout_multiplier);
+            Some (size_adjusted_timeout, caps)
   in
   match
     Time_limit.set_timeout_opt ~name:"Match_rules.timeout_function" timeout f

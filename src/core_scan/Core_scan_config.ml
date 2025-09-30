@@ -69,6 +69,10 @@ type t = {
   (* Limits *)
   (* maximum time to spend running a rule on a single file *)
   timeout : float;
+  dynamic_timeout : bool;
+  dynamic_timeout_max_multiplier : int;
+  dynamic_timeout_unit_kb : int;
+  allow_rule_timeout_control : bool;
   (* maximum number of rules that can timeout on a file *)
   timeout_threshold : int;
   max_memory_mb : int;
@@ -110,6 +114,10 @@ let default =
     (* Limits *)
     (* maximum time to spend running a rule on a single file *)
     timeout = 0.;
+    dynamic_timeout = false;
+    dynamic_timeout_max_multiplier = 20;
+    dynamic_timeout_unit_kb = 30;
+    allow_rule_timeout_control = false;
     (* maximum number of rules that can timeout on a file *)
     timeout_threshold = 0;
     max_memory_mb = 0;

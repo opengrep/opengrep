@@ -56,7 +56,7 @@ open Sexplib.Std
 type location = {
   (* The content of the "token".
    * No need to use it for comparison, as it is determined by the location. *)
-  str : string [@eq.ignore][@ord.ignore];
+  str : string;
   (* TODO? the content of Pos.t used to be inlined in this location type.
    * It is cleaner to factorize things in Pos.t, but this introduces
    * an extra pointer which actually can have real performance implication
@@ -65,7 +65,13 @@ type location = {
    *)
   pos : Pos.t;
 }
-[@@deriving show { with_path = false }, eq, ord, sexp]
+[@@deriving show { with_path = false }, sexp]
+
+let compare_location (loc1 : location) (loc2 : location) : int =
+  Pos.compare loc1.pos loc2.pos
+
+let equal_location (loc1 : location) (loc2 : location) : bool =
+  Pos.equal loc1.pos loc2.pos
 
 (* to represent fake (e.g., fake semicolons in languages such as Javascript),
  * and expanded tokens (e.g., preprocessed constructs by cpp for C/C++)

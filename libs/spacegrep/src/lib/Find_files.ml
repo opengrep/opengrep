@@ -11,26 +11,13 @@ type visit_tracker = {
   mark_visited : string -> unit;
 }
 
-(* TODO: Make thread safe if needed; but for now this is not the case.
- * The hash table is shared by all invocations of the function so it's
- * an issue if it's called concurrently. *)
-let memoize f =
-  let tbl = Hashtbl.create 100 in
-  fun x ->
-    let run =
-      match Hashtbl.find_opt tbl x with
-      | Some run -> run
-      | None ->
-          let run = lazy (f x) in
-          Hashtbl.replace tbl x run;
-          run
-    in
-    Lazy.force run
+let hmemo : (string, Unix.stats) Kcas_data.Hashtbl.t =
+  Kcas_data.Hashtbl.create () (* 101 *)
 
 (* Cache the results of the 'stat' syscall to speed things up.
    (due to calling it multiple times on the same path, and having
    possibly a lot of paths, and not so great caching at the OS level). *)
-let stat = memoize Unix.stat
+let stat filename = Common.memoized hmemo filename (fun () -> Unix.stat filename)
 
 (* This is to avoid visiting the same file or directory multiple times.
 

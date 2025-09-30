@@ -11,7 +11,7 @@
    for non-functional settings such as optimizations (e.g., using a
    cache) use instead Flag_semgrep.ml
 
-   We're using atdgen to specify the list of configuaration options
+   We're using atdgen to specify the list of configuration options
    because atdgen generates automatically the boilerplate to read
    the configuration options from a rule file.
 
@@ -181,6 +181,21 @@ type t = {
 
   (* override the default taint fixpoint timeout. *)
   ?taint_fixpoint_timeout : float option;
+
+  (* rule-specific timeout. *)
+  ?timeout : float option;
+
+  (* adjust timeout according to target file size. *)
+  ?dynamic_timeout : bool option;
+
+  (* unit for dynamic timeout calculation: roughly, how many
+     times 30kb is the target file, clamped to be between 1.
+     and [dynamic_timeout_max_multiplier]. *)
+  ?dynamic_timeout_unit_kb : int option;
+
+  (* limit for dynamic timeout factor, to place a boundary on timeouts
+     for very large files. *)
+  ?dynamic_timeout_max_multiplier : int option;
 
   (* TODO: equivalences:
    *   - require_to_import (but need pass config to Js_to_generic)

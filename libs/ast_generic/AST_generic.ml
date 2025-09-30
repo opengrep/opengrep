@@ -280,13 +280,7 @@ type module_name =
   | FileName of string wrap (* ex: Js import, C #include, Go import *)
 [@@deriving show { with_path = false }, eq, ord, hash]
 
-(* OCaml has generative functors. This means the types `SId.t` and
-   `IdInfoId.t` are different, even though both are represented by ints.
-   This will help enforce that we don't do bad things with these ints by making
-   them abstract.
-*)
 module SId = Gensym.MkId ()
-module IdInfoId = Gensym.MkId ()
 
 (* A single unique id: sid (uid would be a better name, but it usually
  * means "user id" for people).
@@ -457,7 +451,6 @@ class virtual ['self] iter_parent =
      * needed. *)
     method visit_location _env _ = ()
     method visit_id_flags_t _env _ = ()
-    method visit_id_info_id_t _env _ = ()
     method visit_resolved_name _env _ = ()
     method visit_tok _env _ = ()
 
@@ -530,7 +523,6 @@ class virtual ['self] map_parent =
     (* Stubs *)
     method visit_location _env x = x
     method visit_id_flags_t _env x = x
-    method visit_id_info_id_t _env x = x
     method visit_resolved_name _env x = x
     method visit_tok _env x = x
     method visit_parsed_int env pi = Parsed_int.map_tok (self#visit_tok env) pi
@@ -639,14 +631,11 @@ and id_info = {
    * the same identifier can now have different flags. In fact we did not really
    * have to compare 'id_flags' anyways. *)
   id_flags : id_flags ref; [@hash.ignore] [@equal fun _a _b -> true]
-  (* this is used by Naming_SAST in semgrep-pro *)
-  id_info_id : id_info_id; [@hash.ignore] [@equal fun _a _b -> true]
 }
 
 (* See explanation for @name where the visitors are generated at the end of
  * this long recursive type. *)
 and id_flags = (IdFlags.t[@name "id_flags_t"])
-and id_info_id = (IdInfoId.t[@name "id_info_id_t"])
 
 (*****************************************************************************)
 (* Expression *)
@@ -2261,15 +2250,9 @@ let p x = x
 (* Ident and names *)
 (* ------------------------------------------------------------------------- *)
 
-(* For Naming_SAST.ml in semgrep-pro.
- * This can be reset to 0 before parsing each file, or not. It does
- * not matter as the couple (filename, id_info_id) is unique.
- *)
-let id_info_id = IdInfoId.mk
 let empty_var = { vinit = None; vtype = None; vtok = no_sc }
 
-let empty_id_info ?(hidden = false) ?(case_insensitive = false)
-    ?(id = id_info_id ()) () =
+let empty_id_info ?(hidden = false) ?(case_insensitive = false) () =
   {
     id_resolved = ref None;
     id_resolved_alternatives = ref [];
@@ -2277,7 +2260,6 @@ let empty_id_info ?(hidden = false) ?(case_insensitive = false)
     id_svalue = ref None;
     id_flags =
       ref (IdFlags.make ~hidden ~case_insensitive ~final:false ~static:false);
-    id_info_id = id;
   }
 
 let basic_id_info ?(hidden = false) resolved =
@@ -2491,12 +2473,42 @@ let special_multivardef_pattern = "!MultiVarDef!"
 (* Semgrep hacks *)
 (*****************************************************************************)
 
+let is_metavar_name_body len start s =
+    let check_first c =
+      (c >= 'A' && c <= 'Z') || c = '_'
+    in
+    let check_rest c =
+      (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_'
+    in
+    check_first s.[start] &&
+    (let rec check i =
+       if i >= len then true
+       else if check_rest s.[i] then check (i + 1)
+       else false
+    in
+    check (start + 1))
+
 (* coupling: Metavariable.is_metavar_name *)
-let is_metavar_name s = Common.( =~ ) s "^\\(\\$[A-Z_][A-Z_0-9]*\\)$"
+(* previously: regex "^\\(\\$[A-Z_][A-Z_0-9]*\\)$" *)
+let is_metavar_name s =
+  let len = String.length s in
+  if len < 2 then
+    false
+  else if s.[0] <> '$' then
+    false
+  else
+    is_metavar_name_body len 1 s
 
 (* coupling: Metavariable.is_metavar_ellipsis *)
+(* previously: regex "^\\(\\$\\.\\.\\.[A-Z_][A-Z_0-9]*\\)$" *)
 let is_metavar_ellipsis s =
-  Common.( =~ ) s "^\\(\\$\\.\\.\\.[A-Z_][A-Z_0-9]*\\)$"
+  let len = String.length s in
+  if len < 5 then  (* "$..." + at least 1 valid char *)
+    false
+  else if not (String.sub s 0 4 = "$...") then
+    false
+  else
+    is_metavar_name_body len 4 s
 
 (*****************************************************************************)
 (* Custom visitors *)

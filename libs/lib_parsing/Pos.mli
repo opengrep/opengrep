@@ -13,7 +13,11 @@ type t = {
   column : int; (* 0-based *)
   file : Fpath.t;
 }
-[@@deriving show, eq, ord, sexp]
+[@@deriving show, sexp]
+
+val compare : t -> t -> int
+
+val equal : t -> t -> bool
 
 val make : ?line:int -> ?column:int -> Fpath.t -> int -> t
 

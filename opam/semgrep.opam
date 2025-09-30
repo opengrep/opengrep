@@ -45,7 +45,7 @@ depends: [
   "xmlm"
   "sarif" {>= "0.3.0"}
   "cmdliner"
-  "ppxlib"
+  "ppxlib" {= "0.35.0"}
   "ppx_deriving" {>= "6.0.3"}
   "ppx_deriving_yojson"
   "ppx_hash"

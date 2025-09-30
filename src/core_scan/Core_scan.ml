@@ -812,6 +812,10 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
           Match_rules.
             {
               timeout = config.timeout;
+              allow_rule_timeout_control = config.allow_rule_timeout_control;
+              dynamic_timeout = config.dynamic_timeout;
+              dynamic_timeout_max_multiplier = config.dynamic_timeout_max_multiplier;
+              dynamic_timeout_unit_kb = config.dynamic_timeout_unit_kb;
               threshold = config.timeout_threshold;
               caps;
             }
@@ -855,7 +859,10 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
        * cores, but is shared on a per-core basis. Now it's shared between all cores,
        * but it's a DLS key, so each core will get another value for the cache. *)
       begin
-        (* NOTE: This DLS key is created once, before we enter the parallel map path. *)
+        (* NOTE: This DLS key is created once, before we enter the parallel map path.
+         * For baseline scanning, it does not need to be reset, because each invocation
+         * of scan_exn gets a new key.
+         *)
         let cache_dls = DLS.new_key (fun () -> Hashtbl.create (List.length valid_rules))
         in
         Match_env.PrefilterWithCache cache_dls

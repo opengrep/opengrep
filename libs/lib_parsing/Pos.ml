@@ -60,12 +60,22 @@ type t = {
    *)
   bytepos : int; (* 0-based *)
   (* Those two fields can be derived from bytepos (See complete_position() *)
-  line : int [@eq.ignore][@ord.ignore]; (* 1-based *)
-  column : int [@eg.ignore][@ord.ignore]; (* 0-based *)
+  line : int; (* 1-based *)
+  column : int; (* 0-based *)
   (* TODO: use an Src.t/Origin.t instead? (see spacegrep Src_file.source *)
   file : Fpath_.t;
 }
-[@@deriving show, eq, ord, sexp]
+[@@deriving show, sexp]
+
+let compare (pos1 : t) (pos2 : t) : int =
+  let cmp_bpos = Int.compare pos1.bytepos pos2.bytepos in
+  if Int.equal cmp_bpos 0
+    then Fpath_.compare pos1.file pos2.file
+    else cmp_bpos
+
+let equal (pos1 : t) (pos2 : t) : bool =
+  pos1.bytepos =|= pos2.bytepos &&
+  Fpath_.equal pos1.file pos2.file
 
 (* basic file position (used to be Common2.filepos) (used in codemap) *)
 type linecol = { l : int; c : int } [@@deriving show, eq]

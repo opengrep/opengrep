@@ -34,6 +34,10 @@ from semgrep.constants import DEFAULT_MAX_LOG_LIST_ENTRIES
 from semgrep.constants import DEFAULT_MAX_TARGET_SIZE
 from semgrep.constants import DEFAULT_TIMEOUT
 from semgrep.constants import DEFAULT_MAX_MATCH_PER_FILE
+from semgrep.constants import DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB 
 from semgrep.constants import OutputFormat
 from semgrep.core_runner import CoreRunner
 from semgrep.engine import EngineType
@@ -170,10 +174,30 @@ _scan_options: List[Callable] = [
         type=click.Choice(["all", "none"]),
     ),
     optgroup.option(
+        "--allow-rule-timeout-control/--forbid-rule-timeout-control",
+        is_flag=True,
+        default=DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL,
+    ),
+    optgroup.option(
+        "--dynamic-timeout",
+        is_flag=True,
+        default=DEFAULT_DYNAMIC_TIMEOUT,
+    ),
+    optgroup.option(
         "--timeout",
         type=int,
         default=DEFAULT_TIMEOUT,
         envvar="SEMGREP_TIMEOUT",
+    ),
+    optgroup.option(
+        "--dynamic-timeout-unit-kb",
+        type=int,
+        default=DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
+    ),
+    optgroup.option(
+        "--dynamic-timeout-max-multiplier",
+        type=int,
+        default=DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
     ),
     optgroup.option(
         "--timeout-threshold",
@@ -602,6 +626,10 @@ def scan(
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
     max_match_per_file: Optional[int],
+    allow_rule_timeout_control: bool = DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL,
+    dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
+    dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
+    dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
 ) -> Optional[Tuple[RuleMatchMap, List[SemgrepError], List[Rule], Set[Path]]]:
     if version:
         print(__VERSION__)
@@ -777,6 +805,7 @@ def scan(
                 # Run metachecks specifically on the config files
                 if config:
                     try:
+                        # TODO: dynamic timeout stuff should be here...
                         metacheck_errors = CoreRunner(
                             jobs=jobs,
                             engine_type=engine_type,
@@ -869,6 +898,10 @@ def scan(
                     bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
                     inline_metavariables=inline_metavariables,
                     max_match_per_file=max_match_per_file,
+                    allow_rule_timeout_control=allow_rule_timeout_control,
+                    dynamic_timeout=dynamic_timeout,
+                    dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
+                    dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
                 )
             except SemgrepError as e:
                 output_handler.handle_semgrep_errors([e])

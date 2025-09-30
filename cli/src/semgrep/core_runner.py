@@ -34,6 +34,10 @@ from semgrep.config_resolver import Config
 from semgrep.console import console
 from semgrep.constants import Colors
 from semgrep.constants import PLEASE_FILE_ISSUE_TEXT, IS_WINDOWS
+from semgrep.constants import DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER 
+from semgrep.constants import DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB 
 from semgrep.core_output import core_error_to_semgrep_error
 from semgrep.core_output import core_matches_to_rule_matches
 from semgrep.core_targets_plan import Plan
@@ -791,6 +795,10 @@ class CoreRunner:
         bypass_includes_excludes_for_files: bool = True,
         inline_metavariables: bool = False,
         max_match_per_file: Optional[int] = None,
+        allow_rule_timeout_control: bool = DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL,
+        dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
+        dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
+        dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         state = get_state()
         logger.debug(f"Passing whole rules directly to semgrep_core")
@@ -927,8 +935,19 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                     str(self._timeout_threshold),
                     "-max_memory",
                     str(self._max_memory),
+                    "-dynamic_timeout_unit_kb",
+                    str(dynamic_timeout_unit_kb),
+                    "-dynamic_timeout_max_multiplier",
+                    str(dynamic_timeout_max_multiplier),
                 ]
             )
+
+            if allow_rule_timeout_control:
+                cmd.append("-allow_rule_timeout_control")
+
+            if dynamic_timeout:
+                cmd.append("-dynamic_timeout")
+
             if max_match_per_file is not None:
                 cmd.extend(["-max_match_per_file", str(max_match_per_file)])
             if matching_explanations:
@@ -1113,6 +1132,10 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
         bypass_includes_excludes_for_files: bool = True,
         inline_metavariables: bool = False,
         max_match_per_file: Optional[int] = None,
+        allow_rule_timeout_control: bool = DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL,
+        dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
+        dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
+        dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Sometimes we may run into synchronicity issues with the latest DeepSemgrep binary.
@@ -1139,6 +1162,10 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
                 inline_metavariables=inline_metavariables,
                 max_match_per_file=max_match_per_file,
+                allow_rule_timeout_control=allow_rule_timeout_control,
+                dynamic_timeout=dynamic_timeout,
+                dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
+                dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
             )
         except SemgrepError as e:
             # Handle Semgrep errors normally
@@ -1183,6 +1210,10 @@ Exception raised: `{e}`
         bypass_includes_excludes_for_files: bool = True,
         inline_metavariables: bool = False,
         max_match_per_file: Optional[int] = None,
+        allow_rule_timeout_control: bool = DEFAULT_ALLOW_RULE_TIMEOUT_CONTROL,
+        dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
+        dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
+        dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Takes in rules and targets and returns object with findings
@@ -1209,6 +1240,10 @@ Exception raised: `{e}`
             bypass_includes_excludes_for_files=bypass_includes_excludes_for_files,
             inline_metavariables = inline_metavariables,
             max_match_per_file=max_match_per_file,
+            allow_rule_timeout_control=allow_rule_timeout_control,
+            dynamic_timeout=dynamic_timeout,
+            dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
+            dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
         )
 
         logger.debug(

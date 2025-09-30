@@ -106,6 +106,7 @@ let (matches_of_matcher :
         RP.mk_match_result res Core_error.ErrorSet.empty
           { Core_profiling.parse_time; match_time }
 
+(* XXX: This *must* be cleared for baseline scanning, after the head scan! *)
 let hmemo : (Fpath.t, Pos.bytepos_linecol_converters) Kcas_data.Hashtbl.t =
   Kcas_data.Hashtbl.create () (* 101 *)
 

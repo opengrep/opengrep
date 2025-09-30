@@ -681,4 +681,6 @@ let regexp_prefilter_of_rule ~cache (r : R.rule) =
   (* See [is_relevant_rule_from_xtarget]. Safe as long as we process 1 target per domain
    * at all times, and no other thread in the same domain can access the cache value. *)
   | Some cache ->
+    (* NOTE: This is ok for baseline commit scanning, because each invocation of
+     * [scan_exn] has a new DLS key. *)
     Common.memoized_not_thread_safe (Domain.DLS.get cache) key regex_prefilter_fun

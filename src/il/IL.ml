@@ -55,8 +55,6 @@ module G = AST_generic
  * to the generic AST.
  * This is why you will see some 'eorig', 'iorig' fields below and the use of
  * refs such as svalue shared with the generic AST.
- * TODO? alt: store just the range and id_info_id, so easy to propagate back
- * info to generic AST or to return match ranges to semgrep.
  *
  * history:
  *  - cst_php.ml (was actually called ast_php.ml)

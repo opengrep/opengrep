@@ -2268,6 +2268,13 @@ and exprTypeArgs in_ = outPattern typeArgs in_
 (* Interpolated strings *)
 (* ------------------------------------------------------------------------- *)
 
+(* For a single expression in a brace in an interpolated string, don't produce
+ * a Block, because it prevents matching of patterns like s"...${$X}..." *)
+and normalize_brace_in_interpolation (e : expr) : expr =
+  match e with
+  | BlockExpr (_, BEBlock [E e], _) -> e
+  | _ -> e
+
 and interpolatedString ~inPattern in_ =
   ignore inPattern;
   (* useful? *)
@@ -2303,12 +2310,20 @@ and interpolatedString ~inPattern in_ =
          * that?
          *)
         | ID_DOLLAR _ ->
-            let x = ident in_ in
+            let (s, t) as x = ident in_ in
             (* ast: Ident(x) *)
-            xs += EncapsDollarIdent x
+            (* if the identifier starts with $, it is a metavariable, not a variable
+             * inside an interpolated string. However, if we are not in semgrep_mode,
+             * we treat these identifiers as normal variables, so we need to strip this $
+             *)
+            if s.[0] =$= '$'
+                then if Domain.DLS.get Flag_parsing.sgrep_mode
+                    then xs += EncapsStr x
+                    else xs += EncapsDollarIdent (String.sub s 1 (String.length s - 1), t)
+                else xs += EncapsDollarIdent x
         (* actually a ${, but using LBRACE allows to reuse blockExpr *)
         | LBRACE _ ->
-            let x = expr in_ in
+            let x = expr in_ |> normalize_brace_in_interpolation in
             (* ast: x *)
             xs += EncapsExpr x
         (* pad: not in original code, but the way Lexer_scala.mll is written
