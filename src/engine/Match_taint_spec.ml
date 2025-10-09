@@ -444,26 +444,27 @@ let default_effect_handler _fun_name new_effects = new_effects
 let taint_config_of_rule ~per_file_formula_cache
     ?(handle_effects = default_effect_handler) xconf lang file ast_and_errors
     ({ mode = `Taint spec; _ } as rule : R.taint_rule) =
-  let spec_matches, expls =
-    spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
-      ast_and_errors rule
-  in
-  let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
-  let options = xconf.config in
-  let preds = mk_taint_spec_match_preds rule spec_matches in
-  ( Taint_rule_inst.
-      {
-        lang;
-        file;
-        rule_id = fst rule.R.id;
-        options;
-        track_control =
-          spec.sources |> snd
-          |> List.exists (fun (src : R.taint_source) -> src.source_control);
-        preds;
-        handle_effects;
-        java_props_cache = Hashtbl.create 30;
-      },
-    spec_matches,
-    expls )
+  match spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
+      ast_and_errors rule with
+  | { sinks = []; _ }, _
+  | { sources = []; _ }, _ -> None
+  | spec_matches, expls ->
+      let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
+      let options = xconf.config in
+      let preds = mk_taint_spec_match_preds rule spec_matches in
+      Some (Taint_rule_inst.
+            {
+                lang;
+                file;
+                rule_id = fst rule.R.id;
+                options;
+                track_control =
+                spec.sources |> snd
+                |> List.exists (fun (src : R.taint_source) -> src.source_control);
+                preds;
+                handle_effects;
+                java_props_cache = Hashtbl.create 30;
+            },
+            spec_matches,
+            expls)
 [@@trace_trace]
