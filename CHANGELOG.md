@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.10.1](https://github.com/opengrep/opengrep/releases/tag/v1.10.1) - 10-10-2025
+
+### Bug fixes
+
+* Support for the `stackalloc` keyword in C#
+* Better support for strings in Scala
+
+### Improvements
+
+* Performance improvement for taint tracking by skipping a rule if no source or sink found
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.10.0...v1.10.1
+
+
 ## [1.10.0](https://github.com/opengrep/opengrep/releases/tag/v1.10.0) - 07-09-2025
 
 ### New features
