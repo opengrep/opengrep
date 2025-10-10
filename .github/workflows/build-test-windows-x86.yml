@@ -47,7 +47,7 @@ jobs:
     #   run:
     #     shell: bash
 
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
 
@@ -393,7 +393,7 @@ jobs:
         shell: bash
     needs:
       - build-core
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
@@ -416,7 +416,7 @@ jobs:
         shell: bash
     needs:
       - build-wheels
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
