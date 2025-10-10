@@ -284,142 +284,141 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
   in
   (* TODO: 'debug_taint' should just be part of 'res'
      * (i.e., add a "debugging" field to 'Report.match_result'). *)
-  let taint_inst, _TODO_debug_taint, expls =
-    Match_taint_spec.taint_config_of_rule ~per_file_formula_cache xconf lang
-      file (ast, []) rule
-  in
+  match Match_taint_spec.taint_config_of_rule ~per_file_formula_cache xconf lang
+      file (ast, []) rule with
+  | None -> None
+  | Some (taint_inst, _TODO_debug_taint, expls) ->
+        (match !hook_setup_hook_function_taint_signature with
+        | None -> ()
+        | Some setup_hook_function_taint_signature ->
+            setup_hook_function_taint_signature rule taint_inst xtarget);
 
-  (match !hook_setup_hook_function_taint_signature with
-  | None -> ()
-  | Some setup_hook_function_taint_signature ->
-      setup_hook_function_taint_signature rule taint_inst xtarget);
+        (* FIXME: This is no longer needed, now we can just check the type 'n'. *)
+        let ctx = ref AST_to_IL.empty_ctx in
+        Visit_function_defs.visit
+            (fun opt_ent _fdef ->
+            match opt_ent with
+            | Some { name = EN (Id (n, _)); _ } ->
+                ctx := AST_to_IL.add_entity_name !ctx n
+            | __else__ -> ())
+            ast;
 
-  (* FIXME: This is no longer needed, now we can just check the type 'n'. *)
-  let ctx = ref AST_to_IL.empty_ctx in
-  Visit_function_defs.visit
-    (fun opt_ent _fdef ->
-      match opt_ent with
-      | Some { name = EN (Id (n, _)); _ } ->
-          ctx := AST_to_IL.add_entity_name !ctx n
-      | __else__ -> ())
-    ast;
+        let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst ast in
+        record_matches glob_effects;
 
-  let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst ast in
-  record_matches glob_effects;
+        (* Check each function definition. *)
+        Visit_function_defs.visit
+            (fun opt_ent fdef ->
+            match fst fdef.fkind with
+            | LambdaKind
+            | Arrow ->
+                (* We do not need to analyze lambdas here, they will be analyzed
+                    together with their enclosing function. This would just duplicate
+                    work. *)
+                ()
+            | Function
+            | Method
+            | BlockCases ->
+                let opt_name =
+                    let* ent = opt_ent in
+                    AST_to_IL.name_of_entity ent
+                in
+                Log.info (fun m ->
+                    m
+                        "Match_tainting_mode:\n\
+                        --------------------\n\
+                        Checking func def: %s\n\
+                        --------------------"
+                        (Option.map IL.str_of_name opt_name ||| "???"));
+                let _flow, fdef_effects, _mapping =
+                    check_fundef taint_inst opt_name !ctx ~glob_env fdef
+                in
+                record_matches fdef_effects)
+            ast;
 
-  (* Check each function definition. *)
-  Visit_function_defs.visit
-    (fun opt_ent fdef ->
-      match fst fdef.fkind with
-      | LambdaKind
-      | Arrow ->
-          (* We do not need to analyze lambdas here, they will be analyzed
-             together with their enclosing function. This would just duplicate
-             work. *)
-          ()
-      | Function
-      | Method
-      | BlockCases ->
-          let opt_name =
-            let* ent = opt_ent in
-            AST_to_IL.name_of_entity ent
-          in
-          Log.info (fun m ->
-              m
-                "Match_tainting_mode:\n\
-                 --------------------\n\
-                 Checking func def: %s\n\
-                 --------------------"
-                (Option.map IL.str_of_name opt_name ||| "???"));
-          let _flow, fdef_effects, _mapping =
-            check_fundef taint_inst opt_name !ctx ~glob_env fdef
-          in
-          record_matches fdef_effects)
-    ast;
+        (* Check execution of statements during object initialization. *)
+        Visit_class_defs.visit
+            (fun opt_ent cdef ->
+            let opt_name =
+                let* ent = opt_ent in
+                AST_to_IL.name_of_entity ent
+            in
+            let fields =
+                cdef.G.cbody |> Tok.unbracket
+                |> List_.map (function G.F x -> x)
+                |> G.stmt1
+            in
+            let stmts = AST_to_IL.stmt taint_inst.lang fields in
+            let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
+            Log.info (fun m ->
+                m
+                    "Match_tainting_mode:\n\
+                    --------------------\n\
+                    Checking object initialization: %s\n\
+                    --------------------"
+                    (Option.map IL.str_of_name opt_name ||| "???"));
+            let init_effects, _mapping =
+                Dataflow_tainting.fixpoint taint_inst ?name:opt_name
+                IL.{ params = []; cfg; lambdas }
+            in
+            record_matches init_effects)
+            ast;
 
-  (* Check execution of statements during object initialization. *)
-  Visit_class_defs.visit
-    (fun opt_ent cdef ->
-      let opt_name =
-        let* ent = opt_ent in
-        AST_to_IL.name_of_entity ent
-      in
-      let fields =
-        cdef.G.cbody |> Tok.unbracket
-        |> List_.map (function G.F x -> x)
-        |> G.stmt1
-      in
-      let stmts = AST_to_IL.stmt taint_inst.lang fields in
-      let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
-      Log.info (fun m ->
-          m
-            "Match_tainting_mode:\n\
-             --------------------\n\
-             Checking object initialization: %s\n\
-             --------------------"
-            (Option.map IL.str_of_name opt_name ||| "???"));
-      let init_effects, _mapping =
-        Dataflow_tainting.fixpoint taint_inst ?name:opt_name
-          IL.{ params = []; cfg; lambdas }
-      in
-      record_matches init_effects)
-    ast;
-
-  (* Check the top-level statements.
-   * In scripting languages it is not unusual to write code outside
-   * function declarations and we want to check this too. We simply
-   * treat the program itself as an anonymous function. *)
-  let (), match_time =
-    Common.with_time (fun () ->
-        let xs = AST_to_IL.stmt taint_inst.lang (G.stmt1 ast) in
-        let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-        Log.info (fun m ->
-            m
-              "Match_tainting_mode:\n\
-               --------------------\n\
-               Checking top-level program\n\
-               --------------------");
-        let top_effects, _mapping =
-          Dataflow_tainting.fixpoint taint_inst IL.{ params = []; cfg; lambdas }
+        (* Check the top-level statements.
+        * In scripting languages it is not unusual to write code outside
+        * function declarations and we want to check this too. We simply
+        * treat the program itself as an anonymous function. *)
+        let (), match_time =
+            Common.with_time (fun () ->
+                let xs = AST_to_IL.stmt taint_inst.lang (G.stmt1 ast) in
+                let cfg, lambdas = CFG_build.cfg_of_stmts xs in
+                Log.info (fun m ->
+                    m
+                    "Match_tainting_mode:\n\
+                    --------------------\n\
+                    Checking top-level program\n\
+                    --------------------");
+                let top_effects, _mapping =
+                Dataflow_tainting.fixpoint taint_inst IL.{ params = []; cfg; lambdas }
+                in
+                record_matches top_effects)
         in
-        record_matches top_effects)
-  in
-  let matches =
-    !matches
-    (* same post-processing as for search-mode in Match_rules.ml *)
-    |> PM.uniq
-    |> PM.no_submatches (* see "Taint-tracking via ranges" *) |> match_hook
-  in
-  let errors = Parse_target.errors_from_skipped_tokens skipped_tokens in
-  let report =
-    RP.mk_match_result matches errors
-      {
-        Core_profiling.rule_id = fst rule.R.id;
-        rule_parse_time = parse_time;
-        rule_match_time = match_time;
-      }
-  in
-  let explanations =
-    if xconf.matching_explanations then
-      [
-        {
-          ME.op = OutJ.Taint;
-          children = expls;
-          matches = report.matches;
-          pos = snd rule.id;
-          extra = None;
-        };
-      ]
-    else []
-  in
-  let report = { report with explanations } in
-  report
+        let matches =
+            !matches
+            (* same post-processing as for search-mode in Match_rules.ml *)
+            |> PM.uniq
+            |> PM.no_submatches (* see "Taint-tracking via ranges" *) |> match_hook
+        in
+        let errors = Parse_target.errors_from_skipped_tokens skipped_tokens in
+        let report =
+            RP.mk_match_result matches errors
+            {
+                Core_profiling.rule_id = fst rule.R.id;
+                rule_parse_time = parse_time;
+                rule_match_time = match_time;
+            }
+        in
+        let explanations =
+            if xconf.matching_explanations then
+            [
+                {
+                ME.op = OutJ.Taint;
+                children = expls;
+                matches = report.matches;
+                pos = snd rule.id;
+                extra = None;
+                };
+            ]
+            else []
+        in
+        let report = { report with explanations } in
+        Some report
 
 let check_rules ~match_hook
     ~(per_rule_boilerplate_fn :
        R.rule ->
-       (unit -> Core_profiling.rule_profiling Core_result.match_result) ->
-       Core_profiling.rule_profiling Core_result.match_result)
+       (unit -> Core_profiling.rule_profiling Core_result.match_result option) ->
+       Core_profiling.rule_profiling Core_result.match_result option)
     (rules : R.taint_rule list) (xconf : Match_env.xconfig)
     (xtarget : Xtarget.t) :
     Core_profiling.rule_profiling Core_result.match_result list =
@@ -435,7 +434,7 @@ let check_rules ~match_hook
   in
 
   rules
-  |> (List_.map
+  |> (List.filter_map
        (fun rule ->
          let xconf =
            Match_env.adjust_xconfig_with_rule_options xconf

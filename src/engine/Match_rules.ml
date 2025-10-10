@@ -223,6 +223,35 @@ let per_rule_boilerplate_fn (timeout : timeout_config option) =
           (Core_error.ErrorSet.singleton error)
           (Core_profiling.empty_rule_profiling rule)
 
+let per_rule_boilerplate_fn_opt (timeout : timeout_config option) =
+  let cnt_timeout = ref 0 in
+  let rule_timeouts = ref [] in
+  fun (file : Fpath.t) (rule : Rule.t) f ->
+    let rule_id = fst rule.R.id in
+    TLS.set Rule.last_matched_rule (Some rule_id);
+    let res_opt =
+      Profiling.profile_code
+        (spf "real_rule:%s" (Rule_ID.to_string rule_id))
+        (fun () ->
+          (* here we handle the rule! *)
+          timeout_function rule file timeout f)
+    in
+    match res_opt with
+    | Some res -> res
+    | None ->
+        incr cnt_timeout;
+        Stack_.push rule_id rule_timeouts;
+        (match timeout with
+        | Some { threshold; _ } when threshold > 0 && !cnt_timeout >= threshold
+          ->
+            raise (File_timeout !rule_timeouts)
+        | _else_ -> ());
+        let loc = Tok.first_loc_of_file file in
+        let error = E.mk_error ~rule_id ~loc OutJ.Timeout in
+        Some (RP.mk_match_result []
+          (Core_error.ErrorSet.singleton error)
+          (Core_profiling.empty_rule_profiling rule))
+
 let scc_match_hook (match_hook : Core_match.t -> unit)
     (dependency_match_table : Match_SCA_mode.dependency_match_table option) :
     PM.t list -> PM.t list =
@@ -273,6 +302,7 @@ let check
   | _else_ -> ());
 
   let per_rule_boilerplate_fn = per_rule_boilerplate_fn timeout file in
+  let per_rule_boilerplate_fn_opt = per_rule_boilerplate_fn_opt timeout file in
 
   (* We separate out the taint rules specifically, because we may want to
      do some rule-wide optimizations, which require analyzing more than
@@ -288,7 +318,8 @@ let check
   let res_taint_rules =
     taint_rules_groups
     |> List.concat_map (fun taint_rules ->
-           Match_tainting_mode.check_rules ~match_hook ~per_rule_boilerplate_fn
+           Match_tainting_mode.check_rules ~match_hook
+             ~per_rule_boilerplate_fn:per_rule_boilerplate_fn_opt
              taint_rules xconf xtarget)
   in
   let res_nontaint_rules =

@@ -70,6 +70,7 @@ let test_dfg_tainting rules_file file =
   let taint_inst, spec_matches, _exps =
     Match_taint_spec.taint_config_of_rule ~per_file_formula_cache:tbl xconf lang
       file (ast, []) rule
+    |> Option.get
   in
   UCommon.pr2 "\nSources";
   UCommon.pr2 "-------";

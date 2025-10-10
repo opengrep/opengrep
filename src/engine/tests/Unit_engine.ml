@@ -659,11 +659,11 @@ let tainting_test (lang : Lang.t) (rules_file : Fpath.t) (file : Fpath.t) =
            in
            match results with
            | [ res ] -> res.matches
+           | [] -> []
            (* By construction, `check_rules` should only return the same number of results as rules it
               was initially given.
               So this case is impossible.
            *)
-           | []
            | _ :: _ :: _ ->
                raise Impossible)
   in

@@ -43,7 +43,7 @@ val taint_config_of_rule :
   Fpath.t ->
   AST_generic.program * Tok.location list ->
   Rule.taint_rule ->
-  Taint_rule_inst.t * spec_matches * Matching_explanation.t list
+  (Taint_rule_inst.t * spec_matches * Matching_explanation.t list) option
 
 (* Exposed for Pro *)
 
