@@ -2376,14 +2376,18 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
                (succs |> List.map string_of_int |> String.concat ", ")))
   ;
   *)
+  let base_timeout =
+    Common.(
+      taint_inst.options.taint_fixpoint_timeout
+      ||| Limits_semgrep.taint_FIXPOINT_TIMEOUT)
+  in
+  let timeout =
+    if taint_inst.options.taint_intrafile then base_timeout *. 10.0
+    else base_timeout
+  in
   let end_mapping, timeout =
-    DataflowX.fixpoint
-      ~timeout:
-        Common.(
-          taint_inst.options.taint_fixpoint_timeout
-          ||| Limits_semgrep.taint_FIXPOINT_TIMEOUT)
-      ~eq_env:Lval_env.equal ~init:init_mapping ~trans:(transfer env ~fun_cfg)
-      ~forward:true ~flow
+    DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+      ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
   in
   log_timeout_warning taint_inst env.func.fname timeout;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
