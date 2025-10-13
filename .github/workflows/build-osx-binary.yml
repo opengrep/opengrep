@@ -40,7 +40,7 @@ jobs:
         run: |
           python -m pip install --no-cache-dir --upgrade pipenv
       - name: Install pyinstaller
-        run: pipenv run pip install nuitka protobuf jaraco.text
+        run: pipenv run pip install nuitka==2.7.16 protobuf jaraco.text
 
       - name: install some dependencies for windows (pyinstaller only)
         run: pipenv run pip install chardet charset-normalizer
