@@ -644,13 +644,23 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
 
 let lookup_signature_with_object_context env fun_exp object_mappings =
   match env.signature_db with
-  | None -> None
+  | None ->
+      Log.debug (fun m -> m "TAINT_SIG: No signature database available");
+      None
   | Some db -> (
+      Log.debug (fun m ->
+          m "TAINT_SIG: Signature database has %d entries"
+            (Shape_and_sig.FunctionMap.cardinal db.Shape_and_sig.signatures));
       match fun_exp.e with
       | Fetch { base = Var name; rev_offset = [] } ->
           (* Simple function call *)
           let sig_key = Shape_and_sig.{ class_name = None; name = Some name } in
-          Shape_and_sig.(lookup_signature db sig_key)
+          let result = Shape_and_sig.(lookup_signature db sig_key) in
+          Log.debug (fun m ->
+              m "TAINT_SIG: Looking up function %s: %s"
+                (fst name.ident)
+                (if Option.is_some result then "FOUND" else "NOT FOUND"));
+          result
       | Fetch
           {
             base = VarSpecial ((Self | This), _);

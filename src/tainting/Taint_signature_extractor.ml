@@ -123,7 +123,7 @@ let mk_method_property_assumptions (properties : AST_generic.expr list)
          Taint_lval_env.add_lval il_lval taint_set taint_env)
        Taint_lval_env.empty
 
-let mk_param_assumptions (params : IL.param list) : Taint_lval_env.t =
+let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t =
   let _, env =
     params
     |> List.fold_left
@@ -141,7 +141,26 @@ let mk_param_assumptions (params : IL.param list) : Taint_lval_env.t =
                let generic_taint =
                  Taint.{ orig = Var taint_lval; tokens = [] }
                in
-               let taint_set = Taint.Taint_set.singleton generic_taint in
+               (* Check if this parameter matches a source pattern *)
+               let source_taints =
+                 match taint_inst with
+                 | Some tinst ->
+                     let _, tok = pname.ident in
+                     let any = AST_generic.Tk tok in
+                     let source_pms = tinst.TRI.preds.is_source any in
+                     if source_pms <> [] then
+                       (* Create Src taints for matching sources using taints_of_pms *)
+                       let pms_with_specs =
+                         source_pms
+                         |> List.map (fun (tm : Rule.taint_source Taint_spec_match.t) ->
+                                (tm.Taint_spec_match.spec_pm, tm.spec))
+                       in
+                       Taint.taints_of_pms ~incoming:Taint.Taint_set.empty pms_with_specs
+                     else
+                       Taint.Taint_set.empty
+                 | None -> Taint.Taint_set.empty
+               in
+               let taint_set = Taint.Taint_set.union (Taint.Taint_set.singleton generic_taint) source_taints in
                let new_env = Taint_lval_env.add_lval il_lval taint_set env in
                (i + 1, new_env)
            | IL.PatternParam pat -> (
@@ -197,7 +216,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
     ?(signature_db : signature_database option) (func_cfg : IL.fun_cfg) :
     extraction_result =
   let params = Signature.of_IL_params func_cfg.params in
-  let param_assumptions = mk_param_assumptions func_cfg.params in
+  let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
   let combined_env =
     match in_env with
     | Some env -> Taint_lval_env.union env param_assumptions
@@ -467,26 +486,66 @@ let show_signature_extraction func_name signature =
     (Signature.show signature)
 
 let extract_signatures_from_ast taint_inst (ast : AST_generic.program)
-    (functions : (Shape_and_sig.fn_id * IL.fun_cfg) list) : signature_database =
-  (* Detect object initialization mappings for this file *)
+    (functions : (Shape_and_sig.fn_id * IL.fun_cfg * AST_generic.expr list) list) : signature_database =
+  (* Step 1: Detect object initialization mappings for this file *)
   let object_mappings = detect_object_initialization ast taint_inst.TRI.lang in
+  Log.debug (fun m ->
+      m "TAINT_SIG: Object mappings: %s"
+        (Object_initialization.show_object_mappings object_mappings));
 
-  (* Extract signatures for all functions *)
-  let db_with_signatures =
-    List.fold_left
-      (fun db (name, func_cfg) ->
-        let updated_db, _signature =
-          extract_signature_with_file_context ~db taint_inst ~name func_cfg ast
-        in
-        updated_db)
-      (Shape_and_sig.empty_signature_database ())
-      functions
+  (* Step 2: Build call graph to determine analysis order *)
+  let call_graph = Function_call_graph.build_call_graph ~lang:taint_inst.TRI.lang ~object_mappings ast in
+
+  (* Step 3: Determine analysis order using topological traversal *)
+  let analysis_order =
+    Function_call_graph.Topo.fold
+      (fun fn_id acc -> fn_id :: acc)
+      call_graph []
+    |> List.rev
   in
 
-  (* Add object mappings to the final signature database *)
+  Log.debug (fun m ->
+      let names =
+        analysis_order
+        |> List.map Shape_and_sig.show_fn_id
+        |> String.concat " -> "
+      in
+      m "TAINT_SIG: analysis order: %s" names);
+
+  (* Step 4: Create lookup map for function CFGs and method properties *)
+  let func_map =
+    List.fold_left
+      (fun map (name, cfg, props) ->
+        Shape_and_sig.FunctionMap.add name (cfg, props) map)
+      Shape_and_sig.FunctionMap.empty functions
+  in
+
+  (* Step 5: Extract signatures in topological order *)
+  let db_with_signatures =
+    List.fold_left
+      (fun db fn_id ->
+        match Shape_and_sig.FunctionMap.find_opt fn_id func_map with
+        | Some (func_cfg, method_properties) ->
+            let updated_db, _signature =
+              extract_signature_with_file_context ~db taint_inst ~name:fn_id
+                ~method_properties func_cfg ast
+            in
+            updated_db
+        | None ->
+            (* Function is present in the call graph but not in our
+               functions list – ignore it here. *)
+            db)
+      (Shape_and_sig.empty_signature_database ())
+      analysis_order
+  in
+
+  (* Step 6: Add object mappings to the final signature database *)
   let final_db =
     Shape_and_sig.add_object_mappings db_with_signatures object_mappings
   in
+  Log.debug (fun m ->
+      m "TAINT_SIG: Final signature database:\n%s"
+        (Shape_and_sig.show_signature_database final_db));
   final_db
 
 (* Use functions from Shape_and_sig *)

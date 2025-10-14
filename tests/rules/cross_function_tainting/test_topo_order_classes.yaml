@@ -1,0 +1,13 @@
+rules:
+  - id: test_topo_order_classes
+    message: Taint flows through method calls
+    languages:
+      - js
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

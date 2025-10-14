@@ -32,6 +32,16 @@ module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
 
+type fun_info = {
+  fn_id : Shape_and_sig.fn_id;
+  opt_name : IL.name option;
+  class_name_str : string option;
+  method_properties : AST_generic.expr list;
+  cfg : IL.fun_cfg;
+  fdef : G.function_definition;
+  is_lambda_assignment : bool;
+}
+
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -312,53 +322,52 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     (* Add object mappings to initial signature database *)
     let initial_signature_db = Shape_and_sig.add_object_mappings (signature_db ||| Shape_and_sig.empty_signature_database ()) object_mappings in
 
-    (* Process each function definition, threading signature database functionally *)
-    let _signature_db =
+    (* Collect function metadata and prepare call graph based ordering. *)
+    let add_info info (infos, info_map) =
+      let infos = info :: infos in
+      let info_map =
+        if Shape_and_sig.FunctionMap.mem info.fn_id info_map then info_map
+        else Shape_and_sig.FunctionMap.add info.fn_id info info_map
+      in
+      (infos, info_map)
+    in
+
+    let collected_infos, info_map =
       Visit_function_defs.fold_with_class_context
-        (fun signature_db opt_ent class_name fdef ->
+        (fun (infos, info_map) opt_ent class_name fdef ->
           match fst fdef.fkind with
           | LambdaKind
-          | Arrow ->
-              (* Only skip anonymous nested lambdas (no entity).
-                 Process named lambdas from assignments (have entity). *)
-              (match opt_ent with
-              | None ->
-                  (* Anonymous nested lambda - skip it *)
-                  signature_db
-              | Some _ent ->
-                  (* Named lambda from assignment - extract signature only.
-                   * Don't run taint analysis here, as the lambda will be analyzed
-                   * as part of its execution context (top-level or enclosing function). *)
+          | Arrow -> (
+              match opt_ent with
+              | None -> (infos, info_map)
+              | Some _ ->
                   let opt_name =
                     let* ent = opt_ent in
                     AST_to_IL.name_of_entity ent
                   in
-
                   let class_name_il = Option.map AST_to_IL.var_of_name class_name in
-                  let name = Shape_and_sig.{ class_name = class_name_il; name = opt_name } in
-
-                  Log.info (fun m ->
-                      m
-                        "Match_tainting_mode:\n\
-                         --------------------\n\
-                         Extracting signature for lambda assignment: %s\n\
-                         --------------------"
-                        (Option.map IL.str_of_name opt_name ||| "???"));
-
-                  (* Extract signature for this lambda and add to database *)
+                  let fn_id = Shape_and_sig.{ class_name = class_name_il; name = opt_name } in
+                  let class_name_str =
+                    match class_name with
+                    | Some (G.Id ((str, _), _)) -> Some str
+                    | _ -> None
+                  in
                   let fdef_il =
                     AST_to_IL.function_definition taint_inst.lang ~ctx:!ctx fdef
                   in
-                  let fcfg = CFG_build.cfg_of_fdef fdef_il in
-
-                  (* Extract signature (but don't analyze for matches - that happens in context) *)
-                  let updated_db, _signature =
-                    Taint_signature_extractor.extract_signature_with_file_context
-                      ~db:signature_db taint_inst ~name ~method_properties:[] fcfg ast
+                  let cfg = CFG_build.cfg_of_fdef fdef_il in
+                  let info =
+                    {
+                      fn_id;
+                      opt_name;
+                      class_name_str;
+                      method_properties = [];
+                      cfg;
+                      fdef;
+                      is_lambda_assignment = true;
+                    }
                   in
-
-                  (* Return updated signature database for next iteration *)
-                  updated_db)
+                  add_info info (infos, info_map))
           | Function
           | Method
           | BlockCases ->
@@ -366,53 +375,116 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                 let* ent = opt_ent in
                 AST_to_IL.name_of_entity ent
               in
-
               let class_name_il = Option.map AST_to_IL.var_of_name class_name in
-              let class_name_str = match class_name with
+              let class_name_str =
+                match class_name with
                 | Some (G.Id ((str, _), _)) -> Some str
                 | _ -> None
               in
-              let name = Shape_and_sig.{ class_name = class_name_il; name = opt_name } in
-
-              (* Extract this/self properties if this is a method *)
-              let method_properties = match fst fdef.fkind with
+              let method_properties =
+                match fst fdef.fkind with
                 | Method -> Taint_signature_extractor.extract_method_properties fdef
                 | Function | LambdaKind | Arrow | BlockCases -> []
               in
-
-              Log.info (fun m ->
-                  m
-                    "Match_tainting_mode:\n\
-                     --------------------\n\
-                     Checking func def: %s\n\
-                     --------------------"
-                    (Option.map IL.str_of_name opt_name ||| "???"));
-
-              (* Extract signature for this function and add to database *)
+              let fn_id = Shape_and_sig.{ class_name = class_name_il; name = opt_name } in
               let fdef_il =
                 AST_to_IL.function_definition taint_inst.lang ~ctx:!ctx fdef
               in
-              let fcfg = CFG_build.cfg_of_fdef fdef_il in
-
-              (* Cross-function taint analysis enabled: extract signatures *)
-              let updated_db, _signature =
-                Taint_signature_extractor.extract_signature_with_file_context
-                  ~db:signature_db taint_inst ~name ~method_properties fcfg ast
+              let cfg = CFG_build.cfg_of_fdef fdef_il in
+              let info =
+                {
+                  fn_id;
+                  opt_name;
+                  class_name_str;
+                  method_properties;
+                  cfg;
+                  fdef;
+                  is_lambda_assignment = false;
+                }
               in
-
-              (* Run normal taint analysis with updated signature database *)
-              let _flow, fdef_effects, _mapping =
-                check_fundef taint_inst name !ctx ~glob_env
-                  ?class_name:class_name_str ~signature_db:updated_db fdef
-              in
-              record_matches fdef_effects;
-
-              (* Return updated signature database for next iteration *)
-              updated_db)
-        initial_signature_db
-        ast
+              add_info info (infos, info_map)
+        )
+        ([], Shape_and_sig.FunctionMap.empty) ast
     in
-    Some _signature_db
+    let collected_infos = List.rev collected_infos in
+
+    let call_graph = Function_call_graph.build_call_graph ~lang ~object_mappings ast in
+
+    (* Write call graph to dot file for debugging *)
+    let dot_file = open_out "call_graph.dot" in
+    Function_call_graph.Dot.output_graph dot_file call_graph;
+    close_out dot_file;
+    Log.debug (fun m -> m "TAINT_SIG: Wrote call graph to call_graph.dot");
+
+    let analysis_order =
+      Function_call_graph.Topo.fold (fun fn acc -> fn :: acc) call_graph []
+      |> List.rev
+    in
+
+    Log.debug (fun m ->
+        let names =
+          analysis_order
+          |> List.map Shape_and_sig.show_fn_id
+          |> String.concat " -> "
+        in
+        m "TAINT_SIG: analysis order: %s" names);
+
+    let processed = ref Shape_and_sig.FunctionMap.empty in
+
+    let process_fun_info info db =
+      let log_name = Option.map IL.str_of_name info.opt_name ||| "???" in
+      if info.is_lambda_assignment then
+        Log.info (fun m ->
+            m
+              "Match_tainting_mode:\n\
+               --------------------\n\
+               Extracting signature for lambda assignment: %s\n\
+               --------------------"
+              log_name)
+      else
+        Log.info (fun m ->
+            m
+              "Match_tainting_mode:\n\
+               --------------------\n\
+               Checking func def: %s\n\
+               --------------------"
+              log_name);
+      let updated_db, _signature =
+        Taint_signature_extractor.extract_signature_with_file_context
+          ~db taint_inst ~name:info.fn_id ~method_properties:info.method_properties
+          info.cfg ast
+      in
+      if info.is_lambda_assignment then updated_db
+      else (
+        let _flow, fdef_effects, _mapping =
+          check_fundef taint_inst info.fn_id !ctx ~glob_env
+            ?class_name:info.class_name_str ~signature_db:updated_db info.fdef
+        in
+        record_matches fdef_effects;
+        updated_db)
+    in
+
+    let signature_db_after_order =
+      List.fold_left
+        (fun db fn_id ->
+          match Shape_and_sig.FunctionMap.find_opt fn_id info_map with
+          | None -> db
+          | Some info ->
+              processed := Shape_and_sig.FunctionMap.add fn_id () !processed;
+              process_fun_info info db)
+        initial_signature_db analysis_order
+    in
+
+    let final_signature_db =
+      List.fold_left
+        (fun db info ->
+          if Shape_and_sig.FunctionMap.mem info.fn_id !processed then db
+          else (
+            processed := Shape_and_sig.FunctionMap.add info.fn_id () !processed;
+            process_fun_info info db))
+        signature_db_after_order collected_infos
+    in
+    Some final_signature_db
   ) else (
     (* Cross-function taint analysis disabled: use main branch behavior *)
     Visit_function_defs.visit

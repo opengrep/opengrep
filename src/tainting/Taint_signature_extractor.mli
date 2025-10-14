@@ -66,7 +66,7 @@ val extract_method_properties :
 val extract_signatures_from_ast :
   Taint_rule_inst.t ->
   AST_generic.program ->
-  (Shape_and_sig.fn_id * IL.fun_cfg) list ->
+  (Shape_and_sig.fn_id * IL.fun_cfg * AST_generic.expr list) list ->
   signature_database
 (** Extract signatures from a list of functions using AST context *)
 

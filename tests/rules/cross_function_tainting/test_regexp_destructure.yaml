@@ -1,0 +1,18 @@
+rules:
+  - id: regexp_destructure_taint
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+      - patterns:
+          - pattern-inside: |
+              function $FUNC(..., $NEEDLE, ...) {
+                ...
+              }
+          - focus-metavariable: $NEEDLE
+    pattern-sinks:
+      - pattern: new RegExp(...)
+    message: RegExp() called with tainted data through destructuring
+    languages:
+      - javascript
+      - typescript
+    severity: WARNING
