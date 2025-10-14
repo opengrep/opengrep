@@ -1,17 +1,33 @@
 # Changelog
 
-## [1.10.1](https://github.com/opengrep/opengrep/releases/tag/v1.10.1) - 10-10-2025
+## [1.10.2](https://github.com/opengrep/opengrep/releases/tag/v1.10.2) - 14-10-2025
 
 ### Bug fixes
 
-* Support for the `stackalloc` keyword in C#
-* Better support for strings in Scala
+* Special case for the '+' operator in Scala by @maciejpirog in #429
+* c#: fix to-AST-generic for stackalloc arrays by @maciejpirog in #430
+* Set windows runner image to 2022 by @dimitris-m in #435
 
 ### Improvements
 
-* Performance improvement for taint tracking by skipping a rule if no source or sink found
+* Cancel taint on no sinks or sources by @maciejpirog in #433
+* Emit a warning when a rule gets deduped because of shared rule-id by @maciejpirog in #420
+* Remove unused field `id_info_id` from `id_info` by @maciejpirog in #423
 
-**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.10.0...v1.10.1
+### Documentation
+
+* Add `timeout` rule option in OPENGREP.md by @dimitris-m in #424
+* Improve OPENGREP.md text by @dimitris-m in #427
+
+### Tech debt
+
+* Remove Semgrep's changelog folder by @dimitris-m in #428
+
+#### Notes
+
+* Version 1.10.1 (#434) intentionally skipped.
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.10.0...v1.10.2
 
 
 ## [1.10.0](https://github.com/opengrep/opengrep/releases/tag/v1.10.0) - 07-09-2025
