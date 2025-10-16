@@ -610,7 +610,8 @@ let check_rules ~match_hook
     (xtarget : Xtarget.t) :
     Core_profiling.rule_profiling Core_result.match_result list =
   (* Check for language support warnings when taint_intrafile is enabled *)
-  (match rules with
+  (Dataflow_tainting.reset_constructor ();
+  match rules with
   | rule :: _ ->
       (* Check if any rule has taint_intrafile enabled *)
       let has_taint_intrafile = 

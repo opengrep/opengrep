@@ -35,25 +35,13 @@ module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
 
-(* Global storage for constructor instance variable taint *)
-let constructor_instance_vars : (string, Lval_env.t) Hashtbl.t =
-  Hashtbl.create 16
+(* Domain-local storage for constructor instance variable taint *)
+let constructor_instance_vars : (string, Lval_env.t) Hashtbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Hashtbl.create 16)
 
-(* Object-sensitive storage: maps object IDs to their instance variable taint *)
-let object_instance_vars : (string, Lval_env.t) Hashtbl.t = Hashtbl.create 64
-
-(* Maps variable names to their object IDs (which object they hold) *)
-let var_to_object : (string, string) Hashtbl.t = Hashtbl.create 64
-
-(* Generate unique object ID for constructor calls *)
-let mk_object_id (file : Fpath.t) (line : int) (class_name : string) : string =
-  Printf.sprintf "%s:%d:%s" (Fpath.to_string file) line class_name
-
-(* Get variable key for object tracking *)
-let var_key_of_lval lval =
-  match lval with
-  | { base = Var var; rev_offset = [] } -> Some (fst var.ident)
-  | _ -> None
+(* Reset domain-local hashtable *)
+let reset_constructor () =
+  Hashtbl.clear (Domain.DLS.get constructor_instance_vars)
 
 (* Language-dependent constructor identification *)
 let is_constructor = Object_initialization.is_constructor
@@ -132,7 +120,8 @@ type env = {
   signature_db : Shape_and_sig.signature_database option;
       (** Signature database for inter-procedural taint analysis *)
   class_name : string option;
-      (** Class name if we're analyzing a method, None for standalone functions *)
+      (** Class name if we're analyzing a method, None for standalone functions
+      *)
 }
 
 (*****************************************************************************)
@@ -305,11 +294,11 @@ let taints_of_matches env ~incoming sources =
   (data_taints, lval_env)
 
 let record_effects env new_effects =
-  if not (List_.null new_effects) then (
+  if not (List_.null new_effects) then
     let new_effects =
       env.taint_inst.handle_effects env.func.fname new_effects
     in
-    env.effects_acc := Effects.add_list new_effects !(env.effects_acc))
+    env.effects_acc := Effects.add_list new_effects !(env.effects_acc)
 
 let unify_mvars_sets env mvars1 mvars2 =
   let xs =
@@ -642,6 +631,37 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
+let get_signature_for_object db method_name object_mappings obj =
+  (* Method call: obj.method() *)
+  let obj_str = fst obj.ident in
+  (* Use object initialization mappings to determine obj's class *)
+  let obj_class_str =
+    object_mappings
+    |> List.find_opt (fun (var_name, _class_name) ->
+           match var_name with
+           | AST_generic.Id ((var_str, _), _) -> var_str = obj_str
+           | _ -> false)
+    |> Option.map (fun (_var_name, class_name) ->
+           match class_name with
+           | AST_generic.Id ((class_str, _), _) -> class_str
+           | _ -> "")
+  in
+  (* Try with class context first, then fallback to no class *)
+  match obj_class_str with
+  | Some class_str ->
+      let class_name =
+        {
+          ident = (class_str, snd method_name.ident);
+          sid = method_name.sid;
+          id_info = method_name.id_info;
+        }
+      in
+      let method_sig_id_with_class =
+        Shape_and_sig.{ class_name = Some class_name; name = Some method_name }
+      in
+      Shape_and_sig.(lookup_signature db method_sig_id_with_class)
+  | None -> None
+
 let lookup_signature_with_object_context env fun_exp object_mappings =
   match env.signature_db with
   | None ->
@@ -657,8 +677,7 @@ let lookup_signature_with_object_context env fun_exp object_mappings =
           let sig_key = Shape_and_sig.{ class_name = None; name = Some name } in
           let result = Shape_and_sig.(lookup_signature db sig_key) in
           Log.debug (fun m ->
-              m "TAINT_SIG: Looking up function %s: %s"
-                (fst name.ident)
+              m "TAINT_SIG: Looking up function %s: %s" (fst name.ident)
                 (if Option.is_some result then "FOUND" else "NOT FOUND"));
           result
       | Fetch
@@ -692,58 +711,9 @@ let lookup_signature_with_object_context env fun_exp object_mappings =
                     Shape_and_sig.{ class_name = None; name = Some method_name }
                   in
                   Shape_and_sig.(lookup_signature db method_sig_id))
-          | None ->
-              (* No class context, try without class *)
-              let method_sig_id =
-                Shape_and_sig.{ class_name = None; name = Some method_name }
-              in
-              Shape_and_sig.(lookup_signature db method_sig_id))
-      | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] }
-        -> (
-          (* Method call: obj.method() *)
-          let obj_str = fst obj.ident in
-          (* Use object initialization mappings to determine obj's class *)
-          let obj_class_str =
-            object_mappings
-            |> List.find_opt (fun (var_name, _class_name) ->
-                   match var_name with
-                   | AST_generic.Id ((var_str, _), _) -> var_str = obj_str
-                   | _ -> false)
-            |> Option.map (fun (_var_name, class_name) ->
-                   match class_name with
-                   | AST_generic.Id ((class_str, _), _) -> class_str
-                   | _ -> "")
-          in
-          (* Try with class context first, then fallback to no class *)
-          match obj_class_str with
-          | Some class_str -> (
-              let class_name =
-                {
-                  ident = (class_str, snd method_name.ident);
-                  sid = method_name.sid;
-                  id_info = method_name.id_info;
-                }
-              in
-              let method_sig_id_with_class =
-                Shape_and_sig.
-                  { class_name = Some class_name; name = Some method_name }
-              in
-              match
-                Shape_and_sig.(lookup_signature db method_sig_id_with_class)
-              with
-              | Some sig_ -> Some sig_
-              | None ->
-                  (* Fallback to no class context *)
-                  let method_sig_id =
-                    Shape_and_sig.{ class_name = None; name = Some method_name }
-                  in
-                  Shape_and_sig.(lookup_signature db method_sig_id))
-          | None ->
-              (* No object mapping found, try without class context *)
-              let method_sig_id =
-                Shape_and_sig.{ class_name = None; name = Some method_name }
-              in
-              Shape_and_sig.(lookup_signature db method_sig_id))
+          | None -> None)
+      | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] } ->
+          get_signature_for_object db method_name object_mappings obj
       | _ -> None)
 
 (* Legacy function for backward compatibility *)
@@ -1610,6 +1580,7 @@ let check_function_call_callee env e =
 
 (* Test whether an instruction is tainted, and if it is also a sink,
  * report the effect too (by side effect). *)
+ (*TODO needs some cleanup to remove duplicate code*)
 let call_with_intrafile lval_opt e env args instr =
   let args_taints, all_args_taints, lval_env =
     check_function_call_arguments env args
@@ -1618,66 +1589,9 @@ let call_with_intrafile lval_opt e env args instr =
     all_args_taints
     |> Taints.union (gather_all_taints_in_args_taints args_taints)
   in
-  (* Check if this is a DOT access method call and resolve object class *)
-  let e_with_object_context =
-    match e.e with
-    | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] } -> (
-        (* Get object mappings from signature database *)
-        let object_mappings =
-          match env.signature_db with
-          | None -> []
-          | Some db -> Shape_and_sig.get_object_mappings db
-        in
-        (* Find class for this object *)
-        let obj_str = fst obj.ident in
-        let obj_class_str =
-          object_mappings
-          |> List.find_opt (fun (var_name, _class_name) ->
-                 match var_name with
-                 | AST_generic.Id ((var_str, _), _) -> var_str = obj_str
-                 | _ -> false)
-          |> Option.map (fun (_var_name, class_name) ->
-                 match class_name with
-                 | AST_generic.Id ((class_str, _), _) -> class_str
-                 | _ -> "")
-        in
-        match obj_class_str with
-        | Some class_str -> (
-            (* Perform class-aware signature lookup directly *)
-            let class_name =
-              {
-                ident = (class_str, snd method_name.ident);
-                sid = method_name.sid;
-                id_info = method_name.id_info;
-              }
-            in
-            let method_sig_id_with_class =
-              Shape_and_sig.
-                { class_name = Some class_name; name = Some method_name }
-            in
-            let signature_result =
-              match env.signature_db with
-              | None -> None
-              | Some db ->
-                  Shape_and_sig.(lookup_signature db method_sig_id_with_class)
-            in
-            match signature_result with
-            | Some _signature -> e
-            | None -> e)
-        | None -> e)
-    | _ -> e
-  in
   let e_obj, e_taints, e_shape, lval_env =
-    check_function_call_callee { env with lval_env } e_with_object_context
+    check_function_call_callee { env with lval_env } e
   in
-  (* NOTE(sink_has_focus):
-   * After we made sink specs "exact" by default, we need this trick to
-   * be backwards compatible wrt to specifications like `sink(...)`. Even
-   * if the sink is "exact", if it has NO focus, then we consider that all
-   * of the parameters of the function are sinks. So, even if
-   * `taint_assume_safe_functions: true`, if the spec is `sink(...)`, we
-   * still report `sink(tainted)`.
-   *)
   check_orig_if_sink { env with lval_env } instr.iorig all_args_taints Bot
     ~filter_sinks:(fun m -> not (m.spec.sink_exact && m.spec.sink_has_focus));
   let call_taints, shape, lval_env =
@@ -1761,7 +1675,7 @@ let call_with_intrafile lval_opt e env args instr =
   in
   (all_call_taints, shape, lval_env)
 
-let new_with_intrafile env result_lval ty args constructor =
+let new_with_intrafile env _result_lval _ty args constructor =
   (* 'New' with reference to constructor - use constructor signatures *)
   let args_taints, all_args_taints, lval_env =
     check_function_call_arguments env args
@@ -1777,38 +1691,7 @@ let new_with_intrafile env result_lval ty args constructor =
         check_function_call { env with lval_env } constructor args args_taints
   in
   match call_result with
-  | Some (call_taints, shape, lval_env) -> (
-      (* Constructor call succeeded - create object-sensitive tracking *)
-      let class_name_opt =
-        match ty with
-        | G.{ t = TyN (G.Id (class_name, _)); _ } -> Some (fst class_name)
-        | _ -> None
-      in
-      match class_name_opt with
-      | Some class_name ->
-          (* Generate unique object ID and store constructor result *)
-          let line = 0 in
-          (* TODO: Get actual line number from result_lval or constructor *)
-          let object_id = mk_object_id env.taint_inst.file line class_name in
-          (* Associate the result variable with this object ID *)
-          (match var_key_of_lval result_lval with
-          | Some var_key -> Hashtbl.replace var_to_object var_key object_id
-          | None -> ());
-          (* Store the instance variable taint for this specific object *)
-          let storage_key =
-            Printf.sprintf "%s:%s"
-              (Fpath.to_string env.taint_inst.file)
-              class_name
-          in
-          (try
-             let constructor_taint =
-               Hashtbl.find constructor_instance_vars storage_key
-             in
-             Hashtbl.replace object_instance_vars object_id constructor_taint
-           with
-          | Not_found -> ());
-          (call_taints, shape, lval_env)
-      | None -> (call_taints, shape, lval_env))
+  | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
   | None ->
       let all_args_taints =
         all_args_taints
@@ -1831,24 +1714,24 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
         in
         (* Generate ToLval effect for instance variable assignments when intrafile is enabled *)
         (if env.taint_inst.options.taint_intrafile then
-          match lval.base with
-          | VarSpecial (Self, _)
-          | VarSpecial (This, _)
-            when not (Taints.is_empty taints) ->
-              let offset =
-                T.offset_of_rev_IL_offset ~rev_offset:lval.rev_offset
-              in
-              let taint_lval = { T.base = T.BThis; offset } in
-              let effects = [ Effect.ToLval (taints, taint_lval) ] in
-              record_effects env effects
-          | _ -> ());
+           match lval.base with
+           | VarSpecial (Self, _)
+           | VarSpecial (This, _)
+             when not (Taints.is_empty taints) ->
+               let offset =
+                 T.offset_of_rev_IL_offset ~rev_offset:lval.rev_offset
+               in
+               let taint_lval = { T.base = T.BThis; offset } in
+               let effects = [ Effect.ToLval (taints, taint_lval) ] in
+               record_effects env effects
+           | _ -> ());
         (* Let the transfer function handle the actual lval assignment *)
         (taints, shape, lval_env)
     | AssignAnon _ -> (Taints.empty, Bot, env.lval_env)
     | Call (lval_opt, e, args) ->
         let intrafile = env.taint_inst.options.taint_intrafile in
         if intrafile then call_with_intrafile lval_opt e env args instr
-        else (
+        else
           let args_taints, all_args_taints, lval_env =
             check_function_call_arguments env args
           in
@@ -1928,7 +1811,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
             check_type_and_drop_taints_if_bool_or_number env all_call_taints
               type_of_expr e
           in
-          (all_call_taints, shape, lval_env))
+          (all_call_taints, shape, lval_env)
     | New (result_lval, ty, Some constructor, args) -> (
         if env.taint_inst.options.taint_intrafile then
           new_with_intrafile env result_lval ty args constructor
@@ -2347,8 +2230,7 @@ and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env :
   (effects, out_env')
 
 and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
-    ~enter_lval_env ~in_lambda ?class_name
-    ?signature_db fun_cfg =
+    ~enter_lval_env ~in_lambda ?class_name ?signature_db fun_cfg =
   let flow = fun_cfg.cfg in
   let init_mapping = DataflowX.new_node_array flow Lval_env.empty_inout in
   let needed_vars =
@@ -2437,7 +2319,9 @@ and (fixpoint :
                 in
                 try
                   let class_instance_vars =
-                    Hashtbl.find constructor_instance_vars storage_key
+                    Hashtbl.find
+                      (Domain.DLS.get constructor_instance_vars)
+                      storage_key
                   in
                   Lval_env.union in_env class_instance_vars
                 with
@@ -2484,20 +2368,25 @@ and (fixpoint :
       ~class_name ?signature_db fun_cfg
   in
   (* If this was a constructor, store the instance variable taint for other methods *)
-  if taint_inst.options.taint_intrafile then (match name.name with
-  | Some name -> (
-      let func_name = fst name.ident in
-      if is_constructor taint_inst.lang func_name class_name then
-        (* Store constructor taint only when we have proper class context *)
-        match class_name with
-        | Some cls ->
-            let final_env = mapping.(fun_cfg.cfg.exit).Dataflow_core.out_env in
-            let storage_key =
-              Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
-            in
-            Hashtbl.replace constructor_instance_vars storage_key final_env
-        | None -> () (* Don't store when no class context *))
-  | None -> ());
+  (if taint_inst.options.taint_intrafile then
+     match name.name with
+     | Some name -> (
+         let func_name = fst name.ident in
+         if is_constructor taint_inst.lang func_name class_name then
+           (* Store constructor taint only when we have proper class context *)
+           match class_name with
+           | Some cls ->
+               let final_env =
+                 mapping.(fun_cfg.cfg.exit).Dataflow_core.out_env
+               in
+               let storage_key =
+                 Printf.sprintf "%s:%s" (Fpath.to_string taint_inst.file) cls
+               in
+               Hashtbl.replace
+                 (Domain.DLS.get constructor_instance_vars)
+                 storage_key final_env
+           | None -> () (* Don't store when no class context *))
+     | None -> ());
   (effects, mapping)
 [@@profiling]
 

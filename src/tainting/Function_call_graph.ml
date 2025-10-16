@@ -1,21 +1,3 @@
-(* Corneliu Hoffman
- *
- * Copyright (C) 2024 Semgrep Inc.
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public License
- * version 2.1 as published by the Free Software Foundation, with the
- * special exception on linking described in file LICENSE.
- *
- * This library is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the file
- * LICENSE for more details.
- *)
-
-(* Build function call graph using OCamlgraph to determine analysis order
-   for inter-procedural taint analysis *)
-
 open Common
 module G = AST_generic
 module Log = Log_tainting.Log
