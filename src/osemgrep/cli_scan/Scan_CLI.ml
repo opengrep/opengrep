@@ -758,22 +758,7 @@ This may still run Pro rules, but only using the OSS features.
   in
   Arg.value (Arg.flag info)
 
-let o_pro_languages : bool Term.t =
-  let info =
-    Arg.info [ "pro-languages" ]
-      ~doc:
-        ("Enable Pro languages (currently Apex, C#, and Elixir). " ^ C.blurb_pro)
-  in
-  Arg.value (Arg.flag info)
 
-let o_pro_intrafile : bool Term.t =
-  let info =
-    Arg.info [ "pro-intrafile" ]
-      ~doc:
-        ("Intra-file inter-procedural taint analysis. Implies --pro-languages. "
-       ^ C.blurb_pro)
-  in
-  Arg.value (Arg.flag info)
 
 let o_pro_path_sensitive : bool Term.t =
   let info =
@@ -788,6 +773,16 @@ let o_pro : bool Term.t =
       ~doc:
         ("Inter-file analysis and Pro languages (currently Apex, C#, and \
           Elixir. " ^ C.blurb_pro)
+  in
+  Arg.value (Arg.flag info)
+
+let o_taint_intrafile : bool Term.t =
+  let info =
+    Arg.info [ "taint-intrafile" ]
+      ~doc:
+        ("Enable intra-file inter-procedural taint analysis. \
+          Supported languages: Apex, C, C#, C++, Elixir, Go, Java, JavaScript, Julia, Kotlin, Lua, Python, Ruby, Rust, Scala, Swift, TypeScript. \
+          Other languages will fall back to intraprocedural analysis only.")
   in
   Arg.value (Arg.flag info)
 
@@ -1248,18 +1243,18 @@ let outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
        Map_.empty
 
 (* reused in Ci_CLI.ml *)
-let engine_type_conf ~oss ~pro_lang ~pro_intrafile ~pro ~secrets
+let engine_type_conf ~oss ~taint_intrafile ~pro ~secrets
     ~no_secrets_validation ~allow_untrusted_validators ~pro_path_sensitive :
     Engine_type.t =
   (* This first bit just rules out mutually exclusive options. *)
   if oss && secrets then
     Error.abort "Cannot run secrets scan with OSS engine (--oss specified).";
   if
-    [ oss; pro_lang; pro_intrafile; pro ]
+    [ oss; taint_intrafile; pro ]
     |> List.filter Fun.id |> List.length > 1
   then
     Error.abort
-      "Mutually exclusive options --oss/--pro-languages/--pro-intrafile/--pro";
+      "Mutually exclusive options --oss/--taint-intrafile/--pro";
   (* Now select the engine type *)
   if oss then Engine_type.OSS
   else
@@ -1267,22 +1262,23 @@ let engine_type_conf ~oss ~pro_lang ~pro_intrafile ~pro ~secrets
       Engine_type.(
         match () with
         | _ when pro -> Interfile
-        | _ when pro_intrafile -> Interprocedural
+        | _ when taint_intrafile -> Interprocedural
         | _ -> Intraprocedural)
     in
-    let extra_languages = pro || pro_lang || pro_intrafile in
+    let extra_languages = pro in
     let secrets_config =
       if secrets && not no_secrets_validation then
         Some Engine_type.{ allow_all_origins = allow_untrusted_validators }
       else None
     in
     let code_config =
-      if pro || pro_lang || pro_intrafile then Some () else None
+      if pro then Some () else None
     in
     (* Currently we don't run SCA in osemgrep *)
     let supply_chain_config = None in
     match (extra_languages, analysis, secrets_config) with
     | false, Intraprocedural, None -> OSS
+    | false, Interprocedural, None when taint_intrafile -> OSS  (* Allow taint_intrafile in OSS *)
     | _ ->
         PRO
           {
@@ -1399,7 +1395,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
       num_jobs no_secrets_validation nosem opengrep_ignore_pattern optimizations oss
-      output output_enclosing_context pattern pro project_root pro_intrafile pro_lang
+      output output_enclosing_context pattern pro project_root taint_intrafile
       pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions secrets semgrepignore_filename severity show_supported_languages
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
@@ -1418,6 +1414,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     (* Create engine configuration *)
     let engine_config = {
       Engine_config.custom_ignore_pattern = opengrep_ignore_pattern;
+      taint_intrafile = Some taint_intrafile;
     } in
 
     if output_enclosing_context && not json then
@@ -1467,7 +1464,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     in
 
     let engine_type : Engine_type.t =
-      engine_type_conf ~oss ~pro_lang ~pro_intrafile ~pro ~secrets
+      engine_type_conf ~oss ~taint_intrafile ~pro ~secrets
         ~no_secrets_validation ~allow_untrusted_validators ~pro_path_sensitive
     in
     let rules_source : Rules_source.t =
@@ -1504,6 +1501,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         time_flag;
         inline_metavariables;
         matching_explanations;
+        taint_intrafile;
         engine_config;
       }
     in
@@ -1635,8 +1633,9 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes
     $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations $ o_oss
-    $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root $ o_pro_intrafile
-    $ o_pro_languages $ o_pro_path_sensitive $ o_remote $ o_replacement
+    $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root 
+    $ o_taint_intrafile
+    $ o_pro_path_sensitive $ o_remote $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
     $ o_secrets $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages $ o_strict
     $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text

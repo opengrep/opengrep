@@ -81,6 +81,16 @@ let rec expr e =
       match kind with
       | ID_Self -> G.IdSpecial (G.Self, snd id)
       | ID_Super -> G.IdSpecial (G.Super, snd id)
+      | ID_Instance -> 
+          (* Convert @field to this.field *)
+          let var_name = fst id in
+          let tok = snd id in
+          if String.starts_with ~prefix:"@" var_name then
+            let field_name = String.sub var_name 1 (String.length var_name - 1) in
+            let this_expr = G.IdSpecial (G.Self, tok) |> G.e in
+            G.DotAccess (this_expr, tok, G.FN (G.Id ((field_name, tok), G.empty_id_info ())))
+          else
+            G.N (G.Id (ident id, G.empty_id_info ()))
       | _ -> G.N (G.Id (ident id, G.empty_id_info ())))
   | ScopedId x ->
       let name = scope_resolution x in

@@ -1,0 +1,11 @@
+rules:
+  - id: test-nested-function-taint
+    message: Taint flows through nested function
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

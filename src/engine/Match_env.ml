@@ -102,7 +102,18 @@ let fake_rule_id (id, str) =
   }
 
 let adjust_xconfig_with_rule_options xconf options =
-  let config = Common.( ||| ) options xconf.config in
+  (* When rule options are present, we need to merge them with the existing config
+   * rather than replace it entirely. This preserves command-line flags like
+   * --taint-intrafile which are set in xconf.config. *)
+  let config =
+    match options with
+    | None -> xconf.config
+    | Some (rule_opts : Rule_options.t) ->
+        (* Merge rule options with existing config, preserving command-line taint_intrafile setting *)
+        { rule_opts with
+          taint_intrafile = xconf.config.taint_intrafile || rule_opts.taint_intrafile
+        }
+  in
   { xconf with config }
 
 let default_xconfig =

@@ -1543,11 +1543,13 @@ and parameters params : param list =
        | G.Param { pname = Some i; pinfo; pdefault; _ } ->
            Param { pname = var_of_id_info i pinfo; pdefault }
        | G.ParamPattern pat -> PatternParam pat
+       | G.ParamReceiver _param ->
+           (* TODO: Treat receiver as this parameter *)
+           FixmeParam (* TODO *)
        | G.Param { pname = None; _ }
        | G.ParamRest (_, _)
        | G.ParamHashSplat (_, _)
        | G.ParamEllipsis _
-       | G.ParamReceiver _
        | G.OtherParam (_, _) ->
            FixmeParam (* TODO *))
 
@@ -1770,6 +1772,46 @@ and stmt_aux env st =
       let env, ss2 = type_opt_with_pre_stmts env opt_ty in
       ( env,
         ss1 @ ss2 @ [ mk_s (Instr (mk_i (Assign (lv, e')) (Related (G.S st)))) ]
+      )
+  | G.DefStmt (ent, G.VarDef { G.vinit = None; vtype = Some ty; vtok = _ }) 
+    when env.lang =*= Lang.Cpp ->
+      (* Handle C++ constructor calls like: User user(taintedInput) *)
+      (match ty.t with
+      | G.TyFun (params, return_ty) ->
+          (match ent.name, return_ty.t with
+          | G.EN (G.Id (var_name, var_info)), G.TyN (G.Id (_, class_info)) ->
+              (* This is a C++ constructor: ClassName varName(args) *)
+              let obj' = var_of_name (G.Id (var_name, var_info)) in
+              (* Convert params to argument expressions *)
+              let args = List.map (fun param ->
+                match param with
+                | G.Param { ptype; _ } ->
+                    (match ptype with
+                    | Some { t = G.TyN (G.Id (arg_name, arg_info)); _ } ->
+                        G.Arg (G.N (G.Id (arg_name, arg_info)) |> G.e)
+                    | _ -> 
+                        (* Fallback for complex parameter types *)
+                        G.Arg (G.N (G.Id (("_unknown", Tok.unsafe_fake_tok ""), G.empty_id_info ())) |> G.e)
+                    )
+                | _ ->
+                    (* Fallback for non-Param parameter types *)
+                    G.Arg (G.N (G.Id (("_unknown", Tok.unsafe_fake_tok ""), G.empty_id_info ())) |> G.e)
+              ) params in
+              (* Create fake New expression for mk_class_construction *)
+              let fake_new_exp = G.New (Tok.unsafe_fake_tok "", return_ty, class_info, (Tok.unsafe_fake_tok "", args, Tok.unsafe_fake_tok "")) |> G.e in
+              let env, _, new_stmts =
+                mk_class_construction env obj' fake_new_exp return_ty class_info (Tok.unsafe_fake_tok "", args, Tok.unsafe_fake_tok "")
+              in
+              (env, new_stmts)
+          | _ ->
+              (* Not a constructor pattern, fall back to type analysis *)
+              let env, ss, _ = type_with_pre_stmts env ty in
+              (env, ss)
+          )
+      | _ ->
+          (* Not TyFun, fall back to type analysis *)
+          let env, ss, _ = type_with_pre_stmts env ty in
+          (env, ss)
       )
   | G.DefStmt (_ent, G.VarDef { G.vinit = None; vtype = Some ty; vtok = _ }) ->
       (* We want to analyze any expressions in 'ty'. *)
@@ -2192,3 +2234,8 @@ let expr lang e =
   let env = empty_env lang in
   let _, e = expr env e in
   e
+
+let lval lang e =
+  let env = empty_env lang in
+  let _, lv = lval env e in
+  lv

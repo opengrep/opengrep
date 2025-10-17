@@ -1,0 +1,12 @@
+rules:
+  - id: simple_go_taint
+    message: Simple Go cross-function taint
+    languages:
+      - go
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

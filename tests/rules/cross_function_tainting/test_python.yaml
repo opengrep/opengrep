@@ -1,0 +1,11 @@
+rules:
+  - id: test
+    message: SQL injection
+    languages:
+      - python
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: taint
+    pattern-sinks:
+      - pattern: f"...{ $EXPR }..."

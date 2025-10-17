@@ -26,6 +26,7 @@
     semgrep.matching
     semgrep.synthesizing
     semgrep.engine
+    semgrep_tainting
     parser_python.menhir parser_python.ast_generic
     semgrep.data
 

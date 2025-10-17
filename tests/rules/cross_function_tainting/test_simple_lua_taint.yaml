@@ -1,0 +1,12 @@
+rules:
+  - id: simple_lua_taint
+    message: Simple Lua cross-function taint
+    languages:
+      - lua
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

@@ -1,0 +1,17 @@
+rules:
+  - id: java_constructor_sqli
+    message: SQL injection through constructor
+    languages:
+      - java
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: |
+              "$SQLSTR" + $EXPR
+          - metavariable-regex:
+              metavariable: $SQLSTR
+              regex: ^\s*((SELECT|select|DELETE|delete|INSERT|insert|UPDATE|update|CALL|call)|(?i)(REPLACE INTO))\s(\s|.)*
+          - focus-metavariable: $EXPR

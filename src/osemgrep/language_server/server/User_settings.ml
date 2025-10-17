@@ -92,5 +92,6 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       matching_explanations = false;
       time_flag = false;
       inline_metavariables = false;
+      taint_intrafile = false;
       engine_config = Engine_config.default;
     }

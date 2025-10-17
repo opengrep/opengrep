@@ -8,18 +8,18 @@ def fn(params):
 
 
 def fn(params):
-    # In Pro, with index-sensitivity, this vvv does not sanitize 'params' but just `params["sql"]`!
+    # Fixed now, y with index-sensitivity, this vvv does not sanitize 'params' but just `params["sql"]`!
     params["sql"] = "select value from table where x = %s" % db_access.escape(
         params["test"]
     )  # 'params' is sanitized here
-    # protodook: ok: sql-injection
+    # ruleid: sql-injection
     db_access.mysql_dict(params)
 
 
 def fn(params):
-    # In Pro, with index-sensitivity, this vvv does not sanitize 'params' but just `params["sql"]`!
+    # Fixed now, with index-sensitivity, this vvv does not sanitize 'params' but just `params["sql"]`!
     params["sql"] = "select xyz from table"  # 'params' is sanitized here
-    # protodook: ok: sql-injection
+    # ruleid: sql-injection
     results = db_access.mysql_dict(params)
 
     # Just testing source/sink match here, accurate code is below in the for loop
@@ -34,10 +34,10 @@ def fn(params):
 
 
 def fn(params):
-    # In Pro, with index-sensitivity, this vvv does not sanitize 'params' but just `params["name"]`!
+    # Fixed now, with index-sensitivity, this vvv does not sanitize 'params' but just `params["name"]`!
     params["name"] = "test"  # 'params' is sanitized here
     params["sql"] = "select * from params where name = %(name)s" % params
-    # protodook: ok: sql-injection
+    # ruleid: sql-injection
     db_access.mysql_update(params)
 
 

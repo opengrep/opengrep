@@ -201,6 +201,7 @@ type validation_state = Out.validation_state [@@deriving show, eq]
  *)
 type precondition =
   | PLabel of string
+  | PVariable of string
   | PBool of bool
   | PAnd of precondition list
   | POr of precondition list
