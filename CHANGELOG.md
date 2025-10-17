@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.11.1](https://github.com/opengrep/opengrep/releases/tag/v1.11.1) - 17-10-2025
+
+### Bug fixes
+
+* Add --taint-intrafile to python by @dimitris-m in #439
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.0...v1.11.1
+
+
 ## [1.11.0](https://github.com/opengrep/opengrep/releases/tag/v1.11.0) - 17-10-2025
 
 ### New features
