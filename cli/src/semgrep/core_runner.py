@@ -799,6 +799,7 @@ class CoreRunner:
         dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
         dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
         dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+        taint_intrafile: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         state = get_state()
         logger.debug(f"Passing whole rules directly to semgrep_core")
@@ -956,6 +957,9 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 cmd.append("-json_time")
             if not self._respect_rule_paths:
                 cmd.append("-disable_rule_paths")
+
+            if taint_intrafile:
+                cmd.append("-taint_intrafile")
 
             # Create a map to feed to semgrep-core as an alternative to
             # having it actually read the files.
@@ -1136,6 +1140,7 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
         dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
         dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
         dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+        taint_intrafile: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Sometimes we may run into synchronicity issues with the latest DeepSemgrep binary.
@@ -1166,6 +1171,7 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 dynamic_timeout=dynamic_timeout,
                 dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
                 dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
+                taint_intrafile=taint_intrafile,
             )
         except SemgrepError as e:
             # Handle Semgrep errors normally
@@ -1214,6 +1220,7 @@ Exception raised: `{e}`
         dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
         dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
         dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+        taint_intrafile: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Takes in rules and targets and returns object with findings
@@ -1244,6 +1251,7 @@ Exception raised: `{e}`
             dynamic_timeout=dynamic_timeout,
             dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
             dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
+            taint_intrafile=taint_intrafile,
         )
 
         logger.debug(
