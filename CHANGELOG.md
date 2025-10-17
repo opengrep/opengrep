@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.11.0](https://github.com/opengrep/opengrep/releases/tag/v1.11.0) - 17-10-2025
+
+### New features
+
+* Intrafile tainting by @corneliuhoffman in #432
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.10.2...v1.11.0
+
+
 ## [1.10.2](https://github.com/opengrep/opengrep/releases/tag/v1.10.2) - 14-10-2025
 
 ### Bug fixes
