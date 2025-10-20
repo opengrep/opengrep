@@ -5,6 +5,7 @@
  (libraries
    commons
    lib_parsing
+   ast_generic
  )
  (preprocess (pps ppx_deriving.show))
 )
