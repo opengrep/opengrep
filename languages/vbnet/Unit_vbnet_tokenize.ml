@@ -37,5 +37,37 @@ let tests =
          ; Punctuation, "}"
          ; EOF, ""])
       in
-      assert (s = r))
+      assert (s = r));
+
+    Testo.create "lexer (nested interpolated strings)" (fun () ->
+      let s = tokenize "$\"{\"xyz\" a $\"{b \"xyz\"}\"}\"" |> List.map preview in
+      let r =
+      T.([ Operator, "$\""
+         ; StringLiteral, "\"xyz\""
+         ; Identifier, "A"
+         ; Operator, "$\""
+         ; Identifier, "B"
+         ; StringLiteral, "\"xyz\""
+         ; Operator, "\""
+         ; Operator, "\""
+         ; EOF, ""])
+      in
+      assert (s = r));
+
+    Testo.create "lexer (date literals)" (fun () ->
+      [ "# 8/23/1970 3:45:39AM #"
+      ; "# 8/23/1970 #"
+      ; "# 3:45:39AM #"
+      ; "# 3:45:39 #"
+      ; "# 13:45:39 #"
+      ; "# 1AM #"
+      ; "# 13:45:39PM #"
+      ] |>
+      List.iter (fun d ->
+        let s = tokenize d |> List.map preview in
+        let r =
+          T.([ DateLiteral, d
+             ; EOF, ""])
+        in
+        assert (s = r)))
   ]
