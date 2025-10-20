@@ -32,7 +32,7 @@ let fix_pos (s : string) (filename : Fpath.t) (ts : T.t list) : T.t list =
  *)
 (* See the note in Vbnet_lexer.mll about lexer state *)
 let tokenize ?(filepath=Fpath.v "<pattern>") (s : string) : T.t list =
-  Lexer.reset_state ();
+  let state = ref Lexer.initial_state in
   Lexing.from_string s
-  |> collect_tokens Lexer.token
+  |> collect_tokens (Lexer.token state)
   |> fix_pos s filepath
