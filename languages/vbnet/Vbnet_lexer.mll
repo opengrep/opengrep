@@ -1,7 +1,9 @@
 {
-open Effect
-
 module T = Vbnet_token
+
+(* ===== *)
+(* State *)
+(* ===== *)
 
 (* NOTE: The VB.NET lexer is stateful in order to implement interpolated
  * strings. The state is a stack, because we need to take into account
@@ -14,22 +16,31 @@ type lexer_state =
   | InString
   | Brace
 
-(* NOTE: Effects used for thread-safe mutable state *)
-type _ eff +=
-  | Vbnet_lexer_push_state : lexer_state -> unit eff
-  | Vbnet_lexer_pop_state : unit eff
-  | Vbnet_lexer_current_states : lexer_state list eff
+let initial_state _ = [Initial]
 
-let push_state s = perform (Vbnet_lexer_push_state s)
+let state_stack = Domain.DLS.new_key initial_state
 
-let pop_state _ = perform Vbnet_lexer_pop_state
+let push_state s =
+  Domain.DLS.set state_stack (s :: Domain.DLS.get state_stack)
+
+let pop_state _ =
+  Domain.DLS.set state_stack
+    (match Domain.DLS.get state_stack with
+    | _ :: tl -> tl
+    | [] -> [Initial])
 
 let current_states _ =
-  match perform Vbnet_lexer_current_states with
+  match Domain.DLS.get state_stack with
   | [] -> [Initial]
   | xs -> xs
 
 let current_state _ = current_states () |> List.hd
+
+let reset_state _ = Domain.DLS.set state_stack (initial_state ())
+
+(* ======================= *)
+(* Keywords vs identifiers *)
+(* ======================= *)
 
 (* NOTE: VB.NET has a few contextual keywords that has special meaning only in
  * certain contexts, while in others they can be used as identifiers. The latter
