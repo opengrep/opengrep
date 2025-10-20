@@ -16,27 +16,23 @@ type lexer_state =
   | InString
   | Brace
 
-let initial_state _ = [Initial]
+let initial_state = [Initial]
 
-let state_stack = Domain.DLS.new_key initial_state
+let push_state state s =
+  state := s :: !state
 
-let push_state s =
-  Domain.DLS.set state_stack (s :: Domain.DLS.get state_stack)
-
-let pop_state _ =
-  Domain.DLS.set state_stack
-    (match Domain.DLS.get state_stack with
+let pop_state state =
+  state :=
+    (match !state with
     | _ :: tl -> tl
     | [] -> [Initial])
 
-let current_states _ =
-  match Domain.DLS.get state_stack with
+let current_states state =
+  match !state with
   | [] -> [Initial]
   | xs -> xs
 
-let current_state _ = current_states () |> List.hd
-
-let reset_state _ = Domain.DLS.set state_stack (initial_state ())
+let current_state state = current_states state |> List.hd
 
 (* ======================= *)
 (* Keywords vs identifiers *)
@@ -419,20 +415,20 @@ let time_value =
 (* Lexer *)
 (* ===== *)
 
-rule token = parse
+rule token state = parse
   | "" {
-       match current_state () with
-       | Initial | Brace -> read lexbuf
-       | InString -> lex_in_string lexbuf
+       match current_state state with
+       | Initial | Brace -> read state lexbuf
+       | InString -> lex_in_string state lexbuf
        }
 
-and read = parse
+and read state = parse
 
 (* whitespace and comments*)
-  | whitespace { read lexbuf }
+  | whitespace { read state lexbuf }
   | comment_end_of_line { T.make lexbuf T.LineTerminator }
   | comment_end_of_file { T.make lexbuf T.EOF }
-  | line_continuation { read lexbuf }
+  | line_continuation { read state lexbuf }
   | line_terminator { T.make lexbuf T.LineTerminator }
 
 (* ignored preprocessing directives *)
@@ -453,7 +449,7 @@ and read = parse
 
 (* interpolated strings *)
   | "$\"" {
-      push_state InString;
+      push_state state InString;
       T.make lexbuf T.Operator
     }
 
@@ -484,11 +480,12 @@ and read = parse
 (* punctuation *)
   | "(" { T.make lexbuf T.Punctuation }
   | ")" { T.make lexbuf T.Punctuation }
-  | "{" { push_state Brace; T.make lexbuf T.Punctuation }
+  | "{" { push_state state Brace; T.make lexbuf T.Punctuation }
   | "}" {
-      match current_states () with
-      | Brace :: _ -> (pop_state (); T.make lexbuf T.Punctuation)
-      | Initial :: InString :: _ -> (pop_state (); token lexbuf)
+      match current_states state with
+      | Brace :: _ -> (pop_state state; T.make lexbuf T.Punctuation)
+      | Initial :: InString :: _ -> (pop_state state;
+                                     token state lexbuf)
       | _ -> T.make lexbuf T.Punctuation
       }
   | comma { let x = T.make lexbuf T.Punctuation in { x with content = "," } }
@@ -549,8 +546,8 @@ and read = parse
 (* fallback -- useful for xml *)
   | _ { T.make lexbuf T.Other }
 
-and lex_in_string = parse
+and lex_in_string state = parse
   | (interpolated_string_char | "{{" | double_quote_char double_quote_char)+
     {T.make lexbuf T.StringSegment}
-  | '"' { pop_state (); T.make lexbuf T.Operator }
-  | '{' { push_state Initial; token lexbuf }
+  | '"' { pop_state state; T.make lexbuf T.Operator }
+  | '{' { push_state state Initial; token state lexbuf }
