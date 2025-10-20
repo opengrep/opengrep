@@ -1,5 +1,3 @@
-open Effect.Deep
-
 module T = Vbnet_token
 module Lexer = Vbnet_lexer
 
@@ -34,17 +32,7 @@ let fix_pos (s : string) (filename : Fpath.t) (ts : T.t list) : T.t list =
  *)
 (* See the note in Vbnet_lexer.mll about lexer state *)
 let tokenize ?(filepath=Fpath.v "<pattern>") (s : string) : T.t list =
-  let state_stack = ref [Lexer.Initial] in
-  let lexbuf = Lexing.from_string s in
-  match collect_tokens Lexer.token lexbuf |> fix_pos s filepath with
-  | v -> v
-  | effect (Lexer.Vbnet_lexer_push_state st), r ->
-      state_stack := st :: !state_stack;
-      continue r ()
-  | effect Lexer.Vbnet_lexer_pop_state, r ->
-      (match !state_stack with
-       | _ :: tl -> state_stack := tl
-       | [] -> state_stack := [Lexer.Initial]);
-      continue r ()
-  | effect Lexer.Vbnet_lexer_current_states, r ->
-      continue r !state_stack
+  Lexer.reset_state ();
+  Lexing.from_string s
+  |> collect_tokens Lexer.token
+  |> fix_pos s filepath
