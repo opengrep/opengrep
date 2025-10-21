@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.11.2](https://github.com/opengrep/opengrep/releases/tag/v1.11.2) - 21-10-2025
+
+### Bug fixes
+
+* Tainting: rename the functions and simpler eval by @corneliuhoffman in #444
+* Fix cosign version detection in install script by @dimitris-m in #441
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.1...v1.11.2
+
+
 ## [1.11.1](https://github.com/opengrep/opengrep/releases/tag/v1.11.1) - 17-10-2025
 
 ### Bug fixes
