@@ -51,23 +51,60 @@ module Dot = Graph.Graphviz.Dot (struct
   let graph_attributes _ = []
   let default_vertex_attributes _ = []
   let vertex_name v =
+    let class_part = match v.class_name with
+      | Some c -> fst c.IL.ident ^ "."
+      | None -> ""
+    in
     let name = match v.name with
       | Some n -> fst n.IL.ident
       | None -> "???"
     in
-    Printf.sprintf "\"%s\"" name
+    Printf.sprintf "\"%s%s\"" class_part name
   let vertex_attributes _ = []
   let get_subgraph _ = None
   let default_edge_attributes _ = []
   let edge_attributes _ = []
 end)
 
+(* Extract Go receiver type from method *)
+let extract_go_receiver_type (fdef : G.function_definition) : string option =
+  let params = Tok.unbracket fdef.fparams in
+  match params with
+  (* Non-pointer receiver: func (r Type) ... *)
+  | G.ParamReceiver { ptype = Some { t = G.TyN (G.Id ((name, _), _)); _ }; _ }
+    :: _ ->
+      Some name
+  (* Pointer receiver: func (r *Type) ... *)
+  | G.ParamReceiver { ptype = Some { t = G.TyPointer (_, { t = G.TyN (G.Id ((name, _), _)); _ }); _ }; _ }
+    :: _ ->
+      Some name
+  | _ -> None
+
 (* Build fn_id from entity *)
-let fn_id_of_entity (opt_ent : G.entity option) (class_name : G.name option) :
+let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option) (class_name : G.name option) (fdef : G.function_definition) :
     fn_id option =
   let* ent = opt_ent in
   let* name = AST_to_IL.name_of_entity ent in
-  let class_name_il = Option.map AST_to_IL.var_of_name class_name in
+  (* For Go methods, extract receiver type as class name *)
+  let go_receiver_name =
+    match lang with
+    | Lang.Go -> extract_go_receiver_type fdef
+    | _ -> None
+  in
+  let class_name_il =
+    match go_receiver_name with
+    | Some recv_name ->
+        (* Create IL name from Go receiver type *)
+        let fake_tok = Tok.unsafe_fake_tok recv_name in
+        Some
+          IL.
+            {
+              ident = (recv_name, fake_tok);
+              sid = AST_generic.SId.unsafe_default;
+              id_info = AST_generic.empty_id_info ();
+            }
+    | None -> Option.map AST_to_IL.var_of_name class_name
+  in
   Some { class_name = class_name_il; name = Some name }
 
 (* Extract all calls from a function body and resolve them to fn_ids *)
@@ -151,12 +188,28 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program) 
   let funcs, graph =
     Visit_function_defs.fold_with_class_context
       (fun (funcs, graph) opt_ent class_name fdef ->
-        match fn_id_of_entity opt_ent class_name with
+        match fn_id_of_entity ~lang opt_ent class_name fdef with
         | Some fn_id ->
             let func = { fn_id; entity = opt_ent; fdef } in
             let graph = FuncGraph.add_vertex graph fn_id in
             (* Extract calls with object context *)
-            let current_class_il = Option.map AST_to_IL.var_of_name class_name in
+            (* For Go methods, use the receiver type as current_class *)
+            let current_class_il =
+              match lang with
+              | Lang.Go -> (
+                  match extract_go_receiver_type fdef with
+                  | Some recv_name ->
+                      let fake_tok = Tok.unsafe_fake_tok recv_name in
+                      Some
+                        IL.
+                          {
+                            ident = (recv_name, fake_tok);
+                            sid = AST_generic.SId.unsafe_default;
+                            id_info = AST_generic.empty_id_info ();
+                          }
+                  | None -> Option.map AST_to_IL.var_of_name class_name)
+              | _ -> Option.map AST_to_IL.var_of_name class_name
+            in
             let callee_fn_ids =
               extract_calls ~object_mappings current_class_il fdef
             in
