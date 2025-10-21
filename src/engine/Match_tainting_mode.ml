@@ -230,6 +230,23 @@ let pms_of_effect ~match_on (effect_ : Effect.t) =
                    }))
 
 (*****************************************************************************)
+(* Helper to extract Go receiver type from method *)
+(*****************************************************************************)
+
+let extract_go_receiver_type (fdef : G.function_definition) : string option =
+  let params = Tok.unbracket fdef.fparams in
+  match params with
+  (* Non-pointer receiver: func (r Type) ... *)
+  | G.ParamReceiver { ptype = Some { t = G.TyN (G.Id ((name, _), _)); _ }; _ }
+    :: _ ->
+      Some name
+  (* Pointer receiver: func (r *Type) ... *)
+  | G.ParamReceiver { ptype = Some { t = G.TyPointer (_, { t = G.TyN (G.Id ((name, _), _)); _ }); _ }; _ }
+    :: _ ->
+      Some name
+  | _ -> None
+
+(*****************************************************************************)
 (* Main entry points *)
 (*****************************************************************************)
 
@@ -375,11 +392,33 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                 let* ent = opt_ent in
                 AST_to_IL.name_of_entity ent
               in
-              let class_name_il = Option.map AST_to_IL.var_of_name class_name in
-              let class_name_str =
-                match class_name with
-                | Some (G.Id ((str, _), _)) -> Some str
+              (* For Go methods, extract receiver type as class name *)
+              let go_receiver_name =
+                match lang with
+                | Lang.Go -> extract_go_receiver_type fdef
                 | _ -> None
+              in
+              let class_name_il =
+                match go_receiver_name with
+                | Some recv_name ->
+                    (* Create IL name from Go receiver type *)
+                    let fake_tok = Tok.unsafe_fake_tok recv_name in
+                    Some
+                      IL.
+                        {
+                          ident = (recv_name, fake_tok);
+                          sid = AST_generic.SId.unsafe_default;
+                          id_info = AST_generic.empty_id_info ();
+                        }
+                | None -> Option.map AST_to_IL.var_of_name class_name
+              in
+              let class_name_str =
+                match go_receiver_name with
+                | Some name -> Some name
+                | None -> (
+                    match class_name with
+                    | Some (G.Id ((str, _), _)) -> Some str
+                    | _ -> None)
               in
               let method_properties =
                 match fst fdef.fkind with
@@ -431,37 +470,22 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
 
     let processed = ref Shape_and_sig.FunctionMap.empty in
 
-    let process_fun_info info db =
+    (* Phase 1: Extract signatures in topological order (bottom-up) *)
+    let extract_signature info db =
       let log_name = Option.map IL.str_of_name info.opt_name ||| "???" in
-      if info.is_lambda_assignment then
-        Log.info (fun m ->
-            m
-              "Match_tainting_mode:\n\
-               --------------------\n\
-               Extracting signature for lambda assignment: %s\n\
-               --------------------"
-              log_name)
-      else
-        Log.info (fun m ->
-            m
-              "Match_tainting_mode:\n\
-               --------------------\n\
-               Checking func def: %s\n\
-               --------------------"
-              log_name);
+      Log.info (fun m ->
+          m
+            "Match_tainting_mode:\n\
+             --------------------\n\
+             Extracting signature: %s\n\
+             --------------------"
+            log_name);
       let updated_db, _signature =
         Taint_signature_extractor.extract_signature_with_file_context
           ~db taint_inst ~name:info.fn_id ~method_properties:info.method_properties
           info.cfg ast
       in
-      if info.is_lambda_assignment then updated_db
-      else (
-        let _flow, fdef_effects, _mapping =
-          check_fundef taint_inst info.fn_id !ctx ~glob_env
-            ?class_name:info.class_name_str ~signature_db:updated_db info.fdef
-        in
-        record_matches fdef_effects;
-        updated_db)
+      updated_db
     in
 
     let signature_db_after_order =
@@ -471,7 +495,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           | None -> db
           | Some info ->
               processed := Shape_and_sig.FunctionMap.add fn_id () !processed;
-              process_fun_info info db)
+              extract_signature info db)
         initial_signature_db analysis_order
     in
 
@@ -481,9 +505,29 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           if Shape_and_sig.FunctionMap.mem info.fn_id !processed then db
           else (
             processed := Shape_and_sig.FunctionMap.add info.fn_id () !processed;
-            process_fun_info info db))
+            extract_signature info db))
         signature_db_after_order collected_infos
     in
+
+    (* Phase 2: Evaluate all functions (not lambda assignments) in collection order, ignoring call graph *)
+    List.iter
+      (fun info ->
+        if not info.is_lambda_assignment then (
+          let log_name = Option.map IL.str_of_name info.opt_name ||| "???" in
+          Log.info (fun m ->
+              m
+                "Match_tainting_mode:\n\
+                 --------------------\n\
+                 Checking func def: %s\n\
+                 --------------------"
+                log_name);
+          let _flow, fdef_effects, _mapping =
+            check_fundef taint_inst info.fn_id !ctx ~glob_env
+              ?class_name:info.class_name_str ~signature_db:final_signature_db info.fdef
+          in
+          record_matches fdef_effects))
+      collected_infos;
+
     Some final_signature_db
   ) else (
     (* Cross-function taint analysis disabled: use main branch behavior *)
