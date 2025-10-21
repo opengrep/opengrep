@@ -272,6 +272,7 @@ def run_rules(
     dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
     dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
     dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+    taint_intrafile: bool = False,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -378,6 +379,7 @@ def run_rules(
         dynamic_timeout=dynamic_timeout,
         dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
         dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
+        taint_intrafile=taint_intrafile,
     )
 
     if join_rules:
@@ -567,6 +569,7 @@ def run_scan(
     dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
     dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
     dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+    taint_intrafile: bool = False,
 ) -> Tuple[
     RuleMatchMap,
     List[SemgrepError],
@@ -850,6 +853,7 @@ def run_scan(
         dynamic_timeout=dynamic_timeout,
         dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
         dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
+        taint_intrafile=taint_intrafile,
     )
     profiler.save("core_time", core_start_time)
     semgrep_errors: List[SemgrepError] = config_errors + scan_errors
@@ -965,6 +969,7 @@ def run_scan(
                         dynamic_timeout=dynamic_timeout,
                         dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
                         dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
+                        taint_intrafile=taint_intrafile,
                     )
                     rule_matches_by_rule = remove_matches_in_baseline(
                         rule_matches_by_rule,
