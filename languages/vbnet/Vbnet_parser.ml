@@ -1314,6 +1314,18 @@ and toplevel_kw_declaration : G.any parser = fun __n -> (
       let* sub_block1 = sub_block in
       pure (xRule "toplevel_kw_declaration" 7 [sub_block1])
     end;
+    begin
+      (* toplevel_kw_declaration -> '...' *)
+      let* dot_dot_dot1 = token "..." in
+      pure (xRule "toplevel_kw_declaration" 8 [xToken(dot_dot_dot1)])
+    end;
+    begin
+      (* toplevel_kw_declaration -> '<...' expression '...>' *)
+      let* lt_dot_dot_dot1 = token "<..." in
+      let* expression1 = expression in
+      let* dot_dot_dot_gt1 = token "...>" in
+      pure (xRule "toplevel_kw_declaration" 9 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
+    end;
   ]
 ) __n
 
@@ -1739,13 +1751,29 @@ and parameter_list : G.any parser = fun __n -> (
 ) __n
 
 and parameter : G.any parser = fun __n -> (
-  (* parameter -> attribute_list* modifier* modified_identifier simple_as_clause? equals_value? *)
-  let* attribute_lists1 = list_of attribute_list in
-  let* modifiers1 = list_of modifier in
-  let* modified_identifier1 = modified_identifier in
-  let* simple_as_clause_opt1 = optional simple_as_clause in
-  let* equals_value_opt1 = optional equals_value in
-  pure (xRule "parameter" 0 [xList(attribute_lists1); xList(modifiers1); modified_identifier1; xOptional(simple_as_clause_opt1); xOptional(equals_value_opt1)])
+  choice [
+    begin
+      (* parameter -> attribute_list* modifier* modified_identifier simple_as_clause? equals_value? *)
+      let* attribute_lists1 = list_of attribute_list in
+      let* modifiers1 = list_of modifier in
+      let* modified_identifier1 = modified_identifier in
+      let* simple_as_clause_opt1 = optional simple_as_clause in
+      let* equals_value_opt1 = optional equals_value in
+      pure (xRule "parameter" 0 [xList(attribute_lists1); xList(modifiers1); modified_identifier1; xOptional(simple_as_clause_opt1); xOptional(equals_value_opt1)])
+    end;
+    begin
+      (* parameter -> '...' *)
+      let* dot_dot_dot1 = token "..." in
+      pure (xRule "parameter" 1 [xToken(dot_dot_dot1)])
+    end;
+    begin
+      (* parameter -> '<...' expression '...>' *)
+      let* lt_dot_dot_dot1 = token "<..." in
+      let* expression1 = expression in
+      let* dot_dot_dot_gt1 = token "...>" in
+      pure (xRule "parameter" 2 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
+    end;
+  ]
 ) __n
 
 and modified_identifier : G.any parser = fun __n -> (
@@ -1758,18 +1786,40 @@ and modified_identifier : G.any parser = fun __n -> (
 ) __n
 
 and implements_clause : G.any parser = fun __n -> (
-  (* implements_clause -> ':'? 'Implements' type (',' type)* *)
+  (* implements_clause -> ':'? 'Implements' type_list_elem (',' type_list_elem)* *)
   let* colon_opt1 = optional (token ":") in
   let* implements1 = token "IMPLEMENTS" in
-  let* type_1 = type_ in
-  let* comma_type_s1 = list_of 
+  let* type_list_elem1 = type_list_elem in
+  let* comma_type_list_elems1 = list_of 
     begin
       let* comma1 = token "," in
-      let* type_1 = type_ in
-      pure (xGroup([xToken(comma1); type_1]))
+      let* type_list_elem1 = type_list_elem in
+      pure (xGroup([xToken(comma1); type_list_elem1]))
     end
   in
-  pure (xRule "implements_clause" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(implements1); type_1; xList(comma_type_s1)])
+  pure (xRule "implements_clause" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(implements1); type_list_elem1; xList(comma_type_list_elems1)])
+) __n
+
+and type_list_elem : G.any parser = fun __n -> (
+  choice [
+    begin
+      (* type_list_elem -> type *)
+      let* type_1 = type_ in
+      pure (xRule "type_list_elem" 0 [type_1])
+    end;
+    begin
+      (* type_list_elem -> '...' *)
+      let* dot_dot_dot1 = token "..." in
+      pure (xRule "type_list_elem" 1 [xToken(dot_dot_dot1)])
+    end;
+    begin
+      (* type_list_elem -> '<...' type '...>' *)
+      let* lt_dot_dot_dot1 = token "<..." in
+      let* type_1 = type_ in
+      let* dot_dot_dot_gt1 = token "...>" in
+      pure (xRule "type_list_elem" 2 [xToken(lt_dot_dot_dot1); type_1; xToken(dot_dot_dot_gt1)])
+    end;
+  ]
 ) __n
 
 and qualified_name : G.any parser = fun __n -> (
@@ -1808,19 +1858,19 @@ and generic_name : G.any parser = fun __n -> (
 ) __n
 
 and type_argument_list : G.any parser = fun __n -> (
-  (* type_argument_list -> '(' 'Of' type? (',' type?)* ')' *)
+  (* type_argument_list -> '(' 'Of' type_list_elem? (',' type_list_elem?)* ')' *)
   let* lparen1 = token "(" in
   let* of1 = token "OF" in
-  let* type__opt1 = optional type_ in
-  let* comma_type__opts1 = list_of 
+  let* type_list_elem_opt1 = optional type_list_elem in
+  let* comma_type_list_elem_opts1 = list_of 
     begin
       let* comma1 = token "," in
-      let* type__opt1 = optional type_ in
-      pure (xGroup([xToken(comma1); xOptional(type__opt1)]))
+      let* type_list_elem_opt1 = optional type_list_elem in
+      pure (xGroup([xToken(comma1); xOptional(type_list_elem_opt1)]))
     end
   in
   let* rparen1 = token ")" in
-  pure (xRule "type_argument_list" 0 [xToken(lparen1); xToken(of1); xOptional(type__opt1); xList(comma_type__opts1); xToken(rparen1)])
+  pure (xRule "type_argument_list" 0 [xToken(lparen1); xToken(of1); xOptional(type_list_elem_opt1); xList(comma_type_list_elem_opts1); xToken(rparen1)])
 ) __n
 
 and field_declaration : G.any parser = fun __n -> (
@@ -2472,6 +2522,18 @@ and property_accessor_block : G.any parser = fun __n -> (
       let* set2 = token "SET" in
       pure (xRule "property_accessor_block" 1 [xList(attribute_lists1); xList(modifiers1); xToken(set1); xOptional(parameter_list_opt1); statements_block1; xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(set2)])
     end;
+    begin
+      (* property_accessor_block -> '...' *)
+      let* dot_dot_dot1 = token "..." in
+      pure (xRule "property_accessor_block" 2 [xToken(dot_dot_dot1)])
+    end;
+    begin
+      (* property_accessor_block -> '<...' expression '...>' *)
+      let* lt_dot_dot_dot1 = token "<..." in
+      let* expression1 = expression in
+      let* dot_dot_dot_gt1 = token "...>" in
+      pure (xRule "property_accessor_block" 3 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
+    end;
   ]
 ) __n
 
@@ -2571,6 +2633,18 @@ and class_block_kw_declaration : G.any parser = fun __n -> (
       (* class_block_kw_declaration -> declare_statement *)
       let* declare_statement1 = declare_statement in
       pure (xRule "class_block_kw_declaration" 11 [declare_statement1])
+    end;
+    begin
+      (* class_block_kw_declaration -> '...' *)
+      let* dot_dot_dot1 = token "..." in
+      pure (xRule "class_block_kw_declaration" 12 [xToken(dot_dot_dot1)])
+    end;
+    begin
+      (* class_block_kw_declaration -> '<...' expression '...>' *)
+      let* lt_dot_dot_dot1 = token "<..." in
+      let* expression1 = expression in
+      let* dot_dot_dot_gt1 = token "...>" in
+      pure (xRule "class_block_kw_declaration" 13 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
     end;
   ]
 ) __n
@@ -2841,12 +2915,6 @@ and exit_while_statement : G.any parser = fun __n -> (
   let* exit1 = token "EXIT" in
   let* while1 = token "WHILE" in
   pure (xRule "exit_while_statement" 0 [xToken(exit1); xToken(while1)])
-) __n
-
-and expression_statement : G.any parser = fun __n -> (
-  (* expression_statement -> expression *)
-  let* expression1 = expression in
-  pure (xRule "expression_statement" 0 [expression1])
 ) __n
 
 and go_to_statement : G.any parser = fun __n -> (
@@ -3384,10 +3452,10 @@ and identifier_or_keyword : G.any parser = fun __n -> (
 and accessor : G.any parser = fun __n -> (
   choice [
     begin
-      (* accessor -> '.' identifier_or_keyword *)
+      (* accessor -> '.' accessor_body *)
       let* dot1 = token "." in
-      let* identifier_or_keyword1 = identifier_or_keyword in
-      pure (xRule "accessor" 0 [xToken(dot1); identifier_or_keyword1])
+      let* accessor_body1 = accessor_body in
+      pure (xRule "accessor" 0 [xToken(dot1); accessor_body1])
     end;
     begin
       (* accessor -> '.' argument_list *)
@@ -3396,16 +3464,16 @@ and accessor : G.any parser = fun __n -> (
       pure (xRule "accessor" 1 [xToken(dot1); argument_list1])
     end;
     begin
-      (* accessor -> '!' identifier_or_keyword *)
+      (* accessor -> '!' accessor_body *)
       let* bang1 = token "!" in
-      let* identifier_or_keyword1 = identifier_or_keyword in
-      pure (xRule "accessor" 2 [xToken(bang1); identifier_or_keyword1])
+      let* accessor_body1 = accessor_body in
+      pure (xRule "accessor" 2 [xToken(bang1); accessor_body1])
     end;
     begin
-      (* accessor -> '?.' identifier_or_keyword *)
+      (* accessor -> '?.' accessor_body *)
       let* qmark_dot1 = token "?." in
-      let* identifier_or_keyword1 = identifier_or_keyword in
-      pure (xRule "accessor" 3 [xToken(qmark_dot1); identifier_or_keyword1])
+      let* accessor_body1 = accessor_body in
+      pure (xRule "accessor" 3 [xToken(qmark_dot1); accessor_body1])
     end;
     begin
       (* accessor -> '?' '(' expression ')' *)
@@ -3416,30 +3484,46 @@ and accessor : G.any parser = fun __n -> (
       pure (xRule "accessor" 4 [xToken(qmark1); xToken(lparen1); expression1; xToken(rparen1)])
     end;
     begin
-      (* accessor -> '.@' identifier_or_keyword *)
+      (* accessor -> '.@' accessor_body *)
       let* dot_at1 = token ".@" in
-      let* identifier_or_keyword1 = identifier_or_keyword in
-      pure (xRule "accessor" 5 [xToken(dot_at1); identifier_or_keyword1])
+      let* accessor_body1 = accessor_body in
+      pure (xRule "accessor" 5 [xToken(dot_at1); accessor_body1])
     end;
     begin
-      (* accessor -> '.' ('.' '.')? '<' identifier_or_keyword '>' *)
+      (* accessor -> '.' '<' accessor_body '>' *)
       let* dot1 = token "." in
-      let* dot_dot_opt1 = optional 
-        begin
-          let* dot1 = token "." in
-          let* dot2 = token "." in
-          pure (xGroup([xToken(dot1); xToken(dot2)]))
-        end
-      in
       let* lt1 = token "<" in
-      let* identifier_or_keyword1 = identifier_or_keyword in
+      let* accessor_body1 = accessor_body in
       let* gt1 = token ">" in
-      pure (xRule "accessor" 6 [xToken(dot1); xOptional(dot_dot_opt1); xToken(lt1); identifier_or_keyword1; xToken(gt1)])
+      pure (xRule "accessor" 6 [xToken(dot1); xToken(lt1); accessor_body1; xToken(gt1)])
+    end;
+    begin
+      (* accessor -> '...' '<' accessor_body '>' *)
+      let* dot_dot_dot1 = token "..." in
+      let* lt1 = token "<" in
+      let* accessor_body1 = accessor_body in
+      let* gt1 = token ">" in
+      pure (xRule "accessor" 7 [xToken(dot_dot_dot1); xToken(lt1); accessor_body1; xToken(gt1)])
     end;
     begin
       (* accessor -> argument_list *)
       let* argument_list1 = argument_list in
-      pure (xRule "accessor" 7 [argument_list1])
+      pure (xRule "accessor" 8 [argument_list1])
+    end;
+  ]
+) __n
+
+and accessor_body : G.any parser = fun __n -> (
+  choice [
+    begin
+      (* accessor_body -> identifier_or_keyword *)
+      let* identifier_or_keyword1 = identifier_or_keyword in
+      pure (xRule "accessor_body" 0 [identifier_or_keyword1])
+    end;
+    begin
+      (* accessor_body -> '...' *)
+      let* dot_dot_dot1 = token "..." in
+      pure (xRule "accessor_body" 1 [xToken(dot_dot_dot1)])
     end;
   ]
 ) __n
@@ -3557,6 +3641,18 @@ and primary_expression : G.any parser = fun __n -> (
       (* primary_expression -> x_expression *)
       let* x_expression1 = x_expression in
       pure (xRule "primary_expression" 21 [x_expression1])
+    end;
+    begin
+      (* primary_expression -> '...' *)
+      let* dot_dot_dot1 = token "..." in
+      pure (xRule "primary_expression" 22 [xToken(dot_dot_dot1)])
+    end;
+    begin
+      (* primary_expression -> '<...' expression '...>' *)
+      let* lt_dot_dot_dot1 = token "<..." in
+      let* expression1 = expression in
+      let* dot_dot_dot_gt1 = token "...>" in
+      pure (xRule "primary_expression" 23 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
     end;
   ]
 ) __n
