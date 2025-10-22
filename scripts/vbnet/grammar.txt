@@ -92,9 +92,8 @@ single_line_statement
   | stop_or_end_statement
   | throw_statement
   | yield_statement
-  | exit_statement // TODO
+  | exit_statement
   | assignment_statement
- // | expression_statement
   ;
 
 single_line_statements
@@ -370,9 +369,10 @@ toplevel_kw_declaration
   | module_block
   | structure_block
   | enum_block
- // delegates
   | function_block
   | sub_block
+  | '...'
+  | '<...' expression '...>'
   ;
 
 // ........................................
@@ -542,6 +542,8 @@ parameter_list
 
 parameter
   : attribute_list* modifier* modified_identifier simple_as_clause? equals_value?
+  | '...'
+  | '<...' expression '...>'
   ;
 
 modified_identifier
@@ -549,7 +551,13 @@ modified_identifier
   ;
 
 implements_clause
-  : ':'? 'Implements' type (',' type)*
+  : ':'? 'Implements' type_list_elem (',' type_list_elem)*
+  ;
+
+type_list_elem
+  : type
+  | '...'
+  | '<...' type '...>'
   ;
 
 qualified_name
@@ -566,7 +574,7 @@ generic_name
   ;
 
 type_argument_list
-  : '(' 'Of' type? (',' type?)* ')'
+  : '(' 'Of' type_list_elem? (',' type_list_elem?)* ')'
   ;
 
 field_declaration
@@ -738,6 +746,8 @@ property_block
 property_accessor_block
   : attribute_list* modifier* 'Get' statements_block ':'? 'End' 'Get'
   | attribute_list* modifier* 'Set' parameter_list? statements_block ':'? 'End' 'Set'
+  | '...'
+  | '<...' expression '...>'
   ;
 
 class_block
@@ -766,6 +776,8 @@ class_block_kw_declaration
   | operator_block
   | enum_block
   | declare_statement
+  | '...'
+  | '<...' expression '...>'
   ;
 
 interface_block
@@ -859,10 +871,6 @@ exit_try_statement
 
 exit_while_statement
   : 'Exit' 'While'
-  ;
-
-expression_statement
-  : expression
   ;
 
 go_to_statement
@@ -1048,17 +1056,22 @@ identifier_or_keyword
   ;
 
 accessor
-  : '.' identifier_or_keyword
+  : '.' accessor_body
   | '.' argument_list
-  | '!' identifier_or_keyword
-  | '?.' identifier_or_keyword
+  | '!' accessor_body
+  | '?.' accessor_body
   | '?' '(' expression ')'
-  | '.@' identifier_or_keyword
-  | '.' ('.' '.')? '<' identifier_or_keyword '>'
+  | '.@' accessor_body
+  | '.' '<' accessor_body '>'
+  | '...' '<' accessor_body '>'
   | argument_list
   ;
 
-// TODO
+accessor_body
+  : identifier_or_keyword
+  | '...'
+  ;
+
 primary_expression
   : '(' expression ')'
   | literal_expression
@@ -1082,6 +1095,8 @@ primary_expression
   | identifier_expression
   | xml_cdata
   | x_expression
+  | '...'
+  | '<...' expression '...>'
   ;
 
 identifier_expression
@@ -1386,8 +1401,6 @@ named_tuple_element
 typed_tuple_element
   : type
   ;
-
-
 
 name
   : base_name ('.' name_reference)*
