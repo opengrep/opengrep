@@ -681,6 +681,19 @@ end)
 
 type fn_id = { class_name : IL.name option; name : IL.name option }
 [@@deriving show, eq, ord]
+type fun_info = {
+  fn_id : fn_id;
+  opt_name : IL.name option;
+  class_name_str : string option;
+  method_properties : AST_generic.expr list;
+  cfg : IL.fun_cfg;[@opaque]
+  fdef : AST_generic.function_definition;
+  is_lambda_assignment : bool;
+}[@@deriving show]
+
+type detailed_signature = {signature : Signature.t;[@printer (fun fmt x -> Format.fprintf fmt "%s" (Signature.show x))] 
+   parameters : AST_generic.parameters}
+[@@deriving eq, ord,show]
 
 module FunctionMap = Map.Make (struct
   type t = fn_id
@@ -691,8 +704,14 @@ module FunctionMap = Map.Make (struct
     if Int.equal c 0 then Option.compare compare_il_name n1 n2 else c
 end)
 
+
+module SignatureSet = Set.Make (struct
+  type t = detailed_signature
+  let compare = compare_detailed_signature
+  end)
+
 type signature_database = {
-  signatures : Signature.t FunctionMap.t;
+  signatures : SignatureSet.t FunctionMap.t;
   object_mappings : (AST_generic.name * AST_generic.name) list;
 }
 
@@ -701,13 +720,23 @@ let empty_signature_database () : signature_database = {
   object_mappings = [];
 }
 
+
 let lookup_signature (db : signature_database) (func_name : fn_id) :
     Signature.t option =
-  FunctionMap.find_opt func_name db.signatures
+  match FunctionMap.find_opt func_name db.signatures with
+  Some detailed_signature -> Some (SignatureSet.choose detailed_signature).signature
+  | None -> None
 
 let add_signature (db : signature_database) (func_name : fn_id)
-    (signature : Signature.t) : signature_database =
-  { db with signatures = FunctionMap.add func_name signature db.signatures }
+    (signature : detailed_signature) : signature_database =
+ let signatures = FunctionMap.update func_name
+  (function
+    | Some existing_signatures ->
+        Some (SignatureSet.add signature existing_signatures) 
+    | None ->
+        Some (SignatureSet.singleton signature)) db.signatures in
+    
+  { db with signatures}
 
 let add_object_mappings (db : signature_database) (mappings : (AST_generic.name * AST_generic.name) list) : signature_database =
   { db with object_mappings = mappings }
@@ -719,6 +748,7 @@ let show_signature_database (db : signature_database) : string =
   FunctionMap.fold
     (fun name signature acc ->
       let name_str = show_fn_id name in
-      let sig_str = Signature.show signature in
-      acc ^ Printf.sprintf "%s: %s\n" name_str sig_str)
+      let sig_str = String.concat "\n ----- \n" (List.map (fun x -> show_detailed_signature x)(SignatureSet.elements signature)) in
+      (* Format the signature nicely *)
+      acc ^ Printf.sprintf "%s:\n %s\n=======\n" name_str sig_str)
     db.signatures ""

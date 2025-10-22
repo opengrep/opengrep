@@ -445,10 +445,14 @@ let enable_precise_index_tracking () =
 
 let extract_signature_with_file_context
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
+     
     (taint_inst : Taint_rule_inst.t)
-    ?(name = Shape_and_sig.{ class_name = None; name = None })
-    ?(method_properties : AST_generic.expr list = []) func_cfg
+    ~(info : Shape_and_sig.fun_info)
     (ast : AST_generic.program) : signature_database * Signature.t =
+
+  let name = info.fn_id in
+  let method_properties = info.method_properties in
+  let func_cfg = info.cfg in
   enable_precise_index_tracking ();
   let global_sids = extract_global_var_sids_from_ast ast in
   let global_env = mk_global_assumptions_with_sids global_sids in
@@ -477,7 +481,8 @@ let extract_signature_with_file_context
     extract_signature taint_inst ~in_env:combined_global_env ~name:final_name
       ~signature_db:db func_cfg
   in
-  let updated_db = Shape_and_sig.add_signature db final_name signature in
+  let extended_signature = Shape_and_sig.{signature;  parameters = info.fdef.fparams} in
+  let updated_db = Shape_and_sig.add_signature db final_name extended_signature in
   (updated_db, signature)
 
 let show_signature_extraction func_name signature =
@@ -485,7 +490,7 @@ let show_signature_extraction func_name signature =
     (Option.value func_name ~default:"<anonymous>")
     (Signature.show signature)
 
-let extract_signatures_from_ast taint_inst (ast : AST_generic.program)
+(* let extract_signatures_from_ast taint_inst (ast : AST_generic.program)
     (functions : (Shape_and_sig.fn_id * IL.fun_cfg * AST_generic.expr list) list) : signature_database =
   (* Step 1: Detect object initialization mappings for this file *)
   let object_mappings = detect_object_initialization ast taint_inst.TRI.lang in
@@ -526,9 +531,11 @@ let extract_signatures_from_ast taint_inst (ast : AST_generic.program)
       (fun db fn_id ->
         match Shape_and_sig.FunctionMap.find_opt fn_id func_map with
         | Some (func_cfg, method_properties) ->
+          let info =
+            Shape_and_sig.
+              {fn_id; cfg = func_cfg; opt_name = None; class_name_str =None; is_lambda_assignment = false; method_properties; fdef = func_cfg.fde } in 
             let updated_db, _signature =
-              extract_signature_with_file_context ~db taint_inst ~name:fn_id
-                ~method_properties func_cfg ast
+              extract_signature_with_file_context ~db taint_inst ~info ast
             in
             updated_db
         | None ->
@@ -546,7 +553,7 @@ let extract_signatures_from_ast taint_inst (ast : AST_generic.program)
   Log.debug (fun m ->
       m "TAINT_SIG: Final signature database:\n%s"
         (Shape_and_sig.show_signature_database final_db));
-  final_db
+  final_db *)
 
 (* Use functions from Shape_and_sig *)
 let empty_signature_database = Shape_and_sig.empty_signature_database

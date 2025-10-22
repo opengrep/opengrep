@@ -32,15 +32,6 @@ module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
 
-type fun_info = {
-  fn_id : Shape_and_sig.fn_id;
-  opt_name : IL.name option;
-  class_name_str : string option;
-  method_properties : AST_generic.expr list;
-  cfg : IL.fun_cfg;
-  fdef : G.function_definition;
-  is_lambda_assignment : bool;
-}
 
 (*****************************************************************************)
 (* Prelude *)
@@ -323,7 +314,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     let initial_signature_db = Shape_and_sig.add_object_mappings (signature_db ||| Shape_and_sig.empty_signature_database ()) object_mappings in
 
     (* Collect function metadata and prepare call graph based ordering. *)
-    let add_info info (infos, info_map) =
+    let add_info (info: Shape_and_sig.fun_info) (infos, info_map) =
       let infos = info :: infos in
       let info_map =
         if Shape_and_sig.FunctionMap.mem info.fn_id info_map then info_map
@@ -357,7 +348,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   in
                   let cfg = CFG_build.cfg_of_fdef fdef_il in
                   let info =
-                    {
+                    Shape_and_sig.{
                       fn_id;
                       opt_name;
                       class_name_str;
@@ -414,7 +405,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               in
               let cfg = CFG_build.cfg_of_fdef fdef_il in
               let info =
-                {
+                Shape_and_sig.{
                   fn_id;
                   opt_name;
                   class_name_str;
@@ -451,8 +442,9 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         in
         m "TAINT_SIG: analysis order: %s" names);
 
-    let process_fun_info info db =
+    let process_fun_info (info: Shape_and_sig.fun_info) db =
       let log_name = Option.map IL.str_of_name info.opt_name ||| "???" in
+      
       Log.info (fun m ->
           m
             "Match_tainting_mode:\n\
@@ -462,8 +454,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             log_name);
       let updated_db, _signature =
         Taint_signature_extractor.extract_signature_with_file_context
-          ~db taint_inst ~name:info.fn_id ~method_properties:info.method_properties
-          info.cfg ast
+          ~db taint_inst ~info ast
       in
       if info.is_lambda_assignment then updated_db
       else (
@@ -491,8 +482,9 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             process_fun_info info db)
         signature_db_after_order collected_infos
     in
+    print_endline @@ Shape_and_sig.show_signature_database final_signature_db;
     Some final_signature_db
-  ) else (
+     ) else (
     (* Cross-function taint analysis disabled: use main branch behavior *)
     Visit_function_defs.visit
       (fun opt_ent fdef ->
