@@ -446,6 +446,7 @@ and read state = parse
     { kw_or_ident lexbuf }
   | '[' ((alpha_char | numeric_char | combining_char | formatting_char | underscore_char)+) ']'
     { T.make ~uppercase:true lexbuf T.Identifier }
+  | '$' ['A'-'Z']['A'-'Z' '0'-'9']* { T.make lexbuf T.Identifier }
 
 (* interpolated strings *)
   | "$\"" {
@@ -539,6 +540,9 @@ and read state = parse
   | "^=" { T.make lexbuf T.Operator }
   | ";" { T.make lexbuf T.Operator }
   | "|" { T.make lexbuf T.Operator }
+  | "..." { T.make lexbuf T.Operator }
+  | "<..." { T.make lexbuf T.Operator }
+  | "...>" { T.make lexbuf T.Operator }
 
 (* other *)
   | eof  { T.make lexbuf T.EOF; }
