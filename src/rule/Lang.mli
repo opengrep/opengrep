@@ -139,6 +139,7 @@ val lang_of_filename_exn : Fpath.t -> t
 
 (* accept any variants *)
 val is_js : t -> bool
+val is_c_cpp : t -> bool
 
 (* accept any variants *)
 val is_proprietary : t -> bool

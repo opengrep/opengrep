@@ -427,7 +427,9 @@ let is_resolvable_name_ctx env lang =
       | Lang.Js
       | Lang.Ts
       | Lang.Php
-      | Lang.Scala ->
+      | Lang.Scala
+      | Lang.C
+      | Lang.Cpp ->
           true
       | _ -> false)
 
@@ -448,7 +450,9 @@ let resolved_name_kind env lang =
       | Lang.Js
       | Lang.Ts
       | Lang.Php
-      | Lang.Scala ->
+      | Lang.Scala
+      | Lang.C (* can happen for macros inside structs *)
+      | Lang.Cpp ->
           EnclosedVar
       | _ -> raise Impossible)
 
@@ -486,7 +490,7 @@ let js_get_angular_constructor_args env attrs defs =
        | _ -> None)
   |> List_.flatten
 
-let declare_var env lang id id_info ~explicit vinit vtype =
+let declare_var env lang id id_info ?(is_macro=false) ~explicit vinit vtype =
   let sid = SId.mk () in
   (* for the type, we use the (optional) type in vtype, or, if we can infer
    * the type of the expression vinit (literal or id), we use that as a type
@@ -496,8 +500,12 @@ let declare_var env lang id id_info ~explicit vinit vtype =
     (* In JS/TS an assignment to a variable that has not been
      * previously declared will implicitly create a property on
      * the *global* object. *)
-    if Lang.is_js lang && not explicit then (Global, add_ident_global_scope)
-    else (resolved_name_kind env lang, add_ident_current_scope)
+    if Lang.is_js lang && not explicit ||
+       Lang.is_c_cpp lang && is_macro
+    then
+      (Global, add_ident_global_scope)
+    else
+      (resolved_name_kind env lang, add_ident_current_scope)
   in
   let resolved = { entname = (name_kind, sid); enttype = resolved_type } in
   add_ident_to_its_scope id resolved env.names;
@@ -725,7 +733,7 @@ class ['self] resolve_visitor env lang =
       | ( { name = EN (Id (id, id_info)); _ },
           MacroDef
             { macroparams = []; macrobody = [ E ({ e = L _; _ } as e) ] } ) ->
-          declare_var env lang id id_info ~explicit:true (Some e) None;
+          declare_var env lang id id_info ~is_macro:true ~explicit:true (Some e) None;
           super#visit_definition venv x
       (* general case, just recurse *)
       | _ -> super#visit_definition venv x
