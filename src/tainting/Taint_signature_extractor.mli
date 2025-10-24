@@ -36,6 +36,7 @@ val mk_global_tracking_without_taint :
 (** Register global variables for tracking without pre-tainting them *)
 
 val extract_signature_with_file_context :
+  arity:int ->
   ?db:signature_database ->
   Taint_rule_inst.t ->
   ?name:Shape_and_sig.fn_id ->
@@ -63,18 +64,12 @@ val extract_method_properties :
 (* Batch extraction *)
 (*****************************************************************************)
 
-val extract_signatures_from_ast :
-  Taint_rule_inst.t ->
-  AST_generic.program ->
-  (Shape_and_sig.fn_id * IL.fun_cfg * AST_generic.expr list) list ->
-  signature_database
-(** Extract signatures from a list of functions using AST context *)
 
 val empty_signature_database : unit -> signature_database
 (** Create an empty signature database *)
 
 val lookup_signature :
-  signature_database -> Shape_and_sig.fn_id -> Shape_and_sig.Signature.t option
+  signature_database -> Shape_and_sig.fn_id -> int -> Shape_and_sig.Signature.t option
 (** Look up a signature by function name *)
 
 val show_signature_database : signature_database -> string

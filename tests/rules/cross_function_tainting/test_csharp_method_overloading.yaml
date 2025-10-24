@@ -1,0 +1,11 @@
+rules:
+  - id: csharp_method_overload
+    message: Taint through method overloading
+    languages:
+      - csharp
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

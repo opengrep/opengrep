@@ -212,7 +212,6 @@ let any_is_best_sanitizer env any =
 let any_is_best_source ?(is_lval = false) env any =
   env.taint_inst.preds.is_source any
   |> List.filter (fun (m : R.taint_source TM.t) ->
-         (* Remove sources that should match exactly but do not here. *)
          match m.spec.source_by_side_effect with
          | Only -> is_lval && TM.is_exact m
          (* 'Yes' should probably require an exact match like 'Only' but for
@@ -631,7 +630,7 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
-let get_signature_for_object db method_name object_mappings obj =
+let get_signature_for_object db method_name object_mappings obj arity =
   (* Method call: obj.method() *)
   let obj_str = fst obj.ident in
   (* Use object initialization mappings to determine obj's class *)
@@ -659,10 +658,10 @@ let get_signature_for_object db method_name object_mappings obj =
       let method_sig_id_with_class =
         Shape_and_sig.{ class_name = Some class_name; name = Some method_name }
       in
-      Shape_and_sig.(lookup_signature db method_sig_id_with_class)
+      Shape_and_sig.(lookup_signature db method_sig_id_with_class arity)
   | None -> None
 
-let lookup_signature_with_object_context env fun_exp object_mappings =
+let lookup_signature_with_object_context env fun_exp object_mappings arity =
   match env.signature_db with
   | None ->
       Log.debug (fun m -> m "TAINT_SIG: No signature database available");
@@ -675,7 +674,7 @@ let lookup_signature_with_object_context env fun_exp object_mappings =
       | Fetch { base = Var name; rev_offset = [] } ->
           (* Simple function call *)
           let sig_key = Shape_and_sig.{ class_name = None; name = Some name } in
-          let result = Shape_and_sig.(lookup_signature db sig_key) in
+          let result = Shape_and_sig.(lookup_signature db sig_key arity) in
           Log.debug (fun m ->
               m "TAINT_SIG: Looking up function %s: %s" (fst name.ident)
                 (if Option.is_some result then "FOUND" else "NOT FOUND"));
@@ -702,7 +701,7 @@ let lookup_signature_with_object_context env fun_exp object_mappings =
                   { class_name = Some class_name; name = Some method_name }
               in
               match
-                Shape_and_sig.(lookup_signature db method_sig_id_with_class)
+                Shape_and_sig.(lookup_signature db method_sig_id_with_class arity)
               with
               | Some sig_ -> Some sig_
               | None ->
@@ -710,10 +709,10 @@ let lookup_signature_with_object_context env fun_exp object_mappings =
                   let method_sig_id =
                     Shape_and_sig.{ class_name = None; name = Some method_name }
                   in
-                  Shape_and_sig.(lookup_signature db method_sig_id))
+                  Shape_and_sig.(lookup_signature db method_sig_id arity))
           | None -> None)
       | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] } ->
-          get_signature_for_object db method_name object_mappings obj
+          get_signature_for_object db method_name object_mappings obj arity
       | _ -> None)
 
 (* Legacy function for backward compatibility *)
@@ -1257,7 +1256,7 @@ and check_tainted_lval_offset env offset =
 
 (* Test whether an expression is tainted, and if it is also a sink,
  * report the finding too (by side effect). *)
-and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
+and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
   let check env = check_tainted_expr env in
   let check_subexpr exp =
     match exp.e with
@@ -1426,7 +1425,7 @@ and check_tainted_expr env exp : Taints.t * S.shape * Lval_env.t =
                * give it a proper 'Fun' shape. *)
               let sign =
                 if env.taint_inst.options.taint_intrafile then
-                  (lookup_signature env exp, shape)
+                  (lookup_signature env exp arity, shape)
                 else (None, Bot)
               in
               match sign with
@@ -1503,7 +1502,7 @@ let check_function_call env fun_exp args
     (args_taints : (Taints.t * S.shape) argument list) :
     (Taints.t * S.shape * Lval_env.t) option =
   let sig_result =
-    if env.taint_inst.options.taint_intrafile then lookup_signature env fun_exp
+    if env.taint_inst.options.taint_intrafile then lookup_signature env fun_exp (List.length args)
     else None
   in
   match sig_result with
@@ -1558,10 +1557,7 @@ let check_function_call env fun_exp args
                      lval_env |> Lval_env.add var offset taints ))
              (Taints.empty, Bot, env.lval_env))
   | None ->
-      Log.info (fun m ->
-          m "No taint signature found for `%s' `%b' "
-            (Display_IL.string_of_exp fun_exp)
-            env.taint_inst.options.taint_intrafile);
+      
       None
 
 let check_function_call_callee env e =

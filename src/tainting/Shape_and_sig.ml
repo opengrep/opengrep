@@ -18,6 +18,7 @@
 open Common
 module R = Rule
 module T = Taint
+module Log = Log_tainting.Log
 
 (*****************************************************************************)
 (* Taint shapes *)
@@ -639,14 +640,14 @@ end = struct
     il_params
     |> List_.map (function
          | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
-         | IL.PatternParam pat ->
+         | IL.PatternParam pat -> (
              (* Extract parameter name from pattern for Rust function parameters *)
-             (match pat with
+             match pat with
              | AST_generic.PatId (name, _) -> P (fst name)
-             | AST_generic.PatTyped (AST_generic.PatId (name, _), _) -> P (fst name)
+             | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
+                 P (fst name)
              | _ -> Other)
-         | IL.FixmeParam ->
-             Other)
+         | IL.FixmeParam -> Other)
 
   (*************************************)
   (* Signatures *)
@@ -686,39 +687,90 @@ module FunctionMap = Map.Make (struct
   type t = fn_id
 
   let compare { class_name = c1; name = n1 } { class_name = c2; name = n2 } =
-    let compare_il_name n1 n2 = String.compare (fst n1.IL.ident) (fst n2.IL.ident) in
+    let compare_il_name n1 n2 =
+      String.compare (fst n1.IL.ident) (fst n2.IL.ident)
+    in
     let c = Option.compare compare_il_name c1 c2 in
     if Int.equal c 0 then Option.compare compare_il_name n1 n2 else c
 end)
 
+type extended_sig = {
+  sig_ : Signature.t;
+      [@printer fun fmt s -> Format.fprintf fmt "%s" (Signature.show s)]
+  arity : int;
+}
+[@@deriving show]
+
+module SignatureSet = Set.Make (struct
+  type t = extended_sig
+
+  let compare = fun x y -> Signature.compare x.sig_ y.sig_
+end)
+
 type signature_database = {
-  signatures : Signature.t FunctionMap.t;
+  signatures : SignatureSet.t FunctionMap.t;
   object_mappings : (AST_generic.name * AST_generic.name) list;
 }
 
-let empty_signature_database () : signature_database = {
-  signatures = FunctionMap.empty;
-  object_mappings = [];
-}
+let show_name (name_opt : IL.name option) =
+  match name_opt with
+  | Some name -> IL.show_ident name.ident
+  | _ -> ""
 
-let lookup_signature (db : signature_database) (func_name : fn_id) :
-    Signature.t option =
-  FunctionMap.find_opt func_name db.signatures
+let empty_signature_database () : signature_database =
+  { signatures = FunctionMap.empty; object_mappings = [] }
+
+let lookup_signature (db : signature_database) (func_name : fn_id) (arity : int)
+    : Signature.t option =
+  let signatures = FunctionMap.find_opt func_name db.signatures in
+  match signatures with
+  | Some sigs when not (SignatureSet.is_empty sigs) ->
+      let filtered_sigs =
+        SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
+      in
+      let signatures_card = SignatureSet.cardinal filtered_sigs in
+      if signatures_card > 1 then
+        Log.debug (fun m ->
+            m "TAINT_SIG: There are several methods with the name %s the definition was ignored"
+              (show_name func_name.name));
+      if signatures_card =*= 0 then
+        Log.info (fun m ->
+            m "No taint signature found for `%s' " (show_name func_name.name));
+
+      (* If there is only one signature with the given arity, return it *)
+      if signatures_card =*= 1 then
+        Some (SignatureSet.choose filtered_sigs).sig_
+      else None
+  | _ -> None
 
 let add_signature (db : signature_database) (func_name : fn_id)
-    (signature : Signature.t) : signature_database =
-  { db with signatures = FunctionMap.add func_name signature db.signatures }
+    (signature : extended_sig) : signature_database =
+  let signatures =
+    FunctionMap.update func_name
+      (fun existing_sigs ->
+        match existing_sigs with
+        | Some sigs -> Some (SignatureSet.add signature sigs)
+        | None -> Some (SignatureSet.singleton signature))
+      db.signatures
+  in
+  { db with signatures }
 
-let add_object_mappings (db : signature_database) (mappings : (AST_generic.name * AST_generic.name) list) : signature_database =
+let add_object_mappings (db : signature_database)
+    (mappings : (AST_generic.name * AST_generic.name) list) : signature_database
+    =
   { db with object_mappings = mappings }
 
-let get_object_mappings (db : signature_database) : (AST_generic.name * AST_generic.name) list =
+let get_object_mappings (db : signature_database) :
+    (AST_generic.name * AST_generic.name) list =
   db.object_mappings
 
 let show_signature_database (db : signature_database) : string =
   FunctionMap.fold
     (fun name signature acc ->
       let name_str = show_fn_id name in
-      let sig_str = Signature.show signature in
+      let sig_str =
+        String.concat ",\n---\n"
+        @@ List.map show_extended_sig (SignatureSet.elements signature)
+      in
       acc ^ Printf.sprintf "%s: %s\n" name_str sig_str)
     db.signatures ""
