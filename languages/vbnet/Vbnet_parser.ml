@@ -1,8 +1,10 @@
 type token_name = string
 
 module T = Vbnet_token
+module Tokenize = Vbnet_tokenize
 module G = AST_generic
 module RT = Raw_tree
+module DLS = Domain.DLS
 
 type token = T.t
 
@@ -19,8 +21,39 @@ type 'a parser =
   (* next *) token list ->
   ('a parsing_result) Seq.t
 
+let partial = DLS.new_key (fun () -> false)
+
+let reset_parser_state () =
+  DLS.set partial false
+
 let run (p : 'a parser) (ts : token list): 'a parsing_result list =
+  reset_parser_state ();
   p ts |> Seq.take 1 |> List.of_seq
+
+(* Can't use Parsing_Result2.t because of subproject dependencies *)
+type 'a result =
+  | Ok of 'a * Parsing_stat.t
+  | Partial of 'a * Parsing_stat.t
+  | Fail of Parsing_stat.t
+
+let tokenize_and_parse_string  (p : 'a parser) ?(filepath=Fpath.v "<pattern>") (s : string) : 'a result =
+  let ts = Tokenize.tokenize ~filepath s in
+  let line_count = List.filter T.token_line_terminator ts |> List.length in
+  let stat =
+    Parsing_stat.({
+      filename = Fpath.filename filepath;
+      total_line_count = line_count;
+      error_line_count = 0;
+      have_timeout = false;
+      commentized = 0;
+      problematic_lines = [];
+      ast_stat = None;
+    })
+  in
+  match run p ts with
+  | { value; next = [] } :: _ when DLS.get partial -> Partial (value, stat)
+  | { value; next = [] } :: _ -> Ok (value, stat)
+  | _ -> Fail stat
 
 let ( let/ ) xs f = Seq.concat_map f xs
 
@@ -54,6 +87,10 @@ let rec token (t : token_name) : token parser =
     | w :: ws when token_match t w ->
         single { next = ws; value = w }
     | _ -> empty
+
+let pure_token (t : token_name) : unit parser =
+  let* _ = token t in
+  pure ()
 
 let rec token_type (t : T.token_kind) : token parser =
   fun next ->
@@ -114,6 +151,11 @@ let ne_list_of (p : 'a parser) : 'a list parser =
   let* xs = list_of p in
   pure (x :: xs)
 
+let stop_on_partial : unit parser =
+  fun _next ->
+    DLS.set partial true;
+    single { next = []; value = () }
+
 let any_of_raw (r : G.any RT.t) : G.any =
   G.Raw r
 
@@ -135,15 +177,19 @@ let xOptional (r : G.any option) : G.any =
 let xList (rs : G.any list) : G.any =
   RT.List (List.map raw_of_any rs) |> any_of_raw
 
-
 (* parser *)
 
 let rec compilation_unit : G.any parser = fun __n -> (
   (* compilation_unit -> toplevel '<EOF>' *)
+  (* ... or stop on partial *)
   let* toplevel1 = toplevel in
-  let* lt_EOF_gt1 = token "<EOF>" in
-  pure (xRule "compilation_unit" 0 [toplevel1; xToken(lt_EOF_gt1)])
-) __n
+  let* _ = choice [
+      pure_token "<EOF>";
+      stop_on_partial
+    ]
+  in
+  pure (xRule "compilation_unit" 0 [toplevel1])
+) __n |> cut
 
 and toplevel : G.any parser = fun __n -> (
   (* toplevel -> option_statement* imports_statement* attributes_statement* toplevel_declaration* *)
@@ -1337,13 +1383,18 @@ and end_add_handler_statement : G.any parser = fun __n -> (
   pure (xRule "end_add_handler_statement" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(addHandler1)])
 ) __n
 
-and end_class_statement : G.any parser = fun __n -> (
-  (* end_class_statement -> ':'? 'End' 'Class' *)
-  let* colon_opt1 = optional (token ":") in
-  let* end1 = token "END" in
-  let* class1 = token "CLASS" in
-  pure (xRule "end_class_statement" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(class1)])
-) __n
+and end_class_statement : unit parser = fun __n -> (
+  choice [
+    begin
+      (* end_class_statement -> ':'? 'End' 'Class' *)
+      let* _ = optional (token ":") in
+      let* _ = token "END" in
+      let* _ = token "CLASS" in
+      pure ()
+    end;
+    stop_on_partial
+  ]
+) __n |> cut
 
 and end_enum_statement : G.any parser = fun __n -> (
   (* end_enum_statement -> ':'? 'End' 'Enum' *)
@@ -1369,29 +1420,47 @@ and end_function_statement : G.any parser = fun __n -> (
   pure (xRule "end_function_statement" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(function1)])
 ) __n
 
-and end_interface_statement : G.any parser = fun __n -> (
+and end_interface_statement : unit parser = fun __n -> (
   (* end_interface_statement -> ':'? 'End' 'Interface' *)
-  let* colon_opt1 = optional (token ":") in
-  let* end1 = token "END" in
-  let* interface1 = token "INTERFACE" in
-  pure (xRule "end_interface_statement" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(interface1)])
-) __n
+  choice [
+    begin
+      (* end_class_statement -> ':'? 'End' 'Class' *)
+      let* _ = optional (token ":") in
+      let* _ = token "END" in
+      let* _ = token "INTERFACE" in
+      pure ()
+    end;
+    stop_on_partial
+  ]
+) __n |> cut
 
-and end_module_statement : G.any parser = fun __n -> (
+and end_module_statement : unit parser = fun __n -> (
   (* end_module_statement -> ':'? 'End' 'Module' *)
-  let* colon_opt1 = optional (token ":") in
-  let* end1 = token "END" in
-  let* module1 = token "MODULE" in
-  pure (xRule "end_module_statement" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(module1)])
-) __n
+  choice [
+    begin
+      (* end_class_statement -> ':'? 'End' 'Class' *)
+      let* _ = optional (token ":") in
+      let* _ = token "END" in
+      let* _ = token "MODULE" in
+      pure ()
+    end;
+    stop_on_partial
+  ]
+) __n |> cut
 
-and end_namespace_statement : G.any parser = fun __n -> (
+and end_namespace_statement : unit parser = fun __n -> (
   (* end_namespace_statement -> ':'? 'End' 'Namespace' *)
-  let* colon_opt1 = optional (token ":") in
-  let* end1 = token "END" in
-  let* namespace1 = token "NAMESPACE" in
-  pure (xRule "end_namespace_statement" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(namespace1)])
-) __n
+  choice [
+    begin
+      (* end_class_statement -> ':'? 'End' 'Class' *)
+      let* _ = optional (token ":") in
+      let* _ = token "END" in
+      let* _ = token "NAMESPACE" in
+      pure ()
+    end;
+    stop_on_partial
+  ]
+) __n |> cut
 
 and end_operator_statement : G.any parser = fun __n -> (
   (* end_operator_statement -> ':'? 'End' 'Operator' *)
@@ -2480,8 +2549,8 @@ and namespace_block : G.any parser = fun __n -> (
     end
   in
   let* toplevel1 = toplevel in
-  let* end_namespace_statement1 = end_namespace_statement in
-  pure (xRule "namespace_block" 0 [xToken(namespace1); qualified_name1; xList(dot_identifier_names1); toplevel1; end_namespace_statement1])
+  let* _ = end_namespace_statement in
+  pure (xRule "namespace_block" 0 [xToken(namespace1); qualified_name1; xList(dot_identifier_names1); toplevel1])
 ) __n
 
 and property_block : G.any parser = fun __n -> (
@@ -2543,8 +2612,8 @@ and class_block : G.any parser = fun __n -> (
   let* inherits_statements1 = list_of inherits_statement in
   let* implements_statements1 = list_of implements_statement in
   let* class_block_declarations1 = list_of class_block_declaration in
-  let* end_class_statement1 = end_class_statement in
-  pure (xRule "class_block" 0 [class_statement1; xList(inherits_statements1); xList(implements_statements1); xList(class_block_declarations1); end_class_statement1])
+  let* _ = end_class_statement in
+  pure (xRule "class_block" 0 [class_statement1; xList(inherits_statements1); xList(implements_statements1); xList(class_block_declarations1)])
 ) __n
 
 and class_statement : G.any parser = fun __n -> (
@@ -2655,8 +2724,8 @@ and interface_block : G.any parser = fun __n -> (
   let* inherits_statements1 = list_of inherits_statement in
   let* implements_statements1 = list_of implements_statement in
   let* class_block_declarations1 = list_of class_block_declaration in
-  let* end_interface_statement1 = end_interface_statement in
-  pure (xRule "interface_block" 0 [interface_statement1; xList(inherits_statements1); xList(implements_statements1); xList(class_block_declarations1); end_interface_statement1])
+  let* _ = end_interface_statement in
+  pure (xRule "interface_block" 0 [interface_statement1; xList(inherits_statements1); xList(implements_statements1); xList(class_block_declarations1)])
 ) __n
 
 and interface_statement : G.any parser = fun __n -> (
@@ -2673,8 +2742,8 @@ and module_block : G.any parser = fun __n -> (
   let* inherits_statements1 = list_of inherits_statement in
   let* implements_statements1 = list_of implements_statement in
   let* class_block_declarations1 = list_of class_block_declaration in
-  let* end_module_statement1 = end_module_statement in
-  pure (xRule "module_block" 0 [module_statement1; xList(inherits_statements1); xList(implements_statements1); xList(class_block_declarations1); end_module_statement1])
+  let* _ = end_module_statement in
+  pure (xRule "module_block" 0 [module_statement1; xList(inherits_statements1); xList(implements_statements1); xList(class_block_declarations1)])
 ) __n
 
 and module_statement : G.any parser = fun __n -> (

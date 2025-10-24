@@ -33,6 +33,11 @@ let token_ghost (tok : t) : bool =
   | { kind = LineTerminator; _ } -> true
   | _ -> false
 
+let token_line_terminator (tok : t) : bool =
+  match tok with
+  | { kind = LineTerminator; _ } -> true
+  | _ -> false
+
 let token_match (s : string) (tok : t) : bool =
   match s, tok with
   | "<IDENT>", { kind = Identifier; _ }
