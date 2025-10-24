@@ -444,6 +444,7 @@ let enable_precise_index_tracking () =
   Taint.hook_offset_of_IL := Some precise_offset_of_IL
 
 let extract_signature_with_file_context
+    ~arity
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
     (taint_inst : Taint_rule_inst.t)
     ?(name = Shape_and_sig.{ class_name = None; name = None })
@@ -477,7 +478,7 @@ let extract_signature_with_file_context
     extract_signature taint_inst ~in_env:combined_global_env ~name:final_name
       ~signature_db:db func_cfg
   in
-  let updated_db = Shape_and_sig.add_signature db final_name signature in
+  let updated_db = Shape_and_sig.add_signature db final_name {sig_ = signature; arity} in
   (updated_db, signature)
 
 let show_signature_extraction func_name signature =
@@ -485,68 +486,7 @@ let show_signature_extraction func_name signature =
     (Option.value func_name ~default:"<anonymous>")
     (Signature.show signature)
 
-let extract_signatures_from_ast taint_inst (ast : AST_generic.program)
-    (functions : (Shape_and_sig.fn_id * IL.fun_cfg * AST_generic.expr list) list) : signature_database =
-  (* Step 1: Detect object initialization mappings for this file *)
-  let object_mappings = detect_object_initialization ast taint_inst.TRI.lang in
-  Log.debug (fun m ->
-      m "TAINT_SIG: Object mappings: %s"
-        (Object_initialization.show_object_mappings object_mappings));
 
-  (* Step 2: Build call graph to determine analysis order *)
-  let call_graph = Function_call_graph.build_call_graph ~lang:taint_inst.TRI.lang ~object_mappings ast in
-
-  (* Step 3: Determine analysis order using topological traversal *)
-  let analysis_order =
-    Function_call_graph.Topo.fold
-      (fun fn_id acc -> fn_id :: acc)
-      call_graph []
-    |> List.rev
-  in
-
-  Log.debug (fun m ->
-      let names =
-        analysis_order
-        |> List.map Shape_and_sig.show_fn_id
-        |> String.concat " -> "
-      in
-      m "TAINT_SIG: analysis order: %s" names);
-
-  (* Step 4: Create lookup map for function CFGs and method properties *)
-  let func_map =
-    List.fold_left
-      (fun map (name, cfg, props) ->
-        Shape_and_sig.FunctionMap.add name (cfg, props) map)
-      Shape_and_sig.FunctionMap.empty functions
-  in
-
-  (* Step 5: Extract signatures in topological order *)
-  let db_with_signatures =
-    List.fold_left
-      (fun db fn_id ->
-        match Shape_and_sig.FunctionMap.find_opt fn_id func_map with
-        | Some (func_cfg, method_properties) ->
-            let updated_db, _signature =
-              extract_signature_with_file_context ~db taint_inst ~name:fn_id
-                ~method_properties func_cfg ast
-            in
-            updated_db
-        | None ->
-            (* Function is present in the call graph but not in our
-               functions list – ignore it here. *)
-            db)
-      (Shape_and_sig.empty_signature_database ())
-      analysis_order
-  in
-
-  (* Step 6: Add object mappings to the final signature database *)
-  let final_db =
-    Shape_and_sig.add_object_mappings db_with_signatures object_mappings
-  in
-  Log.debug (fun m ->
-      m "TAINT_SIG: Final signature database:\n%s"
-        (Shape_and_sig.show_signature_database final_db));
-  final_db
 
 (* Use functions from Shape_and_sig *)
 let empty_signature_database = Shape_and_sig.empty_signature_database
