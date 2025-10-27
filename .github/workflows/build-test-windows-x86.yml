@@ -79,7 +79,7 @@ jobs:
         uses: cygwin/cygwin-install-action@f61179d72284ceddc397ed07ddb444d82bf9e559 # ratchet:cygwin/cygwin-install-action@master
         with:
           install-dir: D:/cygwin
-          packages: curl,diffutils,m4,make,mingw64-i686-gcc-core,mingw64-i686-gcc-g++,mingw64-i686-openssl,mingw64-x86_64-gcc-core,mingw64-x86_64-gcc-g++,mingw64-x86_64-openssl=1.0.2u+za-1,patch,perl,rsync,unzip,mingw64-x86_64-libssh2,mingw64-x86_64-nghttp2,mingw64-x86_64-pcre,mingw64-x86_64-pcre2,mingw64-x86_64-win-iconv,mingw64-x86_64-zstd,mingw64-x86_64-gettext,mingw64-x86_64-libidn2,mingw64-x86_64-curl,gnupg2,mingw64-x86_64-gmp
+          packages: curl,diffutils,m4,make,mingw64-i686-gcc-core,mingw64-i686-gcc-g++,mingw64-i686-openssl,mingw64-x86_64-gcc-core,mingw64-x86_64-gcc-g++,mingw64-x86_64-openssl=1.0.2u+za-1,patch,perl,rsync,unzip,mingw64-x86_64-libssh2,mingw64-x86_64-nghttp2,mingw64-x86_64-pcre,mingw64-x86_64-pcre2,mingw64-x86_64-win-iconv,mingw64-x86_64-zstd,mingw64-x86_64-gettext,mingw64-x86_64-libidn2,mingw64-x86_64-curl,gnupg2=2.4.8-1,mingw64-x86_64-gmp
 
       - name: Create BASH_ENV configuration
         shell: bash
