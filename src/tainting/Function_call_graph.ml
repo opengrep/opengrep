@@ -22,12 +22,21 @@ let compare_as_str f1 f2 =
 module FuncVertex = struct
   type t = fn_id
 
-  (* Compare by string name only (same as signature database) to handle
-     cases where call site and definition have different SIds *)
+  (* Compare by string name and position only to handle
+     cases where call site and definition have different SIds. We use
+     position as well to differentiate methods with the same name.
+     We need to guard for FakeToks. *)
   let compare f1 f2 =
     let compare_il_name n1 n2 =
+      let open Tok in
       let st = String.compare (fst n1.IL.ident) (fst n2.IL.ident) in
-      if st <> 0 then st else Tok.compare_pos (snd n1.IL.ident) (snd n2.IL.ident)
+      if st <> 0 then st
+      else
+        match (snd n1.IL.ident, snd n2.IL.ident) with
+        | FakeTok _, FakeTok _ -> 0
+        | FakeTok _, _ -> -1
+        | _, FakeTok _ -> 1
+        | _ -> Tok.compare_pos (snd n1.IL.ident) (snd n2.IL.ident)
     in
     let cmp_opt = Option.compare compare_il_name in
     let c1 = cmp_opt f1.class_name f2.class_name in
