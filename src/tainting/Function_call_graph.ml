@@ -41,7 +41,6 @@ module FuncVertex = struct
     let cmp_opt = Option.compare compare_il_name in
     let c1 = cmp_opt f1.class_name f2.class_name in
     if c1 <> 0 then c1 else cmp_opt f1.name f2.name
-
   let hash (f : fn_id) =
     let h1 =
       Option.fold ~none:0 ~some:(fun n -> Hashtbl.hash (fst n.IL.ident)) f.name

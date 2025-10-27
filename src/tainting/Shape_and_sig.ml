@@ -178,24 +178,36 @@ end = struct
   (*************************************)
   (* TODO: Should we just define these in terms of `compare_*` ? *)
 
-  let rec equal_cell cell1 cell2 =
-    let (Cell (taints1, shape1)) = cell1 in
-    let (Cell (taints2, shape2)) = cell2 in
-    Xtaint.equal taints1 taints2 && equal_shape shape1 shape2
+  (* Depth-limited equality to prevent infinite recursion and force convergence
+   * for pathological patterns like obj[key] = [obj[key], item] that create
+   * unbounded recursive structures. If both shapes exceed MAX_SHAPE_DEPTH,
+   * we consider them equal (widening approximation). *)
+  let rec equal_cell_depth depth cell1 cell2 =
+    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
+    else
+      let (Cell (taints1, shape1)) = cell1 in
+      let (Cell (taints2, shape2)) = cell2 in
+      Xtaint.equal taints1 taints2 && equal_shape_depth depth shape1 shape2
 
-  and equal_shape shape1 shape2 =
-    match (shape1, shape2) with
-    | Bot, Bot -> true
-    | Obj obj1, Obj obj2 -> equal_obj obj1 obj2
-    | Arg arg1, Arg arg2 -> T.equal_arg arg1 arg2
-    | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
-    | Bot, _
-    | Obj _, _
-    | Arg _, _
-    | Fun _, _ ->
-        false
+  and equal_shape_depth depth shape1 shape2 =
+    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
+    else
+      match (shape1, shape2) with
+      | Bot, Bot -> true
+      | Obj obj1, Obj obj2 -> equal_obj_depth (depth + 1) obj1 obj2
+      | Arg arg1, Arg arg2 -> T.equal_arg arg1 arg2
+      | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
+      | Bot, _
+      | Obj _, _
+      | Arg _, _
+      | Fun _, _ ->
+          false
 
-  and equal_obj obj1 obj2 = Fields.equal equal_cell obj1 obj2
+  and equal_obj_depth depth obj1 obj2 =
+    Fields.equal (equal_cell_depth depth) obj1 obj2
+
+  (* Public API uses depth 0 *)
+  let equal_cell cell1 cell2 = equal_cell_depth 0 cell1 cell2
 
   (*************************************)
   (* Comparison *)
