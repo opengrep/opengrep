@@ -557,13 +557,15 @@ and map_interpolation (env : env) ((v1, v2, v3, v4, v5, v6) : CST.interpolation)
     | Some tok -> Some ((* pattern ![a-z] *) str env tok)
     | None -> None
   in
-  let _format_opt =
+  let format_opt =
     match v5 with
     | Some x -> Some (map_format_specifier env x)
     | None -> None
   in
   let rb = (* "}" *) token env v6 in
-  (lb, e, rb)
+  match format_opt with
+  | None | Some [] -> e
+  | Some xs -> InterpolatedString (lb, xs ,rb)
 
 and map_lambda_parameters (env : env) (x : CST.lambda_parameters) =
   map_parameters_ env x
@@ -947,8 +949,7 @@ and map_string_ (env : env) ((v1, v2, v3) : CST.string_) :
       (fun x ->
         match x with
         | `Interp x ->
-            let _lb, e, _rb = map_interpolation env x in
-            e
+            map_interpolation env x
         | `Esc_interp x ->
             let s = map_escape_interpolation env x in
             Str s
