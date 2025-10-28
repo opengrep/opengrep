@@ -813,7 +813,7 @@ string:
 
 interpolated:
   | FSTRING_STRING { Str $1 }
-  | FSTRING_LBRACE interpolant fstring_print_spec "}" { InterpolatedString ($1, $2::$3, $4) }
+  | FSTRING_LBRACE interpolant fstring_print_spec "}" { if List.is_empty $3 then $2 else InterpolatedString ($1, $2::$3, $4) }
 
 fstring_print_spec:
   |     fstring_format_clause { $1 }
