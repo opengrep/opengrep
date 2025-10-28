@@ -36,7 +36,8 @@ type 'a result =
   | Partial of 'a * Parsing_stat.t
   | Fail of Parsing_stat.t
 
-let tokenize_and_parse_string  (p : 'a parser) ?(filepath=Fpath.v "<pattern>") (s : string) : 'a result =
+(* FIXME: works for entire files only! *)
+let tokenize_and_parse_string (p : 'a parser) ?(filepath=Fpath.v "<pattern>") (s : string) : 'a result =
   let ts = Tokenize.tokenize ~filepath s in
   let line_count = List.filter T.token_line_terminator ts |> List.length in
   let stat =
@@ -176,6 +177,9 @@ let xOptional (r : G.any option) : G.any =
 
 let xList (rs : G.any list) : G.any =
   RT.List (List.map raw_of_any rs) |> any_of_raw
+
+(* helpers *)
+let fb = Tok.unsafe_fake_bracket
 
 (* parser *)
 
@@ -385,10 +389,10 @@ and argument : G.any parser = fun __n -> (
     begin
       let* to1 = token "TO" in
       let* expression1 = expression in
-      pure (xGroup([xToken(to1); expression1]))
+      pure (xGroup([xToken(to1); G.E expression1]))
     end
   in
-  pure (xRule "argument" 0 [xOptional(identifier_or_keyword_colon_eq_opt1); expression1; xOptional(to_expression_opt1)])
+  pure (xRule "argument" 0 [xOptional(identifier_or_keyword_colon_eq_opt1); G.E expression1; xOptional(to_expression_opt1)])
 ) __n
 
 and escaped_identifier_content : G.any parser = fun __n -> (
@@ -670,7 +674,7 @@ and select_statement : G.any parser = fun __n -> (
   let* case_opt1 = optional (token "CASE") in
   let* expression1 = expression in
   let* _ = look_ahead "<LINE_TERMINATOR>" in
-  pure (xRule "select_statement" 0 [xToken(select1); xOptional(Option.map (fun x -> xToken x) case_opt1); expression1])
+  pure (xRule "select_statement" 0 [xToken(select1); xOptional(Option.map (fun x -> xToken x) case_opt1); G.E expression1])
 ) __n
 
 and case_block : G.any parser = fun __n -> (
@@ -737,10 +741,10 @@ and range_or_expression_case_clause : G.any parser = fun __n -> (
     begin
       let* to1 = token "TO" in
       let* expression1 = expression in
-      pure (xGroup([xToken(to1); expression1]))
+      pure (xGroup([xToken(to1); G.E expression1]))
     end
   in
-  pure (xRule "range_or_expression_case_clause" 0 [expression1; xOptional(to_expression_opt1)])
+  pure (xRule "range_or_expression_case_clause" 0 [G.E expression1; xOptional(to_expression_opt1)])
 ) __n
 
 and relational_case_clause_op : G.any parser = fun __n -> (
@@ -783,7 +787,7 @@ and relational_case_clause : G.any parser = fun __n -> (
   let* is_opt1 = optional (token "IS") in
   let* relational_case_clause_op1 = relational_case_clause_op in
   let* expression1 = expression in
-  pure (xRule "relational_case_clause" 0 [xOptional(Option.map (fun x -> xToken x) is_opt1); relational_case_clause_op1; expression1])
+  pure (xRule "relational_case_clause" 0 [xOptional(Option.map (fun x -> xToken x) is_opt1); relational_case_clause_op1; G.E expression1])
 ) __n
 
 and single_line_if_statement : G.any parser = fun __n -> (
@@ -801,7 +805,7 @@ and single_line_if_statement : G.any parser = fun __n -> (
       pure (xGroup([xToken(else1); single_line_statements1]))
     end
   in
-  pure (xRule "single_line_if_statement" 0 [xToken(if1); expression1; xToken(then1); single_line_statements1; xOptional(lookahead_not_lt_LINE_TERMINATOR_gt_else_single_line_st_opt1)])
+  pure (xRule "single_line_if_statement" 0 [xToken(if1); G.E expression1; xToken(then1); single_line_statements1; xOptional(lookahead_not_lt_LINE_TERMINATOR_gt_else_single_line_st_opt1)])
 ) __n
 
 and multi_line_if_block : G.any parser = fun __n -> (
@@ -816,7 +820,7 @@ and multi_line_if_block : G.any parser = fun __n -> (
   let* colon_opt1 = optional (token ":") in
   let* end1 = token "END" in
   let* if2 = token "IF" in
-  pure (xRule "multi_line_if_block" 0 [xToken(if1); expression1; xOptional(Option.map (fun x -> xToken x) then_opt1); case_statement_terminator1; statements_block1; xList(else_if_blocks1); xOptional(else_block_opt1); xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(if2)])
+  pure (xRule "multi_line_if_block" 0 [xToken(if1); G.E expression1; xOptional(Option.map (fun x -> xToken x) then_opt1); case_statement_terminator1; statements_block1; xList(else_if_blocks1); xOptional(else_block_opt1); xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(if2)])
 ) __n
 
 and else_if_or_elseif : G.any parser = fun __n -> (
@@ -844,7 +848,7 @@ and else_if_block : G.any parser = fun __n -> (
   let* then_opt1 = optional (token "THEN") in
   let* case_statement_terminator1 = case_statement_terminator in
   let* statements_block1 = statements_block in
-  pure (xRule "else_if_block" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); else_if_or_elseif1; expression1; xOptional(Option.map (fun x -> xToken x) then_opt1); case_statement_terminator1; statements_block1])
+  pure (xRule "else_if_block" 0 [xOptional(Option.map (fun x -> xToken x) colon_opt1); else_if_or_elseif1; G.E expression1; xOptional(Option.map (fun x -> xToken x) then_opt1); case_statement_terminator1; statements_block1])
 ) __n
 
 and else_block : G.any parser = fun __n -> (
@@ -904,10 +908,10 @@ and for_header : G.any parser = fun __n -> (
         begin
           let* step1 = token "STEP" in
           let* expression1 = expression in
-          pure (xGroup([xToken(step1); expression1]))
+          pure (xGroup([xToken(step1); G.E expression1]))
         end
       in
-      pure (xRule "for_header" 0 [identifier_name1; xOptional(simple_as_clause_opt1); xToken(eq1); expression1; xToken(to1); expression2; xOptional(step_expression_opt1)])
+      pure (xRule "for_header" 0 [identifier_name1; xOptional(simple_as_clause_opt1); xToken(eq1); G.E expression1; xToken(to1); G.E expression2; xOptional(step_expression_opt1)])
     end;
     begin
       (* for_header -> 'Each' identifier_name simple_as_clause? 'In' expression *)
@@ -916,7 +920,7 @@ and for_header : G.any parser = fun __n -> (
       let* simple_as_clause_opt1 = optional simple_as_clause in
       let* in1 = token "IN" in
       let* expression1 = expression in
-      pure (xRule "for_header" 1 [xToken(each1); identifier_name1; xOptional(simple_as_clause_opt1); xToken(in1); expression1])
+      pure (xRule "for_header" 1 [xToken(each1); identifier_name1; xOptional(simple_as_clause_opt1); xToken(in1); G.E expression1])
     end;
   ]
 ) __n
@@ -945,13 +949,13 @@ and do_header : G.any parser = fun __n -> (
       (* do_header -> 'While' expression *)
       let* while1 = token "WHILE" in
       let* expression1 = expression in
-      pure (xRule "do_header" 0 [xToken(while1); expression1])
+      pure (xRule "do_header" 0 [xToken(while1); G.E expression1])
     end;
     begin
       (* do_header -> 'Until' expression *)
       let* until1 = token "UNTIL" in
       let* expression1 = expression in
-      pure (xRule "do_header" 1 [xToken(until1); expression1])
+      pure (xRule "do_header" 1 [xToken(until1); G.E expression1])
     end;
   ]
 ) __n
@@ -966,7 +970,7 @@ and while_block : G.any parser = fun __n -> (
   let* colon_opt1 = optional (token ":") in
   let* end1 = token "END" in
   let* while2 = token "WHILE" in
-  pure (xRule "while_block" 0 [xToken(while1); expression1; case_statement_terminator1; statements_block1; case_statement_terminator2; xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(while2)])
+  pure (xRule "while_block" 0 [xToken(while1); G.E expression1; case_statement_terminator1; statements_block1; case_statement_terminator2; xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(while2)])
 ) __n
 
 and soft_terminator : G.any parser = fun __n -> (
@@ -1019,7 +1023,7 @@ and catch_filter_clause : G.any parser = fun __n -> (
   (* catch_filter_clause -> 'When' expression *)
   let* when1 = token "WHEN" in
   let* expression1 = expression in
-  pure (xRule "catch_filter_clause" 0 [xToken(when1); expression1])
+  pure (xRule "catch_filter_clause" 0 [xToken(when1); G.E expression1])
 ) __n
 
 and finally_block : G.any parser = fun __n -> (
@@ -1038,7 +1042,7 @@ and with_block : G.any parser = fun __n -> (
   let* colon_opt1 = optional (token ":") in
   let* end1 = token "END" in
   let* with2 = token "WITH" in
-  pure (xRule "with_block" 0 [xToken(with1); expression1; statements_block1; xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(with2)])
+  pure (xRule "with_block" 0 [xToken(with1); G.E expression1; statements_block1; xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(with2)])
 ) __n
 
 and sync_lock_block : G.any parser = fun __n -> (
@@ -1050,7 +1054,7 @@ and sync_lock_block : G.any parser = fun __n -> (
   let* colon_opt1 = optional (token ":") in
   let* end1 = token "END" in
   let* syncLock2 = token "SYNCLOCK" in
-  pure (xRule "sync_lock_block" 0 [xToken(syncLock1); expression1; statements_block1; xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(syncLock2)])
+  pure (xRule "sync_lock_block" 0 [xToken(syncLock1); G.E expression1; statements_block1; xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(end1); xToken(syncLock2)])
 ) __n
 
 and using_block : G.any parser = fun __n -> (
@@ -1087,7 +1091,7 @@ and using_header_item : G.any parser = fun __n -> (
     begin
       (* using_header_item -> access_expression *)
       let* access_expression1 = access_expression in
-      pure (xRule "using_header_item" 1 [access_expression1])
+      pure (xRule "using_header_item" 1 [G.E access_expression1])
     end;
   ]
 ) __n
@@ -1100,17 +1104,17 @@ and erase_statement : G.any parser = fun __n -> (
     begin
       let* comma1 = token "," in
       let* expression1 = expression in
-      pure (xGroup([xToken(comma1); expression1]))
+      pure (xGroup([xToken(comma1); G.E expression1]))
     end
   in
-  pure (xRule "erase_statement" 0 [xToken(erase1); expression1; xList(comma_expressions1)])
+  pure (xRule "erase_statement" 0 [xToken(erase1); G.E expression1; xList(comma_expressions1)])
 ) __n
 
 and error_statement : G.any parser = fun __n -> (
   (* error_statement -> 'Error' expression *)
   let* error1 = token "ERROR" in
   let* expression1 = expression in
-  pure (xRule "error_statement" 0 [xToken(error1); expression1])
+  pure (xRule "error_statement" 0 [xToken(error1); G.E expression1])
 ) __n
 
 and continue_statement : G.any parser = fun __n -> (
@@ -1144,7 +1148,7 @@ and call_statement : G.any parser = fun __n -> (
   (* call_statement -> 'Call' expression *)
   let* call1 = token "CALL" in
   let* expression1 = expression in
-  pure (xRule "call_statement" 0 [xToken(call1); expression1])
+  pure (xRule "call_statement" 0 [xToken(call1); G.E expression1])
 ) __n
 
 and on_error_go_to_statement : G.any parser = fun __n -> (
@@ -1210,14 +1214,14 @@ and print_statement : G.any parser = fun __n -> (
   (* print_statement -> '?' expression *)
   let* qmark1 = token "?" in
   let* expression1 = expression in
-  pure (xRule "print_statement" 0 [xToken(qmark1); expression1])
+  pure (xRule "print_statement" 0 [xToken(qmark1); G.E expression1])
 ) __n
 
 and raise_event_statement : G.any parser = fun __n -> (
   (* raise_event_statement -> 'RaiseEvent' access_expression *)
   let* raiseEvent1 = token "RAISEEVENT" in
   let* access_expression1 = access_expression in
-  pure (xRule "raise_event_statement" 0 [xToken(raiseEvent1); access_expression1])
+  pure (xRule "raise_event_statement" 0 [xToken(raiseEvent1); G.E access_expression1])
 ) __n
 
 and resume_statement : G.any parser = fun __n -> (
@@ -1283,7 +1287,7 @@ and return_statement : G.any parser = fun __n -> (
       let* return1 = token "RETURN" in
       let* _ = look_ahead_not "<LINE_TERMINATOR>" in
       let* expression1 = expression in
-      pure (xRule "return_statement" 1 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(return1); expression1])
+      pure (xRule "return_statement" 1 [xOptional(Option.map (fun x -> xToken x) colon_opt1); xToken(return1); G.E expression1])
     end;
   ]
 ) __n
@@ -1300,14 +1304,14 @@ and yield_statement : G.any parser = fun __n -> (
   (* yield_statement -> 'Yield' expression *)
   let* yield1 = token "YIELD" in
   let* expression1 = expression in
-  pure (xRule "yield_statement" 0 [xToken(yield1); expression1])
+  pure (xRule "yield_statement" 0 [xToken(yield1); G.E expression1])
 ) __n
 
 and throw_statement : G.any parser = fun __n -> (
   (* throw_statement -> 'Throw' expression? *)
   let* throw1 = token "THROW" in
   let* expression_opt1 = optional expression in
-  pure (xRule "throw_statement" 0 [xToken(throw1); xOptional(expression_opt1)])
+  pure (xRule "throw_statement" 0 [xToken(throw1); xOptional(Option.map (fun e -> G.E e) expression_opt1)])
 ) __n
 
 and toplevel_declaration : G.any parser = fun __n -> (
@@ -1370,7 +1374,7 @@ and toplevel_kw_declaration : G.any parser = fun __n -> (
       let* lt_dot_dot_dot1 = token "<..." in
       let* expression1 = expression in
       let* dot_dot_dot_gt1 = token "...>" in
-      pure (xRule "toplevel_kw_declaration" 9 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
+      pure (xRule "toplevel_kw_declaration" 9 [xToken(lt_dot_dot_dot1); G.E expression1; xToken(dot_dot_dot_gt1)])
     end;
   ]
 ) __n
@@ -1648,7 +1652,7 @@ and inferred_field_initializer : G.any parser = fun __n -> (
   (* inferred_field_initializer -> 'Key'? expression *)
   let* key_opt1 = optional (token "KEY") in
   let* expression1 = expression in
-  pure (xRule "inferred_field_initializer" 0 [xOptional(Option.map (fun x -> xToken x) key_opt1); expression1])
+  pure (xRule "inferred_field_initializer" 0 [xOptional(Option.map (fun x -> xToken x) key_opt1); G.E expression1])
 ) __n
 
 and named_field_initializer : G.any parser = fun __n -> (
@@ -1658,7 +1662,7 @@ and named_field_initializer : G.any parser = fun __n -> (
   let* identifier_name1 = identifier_name in
   let* eq1 = token "=" in
   let* expression1 = expression in
-  pure (xRule "named_field_initializer" 0 [xOptional(Option.map (fun x -> xToken x) key_opt1); xToken(dot1); identifier_name1; xToken(eq1); expression1])
+  pure (xRule "named_field_initializer" 0 [xOptional(Option.map (fun x -> xToken x) key_opt1); xToken(dot1); identifier_name1; xToken(eq1); G.E expression1])
 ) __n
 
 and array_creation_expression : G.any parser = fun __n -> (
@@ -1690,10 +1694,10 @@ and collection_initializer : G.any parser = fun __n -> (
         begin
           let* comma1 = token "," in
           let* expression1 = expression in
-          pure (xGroup([xToken(comma1); expression1]))
+          pure (xGroup([xToken(comma1); G.E expression1]))
         end
       in
-      pure (xGroup([expression1; xList(comma_expressions1)]))
+      pure (xGroup([G.E expression1; xList(comma_expressions1)]))
     end
   in
   let* rbrace1 = token "}" in
@@ -1736,7 +1740,7 @@ and equals_value : G.any parser = fun __n -> (
   (* equals_value -> '=' expression *)
   let* eq1 = token "=" in
   let* expression1 = expression in
-  pure (xRule "equals_value" 0 [xToken(eq1); expression1])
+  pure (xRule "equals_value" 0 [xToken(eq1); G.E expression1])
 ) __n
 
 and event_block : G.any parser = fun __n -> (
@@ -1840,7 +1844,7 @@ and parameter : G.any parser = fun __n -> (
       let* lt_dot_dot_dot1 = token "<..." in
       let* expression1 = expression in
       let* dot_dot_dot_gt1 = token "...>" in
-      pure (xRule "parameter" 2 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
+      pure (xRule "parameter" 2 [xToken(lt_dot_dot_dot1); G.E expression1; xToken(dot_dot_dot_gt1)])
     end;
   ]
 ) __n
@@ -2049,31 +2053,32 @@ and declare_statement : G.any parser = fun __n -> (
     begin
       let* alias1 = token "ALIAS" in
       let* literal_expression1 = literal_expression in
-      pure (xGroup([xToken(alias1); literal_expression1]))
+      pure (xGroup([xToken(alias1); G.E literal_expression1]))
     end
   in
   let* parameter_list1 = parameter_list in
   let* simple_as_clause_opt1 = optional simple_as_clause in
-  pure (xRule "declare_statement" 0 [xToken(declare1); xOptional(text_encoding_opt1); function_or_sub1; identifier_token1; xToken(lib1); literal_expression1; xOptional(alias_literal_expression_opt1); parameter_list1; xOptional(simple_as_clause_opt1)])
+  pure (xRule "declare_statement" 0 [xToken(declare1); xOptional(text_encoding_opt1); function_or_sub1; identifier_token1; xToken(lib1); G.E literal_expression1; xOptional(alias_literal_expression_opt1); parameter_list1; xOptional(simple_as_clause_opt1)])
 ) __n
 
-and literal_expression : G.any parser = fun __n -> (
+and literal_expression : G.expr parser = fun __n -> (
   choice [
     begin
       (* literal_expression -> 'False' *)
-      let* false1 = token "FALSE" in
-      pure (xRule "literal_expression" 0 [xToken(false1)])
+      let* t = token "FALSE" in
+      pure (G.L (G.Bool (false, t.tok)) |> G.e)
     end;
     begin
       (* literal_expression -> 'Nothing' *)
-      let* nothing1 = token "NOTHING" in
-      pure (xRule "literal_expression" 1 [xToken(nothing1)])
+      let* t = token "NOTHING" in
+      pure (G.L (G.Null t.tok) |> G.e)
     end;
     begin
       (* literal_expression -> 'True' *)
-      let* true1 = token "TRUE" in
-      pure (xRule "literal_expression" 2 [xToken(true1)])
+      let* t = token "TRUE" in
+      pure (G.L (G.Bool (true, t.tok)) |> G.e)
     end;
+    (* TODO
     begin
       (* literal_expression -> character_literal_token *)
       let* character_literal_token1 = character_literal_token in
@@ -2103,7 +2108,7 @@ and literal_expression : G.any parser = fun __n -> (
       (* literal_expression -> string_literal_token *)
       let* string_literal_token1 = string_literal_token in
       pure (xRule "literal_expression" 8 [string_literal_token1])
-    end;
+    end; *)
   ]
 ) __n
 
@@ -2601,7 +2606,7 @@ and property_accessor_block : G.any parser = fun __n -> (
       let* lt_dot_dot_dot1 = token "<..." in
       let* expression1 = expression in
       let* dot_dot_dot_gt1 = token "...>" in
-      pure (xRule "property_accessor_block" 3 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
+      pure (xRule "property_accessor_block" 3 [xToken(lt_dot_dot_dot1); G.E expression1; xToken(dot_dot_dot_gt1)])
     end;
   ]
 ) __n
@@ -2713,7 +2718,7 @@ and class_block_kw_declaration : G.any parser = fun __n -> (
       let* lt_dot_dot_dot1 = token "<..." in
       let* expression1 = expression in
       let* dot_dot_dot_gt1 = token "...>" in
-      pure (xRule "class_block_kw_declaration" 13 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
+      pure (xRule "class_block_kw_declaration" 13 [xToken(lt_dot_dot_dot1); G.E expression1; xToken(dot_dot_dot_gt1)])
     end;
   ]
 ) __n
@@ -2793,7 +2798,7 @@ and add_handler_statement : G.any parser = fun __n -> (
   let* expression1 = expression in
   let* comma1 = token "," in
   let* expression2 = expression in
-  pure (xRule "add_handler_statement" 0 [xToken(addHandler1); expression1; xToken(comma1); expression2])
+  pure (xRule "add_handler_statement" 0 [xToken(addHandler1); G.E expression1; xToken(comma1); G.E expression2])
 ) __n
 
 and remove_handler_statement : G.any parser = fun __n -> (
@@ -2802,7 +2807,7 @@ and remove_handler_statement : G.any parser = fun __n -> (
   let* expression1 = expression in
   let* comma1 = token "," in
   let* expression2 = expression in
-  pure (xRule "remove_handler_statement" 0 [xToken(removeHandler1); expression1; xToken(comma1); expression2])
+  pure (xRule "remove_handler_statement" 0 [xToken(removeHandler1); G.E expression1; xToken(comma1); G.E expression2])
 ) __n
 
 and assignment_statement_operator : G.any parser = fun __n -> (
@@ -2867,10 +2872,10 @@ and assignment_statement : G.any parser = fun __n -> (
     begin
       let* assignment_statement_operator1 = assignment_statement_operator in
       let* expression1 = expression in
-      pure (xGroup([assignment_statement_operator1; expression1]))
+      pure (xGroup([assignment_statement_operator1; G.E expression1]))
     end
   in
-  pure (xRule "assignment_statement" 0 [await_expression1; xOptional(assignment_statement_operator_expression_opt1)])
+  pure (xRule "assignment_statement" 0 [G.E await_expression1; xOptional(assignment_statement_operator_expression_opt1)])
 ) __n
 
 and exit_statement : G.any parser = fun __n -> (
@@ -3063,7 +3068,7 @@ and re_dim_statement : G.any parser = fun __n -> (
 and redim_clause : G.any parser = fun __n -> (
   (* redim_clause -> access_expression *)
   let* access_expression1 = access_expression in
-  pure (xRule "redim_clause" 0 [access_expression1])
+  pure (xRule "redim_clause" 0 [G.E access_expression1])
 ) __n
 
 and aggregation : G.any parser = fun __n -> (
@@ -3089,7 +3094,7 @@ and function_aggregation : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xGroup([xToken(lparen1); expression1; xToken(rparen1)]))
+      pure (xGroup([xToken(lparen1); G.E expression1; xToken(rparen1)]))
     end
   in
   pure (xRule "function_aggregation" 0 [identifier_token1; xOptional(lparen_expression_rparen_opt1)])
@@ -3103,402 +3108,411 @@ and binary_conditional_expression : G.any parser = fun __n -> (
   let* comma1 = token "," in
   let* expression2 = expression in
   let* rparen1 = token ")" in
-  pure (xRule "binary_conditional_expression" 0 [xToken(if1); xToken(lparen1); expression1; xToken(comma1); expression2; xToken(rparen1)])
+  pure (xRule "binary_conditional_expression" 0 [xToken(if1); xToken(lparen1); G.E expression1; xToken(comma1); G.E expression2; xToken(rparen1)])
 ) __n
 
-and expression_terminator : G.any parser = fun __n -> (
+and expression_terminator : unit parser = fun __n -> (
   choice [
     begin
       (* expression_terminator -> @lookahead('<PUNCTUATION>') *)
       let* _ = look_ahead "<PUNCTUATION>" in
-      pure (xRule "expression_terminator" 0 [])
+      pure ()
     end;
     begin
       (* expression_terminator -> @lookahead('<LINE_TERMINATOR>') *)
       let* _ = look_ahead "<LINE_TERMINATOR>" in
-      pure (xRule "expression_terminator" 1 [])
+      pure ()
     end;
   ]
 ) __n
 
-and expression : G.any parser = fun __n -> (
+and expression : G.expr parser = fun __n -> (
   choice [
     begin
       (* expression -> literal_expression expression_terminator *)
-      let* literal_expression1 = literal_expression in
-      let* expression_terminator1 = expression_terminator in
-      pure (xRule "expression" 0 [literal_expression1; expression_terminator1])
+      let* e = literal_expression in
+      let* _ = expression_terminator in
+      pure e
     end;
     begin
       (* expression -> binary_logical_xor_expression *)
-      let* binary_logical_xor_expression1 = binary_logical_xor_expression in
-      pure (xRule "expression" 1 [binary_logical_xor_expression1])
+      binary_logical_xor_expression
     end;
   ]
 ) __n
 
-and xor_operator : G.any parser = fun __n -> (
+and xor_operator : G.operator G.wrap parser = fun __n -> (
   (* xor_operator -> 'Xor' *)
-  let* xor1 = token "XOR" in
-  pure (xRule "xor_operator" 0 [xToken(xor1)])
+  let* t = token "XOR" in
+  pure (G.BitXor, t.tok) (* FIXME: This plays the role of G.Xor as well *)
 ) __n
 
-and or_operator : G.any parser = fun __n -> (
+and or_operator : G.operator G.wrap parser = fun __n -> (
   choice [
     begin
       (* or_operator -> 'Or' *)
-      let* or1 = token "OR" in
-      pure (xRule "or_operator" 0 [xToken(or1)])
+      let* t = token "OR" in (* NOTE: Or in VB.NET is not short-circuiting *)
+      pure (G.Or, t.tok)
     end;
     begin
       (* or_operator -> 'OrElse' *)
-      let* orElse1 = token "ORELSE" in
-      pure (xRule "or_operator" 1 [xToken(orElse1)])
+      let* t = token "ORELSE" in
+      pure (G.Or, t.tok)
     end;
   ]
 ) __n
 
-and and_operator : G.any parser = fun __n -> (
+and and_operator : G.operator G.wrap parser = fun __n -> (
   choice [
     begin
       (* and_operator -> 'And' *)
-      let* and1 = token "AND" in
-      pure (xRule "and_operator" 0 [xToken(and1)])
+      let* t = token "AND" in
+      pure (G.And, t.tok)
     end;
     begin
       (* and_operator -> 'AndAlso' *)
-      let* andAlso1 = token "ANDALSO" in
-      pure (xRule "and_operator" 1 [xToken(andAlso1)])
+      let* t = token "ANDALSO" in
+      pure (G.And, t.tok)
     end;
   ]
 ) __n
 
-and not_operator : G.any parser = fun __n -> (
+and not_operator : G.operator G.wrap parser = fun __n -> (
   (* not_operator -> 'Not' *)
-  let* not1 = token "NOT" in
-  pure (xRule "not_operator" 0 [xToken(not1)])
+  let* t = token "NOT" in
+  pure (G.Not, t.tok)
 ) __n
 
-and relational_operator : G.any parser = fun __n -> (
+and relational_operator : G.operator G.wrap parser = fun __n -> (
   choice [
     begin
       (* relational_operator -> '=' *)
-      let* eq1 = token "=" in
-      pure (xRule "relational_operator" 0 [xToken(eq1)])
+      let* t = token "=" in
+      pure (G.Eq, t.tok)
     end;
     begin
       (* relational_operator -> '<>' *)
-      let* lt_gt1 = token "<>" in
-      pure (xRule "relational_operator" 1 [xToken(lt_gt1)])
+      let* t = token "<>" in
+      pure (G.NotEq, t.tok)
     end;
     begin
       (* relational_operator -> @lookahead_not('<LINE_TERMINATOR>') '<' *)
       let* _ = look_ahead_not "<LINE_TERMINATOR>" in
-      let* lt1 = token "<" in
-      pure (xRule "relational_operator" 2 [xToken(lt1)])
+      let* t = token "<" in
+      pure (G.Lt, t.tok)
     end;
     begin
       (* relational_operator -> '>' *)
-      let* gt1 = token ">" in
-      pure (xRule "relational_operator" 3 [xToken(gt1)])
+      let* t = token ">" in
+      pure (G.Gt, t.tok)
     end;
     begin
       (* relational_operator -> '<=' *)
-      let* lt_eq1 = token "<=" in
-      pure (xRule "relational_operator" 4 [xToken(lt_eq1)])
+      let* t = token "<=" in
+      pure (G.LtE, t.tok)
     end;
     begin
       (* relational_operator -> '>=' *)
-      let* gt_eq1 = token ">=" in
-      pure (xRule "relational_operator" 5 [xToken(gt_eq1)])
+      let* t = token ">=" in
+      pure (G.GtE, t.tok)
     end;
     begin
       (* relational_operator -> 'Like' *)
-      let* like1 = token "LIKE" in
-      pure (xRule "relational_operator" 6 [xToken(like1)])
+      let* t = token "LIKE" in
+      pure (G.RegexpMatch, t.tok)
     end;
     begin
       (* relational_operator -> 'Is' *)
-      let* is1 = token "IS" in
-      pure (xRule "relational_operator" 7 [xToken(is1)])
+      let* t = token "IS" in
+      pure (G.PhysEq, t.tok)
     end;
     begin
       (* relational_operator -> 'IsNot' *)
-      let* isNot1 = token "ISNOT" in
-      pure (xRule "relational_operator" 8 [xToken(isNot1)])
+      let* t = token "ISNOT" in
+      pure (G.NotPhysEq, t.tok)
     end;
   ]
 ) __n
 
-and shift_operator : G.any parser = fun __n -> (
+and shift_operator : G.operator G.wrap parser = fun __n -> (
   choice [
     begin
       (* shift_operator -> '<<' *)
-      let* lt_lt1 = token "<<" in
-      pure (xRule "shift_operator" 0 [xToken(lt_lt1)])
+      let* t = token "<<" in
+      pure (G.LSL, t.tok)
     end;
     begin
       (* shift_operator -> '>>' *)
-      let* gt_gt1 = token ">>" in
-      pure (xRule "shift_operator" 1 [xToken(gt_gt1)])
+      let* t = token ">>" in
+      pure (G.LSR, t.tok)
     end;
   ]
 ) __n
 
-and concatenation_operator : G.any parser = fun __n -> (
+and concatenation_operator : G.operator G.wrap parser = fun __n -> (
   (* concatenation_operator -> '&' *)
-  let* amp1 = token "&" in
-  pure (xRule "concatenation_operator" 0 [xToken(amp1)])
+  let* t = token "&" in
+  pure (G.Plus, t.tok)
 ) __n
 
-and additive_operator : G.any parser = fun __n -> (
+and additive_operator : G.operator G.wrap parser = fun __n -> (
   choice [
     begin
       (* additive_operator -> '+' *)
-      let* plus1 = token "+" in
-      pure (xRule "additive_operator" 0 [xToken(plus1)])
+      let* t = token "+" in
+      pure (G.Plus, t.tok)
     end;
     begin
       (* additive_operator -> '-' *)
-      let* minus1 = token "-" in
-      pure (xRule "additive_operator" 1 [xToken(minus1)])
+      let* t = token "-" in
+      pure (G.Minus, t.tok)
     end;
   ]
 ) __n
 
-and multiplicative_operator : G.any parser = fun __n -> (
+and multiplicative_operator : G.operator G.wrap parser = fun __n -> (
   choice [
     begin
       (* multiplicative_operator -> '*' *)
-      let* star1 = token "*" in
-      pure (xRule "multiplicative_operator" 0 [xToken(star1)])
+      let* t = token "*" in
+      pure (G.Mult, t.tok)
     end;
     begin
       (* multiplicative_operator -> '/' *)
-      let* slash1 = token "/" in
-      pure (xRule "multiplicative_operator" 1 [xToken(slash1)])
+      let* t = token "/" in
+      pure (G.Div, t.tok)
     end;
     begin
       (* multiplicative_operator -> '\\' *)
-      let* backslash1 = token "\\" in
-      pure (xRule "multiplicative_operator" 2 [xToken(backslash1)])
+      let* t = token "\\" in
+      pure (G.FloorDiv, t.tok)
     end;
     begin
       (* multiplicative_operator -> 'Mod' *)
-      let* mod1 = token "MOD" in
-      pure (xRule "multiplicative_operator" 3 [xToken(mod1)])
+      let* t = token "MOD" in
+      pure (G.Mod, t.tok)
     end;
   ]
 ) __n
 
-and unary_operator : G.any parser = fun __n -> (
+and unary_operator : G.operator G.wrap parser = fun __n -> (
   choice [
     begin
       (* unary_operator -> '+' *)
-      let* plus1 = token "+" in
-      pure (xRule "unary_operator" 0 [xToken(plus1)])
+      let* t = token "+" in
+      pure (G.Plus, t.tok)
     end;
     begin
       (* unary_operator -> '-' *)
-      let* minus1 = token "-" in
-      pure (xRule "unary_operator" 1 [xToken(minus1)])
+      let* t = token "-" in
+      pure (G.Minus, t.tok)
     end;
   ]
 ) __n
 
-and exponentiation_operator : G.any parser = fun __n -> (
+and exponentiation_operator : G.operator G.wrap parser = fun __n -> (
   (* exponentiation_operator -> '^' *)
-  let* caret1 = token "^" in
-  pure (xRule "exponentiation_operator" 0 [xToken(caret1)])
+  let* t = token "^" in
+  pure (G.Pow, t.tok)
 ) __n
 
-and await_operator : G.any parser = fun __n -> (
+and await_operator : G.tok parser = fun __n -> (
   (* await_operator -> 'Await' *)
-  let* await1 = token "AWAIT" in
-  pure (xRule "await_operator" 0 [xToken(await1)])
+  let* t = token "AWAIT" in
+  pure t.tok
 ) __n
 
-and binary_logical_xor_expression : G.any parser = fun __n -> (
+and combine_infix_operator (e : G.expr) (es : (G.operator G.wrap * G.expr) list) : G.expr =
+  List.fold_left
+    (fun prev_e ((op, op_tok), next_e) ->
+      G.Call (G.IdSpecial (G.Op op, op_tok) |> G.e, fb [ G.Arg prev_e; G.Arg next_e ]) |> G.e)
+    e es
+
+and binary_logical_xor_expression : G.expr parser = fun __n -> (
   (* binary_logical_xor_expression -> binary_logical_or_expression (xor_operator binary_logical_or_expression)* *)
-  let* binary_logical_or_expression1 = binary_logical_or_expression in
-  let* xor_operator_binary_logical_or_expressions1 = list_of 
+  let* e = binary_logical_or_expression in
+  let* es = list_of
     begin
-      let* xor_operator1 = xor_operator in
-      let* binary_logical_or_expression1 = binary_logical_or_expression in
-      pure (xGroup([xor_operator1; binary_logical_or_expression1]))
+      let* op = xor_operator in
+      let* en = binary_logical_or_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_logical_xor_expression" 0 [binary_logical_or_expression1; xList(xor_operator_binary_logical_or_expressions1)])
+  pure (combine_infix_operator e es)
 ) __n
 
-and binary_logical_or_expression : G.any parser = fun __n -> (
+and binary_logical_or_expression : G.expr parser = fun __n -> (
   (* binary_logical_or_expression -> binary_logical_and_expression (or_operator binary_logical_and_expression)* *)
-  let* binary_logical_and_expression1 = binary_logical_and_expression in
-  let* or_operator_binary_logical_and_expressions1 = list_of 
+  let* e = binary_logical_and_expression in
+  let* es = list_of
     begin
-      let* or_operator1 = or_operator in
-      let* binary_logical_and_expression1 = binary_logical_and_expression in
-      pure (xGroup([or_operator1; binary_logical_and_expression1]))
+      let* op = or_operator in
+      let* en = binary_logical_and_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_logical_or_expression" 0 [binary_logical_and_expression1; xList(or_operator_binary_logical_and_expressions1)])
+  pure (combine_infix_operator e es)
 ) __n
 
-and binary_logical_and_expression : G.any parser = fun __n -> (
+and binary_logical_and_expression : G.expr parser = fun __n -> (
   (* binary_logical_and_expression -> logical_not_expression (and_operator logical_not_expression)* *)
-  let* logical_not_expression1 = logical_not_expression in
-  let* and_operator_logical_not_expressions1 = list_of 
+  let* e = logical_not_expression in
+  let* es = list_of
     begin
-      let* and_operator1 = and_operator in
-      let* logical_not_expression1 = logical_not_expression in
-      pure (xGroup([and_operator1; logical_not_expression1]))
+      let* op = and_operator in
+      let* en = logical_not_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_logical_and_expression" 0 [logical_not_expression1; xList(and_operator_logical_not_expressions1)])
+  pure (combine_infix_operator e es)
 ) __n
 
-and logical_not_expression : G.any parser = fun __n -> (
+and logical_not_expression : G.expr parser = fun __n -> (
   choice [
     begin
       (* logical_not_expression -> not_operator logical_not_expression *)
-      let* not_operator1 = not_operator in
-      let* logical_not_expression1 = logical_not_expression in
-      pure (xRule "logical_not_expression" 0 [not_operator1; logical_not_expression1])
+      let* (op, op_tok) = not_operator in
+      let* e = logical_not_expression in
+      pure (G.Call (G.IdSpecial (G.Op op, op_tok) |> G.e,
+                    fb [ G.Arg e ]) |> G.e)
     end;
     begin
       (* logical_not_expression -> binary_relational_expression *)
-      let* binary_relational_expression1 = binary_relational_expression in
-      pure (xRule "logical_not_expression" 1 [binary_relational_expression1])
+      binary_relational_expression
     end;
   ]
 ) __n
 
-and binary_relational_expression : G.any parser = fun __n -> (
+and binary_relational_expression : G.expr parser = fun __n -> (
   (* binary_relational_expression -> binary_shift_expression (relational_operator logical_not_expression)? *)
-  let* binary_shift_expression1 = binary_shift_expression in
-  let* relational_operator_logical_not_expression_opt1 = optional 
+  let* e = binary_shift_expression in
+  let* es = optional
     begin
-      let* relational_operator1 = relational_operator in
-      let* logical_not_expression1 = logical_not_expression in
-      pure (xGroup([relational_operator1; logical_not_expression1]))
+      let* op = relational_operator in
+      let* en = logical_not_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_relational_expression" 0 [binary_shift_expression1; xOptional(relational_operator_logical_not_expression_opt1)])
+  match es with
+  | Some ((op, op_tok), en) ->
+      pure (G.Call (G.IdSpecial (G.Op op, op_tok) |> G.e,
+                    fb [ G.Arg e; G.Arg en ]) |> G.e)
+  | None ->
+      pure e
 ) __n
 
-and binary_shift_expression : G.any parser = fun __n -> (
+and binary_shift_expression : G.expr parser = fun __n -> (
   (* binary_shift_expression -> binary_concatenation_expression (shift_operator binary_concatenation_expression)* *)
-  let* binary_concatenation_expression1 = binary_concatenation_expression in
-  let* shift_operator_binary_concatenation_expressions1 = list_of 
+  let* e = binary_concatenation_expression in
+  let* es = list_of
     begin
-      let* shift_operator1 = shift_operator in
-      let* binary_concatenation_expression1 = binary_concatenation_expression in
-      pure (xGroup([shift_operator1; binary_concatenation_expression1]))
+      let* op = shift_operator in
+      let* en = binary_concatenation_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_shift_expression" 0 [binary_concatenation_expression1; xList(shift_operator_binary_concatenation_expressions1)])
+  pure (combine_infix_operator e es)
 ) __n
 
-and binary_concatenation_expression : G.any parser = fun __n -> (
+and binary_concatenation_expression : G.expr parser = fun __n -> (
   (* binary_concatenation_expression -> binary_additive_expression (concatenation_operator binary_additive_expression)* *)
-  let* binary_additive_expression1 = binary_additive_expression in
-  let* concatenation_operator_binary_additive_expressions1 = list_of 
+  let* e = binary_additive_expression in
+  let* es = list_of
     begin
-      let* concatenation_operator1 = concatenation_operator in
-      let* binary_additive_expression1 = binary_additive_expression in
-      pure (xGroup([concatenation_operator1; binary_additive_expression1]))
+      let* op = concatenation_operator in
+      let* en = binary_additive_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_concatenation_expression" 0 [binary_additive_expression1; xList(concatenation_operator_binary_additive_expressions1)])
+  pure (combine_infix_operator e es)
 ) __n
 
-and binary_additive_expression : G.any parser = fun __n -> (
+and binary_additive_expression : G.expr parser = fun __n -> (
   (* binary_additive_expression -> binary_multiplicative_expression (additive_operator binary_multiplicative_expression)* *)
-  let* binary_multiplicative_expression1 = binary_multiplicative_expression in
-  let* additive_operator_binary_multiplicative_expressions1 = list_of 
+  let* e = binary_multiplicative_expression in
+  let* es = list_of
     begin
-      let* additive_operator1 = additive_operator in
-      let* binary_multiplicative_expression1 = binary_multiplicative_expression in
-      pure (xGroup([additive_operator1; binary_multiplicative_expression1]))
+      let* op = additive_operator in
+      let* en = binary_multiplicative_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_additive_expression" 0 [binary_multiplicative_expression1; xList(additive_operator_binary_multiplicative_expressions1)])
+  pure (combine_infix_operator e es)
 ) __n
 
-and binary_multiplicative_expression : G.any parser = fun __n -> (
+and binary_multiplicative_expression : G.expr parser = fun __n -> (
   (* binary_multiplicative_expression -> unary_expression (multiplicative_operator unary_expression)* *)
-  let* unary_expression1 = unary_expression in
-  let* multiplicative_operator_unary_expressions1 = list_of 
+  let* e = unary_expression in
+  let* es = list_of
     begin
-      let* multiplicative_operator1 = multiplicative_operator in
-      let* unary_expression1 = unary_expression in
-      pure (xGroup([multiplicative_operator1; unary_expression1]))
+      let* op = multiplicative_operator in
+      let* en = unary_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_multiplicative_expression" 0 [unary_expression1; xList(multiplicative_operator_unary_expressions1)])
+  pure (combine_infix_operator e es)
 ) __n
 
-and unary_expression : G.any parser = fun __n -> (
+and unary_expression : G.expr parser = fun __n -> (
   choice [
     begin
       (* unary_expression -> unary_operator unary_expression *)
-      let* unary_operator1 = unary_operator in
-      let* unary_expression1 = unary_expression in
-      pure (xRule "unary_expression" 0 [unary_operator1; unary_expression1])
+      let* (op, op_tok) = unary_operator in
+      let* e = unary_expression in
+      pure (G.Call (G.IdSpecial (G.Op op, op_tok) |> G.e,
+                    fb [ G.Arg e ]) |> G.e)
     end;
     begin
       (* unary_expression -> address_of_expression *)
-      let* address_of_expression1 = address_of_expression in
-      pure (xRule "unary_expression" 1 [address_of_expression1])
+      address_of_expression
     end;
     begin
       (* unary_expression -> binary_exponentiation_expression *)
-      let* binary_exponentiation_expression1 = binary_exponentiation_expression in
-      pure (xRule "unary_expression" 2 [binary_exponentiation_expression1])
+      binary_exponentiation_expression
     end;
   ]
 ) __n
 
-and binary_exponentiation_expression : G.any parser = fun __n -> (
+and binary_exponentiation_expression : G.expr parser = fun __n -> (
   (* binary_exponentiation_expression -> await_expression (exponentiation_operator unary_expression)* *)
-  let* await_expression1 = await_expression in
-  let* exponentiation_operator_unary_expressions1 = list_of 
+  let* e = await_expression in
+  let* es = list_of
     begin
-      let* exponentiation_operator1 = exponentiation_operator in
-      let* unary_expression1 = unary_expression in
-      pure (xGroup([exponentiation_operator1; unary_expression1]))
+      let* op = exponentiation_operator in
+      let* en = unary_expression in
+      pure (op, en)
     end
   in
-  pure (xRule "binary_exponentiation_expression" 0 [await_expression1; xList(exponentiation_operator_unary_expressions1)])
+  pure (combine_infix_operator e es)
 ) __n
 
-and await_expression : G.any parser = fun __n -> (
+and await_expression : G.expr parser = fun __n -> (
   choice [
     begin
       (* await_expression -> await_operator await_expression *)
-      let* await_operator1 = await_operator in
-      let* await_expression1 = await_expression in
-      pure (xRule "await_expression" 0 [await_operator1; await_expression1])
+      let* t = await_operator in
+      let* e = await_expression in
+      pure (G.Await (t, e) |> G.e)
     end;
     begin
       (* await_expression -> access_expression *)
-      let* access_expression1 = access_expression in
-      pure (xRule "await_expression" 1 [access_expression1])
+      access_expression
     end;
   ]
 ) __n
 
-and access_expression : G.any parser = fun __n -> (
+(* TODO *)
+and access_expression : G.expr parser = fun __n -> (
   (* access_expression -> primary_expression (@lookahead_not('<LINE_TERMINATOR>') accessor)* *)
-  let* primary_expression1 = primary_expression in
-  let* lookahead_not_lt_LINE_TERMINATOR_gt_accessors1 = list_of 
+  let* e = primary_expression in
+  let* _lookahead_not_lt_LINE_TERMINATOR_gt_accessors1 = list_of
     begin
       let* _ = look_ahead_not "<LINE_TERMINATOR>" in
       let* accessor1 = accessor in
       pure (xGroup([accessor1]))
     end
   in
-  pure (xRule "access_expression" 0 [primary_expression1; xList(lookahead_not_lt_LINE_TERMINATOR_gt_accessors1)])
+  pure (e)
 ) __n
 
 and identifier_or_keyword : G.any parser = fun __n -> (
@@ -3550,7 +3564,7 @@ and accessor : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "accessor" 4 [xToken(qmark1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "accessor" 4 [xToken(qmark1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* accessor -> '.@' accessor_body *)
@@ -3597,20 +3611,24 @@ and accessor_body : G.any parser = fun __n -> (
   ]
 ) __n
 
-and primary_expression : G.any parser = fun __n -> (
+and adjust_range_of_parenthesized_expr (l : G.tok) (e : G.expr) (r : G.tok) : G.expr =
+  e.e_range <- Some (Tok.unsafe_loc_of_tok l, Tok.unsafe_loc_of_tok r);
+  e
+
+and primary_expression : G.expr parser = fun __n -> (
   choice [
     begin
       (* primary_expression -> '(' expression ')' *)
-      let* lparen1 = token "(" in
-      let* expression1 = expression in
-      let* rparen1 = token ")" in
-      pure (xRule "primary_expression" 0 [xToken(lparen1); expression1; xToken(rparen1)])
+      let* l = token "(" in
+      let* e = expression in
+      let* r = token ")" in
+      pure (adjust_range_of_parenthesized_expr l.tok e r.tok)
     end;
     begin
       (* primary_expression -> literal_expression *)
-      let* literal_expression1 = literal_expression in
-      pure (xRule "primary_expression" 1 [literal_expression1])
+      literal_expression
     end;
+    (* TODO
     begin
       (* primary_expression -> binary_conditional_expression *)
       let* binary_conditional_expression1 = binary_conditional_expression in
@@ -3723,6 +3741,7 @@ and primary_expression : G.any parser = fun __n -> (
       let* dot_dot_dot_gt1 = token "...>" in
       pure (xRule "primary_expression" 23 [xToken(lt_dot_dot_dot1); expression1; xToken(dot_dot_dot_gt1)])
     end;
+    *)
   ]
 ) __n
 
@@ -3787,7 +3806,7 @@ and c_type_expression : G.any parser = fun __n -> (
   let* comma1 = token "," in
   let* type_1 = type_ in
   let* rparen1 = token ")" in
-  pure (xRule "c_type_expression" 0 [xToken(cType1); xToken(lparen1); expression1; xToken(comma1); type_1; xToken(rparen1)])
+  pure (xRule "c_type_expression" 0 [xToken(cType1); xToken(lparen1); G.E expression1; xToken(comma1); type_1; xToken(rparen1)])
 ) __n
 
 and direct_cast_expression : G.any parser = fun __n -> (
@@ -3798,7 +3817,7 @@ and direct_cast_expression : G.any parser = fun __n -> (
   let* comma1 = token "," in
   let* type_1 = type_ in
   let* rparen1 = token ")" in
-  pure (xRule "direct_cast_expression" 0 [xToken(directCast1); xToken(lparen1); expression1; xToken(comma1); type_1; xToken(rparen1)])
+  pure (xRule "direct_cast_expression" 0 [xToken(directCast1); xToken(lparen1); G.E expression1; xToken(comma1); type_1; xToken(rparen1)])
 ) __n
 
 and try_cast_expression : G.any parser = fun __n -> (
@@ -3809,7 +3828,7 @@ and try_cast_expression : G.any parser = fun __n -> (
   let* comma1 = token "," in
   let* type_1 = type_ in
   let* rparen1 = token ")" in
-  pure (xRule "try_cast_expression" 0 [xToken(tryCast1); xToken(lparen1); expression1; xToken(comma1); type_1; xToken(rparen1)])
+  pure (xRule "try_cast_expression" 0 [xToken(tryCast1); xToken(lparen1); G.E expression1; xToken(comma1); type_1; xToken(rparen1)])
 ) __n
 
 and get_xml_namespace_expression : G.any parser = fun __n -> (
@@ -3881,14 +3900,14 @@ and interpolation : G.any parser = fun __n -> (
       pure (xGroup([xToken(colon1); xList(interpolation_format_chars1)]))
     end
   in
-  pure (xRule "interpolation" 0 [expression1; xOptional(interpolation_alignment_clause_opt1); xOptional(colon_interpolation_format_chars_opt1)])
+  pure (xRule "interpolation" 0 [G.E expression1; xOptional(interpolation_alignment_clause_opt1); xOptional(colon_interpolation_format_chars_opt1)])
 ) __n
 
 and interpolation_alignment_clause : G.any parser = fun __n -> (
   (* interpolation_alignment_clause -> ',' unary_expression *)
   let* comma1 = token "," in
   let* unary_expression1 = unary_expression in
-  pure (xRule "interpolation_alignment_clause" 0 [xToken(comma1); unary_expression1])
+  pure (xRule "interpolation_alignment_clause" 0 [xToken(comma1); G.E unary_expression1])
 ) __n
 
 and interpolation_format_char : G.any parser = fun __n -> (
@@ -3966,7 +3985,7 @@ and single_line_lambda_expression : G.any parser = fun __n -> (
       let* function1 = token "FUNCTION" in
       let* parameter_list1 = parameter_list in
       let* expression1 = expression in
-      pure (xRule "single_line_lambda_expression" 0 [xList(lambda_modifiers1); xToken(function1); parameter_list1; expression1])
+      pure (xRule "single_line_lambda_expression" 0 [xList(lambda_modifiers1); xToken(function1); parameter_list1; G.E expression1])
     end;
     begin
       (* single_line_lambda_expression -> lambda_modifier* 'Sub' parameter_list single_line_statement *)
@@ -4015,7 +4034,7 @@ and name_of_expression : G.any parser = fun __n -> (
   let* lparen1 = token "(" in
   let* expression1 = expression in
   let* rparen1 = token ")" in
-  pure (xRule "name_of_expression" 0 [xToken(nameOf1); xToken(lparen1); expression1; xToken(rparen1)])
+  pure (xRule "name_of_expression" 0 [xToken(nameOf1); xToken(lparen1); G.E expression1; xToken(rparen1)])
 ) __n
 
 and predefined_cast_expression : G.any parser = fun __n -> (
@@ -4026,7 +4045,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 0 [xToken(cBool1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 0 [xToken(cBool1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CByte' '(' expression ')' *)
@@ -4034,7 +4053,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 1 [xToken(cByte1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 1 [xToken(cByte1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CChar' '(' expression ')' *)
@@ -4042,7 +4061,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 2 [xToken(cChar1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 2 [xToken(cChar1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CDate' '(' expression ')' *)
@@ -4050,7 +4069,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 3 [xToken(cDate1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 3 [xToken(cDate1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CDbl' '(' expression ')' *)
@@ -4058,7 +4077,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 4 [xToken(cDbl1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 4 [xToken(cDbl1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CDec' '(' expression ')' *)
@@ -4066,7 +4085,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 5 [xToken(cDec1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 5 [xToken(cDec1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CInt' '(' expression ')' *)
@@ -4074,7 +4093,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 6 [xToken(cInt1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 6 [xToken(cInt1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CLng' '(' expression ')' *)
@@ -4082,7 +4101,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 7 [xToken(cLng1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 7 [xToken(cLng1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CObj' '(' expression ')' *)
@@ -4090,7 +4109,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 8 [xToken(cObj1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 8 [xToken(cObj1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CSByte' '(' expression ')' *)
@@ -4098,7 +4117,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 9 [xToken(cSByte1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 9 [xToken(cSByte1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CShort' '(' expression ')' *)
@@ -4106,7 +4125,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 10 [xToken(cShort1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 10 [xToken(cShort1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CSng' '(' expression ')' *)
@@ -4114,7 +4133,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 11 [xToken(cSng1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 11 [xToken(cSng1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CStr' '(' expression ')' *)
@@ -4122,7 +4141,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 12 [xToken(cStr1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 12 [xToken(cStr1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CUInt' '(' expression ')' *)
@@ -4130,7 +4149,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 13 [xToken(cUInt1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 13 [xToken(cUInt1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CULng' '(' expression ')' *)
@@ -4138,7 +4157,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 14 [xToken(cULng1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 14 [xToken(cULng1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
     begin
       (* predefined_cast_expression -> 'CUShort' '(' expression ')' *)
@@ -4146,7 +4165,7 @@ and predefined_cast_expression : G.any parser = fun __n -> (
       let* lparen1 = token "(" in
       let* expression1 = expression in
       let* rparen1 = token ")" in
-      pure (xRule "predefined_cast_expression" 15 [xToken(cUShort1); xToken(lparen1); expression1; xToken(rparen1)])
+      pure (xRule "predefined_cast_expression" 15 [xToken(cUShort1); xToken(lparen1); G.E expression1; xToken(rparen1)])
     end;
   ]
 ) __n
@@ -4247,7 +4266,7 @@ and collection_range_variable : G.any parser = fun __n -> (
   let* simple_as_clause_opt1 = optional simple_as_clause in
   let* in1 = token "IN" in
   let* expression1 = expression in
-  pure (xRule "collection_range_variable" 0 [modified_identifier1; xOptional(simple_as_clause_opt1); xToken(in1); expression1])
+  pure (xRule "collection_range_variable" 0 [modified_identifier1; xOptional(simple_as_clause_opt1); xToken(in1); G.E expression1])
 ) __n
 
 and aggregation_range_variable : G.any parser = fun __n -> (
@@ -4326,7 +4345,7 @@ and expression_range_variable : G.any parser = fun __n -> (
   (* expression_range_variable -> variable_name_equals? expression *)
   let* variable_name_equals_opt1 = optional variable_name_equals in
   let* expression1 = expression in
-  pure (xRule "expression_range_variable" 0 [xOptional(variable_name_equals_opt1); expression1])
+  pure (xRule "expression_range_variable" 0 [xOptional(variable_name_equals_opt1); G.E expression1])
 ) __n
 
 and join_clause : G.any parser = fun __n -> (
@@ -4383,7 +4402,7 @@ and join_condition : G.any parser = fun __n -> (
   let* expression1 = expression in
   let* equals1 = token "EQUALS" in
   let* expression2 = expression in
-  pure (xRule "join_condition" 0 [expression1; xToken(equals1); expression2])
+  pure (xRule "join_condition" 0 [G.E expression1; xToken(equals1); G.E expression2])
 ) __n
 
 and simple_join_clause : G.any parser = fun __n -> (
@@ -4443,7 +4462,7 @@ and ordering : G.any parser = fun __n -> (
   (* ordering -> expression ascending_ordering? *)
   let* expression1 = expression in
   let* ascending_ordering_opt1 = optional ascending_ordering in
-  pure (xRule "ordering" 0 [expression1; xOptional(ascending_ordering_opt1)])
+  pure (xRule "ordering" 0 [G.E expression1; xOptional(ascending_ordering_opt1)])
 ) __n
 
 and ascending_ordering : G.any parser = fun __n -> (
@@ -4480,14 +4499,14 @@ and skip_clause : G.any parser = fun __n -> (
   (* skip_clause -> 'Skip' expression *)
   let* skip1 = token "SKIP" in
   let* expression1 = expression in
-  pure (xRule "skip_clause" 0 [xToken(skip1); expression1])
+  pure (xRule "skip_clause" 0 [xToken(skip1); G.E expression1])
 ) __n
 
 and take_clause : G.any parser = fun __n -> (
   (* take_clause -> 'Take' expression *)
   let* take1 = token "TAKE" in
   let* expression1 = expression in
-  pure (xRule "take_clause" 0 [xToken(take1); expression1])
+  pure (xRule "take_clause" 0 [xToken(take1); G.E expression1])
 ) __n
 
 and partition_while_clause : G.any parser = fun __n -> (
@@ -4510,7 +4529,7 @@ and skip_while_clause : G.any parser = fun __n -> (
   let* skip1 = token "SKIP" in
   let* while1 = token "WHILE" in
   let* expression1 = expression in
-  pure (xRule "skip_while_clause" 0 [xToken(skip1); xToken(while1); expression1])
+  pure (xRule "skip_while_clause" 0 [xToken(skip1); xToken(while1); G.E expression1])
 ) __n
 
 and take_while_clause : G.any parser = fun __n -> (
@@ -4518,7 +4537,7 @@ and take_while_clause : G.any parser = fun __n -> (
   let* take1 = token "TAKE" in
   let* while1 = token "WHILE" in
   let* expression1 = expression in
-  pure (xRule "take_while_clause" 0 [xToken(take1); xToken(while1); expression1])
+  pure (xRule "take_while_clause" 0 [xToken(take1); xToken(while1); G.E expression1])
 ) __n
 
 and select_clause : G.any parser = fun __n -> (
@@ -4539,7 +4558,7 @@ and where_clause : G.any parser = fun __n -> (
   (* where_clause -> 'Where' expression *)
   let* where1 = token "WHERE" in
   let* expression1 = expression in
-  pure (xRule "where_clause" 0 [xToken(where1); expression1])
+  pure (xRule "where_clause" 0 [xToken(where1); G.E expression1])
 ) __n
 
 and ternary_conditional_expression : G.any parser = fun __n -> (
@@ -4552,7 +4571,7 @@ and ternary_conditional_expression : G.any parser = fun __n -> (
   let* comma2 = token "," in
   let* expression3 = expression in
   let* rparen1 = token ")" in
-  pure (xRule "ternary_conditional_expression" 0 [xToken(if1); xToken(lparen1); expression1; xToken(comma1); expression2; xToken(comma2); expression3; xToken(rparen1)])
+  pure (xRule "ternary_conditional_expression" 0 [xToken(if1); xToken(lparen1); G.E expression1; xToken(comma1); G.E expression2; xToken(comma2); G.E expression3; xToken(rparen1)])
 ) __n
 
 and tuple_expression : G.any parser = fun __n -> (
@@ -4591,14 +4610,14 @@ and type_of_expression : G.any parser = fun __n -> (
   let* await_expression1 = await_expression in
   let* is_or_is_not1 = is_or_is_not in
   let* type_1 = type_ in
-  pure (xRule "type_of_expression" 0 [xToken(typeOf1); await_expression1; is_or_is_not1; type_1])
+  pure (xRule "type_of_expression" 0 [xToken(typeOf1); G.E await_expression1; is_or_is_not1; type_1])
 ) __n
 
-and address_of_expression : G.any parser = fun __n -> (
+and address_of_expression : G.expr parser = fun __n -> (
   (* address_of_expression -> 'AddressOf' unary_expression *)
-  let* addressOf1 = token "ADDRESSOF" in
-  let* unary_expression1 = unary_expression in
-  pure (xRule "address_of_expression" 0 [xToken(addressOf1); unary_expression1])
+  let* t = token "ADDRESSOF" in
+  let* e = unary_expression in
+  pure (G.Ref (t.tok, e) |> G.e)
 ) __n
 
 and type_ : G.any parser = fun __n -> (
@@ -5165,7 +5184,7 @@ and x_tag_embed_expression : G.any parser = fun __n -> (
   let* lt_percent_eq1 = token "<%=" in
   let* expression1 = expression in
   let* percent_gt1 = token "%>" in
-  pure (xRule "x_tag_embed_expression" 0 [xToken(lt_percent_eq1); expression1; xToken(percent_gt1)])
+  pure (xRule "x_tag_embed_expression" 0 [xToken(lt_percent_eq1); G.E expression1; xToken(percent_gt1)])
 ) __n
 
 and x_name : G.any parser = fun __n -> (
