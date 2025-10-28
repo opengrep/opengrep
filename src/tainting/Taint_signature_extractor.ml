@@ -287,13 +287,15 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                        | Taint.Shape_var _ -> false (* Shape vars cannot materialize values. *)
                        | _ -> true)
               in
-              let has_data =
-                not (Taint.Taint_set.is_empty filtered_data_taints)
+              (* Use taints_and_shape_are_relevant to check if either top-level taints
+               * OR nested shape taints exist (field-sensitive taint tracking) *)
+              let has_data_or_shape =
+                Taint_shape.taints_and_shape_are_relevant filtered_data_taints return_info.data_shape
               in
               let has_control =
                 not (Taint.Taint_set.is_empty return_info.control_taints)
               in
-              if has_data || has_control then
+              if has_data_or_shape || has_control then
                 let filtered_return_info =
                   { return_info with data_taints = filtered_data_taints }
                 in

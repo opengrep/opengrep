@@ -67,3 +67,9 @@ let taint_MAX_TAINT_SET_SIZE = 25
 
 (** Bounds the length of the offsets we can track per arg/poly-taint. *)
 let taint_MAX_POLY_OFFSET = 1
+
+(** Maximum depth for shape equality comparison to prevent infinite recursion
+ * in pathological patterns like obj[key] = [obj[key], item] that create
+ * unbounded recursive structures. When both shapes exceed this depth, we
+ * consider them equal (widening approximation) to force fixpoint convergence. *)
+let taint_MAX_SHAPE_DEPTH = 50
