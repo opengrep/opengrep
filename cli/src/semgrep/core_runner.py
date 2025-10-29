@@ -453,14 +453,14 @@ class StreamingSemgrepCore:
                 exit_code = await asyncio.wait_for(process.wait(), timeout=1.0)
             except TimeoutError:
                 logger.error(
-                    "semgrep timed out waiting for the semgrep-core process to exit after an exception was raised"
+                    "opengrep timed out waiting for the opengrep-core process to exit after an exception was raised"
                 )
                 raise e
 
             # let's log this and reraise as if we got a non zero exit code with
             # a semgrep error then we segfaulted or OOMd and so should
             # immediately exit instead of assuming we got something usuable
-            logger.error(f"semgrep-core exited with {exit_code}!")
+            logger.error(f"opengrep-core exited with {exit_code}!")
             raise e
 
         # Return exit code of cmd. process should already be done
@@ -551,7 +551,7 @@ class CoreRunner:
     ) -> Dict[str, Any]:
         if not core_stderr:
             core_stderr = (
-                "<semgrep-core stderr not captured, should be printed above>\n"
+                "<opengrep-core stderr not captured, should be printed above>\n"
             )
 
         # All paths in this block should call self._fail() to raise a
@@ -602,9 +602,9 @@ class CoreRunner:
         # prints the stderr and never returns, so by doing this we avoid
         # printing stderr twice
         logger.debug(
-            f"--- semgrep-core stderr ---\n"
+            f"--- opengrep-core stderr ---\n"
             f"{core_stderr}"
-            f"--- end semgrep-core stderr ---"
+            f"--- end opengrep-core stderr ---"
         )
 
         # else:
