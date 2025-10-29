@@ -5,7 +5,8 @@ def helper_source (x):
     return source(x)
 def helper_flow(x):
     y = helper_source(x)
-    return y
+    z = y
+    return z
 def main (input):
     x = helper_flow(input)
     helper_to_sink(x)
