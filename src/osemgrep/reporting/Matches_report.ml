@@ -230,7 +230,7 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
   | _ -> ()
 
 let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
-    ~append_separator ppf (m : OutJ.cli_match) =
+    ~show_dataflow_traces ~append_separator ppf (m : OutJ.cli_match) =
   ignore color_output;
   let lines =
     Option.value
@@ -309,7 +309,7 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
        --max-chars-per-line]@."
       findings_indent;
   (match m.extra.dataflow_trace with
-  | Some trace -> pp_dataflow_trace ppf trace
+  | Some trace -> if show_dataflow_traces then pp_dataflow_trace ppf trace else ()
   | None -> ());
   match trimmed with
   | Some num ->
@@ -350,7 +350,8 @@ let pp_styled_severity ppf ~no_color (severity : OutJ.match_severity) =
   | `Experiment ->
       Fmt.pf ppf "%s%s" rule_leading_indent "   "
 
-let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
+let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
+    ~color_output ~show_dataflow_traces ppf
     (matches : OutJ.cli_match list) =
   let print_one_match ~(prev : OutJ.cli_match option) ~(cur : OutJ.cli_match)
       ~(next : OutJ.cli_match option) =
@@ -434,7 +435,7 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
       | Some next -> Rule_ID.equal next.check_id cur.check_id
     in
     pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
-      ~append_separator:(same_file_next && same_rule_next)
+      ~show_dataflow_traces ~append_separator:(same_file_next && same_rule_next)
       ppf cur;
     Fmt.pf ppf "@."
   in
@@ -444,7 +445,12 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
 (* Entry point *)
 (*****************************************************************************)
 
-let pp_cli_output ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
+let pp_cli_output
+    ~max_chars_per_line
+    ~max_lines_per_finding
+    ~color_output
+    ~show_dataflow_traces
+    ppf
     (cli_output : OutJ.cli_output) =
   cli_output.results |> Semgrep_output_utils.sort_cli_matches
   |> Assoc.group_by (fun (m : OutJ.cli_match) ->
@@ -494,4 +500,4 @@ let pp_cli_output ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
            Fmt_.pp_heading ppf
              (String_.unit_str (List.length matches) (group_titles group));
          pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
-           ~color_output ppf matches)
+           ~color_output ~show_dataflow_traces ppf matches)

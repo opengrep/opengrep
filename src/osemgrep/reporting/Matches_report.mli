@@ -4,6 +4,7 @@ val pp_cli_output :
   max_chars_per_line:int ->
   max_lines_per_finding:int ->
   color_output:'a ->
+  show_dataflow_traces:bool ->
   Format.formatter ->
   Semgrep_output_v1_t.cli_output ->
   unit
@@ -13,6 +14,7 @@ val pp_text_outputs :
   max_chars_per_line:int ->
   max_lines_per_finding:int ->
   color_output:'a ->
+  show_dataflow_traces:bool ->
   Format.formatter ->
   Semgrep_output_v1_t.cli_match list ->
   unit

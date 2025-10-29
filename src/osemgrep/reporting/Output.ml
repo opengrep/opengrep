@@ -193,7 +193,8 @@ let dispatch_output_format
       Matches_report.pp_cli_output ~max_chars_per_line:conf.max_chars_per_line
         ~max_lines_per_finding:conf.max_lines_per_finding
           (* nosemgrep: forbid-console *)
-        ~color_output:conf.force_color Format.std_formatter cli_output
+        ~color_output:conf.force_color ~show_dataflow_traces:conf.show_dataflow_traces
+        Format.std_formatter cli_output
   | Sarif ->
       let engine_label =
         match cli_output.engine_requested with
