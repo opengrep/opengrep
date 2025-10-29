@@ -223,7 +223,7 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
       print_call_trace "Taint comes from:" source;
       (match trace.intermediate_vars with
       | Some vars when List.length vars > 0 ->
-          Fmt.pf ppf "@.%sTaint flows through these intermediate variables:@." findings_indent;
+          Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
           print_tokens_no_consec_dupes findings_indent vars
       | _ -> ());
       print_call_trace "This is how taint reaches the sink:" sink
