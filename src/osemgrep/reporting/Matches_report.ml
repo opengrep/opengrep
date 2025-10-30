@@ -203,23 +203,32 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
   in
 
   (* Recursive function to print call trace *)
-  let rec print_call_trace label (trace : OutJ.match_call_trace) =
+  let rec print_call_trace ?(reverse = false) label (trace : OutJ.match_call_trace) =
     match trace with
     | OutJ.CliLoc (loc, _) ->
         Fmt.pf ppf "@.%s %s@." findings_indent label;
         print_location findings_indent loc
     | OutJ.CliCall ((loc, _), intermediate_vars, inner_trace) ->
-        Fmt.pf ppf "@.%s %s@." findings_indent label;
-        print_location findings_indent loc;
-        if List.length intermediate_vars > 0 then (
-          Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
-          print_tokens_no_consec_dupes findings_indent intermediate_vars);
-        print_call_trace "then reaches:" inner_trace
+        if reverse (* this is for source taint traces *)
+        then
+        (print_call_trace ~reverse label inner_trace;
+         if List.length intermediate_vars > 0 then (
+           Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
+           print_tokens_no_consec_dupes findings_indent intermediate_vars);
+         Fmt.pf ppf "@.%s %s@." findings_indent "then call to:" ;
+         print_location findings_indent loc)
+        else
+        (Fmt.pf ppf "@.%s %s@." findings_indent label;
+         print_location findings_indent loc;
+         if List.length intermediate_vars > 0 then (
+           Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
+           print_tokens_no_consec_dupes findings_indent intermediate_vars);
+         print_call_trace ~reverse "then reaches:" inner_trace)
   in
 
   match (trace.taint_source, trace.taint_sink) with
   | Some source, Some sink ->
-      print_call_trace "Taint comes from:" source;
+      print_call_trace ~reverse:true "Taint comes from:" source;
       (match trace.intermediate_vars with
       | Some vars when List.length vars > 0 ->
           Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
