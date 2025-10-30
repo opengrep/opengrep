@@ -28,6 +28,9 @@ module ME = Matching_explanation
 module OutJ = Semgrep_output_v1_t
 module Labels = Set.Make (String)
 module Log = Log_tainting.Log
+(* TEMP: Use optics version for testing *)
+module Function_call_graph = Function_call_graph_with_optics
+(* module Function_call_graph = Function_call_graph *)
 module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature

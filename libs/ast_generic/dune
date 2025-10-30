@@ -8,6 +8,7 @@
 
    commons
    lib_parsing
+   optics_types
  )
  (preprocess
    (pps
@@ -18,6 +19,7 @@
       profiling.ppx
       visitors.ppx
       ppx_sexp_conv
+      ppx_optics
    )
  )
 )

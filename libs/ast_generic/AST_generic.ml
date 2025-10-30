@@ -232,7 +232,7 @@ type 'a wrap = 'a * tok [@@deriving show, eq, ord, hash]
  * but they are useful to report correct ranges in sgrep when we match
  * something that can just be those brackets (e.g., an empty container).
  *)
-type 'a bracket = tok * 'a * tok [@@deriving show, eq, ord, hash]
+type 'a bracket = tok * 'a * tok [@@deriving show, eq, ord, hash, optics]
 
 (* semicolon, a FakeTok in languages that do not require them (e.g., Python).
  * alt: tok option.
@@ -2179,7 +2179,8 @@ and raw_tree = (any Raw_tree.t[@name "raw_tree_t"])
      * ocamlc -stop-after parsing -dsource AST_generic.pp.ml
      * *)
     visitors { variety = "iter"; ancestors = [ "iter_parent" ] },
-    visitors { variety = "map"; ancestors = [ "map_parent" ] }]
+    visitors { variety = "map"; ancestors = [ "map_parent" ] },
+    optics]
 
 (*****************************************************************************)
 (* Error *)
