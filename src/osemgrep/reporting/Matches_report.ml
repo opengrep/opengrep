@@ -203,34 +203,42 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
   in
 
   (* Recursive function to print call trace *)
-  let rec print_call_trace label (trace : OutJ.match_call_trace) =
+  let rec print_call_trace ?(reverse = false) label (trace : OutJ.match_call_trace) =
     match trace with
     | OutJ.CliLoc (loc, _) ->
         Fmt.pf ppf "@.%s %s@." findings_indent label;
         print_location findings_indent loc
-    | OutJ.CliCall (loc_content_pair, intermediate_vars, inner_trace) ->
-        Fmt.pf ppf "@.%s %s@." findings_indent label;
-        (match loc_content_pair with
-        | (loc, _) -> print_location findings_indent loc);
-        if List.length intermediate_vars > 0 then (
-          Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
-          print_tokens_no_consec_dupes findings_indent intermediate_vars);
-        print_call_trace "then reaches:" inner_trace
+    | OutJ.CliCall ((loc, _), intermediate_vars, inner_trace) ->
+        if reverse (* this is for source taint traces *)
+        then
+        (print_call_trace ~reverse label inner_trace;
+         if List.length intermediate_vars > 0 then (
+           Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
+           print_tokens_no_consec_dupes findings_indent intermediate_vars);
+         Fmt.pf ppf "@.%s %s@." findings_indent "then call to:" ;
+         print_location findings_indent loc)
+        else
+        (Fmt.pf ppf "@.%s %s@." findings_indent label;
+         print_location findings_indent loc;
+         if List.length intermediate_vars > 0 then (
+           Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
+           print_tokens_no_consec_dupes findings_indent intermediate_vars);
+         print_call_trace ~reverse "then reaches:" inner_trace)
   in
 
   match (trace.taint_source, trace.taint_sink) with
   | Some source, Some sink ->
-      print_call_trace "Taint comes from:" source;
+      print_call_trace ~reverse:true "Taint comes from:" source;
       (match trace.intermediate_vars with
       | Some vars when List.length vars > 0 ->
-          Fmt.pf ppf "@.%sTaint flows through these intermediate variables:@." findings_indent;
+          Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
           print_tokens_no_consec_dupes findings_indent vars
       | _ -> ());
       print_call_trace "This is how taint reaches the sink:" sink
   | _ -> ()
 
 let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
-    ~append_separator ppf (m : OutJ.cli_match) =
+    ~show_dataflow_traces ~append_separator ppf (m : OutJ.cli_match) =
   ignore color_output;
   let lines =
     Option.value
@@ -309,7 +317,7 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
        --max-chars-per-line]@."
       findings_indent;
   (match m.extra.dataflow_trace with
-  | Some trace -> pp_dataflow_trace ppf trace
+  | Some trace -> if show_dataflow_traces then pp_dataflow_trace ppf trace else ()
   | None -> ());
   match trimmed with
   | Some num ->
@@ -350,7 +358,8 @@ let pp_styled_severity ppf ~no_color (severity : OutJ.match_severity) =
   | `Experiment ->
       Fmt.pf ppf "%s%s" rule_leading_indent "   "
 
-let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
+let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
+    ~color_output ~show_dataflow_traces ppf
     (matches : OutJ.cli_match list) =
   let print_one_match ~(prev : OutJ.cli_match option) ~(cur : OutJ.cli_match)
       ~(next : OutJ.cli_match option) =
@@ -434,7 +443,7 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
       | Some next -> Rule_ID.equal next.check_id cur.check_id
     in
     pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
-      ~append_separator:(same_file_next && same_rule_next)
+      ~show_dataflow_traces ~append_separator:(same_file_next && same_rule_next)
       ppf cur;
     Fmt.pf ppf "@."
   in
@@ -444,7 +453,12 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
 (* Entry point *)
 (*****************************************************************************)
 
-let pp_cli_output ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
+let pp_cli_output
+    ~max_chars_per_line
+    ~max_lines_per_finding
+    ~color_output
+    ~show_dataflow_traces
+    ppf
     (cli_output : OutJ.cli_output) =
   cli_output.results |> Semgrep_output_utils.sort_cli_matches
   |> Assoc.group_by (fun (m : OutJ.cli_match) ->
@@ -494,4 +508,4 @@ let pp_cli_output ~max_chars_per_line ~max_lines_per_finding ~color_output ppf
            Fmt_.pp_heading ppf
              (String_.unit_str (List.length matches) (group_titles group));
          pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
-           ~color_output ppf matches)
+           ~color_output ~show_dataflow_traces ppf matches)
