@@ -434,7 +434,7 @@ def dataflow_trace_to_lines(
         if sink:
             yield Text.assemble("")
             yield Text.assemble(
-                FINDINGS_INDENT_DEPTH * " " + "This is how taint reaches the sink:"
+                BASE_INDENT * " " + "This is how taint reaches the sink:"
             )
             yield from call_trace_to_lines(
                 rule_match_path,
