@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.11.3](https://github.com/opengrep/opengrep/releases/tag/v1.11.3) - 30-10-2025
+
+### Bug fixes
+
+* C/C++: allow for macros in structs by @maciejpirog in #447
+* Python: both parsers generate same structure of interpolated strings by @maciejpirog in #455
+* Tainting fix for several methods with the same name by @corneliuhoffman in #449
+* Tainting fix: fakeTok bug by @corneliuhoffman in #451
+* Depth based equality by @corneliuhoffman in #453
+* Fix windows workflow by @dimitris-m in #450
+* Adapt Sarif output for --taint-intrafile by @dimitris-m in #456
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.2...v1.11.3
+
+
 ## [1.11.2](https://github.com/opengrep/opengrep/releases/tag/v1.11.2) - 21-10-2025
 
 ### Bug fixes
