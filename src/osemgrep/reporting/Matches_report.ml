@@ -208,10 +208,9 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
     | OutJ.CliLoc (loc, _) ->
         Fmt.pf ppf "@.%s %s@." findings_indent label;
         print_location findings_indent loc
-    | OutJ.CliCall (loc_content_pair, intermediate_vars, inner_trace) ->
+    | OutJ.CliCall ((loc, _), intermediate_vars, inner_trace) ->
         Fmt.pf ppf "@.%s %s@." findings_indent label;
-        (match loc_content_pair with
-        | (loc, _) -> print_location findings_indent loc);
+        print_location findings_indent loc;
         if List.length intermediate_vars > 0 then (
           Fmt.pf ppf "@.%s Taint flows through these intermediate variables:@." findings_indent;
           print_tokens_no_consec_dupes findings_indent intermediate_vars);
