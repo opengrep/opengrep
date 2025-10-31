@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.11.4](https://github.com/opengrep/opengrep/releases/tag/v1.11.4) - 31-10-2025
+
+### Bug fixes
+
+* Add `taint_intrafile` param to `ci` command by @lae in #458
+
+### New Contributors
+* @lae made their first contribution in #458
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.3...v1.11.4
+
+
 ## [1.11.3](https://github.com/opengrep/opengrep/releases/tag/v1.11.3) - 30-10-2025
 
 ### Bug fixes
