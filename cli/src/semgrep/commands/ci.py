@@ -283,6 +283,7 @@ def ci(
     dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
     dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
     dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+    taint_intrafile: bool = False,
 ) -> None:
     state = get_state()
 
@@ -398,7 +399,7 @@ def ci(
     debugging_table.add_row(
         "versions",
         "-",
-        f"semgrep [bold]{semgrep.__VERSION__}[/bold] on python [bold]{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}[/bold]",
+        f"opengrep [bold]{semgrep.__VERSION__}[/bold] on python [bold]{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}[/bold]",
     )
     debugging_table.add_row(
         "environment",
@@ -616,6 +617,7 @@ def ci(
         "run_secrets": run_secrets,
         "disable_secrets_validation": disable_secrets_validation_flag,
         "output_handler": output_handler,
+        "taint_intrafile": taint_intrafile,
         "target": [target],
         "pattern": None,
         "lang": None,
