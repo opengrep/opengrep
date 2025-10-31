@@ -398,7 +398,7 @@ def ci(
     debugging_table.add_row(
         "versions",
         "-",
-        f"semgrep [bold]{semgrep.__VERSION__}[/bold] on python [bold]{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}[/bold]",
+        f"opengrep [bold]{semgrep.__VERSION__}[/bold] on python [bold]{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}[/bold]",
     )
     debugging_table.add_row(
         "environment",
