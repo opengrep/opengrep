@@ -18,6 +18,7 @@ type conf = {
      why a rule did or did not match.
   *)
   matching_diagnosis : bool;
+  taint_intrafile : bool;
   common : CLI_common.conf;
 }
 

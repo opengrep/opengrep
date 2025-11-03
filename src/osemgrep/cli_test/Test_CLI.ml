@@ -36,6 +36,7 @@ type conf = {
   optimizations : bool;
   strict : bool;
   matching_diagnosis : bool;
+  taint_intrafile : bool;
   common : CLI_common.conf;
 }
 
@@ -120,6 +121,19 @@ let o_args : string list Term.t =
   in
   Arg.value (Arg.pos_all Arg.string [] info)
 
+(* ------------------------------------------------------------------ *)
+(* Intrafile tainting *)
+(* ------------------------------------------------------------------ *)
+let o_taint_intrafile : bool Term.t =
+  let info =
+    Arg.info [ "taint-intrafile" ]
+      ~doc:
+        ("Enable intra-file inter-procedural taint analysis. \
+          Supported languages: Apex, C, C#, C++, Elixir, Go, Java, JavaScript, Julia, Kotlin, Lua, Python, Ruby, Rust, Scala, Swift, TypeScript. \
+          Other languages will fall back to intraprocedural analysis only.")
+  in
+  Arg.value (Arg.flag info)
+
 (*************************************************************************)
 (* Command-line parsing: turn argv into conf *)
 (*************************************************************************)
@@ -147,7 +161,7 @@ let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
   let combine args common config json matching_diagnosis pro strict
-      test_ignore_todo =
+      taint_intrafile test_ignore_todo =
     let target =
       target_kind_of_roots_and_config (Fpath_.of_strings args) config
     in
@@ -160,11 +174,13 @@ let cmdline_term : conf Term.t =
       common;
       optimizations = true;
       matching_diagnosis;
+      taint_intrafile;
     }
   in
   Term.(
     const combine $ o_args $ CLI_common.o_common $ o_config $ o_json
-    $ o_matching_diagnosis $ o_pro $ o_strict $ o_test_ignore_todo)
+    $ o_matching_diagnosis $ o_pro $ o_strict $ o_taint_intrafile
+    $ o_test_ignore_todo)
 
 let doc = "testing the rules"
 
