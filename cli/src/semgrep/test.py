@@ -459,6 +459,7 @@ def generate_test_results(
     engine_type: EngineType,
     optimizations: str = "none",
     jobs: int,
+    taint_intrafile: bool = False,
 ) -> None:
     config_filenames = get_config_filenames(config)
     config_test_filenames = get_config_test_filenames(config, config_filenames, target)
@@ -492,6 +493,7 @@ def generate_test_results(
         no_rewrite_rule_ids=no_rewrite_rule_ids,
         strict=strict,
         optimizations=optimizations,
+        taint_intrafile=taint_intrafile,
     )
     # XXX: Maybe no need for the pool if jobs = 1.
     cpu_count = multiprocessing.cpu_count()
@@ -587,6 +589,7 @@ def generate_test_results(
         no_rewrite_rule_ids=no_rewrite_rule_ids,
         strict=strict,
         optimizations=optimizations,
+        taint_intrafile=taint_intrafile,
         # only option that differs from the earlier call to semgrep-core:
         autofix=True,
     )
@@ -711,6 +714,7 @@ def test_main(
     optimizations: str,
     engine_type: EngineType,
     jobs: int,
+    taint_intrafile: bool,
 ) -> None:
     if len(target) != 1:
         raise Exception("only one target directory allowed for tests")
@@ -733,4 +737,5 @@ def test_main(
         engine_type=engine_type,
         optimizations=optimizations,
         jobs=jobs,
+        taint_intrafile=taint_intrafile
     )

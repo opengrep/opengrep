@@ -761,6 +761,7 @@ def scan(
             optimizations=optimizations,
             engine_type=engine_type,
             jobs=jobs,
+            taint_intrafile=taint_intrafile,
         )
 
     filtered_matches_by_rule: RuleMatchMap = {}
