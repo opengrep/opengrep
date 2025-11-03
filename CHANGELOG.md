@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.11.5](https://github.com/opengrep/opengrep/releases/tag/v1.11.5) - 03-11-2025
+
+### Bug fixes
+
+* Fix: ensure `--test` works with `--taint-intrafile` by @dimitris-m in #463
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.4...v1.11.5
+
+
 ## [1.11.4](https://github.com/opengrep/opengrep/releases/tag/v1.11.4) - 31-10-2025
 
 ### Bug fixes
