@@ -1352,7 +1352,7 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common ~pro :
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-    ~test_ignore_todo ~strict ~pro ~common : Test_CLI.conf option =
+    ~test_ignore_todo ~strict ~taint_intrafile ~pro ~common : Test_CLI.conf option =
   if test then
     let target =
       Test_CLI.target_kind_of_roots_and_config
@@ -1370,6 +1370,7 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
           ignore_todo = test_ignore_todo;
           common;
           matching_diagnosis = false;
+          taint_intrafile;
         }
   else None
 
@@ -1557,7 +1558,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =
       test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-        ~test_ignore_todo ~strict ~pro ~common
+        ~test_ignore_todo ~strict ~taint_intrafile ~pro ~common
     in
     (* warnings.
      * ugly: TODO: remove the Default guard once we get the warning message
