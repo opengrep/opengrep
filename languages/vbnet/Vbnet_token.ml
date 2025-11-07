@@ -3,13 +3,13 @@ type token_kind =
   | Keyword
   | Operator
   | Punctuation
-  | IntLiteral
+  | IntLiteral of int64
   | FloatLiteral
-  | CharLiteral
-  | StringLiteral
+  | CharLiteral of string
+  | StringLiteral of string
   | StringSegment
   | DateLiteral
-  | CDATA
+  | CDATA of string
   | LineTerminator
   | Other
   | EOF
@@ -28,6 +28,18 @@ let make ?(uppercase=false) (lexbuf : Lexing.lexbuf) (k : token_kind) : t =
     tok = Tok.tok_of_lexbuf lexbuf
   }
 
+let extract_string_content (t : t) : string =
+  match t.kind with
+  | StringLiteral s
+  | CharLiteral s
+  | CDATA s -> s
+  | _ -> failwith "Impossible"
+
+let extract_int_content (t : t) : int64 =
+  match t.kind with
+  | IntLiteral n -> n
+  | _ -> failwith "Impossible"
+
 let token_ghost (tok : t) : bool =
   match tok with
   | { kind = LineTerminator; _ } -> true
@@ -44,13 +56,13 @@ let token_match (s : string) (tok : t) : bool =
   | "<KEYWORD>", { kind = Keyword; _ }
   | "<OPERATOR>", { kind = Operator; _ }
   | "<PUNCTUATION>", { kind = Punctuation; _ }
-  | "<INT>", { kind = IntLiteral; _ }
+  | "<INT>", { kind = IntLiteral _; _ }
   | "<FLOAT>", { kind = FloatLiteral; _ }
-  | "<CHAR>", { kind = CharLiteral; _ }
-  | "<STRING>", { kind = StringLiteral; _ }
+  | "<CHAR>", { kind = CharLiteral _; _ }
+  | "<STRING>", { kind = StringLiteral _; _ }
   | "<STRING_SEGMENT>", { kind = StringSegment; _ }
   | "<DATE>", { kind = DateLiteral; _ }
-  | "<CDATA>", { kind = CDATA; _ }
+  | "<CDATA>", { kind = CDATA _; _ }
   | "<LINE_TERMINATOR>", { kind = LineTerminator; _ }
   | "<OTHER>", { kind = Other; _ }
   | "<EOF>", { kind = EOF; _ } -> true

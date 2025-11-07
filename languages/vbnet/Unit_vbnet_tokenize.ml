@@ -7,11 +7,11 @@ let tests =
   Testo.categorize "lexing_vbnet"
   [
     Testo.create "lexer (basic)" (fun () ->
-      let s = tokenize "1 + \"hello\" } Sub" |> List.map preview in
+      let s = tokenize "12 + \"hello\" } Sub" |> List.map preview in
       let r =
-      T.([ IntLiteral, "1"
+      T.([ IntLiteral 12L, "12"
          ; Operator, "+"
-         ; StringLiteral, "\"hello\""
+         ; StringLiteral "hello", "\"hello\""
          ; Punctuation, "}"
          ; Keyword, "SUB"
          ; EOF, ""])
@@ -19,16 +19,16 @@ let tests =
       assert (s = r));
 
     Testo.create "lexer (interpolated strings)" (fun () ->
-      let s = tokenize "1 + $\"abc{abc xyz}xyz{\"abc\" { + }}\" {}" |> List.map preview in
+      let s = tokenize "&HF + $\"abc{abc xyz}xyz{\"abc\" { + }}\" {}" |> List.map preview in
       let r =
-      T.([ IntLiteral, "1"
+      T.([ IntLiteral 15L, "&HF"
          ; Operator, "+"
          ; Operator, "$\""
          ; StringSegment, "abc"
          ; Identifier, "ABC"
          ; Identifier, "XYZ"
          ; StringSegment, "xyz"
-         ; StringLiteral, "\"abc\""
+         ; StringLiteral "abc", "\"abc\""
          ; Punctuation, "{"
          ; Operator, "+"
          ; Punctuation, "}"
@@ -43,11 +43,11 @@ let tests =
       let s = tokenize "$\"{\"xyz\" a $\"{b \"xyz\"}\"}\"" |> List.map preview in
       let r =
       T.([ Operator, "$\""
-         ; StringLiteral, "\"xyz\""
+         ; StringLiteral "xyz", "\"xyz\""
          ; Identifier, "A"
          ; Operator, "$\""
          ; Identifier, "B"
-         ; StringLiteral, "\"xyz\""
+         ; StringLiteral "xyz", "\"xyz\""
          ; Operator, "\""
          ; Operator, "\""
          ; EOF, ""])
