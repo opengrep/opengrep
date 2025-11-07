@@ -375,7 +375,7 @@ let octal_digit = ['0'-'7']
 
 let binary_digit = ['0'-'1']
 
-let integral_type_char = "S" | "US" | "I" | "UI" | "L" | "UL" | type_char
+let integral_type_char = "S" | "US" | "I" | "UI" | "L" | "UL" | "D" | type_char
 
 let sign = ['+' '-']
 
@@ -437,7 +437,7 @@ and read state = parse
   | "#Else" [^'#']* "#End If" { T.make lexbuf T.LineTerminator }
 
 (* XML CDATA *)
-  | "<![CDATA[" ([^']'] | ']' [^']'] | "]]" [^'>'] )* "]]>" { T.make lexbuf T.CDATA }
+  | "<![CDATA[" (([^']'] | ']' [^']'] | "]]" [^'>'] )* as s) "]]>" { T.make lexbuf (T.CDATA s) }
 
 (* keywords and identifiers *)
   | (alpha_char | underscore_char (alpha_char | numeric_char | combining_char | formatting_char | underscore_char))
@@ -446,6 +446,10 @@ and read state = parse
     { kw_or_ident lexbuf }
   | '[' ((alpha_char | numeric_char | combining_char | formatting_char | underscore_char)+) ']'
     { T.make ~uppercase:true lexbuf T.Identifier }
+    (* some special cases *)
+  | ("Mid$" | "Left$" | "Right$" | "RCase$" | "Trim$" | "UCase$")
+    { T.make ~uppercase:true lexbuf T.Identifier }
+    (* opengrep metavar *)
   | '$' ['A'-'Z']['A'-'Z' '0'-'9']* { T.make lexbuf T.Identifier }
 
 (* interpolated strings *)
@@ -455,14 +459,18 @@ and read state = parse
     }
 
 (* literals *)
-  | digit (digit | '_')* integral_type_char?
-    { T.make lexbuf T.IntLiteral }
-  | '&' ('H' | 'h') hex_digit+ integral_type_char?
-    { T.make lexbuf T.IntLiteral }
-  | '&' ('O' | 'o') octal_digit+ integral_type_char?
-    { T.make lexbuf T.IntLiteral }
-  | '&' ('B' | 'b') binary_digit+ integral_type_char?
-    { T.make lexbuf T.IntLiteral }
+  | ((digit (digit | '_')*) as s) integral_type_char?
+    { let n = Int64.of_string s in
+      T.make lexbuf (T.IntLiteral n) }
+  | '&' ('H' | 'h') ((hex_digit (hex_digit | '_')*) as s) integral_type_char?
+    { let n = Int64.of_string ("0x" ^ s) in
+      T.make lexbuf (T.IntLiteral n) }
+  | '&' ('O' | 'o') (octal_digit (octal_digit | '_')* as s) integral_type_char?
+    { let n = Int64.of_string ("0o" ^ s) in
+      T.make lexbuf (T.IntLiteral n) }
+  | '&' ('B' | 'b') (binary_digit (binary_digit | '_')* as s) integral_type_char?
+    { let n = Int64.of_string ("0b" ^ s) in
+      T.make lexbuf (T.IntLiteral n) }
   | digit+ '.' digit+ (exponent_char sign digit+)? floating_point_type_char?
     { T.make lexbuf T.FloatLiteral }
   | '.' digit+ (exponent_char sign digit+)? floating_point_type_char?
@@ -471,10 +479,10 @@ and read state = parse
     { T.make lexbuf T.FloatLiteral }
   | digit+ floating_point_type_char
     { T.make lexbuf T.FloatLiteral }
-  | double_quote_char (string_char | double_quote_char double_quote_char)* double_quote_char
-    { T.make lexbuf T.StringLiteral }
-  | double_quote_char (string_char | double_quote_char double_quote_char)* double_quote_char ('c' | 'C')
-    { T.make lexbuf T.CharLiteral }
+  | double_quote_char ((string_char | double_quote_char double_quote_char)* as s) double_quote_char
+    { T.make lexbuf (T.StringLiteral s) }
+  | double_quote_char ((string_char | double_quote_char double_quote_char)* as s) double_quote_char ('c' | 'C')
+    { T.make lexbuf (T.CharLiteral s) }
   | '#' whitespace* (date_value | date_value whitespace+ time_value | time_value) whitespace* '#'
     { T.make lexbuf T.DateLiteral }
 
@@ -533,6 +541,7 @@ and read state = parse
   | "?>" { T.make lexbuf T.Operator }
   | "@" { T.make lexbuf T.Operator }
   | ".@" { T.make lexbuf T.Operator }
+  | ".@<" { T.make lexbuf T.Operator }
   | "\\" { T.make lexbuf T.Operator }
   | "\\=" { T.make lexbuf T.Operator }
   | "]]>" { T.make lexbuf T.Operator }

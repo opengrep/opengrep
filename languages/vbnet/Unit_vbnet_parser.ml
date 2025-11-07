@@ -1,5 +1,6 @@
 module T = Vbnet_tokenize
 module P = Vbnet_parser
+module G = AST_generic
 
 let (>>>) (s : string) (p : 'a P.parser) : unit =
   let r = T.tokenize s |> P.run p in
@@ -21,6 +22,45 @@ let is_partial (s : string) : bool =
   | Partial _ -> true
   | _ -> false
 
+let get_val v =
+  v.P.value
+
+let smoke1 _ : bool =
+  let prog = "Dim x as Integer = 123" in
+  (* NOTE: single_line_statment actually returns a list of statements *)
+  let res = T.tokenize prog
+            |> P.run P.single_line_statement
+            |> List.hd |> get_val |> List.hd in
+  G.(match res with
+    | { s = DefStmt (_, G.VarDef {vinit = Some {e = L (Int (Some 123L, _)); _}; _}); _ } -> true
+    | _ -> false)
+
+let smoke2 _ : bool =
+  let prog = "Class C \n Public Sub Foo \n End \n End Sub \n End Class" in
+  let res = T.tokenize prog
+            |> P.run P.toplevel
+            |> List.hd |> get_val in
+  G.(match res with
+  | [{s =
+     DefStmt
+      ({name = EN (Id (("C", _), _)); _},
+       ClassDef
+        {ckind = (Class, _);
+         cbody = (_, [F {s =
+          DefStmt (
+            {name = EN (Id (("FOO", _), _)); _},
+            FuncDef
+             { fkind = (Method, _);
+               fparams = (_, [], _);
+               fbody = FBStmt { s =
+                       ExprStmt
+                        ({e =
+                           Call
+                            ({e = N (Id (("END", _), _)); _},
+                             (_, [], _)); _}, _); _};
+               _}); _}], _); _}); _}] -> true
+  | _ -> false)
+
 let tests =
   Testo.categorize "parsing_vbnet"
   [
@@ -41,28 +81,34 @@ let tests =
       >>> P.expression;
 
       "If (a := 1, b := 2) Then x = not await 4 : Exit Sub Else <foo></foo>"
-      >>> P.single_line_statement);
+      >>> P.single_line_statement
+      );
 
     Testo.create "partial result smoke test" (fun () ->
-        assert (is_ok "Class c \n End Class");
-        assert (is_ok "Class c \n Class d \n End Class \n End Class");
-        assert (is_ok "Class c \n Sub foo \n End Sub \n End Class");
-        assert (is_partial "Class c \n Class d \n End Class");
-        assert (is_ok "Class c \n Sub foo \n End Class"); (* tricky: declaration without body is ok *)
-        assert (is_ok "Class c \n Sub foo \n x = 1 \n End Sub \n End Class");
-        assert (is_partial "Class c \n Sub foo \n x = 1 \n xxx yyy zzz \n End Sub \n End Class");
-        assert (is_ok "Namespace n \n Class c \n End Class \n End Namespace");
-        assert (is_partial "Namespace n \n Class c xx yyy zzz \n End Class \n End Namespace");
-        assert (is_partial "Namespace n \n Class c \n End Class \n xxx yyy zzz \n End Namespace");
-        assert (is_ok "Module c \n End Module");
-        assert (is_ok "Module c \n Module d \n End Module \n End Module");
-        assert (is_ok "Module c \n Sub foo \n End Sub \n End Module");
-        assert (is_partial "Module c \n Module d \n End Module");
-        assert (is_ok "Module c \n Sub foo \n x = 1 \n End Sub \n End Module");
-        assert (is_partial "Module c \n Sub foo \n x = 1 \n xxx yyy zzz \n End Sub \n End Module");
-        assert (is_ok "Namespace c \n End Namespace");
-        assert (is_ok "Namespace n \n Module c \n End Module \n End Namespace");
-        assert (is_partial "Namespace n \n Module c xx yyy zzz \n End Module \n End Namespace");
-        assert (is_partial "Namespace n \n Module c \n End Module \n xxx yyy zzz \n End Namespace")
+      assert (is_ok "Class c \n End Class");
+      assert (is_ok "Class c \n Class d \n End Class \n End Class");
+      assert (is_ok "Class c \n Sub foo \n End Sub \n End Class");
+      assert (is_partial "Class c \n Class d \n End Class");
+      assert (is_ok "Class c \n Sub foo \n End Class"); (* tricky: declaration without body is ok *)
+      assert (is_ok "Class c \n Sub foo \n x = 1 \n End Sub \n End Class");
+      assert (is_partial "Class c \n Sub foo \n x = 1 \n xxx yyy zzz \n End Sub \n End Class");
+      assert (is_ok "Namespace n \n Class c \n End Class \n End Namespace");
+      assert (is_partial "Namespace n \n Class c xx yyy zzz \n End Class \n End Namespace");
+      assert (is_partial "Namespace n \n Class c \n End Class \n xxx yyy zzz \n End Namespace");
+      assert (is_ok "Module c \n End Module");
+      assert (is_ok "Module c \n Module d \n End Module \n End Module");
+      assert (is_ok "Module c \n Sub foo \n End Sub \n End Module");
+      assert (is_partial "Module c \n Module d \n End Module");
+      assert (is_ok "Module c \n Sub foo \n x = 1 \n End Sub \n End Module");
+      assert (is_partial "Module c \n Sub foo \n x = 1 \n xxx yyy zzz \n End Sub \n End Module");
+      assert (is_ok "Namespace c \n End Namespace");
+      assert (is_ok "Namespace n \n Module c \n End Module \n End Namespace");
+      assert (is_partial "Namespace n \n Module c xx yyy zzz \n End Module \n End Namespace");
+      assert (is_partial "Namespace n \n Module c \n End Module \n xxx yyy zzz \n End Namespace")
+      );
+
+    Testo.create "parser result (AST generic) smoke test" (fun () ->
+      assert (smoke1 ());
+      assert (smoke2 ())
       )
   ]
