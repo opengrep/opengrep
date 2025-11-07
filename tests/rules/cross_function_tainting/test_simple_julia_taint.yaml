@@ -1,0 +1,12 @@
+rules:
+  - id: simple_julia_taint
+    message: Simple Julia cross-function taint
+    languages:
+      - julia
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

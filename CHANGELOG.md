@@ -1,5 +1,99 @@
 # Changelog
 
+## [1.11.5](https://github.com/opengrep/opengrep/releases/tag/v1.11.5) - 03-11-2025
+
+### Bug fixes
+
+* Fix: ensure `--test` works with `--taint-intrafile` by @dimitris-m in #463
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.4...v1.11.5
+
+
+## [1.11.4](https://github.com/opengrep/opengrep/releases/tag/v1.11.4) - 31-10-2025
+
+### Bug fixes
+
+* Add `taint_intrafile` param to `ci` command by @lae in #458
+
+### New Contributors
+* @lae made their first contribution in #458
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.3...v1.11.4
+
+
+## [1.11.3](https://github.com/opengrep/opengrep/releases/tag/v1.11.3) - 30-10-2025
+
+### Bug fixes
+
+* C/C++: allow for macros in structs by @maciejpirog in #447
+* Python: both parsers generate same structure of interpolated strings by @maciejpirog in #455
+* Tainting fix for several methods with the same name by @corneliuhoffman in #449
+* Tainting fix: fakeTok bug by @corneliuhoffman in #451
+* Depth based equality by @corneliuhoffman in #453
+* Fix windows workflow by @dimitris-m in #450
+* Adapt Sarif output for --taint-intrafile by @dimitris-m in #456
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.2...v1.11.3
+
+
+## [1.11.2](https://github.com/opengrep/opengrep/releases/tag/v1.11.2) - 21-10-2025
+
+### Bug fixes
+
+* Tainting: rename the functions and simpler eval by @corneliuhoffman in #444
+* Fix cosign version detection in install script by @dimitris-m in #441
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.1...v1.11.2
+
+
+## [1.11.1](https://github.com/opengrep/opengrep/releases/tag/v1.11.1) - 17-10-2025
+
+### Bug fixes
+
+* Add --taint-intrafile to python by @dimitris-m in #439
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.0...v1.11.1
+
+
+## [1.11.0](https://github.com/opengrep/opengrep/releases/tag/v1.11.0) - 17-10-2025
+
+### New features
+
+* Intrafile tainting by @corneliuhoffman in #432
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.10.2...v1.11.0
+
+
+## [1.10.2](https://github.com/opengrep/opengrep/releases/tag/v1.10.2) - 14-10-2025
+
+### Bug fixes
+
+* Special case for the '+' operator in Scala by @maciejpirog in #429
+* c#: fix to-AST-generic for stackalloc arrays by @maciejpirog in #430
+* Set windows runner image to 2022 by @dimitris-m in #435
+
+### Improvements
+
+* Cancel taint on no sinks or sources by @maciejpirog in #433
+* Emit a warning when a rule gets deduped because of shared rule-id by @maciejpirog in #420
+* Remove unused field `id_info_id` from `id_info` by @maciejpirog in #423
+
+### Documentation
+
+* Add `timeout` rule option in OPENGREP.md by @dimitris-m in #424
+* Improve OPENGREP.md text by @dimitris-m in #427
+
+### Tech debt
+
+* Remove Semgrep's changelog folder by @dimitris-m in #428
+
+#### Notes
+
+* Version 1.10.1 (#434) intentionally skipped.
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.10.0...v1.10.2
+
+
 ## [1.10.0](https://github.com/opengrep/opengrep/releases/tag/v1.10.0) - 07-09-2025
 
 ### New features

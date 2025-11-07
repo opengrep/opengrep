@@ -626,7 +626,7 @@ and class_body (env : env) ((v1, v2, v3) : CST.class_body) =
   let v3 = token env v3 (* "}" *) in
   (v1, v2, v3)
 
-and class_declaration (env : env) (x : CST.class_declaration) :
+and class_declaration  (env : env) (x : CST.class_declaration) :
     entity * class_definition =
   match x with
   | `Opt_modifs_choice_class_simple_id_opt_type_params_opt_prim_cons_opt_COLON_dele_specis_opt_type_consts_opt_class_body
@@ -728,7 +728,7 @@ and class_member_declaration (env : env) (x : CST.class_member_declaration) :
   | `Choice_decl y -> (
       match y with
       | `Decl x ->
-          let d = declaration env x in
+          let d = declaration ~is_method:true env x in
           d |> G.fld
       | `Comp_obj (v1, v2, v3, v4, v5, v6) ->
           let v1 = modifiers_opt env v1 in
@@ -907,7 +907,7 @@ and receiver_type (env : env) ((v1, v2) : CST.receiver_type) =
   in
   (v1, v2)
 
-and declaration (env : env) (x : CST.declaration) : definition =
+and declaration ?(is_method = false)(env : env) (x : CST.declaration) : definition =
   match x with
   (* TODO: ugly, this was put here but really it should be attached
    * to a Prop_decl. This was put at the declaration level because
@@ -992,8 +992,9 @@ and declaration (env : env) (x : CST.declaration) : definition =
         | None -> G.FBDecl G.sc
       in
       let entity = basic_entity v5 ~attrs:v1 ?tparams:v3 in
+      let fkind = if is_method then (Method, v2) else (Function, v2) in
       let func_def =
-        { fkind = (Function, v2); fparams = v6; frettype = v7; fbody = v9 }
+        { fkind; fparams = v6; frettype = v7; fbody = v9 }
       in
       let def_kind = FuncDef func_def in
       (entity, def_kind)

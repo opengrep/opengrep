@@ -88,6 +88,9 @@ let report_time = ref Core_scan_config.default.report_time
 (* unused for now by pysemgrep *)
 let equivalences_file = ref None
 
+(* intrafile tainting mode *)
+let taint_intrafile = ref Core_scan_config.default.taint_intrafile
+
 (* ------------------------------------------------------------------------- *)
 (* limits *)
 (* ------------------------------------------------------------------------- *)
@@ -342,6 +345,7 @@ let mk_config () : Core_scan_config.t =
     max_match_per_file = !max_match_per_file;
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
+    taint_intrafile = !taint_intrafile;
     engine_config = Engine_config.default;
   }
 
@@ -665,7 +669,10 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
     ( "-ignore_pattern",
       Arg.String (fun pat -> Flag.opengrep_ignore_pattern := Some pat),
       "Replace the standard 'nosem(grep)' pattern with a custom value"
-    )
+    );
+    ( "-taint_intrafile",
+      Arg.Set taint_intrafile,
+      " activate intrafile tainting mode" );
   ]
   @ Flag_parsing_cpp.cmdline_flags_macrofile ()
   (* inlining of: Common2.cmdline_flags_devel () @ *)
@@ -863,7 +870,7 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
                    targeting use opengrep"
           in
           let engine_config =
-            Engine_config.{ custom_ignore_pattern = !Flag.opengrep_ignore_pattern }
+            Engine_config.{ custom_ignore_pattern = !Flag.opengrep_ignore_pattern; taint_intrafile = None }
           in
           let config = { config with target_source; ncores; engine_config } in
 

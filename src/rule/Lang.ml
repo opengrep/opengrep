@@ -94,8 +94,17 @@ let has_tag tag_name =
          if List.mem tag_name x.tags then Hashtbl.add tbl x.id ());
   fun lang -> Hashtbl.mem tbl lang
 
-let is_js = has_tag "is_js"
 let is_proprietary = has_tag "is_proprietary"
+
+let is_js lang =
+  match lang with
+  | Js | Ts -> true
+  | _ -> false
+
+let is_c_cpp lang =
+  match lang with
+  | C | Cpp -> true
+  |_ -> false
 
 (*****************************************************************************)
 (* Helpers *)

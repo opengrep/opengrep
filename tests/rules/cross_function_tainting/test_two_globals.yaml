@@ -1,0 +1,12 @@
+rules:
+  - id: test-two-globals
+    mode: taint
+    languages:
+      - python
+    message: |
+      This should NOT find anything - global a is tainted but global b is not
+    pattern-sources:
+      - pattern: source1(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

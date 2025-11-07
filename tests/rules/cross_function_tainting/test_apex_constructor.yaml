@@ -1,0 +1,12 @@
+rules:
+  - id: test
+    mode: taint
+    languages:
+      - apex
+    message: |
+      Apex constructor taint flow
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

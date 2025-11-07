@@ -115,8 +115,7 @@ val o_oss : bool Cmdliner.Term.t
 val o_output : string option Cmdliner.Term.t
 val o_output_enclosing_context : bool Cmdliner.Term.t
 val o_pro : bool Cmdliner.Term.t
-val o_pro_intrafile : bool Cmdliner.Term.t
-val o_pro_languages : bool Cmdliner.Term.t
+val o_taint_intrafile : bool Cmdliner.Term.t
 val o_pro_path_sensitive : bool Cmdliner.Term.t
 val o_rewrite_rule_ids : bool Cmdliner.Term.t
 val o_sarif : bool Cmdliner.Term.t
@@ -140,8 +139,7 @@ val o_vim_outputs : string list Cmdliner.Term.t
 
 val engine_type_conf :
   oss:bool ->
-  pro_lang:bool ->
-  pro_intrafile:bool ->
+  taint_intrafile:bool ->
   pro:bool ->
   secrets:bool ->
   no_secrets_validation:bool ->

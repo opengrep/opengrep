@@ -375,10 +375,9 @@ _scan_options: List[Callable] = [
         flag_value=EngineType.PRO_INTERFILE,
     ),
     optgroup.option(
-        "--pro-intrafile",
-        "requested_engine",
-        type=EngineType,
-        flag_value=EngineType.PRO_INTRAFILE,
+        "--taint-intrafile",
+        "taint_intrafile",
+        is_flag=True, default=False
     ),
     optgroup.option(
         "--pro-languages",
@@ -604,6 +603,7 @@ def scan(
     scan_unknown_extensions: bool,
     severity: Optional[Tuple[str, ...]],
     strict: bool,
+    taint_intrafile: bool,
     targets: Sequence[str],
     test: bool,
     test_ignore_todo: bool,
@@ -761,6 +761,7 @@ def scan(
             optimizations=optimizations,
             engine_type=engine_type,
             jobs=jobs,
+            taint_intrafile=taint_intrafile,
         )
 
     filtered_matches_by_rule: RuleMatchMap = {}
@@ -861,6 +862,7 @@ def scan(
                     disable_secrets_validation=disable_secrets_validation_flag,
                     historical_secrets=historical_secrets,
                     output_handler=output_handler,
+                    taint_intrafile=taint_intrafile,
                     target=targets,
                     pattern=pattern,
                     lang=lang,

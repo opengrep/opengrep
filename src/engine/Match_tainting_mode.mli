@@ -16,9 +16,11 @@ val hook_setup_hook_function_taint_signature :
 
 val check_fundef :
   Taint_rule_inst.t ->
-  IL.name option (** entity being analyzed *) ->
+  Shape_and_sig.fn_id (** entity being analyzed *) ->
   AST_to_IL.ctx ->
   ?glob_env:Taint_lval_env.t ->
+  ?class_name:string ->
+  ?signature_db:Shape_and_sig.signature_database ->
   AST_generic.function_definition ->
   IL.fun_cfg * Shape_and_sig.Effects.t * Dataflow_tainting.mapping
 (** Check a function definition using a [Dataflow_tainting.config] (which can
@@ -32,8 +34,8 @@ val check_rules :
   match_hook:(Core_match.t list -> Core_match.t list) ->
   per_rule_boilerplate_fn:
     (Rule.rule ->
-    (unit -> Core_profiling.rule_profiling Core_result.match_result) ->
-    Core_profiling.rule_profiling Core_result.match_result) ->
+    (unit -> Core_profiling.rule_profiling Core_result.match_result option) ->
+    Core_profiling.rule_profiling Core_result.match_result option) ->
   Rule.taint_rule list ->
   Match_env.xconfig ->
   Xtarget.t ->

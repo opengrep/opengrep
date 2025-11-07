@@ -1,0 +1,11 @@
+rules:
+  - id: test-anon-arrow-taint
+    message: Taint flows through anonymous arrow function
+    languages:
+      - js
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

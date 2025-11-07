@@ -92,7 +92,7 @@ type 'a bracket = tok * 'a * tok [@@deriving show]
 (* Names *)
 (*****************************************************************************)
 
-type ident = G.ident [@@deriving show]
+type ident = G.ident [@@deriving show, eq]
 
 (* 'sid' below is the result of name resolution and variable disambiguation
  * using a gensym (see Naming_AST.ml). A name is guaranteed to be
@@ -103,7 +103,7 @@ type ident = G.ident [@@deriving show]
  *
  *)
 type name = { ident : ident; sid : G.sid; id_info : G.id_info }
-[@@deriving show]
+[@@deriving show,eq]
 
 let str_of_name name = Common.spf "%s:%s" (fst name.ident) (G.SId.show name.sid)
 

@@ -113,7 +113,7 @@ let tags_of_metadata metadata =
      defaultConfiguration = { level };
      properties }
 *)
-let rule hide_nudge (rule_id, rule) : Sarif.reporting_descriptor =
+let rule (rule_id, rule) : Sarif.reporting_descriptor =
   let metadata = rule.Rule.metadata ||| JSON.Null in
   let short_description =
     match JSON.member "shortDescription" metadata with
@@ -148,16 +148,8 @@ let rule hide_nudge (rule_id, rule) : Sarif.reporting_descriptor =
     ]
     @ security_severity
   in
-  let nudge_base = "💎 Enable cross-file analysis and Pro rules for free at"
-  and nudge_url = "sg.run/pro" in
-  let nudge_plaintext = spf "\n%s %s" nudge_base nudge_url
-  and nudge_md =
-    spf "\n\n#### %s <a href='https://%s'>%s</a>" nudge_base nudge_url nudge_url
-  in
-  let text_suffix = if hide_nudge then "" else nudge_plaintext in
-  let markdown_interstitial = if hide_nudge then "" else nudge_md in
   let references =
-    Option.to_list (Option.map (fun s -> spf "[Semgrep Rule](%s)" s) source)
+    Option.to_list (Option.map (fun s -> spf "[Rule](%s)" s) source)
   in
   let other_references =
     match JSON.member "references" metadata with
@@ -191,14 +183,14 @@ let rule hide_nudge (rule_id, rule) : Sarif.reporting_descriptor =
          ())
     ~help:
       (multiformat_message
-         ~markdown:(rule_help_text ^ markdown_interstitial ^ references_markdown)
-         (rule_help_text ^ text_suffix))
+         ~markdown:(rule_help_text ^ references_markdown)
+         rule_help_text)
     ?help_uri:source ~properties ()
 
 let sarif_fixes (cli_match : Out.cli_match) : Sarif.fix list option =
   let* fixed_lines = cli_match.extra.fixed_lines in
   let description_text =
-    spf "%s\n Autofix: Opengrep rule suggested fix" cli_match.extra.message
+    spf "%s\n Autofix: rule suggested fix" cli_match.extra.message
   in
   let fix =
     let artifact_change =
@@ -224,7 +216,7 @@ let sarif_fixes (cli_match : Out.cli_match) : Sarif.fix list option =
   in
   Some [ fix ]
 
-let thread_flow_location (cli_match : Out.cli_match) message
+let thread_flow_location message
     (location : Out.location) content nesting_level =
   let location =
     Sarif.create_location ~message
@@ -234,7 +226,7 @@ let thread_flow_location (cli_match : Out.cli_match) message
              (region ~message ~snippet:content location.start location.end_)
            ~artifact_location:
              (Sarif.create_artifact_location
-                ~uri:(Fpath.to_string cli_match.path)
+                ~uri:(Fpath.to_string location.path)
                 ())
            ())
       ()
@@ -243,7 +235,7 @@ let thread_flow_location (cli_match : Out.cli_match) message
     ~nesting_level:(Int64.of_int nesting_level)
     ~location ()
 
-let intermediate_var_locations cli_match intermediate_vars =
+let intermediate_var_locations intermediate_vars =
   intermediate_vars
   |> List_.map (fun ({ location; content } : Out.match_intermediate_var) ->
          let propagation_message_text =
@@ -252,67 +244,71 @@ let intermediate_var_locations cli_match intermediate_vars =
              location.start.line
            |> message
          in
-         thread_flow_location cli_match propagation_message_text location
+         thread_flow_location propagation_message_text location
            content 0)
 
-let thread_flows (cli_match : Out.cli_match)
-    (dataflow_trace : Out.match_dataflow_trace) (location : Out.location)
-    content =
-  (* TODO from sarif.py: deal with taint sink *)
-  let intermediate_vars = dataflow_trace.intermediate_vars in
-  let source_flow_location =
-    let source_message_text =
-      spf "Source: '%s' @ '%s:%d'" content
+let rec final_location_of_trace (mct: Out.match_call_trace) : Out.location =
+  match mct with
+  | CliLoc (location, _content) -> location
+  | CliCall (_, _, mct) -> final_location_of_trace mct
+
+type flow_kind = Source | Sink
+
+let rec thread_flows
+    ?(nesting_level = 0)
+    ~(flow_kind : flow_kind)
+    (match_call_trace: Out.match_call_trace) =
+  match match_call_trace with
+  | CliLoc (location, content) ->
+    let loc_message_text =
+      spf "%s: '%s' @ '%s:%d'"
+        (match flow_kind with Source -> "Source" | Sink -> "Sink")
+        content
         (Fpath.to_string location.path)
         location.start.line
       |> message
     in
-    thread_flow_location cli_match source_message_text location content 0
-  in
-  let intermediate_var_locations =
-    match intermediate_vars with
-    | None -> []
-    | Some intermediate_vars ->
-        intermediate_var_locations cli_match intermediate_vars
-  in
-  let sink_flow_location =
-    let sink_message_text =
-      spf "Sink: '%s' @ '%s:%d'"
-        (String.trim cli_match.extra.lines) (* rule_match.get_lines() ?! *)
-        (Fpath.to_string cli_match.path)
-        cli_match.start.line
+    [ thread_flow_location loc_message_text location content nesting_level ]
+  | CliCall ((location, content), intermediate_vars, nested_match_call_trace) ->
+    let nested_flows = 
+      thread_flows
+        ~nesting_level:(nesting_level + 1)
+        ~flow_kind
+        nested_match_call_trace
+    in
+    let call_message_text =
+      spf "Call: '%s' @ '%s:%d'"
+        content
+        (Fpath.to_string location.path)
+        location.start.line
       |> message
     in
-    thread_flow_location cli_match sink_message_text
-      {
-        Out.start = cli_match.start;
-        end_ = cli_match.end_;
-        path = cli_match.path;
-      }
-      cli_match.extra.lines 1
-  in
-  [
-    Sarif.create_thread_flow
-      ~locations:
-        ((source_flow_location :: intermediate_var_locations)
-        @ [ sink_flow_location ])
-      ();
-  ]
+    let call_flow_location =
+      thread_flow_location call_message_text location content nesting_level
+    in
+    let intermediate_var_locations =
+      intermediate_var_locations intermediate_vars
+    in
+    match flow_kind with
+    | Source ->
+      nested_flows @ (intermediate_var_locations @ [ call_flow_location ])
+    | Sink ->
+      call_flow_location :: (intermediate_var_locations @ nested_flows)
 
 let sarif_codeflow (cli_match : Out.cli_match) : Sarif.code_flow list option =
   match cli_match.extra.dataflow_trace with
   | None
   | Some { Out.taint_source = None; _ } ->
       None
-  | Some { Out.taint_source = Some (CliCall _); _ } ->
-      Logs.err (fun m ->
-          m
-            "Emitting SARIF output for unsupported dataflow trace (source is a \
-             call)");
-      None
+  | Some { Out.taint_source = Some _; taint_sink = None ; _ } ->
+      None (* TODO: raise, this should not happen. *)
   | Some
-      ({ taint_source = Some (CliLoc (location, content)); _ } as dataflow_trace)
+      ({ taint_source = Some source_mct;
+         intermediate_vars;
+         taint_sink = Some sink_mct })
     ->
+      let location = final_location_of_trace source_mct
+      in
       (* TODO from sarif.py: handle taint_sink *)
       let code_flow_message =
         spf "Untrusted dataflow from %s:%d to %s:%d"
@@ -321,8 +317,28 @@ let sarif_codeflow (cli_match : Out.cli_match) : Sarif.code_flow list option =
           (Fpath.to_string cli_match.path)
           cli_match.start.line
       in
+      let source_flows =
+        thread_flows
+          ~flow_kind:Source
+          source_mct
+      in
+      let intermediate_var_locations =
+        match intermediate_vars with
+        | None -> []
+        | Some intermediate_vars ->
+          intermediate_var_locations intermediate_vars
+      in
+      let sink_flows =
+        thread_flows
+          ~flow_kind:Sink
+          sink_mct
+      in
       let thread_flows =
-        thread_flows cli_match dataflow_trace location content
+        [ Sarif.create_thread_flow
+          ~locations:
+            (source_flows @ intermediate_var_locations @ sink_flows)
+          ()
+        ]
       in
       Some
         [
@@ -387,6 +403,7 @@ let error_to_sarif_notification (e : Out.cli_error) =
 
 let sarif_output hrules (cli_output : Out.cli_output)
     ~hide_nudge ~engine_label ~show_dataflow_traces : Sarif.sarif_json_schema =
+  ignore hide_nudge;
   let sarif_schema =
     "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"
   in
@@ -397,7 +414,7 @@ let sarif_output hrules (cli_output : Out.cli_output)
         (hrules |> Hashtbl.to_seq |> List.of_seq
         (* sorting for snapshot stability *)
         |> List.sort (fun (aid, _) (bid, _) -> Rule_ID.compare aid bid)
-        |> List_.map (rule hide_nudge))
+        |> List_.map rule)
     in
     let tool =
       let driver =

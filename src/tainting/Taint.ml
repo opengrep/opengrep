@@ -307,6 +307,7 @@ let compare_taint taint1 taint2 =
 
 let rec show_precondition = function
   | R.PLabel str -> str
+  | R.PVariable var -> "var:" ^ var
   | R.PBool b -> Bool.to_string b
   | R.PNot p -> Printf.sprintf "not %s" (show_precondition p)
   | R.PAnd [ p1; p2 ] ->
@@ -520,6 +521,7 @@ let labels_in_precondition pre =
   let rec loop = function
     | R.PBool _ -> LabelSet.empty
     | R.PLabel l -> LabelSet.singleton l
+    | R.PVariable _ -> LabelSet.empty
     | R.PAnd pres
     | R.POr pres ->
         pres |> List_.map loop |> List.fold_left LabelSet.union LabelSet.empty
@@ -561,6 +563,18 @@ let rec solve_precondition ~ignore_poly_taint ~taints pre : bool option =
           && ((not has_poly_taint) || ignore_poly_taint)
         then Some false
         else None
+    | R.PVariable _var_name ->
+        (* Check if any taint in the filtered set has source origins *)
+        let has_source_taint = 
+          taints 
+          |> Taint_set.elements
+          |> List.exists (fun taint ->
+            match taint.orig with
+            | Src _ -> true  (* Actual source taint *)
+            | _ -> false     (* Variable initialization doesn't count *)
+          ) in
+        if has_source_taint then Some true
+        else Some false
     | R.PNot p -> loop p |> Option.map not
     | R.PAnd ps ->
         ps

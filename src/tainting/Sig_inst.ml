@@ -18,6 +18,7 @@ module Log = Log_tainting.Log
 module G = AST_generic
 module T = Taint
 module Taints = T.Taint_set
+module R = Rule
 open Shape_and_sig.Shape
 module Fields = Shape_and_sig.Fields
 module Shape = Taint_shape
@@ -72,7 +73,7 @@ type inst_trace = {
       (** For sources we extend the call trace. *)
   fix_token_trace_for_var : var_tokens:Tok.t list -> Tok.t list -> Tok.t list;
       (** For variables we should too, but due to limitations in our call-trace
-   * representation, we just record the path as tainted tokens. *)
+          * representation, we just record the path as tainted tokens. *)
 }
 
 (*****************************************************************************)
@@ -705,7 +706,10 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
       fix_token_trace_for_var = add_call_to_token_trace ~callee;
     }
   in
-  let inst_taints taints = instantiate_taints inst_var inst_trace taints in
+  let inst_taints taints =
+    let result = instantiate_taints inst_var inst_trace taints in
+    result
+  in
   let inst_shape shape = instantiate_shape inst_var inst_trace shape in
   let inst_taints_and_shape (taints, shape) =
     let taints = inst_taints taints in
@@ -802,7 +806,7 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
          * fields of the callee object, like `this.x = "tainted"`. *)
         let+ dst_var, dst_offset, tainted_tok =
           (* 'dst_lval' is the actual argument/l-value that corresponds
-             * to the formal argument 'dst_sig_lval'. *)
+           * to the formal argument 'dst_sig_lval'. *)
           match args with
           | None ->
               Log.warn (fun m ->
@@ -816,19 +820,22 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                 dst_sig_lval
         in
         let taints =
-          taints
-          |> instantiate_taints
-               {
-                 inst_lval = lval_to_taints;
-                 (* Note that control taints do not propagate to l-values. *)
-                 inst_ctrl = (fun _ -> Taints.empty);
-               }
-               {
-                 add_call_to_trace_for_src =
-                   add_call_to_trace_if_callee_has_eorig ~callee;
-                 fix_token_trace_for_var =
-                   add_lval_update_to_token_trace ~callee tainted_tok;
-               }
+          let result =
+            taints
+            |> instantiate_taints
+                 {
+                   inst_lval = lval_to_taints;
+                   (* Note that control taints do not propagate to l-values. *)
+                   inst_ctrl = (fun _ -> Taints.empty);
+                 }
+                 {
+                   add_call_to_trace_for_src =
+                     add_call_to_trace_if_callee_has_eorig ~callee;
+                   fix_token_trace_for_var =
+                     add_lval_update_to_token_trace ~callee tainted_tok;
+                 }
+          in
+          result
         in
 
         if Taints.is_empty taints then []

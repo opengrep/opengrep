@@ -330,7 +330,7 @@ main() {
 # Argument parsing
 if command -v cosign &> /dev/null; then
     HAS_COSIGN=true
-    COSIGN_MAJOR_VERSION=$(cosign version | grep GitVersion | sed 's/GitVersion:[[:space:]]*//' | grep -oE '^[0-9]+')
+    COSIGN_MAJOR_VERSION=$(cosign version | grep GitVersion | sed 's/GitVersion:[[:space:]]*v\{0,1\}//' | grep -oE '^[0-9]+')
     if [[ "$COSIGN_MAJOR_VERSION" -lt 2 ]]; then
         echo "Warning: cosign version is less than 2.0.0, signature validation may fail."
     fi;

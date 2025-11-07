@@ -195,7 +195,9 @@ let incremental_text_printer (_caps : < Cap.stdout >) (conf : Scan_CLI.conf)
     ~max_chars_per_line:conf.output_conf.max_chars_per_line
     ~max_lines_per_finding:conf.output_conf.max_lines_per_finding
       (* nosemgrep: forbid-console *)
-    ~color_output:conf.output_conf.force_color Format.std_formatter cli_matches
+    ~color_output:conf.output_conf.force_color
+    ~show_dataflow_traces:conf.output_conf.show_dataflow_traces
+    Format.std_formatter cli_matches
 
 let incremental_json_printer (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
     (cli_matches : Out.cli_match list) : unit =

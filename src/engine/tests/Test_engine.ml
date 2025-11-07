@@ -237,7 +237,14 @@ let make_test_rule_file ?(fail_callback = fun _i m -> Alcotest.fail m)
 
         (* actual *)
         let xtarget = xtarget_of_file xlang target in
-        let xconf = Match_env.default_xconfig in
+        let base_xconf = Match_env.default_xconfig in
+        let config =
+          if List.mem "cross_function_tainting" (Fpath.segs rule_file) then
+            { base_xconf.config with taint_intrafile = true }
+          else
+            base_xconf.config
+        in
+        let xconf = { base_xconf with config } in
 
         Core_profiling.profiling := true;
         let res =

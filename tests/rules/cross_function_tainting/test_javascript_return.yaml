@@ -1,0 +1,13 @@
+rules:
+  - id: javascript_return_taint
+    message: Taint should flow through helper returns
+    languages:
+      - js
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

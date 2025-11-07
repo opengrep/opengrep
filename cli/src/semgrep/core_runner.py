@@ -453,14 +453,14 @@ class StreamingSemgrepCore:
                 exit_code = await asyncio.wait_for(process.wait(), timeout=1.0)
             except TimeoutError:
                 logger.error(
-                    "semgrep timed out waiting for the semgrep-core process to exit after an exception was raised"
+                    "opengrep timed out waiting for the opengrep-core process to exit after an exception was raised"
                 )
                 raise e
 
             # let's log this and reraise as if we got a non zero exit code with
             # a semgrep error then we segfaulted or OOMd and so should
             # immediately exit instead of assuming we got something usuable
-            logger.error(f"semgrep-core exited with {exit_code}!")
+            logger.error(f"opengrep-core exited with {exit_code}!")
             raise e
 
         # Return exit code of cmd. process should already be done
@@ -551,7 +551,7 @@ class CoreRunner:
     ) -> Dict[str, Any]:
         if not core_stderr:
             core_stderr = (
-                "<semgrep-core stderr not captured, should be printed above>\n"
+                "<opengrep-core stderr not captured, should be printed above>\n"
             )
 
         # All paths in this block should call self._fail() to raise a
@@ -602,9 +602,9 @@ class CoreRunner:
         # prints the stderr and never returns, so by doing this we avoid
         # printing stderr twice
         logger.debug(
-            f"--- semgrep-core stderr ---\n"
+            f"--- opengrep-core stderr ---\n"
             f"{core_stderr}"
-            f"--- end semgrep-core stderr ---"
+            f"--- end opengrep-core stderr ---"
         )
 
         # else:
@@ -799,6 +799,7 @@ class CoreRunner:
         dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
         dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
         dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+        taint_intrafile: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         state = get_state()
         logger.debug(f"Passing whole rules directly to semgrep_core")
@@ -956,6 +957,9 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 cmd.append("-json_time")
             if not self._respect_rule_paths:
                 cmd.append("-disable_rule_paths")
+
+            if taint_intrafile:
+                cmd.append("-taint_intrafile")
 
             # Create a map to feed to semgrep-core as an alternative to
             # having it actually read the files.
@@ -1136,6 +1140,7 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
         dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
         dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
         dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+        taint_intrafile: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Sometimes we may run into synchronicity issues with the latest DeepSemgrep binary.
@@ -1166,6 +1171,7 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 dynamic_timeout=dynamic_timeout,
                 dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
                 dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
+                taint_intrafile=taint_intrafile,
             )
         except SemgrepError as e:
             # Handle Semgrep errors normally
@@ -1214,6 +1220,7 @@ Exception raised: `{e}`
         dynamic_timeout: bool = DEFAULT_DYNAMIC_TIMEOUT,
         dynamic_timeout_unit_kb: int = DEFAULT_DYNAMIC_TIMEOUT_UNIT_KB,
         dynamic_timeout_max_multiplier: int = DEFAULT_DYNAMIC_TIMEOUT_MAX_MULTIPLIER,
+        taint_intrafile: bool = False,
     ) -> Tuple[RuleMatchMap, List[SemgrepError], OutputExtra,]:
         """
         Takes in rules and targets and returns object with findings
@@ -1244,6 +1251,7 @@ Exception raised: `{e}`
             dynamic_timeout=dynamic_timeout,
             dynamic_timeout_unit_kb=dynamic_timeout_unit_kb,
             dynamic_timeout_max_multiplier=dynamic_timeout_max_multiplier,
+            taint_intrafile=taint_intrafile,
         )
 
         logger.debug(

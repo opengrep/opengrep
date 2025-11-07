@@ -15,7 +15,7 @@ jobs:
     defaults:
       run:
         shell: bash
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
 
       - name: Set up Python 3.12.1
@@ -142,7 +142,7 @@ jobs:
       run:
         shell: bash
     needs: build-self-contained-windows-binary
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/download-artifact@v4
         with:

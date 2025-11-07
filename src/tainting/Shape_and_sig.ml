@@ -18,6 +18,7 @@
 open Common
 module R = Rule
 module T = Taint
+module Log = Log_tainting.Log
 
 (*****************************************************************************)
 (* Taint shapes *)
@@ -83,10 +84,9 @@ module rec Shape : sig
     | Obj of obj
         (** An "object" or struct-like thing.
 
-           Tuples or lists are also represented by 'Obj' shapes! We just treat
-           constant indexes as if they were fields, and use 'Oany' to capture the
-           non-constant indexes.
-          *)
+            Tuples or lists are also represented by 'Obj' shapes! We just treat
+            constant indexes as if they were fields, and use 'Oany' to capture
+            the non-constant indexes. *)
     | Arg of Taint.arg
         (** Represents the yet-unknown shape of a function/method parameter. It is
             a polymorphic shape variable that is meant to be instantiated at call
@@ -178,24 +178,36 @@ end = struct
   (*************************************)
   (* TODO: Should we just define these in terms of `compare_*` ? *)
 
-  let rec equal_cell cell1 cell2 =
-    let (Cell (taints1, shape1)) = cell1 in
-    let (Cell (taints2, shape2)) = cell2 in
-    Xtaint.equal taints1 taints2 && equal_shape shape1 shape2
+  (* Depth-limited equality to prevent infinite recursion and force convergence
+   * for pathological patterns like obj[key] = [obj[key], item] that create
+   * unbounded recursive structures. If both shapes exceed MAX_SHAPE_DEPTH,
+   * we consider them equal (widening approximation). *)
+  let rec equal_cell_depth depth cell1 cell2 =
+    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
+    else
+      let (Cell (taints1, shape1)) = cell1 in
+      let (Cell (taints2, shape2)) = cell2 in
+      Xtaint.equal taints1 taints2 && equal_shape_depth depth shape1 shape2
 
-  and equal_shape shape1 shape2 =
-    match (shape1, shape2) with
-    | Bot, Bot -> true
-    | Obj obj1, Obj obj2 -> equal_obj obj1 obj2
-    | Arg arg1, Arg arg2 -> T.equal_arg arg1 arg2
-    | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
-    | Bot, _
-    | Obj _, _
-    | Arg _, _
-    | Fun _, _ ->
-        false
+  and equal_shape_depth depth shape1 shape2 =
+    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
+    else
+      match (shape1, shape2) with
+      | Bot, Bot -> true
+      | Obj obj1, Obj obj2 -> equal_obj_depth (depth + 1) obj1 obj2
+      | Arg arg1, Arg arg2 -> T.equal_arg arg1 arg2
+      | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
+      | Bot, _
+      | Obj _, _
+      | Arg _, _
+      | Fun _, _ ->
+          false
 
-  and equal_obj obj1 obj2 = Fields.equal equal_cell obj1 obj2
+  and equal_obj_depth depth obj1 obj2 =
+    Fields.equal (equal_cell_depth depth) obj1 obj2
+
+  (* Public API uses depth 0 *)
+  let equal_cell cell1 cell2 = equal_cell_depth 0 cell1 cell2
 
   (*************************************)
   (* Comparison *)
@@ -251,53 +263,51 @@ end
 (*****************************************************************************)
 and Effect : sig
   type sink = { pm : Core_match.t; rule_sink : R.taint_sink }
-  (** A sink match with its corresponding sink specification (one of the `pattern-sinks`). *)
+  (** A sink match with its corresponding sink specification (one of the
+      `pattern-sinks`). *)
 
   type taint_to_sink_item = {
     taint : Taint.taint;
     sink_trace : unit Taint.call_trace;
         (** This trace is from the current calling context of the taint finding,
-          to the sink.
-          It's a `unit` call_trace because we don't actually need the item at the
-          end, and we need to be able to dispatch on the particular variant of taint
-          (source or arg).
-          *)
+            to the sink. It's a `unit` call_trace because we don't actually need
+            the item at the end, and we need to be able to dispatch on the
+            particular variant of taint (source or arg). *)
   }
 
   type taints_to_sink = {
     taints_with_precondition : taint_to_sink_item list * Rule.precondition;
-        (** Taints reaching the sink and the precondition for the sink to apply. *)
+        (** Taints reaching the sink and the precondition for the sink to apply.
+        *)
     sink : sink;
     merged_env : Metavariable.bindings;
-        (** The metavariable environment that results of merging the environment from
-    * matching the source and the one from matching the sink. *)
+        (** The metavariable environment that results of merging the environment
+            from * matching the source and the one from matching the sink. *)
   }
 
   type taints_to_return = {
     data_taints : Taint.taints;
-        (** The taints of the data being returned (typical data propagated via data flow). *)
+        (** The taints of the data being returned (typical data propagated via
+            data flow). *)
     data_shape : Shape.shape;  (** The shape of the data being returned. *)
     control_taints : Taint.taints;
-        (** The taints propagated via the control flow (cf., `control: true` sources)
-   * used for reachability queries. *)
+        (** The taints propagated via the control flow (cf., `control: true`
+            sources) * used for reachability queries. *)
     return_tok : AST_generic.tok;
   }
 
   type args_taints = (Taint.taints * Shape.shape) IL.argument list
-  (** The taints and shapes associated with the actual arguments in a
-    * function call. *)
+  (** The taints and shapes associated with the actual arguments in a * function
+      call. *)
 
-  (** Function-level result.
-  *
-  * 'ToSink' results where a taint source reaches a sink are candidates for
-  * actual Semgrep findings, although some may be dropped by deduplication.
-  *
-  * Results are computed for each function/method definition, and formulated
-  * using 'lval' taints to act as placeholders of the taint that may be passed
-  * by an arbitrary caller via the function arguments. Thus the results are
-  * polymorphic/context-sensitive, as the 'lval' taints can be instantiated
-  * accordingly at each call site.
-  *)
+  (** Function-level result. * * 'ToSink' results where a taint source reaches a
+      sink are candidates for * actual Semgrep findings, although some may be
+      dropped by deduplication. * * Results are computed for each
+      function/method definition, and formulated * using 'lval' taints to act as
+      placeholders of the taint that may be passed * by an arbitrary caller via
+      the function arguments. Thus the results are *
+      polymorphic/context-sensitive, as the 'lval' taints can be instantiated *
+      accordingly at each call site. *)
   type t =
     | ToSink of taints_to_sink
         (** Taints reach a sink.
@@ -316,50 +326,28 @@ and Effect : sig
         *              ... }
         *)
     | ToReturn of taints_to_return
-        (** Taints reach a `return` statement.
-        *
-        * For example:
-        *
-        *     def foo():
-        *         x = "taint"
-        *         return x
-        *
-        * We infer:
-        *
-        *     ToReturn(["taint"], Bot, ...)
-        *)
+        (** Taints reach a `return` statement. * * For example: * * def foo(): *
+            x = "taint" * return x * * We infer: * * ToReturn(["taint"], Bot,
+            ...) *)
     | ToLval of Taint.taints * Taint.lval
-        (** Taints reach an l-value in the scope of the function/method.
-        *
-        * For example:
-        *
-        *     x = ["ok"]
-        *
-        *     def foo():
-        *         global x
-        *         x[0] = "taint"
-        *
-        * We infer:
-        *
-        *     ToLval(["taint"], "x[0]")
-        *
-        * TODO: Record taint shapes.
-        *)
+        (** Taints reach an l-value in the scope of the function/method. * * For
+            example: * * x = ["ok"] * * def foo(): * global x * x[0] = "taint" *
+            * We infer: * * ToLval(["taint"], "x[0]") * * TODO: Record taint
+            shapes. *)
     | ToSinkInCall of {
         callee : IL.exp;
-            (** The function expression being called, it is used for recording a taint trace. *)
+            (** The function expression being called, it is used for recording a
+                taint trace. *)
         arg : Taint.arg;
-            (** The formal parameter corresponding to the function shape,
-                        this is what we instantiate at a specific call site. *)
+            (** The formal parameter corresponding to the function shape, this
+                is what we instantiate at a specific call site. *)
         args_taints : args_taints;
       }
-        (** Essentially a preliminary form of "effect variable". It represents
-          * the 'ToSink' effects of a function call where the function is not
-          * yet known (the function is an argument to be instantiated at call
-          * site).
-          *
-          * TODO: Handle 'ToReturn' (probably easy) and 'ToLval' (may be trickier).
-          *)
+        (** Essentially a preliminary form of "effect variable". It represents *
+            the 'ToSink' effects of a function call where the function is not *
+            yet known (the function is an argument to be instantiated at call *
+            site). * * TODO: Handle 'ToReturn' (probably easy) and 'ToLval' (may
+            be trickier). *)
 
   val compare : t -> t -> int
   val show : t -> string
@@ -610,18 +598,17 @@ end
  * THINK: Could we have a "taint shape" for functions/methods ?
  *)
 and Signature : sig
-  (** A simplified version of 'AST_generic.parameter', we use 'Other' to represent
-    * parameter kinds that we do not support yet. We don't want to just remove
-    * those unsupported parameters because we rely on the position of a parameter
-    * to represent taint variables, see 'Taint.arg'. *)
+  (** A simplified version of 'AST_generic.parameter', we use 'Other' to
+      represent * parameter kinds that we do not support yet. We don't want to
+      just remove * those unsupported parameters because we rely on the position
+      of a parameter * to represent taint variables, see 'Taint.arg'. *)
   type param = P of string | Other [@@deriving eq, ord]
 
   type params = param list [@@deriving eq, ord]
 
   type t = { params : params; effects : Effects.t } [@@deriving eq, ord]
-  (**
-   * The 'params' act like an universal quantifier, we need them to later
-   * instantiate the accompanying signature. *)
+  (** * The 'params' act like an universal quantifier, we need them to later *
+      instantiate the accompanying signature. *)
 
   val of_IL_params : IL.param list -> params
   val show_params : params -> string
@@ -665,9 +652,14 @@ end = struct
     il_params
     |> List_.map (function
          | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
-         | IL.PatternParam _
-         | IL.FixmeParam ->
-             Other)
+         | IL.PatternParam pat -> (
+             (* Extract parameter name from pattern for Rust function parameters *)
+             match pat with
+             | AST_generic.PatId (name, _) -> P (fst name)
+             | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
+                 P (fst name)
+             | _ -> Other)
+         | IL.FixmeParam -> Other)
 
   (*************************************)
   (* Signatures *)
@@ -695,3 +687,102 @@ module Effects_tbl = Hashtbl.Make (struct
   let equal r1 r2 = Effect.compare r1 r2 =|= 0
   let hash r = Hashtbl.hash r
 end)
+
+(*****************************************************************************)
+(* Signature Database *)
+(*****************************************************************************)
+
+type fn_id = { class_name : IL.name option; name : IL.name option }
+[@@deriving show, eq, ord]
+
+module FunctionMap = Map.Make (struct
+  type t = fn_id
+
+  let compare { class_name = c1; name = n1 } { class_name = c2; name = n2 } =
+    let compare_il_name n1 n2 =
+      String.compare (fst n1.IL.ident) (fst n2.IL.ident)
+    in
+    let c = Option.compare compare_il_name c1 c2 in
+    if Int.equal c 0 then Option.compare compare_il_name n1 n2 else c
+end)
+
+type extended_sig = {
+  sig_ : Signature.t;
+      [@printer fun fmt s -> Format.fprintf fmt "%s" (Signature.show s)]
+  arity : int;
+}
+[@@deriving show]
+
+module SignatureSet = Set.Make (struct
+  type t = extended_sig
+
+  let compare = fun x y -> Signature.compare x.sig_ y.sig_
+end)
+
+type signature_database = {
+  signatures : SignatureSet.t FunctionMap.t;
+  object_mappings : (AST_generic.name * AST_generic.name) list;
+}
+
+let show_name (name_opt : IL.name option) =
+  match name_opt with
+  | Some name -> IL.show_ident name.ident
+  | _ -> ""
+
+let empty_signature_database () : signature_database =
+  { signatures = FunctionMap.empty; object_mappings = [] }
+
+let lookup_signature (db : signature_database) (func_name : fn_id) (arity : int)
+    : Signature.t option =
+  let signatures = FunctionMap.find_opt func_name db.signatures in
+  match signatures with
+  | Some sigs when not (SignatureSet.is_empty sigs) ->
+      let filtered_sigs =
+        SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
+      in
+      let signatures_card = SignatureSet.cardinal filtered_sigs in
+      if signatures_card > 1 then
+        Log.debug (fun m ->
+            m "TAINT_SIG: There are several methods with the name %s the definition was ignored"
+              (show_name func_name.name));
+      if signatures_card =*= 0 then
+        Log.info (fun m ->
+            m "No taint signature found for `%s' " (show_name func_name.name));
+
+      (* If there is only one signature with the given arity, return it *)
+      if signatures_card =*= 1 then
+        Some (SignatureSet.choose filtered_sigs).sig_
+      else None
+  | _ -> None
+
+let add_signature (db : signature_database) (func_name : fn_id)
+    (signature : extended_sig) : signature_database =
+  let signatures =
+    FunctionMap.update func_name
+      (fun existing_sigs ->
+        match existing_sigs with
+        | Some sigs -> Some (SignatureSet.add signature sigs)
+        | None -> Some (SignatureSet.singleton signature))
+      db.signatures
+  in
+  { db with signatures }
+
+let add_object_mappings (db : signature_database)
+    (mappings : (AST_generic.name * AST_generic.name) list) : signature_database
+    =
+  { db with object_mappings = mappings }
+
+let get_object_mappings (db : signature_database) :
+    (AST_generic.name * AST_generic.name) list =
+  db.object_mappings
+
+let show_signature_database (db : signature_database) : string =
+  FunctionMap.fold
+    (fun name signature acc ->
+      let name_str = show_fn_id name in
+      let sig_str =
+        String.concat ",\n---\n"
+        @@ List.map show_extended_sig (SignatureSet.elements signature)
+      in
+      acc ^ Printf.sprintf "%s: %s\n" name_str sig_str)
+    db.signatures ""

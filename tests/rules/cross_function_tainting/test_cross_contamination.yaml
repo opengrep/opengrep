@@ -1,0 +1,12 @@
+rules:
+  - id: test-cross-contamination
+    mode: taint
+    languages:
+      - python
+    message: |
+      This should NOT find anything - y is tainted but x is not
+    pattern-sources:
+      - pattern: source1(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

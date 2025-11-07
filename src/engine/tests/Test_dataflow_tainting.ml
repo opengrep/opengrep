@@ -26,7 +26,9 @@ let test_tainting taint_inst def =
   UCommon.pr2 "\nDataflow";
   UCommon.pr2 "--------";
   let fcfg, _effects_IGNORED, mapping =
-    Match_tainting_mode.check_fundef taint_inst None AST_to_IL.empty_ctx def
+    Match_tainting_mode.check_fundef taint_inst
+      Shape_and_sig.{ class_name = None; name = None }
+      AST_to_IL.empty_ctx def
   in
   DataflowX.display_mapping fcfg.cfg mapping Taint_lval_env.to_string
 
@@ -70,6 +72,7 @@ let test_dfg_tainting rules_file file =
   let taint_inst, spec_matches, _exps =
     Match_taint_spec.taint_config_of_rule ~per_file_formula_cache:tbl xconf lang
       file (ast, []) rule
+    |> Option.get
   in
   UCommon.pr2 "\nSources";
   UCommon.pr2 "-------";
