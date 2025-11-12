@@ -21,20 +21,40 @@ type 'a parser =
   (* next *) token list ->
   ('a parsing_result) Seq.t
 
+(* parser state *)
+
 let partial = DLS.new_key (fun () -> false)
 
+let last_pos = DLS.new_key (fun () -> -1)
+
+let last_token : T.t option DLS.key = DLS.new_key (fun _ -> None)
+
 let reset_parser_state () =
-  DLS.set partial false
+  DLS.set partial false;
+  DLS.set last_pos (-1);
+  DLS.set last_token None
+
+(* run parser *)
 
 let run (p : 'a parser) (ts : token list): 'a parsing_result list =
   reset_parser_state ();
   p ts |> Seq.take 1 |> List.of_seq
 
-(* Can't use Parsing_Result2.t because of subproject dependencies *)
+type error = Fpath.t * string * Pos.t
+
+let error_from_token_opt (f : Fpath.t) (tok_opt : T.t option) : error option =
+  match tok_opt with
+  | None -> None
+  | Some t ->
+      match Tok.loc_of_tok t.tok with
+      | Result.Ok loc -> Some (f, t.content, loc.pos)
+      | _ -> None
+
+ (* Can't use Parsing_Result2.t because of subproject dependencies *)
 type 'a result =
   | Ok of 'a * Parsing_stat.t
-  | Partial of 'a * Parsing_stat.t
-  | Fail of Parsing_stat.t
+  | Partial of 'a * Parsing_stat.t * error option
+  | Fail of Parsing_stat.t * error option
 
 (* FIXME: works for entire files only! *)
 let tokenize_and_parse_string (p : 'a parser) ?(filepath=Fpath.v "<pattern>")
@@ -42,7 +62,7 @@ let tokenize_and_parse_string (p : 'a parser) ?(filepath=Fpath.v "<pattern>")
   let ts = Tokenize.tokenize ~filepath s in
   let line_count = List.filter T.token_line_terminator ts |> List.length in
   let stat =
-    Parsing_stat.({
+    Parsing_stat.{
       filename = Fpath.filename filepath;
       total_line_count = line_count;
       error_line_count = 0;
@@ -50,14 +70,18 @@ let tokenize_and_parse_string (p : 'a parser) ?(filepath=Fpath.v "<pattern>")
       commentized = 0;
       problematic_lines = [];
       ast_stat = None;
-    })
+    }
   in
   match run p ts with
   | { value; next = [] } :: _ when DLS.get partial ->
-      Partial (value, stat)
+      Partial (value,
+               stat,
+               error_from_token_opt filepath (DLS.get last_token))
   | { value; next = [] } :: _ ->
       Ok (value, stat)
-  | _ -> Fail stat
+  | _ -> Fail (stat,
+               error_from_token_opt filepath (DLS.get last_token))
+
 
 let ( let/ ) xs f = Seq.concat_map f xs
 
@@ -89,6 +113,12 @@ let rec token (t : token_name) : token parser =
     | w :: ws when token_ghost w ->
         token t ws
     | w :: ws when token_match t w ->
+        let loc = Tok.unsafe_loc_of_tok w.tok in
+        if loc.pos.bytepos > DLS.get last_pos then
+          begin
+            DLS.set last_pos loc.pos.bytepos;
+            DLS.set last_token (Some w)
+          end;
         single { next = ws; value = w }
     | _ -> empty
 
@@ -5580,3 +5610,48 @@ and string_literal_token : G.any parser = fun __n -> (
   let* lt_STRING_gt1 = token "<STRING>" in
   pure (xRule "string_literal_token" 0 [xToken(lt_STRING_gt1)])
 ) __n
+
+let opengrep_pattern : G.any parser =
+  let* content = choice [
+    begin
+      let* stmt = assignment_statement in
+      pure (G.S stmt)
+    end;
+    begin
+      let* expr = expression in
+      pure (G.E expr)
+    end;
+    begin
+      let* stmt = toplevel_declaration in
+      pure (G.S stmt)
+    end;
+    begin
+      let* stmt = statements_block in
+      pure (G.S stmt)
+    end;
+    begin
+      let* typ = type_ in
+      pure (G.T typ)
+    end;
+    begin
+      let* _ = token "<" in
+      let* attr = attribute in
+      let* _ = token "> in" in
+      pure (G.At attr)
+    end;
+  ]
+  in
+  let* _ = token "<EOF>" in
+  pure content
+
+(* Entry points *)
+
+let parse_file (file : Fpath.t) : G.program result =
+  let content = UFile.read_file file in
+  tokenize_and_parse_string compilation_unit ~filepath:file content
+
+let parse_pattern (s : string) : G.any =
+  let ts = Tokenize.tokenize s in
+  match run opengrep_pattern ts with
+  | { value; next = [] } :: _ -> value
+  | _ -> raise Parsing.Parse_error

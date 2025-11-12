@@ -220,3 +220,31 @@ let just_parse_with_lang lang file : Parsing_result2.t =
       run file [ TreeSitter Parse_apex_tree_sitter.parse ] (fun x -> x)
   | Lang.Csharp ->
       run file [ TreeSitter Parse_csharp_tree_sitter.parse ] (fun x -> x)
+  (* Neither pfff nor tree-sitter. Can't use run, because it supports
+   * "partial" for tree-sitter only *)
+  (* TODO: move this block of code somewhere else *)
+  | Lang.Vb ->
+      let make_res ast stat errs : Parsing_result2.t =
+        Parsing_result2.{
+            ast = ast;
+            errors = errs;
+            skipped_tokens = [];
+            inserted_tokens = [];
+            tolerated_errors = [];
+            stat = stat
+          }
+      in
+      Vbnet_parser.(match Vbnet_parser.parse_file file with
+      | Ok (ast, stat) ->
+          make_res ast stat []
+      | Partial (ast, stat, err) ->
+          make_res ast stat
+            (err
+             |> Option.map (fun (f, s, p) -> Parsing_result2.Other_error (f, s, p))
+             |> Option.to_list)
+      | Fail (stat, err) ->
+          make_res [] stat
+            (err
+             |> Option.map (fun (f, s, p) -> Parsing_result2.Other_error (f, s, p))
+             |> Option.to_list)
+      )

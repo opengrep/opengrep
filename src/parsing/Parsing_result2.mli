@@ -7,6 +7,7 @@
    Alternatively, we could extract that error message but let's not throw
    it away. *)
 type error = Tree_sitter_error of Tree_sitter_run.Tree_sitter_error.t
+           | Other_error of Fpath.t * string * Pos.t
 
 (* Mostly 'type t = (AST_generic, Parse_info.token_location) Parsing_result.t',
  * but the tokens part is actually used to represent skipped_tokens

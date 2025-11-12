@@ -423,6 +423,7 @@ let is_resolvable_name_ctx env lang =
       | Lang.Kotlin
       | Lang.Apex
       | Lang.Csharp
+      | Lang.Vb
       (* true for JS/TS so that we can resolve class methods *)
       | Lang.Js
       | Lang.Ts
@@ -446,6 +447,7 @@ let resolved_name_kind env lang =
       | Lang.Kotlin
       | Lang.Apex
       | Lang.Csharp
+      | Lang.Vb
       (* true for JS/TS to resolve class methods. *)
       | Lang.Js
       | Lang.Ts

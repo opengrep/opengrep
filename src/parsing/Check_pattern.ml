@@ -23,6 +23,7 @@ let lang_has_no_dollar_ids =
     | Yaml
     | Terraform
     | Csharp
+    | Vb
     | Kotlin
     | Lua
     | Elixir

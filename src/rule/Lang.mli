@@ -56,6 +56,7 @@ type t = Language.t =
   | Swift
   | Terraform
   | Ts
+  | Vb
   | Vue
   | Xml
   | Yaml

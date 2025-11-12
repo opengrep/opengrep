@@ -208,6 +208,7 @@ and if_stmt env (tok, e, s, sopt) =
   let colon_body = F.sprintf "%s:\n%s\n" in
   (* (if cond) body *)
   let bracket_body = F.sprintf "%s %s" (* (if cond) body *) in
+  let newline_body = F.sprintf "%s\n%s\n" in
   let format_cond, elseif_str, format_block =
     match env.lang with
     | Lang.Circom
@@ -238,6 +239,8 @@ and if_stmt env (tok, e, s, sopt) =
     | Lang.Python2
     | Lang.Python3 ->
         (no_paren_cond, "elif", colon_body)
+    | Lang.Vb ->
+        (no_paren_cond, "elseif", newline_body)
     | Lang.Apex
     | Lang.Java
     | Lang.Go
@@ -330,6 +333,7 @@ and while_stmt env (tok, e, s) =
     | Lang.Move_on_sui
     | Lang.Move_on_aptos
     | Lang.Ts
+    | Lang.Vb
     | Lang.Vue
     | Lang.Rust
     | Lang.R ->
@@ -376,6 +380,7 @@ and do_while stmt env (s, e) =
     | Lang.Kotlin
     | Lang.Js
     | Lang.Ts
+    | Lang.Vb
     | Lang.Vue ->
         c_do_while
     | Lang.Python
@@ -425,6 +430,7 @@ and for_stmt env (for_tok, hdr, s) =
     | Lang.C
     | Lang.Cpp
     | Lang.Csharp
+    | Lang.Vb
     | Lang.Kotlin
     | Lang.Js
     | Lang.Move_on_sui ->
@@ -527,6 +533,7 @@ and def_stmt env (entity, def_kind) =
       | Lang.C
       | Lang.Cpp
       | Lang.Csharp
+      | Lang.Vb
       | Lang.Kotlin ->
           ( (fun typ id _e -> F.sprintf "%s %s;" typ id),
             fun typ id e -> F.sprintf "%s %s = %s;" typ id e )
