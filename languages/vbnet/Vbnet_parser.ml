@@ -248,6 +248,12 @@ let stmt_of_stmts (xs : G.stmt list) =
 let raw_token (t : T.t) : G.any RT.t =
   RT.Token (t.content, t.tok)
 
+let s_range (tl : Tok.t) (tr : Tok.t) (stmt : G.stmt) : G.stmt =
+  let l = Tok.unsafe_loc_of_tok tl in
+  let r = Tok.unsafe_loc_of_tok tr in
+  stmt.s_range <- Some (l, r);
+  stmt
+
 (* parser *)
 
 let rec compilation_unit : G.program parser = fun __n -> (
@@ -747,8 +753,10 @@ and select_case_block : G.stmt parser = fun __n -> (
   let* expr = expression in
   let* _ = look_ahead "<LINE_TERMINATOR>" in
   let* case_blocks = list_of case_block in
-  let* _ = end_select_statement in
-  pure (G.Switch (select.tok, Some (G.Cond expr), case_blocks) |> G.s)
+  let* end_select = end_select_statement in
+  pure (G.Switch (select.tok, Some (G.Cond expr), case_blocks)
+        |> G.s
+        |> s_range select.tok end_select.tok)
 ) __n
 
 and case_block : G.case_and_body parser = fun __n -> (
@@ -908,7 +916,7 @@ and make_else_if_blocks (else_if_blocks : (Tok.t * G.expr * G.stmt) list)
 
 and multi_line_if_block : G.stmt parser = fun __n -> (
   (* multi_line_if_block -> 'If' expression 'Then'? case_statement_terminator statements_block else_if_block* else_block? ':'? 'End' 'If' *)
-  let* if_ = token "IF" in
+  let* if1 = token "IF" in
   let* condition = expression in
   let* _then = optional (token "THEN") in
   let* _ = case_statement_terminator in (* ensure multi-line *)
@@ -917,9 +925,11 @@ and multi_line_if_block : G.stmt parser = fun __n -> (
   let* else_block_opt = optional else_block in
   let* _colon = optional (token ":") in
   let* _end = token "END" in
-  let* _if = token "IF" in
+  let* if2 = token "IF" in
   let else_ = make_else_if_blocks else_if_blocks else_block_opt in
-  pure (G.If (if_.tok, G.Cond condition, stmt, else_) |> G.s)
+  pure (G.If (if1.tok, G.Cond condition, stmt, else_)
+        |> G.s
+        |> s_range if1.tok if2.tok)
 ) __n
 
 and else_if_or_elseif : Tok.t parser = fun __n -> (
@@ -980,15 +990,22 @@ and for_block : G.stmt parser = fun __n -> (
   let* _ = case_statement_terminator in
   let* stmt = statements_block in
   let* _ = case_statement_terminator in
-  let* _next = token "NEXT" in
-  let* _counter = optional
+  let* next = token "NEXT" in
+  let* counter = optional
     begin
       let* _ = look_ahead_not "<LINE_TERMINATOR>" in
       identifier_name
     end
   in
   let* _ = after_next in
-  pure (G.For (for_.tok, header, stmt) |> G.s)
+  let end_token =
+    (match counter with
+    | None -> next.tok
+    | Some (_, t) -> t)
+  in
+  pure (G.For (for_.tok, header, stmt)
+        |> G.s
+        |> s_range for_.tok end_token)
 ) __n
 
 and for_header : G.for_header parser = fun __n -> (
@@ -1040,7 +1057,7 @@ and do_block : G.stmt parser = fun __n -> (
   let* _ = case_statement_terminator in
   let* stmt = statements_block in
   let* _ = case_statement_terminator in
-  let* loop_ = token "LOOP" in
+  let* loop = token "LOOP" in
   let* footer_opt = optional
     begin
       let* _ = look_ahead_not "<LINE_TERMINATOR>" in
@@ -1049,12 +1066,14 @@ and do_block : G.stmt parser = fun __n -> (
   in
   match header_opt, footer_opt with
   | Some e, _ ->
-      pure (G.While (do_.tok, G.Cond e, stmt) |> G.s)
+      pure (G.While (do_.tok, G.Cond e, stmt)
+            |> G.s
+            |> s_range do_.tok loop.tok)
   | _, Some e ->
       pure (G.DoWhile (do_.tok, stmt, e) |> G.s)
   | None, None ->
       (* Should not happen *)
-      pure (G.Block (do_.tok, [stmt], loop_.tok) |> G.s)
+      pure (G.Block (do_.tok, [stmt], loop.tok) |> G.s)
 ) __n
 
 and do_header : G.expr parser = fun __n -> (
@@ -1075,14 +1094,16 @@ and do_header : G.expr parser = fun __n -> (
 
 and while_block : G.stmt parser = fun __n -> (
   (* while_block -> 'While' expression case_statement_terminator statements_block case_statement_terminator ':'? 'End' 'While' *)
-  let* while_ = token "WHILE" in
+  let* while1 = token "WHILE" in
   let* expr = expression in
   let* _ = case_statement_terminator in
   let* stmt = statements_block in
   let* _ = case_statement_terminator in
   let* _ = token "END" in
-  let* _ = token "WHILE" in
-  pure (G.While (while_.tok, G.Cond expr, stmt) |> G.s)
+  let* while2 = token "WHILE" in
+  pure (G.While (while1.tok, G.Cond expr, stmt)
+        |> G.s
+        |> s_range while1.tok while2.tok)
 ) __n
 
 and soft_terminator : unit parser = fun __n -> (
@@ -1103,14 +1124,16 @@ and soft_terminator : unit parser = fun __n -> (
 and try_block : G.stmt parser = fun __n -> (
   (* try_block -> 'Try' statements_block catch_block* finally_block? ':'? 'End' 'Try' *)
   let* _ = optional (token ":") in
-  let* try_ = token "TRY" in
+  let* try1 = token "TRY" in
   let* stmt = statements_block in
   let* catch_blocks = list_of catch_block in
   let* finally = optional finally_block in
   let* _ = optional (token ":") in
   let* _ = token "END" in
-  let* _ = token "TRY" in
-  pure (G.Try (try_.tok, stmt, catch_blocks, None, finally) |> G.s)
+  let* try2 = token "TRY" in
+  pure (G.Try (try1.tok, stmt, catch_blocks, None, finally)
+        |> G.s
+        |> s_range try1.tok try2.tok)
 ) __n
 
 and catch_block : G.catch parser = fun __n -> (
@@ -1168,13 +1191,13 @@ and make_with_block_var (_ : unit) : G.name =
 
 and with_block : G.stmt parser = fun __n -> (
   (* with_block -> 'With' expression @lookahead('<LINE_TERMINATOR>') statements_block ':'? 'End' 'With' *)
-  let* _with = token "WITH" in
+  let* with1 = token "WITH" in
   let* expr = expression in
   let* _ = look_ahead "<LINE_TERMINATOR>" in
   let* stmt = statements_block in
   let* _ = optional (token ":") in
   let* _ = token "END" in
-  let* _ = token "WITH" in
+  let* with2 = token "WITH" in
   let entity =
     G.{ name = G.EN (make_with_block_var ());
         attrs = [];
@@ -1188,19 +1211,24 @@ and with_block : G.stmt parser = fun __n -> (
       }
   in
   let varDef = G.DefStmt (entity, G.VarDef def) |> G.s in
-  pure (G.Block (fb [varDef; stmt]) |> G.s)
+  pure (G.Block (fb [varDef; stmt])
+        |> G.s
+        |> s_range with1.tok with2.tok)
 ) __n
 
 and sync_lock_block : G.stmt parser = fun __n -> (
   (* sync_lock_block -> 'SyncLock' expression @lookahead('<LINE_TERMINATOR>') statements_block ':'? 'End' 'SyncLock' *)
-  let* syncLock = token "SYNCLOCK" in
+  let* sync_lock1 = token "SYNCLOCK" in
   let* expr = expression in
   let* _ = look_ahead "<LINE_TERMINATOR>" in
   let* stmt = statements_block in
   let* _ = optional (token ":") in
   let* _ = token "END" in
-  let* _ = token "SYNCLOCK" in
-  pure (G.OtherStmtWithStmt (G.OSWS_With, [G.Tk syncLock.tok; G.E expr], stmt) |> G.s)
+  let* sync_lock2 = token "SYNCLOCK" in
+  pure (G.OtherStmtWithStmt
+          (G.OSWS_With, [G.Tk sync_lock1.tok; G.E expr], stmt)
+        |> G.s
+           |> s_range sync_lock1.tok sync_lock2.tok)
 ) __n
 
 and using_block : G.stmt parser = fun __n -> (
@@ -1209,8 +1237,10 @@ and using_block : G.stmt parser = fun __n -> (
   let* header = using_header in
   let* _ = look_ahead "<LINE_TERMINATOR>" in
   let* stmt = statements_block in
-  let* _end_using = end_using_statement in
-  pure (G.WithUsingResource (using.tok, header, stmt) |> G.s)
+  let* end_using = end_using_statement in
+  pure (G.WithUsingResource (using.tok, header, stmt)
+        |> G.s
+        |> s_range using.tok end_using.tok)
 ) __n
 
 and using_header : G.stmt list parser = fun __n -> (
@@ -1591,12 +1621,11 @@ and end_remove_handler_statement : unit parser = fun __n -> (
   pure ()
 ) __n
 
-and end_select_statement : unit parser = fun __n -> (
+and end_select_statement : T.t parser = fun __n -> (
   (* end_select_statement -> ':'? 'End' 'Select' *)
   let* _ = optional (token ":") in
   let* _ = token "END" in
-  let* _ = token "SELECT" in
-  pure ()
+  token "SELECT"
 ) __n
 
 and end_sub_statement : unit parser = fun __n -> (
@@ -1607,12 +1636,11 @@ and end_sub_statement : unit parser = fun __n -> (
   pure ()
 ) __n
 
-and end_using_statement : unit parser = fun __n -> (
+and end_using_statement : T.t parser = fun __n -> (
   (* end_using_statement -> ':'? 'End' 'Using' *)
   let* _ = optional (token ":") in
   let* _ = token "END" in
-  let* _ = token "USING" in
-  pure ()
+  token "USING"
 ) __n
 
 and enum_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
