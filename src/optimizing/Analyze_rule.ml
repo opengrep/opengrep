@@ -547,7 +547,7 @@ let eval_and p (And xs) =
                  m "exception while dumping: %s" (Printexc.to_string e)));
          v)
 
-let run_cnf_step2 cnf big_str =
+let run_cnf_step2 ?(caseless=false) cnf big_str =
   cnf
   |> eval_and (function
        | Idents xs ->
@@ -557,7 +557,12 @@ let run_cnf_step2 cnf big_str =
                   (* TODO: matching_exact_word does not work, why??
                      because string literals and metavariables are put under
                      Idents? *)
-                  let re = Pcre2_.matching_exact_string id in
+                  let re =
+                    if caseless then
+                      Pcre2_.matching_caseless_string id
+                    else
+                      Pcre2_.matching_exact_string id
+                  in
                   (* Note that in case of a PCRE error, we want to assume
                      that the rule is relevant, hence ~on_error:true! *)
                   Pcre2_.unanchored_match ~on_error:true re big_str)
@@ -598,15 +603,16 @@ let compute_final_cnf ~(is_id_mvar : is_id_mvar) f =
 [@@profiling]
 
 let regexp_prefilter_of_formula ~xlang f : prefilter option =
-  let is_id_mvar =
+  let is_id_mvar, caseless =
     match (xlang : Xlang.t) with
     | LRegex
     | LSpacegrep
     | LAliengrep ->
-        Fun.const true
-    | L _ ->
+        Fun.const true, false
+    | L (l, _) ->
         let id_mvars = id_mvars_of_formula f in
-        fun mvar -> MvarSet.mem mvar id_mvars
+        (fun mvar -> MvarSet.mem mvar id_mvars),
+        Lang.is_caseless l
   in
   try
     let* final = compute_final_cnf ~is_id_mvar f in
@@ -614,7 +620,7 @@ let regexp_prefilter_of_formula ~xlang f : prefilter option =
       ( prefilter_formula_of_cnf_step2 final,
         fun big_str ->
           try
-            run_cnf_step2 final big_str
+            run_cnf_step2 ~caseless:caseless final big_str
             (* run_cnf_step2 (And [Or [Idents ["jsonwebtoken"]]]) big_str *)
           with
           (* can happen in spacegrep rules as we don't extract anything from t *)

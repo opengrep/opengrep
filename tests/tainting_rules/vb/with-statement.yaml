@@ -1,0 +1,14 @@
+rules:
+  - id: with
+    languages:
+      - vb
+    message: object inside a With block
+    mode: taint
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($SINK)
+    pattern-sources:
+      - patterns:
+          - pattern: source()
+    severity: WARNING
+

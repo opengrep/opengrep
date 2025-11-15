@@ -450,7 +450,7 @@ and read state = parse
   | ("Mid$" | "Left$" | "Right$" | "RCase$" | "Trim$" | "UCase$")
     { T.make ~uppercase:true lexbuf T.Identifier }
     (* opengrep metavar *)
-  | '$' ['A'-'Z']['A'-'Z' '0'-'9']* { T.make lexbuf T.Identifier }
+  | '$' ['A'-'Z' '_']['A'-'Z' '0'-'9' '_']* { T.make lexbuf T.Identifier }
 
 (* interpolated strings *)
   | "$\"" {

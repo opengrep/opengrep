@@ -53,7 +53,10 @@ val pcre_regexp : t -> Pcre2.regexp
 (* will quote special chars in the string *)
 val matching_exact_string : string -> t
 
-(* add the \b around the quoted string *)
+(* similar to matching_exact_string but with the CASELESS flag *)
+val matching_caseless_string : string -> t
+
+ (* add the \b around the quoted string *)
 val matching_exact_word : string -> t
 
 (* Compile a regexp in PCRE syntax with the given flags. *)

@@ -219,17 +219,17 @@ let ident_of_token (t : T.t) : G.ident =
   t.content, t.tok
 
 let expr_of_id (id : G.ident) =
-  G.N (G.Id (id, G.empty_id_info ())) |> G.e
+  G.N (G.Id (id, G.empty_id_info ~case_insensitive:true ())) |> G.e
 
 let make_name (ident : G.ident) (type_args : G.type_arguments option) : G.name =
   match type_args with
-  | None -> G.Id (ident, G.empty_id_info ())
+  | None -> G.Id (ident, G.empty_id_info ~case_insensitive:true ())
   | Some _ ->
       G.IdQualified
         { name_last = (ident, type_args);
           name_middle = None;
           name_top = None;
-          name_info = G.empty_id_info () }
+          name_info = G.empty_id_info ~case_insensitive:true () }
 
 let rec split_last (xs : 'a list) : 'a list * 'a =
   match xs with
@@ -257,7 +257,7 @@ let collapse_names (ns : G.name list) : G.name =
         { name_last = n;
           name_middle = Some (QDots ns);
           name_top = None;
-          name_info = G.empty_id_info ()
+          name_info = G.empty_id_info ~case_insensitive:true ()
         }
 
 let add_attrs_to_type (t : G.type_) (attrs : G.attribute list) : G.type_=
@@ -387,7 +387,7 @@ and import_alias_clause : G.alias parser = fun __n -> (
   (* import_alias_clause -> identifier_token '=' *)
   let* t = token "<IDENT>" in
   let* _eq = token "=" in
-  pure (ident_of_token t, G.empty_id_info ())
+  pure (ident_of_token t, G.empty_id_info ~case_insensitive:true ())
 ) __n
 
 and attributes_statement : G.stmt list parser = fun __n -> (
@@ -1060,13 +1060,13 @@ and for_header : G.for_header parser = fun __n -> (
             G.Call (G.IdSpecial (G.Op G.Range, to_tok.tok) |> G.e,
                     fb [G.Arg from_; G.Arg to_]) |> G.e
           in
-          pure (G.ForEach (G.PatId (id, G.empty_id_info ()), to_tok.tok, range))
+          pure (G.ForEach (G.PatId (id, G.empty_id_info ~case_insensitive:true ()), to_tok.tok, range))
       | Some step ->
           let range =
             G.Call (G.IdSpecial (G.Op G.Range, to_tok.tok) |> G.e,
                     fb [G.Arg from_; G.Arg to_; G.Arg step]) |> G.e
           in
-          pure (G.ForEach (G.PatId (id, G.empty_id_info ()), to_tok.tok, range))
+          pure (G.ForEach (G.PatId (id, G.empty_id_info ~case_insensitive:true ()), to_tok.tok, range))
     end;
     begin
       (* for_header -> 'Each' identifier_name simple_as_clause? 'In' expression *)
@@ -1075,7 +1075,7 @@ and for_header : G.for_header parser = fun __n -> (
       let* _as = optional simple_as_clause in
       let* in_ = token "IN" in
       let* expr = expression in
-      pure (G.ForEach (G.PatId (id, G.empty_id_info ()), in_.tok, expr))
+      pure (G.ForEach (G.PatId (id, G.empty_id_info ~case_insensitive:true ()), in_.tok, expr))
     end;
   ]
 ) __n
@@ -1178,7 +1178,7 @@ and catch_block : G.catch parser = fun __n -> (
   let base_pat =
     match id_opt with
     | None -> G.PatWildcard catch_.tok
-    | Some id -> G.PatId (id, G.empty_id_info ())
+    | Some id -> G.PatId (id, G.empty_id_info ~case_insensitive:true ())
   in
   let typed_pat =
     match typ_opt with
@@ -1217,7 +1217,8 @@ and finally_block : G.finally parser = fun __n -> (
 
 (* NOTE: we can use the name "with", because it's a reserved keyword *)
 and make_with_block_var (_ : unit) : G.name =
-  G.Id (("with", Tok.unsafe_fake_tok "with"), G.empty_id_info ())
+  G.Id (("with", Tok.unsafe_fake_tok "with"),
+        G.empty_id_info ~case_insensitive:true ~hidden:true ())
 
 and with_block : G.stmt parser = fun __n -> (
   (* with_block -> 'With' expression @lookahead('<LINE_TERMINATOR>') statements_block ':'? 'End' 'With' *)
@@ -1774,7 +1775,7 @@ and new_object_expression : G.expr parser = fun __n -> (
             * so we simply ignore them. *)
            (* NOTE: in the AST there is no way to express the initializing constructor,
             * so we have to do with passing the created object as an argument. *)
-           pure (G.New (new_.tok, typ, G.empty_id_info (), fb [G.Arg anon_class_val]) |> G.e))
+           pure (G.New (new_.tok, typ, G.empty_id_info ~case_insensitive:true (), fb [G.Arg anon_class_val]) |> G.e))
   | Some (typ, Some args), None ->
       pure (G.New (new_.tok, typ, G.empty_id_info(), args) |> G.e)
   | Some (typ, None), None ->
@@ -1848,7 +1849,7 @@ and array_creation_expression : G.expr parser = fun __n -> (
   let* _array_rank = list_of array_rank_specifier in
   let* init = collection_initializer in
   (* TODO: add dimensions to the type *)
-  pure (G.New (new_.tok, typ, G.empty_id_info (), fb [G.Arg init]) |> G.e)
+  pure (G.New (new_.tok, typ, G.empty_id_info ~case_insensitive:true (), fb [G.Arg init]) |> G.e)
 ) __n
 
 and array_rank_specifier : int G.bracket parser = fun __n -> (
@@ -2068,7 +2069,7 @@ and parameter : G.parameter parser = fun __n -> (
             ptype;
             pdefault;
             pattrs;
-            pinfo = G.empty_id_info () }
+            pinfo = G.empty_id_info ~case_insensitive:true () }
       in
       pure (G.Param p)
     end;
@@ -5392,6 +5393,10 @@ and x_attr : G.xml_attribute parser = fun __n -> (
 and x_attr_value : G.a_xml_attr_value parser = fun __n -> (
   choice [
     begin
+      let* (_, expr, _) = x_tag_embed_expression in
+      pure expr
+    end;
+    begin
       (* x_attr_value -> '<IDENT>' *)
       let* t = token "<IDENT>" in
       pure (G.N (make_name (ident_of_token t) None) |> G.e)
@@ -5611,11 +5616,25 @@ and string_literal_token : G.any parser = fun __n -> (
   pure (xRule "string_literal_token" 0 [xToken(lt_STRING_gt1)])
 ) __n
 
+and opengrep_assignment_statement : G.any parser = fun __n -> (
+  (* assignment_statement -> await_expression (assignment_statement_operator expression)? *)
+  let* lhs = await_expression in
+  let* op_rhs_opt = optional
+    begin
+      let* op = assignment_statement_operator in
+      let* rhs = expression in
+      pure (op, rhs)
+    end
+  in
+  match op_rhs_opt with
+  | None -> pure (G.E lhs)
+  | Some (op, rhs) -> pure (G.E (G.AssignOp (lhs, op, rhs) |> G.e))
+) __n
+
 let opengrep_pattern : G.any parser =
   let* content = choice [
     begin
-      let* stmt = assignment_statement in
-      pure (G.S stmt)
+      opengrep_assignment_statement
     end;
     begin
       let* expr = expression in
@@ -5634,10 +5653,20 @@ let opengrep_pattern : G.any parser =
       pure (G.T typ)
     end;
     begin
+      let* stmts = imports_statement in
+      match stmts with
+      | [stmt] -> pure (G.S stmt)
+      | _ -> pure (G.Ss stmts)
+    end;
+    begin
       let* _ = token "<" in
       let* attr = attribute in
       let* _ = token "> in" in
       pure (G.At attr)
+    end;
+    begin
+      let* t = toplevel in
+      pure (G.Ss t)
     end;
   ]
   in

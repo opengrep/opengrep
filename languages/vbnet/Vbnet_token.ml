@@ -21,10 +21,13 @@ type t = {
 }
 
 let make ?(uppercase=false) (lexbuf : Lexing.lexbuf) (k : token_kind) : t =
+  let content =
+    if uppercase
+      then String.uppercase_ascii (Lexing.lexeme lexbuf)
+      else Lexing.lexeme lexbuf
+  in
   { kind = k;
-    content = if uppercase
-                then String.uppercase_ascii (Lexing.lexeme lexbuf)
-                else Lexing.lexeme lexbuf;
+    content;
     tok = Tok.tok_of_lexbuf lexbuf
   }
 
