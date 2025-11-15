@@ -450,7 +450,7 @@ and read state = parse
   | ("Mid$" | "Left$" | "Right$" | "RCase$" | "Trim$" | "UCase$")
     { T.make ~uppercase:true lexbuf T.Identifier }
     (* opengrep metavar *)
-  | '$' ['A'-'Z']['A'-'Z' '0'-'9']* { T.make lexbuf T.Identifier }
+  | '$' ['A'-'Z' '_']['A'-'Z' '0'-'9' '_']* { T.make lexbuf T.Identifier }
 
 (* interpolated strings *)
   | "$\"" {
@@ -460,16 +460,16 @@ and read state = parse
 
 (* literals *)
   | ((digit (digit | '_')*) as s) integral_type_char?
-    { let n = Int64.of_string s in
+    { let n = T.make_int64 s in
       T.make lexbuf (T.IntLiteral n) }
   | '&' ('H' | 'h') ((hex_digit (hex_digit | '_')*) as s) integral_type_char?
-    { let n = Int64.of_string ("0x" ^ s) in
+    { let n = T.make_int64 ("0x" ^ s) in
       T.make lexbuf (T.IntLiteral n) }
   | '&' ('O' | 'o') (octal_digit (octal_digit | '_')* as s) integral_type_char?
-    { let n = Int64.of_string ("0o" ^ s) in
+    { let n = T.make_int64 ("0o" ^ s) in
       T.make lexbuf (T.IntLiteral n) }
   | '&' ('B' | 'b') (binary_digit (binary_digit | '_')* as s) integral_type_char?
-    { let n = Int64.of_string ("0b" ^ s) in
+    { let n = T.make_int64 ("0b" ^ s) in
       T.make lexbuf (T.IntLiteral n) }
   | digit+ '.' digit+ (exponent_char sign digit+)? floating_point_type_char?
     { T.make lexbuf T.FloatLiteral }

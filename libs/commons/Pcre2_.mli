@@ -53,7 +53,10 @@ val pcre_regexp : t -> Pcre2.regexp
 (* will quote special chars in the string *)
 val matching_exact_string : string -> t
 
-(* add the \b around the quoted string *)
+(* similar to matching_exact_string but with the CASELESS flag *)
+val matching_caseless_string : string -> t
+
+ (* add the \b around the quoted string *)
 val matching_exact_word : string -> t
 
 (* Compile a regexp in PCRE syntax with the given flags. *)
@@ -64,6 +67,7 @@ val pcre_compile_with_flags : flags:Pcre2.cflag list -> string -> t
 (* TODO: NOTE INLCUDES MULTILINE *)
 (* TODO: Replace if used *)
 val pcre_compile : string -> t
+val pcre_compile_caseless : string -> t
 
 val anchored_match : ?on_error:bool -> t -> string -> bool
 (** Match the pattern at the beginning of the string (anchored match)

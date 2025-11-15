@@ -44,6 +44,9 @@ val to_langs : t -> Lang.t list
 (* raises an exception with error message *)
 val lang_of_opt_xlang_exn : t option -> Lang.t
 
+(* to inform the compilation of regexps *)
+val is_caseless : t -> bool
+
 (*
    Determine whether a single analyzer exist in an set of
    analyzers. If the first analyzer is more than one language, it's

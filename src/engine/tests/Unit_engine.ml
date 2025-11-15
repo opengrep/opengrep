@@ -75,6 +75,7 @@ let full_lang_info =
     (Lang.Jsonnet, "jsonnet", ".jsonnet");
     (Lang.Clojure, "clojure", ".clj");
     (Lang.Xml, "xml", ".xml");
+    (Lang.Vb, "vb", ".vb");
     (Lang.Dart, "dart", ".dart");
     (Lang.Ql, "ql", ".ql");
     (Lang.Move_on_sui, "move_on_sui", ".move");
@@ -737,6 +738,14 @@ let lang_tainting_tests () =
          in
 
          let lang = Lang.Java in
+         tainting_tests_for_lang files lang);
+      Testo.categorize "tainting Vb"
+        (let dir = taint_tests_path / "vb" in
+         let files =
+           Common2.glob (spf "%s/*.vb" !!dir) |> Fpath_.of_strings
+         in
+
+         let lang = Lang.Vb in
          tainting_tests_for_lang files lang);
       Testo.categorize "tainting Javascript"
         (let dir = taint_tests_path / "js" in

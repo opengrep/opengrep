@@ -74,6 +74,11 @@ let lang_of_opt_xlang_exn (x : t option) : Lang.t =
   | None -> failwith (Lang.unsupported_language_message "unset")
   | Some xlang -> to_lang_exn xlang
 
+let is_caseless (x : t) : bool =
+  match to_lang x with
+  | Ok lang -> Lang.is_caseless lang
+  | _ -> false
+
 let is_compatible ~require ~provide =
   match (require, provide) with
   | LRegex, LRegex

@@ -111,7 +111,15 @@ type selector = {
 let xpatterns_in_formula (e : R.formula) : (Xpattern.t * bool) list =
   Visit_rule.visit_xpatterns (fun xpat ~inside:b acc -> (xpat, b) :: acc) e []
 
-let partition_xpatterns xs =
+let partition_xpatterns ~caseless xs =
+  ignore caseless;
+  let compile_re =
+    (* TODO: check if we can do better for aseless langs, e.g. *)
+    (* if caseless then
+      Pcre2_.pcre_compile_caseless
+       else *)
+      Pcre2_.pcre_compile
+  in
   let semgrep = ref [] in
   let spacegrep = ref [] in
   let aliengrep = ref [] in
@@ -123,7 +131,7 @@ let partition_xpatterns xs =
          | XP.Sem (x, _lang) -> Stack_.push (x, inside, pid, str) semgrep
          | XP.Spacegrep x -> Stack_.push (x, pid, str) spacegrep
          | XP.Aliengrep x -> Stack_.push (x, pid, str) aliengrep
-         | XP.Regexp x -> Stack_.push (Pcre2_.pcre_compile x, pid, str) regexp);
+         | XP.Regexp x -> Stack_.push (compile_re x, pid, str) regexp);
   (List.rev !semgrep, List.rev !spacegrep, List.rev !aliengrep, List.rev !regexp)
 
 let group_matches_per_pattern_id (xs : Core_match.t list) : id_to_match_results
@@ -528,13 +536,14 @@ let matches_of_xpatterns ~has_as_metavariable ~mvar_context rule
         : Xtarget.t) =
     xtarget
   in
+  let caseless = Xlang.is_caseless rule.R.target_analyzer in
   (* Right now you can only mix semgrep/regexps and spacegrep/regexps, but
    * in theory we could mix all of them together. This is why below
    * I don't match over xlang and instead assume we could have multiple
    * kinds of patterns at the same time.
    *)
   let patterns, spacegreps, aliengreps, regexps =
-    partition_xpatterns xpatterns
+    partition_xpatterns caseless xpatterns
   in
 
   (* final result *)

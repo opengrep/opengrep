@@ -21,10 +21,13 @@ type t = {
 }
 
 let make ?(uppercase=false) (lexbuf : Lexing.lexbuf) (k : token_kind) : t =
+  let content =
+    if uppercase
+      then String.uppercase_ascii (Lexing.lexeme lexbuf)
+      else Lexing.lexeme lexbuf
+  in
   { kind = k;
-    content = if uppercase
-                then String.uppercase_ascii (Lexing.lexeme lexbuf)
-                else Lexing.lexeme lexbuf;
+    content;
     tok = Tok.tok_of_lexbuf lexbuf
   }
 
@@ -76,3 +79,9 @@ let print_token (t : t) : unit =
 let print_tokens (ts : t list) : unit =
   List.iter print_token ts
 
+(* We don't have a good way to represent big-nums in the generic AST,
+ * so in case we reach the limit, we just use a big number *)
+let make_int64 (s : string) : int64 =
+  match Int64.of_string_opt s with
+  | Some i -> i
+  | _ -> Int64.max_int

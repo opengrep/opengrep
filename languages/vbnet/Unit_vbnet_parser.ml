@@ -42,23 +42,41 @@ let smoke2 _ : bool =
             |> List.hd |> get_val in
   G.(match res with
   | [{s =
-     DefStmt
-      ({name = EN (Id (("C", _), _)); _},
-       ClassDef
-        {ckind = (Class, _);
-         cbody = (_, [F {s =
-          DefStmt (
-            {name = EN (Id (("FOO", _), _)); _},
-            FuncDef
-             { fkind = (Method, _);
-               fparams = (_, [], _);
-               fbody = FBStmt { s =
-                       ExprStmt
-                        ({e =
-                           Call
-                            ({e = N (Id (("END", _), _)); _},
-                             (_, [], _)); _}, _); _};
-               _}); _}], _); _}); _}] -> true
+      DefStmt
+       ({name =
+          EN
+           (Id
+             (("C", _), _));
+         attrs = []; tparams = None},
+        ClassDef
+         {ckind = (Class, _);
+          cextends = []; cimplements = []; cmixins = [];
+          cparams = _;
+          cbody =
+           (_,
+            [F
+              {s =
+                DefStmt
+                 ({name = EN (Id (("Foo", _), _));
+                   attrs = _;
+                   tparams = None},
+                  FuncDef
+                   {fkind = (Method, _);
+                    fparams = (_, [], _);
+                    frettype = None;
+                    fbody =
+                     FBStmt
+                      {s =
+                        Block
+                         (_,
+                          [{s =
+                             ExprStmt
+                              ({e = Call (
+                                   {e = N (Id (("END", _), _)); _},
+                                   (_, [], _));
+                                _}, _); _}],
+                          _); _}}); _}],
+            _); _}); _}] -> true
   | _ -> false)
 
 let tests =
