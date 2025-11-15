@@ -265,6 +265,7 @@ let show (x : t) = x.pattern
 let pp fmt (x : t) = Format.fprintf fmt "\"%s\"" x.pattern
 let equal (x1 : t) (x2 : t) = x1.pattern = x2.pattern
 let matching_exact_string s : t = regexp (quote s)
+let matching_caseless_string s : t = regexp ~flags:[ `CASELESS ] (quote s)
 
 let matching_exact_word s =
   let pattern = "\b" ^ quote s ^ "\b" in
@@ -277,6 +278,7 @@ let pcre_compile_with_flags ~flags pat = regexp ~flags pat [@@profiling]
                just at the beginning and end of input.
 *)
 let pcre_compile pat = regexp ~flags:[ `MULTILINE ] pat [@@profiling]
+let pcre_compile_caseless pat = regexp ~flags:[ `MULTILINE; `CASELESS ] pat [@@profiling]
 
 let anchored_match ?on_error =
   (* ~iflags are precompiled flags for better performance compared to ~flags *)

@@ -1,0 +1,5 @@
+New $OBJ With {
+  ...,
+  .$FOO = True,
+  ...
+}

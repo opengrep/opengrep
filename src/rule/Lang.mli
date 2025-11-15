@@ -142,6 +142,8 @@ val lang_of_filename_exn : Fpath.t -> t
 val is_js : t -> bool
 val is_c_cpp : t -> bool
 
+val is_caseless : t -> bool
+
 (* accept any variants *)
 val is_proprietary : t -> bool
 val lang_map : (string, t) Hashtbl.t
