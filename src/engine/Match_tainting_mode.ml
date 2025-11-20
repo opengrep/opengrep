@@ -342,12 +342,12 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             Taint_signature_extractor.detect_object_initialization ast
               taint_inst.lang
           in
-          (* Add object mappings to initial signature database *)
-          let initial_signature_db =
-            Shape_and_sig.add_object_mappings
-              (signature_db ||| Shape_and_sig.empty_signature_database ())
-              object_mappings
+          (* Build base signature database with built-in models *)
+          let base_db =
+            Builtin_models.init_signature_database taint_inst.lang signature_db
           in
+          (* Note: object_mappings will be combined with anonymous class mappings
+           * and added to the signature database after IL conversion *)
 
           (* Collect function metadata and prepare call graph based ordering. *)
           let add_info info (infos, info_map) =
@@ -474,8 +474,15 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           in
           let collected_infos = List.rev collected_infos in
 
+          (* Use object mappings from Object_initialization.ml *)
+          let all_object_mappings = object_mappings in
+          let initial_signature_db =
+            Shape_and_sig.add_object_mappings base_db all_object_mappings
+          in
+
           let call_graph =
-            Function_call_graph.build_call_graph ~lang ~object_mappings ast
+            Function_call_graph.build_call_graph ~lang
+              ~object_mappings:all_object_mappings ast
           in
 
           Log.debug (fun m ->
@@ -516,7 +523,31 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                 ~arity ~db taint_inst ~name:info.fn_id
                 ~method_properties:info.method_properties info.cfg ast
             in
-            if info.is_lambda_assignment then updated_db
+            (* For Kotlin, if the last parameter is a lambda (function type),
+             * also extract signature with arity-1 to handle trailing lambda syntax:
+             * f(a, b) vs f(a) { b } *)
+            let updated_db =
+              if Lang.equal lang Lang.Kotlin && arity >= 2 then
+                let last_param_is_lambda =
+                  match List.rev params with
+                  | G.Param { G.ptype = Some ptype; _ } :: _ -> (
+                      match ptype.G.t with
+                      | G.TyFun _ -> true
+                      | _ -> false)
+                  | _ -> false
+                in
+                if last_param_is_lambda then
+                  let db', _ =
+                    Taint_signature_extractor.extract_signature_with_file_context
+                      ~arity:(arity - 1) ~db:updated_db taint_inst ~name:info.fn_id
+                      ~method_properties:info.method_properties info.cfg ast
+                  in
+                  db'
+                else updated_db
+              else updated_db
+            in
+            if info.is_lambda_assignment then
+              updated_db
             else
               let _flow, fdef_effects, _mapping =
                 check_fundef taint_inst info.fn_id !ctx ~glob_env
