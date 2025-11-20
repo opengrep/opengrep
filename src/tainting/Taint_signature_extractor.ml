@@ -123,6 +123,11 @@ let mk_method_property_assumptions (properties : AST_generic.expr list)
          Taint_lval_env.add_lval il_lval taint_set taint_env)
        Taint_lval_env.empty
 
+(** Helper to add a parameter with Arg shape to the environment *)
+let add_param_to_env il_lval taint_set taint_arg env =
+  let param_shape = Shape.Arg taint_arg in
+  Taint_lval_env.add_lval_shape il_lval taint_set param_shape env
+
 let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t =
   let _, env =
     params
@@ -161,7 +166,8 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                  | None -> Taint.Taint_set.empty
                in
                let taint_set = Taint.Taint_set.union (Taint.Taint_set.singleton generic_taint) source_taints in
-               let new_env = Taint_lval_env.add_lval il_lval taint_set env in
+               (* Give the parameter an Arg shape so it can be used in HOF *)
+               let new_env = add_param_to_env il_lval taint_set taint_arg env in
                (i + 1, new_env)
            | IL.PatternParam pat -> (
                (* Extract parameter name from pattern for Rust function parameters *)
@@ -180,9 +186,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                      Taint.{ orig = Var taint_lval; tokens = [] }
                    in
                    let taint_set = Taint.Taint_set.singleton generic_taint in
-                   let new_env =
-                     Taint_lval_env.add_lval il_lval taint_set env
-                   in
+                   let new_env = add_param_to_env il_lval taint_set taint_arg env in
                    (i + 1, new_env)
                | G.PatTyped (G.PatId (name, id_info), _) ->
                    (* Handle typed patterns like PatTyped(PatId(...), type) for Rust *)
@@ -199,9 +203,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                      Taint.{ orig = Var taint_lval; tokens = [] }
                    in
                    let taint_set = Taint.Taint_set.singleton generic_taint in
-                   let new_env =
-                     Taint_lval_env.add_lval il_lval taint_set env
-                   in
+                   let new_env = add_param_to_env il_lval taint_set taint_arg env in
                    (i + 1, new_env)
                | _ ->
                    (* Fallback for other pattern types *)

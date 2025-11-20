@@ -575,6 +575,8 @@ and map_expr env v : G.expr =
       let fdef = { fdef with fkind = (G.LambdaKind, tfn) } in
       G.Lambda fdef |> G.e
   | Capture (tamp, v2) ->
+      (* &fun/arity should have been converted to Lambda in Elixir_to_elixir.ml *)
+      (* Keep other capture forms as OtherExpr *)
       let e = map_expr env v2 in
       G.OtherExpr (("Capture", tamp), [ G.E e ]) |> G.e
   | ShortLambda (tamp, (l, v2, r)) ->
@@ -608,7 +610,11 @@ and map_body env v : G.stmt list =
   xs |> List_.map exprstmt
 
 and map_call env (v1, v2, v3) : G.expr =
-  let e = map_expr env v1 in
+  (* Special handling for DotAnon - extract the inner expression to use as callee *)
+  let e = match v1 with
+    | DotAnon (inner_expr, _tdot) -> map_expr env inner_expr
+    | _ -> map_expr env v1
+  in
   let l, args, r = (map_bracket map_arguments) env v2 in
   let v3 = (map_option map_do_block) env v3 in
   let args' = args_of_do_block_opt v3 in

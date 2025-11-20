@@ -318,9 +318,31 @@ let check
   let res_taint_rules =
     taint_rules_groups
     |> List.concat_map (fun taint_rules ->
-           Match_tainting_mode.check_rules ~match_hook
-             ~per_rule_boilerplate_fn:per_rule_boilerplate_fn_opt
-             taint_rules xconf xtarget)
+           try
+             Match_tainting_mode.check_rules ~match_hook
+               ~per_rule_boilerplate_fn:per_rule_boilerplate_fn_opt
+               taint_rules xconf xtarget
+           with
+           | (File_timeout _ | Out_of_memory | Stack_overflow | Memory_limit.ExceededMemoryLimit _) as exn
+             when xconf.config.taint_intrafile ->
+               (* File-level error with intrafile enabled - retry without intrafile *)
+               let file = xtarget.path.internal_path_to_content in
+               Logs.warn (fun m ->
+                   m "File-level error with intrafile on %s (%s), retrying without intrafile"
+                     !!file (Printexc.to_string exn));
+               let xconf_no_intra =
+                 { xconf with config = { xconf.config with taint_intrafile = false } }
+               in
+               (try
+                  Match_tainting_mode.check_rules ~match_hook
+                    ~per_rule_boilerplate_fn:per_rule_boilerplate_fn_opt
+                    taint_rules xconf_no_intra xtarget
+                with
+                | _ as retry_exn ->
+                    Logs.err (fun m ->
+                        m "File-level error on %s even without intrafile (%s), giving up"
+                          !!file (Printexc.to_string retry_exn));
+                    raise retry_exn))
   in
   let res_nontaint_rules =
     nontaint_rules

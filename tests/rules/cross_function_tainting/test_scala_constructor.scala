@@ -30,6 +30,8 @@ class FieldUser {
 
 object Main {
   def main(args: Array[String]): Unit = {
+    val taintedUser = new TaintedUser("seller")
+    val props = taintedUser.props()
     val taintedInput = source()
     val user = new User(taintedInput)
     val result = user.getProfile()

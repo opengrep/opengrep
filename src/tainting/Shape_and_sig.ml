@@ -695,6 +695,13 @@ end)
 type fn_id = { class_name : IL.name option; name : IL.name option }
 [@@deriving show, eq, ord]
 
+(** Helper to create fn_id with both class and method name *)
+let make_fn_id_with_class class_name method_name =
+  { class_name = Some class_name; name = Some method_name }
+
+(** Helper to create fn_id with just a function name (no class) *)
+let make_fn_id_no_class name = { class_name = None; name = Some name }
+
 module FunctionMap = Map.Make (struct
   type t = fn_id
 
@@ -716,7 +723,10 @@ type extended_sig = {
 module SignatureSet = Set.Make (struct
   type t = extended_sig
 
-  let compare = fun x y -> Signature.compare x.sig_ y.sig_
+  let compare = fun x y ->
+    let sig_cmp = Signature.compare x.sig_ y.sig_ in
+    if sig_cmp <> 0 then sig_cmp
+    else Int.compare x.arity y.arity
 end)
 
 type signature_database = {
@@ -737,22 +747,28 @@ let lookup_signature (db : signature_database) (func_name : fn_id) (arity : int)
   let signatures = FunctionMap.find_opt func_name db.signatures in
   match signatures with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      let filtered_sigs =
-        SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
-      in
-      let signatures_card = SignatureSet.cardinal filtered_sigs in
-      if signatures_card > 1 then
-        Log.debug (fun m ->
-            m "TAINT_SIG: There are several methods with the name %s the definition was ignored"
-              (show_name func_name.name));
-      if signatures_card =*= 0 then
-        Log.info (fun m ->
-            m "No taint signature found for `%s' " (show_name func_name.name));
+      let total_sigs_card = SignatureSet.cardinal sigs in
+      (* If there's only one signature for this function name, return it regardless of arity *)
+      if total_sigs_card =*= 1 then
+        Some (SignatureSet.choose sigs).sig_
+      else
+        (* Multiple signatures - filter by arity *)
+        let filtered_sigs =
+          SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
+        in
+        let signatures_card = SignatureSet.cardinal filtered_sigs in
+        if signatures_card > 1 then
+          Log.debug (fun m ->
+              m "TAINT_SIG: There are several methods with the name %s the definition was ignored"
+                (show_name func_name.name));
+        if signatures_card =*= 0 then
+          Log.info (fun m ->
+              m "No taint signature found for `%s' with arity %d" (show_name func_name.name) arity);
 
-      (* If there is only one signature with the given arity, return it *)
-      if signatures_card =*= 1 then
-        Some (SignatureSet.choose filtered_sigs).sig_
-      else None
+        (* If there is only one signature with the given arity, return it *)
+        if signatures_card =*= 1 then
+          Some (SignatureSet.choose filtered_sigs).sig_
+        else None
   | _ -> None
 
 let add_signature (db : signature_database) (func_name : fn_id)

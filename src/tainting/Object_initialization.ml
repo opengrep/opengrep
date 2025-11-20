@@ -371,6 +371,9 @@ let apex_constructor_pattern : constructor_pattern =
         | G.New (_, class_type, _, _) -> (
             match class_type.G.t with
             | G.TyN name when is_known_class name class_names -> Some name
+            | G.TyN name ->
+                (* For anonymous classes, accept the interface name even if not in class_names *)
+                Some name
             | _ -> None)
         | _ -> None);
     constructor_names = [ "<init>" ];
@@ -477,9 +480,9 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
                         class_names
                     in
                     let class_name =
-                      match class_name with
-                      | Some cls -> Some cls
-                      | None when lang = Lang.Cpp -> (
+                      match (class_name, lang) with
+                      | Some cls, _ -> Some cls
+                      | None, Lang.Cpp -> (
                           (* C++ fallback: extract class name from variable type *)
                           match var_def.G.vtype with
                           | Some var_type -> (
@@ -489,7 +492,7 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
                                   Some name
                               | _ -> None)
                           | None -> None)
-                      | None -> None
+                      | None, _ -> None
                     in
                     match class_name with
                     | Some cls ->
