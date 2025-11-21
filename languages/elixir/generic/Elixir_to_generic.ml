@@ -575,43 +575,10 @@ and map_expr env v : G.expr =
       let fdef = { fdef with fkind = (G.LambdaKind, tfn) } in
       G.Lambda fdef |> G.e
   | Capture (tamp, v2) ->
-      (* &fun/arity syntax - convert to lambda: fn x -> fun(x) end *)
+      (* &fun/arity should have been converted to Lambda in Elixir_to_elixir.ml *)
+      (* Keep other capture forms as OtherExpr *)
       let e = map_expr env v2 in
-      (match e.G.e with
-      | G.Call ({ e = G.IdSpecial ((G.Op G.Div), _); _ }, (_, args, _)) ->
-          (* Extract function name and arity from &fun/arity *)
-          (match args with
-          | G.Arg ({ e = G.N _; _ } as fun_expr) :: G.Arg { e = G.L (G.Int (Some arity, _)); _ } :: _ ->
-              (* Only convert to lambda if first arg is a proper name (not PlaceHolder, etc.) *)
-              (* Create parameters for the lambda based on arity *)
-              let params =
-                List.init (Int64.to_int arity) (fun i ->
-                  let param_name = spf "x%d" i in
-                  let param_id = (param_name, tamp) in
-                  G.Param (G.param_of_id param_id))
-              in
-              (* Create the call to the captured function with parameters *)
-              let param_exprs =
-                List.init (Int64.to_int arity) (fun i ->
-                  let param_name = spf "x%d" i in
-                  let param_id = (param_name, tamp) in
-                  G.Arg (G.N (H.name_of_id param_id) |> G.e))
-              in
-              let call_expr = G.Call (fun_expr, fb param_exprs) |> G.e in
-              let body_stmt = G.ExprStmt (call_expr, G.sc) |> G.s in
-              let fdef = {
-                G.fparams = fb params;
-                frettype = None;
-                fkind = (G.LambdaKind, tamp);
-                fbody = G.FBStmt body_stmt;
-              } in
-              G.Lambda fdef |> G.e
-          | _ ->
-              (* Fallback for other captures like &(&1/2) or malformed *)
-              G.OtherExpr (("Capture", tamp), [ G.E e ]) |> G.e)
-      | _ ->
-          (* For other capture forms (e.g., &(&1 + &2)), keep as OtherExpr *)
-          G.OtherExpr (("Capture", tamp), [ G.E e ]) |> G.e)
+      G.OtherExpr (("Capture", tamp), [ G.E e ]) |> G.e
   | ShortLambda (tamp, (l, v2, r)) ->
       let e = map_expr env v2 in
       H.set_e_range l r e;
