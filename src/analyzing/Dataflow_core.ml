@@ -135,18 +135,31 @@ module Make (F : Flow) = struct
     (* nosemgrep: no-print-in-semgrep *)
     UCommon.pr (mapping_to_str flow env_to_str mapping)
 
-  let fixpoint_worker ~timeout eq_env mapping trans flow succs workset =
-    let t0 = Sys.time () in
+  let fixpoint_worker ~timeout eq_env mapping trans (flow : F.flow) succs workset =
+    (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
+    let num_vertices = flow.graph#nb_nodes in
+    let max_iterations = min 100000 (num_vertices * 10) in
+    let start_time = Unix.gettimeofday () in
     let rec loop i work =
       if NodeiSet.is_empty work then (mapping, `Ok)
       else
-        (* 'Time_limit.set_timeout' cannot be nested and we want to make sure that
-         * fixpoint computations run for a limited amount of time. *)
-        let t1 = Sys.time () in
-        if i > Limits_semgrep.dataflow_FIXPOINT_MIN_ITERS && t1 -. t0 >= timeout
-        then (mapping, `Timeout)
+        (* Check iteration limit first (deterministic) *)
+        if i >= max_iterations then (
+          Log.warn (fun m ->
+              m "Fixpoint iteration timeout: vertices=%d, max_iters=%d, actual_iters=%d"
+                num_vertices max_iterations i);
+          (mapping, `Timeout)
+        )
+        (* Then check wall-clock timeout (safety fallback) *)
+        else if timeout > 0.0 && Unix.gettimeofday () -. start_time > timeout then (
+          Log.warn (fun m ->
+              m "Fixpoint wall-clock timeout: vertices=%d, timeout=%.2fs, iters=%d"
+                num_vertices timeout i);
+          (mapping, `Timeout)
+        )
         else
-          let ni = NodeiSet.choose work in
+          (* Use min_elt instead of choose for deterministic processing order *)
+          let ni = NodeiSet.min_elt work in
           let work' = NodeiSet.remove ni work in
           let old = mapping.(ni) in
           let new_ = trans mapping ni in

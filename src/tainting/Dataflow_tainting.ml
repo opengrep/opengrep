@@ -361,6 +361,7 @@ let merge_source_mvars env bindings =
      there was no conflict between bindings in different sources.
   *)
   bindings_tbl |> Hashtbl.to_seq |> List.of_seq
+  |> List.sort (fun (mvar1, _) (mvar2, _) -> String.compare mvar1 mvar2)
   |> List_.filter_map (fun (mvar, mval_opt) ->
          match mval_opt with
          | None ->
@@ -2658,15 +2659,30 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
     if taint_inst.options.taint_intrafile then base_timeout *. 10.0
     else base_timeout
   in
-  let end_mapping, timeout =
+  let end_mapping, timeout_status =
     DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
       ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
   in
-  log_timeout_warning taint_inst env.func.fname timeout;
-  let exit_lval_env = end_mapping.(flow.exit).D.out_env in
-  effects_from_arg_updates_at_exit enter_lval_env exit_lval_env
-  |> record_effects env;
-  (!(env.effects_acc), end_mapping)
+  (* If fixpoint timed out and intrafile was enabled, retry without intrafile *)
+  match (timeout_status, taint_inst.options.taint_intrafile, signature_db) with
+  | `Timeout, true, Some _ ->
+      Logs.warn (fun m ->
+          m "Fixpoint timeout with intrafile, retrying without [rule: %s file: %s func: %s]"
+            (Rule_ID.to_string taint_inst.rule_id)
+            !!(taint_inst.file)
+            (Option.map IL.str_of_name env.func.fname ||| "???"));
+      (* Create new taint_inst with intrafile disabled *)
+      let taint_inst_no_intra =
+        { taint_inst with options = { taint_inst.options with taint_intrafile = false } }
+      in
+      (* Retry the entire fixpoint_aux without intrafile *)
+      fixpoint_aux taint_inst_no_intra env.func ~enter_lval_env ~in_lambda ?class_name fun_cfg
+  | _ ->
+      log_timeout_warning taint_inst env.func.fname timeout_status;
+      let exit_lval_env = end_mapping.(flow.exit).D.out_env in
+      effects_from_arg_updates_at_exit enter_lval_env exit_lval_env
+      |> record_effects env;
+      (!(env.effects_acc), end_mapping)
 
 (*****************************************************************************)
 (* Entry point *)
