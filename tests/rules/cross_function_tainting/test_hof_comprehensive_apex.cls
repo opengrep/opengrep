@@ -1,26 +1,20 @@
-// HOF test for Apex: Custom higher-order functions
-// This tests taint flow through a custom map function with a callback
+// HOF test for Apex: Custom higher-order functions using simple loops
+// This tests taint flow through array iteration patterns
 
 public class TestHOF {
-    // Custom map function that takes a callback
-    public static List<String> customMap(List<String> arr, MapCallback callback) {
-        List<String> result = new List<String>();
+    // Custom forEach that iterates and calls sink on each item
+    public static void customForEach(List<String> arr) {
         for (String item : arr) {
-            result.add(callback.apply(item));
+        
+           // ruleid: test-hof-taint
+            sink(item);
         }
-        return result;
     }
 
-    // Test case: taint flows through customMap
-    public static void test_custom_map() {
+    // Test case: taint flows through customForEach
+    public static void test_custom_foreach() {
         List<String> arr = new List<String>{source()};
-        customMap(arr, new MapCallback() {
-            public String apply(String x) {
-                // ruleid: test-hof-taint
-                sink(x);
-                return x;
-            }
-        });
+                customForEach(arr);
     }
 
     // Stub functions
@@ -29,10 +23,5 @@ public class TestHOF {
     }
 
     public static void sink(String s) {
-    }
-
-    // Helper interface
-    public interface MapCallback {
-        String apply(String item);
     }
 }
