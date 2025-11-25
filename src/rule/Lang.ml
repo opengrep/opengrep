@@ -161,6 +161,7 @@ let langs_of_filename filename =
   | FT.PL FT.Ruby -> [ Ruby ]
   | FT.PL FT.Julia -> [ Julia ]
   | FT.PL FT.Csharp -> [ Csharp ]
+  | FT.PL FT.Vb -> [ Vb ]
   | FT.PL (FT.Web (FT.Php _)) -> [ Php ]
   | FT.PL (FT.Web FT.Hack) -> [ Hack ]
   | FT.PL FT.Kotlin -> [ Kotlin ]

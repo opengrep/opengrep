@@ -259,7 +259,7 @@ let collapse_names (ns : G.name list) : G.name =
           name_info = G.empty_id_info ~case_insensitive:true ()
         }
 
-let add_attrs_to_type (t : G.type_) (attrs : G.attribute list) : G.type_=
+let add_attrs_to_type (t : G.type_) (attrs : G.attribute list) : G.type_ =
   { t with t_attrs = attrs @ t.t_attrs }
 
 let add_attrs_to_stmt (s : G.stmt) (attrs : G.attribute list) : G.stmt =
