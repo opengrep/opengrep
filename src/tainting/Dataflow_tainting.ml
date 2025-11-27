@@ -671,6 +671,9 @@ let get_signature_for_object db method_name object_mappings obj arity =
       Shape_and_sig.(lookup_signature db method_sig_id arity)
 
 let lookup_signature_with_object_context env fun_exp object_mappings arity =
+  Log.debug (fun m ->
+      m "TAINT_SIG_LOOKUP: Looking up %s with arity %d"
+        (Display_IL.string_of_exp fun_exp) arity);
   match env.signature_db with
   | None ->
       Log.debug (fun m -> m "TAINT_SIG: No signature database available");
@@ -679,6 +682,9 @@ let lookup_signature_with_object_context env fun_exp object_mappings arity =
       Log.debug (fun m ->
           m "TAINT_SIG: Signature database has %d entries"
             (Shape_and_sig.FunctionMap.cardinal db.Shape_and_sig.signatures));
+      Log.debug (fun m ->
+          m "TAINT_SIG_DB: All signatures:\n%s"
+            (Shape_and_sig.show_signature_database db));
       match fun_exp.e with
       | Fetch { base = Var name; rev_offset = [] } ->
           (* Simple function call *)
@@ -1544,12 +1550,20 @@ let check_function_call env fun_exp args
     ?(_implicit_lambda : (IL.exp * IL.function_definition) option = None) () :
     (Taints.t * S.shape * Lval_env.t) option =
   let arity = List.length args in
+  Log.debug (fun m ->
+      m "CHECK_FUNCTION_CALL: %s with arity %d, intrafile=%b"
+        (Display_IL.string_of_exp fun_exp) arity
+        env.taint_inst.options.taint_intrafile);
   let sig_result =
     if env.taint_inst.options.taint_intrafile then lookup_signature env fun_exp arity
     else None
   in
   match sig_result with
   | Some fun_sig ->
+      Log.debug (fun m ->
+          m "SIG_FOUND: %s -> %s"
+            (Display_IL.string_of_exp fun_exp)
+            (Signature.show fun_sig));
       let lookup_sig_fn exp arity =
         if env.taint_inst.options.taint_intrafile then
           lookup_signature env exp arity
@@ -1604,7 +1618,7 @@ let check_function_call env fun_exp args
                    ( taints_acc,
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
-               | ToSinkInCall { callee; arg; args_taints = args_taints_inner } ->
+               | ToSinkInCall { callee; args_taints; _ } ->
                    (* Preserved ToSinkInCall from signature extraction - try to resolve it *)
                    let resolved_call_effects =
                      try
@@ -1616,7 +1630,7 @@ let check_function_call env fun_exp args
                        match callee_name_opt with
                        | Some callee_name ->
                            (* Try to look up the callback's signature *)
-                           let arity = List.length args_taints_inner in
+                           let arity = List.length args_taints in
                            (match lookup_signature env callee arity with
                            | Some callee_sig ->
                                Log.debug (fun m ->
@@ -1625,9 +1639,9 @@ let check_function_call env fun_exp args
                                (* Instantiate the callback's signature with the args_taints *)
                                Sig_inst.instantiate_function_signature env.lval_env
                                  callee_sig ~callee ~args:None
-                                 args_taints_inner
+                                 args_taints
                                  ~lookup_sig:(fun exp _depth ->
-                                   let arity = List.length args_taints_inner in
+                                   let arity = List.length args_taints in
                                    lookup_signature env exp arity)
                                  ()
                            | None ->
@@ -1675,18 +1689,18 @@ let check_function_call env fun_exp args
                            | ToLval (taints, var, offset) ->
                                (taints_acc, shape_acc, lval_env |> Lval_env.add var offset taints)
                            | ToSinkInCall _ ->
-                               (* Nested ToSinkInCall - just record it *)
-                               record_effects env [ Effect.ToSinkInCall { callee; arg; args_taints = args_taints_inner } ];
+                               (* Nested ToSinkInCall - drop it to avoid infinite retry loop *)
                                (taints_acc, shape_acc, lval_env))
                          (taints_acc, shape_acc, lval_env)
                          resolved_effects
                    | None ->
-                       (* Could not resolve - record as effect *)
-                       record_effects env [ Effect.ToSinkInCall { callee; arg; args_taints = args_taints_inner } ];
+                      (* Could not resolve - drop the effect to avoid infinite retry loop *)
                        (taints_acc, shape_acc, lval_env)))
              (Taints.empty, Bot, env.lval_env))
   | None ->
-
+      Log.debug (fun m ->
+          m "CHECK_FUNCTION_CALL: No signature found for %s, returning None"
+            (Display_IL.string_of_exp fun_exp));
       None
 
 let check_function_call_callee env e =
@@ -1694,10 +1708,19 @@ let check_function_call_callee env e =
   | Fetch ({ base = _; rev_offset = _ :: _ } as lval) ->
       (* Method call <object ...>.<method>, the 'sub_taints' and 'sub_shape'
        * correspond to <object ...>. *)
+      Log.debug (fun m ->
+          m "METHOD_CALL_CALLEE: %s (lval: %s)"
+            (Display_IL.string_of_exp e)
+            (Display_IL.string_of_lval lval));
       let taints, shape, `Sub (sub_taints, sub_shape), lval_env =
         check_tainted_lval env lval
       in
       let obj_taints = sub_taints |> add_taints_from_shape sub_shape in
+      Log.debug (fun m ->
+          m "METHOD_CALL_CALLEE: obj_taints=%s, sub_taints=%s, returning taints=%s"
+            (T.show_taints obj_taints)
+            (T.show_taints sub_taints)
+            (T.show_taints taints));
       (* Return sub_shape so we can check if the base object is a function parameter *)
       (`Obj (obj_taints, sub_shape), taints, shape, lval_env)
   | __else__ ->
@@ -1918,6 +1941,8 @@ let call_with_intrafile lval_opt e env args instr =
         | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
         | None -> (
             (* Regular function call processing *)
+            Log.debug (fun m ->
+                m "INTRAFILE: Checking function call %s" (Display_IL.string_of_exp e));
             match check_function_call { env with lval_env } e args args_taints () with
         | Some (call_taints, shape, lval_env) ->
             Log.debug (fun m ->
@@ -1927,6 +1952,12 @@ let call_with_intrafile lval_opt e env args instr =
                   (S.show_shape shape));
             (call_taints, shape, lval_env)
         | None -> (
+            Log.debug (fun m ->
+                m "INTRAFILE: No signature found for %s, falling back to propagation" (Display_IL.string_of_exp e));
+            Log.debug (fun m ->
+                m "INTRAFILE: all_args_taints = %s, propagate_through_functions = %b"
+                  (T.show_taints all_args_taints)
+                  (propagate_through_functions env));
             let call_taints =
               if not (propagate_through_functions env) then Taints.empty
               else
@@ -1934,6 +1965,10 @@ let call_with_intrafile lval_opt e env args instr =
                  * the taint of its arguments. *)
                 all_args_taints
             in
+            Log.debug (fun m ->
+                m "INTRAFILE: Returning call_taints = %s"
+                  (T.show_taints call_taints));
+
             match
               propagate_taint_via_java_getters_and_setters_without_definition
                 { env with lval_env } e args all_args_taints
@@ -2080,6 +2115,10 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
              * before dataflow analysis and added to object_mappings. *)
             (Taints.empty, Bot, env.lval_env))
     | Call (lval_opt, e, args) ->
+        Log.debug (fun m ->
+            m "CALL_INSTR: %s with %d args"
+              (Display_IL.string_of_exp e)
+              (List.length args));
         let intrafile = env.taint_inst.options.taint_intrafile in
         if intrafile then call_with_intrafile lval_opt e env args instr
         else
@@ -2656,33 +2695,18 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
       ||| Limits_semgrep.taint_FIXPOINT_TIMEOUT)
   in
   let timeout =
-    if taint_inst.options.taint_intrafile then base_timeout *. 10.0
+    if taint_inst.options.taint_intrafile then base_timeout *. 20.0
     else base_timeout
   in
   let end_mapping, timeout_status =
     DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
       ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
   in
-  (* If fixpoint timed out and intrafile was enabled, retry without intrafile *)
-  match (timeout_status, taint_inst.options.taint_intrafile, signature_db) with
-  | `Timeout, true, Some _ ->
-      Logs.warn (fun m ->
-          m "Fixpoint timeout with intrafile, retrying without [rule: %s file: %s func: %s]"
-            (Rule_ID.to_string taint_inst.rule_id)
-            !!(taint_inst.file)
-            (Option.map IL.str_of_name env.func.fname ||| "???"));
-      (* Create new taint_inst with intrafile disabled *)
-      let taint_inst_no_intra =
-        { taint_inst with options = { taint_inst.options with taint_intrafile = false } }
-      in
-      (* Retry the entire fixpoint_aux without intrafile *)
-      fixpoint_aux taint_inst_no_intra env.func ~enter_lval_env ~in_lambda ?class_name fun_cfg
-  | _ ->
-      log_timeout_warning taint_inst env.func.fname timeout_status;
-      let exit_lval_env = end_mapping.(flow.exit).D.out_env in
-      effects_from_arg_updates_at_exit enter_lval_env exit_lval_env
-      |> record_effects env;
-      (!(env.effects_acc), end_mapping)
+  log_timeout_warning taint_inst env.func.fname timeout_status;
+  let exit_lval_env = end_mapping.(flow.exit).D.out_env in
+  effects_from_arg_updates_at_exit enter_lval_env exit_lval_env
+  |> record_effects env;
+  (!(env.effects_acc), end_mapping)
 
 (*****************************************************************************)
 (* Entry point *)

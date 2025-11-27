@@ -91,7 +91,6 @@ val iter_targets_and_get_matches_and_exn_to_errors :
   < Cap.fork ; Cap.memory_limit > ->
   Core_scan_config.t ->
   target_handler ->
-  target_handler option ->
   Target.t list ->
   Core_profiling.file_profiling Core_result.match_result list * Target.t list
 
