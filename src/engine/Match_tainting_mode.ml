@@ -270,6 +270,9 @@ let get_arity params info lang =
 
 let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     ?(signature_db : Shape_and_sig.signature_database option)
+    ?(shared_call_graph :
+       (Function_call_graph.FuncGraph.t * (G.name * G.name) list) option =
+      None)
     (xconf : Match_env.xconfig) (xtarget : Xtarget.t) =
   Log.info (fun m ->
       m
@@ -320,7 +323,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
       file (ast, []) rule
   with
   | None -> None
-  | Some (taint_inst, _TODO_debug_taint, expls) ->
+  | Some (taint_inst, spec_matches, expls) ->
       (* FIXME: This is no longer needed, now we can just check the type 'n'. *)
       let ctx = ref AST_to_IL.empty_ctx in
       Visit_function_defs.visit
@@ -337,6 +340,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
       (* Only use signature database if cross-function taint analysis is enabled *)
       let final_signature_db =
         if taint_inst.options.taint_intrafile then (
+          Log.debug (fun m -> m "INTRAFILE_MODE: Entering taint_intrafile code path");
           (* Detect object initialization mappings for this file *)
           let object_mappings =
             Taint_signature_extractor.detect_object_initialization ast
@@ -359,7 +363,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             (infos, info_map)
           in
 
-          let collected_infos, info_map =
+          let (_collected_infos, info_map) =
             Visit_function_defs.fold_with_class_context
               (fun (infos, info_map) opt_ent class_name fdef ->
                 match fst fdef.fkind with
@@ -472,50 +476,97 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               ([], Shape_and_sig.FunctionMap.empty)
               ast
           in
-          let collected_infos = List.rev collected_infos in
-
           (* Use object mappings from Object_initialization.ml *)
           let all_object_mappings = object_mappings in
           let initial_signature_db =
             Shape_and_sig.add_object_mappings base_db all_object_mappings
           in
 
+          (* Use shared call graph if provided, otherwise compute it *)
           let call_graph =
-            Function_call_graph.build_call_graph ~lang
-              ~object_mappings:all_object_mappings ast
+            match shared_call_graph with
+            | Some (graph, shared_mappings) ->
+                (* Verify that object_mappings match to ensure consistency *)
+                if
+                  List.length shared_mappings
+                  <> List.length all_object_mappings
+                then
+                  (* Mappings don't match, recompute (shouldn't happen in practice) *)
+                  Function_call_graph.build_call_graph ~lang
+                    ~object_mappings:all_object_mappings ast
+                else graph
+            | None ->
+                (* Compute call graph as before *)
+                Function_call_graph.build_call_graph ~lang
+                  ~object_mappings:all_object_mappings ast
           in
 
-          Log.debug (fun m ->
-              (* Write call graph to dot file for debugging *)
-              (* let dot_file = open_out "call_graph.dot" in
-                 Function_call_graph.Dot.output_graph dot_file call_graph;
-                 close_out dot_file; *)
-              m "TAINT_SIG: Wrote call graph to call_graph.dot");
+          (* Optimize: filter call graph to only functions relevant for this rule
+             Use the already-computed source/sink ranges from spec_matches *)
+          let source_ranges =
+            spec_matches.sources
+            |> List.map (fun (rwm, _src) -> rwm.Range_with_metavars.r)
+          in
+          let sink_ranges =
+            spec_matches.sinks
+            |> List.map (fun (rwm, _sink) -> rwm.Range_with_metavars.r)
+          in
+          let source_functions =
+            Function_call_graph.find_functions_containing_ranges ~lang ast
+              source_ranges
+          in
+          let sink_functions =
+            Function_call_graph.find_functions_containing_ranges ~lang ast
+              sink_ranges
+          in
+
+          Log.debug (fun m -> m "SUBGRAPH: Found %d source functions and %d sink functions"
+            (List.length source_functions) (List.length sink_functions));
+          List.iteri (fun i fn_id ->
+            let name = match fn_id.Shape_and_sig.name with
+              | Some n -> fst n.IL.ident
+              | None -> "<no-name>"
+            in
+            Log.debug (fun m -> m "SUBGRAPH: source_function[%d] = %s" i name))
+            source_functions;
+          List.iteri (fun i fn_id ->
+            let name = match fn_id.Shape_and_sig.name with
+              | Some n -> fst n.IL.ident
+              | None -> "<no-name>"
+            in
+            Log.debug (fun m -> m "SUBGRAPH: sink_function[%d] = %s" i name))
+            sink_functions;
+
+          (* Write FULL call graph to dot file for debugging. Keeping for debugger *)
+          (* DISABLED: Graph output
+          
+          let full_dot_file = open_out "call_graph_full.dot" in
+          Function_call_graph.Dot.output_graph full_dot_file call_graph;
+          close_out full_dot_file;
+          Log.debug (fun m -> m "FULL GRAPH: Wrote full call graph to call_graph_full.dot");
+          *)
+
+          let relevant_graph =
+            Function_call_graph.compute_relevant_subgraph call_graph
+              source_functions sink_functions
+          in
+
+          (* DISABLED: Graph output and debug logging
+          (* Write call graph to dot file for debugging *)
+          let dot_file = open_out "call_graph.dot" in
+          Function_call_graph.Dot.output_graph dot_file relevant_graph;
+          close_out dot_file;
+          Log.debug (fun m -> m "SUBGRAPH: Wrote call graph to call_graph.dot");
+          *)
 
           let analysis_order =
             Function_call_graph.Topo.fold
               (fun fn acc -> fn :: acc)
-              call_graph []
+              relevant_graph []
             |> List.rev
           in
 
-          Log.debug (fun m ->
-              let names =
-                analysis_order
-                |> List.map Shape_and_sig.show_fn_id
-                |> String.concat " -> "
-              in
-              m "TAINT_SIG: analysis order: %s" names);
-
           let process_fun_info info db =
-            let log_name = Option.map IL.str_of_name info.opt_name ||| "???" in
-            Log.info (fun m ->
-                m
-                  "Match_tainting_mode:\n\
-                   --------------------\n\
-                   Extracting signature: %s\n\
-                   --------------------"
-                  log_name);
             let params = Tok.unbracket info.fdef.fparams in
             let arity = get_arity params info lang in
             let updated_db, _signature =
@@ -567,11 +618,9 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               initial_signature_db analysis_order
           in
 
-          let final_signature_db =
-            List.fold_left
-              (fun db info -> process_fun_info info db)
-              signature_db_after_order collected_infos
-          in
+          (* Skip the "remaining functions" phase entirely - if a function isn't
+             in the relevant subgraph, we don't need to analyze it *)
+          let final_signature_db = signature_db_after_order in
           Some final_signature_db)
         else (
           (* Cross-function taint analysis disabled: use main branch behavior *)
@@ -624,13 +673,6 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           in
           let stmts = AST_to_IL.stmt taint_inst.lang fields in
           let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
-          Log.info (fun m ->
-              m
-                "Match_tainting_mode:\n\
-                 --------------------\n\
-                 Checking object initialization: %s\n\
-                 --------------------"
-                (Option.map IL.str_of_name opt_name ||| "???"));
           let init_effects, _mapping =
             Dataflow_tainting.fixpoint taint_inst ~name
               ?signature_db:final_signature_db
@@ -647,12 +689,6 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         Common.with_time (fun () ->
             let xs = AST_to_IL.stmt taint_inst.lang (G.stmt1 ast) in
             let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-            Log.info (fun m ->
-                m
-                  "Match_tainting_mode:\n\
-                   --------------------\n\
-                   Checking top-level program\n\
-                   --------------------");
             let top_effects, _mapping =
               Dataflow_tainting.fixpoint taint_inst
                 ?signature_db:final_signature_db
@@ -755,19 +791,50 @@ let check_rules ~match_hook
     Formula_cache.mk_specialized_formula_cache rules
   in
 
-  rules
-  |> List.filter_map (fun rule ->
-         let xconf =
-           Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
-         in
-         per_rule_boilerplate_fn
-           (rule :> R.rule)
-           (fun () ->
-             Logs_.with_debug_trace ~__FUNCTION__
-               ~pp_input:(fun _ ->
-                 "target: "
-                 ^ !!(xtarget.path.internal_path_to_content)
-                 ^ "\nruleid: "
-                 ^ (rule.id |> fst |> Rule_ID.to_string))
-               (fun () ->
-                 check_rule per_file_formula_cache rule match_hook xconf xtarget)))
+  (* Pre-compute call graph if taint_intrafile is enabled for any rule.
+     The call graph only depends on the AST structure, not on individual rules,
+     so we can compute it once and share it across all rules for this file. *)
+  let shared_call_graph_opt =
+    match rules with
+    | [] -> None
+    | rule :: _ ->
+        let xconf_first =
+          Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
+        in
+        if xconf_first.config.taint_intrafile then
+          let lang = xtarget.xlang |> Xlang.to_lang_exn in
+          let (ast, _skipped_tokens) =
+            lazy_force xtarget.lazy_ast_and_errors
+          in
+          let object_mappings =
+            Taint_signature_extractor.detect_object_initialization ast lang
+          in
+          let call_graph =
+            Function_call_graph.build_call_graph ~lang
+              ~object_mappings:object_mappings ast
+          in
+          Some (call_graph, object_mappings)
+        else None
+  in
+
+  let results =
+    rules
+    |> List.filter_map (fun rule ->
+           let xconf =
+             Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
+           in
+           per_rule_boilerplate_fn
+             (rule :> R.rule)
+             (fun () ->
+               Logs_.with_debug_trace ~__FUNCTION__
+                 ~pp_input:(fun _ ->
+                   "target: "
+                   ^ !!(xtarget.path.internal_path_to_content)
+                   ^ "\nruleid: "
+                   ^ (rule.id |> fst |> Rule_ID.to_string))
+                 (fun () ->
+                   check_rule per_file_formula_cache rule match_hook
+                     ~shared_call_graph:shared_call_graph_opt xconf xtarget)))
+  in
+
+  results

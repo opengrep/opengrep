@@ -681,13 +681,6 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
     (args_taints : (Taints.t * shape) IL.argument list)
     ?(lookup_sig : (IL.exp -> int -> Signature.t option) option)
     ?(depth : int = 0) () : call_effects option =
-  (* Prevent infinite recursion in ToSinkInCall instantiation *)
-  if depth > 10 then (
-    Log.warn (fun m ->
-        m "instantiate_function_signature: Max recursion depth (10) exceeded for %s"
-          (Display_IL.string_of_exp callee));
-    None)
-  else
   let lval_to_taints lval =
     (* This function simply produces the corresponding taints to the
         given argument, within the body of the function.
@@ -926,10 +919,20 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                   in
                   (* Try to look up the signature - assume arity matches the args_taints *)
                   let lookup_arity = List.length fun_args_taints in
+                  Log.debug (fun m ->
+                      m "🔍 Looking up signature for '%s' with arity %d"
+                        (Display_IL.string_of_exp exp_to_lookup) lookup_arity);
                   (match lookup_fn exp_to_lookup lookup_arity with
-                  | Some sig_ -> Some sig_
+                  | Some sig_ ->
+                      Log.debug (fun m ->
+                          m "✅ Found signature for '%s'"
+                            (Display_IL.string_of_exp exp_to_lookup));
+                      Some sig_
                   | None ->
                       (* For anonymous classes, try looking up just the method name without the object *)
+                      Log.debug (fun m ->
+                          m "❌ No signature found for '%s', trying method name only"
+                            (Display_IL.string_of_exp exp_to_lookup));
                       (match exp_to_lookup.IL.e with
                       | Fetch { base = _; rev_offset = [{ o = Dot method_name; _ }] } ->
                           (* Try looking up just the method name *)
@@ -937,8 +940,15 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                             IL.e = Fetch { base = Var method_name; rev_offset = [] };
                             eorig = exp_to_lookup.eorig;
                           } in
+                          Log.debug (fun m ->
+                              m "🔍 Looking up method name only: '%s' with arity %d"
+                                (Display_IL.string_of_exp method_only_exp) (List.length fun_args_taints));
                           (match lookup_fn method_only_exp (List.length fun_args_taints) with
-                          | Some sig_ -> Some sig_
+                          | Some sig_ ->
+                              Log.debug (fun m ->
+                                  m "✅ Found signature for method name '%s'"
+                                    (Display_IL.string_of_exp method_only_exp));
+                              Some sig_
                           | None ->
                               Log.err (fun m ->
                                   m "%s: Could not find the shape of function argument '%s', and no signature found"
@@ -977,6 +987,9 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                   (Display_IL.string_of_exp fun_exp)
                   (Effect.show_args_taints fun_args_taints)
                   (Effect.show_args_taints args_taints));
+            (* Check depth limit before recursing into callback *)
+            if depth > 10 then []
+            else
             (* Pass through the outer args so we can extract the actual callback expression *)
             (match
                instantiate_function_signature lval_env fun_sig ~callee:fun_exp

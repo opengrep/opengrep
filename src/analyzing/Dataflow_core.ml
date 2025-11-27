@@ -135,41 +135,38 @@ module Make (F : Flow) = struct
     (* nosemgrep: no-print-in-semgrep *)
     UCommon.pr (mapping_to_str flow env_to_str mapping)
 
-  let fixpoint_worker ~timeout eq_env mapping trans (flow : F.flow) succs workset =
+  let fixpoint_worker ~timeout:_ eq_env mapping trans (flow : F.flow) succs
+      workset =
     (* Use iteration-based limit for determinism: 10x graph size, capped at 100k *)
+    let max_nodei = Array.length mapping - 1 in
     let num_vertices = flow.graph#nb_nodes in
-    let max_iterations = min 100000 (num_vertices * 10) in
-    let start_time = Unix.gettimeofday () in
+    let max_visits_per_node = Limits_semgrep.taint_MAX_VISITS_PER_NODE in
+    let max_iterations = min 100000 (num_vertices * max_visits_per_node) in
+    let visit_counts = Array.make (max_nodei + 1) 0 in
     let rec loop i work =
       if NodeiSet.is_empty work then (mapping, `Ok)
       else
         (* Check iteration limit first (deterministic) *)
-        if i >= max_iterations then (
-          Log.warn (fun m ->
-              m "Fixpoint iteration timeout: vertices=%d, max_iters=%d, actual_iters=%d"
-                num_vertices max_iterations i);
-          (mapping, `Timeout)
-        )
-        (* Then check wall-clock timeout (safety fallback) *)
-        else if timeout > 0.0 && Unix.gettimeofday () -. start_time > timeout then (
-          Log.warn (fun m ->
-              m "Fixpoint wall-clock timeout: vertices=%d, timeout=%.2fs, iters=%d"
-                num_vertices timeout i);
-          (mapping, `Timeout)
-        )
+        if i >= max_iterations then (mapping, `Timeout)
         else
           (* Use min_elt instead of choose for deterministic processing order *)
           let ni = NodeiSet.min_elt work in
           let work' = NodeiSet.remove ni work in
-          let old = mapping.(ni) in
-          let new_ = trans mapping ni in
-          let work'' =
-            if eq_inout eq_env old new_ then work'
-            else (
-              mapping.(ni) <- new_;
-              NodeiSet.union work' (succs flow ni))
-          in
-          loop (i + 1) work''
+          visit_counts.(ni) <- visit_counts.(ni) + 1;
+          (* Limit all nodes to max visits to prevent infinite loops *)
+          if visit_counts.(ni) > max_visits_per_node then
+            (* Skip this node and continue *)
+            loop (i + 1) work'
+          else
+            let old = mapping.(ni) in
+            let new_ = trans mapping ni in
+            let work'' =
+              if eq_inout eq_env old new_ then work'
+              else (
+                mapping.(ni) <- new_;
+                NodeiSet.union work' (succs flow ni))
+            in
+            loop (i + 1) work''
     in
     loop 0 workset
 
