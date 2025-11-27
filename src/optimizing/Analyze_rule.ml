@@ -576,9 +576,7 @@ let run_cnf_step2 ?(caseless=false) cnf big_str =
                   res)
        | Regexp2_search re ->
            Log.debug (fun m -> m "check for the presence of %S" (Pcre2_.show re));
-           let res = Pcre2_.unanchored_match re big_str in
-           Log.debug (fun m -> m "result: %B" res);
-           res)
+           Pcre2_.unanchored_match re big_str)
 [@@profiling]
 
 (*****************************************************************************)

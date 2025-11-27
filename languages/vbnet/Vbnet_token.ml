@@ -36,12 +36,12 @@ let extract_string_content (t : t) : string =
   | StringLiteral s
   | CharLiteral s
   | CDATA s -> s
-  | _ -> failwith "Impossible"
+  | _ -> raise Common.Impossible
 
 let extract_int_content (t : t) : int64 =
   match t.kind with
   | IntLiteral n -> n
-  | _ -> failwith "Impossible"
+  | _ -> raise Common.Impossible
 
 let token_ghost (tok : t) : bool =
   match tok with

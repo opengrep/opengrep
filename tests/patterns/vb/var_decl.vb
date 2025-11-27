@@ -1,7 +1,7 @@
 Class C
 
 ' ERROR:
-Dim test As Iteger
+Dim test As Integer
 
 ' Examples from the lang ref:
 

@@ -114,7 +114,7 @@ let xpatterns_in_formula (e : R.formula) : (Xpattern.t * bool) list =
 let partition_xpatterns ~caseless xs =
   ignore caseless;
   let compile_re =
-    (* TODO: check if we can do better for aseless langs, e.g. *)
+    (* TODO: check if we can do better for caseless langs, e.g. *)
     (* if caseless then
       Pcre2_.pcre_compile_caseless
        else *)

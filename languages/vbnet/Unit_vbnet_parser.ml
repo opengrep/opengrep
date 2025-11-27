@@ -27,7 +27,7 @@ let get_val v =
 
 let smoke1 _ : bool =
   let prog = "Dim x as Integer = 123" in
-  (* NOTE: single_line_statment actually returns a list of statements *)
+  (* NOTE: single_line_statement actually returns a list of statements *)
   let res = T.tokenize prog
             |> P.run P.single_line_statement
             |> List.hd |> get_val |> List.hd in

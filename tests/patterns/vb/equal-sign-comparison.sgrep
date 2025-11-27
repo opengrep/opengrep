@@ -1,2 +1,2 @@
-' this is interpreted as comparison, use $X = $Y (no parentheses) if you mean assignemnt
+' this is interpreted as comparison, use $X = $Y (no parentheses) if you mean assignment
 ($X = $Y)
