@@ -119,6 +119,8 @@ let tests (caps : Cap.all_caps) =
       Unit_gitignore.tests;
       Unit_include_filter.tests;
       Unit_parsing.tests ();
+      Unit_vbnet_tokenize.tests;
+      Unit_vbnet_parser.tests;
       Unit_entropy.tests;
       Parser_regexp.Unit_parsing.tests;
       Unit_ReDoS.tests;

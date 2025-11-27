@@ -1,0 +1,3 @@
+Sub SomeMethod (..., m As Integer, ...)
+    ...
+End Sub

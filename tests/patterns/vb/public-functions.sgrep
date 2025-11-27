@@ -1,0 +1,3 @@
+Public Function $FOO(...)
+   ...
+End Function

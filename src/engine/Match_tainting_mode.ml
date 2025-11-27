@@ -698,7 +698,8 @@ let check_rules ~match_hook
          | Lang.Rust
          | Lang.Scala
          | Lang.Swift
-         | Lang.Ts ->
+         | Lang.Ts
+         | Lang.Vb ->
              (* Known supported languages - no warning *)
              ()
          | other_lang ->

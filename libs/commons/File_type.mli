@@ -25,6 +25,7 @@ and pl_type =
   | Java
   | Kotlin
   | Csharp
+  | Vb
   | ObjectiveC of string
   | Swift
   | Apex

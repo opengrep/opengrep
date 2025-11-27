@@ -1,0 +1,12 @@
+(library
+ (public_name parser_vbnet)
+ (name parser_vbnet)
+ (wrapped false)
+ (libraries
+   commons
+   lib_parsing
+   ast_generic
+ )
+ (preprocess (pps ppx_deriving.show))
+)
+(ocamllex Vbnet_lexer)

@@ -32,6 +32,8 @@
 
     osemgrep_language_server
     semgrep.osemgrep_tests
+
+    parser_vbnet
   )
  (modes native byte) ; bytecode here for debugging
  (preprocess
