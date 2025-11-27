@@ -505,8 +505,7 @@ let errors_of_timeout_or_memory_exn (exn : exn) (target : Target.t) : ESet.t =
 (* Returns a list of match results and a separate list of scanned targets *)
 let iter_targets_and_get_matches_and_exn_to_errors
     (caps : < Cap.fork ; Cap.memory_limit ; .. >) (config : Core_scan_config.t)
-    (handle_target : target_handler) (handle_target_no_intra : target_handler option)
-    (targets : Target.t list) :
+    (handle_target : target_handler) (targets : Target.t list) :
     Core_profiling.file_profiling Core_result.match_result list * Target.t list
     =
   (* The target is None when the file was not scanned *)
@@ -569,38 +568,16 @@ let iter_targets_and_get_matches_and_exn_to_errors
                   * but we intercept Timeout here to give a better diagnostic.
                   *)
                  | (Match_rules.File_timeout _ | Out_of_memory | Stack_overflow | Memory_limit.ExceededMemoryLimit _)
-                   as exn when config.taint_intrafile && Option.is_some handle_target_no_intra ->
-                     (* File-level error with intrafile enabled - retry without intrafile *)
-                     Logs.warn (fun m ->
-                         m "File-level error on %s (%s), retrying without intrafile"
-                           !!internal_path (Printexc.to_string exn));
-                     let handle_no_intra = Option.get handle_target_no_intra in
-                     (try
-                        Memory_limit.run_with_global_memory_limit
-                          (caps :> < Cap.memory_limit >)
-                          ~get_context:(get_context_for_memory_limit target)
-                          ~mem_limit_mb:config.max_memory_mb
-                          (fun () -> handle_no_intra target)
-                      with
-                      | _ as retry_exn ->
-                          Logs.err (fun m ->
-                              m "File dropped %s: error even without intrafile (%s)"
-                                !!internal_path (Printexc.to_string retry_exn));
-                          log_critical_exn_and_last_rule ();
-                          let errors = errors_of_timeout_or_memory_exn exn target in
-                          let scanned = true in
-                          (Core_result.mk_match_result [] errors noprof, scanned))
-                 | (Match_rules.File_timeout _ | Out_of_memory | Stack_overflow | Memory_limit.ExceededMemoryLimit _)
                    as exn ->
-                     Logs.warn (fun m ->
-                         m "File dropped %s: %s"
-                           !!internal_path (Printexc.to_string exn));
                      log_critical_exn_and_last_rule ();
                      let errors = errors_of_timeout_or_memory_exn exn target in
                      (* we got an exn on the target so definitely we tried to
                       * process the target
                       *)
                      let scanned = true in
+                     Logs.warn (fun m ->
+                         m "File dropped %s: %s"
+                           !!internal_path (Printexc.to_string exn));
                      (Core_result.mk_match_result [] errors noprof, scanned)
                  | Time_limit.Timeout _ ->
                      (* converted in Main_timeout in timeout_function() *)
@@ -901,23 +878,14 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       end
     else NoPrefiltering
   in
-  let handle_target =
-    mk_target_handler (caps :> < Cap.time_limit >) config valid_rules
-      prefilter_cache_opt
-  in
-  let handle_target_no_intra =
-    if config.taint_intrafile then
-      Some
-        (mk_target_handler (caps :> < Cap.time_limit >)
-           { config with taint_intrafile = false }
-           valid_rules prefilter_cache_opt)
-    else None
-  in
   let file_results, scanned_targets =
     targets
     |> iter_targets_and_get_matches_and_exn_to_errors
          (caps :> < Cap.fork ; Cap.memory_limit >)
-         config handle_target handle_target_no_intra
+         config
+         (mk_target_handler
+            (caps :> < Cap.time_limit >)
+            config valid_rules prefilter_cache_opt)
   in
 
   (* TODO: Delete any lockfile-only findings whose rule produced a code+lockfile
