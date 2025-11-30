@@ -3,5 +3,5 @@
 
   Automatically modified by scripts/release/bump.
 *)
-let version = "1.11.5"
+let version = "1.12.0"
 let version_semgrep = "1.100.0"

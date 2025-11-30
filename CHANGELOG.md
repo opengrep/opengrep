@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.12.0](https://github.com/opengrep/opengrep/releases/tag/v1.12.0) - 30-11-2025
+
+### New features
+
+* Support for VB.NET by @maciejpirog in #473
+
+### Improvements
+
+* Bump python version to 3.13 in self-contained binary by @dimitris-m in #475
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.11.5...v1.12.0
+
+
 ## [1.11.5](https://github.com/opengrep/opengrep/releases/tag/v1.11.5) - 03-11-2025
 
 ### Bug fixes
