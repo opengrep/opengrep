@@ -5,8 +5,6 @@ rules:
       - rust
     severity: WARNING
     mode: taint
-    options:
-      taint_intrafile: true
     pattern-sources:
       - pattern: source(...)
     pattern-sinks:

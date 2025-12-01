@@ -930,65 +930,21 @@ and expr_aux env ?(void = false) g_expr =
           in
           expr env last)
   | G.Record fields -> record env fields
-  | G.Container (G.Dict, xs) -> (
-      (* Lua-specific: Check if this is a Lua array-like table with NextArrayIndex *)
-      let l, entries, r = xs in
-      let is_lua_array_table =
-        env.lang =*= Lang.Lua &&
-        List.for_all
-          (fun entry ->
-            match entry.G.e with
-            | G.Assign ({ e = IdSpecial (NextArrayIndex, _); _ }, _, _) -> true
-            | _ -> false)
-          entries
-      in
-      if is_lua_array_table then
-        (* Extract values from Assign(NextArrayIndex, value) and treat as array *)
-        let values =
-          entries
-          |> List.map (fun entry ->
-                 match entry.G.e with
-                 | G.Assign (_, _, value) -> value
-                 | _ -> assert false)
-        in
-        let env, vs = List.fold_left_map (fun env v -> expr env v) env values in
-        (env, mk_e (Composite (CList, (l, vs, r))) eorig)
-      else
-        (* Regular dict *)
-        dict env xs g_expr)
+  | G.Container (G.Dict, (l, entries, r))
+    when AST_modifications.is_lua_array_table env.lang entries ->
+      (* Lua array-like table: {1, 2, 3} parsed as Dict with NextArrayIndex keys *)
+      let values = AST_modifications.extract_lua_array_values entries in
+      let env, vs = List.fold_left_map (fun env v -> expr env v) env values in
+      (env, mk_e (Composite (CList, (l, vs, r))) eorig)
+  | G.Container (G.Dict, xs) -> dict env xs g_expr
   | G.Container (kind, xs) ->
       let l, xs, r = xs in
       let env, xs = List.fold_left_map (fun env x -> expr env x) env xs in
       let kind = composite_kind ~g_expr kind in
       (env, mk_e (Composite (kind, (l, xs, r))) eorig)
   | G.Comprehension _ -> todo env.stmts (G.E g_expr)
-  | G.Lambda fdef -> (
-      (* Elixir implicit parameter lambda conversion:
-       * Elixir lambdas like `fn x -> sink(x) end` are parsed with an implicit parameter
-       * and a Switch body. Convert them to explicit parameter lambdas. *)
-      let converted_fdef =
-        match (env.lang, Tok.unbracket fdef.fparams, fdef.fbody) with
-        | ( Lang.Elixir,
-            [ G.Param { pname = Some (param_name, _); _ } ],
-            G.FBStmt { s = G.Switch (_, Some (G.Cond _), cases); _ } )
-          when param_name =*= "!_implicit_param!" && List.length cases =*= 1 -> (
-            (* Single-case switch on implicit parameter - extract the pattern and body *)
-            match cases with
-            | [
-             G.CasesAndBody
-               ([ G.Case (_, G.OtherPat (("ArgsAndWhenOpt", _), [ G.Args [ G.Arg { e = G.N (G.Id (id, _)); _ } ] ])) ], body_stmt);
-            ] ->
-                (* Convert to lambda with explicit parameter from the pattern *)
-                let new_param = G.Param (G.param_of_id id) in
-                {
-                  fdef with
-                  fparams = Tok.unsafe_fake_bracket [ new_param ];
-                  fbody = G.FBStmt body_stmt;
-                }
-            | _ -> fdef)
-        | _ -> fdef
-      in
-      let lval = fresh_lval (snd converted_fdef.fkind) in
+  | G.Lambda fdef ->
+      let lval = fresh_lval (snd fdef.fkind) in
       let _, final_fdef =
         (* NOTE(config.stmts): This is a recursive call to
          * `function_definition` and we need to pass it a fresh
@@ -999,10 +955,10 @@ and expr_aux env ?(void = false) g_expr =
          * `foo(bar(), (x) => { ... })`, because the instruction added
          * to `stmts` by the translation of `bar()` is still present
          * when traslating `(x) => { ... }`. *)
-        function_definition { env with stmts = [] } converted_fdef
+        function_definition { env with stmts = [] } fdef
       in
       let env = add_instr env (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig) in
-      (env, mk_e (Fetch lval) eorig))
+      (env, mk_e (Fetch lval) eorig)
   | G.AnonClass def ->
       (* TODO: should use def.ckind *)
       let tok = Common2.fst3 def.G.cbody in
@@ -1109,66 +1065,9 @@ and expr_aux env ?(void = false) g_expr =
   | G.DotAccessEllipsis _ ->
       sgrep_construct env.stmts (G.E g_expr)
   | G.StmtExpr st -> stmt_expr env ~g_expr st
-  | G.OtherExpr (("ShortLambda", tok), [ G.E body_expr ]) ->
-      (* Elixir ShortLambda: &(sink(&1)) - convert to lambda *)
-      (* Extract body and create lambda with placeholders as parameters *)
-      let rec find_max_placeholder e =
-        match e.G.e with
-        | G.OtherExpr (("PlaceHolder", _), [ G.E { e = G.L (G.Int (Some n, _)); _ } ]) ->
-            Int64.to_int n
-        | G.Call (callee, (_, args, _)) ->
-            let callee_max = find_max_placeholder callee in
-            let args_max = args |> List.fold_left (fun acc arg ->
-              match arg with
-              | G.Arg e | G.ArgKwd (_, e) -> max acc (find_max_placeholder e)
-              | _ -> acc
-            ) 0 in
-            max callee_max args_max
-        | _ -> 0
-      in
-      let max_placeholder = find_max_placeholder body_expr in
-      if max_placeholder =*= 0 then
-        (* No placeholders, treat as fixme *)
-        let env, e = expr env body_expr in
-        let other_expr = mk_e (Composite (CTuple, (tok, [e], tok))) eorig in
-        let env, _, tmp = mk_aux_var ~str:"ShortLambda" env tok other_expr in
-        let partial = mk_e (Fetch tmp) (related_tok tok) in
-        (env, fixme_exp ToDo (G.E g_expr) (related_tok tok) ~partial)
-      else
-        (* Convert to Lambda - replace &1, &2, etc. with params *)
-        let rec replace_placeholders e =
-          match e.G.e with
-          | G.OtherExpr (("PlaceHolder", _), [ G.E { e = G.L (G.Int (Some n, tk)); _ } ]) ->
-              let param_idx = Int64.to_int n - 1 in
-              let param_name = spf "x%d" param_idx in
-              let param_id = (param_name, tk) in
-              G.N (G.Id (param_id, G.empty_id_info ())) |> G.e
-          | G.Call (callee, (lp, args, rp)) ->
-              let new_callee = replace_placeholders callee in
-              let new_args = args |> List.map (fun arg ->
-                match arg with
-                | G.Arg e -> G.Arg (replace_placeholders e)
-                | G.ArgKwd (id, e) -> G.ArgKwd (id, replace_placeholders e)
-                | other -> other
-              ) in
-              G.Call (new_callee, (lp, new_args, rp)) |> G.e
-          | _ -> e
-        in
-        let replaced_body = replace_placeholders body_expr in
-        let params = List.init max_placeholder (fun i ->
-          let param_name = spf "x%d" i in
-          let param_id = (param_name, tok) in
-          G.Param (G.param_of_id param_id)
-        ) in
-        let body_stmt = G.ExprStmt (replaced_body, G.sc) |> G.s in
-        let fdef = {
-          G.fparams = Tok.unsafe_fake_bracket params;
-          frettype = None;
-          fkind = (G.LambdaKind, tok);
-          fbody = G.FBStmt body_stmt;
-        } in
-        let lambda_expr = G.Lambda fdef |> G.e in
-        expr env lambda_expr
+  | G.OtherExpr (("ShortLambda", _), _) when env.lang =*= Lang.Elixir ->
+      let lambda_expr = AST_modifications.convert_elixir_short_lambda g_expr in
+      expr env lambda_expr
   | G.OtherExpr ((str, tok), xs) ->
       let env, es =
         List.fold_left_map

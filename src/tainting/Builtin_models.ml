@@ -16,24 +16,11 @@ let make_args_taints taint_set taint_arg_index =
       if idx = taint_arg_index then IL.Unnamed (taint_set, Shape.Bot)
       else IL.Unnamed (Taint.Taint_set.empty, Shape.Bot))
 
-(** Helper to create a function identifier *)
-let make_fn_id ?class_name name_str =
-  {
-    class_name;
-    name =
-      Some
-        {
-          IL.ident = (name_str, Tok.unsafe_fake_tok name_str);
-          sid = AST_generic.SId.unsafe_default;
-          id_info = AST_generic.empty_id_info ();
-        };
-  }
-
 (** Helper function to add HOF signatures that return a function. This is for
     languages like Ruby where arr.map() returns a function that takes a
     callback.
 
-    @param db The signature database to add to
+    @param db The builtin signature database to add to
     @param method_names List of method names to add signatures for
     @param taint_arg_index
       Which callback argument receives the taint (default 0). *)
@@ -84,11 +71,10 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
     { Signature.params = []; effects = Effects.singleton return_effect }
   in
 
-  (* Add signatures for all methods *)
+  (* Add signatures for all methods using simple string keys *)
   List.fold_left
     (fun acc_db method_name ->
-      let fn_id = make_fn_id method_name in
-      add_signature acc_db fn_id { sig_ = method_sig; arity = 0 })
+      add_builtin_signature acc_db method_name { sig_ = method_sig; arity = 0 })
     db method_names
 
 (** Helper function to add HOF signatures for standalone functions (not
@@ -98,7 +84,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
     For example, map(callback, iterable) passes iterable elements to the
     callback.
 
-    @param db The signature database to add to
+    @param db The builtin signature database to add to
     @param function_names List of function names to add signatures for
     @param arity The number of parameters the function takes
     @param callback_index Which parameter is the callback (default 0)
@@ -134,13 +120,24 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
       }
   in
 
-  let hof_sig = { Signature.params; effects = Effects.singleton hof_effect } in
+  (* Also add a ToReturn effect to propagate data taint to the return value.
+     This is essential for chained HOFs like map(f, filter(g, data)). *)
+  let return_effect =
+    Effect.ToReturn
+      {
+        data_taints = data_taint_set;
+        data_shape = Shape.Bot;
+        control_taints = Taint.Taint_set.empty;
+        return_tok = Tok.unsafe_fake_tok "builtin_hof";
+      }
+  in
 
-  (* Add signatures for all functions *)
+  let hof_sig = { Signature.params; effects = Effects.of_list [hof_effect; return_effect] } in
+
+  (* Add signatures for all functions using simple string keys *)
   List.fold_left
     (fun acc_db function_name ->
-      let fn_id = make_fn_id function_name in
-      add_signature acc_db fn_id { sig_ = hof_sig; arity })
+      add_builtin_signature acc_db function_name { sig_ = hof_sig; arity })
     db function_names
 
 (** Helper function to add HOF signatures for a list of methods. This creates a
@@ -149,7 +146,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
 
     For example, arr.map(callback) passes array elements to the callback.
 
-    @param db The signature database to add to
+    @param db The builtin signature database to add to
     @param method_names List of method names to add signatures for
     @param arity The number of parameters the function takes
     @param callback_index
@@ -187,14 +184,26 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
       }
   in
 
-  let hof_sig = { Signature.params; effects = Effects.singleton hof_effect } in
+  (* Also add a ToReturn effect to propagate this taint to the return value.
+     This is essential for chained HOFs like arr.map(...).filter(...) where
+     the result of map needs to carry taint for filter to propagate. *)
+  let return_effect =
+    Effect.ToReturn
+      {
+        data_taints = this_taint_set;
+        data_shape = Shape.Bot;
+        control_taints = Taint.Taint_set.empty;
+        return_tok = Tok.unsafe_fake_tok "builtin_hof";
+      }
+  in
 
-  (* Add signatures for all methods *)
+  let hof_sig = { Signature.params; effects = Effects.of_list [hof_effect; return_effect] } in
+
+  (* Add signatures for all methods using simple string keys *)
   List.fold_left
     (fun acc_db method_name ->
       let transformed_name = method_name_transform method_name in
-      let fn_id = make_fn_id transformed_name in
-      add_signature acc_db fn_id { sig_ = hof_sig; arity })
+      add_builtin_signature acc_db transformed_name { sig_ = hof_sig; arity })
     db method_names
 
 (** HOF configuration types for reusable abstraction *)
@@ -428,12 +437,13 @@ let get_hof_configs (lang : Lang.t) : hof_kind list =
             params = Some [ Signature.Other; Signature.P "callback" ];
           };
       ]
+  (* Apex: No native HOF methods on collections, and no lambda support.
+     Third-party libraries use interface callbacks which need devirtualization. *)
   | _ -> []
 
-(** Create a signature database with built-in models for standard library HOFs
-*)
-let create_builtin_models (lang : Lang.t) : signature_database =
-  let db = empty_signature_database () in
+(** Create a builtin signature database with built-in models for standard library HOFs *)
+let create_builtin_models (lang : Lang.t) : builtin_signature_database =
+  let db = empty_builtin_signature_database () in
   let configs = get_hof_configs lang in
 
   (* Convert configs to signatures *)
@@ -455,19 +465,9 @@ let create_builtin_models (lang : Lang.t) : signature_database =
           add_hof_returning_function_signatures acc_db methods ())
     db configs
 
-let init_signature_database (lang : Lang.t)
-    (user_db : signature_database option) : signature_database =
-  let builtin_db = create_builtin_models lang in
+(** Initialize the signature database. Now that builtin signatures are separate,
+    this function just returns the user DB as-is (or empty if None). *)
+let init_signature_database (user_db : signature_database option) : signature_database =
   match user_db with
-  | Some db ->
-      (* Merge: user DB signatures + builtin signatures *)
-      (* User signatures don't override builtins, they're additive *)
-      let merged_signatures =
-        FunctionMap.union
-          (fun _fn_id user_sigs builtin_sigs ->
-            (* Merge both signature sets *)
-            Some (SignatureSet.union user_sigs builtin_sigs))
-          db.signatures builtin_db.signatures
-      in
-      { db with signatures = merged_signatures }
-  | None -> builtin_db
+  | Some db -> db
+  | None -> empty_signature_database ()

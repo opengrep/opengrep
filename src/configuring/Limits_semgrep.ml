@@ -49,7 +49,7 @@ let taint_FIXPOINT_TIMEOUT = 0.2
 (* this replaces the taint FIXPOINT_TIMEOUT in the config file, in a fixpoint if a node
  * is visted more often than this the assumption is that it is a cycle and so the
  * fixpoint stops *)
-let taint_MAX_VISITS_PER_NODE = 10
+let taint_MAX_VISITS_PER_NODE = 4
 
 (** Bounds the number of variables we can track. *)
 let taint_MAX_TAINTED_VARS = 1000
