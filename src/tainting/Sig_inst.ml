@@ -351,6 +351,12 @@ let instantiate_shape inst_var inst_trace shape =
 
 let find_pos_in_actual_args ?(err_ctx = "???") args_taints fparams :
     T.arg -> _ option =
+  Log.debug (fun m ->
+      m "FIND_POS_IN_ACTUAL_ARGS: err_ctx=%s, num_args=%d, num_fparams=%d, fparams=%s"
+        err_ctx
+        (List.length args_taints)
+        (List.length fparams)
+        (fparams |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat ", "));
   let pos_args_taints, named_args_taints =
     List.partition_map
       IL.(
@@ -681,6 +687,12 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
     (args_taints : (Taints.t * shape) IL.argument list)
     ?(lookup_sig : (IL.exp -> int -> Signature.t option) option)
     ?(depth : int = 0) () : call_effects option =
+  Log.debug (fun m ->
+      m "INST_SIG: depth=%d, callee=%s, num_args_taints=%d, sig_params=%s"
+        depth
+        (Display_IL.string_of_exp callee)
+        (List.length args_taints)
+        (taint_sig.params |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat ", "));
   let lval_to_taints lval =
     (* This function simply produces the corresponding taints to the
         given argument, within the body of the function.
@@ -729,6 +741,9 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
   (* Instatiate effects *)
   let inst_effect : Effect.t -> call_effect list = function
     | Effect.ToReturn { data_taints; data_shape; control_taints; return_tok } ->
+        Log.debug (fun m ->
+            m "INST_EFFECT: ToReturn BEFORE inst_taints: %d taints"
+              (Taints.cardinal data_taints));
         let data_taints = inst_taints data_taints in
         let data_shape = inst_shape data_shape in
         let control_taints =
@@ -737,6 +752,11 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
            * the call trace! *)
           inst_taints control_taints
         in
+        Log.debug (fun m ->
+            m "INST_EFFECT: ToReturn AFTER inst_taints: %d taints, control=%d, relevant=%b"
+              (Taints.cardinal data_taints)
+              (Taints.cardinal control_taints)
+              (Shape.taints_and_shape_are_relevant data_taints data_shape));
         if
           Shape.taints_and_shape_are_relevant data_taints data_shape
           || not (Taints.is_empty control_taints)
@@ -867,17 +887,31 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                 | IL.Named (_, exp) -> Some exp)
             | _ -> None
           in
+          Log.debug (fun m ->
+              m "ToSinkInCall: actual_fun_exp = %s, lookup_sig = %s"
+                (match actual_fun_exp with Some e -> Display_IL.string_of_exp e | None -> "None")
+                (if Option.is_some lookup_sig then "Some" else "None"));
           (* Try to use the actual lambda expression to find its shape in lval_env *)
           let fun_sig_opt =
             match actual_fun_exp with
             | Some ({ IL.e = Fetch { base = Var var_name; rev_offset = []; _ }; _ }) ->
                 (* Simple variable reference like _tmp:67 *)
                 let taint_lval = { T.base = BGlob var_name; offset = [] } in
+                Log.debug (fun m ->
+                    m "ToSinkInCall: Trying lval_to_taints for var %s" (IL.str_of_name var_name));
                 (match lval_to_taints taint_lval with
-                | Some (_taints, Fun sig_) -> Some sig_
-                | Some (_taints, _other_shape) -> None
-                | None -> None)
-            | _ -> None
+                | Some (_taints, Fun sig_) ->
+                    Log.debug (fun m -> m "ToSinkInCall: Found signature in lval_env");
+                    Some sig_
+                | Some (_taints, _other_shape) ->
+                    Log.debug (fun m -> m "ToSinkInCall: Found non-Fun shape in lval_env");
+                    None
+                | None ->
+                    Log.debug (fun m -> m "ToSinkInCall: Not found in lval_env");
+                    None)
+            | _ ->
+                Log.debug (fun m -> m "ToSinkInCall: actual_fun_exp is not a simple var reference");
+                None
           in
           (* If we didn't find the lambda's shape, fall back to using the parameter lval *)
           let fun_sig_opt = match fun_sig_opt with
@@ -917,21 +951,45 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                         | _ -> actual_exp)
                     | _ -> actual_exp
                   in
+                  (* If exp_to_lookup is a temp var with NoOrig, try to extract callback from
+                     callee's eorig which contains the original call expression *)
+                  let exp_to_lookup =
+                    match exp_to_lookup.IL.e, exp_to_lookup.eorig with
+                    | Fetch { base = Var _; rev_offset = [] }, IL.NoOrig ->
+                        (* Try to get callback from callee's original call expression *)
+                        (match callee.eorig with
+                        | IL.SameAs { G.e = G.Call (_, (_, orig_args, _)); _ } ->
+                            (* Extract the argument at fun_arg.index from original AST args *)
+                            (match List.nth_opt orig_args fun_arg.index with
+                            | Some (G.Arg { G.e = G.N (G.Id (id, id_info)); _ }) ->
+                                (* Simple callback: customForEach(arr, n, sink_callback) *)
+                                let callback_name = AST_to_IL.var_of_id_info id id_info in
+                                { IL.e = Fetch { base = Var callback_name; rev_offset = [] };
+                                  eorig = IL.NoOrig }
+                            | Some (G.Arg { G.e = G.Ref (_, { G.e = G.N (G.Id (id, id_info)); _ }); _ }) ->
+                                (* Address-of callback: customForEach(arr, n, &sink_callback) *)
+                                let callback_name = AST_to_IL.var_of_id_info id id_info in
+                                { IL.e = Fetch { base = Var callback_name; rev_offset = [] };
+                                  eorig = IL.NoOrig }
+                            | _ -> exp_to_lookup)
+                        | _ -> exp_to_lookup)
+                    | _ -> exp_to_lookup
+                  in
                   (* Try to look up the signature - assume arity matches the args_taints *)
                   let lookup_arity = List.length fun_args_taints in
                   Log.debug (fun m ->
-                      m "🔍 Looking up signature for '%s' with arity %d"
+                      m "TOSINKINCALL: Looking up signature for '%s' with arity %d"
                         (Display_IL.string_of_exp exp_to_lookup) lookup_arity);
                   (match lookup_fn exp_to_lookup lookup_arity with
                   | Some sig_ ->
                       Log.debug (fun m ->
-                          m "✅ Found signature for '%s'"
+                          m "TOSINKINCALL: Found signature for '%s'"
                             (Display_IL.string_of_exp exp_to_lookup));
                       Some sig_
                   | None ->
                       (* For anonymous classes, try looking up just the method name without the object *)
                       Log.debug (fun m ->
-                          m "❌ No signature found for '%s', trying method name only"
+                          m "TOSINKINCALL: No signature found for '%s', trying method name only"
                             (Display_IL.string_of_exp exp_to_lookup));
                       (match exp_to_lookup.IL.e with
                       | Fetch { base = _; rev_offset = [{ o = Dot method_name; _ }] } ->
@@ -941,12 +999,12 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                             eorig = exp_to_lookup.eorig;
                           } in
                           Log.debug (fun m ->
-                              m "🔍 Looking up method name only: '%s' with arity %d"
+                              m "TOSINKINCALL: Looking up method name only: '%s' with arity %d"
                                 (Display_IL.string_of_exp method_only_exp) (List.length fun_args_taints));
                           (match lookup_fn method_only_exp (List.length fun_args_taints) with
                           | Some sig_ ->
                               Log.debug (fun m ->
-                                  m "✅ Found signature for method name '%s'"
+                                  m "TOSINKINCALL: Found signature for method name '%s'"
                                     (Display_IL.string_of_exp method_only_exp));
                               Some sig_
                           | None ->
@@ -988,7 +1046,7 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                   (Effect.show_args_taints fun_args_taints)
                   (Effect.show_args_taints args_taints));
             (* Check depth limit before recursing into callback *)
-            if depth > 10 then []
+            if depth >= Limits_semgrep.taint_MAX_VISITS_PER_NODE then []
             else
             (* Pass through the outer args so we can extract the actual callback expression *)
             (match
@@ -1066,9 +1124,8 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                   updated_arg.index);
             [ ToSinkInCall { callee = callee_exp; arg = updated_arg; args_taints } ])
   in
-  let call_effects =
-    taint_sig.effects |> Effects.elements |> List.concat_map inst_effect
-  in
+  let effects_list = taint_sig.effects |> Effects.elements in
+  let call_effects = effects_list |> List.concat_map inst_effect in
   Log.debug (fun m ->
       m ~tags:sigs_tag "Instantiated call to %s: %s"
         (Display_IL.string_of_exp callee)

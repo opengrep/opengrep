@@ -214,9 +214,10 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
   env
 
 let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
-    ?(name = Shape_and_sig.{ class_name = None; name = None })
-    ?(signature_db : signature_database option) (func_cfg : IL.fun_cfg) :
-    extraction_result =
+    ?(name = []) ?(signature_db : signature_database option)
+    ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
+    ?(call_graph : Function_call_graph.FuncGraph.t option = None)
+    (func_cfg : IL.fun_cfg) : extraction_result =
   let params = Signature.of_IL_params func_cfg.params in
   let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
   let combined_env =
@@ -226,7 +227,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
   in
   let fixpoint_effects, mapping =
     Dataflow_tainting.fixpoint taint_inst ~in_env:combined_env ~name
-      ?signature_db func_cfg
+      ?signature_db ?builtin_signature_db ?call_graph func_cfg
   in
   let effects_with_preconditions =
     fixpoint_effects |> Effects.elements
@@ -277,9 +278,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                * from propagating taint through helper functions like `return x;`.
                * We now keep parameter/global/control taints so callers can
                * materialize them, while still discarding purely shape-only summaries. *)
-              let func_name =
-                Option.map IL.str_of_name name.name |> Option.value ~default:"<anon>"
-              in
+              let func_name = Shape_and_sig.show_fn_id name in
               Log.debug (fun m ->
                   m "TAINT_SIG: ToReturn effect captured for %s" func_name);
               let filtered_data_taints =
@@ -450,9 +449,12 @@ let enable_precise_index_tracking () =
 let extract_signature_with_file_context
     ~arity
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
+    ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
+    ?(name = [])
+    ?(method_properties : AST_generic.expr list = [])
+    ?(call_graph : Function_call_graph.FuncGraph.t option = None)
     (taint_inst : Taint_rule_inst.t)
-    ?(name = Shape_and_sig.{ class_name = None; name = None })
-    ?(method_properties : AST_generic.expr list = []) func_cfg
+    func_cfg
     (ast : AST_generic.program) : signature_database * Signature.t =
   enable_precise_index_tracking ();
   let global_sids = extract_global_var_sids_from_ast ast in
@@ -460,10 +462,11 @@ let extract_signature_with_file_context
 
   (* If we have a function name but no class name, try to detect it from AST *)
   let final_name =
-    match (name.name, name.class_name) with
-    | Some func_name, None ->
-        let detected_class = find_class_for_function ast func_name in
-        { name with class_name = detected_class }
+    match name with
+    | [ None; Some func_name ] -> (
+        match find_class_for_function ast func_name with
+        | Some detected_class -> [ Some detected_class; Some func_name ]
+        | None -> name)
     | _ -> name
   in
 
@@ -480,7 +483,7 @@ let extract_signature_with_file_context
 
   let { signature; _ } =
     extract_signature taint_inst ~in_env:combined_global_env ~name:final_name
-      ~signature_db:db func_cfg
+      ~signature_db:db ?builtin_signature_db ~call_graph func_cfg
   in
   let updated_db = Shape_and_sig.add_signature db final_name {sig_ = signature; arity} in
   (updated_db, signature)
