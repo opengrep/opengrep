@@ -794,8 +794,22 @@ and definition def =
               G.OtherStmt (G.OS_Todo, [ G.E e; G.Def (ent, G.FuncDef funcdef) ])
               |> G.s)
       | SingletonM e ->
+          (* For singleton methods like 'def self.method_name', extract the method name
+             from the DotAccess expression so the entity has the correct name *)
+          let method_id =
+            match e with
+            | DotAccess (_, _, mn) -> (
+                match method_name mn with
+                | Left id -> id
+                | Right _ -> ("", fake t ""))
+            | ScopedId (Scope (_, _, SM mn)) -> (
+                match method_name mn with
+                | Left id -> id
+                | Right _ -> ("", fake t ""))
+            | _ -> ("", fake t "")
+          in
           let e = expr e in
-          let ent = G.basic_entity ("", fake t "") in
+          let ent = G.basic_entity method_id in
           G.OtherStmt (G.OS_Todo, [ G.E e; G.Def (ent, G.FuncDef funcdef) ])
           |> G.s)
   | ClassDef (t, kind, body) -> (

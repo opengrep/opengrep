@@ -21,6 +21,8 @@ val check_fundef :
   ?glob_env:Taint_lval_env.t ->
   ?class_name:string ->
   ?signature_db:Shape_and_sig.signature_database ->
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?call_graph:Function_call_graph.FuncGraph.t ->
   AST_generic.function_definition ->
   IL.fun_cfg * Shape_and_sig.Effects.t * Dataflow_tainting.mapping
 (** Check a function definition using a [Dataflow_tainting.config] (which can
