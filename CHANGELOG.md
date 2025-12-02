@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.12.1](https://github.com/opengrep/opengrep/releases/tag/v1.12.1) - 02-12-2025
+
+### Bug fixes
+
+* vb: fix comment syntax for --test command on python by @maciejpirog in #477
+* Fix: remove call_graph.dot debug file write by @maciejpirog and @dimitris-m in #478
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.12.0...v1.12.1
+
+
 ## [1.12.0](https://github.com/opengrep/opengrep/releases/tag/v1.12.0) - 30-11-2025
 
 ### New features
