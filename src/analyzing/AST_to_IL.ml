@@ -880,6 +880,12 @@ and expr_aux env ?(void = false) g_expr =
           in
           expr env last)
   | G.Record fields -> record env fields
+  | G.Container (G.Dict, (l, entries, r))
+    when AST_modifications.is_lua_array_table env.lang entries ->
+      (* Lua array-like table: {1, 2, 3} parsed as Dict with NextArrayIndex keys *)
+      let values = AST_modifications.extract_lua_array_values entries in
+      let env, vs = List.fold_left_map (fun env v -> expr env v) env values in
+      (env, mk_e (Composite (CList, (l, vs, r))) eorig)
   | G.Container (G.Dict, xs) -> dict env xs g_expr
   | G.Container (kind, xs) ->
       let l, xs, r = xs in
@@ -887,9 +893,18 @@ and expr_aux env ?(void = false) g_expr =
       let kind = composite_kind ~g_expr kind in
       (env, mk_e (Composite (kind, (l, xs, r))) eorig)
   | G.Comprehension _ -> todo env.stmts (G.E g_expr)
+  | G.Lambda fdef when env.lang =*= Lang.Elixir ->
+      (* Elixir implicit parameter lambda conversion *)
+      let converted_fdef = AST_modifications.convert_elixir_implicit_lambda fdef in
+      let lval = fresh_lval (snd converted_fdef.fkind) in
+      let _, final_fdef =
+        function_definition { env with stmts = [] } converted_fdef
+      in
+      let env = add_instr env (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig) in
+      (env, mk_e (Fetch lval) eorig)
   | G.Lambda fdef ->
       let lval = fresh_lval (snd fdef.fkind) in
-      let _, fdef =
+      let _, final_fdef =
         (* NOTE(config.stmts): This is a recursive call to
          * `function_definition` and we need to pass it a fresh
          * `stmts` ref list. If we reuse the same `stmts` ref list,
@@ -901,7 +916,7 @@ and expr_aux env ?(void = false) g_expr =
          * when traslating `(x) => { ... }`. *)
         function_definition { env with stmts = [] } fdef
       in
-      let env = add_instr env (mk_i (AssignAnon (lval, Lambda fdef)) eorig) in
+      let env = add_instr env (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig) in
       (env, mk_e (Fetch lval) eorig)
   | G.AnonClass def ->
       (* TODO: should use def.ckind *)
@@ -1009,6 +1024,9 @@ and expr_aux env ?(void = false) g_expr =
   | G.DotAccessEllipsis _ ->
       sgrep_construct env.stmts (G.E g_expr)
   | G.StmtExpr st -> stmt_expr env ~g_expr st
+  | G.OtherExpr (("ShortLambda", _), _) when env.lang =*= Lang.Elixir ->
+      let lambda_expr = AST_modifications.convert_elixir_short_lambda g_expr in
+      expr env lambda_expr
   | G.OtherExpr ((str, tok), xs) ->
       let env, es =
         List.fold_left_map

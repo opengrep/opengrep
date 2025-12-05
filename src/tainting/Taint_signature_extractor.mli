@@ -23,6 +23,8 @@ val extract_signature :
   ?in_env:Taint_lval_env.t ->
   ?name:Shape_and_sig.fn_id ->
   ?signature_db:signature_database ->
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?call_graph:Function_call_graph.FuncGraph.t option ->
   IL.fun_cfg ->
   extraction_result
 (** Extract both signature and taint mapping from a function *)
@@ -38,9 +40,11 @@ val mk_global_tracking_without_taint :
 val extract_signature_with_file_context :
   arity:int ->
   ?db:signature_database ->
-  Taint_rule_inst.t ->
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   ?name:Shape_and_sig.fn_id ->
   ?method_properties:AST_generic.expr list ->
+  ?call_graph:Function_call_graph.FuncGraph.t option ->
+  Taint_rule_inst.t ->
   IL.fun_cfg ->
   AST_generic.program ->
   signature_database * Shape_and_sig.Signature.t
