@@ -625,21 +625,17 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
 
 (* If a 'fun_exp' has no known taint signature, then it should have a polymorphic
  * shape and we record its effects with an "effect variable" (that's kind of what
- * 'ToSinkInCall' does).
- * NOTE: ToSinkInCall effects are only created when taint_intrafile is enabled,
- * as they require signature-based analysis to be resolved. *)
-let effects_of_call_func_arg ~intrafile fun_exp fun_shape args_taints =
-  if not intrafile then []
-  else
-    match fun_shape with
-    | S.Arg fun_arg ->
-        [ Effect.ToSinkInCall { callee = fun_exp; arg = fun_arg; args_taints } ]
-    | __else__ ->
-        Log.debug (fun m ->
-            m "Function (?) %s has shape %s"
-              (Display_IL.string_of_exp fun_exp)
-              (S.show_shape fun_shape));
-        []
+ * 'ToSinkInCall' does). *)
+let effects_of_call_func_arg fun_exp fun_shape args_taints =
+  match fun_shape with
+  | S.Arg fun_arg ->
+      [ Effect.ToSinkInCall { callee = fun_exp; arg = fun_arg; args_taints } ]
+  | __else__ ->
+      Log.debug (fun m ->
+          m "Function (?) %s has shape %s"
+            (Display_IL.string_of_exp fun_exp)
+            (S.show_shape fun_shape));
+      []
 
 (* Query call graph to find callee fn_id based on call site token *)
 let lookup_callee_from_graph (graph : Function_call_graph.FuncGraph.t option)
@@ -2147,15 +2143,14 @@ let call_with_intrafile lval_opt e env args instr =
                   (Taints.empty, Bot, lval_env)
                 else (
                   (* Check if this is a call to a function parameter (either direct or via method) *)
-                  let intrafile = env.taint_inst.options.taint_intrafile in
                   (match e_obj with
                   | `Obj (_obj_taints, S.Arg _fun_arg) ->
                       (* This is a method call on a function parameter (e.g., callback.apply in Java, callback.call in Ruby).
                        * Treat it as invoking the callback. *)
-                      effects_of_call_func_arg ~intrafile e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
+                      effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
                       |> record_effects { env with lval_env }
                   | _ ->
-                      effects_of_call_func_arg ~intrafile e e_shape args_taints
+                      effects_of_call_func_arg e e_shape args_taints
                       |> record_effects { env with lval_env });
                   (* If this is a method call, `o.method(...)`, then we fetch the
                    * taint of the callee object `o`. This is a conservative worst-case
@@ -2342,7 +2337,6 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                       (Taints.empty, Bot, lval_env)
                     else (
                       (* Check if this is a call to a function parameter (either direct or via method) *)
-                      let intrafile = env.taint_inst.options.taint_intrafile in
                       (match e_obj with
                       | `Obj (_obj_taints, S.Arg _fun_arg) ->
                           (* This is a method call on a function parameter (e.g., callback.apply in Java).
@@ -2357,10 +2351,10 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                             | _ -> false
                           in
                           if not is_ruby_call_method then
-                            effects_of_call_func_arg ~intrafile e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
+                            effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
                             |> record_effects { env with lval_env }
                       | _ ->
-                          effects_of_call_func_arg ~intrafile e e_shape args_taints
+                          effects_of_call_func_arg e e_shape args_taints
                           |> record_effects { env with lval_env });
                       (* If this is a method call, `o.method(...)`, then we fetch the
                        * taint of the callee object `o`. This is a conservative worst-case
