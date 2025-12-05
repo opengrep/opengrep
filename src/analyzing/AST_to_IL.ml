@@ -1074,15 +1074,8 @@ and expr_aux env ?(void = false) g_expr =
   | G.DotAccessEllipsis _ ->
       sgrep_construct env.stmts (G.E g_expr)
   | G.StmtExpr st -> stmt_expr env ~g_expr st
-  | G.OtherExpr (("ShortLambda", tok), [ G.E body_expr ])
-    when env.lang =*= Lang.Elixir ->
-      (* Elixir ShortLambda: &(sink(&1)) - convert to lambda with explicit params *)
-      let lambda_expr = AST_modifications.convert_elixir_short_lambda tok body_expr in
-      expr env lambda_expr
-  | G.OtherExpr (("Capture", tok), [ G.E body_expr ])
-    when env.lang =*= Lang.Elixir ->
-      (* Elixir Capture: &List.flatten(&1) - convert to lambda with explicit params *)
-      let lambda_expr = AST_modifications.convert_elixir_short_lambda tok body_expr in
+  | G.OtherExpr (("ShortLambda", _), _) when env.lang =*= Lang.Elixir ->
+      let lambda_expr = AST_modifications.convert_elixir_short_lambda g_expr in
       expr env lambda_expr
   | G.OtherExpr ((str, tok), xs) ->
       let env, es =

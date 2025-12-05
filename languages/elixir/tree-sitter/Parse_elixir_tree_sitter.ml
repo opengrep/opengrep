@@ -662,7 +662,12 @@ and map_capture_expression (env : env) (x : CST.capture_expression) =
         match e with
         | BinaryOp (fun_name, (O Div, _), L (Int (Some arity, tok_arity))) ->
             (* Only convert if fun_name is a proper name (not PlaceHolder like &1) *)
-            (match fun_name with
+            (* Handle both direct names and calls with no args like IO.puts *)
+            let actual_fun_name = match fun_name with
+              | Call (inner, (_, ([], []), _), None) -> inner
+              | other -> other
+            in
+            (match actual_fun_name with
             | I _ | Alias _ | DotAlias _ | DotRemote _ ->
                 (* Convert &fun/arity to &(fun(&1, &2, ...)) *)
                 let arity_int = Int64.to_int arity in
@@ -673,7 +678,7 @@ and map_capture_expression (env : env) (x : CST.capture_expression) =
                     PlaceHolder (tand, (Some n, tok_arity)))
                 in
                 (* Create the call: fun_name(&1, &2, ...) *)
-                let call_expr = Call (fun_name, (tand, (placeholder_args, []), tand), None) in
+                let call_expr = Call (actual_fun_name, (tand, (placeholder_args, []), tand), None) in
                 (* Convert to ShortLambda: &(fun(&1, &2, ...)) *)
                 ShortLambda (tand, (tand, call_expr, tand))
             | _ ->
