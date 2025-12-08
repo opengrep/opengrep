@@ -77,7 +77,7 @@ let pp_summary ~respect_gitignore ~(maturity : Maturity.t) ~max_target_bytes
   in
   let out_partial =
     opt_msg
-      "files only partially analyzed due to a parsing or internal Semgrep error"
+      "files only partially analyzed due to a parsing or internal Opengrep error"
       errors
   in
   match (out_skipped, out_partial, out_limited, skipped_groups.ignored) with
