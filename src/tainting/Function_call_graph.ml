@@ -366,7 +366,7 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
     | _ -> ()
   in
   let v =
-    object
+    object (self)
       inherit [_] G.iter as super
 
       method! visit_expr env e =
@@ -386,6 +386,9 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
             | None -> ());
             (* Check arguments for unresolved function calls (Ruby-style) *)
             List.iter check_arg_for_unresolved_function_call args_list;
+            (* Visit callee expression for nested calls (e.g., Ruby's File.open(path_for(x)) do ... end
+               where the callee is itself a Call containing path_for(x) in its args) *)
+            self#visit_expr env callee;
             (* Continue visiting arguments for nested calls *)
             super#visit_arguments env args
         | _ -> super#visit_expr env e
