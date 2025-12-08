@@ -2945,6 +2945,19 @@ and m_other_stmt_with_stmt_operator a b =
 (* Pattern *)
 (*****************************************************************************)
 and m_pattern a b =
+  (* NOTE: We need this for things like destructuring in Elixir functions (and
+   * general destructuring of lists), so that the pattern [..., $ARG, ...] works.
+   * Recall that some functions are always encoded as switch & pattern matching.
+   * An alternative is to always use PatConstructor when we need ... to be
+   * meaningful.
+   * How about PatRecord? I did not change that for now.
+   * TODO: Check, this may cause a performance regression.
+   *)
+  let m_list_with_ellipsis pattern_matcher =
+    m_list_with_dots ~less_is_ok:false pattern_matcher (function
+        | G.PatEllipsis _ -> true
+        | _ -> false)
+  in
   match (a, b) with
   (* equivalence: user-defined equivalence! *)
   | G.DisjPat (a1, a2), b -> m_pattern a1 b >||> m_pattern a2 b
@@ -2965,27 +2978,27 @@ and m_pattern a b =
   | G.PatLiteral a1, B.PatLiteral b1 -> m_literal a1 b1
   | G.PatType a1, B.PatType b1 -> m_type_ a1 b1
   | G.PatConstructor (a1, a2), B.PatConstructor (b1, b2) ->
-      m_name a1 b1 >>= fun () ->
-      (m_list_with_dots ~less_is_ok:false m_pattern (function
-        | G.PatEllipsis _ -> true
-        | _ -> false))
-        a2 b2
-  | G.PatTuple a1, B.PatTuple b1 -> m_bracket (m_list m_pattern) a1 b1
-  | G.PatList a1, B.PatList b1 -> m_bracket (m_list m_pattern) a1 b1
-  | G.PatRecord a1, B.PatRecord b1 -> m_bracket (m_list m_field_pattern) a1 b1
+      m_name a1 b1 >>= fun () -> (m_list_with_ellipsis m_pattern) a2 b2
+  | G.PatTuple a1, B.PatTuple b1 -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1
+  | G.PatList a1, B.PatList b1 -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1
+  | G.PatRecord a1, B.PatRecord b1 ->
+    m_bracket (m_list(*_with_ellipsis ?*) m_field_pattern) a1 b1
   | G.PatKeyVal (a1, a2), B.PatKeyVal (b1, b2) ->
       m_pattern a1 b1 >>= fun () -> m_pattern a2 b2
   | G.PatWildcard a1, B.PatWildcard b1 -> m_tok a1 b1
+  (* TODO: also >||> m_pattern a1 b2 >>= fun () -> m_pattern a2 b1 ?
+   * Treat it like OR? *)
   | G.PatDisj (a1, a2), B.PatDisj (b1, b2) ->
       m_pattern a1 b1 >>= fun () -> m_pattern a2 b2
   | G.PatAs (a1, (a2, a3)), B.PatAs (b1, (b2, b3)) ->
+      (* Question: why m_ident_and_id_info vs m_ident as for PatId? *)
       m_pattern a1 b1 >>= fun () -> m_ident_and_id_info (a2, a3) (b2, b3)
   | G.PatTyped (a1, a2), B.PatTyped (b1, b2) ->
       m_pattern a1 b1 >>= fun () -> m_type_ a2 b2
   | G.PatWhen (a1, a2), B.PatWhen (b1, b2) ->
       m_pattern a1 b1 >>= fun () -> m_expr a2 b2
   | G.OtherPat (a1, a2), B.OtherPat (b1, b2) ->
-      m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
+      m_todo_kind a1 b1 >>= fun () -> (m_list(*_with_ellipsis ?*) m_any) a2 b2
   | G.PatId _, _
   | G.PatLiteral _, _
   | G.PatConstructor _, _

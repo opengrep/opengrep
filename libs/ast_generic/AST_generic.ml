@@ -1453,6 +1453,7 @@ and pattern =
   | PatDisj of pattern * pattern (* also abused for catch in Java *)
   | PatTyped of pattern * type_
   | PatWhen of pattern * expr (* TODO: add tok, 'when' OCaml, 'if' Scala *)
+  (* newvar:! *)
   | PatAs of pattern * (ident * id_info)
   (* For Go also in switch x.(type) { case int: ... } *)
   | PatType of type_

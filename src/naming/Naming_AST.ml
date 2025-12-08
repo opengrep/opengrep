@@ -826,11 +826,15 @@ class ['self] resolve_visitor env lang =
 
     method! visit_pattern venv x =
       match x with
-      | PatId (id, id_info) when is_resolvable_name_ctx env lang ->
+      | (PatId (id, id_info) | PatAs (_, (id, id_info)))
+        when is_resolvable_name_ctx env lang ->
           (* todo: in Python it does not necessarily introduce
            * a newvar if the ID was already declared before.
            * Also inside a PatAs(PatId x,b), the 'x' is actually
            * the name of a class, not a newly introduced local.
+           * NOTE (dimitris): I could not find any example where
+           * such 'x' is not a new variable... why should it be
+           * a class name?
            *)
           declare_var env lang id id_info ~explicit:true None None;
           super#visit_pattern venv x
