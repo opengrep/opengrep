@@ -981,7 +981,9 @@ class ['self] resolve_visitor env lang =
                  * currently tagged
                  *)
                 let s, tok = id in
-                error tok (spf "could not find '%s' in environment" s));
+                if is_implicit_param s then ()
+                else
+                  error tok (spf "could not find '%s' in environment" s));
           recurse := false
       | DotAccess
           ({ e = IdSpecial ((This | Self), _); _ }, _, FN (Id (id, id_info)))

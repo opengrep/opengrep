@@ -2368,8 +2368,12 @@ let param_of_type ?(pattrs = []) ?pdefault ?pname typ =
     pinfo = basic_id_info (Parameter, SId.unsafe_default);
   }
 
-(* for 'function 0 -> 1 ...' in OCaml or 'do 0 -> 1 ...' in Elixir *)
-let implicit_param_id tk = ("!_implicit_param!", tk)
+(* For 'function 0 -> 1 ...' in OCaml or 'do 0 -> 1 ...' in Elixir.
+ * Coupling: src/optimizing/Analyze_rule.ml where such idents are now
+ * ignored, since they are not expected to be found in the source file. *)
+let implicit_param = "!!_implicit_param!"
+let implicit_param_id tk = (implicit_param, tk)
+let is_implicit_param s = String.starts_with ~prefix:"!!_implicit_param!" s
 
 (* ------------------------------------------------------------------------- *)
 (* Types *)
