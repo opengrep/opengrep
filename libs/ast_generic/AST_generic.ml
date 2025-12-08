@@ -1639,7 +1639,7 @@ and definition = entity * definition_kind
  * currently abuse id_info.id_type for that.
  *
  * Note that with the new entity_name type and EPattern, one entity value
- * can actually correspond to the definition of multiple vairables.
+ * can actually correspond to the definition of multiple variables.
  *
  * less: could be renamed entity_def, and name is a kind of entity_use.
  *)

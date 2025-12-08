@@ -350,7 +350,7 @@ and composite_kind =
 (*****************************************************************************)
 
 (* Easier type to compute lvalue/rvalue set of a too general 'expr', which
- * is now split into  instr vs exp vs lval.
+ * is now split into instr vs exp vs lval.
  *)
 and instr = { i : instr_kind; iorig : orig }
 

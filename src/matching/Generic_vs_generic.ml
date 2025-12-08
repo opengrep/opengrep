@@ -214,7 +214,7 @@ let m_dotted_name a b =
  * see: https://github.com/semgrep/semgrep-proprietary/pull/2302
  *
  * WARNING: NOTE: this invalidates an important invariant in our AST, that each
- * identifier has a unique/fresh refrence to an id_info. Although we are able
+ * identifier has a unique/fresh reference to an id_info. Although we are able
  * to get by with a weaker set of invariants for this file, we should not
  * sacrifice this invariant
  *
@@ -3320,7 +3320,7 @@ and m_variable_definition a b =
 (* As opposed to statements, the order of fields should not matter.
  *
  * We actually filter the '...' and use a less-is-ok approach.
- * Indeed '...' are not really useful, and in some patological cases they
+ * Indeed '...' are not really useful, and in some pathological cases they
  * were actually leading to the use a tons of memory. Indeed, in certain
  * files containing a long list of fields (like 3000 static fields),
  * the classic use of >||> to handle Ellipsis variations were stressing

@@ -199,7 +199,7 @@ let rec expr_to_pattern e =
       PatList (t1, xs |> List_.map expr_to_pattern, t2)
   | Ellipsis t -> PatEllipsis t
   | Cast (ty, _tok, expr) -> PatTyped (expr_to_pattern expr, ty)
-  (* TODO:  PatKeyVal and more *)
+  (* TODO: PatKeyVal and more *)
   | _ -> OtherPat (("ExprToPattern", fake ""), [ E e ])
 
 exception NotAnExpr

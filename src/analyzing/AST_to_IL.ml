@@ -273,7 +273,7 @@ let is_constructor env ret_ty id_info =
       match ret_ty with
       (* It would be nice if we can check that this type actually
          corresponds to a class, but I am uncertain if this is
-         possible. Istead we just check if it is a nominal typed.
+         possible. Instead we just check if it is a nominal typed.
          TODO could we somehow guarentee this type is a class? *)
       | { G.t = G.TyN _; _ } -> true
       | _ -> false)
