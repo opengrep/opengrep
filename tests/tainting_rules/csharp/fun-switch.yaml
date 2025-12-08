@@ -1,0 +1,15 @@
+rules:
+- id: taint
+  mode: taint
+  languages: [csharp]
+  message: "tainted"
+  severity: INFO
+  pattern-sources:
+    - patterns:
+        - pattern-inside: |
+            void $F($P) {
+              ...
+            }
+        - focus-metavariable: $P
+  pattern-sinks:
+    - pattern: sink($R)
