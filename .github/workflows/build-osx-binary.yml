@@ -12,7 +12,7 @@ on:
 jobs:
 
   build-self-contained-osx-binary:
-    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-13-large' || 'macos-13-xlarge' }}
+    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
     steps:
       - name: Install ccache
         run: |
@@ -101,7 +101,7 @@ jobs:
 
   test-osx-binary:
     needs: build-self-contained-osx-binary
-    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-13-large' || 'macos-13-xlarge' }}
+    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
     steps:
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
