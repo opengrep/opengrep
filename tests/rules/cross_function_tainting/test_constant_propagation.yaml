@@ -1,0 +1,15 @@
+rules:
+  - id: test-constant-propagation
+    mode: taint
+    languages:
+      - python
+    message: |
+      Constant propagation across functions detected
+    pattern-sources:
+      - pattern: '"password"'
+      - pattern: '4'
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR
+    options:
+      taint_intrafile: true

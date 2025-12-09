@@ -330,7 +330,7 @@ def checkout_opengrep(sha):
 
 def make_opengrep():
     run(["make", "core"], cwd="../..")
-    run(["make", "install"], cwd="../..")
+    run(["pipenv", "run", "make", "install"], cwd="../..")
     run(["pipenv", "run", "pip", "install", "-e", "."], cwd="../../cli")
 
 def run_bench():

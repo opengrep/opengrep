@@ -415,9 +415,8 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
     let body_stmt = AST_generic_helpers.funcbody_to_stmt func.fdef.G.fbody in
     match AST_generic_helpers.range_of_any_opt (G.S body_stmt) with
     | Some (loc_start, loc_end) ->
-        let body_start = loc_start.pos.bytepos in
-        let body_end = loc_end.pos.bytepos in
-        func_ranges := (body_start, body_end) :: !func_ranges
+        let range = Range.range_of_token_locations loc_start loc_end in
+        func_ranges := (range.start, range.end_) :: !func_ranges
     | None -> ())
     all_funcs;
 
@@ -778,9 +777,8 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     let body_stmt = AST_generic_helpers.funcbody_to_stmt func.fdef.G.fbody in
     match AST_generic_helpers.range_of_any_opt (G.S body_stmt) with
     | Some (loc_start, loc_end) ->
-        let body_start = loc_start.pos.bytepos in
-        let body_end = loc_end.pos.bytepos in
-        func_ranges := (body_start, body_end, func.fn_id) :: !func_ranges
+        let range = Range.range_of_token_locations loc_start loc_end in
+        func_ranges := (range.start, range.end_, func.fn_id) :: !func_ranges
     | None -> ())
     funcs;
 
@@ -953,8 +951,9 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
           let cbody_range_opt = AST_generic_helpers.range_of_any_opt (G.Flds cbody_stmts) in
           (match cbody_range_opt with
           | Some (loc_start, loc_end) ->
-              let class_start = loc_start.pos.bytepos in
-              let class_end = loc_end.pos.bytepos in
+              let range = Range.range_of_token_locations loc_start loc_end in
+              let class_start = range.start in
+              let class_end = range.end_ in
               let class_size = class_end - class_start in
 
               (* For each range, check if it's inside this class *)
@@ -985,8 +984,9 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
           let func_range_opt = AST_generic_helpers.range_of_any_opt (G.Def def) in
           (match func_range_opt with
           | Some (loc_start, loc_end) ->
-              let func_start = loc_start.pos.bytepos in
-              let func_end = loc_end.pos.bytepos in
+              let range = Range.range_of_token_locations loc_start loc_end in
+              let func_start = range.start in
+              let func_end = range.end_ in
               let func_size = func_end - func_start in
 
               (* For each range, check if it's inside this function *)
