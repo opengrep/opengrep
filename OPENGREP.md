@@ -12,6 +12,8 @@
 
 - Added support for languages that are not available in Semgrep CE: **Apex** and **Elixir**.
 
+- Added support for languages that are not available in Semgrep CE or Semgrep PRO: **Visual Basic**.
+
 ### Features
 
 - **Self-contained binaries** for multiple architectures, built using **Nuitka** for fast and self-contained executables. This is a departure from Semgrep, which is typically distributed using python wheels or homebrew. Now user environments do not need to have python installed, and the performance is comparable to the python wheel.

@@ -31,7 +31,7 @@ module G = AST_generic
  *  - phase 2, we analyze those raw constructs and try to infer higher-level
  *    constructs like module definitions or function definitions that
  *    are standard in Elixir (see Elixir_to_elixir.ml), also
- *    called the "Kernel" construts.
+ *    called the "Kernel" constructs.
  *
  * references:
  * - https://hexdocs.pm/elixir/syntax-reference.html

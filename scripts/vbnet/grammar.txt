@@ -1,0 +1,1597 @@
+compilation_unit
+ : toplevel '<EOF>'
+ ;
+
+toplevel
+  : option_statement* imports_statement* attributes_statement* toplevel_declaration*
+  ;
+
+option_statement_mandatory
+  : 'Explicit' | 'Strict' | 'Compare' | 'Infer'
+  ;
+
+option_statement_optional
+  : 'On' | 'Off' | 'Text' | 'Binary'
+  ;
+
+option_statement
+  : 'Option' option_statement_mandatory option_statement_optional?
+  ;
+
+imports_statement
+  : 'Imports' imports_clause (',' imports_clause)*
+  ;
+
+imports_clause
+  : simple_imports_clause
+  | '<' x_name '=' '<STRING>' '>'
+  ;
+
+simple_imports_clause
+  : import_alias_clause? name
+  ;
+
+import_alias_clause
+  : identifier_token '='
+  ;
+
+attributes_statement
+  : attribute_list+
+  ;
+
+attribute_list
+  : '<' attribute (',' attribute)* '>'
+  ;
+
+attribute
+  : attribute_target? type argument_list?
+  ;
+
+attribute_target
+  : 'Assembly' ':'
+  | 'Module' ':'
+  ;
+
+argument_list
+  : '(' (argument? (',' argument?)*)? ')'
+  ;
+
+argument
+  : (identifier_or_keyword ':=')? expression ('To' expression)?
+  ;
+
+escaped_identifier_content
+  : '<KEYWORD>'
+  | '<IDENT>'
+  | '<OPERATOR>'
+  | '<INT>'
+  | '<STRING>'
+  ;
+
+identifier_name
+  : '<IDENT>'
+  | '[' escaped_identifier_content+ ']'
+  ;
+
+single_line_statement
+  : single_line_if_statement
+  | add_remove_handler_statement
+  | raise_event_statement
+  | local_declaration_statement
+  | erase_statement
+  | error_statement
+  | continue_statement
+  | call_statement
+  | go_to_statement
+  | on_error_go_to_statement
+  | on_error_resume_next_statement
+  | print_statement
+  | re_dim_statement
+  | resume_statement
+  | return_statement
+  | stop_or_end_statement
+  | throw_statement
+  | yield_statement
+  | exit_statement
+  | assignment_statement
+  ;
+
+single_line_statements
+  : single_line_statement (':' single_line_statement)*
+  ;
+
+multi_line_statement
+  : select_case_block
+  | multi_line_if_block
+  | for_block
+  | do_block
+  | while_block
+  | try_block
+  | with_block
+  | sync_lock_block
+  | using_block
+  ;
+
+statements_block_item
+  : multi_line_statement
+  | identifier_label ':' @lookahead('<LINE_TERMINATOR>')
+  | numeric_label ':' @lookahead('<LINE_TERMINATOR>')
+  | single_line_statements
+  ;
+
+statements_block
+  : statements_block_item (@lookahead('<LINE_TERMINATOR>') statements_block_item)*
+  |
+  ;
+
+// Select Case
+
+select_case_block
+  : select_statement case_block* end_select_statement
+  ;
+
+select_statement
+  : 'Select' 'Case'? expression @lookahead('<LINE_TERMINATOR>')
+  ;
+
+case_block
+  : case_statement statements_block
+  ;
+
+case_statement_terminator
+  : @lookahead('<LINE_TERMINATOR>')
+  | ':'
+  ;
+
+case_statement
+  : 'Case' case_clause (',' case_clause)* case_statement_terminator
+  ;
+
+case_clause
+  : 'Else'
+  | range_or_expression_case_clause
+  | relational_case_clause
+  ;
+
+range_or_expression_case_clause
+  : expression ('To' expression)?
+  ;
+
+relational_case_clause_op
+  : '=' | '>' | '>=' | '<' | '<=' | '<>'
+  ;
+
+relational_case_clause
+  : 'Is'? relational_case_clause_op expression
+  ;
+
+// If statements
+
+single_line_if_statement
+  : 'If' expression 'Then' @lookahead_not('<LINE_TERMINATOR>') single_line_statements (@lookahead_not('<LINE_TERMINATOR>') 'Else' single_line_statements)?
+  ;
+
+multi_line_if_block
+  : 'If' expression 'Then'? case_statement_terminator
+    statements_block
+    else_if_block*
+    else_block?
+    ':'? 'End' 'If'
+  ;
+
+else_if_or_elseif
+  : 'ElseIf'
+  | 'Else' @lookahead_not('<LINE_TERMINATOR>') 'If'
+  ;
+
+else_if_block
+  : ':'? else_if_or_elseif expression 'Then'? case_statement_terminator statements_block
+  ;
+
+else_block
+  : ':'? 'Else' ':'? statements_block
+  ;
+
+// Loops
+
+after_next
+  : @lookahead('<LINE_TERMINATOR>')
+  | @lookahead(':')
+  ;
+
+for_block
+  : 'For' for_header case_statement_terminator statements_block case_statement_terminator 'Next' (@lookahead_not('<LINE_TERMINATOR>') identifier_name)? after_next // case_statement_terminator
+  ;
+
+for_header
+  : identifier_name simple_as_clause? '=' expression 'To' expression ('Step' expression)?
+  | 'Each' identifier_name simple_as_clause? 'In' expression
+  ;
+
+do_block
+  : 'Do' do_header? case_statement_terminator statements_block case_statement_terminator 'Loop' (@lookahead_not('<LINE_TERMINATOR>') do_header)?
+  ;
+
+do_header
+  : 'While' expression
+  | 'Until' expression
+  ;
+
+while_block
+  : 'While' expression case_statement_terminator statements_block case_statement_terminator ':'? 'End' 'While'
+  ;
+
+// Try block
+
+soft_terminator
+  : @lookahead('<LINE_TERMINATOR>')
+  | @lookahead(':')
+  ;
+
+try_block
+  : 'Try' statements_block catch_block* finally_block? ':'? 'End' 'Try'
+  ;
+
+catch_block
+  : 'Catch' identifier_name? simple_as_clause? catch_filter_clause? soft_terminator statements_block
+  ;
+
+simple_as_clause
+  : 'As' attribute_list* type
+  ;
+
+catch_filter_clause
+  : 'When' expression
+  ;
+
+finally_block
+  : 'Finally' statements_block
+  ;
+
+// With block
+
+with_block
+  : 'With' expression @lookahead('<LINE_TERMINATOR>') statements_block ':'? 'End' 'With'
+  ;
+
+// SyncLock block
+
+sync_lock_block
+  : 'SyncLock' expression @lookahead('<LINE_TERMINATOR>') statements_block ':'? 'End' 'SyncLock'
+  ;
+
+// Using block
+
+using_block
+  : 'Using' using_header @lookahead('<LINE_TERMINATOR>') statements_block end_using_statement
+  ;
+
+using_header
+  : using_header_item (',' using_header_item)*
+  ;
+
+using_header_item
+  : 'New'? variable_declarator
+  | access_expression
+  ;
+
+// Other single-lines statements
+
+erase_statement
+  : 'Erase' expression (',' expression)*
+  ;
+
+error_statement
+  : 'Error' expression
+  ;
+
+continue_statement
+  : 'Continue' continue_what
+  ;
+
+continue_what
+  : 'Do' | 'For' | 'While'
+  ;
+
+call_statement
+  : 'Call' expression
+  ;
+
+on_error_go_to_statement
+  : on_error_go_to_label_statement
+  | on_error_go_to_minus_one_statement
+  | on_error_go_to_zero_statement
+  ;
+
+on_error_go_to_label_statement
+  : 'On' 'Error' 'GoTo' '-'? next_label
+  ;
+
+on_error_go_to_minus_one_statement
+  : 'On' 'Error' 'GoTo' '-'? numeric_label
+  ;
+
+on_error_go_to_zero_statement
+  : 'On' 'Error' 'GoTo' '-'? identifier_label
+  ;
+
+on_error_resume_next_statement
+  : 'On' 'Error' 'Resume' 'Next'
+  ;
+
+print_statement
+  : '?' expression
+  ;
+
+raise_event_statement
+  : 'RaiseEvent' access_expression
+  ;
+
+resume_statement
+  : 'Resume' 'Next'
+  | 'Resume' numeric_label?
+  | 'Resume' identifier_label?
+  ;
+
+return_terminator
+  : @lookahead('<LINE_TERMINATOR>')
+  | @lookahead(',')
+  | @lookahead(')')
+  | @lookahead('}')
+  ;
+
+return_statement
+  : ':'? 'Return' return_terminator
+  | ':'? 'Return' @lookahead_not('<LINE_TERMINATOR>') expression
+  ;
+
+stop_or_end_statement
+  : ':'? 'End' @lookahead('<LINE_TERMINATOR>')
+  ;
+
+yield_statement
+  : 'Yield' expression
+  ;
+
+throw_statement
+  : 'Throw' expression?
+  ;
+
+// declarations
+
+toplevel_declaration
+  : attribute_list* modifier* toplevel_kw_declaration;
+
+toplevel_kw_declaration
+  : namespace_block
+  | class_block
+  | interface_block
+  | module_block
+  | structure_block
+  | enum_block
+  | function_block
+  | sub_block
+  | '...'
+  | '<...' expression '...>'
+  ;
+
+// ........................................
+
+end_add_handler_statement
+  : ':'? 'End' 'AddHandler'
+  ;
+
+end_class_statement
+  : ':'? 'End' 'Class'
+  ;
+
+end_enum_statement
+  : ':'? 'End' 'Enum'
+  ;
+
+end_event_statement
+  : ':'? 'End' 'Event'
+  ;
+
+end_function_statement
+  : ':'? 'End' 'Function'
+  ;
+
+end_interface_statement
+  : ':'? 'End' 'Interface'
+  ;
+
+end_module_statement
+  : ':'? 'End' 'Module'
+  ;
+
+end_namespace_statement
+  : ':'? 'End' 'Namespace'
+  ;
+
+end_operator_statement
+  : ':'? 'End' 'Operator'
+  ;
+
+end_property_statement
+  : ':'? 'End' 'Property'
+  ;
+
+end_raise_event_statement
+  : ':'? 'End' 'RaiseEvent'
+  ;
+
+end_remove_handler_statement
+  : ':'? 'End' 'RemoveHandler'
+  ;
+
+end_select_statement
+  : ':'? 'End' 'Select'
+  ;
+
+end_structure_statement
+  : ':'? 'End' 'Structure'
+  ;
+
+end_sub_statement
+  : ':'? 'End' 'Sub'
+  ;
+
+end_using_statement
+  : ':'? 'End' 'Using'
+  ;
+
+enum_block
+  : enum_statement enum_block_item* end_enum_statement
+  ;
+
+enum_statement
+  : 'Enum' identifier_token as_clause?
+  ;
+
+enum_block_item
+  : attribute_list* single_line_statement ','? @lookahead('<LINE_TERMINATOR>')
+  ;
+
+as_clause
+  : as_new_clause
+  | simple_as_clause
+  ;
+
+as_new_clause
+  : 'As' new_expression
+  ;
+
+new_expression
+  : anonymous_object_creation_expression
+  | array_creation_expression
+  | object_creation_expression
+  ;
+
+anonymous_object_creation_expression
+  : 'New' attribute_list* (type argument_list?)? object_member_initializer
+  ;
+
+object_member_initializer
+  : 'With' '{' (field_initializer (',' field_initializer)*)? '}'
+  ;
+
+field_initializer
+  : inferred_field_initializer
+  | named_field_initializer
+  ;
+
+inferred_field_initializer
+  : 'Key'? expression
+  ;
+
+named_field_initializer
+  : 'Key'? '.' identifier_name '=' expression
+  ;
+
+array_creation_expression
+  : 'New' attribute_list* type argument_list? array_rank_specifier* collection_initializer
+  ;
+
+array_rank_specifier
+  : '(' ','* ')'
+  ;
+
+collection_initializer
+  : '{' (expression (',' expression)*)? '}'
+  ;
+
+object_creation_expression
+  : 'New' attribute_list* type argument_list? object_creation_initializer?
+  ;
+
+object_creation_initializer
+  : object_collection_initializer
+  | object_member_initializer
+  ;
+
+object_collection_initializer
+  : 'From' collection_initializer
+  ;
+
+equals_value
+  : '=' expression
+  ;
+
+event_block
+  : event_statement (event_accessor_elem* end_event_statement)?
+  ;
+
+event_statement
+  : 'Custom'? 'Event' identifier_token parameter_list? simple_as_clause? implements_clause?
+  ;
+
+event_accessor_elem
+  : attribute_list* event_accessor_block
+  ;
+
+event_accessor_block
+  : 'AddHandler' parameter_list statements_block end_add_handler_statement
+  | 'RaiseEvent' parameter_list statements_block end_raise_event_statement
+  | 'RemoveHandler' parameter_list statements_block end_remove_handler_statement
+  ;
+
+parameter_list
+  : '(' (parameter (',' parameter)*)? ')'
+  ;
+
+parameter
+  : attribute_list* modifier* modified_identifier simple_as_clause? equals_value?
+  | '...'
+  | '<...' expression '...>'
+  ;
+
+modified_identifier
+  : identifier_token '?'? argument_list? array_rank_specifier*
+  ;
+
+implements_clause
+  : ':'? 'Implements' type_list_elem (',' type_list_elem)*
+  ;
+
+type_list_elem
+  : type
+  | '...'
+  | '<...' type '...>'
+  ;
+
+qualified_name
+  : simple_name ('.' identifier_or_keyword)*
+  ;
+
+simple_name
+  : generic_name
+  | identifier_name
+  ;
+
+generic_name
+  : identifier_token type_argument_list
+  ;
+
+type_argument_list
+  : '(' 'Of' type_list_elem? (',' type_list_elem?)* ')'
+  ;
+
+field_declaration
+  : attribute_list* modifier+ variable_declarator (',' variable_declarator)*
+  ;
+
+variable_declarator
+  : modified_identifier (',' modified_identifier)* as_clause? equals_value?
+  ;
+
+implements_statement
+  : ':'? 'Implements' type (',' type)*
+  ;
+
+inherits_statement
+  : ':'? 'Inherits' type (',' type)*
+  ;
+
+text_encoding
+  : 'Ansi' | 'Unicode' | 'Auto'
+  ;
+
+function_or_sub
+  : 'Function'
+  | 'Sub'
+  ;
+
+declare_statement
+  : 'Declare' text_encoding? function_or_sub identifier_token 'Lib' literal_expression ('Alias' literal_expression)? parameter_list simple_as_clause?
+  ;
+
+literal_expression
+  : 'False'
+  | 'Nothing'
+  | 'True'
+  | character_literal_token
+  | date_literal_token
+  | decimal_literal_token
+  | floating_literal_token
+  | integer_literal_token
+  | string_literal_token
+  ;
+
+type_parameter_list
+  : '(' 'Of' type_parameter (',' type_parameter)* ')'
+  ;
+
+type_parameter
+  : 'In'? identifier_token type_parameter_constraint_clause?
+  | 'Out'? identifier_token type_parameter_constraint_clause?
+  ;
+
+type_parameter_constraint_clause
+  : type_parameter_multiple_constraint_clause
+  | type_parameter_single_constraint_clause
+  ;
+
+type_parameter_multiple_constraint_clause
+  : 'As' '{' constraint (',' constraint)* '}'
+  ;
+
+constraint
+  : special_constraint
+  | type_constraint
+  ;
+
+special_constraint
+  : class_constraint
+  | new_constraint
+  | structure_constraint
+  ;
+
+class_constraint
+  : 'Class'
+  ;
+
+new_constraint
+  : 'New'
+  ;
+
+structure_constraint
+  : 'Structure'
+  ;
+
+type_constraint
+  : type
+  ;
+
+type_parameter_single_constraint_clause
+  : 'As' constraint
+  ;
+
+function_statement
+  : 'Function' identifier_token type_parameter_list? parameter_list? simple_as_clause? handles_clause? implements_clause?
+  ;
+
+handles_clause
+  : 'Handles' handles_clause_item (',' handles_clause_item)*
+  ;
+
+handles_clause_item
+  : event_container '.' identifier_name
+  ;
+
+event_container
+  : keyword_event_container
+  | with_events_event_container
+  | with_events_property_event_container
+  ;
+
+keyword_event_container
+  : 'Me'
+  | 'MyBase'
+  | 'MyClass'
+  ;
+
+with_events_event_container
+  : identifier_token
+  ;
+
+with_events_property_event_container
+  : with_events_event_container '.' identifier_name
+  ;
+
+sub_statement
+  : 'Sub' identifier_token type_parameter_list? parameter_list? simple_as_clause? handles_clause? implements_clause?
+  ;
+
+operator_statement_operator
+  : 'CType' | 'IsTrue' | 'IsFalse' | 'Not' | '+' | '-' | '*' | '/' | '^' | '\\' | '&' | '<<' | '>>' | 'Mod' | 'Or' | 'Xor' | 'And' | 'Like' | '=' | '<>' | '<' | '<=' | '>=' | '>'
+  ;
+
+operator_statement
+  : 'Operator' operator_statement_operator parameter_list? simple_as_clause?
+  ;
+
+property_statement
+  : 'Property' identifier_token parameter_list? as_clause? equals_value? implements_clause?
+  ;
+
+sub_new_statement
+  : 'Sub' 'New' parameter_list?
+  ;
+
+constructor_block
+  : sub_new_statement @lookahead('<LINE_TERMINATOR>') statements_block end_sub_statement
+  ;
+
+function_block
+  : function_statement @lookahead('<LINE_TERMINATOR>') (statements_block end_function_statement)?
+  ;
+
+sub_block
+  : sub_statement @lookahead('<LINE_TERMINATOR>') (statements_block end_sub_statement)?
+  ;
+
+operator_block
+  : operator_statement statements_block end_operator_statement
+  ;
+
+namespace_block
+  : 'Namespace' qualified_name ('.' identifier_name)* toplevel end_namespace_statement
+  ;
+
+property_block
+  : property_statement (property_accessor_block* end_property_statement)?
+  ;
+
+property_accessor_block
+  : attribute_list* modifier* 'Get' statements_block ':'? 'End' 'Get'
+  | attribute_list* modifier* 'Set' parameter_list? statements_block ':'? 'End' 'Set'
+  | '...'
+  | '<...' expression '...>'
+  ;
+
+class_block
+  : class_statement inherits_statement* implements_statement* class_block_declaration* end_class_statement
+  ;
+
+class_statement
+  : 'Class' qualified_name type_parameter_list?
+  ;
+
+class_block_declaration
+  : attribute_list* method_modifier* class_block_kw_declaration
+  | field_declaration
+  ;
+
+class_block_kw_declaration
+  : function_block
+  | constructor_block
+  | sub_block
+  | property_block
+  | class_block
+  | module_block
+  | interface_block
+  | structure_block
+  | event_block
+  | operator_block
+  | enum_block
+  | declare_statement
+  | '...'
+  | '<...' expression '...>'
+  ;
+
+interface_block
+  : interface_statement inherits_statement* implements_statement* class_block_declaration* end_interface_statement
+  ;
+
+interface_statement
+  : 'Interface' qualified_name type_parameter_list?
+  ;
+
+module_block
+  : module_statement inherits_statement* implements_statement* class_block_declaration* end_module_statement
+  ;
+
+module_statement
+  : 'Module' qualified_name type_parameter_list?
+  ;
+
+structure_block
+  : structure_statement inherits_statement* implements_statement* class_block_declaration* end_structure_statement
+  ;
+
+structure_statement
+  : 'Structure' qualified_name type_parameter_list?
+  ;
+
+add_remove_handler_statement
+  : add_handler_statement
+  | remove_handler_statement
+  ;
+
+add_handler_statement
+  : 'AddHandler' expression ',' expression
+  ;
+
+remove_handler_statement
+  : 'RemoveHandler' expression ',' expression
+  ;
+
+assignment_statement_operator
+  : '=' | '+=' | '-=' | '*=' | '/=' | '\=' | '^=' | '<<=' | '>>=' | '&='
+  ;
+
+assignment_statement
+  : await_expression (assignment_statement_operator expression)?
+  ;
+
+exit_statement
+  : exit_do_statement
+  | exit_for_statement
+  | exit_function_statement
+  | exit_operator_statement
+  | exit_property_statement
+  | exit_select_statement
+  | exit_sub_statement
+  | exit_try_statement
+  | exit_while_statement
+  ;
+
+exit_do_statement
+  : 'Exit' 'Do'
+  ;
+
+exit_for_statement
+  : 'Exit' 'For'
+  ;
+
+exit_function_statement
+  : 'Exit' 'Function'
+  ;
+
+exit_operator_statement
+  : 'Exit' 'Operator'
+  ;
+
+exit_property_statement
+  : 'Exit' 'Property'
+  ;
+
+exit_select_statement
+  : 'Exit' 'Select'
+  ;
+
+exit_sub_statement
+  : 'Exit' 'Sub'
+  ;
+
+exit_try_statement
+  : 'Exit' 'Try'
+  ;
+
+exit_while_statement
+  : 'Exit' 'While'
+  ;
+
+go_to_statement
+  : 'GoTo' label
+  ;
+
+label
+  : identifier_label
+  | next_label
+  | numeric_label
+  ;
+
+identifier_label
+  : identifier_token
+  ;
+
+next_label
+  : 'Next'
+  ;
+
+numeric_label
+  : integer_literal_token
+  ;
+
+local_declaration_statement
+  : modifier+ variable_declarator (',' variable_declarator)*
+  ;
+
+re_dim_statement
+  : 'ReDim' 'Preserve'? redim_clause (',' redim_clause)*
+  ;
+
+redim_clause
+  : access_expression
+  ;
+
+aggregation
+  : 'Group'
+  | function_aggregation
+  ;
+
+function_aggregation
+  : identifier_token ('(' expression ')')?
+  ;
+
+binary_conditional_expression
+  : 'If' '(' expression ',' expression ')'
+  ;
+
+expression_terminator
+  : @lookahead('<PUNCTUATION>')
+  | @lookahead('<LINE_TERMINATOR>')
+  ;
+
+expression
+    : literal_expression expression_terminator
+    | binary_logical_xor_expression
+    ;
+
+xor_operator
+    : 'Xor'
+    ;
+
+or_operator
+    : 'Or'
+    | 'OrElse'
+    ;
+
+and_operator
+    : 'And'
+    | 'AndAlso'
+    ;
+
+not_operator
+    : 'Not'
+    ;
+
+relational_operator
+    : '='
+    | '<>'
+    | @lookahead_not('<LINE_TERMINATOR>') '<'
+    | '>'
+    | '<='
+    | '>='
+    | 'Like'
+    | 'Is'
+    | 'IsNot'
+    ;
+
+shift_operator
+    : '<<'
+    | '>>'
+    ;
+
+concatenation_operator
+    : '&'
+    ;
+
+additive_operator
+    : '+'
+    | '-'
+    ;
+
+multiplicative_operator
+    : '*'
+    | '/'
+    | '\\'
+    | 'Mod'
+    ;
+
+unary_operator
+    : '+'
+    | '-'
+    ;
+
+exponentiation_operator
+    : '^'
+    ;
+
+await_operator
+    : 'Await'
+    ;
+
+binary_logical_xor_expression
+    : binary_logical_or_expression (xor_operator binary_logical_or_expression)*
+    ;
+
+binary_logical_or_expression
+    : binary_logical_and_expression (or_operator binary_logical_and_expression)*
+    ;
+
+binary_logical_and_expression
+    : logical_not_expression (and_operator logical_not_expression)*
+    ;
+
+logical_not_expression
+    : not_operator logical_not_expression
+    | binary_relational_expression
+    ;
+
+binary_relational_expression
+    : binary_shift_expression (relational_operator logical_not_expression)?
+    ;
+
+binary_shift_expression
+    : binary_concatenation_expression (shift_operator binary_concatenation_expression)*
+    ;
+
+binary_concatenation_expression
+    : binary_additive_expression (concatenation_operator binary_additive_expression)*
+    ;
+
+binary_additive_expression
+    : binary_multiplicative_expression (additive_operator binary_multiplicative_expression)*
+    ;
+
+binary_multiplicative_expression
+    : unary_expression (multiplicative_operator unary_expression)*
+    ;
+
+unary_expression
+    : unary_operator unary_expression
+    | address_of_expression
+    | binary_exponentiation_expression
+    ;
+
+binary_exponentiation_expression
+    : await_expression (exponentiation_operator unary_expression)*
+    ;
+
+await_expression
+    : await_operator await_expression
+    | access_expression
+    ;
+
+access_expression
+  : primary_expression (@lookahead_not('<LINE_TERMINATOR>') accessor)*
+  ;
+
+identifier_or_keyword
+  : identifier_name type_argument_list?
+  | '<KEYWORD>' type_argument_list?
+  ;
+
+accessor
+  : '.' accessor_body
+  | '.' argument_list
+  | '!' accessor_body
+  | '?.' accessor_body
+  | '?' '(' expression ')'
+  | '.@' accessor_body
+  | '.' '<' accessor_body '>'
+  | '...' '<' accessor_body '>'
+  | argument_list
+  ;
+
+accessor_body
+  : identifier_or_keyword
+  | '...'
+  ;
+
+primary_expression
+  : '(' expression ')'
+  | literal_expression
+  | binary_conditional_expression
+  | get_type_expression
+  | cast_expression
+  | collection_initializer
+  | get_xml_namespace_expression
+  | instance_expression
+  | interpolated_string_expression
+  | lambda_expression
+  | name_of_expression
+  | new_expression
+  | predefined_cast_expression
+  | query_expression
+  | ternary_conditional_expression
+  | anonymous_object_creation_expression
+  | array_creation_expression
+  | tuple_expression
+  | type_of_expression
+  | identifier_expression
+  | xml_cdata
+  | x_expression
+  | '...'
+  | '<...' expression '...>'
+  ;
+
+identifier_expression
+  : '.' identifier_or_keyword
+  | identifier_name type_argument_list?
+  | 'Mid' '$'
+  ;
+
+get_type_expression
+  : 'GetType' '(' qualified_name '?' ')'
+  ;
+
+cast_expression
+  : c_type_expression
+  | direct_cast_expression
+  | try_cast_expression
+  ;
+
+c_type_expression
+  : 'CType' '(' expression ',' type ')'
+  ;
+
+direct_cast_expression
+  : 'DirectCast' '(' expression ',' type ')'
+  ;
+
+try_cast_expression
+  : 'TryCast' '(' expression ',' type ')'
+  ;
+
+get_xml_namespace_expression
+  : 'GetXmlNamespace' '(' xml_prefix_name? ')'
+  ;
+
+xml_prefix_name
+  : '<IDENT>'
+  ;
+
+instance_expression
+  : 'Me'
+  | 'MyBase'
+  | 'MyClass'
+  ;
+
+interpolated_string_expression
+  : '$"' interpolated_string_content* '"'
+  ;
+
+interpolated_string_content
+  : '<STRING_SEGMENT>'
+  | interpolation
+  ;
+
+interpolation
+  : expression interpolation_alignment_clause? (':' interpolation_format_char*)?
+  ;
+
+interpolation_alignment_clause
+  : ',' unary_expression
+  ;
+
+interpolation_format_char
+  : @lookahead_not('\\\"') @lookahead_not('$\\\"') '<OPERATOR>'
+  | '.'
+  | '<IDENT>'
+  | '<KEYWORD>'
+  | '<INT>'
+  | '<FLOAT>'
+  ;
+
+lambda_expression
+  : multi_line_lambda_expression
+  | single_line_lambda_expression
+  ;
+
+lambda_modifier
+  : 'Async'
+  | 'Iterator'
+  ;
+
+single_line_lambda_expression
+  : lambda_modifier* 'Function' parameter_list expression
+  | lambda_modifier* 'Sub' parameter_list single_line_statement
+  ;
+
+multi_line_lambda_expression
+  : lambda_modifier* 'Function' parameter_list simple_as_clause? @lookahead('<LINE_TERMINATOR>')
+    statements_block ':'? 'End' 'Function'
+  | lambda_modifier* 'Sub' parameter_list @lookahead('<LINE_TERMINATOR>')
+    statements_block ':'? 'End' 'Sub'
+  ;
+
+name_of_expression
+  : 'NameOf' '(' expression ')'
+  ;
+
+predefined_cast_expression
+  : 'CBool' '(' expression ')'
+  | 'CByte' '(' expression ')'
+  | 'CChar' '(' expression ')'
+  | 'CDate' '(' expression ')'
+  | 'CDbl' '(' expression ')'
+  | 'CDec' '(' expression ')'
+  | 'CInt' '(' expression ')'
+  | 'CLng' '(' expression ')'
+  | 'CObj' '(' expression ')'
+  | 'CSByte' '(' expression ')'
+  | 'CShort' '(' expression ')'
+  | 'CSng' '(' expression ')'
+  | 'CStr' '(' expression ')'
+  | 'CUInt' '(' expression ')'
+  | 'CULng' '(' expression ')'
+  | 'CUShort' '(' expression ')'
+  ;
+
+query_expression
+  : query_clause+
+  ;
+
+query_clause
+  : from_clause
+  | aggregate_clause
+  | distinct_clause
+  | group_by_clause
+  | join_clause
+  | let_clause
+  | order_by_clause
+  | partition_clause
+  | partition_while_clause
+  | select_clause
+  | where_clause
+  ;
+
+aggregate_clause
+  : 'Aggregate' collection_range_variable (',' collection_range_variable)* query_clause* 'Into' aggregation_range_variable (',' aggregation_range_variable)*
+  ;
+
+collection_range_variable
+  : modified_identifier simple_as_clause? 'In' expression
+  ;
+
+aggregation_range_variable
+  : variable_name_equals? aggregation
+  ;
+
+variable_name_equals
+  : modified_identifier simple_as_clause? '='
+  ;
+
+distinct_clause
+  : 'Distinct'
+  ;
+
+from_clause
+  : 'From' collection_range_variable (',' collection_range_variable)*
+  ;
+
+group_by_clause
+  : 'Group' (expression_range_variable (',' expression_range_variable)*)? 'By' expression_range_variable (',' expression_range_variable)* 'Into' aggregation_range_variable (',' aggregation_range_variable)*
+  ;
+
+expression_range_variable
+  : variable_name_equals? expression
+  ;
+
+join_clause
+  : group_join_clause
+  | simple_join_clause
+  ;
+
+group_join_clause
+  : 'Group' 'Join' collection_range_variable (',' collection_range_variable)* join_clause* 'On' join_condition ('And' join_condition)* 'Into' aggregation_range_variable (',' aggregation_range_variable)*
+  ;
+
+join_condition
+  : expression 'Equals' expression
+  ;
+
+simple_join_clause
+  : 'Join' collection_range_variable (',' collection_range_variable)* join_clause* 'On' join_condition ('And' join_condition)*
+  ;
+
+let_clause
+  : 'Let' expression_range_variable (',' expression_range_variable)*
+  ;
+
+order_by_clause
+  : 'Order' 'By' ordering (',' ordering)*
+  ;
+
+ordering
+  : expression ascending_ordering?
+  ;
+
+ascending_ordering
+  : 'Ascending'
+  | 'Descending'
+  ;
+
+partition_clause
+  : skip_clause
+  | take_clause
+  ;
+
+skip_clause
+  : 'Skip' expression
+  ;
+
+take_clause
+  : 'Take' expression
+  ;
+
+partition_while_clause
+  : skip_while_clause
+  | take_while_clause
+  ;
+
+skip_while_clause
+  : 'Skip' 'While' expression
+  ;
+
+take_while_clause
+  : 'Take' 'While' expression
+  ;
+
+select_clause
+  : 'Select' expression_range_variable (',' expression_range_variable)*
+  ;
+
+where_clause
+  : 'Where' expression
+  ;
+
+ternary_conditional_expression
+  : 'If' '(' expression ',' expression ',' expression ')'
+  ;
+
+tuple_expression
+  : '(' argument (',' argument)+ ')'
+  ;
+
+is_or_is_not
+  : 'Is'
+  | 'IsNot'
+  ;
+
+type_of_expression
+  : 'TypeOf' await_expression is_or_is_not type
+  ;
+
+address_of_expression
+  : 'AddressOf' unary_expression
+  ;
+
+type
+  : base_type (type_modifier)*
+  ;
+
+base_type
+  : name
+  | predefined_type
+  | tuple_type
+  ;
+
+type_modifier
+  : array_rank_specifier
+  | '?'
+  ;
+
+predefined_type
+  : 'Boolean'
+  | 'Byte'
+  | 'Char'
+  | 'Date'
+  | 'Decimal'
+  | 'Double'
+  | 'Integer'
+  | 'Long'
+  | 'Object'
+  | 'SByte'
+  | 'Short'
+  | 'Single'
+  | 'String'
+  | 'UInteger'
+  | 'ULong'
+  | 'UShort'
+  ;
+
+tuple_type
+  : '(' tuple_element (',' tuple_element)+ ')'
+  ;
+
+tuple_element
+  : named_tuple_element
+  | typed_tuple_element
+  ;
+
+named_tuple_element
+  : identifier_token simple_as_clause?
+  ;
+
+typed_tuple_element
+  : type
+  ;
+
+name
+  : base_name ('.' name_reference)*
+  ;
+
+base_name
+  : identifier_name type_argument_list?
+  ;
+
+name_reference
+  : identifier_or_keyword type_argument_list?
+  ;
+
+xml_cdata
+  : '<CDATA>'
+  ;
+
+x_expression
+  : x_element
+  | x_declaration
+  | x_tag_single
+  | x_tag_comment
+  | x_tag_embed_expression
+  ;
+
+x_element
+  : x_tag_start x_body_element* x_tag_end
+  ;
+
+x_declaration
+  : '<?' x_tag_inside '?>' x_expression
+  ;
+
+x_non_xml_operator
+  : '!'
+  | '\''
+  | '#'
+  | '$\''
+  | '%>'
+  | '&'
+  | '&='
+  | '*'
+  | '*='
+  | '+'
+  | '+='
+  | '-'
+  | '-='
+  | '.'
+  | '/'
+  | '/='
+  | '/>'
+  | ':'
+  | ':='
+  | '<<'
+  | '<<='
+  | '<='
+  | '<>'
+  | '='
+  | '>'
+  | '>='
+  | '>>'
+  | '>>='
+  | '?'
+  | '?.'
+  | '?>'
+  | '@'
+  | '.@'
+  | '\\'
+  | '\\='
+  | '^'
+  | '^='
+  | ';'
+  ;
+
+x_body_element
+  : x_expression
+  | '<IDENT>'
+  | '<KEYWORD>'
+  | '<PUNCTUATION>'
+  | '<INT>'
+  | '<FLOAT>'
+  | '<CHAR>'
+  | '<STRING>'
+  | '<STRING_SEGMENT>'
+  | '<DATE>'
+  | '<CDATA>'
+  | '<OTHER>'
+  | x_non_xml_operator
+  ;
+
+x_tag_start
+  : '<' x_tag_inside '>'
+  ;
+
+x_tag_end
+  : '</' x_tag_inside '>'
+  ;
+
+x_tag_single
+  : '<' x_tag_inside '/>'
+  ;
+
+x_tag_comment
+  : '<!--' x_body_element* '-->'
+  ;
+
+x_tag_inside
+  : x_name x_param*
+  ;
+
+x_tag_embed_expression
+  : '<%=' expression '%>'
+  ;
+
+x_name
+  : '<IDENT>' (':' '<IDENT>')*
+  ;
+
+x_param
+  : x_name ('=' x_param_value)?
+  | x_tag_embed_expression
+  ;
+
+x_param_value
+  : '<IDENT>'
+  | '<STRING>'
+  | '<INT>'
+  | x_tag_embed_expression
+  ;
+
+method_modifier
+  : 'Async'
+  | 'Iterator'
+  | modifier
+  ;
+
+modifier
+  : 'Const'
+  | 'Default'
+  | 'Delegate'
+  | 'Dim'
+  | 'Friend'
+  | 'MustInherit'
+  | 'MustOverride'
+  | 'Narrowing'
+  | 'NotInheritable'
+  | 'NotOverridable'
+  | 'Optional'
+  | 'Overloads'
+  | 'Overridable'
+  | 'Overrides'
+  | 'Partial'
+  | 'Private'
+  | 'Protected'
+  | 'Public'
+  | 'ReadOnly'
+  | 'Shadows'
+  | 'Shared'
+  | 'Static'
+  | 'Widening'
+  | 'WithEvents'
+  | 'WriteOnly'
+  | 'ByRef'
+  | 'ByVal'
+  | 'ParamArray'
+  ;
+
+character_literal_token
+  : '<CHAR>'
+  ;
+
+date_literal_token
+  : '<DATE>'
+  ;
+
+decimal_literal_token
+  : 'DECIMAL_LITERAL'
+  ;
+
+floating_literal_token
+  : '<FLOAT>'
+  ;
+
+identifier_token
+  : '<IDENT>'
+  ;
+
+integer_literal_token
+  : '<INT>'
+  ;
+
+string_literal_token
+  : '<STRING>'
+  ;

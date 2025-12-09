@@ -478,11 +478,12 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             Function_call_graph.build_call_graph ~lang ~object_mappings ast
           in
 
-          (* Write call graph to dot file for debugging *)
-          let dot_file = open_out "call_graph.dot" in
-          Function_call_graph.Dot.output_graph dot_file call_graph;
-          close_out dot_file;
-          Log.debug (fun m -> m "TAINT_SIG: Wrote call graph to call_graph.dot");
+          Log.debug (fun m ->
+              (* Write call graph to dot file for debugging *)
+              (* let dot_file = open_out "call_graph.dot" in
+                 Function_call_graph.Dot.output_graph dot_file call_graph;
+                 close_out dot_file; *)
+              m "TAINT_SIG: Wrote call graph to call_graph.dot");
 
           let analysis_order =
             Function_call_graph.Topo.fold
@@ -698,7 +699,8 @@ let check_rules ~match_hook
          | Lang.Rust
          | Lang.Scala
          | Lang.Swift
-         | Lang.Ts ->
+         | Lang.Ts
+         | Lang.Vb ->
              (* Known supported languages - no warning *)
              ()
          | other_lang ->

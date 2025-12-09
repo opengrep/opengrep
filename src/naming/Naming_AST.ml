@@ -423,6 +423,7 @@ let is_resolvable_name_ctx env lang =
       | Lang.Kotlin
       | Lang.Apex
       | Lang.Csharp
+      | Lang.Vb
       (* true for JS/TS so that we can resolve class methods *)
       | Lang.Js
       | Lang.Ts
@@ -446,6 +447,7 @@ let resolved_name_kind env lang =
       | Lang.Kotlin
       | Lang.Apex
       | Lang.Csharp
+      | Lang.Vb
       (* true for JS/TS to resolve class methods. *)
       | Lang.Js
       | Lang.Ts
@@ -824,11 +826,15 @@ class ['self] resolve_visitor env lang =
 
     method! visit_pattern venv x =
       match x with
-      | PatId (id, id_info) when is_resolvable_name_ctx env lang ->
+      | (PatId (id, id_info) | PatAs (_, (id, id_info)))
+        when is_resolvable_name_ctx env lang ->
           (* todo: in Python it does not necessarily introduce
            * a newvar if the ID was already declared before.
            * Also inside a PatAs(PatId x,b), the 'x' is actually
            * the name of a class, not a newly introduced local.
+           * NOTE (dimitris): I could not find any example where
+           * such 'x' is not a new variable... why should it be
+           * a class name?
            *)
           declare_var env lang id id_info ~explicit:true None None;
           super#visit_pattern venv x
@@ -979,7 +985,9 @@ class ['self] resolve_visitor env lang =
                  * currently tagged
                  *)
                 let s, tok = id in
-                error tok (spf "could not find '%s' in environment" s));
+                if is_implicit_param s then ()
+                else
+                  error tok (spf "could not find '%s' in environment" s));
           recurse := false
       | DotAccess
           ({ e = IdSpecial ((This | Self), _); _ }, _, FN (Id (id, id_info)))

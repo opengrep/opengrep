@@ -67,6 +67,21 @@ let csharp_constructor_pattern : constructor_pattern =
     uses_new_keyword = true;
   }
 
+(* VB.NET: New ClassName(args) - similar to C# *)
+let vb_constructor_pattern : constructor_pattern =
+  {
+    match_pattern =
+      (fun rval_expr class_names ->
+        match rval_expr.G.e with
+        | G.New (_, class_type, _, _) -> (
+            match class_type.G.t with
+            | G.TyN name when is_known_class name class_names -> Some name
+            | _ -> None)
+        | _ -> None);
+    constructor_names = [ "New" ];
+    uses_new_keyword = true;
+  }
+
 (* Kotlin: ClassName(args) or new ClassName(args) *)
 let kotlin_constructor_pattern : constructor_pattern =
   {
@@ -371,6 +386,7 @@ let get_constructor_pattern (lang : Lang.t) : constructor_pattern option =
   | Lang.Java -> Some java_constructor_pattern
   | Lang.Apex -> Some apex_constructor_pattern
   | Lang.Csharp -> Some csharp_constructor_pattern
+  | Lang.Vb -> Some vb_constructor_pattern
   | Lang.Kotlin -> Some kotlin_constructor_pattern
   | Lang.Scala -> Some scala_constructor_pattern
   | Lang.Ruby -> Some ruby_constructor_pattern

@@ -82,6 +82,7 @@ type t = Language.t =
   | Swift
   | Terraform
   | Ts
+  | Vb
   | Vue
   | Xml
   | Yaml
@@ -105,6 +106,11 @@ let is_c_cpp lang =
   match lang with
   | C | Cpp -> true
   |_ -> false
+
+let is_caseless lang =
+  match lang with
+  | Vb -> true
+  | _ -> false
 
 (*****************************************************************************)
 (* Helpers *)
@@ -155,6 +161,7 @@ let langs_of_filename filename =
   | FT.PL FT.Ruby -> [ Ruby ]
   | FT.PL FT.Julia -> [ Julia ]
   | FT.PL FT.Csharp -> [ Csharp ]
+  | FT.PL FT.Vb -> [ Vb ]
   | FT.PL (FT.Web (FT.Php _)) -> [ Php ]
   | FT.PL (FT.Web FT.Hack) -> [ Hack ]
   | FT.PL FT.Kotlin -> [ Kotlin ]

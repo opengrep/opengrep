@@ -111,7 +111,7 @@ class ['self] matching_visitor =
        * below call v_stmt (which itself will call v_def).
        *
        * In certain languages like Javascript, some method definitions look
-       * really like assignements, so we would like an expression pattern like
+       * really like assignments, so we would like an expression pattern like
        * '$X = function() { ...}' to also match code like
        * 'class Foo { x = function() { return; } }'.
        *)

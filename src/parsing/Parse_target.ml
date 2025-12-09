@@ -129,7 +129,10 @@ let fail_on_errors errors =
   | [] -> ()
   | errors ->
       let error_strs =
-        List_.map (fun (Tree_sitter_error err : Res.error) -> err.msg) errors
+        List_.map (fun e ->
+            match e with
+            | Res.Tree_sitter_error err -> err.msg
+            | _ -> Res.format_errors [e]) errors
       in
       failwith (String.concat "\n" error_strs)
 

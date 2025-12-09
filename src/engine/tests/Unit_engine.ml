@@ -75,6 +75,7 @@ let full_lang_info =
     (Lang.Jsonnet, "jsonnet", ".jsonnet");
     (Lang.Clojure, "clojure", ".clj");
     (Lang.Xml, "xml", ".xml");
+    (Lang.Vb, "vb", ".vb");
     (Lang.Dart, "dart", ".dart");
     (Lang.Ql, "ql", ".ql");
     (Lang.Move_on_sui, "move_on_sui", ".move");
@@ -738,6 +739,14 @@ let lang_tainting_tests () =
 
          let lang = Lang.Java in
          tainting_tests_for_lang files lang);
+      Testo.categorize "tainting Vb"
+        (let dir = taint_tests_path / "vb" in
+         let files =
+           Common2.glob (spf "%s/*.vb" !!dir) |> Fpath_.of_strings
+         in
+
+         let lang = Lang.Vb in
+         tainting_tests_for_lang files lang);
       Testo.categorize "tainting Javascript"
         (let dir = taint_tests_path / "js" in
          let files = Common2.glob (spf "%s/*.js" !!dir) |> Fpath_.of_strings in
@@ -868,6 +877,8 @@ let semgrep_rules_repo_tests () : Testo.t list =
              | s when s =~ ".*.test.yml" -> None
              (* not languages tests *)
              | s when s =~ ".*/semgrep-rules/stats/" -> None
+             (* this was 'todoruleid' and it now passes. *)
+             | s when s =~ ".*/semgrep-rules/ocaml/lang/correctness/useless-let.yaml" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming
@@ -876,8 +887,10 @@ let semgrep_rules_repo_tests () : Testo.t list =
                     TODO: don't capitalize? leave a slash? *)
                  let s = Common.matched1 test.name in
                  Some (String.capitalize_ascii s)
-            (* this skips a test that incorectly fails for cross-function tainting (because of false positives) *)
-            | s when s =~ ".*/semgrep-rules/java/lang/security/audit/xss/no-direct-response-writer.yaml" ->None
+             (* TODO: This is not skipped! See above. It should move further up to be
+              * excluded! Remove exclusion? *)
+             (* this skips a test that incorrectly fails for cross-function tainting (because of false positives) *)
+             (* | s when s =~ ".*/semgrep-rules/java/lang/security/audit/xss/no-direct-response-writer.yaml" -> None *)
              (* this skips the semgrep-rules/.github entries *)
              | _ ->
                  Logs.info (fun m -> m "skipping %s" test.name);

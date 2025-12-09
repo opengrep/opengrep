@@ -415,19 +415,25 @@ type step2 =
 
 type cnf_step2 = step2 cnf [@@deriving show]
 
-let or_step2 (Or xs) =
+let or_step2 ~caseless (Or xs) =
+  let compile =
+    if caseless then
+      Pcre2_.pcre_compile_caseless
+    else
+      Pcre2_.pcre_compile
+  in
   let step1_to_step2 =
     List_.map (function
       | StringsAndMvars ([], _) -> raise GeneralPattern
       | StringsAndMvars (xs, _) -> Idents xs
-      | Regexp re_str -> Regexp2_search (Pcre2_.pcre_compile re_str)
+      | Regexp re_str -> Regexp2_search (compile re_str)
       | MvarRegexp (_mvar, re_str, _const_prop) ->
           (* The original regexp is meant to apply on a substring.
               We rewrite them to remove end-of-string anchors if possible. *)
           let re =
             match
               Pcre2_.remove_end_of_string_assertions
-                (Pcre2_.pcre_compile re_str)
+                (compile re_str)
             with
             | None -> raise GeneralPattern
             | Some re -> re
@@ -440,8 +446,8 @@ let or_step2 (Or xs) =
   try Some (Or (step1_to_step2 xs)) with
   | GeneralPattern -> None
 
-let and_step2 (And xs) =
-  let ys = xs |> List_.filter_map or_step2 in
+let and_step2 ~caseless (And xs) =
+  let ys = xs |> List_.filter_map (or_step2 ~caseless) in
   if List_.null ys then raise GeneralPattern;
   And ys
 
@@ -547,7 +553,7 @@ let eval_and p (And xs) =
                  m "exception while dumping: %s" (Printexc.to_string e)));
          v)
 
-let run_cnf_step2 cnf big_str =
+let run_cnf_step2 ?(caseless=false) cnf big_str =
   cnf
   |> eval_and (function
        | Idents xs ->
@@ -557,11 +563,20 @@ let run_cnf_step2 cnf big_str =
                   (* TODO: matching_exact_word does not work, why??
                      because string literals and metavariables are put under
                      Idents? *)
-                  let re = Pcre2_.matching_exact_string id in
+                  let re =
+                    if caseless then
+                      Pcre2_.matching_caseless_string id
+                    else
+                      Pcre2_.matching_exact_string id
+                  in
                   (* Note that in case of a PCRE error, we want to assume
                      that the rule is relevant, hence ~on_error:true! *)
-                  Pcre2_.unanchored_match ~on_error:true re big_str)
-       | Regexp2_search re -> Pcre2_.unanchored_match re big_str)
+                  let res = Pcre2_.unanchored_match ~on_error:true re big_str in
+                  Log.debug (fun m -> m "result: %B" res);
+                  res)
+       | Regexp2_search re ->
+           Log.debug (fun m -> m "check for the presence of %S" (Pcre2_.show re));
+           Pcre2_.unanchored_match re big_str)
 [@@profiling]
 
 (*****************************************************************************)
@@ -581,7 +596,7 @@ let prefilter_formula_of_prefilter (pre : prefilter) :
   let x, _f = pre in
   x
 
-let compute_final_cnf ~(is_id_mvar : is_id_mvar) f =
+let compute_final_cnf ~caseless ~(is_id_mvar : is_id_mvar) f =
   let* f = remove_not_final f in
   let cnf = cnf f in
   Log.debug (fun m -> m "cnf0 = %s" (show_cnf_step0 cnf));
@@ -592,7 +607,7 @@ let compute_final_cnf ~(is_id_mvar : is_id_mvar) f =
      let cnf = and_step1bis_filter_general cnf in
      logger#ldebug (lazy (spf "cnf1bis = %s" (show_cnf_step1 cnf)));
   *)
-  let cnf = and_step2 cnf in
+  let cnf = and_step2 ~caseless cnf in
   Log.debug (fun m -> m "cnf2 = %s" (show_cnf_step2 cnf));
   Some cnf
 [@@profiling]
@@ -608,13 +623,14 @@ let regexp_prefilter_of_formula ~xlang f : prefilter option =
         let id_mvars = id_mvars_of_formula f in
         fun mvar -> MvarSet.mem mvar id_mvars
   in
+  let caseless = Xlang.is_caseless xlang in
   try
-    let* final = compute_final_cnf ~is_id_mvar f in
+    let* final = compute_final_cnf ~caseless ~is_id_mvar f in
     Some
       ( prefilter_formula_of_cnf_step2 final,
         fun big_str ->
           try
-            run_cnf_step2 final big_str
+            run_cnf_step2 ~caseless:caseless final big_str
             (* run_cnf_step2 (And [Or [Idents ["jsonwebtoken"]]]) big_str *)
           with
           (* can happen in spacegrep rules as we don't extract anything from t *)

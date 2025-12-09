@@ -279,6 +279,7 @@ let inspect_file_p (lang : Lang.t) path =
     | Swift
     | Terraform
     | Ts
+    | Vb
     | Vue
     | Xml
     | Yaml ->

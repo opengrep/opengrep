@@ -1453,6 +1453,7 @@ and pattern =
   | PatDisj of pattern * pattern (* also abused for catch in Java *)
   | PatTyped of pattern * type_
   | PatWhen of pattern * expr (* TODO: add tok, 'when' OCaml, 'if' Scala *)
+  (* newvar:! *)
   | PatAs of pattern * (ident * id_info)
   (* For Go also in switch x.(type) { case int: ... } *)
   | PatType of type_
@@ -1638,7 +1639,7 @@ and definition = entity * definition_kind
  * currently abuse id_info.id_type for that.
  *
  * Note that with the new entity_name type and EPattern, one entity value
- * can actually correspond to the definition of multiple vairables.
+ * can actually correspond to the definition of multiple variables.
  *
  * less: could be renamed entity_def, and name is a kind of entity_use.
  *)
@@ -2368,8 +2369,12 @@ let param_of_type ?(pattrs = []) ?pdefault ?pname typ =
     pinfo = basic_id_info (Parameter, SId.unsafe_default);
   }
 
-(* for 'function 0 -> 1 ...' in OCaml or 'do 0 -> 1 ...' in Elixir *)
-let implicit_param_id tk = ("!_implicit_param!", tk)
+(* For 'function 0 -> 1 ...' in OCaml or 'do 0 -> 1 ...' in Elixir.
+ * Coupling: src/optimizing/Analyze_rule.ml where such idents are now
+ * ignored, since they are not expected to be found in the source file. *)
+let implicit_param = "!!_implicit_param!"
+let implicit_param_id tk = (implicit_param, tk)
+let is_implicit_param s = String.starts_with ~prefix:"!!_implicit_param!" s
 
 (* ------------------------------------------------------------------------- *)
 (* Types *)

@@ -1,0 +1,4 @@
+Function(x)
+  ...
+  Return 42
+End Function

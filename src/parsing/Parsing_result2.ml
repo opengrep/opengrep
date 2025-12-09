@@ -5,6 +5,7 @@
 module Err = Tree_sitter_run.Tree_sitter_error
 
 type error = Tree_sitter_error of Err.t
+           | Other_error of Fpath.t * string * Pos.t
 
 type t = {
   ast : AST_generic.program;
@@ -55,7 +56,14 @@ let partial ast stat tree_sitter_errors =
   { ast; errors; skipped_tokens; inserted_tokens; tolerated_errors = []; stat }
 
 let has_error x = x.errors <> []
-let format_error ?style (Tree_sitter_error x) = Err.to_string ?style x
+
+let format_error ?style = function
+  | Tree_sitter_error x ->
+      Err.to_string ?style x
+  | Other_error (path, s, pos) ->
+      Fpath.to_string path ^
+      ": Parse error around token '" ^ s ^ "' at " ^
+      Pos.string_of_pos pos
 
 let format_errors ?style errors =
   errors |> List_.map (format_error ?style) |> String.concat ""

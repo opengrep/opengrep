@@ -112,6 +112,7 @@ let (comment_syntaxes : (string * string option) list) =
      * where you can't use comment
      *)
     ("{/*", Some "*/}");
+    ("'", None); (* vb.net  *)
   ]
 
 (*****************************************************************************)
