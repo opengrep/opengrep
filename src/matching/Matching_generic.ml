@@ -356,6 +356,36 @@ let rec equal_ast_bound_code (config : Rule_options.t) (a : MV.mvalue)
     (* TODO: we should get rid of that too, we should properly bind to MV.N *)
     | MV.E { e = G.N (G.Id (a_id, a_id_info)); _ }, MV.Id _ ->
         equal_ast_bound_code config (MV.Id (a_id, Some a_id_info)) b
+    (* For Elixir and similar, in order for a rule with a pattern such as the
+     * one below to produce matches:
+     *
+     * def f(..., $ARG, ...) do
+     *   $ARG
+     * end
+     *
+     * Alt: Recurse with MV.E derived from the MV.S, which will be caught by cases
+     * above. But this is probably more optimal for these cases.
+     *)
+    | MV.S { s = G.ExprStmt ({e = G.N (G.Id (a_id, a_id_info)); _ }, _); _ },
+      MV.Id _ ->
+        equal_ast_bound_code config (MV.Id (a_id, Some a_id_info)) b
+    | MV.Id _,
+      MV.S { s = G.ExprStmt ({e = G.N (G.Id (b_id, b_id_info)); _ }, _); _ } ->
+        equal_ast_bound_code config a (MV.Id (b_id, Some b_id_info))
+    (* Why? To match things like the identity function. *)
+    | MV.S { s = G.ExprStmt ( ( {e = G.N (G.Id _); _ } as e1 ), _); _ },
+      MV.E { e = G.N (G.Id _); _ } ->
+        equal_ast_bound_code config (MV.E e1) b
+    | MV.E { e = G.N (G.Id _); _ },
+      MV.S { s = G.ExprStmt ( ( {e = G.N (G.Id _); _ } as e2 ), _); _ } ->
+        equal_ast_bound_code config a (MV.E e2)
+    (* A more generic version of the above; this means that some cases above
+     * are redundant, but we skip some calls by having these specialised patterns. *)
+    | MV.S { s = G.ExprStmt (e1, _); _ }, _ ->
+        equal_ast_bound_code config (MV.E e1) b
+    | _,
+      MV.S { s = G.ExprStmt ( e2, _); _ } ->
+        equal_ast_bound_code config a (MV.E e2)
     | _, _ -> false
   in
   if not res then

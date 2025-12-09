@@ -1,0 +1,19 @@
+rules:
+- id: tainted
+  mode: taint
+  languages: [elixir]
+  message: "tainted"
+  severity: INFO
+
+  pattern-sources:
+    - patterns:
+      - pattern-either:
+          - pattern-inside: |
+              fn (..., $P, ...) -> ... end
+          - pattern-inside: |
+              fn (..., $P, ...) when $_ -> ... end
+      - focus-metavariable: $P
+
+  pattern-sinks:
+    - pattern: |
+        sink($R)

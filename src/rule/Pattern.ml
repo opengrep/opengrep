@@ -73,3 +73,7 @@ let is_special_identifier ?lang str =
   || (lang =*= Some Lang.Java && str = "this")
   || (* TODO: PHP converts some Eval in __builtin *)
   (lang =*= Some Lang.Php && str =~ "__builtin__*")
+  (* Used in encodings of Elixir and OCaml functions with pattern cases,
+   * these identifiers are not expected to be found in the source files!
+   * Else targets are skipped when they should not be. *)
+  || AST_generic.is_implicit_param str

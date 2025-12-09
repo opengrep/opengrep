@@ -479,7 +479,7 @@ let apply_focus_on_ranges (env : env) (focus_mvars_list : R.focus_mv_list list)
           failwith "Cannot have an empty `focus-metavariables`"
       | _, _ ->
           failwith
-            "Semgrep currently does not support multiple `focus-metavariable` \
+            "Opengrep currently does not support multiple `focus-metavariable` \
              statements with multiple metavariables under a single `patterns`."
     in
     let rec intersect_ranges_list (l : RM.t list list) : RM.t list =

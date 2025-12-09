@@ -154,7 +154,7 @@ let lval_of_id_info  id id_info =
 (* TODO: use also qualifiers? *)
 let lval_of_id_qualified
     { G.name_last = id, _typeargsTODO; name_info = id_info; _ } =
-  lval_of_id_info  id id_info
+  lval_of_id_info id id_info
 
 let lval_of_base base = { base; rev_offset = [] }
 
@@ -225,7 +225,7 @@ let name_of_entity ent =
   | Some (i, pinfo) ->
       let name = var_of_id_info i pinfo in
       Some name
-  | _____else_____ -> None
+  | _else_ -> None
 
 let composite_of_container ~g_expr :
     G.container_operator -> stmts -> IL.composite_kind =
@@ -273,7 +273,7 @@ let is_constructor env ret_ty id_info =
       match ret_ty with
       (* It would be nice if we can check that this type actually
          corresponds to a class, but I am uncertain if this is
-         possible. Istead we just check if it is a nominal typed.
+         possible. Instead we just check if it is a nominal typed.
          TODO could we somehow guarentee this type is a class? *)
       | { G.t = G.TyN _; _ } -> true
       | _ -> false)
@@ -285,7 +285,7 @@ let is_constructor env ret_ty id_info =
 
 let rec lval env eorig =
   match eorig.G.e with
-  | G.N n -> (env, name  n)
+  | G.N n -> (env, name n)
   | G.IdSpecial (G.This, tok) -> (env, lval_of_base (VarSpecial (This, tok)))
   | G.DotAccess (e1orig, tok, field) ->
       let env, offset' =
@@ -340,14 +340,38 @@ and name  = function
 (* TODO: This code is very similar to that of `assign`. Actually, we should not
  * be dealing with patterns in the LHS of `Assign`, those are supposed to be
  * `LetPattern`s. *)
+(* TODO: PatDisj, but it's abused in a lot of places so it's not clear.
+ * Normally, assuming that both patterns have the same identifiers, one
+ * could just recurse on one of them and ignore the other. *)
 and pattern env pat =
   match pat with
   | G.PatWildcard tok ->
       let lval = fresh_lval tok in
       (env, lval, [])
+  | G.PatLiteral _ ->
+      let lval = fresh_lval (Tok.unsafe_fake_tok "_patlit") in
+      (env, lval, [])
   | G.PatId (id, id_info) ->
       let lval = lval_of_id_info id id_info in
       (env, lval, [])
+  | G.PatAs (pat_inner, (id, id_info)) ->
+    let tok = snd id in
+    (* Create tmp to hold the whole matched value *)
+    let tmp = fresh_var tok in
+    let tmp_lval = lval_of_base (Var tmp) in
+    (* Alias lval for 'id' *)
+    let alias_lval = lval_of_id_info id id_info in
+    let tmp_fetch_e = mk_e (Fetch tmp_lval) (Related (G.P pat_inner)) in
+    let alias_assign_stmt =
+      mk_s (Instr (mk_i (Assign (alias_lval, tmp_fetch_e)) (related_tok tok)))
+    in
+    let env, inner_ss =
+      pattern_assign_statements
+        env ~eorig:(Related (G.P pat_inner)) tmp_fetch_e pat_inner
+    in
+    (* NOTE: Order of statements determines scope in cases like: `[x; y] as x`
+     *  here we will see the whole value as `x`. Not important. *)
+    (env, tmp_lval, inner_ss @ [ alias_assign_stmt ])
   | G.PatList (_tok1, pats, tok2)
   | G.PatTuple (_tok1, pats, tok2) ->
       (* P1, ..., Pn *)
@@ -373,6 +397,32 @@ and pattern env pat =
   | G.PatTyped (pat1, ty) ->
       let env, _ = type_ env ty in
       pattern env pat1
+  | G.PatConstructor (G.Id ((_s, tok), _id_info), pats) ->
+    pattern env (G.PatTuple (G.fake "(", pats, tok))
+  | G.PatKeyVal (key_pat, val_pat) ->
+    (* TODO: Now sure about offsets here, as created by the PatTuple case. *)
+    pattern env (G.PatTuple (G.fake "(", [ key_pat; val_pat ], G.fake ")"))
+  | G.PatRecord (tok1, fields, tok2) ->
+    (* TODO: But here the offset is not an index..., should we do proper?
+     * In fact we cannot recover the G.name of the dotted_ident in PatRecord,
+     * so cannot easily create a Dot offset. We have no sid and id_info.
+     * For this reason we do this hack. *)
+    let pats = List_.map (fun (_dot_ident, pat) -> pat) fields in
+    pattern env (G.PatTuple (tok1, pats, tok2))
+  | G.PatWhen (pat_inner, when_expr) ->
+      let env, lval, pat_stmts = pattern env pat_inner in
+      let env, guard_stmts, _e_guard =
+        expr_with_pre_stmts env when_expr
+      in
+      (* TODO: Handle fallthrough which is now true by default for
+       * this kind of pattern. But I wonder if it would be pointless
+       * to bother with it. *)
+      (env, lval, pat_stmts @ guard_stmts)
+  | G.DisjPat (pat1, _pat2) ->
+    (* XXX: Assume same bound variables on lhs and rhs, as is imposed on most
+     * languages. Hence we only recurse on one side. Seems good enough for now. *)
+    pattern env pat1
+  | G.PatEllipsis _ -> sgrep_construct env.stmts (G.P pat)
   | _ -> todo env.stmts (G.P pat)
 
 and _catch_exn env exn =
@@ -1832,7 +1882,7 @@ and stmt_aux env st =
       let st2 = List.concat list_of_lists in
       (env, ss @ [ mk_s (If (tok, e', st1, st2)) ])
   | G.Switch (tok, switch_expr_opt, cases_and_bodies) ->
-      let env, ss, translate_cases =
+      let env, ss, translate_cases, switch_expr_opt' =
         match switch_expr_opt with
         | Some switch_expr ->
             let env, ss, switch_expr' = cond_with_pre_stmts env switch_expr in
@@ -1840,15 +1890,16 @@ and stmt_aux env st =
               ss,
               switch_expr_and_cases_to_exp tok
                 (H.cond_to_expr switch_expr)
-                switch_expr' )
-        | None -> (env, [], cases_to_exp tok)
+                switch_expr',
+              Some switch_expr' )
+        | None -> (env, [], cases_to_exp tok, None)
       in
       let break_label, break_label_s, switch_env =
         mk_switch_break_label env tok
       in
 
       let env, jumps, bodies =
-        cases_and_bodies_to_stmts switch_env tok break_label translate_cases
+        cases_and_bodies_to_stmts switch_env switch_expr_opt' tok break_label translate_cases
           cases_and_bodies
       in
 
@@ -2074,6 +2125,7 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases =
               :: es )
         | G.Case (tok, G.OtherPat (_, [ E c ]))
         | G.CaseEqualExpr (tok, c) ->
+            (* TODO: PatWhen should use something along these lines... *)
             let env, c_ss, c' = expr_with_pre_stmts env c in
             ( env,
               ss @ c_ss,
@@ -2116,6 +2168,7 @@ and cases_to_exp tok env cases =
                `Or`ed together cases. It's handled specially in cases_and_bodies_to_stmts
             *)
             impossible env.stmts (G.Tk tok)
+        (* TODO: Other patterns? Maybe not worth it. *)
         | G.Case (tok, _) ->
             (env, ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es)
         | G.OtherCase ((_, tok), _) ->
@@ -2126,7 +2179,7 @@ and cases_to_exp tok env cases =
     ss,
     { e = Operator ((Or, tok), mk_unnamed_args es); eorig = related_tok tok } )
 
-and cases_and_bodies_to_stmts env tok break_label translate_cases = function
+and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_cases = function
   | [] -> (env, [ mk_s (Goto (tok, break_label)) ], [])
   | G.CaseEllipsis tok :: _ -> sgrep_construct env.stmts (G.Tk tok)
   | [ G.CasesAndBody ([ G.Default dtok ], body) ] ->
@@ -2136,7 +2189,7 @@ and cases_and_bodies_to_stmts env tok break_label translate_cases = function
       (env, [ mk_s (Goto (dtok, label)) ], mk_s (Label label) :: new_stmts)
   | G.CasesAndBody (cases, body) :: xs ->
       let env, jumps, bodies =
-        cases_and_bodies_to_stmts env tok break_label translate_cases
+        cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_cases
           xs (* TODO this is not tail recursive *)
       in
       let label = fresh_label ~label:"__switch_case" tok in
@@ -2144,11 +2197,41 @@ and cases_and_bodies_to_stmts env tok break_label translate_cases = function
       let jump =
         mk_s (IL.If (tok, case, [ mk_s (Goto (tok, label)) ], jumps))
       in
+
+      (* Here we add bindings for the switch pattern, for the common case:
+       * cases is one case for the branch. This makes Switch branches behave
+       * like LetPattern.
+       * Note that we only bind patterns when the switch condition is not None,
+       * even though it still does not always make sense...
+       * On the other hand, if the pattern has for example PatId, what is the
+       * intention if not to create a variable?
+       *)
+      let env, pat_stmts =
+        match switch_expr_opt, cases with
+        | Some cond, [ G.Case (_tok, pat) ] ->
+          let env, pat_stmts =
+            (* TODO: Need break_label here, if we are to handle PatWhen.
+             * See comments below. *)
+            pattern_assign_statements env ~eorig:(Related (G.P pat)) cond pat
+          in
+          (env, pat_stmts)
+        | _ -> (env, [])
+      in
+
       let env, new_stmts = stmt env body in
 
-      let body = mk_s (Label label) :: new_stmts in
+      let body = [ mk_s (Label label) ] @ pat_stmts @ new_stmts in
+      (* Maybe lang has no_fallthrough in general but here we have PatWhen
+       * with guard. Not sure any of that makes a true difference though! *)
+      let is_guarded_pat = 
+        match cases with
+        | [ G.Case (_, G.PatWhen _) ] -> true
+        | _ -> false
+      in
       let break_if_no_fallthrough =
-        if no_switch_fallthrough env.lang then
+        if no_switch_fallthrough env.lang && not is_guarded_pat then
+          (* TODO: Now, this instruction must be emitted conditionally
+           * in the translation of PatWhen, in the true branch of the If. *)
           [ mk_s (Goto (tok, break_label)) ]
         else []
       in
@@ -2207,6 +2290,7 @@ and python_with_stmt env manager opt_pat body =
   in
   let env, new_stmts = stmt env body in
   (env, ss_def_mgr @ ss_def_pat @ new_stmts)
+
 (*****************************************************************************)
 (* Defs *)
 (*****************************************************************************)
