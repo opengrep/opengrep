@@ -24,6 +24,7 @@ type conf = {
   (* mix of --dump-ast/--dump-rule/... *)
   show_kind : show_kind;
   json : bool;
+  html : bool;
 }
 
 (* coupling: if you add a command you probably need to modify [combine]
@@ -68,7 +69,11 @@ let o_json : bool Term.t =
   let info = Arg.info [ "json" ] ~doc:{|Output results in JSON format.|} in
   Arg.value (Arg.flag info)
 
-(* ------------------------------------------------------------------ *)
+let o_html : bool Term.t =
+  let info = Arg.info [ "html" ] ~doc:{|Output results as an HTML page.|} in
+  Arg.value (Arg.flag info)
+
+ (* ------------------------------------------------------------------ *)
 (* Positional arguments *)
 (* ------------------------------------------------------------------ *)
 let o_args : string list Term.t =
@@ -84,7 +89,7 @@ let o_args : string list Term.t =
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common json =
+  let combine args common json html =
     let show_kind =
       (* coupling: if you add a command here, update also the man page
        * further below
@@ -119,10 +124,10 @@ let cmdline_term : conf Term.t =
           Error.abort
             (spf "show command not supported: %s" (String.concat " " args))
     in
-    { show_kind; json; common }
+    { show_kind; json; html; common }
   in
 
-  Term.(const combine $ o_args $ CLI_common.o_common $ o_json)
+  Term.(const combine $ o_args $ CLI_common.o_common $ o_json $ o_html)
 
 let doc = "Show various types of information"
 
