@@ -101,12 +101,28 @@ let expr_of_expr_or_kwds (x : (G.expr, keywords_generic) Either_.t) : G.expr =
 (* TODO: lots of work here to detect when args is really a single
  * pattern, or tuples *)
 let pat_of_args_and_when (args, when_opt) : G.pattern =
-  let rest =
-    match when_opt with
-    | None -> []
-    | Some (_tok, e) -> [ G.E e ]
+  (* let rest =
+       match when_opt with
+       | None -> []
+       | Some (_tok, e) -> [ G.E e ]
+     in *)
+  let pats =
+    List_.map
+      (function
+        | G.OtherArg (("ArgKwdQuoted", _), [ G.E e ]) -> H.expr_to_pattern e
+        | arg -> H.argument_to_expr arg |> H.expr_to_pattern)
+      args
   in
-  G.OtherPat (("ArgsAndWhenOpt", G.fake ""), G.Args args :: rest) |> G.p
+  let pat =
+    match pats with
+    | [] -> G.PatLiteral (G.Null (G.fake "no_arg")) (* invalid syntax anyway. *)
+    | _ ->
+      G.PatTuple (fb pats)
+  in
+  (* G.OtherPat (("ArgsAndWhenOpt", G.fake ""), G.Args args :: rest) |> G.p *)
+  match when_opt with
+    | None -> pat
+    | Some (_tok, e) -> G.PatWhen (pat, e)
 
 let case_and_body_of_stab_clause (x : stab_clause_generic) : G.case_and_body =
   (* body can be empty *)

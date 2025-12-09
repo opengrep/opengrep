@@ -39,4 +39,8 @@
 
   # ruleid: tainted
   fn x when sink(x) -> x end
+  ,
+
+  # ok
+  fn x when sink(y) -> x end
 ]
