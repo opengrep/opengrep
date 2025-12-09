@@ -54,8 +54,15 @@ let json_of_v (v : OCaml.v) =
   aux v
 
 (* mostly a copy paste of Core_CLI.dump_v_to_format *)
-let dump_v_to_format ~json (v : OCaml.v) =
-  if json then J.string_of_json (json_of_v v) else OCaml.string_of_v v
+let dump_any_to_format ~json ~html (any : AST_generic.any) =
+  let (v : OCaml.v) = Meta_AST.vof_any any in
+  match json, html with
+  | true, false ->
+      J.string_of_json (json_of_v v)
+  | false, false ->
+      OCaml.string_of_v v
+  | _, true ->
+      Show_html.generate_html v
 
 (*****************************************************************************)
 (* Main logic *)
@@ -81,8 +88,7 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
       (* TODO: maybe enable the "semgrep.parsing" src here *)
       match Parse_pattern.parse_pattern lang str with
       | Ok any ->
-          let v = Meta_AST.vof_any any in
-          let s = dump_v_to_format ~json:conf.json v in
+          let s = dump_any_to_format ~json:conf.json ~html:conf.html any in
           print s;
           Exit_code.ok ~__LOC__
       | Error s ->
@@ -111,10 +117,9 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
          *)
         Parse_target.parse_and_resolve_name lang file
       in
-      let v = Meta_AST.vof_any (AST_generic.Pr ast) in
       (* 80 columns is too little *)
       UFormat.set_margin 120;
-      let s = dump_v_to_format ~json:conf.json v in
+      let s = dump_any_to_format ~json:conf.json ~html:conf.html (AST_generic.Pr ast) in
       print s;
       match (errors @ tolerated_errors, skipped_tokens @ inserted_tokens) with
       | [], [] -> Exit_code.ok ~__LOC__
