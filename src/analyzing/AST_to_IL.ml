@@ -418,39 +418,6 @@ and pattern env pat =
        * this kind of pattern. But I wonder if it would be pointless
        * to bother with it. *)
       (env, lval, pat_stmts @ guard_stmts)
-  (* XXX: This is for Elixir lambdas, and it's incomplete...
-   * TODO: Deal with other kinds of Arg and when expression which is a singleton
-   * rest in G.Args args :: rest.
-   * TODO: This interpretation is very specific to Elixir, not ideal.
-   * Maybe change the language encoding? We have G.PatWhen in AST_generic. *)
-  | G.OtherPat (("ArgsAndWhenOpt", tok), G.Args args :: maybe_when_expr)
-    when env.lang =*= Lang.Elixir ->
-    let expr_args =
-      List.filter_map (function G.Arg arg -> Some arg | _ -> None) args
-    in
-    let pats =
-      (* XXX: Now Related will not match a real part of the AST of the source,
-       * but tokens should be ok since they are preserved in translation? *)
-      List_.map AST_generic_helpers.expr_to_pattern expr_args
-    in
-    let env, lval, pat_stmts =
-      match pats with
-        | [] ->
-          let lval = fresh_lval (Tok.unsafe_fake_tok "_nopats") in
-          (env, lval, [])
-        | [pat] -> pattern env pat
-        | _ ->
-          pattern env (G.PatTuple (G.fake "(", pats, tok)) in
-    (* XXX: This enables us to find taints in the guards of Elixir fn cases.
-     * Ideally we need something like If, with statements only when guard passes...
-     * Else fallthrough. *)
-    let env, guard_stmts = match maybe_when_expr with
-      | [G.E exp] ->
-        let env, guard_stmts, _e_guard =
-          expr_with_pre_stmts env exp in env, guard_stmts
-      | _ -> env, []
-    in
-    (env, lval, pat_stmts @ guard_stmts)
   | G.DisjPat (pat1, _pat2) ->
     (* XXX: Assume same bound variables on lhs and rhs, as is imposed on most
      * languages. Hence we only recurse on one side. Seems good enough for now. *)
