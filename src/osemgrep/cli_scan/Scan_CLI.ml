@@ -1307,6 +1307,7 @@ let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
             {
               Show.show_kind = Show.DumpPattern (str, Lang.of_string lang_str);
               json;
+              html = false; (* TODO: Update to work with opengrep --dump-ast as well? *)
               common;
             }
       | None, Some lang_str, [ file ] ->
@@ -1316,6 +1317,7 @@ let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
                 Show.DumpAST
                   (Scanning_root.to_fpath file, Lang.of_string lang_str);
               json;
+              html = false;
               common;
             }
       | _, None, _ ->
@@ -1330,11 +1332,11 @@ let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
       | Some _, _, _ :: _ ->
           Error.abort "Can't specify both -e and a target for --dump-ast")
   | _ when dump_engine_path ->
-      Some { Show.show_kind = Show.DumpEnginePath pro; json; common }
+      Some { Show.show_kind = Show.DumpEnginePath pro; json; html = false; common }
   | _ when dump_command_for_core ->
-      Some { Show.show_kind = Show.DumpCommandForCore; json; common }
+      Some { Show.show_kind = Show.DumpCommandForCore; json; html = false; common }
   | _ when show_supported_languages ->
-      Some { Show.show_kind = Show.SupportedLanguages; json; common }
+      Some { Show.show_kind = Show.SupportedLanguages; json; html = false; common }
   | _else_ -> None
 
 let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common ~pro :

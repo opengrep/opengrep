@@ -13,6 +13,7 @@ type conf = {
   (* mix of --dump-ast/--dump-rule/... *)
   show_kind : show_kind;
   json : bool;
+  html : bool;
 }
 
 and show_kind =
