@@ -437,6 +437,8 @@ let get_hof_configs (lang : Lang.t) : hof_kind list =
             params = Some [ Signature.Other; Signature.P "callback" ];
           };
       ]
+  (* Apex: No native HOF methods on collections, and no lambda support.
+     Third-party libraries use interface callbacks which need devirtualization. *)
   | _ -> []
 
 (** Create a builtin signature database with built-in models for standard library HOFs *)

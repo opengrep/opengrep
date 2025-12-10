@@ -483,16 +483,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           (* Use shared call graph if provided, otherwise compute it *)
           let call_graph =
             match shared_call_graph with
-            | Some (graph, shared_mappings) ->
-                (* Verify that object_mappings match to ensure consistency *)
-                if
-                  List.length shared_mappings
-                  <> List.length all_object_mappings
-                then
-                  (* Mappings don't match, recompute (shouldn't happen in practice) *)
-                  Function_call_graph.build_call_graph ~lang
-                    ~object_mappings:all_object_mappings ast
-                else graph
+            | Some (graph, _shared_mappings) ->
+                graph
             | None ->
                 (* Compute call graph as before *)
                 Function_call_graph.build_call_graph ~lang

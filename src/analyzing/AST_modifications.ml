@@ -33,43 +33,6 @@ let extract_lua_array_values (entries : G.expr list) : G.expr list =
          | _ -> assert false)
 
 (* ========================================================================== *)
-(* Elixir: Implicit parameter lambdas *)
-(* ========================================================================== *)
-
-(** Elixir: Convert implicit parameter lambda to explicit parameter lambda.
-
-    Elixir lambdas like `fn x -> sink(x) end` are parsed with an implicit
-    parameter and a Switch body. This converts them to explicit parameter
-    lambdas for proper taint tracking. *)
-let convert_elixir_implicit_lambda (fdef : G.function_definition)
-    : G.function_definition =
-  match (Tok.unbracket fdef.G.fparams, fdef.G.fbody) with
-  | ( [ G.Param { pname = Some _ ; _ } ],
-      G.FBStmt { s = G.Switch (_, Some (G.Cond _), cases); _ } )
-    when  List.length cases =*= 1 -> (
-      match cases with
-      | [
-       G.CasesAndBody
-         ( [
-             G.Case
-               ( _,
-                 G.OtherPat
-                   ( ("ArgsAndWhenOpt", _),
-                     [ G.Args [ G.Arg { e = G.N (G.Id (id, _)); _ } ] ] ) );
-           ],
-           body_stmt );
-      ] ->
-          (* Convert to lambda with explicit parameter from the pattern *)
-          let new_param = G.Param (G.param_of_id id) in
-          {
-            fdef with
-            fparams = Tok.unsafe_fake_bracket [ new_param ];
-            fbody = G.FBStmt body_stmt;
-          }
-      | _ -> fdef)
-  | _ -> fdef
-
-(* ========================================================================== *)
 (* Elixir: ShortLambda / Capture operator *)
 (* ========================================================================== *)
 

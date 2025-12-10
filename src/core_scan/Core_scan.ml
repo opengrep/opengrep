@@ -575,9 +575,6 @@ let iter_targets_and_get_matches_and_exn_to_errors
                       * process the target
                       *)
                      let scanned = true in
-                     Logs.warn (fun m ->
-                         m "File dropped %s: %s"
-                           !!internal_path (Printexc.to_string exn));
                      (Core_result.mk_match_result [] errors noprof, scanned)
                  | Time_limit.Timeout _ ->
                      (* converted in Main_timeout in timeout_function() *)

@@ -218,7 +218,7 @@ let find_max_placeholder (e : G.expr) : int =
   !max_found
 
 (** Replace placeholder references with parameter names.
-    E.g., &1 becomes &1, &2 becomes &2, etc. Recursively replaces in all subexpressions. *)
+     Recursively replaces in all subexpressions. *)
 let replace_placeholders (e : G.expr) : G.expr =
   let mapper =
     object

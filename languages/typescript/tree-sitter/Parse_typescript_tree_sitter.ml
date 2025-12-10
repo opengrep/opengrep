@@ -351,8 +351,9 @@ let import_export_specifier (env : env)
     | None -> None
     | Some (_as_tok, id_tok) -> Some (identifier env id_tok)
   in
-  (* Note: We now include type-only imports (e.g., `import { type Foo }`)
-     in the AST so that pattern matching with ellipsis works correctly.
+  (* Note: We now include type-only imports in the AST so that pattern matching
+     with ellipsis works correctly.
+     For example `import { type Foo }` will match `import {...}`
      Previously these were skipped with a TODO comment. *)
   let expr_id = identifier env v2 in
   Some (expr_id, opt_as_id)

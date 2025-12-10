@@ -943,15 +943,6 @@ and expr_aux env ?(void = false) g_expr =
       let kind = composite_kind ~g_expr kind in
       (env, mk_e (Composite (kind, (l, xs, r))) eorig)
   | G.Comprehension _ -> todo env.stmts (G.E g_expr)
-  | G.Lambda fdef when env.lang =*= Lang.Elixir ->
-      (* Elixir implicit parameter lambda conversion *)
-      let converted_fdef = AST_modifications.convert_elixir_implicit_lambda fdef in
-      let lval = fresh_lval (snd converted_fdef.fkind) in
-      let _, final_fdef =
-        function_definition { env with stmts = [] } converted_fdef
-      in
-      let env = add_instr env (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig) in
-      (env, mk_e (Fetch lval) eorig)
   | G.Lambda fdef ->
       let lval = fresh_lval (snd fdef.fkind) in
       let _, final_fdef =
