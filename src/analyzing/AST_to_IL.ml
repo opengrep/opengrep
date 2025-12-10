@@ -1873,6 +1873,28 @@ and stmt_aux env st =
       let xs = xs |> Tok.unbracket in
       let env, list_of_lists = List.fold_left_map stmt env xs in
       (env, List.concat list_of_lists)
+  (* Rust: if let Some(x) = some_x { ... } etc. *)
+  (* TODO: Handle LetChain too, see Parse_rust_tree_sitter. *)
+  | G.If (tok, G.OtherCond (("LetCond", _tk), [G.P pat; G.E e]), st1, st2)
+    when env.lang =*= Lang.Rust  ->
+    (* Convert to switch(e) { pat -> if_branch, _ -> else_branch }. *)
+    let cond_opt = Some (G.Cond e) in
+    let if_case_and_body =
+      G.CasesAndBody ([ G.Case (G.fake "case", pat) ], st1)
+    in
+    let cases_and_bodies =
+      match st2 with
+      | Some st2 ->
+          [
+            if_case_and_body;
+            G.CasesAndBody ([ G.Case (G.fake "case", G.PatWildcard (G.fake "_")) ], st2);
+          ]
+      | None -> [ if_case_and_body ]
+    in
+    let switch =
+      G.Switch (tok, cond_opt, cases_and_bodies) |> G.s
+    in
+    stmt env switch
   | G.If (tok, cond, st1, st2) ->
       let env, ss, e' = cond_with_pre_stmts env cond in
       let env, st1 = stmt env st1 in

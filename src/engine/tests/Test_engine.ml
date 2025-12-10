@@ -223,7 +223,7 @@ let make_test_rule_file ?(fail_callback = fun _i m -> Alcotest.fail m)
     | None -> ()
     | Some (rules, target, xlang) -> (
         (* expected *)
-        (* not tororuleid! not ok:! not todook:
+        (* not todoruleid! not ok:! not todook:
            see https://semgrep.dev/docs/writing-rules/testing-rules/
            for the meaning of those labels.
 

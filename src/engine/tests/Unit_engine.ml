@@ -44,42 +44,42 @@ let polyglot_pattern_path = tests_path_patterns / "POLYGLOT"
 let full_lang_info =
   [
     (Lang.Bash, "bash", ".bash");
-    (Lang.Dockerfile, "dockerfile", ".dockerfile");
-    (Lang.Python, "python", ".py");
-    (Lang.Promql, "promql", ".promql");
-    (Lang.Js, "js", ".js");
-    (Lang.Ts, "ts", ".ts");
-    (Lang.Json, "json", ".json");
-    (Lang.Java, "java", ".java");
     (Lang.C, "c", ".c");
-    (Lang.Cpp, "cpp", ".cpp");
-    (Lang.Go, "go", ".go");
-    (Lang.Ocaml, "ocaml", ".ml");
-    (Lang.Ruby, "ruby", ".rb");
-    (Lang.Php, "php", ".php");
-    (Lang.Hack, "hack", ".hack");
-    (Lang.Csharp, "csharp", ".cs");
-    (Lang.Lua, "lua", ".lua");
-    (Lang.Rust, "rust", ".rs");
     (Lang.Cairo, "cairo", ".cairo");
-    (Lang.Yaml, "yaml", ".yaml");
-    (Lang.Scala, "scala", ".scala");
-    (Lang.Swift, "swift", ".swift");
-    (Lang.Html, "html", ".html");
-    (Lang.Terraform, "terraform", ".tf");
-    (Lang.Kotlin, "kotlin", ".kt");
-    (Lang.Solidity, "solidity", ".sol");
-    (Lang.Elixir, "elixir", ".ex");
-    (Lang.R, "r", ".r");
-    (Lang.Julia, "julia", ".jl");
-    (Lang.Jsonnet, "jsonnet", ".jsonnet");
     (Lang.Clojure, "clojure", ".clj");
-    (Lang.Xml, "xml", ".xml");
-    (Lang.Vb, "vb", ".vb");
+    (Lang.Cpp, "cpp", ".cpp");
+    (Lang.Csharp, "csharp", ".cs");
     (Lang.Dart, "dart", ".dart");
-    (Lang.Ql, "ql", ".ql");
-    (Lang.Move_on_sui, "move_on_sui", ".move");
+    (Lang.Dockerfile, "dockerfile", ".dockerfile");
+    (Lang.Elixir, "elixir", ".ex");
+    (Lang.Go, "go", ".go");
+    (Lang.Hack, "hack", ".hack");
+    (Lang.Html, "html", ".html");
+    (Lang.Java, "java", ".java");
+    (Lang.Js, "js", ".js");
+    (Lang.Json, "json", ".json");
+    (Lang.Jsonnet, "jsonnet", ".jsonnet");
+    (Lang.Julia, "julia", ".jl");
+    (Lang.Kotlin, "kotlin", ".kt");
+    (Lang.Lua, "lua", ".lua");
     (Lang.Move_on_aptos, "move_on_aptos", ".move");
+    (Lang.Move_on_sui, "move_on_sui", ".move");
+    (Lang.Ocaml, "ocaml", ".ml");
+    (Lang.Php, "php", ".php");
+    (Lang.Promql, "promql", ".promql");
+    (Lang.Python, "python", ".py");
+    (Lang.Ql, "ql", ".ql");
+    (Lang.R, "r", ".r");
+    (Lang.Ruby, "ruby", ".rb");
+    (Lang.Rust, "rust", ".rs");
+    (Lang.Scala, "scala", ".scala");
+    (Lang.Solidity, "solidity", ".sol");
+    (Lang.Swift, "swift", ".swift");
+    (Lang.Terraform, "terraform", ".tf");
+    (Lang.Ts, "ts", ".ts");
+    (Lang.Vb, "vb", ".vb");
+    (Lang.Xml, "xml", ".xml");
+    (Lang.Yaml, "yaml", ".yaml");
   ]
 
 (*****************************************************************************)
@@ -612,168 +612,32 @@ let filter_irrelevant_rules_tests () =
 (* Tainting tests *)
 (*****************************************************************************)
 
-let tainting_test (lang : Lang.t) (rules_file : Fpath.t) (file : Fpath.t) =
-  let rules =
-    match Parse_rule.parse rules_file with
-    | Ok rules -> rules
-    | Error e ->
-        failwith
-          (spf "fail to parse tainting rules %s (error = %s)" !!rules_file
-             (Rule_error.string_of_error e))
-  in
-  let ast =
-    try Parse_target.parse_and_resolve_name_warn_if_partial lang file with
-    | exn ->
-        failwith
-          (spf "fail to parse %s (exn = %s)" !!file (Common.exn_to_s exn))
-  in
-  let rules =
-    rules
-    |> List.filter (fun r ->
-           match r.Rule.target_analyzer with
-           | Xlang.L (x, xs) -> List.mem lang (x :: xs)
-           | _ -> false)
-  in
-  let search_rules, taint_rules, extract_rules, join_rules =
-    Rule.partition_rules rules
-  in
-  assert (search_rules =*= []);
-  assert (extract_rules =*= []);
-  assert (join_rules =*= []);
-  let xconf = Match_env.default_xconfig in
-
-  let matches =
-    taint_rules
-    |> List.concat_map (fun rule ->
-           let xtarget : Xtarget.t =
-             {
-               path = { origin = File file; internal_path_to_content = file };
-               xlang = Xlang.L (lang, []);
-               lazy_content = lazy (UFile.read_file file);
-               lazy_ast_and_errors = lazy (ast, []);
-             }
-           in
-           let results =
-             Match_tainting_mode.check_rules ~match_hook:Fun.id
-               ~per_rule_boilerplate_fn:(fun _rule f -> f ())
-               [ rule ] xconf xtarget
-           in
-           match results with
-           | [ res ] -> res.matches
-           | [] -> []
-           (* By construction, `check_rules` should only return the same number of results as rules it
-              was initially given.
-              So this case is impossible.
-           *)
-           | _ :: _ :: _ ->
-               raise Impossible)
-  in
-  let actual =
-    matches
-    |> List_.map (fun (m : PM.t) ->
-           E.
-             {
-               rule_id = Some m.rule_id.id;
-               typ = Out.SemgrepMatchFound;
-               loc = Some (fst m.range_loc);
-               msg = m.rule_id.message;
-               details = None;
-             })
-  in
-  let regexp = ".*\\b\\(ruleid\\|todook\\):.*" in
-  let expected = TCM.expected_error_lines_of_files ~regexp [ file ] in
-  TCM.compare_actual_to_expected_for_alcotest
-    ~to_location:TCM.location_of_core_error actual expected
-
-let tainting_tests_for_lang files lang =
-  files
-  |> List_.map (fun file ->
-         Testo.create ~tags:(Test_tags.tags_of_lang lang) (Fpath.basename file)
-           (fun () ->
-             let rules_file =
-               let d, b, _e = Filename_.dbe_of_filename !!file in
-               let candidate1 = Filename_.filename_of_dbe (d, b, "yaml") in
-               if Sys.file_exists candidate1 then Fpath.v candidate1
-               else
-                 failwith
-                   (spf "could not find tainting rules file for %s" !!file)
-             in
-             tainting_test lang rules_file file))
-
-(* DEPRECATED: this is redundant because we now have 'make rules-test'
- * which calls 'osemgrep-pro test --pro tests/tainting_rules'
- *)
 let lang_tainting_tests () =
   let taint_tests_path = tests_path / "tainting_rules" in
-  Testo.categorize_suites "lang tainting rules"
+  let lang_specs =
     [
-      Testo.categorize "tainting Go"
-        (let dir = taint_tests_path / "go" in
-         let files = Common2.glob (spf "%s/*.go" !!dir) |> Fpath_.of_strings in
-
-         let lang = Lang.Go in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting PHP"
-        (let dir = taint_tests_path / "php" in
-         let files = Common2.glob (spf "%s/*.php" !!dir) |> Fpath_.of_strings in
-
-         let lang = Lang.Php in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting Apex"
-        (let dir = taint_tests_path / "apex" in
-         let files = Common2.glob (spf "%s/*.trigger" !!dir) |> Fpath_.of_strings in
-
-         let lang = Lang.Apex in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting Python"
-        (let dir = taint_tests_path / "python" in
-         let files = Common2.glob (spf "%s/*.py" !!dir) |> Fpath_.of_strings in
-
-         let lang = Lang.Python in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting Java"
-        (let dir = taint_tests_path / "java" in
-         let files =
-           Common2.glob (spf "%s/*.java" !!dir) |> Fpath_.of_strings
-         in
-
-         let lang = Lang.Java in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting Vb"
-        (let dir = taint_tests_path / "vb" in
-         let files =
-           Common2.glob (spf "%s/*.vb" !!dir) |> Fpath_.of_strings
-         in
-
-         let lang = Lang.Vb in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting Javascript"
-        (let dir = taint_tests_path / "js" in
-         let files = Common2.glob (spf "%s/*.js" !!dir) |> Fpath_.of_strings in
-
-         let lang = Lang.Js in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting Ruby"
-        (let dir = taint_tests_path / "ruby" in
-         let files = Common2.glob (spf "%s/*.rb" !!dir) |> Fpath_.of_strings in
-
-         let lang = Lang.Ruby in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting Typescript"
-        (let dir = taint_tests_path / "ts" in
-         let files = Common2.glob (spf "%s/*.ts" !!dir) |> Fpath_.of_strings in
-
-         let lang = Lang.Ts in
-         tainting_tests_for_lang files lang);
-      Testo.categorize "tainting Scala"
-        (let dir = taint_tests_path / "scala" in
-         let files =
-           Common2.glob (spf "%s/*.scala" !!dir) |> Fpath_.of_strings
-         in
-
-         let lang = Lang.Scala in
-         tainting_tests_for_lang files lang);
+      (* lang, dir, ext *)
+      (Lang.Apex, "apex", ".trigger"); (* TODO: Use Lang.* functions to derive .2, .3 *)
+      (Lang.Csharp, "csharp", ".cs");
+      (Lang.Elixir, "elixir", ".ex");
+      (Lang.Go, "go", ".go");
+      (Lang.Java, "java", ".java");
+      (Lang.Js, "js", ".js");
+      (Lang.Php, "php", ".php");
+      (Lang.Python, "python", ".py");
+      (Lang.Ruby, "ruby", ".rb");
+      (Lang.Ruby, "rust", ".rs");
+      (Lang.Scala, "scala", ".scala");
+      (Lang.Ts, "ts", ".ts");
+      (Lang.Vb, "vb", ".vb");
     ]
+  in
+  Testo.categorize_suites "lang tainting rules"
+    (List_.map
+       (fun (lang, dir, _ext) ->
+          Testo.categorize (spf "tainting %s" (Lang.show lang))
+            (Test_engine.make_tests [ taint_tests_path / dir ]))
+    lang_specs)
 
 (*****************************************************************************)
 (* Full rule tests *)
@@ -929,9 +793,9 @@ let tests () =
       lang_autofix_tests ~polyglot_pattern_path;
       eval_regression_tests ();
       filter_irrelevant_rules_tests ();
-      lang_tainting_tests ();
       maturity_tests ();
       full_rule_taint_maturity_tests ();
       full_rule_regression_tests ();
       semgrep_rules_repo_tests ();
+      lang_tainting_tests ();
     ]

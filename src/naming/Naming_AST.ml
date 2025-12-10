@@ -1033,6 +1033,21 @@ class ['self] resolve_visitor env lang =
               with_new_block_scope env.names (fun () ->
                   self#visit_stmt venv s2))
             s2_opt
+      | If (tok, OtherCond (("LetCond", cond_tk), [P pat; E e]), s1, s2_opt)
+        when has_block_scope lang ->
+          self#visit_tok venv tok;
+          self#visit_tok venv cond_tk;
+          self#visit_expr venv e;
+          with_new_block_scope env.names (fun () ->
+              (* Identifiers introduced by the pattern are only local
+               * to the if_branch. *)
+              self#visit_pattern venv pat;
+              self#visit_stmt venv s1);
+          Option.iter
+            (fun s2 ->
+              with_new_block_scope env.names (fun () ->
+                  self#visit_stmt venv s2))
+            s2_opt
       | _else_ -> super#visit_stmt venv x
   end
   

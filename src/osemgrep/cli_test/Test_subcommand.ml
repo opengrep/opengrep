@@ -202,7 +202,7 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
            *)
           failwith
             "TODO: the split of tests/ and rules/ is not supported yet in \
-             semgrep test"
+             opengrep test"
       | File _
       | URL _
       | R _
