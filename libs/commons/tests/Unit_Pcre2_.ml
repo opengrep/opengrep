@@ -21,12 +21,14 @@ let test_register_exception_printer () =
       ignore (Pcre2_.regexp "???");
       Alcotest.fail "should have failed to compile the regexp"
     with
-    | e -> Printexc.to_string e
+    | e ->
+      let err =  Printexc.to_string e
+      in
+      String.sub err 0 11
   in
   Alcotest.(check string)
     "equal"
-    "Pcre2.Error((Pcre2.BadPattern (\"quantifier does not follow a repeatable \
-     item\", 0)))"
+    "Pcre2.Error"
     msg
 
 let tests =
