@@ -1,0 +1,1 @@
+void $FOO(..., ref readonly $TYPE $VAR) { ... }
