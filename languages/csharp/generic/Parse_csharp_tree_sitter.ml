@@ -2386,7 +2386,7 @@ and parameter (env : env) (v1 : CST.parameter) : G.parameter =
   | `Ellips v1 -> ParamEllipsis (token env v1)
 
 and parameter_type_with_modifiers (env : env)
-    ((v1, v2, v3, v4) : CST.parameter_type_with_modifiers) =
+    ((v1, v2, v3, _readonly, v4) : CST.parameter_type_with_modifiers) =
   let _v1TODO =
     match v1 with
     | Some tok -> [ (* "this" *) token env tok ]
