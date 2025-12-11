@@ -2775,29 +2775,48 @@ and extern_alias_directive (env : env)
 and using_directive (env : env) ((v0, v1, v2, v3, v4) : CST.using_directive) =
   let _globalTODO = Option.map (token env) v0 in
   let v1 = token env v1 (* "using" *) in
-  let v3 = name env v3 in
   let v4 = token env v4 (* ";" *) in
-  let import =
-    match v2 with
-    | Some x -> (
-        match x with
-        | `Static _tok ->
-            (* "static" *)
-            (* using static System.Math; *)
-            (* THINK: The generic AST is undistinguishable from that of `using Foo`. *)
+  (* NOTE: A using statement can be an import, but also a type alias. Since
+   * we cannot know which one is it from the single file, we assume:
+   * - name = import
+   * - any other type = alias
+   *)
+  match v3 with
+  | `Type_name v3 ->
+      let v3 = name env v3 in
+      let import =
+        match v2 with
+        | Some x -> (
+            match x with
+            | `Static _tok ->
+                (* "static" *)
+                (* using static System.Math; *)
+                (* THINK: The generic AST is undistinguishable from that of `using Foo`. *)
+                G.ImportAll (v1, G.DottedName (H2.dotted_ident_of_name v3), v4)
+            | `Name_equals x ->
+                (* using Foo = System.Text; *)
+                let alias = name_equals env x in
+                G.ImportAs
+                  ( v1,
+                    G.DottedName (H2.dotted_ident_of_name v3),
+                    Some (alias, empty_id_info ()) ))
+        | None ->
+            (* using System.IO; *)
             G.ImportAll (v1, G.DottedName (H2.dotted_ident_of_name v3), v4)
-        | `Name_equals x ->
-            (* using Foo = System.Text; *)
-            let alias = name_equals env x in
-            G.ImportAs
-              ( v1,
-                G.DottedName (H2.dotted_ident_of_name v3),
-                Some (alias, empty_id_info ()) ))
-    | None ->
-        (* using System.IO; *)
-        G.ImportAll (v1, G.DottedName (H2.dotted_ident_of_name v3), v4)
-  in
-  G.DirectiveStmt (import |> G.d) |> G.s
+      in
+      G.DirectiveStmt (import |> G.d) |> G.s
+  | _ ->
+      let v3 = type_ env v3 in
+      (match v2 with
+      | Some (`Name_equals n) ->
+          let n = name_equals env n in
+          let entity = basic_entity n in
+          let def = TypeDef { tbody = G.AliasType v3 } in
+          G.DefStmt (entity, def) |> G.s
+      | _ -> (* should not happen! *)
+          let entity = { name = G.EDynamic (G.L (G.Unit v1) |> G.e); attrs = []; tparams = None } in
+          let def = TypeDef { tbody = G.AliasType v3 } in
+          G.DefStmt (entity, def) |> G.s)
 
 and global_attribute_list (env : env)
     ((v1, v2, v3, v4, v5) : CST.global_attribute_list) =
