@@ -2889,8 +2889,8 @@ and namespace_declaration (env : env)
 
 and type_declaration (env : env) (x : CST.type_declaration) : stmt =
   match x with
-  | `Class_decl x -> class_interface_struct env Class x
-  | `Inte_decl x -> class_interface_struct env Interface x
+  | `Class_decl x -> class_struct env Class x
+  | `Inte_decl x -> interface_struct env Interface x
   | `Enum_decl x -> enum_declaration env x
   | `Record_decl x -> record_declaration env x
   | `Record_struct_decl x -> record_struct_declaration env x
@@ -2900,25 +2900,55 @@ and type_declaration (env : env) (x : CST.type_declaration) : stmt =
       let tok = token env tok in
       ExprStmt (Ellipsis tok |> G.e, tok) |> G.s
 
-and class_interface_struct (env : env) class_kind
-    (v1, v2, v3, v4, v5, v6, v7, v8, _v9) =
+and interface_struct (env : env) class_kind
+    (v1, v2, v3, v4, v5, v6, v7, v8, v9) =
+  class_struct env class_kind
+    (v1, v2, v3, v4, v5, None, v6, v7, v8, v9)
+
+(* NOTE: According to the docs
+ * https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/tutorials/primary-constructors
+ * primary constructors' parameters are equivalent to properties, while here
+ * we translate them to fields. It is because properties are represented in
+ * AST generic as a field with getter/setter functions. Here, we don't even have
+ * tokens we could use for getter/setters, so they would never be matched anyway,
+ * while a public field is sufficient for taint propagation.
+ *)
+and parameter_to_field (p : parameter) : stmt option =
+  match p with
+  | Param { pname = Some n; ptype; pdefault; pattrs; _ } ->
+      let public = KeywordAttr (Public, Tok.unsafe_fake_tok "public") in
+      let entity = basic_entity n ~attrs:(public :: pattrs) in
+      let def = VarDef { vinit = pdefault; vtype = ptype; vtok = None } in
+      Some (DefStmt (entity, def) |> s)
+  | _ ->
+      None
+
+and class_struct (env : env) class_kind
+    (v1, v2, v3, v4, v5, args_opt, v6, v7, v8, _v9) =
   (*
-   [Attr] public class MyClass<MyType> : IClass where MyType : SomeType { ... };
-      v1     v2    v3    v4     v5         v6           v7                v8   v9
+   [Attr] public class MyClass<MyType>(args)   : IClass where MyType : SomeType { ... };
+      v1     v2    v3    v4     v5    args_opt     v6           v7                v8   v9
    *)
   let v1 = List.concat_map (attribute_list env) v1 in
-  let v2 = List_.map (modifier env) v2 in
+  let v2 = List.map (modifier env) v2 in
   let v3 = token env v3 (* "class" *) in
   let v4 = identifier env v4 (* identifier *) in
   let v5 = Option.map (type_parameter_list env) v5 in
+  let primary_constr_args =
+    match args_opt with
+    | None -> []
+    | Some ps -> parameter_list env ps
+                 |> Tok.unbracket
+                 |> List.filter_map parameter_to_field
+  in
   let v6 =
     match v6 with
     | Some x -> base_list env x
     | None -> []
   in
-  let v7 = List_.map (type_parameter_constraints_clause env) v7 in
+  let v7 = List.map (type_parameter_constraints_clause env) v7 in
   let open_bra, stmts, close_bra = declaration_list env v8 in
-  let fields = List_.map (fun x -> G.F x) stmts in
+  let fields = List.map (fun x -> G.F x) (primary_constr_args @ stmts) in
   let tparams = type_parameters_with_constraints v5 v7 in
   let idinfo = empty_id_info () in
   let ent = { name = EN (Id (v4, idinfo)); attrs = v1 @ v2; tparams } in
@@ -2936,11 +2966,11 @@ and class_interface_struct (env : env) class_kind
   |> G.s
 
 and struct_declaration (env : env)
-    ((v1, v2, v3, v4, v5, v6, v7, v8, v9, v10) : CST.struct_declaration) =
+    ((v1, v2, v3, v4, v5, v6, args_opt, v7, v8, v9, v10) : CST.struct_declaration) =
   (* Mostly copied from the Class case above. *)
   (*
-  [Attr] public ref struct MyClass<MyType> : IClass where MyType : SomeType { ... };
-    v1    v2    v3    v4     v5      v6        v7           v8                v9
+  [Attr] public ref struct MyClass<MyType>(args) : IClass where MyType : SomeType { ... };
+    v1    v2    v3    v4     v5      v6   args_opt   v7           v8                v9
   *)
   let v1 = List.concat_map (attribute_list env) v1 in
   let v2 = List_.map (modifier env) v2 in
@@ -2952,6 +2982,13 @@ and struct_declaration (env : env)
   let v4 = (* "struct" *) token env v4 in
   let v5 = identifier env v5 in
   let v6 = Option.map (type_parameter_list env) v6 in
+  let primary_constr_args =
+    match args_opt with
+    | None -> []
+    | Some ps -> parameter_list env ps
+                 |> Tok.unbracket
+                 |> List.filter_map parameter_to_field
+  in
   let v7 =
     match v7 with
     | Some x -> base_list env x
@@ -2960,7 +2997,7 @@ and struct_declaration (env : env)
   let v8 = List_.map (type_parameter_constraints_clause env) v8 in
   let tparams = type_parameters_with_constraints v6 v8 in
   let lb, body, rb = declaration_list env v9 in
-  let fields = List_.map (fun x -> G.F x) body in
+  let fields = List_.map (fun x -> G.F x) (primary_constr_args @ body) in
   let _v10 = opt_semi env v10 in
   let idinfo = empty_id_info () in
   let ent = { name = EN (Id (v5, idinfo)); attrs = v1 @ v2 @ v3; tparams } in
@@ -3022,10 +3059,10 @@ and declaration (env : env) (x : CST.declaration) : stmt =
   | `Ellips v1 ->
       let v1 = token env v1 in
       G.ExprStmt (G.Ellipsis v1 |> G.e, sc) |> G.s
-  | `Class_decl x -> class_interface_struct env Class x
+  | `Class_decl x -> class_struct env Class x
   | `Dele_decl x -> delegate_declaration env x
   | `Enum_decl x -> enum_declaration env x
-  | `Inte_decl x -> class_interface_struct env Interface x
+  | `Inte_decl x -> interface_struct env Interface x
   | `Record_decl x -> record_declaration env x
   | `Record_struct_decl x -> record_struct_declaration env x
   | `Struct_decl x -> struct_declaration env x
