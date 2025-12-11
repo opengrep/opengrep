@@ -1243,15 +1243,20 @@ and member_access_expression env (v1, v2, v3) =
     | `Pred_type x -> pred_type env x
     | `Name x -> N (name env x) |> G.e
   in
-  let v2 =
-    match v2 with
-    | `DOT tok -> token env tok (* "." *)
-    | `DASHGT tok -> token env tok
-    (* "->" *)
-  in
-  let v3 = simple_name env v3 in
-  let n = H2.name_of_ids_with_opt_typeargs [ v3 ] in
-  G.DotAccess (v1, v2, G.FN n) |> G.e
+  match v2 with
+  | `DOT tok (* "." *)
+  | `DASHGT tok (* "->" *) ->
+      let v2 = token env tok in
+      let v3 = simple_name env v3 in
+      let n = H2.name_of_ids_with_opt_typeargs [ v3 ] in
+      G.DotAccess (v1, v2, G.FN n) |> G.e
+  | `QMARKDOT tok (* "?." *) ->
+      let v2 = token env tok in
+      let v3 = simple_name env v3 in
+      let n = H2.name_of_ids_with_opt_typeargs [ v3 ] in
+      let op = IdSpecial (Op Elvis, v2) |> e in
+      let rhs = N n |> e in
+      G.Call (op, fb [Arg v1; Arg rhs]) |> G.e
 
 and invocation_expression env (v1, v2) =
   let v1 = expression env v1 in
