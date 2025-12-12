@@ -27,6 +27,12 @@ module MV = Metavariable
 module ME = Matching_explanation
 module OutJ = Semgrep_output_v1_t
 module Labels = Set.Make (String)
+module LangOrd = struct
+  type t = Lang.t
+  let compare = Stdlib.compare
+end
+module LangMap = Map.Make (LangOrd)
+module LangSet = Set.Make (LangOrd)
 module Log = Log_tainting.Log
 module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
@@ -800,35 +806,46 @@ let check_rules ~match_hook
     Formula_cache.mk_specialized_formula_cache rules
   in
 
-  (* Pre-compute call graph if taint_intrafile is enabled for any rule.
-     The call graph only depends on the AST structure, not on individual rules,
-     so we can compute it once and share it across all rules for this file. *)
-  let shared_call_graph_opt =
-    match rules with
-    | [] -> None
-    | rule :: _ ->
-        let xconf_first =
-          Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
-        in
-        if xconf_first.config.taint_intrafile then
-          let lang = xtarget.xlang |> Xlang.to_lang_exn in
-          let (ast, _skipped_tokens) =
-            lazy_force xtarget.lazy_ast_and_errors
-          in
-          let object_mappings =
-            Taint_signature_extractor.detect_object_initialization ast lang
-          in
-          let call_graph =
-            Function_call_graph.build_call_graph ~lang
-              ~object_mappings:object_mappings ast
-          in
-          Some (call_graph, object_mappings)
-        else None
+  (* Collect all languages that have rules with taint_intrafile enabled *)
+  let langs_needing_call_graph =
+    rules
+    |> List.fold_left (fun acc rule ->
+           let xconf_rule =
+             Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
+           in
+           if xconf_rule.config.taint_intrafile then
+             match Xlang.to_lang rule.R.target_analyzer with
+             | Ok lang -> LangSet.add lang acc
+             | Error _ -> acc
+           else acc)
+       LangSet.empty
   in
 
-  (* Create builtin signature database once per file, independent of rules *)
-  let builtin_db = Builtin_models.create_builtin_models (xtarget.xlang |> Xlang.to_lang_exn) in
-  let builtin_signature_db = Some builtin_db in
+  (* Pre-compute call graph and builtin db for each language that needs it.
+     The call graph depends on the AST structure and language, so we compute
+     it once per language and share across rules that need it. *)
+  let call_graph_by_lang =
+    LangSet.fold (fun lang acc ->
+      let (ast, _skipped_tokens) =
+        lazy_force xtarget.lazy_ast_and_errors
+      in
+      let object_mappings =
+        Taint_signature_extractor.detect_object_initialization ast lang
+      in
+      let call_graph =
+        Function_call_graph.build_call_graph ~lang
+          ~object_mappings:object_mappings ast
+      in
+      LangMap.add lang (call_graph, object_mappings) acc)
+    langs_needing_call_graph LangMap.empty
+  in
+
+  let builtin_db_by_lang =
+    LangSet.fold (fun lang acc ->
+      let builtin_db = Builtin_models.create_builtin_models lang in
+      LangMap.add lang builtin_db acc)
+    langs_needing_call_graph LangMap.empty
+  in
 
   let results =
     rules
@@ -836,9 +853,16 @@ let check_rules ~match_hook
            let xconf =
              Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
            in
-           (* Only pass builtin_signature_db if taint_intrafile is enabled for this rule *)
-           let rule_builtin_signature_db =
-             if xconf.config.taint_intrafile then builtin_signature_db else None
+           (* Only pass call graph and builtin db if taint_intrafile is enabled for this rule *)
+           let rule_shared_call_graph, rule_builtin_signature_db =
+             if xconf.config.taint_intrafile then
+               match Xlang.to_lang rule.R.target_analyzer with
+               | Ok lang ->
+                   (LangMap.find_opt lang call_graph_by_lang,
+                    LangMap.find_opt lang builtin_db_by_lang)
+               | Error _ -> (None, None)
+             else
+               (None, None)
            in
            per_rule_boilerplate_fn
              (rule :> R.rule)
@@ -852,7 +876,7 @@ let check_rules ~match_hook
                  (fun () ->
                    check_rule per_file_formula_cache rule match_hook
                      ?builtin_signature_db:rule_builtin_signature_db
-                     ~shared_call_graph:shared_call_graph_opt xconf xtarget)))
+                     ~shared_call_graph:rule_shared_call_graph xconf xtarget)))
   in
 
   results
