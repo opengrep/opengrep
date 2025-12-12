@@ -490,6 +490,12 @@ let errors_of_timeout_or_memory_exn (exn : exn) (target : Target.t) : ESet.t =
         (E.mk_error
            ?rule_id:(TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule)
            ~loc Out.StackOverflow)
+  | Memory_limit.ExceededMemoryLimit _ ->
+      Logs.warn (fun m -> m "ExceededMemoryLimit on %s" (Origin.to_string origin));
+      ESet.singleton
+        (E.mk_error
+           ?rule_id:(TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule)
+           ~loc Out.OutOfMemory)
   | _ -> raise Impossible
 
 (*****************************************************************************)
@@ -561,7 +567,7 @@ let iter_targets_and_get_matches_and_exn_to_errors
                   * Timeout and would generate a TimeoutError code for it,
                   * but we intercept Timeout here to give a better diagnostic.
                   *)
-                 | (Match_rules.File_timeout _ | Out_of_memory | Stack_overflow)
+                 | (Match_rules.File_timeout _ | Out_of_memory | Stack_overflow | Memory_limit.ExceededMemoryLimit _)
                    as exn ->
                      log_critical_exn_and_last_rule ();
                      let errors = errors_of_timeout_or_memory_exn exn target in

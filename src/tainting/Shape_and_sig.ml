@@ -692,18 +692,42 @@ end)
 (* Signature Database *)
 (*****************************************************************************)
 
-type fn_id = { class_name : IL.name option; name : IL.name option }
+(* Function identifier as a path from outermost to innermost scope.
+ * For example:
+ * - [Some class_name; Some method_name; Some nested_fn] for nested function
+ * - [Some class_name; Some method_name] for a method
+ * - [Some fn_name] for a top-level function
+ * - [] for top-level/anonymous
+ *)
+type fn_id = IL.name option list
 [@@deriving show, eq, ord]
+
+(** Helper to create fn_id with both class and method name *)
+let make_fn_id_with_class class_name method_name =
+  [Some class_name; Some method_name]
+
+(** Helper to create fn_id with just a function name (no class) *)
+let make_fn_id_no_class name = [None; Some name]
 
 module FunctionMap = Map.Make (struct
   type t = fn_id
 
-  let compare { class_name = c1; name = n1 } { class_name = c2; name = n2 } =
+  (* Compare by string name and position to differentiate functions with
+     the same name in different modules/classes. This matches FuncVertex
+     in Function_call_graph.ml. *)
+  let compare =
     let compare_il_name n1 n2 =
-      String.compare (fst n1.IL.ident) (fst n2.IL.ident)
+      let open Tok in
+      let st = String.compare (fst n1.IL.ident) (fst n2.IL.ident) in
+      if st <> 0 then st
+      else
+        match (snd n1.IL.ident, snd n2.IL.ident) with
+        | FakeTok _, FakeTok _ -> 0
+        | FakeTok _, _ -> -1
+        | _, FakeTok _ -> 1
+        | _ -> Tok.compare_pos (snd n1.IL.ident) (snd n2.IL.ident)
     in
-    let c = Option.compare compare_il_name c1 c2 in
-    if Int.equal c 0 then Option.compare compare_il_name n1 n2 else c
+    List.compare (Option.compare compare_il_name)
 end)
 
 type extended_sig = {
@@ -716,7 +740,10 @@ type extended_sig = {
 module SignatureSet = Set.Make (struct
   type t = extended_sig
 
-  let compare = fun x y -> Signature.compare x.sig_ y.sig_
+  let compare = fun x y ->
+    let sig_cmp = Signature.compare x.sig_ y.sig_ in
+    if sig_cmp <> 0 then sig_cmp
+    else Int.compare x.arity y.arity
 end)
 
 type signature_database = {
@@ -724,10 +751,62 @@ type signature_database = {
   object_mappings : (AST_generic.name * AST_generic.name) list;
 }
 
+(** Separate database for builtin function signatures.
+    Uses simple string keys (e.g., "map", "filter") instead of complex fn_id paths.
+    This is for builtin stdlib functions that aren't in the call graph. *)
+module BuiltinMap = Map.Make(struct
+  type t = string
+  let compare = String.compare
+end)
+
+type builtin_signature_database = SignatureSet.t BuiltinMap.t
+
+let empty_builtin_signature_database () : builtin_signature_database =
+  BuiltinMap.empty
+
+let add_builtin_signature (db : builtin_signature_database) (func_name : string)
+    (signature : extended_sig) : builtin_signature_database =
+  BuiltinMap.update func_name
+    (fun existing_sigs ->
+      match existing_sigs with
+      | Some sigs -> Some (SignatureSet.add signature sigs)
+      | None -> Some (SignatureSet.singleton signature))
+    db
+
+let lookup_builtin_signature (db : builtin_signature_database) (func_name : string) (arity : int)
+    : Signature.t option =
+  match BuiltinMap.find_opt func_name db with
+  | Some sigs when not (SignatureSet.is_empty sigs) ->
+      let total_sigs_card = SignatureSet.cardinal sigs in
+      if Int.equal total_sigs_card 1 then
+        Some (SignatureSet.choose sigs).sig_
+      else
+        let filtered_sigs =
+          SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
+        in
+        let signatures_card = SignatureSet.cardinal filtered_sigs in
+        if Int.equal signatures_card 1 then
+          Some (SignatureSet.choose filtered_sigs).sig_
+        else None
+  | _ -> None
+
 let show_name (name_opt : IL.name option) =
   match name_opt with
   | Some name -> IL.show_ident name.ident
-  | _ -> ""
+  | None -> ""
+
+let show_fn_id (fn_id : fn_id) : string =
+  match fn_id with
+  | [] -> "<anonymous>"
+  | path ->
+      path
+      |> List.map (fun name_opt ->
+          Option.value ~default:"<anon>" (Option.map (fun name -> fst name.IL.ident) name_opt))
+      |> String.concat "::"
+
+(** Extract the function name (last element) from the fn_id path *)
+let get_fn_name (fn_id : fn_id) : IL.name option =
+  match List.rev fn_id with hd :: _ -> hd | [] -> None
 
 let empty_signature_database () : signature_database =
   { signatures = FunctionMap.empty; object_mappings = [] }
@@ -737,26 +816,46 @@ let lookup_signature (db : signature_database) (func_name : fn_id) (arity : int)
   let signatures = FunctionMap.find_opt func_name db.signatures in
   match signatures with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      let filtered_sigs =
-        SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
-      in
-      let signatures_card = SignatureSet.cardinal filtered_sigs in
-      if signatures_card > 1 then
-        Log.debug (fun m ->
-            m "TAINT_SIG: There are several methods with the name %s the definition was ignored"
-              (show_name func_name.name));
-      if signatures_card =*= 0 then
-        Log.info (fun m ->
-            m "No taint signature found for `%s' " (show_name func_name.name));
+      let total_sigs_card = SignatureSet.cardinal sigs in
+      Log.debug (fun m ->
+          let all_sigs = SignatureSet.elements sigs in
+          let sig_details = all_sigs |> List.map (fun s ->
+            Printf.sprintf "(arity=%d, params=%s)" s.arity
+              (s.sig_.params |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat ",")
+          ) |> String.concat "; " in
+          m "LOOKUP_SIG: %s with arity=%d, found %d sigs: [%s]"
+            (show_fn_id func_name) arity total_sigs_card sig_details);
+      (* If there's only one signature for this function name, return it regardless of arity *)
+      if total_sigs_card =*= 1 then
+        Some (SignatureSet.choose sigs).sig_
+      else
+        (* Multiple signatures - filter by arity *)
+        let filtered_sigs =
+          SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
+        in
+        let signatures_card = SignatureSet.cardinal filtered_sigs in
+        if signatures_card > 1 then
+          Log.debug (fun m ->
+              m "TAINT_SIG: There are several methods with the name %s the definition was ignored"
+                (show_fn_id func_name));
+        if signatures_card =*= 0 then
+          Log.info (fun m ->
+              m "No taint signature found for `%s' with arity %d" (show_fn_id func_name) arity);
 
-      (* If there is only one signature with the given arity, return it *)
-      if signatures_card =*= 1 then
-        Some (SignatureSet.choose filtered_sigs).sig_
-      else None
+        (* If there is only one signature with the given arity, return it *)
+        if signatures_card =*= 1 then
+          Some (SignatureSet.choose filtered_sigs).sig_
+        else None
   | _ -> None
 
 let add_signature (db : signature_database) (func_name : fn_id)
     (signature : extended_sig) : signature_database =
+  (* Debug logging for ALL signatures being added *)
+  let fn_name_str = show_fn_id func_name in
+  let params_str = signature.sig_.params |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat "," in
+  Log.debug (fun m ->
+      m "ADD_SIG: fn=%s, arity=%d, params=%s"
+        fn_name_str signature.arity params_str);
   let signatures =
     FunctionMap.update func_name
       (fun existing_sigs ->

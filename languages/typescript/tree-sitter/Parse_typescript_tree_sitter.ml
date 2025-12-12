@@ -343,23 +343,20 @@ let anon_choice_COMMA_5194cb4 (env : env) (x : CST.anon_choice_COMMA_5194cb4) =
   | `Choice_auto_semi x -> semicolon env x
 
 let import_export_specifier (env : env)
-    ((v1, v2, v3) : CST.import_export_specifier) :
+    ((_v1, v2, v3) : CST.import_export_specifier) :
     (a_ident * a_ident option) option =
-  let type_or_typeof =
-    match v1 with
-    | Some x -> Some (type_or_typeof env x)
-    | None -> None
-  in
+  
   let opt_as_id =
     match v3 with
     | None -> None
     | Some (_as_tok, id_tok) -> Some (identifier env id_tok)
   in
-  match type_or_typeof with
-  | Some _ -> (* TODO: 'type foo', 'typeof foo' *) None
-  | None ->
-      let expr_id = identifier env v2 in
-      Some (expr_id, opt_as_id)
+  (* Note: We now include type-only imports in the AST so that pattern matching
+     with ellipsis works correctly.
+     For example `import { type Foo }` will match `import {...}`
+     Previously these were skipped with a TODO comment. *)
+  let expr_id = identifier env v2 in
+  Some (expr_id, opt_as_id)
 
 let concat_nested_identifier (idents : a_ident list) : a_ident =
   let str = idents |> List_.map fst |> String.concat "." in
