@@ -19,13 +19,13 @@ changes_while_running = False
 # SETUP
 
 # git url, git commit, number of repetitions of the test for a given repo
-repositories = [ ("https://github.com/jellyfin/jellyfin","a0931baa8eb879898f4bc4049176ed3bdb4d80d1", 5)
+repositories = [ ("https://github.com/jellyfin/jellyfin","a0931baa8eb879898f4bc4049176ed3bdb4d80d1", 3)
                , ("https://github.com/grafana/grafana", "afcb55156260fe1887c4731e6cc4c155cc8281a2", 1)
                , ("https://gitlab.com/gitlab-org/gitlab", "915627de697e2dd71fe8205853de51ad3794f3ac", 1)
-               , ("https://github.com/Netflix/lemur", "28b9a73a83d350b1c7ab71fdd739d64eec5d06aa", 5)
-               , ("https://github.com/pythongosssss/ComfyUI-Custom-Scripts","943e5cc7526c601600150867a80a02ab008415e7", 5)
-               , ("https://github.com/pmd/pmd", "81739da5caff948dbcd2136c17532b65c726c781", 5)
-               , ("https://github.com/square/leakcanary", "bf5086da26952e3627f18865bb232963e4d019c5", 5)
+               , ("https://github.com/Netflix/lemur", "28b9a73a83d350b1c7ab71fdd739d64eec5d06aa", 3)
+               , ("https://github.com/pythongosssss/ComfyUI-Custom-Scripts","943e5cc7526c601600150867a80a02ab008415e7", 3)
+               , ("https://github.com/pmd/pmd", "81739da5caff948dbcd2136c17532b65c726c781", 3)
+               , ("https://github.com/square/leakcanary", "bf5086da26952e3627f18865bb232963e4d019c5", 3)
                ]
 
 # Global config set by CLI args
@@ -35,7 +35,34 @@ config = {
     "with_semgrep": False,
     "taint_intrafile": False,
     "reps": None,  # Override default reps if set
+    "timeout": 9,
 }
+
+def scan_cmd(repo, intrafile=False):
+    """Opengrep scan command for repo scanning."""
+    cmd = ["pipenv", "run", "opengrep", "scan",
+            "-c", config["rules"],
+            repo,
+            "-j", num_cpus,
+            "--timeout", str(config["timeout"]),
+            "--max-memory", "4000",
+            "--max-target-bytes", "200000"]
+    if intrafile:
+        cmd.append("--taint-intrafile")
+    return cmd
+
+def semgrep_scan_cmd(repo, pro_intrafile=False):
+    """Semgrep scan command for repo scanning."""
+    cmd = ["semgrep", "scan",
+           "-c", config["rules"],
+           repo,
+           "-j", num_cpus,
+           "--timeout", str(config["timeout"]),
+           "--max-memory", "4000",
+           "--max-target-bytes", "200000"]
+    if pro_intrafile:
+        cmd.append("--pro-intrafile")
+    return cmd
 
 def regular_cmd(repo):
     return ["pipenv", "run", "opengrep", "scan",
@@ -129,8 +156,31 @@ def run(cmd, cwd=None):
     # my_env["PIPENV_PIPFILE"] = "../opengrep/cli/Pipfile"
     print(f"Running: {' '.join(cmd)}")
     sys.stdout.flush()
-    result = subprocess.run(cmd, cwd=cwd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        print(f"ERROR: Command failed with exit code {result.returncode}")
+        if result.stdout:
+            print(f"STDOUT: {result.stdout}")
+        if result.stderr:
+            print(f"STDERR: {result.stderr}")
+        raise subprocess.CalledProcessError(result.returncode, cmd)
     return hash_output(result.stdout)
+
+def cleanup_rules_dir(rules_dir):
+    """Remove non-rule yaml files from a rules directory."""
+    import glob
+    import shutil
+    # Remove .github directory entirely
+    github_dir = os.path.join(rules_dir, ".github")
+    if os.path.exists(github_dir):
+        shutil.rmtree(github_dir)
+        print(f"  Removed {github_dir}")
+    # Remove common non-rule files
+    for pattern in ["template.yaml", ".pre-commit-config.yaml"]:
+        f = os.path.join(rules_dir, pattern)
+        if os.path.exists(f):
+            os.remove(f)
+            print(f"  Removed {f}")
 
 def clone_specific_commit(repo_url, commit_hash, name):
     if os.path.exists(name):
@@ -148,11 +198,8 @@ def clone_specific_commit(repo_url, commit_hash, name):
 
         print(f"Done: {name} at commit {commit_hash}")
 
-def setup():
-    os.makedirs("results", exist_ok=True)
-
+def setup_opengrep_rules():
     clone_specific_commit("https://github.com/opengrep/opengrep-rules", "f1d2b562b414783763fd02a6ed2736eaed622efa", "rules")
-
     run(["rm", "-f", "stats/web_frameworks.yml"], cwd="rules")
     run(["rm", "-f", "stats/cwe_to_metacategory.yml"], cwd="rules")
     run(["rm", "-f", "stats/metacategory_to_support_tier.yml"], cwd="rules")
@@ -163,7 +210,9 @@ def setup():
     run(["rm", "-f", ".github/workflows/pre-commit.yml"], cwd="rules")
     run(["rm", "-f", "template.yaml"], cwd="rules")
     run(["rm", "-f", ".pre-commit-config.yaml"], cwd="rules")
-
+        
+def setup():
+    os.makedirs("results", exist_ok=True)
     for r in repos:
         clone_specific_commit(r["url"], r["sha"], "repos/" + r["name"])
 
@@ -221,6 +270,13 @@ def single_run_cmd(cmd, label="", run_num=None, total_runs=None, start_time_all=
     start_time = time.time()
     output_data = []
     last_pct = -1
+    spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    spinner_idx = 0
+    got_first_pct = False
+
+    # Show initial "loading rules" message
+    sys.stdout.write(f"\r  {label}: {spinner_chars[0]} Loading rules...   ")
+    sys.stdout.flush()
 
     # Use pty to get real-time output with progress
     master_fd, slave_fd = pty.openpty()
@@ -247,12 +303,20 @@ def single_run_cmd(cmd, label="", run_num=None, total_runs=None, start_time_all=
                         pct = int(matches[-1])
                         if pct != last_pct:
                             last_pct = pct
+                            got_first_pct = True
                             elapsed = time.time() - start_time
                             bar_width = 30
                             filled = int(bar_width * pct / 100)
                             bar = '█' * filled + '░' * (bar_width - filled)
                             sys.stdout.write(f"\r  {label}: [{bar}] {pct}% {elapsed:.1f}s   ")
                             sys.stdout.flush()
+            else:
+                # No output yet, show spinner
+                if not got_first_pct:
+                    elapsed = time.time() - start_time
+                    spinner_idx = (spinner_idx + 1) % len(spinner_chars)
+                    sys.stdout.write(f"\r  {label}: {spinner_chars[spinner_idx]} Loading rules... {elapsed:.1f}s   ")
+                    sys.stdout.flush()
         except OSError:
             break
 
@@ -375,7 +439,7 @@ def run_custom_benchmark(rules, target, reps, with_semgrep, taint_intrafile, lab
         run_offset += reps
 
         duration, consistent, findings, files = run_with_cmd(
-            semgrep_cmd(rules, target, pro_intrafile=True), reps, f"{label_prefix}semgrep-pro",
+            semgrep_cmd(rules, target, pro_intrafile=True), reps, f"{label_prefix}semgrep (pro-intrafile)",
             run_offset, total_runs, start_time_all)
         results.append({"name": f"{label_prefix}Semgrep (pro-intrafile)", "duration": duration, "consistent": consistent, "findings": findings, "files": files})
         run_offset += reps
@@ -384,14 +448,14 @@ def run_custom_benchmark(rules, target, reps, with_semgrep, taint_intrafile, lab
     duration, consistent, findings, files = run_with_cmd(
         custom_cmd(rules, target), reps, f"{label_prefix}opengrep",
         run_offset, total_runs, start_time_all)
-    results.append({"name": f"{label_prefix}OpenGrep", "duration": duration, "consistent": consistent, "findings": findings, "files": files})
+    results.append({"name": f"{label_prefix}Opengrep", "duration": duration, "consistent": consistent, "findings": findings, "files": files})
     run_offset += reps
 
     if taint_intrafile:
         duration, consistent, findings, files = run_with_cmd(
             custom_cmd(rules, target, intrafile=True), reps, f"{label_prefix}opengrep-intra",
             run_offset, total_runs, start_time_all)
-        results.append({"name": f"{label_prefix}OpenGrep (taint-intrafile)", "duration": duration, "consistent": consistent, "findings": findings, "files": files})
+        results.append({"name": f"{label_prefix}Opengrep (taint-intrafile)", "duration": duration, "consistent": consistent, "findings": findings, "files": files})
         run_offset += reps
 
     return results, run_offset
@@ -443,7 +507,7 @@ def go_custom(args):
             run_offset += reps
 
             duration, consistent, findings, files = run_with_cmd(
-                semgrep_cmd(rules, target, pro_intrafile=True), reps, "semgrep-pro",
+                semgrep_cmd(rules, target, pro_intrafile=True), reps, "semgrep (pro-intrafile)",
                 run_offset, total_runs, start_time_all)
             all_results["semgrep"].append({"name": "Semgrep (pro-intrafile)", "duration": duration, "consistent": consistent, "findings": findings, "files": files})
             run_offset += reps
@@ -513,6 +577,128 @@ def go_custom(args):
         consistent_str = "yes" if r['consistent'] else "no"
         print(f"{r['name']:<{name_width}}  {r['files']:<8.0f}  {r['findings']:<8.0f}  {r['duration']:<8.2f}  {consistent_str}")
 
+def go_default(rules=None):
+    """Default mode: clone repos, run with semgrep-rules, with-semgrep, taint-intrafile."""
+    os.makedirs("results", exist_ok=True)
+    log_to_file(f"DEFAULT PERF TEST {ts}\n\n")
+
+    # Clone repos
+    for r in repos:
+        clone_specific_commit(r["url"], r["sha"], "repos/" + r["name"])
+
+    if rules is None:
+        rules = "rules"
+
+    # Clean up non-rule yaml files
+    print(f"Cleaning up non-rule files in {rules}...")
+    cleanup_rules_dir(rules)
+
+    # Get version info
+    version, git_sha = get_opengrep_version()
+    print(f"\nOpengrep: {version} ({git_sha[:12]})")
+    print(f"Rules: {rules}")
+    print()
+
+    # Build opengrep
+    print("=== Building Opengrep ===")
+    make_opengrep()
+
+    # Run -f -t on each repo
+    all_results = {}
+    for repo_idx, r in enumerate(repos):
+        repo_path = "repos/" + r["name"]
+        reps = r["reps"]
+        print(f"\n=== [{repo_idx+1}/{len(repos)}] {r['name']} ({reps} reps) ===")
+
+        results, _ = run_custom_benchmark(
+            rules, repo_path, reps,
+            with_semgrep=True,
+            taint_intrafile=True,
+            label_prefix=f"{r['name']}: "
+        )
+        all_results[r["name"]] = results
+
+    # Print summary as markdown table
+    print(f"\n## BENCHMARK RESULTS\n")
+
+    # Collect all config names from first repo
+    first_repo = list(all_results.keys())[0]
+    config_names = [r["name"].split(": ")[1] for r in all_results[first_repo]]
+    repo_names = list(all_results.keys())
+
+    # Header row
+    header = "| Metric |"
+    separator = "|--------|"
+    for repo in repo_names:
+        header += f" {repo} |"
+        separator += "--------|"
+    print(header)
+    print(separator)
+
+    # Time section header
+    print("| **Time (seconds)** |" + " |" * len(repo_names))
+
+    # Time rows
+    for i, cfg in enumerate(config_names):
+        row = f"| {cfg} |"
+        for repo in repo_names:
+            val = all_results[repo][i]["duration"]
+            row += f" {val:.1f} |"
+        print(row)
+
+    # Speedup row (if we have both Semgrep and Opengrep)
+    if len(config_names) >= 3:
+        row = "| **Speedup (SG/OG)** |"
+        for repo in repo_names:
+            sg_time = all_results[repo][0]["duration"]
+            og_time = all_results[repo][2]["duration"]
+            speedup = sg_time / og_time if og_time > 0 else 0
+            row += f" {speedup:.2f}x |"
+        print(row)
+
+    # Findings section header
+    print("| **Findings** |" + " |" * len(repo_names))
+
+    # Findings rows
+    for i, cfg in enumerate(config_names):
+        row = f"| {cfg} |"
+        for repo in repo_names:
+            val = int(all_results[repo][i]["findings"])
+            row += f" {val} |"
+        print(row)
+
+    # Save to CSV (transposed: metrics as rows, repos as columns)
+    print(f"\nSaving to results/results-default-{ts}.csv")
+    with open(f"results/results-default-{ts}.csv", 'w', newline='') as csvfile:
+        fieldnames = ["Metric"] + repo_names
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        # Time rows
+        for i, cfg in enumerate(config_names):
+            row = {"Metric": f"{cfg} (time)"}
+            for repo in repo_names:
+                row[repo] = f"{all_results[repo][i]['duration']:.1f}"
+            writer.writerow(row)
+
+        # Speedup row (Semgrep / Opengrep)
+        if len(config_names) >= 3:  # Has both Semgrep and Opengrep
+            row = {"Metric": "Speedup (SG/OG)"}
+            for repo in repo_names:
+                sg_time = all_results[repo][0]["duration"]  # Semgrep
+                og_time = all_results[repo][2]["duration"]  # Opengrep
+                speedup = sg_time / og_time if og_time > 0 else 0
+                row[repo] = f"{speedup:.2f}x"
+            writer.writerow(row)
+
+        # Findings rows
+        for i, cfg in enumerate(config_names):
+            row = {"Metric": f"{cfg} (findings)"}
+            for repo in repo_names:
+                row[repo] = int(all_results[repo][i]["findings"])
+            writer.writerow(row)
+
+
 def go():
     parser = argparse.ArgumentParser(description='Benchmark opengrep performance')
     parser.add_argument('sha1', nargs='?', help='First SHA/branch to compare')
@@ -527,29 +713,23 @@ def go():
     args = parser.parse_args()
 
     # Check for partial custom mode args
-    if args.rules and not args.target:
-        print("Error: -f/--rules requires -t/--target")
-        sys.exit(1)
     if args.target and not args.rules:
         print("Error: -t/--target requires -f/--rules")
         sys.exit(1)
 
+    setup_opengrep_rules()
+        
     # Custom mode: -f and -t specified
     if args.rules and args.target:
         go_custom(args)
         return
 
-    # Original mode: SHA comparison
+    # Default mode: run on all predefined repos
+    # -f without -t = custom rules on all repos
+    # no args = semgrep-rules on all repos
     if not args.sha1:
-        parser.print_help()
-        print("\nExamples:")
-        print("  bench.py <sha1>                              # Compare sha1 vs current")
-        print("  bench.py <sha1> <sha2>                       # Compare sha1 vs sha2")
-        print("  bench.py -f rules.yaml -t target/            # Custom benchmark (current build)")
-        print("  bench.py -f rules.yaml -t target/ -s main    # Custom benchmark comparing main vs current")
-        print("  bench.py -f rules.yaml -t target/ -s sha1 -s sha2  # Compare two SHAs")
-        print("  bench.py -f rules.yaml -t target/ --with-semgrep --taint-intrafile")
-        sys.exit(1)
+        go_default(rules=args.rules)
+        return
 
     setup()
     log_to_file(f"PERF TEST {ts}\n\n")

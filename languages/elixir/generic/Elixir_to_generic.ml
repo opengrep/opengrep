@@ -210,8 +210,7 @@ let find_max_placeholder (e : G.expr) : int =
         | G.OtherExpr
             (("PlaceHolder", _), [ G.E { e = G.L (G.Int (Some n, _)); _ } ]) ->
             max_found := max !max_found (Int64.to_int n)
-        | _ -> ());
-        super#visit_expr env expr
+        | _ -> super#visit_expr env expr)
     end
   in
   visitor#visit_expr () e;

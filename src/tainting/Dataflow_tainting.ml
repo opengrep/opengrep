@@ -1600,24 +1600,19 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
             let taints, shape, _sub, lval_env = check_tainted_lval env lval in
             let shape =
               (* Check if 'exp' is a known top-level function/method and, if it is,
-               * give it a proper 'Fun' shape. *)
-              let sign =
-                if env.taint_inst.options.taint_intrafile then
-                  (lookup_signature env exp arity, shape)
-                else (None, Bot)
-              in
-              match sign with
-              | Some fun_sig, S.Bot -> S.Fun fun_sig
-              | Some fun_sig, _non_Bot_shape ->
-                  (* A top-level function/method is expected to have shape 'Bot'. *)
-                  Log.warn (fun m ->
-                      m
-                        "'%s' has a taint signature (%s) but as an expression \
-                         its shape is '%s'"
-                        (Display_IL.string_of_exp exp)
-                        (Signature.show fun_sig) (S.show_shape shape));
-                  shape
-              | None (* no signature *), _any_shape -> shape
+               * give it a proper 'Fun' shape. Skip if we already have a Fun shape
+               * (e.g., from lambda assignment). *)
+              match shape with
+              | S.Fun _ -> shape (* Already has a Fun shape, keep it *)
+              | _ ->
+                  let sign =
+                    if env.taint_inst.options.taint_intrafile then
+                      lookup_signature env exp arity
+                    else None
+                  in
+                  match sign with
+                  | Some fun_sig -> S.Fun fun_sig
+                  | None -> shape
             in
             (taints, shape, lval_env)
         | __else__ ->
@@ -2142,36 +2137,61 @@ let call_with_intrafile lval_opt e env args instr =
                 if not (propagate_through_functions env) then
                   (Taints.empty, Bot, lval_env)
                 else (
-                  (* Check if this is a call to a function parameter (either direct or via method) *)
-                  (match e_obj with
-                  | `Obj (_obj_taints, S.Arg _fun_arg) ->
-                      (* This is a method call on a function parameter (e.g., callback.apply in Java, callback.call in Ruby).
-                       * Treat it as invoking the callback. *)
-                      effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
-                      |> record_effects { env with lval_env }
-                  | _ ->
-                      effects_of_call_func_arg e e_shape args_taints
-                      |> record_effects { env with lval_env });
-                  (* If this is a method call, `o.method(...)`, then we fetch the
-                   * taint of the callee object `o`. This is a conservative worst-case
-                   * asumption that any taint in `o` can be tainting the call's effect. *)
-                  let call_taints =
-                    match e_obj with
-                    | `Fun -> call_taints
-                    | `Obj (obj_taints, _) when not (Taints.is_empty obj_taints) ->
-                        (* UNIVERSAL METHOD RECEIVER TAINT PROPAGATION:
-                         * Treat method receivers (like Go's 'u' parameter) as 'this' *)
-                        let receiver_taint_lval =
-                          { T.base = T.BThis; offset = [] }
-                        in
-                        let receiver_effect =
-                          Effect.ToLval (obj_taints, receiver_taint_lval)
-                        in
-                        record_effects { env with lval_env } [ receiver_effect ];
-                        call_taints |> Taints.union obj_taints
-                    | `Obj (obj_taints, _) -> call_taints |> Taints.union obj_taints
+                  (* Check if this is a call that invokes a callback parameter:
+                   * - Direct call: f(x) where f is a callback (e_shape is S.Arg)
+                   * - Method call: f.apply(x) or f.call(x) where f is a callback (e_obj is S.Arg)
+                   * In this case we return empty taints - the callback's return will be handled
+                   * when the ToSinkInCall effect is instantiated. *)
+                  let is_method_callback_invoke =
+                    (* Check if this is a method call pattern on a callback parameter *)
+                    match env.taint_inst.lang, e_obj, e.e with
+                    | Lang.Java, `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
+                        (* Java Function.apply or similar callback invocation methods *)
+                        let method_name = fst name.ident in
+                        method_name = "apply" || method_name = "accept" || method_name = "test" || method_name = "get"
+                    | Lang.Ruby, `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
+                        (* Ruby proc/lambda.call invocation *)
+                        let method_name = fst name.ident in
+                        method_name = "call"
+                    | _ -> false
                   in
-                  (call_taints, Bot, lval_env))))
+                  let callee_is_callback =
+                    match e_shape with
+                    | S.Arg _ -> true
+                    | _ -> is_method_callback_invoke
+                  in
+                  (* Record ToSinkInCall effects for any callback arguments being passed. *)
+                  let callee_shape =
+                    match e_obj with
+                    | `Obj (_, (S.Arg _ as shape)) -> shape
+                    | _ -> e_shape
+                  in
+                  effects_of_call_func_arg e callee_shape args_taints
+                  |> record_effects { env with lval_env };
+                  (* If the callee IS a callback parameter, return empty taints - the callback's
+                   * return value will be handled when the ToSinkInCall effect is instantiated.
+                   * This prevents false positives like sink(app(b, source())) where b doesn't
+                   * propagate taint. But if we're just passing a callback TO another function,
+                   * we still need to propagate taints normally. *)
+                  if callee_is_callback then
+                    (Taints.empty, Bot, lval_env)
+                  else (
+                    (* Callee is not a callback - propagate taints normally *)
+                    let call_taints =
+                      match e_obj with
+                      | `Fun -> call_taints
+                      | `Obj (obj_taints, _) when not (Taints.is_empty obj_taints) ->
+                          let receiver_taint_lval =
+                            { T.base = T.BThis; offset = [] }
+                          in
+                          let receiver_effect =
+                            Effect.ToLval (obj_taints, receiver_taint_lval)
+                          in
+                          record_effects { env with lval_env } [ receiver_effect ];
+                          call_taints |> Taints.union obj_taints
+                      | `Obj (obj_taints, _) -> call_taints |> Taints.union obj_taints
+                    in
+                    (call_taints, Bot, lval_env)))))
   in
   (* We add the taint of the function itselt (i.e., 'e_taints') too. *)
   let all_call_taints =
@@ -2273,10 +2293,6 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
              * before dataflow analysis and added to object_mappings. *)
             (Taints.empty, Bot, env.lval_env))
     | Call (lval_opt, e, args) ->
-        Log.debug (fun m ->
-            m "CALL_INSTR: %s with %d args"
-              (Display_IL.string_of_exp e)
-              (List.length args));
         let intrafile = env.taint_inst.options.taint_intrafile in
         if intrafile then call_with_intrafile lval_opt e env args instr
         else

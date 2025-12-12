@@ -3091,14 +3091,14 @@ and m_definition_kind a b =
   | G.FuncDef a1, B.FuncDef b1 -> m_function_definition a1 b1
   (* iso: FuncDef pattern can match VarDef with Lambda (arrow function) *)
   | G.FuncDef a1, B.VarDef { B.vinit = Some { e = B.Lambda b1; _ }; _ }
-  | B.VarDef { B.vinit = Some { e = B.Lambda b1; _ }; _ }, G.FuncDef a1  ->
+  | B.VarDef { B.vinit = Some { e = B.Lambda a1; _ }; _ }, G.FuncDef b1  ->
       if_config
         (fun x -> x.arrow_is_function)
         ~then_:(m_function_definition a1 b1)
         ~else_:(fail ())
   (* iso: FuncDef pattern can match FieldDefColon with Lambda (arrow function in object literal) *)
   | G.FuncDef a1, B.FieldDefColon { B.vinit = Some { e = B.Lambda b1; _ }; _ }
-  | B.FieldDefColon { B.vinit = Some { e = B.Lambda b1; _ }; _ }, G.FuncDef a1 ->  
+  | B.FieldDefColon { B.vinit = Some { e = B.Lambda a1; _ }; _ }, G.FuncDef b1 ->  
       if_config
         (fun x -> x.arrow_is_function)
         ~then_:(m_function_definition a1 b1)

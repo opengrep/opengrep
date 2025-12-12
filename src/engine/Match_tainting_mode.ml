@@ -27,6 +27,15 @@ module MV = Metavariable
 module ME = Matching_explanation
 module OutJ = Semgrep_output_v1_t
 module Labels = Set.Make (String)
+
+module LangOrd = struct
+  type t = Lang.t
+
+  let compare = Stdlib.compare
+end
+
+module LangMap = Map.Make (LangOrd)
+module LangSet = Set.Make (LangOrd)
 module Log = Log_tainting.Log
 module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
@@ -272,9 +281,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(shared_call_graph :
-       (Function_call_graph.FuncGraph.t * (G.name * G.name) list) option =
-      None)
-    (xconf : Match_env.xconfig) (xtarget : Xtarget.t) =
+        (Function_call_graph.FuncGraph.t * (G.name * G.name) list) option =
+      None) (xconf : Match_env.xconfig) (xtarget : Xtarget.t) =
   Log.info (fun m ->
       m
         "Match_tainting_mode:\n\
@@ -341,7 +349,6 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
       (* Only use signature database if cross-function taint analysis is enabled *)
       let final_signature_db, relevant_graph =
         if taint_inst.options.taint_intrafile then (
-          Log.debug (fun m -> m "INTRAFILE_MODE: Entering taint_intrafile code path");
           (* Detect object initialization mappings for this file *)
           let object_mappings =
             Taint_signature_extractor.detect_object_initialization ast
@@ -362,7 +369,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             (infos, info_map)
           in
 
-          let (_collected_infos, info_map) =
+          let _collected_infos, info_map =
             Visit_function_defs.fold_with_parent_path
               (fun (infos, info_map) opt_ent parent_path fdef ->
                 match fst fdef.fkind with
@@ -375,7 +382,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                           let* ent = opt_ent in
                           AST_to_IL.name_of_entity ent
                         in
-                        let fn_id = parent_path @ [opt_name] in
+                        let fn_id = parent_path @ [ opt_name ] in
                         let class_name_str =
                           match parent_path with
                           | Some class_il :: _ -> Some (fst class_il.IL.ident)
@@ -435,25 +442,31 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                        matching the naming scheme used by Function_call_graph.ml *)
                     let adjusted_parent_path =
                       match (lang, go_receiver_name, parent_path) with
-                      | Lang.Go, Some recv_name, [None] ->
+                      | Lang.Go, Some recv_name, [ None ] ->
                           let fake_tok = Tok.unsafe_fake_tok recv_name in
-                          let recv_il = IL.{
-                            ident = (recv_name, fake_tok);
-                            sid = AST_generic.SId.unsafe_default;
-                            id_info = AST_generic.empty_id_info ();
-                          } in
-                          [Some recv_il]
+                          let recv_il =
+                            IL.
+                              {
+                                ident = (recv_name, fake_tok);
+                                sid = AST_generic.SId.unsafe_default;
+                                id_info = AST_generic.empty_id_info ();
+                              }
+                          in
+                          [ Some recv_il ]
                       | Lang.Go, Some recv_name, None :: rest ->
                           let fake_tok = Tok.unsafe_fake_tok recv_name in
-                          let recv_il = IL.{
-                            ident = (recv_name, fake_tok);
-                            sid = AST_generic.SId.unsafe_default;
-                            id_info = AST_generic.empty_id_info ();
-                          } in
+                          let recv_il =
+                            IL.
+                              {
+                                ident = (recv_name, fake_tok);
+                                sid = AST_generic.SId.unsafe_default;
+                                id_info = AST_generic.empty_id_info ();
+                              }
+                          in
                           Some recv_il :: rest
                       | _, _, path -> path
                     in
-                    let fn_id = adjusted_parent_path @ [opt_name] in
+                    let fn_id = adjusted_parent_path @ [ opt_name ] in
                     let fdef_il =
                       AST_to_IL.function_definition taint_inst.lang ~ctx:!ctx
                         fdef
@@ -483,8 +496,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           (* Use shared call graph if provided, otherwise compute it *)
           let call_graph =
             match shared_call_graph with
-            | Some (graph, _shared_mappings) ->
-                graph
+            | Some (graph, _shared_mappings) -> graph
             | None ->
                 (* Compute call graph as before *)
                 Function_call_graph.build_call_graph ~lang
@@ -510,21 +522,29 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               sink_ranges
           in
 
-          Log.debug (fun m -> m "SUBGRAPH: Found %d source functions and %d sink functions"
-            (List.length source_functions) (List.length sink_functions));
-          List.iteri (fun i fn_id ->
-            let name = match Shape_and_sig.get_fn_name fn_id with
-              | Some n -> fst n.IL.ident
-              | None -> "<no-name>"
-            in
-            Log.debug (fun m -> m "SUBGRAPH: source_function[%d] = %s" i name))
+          Log.debug (fun m ->
+              m "SUBGRAPH: Found %d source functions and %d sink functions"
+                (List.length source_functions)
+                (List.length sink_functions));
+          List.iteri
+            (fun i fn_id ->
+              Log.debug (fun m ->
+                  let name =
+                    match Shape_and_sig.get_fn_name fn_id with
+                    | Some n -> fst n.IL.ident
+                    | None -> "<no-name>"
+                  in
+                  m "SUBGRAPH: source_function[%d] = %s" i name))
             source_functions;
-          List.iteri (fun i fn_id ->
-            let name = match Shape_and_sig.get_fn_name fn_id with
-              | Some n -> fst n.IL.ident
-              | None -> "<no-name>"
-            in
-            Log.debug (fun m -> m "SUBGRAPH: sink_function[%d] = %s" i name))
+          List.iteri
+            (fun i fn_id ->
+              Log.debug (fun m ->
+                  let name =
+                    match Shape_and_sig.get_fn_name fn_id with
+                    | Some n -> fst n.IL.ident
+                    | None -> "<no-name>"
+                  in
+                  m "SUBGRAPH: sink_function[%d] = %s" i name))
             sink_functions;
 
           (* Write FULL call graph to dot file for debugging. Keeping for debugger *)
@@ -532,7 +552,6 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           Function_call_graph.Dot.output_graph full_dot_file call_graph;
           close_out full_dot_file;
           Log.debug (fun m -> m "FULL GRAPH: Wrote full call graph to call_graph_full.dot"); *)
-
           let relevant_graph =
             Function_call_graph.compute_relevant_subgraph call_graph
               source_functions sink_functions
@@ -543,20 +562,28 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           Function_call_graph.Dot.output_graph dot_file relevant_graph;
           close_out dot_file;
           Log.debug (fun m -> m "SUBGRAPH: Wrote call graph to call_graph.dot"); *)
-
           let analysis_order =
             Function_call_graph.Topo.fold
               (fun fn acc -> fn :: acc)
               relevant_graph []
             |> List.rev
           in
-          Log.debug (fun m -> m "TAINT_TOPO: Analysis order has %d functions" (List.length analysis_order));
-          List.iteri (fun i fn_id ->
-            Log.debug (fun m -> m "TAINT_TOPO: [%d] fn_id display=%s raw=%s"
-              i
-              (Shape_and_sig.show_fn_id fn_id)
-              (String.concat "; " (List.map (function None -> "None" | Some n -> Printf.sprintf "Some(%s)" (fst n.IL.ident)) fn_id))))
-          analysis_order;
+          Log.debug (fun m ->
+              m "TAINT_TOPO: Analysis order has %d functions"
+                (List.length analysis_order));
+          List.iteri
+            (fun i fn_id ->
+              Log.debug (fun m ->
+                  m "TAINT_TOPO: [%d] fn_id display=%s raw=%s" i
+                    (Shape_and_sig.show_fn_id fn_id)
+                    (String.concat "; "
+                       (List.map
+                          (function
+                            | None -> "None"
+                            | Some n ->
+                                Printf.sprintf "Some(%s)" (fst n.IL.ident))
+                          fn_id))))
+            analysis_order;
 
           let process_fun_info info db =
             let params = Tok.unbracket info.fdef.fparams in
@@ -565,42 +592,38 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               Taint_signature_extractor.extract_signature_with_file_context
                 ~arity ~db ?builtin_signature_db taint_inst ~name:info.fn_id
                 ~method_properties:info.method_properties
-                ~call_graph:(Some relevant_graph)
-                info.cfg ast
+                ~call_graph:(Some relevant_graph) info.cfg ast
             in
             (* For Kotlin, if the last parameter is a lambda (function type),
              * also extract signature with arity-1 to handle trailing lambda syntax:
              * f(a, b) vs f(a) { b } *)
             let updated_db =
-              if Lang.equal lang Lang.Kotlin && arity >= 2 then
+              if Lang.equal lang Lang.Kotlin && arity >= 1 then
                 let last_param_is_lambda =
                   match List.rev params with
-                  | G.Param { G.ptype = Some ptype; _ } :: _ -> (
-                      match ptype.G.t with
-                      | G.TyFun _ -> true
-                      | _ -> false)
+                  | G.Param { G.ptype = Some { t = G.TyFun _; _ }; _ } :: _ ->
+                      true
                   | _ -> false
                 in
                 if last_param_is_lambda then
                   let db', _ =
-                    Taint_signature_extractor.extract_signature_with_file_context
-                      ~arity:(arity - 1) ~db:updated_db ?builtin_signature_db taint_inst ~name:info.fn_id
-                      ~method_properties:info.method_properties
-                      ~call_graph:(Some relevant_graph)
-                      info.cfg ast
+                    Taint_signature_extractor
+                    .extract_signature_with_file_context ~arity:(arity - 1)
+                      ~db:updated_db ?builtin_signature_db taint_inst
+                      ~name:info.fn_id ~method_properties:info.method_properties
+                      ~call_graph:(Some relevant_graph) info.cfg ast
                   in
                   db'
                 else updated_db
               else updated_db
             in
-            if info.is_lambda_assignment then
-              updated_db
+            if info.is_lambda_assignment then updated_db
             else
               let _flow, fdef_effects, _mapping =
                 check_fundef taint_inst info.fn_id !ctx ~glob_env
                   ?class_name:info.class_name_str ~signature_db:updated_db
-                  ?builtin_signature_db
-                  ?call_graph:(Some relevant_graph) info.fdef
+                  ?builtin_signature_db ?call_graph:(Some relevant_graph)
+                  info.fdef
               in
               record_matches fdef_effects;
               updated_db
@@ -609,18 +632,33 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           let signature_db_after_order =
             List.fold_left
               (fun db fn_id ->
-                Log.debug (fun m -> m "TAINT_SIGBUILD: Processing fn_id=%s (raw=%s)"
-                  (Shape_and_sig.show_fn_id fn_id)
-                  (String.concat "; " (List.map (function None -> "None" | Some n -> Printf.sprintf "Some(%s)" (fst n.IL.ident)) fn_id)));
+                Log.debug (fun m ->
+                    m "TAINT_SIGBUILD: Processing fn_id=%s (raw=%s)"
+                      (Shape_and_sig.show_fn_id fn_id)
+                      (String.concat "; "
+                         (List.map
+                            (function
+                              | None -> "None"
+                              | Some n ->
+                                  Printf.sprintf "Some(%s)" (fst n.IL.ident))
+                            fn_id)));
                 match Shape_and_sig.FunctionMap.find_opt fn_id info_map with
                 | None ->
-                    Log.debug (fun m -> m "TAINT_SIGBUILD: fn_id NOT FOUND in info_map!");
+                    Log.debug (fun m ->
+                        m "TAINT_SIGBUILD: fn_id NOT FOUND in info_map!");
                     db
                 | Some info ->
-                    Log.debug (fun m -> m "TAINT_SIGBUILD: fn_id found in info_map, processing...");
+                    Log.debug (fun m ->
+                        m
+                          "TAINT_SIGBUILD: fn_id found in info_map, \
+                           processing...");
                     let new_db = process_fun_info info db in
-                    Log.debug (fun m -> m "TAINT_SIGBUILD: After processing, db.signatures size=%d"
-                      (Shape_and_sig.FunctionMap.cardinal new_db.Shape_and_sig.signatures));
+                    Log.debug (fun m ->
+                        m
+                          "TAINT_SIGBUILD: After processing, db.signatures \
+                           size=%d"
+                          (Shape_and_sig.FunctionMap.cardinal
+                             new_db.Shape_and_sig.signatures));
                     new_db)
               initial_signature_db analysis_order
           in
@@ -647,7 +685,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                     let* ent = opt_ent in
                     AST_to_IL.name_of_entity ent
                   in
-                  let name = [None; opt_name] in
+                  let name = [ None; opt_name ] in
                   Log.info (fun m ->
                       m
                         "Match_tainting_mode:\n\
@@ -656,7 +694,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                          --------------------"
                         (Option.map IL.str_of_name opt_name ||| "???"));
                   let _flow, fdef_effects, _mapping =
-                    check_fundef taint_inst name !ctx ~glob_env ?builtin_signature_db fdef
+                    check_fundef taint_inst name !ctx ~glob_env
+                      ?builtin_signature_db fdef
                   in
                   record_matches fdef_effects)
             ast;
@@ -670,7 +709,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             let* ent = opt_ent in
             AST_to_IL.name_of_entity ent
           in
-          let name = [None; opt_name] in
+          let name = [ None; opt_name ] in
           let fields =
             cdef.G.cbody |> Tok.unbracket
             |> List_.map (function G.F x -> x)
@@ -680,8 +719,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           let cfg, lambdas = CFG_build.cfg_of_stmts stmts in
           let init_effects, _mapping =
             Dataflow_tainting.fixpoint taint_inst ~name
-              ?signature_db:final_signature_db
-              ?builtin_signature_db
+              ?signature_db:final_signature_db ?builtin_signature_db
               ?call_graph:relevant_graph
               IL.{ params = []; cfg; lambdas }
           in
@@ -698,8 +736,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             let cfg, lambdas = CFG_build.cfg_of_stmts xs in
             let top_effects, _mapping =
               Dataflow_tainting.fixpoint taint_inst
-                ?signature_db:final_signature_db
-                ?builtin_signature_db
+                ?signature_db:final_signature_db ?builtin_signature_db
                 ?call_graph:relevant_graph
                 IL.{ params = []; cfg; lambdas }
             in
@@ -800,35 +837,46 @@ let check_rules ~match_hook
     Formula_cache.mk_specialized_formula_cache rules
   in
 
-  (* Pre-compute call graph if taint_intrafile is enabled for any rule.
-     The call graph only depends on the AST structure, not on individual rules,
-     so we can compute it once and share it across all rules for this file. *)
-  let shared_call_graph_opt =
-    match rules with
-    | [] -> None
-    | rule :: _ ->
-        let xconf_first =
-          Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
-        in
-        if xconf_first.config.taint_intrafile then
-          let lang = xtarget.xlang |> Xlang.to_lang_exn in
-          let (ast, _skipped_tokens) =
-            lazy_force xtarget.lazy_ast_and_errors
-          in
-          let object_mappings =
-            Taint_signature_extractor.detect_object_initialization ast lang
-          in
-          let call_graph =
-            Function_call_graph.build_call_graph ~lang
-              ~object_mappings:object_mappings ast
-          in
-          Some (call_graph, object_mappings)
-        else None
+  (* Collect all languages that have rules with taint_intrafile enabled *)
+  let langs_needing_call_graph =
+    rules
+    |> List.fold_left
+         (fun acc rule ->
+           let xconf_rule =
+             Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
+           in
+           if xconf_rule.config.taint_intrafile then
+             match Xlang.to_lang rule.R.target_analyzer with
+             | Ok lang -> LangSet.add lang acc
+             | Error _ -> acc
+           else acc)
+         LangSet.empty
   in
 
-  (* Create builtin signature database once per file, independent of rules *)
-  let builtin_db = Builtin_models.create_builtin_models (xtarget.xlang |> Xlang.to_lang_exn) in
-  let builtin_signature_db = Some builtin_db in
+  (* Pre-compute call graph and builtin db for each language that needs it.
+     The call graph depends on the AST structure and language, so we compute
+     it once per language and share across rules that need it. *)
+  let call_graph_by_lang =
+    LangSet.fold
+      (fun lang acc ->
+        let ast, _skipped_tokens = lazy_force xtarget.lazy_ast_and_errors in
+        let object_mappings =
+          Taint_signature_extractor.detect_object_initialization ast lang
+        in
+        let call_graph =
+          Function_call_graph.build_call_graph ~lang ~object_mappings ast
+        in
+        LangMap.add lang (call_graph, object_mappings) acc)
+      langs_needing_call_graph LangMap.empty
+  in
+
+  let builtin_db_by_lang =
+    LangSet.fold
+      (fun lang acc ->
+        let builtin_db = Builtin_models.create_builtin_models lang in
+        LangMap.add lang builtin_db acc)
+      langs_needing_call_graph LangMap.empty
+  in
 
   let results =
     rules
@@ -836,9 +884,15 @@ let check_rules ~match_hook
            let xconf =
              Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
            in
-           (* Only pass builtin_signature_db if taint_intrafile is enabled for this rule *)
-           let rule_builtin_signature_db =
-             if xconf.config.taint_intrafile then builtin_signature_db else None
+           (* Only pass call graph and builtin db if taint_intrafile is enabled for this rule *)
+           let rule_shared_call_graph, rule_builtin_signature_db =
+             if xconf.config.taint_intrafile then
+               match Xlang.to_lang rule.R.target_analyzer with
+               | Ok lang ->
+                   ( LangMap.find_opt lang call_graph_by_lang,
+                     LangMap.find_opt lang builtin_db_by_lang )
+               | Error _ -> (None, None)
+             else (None, None)
            in
            per_rule_boilerplate_fn
              (rule :> R.rule)
@@ -852,7 +906,7 @@ let check_rules ~match_hook
                  (fun () ->
                    check_rule per_file_formula_cache rule match_hook
                      ?builtin_signature_db:rule_builtin_signature_db
-                     ~shared_call_graph:shared_call_graph_opt xconf xtarget)))
+                     ~shared_call_graph:rule_shared_call_graph xconf xtarget)))
   in
 
   results

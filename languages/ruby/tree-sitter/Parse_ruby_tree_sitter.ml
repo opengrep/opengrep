@@ -1275,14 +1275,19 @@ and lambda (env : env) ((v1, v2, v3) : CST.lambda) =
           | `Bare_params x -> bare_parameters env x)
     | None -> None
   in
-  let v3 =
+  (* Extract the statements from the block/do_block, don't wrap the whole CodeBlock *)
+  let stmts =
     match v3 with
-    | `Blk x -> block env x
-    | `Do_blk x -> do_block env x
+    | `Blk x -> (
+        match block env x with
+        | CodeBlock (_, _, stmts) -> stmts
+        | other -> [ other ])
+    | `Do_blk x -> (
+        match do_block env x with
+        | CodeBlock (_, _, stmts) -> stmts
+        | other -> [ other ])
   in
-  let b = false in
-  (* should have a third option for lambdas *)
-  CodeBlock ((v1, b, v1), v2, [ v3 ])
+  Lambda (v1, v2, stmts)
 
 and hash (env : env) (v1, v2, v3) =
   let v1 = token2 env v1 in

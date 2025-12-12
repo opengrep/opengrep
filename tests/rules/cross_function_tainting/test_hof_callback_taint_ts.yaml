@@ -1,0 +1,13 @@
+rules:
+  - id: test-hof-callback-taint
+    message: Test HOF callback taint propagation
+    languages:
+      - typescript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
