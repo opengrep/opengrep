@@ -1012,6 +1012,14 @@ class ['self] resolve_visitor env lang =
               xs |> List.iter (fun x -> self#visit_for_or_if_comp venv x);
               self#visit_expr venv e);
           recurse := false
+      (* Because we want new names to be declared after e is visited, for
+       * correct rebinding of the same variable in nested let. Therefore,
+       * if x appears in e, it must be from the outer scope and won't be
+       * the one declared by visiting pat first. *)
+      | LetPattern (pat, e) ->
+        self#visit_expr venv e;
+        self#visit_pattern venv pat;
+        recurse := false
       | _ -> ());
       if !recurse then super#visit_expr venv x
 
