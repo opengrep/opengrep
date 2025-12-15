@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.13.0](https://github.com/opengrep/opengrep/releases/tag/v1.13.0) - 15-12-2025
+
+### Improvements
+
+* Improve handling of patterns and `AST_to_IL` translation by @dimitris-m in #483
+* Improve rust tainting by @dimitris-m in #485
+* Dump generic AST to HTML by @maciejpirog in #484
+* Modernise C# by @maciejpirog in #487
+
+### Bug fixes
+
+* Fix for kotlin double-annotation bug by @maciejpirog in #480
+* Fix PCRE2 test making OSX build fail by @dimitris-m in #486
+* Fix: in `LetPattern(pat, e)`, `e` should be visited first by @dimitris-m in #488
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.12.1...v1.13.0
+
+
 ## [1.12.1](https://github.com/opengrep/opengrep/releases/tag/v1.12.1) - 02-12-2025
 
 ### Bug fixes
