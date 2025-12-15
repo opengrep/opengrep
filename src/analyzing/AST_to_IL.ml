@@ -641,7 +641,7 @@ and expr_aux env ?(void = false) g_expr =
   (* args_with_pre_stmts *)
   | G.Call ({ e = G.IdSpecial (G.Op op, tok); _ }, args) -> (
       match op with
-      | G.Elvis when env.lang =*= Lang.Kotlin -> (
+      | G.Elvis when env.lang =*= Lang.Kotlin || env.lang =*= Lang.Csharp -> (
           (* This implements the logic:
            * result = lhs
            * if (result == null) { result = rhs; }
