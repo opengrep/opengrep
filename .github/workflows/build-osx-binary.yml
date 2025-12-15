@@ -14,6 +14,12 @@ jobs:
   build-self-contained-osx-binary:
     runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
     steps:
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Install ccache
         run: |
           brew install ccache
