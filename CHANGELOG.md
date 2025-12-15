@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.1](https://github.com/opengrep/opengrep/releases/tag/v1.13.1) - 15-12-2025
+
+### CI fixes
+
+* Force python 3.13 for osx binary workflow by @dimitris-m in #490
+
+#### Notes
+
+* Version 1.13.0 (#489) intentionally skipped.
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.12.1...v1.13.1
+
+
 ## [1.13.0](https://github.com/opengrep/opengrep/releases/tag/v1.13.0) - 15-12-2025
 
 ### Improvements
