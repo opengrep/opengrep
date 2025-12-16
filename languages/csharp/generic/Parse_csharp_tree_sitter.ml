@@ -490,12 +490,6 @@ let interpolated_raw_string_text (env : env)
   in
   String (fb x)
 
-let map_anon_choice_ref_eec35e8 (env : env) (x : CST.anon_choice_ref_eec35e8) =
-  match x with
-  | `Ref tok -> (* "ref" *) token env tok
-  | `Out tok -> (* "out" *) token env tok
-  | `In tok -> (* "in" *) token env tok
-
 let real_literal (env : env) (tok : CST.real_literal) =
   let s, t = str env tok (* real_literal *) in
   G.Float (float_of_string_opt s, t)
@@ -2387,24 +2381,31 @@ and parameter (env : env) (v1 : CST.parameter) : G.parameter =
   | `Ellips v1 -> ParamEllipsis (token env v1)
 
 and parameter_type_with_modifiers (env : env)
-    ((v1, v2, v3, _readonly, v4) : CST.parameter_type_with_modifiers) =
-  let _v1TODO =
+    ((v1, v2, v3, v4, v5) : CST.parameter_type_with_modifiers) =
+  let attrs =
     match v1 with
-    | Some tok -> [ (* "this" *) token env tok ]
+    | Some tok -> [ NamedAttr (fake "@", H2.name_of_id ("this", token env tok), fb []) ]
     | None -> []
   in
-  let _v2TODO =
+  let attrs =
     match v2 with
-    | Some tok -> [ (* "scoped" *) token env tok ]
-    | None -> []
+    | Some tok -> NamedAttr (fake "@", H2.name_of_id ("scoped", token env tok), fb []) :: attrs
+    | None -> attrs
   in
-  let _v3TODO =
+  let attrs =
     match v3 with
-    | Some x -> [ map_anon_choice_ref_eec35e8 env x ]
-    | None -> []
+    | Some (`Ref tok) -> NamedAttr (fake "@", H2.name_of_id ("ref", token env tok), fb []) :: attrs
+    | Some (`Out tok) -> NamedAttr (fake "@", H2.name_of_id ("out", token env tok), fb []) :: attrs
+    | Some (`In tok) -> NamedAttr (fake "@", H2.name_of_id ("in", token env tok), fb []) :: attrs
+    | None -> attrs
   in
-  let v4 = ref_base_type env v4 in
-  v4
+  let attrs =
+    match v4 with
+    | Some tok -> NamedAttr (fake "@", H2.name_of_id ("readonly", token env tok), fb []) :: attrs
+    | None -> attrs
+  in
+  let v5 = ref_base_type env v5 in
+  v5, attrs
 
 and explicit_parameter (env : env) (v1, v2, v3, v4) =
   let v1 = List.concat_map (attribute_list env) v1 in
@@ -2414,9 +2415,9 @@ and explicit_parameter (env : env) (v1, v2, v3, v4) =
   Param
     {
       pname = Some v3;
-      ptype = v2;
+      ptype = Option.map fst v2;
       pdefault = v4;
-      pattrs = v1;
+      pattrs = v1 @ List.concat (Option.to_list (Option.map snd v2));
       pinfo = empty_id_info ();
     }
 
