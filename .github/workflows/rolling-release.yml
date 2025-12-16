@@ -12,22 +12,37 @@ permissions:
   id-token: write  # for Cosign keyless
 
 jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate tag input
+        run: |
+          echo "${{ inputs.tag }}" | grep -P '^(v\d+\.\d+\.\d+(-\S+)?|[^v\d].*)$' || {
+            echo "Tag must follow semantic versioning (e.g. v1.2.3 or v1.2.3-beta)."
+            echo "Provided tag: '${{ inputs.tag }}'"
+            exit 1
+          }
 
   build-linux-x86:
+    needs: validate-inputs
     uses: ./.github/workflows/build-test-core-x86.yml
 
   build-linux-aarch64:
+    needs: validate-inputs
     uses: ./.github/workflows/build-test-core-aarch64.yml
 
   build-osx-arm64:
+    needs: validate-inputs
     uses: ./.github/workflows/build-test-osx.yml
 
   build-osx-x86:
+    needs: validate-inputs
     uses: ./.github/workflows/build-test-osx.yml
     with:
       arch: x86_64
 
   build-windows-x86:
+    needs: validate-inputs
     uses: ./.github/workflows/build-test-windows-x86.yml
 
   build-manylinux-binary-x86:
@@ -63,7 +78,7 @@ jobs:
   build-windows-binary-x86:
     needs: build-windows-x86
     uses: ./.github/workflows/build-windows-binary-x86.yml
-    
+
   release:
     runs-on: ubuntu-latest
 
@@ -140,7 +155,7 @@ jobs:
           pushd opengrep_windows_binary_x86; mv opengrep.exe opengrep_windows_x86.exe; popd
 
           popd
-      
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
@@ -163,7 +178,6 @@ jobs:
               "$bin"
           done
 
-          
       - name: Create or Update Rolling Release
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2
         with:
@@ -196,8 +210,8 @@ jobs:
             artifacts/opengrep_osx_binary_x86/opengrep_osx_x86
             artifacts/opengrep_osx_binary_x86/opengrep_osx_x86.cert
             artifacts/opengrep_osx_binary_x86/opengrep_osx_x86.sig
-            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe 
-            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe.cert 
-            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe.sig 
+            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe
+            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe.cert
+            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
