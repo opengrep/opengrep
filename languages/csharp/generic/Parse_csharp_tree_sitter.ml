@@ -3448,7 +3448,23 @@ and declaration (env : env) (x : CST.declaration) : stmt =
       Block (open_br, (DefStmt (ent, VarDef vardef) |> G.s) :: funcs, close_br)
       |> G.s
   | `Using_dire x -> using_directive env x
-
+  | `Exte_decl (v1, _type_param, v2, v3, v4, v5, _where_clause, v6) ->
+      let _v1 = (* "extension" *) token env v1 in
+      let _v2 = (* "(" *) token env v2 in
+      let typ, _attrs = parameter_type_with_modifiers env v3 in
+      let v4 =
+        match v4 with
+        | Some v4 ->
+            let attrs = [ KeywordAttr (Private, fake "private") ] in
+            let entity = basic_entity ~attrs (identifier env v4) in
+            let def = VarDef { vinit = None; vtype = Some typ; vtok = None} in
+            [ DefStmt (entity, def) |> G.s ]
+        | _ -> []
+      in
+      let _v5 = (* ")" *) token env v5 in
+      let open_br, stmts, close_br = declaration_list env v6 in
+      Block (open_br, v4 @ stmts, close_br) |> G.s
+    
 (*****************************************************************************)
 (* Entry points *)
 (*****************************************************************************)
