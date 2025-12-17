@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.13.2](https://github.com/opengrep/opengrep/releases/tag/v1.13.2) - 17-12-2025
+
+### Improvements
+
+* C#: Add matching on function argument modifiers (ref, in, scoped, etc.) by @maciejpirog in #494
+* C#: Support extension blocks by @maciejpirog in #496 
+
+### Release process
+
+* Validate tag input on release by @lae in #493
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.13.1...v1.13.2
+
+
 ## [1.13.1](https://github.com/opengrep/opengrep/releases/tag/v1.13.1) - 15-12-2025
 
 ### CI fixes
