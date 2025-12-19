@@ -45,6 +45,7 @@ and show_kind =
    * alt: we could accept multiple Files via multiple target_roots *)
   | DumpCST of Fpath.t * Lang.t
   | DumpAST of Fpath.t * Lang.t
+  | DumpIL  of Fpath.t * Lang.t
   | DumpConfig of Rules_config.config_string
   | DumpRuleV2 of Fpath.t
   (* 'semgrep show ???'
@@ -112,6 +113,13 @@ let cmdline_term : conf Term.t =
       | [ "dump-ast"; lang_str; file ] ->
           let lang = Lang.of_string lang_str in
           DumpAST (Fpath.v file, lang)
+      | [ "dump-il"; file ] ->
+          let path = Fpath.v file in
+          let lang = Lang.lang_of_filename_exn path in
+          DumpIL (path, lang)
+      | [ "dump-il"; lang_str; file ] ->
+          let lang = Lang.of_string lang_str in
+          DumpIL (Fpath.v file, lang)
       | [ "dump-pattern"; lang_str; pattern ] ->
           let lang = Lang.of_string lang_str in
           DumpPattern (pattern, lang)
@@ -150,6 +158,8 @@ let man : Cmdliner.Manpage.block list =
     `P
       "Dump the abstract syntax tree of the file (with some names/types \
        resolved)";
+    `Pre "opengrep show dump-il [<LANG>] <FILE>";
+    `P "Dump the internal representation of the file";
     `Pre "opengrep show dump-cst [<LANG>] <FILE>";
     `P "Dump the concrete syntax tree of the file (tree sitter only)";
     `Pre "opengrep show dump-pattern <LANG> <STRING>";

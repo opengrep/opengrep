@@ -1,5 +1,6 @@
 open Common
 module J = JSON
+module G = AST_generic
 
 (*****************************************************************************)
 (* Prelude *)
@@ -135,6 +136,43 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
                 |> List_.map Tok.show_location
                 |> String.concat ", "));
           Exit_code.invalid_code ~__LOC__)
+  | DumpIL (file, lang) ->
+      let parse = Parse_target.parse_and_resolve_name lang file in
+      let ast = parse.Parsing_result2.ast in
+      let xs = AST_to_IL.stmt lang (AST_generic.stmt1 ast) in
+      print "=== Toplevel ===";
+      (match xs with
+      | [] -> print "(none)"
+      | _ -> xs |> List.iter (fun stmt -> print (IL.show_stmt stmt)));
+        let report_func_def_with_name ent_opt fdef =
+            let name =
+            match ent_opt with
+            | None -> "<lambda>"
+            | Some { G.name = EN n; _ } -> G.show_name n
+            | Some _ -> "<entity>"
+            in
+            print (spf "\n=== Function ===\nName: %s" name);
+            let s =
+            AST_generic.show_any
+                (G.S (AST_generic_helpers.funcbody_to_stmt fdef.G.fbody))
+            in
+            print s;
+            print "==>";
+
+            (* Creating a CFG and throwing it away here so the implicit return
+            * analysis pass may be run in order to mark implicit return nodes.
+            *)
+            let _ = CFG_build.cfg_of_gfdef lang fdef in
+
+            (* This round, the IL stmts will show return nodes when
+            * they were implicit before.
+            *)
+            let IL.{ fbody = xs; _ } = AST_to_IL.function_definition lang fdef in
+            let s = IL.show_any (IL.Ss xs) in
+            print s
+        in
+        Visit_function_defs.visit report_func_def_with_name ast;
+      Exit_code.ok ~__LOC__
   | DumpConfig config_str ->
       let in_docker = !Semgrep_envvars.v.in_docker in
       let config = Rules_config.parse_config_string ~in_docker config_str in
