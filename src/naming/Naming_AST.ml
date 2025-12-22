@@ -1020,6 +1020,13 @@ class ['self] resolve_visitor env lang =
         self#visit_expr venv e;
         self#visit_pattern venv pat;
         recurse := false
+      (* Elixir ShortLambda: OtherExpr("ShortLambda", [Params [...]; S body])
+       * Create a new scope with the params and visit the body. *)
+      | OtherExpr (("ShortLambda", _), [ Params params; S body ]) ->
+          let new_params = params_of_parameters env (Tok.unsafe_fake_bracket params) in
+          with_new_function_scope new_params env.names (fun () ->
+              self#visit_stmt venv body);
+          recurse := false
       | _ -> ());
       if !recurse then super#visit_expr venv x
 

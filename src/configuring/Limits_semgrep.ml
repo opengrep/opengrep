@@ -46,9 +46,13 @@ let svalue_prop_MAX_VISIT_SYM_IN_CYCLE_CHECK = 1000
  * So e.g. we limit the amount of time that Pro will spend inferring taint signatures.
  * Note that 'Time_limit.set_timeout' cannot be nested. *)
 let taint_FIXPOINT_TIMEOUT = 0.2
+(* this replaces the taint FIXPOINT_TIMEOUT in the config file, in a fixpoint if a node
+ * is visted more often than this the assumption is that it is a cycle and so the
+ * fixpoint stops *)
+let taint_MAX_VISITS_PER_NODE = 4
 
 (** Bounds the number of variables we can track. *)
-let taint_MAX_TAINTED_VARS = 50
+let taint_MAX_TAINTED_VARS = 1000
 
 (** Bounds the number of fields we can track per l-value, that is, the number of
  * fields in an 'Obj' shape, see 'Taint_sig.shape'. *)
