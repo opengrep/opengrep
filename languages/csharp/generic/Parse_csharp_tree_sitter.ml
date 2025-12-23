@@ -2384,7 +2384,8 @@ and parameter_type_with_modifiers (env : env)
     ((v1, v2, v3, v4, v5) : CST.parameter_type_with_modifiers) =
   let attrs =
     match v1 with
-    | Some tok -> [ NamedAttr (fake "@", H2.name_of_id ("this", token env tok), fb []) ]
+    (* reusing the attribute extern to match "extern" class to which we attach the method *)
+    | Some tok -> [ KeywordAttr (Extern, token env tok (* "this" *)) ] 
     | None -> []
   in
   let attrs =
