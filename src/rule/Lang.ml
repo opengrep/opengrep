@@ -158,6 +158,7 @@ let langs_of_filename filename =
   | FT.Config FT.Json -> [ Json ]
   | FT.Config FT.Yaml -> [ Yaml ]
   | FT.Config FT.Terraform -> [ Terraform ]
+  | FT.Config FT.Dockerfile -> [ Dockerfile ]
   | FT.PL FT.Ruby -> [ Ruby ]
   | FT.PL FT.Julia -> [ Julia ]
   | FT.PL FT.Csharp -> [ Csharp ]
@@ -176,6 +177,7 @@ let langs_of_filename filename =
   | FT.PL FT.Elixir -> [ Elixir ]
   | FT.PL FT.Apex -> [ Apex ]
   | FT.PL FT.Dart -> [ Dart  ]
+  | FT.PL (FT.Lisp Clojure) -> [ Clojure ]
   | _ -> []
 
 let lang_of_filename_exn filename =
