@@ -66,10 +66,10 @@ class ['self] pat_id_visitor =
           super#visit_pattern store pat
   end
 
+let pat_id_visitor_instance = new pat_id_visitor
 let visit : AST_generic.any -> (G.ident * G.id_info) list =
-  let v = new pat_id_visitor in
   fun any ->
     let ids = ref [] in
-    v#visit_any ids any;
+    pat_id_visitor_instance#visit_any ids any;
     !ids
 [@@profiling]
