@@ -1,5 +1,10 @@
-(setq $V (get()))
-...
-(eval $V)
-
-
+;; maybe this will change:
+;; this captures more than do, specifically also it matches
+;; implicit do, hence also the body of functions among other
+;; things.
+;; if we put ... after do, it will also catch let because
+;; it also creates an implicit do in the body.
+(do 
+  (setq $V (get ...))
+  ...
+  (eval $V))
