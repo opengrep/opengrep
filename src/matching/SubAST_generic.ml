@@ -136,7 +136,8 @@ let subexprs_of_expr with_symbolic_propagation e =
   | Alias (_, e)
   | LocalImportAll (_, _, e)
   | DeepEllipsis (_, e, _)
-  | DotAccessEllipsis (e, _) ->
+  | DotAccessEllipsis (e, _)
+  | LetPattern (_, e) ->
       [ e ]
   | Assign (e1, _, e2)
   | AssignOp (e1, _, e2)
@@ -187,8 +188,7 @@ let subexprs_of_expr with_symbolic_propagation e =
   | RegexpTemplate ((_l, e, _r), _opt) -> [ e ]
   (* currently skipped over but could recurse *)
   | Constructor _
-  | AnonClass _
-  | LetPattern _ ->
+  | AnonClass _ ->
       []
   | DisjExpr _ -> raise Common.Impossible
 [@@profiling]
@@ -215,6 +215,8 @@ let subexprs_of_expr_implicit (with_symbolic_propagation : bool) (e : expr) :
   | Assign (_e1, _, e2)
   | AssignOp (_e1, _, e2) ->
       [ e2 ]
+  | LetPattern (_pat, e) ->
+      [ e ]
   (* TODO? special case for Bash and Dockerfile to prevent
    * 'RUN b' to also match 'RUN a && b' (but still allowing
    *  'RUN a' to match 'RUN a && b'?)
@@ -271,7 +273,6 @@ let subexprs_of_expr_implicit (with_symbolic_propagation : bool) (e : expr) :
   | RegexpTemplate _ -> []
   | AnonClass _def -> []
   | Lambda _def -> []
-  | LetPattern _ -> []
   | TypedMetavar _
   | DeepEllipsis _
   | DotAccessEllipsis _
