@@ -733,7 +733,8 @@ let semgrep_rules_repo_tests () : Testo.t list =
                        is in the rule
                     *)
                        s =~ ".*/unicode/security/bidi.yml"
-                    || s =~ ".*/dockerfile/security/dockerd-socket-mount.yaml"
+                    (* This test now passes. *)
+                    (* || s =~ ".*/dockerfile/security/dockerd-socket-mount.yaml" *)
                     || s =~ ".*/yaml/semgrep/consistency/.*" ->
                  Some "XFAIL"
              (* FIXME: the following test seems to have an error in the pattern (has $M(){} should have $T $M(){}) *)
