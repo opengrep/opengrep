@@ -178,6 +178,9 @@ let dotted_ident_of_name (n : name) : dotted_ident =
       in
       before @ [ ident ]
 
+(* Duplicate of the one in AST_generic, but with an optimisation
+ * we cannot do there because tests would fail. Leaving this here
+ * for now. *)
 let expr_to_stmt e =
   match e.e with
   | StmtExpr stmt -> stmt
