@@ -89,7 +89,7 @@ let eval_builtin_func lang env func args =
 let result_of_function_call_constant lang f args =
   match (lang, f, args) with
   (* Built-in knowledge, we know these functions return constants when
-     * given constant arguments. *)
+   * given constant arguments. *)
   | ( Lang.Php,
       {
         e =
