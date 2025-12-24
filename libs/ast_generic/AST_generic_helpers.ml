@@ -100,10 +100,11 @@ let add_type_args_opt_to_name name topt =
   | None -> name
   | Some t -> add_type_args_to_name name t
 
-let name_of_ids ?(case_insensitive = false) xs =
+let name_of_ids ?name_top ?(case_insensitive = false) xs =
   match List.rev xs with
   | [] -> failwith "name_of_ids: empty ids"
-  | [ x ] -> Id (x, empty_id_info ~case_insensitive ())
+  | [ x ] when Option.is_none name_top ->
+    Id (x, empty_id_info ~case_insensitive ())
   | x :: xs ->
       let qualif =
         if xs =*= [] then None
@@ -113,7 +114,7 @@ let name_of_ids ?(case_insensitive = false) xs =
         {
           name_last = (x, None);
           name_middle = qualif;
-          name_top = None;
+          name_top;
           name_info = empty_id_info ();
         }
 

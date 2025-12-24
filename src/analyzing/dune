@@ -11,6 +11,7 @@
    ast_generic
    semgrep.core ; Lang
    semgrep.il
+   parser_lisp_tree_sitter ; for macroexpand-1
  )
  (preprocess
     (pps

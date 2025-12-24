@@ -774,7 +774,7 @@ and m_expr_deep a b tin =
  * alternatives:
  *  - force the user to use 'if(... <expr> ...)' (isaac, jmelton)
  *  - do as in coccinelle and use 'if(<... <expr> ...>)'
- *  - CURRENT: impicitely go deep without requiring an extra syntax
+ *  - CURRENT: implicitly go deep without requiring extra syntax
  *
  * todo? we could restrict ourselves to only a few forms?
  *   - x = <expr>,
