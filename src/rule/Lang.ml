@@ -175,6 +175,7 @@ let langs_of_filename filename =
   | FT.PL (FT.Web FT.Html) -> [ Html ]
   | FT.PL FT.Elixir -> [ Elixir ]
   | FT.PL FT.Apex -> [ Apex ]
+  | FT.PL FT.Dart -> [ Dart  ]
   | _ -> []
 
 let lang_of_filename_exn filename =
