@@ -1,4 +1,2 @@
-;; temporary hack: use 'do' for exprs sequence block.
-(do
-  (setq $V (open))
-  (close $V))
+(setq $V (open))
+(close $V)
