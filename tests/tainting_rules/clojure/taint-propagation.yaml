@@ -1,0 +1,54 @@
+rules:
+- id: taint-call
+  mode: taint
+  languages: [clojure]
+  message: "tainted"
+  severity: INFO
+  pattern-sources:
+    - patterns:
+       - pattern-either:
+         # TODO: Add letfn?
+         - pattern-inside: |
+             (fn [... $P ...] ...)
+         - pattern-inside: |
+             (defn $F [... $P ...] ...)
+         # - patterns:
+         #   - pattern-inside: |
+         #       #($_ ... $P ...)
+         #   - metavariable-regex:
+         #       metavariable: $P
+         #       regex: (^%.*$)
+         # # This captures (let [...] ... $P ...) also.
+         # - patterns:
+         #   - pattern-inside: |
+         #       #(do ... $P ...)
+         #   - metavariable-regex:
+         #       metavariable: $P
+         #       regex: (^%.*$)
+         # - patterns:
+         #   - pattern-inside: |
+         #       #(do ... let [... $_ $P ...] ...)
+         #   - metavariable-regex:
+         #       metavariable: $P
+         #       regex: (^%.*$)
+         - patterns:
+           - pattern: |
+               $P
+           - metavariable-regex:
+               metavariable: $P
+               regex: (^%.*$)
+       - focus-metavariable: $P
+  pattern-sinks:
+    - pattern-either: 
+      - pattern: |
+          (sink ...)
+      # because (-> sink)
+      - pattern: |
+          sink 
+  pattern-sanitizers:
+    - pattern-either: 
+      - pattern: |
+          (sanitize ...)
+      # because (-> sanitize)
+      - pattern: |
+          sanitize 
