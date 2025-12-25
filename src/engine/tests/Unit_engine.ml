@@ -619,6 +619,7 @@ let lang_tainting_tests () =
       (* lang, dir, ext *)
       (Lang.Apex, "apex", ".trigger"); (* TODO: Use Lang.* functions to derive .2, .3 *)
       (Lang.Csharp, "csharp", ".cs");
+      (Lang.Dart, "dart", ".dart");
       (Lang.Elixir, "elixir", ".ex");
       (Lang.Go, "go", ".go");
       (Lang.Java, "java", ".java");
