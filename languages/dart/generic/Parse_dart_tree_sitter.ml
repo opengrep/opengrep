@@ -2147,30 +2147,35 @@ and map_strict_formal_parameter_list (env : env)
 *)
 
 and map_string_literal (env : env) (xs : CST.string_literal) : G.expr =
-  G.Call
-    ( G.IdSpecial (G.ConcatString G.SequenceConcat, fake "concat") |> G.e,
-      fb
-        (xs
-        |> List_.map (fun x ->
-               match x with
-               | `Str_lit_double_quotes x ->
-                   map_string_literal_double_quotes env x
-               | `Str_lit_single_quotes x ->
-                   map_string_literal_single_quotes env x
-               | `Str_lit_double_quotes_mult x ->
-                   map_string_literal_double_quotes_multiple env x
-               | `Str_lit_single_quotes_mult x ->
-                   map_string_literal_single_quotes_multiple env x
-               | `Raw_str_lit_double_quotes x ->
-                   map_raw_string_literal_double_quotes env x
-               | `Raw_str_lit_single_quotes x ->
-                   map_raw_string_literal_single_quotes env x
-               | `Raw_str_lit_double_quotes_mult x ->
-                   map_raw_string_literal_double_quotes_multiple env x
-               | `Raw_str_lit_single_quotes_mult x ->
-                   map_raw_string_literal_single_quotes_multiple env x)
-        |> List_.map (fun x -> Arg x)) )
-  |> G.e
+  let map_elems x =
+    match x with
+    | `Str_lit_double_quotes x ->
+        map_string_literal_double_quotes env x
+    | `Str_lit_single_quotes x ->
+        map_string_literal_single_quotes env x
+    | `Str_lit_double_quotes_mult x ->
+        map_string_literal_double_quotes_multiple env x
+    | `Str_lit_single_quotes_mult x ->
+        map_string_literal_single_quotes_multiple env x
+    | `Raw_str_lit_double_quotes x ->
+        map_raw_string_literal_double_quotes env x
+    | `Raw_str_lit_single_quotes x ->
+        map_raw_string_literal_single_quotes env x
+    | `Raw_str_lit_double_quotes_mult x ->
+        map_raw_string_literal_double_quotes_multiple env x
+    | `Raw_str_lit_single_quotes_mult x ->
+        map_raw_string_literal_single_quotes_multiple env x
+  in
+  match xs with
+  | [x] -> x |> map_elems
+  | xs ->
+      G.Call
+          ( G.IdSpecial (G.ConcatString G.SequenceConcat, fake "concat") |> G.e,
+          fb
+              (xs
+              |> List_.map map_elems
+              |> List_.map (fun x -> Arg x)) )
+      |> G.e
 
 and map_string_literal_to_strings (env : env) (xs : CST.string_literal) :
     G.expr list =
@@ -2297,23 +2302,21 @@ and map_switch_label (env : env) ((v1, v2) : CST.switch_label) : case =
   in
   v2
 
-and map_template_substitution (env : env) ((v1, v2) : CST.template_substitution)
-    =
-  let _s1, _t1 = (* "$" *) str env v1 in
-  let v2 =
-    match v2 with
-    | `LCURL_exp_RCURL (v1, v2, v3) ->
-        let v1 = (* "{" *) token env v1 in
-        let v2 = map_expression env v2 in
-        let v3 = (* "}" *) token env v3 in
-        Either_.Right3 (v1, Some v2, v3)
-    | `Id_dollar_esca tok ->
-        let s2, t2 =
+and map_template_substitution (env : env) ((v1, v2) : CST.template_substitution) =
+  let s1, t1 = (* "$" *) str env v1 in
+  match v2 with
+  | `LCURL_exp_RCURL (_v1, v2, _v3) ->
+      let v2 = map_expression env v2 in
+      Either_.Middle3 v2
+  | `Id_dollar_esca tok ->
+      let s2, t2 =
           (* pattern ([a-zA-Z_]|(\\\$))([\w]|(\\\$))* *) str env tok
-        in
-        Left3 (s2, t2)
-  in
-  v2
+      in
+      (* TODO: this is copy-paste from map_sub_string_test, *)
+      (* something weird is going on in the grammar *)
+      match env.extra with
+      | Program -> Either_.Middle3 (N (H2.name_of_id (s2, t2)) |> G.e)
+      | Pattern -> Either_.Left3 (s1 ^ s2, Tok.combine_toks t1 [ t2 ])
 
 and map_throw_expression (env : env) ((v1, v2) : CST.throw_expression) =
   let v1 = (* "throw" *) token env v1 in
@@ -3053,9 +3056,9 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
         match v2 with
         | `Func_sign x ->
             map_function_signature ~attrs env x
-              ((Function, fake "Function"), FBNothing)
-        | `Getter_sign x -> map_getter_signature ~attrs env x FBNothing
-        | `Setter_sign x -> map_setter_signature ~attrs env x FBNothing
+              ((Method, fake "Method"), body)
+        | `Getter_sign x -> map_getter_signature ~attrs env x body
+        | `Setter_sign x -> map_setter_signature ~attrs env x body
       in
       v2
   | `Op_sign x -> map_operator_signature ~attrs env x
