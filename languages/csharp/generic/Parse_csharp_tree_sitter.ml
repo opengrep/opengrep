@@ -2759,9 +2759,9 @@ let enum_member_declaration_list (env : env)
   let _v4 = token env v4 (* "}" *) in
   v2
 
-let rec declaration_list (env : env)
+let rec declaration_list ?(this_param=None) (env : env)
     ((open_bracket, body, close_bracket) : CST.declaration_list) =
-  let xs = List_.map (declaration env) body in
+  let xs = List_.map (declaration ~this_param env) body in
   (token env open_bracket, xs, token env close_bracket)
 
 and extern_alias_directive (env : env)
@@ -3076,7 +3076,7 @@ and record_struct_declaration env (_, _, v3, _, _, _, _, _, _, _, _) =
   let v3 = token env v3 (* "record" *) in
   todo_stmt env v3
 
-and declaration (env : env) (x : CST.declaration) : stmt =
+and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
   match x with
   | `Ellips v1 ->
       let v1 = token env v1 in
@@ -3314,7 +3314,7 @@ and declaration (env : env) (x : CST.declaration) : stmt =
       let v5 = identifier env v5 (* identifier *) in
       let _, tok = v5 in
       let v6 = Option.map (type_parameter_list env) v6 in
-      let v7 = parameter_list env v7 in
+      let l, v7, r = parameter_list env v7 in
       let v8 = List_.map (type_parameter_constraints_clause env) v8 in
       let v9 = function_body env v9 in
       let tparams = type_parameters_with_constraints v6 v8 in
@@ -3324,7 +3324,7 @@ and declaration (env : env) (x : CST.declaration) : stmt =
         G.FuncDef
           {
             fkind = (G.Method, tok);
-            fparams = v7;
+            fparams = (l, Option.to_list (Option.map (fun f -> f ()) this_param) @ v7, r);
             frettype = Some v3;
             fbody = v9;
           }
@@ -3396,6 +3396,7 @@ and declaration (env : env) (x : CST.declaration) : stmt =
                   let has_params = iname <> "get" in
                   let has_return = iname = "get" in
                   let ent = basic_entity (iname ^ "_" ^ fname, itok) ~attrs in
+                  let this_param_list = Option.to_list (Option.map (fun f -> f ()) this_param) in
                   let funcdef =
                     FuncDef
                       {
@@ -3403,6 +3404,7 @@ and declaration (env : env) (x : CST.declaration) : stmt =
                         fparams =
                           fb
                             (if has_params then
+                               this_param_list @
                                [
                                  Param
                                    {
@@ -3413,8 +3415,10 @@ and declaration (env : env) (x : CST.declaration) : stmt =
                                      pinfo = empty_id_info ();
                                    };
                                ]
-                             else []);
-                        frettype = (if has_return then Some v3 else None);
+                             else this_param_list);
+                        (* NOTE: In order to make "set" be recognised by a $T $FOO(...) {...} pattern, *)
+                        (* we need to give it the void type and point to a real token. *)
+                        frettype = (if has_return then Some v3 else Some (G.TyN (Id (("void", itok), G.empty_id_info ())) |> G.t));
                         (* TODO Should this be "void"? *)
                         fbody;
                       }
@@ -3434,10 +3438,10 @@ and declaration (env : env) (x : CST.declaration) : stmt =
             let funcdef =
               FuncDef
                 {
-                  fkind = (Arrow, arrow);
-                  fparams = fb [];
+                  fkind = (Method, arrow);
+                  fparams = fb (Option.to_list (Option.map (fun f -> f ()) this_param));
                   frettype = Some v3;
-                  fbody = G.FBStmt (ExprStmt (expr, v2) |> G.s);
+                  fbody = G.FBStmt (G.Block (fb [ExprStmt (expr, v2) |> G.s]) |> G.s);
                 }
             in
             let func = DefStmt (ent, funcdef) |> G.s in
@@ -3453,17 +3457,25 @@ and declaration (env : env) (x : CST.declaration) : stmt =
       let _v1 = (* "extension" *) token env v1 in
       let _v2 = (* "(" *) token env v2 in
       let typ, _attrs = parameter_type_with_modifiers env v3 in
-      let v4 =
+      let v4, this_param =
         match v4 with
         | Some v4 ->
+            let ident = identifier env v4 in
             let attrs = [ KeywordAttr (Private, fake "private") ] in
-            let entity = basic_entity ~attrs (identifier env v4) in
+            let entity = basic_entity ~attrs ident in
             let def = VarDef { vinit = None; vtype = Some typ; vtok = None} in
-            [ DefStmt (entity, def) |> G.s ]
-        | _ -> []
+            [ DefStmt (entity, def) |> G.s ],
+             Some (fun _ -> G.Param
+              {pname = Some ident;
+               ptype = Some typ;
+               pdefault = None;
+               pattrs = G.KeywordAttr (G.Extern, fake "this") :: attrs;
+               pinfo = G.empty_id_info ~hidden:true ()
+              })
+        | _ -> [], None
       in
       let _v5 = (* ")" *) token env v5 in
-      let open_br, stmts, close_br = declaration_list env v6 in
+      let open_br, stmts, close_br = declaration_list ~this_param env v6 in
       Block (open_br, v4 @ stmts, close_br) |> G.s
     
 (*****************************************************************************)
