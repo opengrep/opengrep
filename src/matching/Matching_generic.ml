@@ -636,7 +636,7 @@ let m_list_with_dots ~less_is_ok f is_dots xsa xsb =
       xsb |> List.fold_left (fun acc xb -> acc >||> f xa xb) (fail ())
   | __else__ -> m_list_with_dots ~less_is_ok f is_dots xsa xsb
 
-let m_list_with_dots_and_metavar_ellipsis ~less_is_ok ~f ~is_dots
+let m_list_with_dots_and_metavar_ellipsis ?(can_skip=fun _ -> false) ~less_is_ok ~f ~is_dots
     ~is_metavar_ellipsis xsa xsb =
   let rec aux xsa xsb =
     match (xsa, xsb) with
@@ -672,6 +672,10 @@ let m_list_with_dots_and_metavar_ellipsis ~less_is_ok ~f ~is_dots
         >||> (* can match more *)
         aux (a :: xsa) xsb
     (* the general case *)
+    | xa :: aas, xb :: bbs when can_skip xb ->
+        aux xsa bbs
+        >||>
+        (f xa xb >>= fun () -> aux aas bbs)
     | xa :: aas, xb :: bbs -> f xa xb >>= fun () -> aux aas bbs
     | [], _
     | _ :: _, _ ->
