@@ -37,7 +37,14 @@ from semgrep.verbose_logging import getLogger
 logger = getLogger(__name__)
 
 
-COMMENT_SYNTAXES = (("#", "\n"), ("//", "\n"), ("<!--", "-->"), ("(*", "*)"), ("'", "\n"))
+COMMENT_SYNTAXES = \
+  (("#", "\n"),
+   ("//", "\n"),
+   ("<!--", "-->"),
+   ("(*", "*)"),
+   ("'", "\n"),
+   (";;", "\n"),
+   (";", "\n"))
 SPACE_OR_NO_SPACE = ("", " ")
 TODORULEID = "todoruleid"
 RULEID = "ruleid"

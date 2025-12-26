@@ -1,4 +1,4 @@
-(defun foo()
+(defn f []
    ;ERROR:
   (foo 1 2)
 

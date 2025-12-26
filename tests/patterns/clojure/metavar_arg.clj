@@ -1,4 +1,4 @@
-(defun foo()
+(defn f []
     ;ERROR:
     (foo 1 2)
 
@@ -7,7 +7,7 @@
          2)
 
     ;ERROR:
-    (foo (unsafe()) ; indeed
+    (foo (unsafe) ; indeed
          2)
 
     ;ERROR:

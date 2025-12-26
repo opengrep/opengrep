@@ -774,7 +774,7 @@ and m_expr_deep a b tin =
  * alternatives:
  *  - force the user to use 'if(... <expr> ...)' (isaac, jmelton)
  *  - do as in coccinelle and use 'if(<... <expr> ...>)'
- *  - CURRENT: impicitely go deep without requiring an extra syntax
+ *  - CURRENT: implicitly go deep without requiring extra syntax
  *
  * todo? we could restrict ourselves to only a few forms?
  *   - x = <expr>,
@@ -813,18 +813,30 @@ and m_expr_root a b = m_expr ~is_root:true a b
 *)
 and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
   Trace_matching.(if on then print_expr_pair a b);
+  (* Added for Clojure's `let` and similar constructs that are encoded
+   * as OtherExpr in generic AST. Useful for Elixir ShortLambda too. *)
+  let m_list_with_ellipsis_any pattern_matcher =
+    m_list_with_dots ~less_is_ok:false pattern_matcher (function
+        | G.E {e = Ellipsis _; _} -> true
+        | _ -> false)
+  in
+  let m_list_with_ellipsis pattern_matcher =
+    m_list_with_dots ~less_is_ok:false pattern_matcher (function
+        | G.{e = Ellipsis _; _} -> true
+        | _ -> false)
+  in
   match (a.G.e, b.G.e) with
   (* the order of the matches matters! take care! *)
   (* alias: match on the expr inside *)
   | G.Alias (_alias, a1), _ -> m_expr a1 b
-  | _, G.Alias (_alias, b1) -> m_expr a b1
+  | _, B.Alias (_alias, b1) -> m_expr a b1
   (* equivalence: user-defined equivalence! *)
   | G.DisjExpr (a1, a2), _b -> m_expr a1 b >||> m_expr a2 b
   | G.LocalImportAll (a0, a1, a2), B.LocalImportAll (b0, b1, b2) ->
       let* () = m_module_name a0 b0 in
       let* () = m_tok a1 b1 in
       m_expr a2 b2
-  | _, G.LocalImportAll (b0, _b1, b2) -> (
+  | _, B.LocalImportAll (b0, _b1, b2) -> (
       match b0 with
       | G.DottedName bn -> with_additional_wildcard_import bn (m_expr a b2)
       | G.FileName _ -> fail ())
@@ -833,7 +845,7 @@ and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
      By setting `arguments_have_changed` to false, we ensure that we
      fall-through to the cases that do decompose on `a` or `b`.
   *)
-  | _, G.Cast (_, _, b1) when arguments_have_changed ->
+  | _, B.Cast (_, _, b1) when arguments_have_changed ->
       (* We apply this equivalence only if not at the root, meaning we've done
          work to get here, and should consider all possibilities.
          This is similar to symbolic propagation.
@@ -1137,14 +1149,14 @@ and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
   | G.Cast (a1, at, a2), B.Cast (b1, bt, b2) ->
       m_type_ a1 b1 >>= fun () ->
       m_tok at bt >>= fun () -> m_expr a2 b2
-  | G.Seq a1, B.Seq b1 -> (m_list m_expr) a1 b1
+  | G.Seq a1, B.Seq b1 -> (m_list_with_ellipsis m_expr) a1 b1
   | G.Ref (a0, a1), B.Ref (b0, b1) -> m_tok a0 b0 >>= fun () -> m_expr a1 b1
   | G.DeRef (a0, a1), B.DeRef (b0, b1) -> m_tok a0 b0 >>= fun () -> m_expr a1 b1
   | G.StmtExpr a1, B.StmtExpr b1 -> m_stmt a1 b1
   (* implicit return *)
   | G.StmtExpr { s = G.Return (_, Some a, _); _ }, _ -> m_implicit_return a b
   | G.OtherExpr (a1, a2), B.OtherExpr (b1, b2) ->
-      m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
+      m_todo_kind a1 b1 >>= fun () -> (m_list_with_ellipsis_any m_any) a2 b2
   | G.RawExpr a, B.RawExpr b -> m_raw_tree a b
   | G.N (G.Id _ as a), B.N (B.IdQualified _ as b) -> m_name a b
   | _, G.N (G.Id _) ->
@@ -2597,18 +2609,6 @@ and m_stmt a b =
           },
           _sc ) ) ->
       return ()
-  | ( _,
-      G.ExprStmt
-        ( {
-            e =
-              G.Call
-                ( { e = G.N (G.Id (("r_2_c_pro_was_here", _), _)); _ },
-                  (_, [], _) );
-            _;
-          },
-          _sc ) )
-    when !hook_r2c_pro_was_here =*= Some true ->
-      return ()
   (* metavar: *)
   (* Note that we can't consider $S a statement metavariable only if the
    * semicolon is a fake one. Indeed in many places we have patterns
@@ -2672,7 +2672,7 @@ and m_stmt a b =
         | Some (xs, _) -> xs
       in
       or_list m_stmt a bs
-  (* the general case *)
+  (* The general case: *)
   (* ... will now allow a subset of stmts (less_is_ok = false here) *)
   | G.Block a1, B.Block b1 ->
       m_bracket (m_stmts_deep ~inside:false ~less_is_ok:false) a1 b1
@@ -2952,6 +2952,7 @@ and m_pattern a b =
    * meaningful.
    * How about PatRecord? I did not change that for now.
    * TODO: Check, this may cause a performance regression.
+   * TODO: Add also ellipsis metavar. We don't capture `$...E`.
    *)
   let m_list_with_ellipsis pattern_matcher =
     m_list_with_dots ~less_is_ok:false pattern_matcher (function

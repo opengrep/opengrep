@@ -188,7 +188,11 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
       let a, b, c = cut line start_col end_col in
       Fmt.pf ppf "%s%4d┆ %s%a%s@." prefix line_num a
         Fmt.(styled `Bold string) b c
-    with _ -> ()
+    with ex ->
+      Log.debug (fun m ->
+          m "Could not read file %a: %s"
+            Fpath.pp loc.path (Exception.(catch ex |> to_string)));
+      ()
   in
 
   (* Helper to print tokens with no consecutive duplicates *)

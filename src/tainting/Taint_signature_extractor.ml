@@ -397,9 +397,8 @@ let pos_in_range target_pos range_opt =
 class class_finder =
   object
     inherit [_] AST_generic.iter as super
-    val mutable found_class : IL.name option = None
 
-    method! visit_definition loc (entity, def_kind) =
+    method! visit_definition (loc, (found_class : IL.name option ref) as env) (entity, def_kind) =
       match def_kind with
       | AST_generic.ClassDef _ ->
           (match entity.AST_generic.name with
@@ -409,7 +408,7 @@ class class_finder =
               in
               if pos_in_range loc class_range then
                 let fake_tok = Tok.unsafe_fake_tok class_name in
-                found_class <-
+                found_class :=
                   Some
                     {
                       IL.ident = (class_name, fake_tok);
@@ -417,20 +416,19 @@ class class_finder =
                       id_info = AST_generic.empty_id_info ();
                     }
           | _ -> ());
-          super#visit_definition loc (entity, def_kind)
-      | _ -> super#visit_definition loc (entity, def_kind)
-
-    method get_result = found_class
+          super#visit_definition env (entity, def_kind)
+      | _ -> super#visit_definition env (entity, def_kind)
   end
 
+let class_finder_visitor_instance = new class_finder
 let find_class_for_function (ast : AST_generic.program) (target_name : IL.name)
     : IL.name option =
   let tok = snd target_name.IL.ident in
   match Tok.loc_of_tok tok with
   | Ok loc ->
-      let visitor = new class_finder in
-      visitor#visit_program loc ast;
-      visitor#get_result
+      let found_class : IL.name option ref = ref None in
+      class_finder_visitor_instance#visit_program (loc, found_class) ast;
+      !found_class
   | _ -> None
 
 let enable_precise_index_tracking () =

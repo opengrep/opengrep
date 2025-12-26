@@ -2,52 +2,52 @@
 let lang_has_no_dollar_ids =
   Lang.(
     function
-    | Circom
     | Apex
+    | C
+    | Circom
+    | Cpp
+    | Csharp
+    | Dart
+    | Elixir
+    | Go
+    | Html
+    | Java
+    | Json
+    | Jsonnet
+    | Julia
+    | Kotlin
+    | Lua
+    | Move_on_aptos
+    | Ocaml
     | Protobuf
     | Python
     | Python2
     | Python3
-    | Java
-    | Go
-    | C
-    | Cpp
-    | Dart
-    | Julia
-    | Clojure
-    | Lisp
-    | Scheme
-    | Ocaml
-    | Json
-    | Jsonnet
-    | Yaml
-    | Terraform
-    | Csharp
-    | Vb
-    | Kotlin
-    | Lua
-    | Elixir
-    | R
-    | Swift
-    | Html
-    | Xml
     | Ql
-    | Move_on_aptos ->
+    | R
+    | Scheme
+    | Swift
+    | Terraform
+    | Vb
+    | Xml
+    | Yaml ->
         true
-    | Move_on_sui
+    | Bash
+    | Cairo
+    | Clojure
+    | Dockerfile
+    | Hack
     | Js
-    | Ts
-    | Vue
-    | Ruby
+    | Lisp
+    | Move_on_sui
     | Php
     | Promql
-    | Hack
-    | Bash
-    | Dockerfile
+    | Ruby
     | Rust
-    | Cairo
     | Scala
-    | Solidity ->
+    | Solidity
+    | Ts
+    | Vue ->
         false)
 
 class ['self] metavar_checker =
