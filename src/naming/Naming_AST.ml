@@ -1063,6 +1063,9 @@ class ['self] resolve_visitor env lang =
               with_new_block_scope env.names (fun () ->
                   self#visit_stmt venv s2))
             s2_opt
+      | OtherStmtWithStmt (OSWS_Extension, _, _) ->
+          with_new_block_scope env.names (fun () ->
+            super#visit_stmt venv x)
       | _else_ -> super#visit_stmt venv x
   end
   
