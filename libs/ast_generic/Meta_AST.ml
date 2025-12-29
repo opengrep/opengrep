@@ -917,6 +917,7 @@ and vof_other_stmt_with_stmt_operator = function
   | OSWS_Iterator -> OCaml.VSum ("OSWS_Iterator", [])
   | OSWS_SEH -> OCaml.VSum ("OSWS_SEH", [])
   | OSWS_Todo -> OCaml.VSum ("OSWS_Todo", [])
+  | OSWS_Extension -> OCaml.VSum ("OSWS_Extension", [])
 
 and vof_label_ident = function
   | LNone -> OCaml.VSum ("LNone", [])
