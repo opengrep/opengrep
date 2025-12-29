@@ -134,3 +134,24 @@ end
 
 function sink(s)
 end
+
+# ===== Top-level HOF Tests =====
+# These test HOF callback detection at module level (outside any function)
+
+# Top-level lambda callback
+# ruleid: test-hof-taint
+toplevel_sink = x -> sink(x)
+toplevel_sink(source())
+
+# Top-level function HOF (map with named callback)
+function toplevel_handler(x)
+    # ruleid: test-hof-taint
+    sink(x)
+    return x
+end
+
+toplevel_items = [source()]
+map(toplevel_handler, toplevel_items)
+
+# Top-level user-defined HOF
+customForEach(toplevel_items, toplevel_handler)

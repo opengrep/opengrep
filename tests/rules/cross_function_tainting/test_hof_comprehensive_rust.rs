@@ -64,11 +64,13 @@ fn test_direct_call() {
 fn test_builtin_map() {
     let tainted = source();
     let arr = vec![tainted];
-    arr.iter().map(|x| {
-        // ruleid: test-hof-taint
-        sink(x);
-        x
-    }).collect::<Vec<_>>();
+    arr.iter()
+        .map(|x| {
+            // ruleid: test-hof-taint
+            sink(x);
+            x
+        })
+        .collect::<Vec<_>>();
 }
 
 fn test_builtin_for_each() {
@@ -83,11 +85,13 @@ fn test_builtin_for_each() {
 fn test_builtin_filter() {
     let tainted = source();
     let arr = vec![tainted];
-    arr.iter().filter(|x| {
-        // ruleid: test-hof-taint
-        sink(x);
-        true
-    }).collect::<Vec<_>>();
+    arr.iter()
+        .filter(|x| {
+            // ruleid: test-hof-taint
+            sink(x);
+            true
+        })
+        .collect::<Vec<_>>();
 }
 
 // ===== Complex Example =====

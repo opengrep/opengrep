@@ -1605,6 +1605,10 @@ and parameters params : param list =
        | G.ParamReceiver _param ->
            (* TODO: Treat receiver as this parameter *)
            FixmeParam (* TODO *)
+       (* Ruby/PHP block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
+       | G.OtherParam (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
+         ->
+           Param { pname = var_of_id_info i pinfo; pdefault }
        | G.Param { pname = None; _ }
        | G.ParamRest (_, _)
        | G.ParamHashSplat (_, _)

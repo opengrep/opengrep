@@ -468,13 +468,15 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
 (* Detect if a function is a user-defined HOF by checking if it calls any of its parameters.
    Returns a list of (parameter_name, parameter_index) for called parameters. *)
 let detect_user_hof (fdef : G.function_definition) : (string * int) list =
-  (* Get parameter names *)
+  (* Get parameter names - handle both regular params and Ruby's &block params *)
   let (_lp, params, _rp) = fdef.fparams in
   let param_names =
     params
     |> List.filter_map (fun param ->
         match param with
         | G.Param { pname = Some (id, _); _ } -> Some id
+        (* Ruby block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
+        | G.OtherParam (_, [G.Pa (G.Param { pname = Some (id, _); _ })]) -> Some id
         | _ -> None)
   in
   (* Check which parameters are called in the function body *)
@@ -577,160 +579,110 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
 
 (* Extract HOF callbacks from a function body, returning fn_ids of callbacks with call site tokens.
    Uses same identification logic as extract_calls to build proper fn_ids. *)
+
+(* Try to identify a callback from a G.argument, returning fn_id and fake token if found *)
+let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) : (fn_id * Tok.t) option =
+  match arg with
+  | G.Arg expr ->
+      (* Also handle this.foo pattern *)
+      let callback_opt = match expr.G.e with
+        | G.DotAccess ({ e = G.IdSpecial ((G.This | G.Self), _); _ }, _, G.FN (G.Id (id, id_info))) ->
+            Some (AST_to_IL.var_of_id_info id id_info)
+        | _ -> extract_callback_from_arg expr
+      in
+      (match callback_opt with
+      | Some callback_name ->
+          let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst callback_name.IL.ident)) in
+          identify_callback ~all_funcs ~caller_parent_path callback_name
+          |> Option.map (fun fn_id -> (fn_id, hof_tok))
+      | None -> None)
+  | _ -> None
+
+(* Extract HOF callbacks from a single call expression *)
+let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_funcs
+    ~caller_parent_path (callee : G.expr) (args : G.arguments) : (fn_id * Tok.t) list =
+  let try_arg arg = try_identify_callback_arg ~all_funcs ~caller_parent_path arg in
+  let try_arg_at_index idx =
+    match List.nth_opt (Tok.unbracket args) idx with
+    | Some arg -> try_arg arg
+    | None -> None
+  in
+  match callee.G.e with
+  (* Method HOF: arr.map(callback) - callback at index 0 *)
+  | G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _)))
+    when List.mem method_name method_hofs ->
+      try_arg_at_index 0 |> Option.to_list
+  (* Function HOF: map(callback, arr) *)
+  | G.N (G.Id (id, id_info)) ->
+      let func_name = fst id in
+      let callee_name_str = fst (AST_to_IL.var_of_id_info id id_info).IL.ident in
+      (match List.find_opt (fun (names, _) -> List.mem func_name names) function_hofs with
+      | Some (_, callback_index) ->
+          try_arg_at_index callback_index |> Option.to_list
+      | None ->
+          (* Check user-defined HOFs *)
+          let current_class = match caller_parent_path with
+            | Some cls :: _ -> Some cls
+            | _ -> None
+          in
+          let hof_params = match current_class with
+            | Some cls ->
+                let class_name_str = fst cls.IL.ident in
+                List.find_map (fun (fn_id, params) ->
+                  match fn_id with
+                  | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callee_name_str -> Some params
+                  | _ -> None
+                ) user_hofs
+            | None ->
+                List.find_map (fun (fn_id, params) ->
+                  match fn_id with
+                  | [None; Some m] when fst m.IL.ident = callee_name_str -> Some params
+                  | _ -> None
+                ) user_hofs
+          in
+          (match hof_params with
+          | Some params ->
+              params |> List.filter_map (fun (_, idx) -> try_arg_at_index idx)
+          | None -> []))
+  | _ -> []
+
 let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs = [])
     ?(caller_parent_path = [])
     ~(lang : Lang.t) (fdef : G.function_definition) : (fn_id * Tok.t) list =
   let hof_configs = Builtin_models.get_hof_configs lang in
-
-  (* Build lists of HOF method/function names from configs *)
   let method_hofs =
-    List.concat_map (fun config ->
-      match config with
+    hof_configs |> List.concat_map (function
       | Builtin_models.MethodHOF { methods; _ } -> methods
-      | _ -> []
-    ) hof_configs
+      | Builtin_models.ReturningFunctionHOF { methods; _ } -> methods
+      | _ -> [])
   in
-
   let function_hofs =
-    List.filter_map (fun config ->
-      match config with
+    hof_configs |> List.filter_map (function
       | Builtin_models.FunctionHOF { functions; callback_index; _ } ->
           Some (functions, callback_index)
-      | _ -> None
-    ) hof_configs
+      | _ -> None)
   in
 
   let callbacks = ref [] in
   let v =
     object
       inherit [_] G.iter as super
-
       method! visit_expr env e =
-        match e.G.e with
-        (* Method HOF call: arr.map(callback) - callback at index 0 *)
-        | G.Call ({ e = G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _))); _ }, args)
-          when List.mem method_name method_hofs ->
-            (match Tok.unbracket args with
-            (* Simple callback: arr.map(foo) *)
-            | G.Arg { G.e = G.N (G.Id (id, id_info)); _ } :: _ ->
-                let callback_name = AST_to_IL.var_of_id_info id id_info in
-                (* Use fake token with callback name - HOF edges shouldn't match regular call lookups *)
-                let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst id)) in
-                (match identify_callback ~all_funcs ~caller_parent_path callback_name with
-                | Some fn_id -> callbacks := (fn_id, hof_tok) :: !callbacks
-                | None -> ());
-                super#visit_arguments env args
-            (* Qualified callback: arr.map(Module.foo) *)
-            | G.Arg { G.e = G.N (G.IdQualified { name_last = id, _; name_info; _ }); _ } :: _ ->
-                let callback_name = AST_to_IL.var_of_id_info id name_info in
-                let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst id)) in
-                (match identify_callback ~all_funcs ~caller_parent_path callback_name with
-                | Some fn_id -> callbacks := (fn_id, hof_tok) :: !callbacks
-                | None -> ());
-                super#visit_arguments env args
-            (* Method callback: arr.map(this.foo) *)
-            | G.Arg { G.e = G.DotAccess ({ e = G.IdSpecial ((G.This | G.Self), _); _ }, _, G.FN (G.Id (id, id_info))); _ } :: _ ->
-                let callback_name = AST_to_IL.var_of_id_info id id_info in
-                let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst id)) in
-                (* For this.foo, look up the class method using identify_callback *)
-                (match identify_callback ~all_funcs ~caller_parent_path callback_name with
-                | Some fn_id -> callbacks := (fn_id, hof_tok) :: !callbacks
-                | None -> ());
-                super#visit_arguments env args
-            | _ -> super#visit_arguments env args)
-
-        (* Function HOF call: map(callback, arr) or array_map(callback, arr) or user_hof(arr, callback) *)
-        | G.Call ({ e = G.N (G.Id (id, id_info)); _ }, args) ->
-            let func_name = fst id in
-            let callee_name = AST_to_IL.var_of_id_info id id_info in
-            (* Check built-in HOFs first *)
-            (match List.find_opt (fun (names, _) -> List.mem func_name names) function_hofs with
-            | Some (_, callback_index) ->
-                (match List.nth_opt (Tok.unbracket args) callback_index with
-                (* Simple callback: map(foo, arr) *)
-                | Some (G.Arg { G.e = G.N (G.Id (cb_id, cb_id_info)); _ }) ->
-                    let callback_name = AST_to_IL.var_of_id_info cb_id cb_id_info in
-                    (* Use fake token with callback name - HOF edges shouldn't match regular call lookups *)
-                    let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst cb_id)) in
-                    (match identify_callback ~all_funcs ~caller_parent_path callback_name with
-                    | Some fn_id -> callbacks := (fn_id, hof_tok) :: !callbacks
-                    | None -> ());
-                    super#visit_arguments env args
-                (* Qualified callback: map(Module.foo, arr) *)
-                | Some (G.Arg { G.e = G.N (G.IdQualified { name_last = cb_id, _; name_info; _ }); _ }) ->
-                    let callback_name = AST_to_IL.var_of_id_info cb_id name_info in
-                    let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst cb_id)) in
-                    (match identify_callback ~all_funcs ~caller_parent_path callback_name with
-                    | Some fn_id -> callbacks := (fn_id, hof_tok) :: !callbacks
-                    | None -> ());
-                    super#visit_arguments env args
-                (* Address-of callback (C): map(&foo, arr) *)
-                | Some (G.Arg { G.e = G.Ref (_, { e = G.N (G.Id (cb_id, cb_id_info)); _ }); _ }) ->
-                    let callback_name = AST_to_IL.var_of_id_info cb_id cb_id_info in
-                    let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst cb_id)) in
-                    (match identify_callback ~all_funcs ~caller_parent_path callback_name with
-                    | Some fn_id -> callbacks := (fn_id, hof_tok) :: !callbacks
-                    | None -> ());
-                    super#visit_arguments env args
-                | _ -> super#visit_arguments env args)
-            | None ->
-                (* Check if this is a user-defined HOF - use string matching *)
-                let callee_name_str = fst callee_name.IL.ident in
-                (* First try to find as class method *)
-                let current_class = match caller_parent_path with
-                  | Some cls :: _ -> Some cls
-                  | _ -> None
-                in
-                let hof_match = match current_class with
-                  | Some cls ->
-                      let class_name_str = fst cls.IL.ident in
-                      List.find_opt (fun (fn_id, _) ->
-                        match fn_id with
-                        | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callee_name_str -> true
-                        | _ -> false
-                      ) user_hofs
-                  | None ->
-                      (* Try as free function *)
-                      List.find_opt (fun (fn_id, _) ->
-                        match fn_id with
-                        | [None; Some m] when fst m.IL.ident = callee_name_str -> true
-                        | _ -> false
-                      ) user_hofs
-                in
-                (match hof_match with
-                | Some (_, called_params) ->
-                    (* Extract callbacks from the arguments at the indices where parameters are called *)
-                    let arg_list = Tok.unbracket args in
-                    List.iter (fun (_param_name, param_idx) ->
-                      match List.nth_opt arg_list param_idx with
-                      | Some (G.Arg arg_expr) ->
-                          (match extract_callback_from_arg arg_expr with
-                          | Some callback_name ->
-                              (match identify_callback ~all_funcs ~caller_parent_path callback_name with
-                              | Some fn_id ->
-                                  Log.debug (fun m -> m "USER_HOF_CALLBACK: Found callback %s at arg %d in call to %s"
-                                    (fst callback_name.IL.ident) param_idx func_name);
-                                  (* Use fake token with callback name - HOF edges shouldn't match regular call lookups *)
-                                  let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst callback_name.IL.ident)) in
-                                  callbacks := (fn_id, hof_tok) :: !callbacks
-                              | None -> ())
-                          | None -> ())
-                      | _ -> ()
-                    ) called_params;
-                    super#visit_arguments env args
-                | None -> super#visit_expr env e))
-
-        | _ -> super#visit_expr env e
+        (match e.G.e with
+        | G.Call (callee, args) ->
+            let found = extract_hof_callbacks_from_call
+              ~method_hofs ~function_hofs ~user_hofs ~all_funcs ~caller_parent_path
+              callee args
+            in
+            callbacks := found @ !callbacks
+        | _ -> ());
+        super#visit_expr env e
     end
   in
   v#visit_function_definition () fdef;
-  (* Deduplicate callbacks by comparing fn_id and tok *)
-  let unique_callbacks =
-    !callbacks |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
-      let cmp = FuncVertex.compare f1 f2 in
-      if cmp <> 0 then cmp else Tok.compare t1 t2)
-  in
-  unique_callbacks
+  !callbacks |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
+    let cmp = FuncVertex.compare f1 f2 in
+    if cmp <> 0 then cmp else Tok.compare t1 t2)
 
 (* Build call graph - Visit_function_defs handles regular functions,
    arrow functions, and lambda assignments like const x = () => {} *)
@@ -762,13 +714,9 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     funcs
     |> List.filter_map (fun { fn_id; fdef; _ } ->
         let called_params = detect_user_hof fdef in
-        if List.length called_params > 0 then (
-          let fn_str = show_fn_id fn_id in
-          Log.debug (fun m -> m "USER_HOF: Detected %s calls parameters: %s"
-            fn_str
-            (called_params |> List.map (fun (name, idx) -> Printf.sprintf "%s@%d" name idx) |> String.concat ", "));
+        if List.length called_params > 0 then
           Some (fn_id, called_params)
-        ) else
+        else
           None)
   in
   (* Build a map from function body ranges to fn_id for context tracking *)
@@ -787,6 +735,12 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     (fun opt_ent parent_path fdef ->
       match fn_id_of_entity ~lang opt_ent parent_path fdef with
       | Some fn_id ->
+          (* Check if this is a top-level lambda/block (parent_path is [None] or []) *)
+          let is_toplevel_lambda = match parent_path with
+            | [None] | [] -> true
+            | _ -> false
+          in
+
           (* Extract calls - class context is already in fn_id *)
           let callee_calls =
             extract_calls ~object_mappings ~all_funcs:funcs ~caller_parent_path:fn_id fdef
@@ -795,9 +749,11 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
           (* Add labeled edges for each call - edge from callee to caller for bottom-up analysis *)
           List.iter
             (fun (callee_fn_id, call_tok) ->
-              (* Create edge label with callee fn_id and call site token *)
               let edge_label = { callee_fn_id; call_site = call_tok } in
-              FuncGraph.add_edge_e graph (FuncGraph.E.create callee_fn_id edge_label fn_id))
+              FuncGraph.add_edge_e graph (FuncGraph.E.create callee_fn_id edge_label fn_id);
+              (* For top-level lambdas, also add edge to <top_level> *)
+              if is_toplevel_lambda then
+                FuncGraph.add_edge_e graph (FuncGraph.E.create callee_fn_id edge_label top_level_fn_id))
             callee_calls;
 
           (* Extract HOF callbacks and add edges: callback -> caller *)
@@ -807,9 +763,11 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
           (* Add labeled edges for each callback - edge from callback to caller for bottom-up analysis *)
           List.iter
             (fun (callback_fn_id, call_tok) ->
-              (* Create edge label with callback fn_id and call site token *)
               let edge_label = { callee_fn_id = callback_fn_id; call_site = call_tok } in
-              FuncGraph.add_edge_e graph (FuncGraph.E.create callback_fn_id edge_label fn_id))
+              FuncGraph.add_edge_e graph (FuncGraph.E.create callback_fn_id edge_label fn_id);
+              (* For top-level lambdas, also add edge to <top_level> *)
+              if is_toplevel_lambda then
+                FuncGraph.add_edge_e graph (FuncGraph.E.create callback_fn_id edge_label top_level_fn_id))
             callback_calls
       | None -> ())
     ast;
@@ -822,6 +780,34 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
       FuncGraph.add_edge_e graph (FuncGraph.E.create callee_fn_id edge_label top_level_fn_id))
     toplevel_calls;
   Log.debug (fun m -> m "CALL_GRAPH: Added %d edges from top-level calls" (List.length toplevel_calls));
+
+  (* Extract HOF callbacks from top-level code and add edges to <top_level> *)
+  let toplevel_hof_callbacks =
+    let hof_configs = Builtin_models.get_hof_configs lang in
+    let method_hofs =
+      hof_configs |> List.concat_map (function
+        | Builtin_models.MethodHOF { methods; _ } -> methods
+        | Builtin_models.ReturningFunctionHOF { methods; _ } -> methods
+        | _ -> [])
+    in
+    let function_hofs =
+      hof_configs |> List.filter_map (function
+        | Builtin_models.FunctionHOF { functions; callback_index; _ } ->
+            Some (functions, callback_index)
+        | _ -> None)
+    in
+    Visit_function_defs.fold_toplevel_calls (fun acc _call_e callee args ->
+      let found = extract_hof_callbacks_from_call
+        ~method_hofs ~function_hofs ~user_hofs ~all_funcs:funcs ~caller_parent_path:[]
+        callee args
+      in
+      found @ acc
+    ) [] ast
+  in
+  toplevel_hof_callbacks |> List.iter (fun (callback_fn_id, call_tok) ->
+    let edge_label = { callee_fn_id = callback_fn_id; call_site = call_tok } in
+    FuncGraph.add_edge_e graph (FuncGraph.E.create callback_fn_id edge_label top_level_fn_id));
+  Log.debug (fun m -> m "CALL_GRAPH: Added %d edges from top-level HOF callbacks" (List.length toplevel_hof_callbacks));
 
   (* Add implicit edges from constructors to all methods in the same class.
      Constructors always execute before any method can be called on an object. *)

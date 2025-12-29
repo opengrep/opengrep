@@ -64,3 +64,23 @@ fun test_original_example() {
 // Stub functions
 fun source(): String = "tainted"
 fun sink(s: String) {}
+
+// ===== Top-level HOF Tests =====
+// These test HOF callback detection at top level (outside any function)
+
+// Top-level lambda callback
+// ruleid: test-hof-taint
+val toplevelSink = { x: String -> sink(x) }
+val toplevelResult1 = toplevelSink(source())
+
+// Top-level method HOF (forEach with named callback)
+fun toplevelHandler(x: String) {
+    // ruleid: test-hof-taint
+    sink(x)
+}
+
+val toplevelItems = listOf(source())
+val toplevelResult2 = toplevelItems.forEach(::toplevelHandler)
+
+// Top-level user-defined HOF
+val toplevelResult3 = directCall(::toplevelHandler, source())

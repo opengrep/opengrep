@@ -65,9 +65,26 @@ char* source() {
 void sink(char* s) {
 }
 
+// ===== Top-level HOF Tests =====
+// These test HOF callback detection at main scope level
+// C doesn't allow function calls at global level, so we test in main
+
+void toplevel_handler(char* x) {
+    // ruleid: test-hof-taint
+    sink(x);
+}
+
 int main() {
     test_custom_foreach();
     test_direct_call();
     test_original_example();
+
+    // Top-level user-defined HOF with named callback
+    char* toplevel_items[] = {source()};
+    customForEach(toplevel_items, 1, &toplevel_handler);
+
+    // Top-level direct call with function pointer
+    directCall(&toplevel_handler);
+
     return 0;
 }

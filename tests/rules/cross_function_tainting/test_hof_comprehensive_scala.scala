@@ -89,3 +89,23 @@ object TestHOF {
     test_builtin_filter()
   }
 }
+  // ===== Top-level HOF Tests =====
+  // These test HOF callback detection at object initialization level
+
+  // Top-level lambda callback
+  // ruleid: test-hof-taint
+  val toplevelSink: String => Unit = (x: String) => sink(x)
+  val toplevelResult1: Unit = toplevelSink(source())
+
+  // Top-level method HOF (foreach with named callback)
+  def toplevelHandler(x: String): Unit = {
+    // ruleid: test-hof-taint
+    sink(x)
+  }
+
+  val toplevelItems: List[String] = List(source())
+  val toplevelResult2: Unit = toplevelItems.foreach(toplevelHandler)
+
+  // Top-level user-defined HOF
+  val toplevelResult3: Unit = customForEach(toplevelItems, toplevelHandler)
+

@@ -75,3 +75,24 @@ func main() {
 	test_direct_call()
 	test_original_example()
 }
+
+// ===== Top-level HOF Tests =====
+// These test HOF callback detection at package level
+
+func toplevelHandler(x string) {
+	// ruleid: test-hof-taint
+	sink(x)
+}
+
+// Package-level lambda callback (like Python's module-level lambda)
+// ruleid: test-hof-taint
+var toplevelSink = func(x string) { sink(x) }
+
+func init() {
+	// Call package-level lambda with tainted data
+	toplevelSink(source())
+
+	// Top-level user-defined HOF with named callback
+	toplevelItems := []string{source()}
+	customForEach(toplevelItems, toplevelHandler)
+}

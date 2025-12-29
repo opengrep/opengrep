@@ -734,8 +734,14 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         Common.with_time (fun () ->
             let xs = AST_to_IL.stmt taint_inst.lang (G.stmt1 ast) in
             let cfg, lambdas = CFG_build.cfg_of_stmts xs in
+            (* Create top_level_fn_id matching Function_call_graph's top_level node.
+             * This is needed for signature lookup to find callbacks via the call graph. *)
+            let top_level_name =
+              let fake_tok = Tok.unsafe_fake_tok "<top_level>" in
+              [None; Some IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = G.empty_id_info () }]
+            in
             let top_effects, _mapping =
-              Dataflow_tainting.fixpoint taint_inst
+              Dataflow_tainting.fixpoint taint_inst ~name:top_level_name
                 ?signature_db:final_signature_db ?builtin_signature_db
                 ?call_graph:relevant_graph
                 IL.{ params = []; cfg; lambdas }

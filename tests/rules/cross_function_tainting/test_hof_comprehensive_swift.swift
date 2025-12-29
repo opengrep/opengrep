@@ -99,3 +99,23 @@ func source() -> String {
 
 func sink(_ s: String) {
 }
+
+// ===== Top-level HOF Tests =====
+// These test HOF callback detection at top level (outside any function)
+
+// Top-level lambda callback
+// ruleid: test-hof-taint
+let toplevelSink: (String) -> Void = { x in sink(x) }
+toplevelSink(source())
+
+// Top-level method HOF (forEach with named callback)
+func toplevelHandler(_ x: String) {
+    // ruleid: test-hof-taint
+    sink(x)
+}
+
+let toplevelItems = [source()]
+toplevelItems.forEach(toplevelHandler)
+
+// Top-level user-defined HOF
+customForEach(toplevelItems, toplevelHandler)

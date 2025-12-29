@@ -261,6 +261,24 @@ let get_hof_configs (lang : Lang.t) : hof_kind list =
       ]
   | Lang.Ruby ->
       [
+        (* For .each(&callback) pattern - callback receives tainted elements *)
+        MethodHOF
+          {
+            methods =
+              [
+                "map";
+                "each";
+                "select";
+                "filter";
+                "flat_map";
+                "collect";
+                "find";
+                "detect";
+              ];
+            arity = 1;
+            taint_arg_index = 0;
+          };
+        (* For chained enumerator pattern: arr.each.with_index { |x, i| ... } *)
         ReturningFunctionHOF
           {
             methods =

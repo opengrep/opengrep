@@ -198,4 +198,32 @@ defmodule TestHOF do
   def sink(_s) do
     :ok
   end
+
+  # ===== Top-level HOF Tests =====
+  # These test HOF callback detection at module level
+  # Elixir evaluates module body at compile time, so we use module attributes
+
+  # Top-level callback function
+   # These would be evaluated when the module is loaded
+  def run_toplevel_tests() do
+    # Top-level lambda callback
+    # ruleid: test-hof-taint
+    toplevel_sink = fn x -> sink(x) end
+    toplevel_sink.(source())
+
+    # Top-level method HOF (each with named callback)
+    toplevel_items = [source()]
+    Enum.each(toplevel_items, &toplevel_handler/1)
+
+    # Top-level user-defined HOF
+    custom_for_each(toplevel_items, &toplevel_handler/1)
+  end
 end
+
+ def toplevel_handler(x) do
+    # ruleid: test-hof-taint
+    sink(x)
+    x
+  end
+  toplevel_handler(source())
+
