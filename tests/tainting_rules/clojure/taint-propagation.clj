@@ -1,6 +1,7 @@
 (ns taint-propagation)
 
 ;; FIXME: Organise this a bit.
+;; TODO: Add more nested examples, sink as str arg etc.
 
 (def f
   (fn [x]
@@ -187,16 +188,18 @@
       (sink z))))
 
 (defn f[x]
+      ;; ruleid: taint-call
   (-> x
       (:user)
-      ;; ruleid: taint-call
+
       (sink)))
 
 (fn [x] 
+      ;; ruleid: taint-call
   (-> x
       (-> func)
       :input
-      ;; ruleid: taint-call
+
       (sink)))
 
 ;; letfn
@@ -284,6 +287,14 @@
   (as-> (sink y) x))
 
 (defn f [y]
+  ;; ruleid: taint-call
+  (-> (sink y)
+      (as-> x
+        (func x)
+        ;; ruleid: taint-call
+        (sink x))))
+
+(defn f [y]
   (if-let [x y]
   ;; ruleid: taint-call
   (-> x sink)
@@ -306,25 +317,20 @@
 
 ;; cond->
 (defn f [x]
+  ;; ruleid: taint-call
   (cond-> x
-      ;; ruleid: taint-call
       true (->> sink)
-      ;; ok:
-      false (->> sanitize sink)))
+      false (->> sanitizes sink)))
 
 (defn f [x]
-  (cond->> x
-      ;; ruleid: taint-call
-      true sink
-      ;; ruleid: taint-call
-      false sink))
+  ;; ok: taint-call
+  (cond->> x ;; vs -> which leads to taint.
+      true (-> sink) ;; (x sink) is not tainted.
+      false sinkz))
 
 (defn f [x]
+  ;; ok: taint-call
   (cond->> x
-      ;; ruleid: taint-call
       true sink
-      ;; TODO: we cannot detect because If Cond encoding.
-      true sanitize 
-      ;; ruleid: taint-call
+      true sanitize
       true sink))
-

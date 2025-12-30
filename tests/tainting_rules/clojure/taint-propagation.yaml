@@ -42,13 +42,13 @@ rules:
     - pattern-either: 
       - pattern: |
           (sink ...)
-      # because (-> sink)
-      - pattern: |
-          sink 
+      # because (-> sink); use (-> ... sink ...) etc instead?
+      # - pattern: |
+      #     sink 
   pattern-sanitizers:
     - pattern-either: 
       - pattern: |
           (sanitize ...)
       # because (-> sanitize)
-      - pattern: |
-          sanitize 
+      # - pattern: |
+      #     sanitize 

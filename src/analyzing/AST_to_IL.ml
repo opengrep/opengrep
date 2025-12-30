@@ -1106,9 +1106,9 @@ and expr_aux env ?(void = false) g_expr =
    * What we really must avoid is Block. *)
   | G.OtherExpr
       (* Other cases are macroexpanded to these. TODO: Confirm which. *)
-      ((("MultiLetPatternBindings" | "MultiLetFnBindings" | "ExprBlock"),
+      ((todo_kind,
         tok), any_exprs)
-    when env.lang =*= Lang.Clojure ->
+    when env.lang =*= Lang.Clojure && CLJ_ME1.expands_as_block todo_kind ->
     let env, exprs =
       List.fold_left_map
         (fun env any_expr ->
@@ -1121,7 +1121,7 @@ and expr_aux env ?(void = false) g_expr =
     | [] -> (env, mk_unit (G.fake "()") NoOrig)
     | e_last :: _e_rest -> (env, e_last)
     end
-  (* Clojure macroexpansion (macroexpand-1). *)
+  (* Clojure: a kind of macroexpansion (macroexpand-1). *)
   | G.OtherExpr ((todo_kind, tok), _ :: _)
     when env.lang =*= Lang.Clojure && CLJ_ME1.is_macroexpandable todo_kind ->
     (try let macro_expanded = CLJ_ME1.macro_expand_1 (* env? *) g_expr in

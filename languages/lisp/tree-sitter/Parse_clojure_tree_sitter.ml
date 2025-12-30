@@ -20,6 +20,7 @@ open AST_generic
 module G = AST_generic
 module GH = AST_generic_helpers
 module H = Parse_tree_sitter_helpers
+module S = Settings_clojure
 
 (* TODO: Remove after testing, this helps move faster. *)
 (* Disable warnings against unused variables *)
@@ -42,16 +43,18 @@ module H = Parse_tree_sitter_helpers
  *
  * TODO: Handle pre: and post: maps, since the could determine if parameters
  * are sanitised. Add as attributes (OtherAtribute)?
+ *
+ * TODO: Fix or remove S.At_IL mode for macroexpansion of threading forms.
  *)
 
 (*****************************************************************************)
-(* Helpers                                                                   *)
+(* Types, Exceptions and Helpers                                             *)
 (*****************************************************************************)
 
 (* TODO: Catch and be lenient, but log in debug mode. *)
 exception Parse_error of {msg: string; related_ast: G.any option}
 let raise_parse_error ?related_ast msg =
-  raise (Parse_error { msg; related_ast = None })
+  raise (Parse_error { msg; related_ast })
 
 (* We use this to control when ellipsis is allowed and how it should be handled. *)
 type parse_kind =
@@ -63,9 +66,15 @@ type syntax_mode =
   | Quoted
   | Syntax_quoted
 
+(* TODO: Only used in S.At_IL mode which is currently disabled.
+ * Add context, when in -> we can handle (-> e (as-> x ...)) and also
+ * fail cleanly when a binding is expected. *)
+type thread_macro_context = Thread_first | Thread_last
+
 type extra = {
   kind: parse_kind;
   mode: syntax_mode;
+  thread_macro_ctx: thread_macro_context option; (* XXX: Only for S.At_IL mode. *)
   ns: string option; (* alt: or in split form? [clojure; core] etc; or G.name? *)
   ns_aliases: (string * string) list;
    (* (ns my.ns (:require [other.ns :as my-alias])) *)
@@ -77,6 +86,10 @@ let in_pattern (env : env) : bool =
   match env.extra.kind with
   | Pattern -> true
   | _ -> false
+
+type insert_pos =
+  | Insert_first
+  | Insert_last
 
 (*****************************************************************************)
 (* Anon function helpers                                                     *)
@@ -209,6 +222,9 @@ let with_mode env mode =
 let with_ns env ns =
   H.{env with extra = {env.extra with ns}}
 
+let with_thread_macro_ctx env thread_macro_ctx =
+  H.{env with extra = {env.extra with thread_macro_ctx}}
+
 let int_regex =
   Pcre2_.regexp "^[+-]?[0-9]+N?$"
 
@@ -233,7 +249,7 @@ let qualified_name_regex_str = "^\\(.+\\)/\\(.+\\)$"
 
 let implicit_param_ident = G.implicit_param
 
-let todo (_env : env) _ = failwith "not implemented"
+let todo (_env : env) _ = raise_parse_error "not implemented"
 
 let token = H.token
 let raw_token (env : env) (tok : Tree_sitter_run.Token.t) =
@@ -279,6 +295,10 @@ let char_str_of_unicode (hex_with_prefix : string) : string =
   let buf = Buffer.create 4 in
   Uutf.Buffer.add_utf_8 buf uchar;
   Buffer.contents buf
+
+(*****************************************************************************)
+(* Names and identifiers                                                     *)
+(*****************************************************************************)
 
 (* NOTE: for symbols in patterns / function args / definitions,
  * we cannot have qualified ids, so clojure.core/x is not expected...
@@ -395,6 +415,10 @@ let sym_to_name_or_ellipsis_expr (env : env) (tok : Tree_sitter_run.Token.t) : G
     let id = name env tok in
     N id |> G.e 
 
+(*****************************************************************************)
+(* Ground values                                                             *)
+(*****************************************************************************)
+
 let map_boolean (env : env) (tok : Tree_sitter_run.Token.t) : bool wrap =
   let _, s = tok in
   let b =
@@ -499,86 +523,66 @@ let map_char (env : env) (tok : Tree_sitter_run.Token.t) : G.expr =
   |> G.e 
 
 (*****************************************************************************)
-(* Boilerplate converter *)
+(* Translation                                                               *)
 (*****************************************************************************)
-(* This was started by copying tree-sitter-lang/semgrep-clojure/.../Boilerplate.ml *)
 
-let rec map_anon_choice_read_cond_lit_137feb9 (env : env)
-    (x : CST.anon_choice_read_cond_lit_137feb9) =
-  match x with
-  | `Read_cond_lit x -> R.Case ("Read_cond_lit", map_read_cond_lit env x)
-  | `Map_lit x -> R.Case ("Map_lit", map_map_lit env x)
-  | `Str_lit tok -> R.Case ("Str_lit", (* str_lit *) raw_token env tok)
-  | `Kwd_lit tok -> R.Case ("Kwd_lit", (* kwd_lit *) raw_token env tok)
-  | `Sym_lit x -> R.Case ("Sym_lit", map_sym_lit env x |> raw_of_expr)
+let rec _helps_other_functions_move_around () = () 
 
-and map_bare_list_lit (env : env) ((v1, v2, v3) : CST.bare_list_lit) =
-  let v1 = (* "(" *) raw_token env v1 in
-  let v2 = map_source env v2 in
-  let v3 = (* ")" *) raw_token env v3 in
-  R.Tuple [ v1; v2; v3 ]
+(* Get first element of source list to see if it's a special form. *)
+and get_forms_and_discriminant (env : env)
+    ((meta, (_lp, src, _rp)) : CST.list_lit) : string option * CST.form list =
+  let _meta = R.List (List_.map (map_metadata_lit env) meta) in
+  let forms = forms_in_source env src in
+  match forms with
+  | `Sym_lit (_meta, (_loc, sym_name)) :: _rest -> Some sym_name, forms
+  | _ -> None, forms
 
-and map_bare_map_lit (env : env) ((v1, v2, v3) : CST.bare_map_lit) =
-  let v1 = (* "{" *) raw_token env v1 in
-  let v2 = map_source env v2 in
-  let v3 = (* "}" *) raw_token env v3 in
-  R.Tuple [ v1; v2; v3 ]
-
-and map_bare_set_lit (env : env) ((v1, v2, v3, v4) : CST.bare_set_lit) =
-  let v1 = (* "#" *) raw_token env v1 in
-  let v2 = (* "{" *) raw_token env v2 in
-  let v3 = map_source env v3 in
-  let v4 = (* "}" *) raw_token env v4 in
-  R.Tuple [ v1; v2; v3; v4 ]
-
-and map_bare_vec_lit (env : env) ((v1, v2, v3) : CST.bare_vec_lit) =
-  let v1 = (* "[" *) raw_token env v1 in
-  let v2 = map_source env v2 in
-  let v3 = (* "]" *) raw_token env v3 in
-  R.Tuple [ v1; v2; v3 ]
-
-and map_kwd_expr (env : env) (tok : CST.kwd_lit) : G.expr =
-  let _atom_kind, tok_colon, atom_name =
-    map_kwd_expr_aux env tok
+and map_list_form
+    (env : env) (((meta, (lp, _src, rp)) as list_lit) : CST.list_lit)
+  : G.expr =
+  let discriminant, forms = get_forms_and_discriminant env list_lit
   in
-  G.OtherExpr (("Atom", tok_colon), [G.Name atom_name])
-  |> G.e
-
-and map_kwd_expr_aux (env : env) (tok : CST.kwd_lit)
-  : string * Tok.t * G.name =
-  (* TODO: svalue can be set here if env contains ns information,
-   * which it currently does not.
-   *  
-   * There are a few cases to consider:
-   * - ::a which requires to expand current namespace in svalue.
-   * - :my-ns/a which is explicitly namespaced keyword. 
-   * - ::my-alias/hi which is alias from:
-   *   (ns my.ns (:require [other.ns :as my-alias]))
-   *   This should have svalue: :other.ns/hi.
-   *
-   * In patterns ::$A/a, :$A/a, $A/$B, ::$A and :$A match as expected.
-   * *)
-  let s, t = H.str env tok in
-  (* Cases for svalue:
-   * ::a => :env.ns/a
-   * ::my-alias/a => :other.ns/a *)
-  let atom_kind, s_name =
-    if String.starts_with ~prefix:"::" s then
-      "::", String.sub s 2 (String.length s - 2)
-    else
-      ":", String.sub s 1 (String.length s - 1)
-  in
-  (* Separate colon from rest of name. *)
-  let tok_colon, tok_name =
-    Tok.split_tok_at_bytepos (String.length atom_kind) t
-  in
-  let id_info = G.empty_id_info () in
-  let atom_name =
-    name_from_ident ~is_auto_resolved:(atom_kind =*= "::")
-      ~is_kwd:true env (s_name, tok_name)
-  in
-  (* TODO: id_info.s_value := expanded if not set *)
-  atom_kind, tok_colon, atom_name
+  (* TODO:
+   * - if not env says quoted;
+   * - if not under defmacro. *)
+  match discriminant with
+    (* TODO: Check if in Quoted state! In that case just symbols list. *)
+    | Some ("def" | "defonce") -> map_def_form env forms
+    | Some "fn" -> map_fn_form env forms
+    | Some ("defn" | "defn-") -> map_defn_form env forms
+    | Some "let" -> map_let_form env forms
+    | Some "letfn" -> map_letfn_form env forms
+    | Some "if" -> map_if_form env forms
+    | Some "if-not" -> map_if_not_form env forms
+    | Some ("if-let" | "if-some") -> map_if_let_some_form env forms
+    | Some "when" -> map_when_form env forms
+    | Some "when-not" -> map_when_not_form env forms
+    | Some "when-let" -> map_when_let_form env forms
+    | Some "when-some" -> map_when_some_form env forms
+    | Some "when-first" -> map_when_first_form env forms
+    | Some "do" -> map_do_form env forms
+    | Some ("->" | "->>") -> map_thread_first_last_form env forms
+    | Some ("cond->" | "cond->>") -> map_cond_thread_first_last_form env forms
+    (* TODO: | Some ("some->" | "some->>") -> map_some_thread_first_last_form env forms *)
+    | Some "try" -> map_try_catch_finally_form env forms
+    | Some "throw" -> map_throw_form env forms
+    | Some "as->" -> map_as_thread_form env forms
+    | Some "comment" -> map_comment_form env forms
+    (* | Some "format" -> map_format_form env forms *) (* XXX: Treat as normal function. *)
+    | Some "loop" -> map_loop_form env forms
+    | Some ("defmacro" | "definline") -> map_defmacro_form env forms
+    | Some "ns" -> map_ns_form env forms
+    | Some "require" -> map_require_form env forms
+    | Some "use" -> map_use_form env forms
+    | Some ("in-ns" (* TODO: replace env.extra.ns *)) ->
+      (* TODO: Do not ignore. but for now we don't want this to be
+       * treated like function application. *)
+      G.(L (Null (fake "")) |> e)
+    (* Here we assume this is not a special form, and it's interpreted
+     * as function application. *)
+    (* TODO: How about (:user ...)? We should use G.DotAccess with FDynamic
+     * Atom :user. *)
+    | _ -> map_call_form env forms
 
 and map_form (env : env) (x : CST.form) : G.expr =
   match x with
@@ -599,6 +603,9 @@ and map_form (env : env) (x : CST.form) : G.expr =
     (* let lit = map_kwd_lit env tok in L lit |> G.e  *)
     map_kwd_expr env tok
   | `Str_lit tok ->
+    (* TODO: Make interpolated, in reality only used in patterns in
+     * order to easily match "SELECT ... FROM ..." etc within strings,
+     * without a regex. *)
     let s, t = H.str env tok in 
     let s_no_quotes = String.sub s 1 (String.length s - 2) in
     L (G.String (Tok.unsafe_fake_bracket (s_no_quotes, t)))
@@ -631,9 +638,7 @@ and map_form (env : env) (x : CST.form) : G.expr =
        |> G.e 
      (* end *)
 
-  (*
-   *  TODO: Start of remaining RAW translation.
-   *)
+  (* TODO: Start of remaining RAW translation. *)
 
   | `Read_cond_lit x ->
     R.Case ("Read_cond_lit", map_read_cond_lit env x)
@@ -748,22 +753,115 @@ and map_form (env : env) (x : CST.form) : G.expr =
           R.Tuple [ v2; raw_of_expr v4 ] )
     |> expr_of_raw
 
-(* whitespace/comment *)
-and map_gap (_env : env) (x : CST.gap) : unit =
-  match x with
-  | `Ws _tok -> ()
-  | `Comm _tok -> ()
-  (* ?? *)
-  | `Dis_expr (_v1, _v2, _v3formTODO) -> ()
+(*
+ * (try expr* catch-clause* finally-clause?)
+ *  
+ * catch-clause → (catch classname name expr* )
+ * finally-clause → (finally expr* )
+ * 
+ * The exprs are evaluated and, if no exceptions occur, the value of the
+ * last expression is returned. If an exception occurs and catch-clauses
+ * are provided, each is examined in turn and the first for which the thrown
+ * exception is an instance of the classname is considered a matching catch-clause.
+ * If there is a matching catch-clause, its exprs are evaluated in a context in
+ * which name is bound to the thrown exception, and the value of the last is the
+ * return value of the function. If there is no matching catch-clause, the exception
+ * propagates out of the function. Before returning, normally or abnormally, any
+ * finally-clause exprs will be evaluated for their side effects.
+ *
+ * But note:
+ * (->> (finally (println "67")) (try (+ 1 2)))
+ * works.
+ * If we macroexpanded during translation we could handle that, but currently it's
+ * difficult.
+ * TODO: Macroexpand but also tag with OtherExpr wrappers? 
+ *)
+and map_try_catch_finally_form (env : env) (forms : CST.form list) : G.expr =
+  (* TODO: Need to actually extract up to the first (catch ...). Maybe simple
+   * rec aux function that splits the forms in 2 parts (or 3, with finally). *)
+  todo env ()
 
-(* Get first element of source list to see if it's a special form. *)
-and get_forms_and_discriminant (env : env)
-    ((meta, (_lp, src, _rp)) : CST.list_lit) : string option * CST.form list =
-  let _meta = R.List (List_.map (map_metadata_lit env) meta) in
-  let forms = forms_in_source env src in
-  match forms with
-  | `Sym_lit (_meta, (_loc, sym_name)) :: _rest -> Some sym_name, forms
-  | _ -> None, forms
+(* TODO: Instead of Call, make list container, works for rest forms
+ * inductively because env should say it's a quoted context.
+ * TODO: For symbols not in unquoted context, we should wrap them
+ * in something that does not resolve them in Naming. That is, we
+ * will need to intentionally skip visiting the node in Naming in
+ * order for such symbols to remain unresolved. *) 
+and map_quoted_list_form (env : env) (forms : CST.form list) =
+  todo env ()
+
+and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
+  (* TODO: Like defn but the definition is MacroDef with idents.
+   * The parameters are not evaluated. *)
+  todo env ()
+
+(* TODO:
+ *  
+ * Imagine a sink with the recur values:
+ *
+ * (defn process-with-metadata [user-input]
+ *   (loop [data user-input
+ *          metadata nil]  ;; starts clean!
+ *     (if (empty? data)
+ *       metadata
+ *       (let [item (first data)
+ *             ;; metadata is nil first time, so we skip the sink
+ *             _ (when metadata
+ *                 (sink metadata))  ;; metadata becomes tainted after first recur!
+ *             ;; Now we store the tainted item into metadata
+ *             new-metadata item]
+ *         (recur (rest data) new-metadata)))))
+*)
+and map_loop_form (env : env) (forms : CST.form list) : G.expr =
+  todo env ()
+
+(* (format fmt & args) *)
+and _UNUSED_map_format_form (env : env) (forms : CST.form list) : G.expr =
+  (* TODO: String interpolation. *)
+  todo env ()
+
+and map_kwd_expr (env : env) (tok : CST.kwd_lit) : G.expr =
+  let _atom_kind, tok_colon, atom_name =
+    map_kwd_expr_aux env tok
+  in
+  G.OtherExpr (("Atom", tok_colon), [G.Name atom_name])
+  |> G.e
+
+and map_kwd_expr_aux (env : env) (tok : CST.kwd_lit)
+  : string * Tok.t * G.name =
+  (* TODO: svalue can be set here if env contains ns information,
+   * which it currently does not.
+   *  
+   * There are a few cases to consider:
+   * - ::a which requires to expand current namespace in svalue.
+   * - :my-ns/a which is explicitly namespaced keyword. 
+   * - ::my-alias/hi which is alias from:
+   *   (ns my.ns (:require [other.ns :as my-alias]))
+   *   This should have svalue: :other.ns/hi.
+   *
+   * In patterns ::$A/a, :$A/a, $A/$B, ::$A and :$A match as expected.
+   * *)
+  let s, t = H.str env tok in
+  (* Cases for svalue:
+   * ::a => :env.ns/a
+   * ::my-alias/a => :other.ns/a *)
+  let atom_kind, s_name =
+    if String.starts_with ~prefix:"::" s then
+      "::", String.sub s 2 (String.length s - 2)
+    else
+      ":", String.sub s 1 (String.length s - 1)
+  in
+  (* Separate colon from rest of name. *)
+  let tok_colon, tok_name =
+    Tok.split_tok_at_bytepos (String.length atom_kind) t
+  in
+  let id_info = G.empty_id_info () in
+  let atom_name =
+    name_from_ident ~is_auto_resolved:(atom_kind =*= "::")
+      ~is_kwd:true env (s_name, tok_name)
+  in
+  (* TODO: id_info.s_value := expanded if not set *)
+  atom_kind, tok_colon, atom_name
 
 (* (def symbol doc-string? init?) noting that metadata are parsed
  * together with the symbol. *)
@@ -905,7 +1003,7 @@ and map_binding_form_vec_lit
  *  
  * (let [{:strs [x y]} {"x" 1 "y" 2}] [x y]) ;; x=1, y=2
  * 
- *  TODO: careful with naming 'x! keep as string?
+ * TODO: careful with naming 'x! keep as string?
  * (let [{:syms [foo bar]} {'foo 1 'bar 2}]
  *   ;; foo=1, bar=2
  *   )
@@ -1026,8 +1124,7 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
 
 and map_fn_params (env : env) (form : CST.form) : G.pattern (* list bracket *) =
   match form with
-  | `Vec_lit vec_lit ->
-    map_binding_form_vec_lit ~allow_as:false env vec_lit
+  | `Vec_lit vec_lit -> map_binding_form_vec_lit ~allow_as:false env vec_lit
   | _ -> raise_parse_error "Invalid fn params."
 
 (* TODO:
@@ -1205,7 +1302,6 @@ and map_fn_form
  *)
 and map_defn_form (env : env) (forms : CST.form list) =
   match forms with
-  (* TODO: If defn-, add attribute 'private'. *)
   | `Sym_lit (_meta, ((_loc, ("defn" | "defn-" as sym)) as defn_tk))
     :: `Sym_lit n :: rest_forms ->
     let name_of_defn = map_name env n in
@@ -1278,18 +1374,13 @@ and map_defn_form (env : env) (forms : CST.form list) =
       }
     in
     let def =
-      match sym with
-      (* | "defmacro" ->
-           G.MacroDef G.{ macroparams = (\* ident list *\) [];
-                          macrobody = (\* any list *\) [] } *)
-      | _ ->
-        G.FuncDef
-          {
-            G.fparams = Tok.unsafe_fake_bracket param_implicit;
-            frettype = None;
-            fkind = (G.Function, defn_tok);
-            fbody = G.FBStmt body_stmt;
-          }
+      G.FuncDef
+        {
+          G.fparams = Tok.unsafe_fake_bracket param_implicit;
+          frettype = None;
+          fkind = (G.Function, defn_tok);
+          fbody = G.FBStmt body_stmt;
+        }
     in
     let st = G.DefStmt (entity, def) |> G.s in
     StmtExpr st |> G.e
@@ -1342,6 +1433,12 @@ and map_let_form (env : env) (forms : CST.form list) =
         (* We need MultiLetPatternBindings to be able to match the bindings
          * with ..., specifically to avoid this (let [$X $V] ...) matching
          * multiple bindings. The IL translation remains flat. *)
+        (* TODO:
+         * - Use ExprBlock here too? But it creates scope!
+         *   And by definition we want same scope as below body!
+         * - Use wrapper OtherExpr to 'tag' the AST we produce in order
+         *   to distinguish constructs (because now everything will look
+         *   the same.) *)
         let bindings_other_expr =
             G.OtherExpr (("MultiLetPatternBindings", token env let_tk),
                          bindings)
@@ -1376,15 +1473,6 @@ and map_call_form (env : env) (forms : CST.form list) =
   | [] ->
     (* Invalid syntax, nothing to call. *)
     raise_parse_error "Invalid call form."
-
-(* TODO: Instead of Call, make list container, works for rest forms
- * inductively because env should say it's a quoted context.
- * TODO: For symbols not in unquoted context, we should wrap them
- * in something that does not resolve them in Naming. That is, we
- * will need to intentionally skip visiting the node in Naming in
- * order for such symbols to remain unresolved. *) 
-and map_quoted_list_form (env : env) (forms : CST.form list) =
-  todo env ()
 
 (*
   letfn
@@ -1558,13 +1646,80 @@ and map_do_form (env : env) (forms: CST.form list) : G.expr =
  * NOTE: A tainting rule should have patterns for `(sink ...)`
  * and also just `sink`, else it might miss findings. 
  *)
-and map_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
+and insert_threaded
+    (env: env) (insert_pos: insert_pos) (value_form: CST.form) (target_form: CST.form)
+  : CST.form =
+  let insert_last x xs = List.rev (x :: (List.rev xs)) in
+  match target_form with
+  | `List_lit (meta, (lp, srcs, rp)) ->
+    let src_forms = forms_in_source env srcs in
+    begin match src_forms with
+    | hd_form :: src_forms_rest -> 
+      let srcs' = match insert_pos with
+        | Insert_first -> hd_form :: value_form :: src_forms_rest
+        | Insert_last -> insert_last value_form src_forms
+      in
+      `List_lit (meta, (lp, List_.map (fun src -> `Form src) srcs', rp))
+    | _ ->
+      raise_parse_error "Invalid thread target form."
+    end
+  | _ ->
+    (* Create fake tokens for brackets since they will (should) be thrown away anyway. *)
+    let module T = Tree_sitter_run.Token in
+    let module L = Tree_sitter_run.Loc in
+    let pos = L.{row = -1; column = -1} in
+    let loc = L.{start = pos; end_ = pos} in
+    `List_lit ([], ((loc, "("), [`Form target_form; `Form value_form], (loc, ")")))
+
+and map_thread_first_last_form_eager
+    (env : env) (forms: CST.form list) : G.expr =
+  match forms with
+    | `Sym_lit (_meta_thread,
+                ((_loc, (("->" | "->>") as first_or_last)) as thread_tk))
+      :: (v_form :: rest_forms) ->
+        let insert_pos =
+          match first_or_last with
+          | "->" -> Insert_first
+          | _ (* "->>" *) -> Insert_last
+        in
+        let expanded =
+          List.fold_left (insert_threaded env insert_pos) v_form rest_forms
+        in
+        let body = map_form env expanded in
+        G.OtherExpr ((first_or_last, (token env thread_tk)), [ G.E body ])
+        |> G.e
+    | _ ->
+        raise_parse_error "Invalid thread-first / thread_last form."
+
+and ensure_form_is_list (env : env) (form: CST.form) : CST.form =
+  match form with
+  | `List_lit _ -> form
+  | _ ->
+    let module T = Tree_sitter_run.Token in
+    let module L = Tree_sitter_run.Loc in
+    let pos = L.{row = -1; column = -1} in
+    let loc = L.{start = pos; end_ = pos} in
+    `List_lit ([], ((loc, "("), [`Form form], (loc, ")")))
+
+and map_thread_first_last_form_lazy (env : env) (forms: CST.form list) : G.expr =
   match forms with
     | `Sym_lit (_meta_thread,
                 ((_loc, (("->" | "->>") as first_or_last)) as thread_tk))
       :: (_ :: _ as rest_forms) ->
+      let thread_macro_ctx = 
+        match first_or_last with
+        | "->" -> Some Thread_first
+        | _ (* "->>" *) -> Some Thread_last
+      in
       let rest_exprs = List_.map
-          (fun form -> G.E (map_form env form))
+          (fun form ->
+             (* TODO: Convert `sink` to `(sink)` so we don't have to add
+              * a `sink` pattern to sinks, because this makes all instances
+              * of the name tainted, even when not in call position. *)
+             G.E (map_form
+                    (* XXX: This must be always cleared 1 level down ALWAYS. *)
+                    (with_thread_macro_ctx env thread_macro_ctx)
+                    (ensure_form_is_list env form)))
           rest_forms
       in
       G.OtherExpr ((first_or_last, (token env thread_tk)), rest_exprs)
@@ -1572,7 +1727,123 @@ and map_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
     | _ ->
         raise_parse_error "Invalid thread-first / thread_last form."
 
-and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
+and map_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
+  match S.macroexpansion_mode with
+  | S.At_IL -> map_thread_first_last_form_lazy env forms 
+  | S.At_generic -> map_thread_first_last_form_eager env forms
+
+and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G.expr =
+  match forms with
+    | `Sym_lit (_meta_thread,
+                ((loc, (("cond->" | "cond->>") as first_or_last)) as thread_tk))
+      :: (v_expr :: clauses as rest_forms) ->
+
+      let fake_let_var_sym_lit = ([], ((loc, G.implicit_param))) in
+      let fake_let_var_sym = `Sym_lit fake_let_var_sym_lit in
+      let pos =
+        match first_or_last with
+        | "cond->" -> Insert_first
+        | _ (* cond->> *) -> Insert_last
+      in
+
+      let test_expr_pairs =
+        let rec aux acc = function
+          | test_expr_form :: body_expr_form :: rest ->
+            aux ((test_expr_form, body_expr_form) :: acc) rest
+          | [] -> List.rev acc
+          | _ ->
+            raise_parse_error
+              "Expected even number of test and body exprs"
+        in
+        aux [] clauses
+       in
+       let clauses_threaded =
+         List_.map
+           (fun (test_expr_form, body_expr_form) ->
+              (test_expr_form,
+               insert_threaded env pos fake_let_var_sym body_expr_form))
+           test_expr_pairs
+       in
+       (* Now we have clauses (test, body') where body' is (-> g body),
+        * resp. for ->>. *)
+       begin match clauses_threaded with
+         | [] ->
+           let e = map_form env v_expr (* no need for binding at all *) in 
+           G.OtherExpr ((first_or_last, (token env thread_tk)), [ G.E e ])
+           |> G.e
+         | _ ->
+           let last_test, last_expr, rest_test_exprs =
+             begin match List.rev clauses_threaded with
+             | (last_test_form, last_expr_form) :: rest_rev_forms ->
+               (map_form env last_test_form,
+                map_form env last_expr_form,
+                (List.rev
+                  (List_.map (fun (tst_form, expr_form) ->
+                    (map_form env tst_form, map_form env expr_form))
+                     rest_rev_forms)))
+             | _ -> assert false
+             end
+           in
+           let fake_g = H.str env (snd fake_let_var_sym_lit) in
+           let make_tmp () =
+             let id_info = G.empty_id_info ~hidden:true () in
+             G.PatId (fake_g, id_info)
+           in
+           let make_if_thread_else previous_ident pos test_expr body_expr =
+             let ident_expr =
+               G.N previous_ident |> G.e
+             in
+             (* TODO: Make condition more specific. *)
+             G.If (G.fake "if-cond", (G.Cond test_expr),
+                   body_expr |> G.exprstmt,
+                   Some (ident_expr |> G.exprstmt))
+             |> G.s |> G.stmt_to_expr
+           in
+           let make_let new_pat expr = 
+             G.LetPattern (new_pat, expr) |> G.e
+           in
+           let init_pat_id = make_tmp () in
+           let init_exr = 
+             make_let init_pat_id (map_form env v_expr)
+           in
+           let last_binding, intermediate_binding_exprs =
+             List.fold_left_map
+               (fun last_binding (test_expr, body_expr) ->
+                  begin match last_binding with
+                 | G.PatId (prev_ident, id_info) ->
+                     let new_tmp = make_tmp () in
+                     let if_expr =
+                         make_if_thread_else
+                           (G.Id (prev_ident, id_info))
+                           pos
+                           test_expr
+                           body_expr
+                     in
+                     (new_tmp, (make_let new_tmp if_expr))
+                 | _ -> assert false
+                  end
+               )
+               init_pat_id
+               rest_test_exprs
+           in
+           let last_id = match last_binding with
+             | G.PatId (last_ident, id_info) -> G.Id (last_ident, id_info)
+             | _ -> assert false
+           in
+           let last_if_expr = 
+             make_if_thread_else last_id pos last_test last_expr
+           in
+           let body_exprs =
+             List_.map (fun e -> G.E e)
+               (init_exr :: intermediate_binding_exprs @ [last_if_expr])
+           in
+           G.OtherExpr ((first_or_last, (token env thread_tk)), body_exprs)
+           |> G.e
+         end
+    | _ ->
+        raise_parse_error "Invalid cond-> / cond->> form."
+
+and map_cond_thread_first_last_form_lazy (env : env) (forms: CST.form list) : G.expr =
   match forms with
     | `Sym_lit (_meta_thread,
                 ((_loc, (("cond->" | "cond->>") as first_or_last)) as thread_tk))
@@ -1585,6 +1856,12 @@ and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr 
       |> G.e
     | _ ->
         raise_parse_error "Invalid cond-> / cond->> form."
+
+and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
+  match S.macroexpansion_mode with
+  | S.At_IL -> map_cond_thread_first_last_form_lazy env forms 
+  | S.At_generic -> map_cond_thread_first_last_form_eager env forms
+
 (*
  * as->
  * Usage: (as-> expr name & forms)
@@ -1607,59 +1884,82 @@ and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr 
  * If there is not rest forms, then body becomes p.
  *  
  * TODO: Interleave the binding in the macroexpansion instead of here? 
- * TODO: How about deep expr matching? Descend into context? 
+ * TODO: How about deep expr matching? Descend into context?
+ * TODO:
+ * How about (-> e (as-> x e1 ... en))
+ * opengrep.clj=> (-> 5 (as-> x (+ x x) (+ x x)) )
+ * 20
+ * This is a problem for the S.At_IL mode, but not for S.At_generic. 
  *)
 and map_as_thread_form (env : env) (forms: CST.form list) : G.expr =
-  match forms with
-    | `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
-      :: v_expr_form :: pat_form :: rest_forms ->
+  (* We should abstract the functions on extra in a module, and return
+   * a new env so it's clearer.
+   * BUG (S.At_IL):
+   * We must always clear this context, how about a deeply nested as-> ?
+   * It will be parsed in a wrong way. Even in parallel, one as-> after
+   * the other, is an issue! Like in: (defn ... as-> ...) (defn ... as-> ...).
+   * Can we delay parsing some parts? *)
+  let thread_macro_ctx, env =
+    match env.extra.thread_macro_ctx with
+    | Some _ as ctx -> ctx, (with_thread_macro_ctx env None)
+    | _ -> None, env
+  in
+  let map_pat_and_rest pat_and_rest_forms =
+    (* What about (->> x (as-> e)) ~> e? Not handled for now, should be
+     * extremely uncommon. *)
+    match pat_and_rest_forms with
+      | pat_form :: rest_forms ->
+        let pat = map_binding_form env pat_form in
+        let rest_exprs = List_.map (map_form env) rest_forms in
+        let rec interleave_pat pat exprs =
+          match exprs, env.extra.kind with
+          | [], _ -> [] 
+          | [ last_expr ], _ -> G.E last_expr :: []
+          | ({e = G.Ellipsis _; _} as expr) :: rest_exprs, Pattern ->
+            (* Special case: an ellipsis should abstract over P, E pairs. *)
+            (* But not for v_expr; in that case we want (as-> ... p exprs),
+             * hence v_expr is dealt with separately. *)
+            G.E expr :: interleave_pat pat rest_exprs
+          | expr :: rest_exprs, _ ->
+            (* XXX: Need to have fresh id_info, force simple name (PatId) and
+             * replace id_info, or use visitor, or live with this trick below
+             * (create new pattern). For now this trick is sufficient. *)
+            G.E expr :: G.P (map_binding_form env pat_form) (* pat *)
+            :: interleave_pat pat rest_exprs
+        in
+        G.P pat :: (interleave_pat pat rest_exprs)
+      | _ ->
+        raise_parse_error "Invalid as-> form."
+  in
+  match S.macroexpansion_mode, thread_macro_ctx, forms with
+
+    (* XXX: Currently the only active macroexpansion mode. *)
+    | S.At_generic, _,
+      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
+      :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest )
+
+    | S.At_IL, ( None | Some Thread_last ),
+      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
+      (* NOTE: In S.At_IL, under (-> e ...) this may not exist. *)
+      :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest ) ->
+
+      let pat_and_rest = map_pat_and_rest pat_and_rest in
       let v_expr = map_form env v_expr_form in
-      let pat = map_binding_form env pat_form in
-      let rest_exprs = List_.map (map_form env) rest_forms in
-      let rec interleave_pat pat exprs =
-        match exprs, env.extra.kind with
-        | [], _ -> [] 
-        | [ last_expr ], _ -> G.E last_expr :: []
-        | ({e = G.Ellipsis _; _} as expr) :: rest_exprs, Pattern ->
-          (* Special case: an ellipsis should abstract over P, E pairs. *)
-          (* But not for v_expr; in that case we want (as-> ... p exprs),
-           * hence v_expr is dealt with separately. *)
-          G.E expr :: interleave_pat pat rest_exprs
-        | expr :: rest_exprs, _ ->
-          (* XXX: Need to have fresh id_info, force name and replace id_info
-           * or use visitor, or live with this trick below (create new pattern).
-           * For now this trick is sufficient. *)
-          G.E expr :: G.P (map_binding_form env pat_form) (* pat *)
-          :: interleave_pat pat rest_exprs
-      in
       let interleaved_expr_pat =
-        G.E v_expr :: G.P pat
-        :: (interleave_pat pat rest_exprs)
+        G.E v_expr :: pat_and_rest
       in
       G.OtherExpr (("as->", (token env thread_tk)), interleaved_expr_pat)
       |> G.e
+
+    | S.At_IL, Some Thread_first,
+      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
+      :: ( pat_form :: rest_forms as pat_and_rest ) ->
+      let pat_and_rest = map_pat_and_rest pat_and_rest in
+      G.OtherExpr (("as->", (token env thread_tk)), pat_and_rest)
+      |> G.e
+
     | _ ->
         raise_parse_error "Invalid as-> form."
-
-(* TODO:
- *  
- * Imagine a sink with the recur values:
- *
- * (defn process-with-metadata [user-input]
- *   (loop [data user-input
- *          metadata nil]  ;; starts clean!
- *     (if (empty? data)
- *       metadata
- *       (let [item (first data)
- *             ;; metadata is nil first time, so we skip the sink
- *             _ (when metadata
- *                 (sink metadata))  ;; metadata becomes tainted after first recur!
- *             ;; Now we store the tainted item into metadata
- *             new-metadata item]
- *         (recur (rest data) new-metadata)))))
-*)
-and map_loop_form (env : env) (forms : CST.form list) : G.expr =
-  todo env ()
 
 (*
  * Usage: (when test & body)
@@ -1678,6 +1978,10 @@ and map_when_form (env : env) (forms : CST.form list) : G.expr =
     in
     G.OtherExpr (("When", token env when_tk), when_forms) |> G.e
   | _ ->
+    (* FIXME (S.At_IL):
+     * (-> test (when)) will fail but is legal clojure and becomes nil.
+     * On the other hand the condition above exists because (when) is
+     * not correct in general. *)
     raise_parse_error "Invalid when form."
 
 and map_when_not_form (env : env) (forms : CST.form list) : G.expr =
@@ -1860,11 +2164,6 @@ and map_when_first_form (env : env) (forms : CST.form list) : G.expr =
   | _ ->
     raise_parse_error "Invalid when-first form."
 
-and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
-  (* TODO: Like defn but the definition is MacroDef with idents.
-   * The parameters are no evaluated. *)
-  todo env ()
-
 and map_anon_func_form
     (env : env)
     (meta_list : CST.metadata_lit list)
@@ -1876,20 +2175,22 @@ and map_anon_func_form
   let body_expr = map_list_form env (meta_list, bare_list) in
   encode_short_lambda env tok body_expr
 
+(*
+ * NOTE (S.At_IL):  
+ * opengrep.clj=> (-> (println "67") (comment))
+ * nil
+ * But we process the threaded value. 
+ *)
 and map_comment_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
   | `Sym_lit (_meta_let, ((_loc, "comment") as comment_tk)) :: _rest -> 
     L (Null (H.token env comment_tk)) |> G.e
   | _ -> assert false
 
-(* (format fmt & args) *)
-and map_format_form (env : env) (forms : CST.form list) : G.expr =
-  (* TODO: String interpolation. *)
-  todo env ()
-
 and map_ns_form (env : env) (forms : CST.form list) : G.expr =
   (* TODO: DirectiveStmt with imported modules (directive_kind).
-   * But for now a quick hack is probably enough. *)
+   * But for now a quick hack is probably enough.
+   * TODO: However, we should treat as quoted. *)
   match forms with
     | `Sym_lit (_meta_ns, ((_loc, "ns") as ns_tk)) :: body_forms ->
       let as_exprs = List_.map
@@ -1904,8 +2205,6 @@ and map_ns_form (env : env) (forms : CST.form list) : G.expr =
       raise_parse_error "Invalid ns form."
 
 and map_require_form (env : env) (forms : CST.form list) : G.expr =
-  (* TODO: DirectiveStmt with imported modules (directive_kind).
-   * But for now a quick hack is probably enough. *)
   match forms with
     | `Sym_lit (_meta_ns, ((_loc, "require") as req_tk)) :: body_forms ->
       let as_exprs = List_.map
@@ -1920,8 +2219,6 @@ and map_require_form (env : env) (forms : CST.form list) : G.expr =
       raise_parse_error "Invalid require form."
 
 and map_use_form (env : env) (forms : CST.form list) : G.expr =
-  (* TODO: DirectiveStmt with imported modules (directive_kind).
-   * But for now a quick hack is probably enough. *)
   match forms with
     | `Sym_lit (_meta_ns, ((_loc, "use") as req_tk)) :: body_forms ->
       let as_exprs = List_.map
@@ -1935,58 +2232,20 @@ and map_use_form (env : env) (forms : CST.form list) : G.expr =
     | _ ->
       raise_parse_error "Invalid use form."
 
-and map_list_form
-    (env : env) (((meta, (lp, _src, _rp)) as list_lit) : CST.list_lit)
-  : G.expr =
-  let discriminant, forms = get_forms_and_discriminant env list_lit
-  in
-  (* TODO:
-   * - if not env says quoted;
-   * - if not under defmacro. *)
-  match discriminant with
-    (* TODO: Check if in Quoted state! In that case just symbols list. *)
-    | Some ("def" | "defonce") -> map_def_form env forms
-    | Some "fn" -> map_fn_form env forms
-    | Some ("defn" | "defn-") -> map_defn_form env forms
-    | Some "let" -> map_let_form env forms
-    | Some "letfn" -> map_letfn_form env forms
-    | Some "if" -> map_if_form env forms
-    | Some "if-not" -> map_if_not_form env forms
-    | Some ("if-let" | "if-some") -> map_if_let_some_form env forms
-    | Some "when" -> map_when_form env forms
-    | Some "when-not" -> map_when_not_form env forms
-    | Some "when-let" -> map_when_let_form env forms
-    | Some "when-some" -> map_when_some_form env forms
-    | Some "when-first" -> map_when_first_form env forms
-    | Some "do" -> map_do_form env forms
-    | Some ("->" | "->>") -> map_thread_first_last_form env forms
-    | Some ("cond->" | "cond->>") -> map_cond_thread_first_last_form env forms
-    (* | Some ("some->" | "some->>") -> map_some_thread_first_last_form env forms *)
-    (* | Some "try" -> map_try_catch_form env forms *)
-    | Some "as->" -> map_as_thread_form env forms
-    | Some "comment" -> map_comment_form env forms
-    | Some "format" -> map_format_form env forms
-    | Some "loop" -> map_loop_form env forms
-    | Some ("defmacro" | "definline") -> map_defmacro_form env forms
-    | Some "ns" -> map_ns_form env forms
-    | Some "require" -> map_require_form env forms
-    | Some "use" -> map_use_form env forms
-    | Some ("in-ns" (* TODO: replace env.extra.ns *)) ->
-      (* TODO: Do not ignore. but for now we don't want this to be
-       * treated like function application. *)
-      G.(L (Null (fake "")) |> e)
-    (* Here we assume this is not a special form, and it's interpreted
-     * as function application. *)
-    (* TODO: How about (:user ...)? We should use G.DotAccess with FDynamic
-     * Atom :user. *)
-    | _ -> map_call_form env forms
-
-(* (meta, (lp, list, rp)) *)
-(* (meta, (lp, `[Form (`Kw_lit ":a"); ...], rp)) *)
-and map_list_lit (env : env) ((v1, v2) : CST.list_lit) =
-  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
-  let v2 = map_bare_list_lit env v2 in
-  v2
+(*
+ * (throw expr)
+ * The expr is evaluated and thrown, therefore it should yield an instance of some
+ * derivee of Throwable. 
+ *)
+and map_throw_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+    | `Sym_lit (_meta_throw, ((_loc, "throw") as throw_tk)) :: body_form :: [] ->
+      G.Throw (token env throw_tk, map_form env body_form, G.fake "")
+      |> G.s
+      |> G.stmt_to_expr
+    | _ ->
+      (* FIXME (S.At_IL): (-> (Exception. "boom") (throw)) is valid. *)
+      raise_parse_error "Invalid throw form."
 
 and map_bare_set_form (env : env) ((hash_sym, lb, src, rb) : CST.bare_set_lit) =
   let hash_tk = (* "#" *) token env hash_sym in
@@ -2000,11 +2259,6 @@ and map_set_form (env : env) ((meta, bare_set) : CST.set_lit) =
   let _v1 = R.List (List_.map (map_metadata_lit env) meta) in
   map_bare_set_form env bare_set
 
-and map_vec_lit (env : env) ((v1, v2) : CST.vec_lit) =
-  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
-  let v2 = map_bare_vec_lit env v2 in
-  v2
-
 and map_bare_vec_form (env : env) ((lb, src, rb) : CST.bare_vec_lit) =
   let lb_tk = (* "[" *) token env lb in
   let rb_tk = (* "]" *) token env rb in
@@ -2015,11 +2269,6 @@ and map_bare_vec_form (env : env) ((lb, src, rb) : CST.bare_vec_lit) =
 and map_vec_form (env : env) ((v1, v2) : CST.vec_lit) =
   let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
   map_bare_vec_form env v2
-
-and map_map_lit (env : env) ((v1, v2) : CST.map_lit) =
-  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
-  let v2 = map_bare_map_lit env v2 in
-  v2
 
 and map_bare_map_form (env : env) ((lb, src, rb) : CST.bare_map_lit) =
   let lb_tk = (* "{" *) token env lb in
@@ -2044,6 +2293,101 @@ and map_bare_map_form (env : env) ((lb, src, rb) : CST.bare_map_lit) =
 and map_map_form (env : env) ((v1, v2) : CST.map_lit) =
   let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
   map_bare_map_form env v2
+
+and map_sym_lit (env : env) ((v1, v2) : CST.sym_lit) =
+  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
+  let v2 = sym_to_name_or_ellipsis_expr env v2 in
+  v2
+
+and map_sym_lit_pat (env : env) ((v1, v2) : CST.sym_lit) =
+  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
+  let v2 = simple_ident_or_ellipsis_pat env v2 in
+  v2
+
+and map_sym_lit_pat_qualified (env : env) ((v1, v2) : CST.sym_lit) =
+  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
+  let v2 = ident_or_ellipsis_pat env v2 in
+  v2
+
+and map_sym_val_lit (env : env) ((v1, v2) : CST.sym_lit) =
+  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
+  let _, s = v2 in
+  match s with
+  | ( "Inf" | "-Inf" | "NaN" ) ->
+    L (G.Float (float_of_string_opt s, token env v2)) |> G.e 
+  | _ ->
+    (* TODO: Use OtherExpr... who cares if it makes sense? *)
+    raise_parse_error
+      "Invalid syntax: ##<symbol> only supports ##Inf, ##-Inf, ##NaN."
+
+and map_name (env : env) ((v1, v2) : CST.sym_lit) =
+  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
+  let v2 = name env v2 in
+  v2
+
+(*****************************************************************************)
+(* Boilerplate converter *)
+(*****************************************************************************)
+(* This was started by copying tree-sitter-lang/semgrep-clojure/.../Boilerplate.ml *)
+
+ and map_anon_choice_read_cond_lit_137feb9 (env : env)
+    (x : CST.anon_choice_read_cond_lit_137feb9) =
+  match x with
+  | `Read_cond_lit x -> R.Case ("Read_cond_lit", map_read_cond_lit env x)
+  | `Map_lit x -> R.Case ("Map_lit", map_map_lit env x)
+  | `Str_lit tok -> R.Case ("Str_lit", (* str_lit *) raw_token env tok)
+  | `Kwd_lit tok -> R.Case ("Kwd_lit", (* kwd_lit *) raw_token env tok)
+  | `Sym_lit x -> R.Case ("Sym_lit", map_sym_lit env x |> raw_of_expr)
+
+and map_bare_list_lit (env : env) ((v1, v2, v3) : CST.bare_list_lit) =
+  let v1 = (* "(" *) raw_token env v1 in
+  let v2 = map_source env v2 in
+  let v3 = (* ")" *) raw_token env v3 in
+  R.Tuple [ v1; v2; v3 ]
+
+and map_bare_map_lit (env : env) ((v1, v2, v3) : CST.bare_map_lit) =
+  let v1 = (* "{" *) raw_token env v1 in
+  let v2 = map_source env v2 in
+  let v3 = (* "}" *) raw_token env v3 in
+  R.Tuple [ v1; v2; v3 ]
+
+and map_bare_set_lit (env : env) ((v1, v2, v3, v4) : CST.bare_set_lit) =
+  let v1 = (* "#" *) raw_token env v1 in
+  let v2 = (* "{" *) raw_token env v2 in
+  let v3 = map_source env v3 in
+  let v4 = (* "}" *) raw_token env v4 in
+  R.Tuple [ v1; v2; v3; v4 ]
+
+and map_bare_vec_lit (env : env) ((v1, v2, v3) : CST.bare_vec_lit) =
+  let v1 = (* "[" *) raw_token env v1 in
+  let v2 = map_source env v2 in
+  let v3 = (* "]" *) raw_token env v3 in
+  R.Tuple [ v1; v2; v3 ]
+
+(* whitespace/comment *)
+and map_gap (_env : env) (x : CST.gap) : unit =
+  match x with
+  | `Ws _tok -> ()
+  | `Comm _tok -> ()
+  (* ?? *)
+  | `Dis_expr (_v1, _v2, _v3formTODO) -> ()
+
+(* (meta, (lp, list, rp)) *)
+(* (meta, (lp, `[Form (`Kw_lit ":a"); ...], rp)) *)
+and map_list_lit (env : env) ((v1, v2) : CST.list_lit) =
+  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
+  let v2 = map_bare_list_lit env v2 in
+  v2
+
+and map_vec_lit (env : env) ((v1, v2) : CST.vec_lit) =
+  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
+  let v2 = map_bare_vec_lit env v2 in
+  v2
+
+and map_map_lit (env : env) ((v1, v2) : CST.map_lit) =
+  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
+  let v2 = map_bare_map_lit env v2 in
+  v2
 
 and map_meta_lit (env : env) ((v1, v2, v3) : CST.meta_lit) =
   let v1 = (* "^" *) raw_token env v1 in
@@ -2078,6 +2422,10 @@ and map_read_cond_lit (env : env) ((v1, v2, v3, v4) : CST.read_cond_lit) =
   let v3 = R.List (List_.map (raw_token env (* ws *)) v3) in
   let v4 = map_bare_list_lit env v4 in
   R.Tuple [ v2; v3; v4 ]
+
+(*****************************************************************************)
+(* Forms processing                                                          *)
+(*****************************************************************************)
 
 (* TODO: To detect (ns ...) we need to fold so that env.extra.ns
  * is modified... But map_form must return the env too! *)
@@ -2151,37 +2499,6 @@ and map_program (env : env) (xs : CST.source) : G.program =
     env
     xs
 
-and map_sym_lit (env : env) ((v1, v2) : CST.sym_lit) =
-  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
-  let v2 = sym_to_name_or_ellipsis_expr env v2 in
-  v2
-
-and map_sym_lit_pat (env : env) ((v1, v2) : CST.sym_lit) =
-  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
-  let v2 = simple_ident_or_ellipsis_pat env v2 in
-  v2
-
-and map_sym_lit_pat_qualified (env : env) ((v1, v2) : CST.sym_lit) =
-  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
-  let v2 = ident_or_ellipsis_pat env v2 in
-  v2
-
-and map_sym_val_lit (env : env) ((v1, v2) : CST.sym_lit) =
-  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
-  let _, s = v2 in
-  match s with
-  | ( "Inf" | "-Inf" | "NaN" ) ->
-    L (G.Float (float_of_string_opt s, token env v2)) |> G.e 
-  | _ ->
-    (* TODO: Use OtherExpr... who cares if it makes sense? *)
-    raise_parse_error
-      "Invalid syntax: ##<symbol> only supports ##Inf, ##-Inf, ##NaN."
-
-and map_name (env : env) ((v1, v2) : CST.sym_lit) =
-  let _v1 = R.List (List_.map (map_metadata_lit env) v1) in
-  let v2 = name env v2 in
-  v2
-
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -2193,6 +2510,7 @@ let parse file =
       let env = { H.file;
                   conv = H.line_col_to_pos file;
                   extra = {kind = Program; mode = Normal;
+                           thread_macro_ctx = None;
                            ns = None; ns_aliases = []} }
       in
       map_program env cst)
@@ -2233,6 +2551,7 @@ let parse_pattern str =
                    * metavar, perhaps anonymous, so it can be matched.
                    * *)
                   extra = {kind = Pattern; mode = Normal;
+                           thread_macro_ctx = None;
                            ns = None; ns_aliases = []} }
       in
       (* XXX: Need sequence of ExprStmt to one ExprStmt with ExprBlock inside.

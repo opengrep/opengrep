@@ -28,6 +28,7 @@
 (* open Common *)
 module G = AST_generic
 module GH = AST_generic_helpers
+module S = Settings_clojure
 
 type insert_pos = 
   | Insert_first
@@ -35,9 +36,25 @@ type insert_pos =
 
 exception Macroexpansion_error of string * G.any
 
+(* This takes precedence, for macroexpansion at translation-to-generic.
+ * Second line of patterns must be commented out or disabled otherwise. *)
+let expands_as_block (todo_kind : string) =
+  match S.macroexpansion_mode, todo_kind  with
+  | S.At_IL, ("MultiLetPatternBindings" | "MultiLetFnBindings" | "ExprBlock")
+    -> true
+  | S.At_generic,
+    (* When we macroexpand during translation to generic, things like "->"
+     * are simply there to tag already-prepared expr blocks. *)
+    ("MultiLetPatternBindings" | "MultiLetFnBindings" | "ExprBlock"
+    | "->" | "->>" | "cond->" | "cond->>")
+    -> true
+  | _
+    -> false
+
+(* XXX: It would be more robust to match on macroexpansion_mode as above. *)
 let is_macroexpandable (todo_kind : string) =
   match todo_kind with
-  | "->" | "->>" | "cond->" | "cond->>" | "as->"| "ShortLambda"
+  | "->" | "->>" | "cond->" | "cond->>" | "as->" | "ShortLambda"
   | "When" | "WhenNot" | "WhenLet" | "WhenSome" | "WhenFirst"
   | "IfLet" | "IfNot" | "IfSome"
     -> true
@@ -53,11 +70,18 @@ let is_macroexpandable (todo_kind : string) =
  * Not implemented and will fail to parse because the placeholder
  * is not a valid binding form. We could simply expand once here
  * for such cases... but it's simply not worth the effort.
+ *
+ * In theory we could allow that by looking at the first form
+ * in which we will thread the value in, for -> only, and in that
+ * case decide to treat as bindings.
  *)
 let insert_threaded insert_pos v e =
+
   let insert_last x xs = List.rev (x :: (List.rev xs)) in
+
   match e.G.e with
 
+  (* NOTE: If macroexpanding raw, wrap in `List with no meta and fake parens. *)
   | G.N _ | G.L _ | G.Container _ | G.Record _
   | G.OtherExpr (("Atom", _), [G.Name _]) ->
     (* TODO: Special cases for atom etc which means G.DotAccess? *)
@@ -71,7 +95,10 @@ let insert_threaded insert_pos v e =
     in
     {e with e = G.Call (expr, (lp, args', rp))}
 
-  | G.OtherExpr (((( "->" | "->>" | "ExprBlock"), _tk) as td_kind), exprs) ->
+  (* FIXME (S.At_IL): Deal with as->, for example:
+   * (-> 5 (as-> x (+ x x) (+ x x)) )
+   * works. *)
+  | G.OtherExpr (((( "->" | "->>" | "as->" | "ExprBlock"), _tk) as td_kind), exprs) ->
     (* FIXME: letfn and let create ExprBlock, we should not process these
      * for ->, but only for ->>. *)
     let new_exp = G.E v in
@@ -129,12 +156,15 @@ let insert_threaded insert_pos v e =
                           G.E e)
   | _ ->
     (* TODO: Log this... *)
+    (* TODO: Should this be an exception vs assert? We have more constructs now, this
+     * should not be assert any more. *)
     ignore ( assert false );
     e
 
 let macro_expand_1 (expr : G.expr) : G.expr =
   match expr.G.e with
 
+  (* XXX: No effect if macroexpansion happens on generic translation. *)
   | G.OtherExpr (((( "->" | "->>") as first_or_last), _tk),
                  (G.E v_expr) :: rest_exprs) ->
     let unpacked_rest_exprs =
@@ -165,7 +195,7 @@ let macro_expand_1 (expr : G.expr) : G.expr =
    *       g (if true (-> g (+ 1)) g)]
    *  (if false (-> g (- 1)) g)) 
    *)
-  | G.OtherExpr (((( "cond->" | "cond->>") as cond_first_or_last), _tk),
+  | G.OtherExpr (((( "cond->" | "cond->>" ) as cond_first_or_last), _tk),
                  (G.E v_expr) :: tests_and_exprs) ->
     let make_tmp ?sid () =
       let open Common in
@@ -173,6 +203,8 @@ let macro_expand_1 (expr : G.expr) : G.expr =
       let name_kind = G.LocalVar in
       let entname = (name_kind, sid) in
       let temp_ident =
+        (* Can this shadow uses in functions? Don't think so.
+         * But how about nested cond-> ? Add SId suffix? *)
         (G.implicit_param, G.fake "cond-threaded-temp" (* first_or_last? *))
       in
       let id_info = G.basic_id_info ~hidden:true entname in
@@ -208,6 +240,7 @@ let macro_expand_1 (expr : G.expr) : G.expr =
       let unpacked_rest_tests_exprs =
         List.map (function
             | G.E expr -> expr
+            (* TODO: raise proper exception: *)
             | _ -> failwith "Expected expr") rest_tests_exprs_anys
       in
       let pos =
@@ -220,6 +253,7 @@ let macro_expand_1 (expr : G.expr) : G.expr =
           | test_expr :: body_expr :: rest ->
             aux ((test_expr, body_expr) :: acc) rest
           | [] -> List.rev acc
+          (* TODO: raise proper exception: *)
           | _ -> failwith "Expected even number of test and body exprs"
         in
         aux [] unpacked_rest_tests_exprs
@@ -432,24 +466,6 @@ let macro_expand_1 (expr : G.expr) : G.expr =
       G.OtherExpr (("ExprBlock", thread_tk), exs_any)
       |> G.e
     end
-
-  (* TODO: Remove, not used due to issues. *)
-  | G.OtherExpr (("Call", _call_fake_tok),
-                 [ (G.E func_expr); G.Args arg_exprs ]) ->
-    let arg_exprs_unwrapped =
-      List.map (function
-          | G.Arg expr -> expr
-          | _ -> failwith "Expected arg")
-        arg_exprs
-    in
-    let _arg_exprs_mapped =
-          [ G.Arg 
-              (G.Container
-                 (G.List, Tok.unsafe_fake_bracket arg_exprs_unwrapped)
-               |> G.e) ]
-    in
-    G.Call (func_expr, Tok.unsafe_fake_bracket arg_exprs(* _mapped *))
-    |> G.e
 
   | _ ->
     raise @@ Macroexpansion_error ("Not implemented", G.E expr)
