@@ -150,3 +150,23 @@ async function test_original_example() {
     return sink(changes);
   });
 }
+
+// ===== Top-level HOF Tests =====
+// These test HOF callback detection at module level (outside any function)
+
+// Top-level lambda callback
+// ruleid: test-hof-taint
+const toplevelSink = (x) => sink(x);
+toplevelSink(source());
+
+// Top-level method HOF (forEach with named callback)
+function toplevelHandler(x) {
+  // ruleid: test-hof-taint
+  sink(x);
+}
+
+const toplevelItems = [source()];
+toplevelItems.forEach(toplevelHandler);
+
+// Top-level user-defined HOF
+customForEach(toplevelItems, toplevelHandler);

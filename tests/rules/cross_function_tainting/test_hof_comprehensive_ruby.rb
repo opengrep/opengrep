@@ -13,7 +13,7 @@ end
 
 def custom_for_each(arr, &callback)
   arr.each do |item|
-    callback.call(item)
+    callback(item)
   end
 end
 
@@ -69,3 +69,29 @@ end
 
 def sink(s)
 end
+
+# ===== Top-level HOF Tests =====
+# These test HOF callback detection at top level (outside any def)
+
+# Top-level lambda callback
+# ruleid: test-hof-taint
+toplevel_sink = ->(x) { sink(x) }
+toplevel_sink.(source())
+
+# ruleid: test-hof-taint
+toplevel_sink1 = ->(x) { sink(x) }
+# ruleid: test-hof-taint
+toplevel_sink2 = ->(x) { sink(x) }
+
+# Top-level method HOF (each with block)
+toplevel_items = [source()]
+toplevel_items.each(&toplevel_sink1)
+
+# Named callback for top-level HOF
+def toplevel_handler(x)
+  # ruleid: test-hof-taint
+  sink(x)
+end
+toplevel_handler(source())
+# Top-level user-defined HOF
+custom_for_each(toplevel_items, &toplevel_sink2)

@@ -121,4 +121,7 @@ class TestHOF
     // Stub functions
     static string source() => "tainted";
     static void sink(string s) { }
+
+    // NOTE: Top-level HOF tests not supported in C# because static constructors
+    // create cycles with implicit constructor edges in the call graph.
 }

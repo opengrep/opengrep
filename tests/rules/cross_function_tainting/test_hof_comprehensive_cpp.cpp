@@ -119,6 +119,15 @@ void test_original_example() {
     });
 }
 
+// ===== Top-level HOF Tests =====
+// These test HOF callback detection at main scope level
+// C++ doesn't allow function calls at global level, so we test in main
+
+void toplevelHandler(std::string x) {
+    // ruleid: test-hof-taint
+    sink(x);
+}
+
 int main() {
     test_custom_map();
     test_custom_map_builtin();
@@ -127,5 +136,18 @@ int main() {
     test_builtin_for_each();
     test_builtin_transform();
     test_original_example();
+
+    // Top-level lambda callback
+    // ruleid: test-hof-taint
+    auto toplevelSink = [](std::string x) { sink(x); };
+    toplevelSink(source());
+
+    // Top-level method HOF (for_each with named callback)
+    std::vector<std::string> toplevelItems = {source()};
+    std::for_each(toplevelItems.begin(), toplevelItems.end(), toplevelHandler);
+
+    // Top-level user-defined HOF
+    customForEach<std::string>(toplevelItems, toplevelHandler);
+
     return 0;
 }

@@ -100,4 +100,12 @@ function source() {
 function sink($s) {
 }
 
+// ===== Top-level HOF Tests =====
+// These test HOF callback detection at script level (outside any function)
+
+// Top-level lambda callback
+// ruleid: test-hof-taint
+$toplevelSink = function($x) { sink($x); };
+$toplevelSink(source());
+
 ?>

@@ -1601,18 +1601,26 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
             let shape =
               (* Check if 'exp' is a known top-level function/method and, if it is,
                * give it a proper 'Fun' shape. Skip if we already have a Fun shape
-               * (e.g., from lambda assignment). *)
+               * (e.g., from lambda assignment). Also skip for temp variables to
+               * avoid incorrectly matching them to lambda signatures. *)
               match shape with
               | S.Fun _ -> shape (* Already has a Fun shape, keep it *)
               | _ ->
-                  let sign =
-                    if env.taint_inst.options.taint_intrafile then
-                      lookup_signature env exp arity
-                    else None
+                  let is_temp_var =
+                    match lval.base with
+                    | Var name -> String.starts_with ~prefix:"_tmp" (fst name.ident)
+                    | _ -> false
                   in
-                  match sign with
-                  | Some fun_sig -> S.Fun fun_sig
-                  | None -> shape
+                  if is_temp_var then shape
+                  else
+                    let sign =
+                      if env.taint_inst.options.taint_intrafile then
+                        lookup_signature env exp arity
+                      else None
+                    in
+                    (match sign with
+                    | Some fun_sig -> S.Fun fun_sig
+                    | None -> shape)
             in
             (taints, shape, lval_env)
         | __else__ ->

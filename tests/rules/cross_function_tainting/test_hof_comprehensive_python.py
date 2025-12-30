@@ -101,3 +101,23 @@ def test_original_example():
         changes = node.associated_pull_requests.nodes
         # ruleid: test-hof-taint
         sink(changes)
+
+# ===== Top-level HOF Tests =====
+# These test HOF callback detection at module level (outside any function)
+
+# Top-level lambda callback
+# ruleid: test-hof-taint
+toplevel_sink = lambda x: sink(x)
+toplevel_sink(source())
+
+# Top-level function HOF (map with named callback)
+def toplevel_handler(x):
+    # ruleid: test-hof-taint
+    sink(x)
+    return x
+
+toplevel_items = [source()]
+list(map(toplevel_handler, toplevel_items))
+
+# Top-level user-defined HOF
+custom_for_each(toplevel_items, toplevel_handler)

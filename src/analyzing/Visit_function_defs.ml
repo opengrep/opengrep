@@ -16,6 +16,15 @@
 module G = AST_generic
 module H = AST_generic_helpers
 
+(* Helper to extract Python-style lambda assignments: g = lambda x: ...
+   Returns the synthetic entity and function definition if this is a lambda assignment. *)
+let extract_lambda_assignment (e : G.expr) : (G.entity * G.function_definition) option =
+  match e.G.e with
+  | G.Assign ({ e = G.N (G.Id (id, id_info)); _ }, _, { e = G.Lambda fdef; _ }) ->
+      let ent = { G.name = G.EN (G.Id (id, id_info)); G.attrs = []; G.tparams = None } in
+      Some (ent, fdef)
+  | _ -> None
+
 class ['self] visitor =
   object (self : 'self)
     inherit [_] G.iter_no_id_info as super
@@ -40,6 +49,14 @@ class ['self] visitor =
       f None fdef;
       (* go into nested functions *)
       super#visit_function_definition f fdef
+
+    method! visit_expr f e =
+      match extract_lambda_assignment e with
+      | Some (ent, fdef) ->
+          f (Some ent) fdef;
+          let body = H.funcbody_to_stmt fdef.G.fbody in
+          self#visit_stmt f body
+      | None -> super#visit_expr f e
   end
 
 class ['self] visitor_with_class_context =
@@ -92,6 +109,14 @@ class ['self] visitor_with_class_context =
       f None !current_class fdef;
       (* go into nested functions *)
       super#visit_function_definition f fdef
+
+    method! visit_expr f e =
+      match extract_lambda_assignment e with
+      | Some (ent, fdef) ->
+          f (Some ent) !current_class fdef;
+          let body = H.funcbody_to_stmt fdef.G.fbody in
+          self#visit_stmt f body
+      | None -> super#visit_expr f e
   end
 
 (* NOTE: Removed [lazy] because it can crash when using domains. *)
@@ -139,6 +164,22 @@ let fold_with_class_context
    - Nested function: [None; Some parent_func; Some nested_func] (excluding current function)
 *)
 
+(* Convert G.name to IL.name for fn_id path construction.
+   Uses unsafe_default sid and clears id_resolved to ensure consistent
+   comparison in FunctionMap (which compares by string name + position). *)
+let g_name_to_il_name (g_name : G.name) : IL.name option =
+  match g_name with
+  | G.Id ((str, tok), id_info) ->
+      let id_info = { id_info with G.id_resolved = ref None } in
+      Some IL.{ ident = (str, tok); sid = G.SId.unsafe_default; id_info }
+  | _ -> None
+
+(* Convert G.entity to IL.name for fn_id path construction. *)
+let entity_to_il_name (ent : G.entity) : IL.name option =
+  match ent.G.name with
+  | G.EN name -> g_name_to_il_name name
+  | _ -> None
+
 let append_to_parrent_path parent_path class_il func_il =
   let visitor_parent_path =
     if parent_path = [] then [ class_il ] else parent_path
@@ -164,8 +205,8 @@ class ['self] visitor_with_parent_path =
               super#visit_definition f def)
       | G.FuncDef fdef ->
           (* Build fn_id path: [class_option; ...parent_path...; current_func] *)
-          let class_il = Option.map AST_to_IL.var_of_name !current_class in
-          let func_il = AST_to_IL.name_of_entity ent in
+          let class_il = Option.bind !current_class g_name_to_il_name in
+          let func_il = entity_to_il_name ent in
 
           (* Call the visitor function with parent path (without current function) *)
           let visitor_parent_path, current_fn_id =
@@ -179,8 +220,8 @@ class ['self] visitor_with_parent_path =
               super#visit_stmt f body)
       | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
           (* Handle lambda assignments like: const f = () => {...} *)
-          let class_il = Option.map AST_to_IL.var_of_name !current_class in
-          let func_il = AST_to_IL.name_of_entity ent in
+          let class_il = Option.bind !current_class g_name_to_il_name in
+          let func_il = entity_to_il_name ent in
           let visitor_parent_path, current_fn_id =
             append_to_parrent_path !parent_path class_il func_il
           in
@@ -195,8 +236,8 @@ class ['self] visitor_with_parent_path =
       | G.F stmt -> (
           match stmt.G.s with
           | G.DefStmt (ent, G.FuncDef fdef) ->
-              let class_il = Option.map AST_to_IL.var_of_name !current_class in
-              let func_il = AST_to_IL.name_of_entity ent in
+              let class_il = Option.bind !current_class g_name_to_il_name in
+              let func_il = entity_to_il_name ent in
               let visitor_parent_path, current_fn_id =
                 append_to_parrent_path !parent_path class_il func_il
               in
@@ -206,8 +247,8 @@ class ['self] visitor_with_parent_path =
                   self#visit_stmt f body)
           | G.DefStmt
               (ent, G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ }) ->
-              let class_il = Option.map AST_to_IL.var_of_name !current_class in
-              let func_il = AST_to_IL.name_of_entity ent in
+              let class_il = Option.bind !current_class g_name_to_il_name in
+              let func_il = entity_to_il_name ent in
               let visitor_parent_path, current_fn_id =
                 append_to_parrent_path !parent_path class_il func_il
               in
@@ -221,12 +262,26 @@ class ['self] visitor_with_parent_path =
       (* Anonymous nested functions *)
       let visitor_parent_path =
         if !parent_path = [] then
-          [ Option.map AST_to_IL.var_of_name !current_class ]
+          [ Option.bind !current_class g_name_to_il_name ]
         else !parent_path
       in
       f None visitor_parent_path fdef;
       (* No path change for anonymous functions - they don't add to the path *)
       super#visit_function_definition f fdef
+
+    method! visit_expr f e =
+      match extract_lambda_assignment e with
+      | Some (ent, fdef) ->
+          let class_il = Option.bind !current_class g_name_to_il_name in
+          let func_il = entity_to_il_name ent in
+          let visitor_parent_path, current_fn_id =
+            append_to_parrent_path !parent_path class_il func_il
+          in
+          f (Some ent) visitor_parent_path fdef;
+          Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
+              let body = H.funcbody_to_stmt fdef.G.fbody in
+              self#visit_stmt f body)
+      | None -> super#visit_expr f e
   end
 
 (* Visit all function definitions with parent path context. *)
@@ -251,4 +306,31 @@ let fold_with_parent_path
     (fun opt_ent parent_path fdef ->
       acc_ref := f !acc_ref opt_ent parent_path fdef)
     ast;
+  !acc_ref
+
+(* Visitor for Call expressions at top-level only (skips function bodies).
+   Handles both function calls f(...) and method calls obj.m(...) *)
+class ['self] toplevel_call_visitor =
+  object (_self : 'self)
+    inherit [_] G.iter_no_id_info as super
+    method! visit_function_definition _ _ = ()
+    method! visit_expr f e =
+      (match e.G.e with
+      | G.Call (callee, args) -> f e callee args
+      | _ -> ());
+      super#visit_expr f e
+  end
+
+(* Visit all Call expressions at top level (outside function bodies).
+   Callback receives: full call expr, callee expr, and arguments *)
+let visit_toplevel_calls (f : G.expr -> G.expr -> G.arguments -> unit) (ast : G.program) : unit =
+  let v = new toplevel_call_visitor in
+  v#visit_program f ast
+
+(* Fold over all Call expressions at top level *)
+let fold_toplevel_calls (f : 'acc -> G.expr -> G.expr -> G.arguments -> 'acc)
+    (init_acc : 'acc) (ast : G.program) : 'acc =
+  let acc_ref = ref init_acc in
+  let v = new toplevel_call_visitor in
+  v#visit_program (fun call_e callee args -> acc_ref := f !acc_ref call_e callee args) ast;
   !acc_ref
