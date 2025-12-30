@@ -804,6 +804,7 @@ let check_rules ~match_hook
          match lang with
          | Lang.Apex
          | Lang.C
+         | Lang.Clojure
          | Lang.Cpp
          | Lang.Csharp
          | Lang.Elixir

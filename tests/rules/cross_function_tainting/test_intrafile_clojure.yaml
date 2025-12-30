@@ -1,4 +1,3 @@
-
 rules:
 - id: taint-call
   mode: taint
@@ -9,20 +8,12 @@ rules:
     - pattern-either:
       - pattern: |
           (source ...)
-      # because (-> source)
-      # - pattern: |
-      #     source
   pattern-sinks:
     - pattern-either: 
       - pattern: |
           (sink ...)
-      # because (-> sink)
-      # - pattern: |
-      #     sink
   pattern-sanitizers:
     - pattern-either: 
       - pattern: |
           (sanitize ...)
-      # because (-> sanitize)
-      # - pattern: |
-      #     sanitize
+
