@@ -1716,13 +1716,12 @@ and insert_threaded
     | _ ->
       `List_lit ([], ((loc, "("), [`Form target_form; `Form value_form], (loc, ")")))
 
-(* How about (-> e e1 ... e2) ie ellipsis. Now becomes: (e2 (... (e1 e)))
- * and what will it match? Only call. Users would expect it to match any sequence
- * of e in the pipeline. But this cannot be macroexpanded properly. Should we
- * convert to deep ellipsis? In insertion, if hd is ..., embed in a deep ellipsis?
- * This way we should get (e2 (<... (e1 e) ...>)) which is closer to the intention
- * of the user. This has now been implemented (see above function).
- * That part was better with S.At_IL (the *_lazy variation below. *)
+(* How about (-> e e1 ... e2) ie ellipsis. Direct translation makes it:
+ * (e2 (... (e1 e))) and what will it match? Only call. Users would expect it to
+ * match any sequence of e in the pipeline. But this cannot be macroexpanded properly.
+ * So we convert to deep ellipsis. This way we should get (e2 (<... (e1 e) ...>)) which
+ * is closer to the intention of the user. This has now been implemented (see above
+ * function). That part was better with S.At_IL (the *_lazy variation below. *)
 and map_thread_first_last_form_eager
     (env : env) (forms: CST.form list) : G.expr =
   match forms with
@@ -1801,8 +1800,6 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
         | _ (* cond->> *) -> Insert_last
       in
 
-      (* TODO: Handle ... which should abstract over test and body.
-       * Test with search rule. *)
       let test_expr_pairs =
         let rec aux acc = function
           | test_expr_form :: body_expr_form :: rest ->
@@ -1817,8 +1814,18 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
        let clauses_threaded =
          List_.map
            (fun (test_expr_form, body_expr_form) ->
-              (test_expr_form,
-               insert_threaded env pos fake_let_var_sym body_expr_form))
+              (* We keep ... ... as is in patterns, so that
+               * we can convert to a single ellipsis in between
+               * the synthetic let bindings created below.
+               * This allows to match with patterns like:
+               * (cond-> e ... ... $TEST $FORM). *)
+              match test_expr_form, body_expr_form with
+              | `Sym_lit (_, ((_, "..."))), `Sym_lit (_, ((_, "...")))
+                when in_pattern env ->
+                (test_expr_form, body_expr_form)
+              | _ ->
+                (test_expr_form,
+                 insert_threaded env pos fake_let_var_sym body_expr_form))
            test_expr_pairs
        in
        (* Now we have clauses (test, body') where body' is (-> g body),
@@ -1866,20 +1873,24 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
            in
            let last_binding, intermediate_binding_exprs =
              List.fold_left_map
-               (* TODO: Handle ... here, we need new type and in this
-                * case we don't generate Let-If but Ellipsis. *)
                (fun last_binding (test_expr, body_expr) ->
                   begin match last_binding with
                  | G.PatId (prev_ident, id_info) ->
-                     let new_tmp = make_tmp () in
-                     let if_expr =
-                         make_if_thread_else
-                           (G.Id (prev_ident, id_info))
-                           pos
-                           test_expr
-                           body_expr
-                     in
-                     (new_tmp, (make_let new_tmp if_expr))
+                     begin match test_expr.G.e, body_expr.G.e with
+                       (* So we can match using: (cond-> e ... ... $TEST $FORM). *)
+                       | G.Ellipsis tk, G.Ellipsis _ when in_pattern env ->
+                         last_binding, test_expr
+                       | _ -> 
+                         let new_tmp = make_tmp () in
+                         let if_expr =
+                             make_if_thread_else
+                               (G.Id (prev_ident, id_info))
+                               pos
+                               test_expr
+                               body_expr
+                         in
+                         (new_tmp, (make_let new_tmp if_expr))
+                     end
                  | _ -> assert false
                   end
                )
@@ -1890,8 +1901,13 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
              | G.PatId (last_ident, id_info) -> G.Id (last_ident, id_info)
              | _ -> assert false
            in
-           let last_if_expr = 
-             make_if_thread_else last_id pos last_test last_expr
+           let last_if_expr =
+             begin match last_test.G.e, last_expr.G.e with
+               (* So we can match using: (cond-> e ... ...). *)
+               | G.Ellipsis tk, G.Ellipsis _ when in_pattern env ->
+                 last_test
+               | _ -> make_if_thread_else last_id pos last_test last_expr
+             end
            in
            let body_exprs =
              List_.map (fun e -> G.E e)
