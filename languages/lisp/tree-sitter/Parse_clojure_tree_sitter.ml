@@ -568,6 +568,7 @@ and map_list_form
     | Some "throw" -> map_throw_form env forms
     | Some "as->" -> map_as_thread_form env forms
     | Some "comment" -> map_comment_form env forms
+    (* | Some "doto" -> map_doto_form env forms *) (* XXX: Treat as normal function. *)
     (* | Some "format" -> map_format_form env forms *) (* XXX: Treat as normal function. *)
     | Some "loop" -> map_loop_form env forms
     | Some ("defmacro" | "definline") -> map_defmacro_form env forms
@@ -586,14 +587,14 @@ and map_list_form
 
 and map_form (env : env) (x : CST.form) : G.expr =
   match x with
-  | `Semg_deep_exp (v1, v2, v3) ->
+  | `Semg_deep_exp (lt, _v2_gap, expr_form, _v4_gap, gt) ->
     begin
     match env.extra.kind with
     | Pattern ->
-      let v1 = (* "<..." *) token env v1 in
-      let v2 = map_form env v2 in
-      let v3 = (* "...>" *) token env v3 in
-      DeepEllipsis (v1, v2, v3) |> G.e
+      let v1 = (* "<..." *) token env lt in
+      let v3 = map_form env expr_form in
+      let v5 = (* "...>" *) token env gt in
+      DeepEllipsis (v1, v3, v5) |> G.e
     | _ ->
       raise_parse_error
         "Deep ellipsis <... ...> is only allowed in Pattern mode."
@@ -652,6 +653,7 @@ and map_form (env : env) (x : CST.form) : G.expr =
           let v4 = map_bare_list_lit env v4 in
           R.Tuple [ v2; v3; v4 ] )
     |> expr_of_raw
+  (* TODO: Handle this. *)
   | `Ns_map_lit (v1, v2, v3, v4, v5) ->
     (*
      #:person{:first "Han" ::second "Solo"}
@@ -715,6 +717,7 @@ and map_form (env : env) (x : CST.form) : G.expr =
           let v4 = map_form env v4 in
           R.Tuple [ v2; raw_of_expr v4 ] )
     |> expr_of_raw
+  (* TODO: Handle this. *)
   | `Quot_lit (v1, v2, v3, v4) ->
      (* TODO: function (quote ...) behaves the same. *)
       R.Case
@@ -725,6 +728,7 @@ and map_form (env : env) (x : CST.form) : G.expr =
           let v4 = map_form (with_mode env Quoted) v4 in
           R.Tuple [ v2; raw_of_expr v4 ] )
     |> expr_of_raw
+  (* TODO: Handle this. *)
   | `Syn_quot_lit (v1, v2, v3, v4) ->
       R.Case
         ( "Syn_quot_lit",
@@ -803,10 +807,21 @@ and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
  * are evaluated in order.  Returns x.
  *  (doto (new java.util.HashMap) (.put "a" 1) (.put "b" 2))
  *
+ * opengrep.clj=> (macroexpand '(doto (new java.util.HashMap) (.put "a" 1) (.put "b" 2)))
+ * (let* [g (new java.util.HashMap)] (.put g "a" 1) (.put g "b" 2) g) 
+ *
  * TODO: This one requires a fresh symbol for x, and then we need
  * a letpattern and to thread the symbol in the forms.
+ *
+ * TODO: For search mode, we are better off not translating this; but for
+ * tainting, it's probably better to translate. The issue is that most
+ * people would naturally write patterns like `(.put "a" 1)` which won't
+ * match once `doto` is expanded.
+ *
+ * NOTE: At them moment this is interpeted as a normal function call,
+ * because it can become confusing for users if it's expanded in search mode.
  *)
-and map_doto_form (env : env) (forms : CST.form list) : G.expr =
+and _UNUSED_map_doto_form (env : env) (forms : CST.form list) : G.expr =
   todo env ()
 
 (* TODO: some-> / some->> are similar to -> / ->> but need a let bindings
@@ -1687,7 +1702,7 @@ and insert_threaded
       in
       `List_lit (meta, (lp, List_.map (fun src -> `Form src) srcs', rp))
     | _ ->
-      raise_parse_error "Invalid thread target form."
+      raise_parse_error "Invalid thread target form: list is empty."
     end
   | _ ->
     (* Create fake tokens for brackets since they will (should) be thrown away anyway. *)
@@ -1695,11 +1710,19 @@ and insert_threaded
     let module L = Tree_sitter_run.Loc in
     let pos = L.{row = -1; column = -1} in
     let loc = L.{start = pos; end_ = pos} in
-    `List_lit ([], ((loc, "("), [`Form target_form; `Form value_form], (loc, ")")))
+    match target_form with
+    | `Sym_lit (_meta, ((_loc, "...") as ellipsis_tk)) when in_pattern env ->
+      `Semg_deep_exp ((loc, "<..."), [], value_form, [], (loc, "...>"))
+    | _ ->
+      `List_lit ([], ((loc, "("), [`Form target_form; `Form value_form], (loc, ")")))
 
-(* TODO: How about (-> e e1 ... e2) ie ellipsis. Now becomes: (e2 (... (e1 e)))
- * and what will it match? Only call. That part was better with S.At_IL (the *_lazy
- * variation below. *)
+(* How about (-> e e1 ... e2) ie ellipsis. Now becomes: (e2 (... (e1 e)))
+ * and what will it match? Only call. Users would expect it to match any sequence
+ * of e in the pipeline. But this cannot be macroexpanded properly. Should we
+ * convert to deep ellipsis? In insertion, if hd is ..., embed in a deep ellipsis?
+ * This way we should get (e2 (<... (e1 e) ...>)) which is closer to the intention
+ * of the user. This has now been implemented (see above function).
+ * That part was better with S.At_IL (the *_lazy variation below. *)
 and map_thread_first_last_form_eager
     (env : env) (forms: CST.form list) : G.expr =
   match forms with
@@ -1818,6 +1841,7 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
              | _ -> assert false
              end
            in
+           (* TODO: Maybe use Tok.ExpandedTok? *)
            let fake_g = H.str env (snd fake_let_var_sym_lit) in
            let make_tmp () =
              let id_info = G.empty_id_info ~hidden:true () in
@@ -1923,7 +1947,7 @@ and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr 
  * TODO: How about deep expr matching? Descend into context?
  * TODO:
  * How about (-> e (as-> x e1 ... en))
- * opengrep.clj=> (-> 5 (as-> x (+ x x) (+ x x)) )
+ * opengrep.clj=> (-> 5 (as-> x (+ x x) (+ x x)))
  * 20
  * This is a problem for the S.At_IL mode, but not for S.At_generic. 
  *)
@@ -2017,7 +2041,8 @@ and map_when_form (env : env) (forms : CST.form list) : G.expr =
     (* FIXME (S.At_IL):
      * (-> test (when)) will fail but is legal clojure and becomes nil.
      * On the other hand the condition above exists because (when) is
-     * not correct in general. *)
+     * not correct in general. But we can just relax the pattern to allow
+     * also (when). *)
     raise_parse_error "Invalid when form."
 
 and map_when_not_form (env : env) (forms : CST.form list) : G.expr =

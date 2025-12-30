@@ -191,7 +191,6 @@
   ;; ruleid: taint-call
   (-> x
       (:user)
-
       (sink)))
 
 (fn [x] 
@@ -199,7 +198,6 @@
   (-> x
       (-> func)
       :input
-
       (sink)))
 
 ;; letfn
