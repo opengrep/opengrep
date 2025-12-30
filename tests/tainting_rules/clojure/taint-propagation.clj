@@ -62,7 +62,7 @@
 (def res
   (fn [careful input]
     (do
-      (let [x (source input)] ;; fixme other rule also: source
+      (let [x (source input)]
         (if careful
           (let [si (sanitize x)]
             ;; OK:
@@ -145,38 +145,38 @@
 (defn f [x] 
   (let [z x] 
     (let [k z] 
-      ; ruleid: taint-call
+      ;; ruleid: taint-call
       (if 1 (->> k ((fn [s] (sink s))))))
     (let [s 5] 
-      ; ok:
+      ;; ok:
       (if 1 (sink k))) ;; k is out of scope here
     (do 
-      ; ok:
+      ;; ok:
       (if 1 (sink k)))))
 
 (defn f [x] 
   (let [z x] 
     (let [k z] 
-      ; ruleid: taint-call
+      ;; ruleid: taint-call
       (if 1 (sink k)))))
 
 (defn f [x] 
   (let [z x] 
     (let [k z] 
-      ; ruleid: taint-call
+      ;; ruleid: taint-call
       (if 1 (sink k) nil))))
 
 (def f 
   (fn [x] 
     (let [z x] 
       (let [k z] 
-        ; ruleid: taint-call
+        ;; ruleid: taint-call
         (if 1 (sink k)))
       (let [s 5] 
-        ; ok:
+        ;; ok:
         (if 1 (sink k)))
       (do 
-        ; ok:
+        ;; ok:
         (if 1 (sink k))))))
 
 (def f
@@ -188,14 +188,14 @@
       (sink z))))
 
 (defn f[x]
-      ;; ruleid: taint-call
+  ;; ruleid: taint-call
   (-> x
       (:user)
 
       (sink)))
 
 (fn [x] 
-      ;; ruleid: taint-call
+  ;; ruleid: taint-call
   (-> x
       (-> func)
       :input
@@ -334,3 +334,9 @@
       true sink
       true sanitize
       true sink))
+
+(defn f[x]
+  ;; ruleid: taint-call
+  (some-> x
+      (:user)
+      (sink)))

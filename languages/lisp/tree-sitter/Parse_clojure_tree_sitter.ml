@@ -563,7 +563,7 @@ and map_list_form
     | Some "do" -> map_do_form env forms
     | Some ("->" | "->>") -> map_thread_first_last_form env forms
     | Some ("cond->" | "cond->>") -> map_cond_thread_first_last_form env forms
-    (* TODO: | Some ("some->" | "some->>") -> map_some_thread_first_last_form env forms *)
+    | Some ("some->" | "some->>") -> map_some_thread_first_last_form env forms
     | Some "try" -> map_try_catch_finally_form env forms
     | Some "throw" -> map_throw_form env forms
     | Some "as->" -> map_as_thread_form env forms
@@ -795,6 +795,32 @@ and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
    * The parameters are not evaluated. *)
   todo env ()
 
+(*
+ * (doto x & forms)
+ *
+ * Evaluates x then calls all of the methods and functions with the
+ * value of x supplied at the front of the given arguments.  The forms
+ * are evaluated in order.  Returns x.
+ *  (doto (new java.util.HashMap) (.put "a" 1) (.put "b" 2))
+ *
+ * TODO: This one requires a fresh symbol for x, and then we need
+ * a letpattern and to thread the symbol in the forms.
+ *)
+and map_doto_form (env : env) (forms : CST.form list) : G.expr =
+  todo env ()
+
+(* TODO: some-> / some->> are similar to -> / ->> but need a let bindings
+ * translation similar to cond-> / cond->>.
+ *
+ * opengrep.clj=> (macroexpand '(some->> x (-> sink) func))
+ * (let* [g x
+ *        g (if (clojure.core/nil? g) nil (clojure.core/->> g (-> sink)))]
+ *  (if (clojure.core/nil? g) nil (clojure.core/->> g func)))
+ *)
+and map_some_thread_first_last_form (env : env) (forms : CST.form list) : G.expr =
+  (* Temporary solution. *)
+  map_thread_first_last_form_eager env forms
+
 (* TODO:
  *  
  * Imagine a sink with the recur values:
@@ -811,7 +837,7 @@ and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
  *             ;; Now we store the tainted item into metadata
  *             new-metadata item]
  *         (recur (rest data) new-metadata)))))
-*)
+ *)
 and map_loop_form (env : env) (forms : CST.form list) : G.expr =
   todo env ()
 
@@ -1671,15 +1697,19 @@ and insert_threaded
     let loc = L.{start = pos; end_ = pos} in
     `List_lit ([], ((loc, "("), [`Form target_form; `Form value_form], (loc, ")")))
 
+(* TODO: How about (-> e e1 ... e2) ie ellipsis. Now becomes: (e2 (... (e1 e)))
+ * and what will it match? Only call. That part was better with S.At_IL (the *_lazy
+ * variation below. *)
 and map_thread_first_last_form_eager
     (env : env) (forms: CST.form list) : G.expr =
   match forms with
     | `Sym_lit (_meta_thread,
-                ((_loc, (("->" | "->>") as first_or_last)) as thread_tk))
+                ((_loc, (("->" | "->>" | "some->" | "some->>") as first_or_last))
+                 as thread_tk))
       :: (v_form :: rest_forms) ->
         let insert_pos =
           match first_or_last with
-          | "->" -> Insert_first
+          | ("->" | "some->") -> Insert_first
           | _ (* "->>" *) -> Insert_last
         in
         let expanded =
@@ -1713,7 +1743,7 @@ and map_thread_first_last_form_lazy (env : env) (forms: CST.form list) : G.expr 
       in
       let rest_exprs = List_.map
           (fun form ->
-             (* TODO: Convert `sink` to `(sink)` so we don't have to add
+             (* We convert `sink` to `(sink)` so we don't have to add
               * a `sink` pattern to sinks, because this makes all instances
               * of the name tainted, even when not in call position. *)
              G.E (map_form
@@ -1738,6 +1768,8 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
                 ((loc, (("cond->" | "cond->>") as first_or_last)) as thread_tk))
       :: (v_expr :: clauses as rest_forms) ->
 
+      (* Note that we piggyback on the location of "cond->" for the new
+       * variable we are introducing. *)
       let fake_let_var_sym_lit = ([], ((loc, G.implicit_param))) in
       let fake_let_var_sym = `Sym_lit fake_let_var_sym_lit in
       let pos =
@@ -1746,6 +1778,8 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
         | _ (* cond->> *) -> Insert_last
       in
 
+      (* TODO: Handle ... which should abstract over test and body.
+       * Test with search rule. *)
       let test_expr_pairs =
         let rec aux acc = function
           | test_expr_form :: body_expr_form :: rest ->
@@ -1808,6 +1842,8 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
            in
            let last_binding, intermediate_binding_exprs =
              List.fold_left_map
+               (* TODO: Handle ... here, we need new type and in this
+                * case we don't generate Let-If but Ellipsis. *)
                (fun last_binding (test_expr, body_expr) ->
                   begin match last_binding with
                  | G.PatId (prev_ident, id_info) ->
@@ -1905,8 +1941,8 @@ and map_as_thread_form (env : env) (forms: CST.form list) : G.expr =
     | _ -> None, env
   in
   let map_pat_and_rest pat_and_rest_forms =
-    (* What about (->> x (as-> e)) ~> e? Not handled for now, should be
-     * extremely uncommon. *)
+    (* S.At_IL: What about (->> x (as-> e)) ~> e? Not handled for now, should be
+     * extremely uncommon. For S.At_generic this is no issue. *)
     match pat_and_rest_forms with
       | pat_form :: rest_forms ->
         let pat = map_binding_form env pat_form in
@@ -1940,7 +1976,7 @@ and map_as_thread_form (env : env) (forms: CST.form list) : G.expr =
 
     | S.At_IL, ( None | Some Thread_last ),
       `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
-      (* NOTE: In S.At_IL, under (-> e ...) this may not exist. *)
+      (* NOTE: In S.At_IL, under (-> e ...) the v_expr_form will not exist. *)
       :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest ) ->
 
       let pat_and_rest = map_pat_and_rest pat_and_rest in
