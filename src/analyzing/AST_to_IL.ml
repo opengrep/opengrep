@@ -2081,14 +2081,6 @@ and stmt_aux env st =
       let todo_stmt = fixme_stmt ToDo (G.TodoK ("unsafe_block", tok)) in
       let env, new_stmts = stmt env stmt1 in
       (env, todo_stmt @ new_stmts)
-  (* C#: extension block *)
-  | G.OtherStmtWithStmt (G.OSWS_Extension, anys, def_stmt)
-        when env.lang =*= Lang.Csharp ->
-      let env, def_stmt = stmt env def_stmt in
-      let stmts = H.filter_stmts anys in
-      let env, stmts = List.fold_left_map stmt env stmts in
-      let stmts = List.concat stmts in
-      (env, def_stmt @ stmts)
   | G.OtherStmt (OS_Async, [ G.S stmt1 ]) ->
       let todo_stmt = fixme_stmt ToDo (G.TodoK ("async", G.fake "async")) in
       let env, new_stmts = stmt env stmt1 in
