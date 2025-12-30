@@ -847,7 +847,6 @@ and map_other_stmt_with_stmt_operator = function
   | OSWS_Todo -> "S_Todo"
   | OSWS_Block _TODO -> "S_Todo"
   | OSWS_SEH -> "S_SEH"
-  | OSWS_Extension -> "S_Extension"
 
 and map_condition = function
   | Cond v1 ->

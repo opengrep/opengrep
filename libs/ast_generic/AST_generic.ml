@@ -1387,8 +1387,6 @@ and other_stmt_with_stmt_operator =
   | OSWS_Iterator
   (* Microsoft-specific C/C++ extension for Structured Exception Handling *)
   | OSWS_SEH
-  (* C# extension block *)
-  | OSWS_Extension
   (* e.g., Case/Default outside of switch in C/C++, StmtTodo in C++ *)
   | OSWS_Todo
 

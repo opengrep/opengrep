@@ -3433,7 +3433,7 @@ and declaration (env : env) (x : CST.declaration) : stmt =
             let funcdef =
               FuncDef
                 {
-                  fkind = (Method, arrow);
+                  fkind = (Arrow, arrow);
                   fparams = fb [];
                   frettype = Some v3;
                   fbody = G.FBStmt (ExprStmt (expr, v2) |> G.s);
@@ -3452,17 +3452,19 @@ and declaration (env : env) (x : CST.declaration) : stmt =
       let _v1 = (* "extension" *) token env v1 in
       let _v2 = (* "(" *) token env v2 in
       let typ, _attrs = parameter_type_with_modifiers env v3 in
-      let _v5 = (* ")" *) token env v5 in
-      let decls = declaration_list env v6 in
-      let entity = 
+      let v4 =
         match v4 with
-        | Some v4 -> basic_entity (identifier env v4)
-        | None -> basic_entity ~hidden:true (G.implicit_param_id (fake "implicit"))
+        | Some v4 ->
+            let attrs = [ KeywordAttr (Private, fake "private") ] in
+            let entity = basic_entity ~attrs (identifier env v4) in
+            let def = VarDef { vinit = None; vtype = Some typ; vtok = None} in
+            [ DefStmt (entity, def) |> G.s ]
+        | _ -> []
       in
-      let def = VarDef { vinit = None; vtype = Some typ; vtok = None} in
-      let v4 = DefStmt (entity, def) |> G.s in
-      G.OtherStmtWithStmt (G.OSWS_Extension, [G.S (G.Block decls |> G.s)], v4) |> G.s
- 
+      let _v5 = (* ")" *) token env v5 in
+      let open_br, stmts, close_br = declaration_list env v6 in
+      Block (open_br, v4 @ stmts, close_br) |> G.s
+    
 (*****************************************************************************)
 (* Entry points *)
 (*****************************************************************************)

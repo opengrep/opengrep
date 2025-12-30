@@ -162,7 +162,3 @@ val add_semicolon_to_last_var_def_and_convert_to_stmts :
 
 val add_semicolon_to_last_def_and_convert_to_stmts :
   AST_generic.sc -> AST_generic.definition list -> AST_generic.stmt list
-
-(* observers *)
-
-val filter_stmts : AST_generic.any list -> AST_generic.stmt list

@@ -769,16 +769,3 @@ let add_semicolon_to_last_def_and_convert_to_stmts (sc : sc)
     | xs -> xs
   in
   ys |> List_.map (fun (ent, def) -> DefStmt (ent, def) |> G.s)
-
-(*****************************************************************************)
-(* Observers *)
-(*****************************************************************************)
-
-let filter_stmts (xs : AST_generic.any list) : AST_generic.stmt list =
-  let to_stmts x =
-    match x with
-    | G.Ss ss -> ss
-    | G.S s -> [s]
-    | _ -> []
-  in
-  List.concat_map to_stmts xs
