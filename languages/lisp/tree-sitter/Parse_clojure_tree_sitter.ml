@@ -833,7 +833,7 @@ and _UNUSED_map_doto_form (env : env) (forms : CST.form list) : G.expr =
  *  (if (clojure.core/nil? g) nil (clojure.core/->> g func)))
  *)
 and map_some_thread_first_last_form (env : env) (forms : CST.form list) : G.expr =
-  (* Temporary solution. *)
+  (* XXX: Temporary solution. *)
   map_thread_first_last_form_eager env forms
 
 (* TODO:
@@ -854,7 +854,8 @@ and map_some_thread_first_last_form (env : env) (forms : CST.form list) : G.expr
  *         (recur (rest data) new-metadata)))))
  *)
 and map_loop_form (env : env) (forms : CST.form list) : G.expr =
-  todo env ()
+  (* XXX: temporarily handle as function application. *)
+  map_call_form env forms
 
 (* (format fmt & args) *)
 and _UNUSED_map_format_form (env : env) (forms : CST.form list) : G.expr =
