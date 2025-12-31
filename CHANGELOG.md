@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.14.0](https://github.com/opengrep/opengrep/releases/tag/v1.14.0) - 31-12-2025
+
+### Improvements
+
+* Support for higher-order functions in intrafile taint analysis by @corneliuhoffman in #469 and #513
+* Clojure: Improved support for Clojure (incl. tainting) by @dimitris-m in #501
+* Dart: Improved support for Dart by @maciejpirog in #508
+* C#: Better handing of extension methods and extension blocks by @maciejpirog in #514
+
+### Fixes
+
+* Bump cygwin install action by @dimitris-m in #503 and #509 https://github.com/opengrep/opengrep/pull/503
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.13.2...v1.14.0
+
+
 ## [1.13.2](https://github.com/opengrep/opengrep/releases/tag/v1.13.2) - 17-12-2025
 
 ### Improvements
