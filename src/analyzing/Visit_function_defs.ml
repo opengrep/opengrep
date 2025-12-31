@@ -1,6 +1,6 @@
 (* Iago Abal
  *
- * Copyright (C) 2022 r2c
+ * Copyright (C) 2022 r2c, Opengrep 2025
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -23,6 +23,7 @@ let extract_lambda_assignment (e : G.expr) : (G.entity * G.function_definition) 
   | G.Assign ({ e = G.N (G.Id (id, id_info)); _ }, _, { e = G.Lambda fdef; _ }) ->
       let ent = { G.name = G.EN (G.Id (id, id_info)); G.attrs = []; G.tparams = None } in
       Some (ent, fdef)
+  (* This one was added for Clojure, but may apply to more translations. *)
   | G.LetPattern (pat, { e = G.Lambda fdef; _ }) ->
       let ent = H.entity_of_pattern pat in
       Some (ent, fdef)
