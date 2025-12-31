@@ -333,8 +333,31 @@
       true sanitize
       true sink))
 
-(defn f[x]
+(defn f [x]
   ;; ruleid: taint-call
   (some-> x
       (:user)
       (sink)))
+
+(defn f [x]
+  ;; ruleid: taint-call
+  (try (sink x)))
+
+(defn f [x]
+  ;; ruleid: taint-call
+  (try (sink x)
+       (catch Exception e (println e) (sink e))))
+
+(defn f [x]
+  ;; ruleid: taint-call
+  (try (sink x)
+       ;; ruleid: taint-call
+       (finally (sink x))))
+
+(defn f [x]
+  ;; ruleid: taint-call
+  (try (sink x)
+       ;; ruleid: taint-call
+       (catch Exception e (println e) (sink x))
+       ;; ruleid: taint-call
+       (finally (sink x))))

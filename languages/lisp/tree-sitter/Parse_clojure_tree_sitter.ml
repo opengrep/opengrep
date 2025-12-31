@@ -211,10 +211,20 @@ type list_binding_form_state =
   | At_as_list of G.pattern list * Tok.t (* the :as *)
   | After_as_list of G.pattern list * G.ident
 
+type try_catch_finally_state =
+  | Try_exprs of Tok.t (* try *) * G.expr list
+  | At_catch_clause of (Tok.t (* catch *) * G.catch_exn * G.expr list) list
+  | At_finally_clause of Tok.t (* finally *) * G.expr list
+
 let expr_to_stmt e =
   match e.e with
     | StmtExpr st -> st
     | _else_ -> s (ExprStmt (e, sc))
+
+let exprblock exprs =
+  let exs_any = List_.map (fun e -> G.E e) exprs in
+  G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
+  |> G.e
 
 let with_mode env mode =
   H.{env with extra = {env.extra with mode}}
@@ -756,34 +766,6 @@ and map_form (env : env) (x : CST.form) : G.expr =
           let v4 = map_form (with_mode env Normal) v4 in
           R.Tuple [ v2; raw_of_expr v4 ] )
     |> expr_of_raw
-
-(*
- * (try expr* catch-clause* finally-clause?)
- *  
- * catch-clause → (catch classname name expr* )
- * finally-clause → (finally expr* )
- * 
- * The exprs are evaluated and, if no exceptions occur, the value of the
- * last expression is returned. If an exception occurs and catch-clauses
- * are provided, each is examined in turn and the first for which the thrown
- * exception is an instance of the classname is considered a matching catch-clause.
- * If there is a matching catch-clause, its exprs are evaluated in a context in
- * which name is bound to the thrown exception, and the value of the last is the
- * return value of the function. If there is no matching catch-clause, the exception
- * propagates out of the function. Before returning, normally or abnormally, any
- * finally-clause exprs will be evaluated for their side effects.
- *
- * But note:
- * (->> (finally (println "67")) (try (+ 1 2)))
- * works.
- * If we macroexpanded during translation we could handle that, but currently it's
- * difficult.
- * TODO: Macroexpand but also tag with OtherExpr wrappers? 
- *)
-and map_try_catch_finally_form (env : env) (forms : CST.form list) : G.expr =
-  (* TODO: Need to actually extract up to the first (catch ...). Maybe simple
-   * rec aux function that splits the forms in 2 parts (or 3, with finally). *)
-  todo env ()
 
 (* TODO: Instead of Call, make list container, works for rest forms
  * inductively because env should say it's a quoted context.
@@ -2326,6 +2308,143 @@ and map_throw_form (env : env) (forms : CST.form list) : G.expr =
     | _ ->
       (* FIXME (S.At_IL): (-> (Exception. "boom") (throw)) is valid. *)
       raise_parse_error "Invalid throw form."
+
+(*
+ * (try expr* catch-clause* finally-clause?)
+ *
+ * catch-clause → (catch classname name expr* )
+ * finally-clause → (finally expr* )
+ *
+ * The exprs are evaluated and, if no exceptions occur, the value of the
+ * last expression is returned. If an exception occurs and catch-clauses
+ * are provided, each is examined in turn and the first for which the thrown
+ * exception is an instance of the classname is considered a matching catch-clause.
+ * If there is a matching catch-clause, its exprs are evaluated in a context in
+ * which name is bound to the thrown exception, and the value of the last is the
+ * return value of the function. If there is no matching catch-clause, the exception
+ * propagates out of the function. Before returning, normally or abnormally, any
+ * finally-clause exprs will be evaluated for their side effects.
+ *
+ * But note:
+ * (->> (finally (println "67")) (try (+ 1 2)))
+ * works when using the default S.At_generic.
+ *)
+and map_try_catch_finally_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+  | `Sym_lit (_meta, ((_loc, ("try")) as try_tk)) :: rest_forms ->
+    let state =
+      List.fold_left
+        (fun acc form ->
+           match form with
+           | `List_lit (_meta, (lp, srcs, rp)) ->
+             let list_forms = forms_in_source env srcs in
+             begin match acc, list_forms with
+               | ( Try_exprs _ | At_catch_clause _ ) :: acc',
+                 `Sym_lit (_meta, ((_loc, ("catch")) as catch_tk))
+                 :: `Sym_lit class_name :: `Sym_lit ex_name
+                 :: catch_exprs ->
+                 let class_name_expr = G.Name (map_name env class_name) in
+                 let ex_name_ident = G.P (map_sym_lit_pat env ex_name) in
+                 let exprs =
+                   List_.map (map_form env) catch_exprs
+                 in
+                 begin match acc with
+                   | Try_exprs _ :: acc' ->
+                     let tk = H.str env catch_tk in
+                     At_catch_clause
+                       [ snd tk,
+                         G.OtherCatch (tk,
+                                       [class_name_expr; ex_name_ident]),
+                         exprs ] :: acc
+                   | At_catch_clause catch_state :: acc' ->
+                     let tk = H.str env catch_tk in
+                     At_catch_clause
+                       ((snd tk,
+                         G.OtherCatch (tk,
+                                       [class_name_expr; ex_name_ident]),
+                         exprs) :: catch_state)
+                     :: acc'
+                   | _ -> assert false
+                 end
+               | ( Try_exprs _ | At_catch_clause _ ) :: acc',
+                 `Sym_lit (_meta, ((_loc, ("finally")) as finally_tk))
+                 :: finally_exprs ->
+                 let tk = token env finally_tk in
+                 At_finally_clause
+                   (tk, List_.map (map_form env) finally_exprs)
+                 :: acc
+               (* At this point we know that we don't have a catch or finally
+                * in the form head. *)
+               | Try_exprs (tk, try_expr_list) :: acc', _ ->
+                 let expr = map_form env form in
+                 Try_exprs (tk, expr :: try_expr_list) :: acc'
+               | _ -> raise_parse_error "Invalid try-catch-finally form."
+             end
+           | _ -> raise_parse_error "Invalid try-catch-finally form."
+        )
+        [Try_exprs (token env try_tk, [])]
+        rest_forms
+    in
+    let state = List.rev state
+    in
+    begin match state with
+      (* Try *)
+      | [ Try_exprs (try_tk, try_exprs) ] ->
+        G.Try (try_tk,
+               exprblock (List.rev try_exprs) |> expr_to_stmt,
+               [],
+               None,
+               None)
+        |> G.s |> stmt_to_expr
+      (* Try-Finally *)
+      | [ Try_exprs (try_tk, try_exprs);
+            At_finally_clause (finally_tk, finally_exprs) ] ->
+            G.Try (try_tk,
+                 exprblock (List.rev try_exprs) |> expr_to_stmt,
+                 [],
+                 None,
+                 Some (finally_tk,
+                         exprblock (List.rev finally_exprs ) |> expr_to_stmt))
+            |> G.s |> stmt_to_expr
+      (* Try-Catch *)
+      | [ Try_exprs (try_tk, try_exprs);
+          At_catch_clause catch_clauses ] ->
+        let catch_clauses =
+          List.rev_map
+            (fun (tk, catch_kind, exprs) ->
+               (tk,
+                catch_kind,
+                exprblock (List.rev exprs) |> expr_to_stmt))
+            catch_clauses
+        in
+        G.Try (try_tk,
+               exprblock (List.rev try_exprs) |> expr_to_stmt,
+               catch_clauses,
+               None,
+               None)
+        |> G.s |> stmt_to_expr
+      (* Try-Catch-Finally *)
+      | [ Try_exprs (try_tk, try_exprs);
+          At_catch_clause catch_clauses;
+          At_finally_clause (finally_tk, finally_exprs) ] ->
+        let catch_clauses =
+          List.rev_map
+            (fun (tk, catch_kind, exprs) ->
+               (tk,
+                catch_kind,
+                exprblock (List.rev exprs) |> expr_to_stmt))
+            catch_clauses
+        in
+        G.Try (try_tk,
+               exprblock (List.rev try_exprs) |> expr_to_stmt,
+               catch_clauses,
+               None,
+               Some (finally_tk,
+                     exprblock (List.rev finally_exprs) |> expr_to_stmt))
+        |> G.s |> stmt_to_expr
+      | _ -> raise_parse_error "Invalid try-catch-finally form."
+    end
+  | _ -> raise_parse_error "Invalid try-catch-finally form."
 
 and map_bare_set_form (env : env) ((hash_sym, lb, src, rb) : CST.bare_set_lit) =
   let hash_tk = (* "#" *) token env hash_sym in
