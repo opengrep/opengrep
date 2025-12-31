@@ -162,3 +162,5 @@ val add_semicolon_to_last_var_def_and_convert_to_stmts :
 
 val add_semicolon_to_last_def_and_convert_to_stmts :
   AST_generic.sc -> AST_generic.definition list -> AST_generic.stmt list
+
+val ident_of_parameter_opt : AST_generic.parameter -> AST_generic.ident option

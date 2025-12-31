@@ -769,3 +769,13 @@ let add_semicolon_to_last_def_and_convert_to_stmts (sc : sc)
     | xs -> xs
   in
   ys |> List_.map (fun (ent, def) -> DefStmt (ent, def) |> G.s)
+
+let ident_of_parameter_opt (p : parameter) : AST_generic.ident option =
+  match p with
+  | Param pc
+  | ParamRest (_, pc)
+  | ParamHashSplat (_, pc)
+  | ParamReceiver pc ->
+      pc.pname
+  | _ -> None
+    

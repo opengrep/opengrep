@@ -3223,17 +3223,34 @@ and m_function_body a b =
 
 and m_parameters a b = m_bracket m_parameter_list a b
 
+(* in C# some function params are not real params, so we can skip them during matching *)
+and can_skip_special_cases lang =
+  if lang =*= Lang.Csharp then
+  let is_extern = function
+    | G.KeywordAttr (G.Extern, _) -> true
+    | _ -> false
+  in
+    fun p ->
+      match p with
+      | G.Param p when List.exists is_extern p.pattrs -> true
+      | _ -> false
+  else
+    fun _ -> false
+
 and m_parameter_list a b =
-  m_list_with_dots_and_metavar_ellipsis ~f:m_parameter
-    ~is_dots:(function
-      | G.ParamEllipsis _ -> true
-      | _ -> false)
-    ~less_is_ok:false (* empty list can not match non-empty list *)
-    ~is_metavar_ellipsis:(function
-      | Param { pname = Some (s, tok); _ } when Mvar.is_metavar_ellipsis s ->
-          Some ((s, tok), fun xs -> MV.Params xs)
-      | _ -> None)
-    a b
+  with_lang (fun lang ->
+    m_list_with_dots_and_metavar_ellipsis
+        ~can_skip:(can_skip_special_cases lang)
+        ~f:m_parameter
+        ~is_dots:(function
+        | G.ParamEllipsis _ -> true
+        | _ -> false)
+        ~less_is_ok:false (* empty list can not match non-empty list *)
+        ~is_metavar_ellipsis:(function
+        | Param { pname = Some (s, tok); _ } when Mvar.is_metavar_ellipsis s ->
+            Some ((s, tok), fun xs -> MV.Params xs)
+        | _ -> None)
+        a b)
 
 and m_parameter a b =
   match (a, b) with
