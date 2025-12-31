@@ -259,7 +259,7 @@ let qualified_name_regex_str = "^\\(.+\\)/\\(.+\\)$"
 
 let implicit_param_ident = G.implicit_param
 
-let todo (_env : env) _ = raise_parse_error "not implemented"
+let todo (_env : env) _ = raise_parse_error "Not implemented."
 
 let token = H.token
 let raw_token (env : env) (tok : Tree_sitter_run.Token.t) =
@@ -836,7 +836,8 @@ and map_some_thread_first_last_form (env : env) (forms : CST.form list) : G.expr
  *         (recur (rest data) new-metadata)))))
  *)
 and map_loop_form (env : env) (forms : CST.form list) : G.expr =
-  (* XXX: temporarily handle as function application. *)
+  (* XXX: temporarily handle as function application.
+   * This is not correct but will avoid failing to parse for now. *)
   map_call_form env forms
 
 (* (format fmt & args) *)
@@ -2641,7 +2642,7 @@ and map_forms_in_source :
         | `Form x ->
           (try Some (f env x) with
            (* TODO: Do something with errors, collect? Log? *)
-           | Parse_error _ -> None)
+           | Parse_error pe -> failwith pe.msg)
         | `Gap _ -> None)
       xs
 
