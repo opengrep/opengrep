@@ -1805,6 +1805,8 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
         let rec aux acc = function
           | test_expr_form :: body_expr_form :: rest ->
             aux ((test_expr_form, body_expr_form) :: acc) rest
+          | (`Sym_lit (_, ((_, "..."))) as ellipsis) :: [] when in_pattern env ->
+            List.rev ((ellipsis, ellipsis) :: acc)
           | [] -> List.rev acc
           | _ ->
             raise_parse_error
