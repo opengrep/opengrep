@@ -1,0 +1,19 @@
+rules:
+- id: taint-call
+  mode: taint
+  languages: [clojure]
+  message: "tainted"
+  severity: INFO
+  pattern-sources:
+    - pattern-either:
+      - pattern: |
+          (source ...)
+  pattern-sinks:
+    - pattern-either: 
+      - pattern: |
+          (sink ...)
+  pattern-sanitizers:
+    - pattern-either: 
+      - pattern: |
+          (sanitize ...)
+

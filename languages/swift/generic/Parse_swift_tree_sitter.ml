@@ -66,19 +66,6 @@ let in_pattern env =
   | Program -> false
   | Pattern -> true
 
-(* TODO? move to AST_generic_helpers.ml? *)
-let entity_of_pattern ?(attrs = []) (pat : G.pattern) : G.entity =
-  (* TODO Desugar single-element tuples? *)
-  let entity_name =
-    match pat with
-    (* Unwrap PatId into a regular name. map_property_binding_pattern has to
-     * return a pattern because it is recursive, and might need to compose its
-     * return value into larger patterns. So, we have to unwrap here. *)
-    | G.PatId (id, id_info) -> G.EN (G.Id (id, id_info))
-    | pattern -> G.EPattern pattern
-  in
-  { G.name = entity_name; attrs; tparams = None }
-
 let map_trailing_comma env v =
   match v with
   | Some tok -> Some ((* "," *) token env tok)
@@ -2144,7 +2131,7 @@ and map_single_modifierless_property_declaration (env : env)
     ((pat, tannot, tconstraints, init) :
       CST.single_modifierless_property_declaration) : G.stmt =
   let pat = map_no_expr_pattern_already_bound env pat in
-  let entity = entity_of_pattern ~attrs pat in
+  let entity = H2.entity_of_pattern ~attrs pat in
   let tconstraints =
     Option.map (map_type_constraints env) tconstraints |> List_.optlist_to_list
   in
@@ -2551,7 +2538,7 @@ and map_protocol_member_declaration (env : env)
       let v1 = map_modifiers_opt env v1 in
       let kinds, pat = map_binding_kind_and_pattern env v2 in
       let pat = apply_pattern_kinds env pat kinds in
-      let entity = entity_of_pattern ~attrs:v1 pat in
+      let entity = H2.entity_of_pattern ~attrs:v1 pat in
       let tconstraints =
         Option.map (map_type_constraints env) v4 |> List_.optlist_to_list
       in

@@ -70,7 +70,7 @@ let generate_ograph_xxx g filename =
  * properly built Cmd, or even switch to CapExec!
  *)
 let launch_png_cmd (caps : < Cap.exec >) filename =
-  CapExec.cmd_to_list caps#exec (spf "dot -Tpng %s -o %s.png" filename filename)
+  CapExec.cmd_to_list caps#exec (spf "dot -Tpng -Gdpi=300 %s -o %s.png" filename filename)
   |> ignore;
   CapExec.cmd_to_list caps#exec (spf "open %s.png" filename) |> ignore;
   ()

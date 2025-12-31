@@ -965,7 +965,7 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
               super#visit_definition env def
           | None -> super#visit_definition env def);
           current_class := old_class
-      | G.FuncDef fdef ->
+      | G.FuncDef fdef | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
           (* Get the entire function definition range (including parameters) *)
           let func_range_opt = AST_generic_helpers.range_of_any_opt (G.Def def) in
           (match func_range_opt with

@@ -1,2 +1,2 @@
-(setq $V (open()))
+(setq $V (open))
 (close $V)

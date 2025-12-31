@@ -1,6 +1,6 @@
 (* Yoann Padioleau
  *
- * Copyright (C) 2020 Semgrep Inc.
+ * Copyright (C) 2020 Semgrep Inc, 2025 Opengrep.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -17,6 +17,7 @@ open IL
 module Log = Log_analyzing.Log
 module G = AST_generic
 module H = AST_generic_helpers
+module CLJ_ME1 = Macro_expand_clojure
 
 [@@@warning "-40-42"]
 
@@ -258,7 +259,7 @@ let add_entity_name ctx ident =
 
 let def_expr_evaluates_to_value (lang : Lang.t) =
   match lang with
-  | Elixir -> true
+  | Elixir (* | Clojure *) -> true
   | _else_ -> false
 
 let is_constructor env ret_ty id_info =
@@ -370,7 +371,7 @@ and pattern env pat =
         env ~eorig:(Related (G.P pat_inner)) tmp_fetch_e pat_inner
     in
     (* NOTE: Order of statements determines scope in cases like: `[x; y] as x`
-     *  here we will see the whole value as `x`. Not important. *)
+     * here we will see the whole value as `x`. Not important. *)
     (env, tmp_lval, inner_ss @ [ alias_assign_stmt ])
   | G.PatList (_tok1, pats, tok2)
   | G.PatTuple (_tok1, pats, tok2) ->
@@ -399,14 +400,28 @@ and pattern env pat =
       pattern env pat1
   | G.PatConstructor (G.Id ((_s, tok), _id_info), pats) ->
     pattern env (G.PatTuple (G.fake "(", pats, tok))
-  | G.PatKeyVal (key_pat, val_pat) ->
-    (* TODO: Now sure about offsets here, as created by the PatTuple case. *)
-    pattern env (G.PatTuple (G.fake "(", [ key_pat; val_pat ], G.fake ")"))
+  (* TODO: This can help with field sensitivity, if we consider
+   * which atom is actually used to extract the value in key_pat.
+   * For now we ignore the value part. Note that these patterns
+   * are of the shape '{ x :a }' etc. But can also come from
+   * '{ :keys [a] }' which in this case becomes equivalent to
+   * '{ a :a }'. *)
+  | G.PatKeyVal (key_pat, G.OtherPat (((":" | "::"), _tk_col),
+                                      [G.Name _atom_name]))
+    when env.lang =*= Lang.Clojure ->
+    pattern env key_pat
+  (* Only seems to be used in Ruby, modulo the above case for Clojure. *)
+  | G.PatKeyVal (_key_pat, val_pat) when env.lang =*= Lang.Ruby ->
+    (* My understanding is that the new variables are introduced on the rhs. *)
+    pattern env val_pat 
   | G.PatRecord (tok1, fields, tok2) ->
     (* TODO: But here the offset is not an index..., should we do proper?
+     * But at least some taint will be propagated with this solution. 
      * In fact we cannot recover the G.name of the dotted_ident in PatRecord,
      * so cannot easily create a Dot offset. We have no sid and id_info.
-     * For this reason we do this hack. *)
+     * For this reason we do this hack.
+     * TODO: Check this encoding with FieldDefCol used in a lot of places,
+     * have something native that does the same. *)
     let pats = List_.map (fun (_dot_ident, pat) -> pat) fields in
     pattern env (G.PatTuple (tok1, pats, tok2))
   | G.PatWhen (pat_inner, when_expr) ->
@@ -828,6 +843,22 @@ and expr_aux env ?(void = false) g_expr =
           let env = { env with stmts } in
           let fixme = fixme_exp kind any_generic (related_exp g_expr) in
           add_call env tok eorig ~void (fun res -> Call (res, fixme, args)))
+  | G.Call (e, args) when env.lang =*= Lang.Clojure ->
+      let tok = G.fake "call" in
+      let arg_list = Tok.unbracket args in
+      let arg_list_unwrapped =
+        List_.map (function
+            | G.Arg expr -> expr
+            | _ -> failwith "Expected G.Arg")
+          arg_list
+      in
+      let arg_container =
+            [ G.Arg
+                (G.Container
+                   (G.List, Tok.unsafe_fake_bracket arg_list_unwrapped)
+                 |> G.e) ]
+      in
+      call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket arg_container)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
       call_generic env ~void tok eorig e args
@@ -920,6 +951,7 @@ and expr_aux env ?(void = false) g_expr =
       let env, new_stmts = pattern_assign_statements env ~eorig exp pat in
       let env = add_stmts env new_stmts in
       (env, mk_unit (G.fake "()") NoOrig)
+  (* TODO: Use instead of ExprBlock? But we also have scope for block. *)
   | G.Seq xs -> (
       match List.rev xs with
       | [] -> impossible env.stmts (G.E g_expr)
@@ -1068,6 +1100,42 @@ and expr_aux env ?(void = false) g_expr =
   | G.OtherExpr (("ShortLambda", _), _) when env.lang =*= Lang.Elixir ->
       let lambda_expr = AST_modifications.convert_elixir_short_lambda g_expr in
       expr env lambda_expr
+  (* The idea here is that this is like a block, and we only
+   * really care about the last expression. *)
+  (* TODO: What if a statement creeps in? E.g. an If, `fn`..?
+   * What we really must avoid is Block. *)
+  | G.OtherExpr
+      (* Other cases are macroexpanded to these. TODO: Confirm which. *)
+      ((todo_kind,
+        tok), any_exprs)
+    when env.lang =*= Lang.Clojure && CLJ_ME1.expands_as_block todo_kind ->
+    let env, exprs =
+      List.fold_left_map
+        (fun env any_expr ->
+          match any_expr with
+          | G.E exp -> expr env exp
+          | _else_ -> (env, fixme_exp ToDo any_expr (related_tok tok)))
+        env any_exprs
+    in
+    begin match List.rev exprs with
+    | [] -> (env, mk_unit (G.fake "()") NoOrig)
+    | e_last :: _e_rest -> (env, e_last)
+    end
+  (* Clojure: a kind of macroexpansion (macroexpand-1). *)
+  | G.OtherExpr ((todo_kind, tok), _ :: _)
+    when env.lang =*= Lang.Clojure && CLJ_ME1.is_macroexpandable todo_kind ->
+    (try let macro_expanded = CLJ_ME1.macro_expand_1 (* env? *) g_expr in
+    (* Log.debug
+         (fun fmt ->
+           fmt "Clojure macroexpand-1 (->): Source: \n%s \n=> \nExpanded: \n%s"
+           ( G.show_expr g_expr )
+           ( G.show_expr macro_expanded )); *)
+    expr env macro_expanded
+    with
+    | CLJ_ME1.Macroexpansion_error (_msg, any_expr) ->
+      (env, fixme_exp ToDo any_expr (related_tok tok))
+    | exn -> raise exn)
+  (* Default. *)
   | G.OtherExpr ((str, tok), xs) ->
       let env, es =
         List.fold_left_map
@@ -1512,6 +1580,7 @@ and lval_of_ent env ent =
   | G.EN name -> lval env (G.N name |> G.e)
   | G.EDynamic eorig -> lval env eorig
   | G.EPattern (PatId (id, id_info)) -> lval env (G.N (Id (id, id_info)) |> G.e)
+  (* Why not more here, if we are to support more patterns? *)
   | G.EPattern _ -> (
       let any = G.En ent in
       log_fixme ToDo any;
@@ -1670,7 +1739,8 @@ and type_opt_with_pre_stmts env opt_ty =
 and no_switch_fallthrough : Lang.t -> bool = function
   | Go
   | Ruby
-  | Rust ->
+  | Rust
+  | Clojure->
       true
   | _ -> false
 

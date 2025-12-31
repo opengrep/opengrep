@@ -20,6 +20,9 @@ val expr_to_type : AST_generic.expr -> AST_generic.type_
 val expr_to_class_parent : AST_generic.expr -> AST_generic.class_parent
 val expr_to_entity_name_opt : AST_generic.expr -> AST_generic.entity_name option
 
+val entity_of_pattern:
+  ?attrs:AST_generic.attribute list -> AST_generic.pattern -> AST_generic.entity
+
 (* should avoid; used mainly during expr->condition migration for If/While/..*)
 val cond_to_expr : AST_generic.condition -> AST_generic.expr
 
@@ -45,7 +48,7 @@ val funcbody_to_stmt : AST_generic.function_body -> AST_generic.stmt
 val name_of_id : ?case_insensitive:bool -> AST_generic.ident -> AST_generic.name
 
 val name_of_ids :
-  ?case_insensitive:bool -> AST_generic.dotted_ident -> AST_generic.name
+  ?name_top:Tok.t -> ?case_insensitive:bool -> AST_generic.dotted_ident -> AST_generic.name
 
 val name_of_ids_with_opt_typeargs :
   (AST_generic.ident * AST_generic.type_arguments option) list ->

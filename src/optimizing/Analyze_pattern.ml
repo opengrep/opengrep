@@ -43,22 +43,15 @@ type mvars = MvarSet.t
 (* Entry points *)
 (*****************************************************************************)
 
-class ['self] extract_strings_and_mvars_visitor ?lang () =
+class ['self] extract_strings_and_mvars_visitor =
     object (_self : 'self)
       inherit ['self] AST_generic.iter_no_id_info as super
 
-      val mutable strings = []
-      val mutable mvars = []
-
-      method get_strings = strings
-      method get_mvars = mvars
-
-      method! visit_ident _env (str, _tok) =
+      method! visit_ident (strings, mvars, lang as _env) (str, _tok) =
         match () with
-        | _ when Mvar.is_metavar_name str -> mvars <- str :: mvars (* Stack_.push str mvars *)
+        | _ when Mvar.is_metavar_name str -> Stack_.push str mvars
         | _ when not (Pattern.is_special_identifier ?lang str) ->
-            strings <- str :: strings
-            (* Stack_.push str strings *)
+            Stack_.push str strings
         | _ -> ()
 
       method! visit_name env x =
@@ -70,7 +63,7 @@ class ['self] extract_strings_and_mvars_visitor ?lang () =
             ()
         | _ -> super#visit_name env x
 
-      method! visit_directive env x =
+      method! visit_directive (strings, _mvars, _lang as env) x =
         match x with
         | { d = ImportFrom (_, FileName (str, _), _); _ }
         | { d = ImportAs (_, FileName (str, _), _); _ }
@@ -82,11 +75,11 @@ class ['self] extract_strings_and_mvars_visitor ?lang () =
              * overapproximate taking the sub-strings, see
              * Generic_vs_generic.m_module_name_prefix. *)
             String_.split ~sep:{|/\|\\|} str
-            |> List.iter (fun s -> strings <- s :: strings (* Stack_.push s strings *));
+            |> List.iter (fun s -> Stack_.push s strings);
             super#visit_directive env x
         | _ -> super#visit_directive env x
 
-      method! visit_expr env x =
+      method! visit_expr (strings, _mvars, _lang as env) x =
         match x.e with
         (* less: we could extract strings for the other literals too?
          * atoms, chars, even int?
@@ -103,10 +96,10 @@ class ['self] extract_strings_and_mvars_visitor ?lang () =
             ( { e = IdSpecial (Require, _); _ },
               (_, [ Arg { e = L (String (_, (str, _tok), _)); _ } ], _) ) ->
             if not (Pattern.is_special_string_literal str) then
-              strings <- str :: strings (* Stack_.push str strings *)
+              Stack_.push str strings
         | IdSpecial (Eval, t) ->
             if Tok.is_origintok t then
-              strings <- (Tok.content_of_tok t) :: strings (* Stack_.push (Tok.content_of_tok t) strings *)
+              Stack_.push (Tok.content_of_tok t) strings
         | TypedMetavar (_, _, type_) -> (
             match type_ with
             | { t = TyN (IdQualified _ as name); _ } ->
@@ -130,11 +123,14 @@ class ['self] extract_strings_and_mvars_visitor ?lang () =
         | _ -> super#visit_expr env x
     end
 
+let extract_strings_and_mvars_visitor_instance =
+  new extract_strings_and_mvars_visitor
+
 let extract_strings_and_mvars ?lang any =
-  let visitor = new extract_strings_and_mvars_visitor ?lang ()
-  in
-  visitor#visit_any () any;
-  (Common2.uniq visitor#get_strings, Common2.uniq visitor#get_mvars)
+  let strings = ref [] in
+  let mvars = ref [] in
+  extract_strings_and_mvars_visitor_instance#visit_any (strings, mvars, lang) any;
+  !strings, !mvars
 
 let extract_specific_strings ?lang any =
   extract_strings_and_mvars ?lang any |> fst
@@ -157,42 +153,34 @@ class ['self] extract_mvars_in_id_position_visitor =
     object (_self : 'self)
       inherit [_] AST_generic.iter_no_id_info as super
 
-      val mutable mvars = MvarSet.empty
-
-      method get_mvars = mvars
-
-      method! visit_directive env x =
+      method! visit_directive mvars x =
         match x with
         | { d = ImportFrom (_, FileName (str, _), _); _ }
         | { d = ImportAs (_, FileName (str, _), _); _ }
         | { d = ImportAll (_, FileName (str, _), _); _ }
           when Mvar.is_metavar_name str ->
-            mvars <- MvarSet.add str mvars;
-            (* mvars := MvarSet.add str !mvars; *)
-            super#visit_directive env x
-        | _ -> super#visit_directive env x
+            mvars := MvarSet.add str !mvars;
+            super#visit_directive mvars x
+        | _ -> super#visit_directive mvars x
 
-      method! visit_type_kind env x =
+      method! visit_type_kind mvars x =
         match x with
         | TyN (Id ((str, _tok), _ii)) when Mvar.is_metavar_name str ->
-            mvars <- MvarSet.add str mvars
-            (* mvars := MvarSet.add str !mvars *)
-        | _ -> super#visit_type_kind env x
+            mvars := MvarSet.add str !mvars
+        | _ -> super#visit_type_kind mvars x
 
-      method! visit_expr env x =
+      method! visit_expr mvars x =
         match x.e with
         | Call ({ e = N (Id ((str, _tok), _ii)); _ }, _)
         | New (_, { t = TyN (Id ((str, _tok), _ii)); _ }, _, _)
         | DotAccess (_, _, FN (Id ((str, _tok), _ii)))
           when Mvar.is_metavar_name str ->
-            mvars <- MvarSet.add str mvars
-            (* mvars := MvarSet.add str !mvars *)
-        | _ -> super#visit_expr env x
+            mvars := MvarSet.add str !mvars
+        | _ -> super#visit_expr mvars x
     end
 
 let extract_mvars_in_id_position_visitor_instance = new extract_mvars_in_id_position_visitor
 let extract_mvars_in_id_position ?lang:_ any =
-  let visitor = extract_mvars_in_id_position_visitor_instance
-  in
-  visitor#visit_any () any;
-  visitor#get_mvars
+  let env_mvars = ref MvarSet.empty in
+  extract_mvars_in_id_position_visitor_instance#visit_any env_mvars any;
+  !env_mvars

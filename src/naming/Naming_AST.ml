@@ -303,7 +303,7 @@ let set_resolved env id_info x =
    * this could lead to cycle in the AST because of id_type
    * that will reference a type, that could containi an OT_Expr, containing
    * an Id, that could contain the same id_type, and so on.
-   * See tests/naming/python/shadow_name_type.py for a patological example
+   * See tests/naming/python/shadow_name_type.py for a pathological example
    * See also tests/rust/parsing/misc_recursion.rs for another example.
    *)
   if not !(env.in_type) then
@@ -467,6 +467,13 @@ let params_of_parameters env params : scope =
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
+       (* TODO: ParamPattern *)
+       | _ -> None)
+
+let pattern_params_of_parameters _env params : AST_generic.pattern list =
+  params |> Tok.unbracket
+  |> List_.filter_map (function
+       | ParamPattern pat -> Some pat
        | _ -> None)
 
 let js_get_angular_constructor_args env attrs defs =
@@ -492,7 +499,8 @@ let js_get_angular_constructor_args env attrs defs =
        | _ -> None)
   |> List_.flatten
 
-let declare_var env lang id id_info ?(is_macro=false) ~explicit vinit vtype =
+let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
+    ~explicit vinit vtype =
   let sid = SId.mk () in
   (* for the type, we use the (optional) type in vtype, or, if we can infer
    * the type of the expression vinit (literal or id), we use that as a type
@@ -503,7 +511,8 @@ let declare_var env lang id id_info ?(is_macro=false) ~explicit vinit vtype =
      * previously declared will implicitly create a property on
      * the *global* object. *)
     if Lang.is_js lang && not explicit ||
-       Lang.is_c_cpp lang && is_macro
+       Lang.is_c_cpp lang && is_macro || (* TODO: Clojure macro? *)
+       force_global
     then
       (Global, add_ident_global_scope)
     else
@@ -512,6 +521,22 @@ let declare_var env lang id id_info ?(is_macro=false) ~explicit vinit vtype =
   let resolved = { entname = (name_kind, sid); enttype = resolved_type } in
   add_ident_to_its_scope id resolved env.names;
   set_resolved env id_info resolved
+
+let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
+  (* Used for all clojure non-auto-resolved atoms which we consider globals. *)
+  if
+    Option.is_none !(id_info.id_resolved)
+  then
+    match lookup_scope_opt id env with
+    | Some resolved ->
+      (* Name resolution. *)
+      set_resolved env id_info resolved
+    | _ ->
+      (* Declare it once globally. *)
+      declare_var env env.lang id id_info
+        ~force_global:true
+        ~explicit:false
+        vinit None
 
 let assign_implicitly_declares lang =
   lang =*= Lang.Python || lang =*= Lang.Ruby || lang =*= Lang.Php
@@ -538,8 +563,19 @@ class ['self] resolve_visitor env lang =
        * (no need to declarare prototype and forward decls as in C).
        *)
       let new_params = params_of_parameters env x.fparams in
+      (* TODO: How about PatternParam which is ignored in the function
+       * called above? We should visit_pattern for these, inside the scope? *)
       with_new_context InFunction env (fun () ->
           with_new_function_scope new_params env.names (fun () ->
+              (* TODO: Even more accurate to maintain order of adding
+               * to scope, so the interleaving of Param and PatternParam
+               * should be respected. This requires a custom with_function_scope...
+               * Basically to use with_new_block_scope and do manually. *)
+              let pat_params =
+                pattern_params_of_parameters env x.fparams
+              in
+              super#visit_pattern venv
+                (PatTuple (Tok.unsafe_fake_bracket pat_params));
               (* todo: actually we should first go inside x.fparams.ptype
                * without the new_params (this would also prevent cycle if
                * a parameter name is the same than type name used in ptype
@@ -645,6 +681,7 @@ class ['self] resolve_visitor env lang =
                   set_resolved env local_id_info resolved;
                   add_ident_current_scope local_id resolved env.names
                   (* TODO handle nested destructuring? *)
+                  (* TODO: Use the patterns mechanism to do this proper. *)
               | _ -> ())
             fields
       (* In Rust, the left-hand side (lhs) of the let variable definition is
@@ -665,6 +702,12 @@ class ['self] resolve_visitor env lang =
            *)
           super#visit_definition venv x;
           declare_var env lang id id_info ~explicit:true vinit vtype
+      (* Left the case above because we have the type information `vtype` which
+       * would be lost here. *)
+      | ( { name = EPattern (pat); _ }, VarDef { vinit = _; vtype = _; vtok = _ } )
+        when is_resolvable_name_ctx env lang ->
+          super#visit_definition venv x;
+          self#visit_pattern venv pat
       | { name = EN (Id (id, id_info)); _ }, FuncDef _
         when is_resolvable_name_ctx env lang ->
           (match lang with
@@ -837,17 +880,33 @@ class ['self] resolve_visitor env lang =
            * a class name?
            *)
           declare_var env lang id id_info ~explicit:true None None;
+          (* TODO: Should we visit before declaring? Better, if we
+           * want `[x, y] as x` to have `as x` shadowing the other `x`. *)
           super#visit_pattern venv x
       | PatTyped (PatId (id, id_info), ty)
         when is_resolvable_name_ctx env lang ->
           declare_var env lang id id_info ~explicit:true None (Some ty)
+      | PatTyped (PatAs (pat', (id, id_info)), ty)
+        (* TODO: Check if we need to visit `ty` also, first. *)
+        when is_resolvable_name_ctx env lang ->
+          super#visit_pattern venv pat';
+          declare_var env lang id id_info ~explicit:true None (Some ty)
       (* do not recurse here, we don't want the PatId case above
        * to overwrite the job done here
        *)
-      | PatTyped (pattern, ty) when Lang.is_js lang ->
-          Common.save_excursion_unsafe env.in_lvalue true (fun () ->
-              super#visit_type_ venv ty);
-          super#visit_pattern venv pattern
+      | PatTyped (pattern, ty) (* when Lang.is_js lang *) ->
+        Common.save_excursion_unsafe env.in_lvalue true (fun () ->
+            super#visit_type_ venv ty);
+        super#visit_pattern venv pattern
+      | OtherPat ((":", _),
+                  [Name ((IdQualified {name_last = (id, _);
+                                       name_middle = Some (QDots [_]);
+                                       name_top = Some (Tok.FakeTok (":", _));
+                                       name_info = id_info; _})
+                         as name)]) 
+        when lang =*= Lang.Clojure ->
+        let vinit = (N name |> e |> Option.some) in 
+        set_resolved_global_if_not_already_resolved env ?vinit id id_info
       (* This is used for Ts in the case of typed patterns with records.
        * For example in a fuction like: 
        *  function ({foo} :{foo:foo_type}){}
@@ -862,6 +921,11 @@ class ['self] resolve_visitor env lang =
        * unresolved. *)
       (* TODO: We should fix the AST of JS/TS so those `f({foo})` patterns do
        * not show as regular variables. *)
+      (* TODO: Fix Js encoding to use proper patterns...
+       * For example in:
+       * `function f({ foo }) { sink(foo) }`
+       * we should have a pattern PatKeyVal where key is PatId(foo) and value
+       * is e_param.foo where e_param is the function parameter. *)
         when not (Lang.is_js lang) ->
           Common.save_excursion_unsafe env.in_lvalue true (fun () ->
               super#visit_pattern venv x)
@@ -1020,10 +1084,47 @@ class ['self] resolve_visitor env lang =
         self#visit_expr venv e;
         self#visit_pattern venv pat;
         recurse := false
+      (* These expressions define scopes. *)
+      (* TODO: Create module in clojure's directory, make this more
+       * configurable (ask if construct is block etc.) *)
+      | OtherExpr ((("ExprBlock" | "as->"), _block_tk),
+                  expr_anys)
+        when lang =*= Lang.Clojure ->
+        (* Even if we parse a top level block, it does not
+         * define global names. *)
+        with_new_context InFunction env (fun () ->
+          with_new_block_scope env.names (fun () ->
+              List.iter (self#visit_any venv) expr_anys));
+        recurse := false
+      (* Clojure ShortLambda:
+       * OtherExpr("ShortLambda", [Params [...]; E body])
+       * Create a new scope with the params and visit the body. *)
+      | OtherExpr (("ShortLambda", _),
+                   [Params [(ParamPattern pat)]; E body])
+        when lang =*= Lang.Clojure ->
+        with_new_context InFunction env (fun () ->
+            with_new_block_scope env.names (fun () ->
+                self#visit_pattern venv pat;
+                self#visit_expr venv body));
+          recurse := false
+      (* TODO: Without a condition on middle names, this identifies
+       * :domain/a and :a. Needs more careful handling. *)
+      | OtherExpr (("Atom", _atom_tk),
+                   [Name ((IdQualified {name_last = (id, _);
+                                        name_middle = Some (QDots [_]);
+                                        name_top = Some (Tok.FakeTok (":", _));
+                                        name_info = id_info; _})
+                          as name)])
+        when lang =*= Lang.Clojure ->
+        let vinit = (N name |> e |> Option.some) in 
+        set_resolved_global_if_not_already_resolved env ?vinit id id_info;
+        recurse := false
       (* Elixir ShortLambda: OtherExpr("ShortLambda", [Params [...]; S body])
        * Create a new scope with the params and visit the body. *)
       | OtherExpr (("ShortLambda", _), [ Params params; S body ]) ->
-          let new_params = params_of_parameters env (Tok.unsafe_fake_bracket params) in
+          let new_params =
+            params_of_parameters env (Tok.unsafe_fake_bracket params)
+          in
           with_new_function_scope new_params env.names (fun () ->
               self#visit_stmt venv body);
           recurse := false
@@ -1063,6 +1164,11 @@ class ['self] resolve_visitor env lang =
               with_new_block_scope env.names (fun () ->
                   self#visit_stmt venv s2))
             s2_opt
+      (* But is there any point in doing that? Probably yes. *)
+      (* Commented out: docker constant propagation test fails... *)
+      (* | Block (_, stmts, _) when has_block_scope lang ->
+             with_new_block_scope env.names (fun () ->
+                 List.iter (fun stmt -> self#visit_stmt venv stmt) stmts) *)
       | _else_ -> super#visit_stmt venv x
   end
   
