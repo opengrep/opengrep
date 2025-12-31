@@ -772,14 +772,19 @@ and map_form (env : env) (x : CST.form) : G.expr =
  * TODO: For symbols not in unquoted context, we should wrap them
  * in something that does not resolve them in Naming. That is, we
  * will need to intentionally skip visiting the node in Naming in
- * order for such symbols to remain unresolved. *) 
-and map_quoted_list_form (env : env) (forms : CST.form list) =
+ * order for such symbols to remain unresolved.
+ *)
+and _UNUSED_map_quoted_list_form (env : env) (forms : CST.form list) =
   todo env ()
 
+(* TODO: Like defn but the definition is MacroDef with idents.
+ * The parameters are not evaluated. For now we ignore macros,
+ * we don't want to fail parsing a target because of this. *)
 and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
-  (* TODO: Like defn but the definition is MacroDef with idents.
-   * The parameters are not evaluated. *)
-  todo env ()
+  match forms with
+  | `Sym_lit (_meta, ((_loc, ("defmacro" | "definline")) as tk)) :: _ ->
+    L (Null (H.token env tk)) |> G.e
+  | _ -> assert false (* We invoked when the symbol was one of the above. *)
 
 (*
  * (doto x & forms)
