@@ -230,6 +230,18 @@ let expr_to_entity_name_opt (e : G.expr) : G.entity_name option =
   | N name -> Some (EN name)
   | _ -> None
 
+let entity_of_pattern ?(attrs = []) (pat : G.pattern) : G.entity =
+  (* TODO Desugar single-element tuples? *)
+  let entity_name =
+    match pat with
+    (* Unwrap PatId into a regular name. map_property_binding_pattern has to
+     * return a pattern because it is recursive, and might need to compose its
+     * return value into larger patterns. So, we have to unwrap here. *)
+    | G.PatId (id, id_info) -> G.EN (G.Id (id, id_info))
+    | pattern -> G.EPattern pattern
+  in
+  { G.name = entity_name; attrs; tparams = None }
+
 (* We would like to do more things here, like transform certain
  * N in TyN, but we can't do that from the Xxx_to_generic.ml
  * (e.g., Python_to_generic.ml). Indeed, certain transformations

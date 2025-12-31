@@ -23,6 +23,9 @@ let extract_lambda_assignment (e : G.expr) : (G.entity * G.function_definition) 
   | G.Assign ({ e = G.N (G.Id (id, id_info)); _ }, _, { e = G.Lambda fdef; _ }) ->
       let ent = { G.name = G.EN (G.Id (id, id_info)); G.attrs = []; G.tparams = None } in
       Some (ent, fdef)
+  | G.LetPattern (pat, { e = G.Lambda fdef; _ }) ->
+      let ent = H.entity_of_pattern pat in
+      Some (ent, fdef)
   | _ -> None
 
 class ['self] visitor =
