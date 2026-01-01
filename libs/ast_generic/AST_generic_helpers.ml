@@ -795,3 +795,9 @@ let ident_of_parameter_opt (p : parameter) : AST_generic.ident option =
       pc.pname
   | _ -> None
     
+let any_of_function_body (fb : function_body) : any =
+  match fb with
+  | FBStmt s -> S s
+  | FBExpr e -> E e
+  | FBDecl t -> Tk t
+  | FBNothing -> Anys []
