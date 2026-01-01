@@ -2438,8 +2438,11 @@ and attribute (env : env) ((v1, v2) : CST.attribute) =
     | Some x -> attribute_argument_list env x
     | None -> fb []
   in
+  match v1 with
+  | G.Id (("get", tok), _) -> G.KeywordAttr (G.Getter, tok)
+  | G.Id (("set", tok), _) -> G.KeywordAttr (G.Setter, tok)
   (* TODO get the first [ as token here? *)
-  G.NamedAttr (fake "[", v1, v2)
+  | _ -> G.NamedAttr (fake "[", v1, v2)
 
 and argument_list (env : env) ((v1, v2, v3) : CST.argument_list) : G.arguments =
   let v1 = token env v1 (* "(" *) in
@@ -3096,6 +3099,12 @@ and add_this_param ~(this_param : (G.tok -> G.parameter) option) ~(anchor : G.to
           | None -> res))
   | _ -> s 
     
+and fix_s_range (new_range : (Tok.location * Tok.location) option) (s : stmt) : stmt =
+  (match new_range with
+  | Some _ -> s.s_range <- new_range
+  | _ -> ());
+  s
+  
 and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
   match x with
   | `Ellips v1 ->
@@ -3397,6 +3406,17 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
       let _v4TODO = Option.map (explicit_interface_specifier env) v4 in
       let v5 = identifier env v5 (* identifier *) in
       let fname, _ftok = v5 in
+      (* The C#14 "field" keyword is mapped as an additional argument to get and set *)
+      let fieldParam tok =
+        Param
+          {
+            pname = Some ("field", tok);
+            ptype = Some v3;
+            pdefault = Some (G.N (G.Id (v5, G.empty_id_info ())) |> G.e);
+            pattrs = [];
+            pinfo = empty_id_info ~hidden:false ()
+          }
+      in
       let accessors, vinit =
         match v6 with
         | `Acce_list_opt_EQ_exp_SEMI (v1, v2) ->
@@ -3417,25 +3437,52 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                   let iname, itok = id in
                   let has_params = iname <> "get" in
                   let has_return = iname = "get" in
+                  let _property_attr =
+                    if iname = "get"
+                       then G.KeywordAttr (G.Getter, itok)
+                       else G.KeywordAttr (G.Setter, itok)
+                  in
+                  let attrs = attrs in
                   let ent = basic_entity (iname ^ "_" ^ fname, itok) ~attrs in
+                  let itok_loc = Tok.unsafe_loc_of_tok itok in
+                  let new_loc loc n =
+                      Tok.({
+                      str = "";
+                      pos =
+                          {
+                          loc.pos with
+                          bytepos = loc.pos.bytepos + n;
+                          column = loc.pos.column + n;
+                          };
+                      })
+                  in
+                  let this_token = 
+                    Tok.OriginTok (new_loc itok_loc 0)
+                  in
+                  let value_token = 
+                    Tok.OriginTok (new_loc itok_loc 1)
+                  in
+                  let field_token =
+                    Tok.OriginTok (new_loc itok_loc 2)
+                  in
                   let funcdef =
                     FuncDef
                       {
                         fkind = (Method, itok);
                         fparams =
                           fb
-                            (if has_params then
+                            ((if has_params then
                                [
                                  Param
                                    {
-                                     pname = Some ("value", fake "value");
+                                     pname = Some ("value", value_token);
                                      ptype = Some v3;
                                      pdefault = None;
                                      pattrs = [];
                                      pinfo = empty_id_info ();
                                    };
                                ]
-                             else []);
+                             else []) @ [fieldParam field_token]);
                         (* NOTE: In order to make "set" be recognised by a $T $FOO(...) {...} pattern, *)
                         (* we need to give it the void type and point to a real token. *)
                         frettype = (if has_return then Some v3 else Some (G.TyN (Id (("void", itok), G.empty_id_info ())) |> G.t));
@@ -3443,9 +3490,15 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                         fbody;
                       }
                   in
+                  let fixed_range =
+                    match Tok.loc_of_tok itok, H2.range_of_any_opt (H2.any_of_function_body fbody) with
+                    | Ok l1, Some (_, l2) -> Some (l1, l2)
+                    | _ -> None
+                  in
                   DefStmt (ent, funcdef)
                   |> G.s
-                  |> add_this_param ~this_param ~anchor:itok)
+                  |> fix_s_range fixed_range
+                  |> add_this_param ~this_param ~anchor:this_token)
                 v1
             in
             ((open_br, funcs, close_br), v2)
@@ -3461,7 +3514,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
               FuncDef
                 {
                   fkind = (Method, arrow);
-                  fparams = fb [] (* (Option.to_list (Option.map (fun f -> f ()) this_param)) *) ;
+                  fparams = fb [fieldParam (snd v5)] (* (Option.to_list (Option.map (fun f -> f ()) this_param)) *) ;
                   frettype = Some v3;
                   fbody = G.FBStmt (G.Block (fb [ExprStmt (expr, v2) |> G.s]) |> G.s);
                 }
