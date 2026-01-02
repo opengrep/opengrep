@@ -381,7 +381,7 @@ let extract_unqualified_ident (env : env) (tok : Tree_sitter_run.Token.t) : G.id
   if s =~ qualified_name_regex_str then
       let before, after = Common.matched2 s in
       let _t_before, t_after =
-        Tok.split_tok_at_bytepos (String.length before) t
+        Tok.split_tok_at_bytepos (String.length before + 1 (* / *)) t
       in
       (after, t_after)
   else
