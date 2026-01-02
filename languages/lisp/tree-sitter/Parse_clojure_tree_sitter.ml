@@ -34,17 +34,22 @@ module S = Settings_clojure
 (*****************************************************************************)
 
 (*
- * Many of the common macros are expanded in AST_to_IL conversion.
+ * Many of the common macros are expanded.
  *
  * TODO: Update with latest grammar?
  * https://github.com/sogaiu/tree-sitter-clojure/blob/master/grammar.js
  * This is, by the way, the grammar used here -- but we don't have the
  * latest version.
  *
+ * TODO: Handle imports better, it makes rules more robust and with less
+ * patterns needed. Especially module aliasing.
+ *
  * TODO: Handle pre: and post: maps, since the could determine if parameters
  * are sanitised. Add as attributes (OtherAtribute)?
  *
  * TODO: Fix or remove S.At_IL mode for macroexpansion of threading forms.
+ *   This should really be removed soon, why pollute the codebase if it won't
+ *   be used?
  *)
 
 (*****************************************************************************)
@@ -324,7 +329,7 @@ let name_from_ident ?(is_auto_resolved = false) ?(is_kwd = false)
       let t_before, t_after =
         Tok.split_tok_at_bytepos (String.length before) t
       in
-      let t_slash, t_after =
+      let _t_slash, t_after =
         Tok.split_tok_at_bytepos 1 t_after
       in
       (* Example: obtain idents for 'clojure' and 'core' from 'clojure.core'. *)
@@ -581,6 +586,7 @@ and map_list_form
     | Some "comment" -> map_comment_form env forms
     (* | Some "doto" -> map_doto_form env forms *) (* XXX: Treat as normal function. *)
     (* | Some "format" -> map_format_form env forms *) (* XXX: Treat as normal function. *)
+    (* | Some ".." -> map_dotdot_form env forms *) (* TODO: It's a threading macro for methods. *)
     | Some "loop" -> map_loop_form env forms
     | Some ("defmacro" | "definline") -> map_defmacro_form env forms
     | Some "ns" -> map_ns_form env forms
@@ -810,6 +816,10 @@ and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
  * because it can become confusing for users if it's expanded in search mode.
  *)
 and _UNUSED_map_doto_form (env : env) (forms : CST.form list) : G.expr =
+  todo env ()
+
+(* TODO: (.. object method1 method2 method3) ~> (.method3 (.method2 (.method1 object))) *)
+and _UNUSED_map_dotdot_form (env : env) (forms : CST.form list) : G.expr =
   todo env ()
 
 (* TODO: some-> / some->> are similar to -> / ->> but need a let bindings
@@ -1056,6 +1066,14 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
     | [ `Kwd_lit ((_loc, ":or") as tk_or); `Map_lit default_val ] ->
        make_pat s_pat tk_pat @@
        pats @
+       (* TODO: This won't trace (source...) in default_val to a sink in the
+        * body, we need to create instantiation code that relates to the variable
+        * to which the default value may be assigned. An If-Not-Nil-Assign will
+        * suffice, for each symbol in the default_val (which is a map of symbols
+        * to values). The function must return G.pattern * expr list where expr
+        * is a map of default values; we can have several. Careful with ordering
+        * to capture any shadowing that may occur (should not happen in correct
+        * code). *)
        [ G.OtherPat (("OrValuePat", (token env tk_or)),
                      [G.E (map_map_form env default_val)]) ]
 
@@ -1673,9 +1691,6 @@ and map_do_form (env : env) (forms: CST.form list) : G.expr =
  * second item in the first form, making a list of it is not a
  * list already. If there are more forms, inserts the first form
  * as the second item in second form, etc.
- *
- * NOTE: A tainting rule should have patterns for `(sink ...)`
- * and also just `sink`, else it might miss findings. 
  *)
 and insert_threaded
     (env: env) (insert_pos: insert_pos) (value_form: CST.form) (target_form: CST.form)
