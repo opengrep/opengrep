@@ -257,6 +257,7 @@ let radix_regex =
 
 let qualified_name_regex_str = "^\\(.+\\)/\\(.+\\)$"
 
+let fake_variable_ident = "G__1111"
 let implicit_param_ident = G.implicit_param
 
 let todo (_env : env) _ = raise_parse_error "Not implemented."
@@ -1781,7 +1782,7 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
 
       (* Note that we piggyback on the location of "cond->" for the new
        * variable we are introducing. *)
-      let fake_let_var_sym_lit = ([], ((loc, G.implicit_param))) in
+      let fake_let_var_sym_lit = ([], ((loc, fake_variable_ident))) in
       let fake_let_var_sym = `Sym_lit fake_let_var_sym_lit in
       let pos =
         match first_or_last with
@@ -1839,7 +1840,9 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
              | _ -> assert false
              end
            in
-           (* TODO: Maybe use Tok.ExpandedTok? *)
+           (* TODO: Maybe use Tok.ExpandedTok? No, won't work, no ranges
+            * and wrong results. But would be good to distinguish since
+            * for example we cannot show the intermediate variable. *)
            let fake_g = H.str env (snd fake_let_var_sym_lit) in
            let make_tmp () =
              let id_info = G.empty_id_info ~hidden:true () in
