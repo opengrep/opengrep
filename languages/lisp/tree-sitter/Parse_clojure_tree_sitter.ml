@@ -1558,6 +1558,18 @@ and map_call_form (env : env) (forms : CST.form list) : G.expr =
                      args))
         |> G.e
     end
+  (* XXX: Do we want / need this? We won't be able to match such
+   * fragments with ($F ...) since this pattern becomes a call.
+   * But (:$K ...) and (::$K ...) still work. On the other hand,
+   * :kwd is also a function! *)
+  | (`Kwd_lit ((_loc, kwd_name) as kwd_tk) as kwd) :: [ arg_form ] ->
+    begin match map_form env kwd with
+    | {e = G.OtherExpr (("Atom", atom_tk), [G.Name n]); _} ->
+      G.DotAccess (map_form env arg_form, atom_tk, G.FN n) |> G.e
+    | _ ->
+      raise_parse_error ~related_ast:(Tk (token env kwd_tk))
+        "Invalid keyword call form."
+    end
   | fn_expr :: arg_forms ->
     let fn_expr_mapped = map_form env fn_expr in
     let arg_exprs_mapped =
