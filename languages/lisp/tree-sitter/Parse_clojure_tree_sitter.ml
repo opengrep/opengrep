@@ -1499,8 +1499,65 @@ and map_let_form (env : env) (forms : CST.form list) =
     | _ ->
       raise_parse_error "Invalid let form."
 
-and map_call_form (env : env) (forms : CST.form list) =
+and map_call_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
+  | (`Sym_lit (_meta, ((_loc, sym_name) as sym_tk)) as sym) :: rest ->
+    let op, arg_forms =
+      match sym_name with
+      | "+" -> Some G.Plus, rest
+      | "-" -> Some G.Minus, rest
+      | "*" -> Some G.Mult, rest
+      | "/" -> Some G.Div, rest
+      | "mod" -> Some G.Mod, rest
+      | "Math/pow" -> Some G.Pow, rest
+      | "quot" -> Some G.FloorDiv, rest
+      | "bit-shift-left" -> Some G.LSL, rest
+      | "unsigned-bit-shift-right" -> Some G.LSR, rest
+      | "bit-shift-right" -> Some G.ASR, rest
+      | "bit-or" -> Some G.BitOr, rest
+      | "bit-xor" -> Some G.BitXor, rest
+      | "bit-and" -> Some G.BitAnd, rest
+      | "bit-not" -> Some G.BitNot, rest
+      | "bit-and-not" -> Some G.BitClear, rest
+      | "and" -> Some G.And, rest
+      | "or" -> Some G.Or, rest
+      | "=" -> Some G.Eq, rest
+      | "not=" -> Some G.NotEq, rest
+      | "identical?" -> Some G.PhysEq, rest
+      | "<" -> Some G.Lt, rest
+      | "<=" -> Some G.LtE, rest
+      | ">" -> Some G.Gt, rest
+      | ">=" -> Some G.GtE, rest
+      | "compare" -> Some G.Cmp, rest
+      | "str" -> Some G.Concat, rest
+      | "conj" -> Some G.Append, rest
+      | "re-find" -> Some G.RegexpMatch, rest
+      | "range" -> Some G.Range, rest
+      | "count" -> Some G.Length, rest
+      | "contains?" -> Some G.In, rest
+      | "instance?" -> Some G.Is, rest
+      | "not" -> begin
+          match rest with
+          | `Sym_lit (_, (_, "identical?")) :: rest -> Some G.NotPhysEq, rest
+          | `Sym_lit (_, (_, "contains?")) :: rest -> Some G.NotIn, rest
+          | `Sym_lit (_, (_, "instance?")) :: rest -> Some G.NotIs, rest
+          | _ -> Some G.Not, rest
+        end
+      | _ -> None, rest (* Because first is the function symbol. *)
+    in
+    let args =
+      List_.map (map_form env) arg_forms
+    in
+    begin match op with
+      | Some op ->
+        G.opcall (op, token env sym_tk) args
+      | _ ->
+        G.Call (map_form env sym,
+                Tok.unsafe_fake_bracket
+                  (List_.map (fun e -> G.Arg e)
+                     args))
+        |> G.e
+    end
   | fn_expr :: arg_forms ->
     let fn_expr_mapped = map_form env fn_expr in
     let arg_exprs_mapped =
