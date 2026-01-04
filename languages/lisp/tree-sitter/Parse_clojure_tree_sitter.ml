@@ -588,6 +588,7 @@ and map_list_form
     (* | Some "format" -> map_format_form env forms *) (* XXX: Treat as normal function. *)
     (* | Some ".." -> map_dotdot_form env forms *) (* TODO: It's a threading macro for methods. *)
     | Some "loop" -> map_loop_form env forms
+    | Some "recur" -> map_recur_form env forms
     | Some ("defmacro" | "definline") -> map_defmacro_form env forms
     | Some "ns" -> map_ns_form env forms
     | Some "require" -> map_require_form env forms
@@ -833,28 +834,6 @@ and _UNUSED_map_dotdot_form (env : env) (forms : CST.form list) : G.expr =
 and map_some_thread_first_last_form (env : env) (forms : CST.form list) : G.expr =
   (* XXX: Temporary solution. *)
   map_thread_first_last_form_eager env forms
-
-(* TODO:
- *  
- * Imagine a sink with the recur values:
- *
- * (defn process-with-metadata [user-input]
- *   (loop [data user-input
- *          metadata nil]  ;; starts clean!
- *     (if (empty? data)
- *       metadata
- *       (let [item (first data)
- *             ;; metadata is nil first time, so we skip the sink
- *             _ (when metadata
- *                 (sink metadata))  ;; metadata becomes tainted after first recur!
- *             ;; Now we store the tainted item into metadata
- *             new-metadata item]
- *         (recur (rest data) new-metadata)))))
- *)
-and map_loop_form (env : env) (forms : CST.form list) : G.expr =
-  (* XXX: temporarily handle as function application.
-   * This is not correct but will avoid failing to parse for now. *)
-  map_call_form env forms
 
 (* (format fmt & args) *)
 and _UNUSED_map_format_form (env : env) (forms : CST.form list) : G.expr =
@@ -1602,6 +1581,44 @@ and map_call_form (env : env) (forms : CST.form list) : G.expr =
   | [] ->
     (* Invalid syntax, nothing to call. *)
     raise_parse_error "Invalid call form."
+
+(* (loop [binding* ] expr* ) *)
+and map_loop_form (env : env) (forms : CST.form list) : G.expr =
+  (* XXX: temporarily handle as function application.
+   * This is not correct but will avoid failing to parse for now. *)
+  match forms with
+    | `Sym_lit (_meta_let, ((_loc, "loop") as loop_tk)) ::
+      (`Vec_lit (_meta_vec, (_lb, binding_srcs, _rb)) as bindings_form) ::
+      body_forms ->
+        let bindings = map_let_binding_forms env bindings_form in
+        let body_exprs =
+          List_.map (fun form -> G.E (map_form env form))
+            body_forms
+        in
+        let bindings_other_expr =
+            G.OtherExpr (("LoopPatternBindings", token env loop_tk),
+                         bindings)
+            |> G.e
+        in
+        G.OtherExpr (("Loop", (token env loop_tk)),
+                     (G.E bindings_other_expr) :: body_exprs)
+        |> G.e
+    | _ ->
+      raise_parse_error "Invalid loop form."
+
+and map_recur_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+    | `Sym_lit (_meta_let, ((_loc, "recur") as recur_tk)) ::
+      arg_forms ->
+        let arg_exprs =
+          List_.map (fun form -> G.E (map_form env form))
+            arg_forms
+        in
+        G.OtherExpr (("Recur", (token env recur_tk)),
+                     arg_exprs)
+        |> G.e
+    | _ ->
+      raise_parse_error "Invalid recur form."
 
 (*
   letfn
