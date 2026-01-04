@@ -63,12 +63,18 @@ type env = {
   break_labels : label list;
   cont_label : label option;
   ctx : ctx;
+  rec_point_lvals : lval list;
 }
 
 let empty_ctx = { entity_names = IdentSet.empty }
 
 let empty_env (lang : Lang.t) : env =
-  { stmts = []; break_labels = []; cont_label = None; ctx = empty_ctx; lang }
+  { stmts = [];
+    break_labels = [];
+    cont_label = None;
+    ctx = empty_ctx;
+    rec_point_lvals = [];
+    lang }
 
 (*****************************************************************************)
 (* Error management *)
@@ -1121,6 +1127,90 @@ and expr_aux env ?(void = false) g_expr =
     | [] -> (env, mk_unit (G.fake "()") NoOrig)
     | e_last :: _e_rest -> (env, e_last)
     end
+  (* Clojure loop. *)
+  | G.OtherExpr (("Loop", tok),
+                 G.E { e = G.OtherExpr
+                           (("LoopPatternBindings", lpbs_tok),
+                            bindings); _ }
+                 :: body_exprs)
+    when env.lang =*= Lang.Clojure ->
+    let env = {env with rec_point_lvals = []; cont_label = None} in
+    let env =
+      List.fold_left
+        (fun env any_expr ->
+          match any_expr with
+          | G.E {e = G.LetPattern (pat, e); _} ->
+            let env, exp = expr env e in
+            let env, lval, new_stmts =
+              try
+                let env, lval, ss = pattern env pat in
+                (env,
+                 Some lval,
+                 [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ] @ ss)
+              with
+              | Fixme (stmts, kind, any_generic) ->
+                  ({ env with stmts }, None, fixme_stmt kind any_generic)
+            in
+            let env = add_stmts env new_stmts in
+            begin match lval with
+              | Some lval -> {env with rec_point_lvals = lval :: env.rec_point_lvals}
+              | None -> env
+            end
+          | _else_ -> (* This should not happen in our translation *) env)
+        env bindings
+    in
+    let _rec_point_label, rec_point_label_stmts, rec_point_env =
+      mk_recursion_point_label env lpbs_tok
+    in
+    let env = add_stmts rec_point_env rec_point_label_stmts in
+    let env, exprs =
+      List.fold_left_map
+        (fun env any_expr ->
+          match any_expr with
+          | G.E exp -> expr env exp
+          | _else_ -> (env, fixme_exp ToDo any_expr (related_tok tok)))
+        env body_exprs
+    in
+    begin match List.rev exprs with
+    | [] -> (env, mk_unit (G.fake "()") NoOrig)
+    | e_last :: _e_rest -> (env, e_last)
+    end
+  (* Clojure recur. *)
+  | G.OtherExpr (("Recur", tok), args)
+    when env.lang =*= Lang.Clojure ->
+    let rec_point_lvals = List.rev env.rec_point_lvals in
+    let rec_point_lvals, args =
+      match (List.length rec_point_lvals) - (List.length args) with
+      | 0 -> (rec_point_lvals, args)
+      (* User did not pass all values for bindings, add nil bindings. *)
+      | n when n > 0 ->
+        (rec_point_lvals,
+         args @ (List.init n (fun _ ->
+             G.E (G.L (G.Null (G.fake "nil")) |> G.e))))
+      (* User passed more values than expected for bindings; ignore
+       * the extra ones. *)
+      | n (* < 0 *) -> (List.take n rec_point_lvals, args)
+    in
+    (* Assign bindings to recursion point lvals. *)
+    let env =
+      List.fold_left2
+        (fun env lval arg_expr ->
+           let arg = match arg_expr with
+             | G.E e -> e
+             | _else_ -> impossible env.stmts (G.E g_expr)
+           in
+          let env, arg_exp = expr env arg in
+          add_instr env (mk_i (Assign (lval, arg_exp)) NoOrig))
+        env rec_point_lvals args
+    in
+    begin match env.cont_label with
+      | None ->
+        impossible env.stmts (G.Tk tok)
+      | Some lbl ->
+        add_stmts env [ mk_s (Goto (tok, lbl)) ],
+        mk_unit tok NoOrig
+    end
+
   (* Clojure: a kind of macroexpansion (macroexpand-1). *)
   | G.OtherExpr ((todo_kind, tok), _ :: _)
     when env.lang =*= Lang.Clojure && CLJ_ME1.is_macroexpandable todo_kind ->
@@ -1764,6 +1854,13 @@ and mk_switch_break_label env tok =
     { env with break_labels = break_label :: env.break_labels }
   in
   (break_label, [ mk_s (Label break_label) ], switch_env)
+
+and mk_recursion_point_label env tok =
+  let rec_point_label = fresh_label ~label:"__rec_point" tok in
+  let rec_point_env =
+    { env with cont_label = Some rec_point_label }
+  in
+  (rec_point_label, [ mk_s (Label rec_point_label) ], rec_point_env)
 
 and implicit_return env eorig tok =
   (* We always expect a value from an expression that is implicitly
