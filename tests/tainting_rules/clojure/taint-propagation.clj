@@ -361,3 +361,22 @@
        (catch Exception e (println e) (sink x))
        ;; ruleid: taint-call
        (finally (sink x))))
+
+(defn f [x]
+  ;; ruleid: taint-call
+  (and false (sink x)))
+
+;; loop
+(defn process-with-metadata [user-input]
+  (loop [data user-input
+         metadata nil]  ;; starts clean.
+    (if (empty? data)
+      metadata
+      (let [item (first data)
+            ;; metadata is nil first time, so we skip the sink
+            _ (when metadata
+                ;; ruleid: taint-call
+                (sink metadata))  ;; metadata becomes tainted after first recur!
+            ;; Now we store the tainted item into metadata
+            new-metadata item]
+        (recur (rest data) new-metadata)))))

@@ -272,10 +272,25 @@ let content_of_loc (loc : Out.location) : string =
   OutUtils.content_of_file_at_range (loc.start, loc.end_) loc.path
 
 let token_to_intermediate_var token : Out.match_intermediate_var option =
-  let* location = OutUtils.tokens_to_single_loc [ token ] in
-  Some
-    (Out.{ location; content = content_of_loc location }
-      : Out.match_intermediate_var)
+  match token with
+  (* HACK: This is just for clojure... to avoid polluting text / json / sarif
+   * output with fake intermediate variables that are the result of macroexpansion.
+   * Such variables are (re)using real tokens whose content has nothing to do with
+   * the actual fake variables, simply because we need real tokens. The output we
+   * get as intermediate variable is irrelevant and simply wrong for tooling that
+   * consumes intermediate variables. 
+   * Tried to make the tokens Faketok / ExpandedTok earlier in the pipeline but
+   * unfortunately it messed up tainting results. This hack, however ugly as it may
+   * be, is not on a critical path so it should be otherwise harmless while doing
+   * a specific job for us.
+   * TODO: At least make the condition str =*= AST_generic.fake_ident and then
+   * other places can use it. *)
+  | Tok.OriginTok {str;_ } when str =*= "G__1111" -> None
+  | _ ->
+    let* location = OutUtils.tokens_to_single_loc [ token ] in
+    Some
+      (Out.{ location; content = content_of_loc location }
+        : Out.match_intermediate_var)
 
 let tokens_to_intermediate_vars tokens =
   List_.filter_map token_to_intermediate_var tokens

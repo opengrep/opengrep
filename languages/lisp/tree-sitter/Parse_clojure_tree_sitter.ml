@@ -34,17 +34,22 @@ module S = Settings_clojure
 (*****************************************************************************)
 
 (*
- * Many of the common macros are expanded in AST_to_IL conversion.
+ * Many of the common macros are expanded.
  *
  * TODO: Update with latest grammar?
  * https://github.com/sogaiu/tree-sitter-clojure/blob/master/grammar.js
  * This is, by the way, the grammar used here -- but we don't have the
  * latest version.
  *
+ * TODO: Handle imports better, it makes rules more robust and with less
+ * patterns needed. Especially module aliasing.
+ *
  * TODO: Handle pre: and post: maps, since the could determine if parameters
  * are sanitised. Add as attributes (OtherAtribute)?
  *
  * TODO: Fix or remove S.At_IL mode for macroexpansion of threading forms.
+ *   This should really be removed soon, why pollute the codebase if it won't
+ *   be used?
  *)
 
 (*****************************************************************************)
@@ -257,6 +262,7 @@ let radix_regex =
 
 let qualified_name_regex_str = "^\\(.+\\)/\\(.+\\)$"
 
+let fake_variable_ident = "G__1111"
 let implicit_param_ident = G.implicit_param
 
 let todo (_env : env) _ = raise_parse_error "Not implemented."
@@ -323,7 +329,7 @@ let name_from_ident ?(is_auto_resolved = false) ?(is_kwd = false)
       let t_before, t_after =
         Tok.split_tok_at_bytepos (String.length before) t
       in
-      let t_slash, t_after =
+      let _t_slash, t_after =
         Tok.split_tok_at_bytepos 1 t_after
       in
       (* Example: obtain idents for 'clojure' and 'core' from 'clojure.core'. *)
@@ -380,7 +386,7 @@ let extract_unqualified_ident (env : env) (tok : Tree_sitter_run.Token.t) : G.id
   if s =~ qualified_name_regex_str then
       let before, after = Common.matched2 s in
       let _t_before, t_after =
-        Tok.split_tok_at_bytepos (String.length before) t
+        Tok.split_tok_at_bytepos (String.length before + 1 (* / *)) t
       in
       (after, t_after)
   else
@@ -580,7 +586,9 @@ and map_list_form
     | Some "comment" -> map_comment_form env forms
     (* | Some "doto" -> map_doto_form env forms *) (* XXX: Treat as normal function. *)
     (* | Some "format" -> map_format_form env forms *) (* XXX: Treat as normal function. *)
+    (* | Some ".." -> map_dotdot_form env forms *) (* TODO: It's a threading macro for methods. *)
     | Some "loop" -> map_loop_form env forms
+    | Some "recur" -> map_recur_form env forms
     | Some ("defmacro" | "definline") -> map_defmacro_form env forms
     | Some "ns" -> map_ns_form env forms
     | Some "require" -> map_require_form env forms
@@ -811,6 +819,10 @@ and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
 and _UNUSED_map_doto_form (env : env) (forms : CST.form list) : G.expr =
   todo env ()
 
+(* TODO: (.. object method1 method2 method3) ~> (.method3 (.method2 (.method1 object))) *)
+and _UNUSED_map_dotdot_form (env : env) (forms : CST.form list) : G.expr =
+  todo env ()
+
 (* TODO: some-> / some->> are similar to -> / ->> but need a let bindings
  * translation similar to cond-> / cond->>.
  *
@@ -822,28 +834,6 @@ and _UNUSED_map_doto_form (env : env) (forms : CST.form list) : G.expr =
 and map_some_thread_first_last_form (env : env) (forms : CST.form list) : G.expr =
   (* XXX: Temporary solution. *)
   map_thread_first_last_form_eager env forms
-
-(* TODO:
- *  
- * Imagine a sink with the recur values:
- *
- * (defn process-with-metadata [user-input]
- *   (loop [data user-input
- *          metadata nil]  ;; starts clean!
- *     (if (empty? data)
- *       metadata
- *       (let [item (first data)
- *             ;; metadata is nil first time, so we skip the sink
- *             _ (when metadata
- *                 (sink metadata))  ;; metadata becomes tainted after first recur!
- *             ;; Now we store the tainted item into metadata
- *             new-metadata item]
- *         (recur (rest data) new-metadata)))))
- *)
-and map_loop_form (env : env) (forms : CST.form list) : G.expr =
-  (* XXX: temporarily handle as function application.
-   * This is not correct but will avoid failing to parse for now. *)
-  map_call_form env forms
 
 (* (format fmt & args) *)
 and _UNUSED_map_format_form (env : env) (forms : CST.form list) : G.expr =
@@ -1055,6 +1045,14 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
     | [ `Kwd_lit ((_loc, ":or") as tk_or); `Map_lit default_val ] ->
        make_pat s_pat tk_pat @@
        pats @
+       (* TODO: This won't trace (source...) in default_val to a sink in the
+        * body, we need to create instantiation code that relates to the variable
+        * to which the default value may be assigned. An If-Not-Nil-Assign will
+        * suffice, for each symbol in the default_val (which is a map of symbols
+        * to values). The function must return G.pattern * expr list where expr
+        * is a map of default values; we can have several. Careful with ordering
+        * to capture any shadowing that may occur (should not happen in correct
+        * code). *)
        [ G.OtherPat (("OrValuePat", (token env tk_or)),
                      [G.E (map_map_form env default_val)]) ]
 
@@ -1480,8 +1478,88 @@ and map_let_form (env : env) (forms : CST.form list) =
     | _ ->
       raise_parse_error "Invalid let form."
 
-and map_call_form (env : env) (forms : CST.form list) =
+and map_call_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
+  | (`Sym_lit (_meta, ((_loc, sym_name) as sym_tk)) as sym) :: rest ->
+    let op, arg_forms =
+      match sym_name with
+      | "+" -> Some G.Plus, rest
+      | "-" -> Some G.Minus, rest
+      | "*" -> Some G.Mult, rest
+      | "/" -> Some G.Div, rest
+      | "mod" -> Some G.Mod, rest
+      | "Math/pow" -> Some G.Pow, rest
+      | "quot" -> Some G.FloorDiv, rest
+      | "bit-shift-left" -> Some G.LSL, rest
+      | "unsigned-bit-shift-right" -> Some G.LSR, rest
+      | "bit-shift-right" -> Some G.ASR, rest
+      | "bit-or" -> Some G.BitOr, rest
+      | "bit-xor" -> Some G.BitXor, rest
+      | "bit-and" -> Some G.BitAnd, rest
+      | "bit-not" -> Some G.BitNot, rest
+      | "bit-and-not" -> Some G.BitClear, rest
+      | "and" -> Some G.And, rest
+      | "or" -> Some G.Or, rest
+      | "=" -> Some G.Eq, rest
+      | "not=" -> Some G.NotEq, rest
+      | "identical?" -> Some G.PhysEq, rest
+      | "<" -> Some G.Lt, rest
+      | "<=" -> Some G.LtE, rest
+      | ">" -> Some G.Gt, rest
+      | ">=" -> Some G.GtE, rest
+      | "compare" -> Some G.Cmp, rest
+      | "str" -> Some G.Concat, rest
+      | "conj" -> Some G.Append, rest
+      | "re-find" -> Some G.RegexpMatch, rest
+      | "range" -> Some G.Range, rest
+      | "count" -> Some G.Length, rest
+      | "contains?" -> Some G.In, rest
+      | "instance?" -> Some G.Is, rest
+      | "not" -> begin
+          match rest with
+          | `Sym_lit (_, (_, "identical?")) :: rest -> Some G.NotPhysEq, rest
+          | `Sym_lit (_, (_, "contains?")) :: rest -> Some G.NotIn, rest
+          | `Sym_lit (_, (_, "instance?")) :: rest -> Some G.NotIs, rest
+          | _ -> Some G.Not, rest
+        end
+      | _ -> None, rest (* Because first is the function symbol. *)
+    in
+    let args =
+      List_.map (map_form env) arg_forms
+    in
+    begin match op with
+      | Some op ->
+        G.opcall (op, token env sym_tk) args
+      | _ ->
+        G.Call (map_form env sym,
+                Tok.unsafe_fake_bracket
+                  (List_.map (fun e -> G.Arg e)
+                     args))
+        |> G.e
+    end
+  (* XXX: Do we want / need this? We won't be able to match such
+   * fragments with ($F ...) since this pattern becomes a call.
+   * But (:$K ...) and (::$K ...) still work. On the other hand,
+   * :kwd is also a function!
+   *
+   * TODO How about:
+   *
+   * (:kwd arg default-value)
+   *
+   * (get arg :kwd)
+   * (get arg :kwd default-value)
+   *
+   * Leaving the code below commented out in case we want to properly
+   * support DotAccess later. 
+   *)
+  (* | (`Kwd_lit ((_loc, kwd_name) as kwd_tk) as kwd) :: [ arg_form ] ->
+       begin match map_form env kwd with
+       | {e = G.OtherExpr (("Atom", atom_tk), [G.Name n]); _} ->
+         G.DotAccess (map_form env arg_form, atom_tk, G.FN n) |> G.e
+       | _ ->
+         raise_parse_error ~related_ast:(Tk (token env kwd_tk))
+           "Invalid keyword call form."
+       end *)
   | fn_expr :: arg_forms ->
     let fn_expr_mapped = map_form env fn_expr in
     let arg_exprs_mapped =
@@ -1503,6 +1581,44 @@ and map_call_form (env : env) (forms : CST.form list) =
   | [] ->
     (* Invalid syntax, nothing to call. *)
     raise_parse_error "Invalid call form."
+
+(* (loop [binding* ] expr* ) *)
+and map_loop_form (env : env) (forms : CST.form list) : G.expr =
+  (* XXX: temporarily handle as function application.
+   * This is not correct but will avoid failing to parse for now. *)
+  match forms with
+    | `Sym_lit (_meta_let, ((_loc, "loop") as loop_tk)) ::
+      (`Vec_lit (_meta_vec, (_lb, binding_srcs, _rb)) as bindings_form) ::
+      body_forms ->
+        let bindings = map_let_binding_forms env bindings_form in
+        let body_exprs =
+          List_.map (fun form -> G.E (map_form env form))
+            body_forms
+        in
+        let bindings_other_expr =
+            G.OtherExpr (("LoopPatternBindings", token env loop_tk),
+                         bindings)
+            |> G.e
+        in
+        G.OtherExpr (("Loop", (token env loop_tk)),
+                     (G.E bindings_other_expr) :: body_exprs)
+        |> G.e
+    | _ ->
+      raise_parse_error "Invalid loop form."
+
+and map_recur_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+    | `Sym_lit (_meta_let, ((_loc, "recur") as recur_tk)) ::
+      arg_forms ->
+        let arg_exprs =
+          List_.map (fun form -> G.E (map_form env form))
+            arg_forms
+        in
+        G.OtherExpr (("Recur", (token env recur_tk)),
+                     arg_exprs)
+        |> G.e
+    | _ ->
+      raise_parse_error "Invalid recur form."
 
 (*
   letfn
@@ -1672,9 +1788,6 @@ and map_do_form (env : env) (forms: CST.form list) : G.expr =
  * second item in the first form, making a list of it is not a
  * list already. If there are more forms, inserts the first form
  * as the second item in second form, etc.
- *
- * NOTE: A tainting rule should have patterns for `(sink ...)`
- * and also just `sink`, else it might miss findings. 
  *)
 and insert_threaded
     (env: env) (insert_pos: insert_pos) (value_form: CST.form) (target_form: CST.form)
@@ -1781,7 +1894,7 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
 
       (* Note that we piggyback on the location of "cond->" for the new
        * variable we are introducing. *)
-      let fake_let_var_sym_lit = ([], ((loc, G.implicit_param))) in
+      let fake_let_var_sym_lit = ([], ((loc, fake_variable_ident))) in
       let fake_let_var_sym = `Sym_lit fake_let_var_sym_lit in
       let pos =
         match first_or_last with
@@ -1839,7 +1952,9 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
              | _ -> assert false
              end
            in
-           (* TODO: Maybe use Tok.ExpandedTok? *)
+           (* TODO: Maybe use Tok.ExpandedTok? No, won't work, no ranges
+            * and wrong results. But would be good to distinguish since
+            * for example we cannot show the intermediate variable. *)
            let fake_g = H.str env (snd fake_let_var_sym_lit) in
            let make_tmp () =
              let id_info = G.empty_id_info ~hidden:true () in
