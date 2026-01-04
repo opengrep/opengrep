@@ -47,7 +47,9 @@ and show_kind =
   | DumpAST of Fpath.t * Lang.t
   | DumpIL  of Fpath.t * Lang.t
   | DumpConfig of Rules_config.config_string
+  | DumpRule of Fpath.t
   | DumpRuleV2 of Fpath.t
+  | DumpPatternsOfRule of Fpath.t
   (* 'semgrep show ???'
    * accessible also as 'semgrep scan --dump-engine-path
    * LATER: get rid of it? *)
@@ -98,7 +100,9 @@ let cmdline_term : conf Term.t =
       match args with
       | [ "version" ] -> Version
       | [ "dump-config"; config_str ] -> DumpConfig config_str
+      | [ "dump-rule"; file ] -> DumpRule (Fpath.v file)
       | [ "dump-rule-v2"; file ] -> DumpRuleV2 (Fpath.v file)
+      | [ "dump-patterns-of-rule"; file ] -> DumpPatternsOfRule (Fpath.v file)
       | [ "dump-cst"; file ] ->
           let path = Fpath.v file in
           let lang = Lang.lang_of_filename_exn path in
@@ -152,8 +156,12 @@ let man : Cmdliner.Manpage.block list =
     `P "Print a list of languages that are currently supported by Opengrep.";
     `Pre "opengrep show dump-config <STRING>";
     `P "Dump the internal representation of the result of --config=<STRING>";
+    `Pre "opengrep show dump-rule <FILE>";
+    `P "Dump the internal representation of a rule";
     `Pre "opengrep show dump-rule-v2 <FILE>";
     `P "Dump the internal representation of a rule using the new (v2) syntax";
+    `Pre "opengrep show dump-patterns-of-rule <FILE>";
+    `P "Dump the internal representation of all patterns found in a rule";
     `Pre "opengrep show dump-ast [<LANG>] <FILE>";
     `P
       "Dump the abstract syntax tree of the file (with some names/types \

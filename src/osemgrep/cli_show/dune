@@ -15,6 +15,7 @@
 
     semgrep.parsing
     semgrep.parsing.tests ; Test_parsing.dump_tree_sitter_cst
+    semgrep.core_cli
     osemgrep_core
     osemgrep_configuring
     osemgrep_networking

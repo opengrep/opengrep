@@ -25,7 +25,9 @@ and show_kind =
   | DumpAST of Fpath.t * Lang.t
   | DumpIL  of Fpath.t * Lang.t
   | DumpConfig of Rules_config.config_string
+  | DumpRule of Fpath.t
   | DumpRuleV2 of Fpath.t
+  | DumpPatternsOfRule of Fpath.t
   | DumpEnginePath of bool (* pro = true *)
   | DumpCommandForCore
 [@@deriving show]
