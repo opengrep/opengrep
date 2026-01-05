@@ -50,6 +50,10 @@ module IdentSet = Set.Make (String)
 type ctx = { entity_names : IdentSet.t }
 type stmts = stmt list
 
+type rec_point_lvals =
+  | Loop_rec_point of lval list (* loop binding lvals *)
+  | Fn_rec_point of lval (* one parameter, destructured in body. *)
+
 type env = {
   lang : Lang.t;
   (* stmts hidden inside expressions that we want to move out of 'exp',
@@ -62,8 +66,9 @@ type env = {
   stmts : stmts;
   break_labels : label list;
   cont_label : label option;
+  rec_point_label : label option;
   ctx : ctx;
-  rec_point_lvals : lval list;
+  rec_point_lvals : rec_point_lvals option;
 }
 
 let empty_ctx = { entity_names = IdentSet.empty }
@@ -72,8 +77,9 @@ let empty_env (lang : Lang.t) : env =
   { stmts = [];
     break_labels = [];
     cont_label = None;
+    rec_point_label = None;
     ctx = empty_ctx;
-    rec_point_lvals = [];
+    rec_point_lvals = None;
     lang }
 
 (*****************************************************************************)
@@ -993,7 +999,13 @@ and expr_aux env ?(void = false) g_expr =
          * `foo(bar(), (x) => { ... })`, because the instruction added
          * to `stmts` by the translation of `bar()` is still present
          * when traslating `(x) => { ... }`. *)
-        function_definition { env with stmts = [] } fdef
+        function_definition
+          { env with stmts = [];
+                     cont_label = None;
+                     break_labels = [];
+                     rec_point_label = None;
+                     rec_point_lvals = None }
+          fdef
       in
       let env = add_instr env (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig) in
       (env, mk_e (Fetch lval) eorig)
@@ -1134,10 +1146,12 @@ and expr_aux env ?(void = false) g_expr =
                             bindings); _ }
                  :: body_exprs)
     when env.lang =*= Lang.Clojure ->
-    let env = {env with rec_point_lvals = []; cont_label = None} in
     let env =
+      {env with rec_point_lvals = None; rec_point_label = None}
+    in
+    let (env, lvals) =
       List.fold_left
-        (fun env any_expr ->
+        (fun (env, lvals) any_expr ->
           match any_expr with
           | G.E {e = G.LetPattern (pat, e); _} ->
             let env, exp = expr env e in
@@ -1153,11 +1167,14 @@ and expr_aux env ?(void = false) g_expr =
             in
             let env = add_stmts env new_stmts in
             begin match lval with
-              | Some lval -> {env with rec_point_lvals = lval :: env.rec_point_lvals}
-              | None -> env
+              | Some lval -> env, lval :: lvals
+              | None -> env, lvals
             end
-          | _else_ -> (* This should not happen in our translation *) env)
-        env bindings
+          | _else_ -> (* This should not happen in our translation *) env, lvals)
+        (env, []) bindings
+    in
+    let env =
+      { env with rec_point_lvals = Loop_rec_point (List.rev lvals) |> Option.some }
     in
     let _rec_point_label, rec_point_label_stmts, rec_point_env =
       mk_recursion_point_label env lpbs_tok
@@ -1178,21 +1195,22 @@ and expr_aux env ?(void = false) g_expr =
   (* Clojure recur. *)
   | G.OtherExpr (("Recur", tok), args)
     when env.lang =*= Lang.Clojure ->
-    let rec_point_lvals = List.rev env.rec_point_lvals in
-    let rec_point_lvals, args =
-      match (List.length rec_point_lvals) - (List.length args) with
-      | 0 -> (rec_point_lvals, args)
-      (* User did not pass all values for bindings, add nil bindings. *)
-      | n when n > 0 ->
-        (rec_point_lvals,
-         args @ (List.init n (fun _ ->
-             G.E (G.L (G.Null (G.fake "nil")) |> G.e))))
-      (* User passed more values than expected for bindings; ignore
-       * the extra ones. *)
-      | n (* < 0 *) -> (List.take n rec_point_lvals, args)
-    in
-    (* Assign bindings to recursion point lvals. *)
     let env =
+      match env.rec_point_lvals with
+      | Some (Loop_rec_point rec_point_lvals) ->
+        let rec_point_lvals, args =
+        match (List.length rec_point_lvals) - (List.length args) with
+        | 0 -> (rec_point_lvals, args)
+        (* User did not pass all values for bindings, add nil bindings. *)
+        | n when n > 0 ->
+          (rec_point_lvals,
+           args @ (List.init n (fun _ ->
+               G.E (G.L (G.Null (G.fake "nil")) |> G.e))))
+        (* User passed more values than expected for bindings; ignore
+         * the extra ones. *)
+        | n (* < 0 *) -> (List.take n rec_point_lvals, args)
+      in
+    (* Assign bindings to recursion point lvals. *)
       List.fold_left2
         (fun env lval arg_expr ->
            let arg = match arg_expr with
@@ -1202,8 +1220,24 @@ and expr_aux env ?(void = false) g_expr =
           let env, arg_exp = expr env arg in
           add_instr env (mk_i (Assign (lval, arg_exp)) NoOrig))
         env rec_point_lvals args
+      (* In this case there is one lval, which is where the unique
+       * parameter is stored in clojure, ie, before destructuring.
+       * TODO: How about short lambdas? *)
+      | Some (Fn_rec_point lval) ->
+        let args = List_.map (function
+            | G.E e -> e
+            | _else_ -> impossible env.stmts (G.E g_expr))
+          args
+        in
+        let env, arg_container_exp =
+          G.Container (G.List, Tok.unsafe_fake_bracket args) |> G.e
+          |> expr env
+        in
+        add_instr env (mk_i (Assign (lval, arg_container_exp)) NoOrig)
+      | _ ->
+        impossible env.stmts (G.E g_expr)
     in
-    begin match env.cont_label with
+    begin match env.rec_point_label with
       | None ->
         impossible env.stmts (G.Tk tok)
       | Some lbl ->
@@ -1361,12 +1395,18 @@ and record env ((_tok, origfields, _) as record_def) =
               | G.FieldDefColon { G.vinit = Some fdeforig; _ } ->
                   expr env fdeforig
               (* Some languages such as javascript allow function
-                  definitions in object literal syntax. *)
+                 definitions in object literal syntax. *)
               | G.FuncDef fdef ->
                   let lval = fresh_lval (snd fdef.fkind) in
                   (* See NOTE(config.stmts)! *)
                   let _, fdef =
-                    function_definition { env with stmts = [] } fdef
+                    function_definition
+                      { env with stmts = [];
+                                 cont_label = None;
+                                 rec_point_label = None;
+                                 break_labels = [];
+                                 rec_point_lvals = None }
+                      fdef
                   in
                   let forig = Related (G.Fld forig) in
                   let env =
@@ -1858,7 +1898,7 @@ and mk_switch_break_label env tok =
 and mk_recursion_point_label env tok =
   let rec_point_label = fresh_label ~label:"__rec_point" tok in
   let rec_point_env =
-    { env with cont_label = Some rec_point_label }
+    { env with rec_point_label = Some rec_point_label }
   in
   (rec_point_label, [ mk_s (Label rec_point_label) ], rec_point_env)
 
@@ -2499,7 +2539,18 @@ and python_with_stmt env manager opt_pat body =
 
 and function_definition env fdef =
   let fparams = parameters fdef.G.fparams in
+  let env, rec_point_label_stmts = match env.lang, fparams with
+    | Lang.Clojure, [ Param { pname; _ } ] ->
+      let lval = IL_helpers.lval_of_var pname in
+      let _rec_point_label, rec_point_label_stmts, rec_point_env =
+        mk_recursion_point_label env (G.fake "fun_rec_point")
+      in
+      {rec_point_env with rec_point_lvals = Some (Fn_rec_point lval)},
+      rec_point_label_stmts
+    | _ -> env, []
+  in
   let env, fbody = function_body env fdef.G.fbody in
+  let fbody = rec_point_label_stmts @ fbody in
   (env, { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody })
 
 (*****************************************************************************)
