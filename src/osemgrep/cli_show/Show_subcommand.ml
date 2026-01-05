@@ -192,6 +192,9 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
       rules_and_errors
       |> List.iter (fun x -> print (Rule_fetching.show_rules_and_origin x));
       Exit_code.ok ~__LOC__
+  | DumpRule file ->
+      Core_actions.dump_rule file;
+      Exit_code.ok ~__LOC__
   | DumpRuleV2 file ->
       (* TODO: use validation ocaml code to enforce the
        * CHECK: in rule_schema_v2.atd.
@@ -201,6 +204,9 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
        *)
       let rules = Parse_rules_with_atd.parse_rules_v2 file in
       print (Rule_schema_v2_t.show_rules rules);
+      Exit_code.ok ~__LOC__
+  | DumpPatternsOfRule file ->
+      Core_CLI.dump_patterns_of_rule file;
       Exit_code.ok ~__LOC__
   | DumpEnginePath _pro -> failwith "TODO: dump-engine-path not implemented yet"
   | DumpCommandForCore ->
