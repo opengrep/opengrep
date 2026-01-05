@@ -1,0 +1,4 @@
+;; DO NOT WRITE PATTERNS LIKE: tests/patterns/clojure/ellipsis-fn-bindings.sgrep
+;; Do this instead: use metavariable for function name, explicit parameters vector;
+;; ... for body unless something more specific is needed.
+(defn $_ [...] ...)

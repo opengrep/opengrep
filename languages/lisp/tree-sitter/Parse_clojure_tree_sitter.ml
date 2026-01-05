@@ -226,10 +226,12 @@ let expr_to_stmt e =
     | StmtExpr st -> st
     | _else_ -> s (ExprStmt (e, sc))
 
-let exprblock exprs =
-  let exs_any = List_.map (fun e -> G.E e) exprs in
-  G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
-  |> G.e
+let exprblock = function
+  | [ ({e = G.OtherExpr(("ExprBlock",_ ), _); _} as exp) ] -> exp
+  | exprs ->
+    let exs_any = List_.map (fun e -> G.E e) exprs in
+    G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
+    |> G.e
 
 let with_mode env mode =
   H.{env with extra = {env.extra with mode}}
@@ -375,7 +377,10 @@ let name_from_ident ?(is_auto_resolved = false) ?(is_kwd = false)
     | true, false ->
         GH.name_of_ids ~name_top:(G.fake ":") [ (":", (G.fake ":")); (s, t) ]
     | _ ->
-        Id ((s, t), empty_id_info ())
+        let s' =
+          match s with "..." when in_pattern env -> "$_" | _ -> s
+        in
+        Id ((s', t), empty_id_info ())
 
 let name (env : env) (tok : Tree_sitter_run.Token.t) : G.name =
   name_from_ident env (H.str env tok)
@@ -601,6 +606,7 @@ and map_list_form
      * as function application. *)
     (* TODO: How about (:user ...)? We should use G.DotAccess with FDynamic
      * Atom :user. *)
+    | Some "..." when in_pattern env -> map_ellipsis_list_form env forms
     | _ -> map_call_form env forms
 
 and map_form (env : env) (x : CST.form) : G.expr =
@@ -892,7 +898,7 @@ and map_def_form (env : env) (forms : CST.form list) =
     (* XXX: in fact, the symbol is interned, if it does not exist,
      * in the current namespace *ns*. *)
     (* XXX: In patterns this could be Ellipsis? No need though. *)
-    let symbol_ident : G.name = map_name env x in 
+    let symbol_ident : G.name = map_name env x in
     let init_val = 
       match rest with
       | [ init ] | [ _ (* doc string (TODO: match this?) *); init ] ->
@@ -1152,6 +1158,12 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
 
 and map_fn_params (env : env) (form : CST.form) : G.pattern (* list bracket *) =
   match form with
+  (* We relax patterns do allow (defn ... ... ...). *)
+  | `Sym_lit (_, (_, "...")) when in_pattern env ->
+    let ellipsis = map_binding_form env form in
+    G.PatList (Tok.unsafe_fake_tok "[",
+               [ellipsis],
+               Tok.unsafe_fake_tok "]")
   | `Vec_lit vec_lit -> map_binding_form_vec_lit ~allow_as:false env vec_lit
   | _ -> raise_parse_error "Invalid fn params."
 
@@ -1250,7 +1262,8 @@ and map_fn_form
     let name_opt, rest_forms =
       match forms with
       | `Sym_lit x :: rest ->
-         Some (map_name env x), rest
+         let fn_name = map_name env x in
+         Some fn_name, rest
       | _ ->
          None, forms
     in
@@ -1264,11 +1277,7 @@ and map_fn_form
     let cases =
       List_.map
         (fun (pat, exs) ->
-           let exs_any = List_.map (fun e -> G.E e) exs in
-           let expr_block =
-             G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
-             |> G.e
-           in
+           let expr_block = exprblock exs in
            G.case_of_pat_and_expr (pat, expr_block)
            (* Why commented out? We don't want block under let. Messes
             * up order of bindings. *)
@@ -1349,7 +1358,9 @@ and map_defn_form (env : env) (forms : CST.form list) =
     in
     let patterns_and_bodies =
       match rest_forms with
-      | `Vec_lit _ :: _ -> [map_fn_single_arity env rest_forms]
+      | `Sym_lit (_, (_, "...")) :: _
+      | `Vec_lit _ :: _ ->
+        [map_fn_single_arity env rest_forms]
       | `List_lit _ :: _ ->
         let rest_forms, final_attr_map_opt =
           begin match List.rev rest_forms with
@@ -1364,11 +1375,7 @@ and map_defn_form (env : env) (forms : CST.form list) =
     let cases =
       List_.map
         (fun (pat, exs) ->
-           let exs_any = List_.map (fun e -> G.E e) exs in
-           let expr_block =
-             G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
-             |> G.e
-           in
+           let expr_block = exprblock exs in
            G.case_of_pat_and_expr (pat, expr_block))
         patterns_and_bodies
     in
@@ -1477,6 +1484,20 @@ and map_let_form (env : env) (forms : CST.form list) =
         |> G.e
     | _ ->
       raise_parse_error "Invalid let form."
+
+(* TODO: Do we really want this? And how about (... e) or (... e ...)?
+ * For the later we can write without parentheses, and it will be combined
+ * in a block for us. We can also write (do ...) which is the same as (...).
+ * Currently if we have a pattern (... e1 e2) it will be interpreted as a
+ * block, not as a call. *)
+(* (...) more naturally maps to ExprBlock(...) rather than Call(..., []). *)
+and map_ellipsis_list_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+  | `Sym_lit (_meta, ((_loc, "...") as ellipsis_tk)) :: _ ->
+    exprblock (List_.map (map_form env) forms)
+  | _ ->
+    (* We only call this function when the forms start with ... . *)
+    assert false
 
 and map_call_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
