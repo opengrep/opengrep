@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.14.1](https://github.com/opengrep/opengrep/releases/tag/v1.14.1) - 06-01-2026
+
+### Improvements
+
+* Clojure translation part II by @dimitris-m in #517
+* C#: Allow implicit variables in properties to be taint sources by @maciejpirog in #516
+* Add core flags `dump_rule` and `dump_patterns_of_rule` as options in the show command by @maciejpirog in #519
+
+### Bug fixes
+
+* Fix: pass sig db to lambda analysis, handle method mutation tainting by @corneliuhoffman in #520
+
+### Tech debt
+
+* Fix CHANGELOG.md, OPENGREP.md, remove unused files by @dimitris-m in #523
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.14.0...v1.14.1
+
+
 ## [1.14.0](https://github.com/opengrep/opengrep/releases/tag/v1.14.0) - 31-12-2025
 
 ### Improvements
