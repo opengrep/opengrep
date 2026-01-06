@@ -1238,7 +1238,7 @@ and stmt_kind =
       * case_and_body list (* TODO brace *)
   | Continue of tok * label_ident * sc
   | Break of tok * label_ident * sc
-  (* todo? remove stmt argument? more symetric to Goto *)
+  (* todo? remove stmt argument? more symmetric to Goto *)
   | Label of label * stmt
   | Goto of tok * label * sc (* less: use label_ident for computed goto in C*)
   (* TODO? move in expr! in C++ the expr can be an option *)

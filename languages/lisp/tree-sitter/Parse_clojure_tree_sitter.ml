@@ -20,7 +20,6 @@ open AST_generic
 module G = AST_generic
 module GH = AST_generic_helpers
 module H = Parse_tree_sitter_helpers
-module S = Settings_clojure
 
 (* TODO: Remove after testing, this helps move faster. *)
 (* Disable warnings against unused variables *)
@@ -34,17 +33,18 @@ module S = Settings_clojure
 (*****************************************************************************)
 
 (*
- * Many of the common macros are expanded in AST_to_IL conversion.
+ * Many of the common macros are expanded.
  *
  * TODO: Update with latest grammar?
  * https://github.com/sogaiu/tree-sitter-clojure/blob/master/grammar.js
  * This is, by the way, the grammar used here -- but we don't have the
  * latest version.
  *
+ * TODO: Handle imports better, it makes rules more robust and with less
+ * patterns needed. Especially module aliasing.
+ *
  * TODO: Handle pre: and post: maps, since the could determine if parameters
  * are sanitised. Add as attributes (OtherAtribute)?
- *
- * TODO: Fix or remove S.At_IL mode for macroexpansion of threading forms.
  *)
 
 (*****************************************************************************)
@@ -66,15 +66,9 @@ type syntax_mode =
   | Quoted
   | Syntax_quoted
 
-(* TODO: Only used in S.At_IL mode which is currently disabled.
- * Add context, when in -> we can handle (-> e (as-> x ...)) and also
- * fail cleanly when a binding is expected. *)
-type thread_macro_context = Thread_first | Thread_last
-
 type extra = {
   kind: parse_kind;
   mode: syntax_mode;
-  thread_macro_ctx: thread_macro_context option; (* XXX: Only for S.At_IL mode. *)
   ns: string option; (* alt: or in split form? [clojure; core] etc; or G.name? *)
   ns_aliases: (string * string) list;
    (* (ns my.ns (:require [other.ns :as my-alias])) *)
@@ -221,19 +215,18 @@ let expr_to_stmt e =
     | StmtExpr st -> st
     | _else_ -> s (ExprStmt (e, sc))
 
-let exprblock exprs =
-  let exs_any = List_.map (fun e -> G.E e) exprs in
-  G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
-  |> G.e
+let exprblock = function
+  | [ ({e = G.OtherExpr(("ExprBlock",_ ), _); _} as exp) ] -> exp
+  | exprs ->
+    let exs_any = List_.map (fun e -> G.E e) exprs in
+    G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
+    |> G.e
 
 let with_mode env mode =
   H.{env with extra = {env.extra with mode}}
 
 let with_ns env ns =
   H.{env with extra = {env.extra with ns}}
-
-let with_thread_macro_ctx env thread_macro_ctx =
-  H.{env with extra = {env.extra with thread_macro_ctx}}
 
 let int_regex =
   Pcre2_.regexp "^[+-]?[0-9]+N?$"
@@ -257,6 +250,7 @@ let radix_regex =
 
 let qualified_name_regex_str = "^\\(.+\\)/\\(.+\\)$"
 
+let fake_variable_ident = "G__1111"
 let implicit_param_ident = G.implicit_param
 
 let todo (_env : env) _ = raise_parse_error "Not implemented."
@@ -323,7 +317,7 @@ let name_from_ident ?(is_auto_resolved = false) ?(is_kwd = false)
       let t_before, t_after =
         Tok.split_tok_at_bytepos (String.length before) t
       in
-      let t_slash, t_after =
+      let _t_slash, t_after =
         Tok.split_tok_at_bytepos 1 t_after
       in
       (* Example: obtain idents for 'clojure' and 'core' from 'clojure.core'. *)
@@ -369,7 +363,10 @@ let name_from_ident ?(is_auto_resolved = false) ?(is_kwd = false)
     | true, false ->
         GH.name_of_ids ~name_top:(G.fake ":") [ (":", (G.fake ":")); (s, t) ]
     | _ ->
-        Id ((s, t), empty_id_info ())
+        let s' =
+          match s with "..." when in_pattern env -> "$_" | _ -> s
+        in
+        Id ((s', t), empty_id_info ())
 
 let name (env : env) (tok : Tree_sitter_run.Token.t) : G.name =
   name_from_ident env (H.str env tok)
@@ -380,7 +377,7 @@ let extract_unqualified_ident (env : env) (tok : Tree_sitter_run.Token.t) : G.id
   if s =~ qualified_name_regex_str then
       let before, after = Common.matched2 s in
       let _t_before, t_after =
-        Tok.split_tok_at_bytepos (String.length before) t
+        Tok.split_tok_at_bytepos (String.length before + 1 (* / *)) t
       in
       (after, t_after)
   else
@@ -580,7 +577,9 @@ and map_list_form
     | Some "comment" -> map_comment_form env forms
     (* | Some "doto" -> map_doto_form env forms *) (* XXX: Treat as normal function. *)
     (* | Some "format" -> map_format_form env forms *) (* XXX: Treat as normal function. *)
+    (* | Some ".." -> map_dotdot_form env forms *) (* TODO: It's a threading macro for methods. *)
     | Some "loop" -> map_loop_form env forms
+    | Some "recur" -> map_recur_form env forms
     | Some ("defmacro" | "definline") -> map_defmacro_form env forms
     | Some "ns" -> map_ns_form env forms
     | Some "require" -> map_require_form env forms
@@ -593,6 +592,7 @@ and map_list_form
      * as function application. *)
     (* TODO: How about (:user ...)? We should use G.DotAccess with FDynamic
      * Atom :user. *)
+    | Some "..." when in_pattern env -> map_ellipsis_list_form env forms
     | _ -> map_call_form env forms
 
 and map_form (env : env) (x : CST.form) : G.expr =
@@ -811,6 +811,10 @@ and map_defmacro_form (env : env) (forms : CST.form list) : G.expr =
 and _UNUSED_map_doto_form (env : env) (forms : CST.form list) : G.expr =
   todo env ()
 
+(* TODO: (.. object method1 method2 method3) ~> (.method3 (.method2 (.method1 object))) *)
+and _UNUSED_map_dotdot_form (env : env) (forms : CST.form list) : G.expr =
+  todo env ()
+
 (* TODO: some-> / some->> are similar to -> / ->> but need a let bindings
  * translation similar to cond-> / cond->>.
  *
@@ -821,29 +825,7 @@ and _UNUSED_map_doto_form (env : env) (forms : CST.form list) : G.expr =
  *)
 and map_some_thread_first_last_form (env : env) (forms : CST.form list) : G.expr =
   (* XXX: Temporary solution. *)
-  map_thread_first_last_form_eager env forms
-
-(* TODO:
- *  
- * Imagine a sink with the recur values:
- *
- * (defn process-with-metadata [user-input]
- *   (loop [data user-input
- *          metadata nil]  ;; starts clean!
- *     (if (empty? data)
- *       metadata
- *       (let [item (first data)
- *             ;; metadata is nil first time, so we skip the sink
- *             _ (when metadata
- *                 (sink metadata))  ;; metadata becomes tainted after first recur!
- *             ;; Now we store the tainted item into metadata
- *             new-metadata item]
- *         (recur (rest data) new-metadata)))))
- *)
-and map_loop_form (env : env) (forms : CST.form list) : G.expr =
-  (* XXX: temporarily handle as function application.
-   * This is not correct but will avoid failing to parse for now. *)
-  map_call_form env forms
+  map_thread_first_last_form env forms
 
 (* (format fmt & args) *)
 and _UNUSED_map_format_form (env : env) (forms : CST.form list) : G.expr =
@@ -902,7 +884,7 @@ and map_def_form (env : env) (forms : CST.form list) =
     (* XXX: in fact, the symbol is interned, if it does not exist,
      * in the current namespace *ns*. *)
     (* XXX: In patterns this could be Ellipsis? No need though. *)
-    let symbol_ident : G.name = map_name env x in 
+    let symbol_ident : G.name = map_name env x in
     let init_val = 
       match rest with
       | [ init ] | [ _ (* doc string (TODO: match this?) *); init ] ->
@@ -1055,6 +1037,14 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
     | [ `Kwd_lit ((_loc, ":or") as tk_or); `Map_lit default_val ] ->
        make_pat s_pat tk_pat @@
        pats @
+       (* TODO: This won't trace (source...) in default_val to a sink in the
+        * body, we need to create instantiation code that relates to the variable
+        * to which the default value may be assigned. An If-Not-Nil-Assign will
+        * suffice, for each symbol in the default_val (which is a map of symbols
+        * to values). The function must return G.pattern * expr list where expr
+        * is a map of default values; we can have several. Careful with ordering
+        * to capture any shadowing that may occur (should not happen in correct
+        * code). *)
        [ G.OtherPat (("OrValuePat", (token env tk_or)),
                      [G.E (map_map_form env default_val)]) ]
 
@@ -1154,6 +1144,12 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
 
 and map_fn_params (env : env) (form : CST.form) : G.pattern (* list bracket *) =
   match form with
+  (* We relax patterns do allow (defn ... ... ...). *)
+  | `Sym_lit (_, (_, "...")) when in_pattern env ->
+    let ellipsis = map_binding_form env form in
+    G.PatList (Tok.unsafe_fake_tok "[",
+               [ellipsis],
+               Tok.unsafe_fake_tok "]")
   | `Vec_lit vec_lit -> map_binding_form_vec_lit ~allow_as:false env vec_lit
   | _ -> raise_parse_error "Invalid fn params."
 
@@ -1252,7 +1248,8 @@ and map_fn_form
     let name_opt, rest_forms =
       match forms with
       | `Sym_lit x :: rest ->
-         Some (map_name env x), rest
+         let fn_name = map_name env x in
+         Some fn_name, rest
       | _ ->
          None, forms
     in
@@ -1266,11 +1263,7 @@ and map_fn_form
     let cases =
       List_.map
         (fun (pat, exs) ->
-           let exs_any = List_.map (fun e -> G.E e) exs in
-           let expr_block =
-             G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
-             |> G.e
-           in
+           let expr_block = exprblock exs in
            G.case_of_pat_and_expr (pat, expr_block)
            (* Why commented out? We don't want block under let. Messes
             * up order of bindings. *)
@@ -1351,7 +1344,9 @@ and map_defn_form (env : env) (forms : CST.form list) =
     in
     let patterns_and_bodies =
       match rest_forms with
-      | `Vec_lit _ :: _ -> [map_fn_single_arity env rest_forms]
+      | `Sym_lit (_, (_, "...")) :: _
+      | `Vec_lit _ :: _ ->
+        [map_fn_single_arity env rest_forms]
       | `List_lit _ :: _ ->
         let rest_forms, final_attr_map_opt =
           begin match List.rev rest_forms with
@@ -1366,11 +1361,7 @@ and map_defn_form (env : env) (forms : CST.form list) =
     let cases =
       List_.map
         (fun (pat, exs) ->
-           let exs_any = List_.map (fun e -> G.E e) exs in
-           let expr_block =
-             G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exs_any)
-             |> G.e
-           in
+           let expr_block = exprblock exs in
            G.case_of_pat_and_expr (pat, expr_block))
         patterns_and_bodies
     in
@@ -1480,8 +1471,102 @@ and map_let_form (env : env) (forms : CST.form list) =
     | _ ->
       raise_parse_error "Invalid let form."
 
-and map_call_form (env : env) (forms : CST.form list) =
+(* TODO: Do we really want this? And how about (... e) or (... e ...)?
+ * For the later we can write without parentheses, and it will be combined
+ * in a block for us. We can also write (do ...) which is the same as (...).
+ * Currently if we have a pattern (... e1 e2) it will be interpreted as a
+ * block, not as a call. *)
+(* (...) more naturally maps to ExprBlock(...) rather than Call(..., []). *)
+and map_ellipsis_list_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
+  | `Sym_lit (_meta, ((_loc, "...") as ellipsis_tk)) :: _ ->
+    exprblock (List_.map (map_form env) forms)
+  | _ ->
+    (* We only call this function when the forms start with ... . *)
+    assert false
+
+and map_call_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+  | (`Sym_lit (_meta, ((_loc, sym_name) as sym_tk)) as sym) :: rest ->
+    let op, arg_forms =
+      match sym_name with
+      | "+" -> Some G.Plus, rest
+      | "-" -> Some G.Minus, rest
+      | "*" -> Some G.Mult, rest
+      | "/" -> Some G.Div, rest
+      | "mod" -> Some G.Mod, rest
+      | "Math/pow" -> Some G.Pow, rest
+      | "quot" -> Some G.FloorDiv, rest
+      | "bit-shift-left" -> Some G.LSL, rest
+      | "unsigned-bit-shift-right" -> Some G.LSR, rest
+      | "bit-shift-right" -> Some G.ASR, rest
+      | "bit-or" -> Some G.BitOr, rest
+      | "bit-xor" -> Some G.BitXor, rest
+      | "bit-and" -> Some G.BitAnd, rest
+      | "bit-not" -> Some G.BitNot, rest
+      | "bit-and-not" -> Some G.BitClear, rest
+      | "and" -> Some G.And, rest
+      | "or" -> Some G.Or, rest
+      | "=" -> Some G.Eq, rest
+      | "not=" -> Some G.NotEq, rest
+      | "identical?" -> Some G.PhysEq, rest
+      | "<" -> Some G.Lt, rest
+      | "<=" -> Some G.LtE, rest
+      | ">" -> Some G.Gt, rest
+      | ">=" -> Some G.GtE, rest
+      | "compare" -> Some G.Cmp, rest
+      | "str" -> Some G.Concat, rest
+      | "conj" -> Some G.Append, rest
+      | "re-find" -> Some G.RegexpMatch, rest
+      | "range" -> Some G.Range, rest
+      | "count" -> Some G.Length, rest
+      | "contains?" -> Some G.In, rest
+      | "instance?" -> Some G.Is, rest
+      | "not" -> begin
+          match rest with
+          | `Sym_lit (_, (_, "identical?")) :: rest -> Some G.NotPhysEq, rest
+          | `Sym_lit (_, (_, "contains?")) :: rest -> Some G.NotIn, rest
+          | `Sym_lit (_, (_, "instance?")) :: rest -> Some G.NotIs, rest
+          | _ -> Some G.Not, rest
+        end
+      | _ -> None, rest (* Because first is the function symbol. *)
+    in
+    let args =
+      List_.map (map_form env) arg_forms
+    in
+    begin match op with
+      | Some op ->
+        G.opcall (op, token env sym_tk) args
+      | _ ->
+        G.Call (map_form env sym,
+                Tok.unsafe_fake_bracket
+                  (List_.map (fun e -> G.Arg e)
+                     args))
+        |> G.e
+    end
+  (* XXX: Do we want / need this? We won't be able to match such
+   * fragments with ($F ...) since this pattern becomes a call.
+   * But (:$K ...) and (::$K ...) still work. On the other hand,
+   * :kwd is also a function!
+   *
+   * TODO How about:
+   *
+   * (:kwd arg default-value)
+   *
+   * (get arg :kwd)
+   * (get arg :kwd default-value)
+   *
+   * Leaving the code below commented out in case we want to properly
+   * support DotAccess later. 
+   *)
+  (* | (`Kwd_lit ((_loc, kwd_name) as kwd_tk) as kwd) :: [ arg_form ] ->
+       begin match map_form env kwd with
+       | {e = G.OtherExpr (("Atom", atom_tk), [G.Name n]); _} ->
+         G.DotAccess (map_form env arg_form, atom_tk, G.FN n) |> G.e
+       | _ ->
+         raise_parse_error ~related_ast:(Tk (token env kwd_tk))
+           "Invalid keyword call form."
+       end *)
   | fn_expr :: arg_forms ->
     let fn_expr_mapped = map_form env fn_expr in
     let arg_exprs_mapped =
@@ -1503,6 +1588,44 @@ and map_call_form (env : env) (forms : CST.form list) =
   | [] ->
     (* Invalid syntax, nothing to call. *)
     raise_parse_error "Invalid call form."
+
+(* (loop [binding* ] expr* ) *)
+and map_loop_form (env : env) (forms : CST.form list) : G.expr =
+  (* XXX: temporarily handle as function application.
+   * This is not correct but will avoid failing to parse for now. *)
+  match forms with
+    | `Sym_lit (_meta_let, ((_loc, "loop") as loop_tk)) ::
+      (`Vec_lit (_meta_vec, (_lb, binding_srcs, _rb)) as bindings_form) ::
+      body_forms ->
+        let bindings = map_let_binding_forms env bindings_form in
+        let body_exprs =
+          List_.map (fun form -> G.E (map_form env form))
+            body_forms
+        in
+        let bindings_other_expr =
+            G.OtherExpr (("LoopPatternBindings", token env loop_tk),
+                         bindings)
+            |> G.e
+        in
+        G.OtherExpr (("Loop", (token env loop_tk)),
+                     (G.E bindings_other_expr) :: body_exprs)
+        |> G.e
+    | _ ->
+      raise_parse_error "Invalid loop form."
+
+and map_recur_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+    | `Sym_lit (_meta_let, ((_loc, "recur") as recur_tk)) ::
+      arg_forms ->
+        let arg_exprs =
+          List_.map (fun form -> G.E (map_form env form))
+            arg_forms
+        in
+        G.OtherExpr (("Recur", (token env recur_tk)),
+                     arg_exprs)
+        |> G.e
+    | _ ->
+      raise_parse_error "Invalid recur form."
 
 (*
   letfn
@@ -1672,9 +1795,6 @@ and map_do_form (env : env) (forms: CST.form list) : G.expr =
  * second item in the first form, making a list of it is not a
  * list already. If there are more forms, inserts the first form
  * as the second item in second form, etc.
- *
- * NOTE: A tainting rule should have patterns for `(sink ...)`
- * and also just `sink`, else it might miss findings. 
  *)
 and insert_threaded
     (env: env) (insert_pos: insert_pos) (value_form: CST.form) (target_form: CST.form)
@@ -1710,8 +1830,8 @@ and insert_threaded
  * match any sequence of e in the pipeline. But this cannot be macroexpanded properly.
  * So we convert to deep ellipsis. This way we should get (e2 (<... (e1 e) ...>)) which
  * is closer to the intention of the user. This has now been implemented (see above
- * function). That part was better with S.At_IL (the *_lazy variation below. *)
-and map_thread_first_last_form_eager
+ * function). *)
+and map_thread_first_last_form
     (env : env) (forms: CST.form list) : G.expr =
   match forms with
     | `Sym_lit (_meta_thread,
@@ -1742,38 +1862,23 @@ and ensure_form_is_list (env : env) (form: CST.form) : CST.form =
     let loc = L.{start = pos; end_ = pos} in
     `List_lit ([], ((loc, "("), [`Form form], (loc, ")")))
 
-and map_thread_first_last_form_lazy (env : env) (forms: CST.form list) : G.expr =
-  match forms with
-    | `Sym_lit (_meta_thread,
-                ((_loc, (("->" | "->>") as first_or_last)) as thread_tk))
-      :: (_ :: _ as rest_forms) ->
-      let thread_macro_ctx = 
-        match first_or_last with
-        | "->" -> Some Thread_first
-        | _ (* "->>" *) -> Some Thread_last
-      in
-      let rest_exprs = List_.map
-          (fun form ->
-             (* We convert `sink` to `(sink)` so we don't have to add
-              * a `sink` pattern to sinks, because this makes all instances
-              * of the name tainted, even when not in call position. *)
-             G.E (map_form
-                    (* XXX: This must be always cleared 1 level down ALWAYS. *)
-                    (with_thread_macro_ctx env thread_macro_ctx)
-                    (ensure_form_is_list env form)))
-          rest_forms
-      in
-      G.OtherExpr ((first_or_last, (token env thread_tk)), rest_exprs)
-      |> G.e
-    | _ ->
-        raise_parse_error "Invalid thread-first / thread_last form."
-
-and map_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
-  match S.macroexpansion_mode with
-  | S.At_IL -> map_thread_first_last_form_lazy env forms 
-  | S.At_generic -> map_thread_first_last_form_eager env forms
-
-and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G.expr =
+(*
+ * (let [g (gensym)
+ *         steps (map (fn [[test step]] `(if ~test (-> ~g ~step) ~g))
+ *                    (partition 2 claues))]
+ *     `(let [~g ~expr
+ *            ~@(interleave (repeat g) (butlast steps))]
+ *        ~(if (empty? steps)
+ *           g
+ *           (last steps)))))
+ *
+ * opengrep.clj=> (macroexpand-1 '(cond-> 1 true (+ 1) false (- 1)))
+ * replacing a gensym such as G__2174 with g: 
+ * (let [g 1
+ *       g (if true (-> g (+ 1)) g)]
+ *  (if false (-> g (- 1)) g)) 
+ *)
+and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
   match forms with
     | `Sym_lit (_meta_thread,
                 ((loc, (("cond->" | "cond->>") as first_or_last)) as thread_tk))
@@ -1781,7 +1886,7 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
 
       (* Note that we piggyback on the location of "cond->" for the new
        * variable we are introducing. *)
-      let fake_let_var_sym_lit = ([], ((loc, G.implicit_param))) in
+      let fake_let_var_sym_lit = ([], ((loc, fake_variable_ident))) in
       let fake_let_var_sym = `Sym_lit fake_let_var_sym_lit in
       let pos =
         match first_or_last with
@@ -1839,7 +1944,9 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
              | _ -> assert false
              end
            in
-           (* TODO: Maybe use Tok.ExpandedTok? *)
+           (* TODO: Maybe use Tok.ExpandedTok? No, won't work, no ranges
+            * and wrong results. But would be good to distinguish since
+            * for example we cannot show the intermediate variable. *)
            let fake_g = H.str env (snd fake_let_var_sym_lit) in
            let make_tmp () =
              let id_info = G.empty_id_info ~hidden:true () in
@@ -1910,25 +2017,6 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
     | _ ->
         raise_parse_error "Invalid cond-> / cond->> form."
 
-and map_cond_thread_first_last_form_lazy (env : env) (forms: CST.form list) : G.expr =
-  match forms with
-    | `Sym_lit (_meta_thread,
-                ((_loc, (("cond->" | "cond->>") as first_or_last)) as thread_tk))
-      :: (_expr :: _clauses as rest_forms) ->
-      let rest_exprs = List_.map
-          (fun form -> G.E (map_form env form))
-          rest_forms
-      in
-      G.OtherExpr ((first_or_last, (token env thread_tk)), rest_exprs)
-      |> G.e
-    | _ ->
-        raise_parse_error "Invalid cond-> / cond->> form."
-
-and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
-  match S.macroexpansion_mode with
-  | S.At_IL -> map_cond_thread_first_last_form_lazy env forms 
-  | S.At_generic -> map_cond_thread_first_last_form_eager env forms
-
 (*
  * as->
  * Usage: (as-> expr name & forms)
@@ -1949,31 +2037,9 @@ and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr 
  * (E v) (P p) - (E f1) (P p) - (E f2) (P p)  - ... - (E fn-1) (P p) - E Efn 
  *
  * If there is not rest forms, then body becomes p.
- *  
- * TODO: Interleave the binding in the macroexpansion instead of here? 
- * TODO: How about deep expr matching? Descend into context?
- * TODO:
- * How about (-> e (as-> x e1 ... en))
- * opengrep.clj=> (-> 5 (as-> x (+ x x) (+ x x)))
- * 20
- * This is a problem for the S.At_IL mode, but not for S.At_generic. 
  *)
 and map_as_thread_form (env : env) (forms: CST.form list) : G.expr =
-  (* We should abstract the functions on extra in a module, and return
-   * a new env so it's clearer.
-   * BUG (S.At_IL):
-   * We must always clear this context, how about a deeply nested as-> ?
-   * It will be parsed in a wrong way. Even in parallel, one as-> after
-   * the other, is an issue! Like in: (defn ... as-> ...) (defn ... as-> ...).
-   * Can we delay parsing some parts? *)
-  let thread_macro_ctx, env =
-    match env.extra.thread_macro_ctx with
-    | Some _ as ctx -> ctx, (with_thread_macro_ctx env None)
-    | _ -> None, env
-  in
   let map_pat_and_rest pat_and_rest_forms =
-    (* S.At_IL: What about (->> x (as-> e)) ~> e? Not handled for now, should be
-     * extremely uncommon. For S.At_generic this is no issue. *)
     match pat_and_rest_forms with
       | pat_form :: rest_forms ->
         let pat = map_binding_form env pat_form in
@@ -1998,35 +2064,18 @@ and map_as_thread_form (env : env) (forms: CST.form list) : G.expr =
       | _ ->
         raise_parse_error "Invalid as-> form."
   in
-  match S.macroexpansion_mode, thread_macro_ctx, forms with
-
-    (* XXX: Currently the only active macroexpansion mode. *)
-    | S.At_generic, _,
-      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
-      :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest )
-
-    | S.At_IL, ( None | Some Thread_last ),
-      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
-      (* NOTE: In S.At_IL, under (-> e ...) the v_expr_form will not exist. *)
-      :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest ) ->
-
-      let pat_and_rest = map_pat_and_rest pat_and_rest in
-      let v_expr = map_form env v_expr_form in
-      let interleaved_expr_pat =
-        G.E v_expr :: pat_and_rest
-      in
-      G.OtherExpr (("as->", (token env thread_tk)), interleaved_expr_pat)
-      |> G.e
-
-    | S.At_IL, Some Thread_first,
-      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
-      :: ( pat_form :: rest_forms as pat_and_rest ) ->
-      let pat_and_rest = map_pat_and_rest pat_and_rest in
-      G.OtherExpr (("as->", (token env thread_tk)), pat_and_rest)
-      |> G.e
-
-    | _ ->
-        raise_parse_error "Invalid as-> form."
+  match forms with
+  | `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
+    :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest ) ->
+    let pat_and_rest = map_pat_and_rest pat_and_rest in
+    let v_expr = map_form env v_expr_form in
+    let interleaved_expr_pat =
+      G.E v_expr :: pat_and_rest
+    in
+    G.OtherExpr (("as->", (token env thread_tk)), interleaved_expr_pat)
+    |> G.e
+  | _ ->
+      raise_parse_error "Invalid as-> form."
 
 (*
  * Usage: (when test & body)
@@ -2045,11 +2094,6 @@ and map_when_form (env : env) (forms : CST.form list) : G.expr =
     in
     G.OtherExpr (("When", token env when_tk), when_forms) |> G.e
   | _ ->
-    (* FIXME (S.At_IL):
-     * (-> test (when)) will fail but is legal clojure and becomes nil.
-     * On the other hand the condition above exists because (when) is
-     * not correct in general. But we can just relax the pattern to allow
-     * also (when). *)
     raise_parse_error "Invalid when form."
 
 and map_when_not_form (env : env) (forms : CST.form list) : G.expr =
@@ -2243,12 +2287,6 @@ and map_anon_func_form
   let body_expr = map_list_form env (meta_list, bare_list) in
   encode_short_lambda env tok body_expr
 
-(*
- * NOTE (S.At_IL):  
- * opengrep.clj=> (-> (println "67") (comment))
- * nil
- * But we process the threaded value. 
- *)
 and map_comment_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
   | `Sym_lit (_meta_let, ((_loc, "comment") as comment_tk)) :: _rest -> 
@@ -2312,7 +2350,6 @@ and map_throw_form (env : env) (forms : CST.form list) : G.expr =
       |> G.s
       |> G.stmt_to_expr
     | _ ->
-      (* FIXME (S.At_IL): (-> (Exception. "boom") (throw)) is valid. *)
       raise_parse_error "Invalid throw form."
 
 (*
@@ -2330,10 +2367,6 @@ and map_throw_form (env : env) (forms : CST.form list) : G.expr =
  * return value of the function. If there is no matching catch-clause, the exception
  * propagates out of the function. Before returning, normally or abnormally, any
  * finally-clause exprs will be evaluated for their side effects.
- *
- * But note:
- * (->> (finally (println "67")) (try (+ 1 2)))
- * works when using the default S.At_generic.
  *)
 and map_try_catch_finally_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
@@ -2715,7 +2748,6 @@ let parse file =
       let env = { H.file;
                   conv = H.line_col_to_pos file;
                   extra = {kind = Program; mode = Normal;
-                           thread_macro_ctx = None;
                            ns = None; ns_aliases = []} }
       in
       map_program env cst)
@@ -2734,7 +2766,7 @@ let with_expr_stmt_seq_to_block = function
       List_.map
         (function
           | {s = G.ExprStmt (e, _sc); _ } -> G.E e
-          | _ -> assert false)
+          | _ -> assert false (* Because: ss_is_expr_stmt_seq stmts *))
         stmts
     in
     G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exprs)
@@ -2756,7 +2788,6 @@ let parse_pattern str =
                    * metavar, perhaps anonymous, so it can be matched.
                    * *)
                   extra = {kind = Pattern; mode = Normal;
-                           thread_macro_ctx = None;
                            ns = None; ns_aliases = []} }
       in
       (* XXX: Need sequence of ExprStmt to one ExprStmt with ExprBlock inside.
