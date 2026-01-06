@@ -483,9 +483,377 @@ let create_builtin_models (lang : Lang.t) : builtin_signature_database =
           add_hof_returning_function_signatures acc_db methods ())
     db configs
 
+(* ========================================================================== *)
+(* Collection models for taint propagation through put/get, add/get patterns  *)
+(* ========================================================================== *)
+
+(** Collection model configuration types *)
+type collection_model_kind =
+  | ArgTaintsThis of {
+      methods : string list;
+      arity : int;
+      taint_arg_index : int;
+      returns_this : bool;
+    }
+  | ThisTaintsReturn of { methods : string list; arity : int }
+
+(** Get collection model configurations for a language *)
+let get_collection_configs (lang : Lang.t) : collection_model_kind list =
+  match lang with
+  | Lang.Java ->
+      [
+        (* HashMap/Map: put(key, value) - value (arg 1) taints this, returns previous value (not this) *)
+        ArgTaintsThis
+          {
+            methods = [ "put"; "putIfAbsent" ];
+            arity = 2;
+            taint_arg_index = 1;
+            returns_this = false;
+          };
+        (* List: add(item) - item (arg 0) taints this, returns boolean *)
+        ArgTaintsThis
+          {
+            methods = [ "add"; "addFirst"; "addLast"; "push"; "offer" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* List: add(index, item) - item (arg 1) taints this, returns void *)
+        ArgTaintsThis
+          {
+            methods = [ "add"; "set" ];
+            arity = 2;
+            taint_arg_index = 1;
+            returns_this = false;
+          };
+        (* StringBuilder: append(str) - str (arg 0) taints this, RETURNS THIS for fluent chaining *)
+        ArgTaintsThis
+          {
+            methods = [ "append"; "insert" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = true;
+          };
+        (* Collection accessors: get(key/index) - this taints return *)
+        ThisTaintsReturn
+          {
+            methods =
+              [ "get"; "getFirst"; "getLast"; "peek"; "poll"; "pop"; "remove" ];
+            arity = 1;
+          };
+        (* No-arg accessors *)
+        ThisTaintsReturn
+          {
+            methods =
+              [ "toString"; "getFirst"; "getLast"; "peek"; "poll"; "pop" ];
+            arity = 0;
+          };
+        (* Iterator: next() - this taints return *)
+        ThisTaintsReturn { methods = [ "next" ]; arity = 0 };
+      ]
+  | Lang.Js
+  | Lang.Ts ->
+      [
+        (* Map.set(key, value) - value taints this, returns this (fluent) *)
+        ArgTaintsThis
+          {
+            methods = [ "set" ];
+            arity = 2;
+            taint_arg_index = 1;
+            returns_this = true;
+          };
+        (* Array.push(item) - item taints this, returns new length *)
+        ArgTaintsThis
+          {
+            methods = [ "push"; "unshift" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* Set.add(item) - item taints this, returns this (fluent) *)
+        ArgTaintsThis
+          {
+            methods = [ "add" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = true;
+          };
+        (* Map.get(key), Array.pop(), Array.shift() - this taints return *)
+        ThisTaintsReturn { methods = [ "get" ]; arity = 1 };
+        ThisTaintsReturn { methods = [ "pop"; "shift"; "at" ]; arity = 0 };
+        ThisTaintsReturn { methods = [ "at" ]; arity = 1 };
+        (* String methods that return modified strings *)
+        ThisTaintsReturn
+          {
+            methods = [ "toString"; "valueOf"; "join" ];
+            arity = 0;
+          };
+      ]
+  | Lang.Python ->
+      [
+        (* list.append(item), set.add(item) - item taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "append"; "add"; "insert" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* list.extend(iterable) - iterable taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "extend"; "update" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* dict.update with single arg *)
+        ArgTaintsThis
+          {
+            methods = [ "update" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* list.pop(), dict.get(key), dict.pop(key) - this taints return *)
+        ThisTaintsReturn { methods = [ "pop" ]; arity = 0 };
+        ThisTaintsReturn { methods = [ "get"; "pop"; "setdefault" ]; arity = 1 };
+        ThisTaintsReturn { methods = [ "get"; "pop"; "setdefault" ]; arity = 2 };
+        (* Iteration helpers *)
+        ThisTaintsReturn { methods = [ "copy"; "keys"; "values"; "items" ]; arity = 0 };
+      ]
+  | Lang.Ruby ->
+      [
+        (* Array.push, Array.<<, Array.append - item taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "push"; "append"; "unshift"; "prepend" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = true;
+          };
+        (* Hash[]= is handled differently, but merge taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "merge!"; "update" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = true;
+          };
+        (* Array.pop, Array.shift, Hash.fetch - this taints return *)
+        ThisTaintsReturn { methods = [ "pop"; "shift"; "first"; "last" ]; arity = 0 };
+        ThisTaintsReturn { methods = [ "fetch"; "dig"; "slice" ]; arity = 1 };
+        ThisTaintsReturn { methods = [ "fetch"; "dig" ]; arity = 2 };
+        ThisTaintsReturn { methods = [ "to_s"; "join"; "flatten" ]; arity = 0 };
+      ]
+  | Lang.Csharp ->
+      [
+        (* List.Add, HashSet.Add - item taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "Add"; "Push"; "Enqueue"; "Insert" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* Dictionary.Add(key, value) - value taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "Add"; "TryAdd" ];
+            arity = 2;
+            taint_arg_index = 1;
+            returns_this = false;
+          };
+        (* List[i], Dictionary[key], Queue.Dequeue, Stack.Pop - this taints return *)
+        ThisTaintsReturn { methods = [ "Pop"; "Dequeue"; "Peek" ]; arity = 0 };
+        ThisTaintsReturn { methods = [ "ElementAt"; "GetValueOrDefault" ]; arity = 1 };
+        ThisTaintsReturn { methods = [ "ToString" ]; arity = 0 };
+      ]
+  | Lang.Kotlin ->
+      [
+        (* MutableList.add, MutableSet.add - item taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "add"; "addFirst"; "addLast" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* MutableMap.put(key, value) - value taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "put"; "putIfAbsent" ];
+            arity = 2;
+            taint_arg_index = 1;
+            returns_this = false;
+          };
+        (* StringBuilder.append - returns this *)
+        ArgTaintsThis
+          {
+            methods = [ "append" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = true;
+          };
+        (* get, removeAt, removeLast - this taints return *)
+        ThisTaintsReturn { methods = [ "get"; "getOrNull"; "getOrDefault" ]; arity = 1 };
+        ThisTaintsReturn { methods = [ "first"; "last"; "removeFirst"; "removeLast" ]; arity = 0 };
+        ThisTaintsReturn { methods = [ "toString" ]; arity = 0 };
+      ]
+  | Lang.Swift ->
+      [
+        (* Array.append - item taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "append"; "insert" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* Dictionary updateValue(value, forKey:) - value taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "updateValue" ];
+            arity = 2;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* Array subscript, popLast, removeFirst - this taints return *)
+        ThisTaintsReturn { methods = [ "popLast"; "removeFirst"; "removeLast"; "first"; "last" ]; arity = 0 };
+        ThisTaintsReturn { methods = [ "remove" ]; arity = 1 };
+      ]
+  | Lang.Rust ->
+      [
+        (* Vec.push - item taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "push"; "push_front"; "push_back" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = false;
+          };
+        (* HashMap.insert(key, value) - value taints this *)
+        ArgTaintsThis
+          {
+            methods = [ "insert" ];
+            arity = 2;
+            taint_arg_index = 1;
+            returns_this = false;
+          };
+        (* Vec.pop, HashMap.get, HashMap.remove - this taints return *)
+        ThisTaintsReturn { methods = [ "pop"; "pop_front"; "pop_back" ]; arity = 0 };
+        ThisTaintsReturn { methods = [ "get"; "get_mut"; "remove" ]; arity = 1 };
+        ThisTaintsReturn { methods = [ "into_iter"; "iter"; "iter_mut" ]; arity = 0 };
+      ]
+  | Lang.Scala ->
+      [
+        (* mutable collections: += or add *)
+        ArgTaintsThis
+          {
+            methods = [ "append"; "prepend"; "addOne"; "add" ];
+            arity = 1;
+            taint_arg_index = 0;
+            returns_this = true;
+          };
+        (* mutable Map: put(key, value) or update(key, value) *)
+        ArgTaintsThis
+          {
+            methods = [ "put"; "update"; "addOne" ];
+            arity = 2;
+            taint_arg_index = 1;
+            returns_this = false;
+          };
+        (* accessors *)
+        ThisTaintsReturn { methods = [ "head"; "last"; "apply"; "get" ]; arity = 0 };
+        ThisTaintsReturn { methods = [ "apply"; "get"; "getOrElse" ]; arity = 1 };
+        ThisTaintsReturn { methods = [ "mkString"; "toString" ]; arity = 0 };
+      ]
+  | Lang.Go ->
+      [
+        (* Go uses map indexing m[k]=v, not methods, but append is a builtin *)
+        (* append(slice, items...) - handled differently as builtin function *)
+        (* For method-based APIs like sync.Map *)
+        ArgTaintsThis
+          {
+            methods = [ "Store" ];
+            arity = 2;
+            taint_arg_index = 1;
+            returns_this = false;
+          };
+        ThisTaintsReturn { methods = [ "Load" ]; arity = 1 };
+      ]
+  | _ -> []
+
+(* Primitive helpers for building taint sets and effects *)
+
+let this_taint_set () =
+  let taint = Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] } in
+  Taint.Taint_set.singleton taint
+
+let arg_taint_set index =
+  let arg = { Taint.name = "value"; index } in
+  let taint = Taint.{ orig = Var { base = BArg arg; offset = [] }; tokens = [] } in
+  Taint.Taint_set.singleton taint
+
+let return_effect taint_set =
+  Effect.ToReturn
+    {
+      data_taints = taint_set;
+      data_shape = Shape.Bot;
+      control_taints = Taint.Taint_set.empty;
+      return_tok = Tok.unsafe_fake_tok "builtin";
+    }
+
+let to_lval_this taint_set =
+  Effect.ToLval (taint_set, { Taint.base = BThis; offset = [] })
+
+let add_method_signatures db method_names arity effects =
+  let params = List.init arity (fun _ -> Signature.Other) in
+  let sig_ = { Signature.params; effects } in
+  List.fold_left
+    (fun acc_db name -> add_builtin_signature acc_db name { sig_; arity })
+    db method_names
+
+(* Collection model signature builders *)
+
+(** Add signatures where an argument taints 'this' (e.g., put, add, append) *)
+let add_arg_taints_this_signatures db method_names arity ~taint_arg_index
+    ?(returns_this = false) () =
+  let to_lval = to_lval_this (arg_taint_set taint_arg_index) in
+  let effects =
+    if returns_this then
+      Effects.of_list [ to_lval; return_effect (this_taint_set ()) ]
+    else Effects.singleton to_lval
+  in
+  add_method_signatures db method_names arity effects
+
+(** Add signatures where 'this' taints the return value (e.g., get, toString) *)
+let add_this_taints_return_signatures db method_names arity =
+  let effects = Effects.singleton (return_effect (this_taint_set ())) in
+  add_method_signatures db method_names arity effects
+
+(** Add collection models to a builtin signature database *)
+let add_collection_models db (lang : Lang.t) : builtin_signature_database =
+  let configs = get_collection_configs lang in
+  List.fold_left
+    (fun acc_db config ->
+      match config with
+      | ArgTaintsThis { methods; arity; taint_arg_index; returns_this } ->
+          add_arg_taints_this_signatures acc_db methods arity ~taint_arg_index
+            ~returns_this ()
+      | ThisTaintsReturn { methods; arity } ->
+          add_this_taints_return_signatures acc_db methods arity)
+    db configs
+
+(** Create a builtin signature database with all built-in models (HOFs + collections) *)
+let create_all_builtin_models (lang : Lang.t) : builtin_signature_database =
+  let db = create_builtin_models lang in
+  add_collection_models db lang
+
 (** Initialize the signature database. Now that builtin signatures are separate,
     this function just returns the user DB as-is (or empty if None). *)
-let init_signature_database (user_db : signature_database option) : signature_database =
+let init_signature_database (user_db : signature_database option) :
+    signature_database =
   match user_db with
   | Some db -> db
   | None -> empty_signature_database ()

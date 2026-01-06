@@ -1,0 +1,12 @@
+rules:
+  - id: java-collection-taint
+    mode: taint
+    languages: [java]
+    message: "Taint flows through Java collection to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: sink(...)
