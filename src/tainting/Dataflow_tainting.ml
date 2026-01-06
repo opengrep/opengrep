@@ -2763,7 +2763,9 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
     |> List_.map (fun (lambda_name, lambda_cfg) ->
            let lambda_in_env = mk_lambda_in_env env lambda_cfg in
            fixpoint_lambda env.taint_inst env.func env.needed_vars lambda_name
-             lambda_cfg lambda_in_env)
+             lambda_cfg lambda_in_env ?signature_db:env.signature_db
+             ?builtin_signature_db:env.builtin_signature_db
+             ?call_graph:env.call_graph ())
     |> List_.split
   in
   let effects = Effects.union_list effects_lambdas in
@@ -2797,7 +2799,8 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
   in
   (effects, out_env)
 
-and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env :
+and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env
+    ?signature_db ?builtin_signature_db ?call_graph () :
     Effects.t * Lval_env.t =
   Log.debug (fun m ->
       m "Analyzing lambda %s (%s)"
@@ -2805,7 +2808,8 @@ and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env :
         (Lval_env.to_string in_env));
   let effects, mapping =
     fixpoint_aux taint_inst func ~needed_vars ~enter_lval_env:in_env
-      ~in_lambda:(Some lambda_name) ~class_name:None lambda_cfg
+      ~in_lambda:(Some lambda_name) ~class_name:None ?signature_db
+      ?builtin_signature_db ?call_graph lambda_cfg
   in
   let effects =
     effects

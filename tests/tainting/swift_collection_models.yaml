@@ -1,0 +1,12 @@
+rules:
+  - id: swift-collection-taint
+    mode: taint
+    languages: [swift]
+    message: "Taint flows through Swift collection to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: sink(...)

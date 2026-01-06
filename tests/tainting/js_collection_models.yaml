@@ -1,0 +1,12 @@
+rules:
+  - id: js-collection-taint
+    mode: taint
+    languages: [javascript, typescript]
+    message: "Taint flows through JS collection to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: sink(...)

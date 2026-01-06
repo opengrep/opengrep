@@ -880,7 +880,7 @@ let check_rules ~match_hook
   let builtin_db_by_lang =
     LangSet.fold
       (fun lang acc ->
-        let builtin_db = Builtin_models.create_builtin_models lang in
+        let builtin_db = Builtin_models.create_all_builtin_models lang in
         LangMap.add lang builtin_db acc)
       langs_needing_call_graph LangMap.empty
   in

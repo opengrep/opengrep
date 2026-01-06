@@ -1,0 +1,12 @@
+rules:
+  - id: csharp-collection-taint
+    mode: taint
+    languages: [csharp]
+    message: "Taint flows through C# collection to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: Sink(...)

@@ -1,0 +1,12 @@
+rules:
+  - id: kotlin-collection-taint
+    mode: taint
+    languages: [kotlin]
+    message: "Taint flows through Kotlin collection to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: sink(...)
