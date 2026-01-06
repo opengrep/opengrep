@@ -1,0 +1,33 @@
+
+rules:
+- id: taint_prop_field
+  languages: [csharp]
+  message: "tainted field reaches sink"
+  severity: WARNING
+  mode: taint
+  pattern-sources:
+    - patterns:
+      - pattern-inside: |
+          [get] $T $F($FIELD) { ... }
+      - focus-metavariable: $FIELD
+    - patterns:
+      - pattern-inside: |
+          [set] $T $F($VALUE, $FIELD) { ... }
+      - focus-metavariable: $FIELD
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+
+- id: taint_prop_value
+  languages: [csharp]
+  message: "tainted values reaches sink"
+  severity: WARNING
+  mode: taint
+  pattern-sources:
+    - patterns:
+      - pattern-inside: |
+          [set] $T $F($VALUE, $FIELD) { ... }
+      - focus-metavariable: $VALUE
+  pattern-sinks:
+    - pattern: |
+        sink(...)

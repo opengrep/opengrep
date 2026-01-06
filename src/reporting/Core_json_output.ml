@@ -285,7 +285,7 @@ let token_to_intermediate_var token : Out.match_intermediate_var option =
    * a specific job for us.
    * TODO: At least make the condition str =*= AST_generic.fake_ident and then
    * other places can use it. *)
-  | Tok.OriginTok {str;_ } when str =*= "G__1111" -> None
+  | Tok.OriginTok {str;_ } when str =*= "G__1111" || str =*= "" -> None
   | _ ->
     let* location = OutUtils.tokens_to_single_loc [ token ] in
     Some
