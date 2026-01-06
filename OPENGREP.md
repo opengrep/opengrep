@@ -12,7 +12,11 @@
 
 - Added support for languages that are not available in Semgrep CE: **Apex** and **Elixir**.
 
+- Improved support for **Clojure** which now supports tainting.
+
 - Added support for languages that are not available in Semgrep CE or Semgrep PRO: **Visual Basic**.
+
+- Added support for intrafile cross-function tainting, with the flag `--taint-intrafile`.
 
 ### Features
 
@@ -59,6 +63,8 @@
 - **C/C++**: Make C/C++ parser more lenient when dealing with preprocessor directives [#393](https://github.com/opengrep/opengrep/pull/393)
 
 - **C#**: Fix string literals in the parser [#186](https://github.com/opengrep/opengrep/pull/186)
+
+- **Clojure**: New translation in [#501](https://github.com/opengrep/opengrep/pull/501) and [#517](https://github.com/opengrep/opengrep/pull/517)
 
 - **Kotlin**: Fix string templates [#191](https://github.com/opengrep/opengrep/pull/191)
 

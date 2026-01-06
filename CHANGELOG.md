@@ -9,9 +9,9 @@
 * Dart: Improved support for Dart by @maciejpirog in #508
 * C#: Better handing of extension methods and extension blocks by @maciejpirog in #514
 
-### Fixes
+### CI fixes
 
-* Bump cygwin install action by @dimitris-m in #503 and #509 https://github.com/opengrep/opengrep/pull/503
+* Bump cygwin install action by @dimitris-m in #503 and #509
 
 **Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.13.2...v1.14.0
 
