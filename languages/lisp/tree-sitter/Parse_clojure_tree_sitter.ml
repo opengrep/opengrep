@@ -20,7 +20,6 @@ open AST_generic
 module G = AST_generic
 module GH = AST_generic_helpers
 module H = Parse_tree_sitter_helpers
-module S = Settings_clojure
 
 (* TODO: Remove after testing, this helps move faster. *)
 (* Disable warnings against unused variables *)
@@ -46,10 +45,6 @@ module S = Settings_clojure
  *
  * TODO: Handle pre: and post: maps, since the could determine if parameters
  * are sanitised. Add as attributes (OtherAtribute)?
- *
- * TODO: Fix or remove S.At_IL mode for macroexpansion of threading forms.
- *   This should really be removed soon, why pollute the codebase if it won't
- *   be used?
  *)
 
 (*****************************************************************************)
@@ -71,15 +66,9 @@ type syntax_mode =
   | Quoted
   | Syntax_quoted
 
-(* TODO: Only used in S.At_IL mode which is currently disabled.
- * Add context, when in -> we can handle (-> e (as-> x ...)) and also
- * fail cleanly when a binding is expected. *)
-type thread_macro_context = Thread_first | Thread_last
-
 type extra = {
   kind: parse_kind;
   mode: syntax_mode;
-  thread_macro_ctx: thread_macro_context option; (* XXX: Only for S.At_IL mode. *)
   ns: string option; (* alt: or in split form? [clojure; core] etc; or G.name? *)
   ns_aliases: (string * string) list;
    (* (ns my.ns (:require [other.ns :as my-alias])) *)
@@ -238,9 +227,6 @@ let with_mode env mode =
 
 let with_ns env ns =
   H.{env with extra = {env.extra with ns}}
-
-let with_thread_macro_ctx env thread_macro_ctx =
-  H.{env with extra = {env.extra with thread_macro_ctx}}
 
 let int_regex =
   Pcre2_.regexp "^[+-]?[0-9]+N?$"
@@ -839,7 +825,7 @@ and _UNUSED_map_dotdot_form (env : env) (forms : CST.form list) : G.expr =
  *)
 and map_some_thread_first_last_form (env : env) (forms : CST.form list) : G.expr =
   (* XXX: Temporary solution. *)
-  map_thread_first_last_form_eager env forms
+  map_thread_first_last_form env forms
 
 (* (format fmt & args) *)
 and _UNUSED_map_format_form (env : env) (forms : CST.form list) : G.expr =
@@ -1844,8 +1830,8 @@ and insert_threaded
  * match any sequence of e in the pipeline. But this cannot be macroexpanded properly.
  * So we convert to deep ellipsis. This way we should get (e2 (<... (e1 e) ...>)) which
  * is closer to the intention of the user. This has now been implemented (see above
- * function). That part was better with S.At_IL (the *_lazy variation below. *)
-and map_thread_first_last_form_eager
+ * function). *)
+and map_thread_first_last_form
     (env : env) (forms: CST.form list) : G.expr =
   match forms with
     | `Sym_lit (_meta_thread,
@@ -1876,38 +1862,23 @@ and ensure_form_is_list (env : env) (form: CST.form) : CST.form =
     let loc = L.{start = pos; end_ = pos} in
     `List_lit ([], ((loc, "("), [`Form form], (loc, ")")))
 
-and map_thread_first_last_form_lazy (env : env) (forms: CST.form list) : G.expr =
-  match forms with
-    | `Sym_lit (_meta_thread,
-                ((_loc, (("->" | "->>") as first_or_last)) as thread_tk))
-      :: (_ :: _ as rest_forms) ->
-      let thread_macro_ctx = 
-        match first_or_last with
-        | "->" -> Some Thread_first
-        | _ (* "->>" *) -> Some Thread_last
-      in
-      let rest_exprs = List_.map
-          (fun form ->
-             (* We convert `sink` to `(sink)` so we don't have to add
-              * a `sink` pattern to sinks, because this makes all instances
-              * of the name tainted, even when not in call position. *)
-             G.E (map_form
-                    (* XXX: This must be always cleared 1 level down ALWAYS. *)
-                    (with_thread_macro_ctx env thread_macro_ctx)
-                    (ensure_form_is_list env form)))
-          rest_forms
-      in
-      G.OtherExpr ((first_or_last, (token env thread_tk)), rest_exprs)
-      |> G.e
-    | _ ->
-        raise_parse_error "Invalid thread-first / thread_last form."
-
-and map_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
-  match S.macroexpansion_mode with
-  | S.At_IL -> map_thread_first_last_form_lazy env forms 
-  | S.At_generic -> map_thread_first_last_form_eager env forms
-
-and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G.expr =
+(*
+ * (let [g (gensym)
+ *         steps (map (fn [[test step]] `(if ~test (-> ~g ~step) ~g))
+ *                    (partition 2 claues))]
+ *     `(let [~g ~expr
+ *            ~@(interleave (repeat g) (butlast steps))]
+ *        ~(if (empty? steps)
+ *           g
+ *           (last steps)))))
+ *
+ * opengrep.clj=> (macroexpand-1 '(cond-> 1 true (+ 1) false (- 1)))
+ * replacing a gensym such as G__2174 with g: 
+ * (let [g 1
+ *       g (if true (-> g (+ 1)) g)]
+ *  (if false (-> g (- 1)) g)) 
+ *)
+and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
   match forms with
     | `Sym_lit (_meta_thread,
                 ((loc, (("cond->" | "cond->>") as first_or_last)) as thread_tk))
@@ -2046,25 +2017,6 @@ and map_cond_thread_first_last_form_eager (env : env) (forms: CST.form list) : G
     | _ ->
         raise_parse_error "Invalid cond-> / cond->> form."
 
-and map_cond_thread_first_last_form_lazy (env : env) (forms: CST.form list) : G.expr =
-  match forms with
-    | `Sym_lit (_meta_thread,
-                ((_loc, (("cond->" | "cond->>") as first_or_last)) as thread_tk))
-      :: (_expr :: _clauses as rest_forms) ->
-      let rest_exprs = List_.map
-          (fun form -> G.E (map_form env form))
-          rest_forms
-      in
-      G.OtherExpr ((first_or_last, (token env thread_tk)), rest_exprs)
-      |> G.e
-    | _ ->
-        raise_parse_error "Invalid cond-> / cond->> form."
-
-and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr =
-  match S.macroexpansion_mode with
-  | S.At_IL -> map_cond_thread_first_last_form_lazy env forms 
-  | S.At_generic -> map_cond_thread_first_last_form_eager env forms
-
 (*
  * as->
  * Usage: (as-> expr name & forms)
@@ -2085,31 +2037,9 @@ and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr 
  * (E v) (P p) - (E f1) (P p) - (E f2) (P p)  - ... - (E fn-1) (P p) - E Efn 
  *
  * If there is not rest forms, then body becomes p.
- *  
- * TODO: Interleave the binding in the macroexpansion instead of here? 
- * TODO: How about deep expr matching? Descend into context?
- * TODO:
- * How about (-> e (as-> x e1 ... en))
- * opengrep.clj=> (-> 5 (as-> x (+ x x) (+ x x)))
- * 20
- * This is a problem for the S.At_IL mode, but not for S.At_generic. 
  *)
 and map_as_thread_form (env : env) (forms: CST.form list) : G.expr =
-  (* We should abstract the functions on extra in a module, and return
-   * a new env so it's clearer.
-   * BUG (S.At_IL):
-   * We must always clear this context, how about a deeply nested as-> ?
-   * It will be parsed in a wrong way. Even in parallel, one as-> after
-   * the other, is an issue! Like in: (defn ... as-> ...) (defn ... as-> ...).
-   * Can we delay parsing some parts? *)
-  let thread_macro_ctx, env =
-    match env.extra.thread_macro_ctx with
-    | Some _ as ctx -> ctx, (with_thread_macro_ctx env None)
-    | _ -> None, env
-  in
   let map_pat_and_rest pat_and_rest_forms =
-    (* S.At_IL: What about (->> x (as-> e)) ~> e? Not handled for now, should be
-     * extremely uncommon. For S.At_generic this is no issue. *)
     match pat_and_rest_forms with
       | pat_form :: rest_forms ->
         let pat = map_binding_form env pat_form in
@@ -2134,35 +2064,18 @@ and map_as_thread_form (env : env) (forms: CST.form list) : G.expr =
       | _ ->
         raise_parse_error "Invalid as-> form."
   in
-  match S.macroexpansion_mode, thread_macro_ctx, forms with
-
-    (* XXX: Currently the only active macroexpansion mode. *)
-    | S.At_generic, _,
-      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
-      :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest )
-
-    | S.At_IL, ( None | Some Thread_last ),
-      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
-      (* NOTE: In S.At_IL, under (-> e ...) the v_expr_form will not exist. *)
-      :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest ) ->
-
-      let pat_and_rest = map_pat_and_rest pat_and_rest in
-      let v_expr = map_form env v_expr_form in
-      let interleaved_expr_pat =
-        G.E v_expr :: pat_and_rest
-      in
-      G.OtherExpr (("as->", (token env thread_tk)), interleaved_expr_pat)
-      |> G.e
-
-    | S.At_IL, Some Thread_first,
-      `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
-      :: ( pat_form :: rest_forms as pat_and_rest ) ->
-      let pat_and_rest = map_pat_and_rest pat_and_rest in
-      G.OtherExpr (("as->", (token env thread_tk)), pat_and_rest)
-      |> G.e
-
-    | _ ->
-        raise_parse_error "Invalid as-> form."
+  match forms with
+  | `Sym_lit (_meta_thread, ((_loc, "as->") as thread_tk))
+    :: v_expr_form :: ( pat_form :: rest_forms as pat_and_rest ) ->
+    let pat_and_rest = map_pat_and_rest pat_and_rest in
+    let v_expr = map_form env v_expr_form in
+    let interleaved_expr_pat =
+      G.E v_expr :: pat_and_rest
+    in
+    G.OtherExpr (("as->", (token env thread_tk)), interleaved_expr_pat)
+    |> G.e
+  | _ ->
+      raise_parse_error "Invalid as-> form."
 
 (*
  * Usage: (when test & body)
@@ -2181,11 +2094,6 @@ and map_when_form (env : env) (forms : CST.form list) : G.expr =
     in
     G.OtherExpr (("When", token env when_tk), when_forms) |> G.e
   | _ ->
-    (* FIXME (S.At_IL):
-     * (-> test (when)) will fail but is legal clojure and becomes nil.
-     * On the other hand the condition above exists because (when) is
-     * not correct in general. But we can just relax the pattern to allow
-     * also (when). *)
     raise_parse_error "Invalid when form."
 
 and map_when_not_form (env : env) (forms : CST.form list) : G.expr =
@@ -2379,12 +2287,6 @@ and map_anon_func_form
   let body_expr = map_list_form env (meta_list, bare_list) in
   encode_short_lambda env tok body_expr
 
-(*
- * NOTE (S.At_IL):  
- * opengrep.clj=> (-> (println "67") (comment))
- * nil
- * But we process the threaded value. 
- *)
 and map_comment_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
   | `Sym_lit (_meta_let, ((_loc, "comment") as comment_tk)) :: _rest -> 
@@ -2448,7 +2350,6 @@ and map_throw_form (env : env) (forms : CST.form list) : G.expr =
       |> G.s
       |> G.stmt_to_expr
     | _ ->
-      (* FIXME (S.At_IL): (-> (Exception. "boom") (throw)) is valid. *)
       raise_parse_error "Invalid throw form."
 
 (*
@@ -2466,10 +2367,6 @@ and map_throw_form (env : env) (forms : CST.form list) : G.expr =
  * return value of the function. If there is no matching catch-clause, the exception
  * propagates out of the function. Before returning, normally or abnormally, any
  * finally-clause exprs will be evaluated for their side effects.
- *
- * But note:
- * (->> (finally (println "67")) (try (+ 1 2)))
- * works when using the default S.At_generic.
  *)
 and map_try_catch_finally_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
@@ -2851,7 +2748,6 @@ let parse file =
       let env = { H.file;
                   conv = H.line_col_to_pos file;
                   extra = {kind = Program; mode = Normal;
-                           thread_macro_ctx = None;
                            ns = None; ns_aliases = []} }
       in
       map_program env cst)
@@ -2870,7 +2766,7 @@ let with_expr_stmt_seq_to_block = function
       List_.map
         (function
           | {s = G.ExprStmt (e, _sc); _ } -> G.E e
-          | _ -> assert false)
+          | _ -> assert false (* Because: ss_is_expr_stmt_seq stmts *))
         stmts
     in
     G.OtherExpr (("ExprBlock", (G.fake "expr_block")), exprs)
@@ -2892,7 +2788,6 @@ let parse_pattern str =
                    * metavar, perhaps anonymous, so it can be matched.
                    * *)
                   extra = {kind = Pattern; mode = Normal;
-                           thread_macro_ctx = None;
                            ns = None; ns_aliases = []} }
       in
       (* XXX: Need sequence of ExprStmt to one ExprStmt with ExprBlock inside.
