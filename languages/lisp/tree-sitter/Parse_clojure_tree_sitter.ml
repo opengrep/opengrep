@@ -593,6 +593,7 @@ and map_list_form
     (* TODO: How about (:user ...)? We should use G.DotAccess with FDynamic
      * Atom :user. *)
     | Some "..." when in_pattern env -> map_ellipsis_list_form env forms
+    | Some "apply" -> map_apply_form env forms
     | _ -> map_call_form env forms
 
 and map_form (env : env) (x : CST.form) : G.expr =
@@ -1484,6 +1485,17 @@ and map_ellipsis_list_form (env : env) (forms : CST.form list) : G.expr =
   | _ ->
     (* We only call this function when the forms start with ... . *)
     assert false
+
+and map_apply_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+  | `Sym_lit (_meta, ((_loc, "apply") as apply_tk)) :: (_func :: _args as rest) ->
+    (* The last parameter of the function is unpacked as collection and spread
+     * out as N arguments. For this reason we tag it, and AST_to_IL can detect
+     * that and translate to the correct semantics. *)
+    let call = map_call_form env rest in
+    G.OtherExpr (("Apply", token env apply_tk), [G.E call]) |> G.e
+  | _ ->
+    raise_parse_error "Invalid apply form."
 
 and map_call_form (env : env) (forms : CST.form list) : G.expr =
   match forms with

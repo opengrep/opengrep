@@ -2955,7 +2955,6 @@ and (fixpoint :
                          (IL.str_of_name lambda_name));
                    let lambda_fn_id = Shape_and_sig.make_fn_id_no_class lambda_name in
                    let params = Signature.of_IL_params lambda_cfg.params in
-                   (* Create assumptions for lambda parameters *)
                    (* Create assumptions for lambda parameters using Fold_IL_params *)
                    let param_assumptions =
                      let _, env =
