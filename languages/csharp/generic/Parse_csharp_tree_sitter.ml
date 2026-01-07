@@ -3413,7 +3413,7 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
             pname = Some ("field", tok);
             ptype = Some v3;
             pdefault = Some (G.N (G.Id (v5, G.empty_id_info ())) |> G.e);
-            pattrs = [];
+            pattrs = [G.KeywordAttr (G.Extern, fake "field")];
             pinfo = empty_id_info ~hidden:false ()
           }
       in

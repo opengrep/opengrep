@@ -643,6 +643,7 @@ let m_list_with_dots_and_metavar_ellipsis ?(can_skip=fun _ -> false) ~less_is_ok
     | [], [] -> return ()
     (* less-is-ok: empty list can sometimes match non-empty list *)
     | [], _ :: _ when less_is_ok -> return ()
+    | [], xb :: xsb when can_skip xb -> aux [] xsb 
     (* dots: '...', can also match no argument *)
     | [ a ], [] when is_dots a -> return ()
     (* opti: if is_metavar_ellipsis and less_is_ok is false, then
