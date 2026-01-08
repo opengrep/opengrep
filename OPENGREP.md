@@ -8,15 +8,15 @@
 
 - Switched to **OCaml 5.3.0** with large-scale refactoring to support multicore execution with shared-memory parallelism. At the time of the fork, the project was using **OCaml 4** and parallelism was achieved using a process forking approach, which did not work on Windows.
 
-- Added support for **Windows**.
+- Added native support for **Windows**.
 
-- Added support for languages that are not available in Semgrep CE: **Apex** and **Elixir**.
+- Added support for languages that are not available in Semgrep CE or Semgrep PRO: **Apex** and **Visual Basic**.
 
-- Improved support for **Clojure** which now supports tainting.
+- Added support for languages that are not available in Semgrep CE: **Elixir**.
 
-- Added support for languages that are not available in Semgrep CE or Semgrep PRO: **Visual Basic**.
+- Improved support for **Clojure** which now supports tainting, while in Semgrep the translation is very limited.
 
-- Added support for intrafile cross-function tainting, with the flag `--taint-intrafile`.
+- Added support for intrafile cross-function tainting, with the flag `--taint-intrafile`. This works similarly to Semgrep's `--pro-intrafile`.
 
 ### Features
 
@@ -36,7 +36,7 @@
 
 - Added a per-rule **limit on the number of reported matches**. Use the rule option: `max-match-per-file`.
 
-- Taint analysis now supports **per-rule timeout configuration**. Use the rule option: `taint-fixpoint-timeout`. (This should be mostly be reserved for cases where results are not very stable on consecutive runs, and should remain relatively low, for example between 0.2 and 2 seconds.)
+- Taint analysis now supports **per-rule timeout configuration**. Use the rule option: `taint-fixpoint-timeout`. (This should be mostly be reserved for cases where results are not very stable on consecutive runs, and should remain relatively low, for example between 0.2 and 2 seconds.) **Update:** this is now deprecated: taint fixpoint timeouts no longer exist.
 
 - **Postprocessing** (autofix and `nosem` annotations) now works with **incremental output**. Use the flag: `--incremental-output-postprocess.`
 

@@ -7,14 +7,14 @@
 
 (defn h [] 
   ;; ruleid: taint-call
-  (let [f (fn [x] (sink x))] 
-    (f (source))))
+  (let [r (fn [x] (sink x))]
+    (r (source))))
 
 (defn j [x] 
   (let [z (source x)
         ;; ruleid: taint-call
-        f (fn [v] (sink v))]
-    (f z)))
+        i (fn [v] (sink v))]
+    (i z)))
 
 ;; FIXME: These tests pass when ran locally against the rule, but I get a strange
 ;; Mutex: Operation not permitted error when running `make core-test`.

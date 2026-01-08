@@ -380,3 +380,20 @@
             ;; Now we store the tainted item into metadata
             new-metadata item]
         (recur (rest data) new-metadata)))))
+
+(def f
+  (fn [x & xs]
+    ;; ruleid: taint-call
+    (apply sink x xs)))
+
+(defn f [x]
+  ;; ok: taint-call
+  '(sink x))
+
+(defn f [x]
+  ;; ok: taint-call
+  `(sink x))
+
+(defn f [x]
+  ;; ok: taint-call
+  (quote (sink x)))

@@ -1210,7 +1210,7 @@ and expr_aux env ?(void = false) g_expr =
          * the extra ones. *)
         | n (* < 0 *) -> (List.take n rec_point_lvals, args)
       in
-    (* Assign bindings to recursion point lvals. *)
+      (* Assign bindings to recursion point lvals. *)
       List.fold_left2
         (fun env lval arg_expr ->
            let arg = match arg_expr with
@@ -1244,7 +1244,36 @@ and expr_aux env ?(void = false) g_expr =
         add_stmts env [ mk_s (Goto (tok, lbl)) ],
         mk_unit tok NoOrig
     end
-
+  (* OtherExpr("Apply", Call) ~> Call(concat [a_1 .. n_k] a_k+1).
+   * So the difference is in how we construct the arguments vector. *)
+  | G.OtherExpr (("Apply", _tok), [ G.E ({e = Call(e, args); _} as call_exp) ])
+    when env.lang =*= Lang.Clojure ->
+      let tok = G.fake "call" in
+      let arg_list = Tok.unbracket args in
+      let arg_list_unwrapped =
+        List_.map (function
+            | G.Arg expr -> expr
+            | _ -> failwith "Expected G.Arg")
+          arg_list
+      in
+      begin match e.G.e, List.rev arg_list_unwrapped with
+        | G.IdSpecial _, _ | _, [] ->
+          (* No arguments or special, fallback to standard call.
+           * TODO: For idSpecial with args, use Call IdSpecial Spread
+           * to at least show the correct semantics. *)
+          expr env call_exp
+        | _, last_arg :: rest_args_rev ->
+          let rest_args_container =
+                (G.Container
+                   (G.List, Tok.unsafe_fake_bracket (List.rev rest_args_rev))
+                 |> G.e)
+          in
+          let apply_arg =
+            [ G.Arg (G.opcall (G.Concat, G.fake "concat")
+                       [ rest_args_container; last_arg ]) ]
+          in
+          call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket apply_arg)
+      end
   (* Clojure: a kind of macroexpansion (macroexpand-1). *)
   | G.OtherExpr ((todo_kind, tok), _ :: _)
     when env.lang =*= Lang.Clojure && CLJ_ME1.is_macroexpandable todo_kind ->
@@ -2540,6 +2569,8 @@ and python_with_stmt env manager opt_pat body =
 and function_definition env fdef =
   let fparams = parameters fdef.G.fparams in
   let env, rec_point_label_stmts = match env.lang, fparams with
+    (* NOTE: Clojure functions are translated to have one formal parameter,
+     * which is then destructured in a Switch (this is how multi-arity works). *)
     | Lang.Clojure, [ Param { pname; _ } ] ->
       let lval = IL_helpers.lval_of_var pname in
       let _rec_point_label, rec_point_label_stmts, rec_point_env =
