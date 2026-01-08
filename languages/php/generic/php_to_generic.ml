@@ -500,9 +500,18 @@ and hint_type = function
   | HintTuple (t1, v1, t2) ->
       let v1 = list hint_type v1 in
       G.TyTuple (t1, v1, t2) |> G.t
-  | HintUnion v1 -> (* TODO: Why are union types traslated to tuples? *)
-      let v1 = list hint_type v1 in
-      G.TyTuple (fb v1) |> G.t
+  | HintUnion (first, rest) ->
+      let first = hint_type first in
+      (* Fold into nested TyOr using real | tokens *)
+      List.fold_left
+        (fun acc (tok, ty) -> G.TyOr (acc, tok, hint_type ty) |> G.t)
+        first rest
+  | HintIntersection (first, rest, _parens) ->
+      let first = hint_type first in
+      (* Fold into nested TyAnd using real & tokens *)
+      List.fold_left
+        (fun acc (tok, ty) -> G.TyAnd (acc, tok, hint_type ty) |> G.t)
+        first rest
   | HintCallback (v1, v2) ->
       let v1 = list hint_type v1 and v2 = option hint_type v2 in
       let params = v1 |> List_.map (fun x -> G.Param (G.param_of_type x)) in

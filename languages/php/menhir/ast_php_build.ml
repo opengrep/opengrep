@@ -69,6 +69,20 @@ let rec comma_list_dots = function
   | Either_.Left3 x :: rl -> x :: comma_list_dots rl
   | (Either_.Middle3 _ | Either_.Right3 _) :: rl -> comma_list_dots rl
 
+(* Extract first element and list of (separator, element) pairs.
+   [Left A; Right sep; Left B; Right sep; Left C] -> Some (A, [(sep, B); (sep, C)]) *)
+let comma_list_with_seps = function
+  | [] -> None
+  | Either.Left first :: rest ->
+      let rec loop acc = function
+        | [] -> List.rev acc
+        | Either.Right tok :: Either.Left x :: rl -> loop ((tok, x) :: acc) rl
+        | Either.Right _ :: [] -> List.rev acc
+        | _ -> List.rev acc
+      in
+      Some (first, loop [] rest)
+  | Either.Right _ :: _ -> None
+
 let brace (_, x, _) = x
 let bracket f (a, b, c) = (a, f b, c)
 let noop tok = A.Block (fb tok [])
@@ -631,7 +645,20 @@ and hint_type env = function
   | HintQuestion (tok, t) -> A.HintQuestion (tok, hint_type env t)
   | HintTuple (t1, v1, t2) ->
       A.HintTuple (t1, List_.map (hint_type env) (comma_list v1), t2)
-  | HintUnion v1 -> A.HintUnion (List_.map (hint_type env) (comma_list v1))
+  | HintUnion v1 ->
+      (match comma_list_with_seps v1 with
+      | None -> error (unsafe_fake "HintUnion") "empty union type"
+      | Some (first, rest) ->
+          let first = hint_type env first in
+          let rest = List_.map (fun (tok, t) -> (tok, hint_type env t)) rest in
+          A.HintUnion (first, rest))
+  | HintIntersection (t1, v1, t2) ->
+      (match comma_list_with_seps v1 with
+      | None -> error t1 "empty intersection type"
+      | Some (first, rest) ->
+          let first = hint_type env first in
+          let rest = List_.map (fun (tok, t) -> (tok, hint_type env t)) rest in
+          A.HintIntersection (first, rest, (t1, (), t2)))
   | HintCallback (_, (_, args, ret), _) ->
       let args = List_.map (hint_type env) (comma_list_dots (brace args)) in
       let ret = Option.map (fun (_, t) -> hint_type env t) ret in

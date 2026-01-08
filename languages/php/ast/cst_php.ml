@@ -143,6 +143,8 @@ type hint_type =
   | HintQuestion of (tok * hint_type)
   | HintTuple of hint_type comma_list paren
   | HintUnion of hint_type comma_list
+  (* PHP 8.1 intersection types, PHP 8.2 DNF types (parenthesized) *)
+  | HintIntersection of hint_type comma_list paren
   | HintCallback of
       (tok (* "function" *)
       * hint_type comma_list_dots paren

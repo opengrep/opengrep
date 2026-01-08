@@ -915,6 +915,9 @@ primary_type_php:
  (* hack-ext: hack extensions *)
  | "?" type_php
      { HintQuestion ($1, $2)  }
+ (* PHP 8.1/8.2: intersection types (A&B) for DNF types *)
+ | "(" intersection_type_php_list ")"
+     { HintIntersection ($1, $2, $3) }
  | "(" non_empty_type_php_list ")"
      { HintTuple ($1, $2, $3) }
  | "(" T_FUNCTION "(" type_php_or_dots_list ")" return_type ")"
@@ -1547,6 +1550,10 @@ non_empty_type_php_list:
 
 union_type_php_list:
  | list_sep(primary_type_php, "|") { $1 }
+
+(* PHP 8.1/8.2: intersection types use & separator, must have 2+ types *)
+intersection_type_php_list:
+ | list_sep(class_name, TAND) { $1 }
 
 class_name_list: listc(class_name_no_array) { $1 }
 
