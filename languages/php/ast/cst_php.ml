@@ -705,7 +705,21 @@ and class_stmt =
   | DeclEllipsis of tok
 
 and class_constant = ident * static_scalar_affect
-and class_variable = dname * static_scalar_affect option
+
+(* PHP 8.4 property hooks *)
+and property_hook = {
+  ph_kind: property_hook_kind wrap;
+  ph_params: parameter comma_list_dots paren option; (* set($value) *)
+  ph_body: property_hook_body;
+}
+
+and property_hook_kind = PhGet | PhSet
+
+and property_hook_body =
+  | PHExpr of tok (* => *) * expr
+  | PHBlock of stmt_and_def list brace
+
+and class_variable = dname * static_scalar_affect option * property_hook list brace option
 
 and class_var_modifier =
   | NoModifiers of tok (* 'var' *)

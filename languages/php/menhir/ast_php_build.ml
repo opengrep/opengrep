@@ -850,18 +850,39 @@ and class_variables env ?(add_dollar = true) st acc =
       in
       let ht = opt hint_type env ht in
       List_.map
-        (fun (n, ss) ->
+        (fun (n, ss, hooks_opt) ->
           let name = dname ~add_dollar n in
           let value = opt static_scalar_affect env ss in
+          let hooks = match hooks_opt with
+            | None -> []
+            | Some (_, hooks, _) -> List_.map (property_hook env) hooks
+          in
           {
             A.cv_name = name;
             A.cv_value = value;
             A.cv_modifiers = m;
             A.cv_type = ht;
+            A.cv_hooks = hooks;
           })
         cvl
       @ acc
   | _ -> acc
+
+and property_hook env hook =
+  let kind = match fst hook.ph_kind with
+    | PhGet -> A.PhGet (snd hook.ph_kind)
+    | PhSet -> A.PhSet (snd hook.ph_kind)
+  in
+  let params = match hook.ph_params with
+    | None -> []
+    | Some (_, ps, _) -> List_.map (fun p -> A.ParamClassic (parameter env p)) (comma_list_dots ps)
+  in
+  let body = match hook.ph_body with
+    | PHExpr (_, e) -> Some (A.Expr (expr env e, Tok.unsafe_fake_tok ";"))
+    | PHBlock (l, stmts, r) ->
+        Some (A.Block (l, List_.fold_right (stmt_and_def env) stmts [], r))
+  in
+  { A.ph_kind = kind; A.ph_params = params; A.ph_body = body }
 
 and modifier _env m =
   let m, tok = m in

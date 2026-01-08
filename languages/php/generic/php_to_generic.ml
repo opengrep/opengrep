@@ -664,9 +664,14 @@ and class_def
   let vars = list class_var c_variables in
   let methods = list method_def c_methods in
 
+  (* Extract var defs and property hooks from vars *)
+  let var_fields = vars |> List_.map (fun (ent, var, _hooks) -> (ent, G.VarDef var)) in
+  let hook_fields = vars |> List.concat_map (fun (_ent, _var, hooks) -> hooks) in
+
   let fields =
     (csts |> List_.map (fun (ent, var) -> (ent, G.VarDef var)))
-    @ (vars |> List_.map (fun (ent, var) -> (ent, G.VarDef var)))
+    @ var_fields
+    @ hook_fields
     @ (methods |> List_.map (fun (ent, var) -> (ent, G.FuncDef var)))
   in
 
@@ -704,6 +709,7 @@ and class_var
       cv_type = ctype;
       cv_value = cvalue;
       cv_modifiers = cmodifiers;
+      cv_hooks = chooks;
     } =
   let id = var cname in
   let typ = option hint_type ctype in
@@ -713,7 +719,27 @@ and class_var
   in
   let ent = G.basic_entity id ~case_insensitive:false ~attrs:modifiers in
   let def = { G.vtype = typ; vinit = value; vtok = G.no_sc } in
-  (ent, def)
+  let hooks = list property_hook chooks in
+  (ent, def, hooks)
+
+and property_hook { ph_kind; ph_params; ph_body } =
+  let attr, tok, name_str = match ph_kind with
+    | PhGet tok -> (G.KeywordAttr (G.Getter, tok), tok, "get")
+    | PhSet tok -> (G.KeywordAttr (G.Setter, tok), tok, "set")
+  in
+  let params = list parameter ph_params in
+  let body = match ph_body with
+    | None -> G.FBNothing
+    | Some s -> G.FBStmt (stmt s)
+  in
+  let fdef = {
+    G.fkind = (G.Method, tok);
+    fparams = (fake "(", params, fake ")");
+    frettype = None;
+    fbody = body;
+  } in
+  let ent = G.basic_entity (name_str, tok) ~case_insensitive:false ~attrs:[attr] in
+  (ent, G.FuncDef fdef)
 
 and method_def v = func_def v
 

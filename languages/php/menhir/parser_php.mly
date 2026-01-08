@@ -734,14 +734,14 @@ unticked_class_declaration:
          c_enum_type  = Some { e_tok = $3; e_base = $4; e_constraint = None; }       }
      }
 
-  backed_enum_single: 
-  | T_CASE ident TEQ static_scalar TSEMICOLON {make_class_vars (DName $2, Some ($3, $4)) }
+  backed_enum_single:
+  | T_CASE ident TEQ static_scalar TSEMICOLON {make_class_vars (DName $2, Some ($3, $4), None) }
   | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
 
 
-enum_single: 
-    | T_CASE ident TSEMICOLON { make_class_vars (DName $2, None)  }
+enum_single:
+    | T_CASE ident TSEMICOLON { make_class_vars (DName $2, None, None)  }
     | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
 
@@ -798,8 +798,11 @@ member_declaration:
      { ClassConstants(o2l $1, $2, $3, $4, $5) }
 
 (* class variables (aka properties) *)
- | variable_modifiers ioption(type_php) listc(class_variable) ";"
+ | variable_modifiers ioption(type_php) listc(class_variable_simple) ";"
      { ClassVariables($1, $2, $3, $4)  }
+ (* PHP 8.4: property with hooks - single variable, no semicolon *)
+ | variable_modifiers ioption(type_php) class_variable_hooked
+     { ClassVariables($1, $2, [Left $3], Tok.FakeTok(";", None))  }
 
 (* class methods *)
  | ioption(attributes) method_declaration { Method { $2 with f_attrs = $1 } }
@@ -831,9 +834,37 @@ class_constant_declaration:
   ident_constant_name TEQ static_scalar { ((Name $1), ($2,$3))}
 
 
-class_variable:
- | variable           { (DName $1, None) }
- | variable TEQ static_scalar { (DName $1, Some ($2, $3)) }
+(* Simple class variable - no hooks, used in comma lists *)
+class_variable_simple:
+ | variable           { (DName $1, None, None) }
+ | variable TEQ static_scalar { (DName $1, Some ($2, $3), None) }
+
+(* PHP 8.4: class variable with property hooks - must be alone *)
+class_variable_hooked:
+ | variable property_hooks { (DName $1, None, Some $2) }
+ | variable TEQ static_scalar property_hooks { (DName $1, Some ($2, $3), Some $4) }
+
+(* PHP 8.4 property hooks *)
+property_hooks:
+ | "{" property_hook* "}" { ($1, $2, $3) }
+
+property_hook:
+ | T_IDENT property_hook_params? property_hook_body
+     { let (s, tok) = $1 in
+       let kind = match s with
+         | "get" -> PhGet
+         | "set" -> PhSet
+         | _ -> raise (Parsing.Parse_error)
+       in
+       { ph_kind = (kind, tok); ph_params = $2; ph_body = $3 }
+     }
+
+property_hook_params:
+ | "(" parameter_list ")" { ($1, $2, $3) }
+
+property_hook_body:
+ | "{" inner_statement* "}" { PHBlock ($1, $2, $3) }
+ | T_ARROW expr ";" { PHExpr ($1, $2) }
 
 method_body:
  | "{" inner_statement* "}" { ($1, $2, $3), MethodRegular }

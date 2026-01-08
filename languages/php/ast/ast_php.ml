@@ -418,12 +418,22 @@ and class_def = {
 and class_kind = Class | Interface | Trait | Enum
 and xhp_field = class_var * bool
 
+(* PHP 8.4 property hooks *)
+and property_hook = {
+  ph_kind : property_hook_kind;
+  ph_params : parameter list; (* set($value) parameter *)
+  ph_body : stmt option; (* None for abstract, Some for body *)
+}
+
+and property_hook_kind = PhGet of tok | PhSet of tok
+
 and class_var = {
   (* note that the name will contain a $ *)
   cv_name : var;
   cv_type : hint_type option;
   cv_value : expr option;
   cv_modifiers : modifier list;
+  cv_hooks : property_hook list; (* PHP 8.4 property hooks *)
 }
 
 and method_def = func_def

@@ -1210,7 +1210,7 @@ and map_enum_member_declaration (env : env) (x : CST.enum_member_declaration) :
       let type_, value = v4 in
       [
         EnumCase
-          { cv_name = v3; cv_type = type_; cv_value = value; cv_modifiers = [] };
+          { cv_name = v3; cv_type = type_; cv_value = value; cv_modifiers = []; cv_hooks = [] };
       ]
   | `Meth_decl x -> [ map_method_declaration env x ]
   | `Use_decl x -> map_use_declaration env x
@@ -1518,6 +1518,7 @@ and map_member_declaration (env : env) (x : CST.member_declaration) :
               A.cv_type = v3;
               A.cv_value = value;
               A.cv_modifiers = v2;
+              A.cv_hooks = [];
             })
         (v4 :: v5)
   | `Meth_decl x -> [ map_method_declaration env x ]
