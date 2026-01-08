@@ -594,6 +594,7 @@ and map_list_form
      * Atom :user. *)
     | Some "..." when in_pattern env -> map_ellipsis_list_form env forms
     | Some "apply" -> map_apply_form env forms
+    | Some "quote" -> map_quote_form env forms
     | _ -> map_call_form env forms
 
 and map_form (env : env) (x : CST.form) : G.expr =
@@ -1486,6 +1487,14 @@ and map_ellipsis_list_form (env : env) (forms : CST.form list) : G.expr =
     (* We only call this function when the forms start with ... . *)
     assert false
 
+and map_quote_form (env : env) (forms : CST.form list) : G.expr =
+  match forms with
+  | `Sym_lit (_meta, (_loc, "quote")) :: quote_form :: [] ->
+      R.Case
+        ( "Quot_lit",
+          map_form (with_mode env Quoted) quote_form |> raw_of_expr )
+    |> expr_of_raw
+  | _ -> raise_parse_error "Invalid quote form."
 and map_apply_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
   | `Sym_lit (_meta, ((_loc, "apply") as apply_tk)) :: (_func :: _args as rest) ->
