@@ -162,7 +162,7 @@ let str_of_info x = Tok.content_of_tok x
  *)
  T_ECHO  T_PRINT
  (* pad: was declared via right ... ??? mean token ? *)
- T_ASYNC T_STATIC  T_ABSTRACT  T_FINAL  T_PRIVATE T_PROTECTED T_PUBLIC
+ T_ASYNC T_STATIC  T_ABSTRACT  T_FINAL  T_PRIVATE T_PROTECTED T_PUBLIC T_READONLY
  T_UNSET T_ISSET T_EMPTY
  T_CLASS   T_INTERFACE  T_EXTENDS T_IMPLEMENTS
  T_TRAIT T_INSTEADOF
@@ -751,6 +751,7 @@ class_entry_type:
  | T_CLASS                    { ClassRegular $1 }
  | T_ABSTRACT T_CLASS         { ClassAbstract ($1, $2) }
  | T_FINAL    T_CLASS         { ClassFinal ($1, $2) }
+ | T_READONLY T_CLASS         { ClassReadonly ($1, $2) }
 
 
 visibility_modifier:
@@ -771,6 +772,7 @@ member_modifier:
  | visibility_modifier { $1 }
  | T_STATIC    { Static,($1) }
  | T_ASYNC     { Async,($1) }
+ | T_READONLY  { Readonly,($1) }
 
 
 extends_from:

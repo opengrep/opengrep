@@ -82,6 +82,7 @@ let modifierbis = function
   | Abstract -> G.Abstract
   | Final -> G.Final
   | Async -> G.Async
+  | Readonly -> G.Const
 
 let ptype (x, t) =
   match x with

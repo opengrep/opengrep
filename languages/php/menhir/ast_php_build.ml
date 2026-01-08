@@ -784,6 +784,7 @@ and class_type _env = function
   | ClassRegular tok -> ((A.Class, tok), [])
   | ClassFinal (tokf, tok) -> ((A.Class, tok), [ (Final, tokf) ])
   | ClassAbstract (toka, tok) -> ((A.Class, tok), [ (Abstract, toka) ])
+  | ClassReadonly (tokr, tok) -> ((A.Class, tok), [ (Readonly, tokr) ])
   | Interface tok -> ((A.Interface, tok), [])
   | Trait tok -> ((A.Trait, tok), [])
   | Enum tok -> ((A.Enum, tok), [])
@@ -845,6 +846,7 @@ and modifier _env m =
   | Final -> (A.Final, tok)
   | Static -> (A.Static, tok)
   | Async -> (A.Async, tok)
+  | Readonly -> (A.Readonly, tok)
 
 and class_body env st (mets, flds) =
   match st with

@@ -380,6 +380,7 @@ and keyword_modifier =
   | Final
   | Static
   | Async
+  | Readonly
 
 (* normally either an Id or Call with only static arguments *)
 and attribute = expr

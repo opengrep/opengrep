@@ -663,6 +663,7 @@ and class_type =
   | ClassRegular of tok (* class *)
   | ClassFinal of tok * tok (* final class *)
   | ClassAbstract of tok * tok (* abstract class *)
+  | ClassReadonly of tok * tok (* readonly class, PHP 8.2 *)
   | Interface of tok (* interface *)
   (* PHP 5.4 traits: http://php.net/manual/en/language.oop5.traits.php
    * Allow to mixin behaviors and data so it's really just
@@ -726,6 +727,8 @@ and modifier =
   (* for ?? *)
   | Static
   | Async
+  (* PHP 8.1 readonly properties, PHP 8.2 readonly classes *)
+  | Readonly
 
 (* those are bad features ... noone should use them. *)
 and trait_rule =
