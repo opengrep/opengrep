@@ -548,7 +548,7 @@ and hint_type = function
       List.fold_left
         (fun acc (tok, ty) -> G.TyOr (acc, tok, hint_type ty) |> G.t)
         first rest
-  | HintIntersection (first, rest, _parens) ->
+  | HintIntersection (_lparen, (first, rest), _rparen) ->
       let first = hint_type first in
       (* Fold into nested TyAnd using real & tokens *)
       List.fold_left

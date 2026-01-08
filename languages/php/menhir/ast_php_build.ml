@@ -662,7 +662,7 @@ and hint_type env = function
       | Some (first, rest) ->
           let first = hint_type env first in
           let rest = List_.map (fun (tok, t) -> (tok, hint_type env t)) rest in
-          A.HintIntersection (first, rest, (t1, (), t2)))
+          A.HintIntersection (t1, (first, rest), t2))
   | HintCallback (_, (_, args, ret), _) ->
       let args = List_.map (hint_type env) (comma_list_dots (brace args)) in
       let ret = Option.map (fun (_, t) -> hint_type env t) ret in

@@ -275,8 +275,8 @@ and hint_type =
   (* first type, then list of (| tok, type) pairs *)
   | HintUnion of hint_type * (tok * hint_type) list
   (* PHP 8.1 intersection types, PHP 8.2 DNF types *)
-  (* first type, then list of (& tok, type) pairs, then parens *)
-  | HintIntersection of hint_type * (tok * hint_type) list * unit bracket
+  (* first type, then list of (& tok, type) pairs, wrapped in parens *)
+  | HintIntersection of (hint_type * (tok * hint_type) list) bracket
   | HintCallback of hint_type list * hint_type option
   | HintTypeConst of hint_type * tok * hint_type (* ?? *)
   | HintVariadic of tok * hint_type option
