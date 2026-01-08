@@ -772,7 +772,7 @@ variable_modifiers:
  | T_VAR                  { NoModifiers $1 }
  | member_modifier+       { VModifiers $1 }
 
-member_modifier:
+%inline member_modifier:
  | class_modifier { $1 }
  | visibility_modifier { $1 }
  | T_STATIC    { Static,($1) }
