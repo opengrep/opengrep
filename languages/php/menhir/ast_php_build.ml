@@ -895,6 +895,8 @@ and modifier _env m =
   | Static -> (A.Static, tok)
   | Async -> (A.Async, tok)
   | Readonly -> (A.Readonly, tok)
+  | PrivateSet -> (A.PrivateSet, tok)
+  | ProtectedSet -> (A.ProtectedSet, tok)
 
 and class_body env st (mets, flds) =
   match st with

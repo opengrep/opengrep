@@ -83,6 +83,9 @@ let modifierbis = function
   | Final -> G.Final
   | Async -> G.Async
   | Readonly -> G.Const
+  (* PHP 8.4 asymmetric visibility - handled separately *)
+  | PrivateSet -> G.Private (* fallback, actual handling in modifier function *)
+  | ProtectedSet -> G.Protected
 
 let ptype (x, t) =
   match x with
@@ -546,9 +549,7 @@ and func_def
   let params = parameters f_params in
   let fret = option hint_type f_return_type in
   let _is_refTODO = bool f_ref in
-  let modifiers =
-    list modifier m_modifiers |> List_.map (fun m -> G.KeywordAttr m)
-  in
+  let modifiers = list modifier_to_attr m_modifiers in
   (* todo: transform in UseOuterDecl before first body stmt *)
   let _lusesTODO =
     list
@@ -602,7 +603,15 @@ and parameter_classic { p_type; p_ref; p_name; p_default; p_attrs; p_variadic }
   | _, Some tok -> G.OtherParam (("Ref", tok), [ G.Pa (G.Param pclassic) ])
   | Some tok, None -> G.ParamRest (tok, pclassic)
 
-and modifier v = wrap modifierbis v
+(* PHP 8.4 asymmetric visibility: private(set) and protected(set)
+   are converted to OtherAttribute like Swift does *)
+and modifier_to_attr (m, tok) =
+  match m with
+  | PrivateSet ->
+      G.OtherAttribute (("private(set)", tok), [])
+  | ProtectedSet ->
+      G.OtherAttribute (("protected(set)", tok), [])
+  | _ -> G.KeywordAttr (modifierbis m, tok)
 
 (* TODO: attributes are probably case-insensitive because they refer
    to class names. This need to be verified. *)
@@ -655,9 +664,7 @@ and class_def
 
   let _enum = option (enum_type tok) c_enum_type in
 
-  let modifiers =
-    list modifier c_modifiers |> List_.map (fun m -> G.KeywordAttr m)
-  in
+  let modifiers = list modifier_to_attr c_modifiers in
   let attrs = list attribute c_attrs in
 
   let csts = list constant_def c_constants in
@@ -714,9 +721,7 @@ and class_var
   let id = var cname in
   let typ = option hint_type ctype in
   let value = option expr cvalue in
-  let modifiers =
-    list modifier cmodifiers |> List_.map (fun m -> G.KeywordAttr m)
-  in
+  let modifiers = list modifier_to_attr cmodifiers in
   let ent = G.basic_entity id ~case_insensitive:false ~attrs:modifiers in
   let def = { G.vtype = typ; vinit = value; vtok = G.no_sc } in
   let hooks = list property_hook chooks in

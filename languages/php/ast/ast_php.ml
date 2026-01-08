@@ -385,6 +385,9 @@ and keyword_modifier =
   | Static
   | Async
   | Readonly
+  (* PHP 8.4 asymmetric visibility *)
+  | PrivateSet
+  | ProtectedSet
 
 (* normally either an Id or Call with only static arguments *)
 and attribute = expr

@@ -773,6 +773,15 @@ member_modifier:
  | T_STATIC    { Static,($1) }
  | T_ASYNC     { Async,($1) }
  | T_READONLY  { Readonly,($1) }
+ (* PHP 8.4 asymmetric visibility *)
+ | T_PRIVATE "(" T_IDENT ")"
+     { let (s, _) = $3 in
+       if s = "set" then PrivateSet, $1
+       else raise Parsing.Parse_error }
+ | T_PROTECTED "(" T_IDENT ")"
+     { let (s, _) = $3 in
+       if s = "set" then ProtectedSet, $1
+       else raise Parsing.Parse_error }
 
 
 extends_from:

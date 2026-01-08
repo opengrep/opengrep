@@ -745,6 +745,9 @@ and modifier =
   | Async
   (* PHP 8.1 readonly properties, PHP 8.2 readonly classes *)
   | Readonly
+  (* PHP 8.4 asymmetric visibility: private(set), protected(set) *)
+  | PrivateSet
+  | ProtectedSet
 
 (* those are bad features ... noone should use them. *)
 and trait_rule =
