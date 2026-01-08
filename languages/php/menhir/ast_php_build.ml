@@ -396,6 +396,10 @@ and expr env = function
       let args = comma_list args in
       let args = List_.map (argument env) args in
       A.Call (e, (lp, args, rp))
+  (* PHP 8.1: first-class callable syntax *)
+  | FirstClassCallable (e, _lp, ellipsis, _rp) ->
+      let e = expr env e in
+      A.FirstClassCallable (e, ellipsis)
   | ObjGet (e1, tok, e2) ->
       let e1 = expr env e1 in
       let e2 = expr env e2 in

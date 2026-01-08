@@ -360,6 +360,45 @@ and expr e : G.expr =
   | Call (v1, v2) ->
       let v1 = expr v1 and v2 = bracket (list argument) v2 in
       G.Call (v1, v2) |> G.e
+  (* PHP 8.1: first-class callable - desugar to Closure::fromCallable(...) *)
+  | FirstClassCallable (callable_expr, tok) ->
+      let callable_arg =
+        match callable_expr with
+        (* strlen(...) → Closure::fromCallable('strlen') *)
+        | Id [ name ] ->
+            let str = fst name in
+            G.Arg (G.L (G.String (fb (str, snd name))) |> G.e)
+        (* $obj->method(...) → Closure::fromCallable([$obj, 'method']) *)
+        | Obj_get (obj, _arrow, Id [ method_name ]) ->
+            let obj_expr = expr obj in
+            let method_str =
+              G.L (G.String (fb (fst method_name, snd method_name))) |> G.e
+            in
+            G.Arg
+              (G.Container (G.Array, fb [ obj_expr; method_str ]) |> G.e)
+        (* Foo::bar(...) → Closure::fromCallable([Foo::class, 'bar']) *)
+        | Class_get (class_ref, _colons, Id [ method_name ]) ->
+            let class_expr = expr class_ref in
+            let method_str =
+              G.L (G.String (fb (fst method_name, snd method_name))) |> G.e
+            in
+            G.Arg (G.Container (G.Array, fb [ class_expr; method_str ]) |> G.e)
+        (* For other forms, pass as-is *)
+        | _ -> G.Arg (expr callable_expr)
+      in
+      let closure_class =
+        G.N
+          (G.IdQualified
+             {
+               G.name_last = (("fromCallable", tok), None);
+               name_middle =
+                 Some (G.QDots [ (("Closure", tok), None) ]);
+               name_top = None;
+               name_info = G.empty_id_info ();
+             })
+        |> G.e
+      in
+      G.Call (closure_class, fb [ callable_arg ]) |> G.e
   | Throw (t, v1) ->
       let v1 = expr v1 in
       let st = G.Throw (t, v1, G.sc) |> G.s in

@@ -1177,6 +1177,17 @@ new_expr:
 
 call_expr:
  | member_expr arguments { Call ($1, $2) }
+ (* PHP 8.1: first-class callable syntax: strlen(...), $obj->method(...), etc.
+  * In sgrep/pattern mode, ... means ellipsis (match any args).
+  * In code mode, ... means first-class callable. *)
+ | member_expr "(" "..." ")"
+     { if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Call ($1, ($2, [Left (Arg (Ellipsis $3))], $4))
+       else FirstClassCallable ($1, $2, $3, $4) }
+ | call_expr "(" "..." ")"
+     { if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Call ($1, ($2, [Left (Arg (Ellipsis $3))], $4))
+       else FirstClassCallable ($1, $2, $3, $4) }
  | call_expr arguments { Call ($1, $2) }
  | call_expr "[" dim_offset "]" { ArrayGet($1, ($2, $3, $4)) }
  | call_expr "{" expr "}"   { HashGet($1, ($2, $3, $4)) }

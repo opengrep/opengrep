@@ -196,6 +196,9 @@ type expr =
   (* e.g. f(...$x) *)
   | Unpack of expr
   | Call of expr * argument list bracket
+  (* PHP 8.1: first-class callable syntax - strlen(...), $obj->method(...), etc.
+   * Will be desugared to Closure::fromCallable(...) *)
+  | FirstClassCallable of expr * tok (* ... *)
   | Throw of tok * expr
   (* todo? transform into Call (builtin ...) ? *)
   | Infix of AST_generic.incr_decr wrap * expr

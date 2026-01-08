@@ -211,6 +211,8 @@ and expr =
   | This of tok
   | Throw of tok * expr
   | Call of expr * arguments
+  (* PHP 8.1: first-class callable syntax: strlen(...), $obj->method(...), etc. *)
+  | FirstClassCallable of expr * tok (* ( *) * tok (* ... *) * tok (* ) *)
   | ObjGet of expr * tok (* -> *) * expr
   | ClassGet of class_name_reference * tok (* :: *) * expr
   | ArrayGet of expr * expr option bracket
