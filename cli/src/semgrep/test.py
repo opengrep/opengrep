@@ -44,7 +44,8 @@ COMMENT_SYNTAXES = \
    ("(*", "*)"),
    ("'", "\n"),
    (";;", "\n"),
-   (";", "\n"))
+   # (";", "\n")
+   )
 SPACE_OR_NO_SPACE = ("", " ")
 TODORULEID = "todoruleid"
 RULEID = "ruleid"
