@@ -1,5 +1,5 @@
 <?php
-// PHP 8.2: DNF types (Disjunctive Normal Form) - FAILS TO PARSE
+// PHP 8.2: DNF types (Disjunctive Normal Form)
 interface A {}
 interface B {}
 interface C {}

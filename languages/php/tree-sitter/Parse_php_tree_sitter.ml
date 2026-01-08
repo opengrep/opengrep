@@ -1102,7 +1102,7 @@ and map_const_declaration_ (env : env)
   let v5 = map_semicolon env v5 in
   List_.map
     (fun (name, expr) ->
-      { A.cst_tok = v2; A.cst_name = name; A.cst_body = expr })
+      { A.cst_tok = v2; A.cst_name = name; A.cst_body = expr; A.cst_modifiers = [] })
     (v3 :: v4)
 
 and map_const_element (env : env) ((v1, v2, v3) : CST.const_element) =

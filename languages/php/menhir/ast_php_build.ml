@@ -676,7 +676,7 @@ and constant_def env
     { cst_name; cst_val; cst_type = _TODO; cst_toks = tok, _, _ } =
   let name = ident env cst_name in
   let value = expr env cst_val in
-  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value }
+  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value; A.cst_modifiers = [] }
 
 and comma_list_dots_params f xs =
   match xs with
@@ -827,12 +827,14 @@ and class_traits env x acc =
 
 and class_constants env st acc =
   match st with
-  | ClassConstants (_, tok, _, cl, _) ->
+  | ClassConstants (mods, tok, _, cl, _) ->
+      let modifiers = List_.map (modifier env) mods in
       List_.fold_right
         (fun (n, ss) acc ->
           let body = static_scalar_affect env ss in
           let cst =
-            { A.cst_name = ident env n; cst_body = body; cst_tok = tok }
+            { A.cst_name = ident env n; cst_body = body; cst_tok = tok;
+              cst_modifiers = modifiers }
           in
           cst :: acc)
         (comma_list cl) acc

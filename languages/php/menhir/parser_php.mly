@@ -759,6 +759,11 @@ visibility_modifier:
  | T_PROTECTED { Protected,($1) }
  | T_PRIVATE   { Private,($1) }
 
+(* PHP 8.1: class constants can have visibility and final modifiers *)
+const_modifier:
+ | visibility_modifier { $1 }
+ | T_FINAL { Final, $1 }
+
 class_modifier:
  | T_ABSTRACT { Abstract, $1 }
  | T_FINAL    { Final, $1 }
@@ -801,10 +806,10 @@ implements_list:
 (*----------------------------*)
 
 member_declaration:
- (* class constants *)
- | visibility_modifier?
+ (* class constants - PHP 8.1 allows final modifier *)
+ | const_modifier*
    T_CONST ioption(type_php) listc(class_constant_declaration)  ";"
-     { ClassConstants(o2l $1, $2, $3, $4, $5) }
+     { ClassConstants($1, $2, $3, $4, $5) }
 
 (* class variables (aka properties) *)
  | variable_modifiers ioption(type_php) listc(class_variable_simple) ";"
@@ -1197,6 +1202,9 @@ member_expr:
  (* php 5.5 extension *)
  | member_expr "::" T_CLASS
      { ClassGet($1, $2, Id (XName [QI (Name("class", $3))])) }
+ (* PHP 8.3: dynamic class constant fetch C::{$name} *)
+ | member_expr "::" "{" expr "}"
+     { ClassGet($1, $2, (BraceIdent ($3, $4, $5))) }
 
 
 primary_expr:

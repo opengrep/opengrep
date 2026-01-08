@@ -397,6 +397,8 @@ and constant_def = {
   cst_name : ident;
   (* normally a static scalar *)
   cst_body : expr;
+  (* PHP 7.1: class constant visibility *)
+  cst_modifiers : modifier list;
 }
 
 and enum_type = { e_base : hint_type; e_constraint : hint_type option }
