@@ -366,13 +366,12 @@ and expr e : G.expr =
         match callable_expr with
         (* strlen(...) → Closure::fromCallable('strlen') *)
         | Id [ name ] ->
-            let str = fst name in
-            G.Arg (G.L (G.String (fb (str, snd name))) |> G.e)
+            G.Arg (G.L (G.String (fb name)) |> G.e)
         (* $obj->method(...) → Closure::fromCallable([$obj, 'method']) *)
         | Obj_get (obj, _arrow, Id [ method_name ]) ->
             let obj_expr = expr obj in
             let method_str =
-              G.L (G.String (fb (fst method_name, snd method_name))) |> G.e
+              G.L (G.String (fb method_name)) |> G.e
             in
             G.Arg
               (G.Container (G.Array, fb [ obj_expr; method_str ]) |> G.e)
@@ -380,7 +379,7 @@ and expr e : G.expr =
         | Class_get (class_ref, _colons, Id [ method_name ]) ->
             let class_expr = expr class_ref in
             let method_str =
-              G.L (G.String (fb (fst method_name, snd method_name))) |> G.e
+              G.L (G.String (fb  method_name)) |> G.e
             in
             G.Arg (G.Container (G.Array, fb [ class_expr; method_str ]) |> G.e)
         (* For other forms, pass as-is *)

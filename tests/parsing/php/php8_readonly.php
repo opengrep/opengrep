@@ -1,5 +1,5 @@
 <?php
-// PHP 8.1: Readonly properties - WORKS
+// PHP 8.1: Readonly properties 
 class ReadonlyProperty {
     public readonly int $id;
 
@@ -8,7 +8,7 @@ class ReadonlyProperty {
     }
 }
 
-// PHP 8.2: Readonly classes - WORKS
+// PHP 8.2: Readonly classes 
 readonly class ReadonlyClass {
     public int $value;
 }
