@@ -143,6 +143,8 @@ type hint_type =
   | HintQuestion of (tok * hint_type)
   | HintTuple of hint_type comma_list paren
   | HintUnion of hint_type comma_list
+  (* PHP 8.1 intersection types, PHP 8.2 DNF types (parenthesized) *)
+  | HintIntersection of hint_type comma_list paren
   | HintCallback of
       (tok (* "function" *)
       * hint_type comma_list_dots paren
@@ -209,6 +211,8 @@ and expr =
   | This of tok
   | Throw of tok * expr
   | Call of expr * arguments
+  (* PHP 8.1: first-class callable syntax: strlen(...), $obj->method(...), etc. *)
+  | FirstClassCallable of expr * tok (* ( *) * tok (* ... *) * tok (* ) *)
   | ObjGet of expr * tok (* -> *) * expr
   | ClassGet of class_name_reference * tok (* :: *) * expr
   | ArrayGet of expr * expr option bracket
@@ -663,6 +667,7 @@ and class_type =
   | ClassRegular of tok (* class *)
   | ClassFinal of tok * tok (* final class *)
   | ClassAbstract of tok * tok (* abstract class *)
+  | ClassReadonly of tok * tok (* readonly class, PHP 8.2 *)
   | Interface of tok (* interface *)
   (* PHP 5.4 traits: http://php.net/manual/en/language.oop5.traits.php
    * Allow to mixin behaviors and data so it's really just
@@ -702,7 +707,21 @@ and class_stmt =
   | DeclEllipsis of tok
 
 and class_constant = ident * static_scalar_affect
-and class_variable = dname * static_scalar_affect option
+
+(* PHP 8.4 property hooks *)
+and property_hook = {
+  ph_kind: property_hook_kind wrap;
+  ph_params: parameter comma_list_dots paren option; (* set($value) *)
+  ph_body: property_hook_body;
+}
+
+and property_hook_kind = PhGet | PhSet
+
+and property_hook_body =
+  | PHExpr of tok (* => *) * expr * tok (* ; *)
+  | PHBlock of stmt_and_def list brace
+
+and class_variable = dname * static_scalar_affect option * property_hook list brace option
 
 and class_var_modifier =
   | NoModifiers of tok (* 'var' *)
@@ -726,6 +745,11 @@ and modifier =
   (* for ?? *)
   | Static
   | Async
+  (* PHP 8.1 readonly properties, PHP 8.2 readonly classes *)
+  | Readonly
+  (* PHP 8.4 asymmetric visibility: private(set), protected(set) *)
+  | PrivateSet
+  | ProtectedSet
 
 (* those are bad features ... noone should use them. *)
 and trait_rule =

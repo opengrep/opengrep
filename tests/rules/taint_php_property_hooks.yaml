@@ -1,0 +1,11 @@
+rules:
+  - id: taint-property-hooks
+    languages:
+      - php
+    severity: WARNING
+    message: Tainted data flows to sink
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

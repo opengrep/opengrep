@@ -162,7 +162,7 @@ let str_of_info x = Tok.content_of_tok x
  *)
  T_ECHO  T_PRINT
  (* pad: was declared via right ... ??? mean token ? *)
- T_ASYNC T_STATIC  T_ABSTRACT  T_FINAL  T_PRIVATE T_PROTECTED T_PUBLIC
+ T_ASYNC T_STATIC  T_ABSTRACT  T_FINAL  T_PRIVATE T_PROTECTED T_PUBLIC T_READONLY
  T_UNSET T_ISSET T_EMPTY
  T_CLASS   T_INTERFACE  T_EXTENDS T_IMPLEMENTS
  T_TRAIT T_INSTEADOF
@@ -734,14 +734,14 @@ unticked_class_declaration:
          c_enum_type  = Some { e_tok = $3; e_base = $4; e_constraint = None; }       }
      }
 
-  backed_enum_single: 
-  | T_CASE ident TEQ static_scalar TSEMICOLON {make_class_vars (DName $2, Some ($3, $4)) }
+  backed_enum_single:
+  | T_CASE ident TEQ static_scalar TSEMICOLON {make_class_vars (DName $2, Some ($3, $4), None) }
   | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
 
 
-enum_single: 
-    | T_CASE ident TSEMICOLON { make_class_vars (DName $2, None)  }
+enum_single:
+    | T_CASE ident TSEMICOLON { make_class_vars (DName $2, None, None)  }
     | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
 
@@ -751,12 +751,18 @@ class_entry_type:
  | T_CLASS                    { ClassRegular $1 }
  | T_ABSTRACT T_CLASS         { ClassAbstract ($1, $2) }
  | T_FINAL    T_CLASS         { ClassFinal ($1, $2) }
+ | T_READONLY T_CLASS         { ClassReadonly ($1, $2) }
 
 
 visibility_modifier:
  | T_PUBLIC    { Public,($1) }
  | T_PROTECTED { Protected,($1) }
  | T_PRIVATE   { Private,($1) }
+
+(* PHP 8.1: class constants can have visibility and final modifiers *)
+const_modifier:
+ | visibility_modifier { $1 }
+ | T_FINAL { Final, $1 }
 
 class_modifier:
  | T_ABSTRACT { Abstract, $1 }
@@ -766,11 +772,21 @@ variable_modifiers:
  | T_VAR                  { NoModifiers $1 }
  | member_modifier+       { VModifiers $1 }
 
-member_modifier:
+%inline member_modifier:
  | class_modifier { $1 }
  | visibility_modifier { $1 }
  | T_STATIC    { Static,($1) }
  | T_ASYNC     { Async,($1) }
+ | T_READONLY  { Readonly,($1) }
+ (* PHP 8.4 asymmetric visibility *)
+ | T_PRIVATE "(" T_IDENT ")"
+     { let (s, _) = $3 in
+       if s = "set" then PrivateSet, $1
+       else raise Parsing.Parse_error }
+ | T_PROTECTED "(" T_IDENT ")"
+     { let (s, _) = $3 in
+       if s = "set" then ProtectedSet, $1
+       else raise Parsing.Parse_error }
 
 
 extends_from:
@@ -790,14 +806,17 @@ implements_list:
 (*----------------------------*)
 
 member_declaration:
- (* class constants *)
- | visibility_modifier?
+ (* class constants - PHP 8.1 allows final modifier *)
+ | const_modifier*
    T_CONST ioption(type_php) listc(class_constant_declaration)  ";"
-     { ClassConstants(o2l $1, $2, $3, $4, $5) }
+     { ClassConstants($1, $2, $3, $4, $5) }
 
 (* class variables (aka properties) *)
- | variable_modifiers ioption(type_php) listc(class_variable) ";"
+ | variable_modifiers ioption(type_php) listc(class_variable_simple) ";"
      { ClassVariables($1, $2, $3, $4)  }
+ (* PHP 8.4: property with hooks - single variable, no semicolon *)
+ | variable_modifiers ioption(type_php) class_variable_hooked
+     { ClassVariables($1, $2, [Left $3], Tok.FakeTok(";", None))  }
 
 (* class methods *)
  | ioption(attributes) method_declaration { Method { $2 with f_attrs = $1 } }
@@ -829,9 +848,37 @@ class_constant_declaration:
   ident_constant_name TEQ static_scalar { ((Name $1), ($2,$3))}
 
 
-class_variable:
- | variable           { (DName $1, None) }
- | variable TEQ static_scalar { (DName $1, Some ($2, $3)) }
+(* Simple class variable - no hooks, used in comma lists *)
+class_variable_simple:
+ | variable           { (DName $1, None, None) }
+ | variable TEQ static_scalar { (DName $1, Some ($2, $3), None) }
+
+(* PHP 8.4: class variable with property hooks - must be alone *)
+class_variable_hooked:
+ | variable property_hooks { (DName $1, None, Some $2) }
+ | variable TEQ static_scalar property_hooks { (DName $1, Some ($2, $3), Some $4) }
+
+(* PHP 8.4 property hooks *)
+property_hooks:
+ | "{" property_hook* "}" { ($1, $2, $3) }
+
+property_hook:
+ | T_IDENT property_hook_params? property_hook_body
+     { let (s, tok) = $1 in
+       let kind = match s with
+         | "get" -> PhGet
+         | "set" -> PhSet
+         | _ -> raise (Parsing.Parse_error)
+       in
+       { ph_kind = (kind, tok); ph_params = $2; ph_body = $3 }
+     }
+
+property_hook_params:
+ | "(" parameter_list ")" { ($1, $2, $3) }
+
+property_hook_body:
+ | "{" inner_statement* "}" { PHBlock ($1, $2, $3) }
+ | T_ARROW expr ";" { PHExpr ($1, $2, $3) }
 
 method_body:
  | "{" inner_statement* "}" { ($1, $2, $3), MethodRegular }
@@ -913,6 +960,9 @@ primary_type_php:
  (* hack-ext: hack extensions *)
  | "?" type_php
      { HintQuestion ($1, $2)  }
+ (* PHP 8.1/8.2: intersection types (A&B) for DNF types *)
+ | "(" intersection_type_php_list ")"
+     { HintIntersection ($1, $2, $3) }
  | "(" non_empty_type_php_list ")"
      { HintTuple ($1, $2, $3) }
  | "(" T_FUNCTION "(" type_php_or_dots_list ")" return_type ")"
@@ -1127,6 +1177,17 @@ new_expr:
 
 call_expr:
  | member_expr arguments { Call ($1, $2) }
+ (* PHP 8.1: first-class callable syntax: strlen(...), $obj->method(...), etc.
+  * In sgrep/pattern mode, ... means ellipsis (match any args).
+  * In code mode, ... means first-class callable. *)
+ | member_expr "(" "..." ")"
+     { if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Call ($1, ($2, [Left (Arg (Ellipsis $3))], $4))
+       else FirstClassCallable ($1, $2, $3, $4) }
+ | call_expr "(" "..." ")"
+     { if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Call ($1, ($2, [Left (Arg (Ellipsis $3))], $4))
+       else FirstClassCallable ($1, $2, $3, $4) }
  | call_expr arguments { Call ($1, $2) }
  | call_expr "[" dim_offset "]" { ArrayGet($1, ($2, $3, $4)) }
  | call_expr "{" expr "}"   { HashGet($1, ($2, $3, $4)) }
@@ -1152,6 +1213,9 @@ member_expr:
  (* php 5.5 extension *)
  | member_expr "::" T_CLASS
      { ClassGet($1, $2, Id (XName [QI (Name("class", $3))])) }
+ (* PHP 8.3: dynamic class constant fetch C::{$name} *)
+ | member_expr "::" "{" expr "}"
+     { ClassGet($1, $2, (BraceIdent ($3, $4, $5))) }
 
 
 primary_expr:
@@ -1198,7 +1262,63 @@ constant:
  | T_FUNC_C { PreProcess(FunctionC, $1) }|T_METHOD_C { PreProcess(MethodC, $1)}
  | T_NAMESPACE_C { PreProcess(NamespaceC, $1) }
 
-static_scalar: expr { $1 }
+(* static_scalar: Compile-time constant expressions. Excludes brace access
+ * which isn't valid in constant contexts and conflicts with property hooks. *)
+static_scalar:
+ | static_scalar_primary { $1 }
+ (* Arithmetic *)
+ | static_scalar TPLUS static_scalar  { Binary($1,(Arith Plus,$2),$3) }
+ | static_scalar TMINUS static_scalar { Binary($1,(Arith Minus,$2),$3) }
+ | static_scalar TMUL static_scalar   { Binary($1,(Arith Mul,$2),$3) }
+ | static_scalar TDIV static_scalar   { Binary($1,(Arith Div,$2),$3) }
+ | static_scalar TMOD static_scalar   { Binary($1,(Arith Mod,$2),$3) }
+ | static_scalar TPOW static_scalar   { Binary($1,(Arith Pow,$2),$3) }
+ | static_scalar "." static_scalar    { Binary($1,(BinaryConcat,$2),$3) }
+ (* Bitwise *)
+ | static_scalar TAND static_scalar   { Binary($1,(Arith And,$2),$3) }
+ | static_scalar "|" static_scalar    { Binary($1,(Arith Or,$2),$3) }
+ | static_scalar TXOR static_scalar   { Binary($1,(Arith Xor,$2),$3) }
+ | static_scalar T_SL static_scalar   { Binary($1,(Arith DecLeft,$2),$3) }
+ | static_scalar T_SR static_scalar   { Binary($1,(Arith DecRight,$2),$3) }
+ (* Logical *)
+ | static_scalar T_BOOLEAN_OR static_scalar  { Binary($1,(Logical OrBool,$2),$3) }
+ | static_scalar T_BOOLEAN_AND static_scalar { Binary($1,(Logical AndBool,$2),$3) }
+ | static_scalar T_LOGICAL_OR static_scalar  { Binary($1,(Logical OrLog,$2),$3) }
+ | static_scalar T_LOGICAL_AND static_scalar { Binary($1,(Logical AndLog,$2),$3) }
+ | static_scalar T_LOGICAL_XOR static_scalar { Binary($1,(Logical XorLog,$2),$3) }
+ | static_scalar T_NULL_COALLESCING static_scalar { Binary($1,(Arith Nullish,$2),$3) }
+ (* Comparison *)
+ | static_scalar T_IS_IDENTICAL static_scalar        { Binary($1,(Logical Identical,$2),$3) }
+ | static_scalar T_IS_NOT_IDENTICAL static_scalar    { Binary($1,(Logical NotIdentical,$2),$3) }
+ | static_scalar T_IS_EQUAL static_scalar            { Binary($1,(Logical Eq,$2),$3) }
+ | static_scalar T_IS_NOT_EQUAL static_scalar        { Binary($1,(Logical NotEq,$2),$3) }
+ | static_scalar "<" static_scalar                   { Binary($1,(Logical Inf,$2),$3) }
+ | static_scalar T_IS_SMALLER_OR_EQUAL static_scalar { Binary($1,(Logical InfEq,$2),$3) }
+ | static_scalar ">" static_scalar                   { Binary($1,(Logical Sup,$2),$3) }
+ | static_scalar T_IS_GREATER_OR_EQUAL static_scalar { Binary($1,(Logical SupEq,$2),$3) }
+ | static_scalar T_ROCKET static_scalar              { Binary($1,(CombinedComparison,$2),$3) }
+ (* Ternary *)
+ | static_scalar "?" static_scalar ":" static_scalar { CondExpr($1,$2,Some $3,$4,$5) }
+ | static_scalar "?" ":" static_scalar               { CondExpr($1,$2,None,$3,$4) }
+ (* Unary *)
+ | TPLUS  static_scalar %prec T_INC { Unary((UnPlus,$1),$2) }
+ | TMINUS static_scalar %prec T_INC { Unary((UnMinus,$1),$2) }
+ | TBANG  static_scalar             { Unary((UnBang,$1),$2) }
+ | TTILDE static_scalar             { Unary((UnTilde,$1),$2) }
+
+static_scalar_primary:
+ | constant { Sc (C $1) }
+ | qualified_class_name { Id $1 }
+ | T_ARRAY "(" array_pair_list ")"  { ArrayLong($1,($2,$3,$4)) }
+ | "[" array_pair_list "]"          { ArrayShort($1,$2,$3) }
+ | "(" static_scalar ")"            { ParenExpr($1,$2,$3) }
+ (* Class constant access: self/parent must come before qualified_class_name *)
+ | T_SELF "::" ident                 { ClassGet(Id (Self $1),$2,Id (XName [QI (Name $3)])) }
+ | T_SELF "::" T_CLASS               { ClassGet(Id (Self $1),$2,Id (XName [QI (Name ("class",$3))])) }
+ | T_PARENT "::" ident               { ClassGet(Id (Parent $1),$2,Id (XName [QI (Name $3)])) }
+ | T_PARENT "::" T_CLASS             { ClassGet(Id (Parent $1),$2,Id (XName [QI (Name ("class",$3))])) }
+ | qualified_class_name "::" ident   { ClassGet(Id $1,$2,Id (XName [QI (Name $3)])) }
+ | qualified_class_name "::" T_CLASS { ClassGet(Id $1,$2,Id (XName [QI (Name ("class",$3))])) }
 
 (*----------------------------*)
 (* list/array *)
@@ -1545,6 +1665,10 @@ non_empty_type_php_list:
 
 union_type_php_list:
  | list_sep(primary_type_php, "|") { $1 }
+
+(* PHP 8.1/8.2: intersection types use & separator, must have 2+ types *)
+intersection_type_php_list:
+ | list_sep(class_name, TAND) { $1 }
 
 class_name_list: listc(class_name_no_array) { $1 }
 

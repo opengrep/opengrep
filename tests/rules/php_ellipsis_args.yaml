@@ -1,0 +1,6 @@
+rules:
+- id: ellipsis-args
+  message: Pattern ellipsis matches any arguments
+  languages: [php]
+  severity: INFO
+  pattern: foo(...)

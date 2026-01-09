@@ -167,6 +167,7 @@ let keyword_table = Hashtbl_.hash_of_list [
   "use",             (fun ii -> T_USE ii);
 
   "abstract", (fun ii -> T_ABSTRACT ii); "final", (fun ii -> T_FINAL ii);
+  "readonly",        (fun ii -> T_READONLY ii);
   (* ugly: need a special lexing trick for async, see some code below
    * "async", (fun ii -> T_ASYNC ii);
    *)

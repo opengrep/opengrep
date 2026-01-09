@@ -120,6 +120,7 @@ let visitor_info_of_tok f = function
   | T_ABSTRACT ii -> T_ABSTRACT (f ii)
   | T_FINAL ii -> T_FINAL (f ii)
   | T_ASYNC ii -> T_ASYNC (f ii)
+  | T_READONLY ii -> T_READONLY (f ii)
   | T_PRIVATE ii -> T_PRIVATE (f ii)
   | T_PROTECTED ii -> T_PROTECTED (f ii)
   | T_PUBLIC ii -> T_PUBLIC (f ii)
