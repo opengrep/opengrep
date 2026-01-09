@@ -137,8 +137,6 @@ type offset = Ofld of IL.name | Oint of int | Ostr of string | Oany
 
 type lval = { base : base; offset : offset list }
 
-let hook_offset_of_IL = ref None
-
 let compare_lval { base = base1; offset = offset1 }
     { base = base2; offset = offset2 } =
   match compare_base base1 base2 with
@@ -166,14 +164,14 @@ let show_offset_list offset =
 let show_lval { base; offset } = show_base base ^ show_offset_list offset
 
 let offset_of_IL (o : IL.offset) =
-  match !hook_offset_of_IL with
-  | None -> (
-      match o.o with
-      | Dot n -> Ofld n
-      | Index _ ->
-          (* no index-sensitivity in OSS *)
-          Oany)
-  | Some offset_of_IL -> offset_of_IL o
+match o.o with
+| IL.Dot n -> Ofld n
+| IL.Index { e = IL.Literal (Int pi); _ } -> (
+    match Parsed_int.to_int_opt pi with
+    | Some i -> Oint i
+    | None -> Oany)
+| IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
+| IL.Index _ -> Oany
 
 let offset_of_rev_IL_offset ~rev_offset = List.rev_map offset_of_IL rev_offset
 

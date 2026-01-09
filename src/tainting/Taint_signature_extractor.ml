@@ -431,19 +431,6 @@ let find_class_for_function (ast : AST_generic.program) (target_name : IL.name)
       !found_class
   | _ -> None
 
-let enable_precise_index_tracking () =
-  let precise_offset_of_IL (o : IL.offset) =
-    match o.o with
-    | IL.Dot n -> Taint.Ofld n
-    | IL.Index { e = IL.Literal (Int pi); _ } -> (
-        match Parsed_int.to_int_opt pi with
-        | Some i -> Taint.Oint i
-        | None -> Taint.Oany)
-    | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Taint.Ostr s
-    | IL.Index _ -> Taint.Oany
-  in
-  Taint.hook_offset_of_IL := Some precise_offset_of_IL
-
 let extract_signature_with_file_context
     ~arity
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
@@ -454,7 +441,6 @@ let extract_signature_with_file_context
     (taint_inst : Taint_rule_inst.t)
     func_cfg
     (ast : AST_generic.program) : signature_database * Signature.t =
-  enable_precise_index_tracking ();
   let global_sids = extract_global_var_sids_from_ast ast in
   let global_env = mk_global_assumptions_with_sids global_sids in
 
