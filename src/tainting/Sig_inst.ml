@@ -349,86 +349,96 @@ let instantiate_shape inst_var inst_trace shape =
   in
   inst_shape shape
 
-let find_pos_in_actual_args ?(err_ctx = "???") args_taints fparams :
-    T.arg -> _ option =
+let find_pos_in_actual_args ?(err_ctx = "???") (args : 'a IL.argument list)
+    (fparams : Signature.params) : T.arg -> 'a option =
   Log.debug (fun m ->
       m "FIND_POS_IN_ACTUAL_ARGS: err_ctx=%s, num_args=%d, num_fparams=%d, fparams=%s"
         err_ctx
-        (List.length args_taints)
+        (List.length args)
         (List.length fparams)
         (fparams |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat ", "));
-  let pos_args_taints, named_args_taints =
+  (* We go left-to-right through formal params. If a param is named and there
+   * is an actual named arg, use it; if not, take the first non-named actual
+   * arg available. NOTE that it is the Python semantics, and can potentially lead 
+   * to problems with languages like OCaml, where there is a clear distinction
+   * between named and non-named arguments. *)
+  let pos_args, named_args =
     List.partition_map
-      IL.(
-        function
-        | Unnamed taints -> Left taints
-        | Named (id, taints) -> Right (id, taints))
-      args_taints
+      (function
+      | IL.Unnamed v -> Left v
+      | IL.Named ((name, _token), v) -> Right (name, v))
+      args
   in
-  let named_arg_map =
-    named_args_taints
-    |> List.fold_left
-         (fun xmap ((s, _), taint) -> SMap.add s taint xmap)
-         SMap.empty
+  let name_vals =
+    fparams |> List.map (function
+       | Signature.P name -> Some (name, List.assoc_opt name named_args)
+       | _ -> None)
   in
-  let name_to_taints = Hashtbl.create 10 in
-  let idx_to_taints = Hashtbl.create 10 in
-  (* We first process the named arguments, and then positional arguments.
-   *)
-  let remaining_params =
-    (* Here, we take all the named arguments and remove them from the list of parameters.
-     *)
-    List_.fold_right
-      (fun (param : Signature.param) acc ->
-        match param with
-        | P s' -> (
-            match SMap.find_opt s' named_arg_map with
-            | Some taints ->
-                (* If this parameter is one of our arguments, insert a mapping and then remove it
-                   from the list of remaining parameters.*)
-                Hashtbl.add name_to_taints s' taints;
-                acc
-                (* Otherwise, it has not been consumed, so keep it in the remaining parameters.*)
-            | None -> param :: acc (* Same as above. *))
-        | Other -> param :: acc)
-      fparams []
+  let rec merge name_vals pos_args =
+     match name_vals, pos_args with
+     (* No more formal args, no more actual args: we're done *)
+     | [], [] -> []
+     (* No more formal args, but there are still positional args *)
+     | [], _ ->
+        Log.err (fun m ->
+          m "function applied to more arguments than expected by the signature (%s)" err_ctx);
+          []
+     (* The formal arg doesn't get a value (not found among named args, 
+      * and no more positional args) *)
+     | None :: _ , []
+     | Some (_, None) :: _, [] ->
+        Log.err (fun m ->
+          m "function applied to fewer arguments than expected by the signature (%s)" err_ctx);
+          []
+     (* The value for the formal arg is found among named actual args *)
+     | Some (name, Some v) :: name_vals, _ ->
+        (Some name, v) :: merge name_vals pos_args
+     (* Not found among named actual args, so we assign the first 
+      * available positional arg *)
+     | Some (name, None) :: name_vals, v :: pos_args ->
+        (Some name, v) :: merge name_vals pos_args
+     (* The formal arg does not have a name *)
+     | None :: name_vals, v :: pos_args ->
+         (None, v) :: merge name_vals pos_args
   in
-  let _ =
-    (* We then process all of the positional arguments in order of the remaining parameters.
-     *)
-    pos_args_taints
-    |> List.fold_left
-         (fun (i, remaining_params) taints ->
-           match remaining_params with
-           | [] ->
-               Log.err (fun m ->
-                   m
-                     "More args to function than there are positional \
-                      arguments in function signature (%s)"
-                     err_ctx);
-               (i + 1, [])
-           | _ :: rest ->
-               Hashtbl.add idx_to_taints i taints;
-               (i + 1, rest))
-         (0, remaining_params)
+  let name_opt_value_list = merge name_vals pos_args in
+  let param_index_array = Array.of_list (List.map snd name_opt_value_list) in
+  let param_name_map =
+    name_opt_value_list
+    |> List.filter_map
+         (fun (a, b) -> Option.map (fun a -> (a, b)) a)
+    |> SMap.of_list
   in
   (* lookup function *)
   fun ({ name = s; index = i } : Taint.arg) ->
-    let taint_opt =
-      match
-        (Hashtbl.find_opt name_to_taints s, Hashtbl.find_opt idx_to_taints i)
-      with
-      | Some taints, _ -> Some taints
-      | _, Some taints -> Some taints
-      | __else__ -> None
-    in
-    if Option.is_none taint_opt then
-      Log.debug (fun m ->
+    match SMap.find_opt s param_name_map with
+    | Some _ as r -> r
+    | _ when i < 0 || i >= Array.length param_index_array ->
+        Log.debug (fun m ->
           (* TODO: provide more context for debugging *)
           m ~tags:bad_tag
             "Cannot match taint variable with function arguments (%i: %s)" i s);
-    taint_opt
+        None
+    | _ -> Some (Array.get param_index_array i)
 
+(* Test find_pos_in_actual_args.
+ * Function: foo(x, y, _, z)
+ * Call: foo(0, x=1, 2, 3) 
+ * Expected: x -> 1, y -> 0, _ -> 2, z -> 3 *)
+let%test _ =
+  let named s v = IL.Named ((s, G.fake ""), v) in
+  let params = Signature.([P "x"; P "y"; Other; P "z"]) in
+  let args = IL.([Unnamed 0; named "x" 1; Unnamed 2; Unnamed 3]) in
+  let func = find_pos_in_actual_args args params in
+  let open T in
+  Option.equal (=|=) (func {name = "x"; index = -1}) (Some 1) &&
+  Option.equal (=|=) (func {name = "y"; index = -1}) (Some 0) &&
+  Option.equal (=|=) (func {name = "z"; index = -1}) (Some 3) &&
+  Option.equal (=|=) (func {name = "";  index = 0})  (Some 1) &&
+  Option.equal (=|=) (func {name = "";  index = 1})  (Some 0) &&
+  Option.equal (=|=) (func {name = "";  index = 2})  (Some 2) &&
+  Option.equal (=|=) (func {name = "";  index = 3})  (Some 3)
+  
 (* Given a function/method call 'fun_exp'('args_exps'), and a taint variable 'tlval'
     from the taint signature of the called function/method 'fun_exp', we want to
    determine the actual l-value that corresponds to 'lval' in the caller's context.
