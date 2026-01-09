@@ -718,7 +718,7 @@ and property_hook = {
 and property_hook_kind = PhGet | PhSet
 
 and property_hook_body =
-  | PHExpr of tok (* => *) * expr
+  | PHExpr of tok (* => *) * expr * tok (* ; *)
   | PHBlock of stmt_and_def list brace
 
 and class_variable = dname * static_scalar_affect option * property_hook list brace option

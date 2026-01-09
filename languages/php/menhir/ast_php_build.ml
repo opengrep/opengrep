@@ -202,7 +202,7 @@ and name_expr env = function
   | XName [ QI (Name ("class", tok)) ] -> A.Id [ (A.special "class", wrap tok) ]
   | XName qi -> A.Id (qualified_ident env qi)
   | Self tok -> A.IdSpecial (A.Self, tok)
-  | Parent tok -> A.IdSpecial (A.Self, tok)
+  | Parent tok -> A.IdSpecial (A.Parent, tok)
   | LateStatic tok -> A.Id [ (A.special "static", wrap tok) ]
 
 and ident _env = function
@@ -884,7 +884,7 @@ and property_hook env hook =
     | Some (_, ps, _) -> List_.map (fun p -> A.ParamClassic (parameter env p)) (comma_list_dots ps)
   in
   let body = match hook.ph_body with
-    | PHExpr (_, e) -> Some (A.Expr (expr env e, Tok.unsafe_fake_tok ";"))
+    | PHExpr (_, e, sc) -> Some (A.Expr (expr env e, sc))
     | PHBlock (l, stmts, r) ->
         Some (A.Block (l, List_.fold_right (stmt_and_def env) stmts [], r))
   in

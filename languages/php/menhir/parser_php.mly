@@ -878,7 +878,7 @@ property_hook_params:
 
 property_hook_body:
  | "{" inner_statement* "}" { PHBlock ($1, $2, $3) }
- | T_ARROW expr ";" { PHExpr ($1, $2) }
+ | T_ARROW expr ";" { PHExpr ($1, $2, $3) }
 
 method_body:
  | "{" inner_statement* "}" { ($1, $2, $3), MethodRegular }
@@ -1262,7 +1262,63 @@ constant:
  | T_FUNC_C { PreProcess(FunctionC, $1) }|T_METHOD_C { PreProcess(MethodC, $1)}
  | T_NAMESPACE_C { PreProcess(NamespaceC, $1) }
 
-static_scalar: expr { $1 }
+(* static_scalar: Compile-time constant expressions. Excludes brace access
+ * which isn't valid in constant contexts and conflicts with property hooks. *)
+static_scalar:
+ | static_scalar_primary { $1 }
+ (* Arithmetic *)
+ | static_scalar TPLUS static_scalar  { Binary($1,(Arith Plus,$2),$3) }
+ | static_scalar TMINUS static_scalar { Binary($1,(Arith Minus,$2),$3) }
+ | static_scalar TMUL static_scalar   { Binary($1,(Arith Mul,$2),$3) }
+ | static_scalar TDIV static_scalar   { Binary($1,(Arith Div,$2),$3) }
+ | static_scalar TMOD static_scalar   { Binary($1,(Arith Mod,$2),$3) }
+ | static_scalar TPOW static_scalar   { Binary($1,(Arith Pow,$2),$3) }
+ | static_scalar "." static_scalar    { Binary($1,(BinaryConcat,$2),$3) }
+ (* Bitwise *)
+ | static_scalar TAND static_scalar   { Binary($1,(Arith And,$2),$3) }
+ | static_scalar "|" static_scalar    { Binary($1,(Arith Or,$2),$3) }
+ | static_scalar TXOR static_scalar   { Binary($1,(Arith Xor,$2),$3) }
+ | static_scalar T_SL static_scalar   { Binary($1,(Arith DecLeft,$2),$3) }
+ | static_scalar T_SR static_scalar   { Binary($1,(Arith DecRight,$2),$3) }
+ (* Logical *)
+ | static_scalar T_BOOLEAN_OR static_scalar  { Binary($1,(Logical OrBool,$2),$3) }
+ | static_scalar T_BOOLEAN_AND static_scalar { Binary($1,(Logical AndBool,$2),$3) }
+ | static_scalar T_LOGICAL_OR static_scalar  { Binary($1,(Logical OrLog,$2),$3) }
+ | static_scalar T_LOGICAL_AND static_scalar { Binary($1,(Logical AndLog,$2),$3) }
+ | static_scalar T_LOGICAL_XOR static_scalar { Binary($1,(Logical XorLog,$2),$3) }
+ | static_scalar T_NULL_COALLESCING static_scalar { Binary($1,(Arith Nullish,$2),$3) }
+ (* Comparison *)
+ | static_scalar T_IS_IDENTICAL static_scalar        { Binary($1,(Logical Identical,$2),$3) }
+ | static_scalar T_IS_NOT_IDENTICAL static_scalar    { Binary($1,(Logical NotIdentical,$2),$3) }
+ | static_scalar T_IS_EQUAL static_scalar            { Binary($1,(Logical Eq,$2),$3) }
+ | static_scalar T_IS_NOT_EQUAL static_scalar        { Binary($1,(Logical NotEq,$2),$3) }
+ | static_scalar "<" static_scalar                   { Binary($1,(Logical Inf,$2),$3) }
+ | static_scalar T_IS_SMALLER_OR_EQUAL static_scalar { Binary($1,(Logical InfEq,$2),$3) }
+ | static_scalar ">" static_scalar                   { Binary($1,(Logical Sup,$2),$3) }
+ | static_scalar T_IS_GREATER_OR_EQUAL static_scalar { Binary($1,(Logical SupEq,$2),$3) }
+ | static_scalar T_ROCKET static_scalar              { Binary($1,(CombinedComparison,$2),$3) }
+ (* Ternary *)
+ | static_scalar "?" static_scalar ":" static_scalar { CondExpr($1,$2,Some $3,$4,$5) }
+ | static_scalar "?" ":" static_scalar               { CondExpr($1,$2,None,$3,$4) }
+ (* Unary *)
+ | TPLUS  static_scalar %prec T_INC { Unary((UnPlus,$1),$2) }
+ | TMINUS static_scalar %prec T_INC { Unary((UnMinus,$1),$2) }
+ | TBANG  static_scalar             { Unary((UnBang,$1),$2) }
+ | TTILDE static_scalar             { Unary((UnTilde,$1),$2) }
+
+static_scalar_primary:
+ | constant { Sc (C $1) }
+ | qualified_class_name { Id $1 }
+ | T_ARRAY "(" array_pair_list ")"  { ArrayLong($1,($2,$3,$4)) }
+ | "[" array_pair_list "]"          { ArrayShort($1,$2,$3) }
+ | "(" static_scalar ")"            { ParenExpr($1,$2,$3) }
+ (* Class constant access: self/parent must come before qualified_class_name *)
+ | T_SELF "::" ident                 { ClassGet(Id (Self $1),$2,Id (XName [QI (Name $3)])) }
+ | T_SELF "::" T_CLASS               { ClassGet(Id (Self $1),$2,Id (XName [QI (Name ("class",$3))])) }
+ | T_PARENT "::" ident               { ClassGet(Id (Parent $1),$2,Id (XName [QI (Name $3)])) }
+ | T_PARENT "::" T_CLASS             { ClassGet(Id (Parent $1),$2,Id (XName [QI (Name ("class",$3))])) }
+ | qualified_class_name "::" ident   { ClassGet(Id $1,$2,Id (XName [QI (Name $3)])) }
+ | qualified_class_name "::" T_CLASS { ClassGet(Id $1,$2,Id (XName [QI (Name ("class",$3))])) }
 
 (*----------------------------*)
 (* list/array *)
