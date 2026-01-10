@@ -17,5 +17,5 @@ let default = {
 (* Get the list of patterns to use for ignoring lines *)
 let get_ignore_patterns config : string list =
   match config.custom_ignore_pattern with
-  | None -> ["nosem"; "nosemgrep"]
-  | Some pattern -> [pattern] 
+  | None -> ["nosem"; "nosemgrep"; "noopengrep"]
+  | Some pattern -> [pattern]
