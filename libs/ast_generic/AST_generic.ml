@@ -153,7 +153,7 @@
  *    'Return of tok * expr option * tok' for the ending semicolon
  *    (alt: have the range info in each expr/stmt/pattern but big refactoring)
  *  - to correctly compute a CFG (Control Flow Graph), the stmt type
- *    should list all constructs that contains other statements and
+ *    should list all constructs that contain other statements and
  *    try to avoid to use the very generic 'OtherXxx of any'
  *  - to correctly compute a DFG (Data Flow Graph), and to correctly resolve
  *    names (see Naming_AST.ml), each constructs that introduce a new
