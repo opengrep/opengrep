@@ -9,7 +9,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
 [main (root-commit) <MASKED>] Add files
- 2 files changed, 15 insertions(+)
+ 2 files changed, 19 insertions(+)
  create mode 100644 rules.yml
  create mode 100644 stupid.py
 
@@ -28,7 +28,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 └─────────────┘
   Scanning 2 files tracked by git with 1 Code rule:
   Scanning 2 files.
-{"check_id":"eqeq-bad","path":"stupid.py","start":{"line":7,"col":12,"offset":82},"end":{"line":7,"col":26,"offset":96},"extra":{"metavars":{"$X":{"start":{"line":7,"col":12,"offset":82},"end":{"line":7,"col":17,"offset":87},"abstract_content":"a+b"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"cfc8e5ceba21000327d781a28bf2a412c742bed8ec9a31ece927343d6535aa6ca6e2794961e84804f828e8442447c4c3690def9f507f9126a6168d9d5e1e8bb2","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}
+{"check_id":"eqeq-bad","path":"stupid.py","start":{"line":11,"col":12,"offset":146},"end":{"line":11,"col":26,"offset":160},"extra":{"metavars":{"$X":{"start":{"line":11,"col":12,"offset":146},"end":{"line":11,"col":17,"offset":151},"abstract_content":"a+b"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"cfc8e5ceba21000327d781a28bf2a412c742bed8ec9a31ece927343d6535aa6ca6e2794961e84804f828e8442447c4c3690def9f507f9126a6168d9d5e1e8bb2","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}
 
 
 ┌──────────────┐
