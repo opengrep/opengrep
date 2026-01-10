@@ -67,7 +67,16 @@ def foo(a, b):
 
 let stupid_py_content_ignore_pat = {|
 def foo(a, b):
+    # nosem
+    return a + b == a + b
+
     # noopengrep
+    return a + b == a + b
+
+    # nosec
+    return a + b == a + b
+
+    # nosec2
     return a + b == a + b
 |}
 
@@ -229,7 +238,7 @@ let test_basic_output_ignore_pattern (caps : Scan_subcommand.caps) () =
                 Scan_subcommand.main caps
                   [|
                     "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
-                    "--opengrep-ignore-pattern"; "noopengrep";
+                    "--opengrep-ignore-pattern"; "(nosec|nosec2)";
                     "--json"
                   |])
           in
