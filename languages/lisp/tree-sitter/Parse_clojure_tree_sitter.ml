@@ -769,16 +769,6 @@ and map_form (env : env) (x : CST.form) : G.expr =
           R.Tuple [ v2; raw_of_expr v4 ] )
     |> expr_of_raw
 
-(* TODO: Instead of Call, make list container, works for rest forms
- * inductively because env should say it's a quoted context.
- * TODO: For symbols not in unquoted context, we should wrap them
- * in something that does not resolve them in Naming. That is, we
- * will need to intentionally skip visiting the node in Naming in
- * order for such symbols to remain unresolved.
- *)
-and _UNUSED_map_quoted_list_form (env : env) (forms : CST.form list) =
-  todo env ()
-
 (* TODO: Like defn but the definition is MacroDef with idents.
  * The parameters are not evaluated. For now we ignore macros,
  * we don't want to fail parsing a target because of this. *)
@@ -1487,6 +1477,13 @@ and map_ellipsis_list_form (env : env) (forms : CST.form list) : G.expr =
     (* We only call this function when the forms start with ... . *)
     assert false
 
+(* TODO: Instead of Call, make list container, works for rest forms
+ * inductively because env should say it's a quoted context.
+ * TODO: For symbols not in unquoted context, we should wrap them
+ * in something that does not resolve them in Naming. That is, we
+ * will need to intentionally skip visiting the node in Naming in
+ * order for such symbols to remain unresolved.
+ *)
 and map_quote_form (env : env) (forms : CST.form list) : G.expr =
   match forms with
   | `Sym_lit (_meta, (_loc, "quote")) :: quote_form :: [] ->
