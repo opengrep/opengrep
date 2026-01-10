@@ -1,4 +1,4 @@
-# OpenGrep Cross-Function Tainting (Intrafile)
+# Opengrep Cross-Function Tainting (Intrafile)
 
 ## Overview
 
