@@ -76,6 +76,10 @@ def foo(a, b):
     # nosem
     return a + b == a + b
 
+def also-foo(a, b):
+    # noopengrep
+    return a + b == a + b
+
 def bar (a, b):
     return a + b == a + b
 |}
