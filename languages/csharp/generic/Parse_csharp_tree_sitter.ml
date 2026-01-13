@@ -989,6 +989,12 @@ and element_binding_expression (env : env) (x : CST.element_binding_expression)
   let exprs = List_.map H2.argument_to_expr args in
   (open_br, exprs, close_br)
 
+and maybe_element_binding_expression (env : env) (x : CST.maybe_element_binding_expression)
+    =
+  let open_br, args, close_br, elvis = maybe_bracketed_argument_list env x in
+  let exprs = List_.map H2.argument_to_expr args in
+  (open_br, exprs, close_br, elvis)
+
 and nullable_type (env : env) ((v1, v2) : CST.nullable_type) =
   let t = nullable_base_type env v1 in
   let tquestion = (* "?" *) token env v2 in
@@ -1317,10 +1323,15 @@ and lvalue_expression (env : env) (x : CST.lvalue_expression) : G.expr =
   | `Simple_name x -> simple_name_expression env x
   | `Elem_access_exp (v1, v2) ->
       let v1 = expression env v1 in
-      let v2 = element_binding_expression env v2 in
-      let open_br, _exprsTODO, close_br = v2 in
+      let v2 = maybe_element_binding_expression env v2 in
+      let open_br, exprs, close_br, elvis = v2 in
       (* TODO we map multidim arrays as jagged arrays when creating arrays, with as tuples here. Does that work? Should we map this as multiple nested ArrayAccess? *)
-      ArrayAccess (v1, (open_br, Container (Tuple, v2) |> G.e, close_br)) |> G.e
+      let inner =
+        if elvis then
+          G.Call (G.IdSpecial (G.Op G.Elvis, open_br) |> G.e, fb [ G.Arg v1 ]) |> G.e
+        else v1
+      in
+        ArrayAccess (inner, (open_br, Container (Tuple, (open_br, exprs, close_br)) |> G.e, close_br)) |> G.e
   | `Elem_bind_exp x ->
       Container (Tuple, element_binding_expression env x) |> G.e
   | `Poin_indi_exp (v1, v2) -> DeRef (token env v1, expression env v2) |> G.e
@@ -2228,6 +2239,27 @@ and bracketed_argument_list (env : env)
   let v4 = token env v4 (* "]" *) in
   (v1, v2 :: v3, v4)
 
+and maybe_bracketed_argument_list (env : env)
+    ((v1, v2, v3, v4) : CST.maybe_bracketed_argument_list) =
+  let v1, elvis =
+    match v1 with
+    | `QMARKLBRACK t (* "?[" *) ->
+        token env t, true
+    | `LBRACK t (* "[" *) ->
+        token env t, false
+  in
+  let v2 = argument env v2 in
+  let v3 =
+    List_.map
+      (fun (v1, v2) ->
+        let _v1 = token env v1 (* "," *) in
+        let v2 = argument env v2 in
+        v2)
+      v3
+  in
+  let v4 = token env v4 (* "]" *) in
+  (v1, v2 :: v3, v4, elvis)
+  
 and pattern (env : env) (x : CST.pattern) : G.pattern =
   match x with
   | `Cst_pat x -> constant_pattern env x

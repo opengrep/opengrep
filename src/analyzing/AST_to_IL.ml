@@ -707,6 +707,12 @@ and expr_aux env ?(void = false) g_expr =
               in
               (env, mk_e (Fetch result_lval) eorig)
             end
+          (* TODO: simply getting rid of the elvis here is semantically not correct, *)
+          (* but should not affect the analysis in practical cases. The proper implememntation *)
+          (* requires more gymnastics with IL, for which we first need a deeper refactoring *)
+          (* of AST_to_IL *)
+          | [ G.Arg arg ] when env.lang =*= Lang.Csharp ->
+              expr_aux env ~void arg
           | _ -> impossible env.stmts (G.E g_expr))
       | _ -> (
           (* All other operators *)
