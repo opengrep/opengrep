@@ -599,10 +599,14 @@ end
  *)
 and Signature : sig
   (** A simplified version of 'AST_generic.parameter', we use 'Other' to
-      represent * parameter kinds that we do not support yet. We don't want to
-      just remove * those unsupported parameters because we rely on the position
-      of a parameter * to represent taint variables, see 'Taint.arg'. *)
-  type param = P of string | Other [@@deriving eq, ord]
+      represent parameter kinds that we do not support yet. We don't want to
+      just remove those unsupported parameters because we rely on the position
+      of a parameter to represent taint variables, see 'Taint.arg'. *)
+  type param =
+    | P of string
+    | PRest of string
+    | Other
+  [@@deriving eq, ord, show]
 
   type params = param list [@@deriving eq, ord]
 
@@ -619,26 +623,15 @@ end = struct
   (*************************************)
 
   (* TODO: Now with HOFs we run the risk of shadowing... *)
-  type param = P of string | Other
+  type param =
+    | P of string
+    | PRest of string
+    | Other [@@deriving eq, ord, show]
   type params = param list
-
-  let equal_param param1 param2 =
-    match (param1, param2) with
-    | P s1, P s2 -> String.equal s1 s2
-    | Other, Other -> true
-    | P _, Other
-    | Other, P _ ->
-        false
-
-  let compare_param param1 param2 =
-    match (param1, param2) with
-    | P s1, P s2 -> String.compare s1 s2
-    | Other, Other -> 0
-    | P _, Other -> -1
-    | Other, P _ -> 1
 
   let show_param = function
     | P s -> s
+    | PRest s -> "*" ^ s (* Python syntax for "rest" params *)
     | Other -> "_?"
 
   let equal_params params1 params2 = List.equal equal_param params1 params2
@@ -652,14 +645,16 @@ end = struct
     il_params
     |> List_.map (function
          | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
-         | IL.PatternParam pat -> (
+         (* functions signatures don't look into the shape of the argument. *)
+         | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
+         | IL.ParamPattern pat -> (
              (* Extract parameter name from pattern for Rust function parameters *)
              match pat with
              | AST_generic.PatId (name, _) -> P (fst name)
              | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
                  P (fst name)
              | _ -> Other)
-         | IL.FixmeParam -> Other)
+         | IL.ParamFixme -> Other)
 
   (*************************************)
   (* Signatures *)
@@ -821,7 +816,7 @@ let lookup_signature (db : signature_database) (func_name : fn_id) (arity : int)
           let all_sigs = SignatureSet.elements sigs in
           let sig_details = all_sigs |> List.map (fun s ->
             Printf.sprintf "(arity=%d, params=%s)" s.arity
-              (s.sig_.params |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat ",")
+              (s.sig_.params |> List.map Signature.show_param |> String.concat ",")
           ) |> String.concat "; " in
           m "LOOKUP_SIG: %s with arity=%d, found %d sigs: [%s]"
             (show_fn_id func_name) arity total_sigs_card sig_details);
@@ -852,7 +847,7 @@ let add_signature (db : signature_database) (func_name : fn_id)
     (signature : extended_sig) : signature_database =
   (* Debug logging for ALL signatures being added *)
   let fn_name_str = show_fn_id func_name in
-  let params_str = signature.sig_.params |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat "," in
+  let params_str = signature.sig_.params |> List.map Signature.show_param |> String.concat "," in
   Log.debug (fun m ->
       m "ADD_SIG: fn=%s, arity=%d, params=%s"
         fn_name_str signature.arity params_str);

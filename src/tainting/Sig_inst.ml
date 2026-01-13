@@ -349,33 +349,37 @@ let instantiate_shape inst_var inst_trace shape =
   in
   inst_shape shape
 
+(* NOTE: 'a is either:
+ * - IL.exp in instantiate_lval_using_actual_exps
+ * - Taints.t * shape in instantiate_lval_using_shape *)
 let find_pos_in_actual_args ?(err_ctx = "???") (args : 'a IL.argument list)
-    (fparams : Signature.params) : T.arg -> 'a option =
+    (fparams : Signature.params) ~(combine_rest_args : 'a list -> 'a) : T.arg -> 'a option =
   Log.debug (fun m ->
       m "FIND_POS_IN_ACTUAL_ARGS: err_ctx=%s, num_args=%d, num_fparams=%d, fparams=%s"
         err_ctx
         (List.length args)
         (List.length fparams)
-        (fparams |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat ", "));
+        (fparams |> List.map Signature.show_param |> String.concat ", "));
   (* We go left-to-right through formal params. If a param is named and there
    * is an actual named arg, use it; if not, take the first non-named actual
    * arg available. NOTE that it is the Python semantics, and can potentially lead 
    * to problems with languages like OCaml, where there is a clear distinction
    * between named and non-named arguments. *)
   let pos_args, named_args =
-    List.partition_map
-      (function
+    args |>
+    List.partition_map (function
       | IL.Unnamed v -> Left v
       | IL.Named ((name, _token), v) -> Right (name, v))
-      args
   in
-  let name_vals =
-    fparams |> List.map (function
-       | Signature.P name -> Some (name, List.assoc_opt name named_args)
+  let formal_args_with_vals =
+    fparams |>
+    List.map (function
+       | (Signature.P name as p)
+       | (Signature.PRest name as p) -> Some (p, List.assoc_opt name named_args)
        | _ -> None)
   in
-  let rec merge name_vals pos_args =
-     match name_vals, pos_args with
+  let rec merge formal_args_with_vals pos_args =
+     match formal_args_with_vals, pos_args with
      (* No more formal args, no more actual args: we're done *)
      | [], [] -> []
      (* No more formal args, but there are still positional args *)
@@ -386,22 +390,28 @@ let find_pos_in_actual_args ?(err_ctx = "???") (args : 'a IL.argument list)
      (* The formal arg doesn't get a value (not found among named args, 
       * and no more positional args) *)
      | None :: _ , []
-     | Some (_, None) :: _, [] ->
+     | Some (Signature.P _, None) :: _, [] ->
         Log.err (fun m ->
           m "function applied to fewer arguments than expected by the signature (%s)" err_ctx);
           []
      (* The value for the formal arg is found among named actual args *)
-     | Some (name, Some v) :: name_vals, _ ->
-        (Some name, v) :: merge name_vals pos_args
+     | Some (Signature.P name, Some v) :: avs, _
+     | Some (Signature.PRest name, Some v) :: avs, _ (* possible? *) ->
+        (Some name, v) :: merge avs pos_args
      (* Not found among named actual args, so we assign the first 
       * available positional arg *)
-     | Some (name, None) :: name_vals, v :: pos_args ->
+     | Some (Signature.P name, None) :: name_vals, v :: pos_args ->
         (Some name, v) :: merge name_vals pos_args
+     (* The rest argument takes all positional args *)
+     | Some (Signature.PRest name, None) :: name_vals, _ ->
+        (Some name, combine_rest_args pos_args) :: merge name_vals []
      (* The formal arg does not have a name *)
      | None :: name_vals, v :: pos_args ->
          (None, v) :: merge name_vals pos_args
+     | Some (Signature.Other, _) :: _, _ ->
+         raise Impossible
   in
-  let name_opt_value_list = merge name_vals pos_args in
+  let name_opt_value_list = merge formal_args_with_vals pos_args in
   let param_index_array = Array.of_list (List.map snd name_opt_value_list) in
   let param_name_map =
     name_opt_value_list
@@ -429,7 +439,7 @@ let%test _ =
   let named s v = IL.Named ((s, G.fake ""), v) in
   let params = Signature.([P "x"; P "y"; Other; P "z"]) in
   let args = IL.([Unnamed 0; named "x" 1; Unnamed 2; Unnamed 3]) in
-  let func = find_pos_in_actual_args args params in
+  let func = find_pos_in_actual_args args params ~combine_rest_args:List.hd in
   let open T in
   Option.equal (=|=) (func {name = "x"; index = -1}) (Some 1) &&
   Option.equal (=|=) (func {name = "y"; index = -1}) (Some 0) &&
@@ -438,7 +448,16 @@ let%test _ =
   Option.equal (=|=) (func {name = "";  index = 1})  (Some 0) &&
   Option.equal (=|=) (func {name = "";  index = 2})  (Some 2) &&
   Option.equal (=|=) (func {name = "";  index = 3})  (Some 3)
-  
+
+let combine_rest_args_exp (es : IL.exp list) : IL.exp =
+  let e = IL.Composite (IL.CList, Tok.unsafe_fake_bracket es) in
+  let eorig =
+    es
+    |> List.map (fun x -> IL.any_of_orig (x.IL.eorig))
+    |> (fun x -> IL.Related (G.Anys x))
+  in
+  {e; eorig}
+
 (* Given a function/method call 'fun_exp'('args_exps'), and a taint variable 'tlval'
     from the taint signature of the called function/method 'fun_exp', we want to
    determine the actual l-value that corresponds to 'lval' in the caller's context.
@@ -483,6 +502,7 @@ let instantiate_lval_using_actual_exps (fun_exp : IL.exp) fparams args_exps
       let* (arg_exp : IL.exp) =
         find_pos_in_actual_args
           ~err_ctx:(Display_IL.string_of_exp fun_exp)
+          ~combine_rest_args:combine_rest_args_exp
           args_exps fparams pos
       in
       match (arg_exp.e, tlval.offset) with
@@ -610,6 +630,16 @@ let fix_lval_taints_if_global_or_a_field_of_this_class (fun_exp : IL.exp)
        * return it as a type variable. *)
       Taints.singleton { orig = Var lval; tokens = [] }
 
+let combine_rest_args_taint (ts : (Taints.t * shape) list) : Taints.t * shape =
+  let taints = List.fold_left Taints.union Taints.empty (List.map fst ts) in
+  let shape =
+    Obj (Fields.of_list
+           (List.mapi
+              (fun i (t, s) -> Taint.Oint i, Cell (Xtaint.of_taints t, s))
+              ts))
+  in
+  (taints, shape) 
+
 let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
     lval : (Taints.t * shape) option =
   let { T.base; offset } = lval in
@@ -641,6 +671,7 @@ let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
     | `Arg pos ->
         find_pos_in_actual_args
           ~err_ctx:(Display_IL.string_of_exp fun_exp)
+          ~combine_rest_args:combine_rest_args_taint
           args_taints fparams pos
     | `Var var ->
         let* (Cell (xtaints, shape)) = Lval_env.find_var lval_env var in
@@ -702,7 +733,7 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
         depth
         (Display_IL.string_of_exp callee)
         (List.length args_taints)
-        (taint_sig.params |> List.map (function Signature.P s -> "P(" ^ s ^ ")" | Signature.Other -> "Other") |> String.concat ", "));
+        (taint_sig.params |> List.map Signature.show_param |> String.concat ", "));
   let lval_to_taints lval =
     (* This function simply produces the corresponding taints to the
         given argument, within the body of the function.

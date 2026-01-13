@@ -134,7 +134,10 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
     |> List.fold_left
          (fun (i, env) param ->
            match param with
-           | IL.Param { pname; _ } ->
+           | IL.Param { pname; _ }
+           (* NOTE: from the perspective of the function definition, a "rest" param is just *)
+           (* a param. The difference is only at the call site when instantiating the args. *)
+           | IL.ParamRest { pname; _ } ->
                let il_lval : IL.lval = { base = Var pname; rev_offset = [] } in
                let taint_arg : Taint.arg =
                  { name = fst pname.ident; index = i }
@@ -169,7 +172,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                (* Give the parameter an Arg shape so it can be used in HOF *)
                let new_env = add_param_to_env il_lval taint_set taint_arg env in
                (i + 1, new_env)
-           | IL.PatternParam pat -> (
+           | IL.ParamPattern pat -> (
                (* Extract parameter name from pattern for Rust function parameters *)
                match pat with
                | G.PatId (name, id_info) ->
@@ -208,7 +211,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                | _ ->
                    (* Fallback for other pattern types *)
                    (i + 1, env))
-           | IL.FixmeParam -> (i + 1, env))
+           | IL.ParamFixme -> (i + 1, env))
          (0, Taint_lval_env.empty)
   in
   env
