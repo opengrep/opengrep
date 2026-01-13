@@ -32,7 +32,7 @@ let fold :
         | Param { pname = name; pdefault } ->
             f acc name.ident name.id_info pdefault
         (* JS: {arg} : type *)
-        | PatternParam
+        | ParamPattern
             (G.OtherPat
               ( ("ExprToPattern", _),
                 [
@@ -40,7 +40,7 @@ let fold :
                     { e = G.Cast (_, _, { e = G.Record (_, fields, _); _ }); _ };
                 ] ))
         (* JS: {arg} *)
-        | PatternParam
+        | ParamPattern
             (G.OtherPat
               (("ExprToPattern", _), [ G.E { e = G.Record (_, fields, _); _ } ]))
           ->
@@ -60,7 +60,7 @@ let fold :
                     f acc id ii None
                 | G.F _ -> acc)
               acc fields
-        | PatternParam pat ->
+        | ParamPattern pat ->
             (* Here, we just get all the identifiers in the pattern, which may
                themselves be sources.
                This is so we can handle patterns such as:
@@ -69,5 +69,5 @@ let fold :
             *)
             let ids = Visit_pattern_ids.visit (G.P pat) in
             List.fold_left (fun acc (id, pinfo) -> f acc id pinfo None) acc ids
-        | IL.FixmeParam -> acc)
+        | IL.ParamFixme -> acc)
     acc params

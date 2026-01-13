@@ -652,14 +652,14 @@ end = struct
     il_params
     |> List_.map (function
          | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
-         | IL.PatternParam pat -> (
+         | IL.ParamPattern pat -> (
              (* Extract parameter name from pattern for Rust function parameters *)
              match pat with
              | AST_generic.PatId (name, _) -> P (fst name)
              | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
                  P (fst name)
              | _ -> Other)
-         | IL.FixmeParam -> Other)
+         | IL.ParamFixme -> Other)
 
   (*************************************)
   (* Signatures *)

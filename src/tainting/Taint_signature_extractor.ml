@@ -169,7 +169,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                (* Give the parameter an Arg shape so it can be used in HOF *)
                let new_env = add_param_to_env il_lval taint_set taint_arg env in
                (i + 1, new_env)
-           | IL.PatternParam pat -> (
+           | IL.ParamPattern pat -> (
                (* Extract parameter name from pattern for Rust function parameters *)
                match pat with
                | G.PatId (name, id_info) ->
@@ -208,7 +208,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                | _ ->
                    (* Fallback for other pattern types *)
                    (i + 1, env))
-           | IL.FixmeParam -> (i + 1, env))
+           | IL.ParamFixme -> (i + 1, env))
          (0, Taint_lval_env.empty)
   in
   env

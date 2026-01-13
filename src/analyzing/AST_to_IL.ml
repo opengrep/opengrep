@@ -1835,10 +1835,10 @@ and parameters params : param list =
   |> List_.map (function
        | G.Param { pname = Some i; pinfo; pdefault; _ } ->
            Param { pname = var_of_id_info i pinfo; pdefault }
-       | G.ParamPattern pat -> PatternParam pat
+       | G.ParamPattern pat -> ParamPattern pat
        | G.ParamReceiver _param ->
            (* TODO: Treat receiver as this parameter *)
-           FixmeParam (* TODO *)
+           ParamFixme (* TODO *)
        (* Ruby/PHP block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
        | G.OtherParam (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
          ->
@@ -1848,7 +1848,7 @@ and parameters params : param list =
        | G.ParamHashSplat (_, _)
        | G.ParamEllipsis _
        | G.OtherParam (_, _) ->
-           FixmeParam (* TODO *))
+           ParamFixme (* TODO *))
 
 (*****************************************************************************)
 (* Type *)
