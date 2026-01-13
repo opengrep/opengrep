@@ -29,7 +29,8 @@ let fold :
     IL.(
       fun acc par ->
         match par with
-        | Param { pname = name; pdefault } ->
+        | Param { pname = name; pdefault }
+        | ParamRest { pname = name; pdefault } ->
             f acc name.ident name.id_info pdefault
         (* JS: {arg} : type *)
         | ParamPattern

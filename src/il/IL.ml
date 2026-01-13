@@ -185,6 +185,7 @@ type name_param = { pname : name; pdefault : G.expr option }
 
 type param =
   | Param of name_param
+  | ParamRest of name_param
   | ParamPattern of G.pattern
   | ParamFixme
 [@@deriving show { with_path = false }]
@@ -220,7 +221,9 @@ class virtual ['self] iter_parent =
 
     method visit_param env param =
       match param with
-      | Param { pname; pdefault = _ } -> self#visit_name env pname
+      | Param { pname; pdefault = _ }
+      | ParamRest { pname; pdefault = _ } ->
+          self#visit_name env pname
       | ParamPattern _
       | ParamFixme ->
           ()
