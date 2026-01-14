@@ -383,20 +383,15 @@ let default_switch_label (env : env) ((v1, v2) : CST.default_switch_label) =
   G.Default v1
 
 let attribute_target_specifier (env : env)
-    ((v1, v2) : CST.attribute_target_specifier) =
-  let v1 =
-    match v1 with
-    | `Field tok -> token env tok (* "field" *)
-    | `Event tok -> token env tok (* "event" *)
-    | `Meth tok -> token env tok (* "method" *)
-    | `Param tok -> token env tok (* "param" *)
-    | `Prop tok -> token env tok (* "property" *)
-    | `Ret tok -> token env tok (* "return" *)
-    | `Type tok -> token env tok
-    (* "type" *)
-  in
-  let v2 = token env v2 (* ":" *) in
-  (v1, v2)
+    (v1 : CST.attribute_target_specifier) =
+  match v1 with
+  | `Fiel tok -> token env tok (* "field:" *)
+  | `Even tok -> token env tok (* "event:" *)
+  | `Meth tok -> token env tok (* "method:" *)
+  | `Para tok -> token env tok (* "param:" *)
+  | `Prop tok -> token env tok (* "property:" *)
+  | `Retu tok -> token env tok (* "return:" *)
+  | `Type tok -> token env tok (* "type:" *)
 
 (* note that there's no octal literal in C# so no need for
  * H.int_of_string_c_octal_opt
@@ -989,7 +984,7 @@ and element_binding_expression (env : env) (x : CST.element_binding_expression)
   let exprs = List_.map H2.argument_to_expr args in
   (open_br, exprs, close_br)
 
-and maybe_element_binding_expression (env : env) (x : CST.maybe_element_binding_expression)
+and maybe_element_binding_expression (env : env) (x : CST.maybe_bracketed_argument_list)
     =
   let open_br, args, close_br, elvis = maybe_bracketed_argument_list env x in
   let exprs = List_.map H2.argument_to_expr args in
