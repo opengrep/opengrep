@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.15.0](https://github.com/opengrep/opengrep/releases/tag/v1.15.0) - 14-01-2026
+
+### Improvements
+
+* Clojure translation part III by @dimitris-m in #527
+* Php modernisation by @corneliuhoffman in #529
+* Intrafile tainting with variadic functions by @maciejpirog in #538
+* C#: The `field` implicit parameter can be skipped in a pattern by @maciejpirog in #525
+* C#: Add conditional array access (`?[...]`) to l-values by @maciejpirog in #535
+* C#: Collection expressions vs attributes with targets (parser fix) by @maciejpirog in #539
+* Add `noopengrep` to the default nosem patterns by @dimitris-m in #533
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.14.1...v1.15.0
+
+
 ## [1.14.1](https://github.com/opengrep/opengrep/releases/tag/v1.14.1) - 06-01-2026
 
 ### Improvements
