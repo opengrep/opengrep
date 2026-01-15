@@ -1532,12 +1532,16 @@ and map_call_form (env : env) (forms : CST.form list) : G.expr =
       | "<=" -> Some G.LtE, rest
       | ">" -> Some G.Gt, rest
       | ">=" -> Some G.GtE, rest
-      | "compare" -> Some G.Cmp, rest
-      | "str" -> Some G.Concat, rest
-      | "conj" -> Some G.Append, rest
-      | "re-find" -> Some G.RegexpMatch, rest
-      | "range" -> Some G.Range, rest
-      | "count" -> Some G.Length, rest
+      (* These are commented out because for some reason
+       * we can't properly focus on metavariables in a sink when e.g.
+       * `str` is `G.Concat`.
+       * TODO: Investigate why this happens. *)
+      (* | "compare" -> Some G.Cmp, rest
+         | "str" -> Some G.Concat, rest
+         | "conj" -> Some G.Append, rest
+         | "re-find" -> Some G.RegexpMatch, rest
+         | "range" -> Some G.Range, rest
+         | "count" -> Some G.Length, rest *)
       | "contains?" -> Some G.In, rest
       | "instance?" -> Some G.Is, rest
       | "not" -> begin
