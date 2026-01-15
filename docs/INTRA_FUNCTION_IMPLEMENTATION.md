@@ -1,8 +1,8 @@
-# OpenGrep Cross-Function Tainting (Intrafile)
+# Opengrep Cross-Function Tainting (Intrafile)
 
 ## Overview
 
-This document explains how OpenGrep performs intrafile cross-function taint
+This document explains how Opengrep performs intrafile cross-function taint
 analysis when the `--taint-intrafile` flag (or per-rule option) is enabled.
 The implementation hinges on four cooperating subsystems:
 
@@ -236,12 +236,10 @@ The `--taint-intrafile` implementation consists of several cooperating phases:
    re-analyzing the callee each time.
 
 Together these components deliver the behavior behind `--taint-intrafile`,
-allowing OpenGrep to capture cross-function taint flows within a single file
+allowing Opengrep to capture cross-function taint flows within a single file
 while maintaining predictable performance.
-## TODO:
-0. We might want to consider raising the taint_FIXPOINT_TIMEOUT for the case of --taint-intrafile. For some files the computations take longer and
-limiting it to 200ms might stop the taint computation before it finishes. 
 
+## TODO
 
 1. Inheritance is not yet supported, for example the following gives a false negative:
 ```python
@@ -254,30 +252,3 @@ class ChildClass(BaseClass):
         sink(self.name)
  
 ```
-
-
-2 Higher order functions. For example this will fail:
-```javascript
-
-async function graphql(ghtoken, query, variables) {
-  const results = await fetch('https://api.github.com/graphql', {
-    method: 'POST',
-    body: JSON.stringify({ query, variables }),
-  });
-  const res = await results.json();
-  return res.data;
-}
-
-async function getHistory(name, owner) {
-  const result = await graphql(ghtoken, query, { name, owner });
-  return result.repository.commits.nodes;
-}
-
-const history = await getHistory(name, owner);
-const items = history.flatMap((node) => {
-  const changes = node.associatedPullRequests.nodes;
-  const item = changes[0];
-  return item;
-});
-```
-
