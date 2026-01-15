@@ -1,0 +1,9 @@
+rules:
+  - id: test
+    patterns:
+      - pattern-inside: (str ... $X ...)
+      - focus-metavariable: $X
+    message: Test
+    languages:
+      - clojure
+    severity: ERROR
