@@ -123,23 +123,12 @@ let tags_of_metadata metadata =
   List.sort_uniq String.compare all_tags
 
 (* Check if a rule is security-related based on its metadata.
- * A rule is considered security-related if it has CWE, OWASP tags, or
- * an explicit "security" tag in its metadata.
+ * A rule is considered security-related if metadata.category = "security".
  *)
 let is_security_rule metadata =
-  let has_cwe = JSON.member "cwe" metadata <> None in
-  let has_owasp = JSON.member "owasp" metadata <> None in
-  let has_security_tag =
-    match JSON.member "tags" metadata with
-    | Some (JSON.Array tags) ->
-        List.exists
-          (function
-            | JSON.String s -> String.lowercase_ascii s = "security"
-            | _ -> false)
-          tags
-    | _ -> false
-  in
-  has_cwe || has_owasp || has_security_tag
+  match JSON.member "category" metadata with
+  | Some (JSON.String s) -> String.lowercase_ascii s = "security"
+  | _ -> false
 
 (* We want to produce a json object? with the following shape:
    { id; name;
