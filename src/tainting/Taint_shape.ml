@@ -110,35 +110,32 @@ let fix_poly_taint_with_offset offset taints =
        (fun taints o ->
          match (type_of_offset o, o) with
          | Some { t = TyFun _; _ }, _ ->
-             (* We have an l-value like `o.f` where `f` has a function type,
-              * so it's a method call, we return nothing here. We cannot just
-              * return `xtaint`, which is the taint of `o` in the environment;
-              * whether that taint propagates or not is determined in
-              * 'check_tainted_instr'/'Call'. Otherwise, if `o` had taint var
-              * 'o@i', the call `o.getX()` would have taints '{o@i, o@i.x}'
-              * when it should only have taints '{o@i.x}'. *)
-             Taints.empty
+            (* We have an l-value like `o.f` where `f` has a function type,
+             * so it's a method call, we return nothing here. We cannot just
+             * return `xtaint`, which is the taint of `o` in the environment;
+             * whether that taint propagates or not is determined in
+             * 'check_tainted_instr'/'Call'. Otherwise, if `o` had taint var
+             * 'o@i', the call `o.getX()` would have taints '{o@i, o@i.x}'
+             * when it should only have taints '{o@i.x}'. *)
+            Taints.empty
          | _, Oany ->
-             (* Cannot handle this offset. *)
-             taints
+            (* Cannot handle this offset. *)
+            taints
          | __any__, ((Ofld _ | Ostr _ | Oint _) as o) ->
-             (* Not a method call (to the best of our knowledge) or
-              * an unresolved Java `getX` method. *)
-             let taints' =
-               taints
-               |> Taints.map (fun taint ->
-                      match taint.orig with
-                      | Var lval ->
-                          let lval' = add_offset_to_lval o lval in
-                          { taint with orig = Var lval' }
-                      | Shape_var lval ->
-                          let lval' = add_offset_to_lval o lval in
-                          { taint with orig = Shape_var lval' }
-                      | Src _
-                      | Control ->
-                          taint)
-             in
-             taints')
+            (* Not a method call (to the best of our knowledge) or
+             * an unresolved Java `getX` method. *)
+             taints
+             |> Taints.map (fun taint ->
+                  match taint.orig with
+                  | Var lval ->
+                      let lval' = add_offset_to_lval o lval in
+                      { taint with orig = Var lval' }
+                  | Shape_var lval ->
+                      let lval' = add_offset_to_lval o lval in
+                      { taint with orig = Shape_var lval' }
+                  | Src _
+                  | Control ->
+                      taint))
        taints
 
 (*********************************************************)
@@ -581,7 +578,8 @@ and enum_in_shape = function
   | Fun _ -> Seq.empty
 
 and enum_in_obj obj =
-  obj |> Fields.to_seq
+  obj
+  |> Fields.to_seq
   |> Seq.map (fun (o, cell) ->
          enum_in_cell cell
          |> Seq.map (fun (offset, taints) -> (o :: offset, taints)))

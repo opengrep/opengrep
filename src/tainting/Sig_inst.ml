@@ -770,8 +770,7 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
     }
   in
   let inst_taints taints =
-    let result = instantiate_taints inst_var inst_trace taints in
-    result
+    instantiate_taints inst_var inst_trace taints
   in
   let inst_shape shape = instantiate_shape inst_var inst_trace shape in
   let inst_taints_and_shape (taints, shape) =
@@ -891,24 +890,16 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                 dst_sig_lval
         in
         let taints =
-          let result =
-            taints
-            |> instantiate_taints
-                 {
-                   inst_lval = lval_to_taints;
-                   (* Note that control taints do not propagate to l-values. *)
-                   inst_ctrl = (fun _ -> Taints.empty);
-                 }
-                 {
-                   add_call_to_trace_for_src =
-                     add_call_to_trace_if_callee_has_eorig ~callee;
-                   fix_token_trace_for_var =
-                     add_lval_update_to_token_trace ~callee tainted_tok;
-                 }
-          in
-          result
+          taints
+          |> instantiate_taints
+               { inst_lval = lval_to_taints;
+                 (* Note that control taints do not propagate to l-values. *)
+                 inst_ctrl = (fun _ -> Taints.empty); }
+               { add_call_to_trace_for_src =
+                   add_call_to_trace_if_callee_has_eorig ~callee;
+                 fix_token_trace_for_var =
+                   add_lval_update_to_token_trace ~callee tainted_tok; }
         in
-
         if Taints.is_empty taints then []
         else [ ToLval (taints, dst_var, dst_offset) ]
     | Effect.ToSinkInCall
@@ -1110,12 +1101,12 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                                  (match lval_to_taints lval with
                                  | Some (taints, _shape) ->
                                      (* Look for a taint from a parameter *)
-                                     let param_opt = taints |> Taints.elements |> List.find_map (fun t ->
-                                       match t.T.orig with
-                                       | Var { base = BArg arg; offset = [] } -> Some arg
-                                       | _ -> None)
-                                     in
-                                     param_opt
+                                     taints
+                                     |> Taints.elements
+                                     |> List.find_map (fun t ->
+                                          match t.T.orig with
+                                          | Var { base = BArg arg; offset = [] } -> Some arg
+                                          | _ -> None)
                                  | None -> None)
                              | _ -> None
                            in
@@ -1145,12 +1136,12 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                             (match lval_to_taints lval with
                             | Some (taints, _shape) ->
                                 (* Look for a taint from a parameter *)
-                                let param_opt = taints |> Taints.elements |> List.find_map (fun t ->
-                                  match t.T.orig with
-                                  | Var { base = BArg arg; offset = [] } -> Some arg
-                                  | _ -> None)
-                                in
-                                param_opt
+                                taints
+                                |> Taints.elements
+                                |> List.find_map (fun t ->
+                                     match t.T.orig with
+                                     | Var { base = BArg arg; offset = [] } -> Some arg
+                                     | _ -> None)
                             | None -> None)
                         | _ -> None
                       in

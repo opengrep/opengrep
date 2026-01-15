@@ -2611,23 +2611,21 @@ let mk_lambda_in_env env lcfg =
    *
    * so we can propagate taint from `obj` to `x`.
    *)
-  let lval_env_with_params =
-    lcfg.params
-    |> Fold_IL_params.fold
-         (fun lval_env id id_info _pdefault ->
-           let var = AST_to_IL.var_of_id_info id id_info in
-           (* This is a *new* variable, so we clean any taint that we may have
-            * attached to it previously. This can happen when a lambda is called
-            * inside a loop. *)
-           let lval_env = Lval_env.clean lval_env (LV.lval_of_var var) in
-           (* Now check if the parameter is itself a taint source. *)
-           let taints, shape, lval_env =
+  lcfg.params
+  |> Fold_IL_params.fold
+       (fun lval_env id id_info _pdefault ->
+         let var = AST_to_IL.var_of_id_info id id_info in
+         (* This is a *new* variable, so we clean any taint that we may have
+          * attached to it previously. This can happen when a lambda is called
+          * inside a loop. *)
+         let lval_env = Lval_env.clean lval_env (LV.lval_of_var var) in
+         (* Now check if the parameter is itself a taint source. *)
+         let taints, shape, lval_env =
              check_tainted_var { env with lval_env } var
-           in
-           lval_env |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
-         env.lval_env
-  in
-  lval_env_with_params
+         in
+         lval_env
+         |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
+       env.lval_env
 
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
  fun enter_env ~fun_cfg
@@ -2659,7 +2657,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
               lval_env'
           | None -> lval_env'
         in
-        let lval_env' =
+        begin
           match opt_lval with
           | Some lval ->
               if Shape.taints_and_shape_are_relevant taints shape then
@@ -2687,8 +2685,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
           | None ->
               (* Instruction returns 'void' or its return value is ignored. *)
               lval_env'
-        in
-        lval_env'
+        end
     | NCond (_tok, e)
     | NThrow (_tok, e) ->
         let _taints, _shape, lval_env' = check_tainted_expr env e in

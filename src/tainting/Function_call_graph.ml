@@ -227,10 +227,11 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                       | _ -> false
                     ) all_funcs in
                     (* Debug: show all function names *)
-                    let all_names = all_funcs |> List.map (fun f ->
-                      let fn_str = show_fn_id f.fn_id in
-                      fn_str
-                    ) |> String.concat ", " in
+                    let all_names =
+                      all_funcs
+                      |> List.map (fun f -> show_fn_id f.fn_id)
+                      |> String.concat ", "
+                    in
                     Log.debug (fun m -> m "CALL_EXTRACT: In class %s, call to %s, checking %d funcs, method_exists=%b, ALL: [%s]"
                       class_name_str callee_name_str (List.length all_funcs) (Option.is_some method_match) all_names);
                     (match method_match with
@@ -396,12 +397,10 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
   in
   v#visit_function_definition () fdef;
   (* Deduplicate calls by comparing fn_id and tok *)
-  let unique_calls =
-    !calls |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
-      let cmp = FuncVertex.compare f1 f2 in
-      if cmp <> 0 then cmp else Tok.compare t1 t2)
-  in
-  unique_calls
+  !calls
+  |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
+       let cmp = FuncVertex.compare f1 f2 in
+       if cmp <> 0 then cmp else Tok.compare t1 t2)
 
 (* Extract calls from top-level statements (outside any function).
    This returns a list of (callee_fn_id, call_tok) pairs. *)
@@ -458,12 +457,10 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
   in
   v#visit_program () ast;
   (* Deduplicate *)
-  let unique_calls =
-    !calls |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
-      let cmp = FuncVertex.compare f1 f2 in
-      if cmp <> 0 then cmp else Tok.compare t1 t2)
-  in
-  unique_calls
+  !calls
+  |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
+       let cmp = FuncVertex.compare f1 f2 in
+       if cmp <> 0 then cmp else Tok.compare t1 t2)
 
 (* Detect if a function is a user-defined HOF by checking if it calls any of its parameters.
    Returns a list of (parameter_name, parameter_index) for called parameters. *)
