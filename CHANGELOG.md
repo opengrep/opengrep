@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.15.1](https://github.com/opengrep/opengrep/releases/tag/v1.15.1) - 16-01-2026
+
+### Bug fixes
+
+* Clojure translation improvements by @dimitris-m in #534
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.15.0...v1.15.1
+
+
 ## [1.15.0](https://github.com/opengrep/opengrep/releases/tag/v1.15.0) - 14-01-2026
 
 ### Improvements
