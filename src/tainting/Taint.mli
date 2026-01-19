@@ -197,6 +197,7 @@ module Taint_set : sig
   val union : t -> t -> t
   val diff : t -> t -> t
   val map : (taint -> taint) -> t -> t
+  val bind : t -> (taint -> t) -> t
   val iter : (taint -> unit) -> t -> unit
   val fold : (taint -> 'a -> 'a) -> t -> 'a -> 'a
   val filter : (taint -> bool) -> t -> t

@@ -801,7 +801,7 @@ let show_fn_id (fn_id : fn_id) : string =
 
 (** Extract the function name (last element) from the fn_id path *)
 let get_fn_name (fn_id : fn_id) : IL.name option =
-  match List.rev fn_id with hd :: _ -> hd | [] -> None
+  List_.last_opt fn_id |> Option.join
 
 let empty_signature_database () : signature_database =
   { signatures = FunctionMap.empty; object_mappings = [] }

@@ -279,11 +279,7 @@ let instantiate_taint inst_var inst_trace taint =
                  }))
 
 let instantiate_taints inst_var inst_trace taints =
-  taints |> Taints.to_seq
-  |> Seq.fold_left
-       (fun acc taint ->
-         acc |> Taints.union (instantiate_taint inst_var inst_trace taint))
-       Taints.empty
+  Taints.bind taints (fun taint -> instantiate_taint inst_var inst_trace taint)
 
 let instantiate_shape inst_var inst_trace shape =
   let inst_taints = instantiate_taints inst_var inst_trace in
@@ -307,7 +303,7 @@ let instantiate_shape inst_var inst_trace shape =
             Arg arg)
     | Fun _ as funTODO ->
         (* Right now a function shape can only come from a top-level function,
-         * whose shape will not depend on the parameters of another encloding
+         * whose shape will not depend on the parameters of another enclosing
          * function, so we shouldn't have to instantiate anything here, e.g.:
          *
          *     def bar():

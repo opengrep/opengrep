@@ -129,13 +129,12 @@ let normalize_lval lval =
     (* explicit dereference of `this` e.g. `this->x` *)
     | Mem { e = Fetch { base = VarSpecial (This, _); rev_offset = [] }; _ }
     | VarSpecial _ -> (
-        match List.rev rev_offset with
+        match List_.init_and_last_opt rev_offset with
         (* this.x o_1 ... o_N becomes x o_1 ... o_N *)
-        | { o = IL.Dot var; _ } :: offset' -> Some (var, List.rev offset')
+        | Some (offset, { o = IL.Dot var; _ }) -> Some (var, offset)
         (* we do not handle any other case *)
-        | []
-        | { o = IL.Index _; _ } :: _ ->
-            None)
+        | None
+        | Some (_, { o = IL.Index _; _ }) -> None)
     | Mem _ -> None
   in
   let offset = T.offset_of_rev_IL_offset ~rev_offset in
