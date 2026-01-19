@@ -552,7 +552,7 @@ def print_time_summary(
     )
 
     # Output semgrep-core information
-    console.print("\nSemgrep-core time:")
+    console.print("\nopengrep-core time:")
     console.print(
         f"Total CPU time: {all_total_time:.4f}s  File parse time: {file_parsing_time:.4f}s"
         f"  Rule parse time: {rule_parsing_time:.4f}s  Match time: {total_matching_time:.4f}s"
@@ -570,7 +570,7 @@ def print_time_summary(
         )
 
     console.print(f"Slowest {items_to_show} rules to match")
-    slowest_rule_times = sorted(rule_match_timings.items(), reverse=True)[
+    slowest_rule_times = sorted(rule_match_timings.items(), key=lambda x: x[1], reverse=True)[
         :items_to_show
     ]
     for rule_id, match_time in slowest_rule_times:
