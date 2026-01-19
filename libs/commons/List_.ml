@@ -248,11 +248,27 @@ let tl_exn errmsg xs =
   | [] -> failwith errmsg
   | _ :: tail -> tail
 
+let hd_opt xs =
+  match xs with
+  | [] -> None
+  | x :: _ -> Some x
+
 let rec last_opt xs =
   match xs with
   | [] -> None
   | [ x ] -> Some x
   | _ :: tl -> last_opt tl
+
+let rec init_and_last_non_empty xs =
+  match xs with
+  | [ x ] -> [], x
+  | x :: xs -> let xs', l = init_and_last_non_empty xs in x :: xs', l
+  | _ -> failwith "impossible"
+
+let init_and_last_opt xs =
+  match xs with
+  | [] -> None
+  | _ -> Some (init_and_last_non_empty xs)
 
 let mapi f l = map2 f (List.init (List.length l) Fun.id) l
 

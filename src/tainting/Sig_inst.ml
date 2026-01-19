@@ -169,13 +169,11 @@ let add_call_to_token_trace ~callee ~var_tokens caller_tokens =
    * This is a hack we use because taint traces aren't general enough,
    * this should be represented with a call trace.
    *)
-  let call_tokens =
-    (match get_ident_of_callee callee with
+  var_tokens @
+  (match get_ident_of_callee callee with
     | None -> []
-    | Some ident -> [ snd ident ])
-    @ List.rev var_tokens
-  in
-  List.rev_append call_tokens caller_tokens
+    | Some ident -> [ snd ident ]) @
+  caller_tokens
 
 let add_lval_update_to_token_trace ~callee:_TODO lval_tok ~var_tokens
     caller_tokens =
@@ -200,11 +198,8 @@ let add_lval_update_to_token_trace ~callee:_TODO lval_tok ~var_tokens
    * This is a hack we use because taint traces aren't general enough,
    * this should be represented with a call trace.
    *)
-  let call_tokens =
-    (* TODO: Use `get_ident_of_callee callee` to add the callee to the trace. *)
-    lval_tok :: List.rev var_tokens
-  in
-  List.rev_append call_tokens caller_tokens
+  (* TODO: Use `get_ident_of_callee callee` to add the callee to the trace. *)
+  var_tokens @ lval_tok :: caller_tokens
 
 (*****************************************************************************)
 (* Instatiation *)

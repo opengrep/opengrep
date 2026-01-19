@@ -312,12 +312,10 @@ let unify_mvars_sets env mvars1 mvars2 =
         let* xs = xs_opt in
         match List.assoc_opt mvar mvars2 with
         | None -> Some ((mvar, mval) :: xs)
-        | Some mval' ->
-            if
-              Matching_generic.equal_ast_bound_code env.taint_inst.options mval
-                mval'
-            then Some ((mvar, mval) :: xs)
-            else None)
+        | Some mval' when Matching_generic.equal_ast_bound_code
+                            env.taint_inst.options mval mval' ->
+            Some ((mvar, mval) :: xs)
+        | _ -> None)
       (Some []) mvars1
   in
   let ys =
@@ -1206,29 +1204,30 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
    _;
   }
   (* We check for the "get"/"set" prefix below. *)
-    when env.taint_inst.lang =*= Lang.Java && String.length method_str > 3 -> (
-      let mk_prop_lval () =
-        (* e.g. getFooBar/setFooBar -> fooBar *)
-        let prop_str =
+    when env.taint_inst.lang =*= Lang.Java && String.length method_str > 3 ->
+      begin
+        let mk_prop_lval () =
+          (* e.g. getFooBar/setFooBar -> fooBar *)
+          let prop_str =
           String.uncapitalize_ascii (Str.string_after method_str 3)
-        in
-        let prop_name =
+          in
+          let prop_name =
           match
-            Hashtbl.find_opt env.taint_inst.java_props_cache (prop_str, sid)
+              Hashtbl.find_opt env.taint_inst.java_props_cache (prop_str, sid)
           with
           | Some prop_name -> prop_name
           | None -> (
               let mk_default_prop_name () =
-                let prop_name =
+                  let prop_name =
                   {
-                    ident = (prop_str, method_tok);
-                    sid = G.SId.unsafe_default;
-                    id_info = G.empty_id_info ();
+                      ident = (prop_str, method_tok);
+                      sid = G.SId.unsafe_default;
+                      id_info = G.empty_id_info ();
                   }
-                in
-                Hashtbl.add env.taint_inst.java_props_cache (prop_str, sid)
+                  in
+                  Hashtbl.add env.taint_inst.java_props_cache (prop_str, sid)
                   prop_name;
-                prop_name
+                  prop_name
               in
               match (!(obj.id_info.id_type), !hook_find_attribute_in_class) with
               | Some { t = TyN class_name; _ }, Some hook -> (
@@ -1237,27 +1236,28 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
                   | Some prop_name ->
                       let prop_name = AST_to_IL.var_of_name prop_name in
                       Hashtbl.add env.taint_inst.java_props_cache
-                        (prop_str, sid) prop_name;
+                          (prop_str, sid) prop_name;
                       prop_name)
               | __else__ -> mk_default_prop_name ())
-        in
-        { lval with rev_offset = [ { o = Dot prop_name; oorig = NoOrig } ] }
-      in
-      match args with
-      | [] when String.(starts_with ~prefix:"get" method_str) ->
-          let taints, shape, _sub, lval_env =
-            check_tainted_lval env (mk_prop_lval ())
           in
-          Some (taints, shape, lval_env)
-      | [ _ ] when String.starts_with ~prefix:"set" method_str ->
-          if not (Taints.is_empty all_args_taints) then
-            Some
-              ( Taints.empty,
-                Bot,
-                env.lval_env
-                |> Lval_env.add_lval (mk_prop_lval ()) all_args_taints )
-          else Some (Taints.empty, Bot, env.lval_env)
-      | __else__ -> None)
+          { lval with rev_offset = [ { o = Dot prop_name; oorig = NoOrig } ] }
+        in
+        match args with
+        | [] when String.(starts_with ~prefix:"get" method_str) ->
+            let taints, shape, _sub, lval_env =
+                check_tainted_lval env (mk_prop_lval ())
+            in
+            Some (taints, shape, lval_env)
+        | [ _ ] when String.starts_with ~prefix:"set" method_str ->
+            if not (Taints.is_empty all_args_taints) then
+                Some
+                ( Taints.empty,
+                    Bot,
+                    env.lval_env
+                    |> Lval_env.add_lval (mk_prop_lval ()) all_args_taints )
+            else Some (Taints.empty, Bot, env.lval_env)
+        | __else__ -> None
+      end
   | __else__ -> None
 
 and check_tainted_lval_aux env (lval : IL.lval) :
