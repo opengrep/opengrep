@@ -471,8 +471,3 @@ let show_signature_extraction func_name signature =
   Printf.sprintf "Function %s signature: %s"
     (Option.value func_name ~default:"<anonymous>")
     (Signature.show signature)
-
-(* Use functions from Shape_and_sig *)
-let empty_signature_database = Shape_and_sig.empty_signature_database
-let lookup_signature = Shape_and_sig.lookup_signature
-let show_signature_database = Shape_and_sig.show_signature_database

@@ -68,16 +68,5 @@ val extract_method_properties :
 (* Batch extraction *)
 (*****************************************************************************)
 
-
-val empty_signature_database : unit -> signature_database
-(** Create an empty signature database *)
-
-val lookup_signature :
-  signature_database -> Shape_and_sig.fn_id -> int -> Shape_and_sig.Signature.t option
-(** Look up a signature by function name *)
-
-val show_signature_database : signature_database -> string
-(** Show all signatures in the database *)
-
 val detect_object_initialization : AST_generic.program -> Lang.t -> (AST_generic.name * AST_generic.name) list
 (** Detect object initialization patterns in the AST for the given language *)
