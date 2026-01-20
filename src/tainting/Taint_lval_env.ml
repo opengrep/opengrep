@@ -121,23 +121,20 @@ let normalize_lval lval =
         match rev_offset with
         (* Static class field, `C.x`, we normalize it to just `x` since `x` is
            a unique global.
-
            TODO: C.x.y ? *)
         | [ { o = IL.Dot var; _ } ]
-          when H.is_class_name name || IdFlags.is_static !(var.id_info.id_flags)
-          ->
+          when H.is_class_name name || IdFlags.is_static !(var.id_info.id_flags) ->
             Some (var, [])
         | __else__ -> Some (name, rev_offset))
     (* explicit dereference of `this` e.g. `this->x` *)
     | Mem { e = Fetch { base = VarSpecial (This, _); rev_offset = [] }; _ }
     | VarSpecial _ -> (
-        match List.rev rev_offset with
+        match List_.init_and_last_opt rev_offset with
         (* this.x o_1 ... o_N becomes x o_1 ... o_N *)
-        | { o = IL.Dot var; _ } :: offset' -> Some (var, List.rev offset')
+        | Some (offset, { o = IL.Dot var; _ }) -> Some (var, offset)
         (* we do not handle any other case *)
-        | []
-        | { o = IL.Index _; _ } :: _ ->
-            None)
+        | None
+        | Some (_, { o = IL.Index _; _ }) -> None)
     | Mem _ -> None
   in
   let offset = T.offset_of_rev_IL_offset ~rev_offset in
@@ -155,14 +152,10 @@ let remove_some_lval_from_tainted_set tainted =
    * This could perhaps (?) break monotonicity and cause divergence of the fixpoint,
    * but the Limits_semgrep.taint_FIXPOINT_TIMEOUT seconds timeout would take care
    * of that. *)
-  match
-    tainted
-    |> NameMap.find_first_opt (fun var ->
-           (* auxiliary _tmp variables get fake tokens *)
-           Tok.is_fake (snd var.ident))
-  with
-  | None -> None
-  | Some (var, _) -> Some (var, NameMap.remove var tainted)
+  tainted
+  (* auxiliary _tmp variables get fake tokens *)
+  |> NameMap.find_first_opt (fun var -> Tok.is_fake (snd var.ident))
+  |> Option.map (function var, _ -> var, NameMap.remove var tainted)
 
 let check_tainted_lvals_limit tainted new_var =
   if
@@ -347,17 +340,7 @@ let equal_by_lval { tainted = tainted1; _ } { tainted = tainted2; _ } lval =
          variable. We just return the same environment untouched. *)
       false
   | Some (var, _offsets) ->
-      let equal_tainted =
-        match
-          (NameMap.find_opt var tainted1, NameMap.find_opt var tainted2)
-        with
-        | None, None -> true
-        | Some ref1, Some ref2 -> equal_cell ref1 ref2
-        | Some _, None
-        | None, Some _ ->
-            false
-      in
-      equal_tainted
+      Option.equal equal_cell (NameMap.find_opt var tainted1) (NameMap.find_opt var tainted2)
 
 let to_string
     { tainted; control; taints_to_propagate; pending_propagation_dests } =

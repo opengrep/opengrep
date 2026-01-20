@@ -312,12 +312,10 @@ let unify_mvars_sets env mvars1 mvars2 =
         let* xs = xs_opt in
         match List.assoc_opt mvar mvars2 with
         | None -> Some ((mvar, mval) :: xs)
-        | Some mval' ->
-            if
-              Matching_generic.equal_ast_bound_code env.taint_inst.options mval
-                mval'
-            then Some ((mvar, mval) :: xs)
-            else None)
+        | Some mval' when Matching_generic.equal_ast_bound_code
+                            env.taint_inst.options mval mval' ->
+            Some ((mvar, mval) :: xs)
+        | _ -> None)
       (Some []) mvars1
   in
   let ys =
@@ -1206,29 +1204,30 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
    _;
   }
   (* We check for the "get"/"set" prefix below. *)
-    when env.taint_inst.lang =*= Lang.Java && String.length method_str > 3 -> (
-      let mk_prop_lval () =
-        (* e.g. getFooBar/setFooBar -> fooBar *)
-        let prop_str =
+    when env.taint_inst.lang =*= Lang.Java && String.length method_str > 3 ->
+      begin
+        let mk_prop_lval () =
+          (* e.g. getFooBar/setFooBar -> fooBar *)
+          let prop_str =
           String.uncapitalize_ascii (Str.string_after method_str 3)
-        in
-        let prop_name =
+          in
+          let prop_name =
           match
-            Hashtbl.find_opt env.taint_inst.java_props_cache (prop_str, sid)
+              Hashtbl.find_opt env.taint_inst.java_props_cache (prop_str, sid)
           with
           | Some prop_name -> prop_name
           | None -> (
               let mk_default_prop_name () =
-                let prop_name =
+                  let prop_name =
                   {
-                    ident = (prop_str, method_tok);
-                    sid = G.SId.unsafe_default;
-                    id_info = G.empty_id_info ();
+                      ident = (prop_str, method_tok);
+                      sid = G.SId.unsafe_default;
+                      id_info = G.empty_id_info ();
                   }
-                in
-                Hashtbl.add env.taint_inst.java_props_cache (prop_str, sid)
+                  in
+                  Hashtbl.add env.taint_inst.java_props_cache (prop_str, sid)
                   prop_name;
-                prop_name
+                  prop_name
               in
               match (!(obj.id_info.id_type), !hook_find_attribute_in_class) with
               | Some { t = TyN class_name; _ }, Some hook -> (
@@ -1237,27 +1236,28 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
                   | Some prop_name ->
                       let prop_name = AST_to_IL.var_of_name prop_name in
                       Hashtbl.add env.taint_inst.java_props_cache
-                        (prop_str, sid) prop_name;
+                          (prop_str, sid) prop_name;
                       prop_name)
               | __else__ -> mk_default_prop_name ())
-        in
-        { lval with rev_offset = [ { o = Dot prop_name; oorig = NoOrig } ] }
-      in
-      match args with
-      | [] when String.(starts_with ~prefix:"get" method_str) ->
-          let taints, shape, _sub, lval_env =
-            check_tainted_lval env (mk_prop_lval ())
           in
-          Some (taints, shape, lval_env)
-      | [ _ ] when String.starts_with ~prefix:"set" method_str ->
-          if not (Taints.is_empty all_args_taints) then
-            Some
-              ( Taints.empty,
-                Bot,
-                env.lval_env
-                |> Lval_env.add_lval (mk_prop_lval ()) all_args_taints )
-          else Some (Taints.empty, Bot, env.lval_env)
-      | __else__ -> None)
+          { lval with rev_offset = [ { o = Dot prop_name; oorig = NoOrig } ] }
+        in
+        match args with
+        | [] when String.(starts_with ~prefix:"get" method_str) ->
+            let taints, shape, _sub, lval_env =
+                check_tainted_lval env (mk_prop_lval ())
+            in
+            Some (taints, shape, lval_env)
+        | [ _ ] when String.starts_with ~prefix:"set" method_str ->
+            if not (Taints.is_empty all_args_taints) then
+                Some
+                ( Taints.empty,
+                    Bot,
+                    env.lval_env
+                    |> Lval_env.add_lval (mk_prop_lval ()) all_args_taints )
+            else Some (Taints.empty, Bot, env.lval_env)
+        | __else__ -> None
+      end
   | __else__ -> None
 
 and check_tainted_lval_aux env (lval : IL.lval) :
@@ -2611,23 +2611,21 @@ let mk_lambda_in_env env lcfg =
    *
    * so we can propagate taint from `obj` to `x`.
    *)
-  let lval_env_with_params =
-    lcfg.params
-    |> Fold_IL_params.fold
-         (fun lval_env id id_info _pdefault ->
-           let var = AST_to_IL.var_of_id_info id id_info in
-           (* This is a *new* variable, so we clean any taint that we may have
-            * attached to it previously. This can happen when a lambda is called
-            * inside a loop. *)
-           let lval_env = Lval_env.clean lval_env (LV.lval_of_var var) in
-           (* Now check if the parameter is itself a taint source. *)
-           let taints, shape, lval_env =
+  lcfg.params
+  |> Fold_IL_params.fold
+       (fun lval_env id id_info _pdefault ->
+         let var = AST_to_IL.var_of_id_info id id_info in
+         (* This is a *new* variable, so we clean any taint that we may have
+          * attached to it previously. This can happen when a lambda is called
+          * inside a loop. *)
+         let lval_env = Lval_env.clean lval_env (LV.lval_of_var var) in
+         (* Now check if the parameter is itself a taint source. *)
+         let taints, shape, lval_env =
              check_tainted_var { env with lval_env } var
-           in
-           lval_env |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
-         env.lval_env
-  in
-  lval_env_with_params
+         in
+         lval_env
+         |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
+       env.lval_env
 
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
  fun enter_env ~fun_cfg
@@ -2659,7 +2657,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
               lval_env'
           | None -> lval_env'
         in
-        let lval_env' =
+        begin
           match opt_lval with
           | Some lval ->
               if Shape.taints_and_shape_are_relevant taints shape then
@@ -2687,8 +2685,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
           | None ->
               (* Instruction returns 'void' or its return value is ignored. *)
               lval_env'
-        in
-        lval_env'
+        end
     | NCond (_tok, e)
     | NThrow (_tok, e) ->
         let _taints, _shape, lval_env' = check_tainted_expr env e in

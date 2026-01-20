@@ -2,6 +2,7 @@ open IL
 module Shape = Shape_and_sig.Shape
 module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
+module G = AST_generic
 module Signature = Shape_and_sig.Signature
 module TRI = Taint_rule_inst
 module Log = Log_tainting.Log
@@ -36,41 +37,37 @@ let extract_param_labels_from_sink (sink_info : Effect.taints_to_sink) :
   let taints_items, _existing_precondition =
     sink_info.taints_with_precondition
   in
-  let param_labels =
-    taints_items
-    |> List.map (fun (item : Effect.taint_to_sink_item) -> item.taint)
-    |> List.fold_left
-         (fun acc taint ->
-           match taint.Taint.orig with
-           | Taint.Var lval -> (
-               match lval.base with
-               | Taint.BGlob name -> fst name.ident :: acc
-               | _ -> acc)
-           | _ -> acc)
-         []
-  in
-  param_labels
+  taints_items
+  |> List.map (fun (item : Effect.taint_to_sink_item) -> item.taint)
+  |> List.fold_left
+       (fun acc taint ->
+         match taint.Taint.orig with
+         | Taint.Var lval -> (
+             match lval.base with
+             | Taint.BGlob name -> fst name.ident :: acc
+             | _ -> acc)
+         | _ -> acc)
+       []
 
 (* Extract this.x and self.x properties from a function definition *)
-let extract_method_properties (fdef : AST_generic.function_definition) :
-    AST_generic.expr list =
+let extract_method_properties (fdef : G.function_definition) :
+    G.expr list =
   let found_properties = ref [] in
   let visitor =
     object
-      inherit [_] AST_generic.iter as super
+      inherit [_] G.iter as super
 
       method! visit_expr () expr =
-        (match expr.AST_generic.e with
-        | AST_generic.DotAccess (obj, _, AST_generic.FN (AST_generic.Id (_, _)))
-          -> (
+        (match expr.G.e with
+        | G.DotAccess (obj, _, G.FN (G.Id (_, _))) -> (
             (* Check if base object is IdSpecial This or Self *)
-            match obj.AST_generic.e with
-            | AST_generic.IdSpecial (AST_generic.This, _)
-            | AST_generic.IdSpecial (AST_generic.Self, _) ->
+            match obj.G.e with
+            | G.IdSpecial (G.This, _)
+            | G.IdSpecial (G.Self, _) ->
                 found_properties := expr :: !found_properties
-            | AST_generic.DeRef (_, inner_obj) -> (
-                match inner_obj.AST_generic.e with
-                | AST_generic.IdSpecial (AST_generic.This, _) ->
+            | G.DeRef (_, inner_obj) -> (
+                match inner_obj.G.e with
+                | G.IdSpecial (G.This, _) ->
                     found_properties := expr :: !found_properties
                 | _ -> ())
             | _ -> ())
@@ -81,21 +78,16 @@ let extract_method_properties (fdef : AST_generic.function_definition) :
   (* Convert function body to statement and visit it *)
   let body_stmt = AST_generic_helpers.funcbody_to_stmt fdef.fbody in
   visitor#visit_stmt () body_stmt;
-  (* Remove duplicates by converting to set and back *)
-  let unique_props =
-    List.sort_uniq
-      (fun e1 e2 ->
-        String.compare (AST_generic.show_expr e1) (AST_generic.show_expr e2))
-      !found_properties
-  in
-  unique_props
+  (* Sort and remove duplicates *)
+  !found_properties
+  |> List.sort_uniq (fun e1 e2 -> String.compare (G.show_expr e1) (G.show_expr e2))
 
 (* Object initialization detection for different languages *)
 let detect_object_initialization =
   Object_initialization.detect_object_initialization
 
 (* Convert AST method properties to taint assumptions using AST_to_IL *)
-let mk_method_property_assumptions (properties : AST_generic.expr list)
+let mk_method_property_assumptions (properties : G.expr list)
     (lang : Lang.t) : Taint_lval_env.t =
   properties
   |> List.fold_left
@@ -154,7 +146,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                  match taint_inst with
                  | Some tinst ->
                      let _, tok = pname.ident in
-                     let any = AST_generic.Tk tok in
+                     let any = G.Tk tok in
                      let source_pms = tinst.TRI.preds.is_source any in
                      if source_pms <> [] then
                        (* Create Src taints for matching sources using taints_of_pms *)
@@ -326,7 +318,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
   { signature; mapping }
 
 let mk_global_assumptions_with_sids
-    (global_vars : (string * AST_generic.SId.t) list) : Taint_lval_env.t =
+    (global_vars : (string * G.SId.t) list) : Taint_lval_env.t =
   global_vars
   |> List.fold_left
        (fun env (var_name, sid) ->
@@ -336,7 +328,7 @@ let mk_global_assumptions_with_sids
              {
                ident = (var_name, fake_tok);
                sid;
-               id_info = AST_generic.empty_id_info ();
+               id_info = G.empty_id_info ();
              }
          in
          let il_lval : IL.lval = { base = Var var_id; rev_offset = [] } in
@@ -347,7 +339,7 @@ let mk_global_assumptions_with_sids
        Taint_lval_env.empty
 
 let mk_global_tracking_without_taint
-    (global_vars : (string * AST_generic.SId.t) list) : Taint_lval_env.t =
+    (global_vars : (string * G.SId.t) list) : Taint_lval_env.t =
   global_vars
   |> List.fold_left
        (fun env (var_name, sid) ->
@@ -357,7 +349,7 @@ let mk_global_tracking_without_taint
              {
                ident = (var_name, fake_tok);
                sid;
-               id_info = AST_generic.empty_id_info ();
+               id_info = G.empty_id_info ();
              }
          in
          let il_lval : IL.lval = { base = Var var_id; rev_offset = [] } in
@@ -365,22 +357,22 @@ let mk_global_tracking_without_taint
          Taint_lval_env.add_lval il_lval Taint.Taint_set.empty env)
        Taint_lval_env.empty
 
-let extract_global_var_sids_from_ast (ast : AST_generic.program) :
-    (string * AST_generic.SId.t) list =
+let extract_global_var_sids_from_ast (ast : G.program) :
+    (string * G.SId.t) list =
   ast
   |> List.fold_left
        (fun acc stmt ->
          match stmt with
          | {
-          AST_generic.s =
-            AST_generic.ExprStmt ({ e = AST_generic.Assign (lhs, _, _); _ }, _);
+          G.s =
+            G.ExprStmt ({ e = G.Assign (lhs, _, _); _ }, _);
           _;
          } -> (
              match lhs with
-             | { e = AST_generic.N (AST_generic.Id ((name, _), id_info)); _ }
+             | { e = G.N (G.Id ((name, _), id_info)); _ }
                -> (
                  match !(id_info.id_resolved) with
-                 | Some (AST_generic.Global, sid) -> (name, sid) :: acc
+                 | Some (G.Global, sid) -> (name, sid) :: acc
                  | _ -> acc)
              | _ -> acc)
          | _ -> acc)
@@ -399,13 +391,13 @@ let pos_in_range target_pos range_opt =
 (* Simple visitor to find class context for a function *)
 class class_finder =
   object
-    inherit [_] AST_generic.iter as super
+    inherit [_] G.iter as super
 
     method! visit_definition (loc, (found_class : IL.name option ref) as env) (entity, def_kind) =
       match def_kind with
-      | AST_generic.ClassDef _ ->
-          (match entity.AST_generic.name with
-          | AST_generic.EN (AST_generic.Id ((class_name, _), _)) ->
+      | G.ClassDef _ ->
+          (match entity.G.name with
+          | G.EN (G.Id ((class_name, _), _)) ->
               let class_range =
                 AST_generic_helpers.range_of_any_opt (Def (entity, def_kind))
               in
@@ -415,8 +407,8 @@ class class_finder =
                   Some
                     {
                       IL.ident = (class_name, fake_tok);
-                      sid = AST_generic.SId.unsafe_default;
-                      id_info = AST_generic.empty_id_info ();
+                      sid = G.SId.unsafe_default;
+                      id_info = G.empty_id_info ();
                     }
           | _ -> ());
           super#visit_definition env (entity, def_kind)
@@ -424,7 +416,7 @@ class class_finder =
   end
 
 let class_finder_visitor_instance = new class_finder
-let find_class_for_function (ast : AST_generic.program) (target_name : IL.name)
+let find_class_for_function (ast : G.program) (target_name : IL.name)
     : IL.name option =
   let tok = snd target_name.IL.ident in
   match Tok.loc_of_tok tok with
@@ -439,11 +431,11 @@ let extract_signature_with_file_context
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(name = [])
-    ?(method_properties : AST_generic.expr list = [])
+    ?(method_properties : G.expr list = [])
     ?(call_graph : Function_call_graph.FuncGraph.t option = None)
     (taint_inst : Taint_rule_inst.t)
     func_cfg
-    (ast : AST_generic.program) : signature_database * Signature.t =
+    (ast : G.program) : signature_database * Signature.t =
   let global_sids = extract_global_var_sids_from_ast ast in
   let global_env = mk_global_assumptions_with_sids global_sids in
 
@@ -479,10 +471,3 @@ let show_signature_extraction func_name signature =
   Printf.sprintf "Function %s signature: %s"
     (Option.value func_name ~default:"<anonymous>")
     (Signature.show signature)
-
-
-
-(* Use functions from Shape_and_sig *)
-let empty_signature_database = Shape_and_sig.empty_signature_database
-let lookup_signature = Shape_and_sig.lookup_signature
-let show_signature_database = Shape_and_sig.show_signature_database

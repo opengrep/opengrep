@@ -63,8 +63,12 @@ val hd_exn : string -> 'a list -> 'a
    empty list"' apply. *)
 val tl_exn : string -> 'a list -> 'a list
 
+val hd_opt : 'a list -> 'a option
+
 val last_opt : 'a list -> 'a option
 (** Returns the last element of the list or none if the list is empty. *)
+
+val init_and_last_opt : 'a list -> ('a list * 'a) option
 
 val map2 : ('a -> 'b -> 'c) -> 'a list -> 'b list -> 'c list
 (** Same as [List.map2] but stack-safe and slightly faster on short lists.

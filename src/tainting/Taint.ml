@@ -500,6 +500,13 @@ module Taint_set = struct
      to simply map the codomain taint, and then take its `orig` as the key.
   *)
   let map f set = set |> Taints.to_seq |> Seq.map f |> Taints.of_seq
+
+  let bind set f =
+    set
+    |> Taints.to_seq
+    |> Seq.flat_map (fun x -> Taints.to_seq (f x))
+    |> Taints.of_seq
+  
   let iter f set = Taints.iter f set
   let fold f set acc = Taints.fold f set acc
   let filter f set = Taints.filter f set
@@ -557,8 +564,8 @@ let rec solve_precondition ~ignore_poly_taint ~taints pre : bool option =
     | R.PLabel l ->
         if LabelSet.mem l sure_labels then Some true
         else if
-          (not (LabelSet.mem l maybe_labels))
-          && ((not has_poly_taint) || ignore_poly_taint)
+          not (LabelSet.mem l maybe_labels)
+          && (not has_poly_taint || ignore_poly_taint)
         then Some false
         else None
     | R.PVariable _var_name ->

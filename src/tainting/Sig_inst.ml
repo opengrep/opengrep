@@ -169,13 +169,11 @@ let add_call_to_token_trace ~callee ~var_tokens caller_tokens =
    * This is a hack we use because taint traces aren't general enough,
    * this should be represented with a call trace.
    *)
-  let call_tokens =
-    (match get_ident_of_callee callee with
+  var_tokens @
+  (match get_ident_of_callee callee with
     | None -> []
-    | Some ident -> [ snd ident ])
-    @ List.rev var_tokens
-  in
-  List.rev_append call_tokens caller_tokens
+    | Some ident -> [ snd ident ]) @
+  caller_tokens
 
 let add_lval_update_to_token_trace ~callee:_TODO lval_tok ~var_tokens
     caller_tokens =
@@ -200,11 +198,8 @@ let add_lval_update_to_token_trace ~callee:_TODO lval_tok ~var_tokens
    * This is a hack we use because taint traces aren't general enough,
    * this should be represented with a call trace.
    *)
-  let call_tokens =
-    (* TODO: Use `get_ident_of_callee callee` to add the callee to the trace. *)
-    lval_tok :: List.rev var_tokens
-  in
-  List.rev_append call_tokens caller_tokens
+  (* TODO: Use `get_ident_of_callee callee` to add the callee to the trace. *)
+  var_tokens @ lval_tok :: caller_tokens
 
 (*****************************************************************************)
 (* Instatiation *)
@@ -284,11 +279,7 @@ let instantiate_taint inst_var inst_trace taint =
                  }))
 
 let instantiate_taints inst_var inst_trace taints =
-  taints |> Taints.to_seq
-  |> Seq.fold_left
-       (fun acc taint ->
-         acc |> Taints.union (instantiate_taint inst_var inst_trace taint))
-       Taints.empty
+  Taints.bind taints (fun taint -> instantiate_taint inst_var inst_trace taint)
 
 let instantiate_shape inst_var inst_trace shape =
   let inst_taints = instantiate_taints inst_var inst_trace in
@@ -312,7 +303,7 @@ let instantiate_shape inst_var inst_trace shape =
             Arg arg)
     | Fun _ as funTODO ->
         (* Right now a function shape can only come from a top-level function,
-         * whose shape will not depend on the parameters of another encloding
+         * whose shape will not depend on the parameters of another enclosing
          * function, so we shouldn't have to instantiate anything here, e.g.:
          *
          *     def bar():
@@ -770,8 +761,7 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
     }
   in
   let inst_taints taints =
-    let result = instantiate_taints inst_var inst_trace taints in
-    result
+    instantiate_taints inst_var inst_trace taints
   in
   let inst_shape shape = instantiate_shape inst_var inst_trace shape in
   let inst_taints_and_shape (taints, shape) =
@@ -891,24 +881,16 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                 dst_sig_lval
         in
         let taints =
-          let result =
-            taints
-            |> instantiate_taints
-                 {
-                   inst_lval = lval_to_taints;
-                   (* Note that control taints do not propagate to l-values. *)
-                   inst_ctrl = (fun _ -> Taints.empty);
-                 }
-                 {
-                   add_call_to_trace_for_src =
-                     add_call_to_trace_if_callee_has_eorig ~callee;
-                   fix_token_trace_for_var =
-                     add_lval_update_to_token_trace ~callee tainted_tok;
-                 }
-          in
-          result
+          taints
+          |> instantiate_taints
+               { inst_lval = lval_to_taints;
+                 (* Note that control taints do not propagate to l-values. *)
+                 inst_ctrl = (fun _ -> Taints.empty); }
+               { add_call_to_trace_for_src =
+                   add_call_to_trace_if_callee_has_eorig ~callee;
+                 fix_token_trace_for_var =
+                   add_lval_update_to_token_trace ~callee tainted_tok; }
         in
-
         if Taints.is_empty taints then []
         else [ ToLval (taints, dst_var, dst_offset) ]
     | Effect.ToSinkInCall
@@ -1110,12 +1092,12 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                                  (match lval_to_taints lval with
                                  | Some (taints, _shape) ->
                                      (* Look for a taint from a parameter *)
-                                     let param_opt = taints |> Taints.elements |> List.find_map (fun t ->
-                                       match t.T.orig with
-                                       | Var { base = BArg arg; offset = [] } -> Some arg
-                                       | _ -> None)
-                                     in
-                                     param_opt
+                                     taints
+                                     |> Taints.elements
+                                     |> List.find_map (fun t ->
+                                          match t.T.orig with
+                                          | Var { base = BArg arg; offset = [] } -> Some arg
+                                          | _ -> None)
                                  | None -> None)
                              | _ -> None
                            in
@@ -1145,12 +1127,12 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                             (match lval_to_taints lval with
                             | Some (taints, _shape) ->
                                 (* Look for a taint from a parameter *)
-                                let param_opt = taints |> Taints.elements |> List.find_map (fun t ->
-                                  match t.T.orig with
-                                  | Var { base = BArg arg; offset = [] } -> Some arg
-                                  | _ -> None)
-                                in
-                                param_opt
+                                taints
+                                |> Taints.elements
+                                |> List.find_map (fun t ->
+                                     match t.T.orig with
+                                     | Var { base = BArg arg; offset = [] } -> Some arg
+                                     | _ -> None)
                             | None -> None)
                         | _ -> None
                       in

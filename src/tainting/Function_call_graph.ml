@@ -188,6 +188,12 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
       } in
       Some (normalized_parent_path @ [Some tmp_name])
 
+let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
+  ids |>
+  List.sort_uniq (fun (f1, t1) (f2, t2) ->
+    let cmp = FuncVertex.compare f1 f2 in
+    if cmp <> 0 then cmp else Tok.compare t1 t2)
+
 (* Extract all calls from a function body and resolve them to fn_ids *)
 (* Helper function to identify the callee fn_id from a call expression's callee *)
 let identify_callee ?(object_mappings = []) ?(all_funcs = [])
@@ -198,59 +204,64 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
     | _ -> None
   in
   match callee.G.e with
-        (* Simple function call: foo() *)
-        | G.N (G.Id ((id, _), _id_info)) ->
-            let callee_name_str = id in
-            (* First check if it's a nested function in the same scope - use string matching *)
-            let nested_match = List.find_opt (fun f ->
-              match List.rev f.fn_id with
-              | Some name :: rest when fst name.IL.ident = callee_name_str ->
-                  (* Check if parent path matches *)
-                  let f_parent = List.rev rest in
-                  Int.equal (compare_as_str f_parent caller_parent_path) 0
-              | _ -> false
-            ) all_funcs in
-            (match nested_match with
-            | Some f ->
-                Log.debug (fun m -> m "CALL_EXTRACT: Found nested function %s in same scope" callee_name_str);
-                Some f.fn_id
-            | None ->
-                (* For class-based languages, foo() might be an implicit this.foo() call.
-                   Check if a method with this name exists in the current class. *)
-                match current_class with
-                | Some class_name ->
-                    let class_name_str = fst class_name.IL.ident in
-                    (* Check if this method exists in the class - use string matching *)
-                    let method_match = List.find_opt (fun f ->
+    (* Simple function call: foo() *)
+    | G.N (G.Id ((id, _), _id_info)) ->
+        let callee_name_str = id in
+        (* First check if it's a nested function in the same scope - use string matching *)
+        let nested_match =
+          List.find_opt (fun f ->
+            match List_.init_and_last_opt f.fn_id with
+            | Some (f_parent, Some name) when String.equal (fst name.IL.ident) callee_name_str ->
+                (* Check if parent path matches *)
+                Int.equal (compare_as_str f_parent caller_parent_path) 0
+            | _ -> false
+          ) all_funcs
+        in
+        begin
+          match nested_match with
+          | Some f ->
+              Log.debug (fun m -> m "CALL_EXTRACT: Found nested function %s in same scope" callee_name_str);
+              Some f.fn_id
+          | None ->
+              (* For class-based languages, foo() might be an implicit this.foo() call.
+                 Check if a method with this name exists in the current class. *)
+              match current_class with
+              | Some class_name ->
+                  let class_name_str = fst class_name.IL.ident in
+                  (* Check if this method exists in the class - use string matching *)
+                  let method_match = List.find_opt (fun f ->
                       match f.fn_id with
                       | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callee_name_str -> true
                       | _ -> false
-                    ) all_funcs in
-                    (* Debug: show all function names *)
-                    let all_names = all_funcs |> List.map (fun f ->
-                      let fn_str = show_fn_id f.fn_id in
-                      fn_str
-                    ) |> String.concat ", " in
-                    Log.debug (fun m -> m "CALL_EXTRACT: In class %s, call to %s, checking %d funcs, method_exists=%b, ALL: [%s]"
+                  ) all_funcs in
+                  (* Debug: show all function names *)
+                  let all_names =
+                      all_funcs
+                      |> List.map (fun f -> show_fn_id f.fn_id)
+                      |> String.concat ", "
+                  in
+                  Log.debug (fun m -> m "CALL_EXTRACT: In class %s, call to %s, checking %d funcs, method_exists=%b, ALL: [%s]"
                       class_name_str callee_name_str (List.length all_funcs) (Option.is_some method_match) all_names);
-                    (match method_match with
-                    | Some f -> Some f.fn_id
-                    | None ->
-                        (* It's a free function call, not a method - use string matching *)
-                        let free_fn_match = List.find_opt (fun f ->
+                  (match method_match with
+                  | Some f -> Some f.fn_id
+                  | None ->
+                      (* It's a free function call, not a method - use string matching *)
+                      let free_fn_match = List.find_opt (fun f ->
                           match f.fn_id with
                           | [None; Some name] when fst name.IL.ident = callee_name_str -> true
                           | _ -> false
-                        ) all_funcs in
-                        Option.map (fun f -> f.fn_id) free_fn_match)
-                | None ->
-                    (* Top-level free function - use string matching *)
-                    let free_fn_match = List.find_opt (fun f ->
+                      ) all_funcs in
+                      Option.map (fun f -> f.fn_id) free_fn_match)
+              | None ->
+                  (* Top-level free function - use string matching *)
+                  let free_fn_match =
+                    List.find_opt (fun f ->
                       match f.fn_id with
                       | [None; Some name] when fst name.IL.ident = callee_name_str -> true
                       | _ -> false
                     ) all_funcs in
-                    Option.map (fun f -> f.fn_id) free_fn_match)
+                  Option.map (fun f -> f.fn_id) free_fn_match
+        end
         (* Qualified call: Module.foo() *)
         | G.N (G.IdQualified { name_last = (id, _), _; _ }) ->
             let callee_name_str = id in
@@ -396,12 +407,7 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
   in
   v#visit_function_definition () fdef;
   (* Deduplicate calls by comparing fn_id and tok *)
-  let unique_calls =
-    !calls |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
-      let cmp = FuncVertex.compare f1 f2 in
-      if cmp <> 0 then cmp else Tok.compare t1 t2)
-  in
-  unique_calls
+  !calls |> dedup_fn_ids
 
 (* Extract calls from top-level statements (outside any function).
    This returns a list of (callee_fn_id, call_tok) pairs. *)
@@ -457,13 +463,7 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
     end
   in
   v#visit_program () ast;
-  (* Deduplicate *)
-  let unique_calls =
-    !calls |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
-      let cmp = FuncVertex.compare f1 f2 in
-      if cmp <> 0 then cmp else Tok.compare t1 t2)
-  in
-  unique_calls
+  !calls |> dedup_fn_ids
 
 (* Detect if a function is a user-defined HOF by checking if it calls any of its parameters.
    Returns a list of (parameter_name, parameter_index) for called parameters. *)
@@ -532,10 +532,9 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
 
   (* First check if it's a nested function in the same scope - match by string name *)
   let nested_match = List.find_opt (fun f ->
-    match List.rev f.fn_id with
-    | Some name :: rest when fst name.IL.ident = callback_name_str ->
+    match List_.init_and_last_opt f.fn_id with
+    | Some (f_parent, Some name) when fst name.IL.ident = callback_name_str ->
         (* Check if it's in the caller's scope *)
-        let f_parent = List.rev rest in
         Int.equal (compare_as_str f_parent caller_parent_path) 0
     | _ -> false
   ) all_funcs in
@@ -621,10 +620,7 @@ let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_
           try_arg_at_index callback_index |> Option.to_list
       | None ->
           (* Check user-defined HOFs *)
-          let current_class = match caller_parent_path with
-            | Some cls :: _ -> Some cls
-            | _ -> None
-          in
+          let current_class = List_.hd_opt caller_parent_path |> Option.join in
           let hof_params = match current_class with
             | Some cls ->
                 let class_name_str = fst cls.IL.ident in
@@ -680,9 +676,7 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs
     end
   in
   v#visit_function_definition () fdef;
-  !callbacks |> List.sort_uniq (fun (f1, t1) (f2, t2) ->
-    let cmp = FuncVertex.compare f1 f2 in
-    if cmp <> 0 then cmp else Tok.compare t1 t2)
+  !callbacks |> dedup_fn_ids
 
 (* Build call graph - Visit_function_defs handles regular functions,
    arrow functions, and lambda assignments like const x = () => {} *)
@@ -713,22 +707,12 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
   let user_hofs =
     funcs
     |> List.filter_map (fun { fn_id; fdef; _ } ->
-        let called_params = detect_user_hof fdef in
-        if List.length called_params > 0 then
-          Some (fn_id, called_params)
-        else
-          None)
+         let called_params = detect_user_hof fdef in
+         if List.is_empty called_params then
+           None
+         else
+           Some (fn_id, called_params))
   in
-  (* Build a map from function body ranges to fn_id for context tracking *)
-  let func_ranges = ref [] in
-  List.iter (fun func ->
-    let body_stmt = AST_generic_helpers.funcbody_to_stmt func.fdef.G.fbody in
-    match AST_generic_helpers.range_of_any_opt (G.S body_stmt) with
-    | Some (loc_start, loc_end) ->
-        let range = Range.range_of_token_locations loc_start loc_end in
-        func_ranges := (range.start, range.end_, func.fn_id) :: !func_ranges
-    | None -> ())
-    funcs;
 
   (* Visit all calls in the AST, tracking the current function context *)
   Visit_function_defs.visit_with_parent_path
@@ -1018,28 +1002,33 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
   visitor#visit_program () ast;
 
   (* Now select the innermost (smallest) function for each range *)
-  let matching_funcs = ref [] in
-  List.iter (fun range ->
+  List.fold_left (fun matching_funcs range ->
     let funcs_list = Hashtbl.find range_to_funcs range in
-    if funcs_list <> [] then (
-      (* Sort by size and pick the smallest (innermost) *)
-      let sorted = List.sort (fun (_, size1) (_, size2) -> compare size1 size2) funcs_list in
-      let (innermost_fn_id, _) = List.hd sorted in
-      if not (List.mem innermost_fn_id !matching_funcs) then
-        matching_funcs := innermost_fn_id :: !matching_funcs
-    ) else (
+    if List.is_empty funcs_list then
       (* No function contains this range - it's at top level *)
       let top_level_name =
         let fake_tok = Tok.unsafe_fake_tok "<top_level>" in
-        Some IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = AST_generic.empty_id_info () }
+        Some IL.{ ident = ("<top_level>", fake_tok);
+                  sid = G.SId.unsafe_default;
+                  id_info = AST_generic.empty_id_info () }
       in
       let top_level_fn_id = [None; top_level_name] in
-      if not (List.mem top_level_fn_id !matching_funcs) then
-        matching_funcs := top_level_fn_id :: !matching_funcs
-    )
-  ) ranges;
+      if List.mem top_level_fn_id matching_funcs then
+        matching_funcs
+      else
+        top_level_fn_id :: matching_funcs
+    else
+      (* Sort by size and pick the smallest (innermost) *)
+      let sorted =
+        List.sort (fun (_, size1) (_, size2) -> compare size1 size2) funcs_list
+      in
+      let (innermost_fn_id, _) = List.hd sorted in
+      if List.mem innermost_fn_id matching_funcs then
+        matching_funcs
+      else
+        innermost_fn_id :: matching_funcs
+  ) [] ranges
 
-  !matching_funcs
 
 (* Compute the subgraph containing only functions relevant for taint flow
    from sources to sinks. This uses the nearest common descendant algorithm
