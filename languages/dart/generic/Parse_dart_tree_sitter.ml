@@ -600,25 +600,32 @@ and map_assertion (env : env) ((v1, v2, v3, v4, v5, v6) : CST.assertion) :
   let v6 = (* ")" *) token env v6 in
   (v1, (v2, v3 :: v4, v6))
 
-and map_assignable_expression (env : env) (x : CST.assignable_expression) : expr
-    =
-  match x with
-  | `Prim_assi_sele_part (v1, v2) ->
-      let v1 = map_primary env v1 in
-      let v2 = map_assignable_selector_part env v2 in
-      v2 v1
-  | `Super_unco_assi_sele (v1, v2) ->
-      let v1 = (* "super" *) token env v1 in
-      let expr = IdSpecial (Super, v1) |> G.e in
-      let v2 = map_unconditional_assignable_selector env v2 in
-      v2 expr
-  | `Cons_invo_assi_sele_part (v1, v2) ->
-      let v1 = map_constructor_invocation env v1 in
-      let v2 = map_assignable_selector_part env v2 in
-      v2 v1
-  | `Id tok ->
-      G.N (Id ((* pattern [a-zA-Z_$][\w$]* *) str env tok, empty_id_info ()))
-      |> G.e
+and map_assignable_expression (env : env) (p : CST.assignable_expression) : expr =
+  match p with
+  | `Choice_prim_assi_sele_part x ->
+      begin
+        match x with
+        | `Prim_assi_sele_part (v1, v2) ->
+            let v1 = map_primary env v1 in
+            let v2 = map_assignable_selector_part env v2 in
+            v2 v1
+        | `Super_unco_assi_sele (v1, v2) ->
+            let v1 = (* "super" *) token env v1 in
+            let expr = IdSpecial (Super, v1) |> G.e in
+            let v2 = map_unconditional_assignable_selector env v2 in
+            v2 expr
+        | `Cons_invo_assi_sele_part (v1, v2) ->
+            let v1 = map_constructor_invocation env v1 in
+            let v2 = map_assignable_selector_part env v2 in
+            v2 v1
+        | `Id tok ->
+            G.N (Id ((* pattern [a-zA-Z_$][\w$]* *) str env tok, empty_id_info ()))
+            |> G.e
+      end
+  | `Typed_meta (_v1, v2, v3, _v4) ->
+      let typ = map_type_ env v2 in
+      let id = (* semgrep_metavariable *) str env v3 in
+      G.TypedMetavar (id, fake ":", typ) |> G.e
 
 and map_assignable_selector (env : env) (x : CST.assignable_selector) :
     expr -> expr =
@@ -986,7 +993,7 @@ and map_expression (env : env) (x : CST.expression) : G.expr =
       let v2 = map_expression env v2 in
       let v3 = (* "...>" *) token env v3 in
       DeepEllipsis (v1, v2, v3) |> G.e
-
+    
 and map_expression_statement (env : env) (x : CST.expression_statement) : stmt =
   match x with
   | `Exp_semi (v1, v2) ->
@@ -1784,51 +1791,60 @@ and map_postfix_expression_ (env : env) (x : CST.postfix_expression_) =
       let v2 = map_selectors env v2 in
       v2 v1
 
-and map_primary (env : env) (x : CST.primary) : expr =
-  match x with
-  | `Lit x -> map_literal env x
-  | `Func_exp (v1, v2) ->
-      let _tparams, fparams = map_formal_parameter_part env v1 in
-      let fbody = map_function_expression_body env v2 in
-      Lambda
-        { fkind = (LambdaKind, fake "lambda"); fparams; frettype = None; fbody }
-      |> G.e
-  | `Id tok ->
-      N (Id ((* pattern [a-zA-Z_$][\w$]* *) str env tok, empty_id_info ()))
-      |> G.e
-  | `New_exp (v1, v2, v3, v4) ->
-      let v1 = (* "new" *) token env v1 in
-      let v2 = map_type_not_void env v2 in
-      (* Dunno what this means. *)
-      let _v3_TODO =
-        match v3 with
-        | Some x -> Some (map_dot_identifier env x)
-        | None -> None
-      in
-      let v4 = map_arguments env v4 in
-      New (v1, v2, empty_id_info (), v4) |> G.e
-  | `Const_obj_exp (v1, v2, v3, v4) ->
-      let v1 = (* const_builtin *) token env v1 in
-      let v2 = map_type_not_void env v2 in
-      let _v3_TODO =
-        match v3 with
-        | Some x -> Some (map_dot_identifier env x)
-        | None -> None
-      in
-      let v4 = map_arguments env v4 in
-      (* Seems to be similar to the above case, but with the
-         added stipulation it must be `const`.
-      *)
-      New (v1, v2, empty_id_info (), v4) |> G.e
-  | `LPAR_exp_RPAR x -> map_parenthesized_expression env x
-  | `This tok -> IdSpecial (This, (* "this" *) token env tok) |> G.e
-  | `Super_unco_assi_sele (v1, v2) ->
-      let v1 = (* "super" *) token env v1 in
-      let v1 = IdSpecial (Super, v1) |> G.e in
-      let v2 = map_unconditional_assignable_selector env v2 in
-      v2 v1
+and map_primary (env : env) (p : CST.primary) : expr =
+  match p with
+  | `Choice_lit x -> begin
+        match x with
+        | `Lit x -> map_literal env x
+        | `Func_exp (v1, v2) ->
+            let _tparams, fparams = map_formal_parameter_part env v1 in
+            let fbody = map_function_expression_body env v2 in
+            Lambda
+                { fkind = (LambdaKind, fake "lambda"); fparams; frettype = None; fbody }
+            |> G.e
+        | `Id tok ->
+            N (Id ((* pattern [a-zA-Z_$][\w$]* *) str env tok, empty_id_info ()))
+            |> G.e
+        | `New_exp (v1, v2, v3, v4) ->
+            let v1 = (* "new" *) token env v1 in
+            let v2 = map_type_not_void env v2 in
+            (* Dunno what this means. *)
+            let _v3_TODO =
+                match v3 with
+                | Some x -> Some (map_dot_identifier env x)
+                | None -> None
+            in
+            let v4 = map_arguments env v4 in
+            New (v1, v2, empty_id_info (), v4) |> G.e
+        | `Const_obj_exp (v1, v2, v3, v4) ->
+            let v1 = (* const_builtin *) token env v1 in
+            let v2 = map_type_not_void env v2 in
+            let _v3_TODO =
+                match v3 with
+                | Some x -> Some (map_dot_identifier env x)
+                | None -> None
+            in
+            let v4 = map_arguments env v4 in
+            (* Seems to be similar to the above case, but with the
+                added stipulation it must be `const`.
+            *)
+            New (v1, v2, empty_id_info (), v4) |> G.e
+        | `LPAR_exp_RPAR x -> map_parenthesized_expression env x
+        | `This tok -> IdSpecial (This, (* "this" *) token env tok) |> G.e
+        | `Super_unco_assi_sele (v1, v2) ->
+            let v1 = (* "super" *) token env v1 in
+            let v1 = IdSpecial (Super, v1) |> G.e in
+            let v2 = map_unconditional_assignable_selector env v2 in
+            v2 v1
+        end
+  | `Typed_meta (_v1, v2, v3, _v4) ->
+      let typ = map_type_ env v2 in
+      let id = (* semgrep_metavariable *) str env v3 in
+      G.TypedMetavar (id, fake ":", typ) |> G.e
 
-and map_real_expression (env : env) (x : CST.real_expression) : expr =
+and map_real_expression (env : env) (p : CST.real_expression) : expr =
+  match p with
+  | `Choice_cond_exp x -> begin
   match x with
   | `Cond_exp (v1, v2, v3, v4, v5) ->
       let v1 = map_real_expression env v1 in
@@ -1880,6 +1896,11 @@ and map_real_expression (env : env) (x : CST.real_expression) : expr =
       let v2 = map_type_test env v2 in
       v2 v1
   | `Un_exp x -> map_unary_expression env x
+  end
+  | `Typed_meta (_v1, v2, v3, _v4) ->
+      let typ = map_type_ env v2 in
+      let id = (* semgrep_metavariable *) str env v3 in
+      G.TypedMetavar (id, fake ":", typ) |> G.e
 
 and map_relational_expression (env : env) (x : CST.relational_expression) =
   match x with

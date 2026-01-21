@@ -1,0 +1,12 @@
+rules:
+- id: taint
+  languages: [dart]
+  message: "tainted data reached sink"
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        (UserData $FOO).getData()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
