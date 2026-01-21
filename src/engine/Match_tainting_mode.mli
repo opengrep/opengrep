@@ -32,6 +32,20 @@ val check_fundef :
   * This is a low-level function exposed for debugging purposes (-dfg_tainting).
   *)
 
+val check_rule :
+  Formula_cache.t ->
+  Rule.taint_rule ->
+  (Core_match.t list -> Core_match.t list) ->
+  ?signature_db:Shape_and_sig.signature_database ->
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?shared_call_graph:(Function_call_graph.FuncGraph.t * (AST_generic.name * AST_generic.name) list) option ->
+  Match_env.xconfig ->
+  Xtarget.t ->
+  Core_profiling.rule_profiling Core_result.match_result option * Shape_and_sig.signature_database option
+(** Check a single taint rule on a target. Returns both the match result and the
+  * computed signature database (when taint_intrafile is enabled).
+  *)
+
 val check_rules :
   match_hook:(Core_match.t list -> Core_match.t list) ->
   per_rule_boilerplate_fn:

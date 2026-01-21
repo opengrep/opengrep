@@ -30,6 +30,8 @@ and show_kind =
   | DumpPatternsOfRule of Fpath.t
   | DumpEnginePath of bool (* pro = true *)
   | DumpCommandForCore
+  | DumpIntrafileGraph of Fpath.t * Lang.t
+  | DumpTaintSignatures of Fpath.t * Fpath.t
 [@@deriving show]
 
 (*

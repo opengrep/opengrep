@@ -211,6 +211,59 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
   | DumpEnginePath _pro -> failwith "TODO: dump-engine-path not implemented yet"
   | DumpCommandForCore ->
       failwith "TODO: dump-command-for-core not implemented yet"
+  | DumpIntrafileGraph (file, lang) ->
+      let ast = Parse_target.parse_and_resolve_name_warn_if_partial lang file in
+      let graph = Function_call_graph.build_call_graph ~lang ast in
+      Function_call_graph.Dot.output_graph stdout graph;
+      Exit_code.ok ~__LOC__
+  | DumpTaintSignatures (rule_file, target_file) ->
+      let lang = Lang.lang_of_filename_exn target_file in
+      let rules =
+        match Parse_rule.parse rule_file with
+        | Ok rules -> rules
+        | Error e ->
+            Error.abort
+              (Common.spf "Failed to parse rule file %s: %s"
+                 (Fpath.to_string rule_file)
+                 (Rule_error.string_of_error e))
+      in
+      let rules =
+        rules
+        |> List.filter (fun r ->
+               match r.Rule.target_analyzer with
+               | Xlang.L (x, xs) -> List.mem lang (x :: xs)
+               | _ -> false)
+      in
+      let _search_rules, taint_rules, _extract_rules, _join_rules =
+        Rule.partition_rules rules
+      in
+      (match taint_rules with
+      | [] ->
+          print "No taint rules found for this language";
+          Exit_code.ok ~__LOC__
+      | rule :: _ ->
+          let xconf = Match_env.default_xconfig in
+          let xconf = { xconf with config = { xconf.config with taint_intrafile = true } } in
+          let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.Rule.options in
+          let tbl = Formula_cache.mk_specialized_formula_cache [] in
+          let xlang = Xlang.L (lang, []) in
+          let parser xlang file =
+            let { Parsing_result2.ast; skipped_tokens; _ } =
+              Parse_target.parse_and_resolve_name xlang file
+            in
+            (ast, skipped_tokens)
+          in
+          let xtarget = Xtarget.resolve parser (Target.mk_regular xlang Product.all (File target_file)) in
+          let _report, signature_db_opt =
+            Match_tainting_mode.check_rule tbl rule Fun.id xconf xtarget
+          in
+          (match signature_db_opt with
+          | None ->
+              print "No signatures extracted (taint_intrafile may be disabled)";
+              Exit_code.ok ~__LOC__
+          | Some signature_db ->
+              print (Shape_and_sig.show_signature_database signature_db);
+              Exit_code.ok ~__LOC__))
 
 (*****************************************************************************)
 (* Entry point *)
