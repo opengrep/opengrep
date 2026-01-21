@@ -167,7 +167,7 @@ let langs_of_filename filename =
   | FT.PL (FT.Web FT.Hack) -> [ Hack ]
   | FT.PL FT.Kotlin -> [ Kotlin ]
   | FT.PL FT.Lua -> [ Lua ]
-  | FT.PL (FT.Script "bash") -> [ Bash ]
+  | FT.PL (FT.Script ("bash" | "sh")) -> [ Bash ]
   | FT.PL FT.Rust -> [ Rust ]
   | FT.PL FT.Move -> [ Move_on_sui; Move_on_aptos ]
   | FT.PL FT.R -> [ R ]
