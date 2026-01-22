@@ -1,0 +1,19 @@
+(library
+ (name graph_lib)
+ (public_name callgraph.graph_lib)
+ (wrapped false)
+ (libraries
+  commons
+  semgrep.il
+  ast_generic
+  ocamlgraph
+  ppx_deriving_yojson.runtime
+  yojson
+  fpath
+ )
+ (preprocess
+  (pps
+   ppx_deriving.show
+   ppx_deriving.eq
+   ppx_deriving.ord
+   ppx_deriving_yojson)))

@@ -24,7 +24,7 @@ val hook_check_tainted_at_exit_sinks :
 val fixpoint :
   Taint_rule_inst.t ->
   ?in_env:Taint_lval_env.t ->
-  ?name:Shape_and_sig.fn_id ->
+  ?name:IL.name ->
   ?class_name:string ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->

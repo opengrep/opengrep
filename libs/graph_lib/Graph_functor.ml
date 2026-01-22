@@ -17,7 +17,7 @@ module Reachable (G_in : BIDIR) : sig
   val reverse_reachable_subgraph : graph -> vertex list -> graph
 
   (* Main: subgraph containing all paths from s1|s2 to the NEAREST common descendants.
-     “Nearest” is computed cycle-safely via SCC condensation minima inside R1 ∩ R2. *)
+     "Nearest" is computed cycle-safely via SCC condensation minima inside R1 ∩ R2. *)
   val nearest_common_descendant_subgraph : graph -> vertex -> vertex -> graph
 end = struct
   module G = G_in

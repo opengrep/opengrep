@@ -21,7 +21,7 @@ type signature_database = Shape_and_sig.signature_database
 val extract_signature :
   Taint_rule_inst.t ->
   ?in_env:Taint_lval_env.t ->
-  ?name:Shape_and_sig.fn_id ->
+  ?name:IL.name ->
   ?signature_db:signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   ?call_graph:Function_call_graph.FuncGraph.t option ->
@@ -41,7 +41,7 @@ val extract_signature_with_file_context :
   arity:int ->
   ?db:signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?name:Shape_and_sig.fn_id ->
+  name:IL.name ->
   ?method_properties:AST_generic.expr list ->
   ?call_graph:Function_call_graph.FuncGraph.t option ->
   Taint_rule_inst.t ->
@@ -63,10 +63,6 @@ val extract_method_properties :
   AST_generic.function_definition -> AST_generic.expr list
 (** Extract this.x and self.x property accesses from a function definition *)
 
-
-(*****************************************************************************)
-(* Batch extraction *)
-(*****************************************************************************)
 
 val detect_object_initialization : AST_generic.program -> Lang.t -> (AST_generic.name * AST_generic.name) list
 (** Detect object initialization patterns in the AST for the given language *)
