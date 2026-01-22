@@ -331,7 +331,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     Match_taint_spec.taint_config_of_rule ~per_file_formula_cache xconf lang
       file (ast, []) rule
   with
-  | None -> None
+  | None -> (None, None)
   | Some (taint_inst, spec_matches, expls) ->
       (* FIXME: This is no longer needed, now we can just check the type 'n'. *)
       let ctx = ref AST_to_IL.empty_ctx in
@@ -778,7 +778,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         else []
       in
       let report = { report with explanations } in
-      Some report
+      (Some report, final_signature_db)
 
 let check_rules ~match_hook
     ~(per_rule_boilerplate_fn :
@@ -911,9 +911,12 @@ let check_rules ~match_hook
                    ^ "\nruleid: "
                    ^ (rule.id |> fst |> Rule_ID.to_string))
                  (fun () ->
-                   check_rule per_file_formula_cache rule match_hook
-                     ?builtin_signature_db:rule_builtin_signature_db
-                     ~shared_call_graph:rule_shared_call_graph xconf xtarget)))
+                   let report, _signature_db =
+                     check_rule per_file_formula_cache rule match_hook
+                       ?builtin_signature_db:rule_builtin_signature_db
+                       ~shared_call_graph:rule_shared_call_graph xconf xtarget
+                   in
+                   report)))
   in
 
   results
