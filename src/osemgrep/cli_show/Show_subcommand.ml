@@ -227,43 +227,64 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
                  (Fpath.to_string rule_file)
                  (Rule_error.string_of_error e))
       in
-      let rules =
+      let has_disabled_intrafile (r: Rule.t) =
+        match r.Rule.options with
+        | Some {taint_intrafile = false; _} -> true
+        | _ -> false
+      in
+      let applicable_rules, non_applicable_rules =
         rules
-        |> List.filter (fun r ->
+        |> List.partition (fun r ->
                match r.Rule.target_analyzer with
-               | Xlang.L (x, xs) -> List.mem lang (x :: xs)
+               | Xlang.L (x, xs) when not (has_disabled_intrafile r) ->
+                 List.mem lang (x :: xs)
                | _ -> false)
       in
       let _search_rules, taint_rules, _extract_rules, _join_rules =
-        Rule.partition_rules rules
+        Rule.partition_rules applicable_rules
       in
+      let num_non_applicable = List.length non_applicable_rules in
+      if num_non_applicable > 0 then
+        print
+          (spf
+             "%d rule(s) were not applicable (check target_analyzer field \
+              and taint_intrafile rule option)"
+             num_non_applicable);
       (match taint_rules with
       | [] ->
-          print "No taint rules found for this language";
+          print "No applicable taint rules found";
           Exit_code.ok ~__LOC__
-      | rule :: _ ->
-          let xconf = Match_env.default_xconfig in
-          let xconf = { xconf with config = { xconf.config with taint_intrafile = true } } in
-          let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.Rule.options in
-          let tbl = Formula_cache.mk_specialized_formula_cache [] in
-          let xlang = Xlang.L (lang, []) in
-          let parser xlang file =
-            let { Parsing_result2.ast; skipped_tokens; _ } =
-              Parse_target.parse_and_resolve_name xlang file
+      | _ ->
+        List.iter
+          (fun rule ->
+            let xconf = Match_env.default_xconfig in
+            let xconf = { xconf with config = { xconf.config with taint_intrafile = true } } in
+            let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.Rule.options in
+            let tbl = Formula_cache.mk_specialized_formula_cache [] in
+            let xlang = Xlang.L (lang, []) in
+            let parser xlang file =
+              let { Parsing_result2.ast; skipped_tokens; _ } =
+                Parse_target.parse_and_resolve_name xlang file
+              in
+              (ast, skipped_tokens)
             in
-            (ast, skipped_tokens)
-          in
-          let xtarget = Xtarget.resolve parser (Target.mk_regular xlang Product.all (File target_file)) in
-          let _report, signature_db_opt =
-            Match_tainting_mode.check_rule tbl rule Fun.id xconf xtarget
-          in
-          (match signature_db_opt with
-          | None ->
-              print "No signatures extracted (taint_intrafile may be disabled)";
-              Exit_code.ok ~__LOC__
-          | Some signature_db ->
-              print (Shape_and_sig.show_signature_database signature_db);
-              Exit_code.ok ~__LOC__))
+            let xtarget =
+              Xtarget.resolve parser (Target.mk_regular xlang Product.all (File target_file))
+            in
+            let _report, signature_db_opt =
+              Match_tainting_mode.check_rule tbl rule Fun.id xconf xtarget
+            in
+            begin match signature_db_opt with
+            | None ->
+                print (spf "Could not obtain taint signatures for rule %s:\n"
+                         (Rule_ID.to_string (fst rule.Rule.id)));
+            | Some signature_db ->
+                print (spf "Taint signatures for rule %s:\n"
+                         (Rule_ID.to_string (fst rule.Rule.id)));
+                print (Shape_and_sig.show_signature_database signature_db)
+            end)
+          taint_rules;
+        Exit_code.ok ~__LOC__)
 
 (*****************************************************************************)
 (* Entry point *)
