@@ -6,6 +6,16 @@ on:
         description: the tag to use
         required: true
         type: string
+      skip_windows:
+        description: Skip Windows build (faster for Linux-only testing)
+        required: false
+        type: boolean
+        default: false
+      skip_osx:
+        description: Skip OSX build (faster for Linux-only testing)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -32,16 +42,19 @@ jobs:
     uses: ./.github/workflows/build-test-core-aarch64.yml
 
   build-osx-arm64:
+    if: ${{ inputs.skip_osx != true }}
     needs: validate-inputs
     uses: ./.github/workflows/build-test-osx.yml
 
   build-osx-x86:
+    if: ${{ inputs.skip_osx != true }}
     needs: validate-inputs
     uses: ./.github/workflows/build-test-osx.yml
     with:
       arch: x86_64
 
   build-windows-x86:
+    if: ${{ inputs.skip_windows != true }}
     needs: validate-inputs
     uses: ./.github/workflows/build-test-windows-x86.yml
 
@@ -66,16 +79,19 @@ jobs:
       arch: aarch64
 
   build-osx-binary-arm64:
+    if: ${{ inputs.skip_osx != true }}
     needs: build-osx-arm64
     uses: ./.github/workflows/build-osx-binary.yml
 
   build-osx-binary-x86:
+    if: ${{ inputs.skip_osx != true }}
     needs: build-osx-x86
     uses: ./.github/workflows/build-osx-binary.yml
     with:
       arch: x86_64
 
   build-windows-binary-x86:
+    if: ${{ inputs.skip_windows != true }}
     needs: build-windows-x86
     uses: ./.github/workflows/build-windows-binary-x86.yml
 
