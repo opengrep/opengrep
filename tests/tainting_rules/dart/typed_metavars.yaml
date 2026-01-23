@@ -6,7 +6,7 @@ rules:
   mode: taint
   pattern-sources:
     - pattern: |
-        (UserData $FOO).getData()
+        (C $FOO).getData()
   pattern-sinks:
     - pattern: |
         sink(...)
