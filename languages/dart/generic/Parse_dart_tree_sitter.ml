@@ -1926,13 +1926,13 @@ and map_selector (env : env) (x : CST.selector) : expr -> expr =
   | `Assi_sele x -> map_assignable_selector env x expr
   | `Arg_part x ->
       let _tyargs_TODO, args = map_argument_part env x in
-      (* Just by looking at the syntax, we cannot know when a(...) is *)
-      (* a function call or a "new" expression, because the "new" keyword *)
-      (* is optional. However, there is almost universal convention in *)
-      (* Dart that types begin with an uppercase, while everything else *)
-      (* with a lowercase character. We use this convention as a heuristic: *)
-      (* if an identifier starts with an uppercase char, we convert it to *)
-      (* G.New; othwerwise, it is a call. *)
+      (* Just by looking at the syntax, we cannot know when a(...) is 
+       * a function call or a "new" expression, because the "new" keyword 
+       * is optional. However, there is almost universal convention in 
+       * Dart that types begin with an uppercase, while everything else 
+       * with a lowercase character. We use this convention as a heuristic: 
+       * if an identifier starts with an uppercase char, we convert it to 
+       * G.New; othwerwise, it is a call. *)
       match expr.e with
       | N (Id ((s, _), id_info) as n)
         when String.length s > 0 && s.[0] >= 'A' && s.[0] <= 'Z' ->
