@@ -84,7 +84,7 @@ let tmp_file_counter = Atomic.make 0 (* Ensure that we never create the same fil
 let new_temp_file ?(prefix = default_temp_file_prefix) ?(suffix = "") ?temp_dir
     () =
   let cnt = Atomic.fetch_and_add tmp_file_counter 1 in
-  let pid = if !Common.jsoo then 42 else (Thread.id (Thread.self ())) (* UUnix.getpid () *) in
+  let pid = Thread.id (Thread.self ()) (* UUnix.getpid () *) in
   let temp_file =
     UFilename.temp_file
       ?temp_dir:(Option.map Fpath.to_string temp_dir)
@@ -142,15 +142,12 @@ let write_temp_file_with_autodelete ~prefix ~suffix ~data : Fpath.t =
 
 let replace_named_pipe_by_regular_file_if_needed ?(prefix = "named-pipe")
     (path : Fpath.t) : Fpath.t option =
-  if !Common.jsoo then None
-    (* don't bother supporting exotic things like fds if running in JS *)
-  else
-    match (UUnix.stat !!path).st_kind with
-    | Unix.S_FIFO ->
-        let data = UFile.read_file path in
-        let suffix = "-" ^ Fpath.basename path in
-        Some (write_temp_file_with_autodelete ~prefix ~suffix ~data)
-    | _ -> None
+  match (UUnix.stat !!path).st_kind with
+  | Unix.S_FIFO ->
+      let data = UFile.read_file path in
+      let suffix = "-" ^ Fpath.basename path in
+      Some (write_temp_file_with_autodelete ~prefix ~suffix ~data)
+  | _ -> None
 
 let replace_stdin_by_regular_file ?(prefix = "stdin") () : Fpath.t =
   let data = In_channel.input_all UStdlib.stdin in

@@ -77,27 +77,21 @@ module Legacy = struct
    unclear.
 *)
   let read_file ?(max_len = max_int) path =
-    if !jsoo then (
-      let ic = UStdlib.open_in_bin path in
-      let s = really_input_string ic (in_channel_length ic) in
-      close_in ic;
-      s)
-    else
-      let buf_len = 4096 in
-      let extbuf = Buffer.create 4096 in
-      let buf = Bytes.create buf_len in
-      let rec loop fd =
-        match Unix.read fd buf 0 buf_len with
-        | 0 -> Buffer.contents extbuf
-        | num_bytes ->
-            assert (num_bytes > 0);
-            assert (num_bytes <= buf_len);
-            Buffer.add_subbytes extbuf buf 0 num_bytes;
-            if Buffer.length extbuf >= max_len then Buffer.sub extbuf 0 max_len
-            else loop fd
-      in
-      let fd = UUnix.openfile path [ Unix.O_RDONLY ] 0 in
-      Common.protect ~finally:(fun () -> Unix.close fd) (fun () -> loop fd)
+    let buf_len = 4096 in
+    let extbuf = Buffer.create 4096 in
+    let buf = Bytes.create buf_len in
+    let rec loop fd =
+      match Unix.read fd buf 0 buf_len with
+      | 0 -> Buffer.contents extbuf
+      | num_bytes ->
+          assert (num_bytes > 0);
+          assert (num_bytes <= buf_len);
+          Buffer.add_subbytes extbuf buf 0 num_bytes;
+          if Buffer.length extbuf >= max_len then Buffer.sub extbuf 0 max_len
+          else loop fd
+    in
+    let fd = UUnix.openfile path [ Unix.O_RDONLY ] 0 in
+    Common.protect ~finally:(fun () -> Unix.close fd) (fun () -> loop fd)
 
   let write_file ~file s =
     let chan = UStdlib.open_out_bin file in
@@ -204,18 +198,10 @@ let with_open_out path func = Legacy.with_open_outfile !!path func
 let with_open_in path func = Legacy.with_open_infile !!path func
 
 let filesize file =
-  if not !Common.jsoo (* this does not work well with jsoo *) then
-    (UUnix.stat !!file).st_size
-    (* src: https://rosettacode.org/wiki/File_size#OCaml *)
-  else
-    let ic = UStdlib.open_in_bin !!file in
-    let i = in_channel_length ic in
-    close_in ic;
-    i
+  (UUnix.stat !!file).st_size
 
 let filemtime file =
-  if !Common.jsoo then failwith "JSOO:filemtime"
-  else (UUnix.stat !!file).st_mtime
+  (UUnix.stat !!file).st_mtime
 
 let is_dir ~follow_symlinks path =
   let stat = if follow_symlinks then UUnix.stat else UUnix.lstat in

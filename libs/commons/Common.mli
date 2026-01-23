@@ -275,10 +275,3 @@ module Operators : sig
   val ( == ) : Eq.hidden_by_your_nanny
   val ( != ) : Eq.hidden_by_your_nanny
 end
-
-(*****************************************************************************)
-(* Misc *)
-(*****************************************************************************)
-
-(* you should set this flag when you run code compiled by js_of_ocaml *)
-val jsoo : bool ref
