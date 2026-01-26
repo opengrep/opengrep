@@ -495,7 +495,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             (fun i fn_id ->
               Log.debug (fun m ->
                   let name =
-                    match Shape_and_sig.get_fn_name fn_id with
+                    match Function_call_graph.get_fn_name fn_id with
                     | Some n -> fst n.IL.ident
                     | None -> "<no-name>"
                   in
@@ -505,7 +505,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             (fun i fn_id ->
               Log.debug (fun m ->
                   let name =
-                    match Shape_and_sig.get_fn_name fn_id with
+                    match Function_call_graph.get_fn_name fn_id with
                     | Some n -> fst n.IL.ident
                     | None -> "<no-name>"
                   in

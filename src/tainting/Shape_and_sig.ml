@@ -687,32 +687,9 @@ end)
 (* Signature Database *)
 (*****************************************************************************)
 
-(* Function identifier as a path from outermost to innermost scope.
- * For example:
- * - [Some class_name; Some method_name; Some nested_fn] for nested function
- * - [Some class_name; Some method_name] for a method
- * - [Some fn_name] for a top-level function
- * - [] for top-level/anonymous
- *)
-type fn_id = IL.name option list
-[@@deriving show, eq, ord]
-
-(** Helper to create fn_id with both class and method name *)
-let make_fn_id_with_class class_name method_name =
-  [Some class_name; Some method_name]
-
-(** Helper to create fn_id with just a function name (no class) *)
-let make_fn_id_no_class name = [None; Some name]
-
 (* Function key for the signature database - uses just the function name (last element of fn_id).
    This matches the graph vertex type in Function_call_graph.ml. *)
 type func_key = Function_id.t
-
-(* Extract function key from fn_id - takes the last element *)
-let fn_id_to_func_key (fn_id : fn_id) : func_key option =
-  match List.rev fn_id with
-  | Some name :: _ -> Some (Function_id.of_il_name name)
-  | _ -> None
 
 module FunctionMap = Map.Make (Function_id)
 
@@ -738,7 +715,6 @@ type signature_database = {
 }
 
 (** Separate database for builtin function signatures.
-    Uses simple string keys (e.g., "map", "filter") instead of complex fn_id paths.
     This is for builtin stdlib functions that aren't in the call graph. *)
 module BuiltinMap = Map.Make(struct
   type t = string
@@ -780,19 +756,6 @@ let show_name (name_opt : IL.name option) =
   match name_opt with
   | Some name -> IL.show_ident name.ident
   | None -> ""
-
-let show_fn_id (fn_id : fn_id) : string =
-  match fn_id with
-  | [] -> "<anonymous>"
-  | path ->
-      path
-      |> List.map (fun name_opt ->
-          Option.value ~default:"<anon>" (Option.map (fun name -> fst name.IL.ident) name_opt))
-      |> String.concat "::"
-
-(** Extract the function name (last element) from the fn_id path *)
-let get_fn_name (fn_id : fn_id) : IL.name option =
-  List_.last_opt fn_id |> Option.join
 
 let empty_signature_database () : signature_database =
   { signatures = FunctionMap.empty; object_mappings = [] }

@@ -6,6 +6,29 @@ module Reachable = Graph_reachability
 
 (* Type for function information including AST node *)
 
+(* Function identifier as a path from outermost to innermost scope.
+ * For example:
+ * - [Some class_name; Some method_name; Some nested_fn] for nested function
+ * - [Some class_name; Some method_name] for a method
+ * - [Some fn_name] for a top-level function
+ * - [] for top-level/anonymous
+ *)
+type fn_id = IL.name option list
+[@@deriving show, eq, ord]
+
+let show_fn_id (fn_id : fn_id) : string =
+  match fn_id with
+  | [] -> "<anonymous>"
+  | path ->
+      path
+      |> List.map (fun name_opt ->
+          Option.value ~default:"<anon>" (Option.map (fun name -> fst name.IL.ident) name_opt))
+      |> String.concat "::"
+
+(** Extract the function name (last element) from the fn_id path *)
+let get_fn_name (fn_id : fn_id) : IL.name option =
+  List_.last_opt fn_id |> Option.join
+
 type func_info = {
   fn_id : fn_id;
   entity : G.entity option;
