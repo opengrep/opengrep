@@ -66,7 +66,6 @@ let show_node (n : node) : string = fst n.IL.ident
 
  (** Call graph edge - represents a call from one function to another *)
 type edge = {
-  callee_fn_id : IL.name;
   call_site : Pos.t;
 }
 [@@deriving show, eq, ord]
@@ -74,11 +73,6 @@ type edge = {
 (* Required by OCamlGraph's ConcreteBidirectionalLabeled functor.
    Never actually used since we always call G.add_edge_e with explicit labels. *)
 let default_edge = {
-  callee_fn_id = IL.{
-    ident = ("", Tok.unsafe_fake_tok "");
-    sid = AST_generic.SId.unsafe_default;
-    id_info = AST_generic.empty_id_info ();
-  };
   call_site = { Pos.bytepos = 0; line = 0; column = 0; file = Fpath.v "." };
 }
 
@@ -141,12 +135,12 @@ let pos_of_tok (tok : Tok.t) : Pos.t =
     { Pos.bytepos = loc.pos.bytepos; line = loc.pos.line; column = loc.pos.column; file = loc.pos.file }
 
 (* Helper to create an edge label from callee node and call site token *)
-let mk_edge_label (callee_node : node) (call_tok : Tok.t) : edge =
-  { callee_fn_id = callee_node; call_site = pos_of_tok call_tok }
+let mk_edge_label (call_tok : Tok.t) : edge =
+  { call_site = pos_of_tok call_tok }
 
 (* Helper to add an edge to the graph: src -> dst with call site info *)
 let add_edge (graph : G.t) ~(src : node) ~(dst : node) ~(call_tok : Tok.t) =
-  let edge_label = mk_edge_label src call_tok in
+  let edge_label = mk_edge_label call_tok in
   G.add_edge_e graph (G.E.create src edge_label dst)
 
 (* Query call graph to find callee node based on call site token *)
@@ -180,11 +174,10 @@ let lookup_callee_from_graph (graph : G.t option)
           let src = G.E.src edge in
           let dst = G.E.dst edge in
           Log.debug (fun m ->
-              m "CALL_GRAPH: Edge: %s -> %s (call_site=L%d:C%d, callee=%s)"
+              m "CALL_GRAPH: Edge: %s -> %s (call_site=L%d:C%d)"
                 (show_node src)
                 (show_node dst)
-                label.call_site.Pos.line label.call_site.Pos.column
-                (show_node label.callee_fn_id)))
+                label.call_site.Pos.line label.call_site.Pos.column))
         !all_edges;
 
       (* Find edge with matching call_site position *)
@@ -198,13 +191,12 @@ let lookup_callee_from_graph (graph : G.t option)
               Log.debug (fun m ->
                   m "CALL_GRAPH: MATCH FOUND! call_site=L%d:C%d, callee=%s"
                     label.call_site.Pos.line label.call_site.Pos.column
-                    (show_node label.callee_fn_id));
+                    (show_node (G.E.src edge)));
             matches)
       in
       match exact_match with
       | Some edge ->
-          let label = G.E.label edge in
-          Some label.callee_fn_id
+          Some (G.E.src edge) 
       | None ->
           (* Fallback: check for implicit/HOF edges by matching line 0 (fake position) *)
           !all_edges
@@ -212,6 +204,4 @@ let lookup_callee_from_graph (graph : G.t option)
               let label = G.E.label edge in
               (* Implicit edges have line 0 - match by callee name if call is to same function *)
               Int.equal label.call_site.Pos.line 0)
-          |> Option.map (fun edge ->
-              let label = G.E.label edge in
-              label.callee_fn_id)
+          |> Option.map G.E.src
