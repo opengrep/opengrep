@@ -1,15 +1,5 @@
 module Log = Log_call_graph.Log
 
-(* Call Graph Types - core types for call graph construction and analysis *)
-
-(** Position in a file (line/column) *)
-type position = { line : int; column : int [@key "character"] }
-[@@deriving yojson, eq, show, ord]
-
-(** Range in a file (start/end positions) *)
-type range = { start : position; end_ : position [@key "end"] }
-[@@deriving yojson, eq, show, ord]
-
 (** Function identifier - IL.name contains name string + token with file/position *)
 type function_id = IL.name option
 [@@deriving show, eq, ord]
