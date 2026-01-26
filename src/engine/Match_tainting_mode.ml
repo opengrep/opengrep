@@ -492,23 +492,15 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                 (List.length source_functions)
                 (List.length sink_functions));
           List.iteri
-            (fun i fn_id ->
+            (fun i id ->
               Log.debug (fun m ->
-                  let name =
-                    match Function_call_graph.get_fn_name fn_id with
-                    | Some n -> fst n.IL.ident
-                    | None -> "<no-name>"
-                  in
+                  let name = Function_id.show id in
                   m "SUBGRAPH: source_function[%d] = %s" i name))
             source_functions;
           List.iteri
-            (fun i fn_id ->
+            (fun i id ->
               Log.debug (fun m ->
-                  let name =
-                    match Function_call_graph.get_fn_name fn_id with
-                    | Some n -> fst n.IL.ident
-                    | None -> "<no-name>"
-                  in
+                  let name = Function_id.show id in
                   m "SUBGRAPH: sink_function[%d] = %s" i name))
             sink_functions;
 

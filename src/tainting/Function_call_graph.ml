@@ -862,7 +862,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
 
 (* Identify functions that contain byte ranges (from pattern matches) *)
 let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
-    (ranges : Range.t list) : fn_id list =
+    (ranges : Range.t list) : Function_id.t list =
   (* Hash table to track ALL functions containing each range, along with function size *)
   let range_to_funcs : (Range.t, (fn_id * int) list) Hashtbl.t = Hashtbl.create 10 in
   List.iter (fun range -> Hashtbl.add range_to_funcs range []) ranges;
@@ -1007,17 +1007,15 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       else
         innermost_fn_id :: matching_funcs
   ) [] ranges
-
+  |> List.filter_map fn_id_to_node
 
 (* Compute the subgraph containing only functions relevant for taint flow
    from sources to sinks. This uses the nearest common descendant algorithm
    to find all paths between source and sink functions. *)
-let compute_relevant_subgraph (graph : Call_graph.G.t) (sources : fn_id list)
-    (sinks : fn_id list) : Call_graph.G.t =
+let compute_relevant_subgraph (graph : Call_graph.G.t)
+    (sources : Function_id.t list) (sinks : Function_id.t list) : Call_graph.G.t =
   (* Convert fn_id lists to node lists *)
-  let source_nodes = List.filter_map fn_id_to_node sources in
-  let sink_nodes = List.filter_map fn_id_to_node sinks in
-  match (source_nodes, sink_nodes) with
+  match (sources, sinks) with
   | [], _ | _, [] ->
       (* No sources or sinks, return empty graph *)
       Call_graph.G.create ()
@@ -1035,8 +1033,8 @@ let compute_relevant_subgraph (graph : Call_graph.G.t) (sources : fn_id list)
               (* Add all vertices and edges from subgraph to result *)
               Call_graph.G.iter_vertex (Call_graph.G.add_vertex result) subgraph;
               Call_graph.G.iter_edges_e (Call_graph.G.add_edge_e result) subgraph)
-            sink_nodes)
-        source_nodes;
+            sinks)
+        sources;
       result
 
 (* Save graph to marshal file for use with graph-viewer.
