@@ -19,12 +19,6 @@ let reachable_subgraph (g : graph) (s : vertex) : graph =
   if not (G.mem_vertex sg s) then G.add_vertex sg s;
   sg
 
-let reachable_subgraph_many (g : graph) (seeds : vertex list) : graph =
-  (* simple & robust: union the single-source subgraphs *)
-  List.fold_left
-    (fun acc s -> Oper.union acc (reachable_subgraph g s))
-    (G.create ()) seeds
-
 (* reverse BFS view: successors := predecessors *)
 module Rev = struct
   include G
@@ -107,3 +101,31 @@ let nearest_common_descendant_subgraph (g : graph) (s1 : vertex) (s2 : vertex)
         g seed)
     mins;
   sg
+
+(* Compute the subgraph containing only functions relevant for taint flow
+   from sources to sinks. This uses the nearest common descendant algorithm
+   to find all paths between source and sink functions. *)
+let compute_relevant_subgraph (graph : Call_graph.G.t)
+    ~(sources : Function_id.t list) ~(sinks : Function_id.t list) : Call_graph.G.t =
+  (* Convert fn_id lists to node lists *)
+  match (sources, sinks) with
+  | [], _ | _, [] ->
+      (* No sources or sinks, return empty graph *)
+      Call_graph.G.create ()
+  | _ :: _, _ :: _ ->
+      (* Compute union of all nearest common descendant subgraphs
+         for each source-sink pair *)
+      let result = Call_graph.G.create () in
+      List.iter
+        (fun source_node ->
+          List.iter
+            (fun sink_node ->
+              let subgraph =
+                nearest_common_descendant_subgraph graph source_node sink_node
+              in
+              (* Add all vertices and edges from subgraph to result *)
+              Call_graph.G.iter_vertex (Call_graph.G.add_vertex result) subgraph;
+              Call_graph.G.iter_edges_e (Call_graph.G.add_edge_e result) subgraph)
+            sinks)
+        sources;
+      result

@@ -60,6 +60,11 @@ module Display = struct
 end
 
 module Dot = Graph.Graphviz.Dot (Display)
+    
+(* OCamlgraph: Use built-in algorithms *)
+module Topo = Graph.Topological.Make (G)
+module SCC = Graph.Components.Make (G)
+
 
 (** Node tracking for incremental updates *)
 let removed_node_keys : (string, unit) Hashtbl.t = Hashtbl.create 1000

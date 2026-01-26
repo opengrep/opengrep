@@ -6,6 +6,7 @@
   commons
   semgrep_core
   semgrep.il
+  semgrep.matching
   ast_generic
   ocamlgraph
   ppx_deriving_yojson.runtime

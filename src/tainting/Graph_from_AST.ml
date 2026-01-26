@@ -1,7 +1,7 @@
 open Common
 module G = AST_generic
-module Log = Log_tainting.Log
-open Shape_and_sig
+module Log = Log_call_graph.Log
+(*  *open Shape_and_sig *)
 module Reachable = Graph_reachability
 
 (* Type for function information including AST node *)
@@ -55,24 +55,8 @@ let fn_id_to_node (fn_id : fn_id) : node option =
   | Some name :: _ -> Some (Function_id.of_il_name name)
   | _ -> None
 
-(* Get node or fail - for cases where we know fn_id is valid *)
-let fn_id_to_node_exn (fn_id : fn_id) : node =
-  match fn_id_to_node fn_id with
-  | Some n -> n
-  | None -> failwith ("fn_id_to_node_exn: invalid fn_id: " ^ show_fn_id fn_id)
-
 (* Equality for fn_id using compare_fn_id *)
 let equal_fn_id f1 f2 = Int.equal (compare_fn_id f1 f2) 0
-
-(* Reuse graph types from Call_graph for consistency between intrafile and crossfile graphs *)
-type call_edge = Call_graph.edge
-
-(* OCamlgraph: Use built-in algorithms *)
-module Topo = Graph.Topological.Make (Call_graph.G)
-module SCC = Graph.Components.Make (Call_graph.G)
-
-(* Reuse Dot module from Call_graph *)
-module Dot = Call_graph.Dot
 
 (* Extract Go receiver type from method *)
 let extract_go_receiver_type (fdef : G.function_definition) : string option =
@@ -1008,36 +992,3 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
         innermost_fn_id :: matching_funcs
   ) [] ranges
   |> List.filter_map fn_id_to_node
-
-(* Compute the subgraph containing only functions relevant for taint flow
-   from sources to sinks. This uses the nearest common descendant algorithm
-   to find all paths between source and sink functions. *)
-let compute_relevant_subgraph (graph : Call_graph.G.t)
-    (sources : Function_id.t list) (sinks : Function_id.t list) : Call_graph.G.t =
-  (* Convert fn_id lists to node lists *)
-  match (sources, sinks) with
-  | [], _ | _, [] ->
-      (* No sources or sinks, return empty graph *)
-      Call_graph.G.create ()
-  | _ :: _, _ :: _ ->
-      (* Compute union of all nearest common descendant subgraphs
-         for each source-sink pair *)
-      let result = Call_graph.G.create () in
-      List.iter
-        (fun source_node ->
-          List.iter
-            (fun sink_node ->
-              let subgraph =
-                Reachable.nearest_common_descendant_subgraph graph source_node sink_node
-              in
-              (* Add all vertices and edges from subgraph to result *)
-              Call_graph.G.iter_vertex (Call_graph.G.add_vertex result) subgraph;
-              Call_graph.G.iter_edges_e (Call_graph.G.add_edge_e result) subgraph)
-            sinks)
-        sources;
-      result
-
-(* Save graph to marshal file for use with graph-viewer.
-   Since Call_graph.G = Call_graph.G, we can use Graph_serialization directly. *)
-let save_graph (graph : Call_graph.G.t) (path : string) =
-  Graph_serialization.save_graph graph path

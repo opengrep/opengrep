@@ -411,7 +411,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                         let go_receiver_name =
                           match lang with
                           | Lang.Go ->
-                              Function_call_graph.extract_go_receiver_type fdef
+                              Graph_from_AST.extract_go_receiver_type fdef
                           | _ -> None
                         in
                         let class_name_str =
@@ -464,7 +464,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             | Some (graph, _shared_mappings) -> graph
             | None ->
                 (* Compute call graph as before *)
-                Function_call_graph.build_call_graph ~lang
+                Graph_from_AST.build_call_graph ~lang
                   ~object_mappings:all_object_mappings ast
           in
 
@@ -479,11 +479,11 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             |> List.map (fun (rwm, _sink) -> rwm.Range_with_metavars.r)
           in
           let source_functions =
-            Function_call_graph.find_functions_containing_ranges ~lang ast
+            Graph_from_AST.find_functions_containing_ranges ~lang ast
               source_ranges
           in
           let sink_functions =
-            Function_call_graph.find_functions_containing_ranges ~lang ast
+            Graph_from_AST.find_functions_containing_ranges ~lang ast
               sink_ranges
           in
 
@@ -506,21 +506,21 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
 
           (* Write FULL call graph to dot file for debugging. Keeping for debugger *)
           (* let full_dot_file = open_out "call_graph_full.dot" in
-          Function_call_graph.Dot.output_graph full_dot_file call_graph;
+          Call_graph.Dot.output_graph full_dot_file call_graph;
           close_out full_dot_file;
           Log.debug (fun m -> m "FULL GRAPH: Wrote full call graph to call_graph_full.dot"); *)
           let relevant_graph =
-            Function_call_graph.compute_relevant_subgraph call_graph
-              source_functions sink_functions
+            Graph_reachability.compute_relevant_subgraph call_graph
+              ~sources:source_functions ~sinks:sink_functions
           in
 
           (* Write call graph to dot file for debugging *)
           (* let dot_file = open_out "call_graph.dot" in
-          Function_call_graph.Dot.output_graph dot_file relevant_graph;
+          Call_graph.Dot.output_graph dot_file relevant_graph;
           close_out dot_file;
           Log.debug (fun m -> m "SUBGRAPH: Wrote call graph to call_graph.dot"); *)
           let analysis_order =
-            Function_call_graph.Topo.fold
+            Call_graph.Topo.fold
               (fun fn acc -> fn :: acc)
               relevant_graph []
             |> List.rev
@@ -811,7 +811,7 @@ let check_rules ~match_hook
           Taint_signature_extractor.detect_object_initialization ast lang
         in
         let call_graph =
-          Function_call_graph.build_call_graph ~lang ~object_mappings ast
+          Graph_from_AST.build_call_graph ~lang ~object_mappings ast
         in
         LangMap.add lang (call_graph, object_mappings) acc)
       langs_needing_call_graph LangMap.empty

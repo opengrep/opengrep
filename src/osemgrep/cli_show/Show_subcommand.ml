@@ -213,8 +213,8 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
       failwith "TODO: dump-command-for-core not implemented yet"
   | DumpIntrafileGraph (file, lang) ->
       let ast = Parse_target.parse_and_resolve_name_warn_if_partial lang file in
-      let graph = Function_call_graph.build_call_graph ~lang ast in
-      Function_call_graph.Dot.output_graph stdout graph;
+      let graph = Graph_from_AST.build_call_graph ~lang ast in
+      Call_graph.Dot.output_graph stdout graph;
       Exit_code.ok ~__LOC__
   | DumpTaintSignatures (rule_file, target_file) ->
       let lang = Lang.lang_of_filename_exn target_file in

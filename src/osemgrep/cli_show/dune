@@ -15,7 +15,7 @@
 
     semgrep.parsing
     semgrep.parsing.tests ; Test_parsing.dump_tree_sitter_cst
-    semgrep.tainting ; Function_call_graph
+    semgrep.tainting
     semgrep.engine ; Match_tainting_mode
     semgrep.core_cli
     osemgrep_core

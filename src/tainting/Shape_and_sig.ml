@@ -688,7 +688,7 @@ end)
 (*****************************************************************************)
 
 (* Function key for the signature database - uses just the function name (last element of fn_id).
-   This matches the graph vertex type in Function_call_graph.ml. *)
+   This matches the graph vertex type in Call_graph.ml. *)
 type func_key = Function_id.t
 
 module FunctionMap = Map.Make (Function_id)
