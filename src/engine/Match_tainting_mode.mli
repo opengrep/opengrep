@@ -22,7 +22,7 @@ val check_fundef :
   ?class_name:string ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?call_graph:Function_call_graph.FuncGraph.t ->
+  ?call_graph:Call_graph.G.t ->
   AST_generic.function_definition ->
   IL.fun_cfg * Shape_and_sig.Effects.t * Dataflow_tainting.mapping
 (** Check a function definition using a [Dataflow_tainting.config] (which can
@@ -38,7 +38,7 @@ val check_rule :
   (Core_match.t list -> Core_match.t list) ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?shared_call_graph:(Function_call_graph.FuncGraph.t * (AST_generic.name * AST_generic.name) list) option ->
+  ?shared_call_graph:(Call_graph.G.t * (AST_generic.name * AST_generic.name) list) option ->
   Match_env.xconfig ->
   Xtarget.t ->
   Core_profiling.rule_profiling Core_result.match_result option * Shape_and_sig.signature_database option

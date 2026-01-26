@@ -1,3 +1,5 @@
+module Log = Log_call_graph.Log
+
 (* Call Graph Types - core types for call graph construction and analysis *)
 
 (** Position in a file (line/column) *)
@@ -60,7 +62,9 @@ let compare_node n1 n2 =
 let equal_node n1 n2 =
   (node_compare_key n1) = (node_compare_key n2)
 
-(** Call graph edge - represents a call from one function to another *)
+let show_node (n : node) : string = fst n.IL.ident
+
+ (** Call graph edge - represents a call from one function to another *)
 type edge = {
   callee_fn_id : IL.name;
   call_site : Pos.t;
@@ -126,3 +130,88 @@ let node_key (n : node) =
 let clear_removed_nodes () = Hashtbl.clear removed_node_keys
 let mark_node_removed (n : node) = Hashtbl.add removed_node_keys (node_key n) ()
 let was_node_removed (n : node) = Hashtbl.mem removed_node_keys (node_key n)
+
+(** Helpers **)
+
+let pos_of_tok (tok : Tok.t) : Pos.t =
+  if Tok.is_fake tok then
+    { Pos.bytepos = 0; line = 0; column = 0; file = Fpath.v "." }
+  else
+    let loc = Tok.unsafe_loc_of_tok tok in
+    { Pos.bytepos = loc.pos.bytepos; line = loc.pos.line; column = loc.pos.column; file = loc.pos.file }
+
+(* Helper to create an edge label from callee node and call site token *)
+let mk_edge_label (callee_node : node) (call_tok : Tok.t) : edge =
+  { callee_fn_id = callee_node; call_site = pos_of_tok call_tok }
+
+(* Helper to add an edge to the graph: src -> dst with call site info *)
+let add_edge (graph : G.t) ~(src : node) ~(dst : node) ~(call_tok : Tok.t) =
+  let edge_label = mk_edge_label src call_tok in
+  G.add_edge_e graph (G.E.create src edge_label dst)
+
+(* Query call graph to find callee node based on call site token *)
+let lookup_callee_from_graph (graph : G.t option)
+    (caller_node : node option) (call_tok : Tok.t) : node option =
+  match graph with
+  | None ->
+      Log.debug (fun m ->
+          m "CALL_GRAPH: Graph is None during lookup! caller=%s, call_tok=%s"
+            (Option.fold ~none:"<none>" ~some:show_node caller_node)
+            (Tok.content_of_tok call_tok));
+      None
+  | Some g ->
+      (* Don't check mem_vertex - just search ALL edges for matching call_site token.
+         We match purely on call site location. *)
+      Log.debug (fun m ->
+          m "CALL_GRAPH: Looking for call_tok at %s in caller context %s"
+            (Tok.content_of_tok call_tok)
+            (Option.fold ~none:"<none>" ~some:show_node caller_node));
+
+      (* Iterate through ALL edges in the graph *)
+      (* Convert call_tok to Pos.t for comparison *)
+      let call_pos = pos_of_tok call_tok in
+      let all_edges = ref [] in
+      G.iter_edges_e (fun e -> all_edges := e :: !all_edges) g;
+      Log.debug (fun m -> m "CALL_GRAPH: Searching %d total edges for call_tok at L%d:C%d"
+        (List.length !all_edges) call_pos.Pos.line call_pos.Pos.column);
+      (* Log all edges for debugging *)
+      List.iter (fun edge ->
+          let label = G.E.label edge in
+          let src = G.E.src edge in
+          let dst = G.E.dst edge in
+          Log.debug (fun m ->
+              m "CALL_GRAPH: Edge: %s -> %s (call_site=L%d:C%d, callee=%s)"
+                (show_node src)
+                (show_node dst)
+                label.call_site.Pos.line label.call_site.Pos.column
+                (show_node label.callee_fn_id)))
+        !all_edges;
+
+      (* Find edge with matching call_site position *)
+      let exact_match =
+        !all_edges
+        |> List.find_opt (fun edge ->
+            let label = G.E.label edge in
+            (* Compare by position *)
+            let matches = Pos.equal label.call_site call_pos in
+            if matches then
+              Log.debug (fun m ->
+                  m "CALL_GRAPH: MATCH FOUND! call_site=L%d:C%d, callee=%s"
+                    label.call_site.Pos.line label.call_site.Pos.column
+                    (show_node label.callee_fn_id));
+            matches)
+      in
+      match exact_match with
+      | Some edge ->
+          let label = G.E.label edge in
+          Some label.callee_fn_id
+      | None ->
+          (* Fallback: check for implicit/HOF edges by matching line 0 (fake position) *)
+          !all_edges
+          |> List.find_opt (fun edge ->
+              let label = G.E.label edge in
+              (* Implicit edges have line 0 - match by callee name if call is to same function *)
+              Int.equal label.call_site.Pos.line 0)
+          |> Option.map (fun edge ->
+              let label = G.E.label edge in
+              label.callee_fn_id)

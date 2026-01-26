@@ -121,7 +121,7 @@ type env = {
       (** Signature database for inter-procedural taint analysis *)
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
       (** Builtin signature database for standard library functions *)
-  call_graph : Function_call_graph.FuncGraph.t option;
+  call_graph : Call_graph.G.t option;
       (** Call graph for edge-based signature lookup *)
   class_name : string option;
       (** Class name if we're analyzing a method, None for standalone functions
@@ -633,79 +633,13 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
-(* Query call graph to find callee node based on call site token *)
-let lookup_callee_from_graph (graph : Function_call_graph.FuncGraph.t option)
-    (caller_node : Function_call_graph.node option) (call_tok : Tok.t) : Function_call_graph.node option =
-  match graph with
-  | None ->
-      Log.debug (fun m ->
-          m "CALL_GRAPH: Graph is None during lookup! caller=%s, call_tok=%s"
-            (Option.fold ~none:"<none>" ~some:Function_call_graph.show_node caller_node)
-            (Tok.content_of_tok call_tok));
-      None
-  | Some g ->
-      (* Don't check mem_vertex - just search ALL edges for matching call_site token.
-         We match purely on call site location. *)
-      Log.debug (fun m ->
-          m "CALL_GRAPH: Looking for call_tok at %s in caller context %s"
-            (Tok.content_of_tok call_tok)
-            (Option.fold ~none:"<none>" ~some:Function_call_graph.show_node caller_node));
-
-      (* Iterate through ALL edges in the graph *)
-      (* Convert call_tok to Pos.t for comparison *)
-      let call_pos = Function_call_graph.pos_of_tok call_tok in
-      let all_edges = ref [] in
-      Function_call_graph.FuncGraph.iter_edges_e (fun e -> all_edges := e :: !all_edges) g;
-      Log.debug (fun m -> m "CALL_GRAPH: Searching %d total edges for call_tok at L%d:C%d"
-        (List.length !all_edges) call_pos.Pos.line call_pos.Pos.column);
-      (* Log all edges for debugging *)
-      List.iter (fun edge ->
-          let label = Function_call_graph.FuncGraph.E.label edge in
-          let src = Function_call_graph.FuncGraph.E.src edge in
-          let dst = Function_call_graph.FuncGraph.E.dst edge in
-          Log.debug (fun m ->
-              m "CALL_GRAPH: Edge: %s -> %s (call_site=L%d:C%d, callee=%s)"
-                (Function_call_graph.show_node src)
-                (Function_call_graph.show_node dst)
-                label.call_site.Pos.line label.call_site.Pos.column
-                (Function_call_graph.show_node label.callee_fn_id)))
-        !all_edges;
-
-      (* Find edge with matching call_site position *)
-      let exact_match =
-        !all_edges
-        |> List.find_opt (fun edge ->
-            let label = Function_call_graph.FuncGraph.E.label edge in
-            (* Compare by position *)
-            let matches = Pos.equal label.call_site call_pos in
-            if matches then
-              Log.debug (fun m ->
-                  m "CALL_GRAPH: MATCH FOUND! call_site=L%d:C%d, callee=%s"
-                    label.call_site.Pos.line label.call_site.Pos.column
-                    (Function_call_graph.show_node label.callee_fn_id));
-            matches)
-      in
-      match exact_match with
-      | Some edge ->
-          let label = Function_call_graph.FuncGraph.E.label edge in
-          Some label.callee_fn_id
-      | None ->
-          (* Fallback: check for implicit/HOF edges by matching line 0 (fake position) *)
-          !all_edges
-          |> List.find_opt (fun edge ->
-              let label = Function_call_graph.FuncGraph.E.label edge in
-              (* Implicit edges have line 0 - match by callee name if call is to same function *)
-              Int.equal label.call_site.Pos.line 0)
-          |> Option.map (fun edge ->
-              let label = Function_call_graph.FuncGraph.E.label edge in
-              label.callee_fn_id)
 
 let get_signature_for_object graph caller_node db method_name obj arity =
   (* Method call: obj.method() *)
   (* Use obj's token (start of call expression) to match edge labels *)
   let call_tok = snd obj.ident in
   (* First try to look up via call graph to get the correct node with definition token *)
-  match lookup_callee_from_graph graph caller_node call_tok with
+  match Call_graph.lookup_callee_from_graph graph caller_node call_tok with
   | Some callee_node ->
       Shape_and_sig.(lookup_signature db callee_node arity)
   | None -> Shape_and_sig.lookup_signature db method_name arity
@@ -754,7 +688,7 @@ let lookup_signature_with_object_context env fun_exp arity =
                 | _ -> snd name.ident)
             | NoOrig -> snd name.ident
           in
-          (match lookup_callee_from_graph env.call_graph env.func.name call_tok with
+          (match Call_graph.lookup_callee_from_graph env.call_graph env.func.name call_tok with
           | Some callee_node ->
               Shape_and_sig.(lookup_signature db callee_node arity)
           | None ->
@@ -776,7 +710,7 @@ let lookup_signature_with_object_context env fun_exp arity =
           (* First try to look up via call graph to get the correct fn_id *)
           (* Use self_tok (start of call expression) to match edge labels *)
           let call_tok = self_tok in
-          match lookup_callee_from_graph env.call_graph env.func.name call_tok with
+          match Call_graph.lookup_callee_from_graph env.call_graph env.func.name call_tok with
           | Some callee_node ->
               Shape_and_sig.(lookup_signature db callee_node arity)
           | None ->
@@ -803,7 +737,7 @@ let lookup_signature env fun_exp =
   Log.debug (fun m ->
       m "LOOKUP_SIG_ENTRY: Looking up %s from caller %s"
         (Display_IL.string_of_exp fun_exp)
-        (Option.fold ~none:"<none>" ~some:Function_call_graph.show_node env.func.name));
+        (Option.fold ~none:"<none>" ~some:Call_graph.show_node env.func.name));
   lookup_signature_with_object_context env fun_exp
 
 (*****************************************************************************)
@@ -2807,7 +2741,7 @@ and (fixpoint :
       ?name:IL.name ->
       ?class_name:string ->
       ?signature_db:Shape_and_sig.signature_database ->
-      ?call_graph:Function_call_graph.FuncGraph.t ->
+      ?call_graph:Call_graph.G.t ->
       ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
       F.fun_cfg ->
       Effects.t * mapping) =

@@ -1,9 +1,10 @@
 (library
- (name graph_lib)
- (public_name callgraph.graph_lib)
+ (name call_graph)
+ (public_name semgrep.call_graph)
  (wrapped false)
  (libraries
   commons
+  semgrep_core
   semgrep.il
   ast_generic
   ocamlgraph

@@ -280,7 +280,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(shared_call_graph :
-        (Function_call_graph.FuncGraph.t * (G.name * G.name) list) option =
+        (Call_graph.G.t * (G.name * G.name) list) option =
       None) (xconf : Match_env.xconfig) (xtarget : Xtarget.t) =
   Log.info (fun m ->
       m

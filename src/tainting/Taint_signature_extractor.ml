@@ -211,7 +211,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
 let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
     ?(name : IL.name option) ?(signature_db : signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Function_call_graph.FuncGraph.t option = None)
+    ?(call_graph : Call_graph.G.t option = None)
     (func_cfg : IL.fun_cfg) : extraction_result =
   let params = Signature.of_IL_params func_cfg.params in
   let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
@@ -385,7 +385,7 @@ let extract_signature_with_file_context
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ~(name : IL.name)
     ?(method_properties : AST_generic.expr list = [])
-    ?(call_graph : Function_call_graph.FuncGraph.t option = None)
+    ?(call_graph : Call_graph.G.t option = None)
     (taint_inst : Taint_rule_inst.t)
     func_cfg
     (ast : G.program) : signature_database * Signature.t =

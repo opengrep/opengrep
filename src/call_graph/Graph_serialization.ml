@@ -1,6 +1,6 @@
 (* Graph serialization - save/load/export functions for call graphs *)
 
-open Call_graph_types
+open Call_graph
 
 (* Convert path to file:// URI *)
 let fpath_to_uri path = "file://" ^ Fpath.to_string path

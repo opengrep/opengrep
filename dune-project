@@ -566,7 +566,7 @@ Uses indentation and standard braces to determine a crude parse tree
   (description "XXX")
 )
 
-(package (name callgraph)
+(package (name call_graph)
   (synopsis "Call graph infrastructure for opengrep")
   (description "Call graph construction, serialization, and analysis utilities.")
 )
