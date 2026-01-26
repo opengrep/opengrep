@@ -29,7 +29,7 @@ type node = Call_graph.node
 (* Extract graph node from fn_id - takes the last element *)
 let fn_id_to_node (fn_id : fn_id) : node option =
   match List.rev fn_id with
-  | Some name :: _ -> Some name
+  | Some name :: _ -> Some (Function_id.of_il_name name)
   | _ -> None
 
 (* Get node or fail - for cases where we know fn_id is valid *)
@@ -633,7 +633,8 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
   (* Create a special top_level node to represent code outside functions *)
   let top_level_node : node =
     let fake_tok = Tok.unsafe_fake_tok "<top_level>" in
-    IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = AST_generic.empty_id_info () }
+    let il_name = IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = AST_generic.empty_id_info () } in
+    Function_id.of_il_name il_name
   in
   Call_graph.G.add_vertex graph top_level_node;
 
@@ -807,7 +808,8 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     (* Create Class:* node *)
     let class_init_node : node =
       let fake_tok = Tok.unsafe_fake_tok ("Class:" ^ class_str) in
-      IL.{ ident = ("Class:" ^ class_str, fake_tok); sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
+      let il_name = IL.{ ident = ("Class:" ^ class_str, fake_tok); sid = G.SId.unsafe_default; id_info = G.empty_id_info () } in
+      Function_id.of_il_name il_name
     in
     Call_graph.G.add_vertex graph class_init_node;
 

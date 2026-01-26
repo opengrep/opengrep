@@ -706,32 +706,15 @@ let make_fn_id_no_class name = [None; Some name]
 
 (* Function key for the signature database - uses just the function name (last element of fn_id).
    This matches the graph vertex type in Function_call_graph.ml. *)
-type func_key = IL.name
-
-(* Compare IL.name by string name and position to differentiate functions with
-   the same name in different modules/classes. This matches FuncVertex
-   in Function_call_graph.ml. *)
-let compare_func_key n1 n2 =
-  let open Tok in
-  let st = String.compare (fst n1.IL.ident) (fst n2.IL.ident) in
-  if st <> 0 then st
-  else
-    match (snd n1.IL.ident, snd n2.IL.ident) with
-    | FakeTok _, FakeTok _ -> 0
-    | FakeTok _, _ -> -1
-    | _, FakeTok _ -> 1
-    | _ -> Tok.compare_pos (snd n1.IL.ident) (snd n2.IL.ident)
+type func_key = Function_id.t
 
 (* Extract function key from fn_id - takes the last element *)
 let fn_id_to_func_key (fn_id : fn_id) : func_key option =
   match List.rev fn_id with
-  | Some name :: _ -> Some name
+  | Some name :: _ -> Some (Function_id.of_il_name name)
   | _ -> None
 
-module FunctionMap = Map.Make (struct
-  type t = func_key
-  let compare = compare_func_key
-end)
+module FunctionMap = Map.Make (Function_id)
 
 type extended_sig = {
   sig_ : Signature.t;
@@ -814,7 +797,7 @@ let get_fn_name (fn_id : fn_id) : IL.name option =
 let empty_signature_database () : signature_database =
   { signatures = FunctionMap.empty; object_mappings = [] }
 
-let lookup_signature (db : signature_database) (name : IL.name) (arity : int)
+let lookup_signature (db : signature_database) (name : Function_id.t) (arity : int)
     : Signature.t option =
   let signatures = FunctionMap.find_opt name db.signatures in
   match signatures with
@@ -833,7 +816,7 @@ let lookup_signature (db : signature_database) (name : IL.name) (arity : int)
         else None
   | _ -> None
 
-let add_signature (db : signature_database) (name : IL.name)
+let add_signature (db : signature_database) (name : Function_id.t)
     (signature : extended_sig) : signature_database =
   let signatures =
     FunctionMap.update name
@@ -855,7 +838,7 @@ let get_object_mappings (db : signature_database) :
   db.object_mappings
 
 let show_func_key (key : func_key) : string =
-  fst key.IL.ident
+  Function_id.show_debug key
 
 let show_signature_database (db : signature_database) : string =
   FunctionMap.fold

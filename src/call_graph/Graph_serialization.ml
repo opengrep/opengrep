@@ -28,37 +28,31 @@ let export_dot (graph : G.t) (path : string) =
 let graph_to_json (graph : G.t) : Yojson.Basic.t =
   (* Generate unique node ID from name, file, line, col - avoids hash collisions *)
   let node_unique_id v =
-    let name = fst v.IL.ident in
-    let tok = snd v.IL.ident in
-    if Tok.is_fake tok then
-      Printf.sprintf "%s|unknown|0|0" name
-    else
-      let file = Fpath.to_string (Tok.file_of_tok tok) in
-      let line = Tok.line_of_tok tok in
-      let col = Tok.col_of_tok tok in
-      Printf.sprintf "%s|%s|%d|%d" name file line col
+    let name = Function_id.show v in 
+    let file, line, col = Function_id.to_file_line_col v in
+    Printf.sprintf "%s|%s|%d|%d" name file line col
   in
   let node_to_json v =
+    let name = Function_id.show v in 
+    let file, line, _col = Function_id.to_file_line_col v in
     let id = node_unique_id v in
-    let label = fst v.IL.ident in
-    let tok = snd v.IL.ident in
-    let file, line =
-      if Tok.is_fake tok then ("unknown", 0)
-      else (fpath_to_uri (Tok.file_of_tok tok), Tok.line_of_tok tok)
+    let uri = if file = "unknown" then file else "file://" ^ file in
+    let label =
+      if name = "<top_level>" then
+        let filename =
+          if file = "unknown" then "unknown_file"
+          else Filename.basename @@ file
+        in
+        name ^ "\n" ^ filename
+      else name
     in
-    let label = if label = "<top_level>" then
-      let filename = if Tok.is_fake tok then "unknown_file"
-        else Filename.basename @@ Fpath.to_string (Tok.file_of_tok tok)
-      in
-      label ^ "\n" ^ filename
-    else label in
     (id, `Assoc [
       ("key", `String id);
       ("attributes", `Assoc [
         ("label", `String label);
         ("size", `Int 5);
         ("color", `String "#0074D9");
-        ("file", `String file);
+        ("file", `String uri);
         ("line", `Int line);
         ("endLine", `Int (line + 20));
         ("fullLabel", `String label);

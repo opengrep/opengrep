@@ -407,7 +407,7 @@ let extract_signature_with_file_context
     extract_signature taint_inst ~in_env:combined_global_env ~name
       ~signature_db:db ?builtin_signature_db ~call_graph func_cfg
   in
-  let updated_db = Shape_and_sig.add_signature db name {sig_ = signature; arity} in
+  let updated_db = Shape_and_sig.add_signature db (Function_id.of_il_name name) {sig_ = signature; arity} in
   (updated_db, signature)
 
 let show_signature_extraction func_name signature =

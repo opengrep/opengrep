@@ -362,8 +362,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           let add_info info (infos, info_map) =
             let infos = info :: infos in
             let info_map =
-              if Shape_and_sig.FunctionMap.mem info.name info_map then info_map
-              else Shape_and_sig.FunctionMap.add info.name info info_map
+              if Shape_and_sig.FunctionMap.mem (Function_id.of_il_name info.name) info_map then info_map
+              else Shape_and_sig.FunctionMap.add (Function_id.of_il_name info.name) info info_map
             in
             (infos, info_map)
           in
@@ -539,7 +539,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           List.iteri
             (fun i node ->
               Log.debug (fun m ->
-                  m "TAINT_TOPO: [%d] %s" i (fst node.IL.ident)))
+                  m "TAINT_TOPO: [%d] %s" i (Function_id.show node)))
             analysis_order;
 
           let process_fun_info info db =
@@ -590,7 +590,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             List.fold_left
               (fun db node ->
                 Log.debug (fun m ->
-                    m "TAINT_SIGBUILD: Processing %s" (fst node.IL.ident));
+                    m "TAINT_SIGBUILD: Processing %s" (Function_id.show node));
                 match Shape_and_sig.FunctionMap.find_opt node info_map with
                 | None ->
                     Log.debug (fun m ->

@@ -633,13 +633,13 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
-
 let get_signature_for_object graph caller_node db method_name obj arity =
   (* Method call: obj.method() *)
   (* Use obj's token (start of call expression) to match edge labels *)
   let call_tok = snd obj.ident in
   (* First try to look up via call graph to get the correct node with definition token *)
-  match Call_graph.lookup_callee_from_graph graph caller_node call_tok with
+  match Call_graph.lookup_callee_from_graph
+          graph (Option.map Function_id.of_il_name caller_node) call_tok with
   | Some callee_node ->
       Shape_and_sig.(lookup_signature db callee_node arity)
   | None -> Shape_and_sig.lookup_signature db method_name arity
@@ -688,17 +688,22 @@ let lookup_signature_with_object_context env fun_exp arity =
                 | _ -> snd name.ident)
             | NoOrig -> snd name.ident
           in
-          (match Call_graph.lookup_callee_from_graph env.call_graph env.func.name call_tok with
+          (match
+            Call_graph.lookup_callee_from_graph
+              env.call_graph
+              (Option.map Function_id.of_il_name env.func.name)
+              call_tok
+           with
           | Some callee_node ->
               Shape_and_sig.(lookup_signature db callee_node arity)
           | None ->
               (* Graph lookup failed - try class context or direct lookup *)
               match env.class_name with
               | Some _ ->
-                  Shape_and_sig.lookup_signature db name arity
+                  Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity
               | None ->
                   let func_name = fst name.ident in
-                  let result = Shape_and_sig.lookup_signature db name arity in
+                  let result = Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity in
                   try_builtin_fallback env func_name arity result)
       | Fetch
           {
@@ -710,13 +715,26 @@ let lookup_signature_with_object_context env fun_exp arity =
           (* First try to look up via call graph to get the correct fn_id *)
           (* Use self_tok (start of call expression) to match edge labels *)
           let call_tok = self_tok in
-          match Call_graph.lookup_callee_from_graph env.call_graph env.func.name call_tok with
+          match
+            Call_graph.lookup_callee_from_graph
+              env.call_graph
+              (Option.map Function_id.of_il_name env.func.name)
+              call_tok
+          with
           | Some callee_node ->
               Shape_and_sig.(lookup_signature db callee_node arity)
           | None ->
-              Shape_and_sig.lookup_signature db method_name arity)
+              Shape_and_sig.lookup_signature db (Function_id.of_il_name method_name) arity)
       | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] } -> (
-          match get_signature_for_object env.call_graph env.func.name db method_name obj arity with
+          match
+            get_signature_for_object
+              env.call_graph
+              env.func.name
+              db
+              (Function_id.of_il_name method_name)
+              obj
+              arity
+          with
           | Some _ as result -> result
           | None ->
               (* Fallback: try qualified function name (Module.function for Elixir, etc.) *)
@@ -727,7 +745,7 @@ let lookup_signature_with_object_context env fun_exp arity =
                   id_info = method_name.id_info;
                 }
               in
-              let result = Shape_and_sig.lookup_signature db qualified_name arity in
+              let result = Shape_and_sig.lookup_signature db (Function_id.of_il_name qualified_name) arity in
               (* Try builtin fallback - first with qualified name, then with just method name *)
               let result = try_builtin_fallback env (fst qualified_name.ident) arity result in
               try_builtin_fallback env (fst method_name.ident) arity result)
@@ -737,7 +755,7 @@ let lookup_signature env fun_exp =
   Log.debug (fun m ->
       m "LOOKUP_SIG_ENTRY: Looking up %s from caller %s"
         (Display_IL.string_of_exp fun_exp)
-        (Option.fold ~none:"<none>" ~some:Call_graph.show_node env.func.name));
+        (Option.fold ~none:"<none>" ~some:Call_graph.show_node (Option.map Function_id.of_il_name env.func.name)));
   lookup_signature_with_object_context env fun_exp
 
 (*****************************************************************************)
@@ -2120,7 +2138,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
             match (lval.base, env.signature_db, anon_entity) with
             | Var lambda_name, Some db, Lambda fdef ->
                 let arity = List.length fdef.fparams in
-                (match Shape_and_sig.lookup_signature db lambda_name arity with
+                (match Shape_and_sig.lookup_signature db (Function_id.of_il_name lambda_name) arity with
                 | Some sig_ ->
                     let fun_shape = S.Fun sig_ in
                     Log.debug (fun m ->
@@ -2869,7 +2887,7 @@ and (fixpoint :
                      { Signature.params; effects = lambda_effects }
                    in
                    let arity = List.length lambda_cfg.params in
-                   Shape_and_sig.add_signature acc_db lambda_name
+                   Shape_and_sig.add_signature acc_db (Function_id.of_il_name lambda_name)
                      { sig_ = signature; arity }
                  with
                  | e ->
