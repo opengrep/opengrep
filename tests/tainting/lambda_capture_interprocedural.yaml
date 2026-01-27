@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-capture-interprocedural
+    mode: taint
+    languages: [typescript, javascript]
+    message: "Taint flows through captured variable in lambda to interprocedural sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: props
+    pattern-sinks:
+      - pattern: window.location.href = $X

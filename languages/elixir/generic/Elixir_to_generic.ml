@@ -194,6 +194,65 @@ let args_of_do_block_opt (blopt : do_block_generic option) : G.argument list =
       List_.map argument_of_pair kwds
 
 (*****************************************************************************)
+(* Short Lambda / Capture helpers *)
+(*****************************************************************************)
+
+(** Find the maximum placeholder number in a ShortLambda body.
+    E.g., in &(foo(&1, &3)), returns 3. Recursively searches all subexpressions. *)
+let find_max_placeholder (e : G.expr) : int =
+  let max_found = ref 0 in
+  let visitor =
+    object
+      inherit [_] AST_generic.iter_no_id_info as super
+
+      method! visit_expr env expr =
+        (match expr.G.e with
+        | G.OtherExpr
+            (("PlaceHolder", _), [ G.E { e = G.L (G.Int (Some n, _)); _ } ]) ->
+            max_found := max !max_found (Int64.to_int n)
+        | _ -> super#visit_expr env expr)
+    end
+  in
+  visitor#visit_expr () e;
+  !max_found
+
+(** Replace placeholder references with parameter names.
+     Recursively replaces in all subexpressions. *)
+let replace_placeholders (e : G.expr) : G.expr =
+  let mapper =
+    object
+      inherit [_] AST_generic.map as super
+
+      method! visit_expr env expr =
+        match expr.G.e with
+        | G.OtherExpr
+            (("PlaceHolder", _), [ G.E { e = G.L (G.Int (Some n, tk)); _ } ]) ->
+            let param_name = Printf.sprintf "&%Ld" n in
+            let param_id = (param_name, tk) in
+            G.N (G.Id (param_id, G.empty_id_info ())) |> G.e
+        | _ -> super#visit_expr env expr
+    end
+  in
+  mapper#visit_expr () e
+
+(** Convert a ShortLambda/Capture body to OtherExpr with params and body.
+    Creates params &1, &2, ... based on placeholders.
+    Structure: OtherExpr("ShortLambda", [Params [...]; S body_stmt])
+    This allows Naming_AST to create proper scope for the params. *)
+let convert_short_lambda (tok : Tok.t) (body_expr : G.expr) : G.expr =
+  let max_placeholder = find_max_placeholder body_expr in
+  let replaced_body = replace_placeholders body_expr in
+  let params =
+    List.init max_placeholder (fun i ->
+        let param_name = Printf.sprintf "&%d" (i + 1) in
+        let param_id = (param_name, tok) in
+        G.Param (G.param_of_id param_id))
+  in
+  let body_stmt = G.ExprStmt (replaced_body, G.sc) |> G.s in
+  (* Structure that Naming_AST can recognize for scope handling *)
+  G.OtherExpr (("ShortLambda", tok), [ G.Params params; G.S body_stmt ]) |> G.e
+
+(*****************************************************************************)
 (* Boilerplate *)
 (*****************************************************************************)
 
@@ -575,12 +634,14 @@ and map_expr env v : G.expr =
       let fdef = { fdef with fkind = (G.LambdaKind, tfn) } in
       G.Lambda fdef |> G.e
   | Capture (tamp, v2) ->
+      (* Convert capture with placeholders to lambda wrapped in ShortLambda *)
       let e = map_expr env v2 in
-      G.OtherExpr (("Capture", tamp), [ G.E e ]) |> G.e
+      convert_short_lambda tamp e
   | ShortLambda (tamp, (l, v2, r)) ->
+      (* Convert short lambda with placeholders to lambda wrapped in ShortLambda *)
       let e = map_expr env v2 in
       H.set_e_range l r e;
-      G.OtherExpr (("ShortLambda", tamp), [ G.E e ]) |> G.e
+      convert_short_lambda tamp e
   | PlaceHolder (tamp, x) ->
       let lit = G.L (G.Int x) |> G.e in
       G.OtherExpr (("PlaceHolder", tamp), [ G.E lit ]) |> G.e
@@ -608,7 +669,11 @@ and map_body env v : G.stmt list =
   xs |> List_.map exprstmt
 
 and map_call env (v1, v2, v3) : G.expr =
-  let e = map_expr env v1 in
+  (* Special handling for DotAnon - extract the inner expression to use as callee *)
+  let e = match v1 with
+    | DotAnon (inner_expr, _tdot) -> map_expr env inner_expr
+    | _ -> map_expr env v1
+  in
   let l, args, r = (map_bracket map_arguments) env v2 in
   let v3 = (map_option map_do_block) env v3 in
   let args' = args_of_do_block_opt v3 in

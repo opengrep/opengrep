@@ -107,33 +107,20 @@ class ['self] no_cycles_in_sym_prop_visitor =
   object
     inherit ['self] G.iter
 
-    val mutable ff = (fun _ -> assert false)
-    val mutable ok = true
-
-    method get_ff = ff
-    method get_ok = ok
-    method set_ff f = ff <- f
-    method set_ok b = ok <- b
-
-    method! visit_resolved_name _env (_, sid) =
-      ok <- ok && ff sid;
-      if not ok then raise Exit
+    method! visit_resolved_name ff (_, sid) =
+      if not (ff sid) then raise Exit
   end
 
+let no_cycles_in_sym_prop_visitor_instance = new no_cycles_in_sym_prop_visitor
 let no_cycles_in_sym_prop sid exp =
   let for_all_sid : (G.sid -> bool) -> G.any -> bool =
     (* Check that all sid's satisfy a given condition. We use refs so that
      * we can have a single visitor for all calls, given that the old
      * `mk_visitor` was kind of expensive, and constructing a visitor object
      * may be as well. *)
-    let vout = new no_cycles_in_sym_prop_visitor
-    in
     fun f ast ->
-      vout#set_ff f;
-      vout#set_ok true;
       try
-        vout#visit_any () ast;
-        vout#get_ok
+        no_cycles_in_sym_prop_visitor_instance#visit_any f ast; true
       with
       | Exit -> false
   in

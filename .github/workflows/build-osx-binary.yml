@@ -12,8 +12,14 @@ on:
 jobs:
 
   build-self-contained-osx-binary:
-    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-13-large' || 'macos-13-xlarge' }}
+    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
     steps:
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Install ccache
         run: |
           brew install ccache
@@ -39,7 +45,9 @@ jobs:
       - name: Install pipenv
         run: |
           python -m pip install --no-cache-dir --upgrade pipenv
-      - name: Install pyinstaller
+          pipenv --python 3.13
+
+      - name: Install nuitka
         run: pipenv run pip install nuitka==2.8.9 protobuf jaraco.text
 
       - name: install some dependencies for windows (pyinstaller only)
@@ -101,7 +109,7 @@ jobs:
 
   test-osx-binary:
     needs: build-self-contained-osx-binary
-    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-13-large' || 'macos-13-xlarge' }}
+    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
     steps:
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:

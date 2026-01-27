@@ -69,6 +69,20 @@ let rec comma_list_dots = function
   | Either_.Left3 x :: rl -> x :: comma_list_dots rl
   | (Either_.Middle3 _ | Either_.Right3 _) :: rl -> comma_list_dots rl
 
+(* Extract first element and list of (separator, element) pairs.
+   [Left A; Right sep; Left B; Right sep; Left C] -> Some (A, [(sep, B); (sep, C)]) *)
+let comma_list_with_seps = function
+  | [] -> None
+  | Either.Left first :: rest ->
+      let rec loop acc = function
+        | [] -> List.rev acc
+        | Either.Right tok :: Either.Left x :: rl -> loop ((tok, x) :: acc) rl
+        | Either.Right _ :: [] -> List.rev acc
+        | _ -> List.rev acc
+      in
+      Some (first, loop [] rest)
+  | Either.Right _ :: _ -> None
+
 let brace (_, x, _) = x
 let bracket f (a, b, c) = (a, f b, c)
 let noop tok = A.Block (fb tok [])
@@ -188,7 +202,7 @@ and name_expr env = function
   | XName [ QI (Name ("class", tok)) ] -> A.Id [ (A.special "class", wrap tok) ]
   | XName qi -> A.Id (qualified_ident env qi)
   | Self tok -> A.IdSpecial (A.Self, tok)
-  | Parent tok -> A.IdSpecial (A.Self, tok)
+  | Parent tok -> A.IdSpecial (A.Parent, tok)
   | LateStatic tok -> A.Id [ (A.special "static", wrap tok) ]
 
 and ident _env = function
@@ -382,6 +396,10 @@ and expr env = function
       let args = comma_list args in
       let args = List_.map (argument env) args in
       A.Call (e, (lp, args, rp))
+  (* PHP 8.1: first-class callable syntax *)
+  | FirstClassCallable (e, _lp, ellipsis, _rp) ->
+      let e = expr env e in
+      A.FirstClassCallable (e, ellipsis)
   | ObjGet (e1, tok, e2) ->
       let e1 = expr env e1 in
       let e2 = expr env e2 in
@@ -631,7 +649,20 @@ and hint_type env = function
   | HintQuestion (tok, t) -> A.HintQuestion (tok, hint_type env t)
   | HintTuple (t1, v1, t2) ->
       A.HintTuple (t1, List_.map (hint_type env) (comma_list v1), t2)
-  | HintUnion v1 -> A.HintUnion (List_.map (hint_type env) (comma_list v1))
+  | HintUnion v1 ->
+      (match comma_list_with_seps v1 with
+      | None -> error (unsafe_fake "HintUnion") "empty union type"
+      | Some (first, rest) ->
+          let first = hint_type env first in
+          let rest = List_.map (fun (tok, t) -> (tok, hint_type env t)) rest in
+          A.HintUnion (first, rest))
+  | HintIntersection (t1, v1, t2) ->
+      (match comma_list_with_seps v1 with
+      | None -> error t1 "empty intersection type"
+      | Some (first, rest) ->
+          let first = hint_type env first in
+          let rest = List_.map (fun (tok, t) -> (tok, hint_type env t)) rest in
+          A.HintIntersection (t1, (first, rest), t2))
   | HintCallback (_, (_, args, ret), _) ->
       let args = List_.map (hint_type env) (comma_list_dots (brace args)) in
       let ret = Option.map (fun (_, t) -> hint_type env t) ret in
@@ -649,7 +680,7 @@ and constant_def env
     { cst_name; cst_val; cst_type = _TODO; cst_toks = tok, _, _ } =
   let name = ident env cst_name in
   let value = expr env cst_val in
-  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value }
+  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value; A.cst_modifiers = [] }
 
 and comma_list_dots_params f xs =
   match xs with
@@ -784,6 +815,7 @@ and class_type _env = function
   | ClassRegular tok -> ((A.Class, tok), [])
   | ClassFinal (tokf, tok) -> ((A.Class, tok), [ (Final, tokf) ])
   | ClassAbstract (toka, tok) -> ((A.Class, tok), [ (Abstract, toka) ])
+  | ClassReadonly (tokr, tok) -> ((A.Class, tok), [ (Readonly, tokr) ])
   | Interface tok -> ((A.Interface, tok), [])
   | Trait tok -> ((A.Trait, tok), [])
   | Enum tok -> ((A.Enum, tok), [])
@@ -799,12 +831,14 @@ and class_traits env x acc =
 
 and class_constants env st acc =
   match st with
-  | ClassConstants (_, tok, _, cl, _) ->
+  | ClassConstants (mods, tok, _, cl, _) ->
+      let modifiers = List_.map (modifier env) mods in
       List_.fold_right
         (fun (n, ss) acc ->
           let body = static_scalar_affect env ss in
           let cst =
-            { A.cst_name = ident env n; cst_body = body; cst_tok = tok }
+            { A.cst_name = ident env n; cst_body = body; cst_tok = tok;
+              cst_modifiers = modifiers }
           in
           cst :: acc)
         (comma_list cl) acc
@@ -822,18 +856,39 @@ and class_variables env ?(add_dollar = true) st acc =
       in
       let ht = opt hint_type env ht in
       List_.map
-        (fun (n, ss) ->
+        (fun (n, ss, hooks_opt) ->
           let name = dname ~add_dollar n in
           let value = opt static_scalar_affect env ss in
+          let hooks = match hooks_opt with
+            | None -> []
+            | Some (_, hooks, _) -> List_.map (property_hook env) hooks
+          in
           {
             A.cv_name = name;
             A.cv_value = value;
             A.cv_modifiers = m;
             A.cv_type = ht;
+            A.cv_hooks = hooks;
           })
         cvl
       @ acc
   | _ -> acc
+
+and property_hook env hook =
+  let kind = match fst hook.ph_kind with
+    | PhGet -> A.PhGet (snd hook.ph_kind)
+    | PhSet -> A.PhSet (snd hook.ph_kind)
+  in
+  let params = match hook.ph_params with
+    | None -> []
+    | Some (_, ps, _) -> List_.map (fun p -> A.ParamClassic (parameter env p)) (comma_list_dots ps)
+  in
+  let body = match hook.ph_body with
+    | PHExpr (_, e, sc) -> Some (A.Expr (expr env e, sc))
+    | PHBlock (l, stmts, r) ->
+        Some (A.Block (l, List_.fold_right (stmt_and_def env) stmts [], r))
+  in
+  { A.ph_kind = kind; A.ph_params = params; A.ph_body = body }
 
 and modifier _env m =
   let m, tok = m in
@@ -845,6 +900,9 @@ and modifier _env m =
   | Final -> (A.Final, tok)
   | Static -> (A.Static, tok)
   | Async -> (A.Async, tok)
+  | Readonly -> (A.Readonly, tok)
+  | PrivateSet -> (A.PrivateSet, tok)
+  | ProtectedSet -> (A.ProtectedSet, tok)
 
 and class_body env st (mets, flds) =
   match st with

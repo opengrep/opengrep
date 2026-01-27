@@ -42,13 +42,12 @@ def _print_product_status(sast_enabled: bool = True, sca_enabled: bool = False) 
     is given the product-focused CLI UX treatment.
     """
     learn_more_url = with_color(Colors.cyan, "https://opengrep.dev", underline=True)
-    login_command = with_color(Colors.gray, "`semgrep login`")
     is_logged_in = auth.is_logged_in_weak()
     all_enabled = True  # assume all enabled until we find a disabled product
 
     sections = [
         (
-            "Semgrep OSS",
+            "Opengrep",
             sast_enabled,
             [
                 "Basic security coverage for first-party code vulnerabilities.",

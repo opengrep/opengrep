@@ -158,6 +158,7 @@ let langs_of_filename filename =
   | FT.Config FT.Json -> [ Json ]
   | FT.Config FT.Yaml -> [ Yaml ]
   | FT.Config FT.Terraform -> [ Terraform ]
+  | FT.Config FT.Dockerfile -> [ Dockerfile ]
   | FT.PL FT.Ruby -> [ Ruby ]
   | FT.PL FT.Julia -> [ Julia ]
   | FT.PL FT.Csharp -> [ Csharp ]
@@ -166,7 +167,7 @@ let langs_of_filename filename =
   | FT.PL (FT.Web FT.Hack) -> [ Hack ]
   | FT.PL FT.Kotlin -> [ Kotlin ]
   | FT.PL FT.Lua -> [ Lua ]
-  | FT.PL (FT.Script "bash") -> [ Bash ]
+  | FT.PL (FT.Script ("bash" | "sh")) -> [ Bash ]
   | FT.PL FT.Rust -> [ Rust ]
   | FT.PL FT.Move -> [ Move_on_sui; Move_on_aptos ]
   | FT.PL FT.R -> [ R ]
@@ -175,6 +176,8 @@ let langs_of_filename filename =
   | FT.PL (FT.Web FT.Html) -> [ Html ]
   | FT.PL FT.Elixir -> [ Elixir ]
   | FT.PL FT.Apex -> [ Apex ]
+  | FT.PL FT.Dart -> [ Dart  ]
+  | FT.PL (FT.Lisp Clojure) -> [ Clojure ]
   | _ -> []
 
 let lang_of_filename_exn filename =

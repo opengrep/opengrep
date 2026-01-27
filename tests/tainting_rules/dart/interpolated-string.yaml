@@ -1,0 +1,25 @@
+
+rules:
+  - id: dart_sqli
+    message: "WriteAsString on File can be dangerous."
+    languages:
+      - dart
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - patterns:
+        - pattern-inside: |
+            $RET $FUNC(..., $TYPE $PARAM, ...) {
+                ...
+            }
+        - pattern: $PARAM
+    pattern-sinks:
+      - patterns:
+        - pattern-either:
+            - pattern: |
+                "$SQL...${$SINK}..."
+            - pattern: |
+                "$SQL" + $SINK
+        - metavariable-regex:
+                metavariable: $SQL
+                regex: ^SELECT

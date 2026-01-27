@@ -1,6 +1,6 @@
 (* Yoann Padioleau
  *
- * Copyright (C) 2020 Semgrep Inc.
+ * Copyright (C) 2020 Semgrep Inc, 2025 Opengrep.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public License
@@ -17,6 +17,7 @@ open IL
 module Log = Log_analyzing.Log
 module G = AST_generic
 module H = AST_generic_helpers
+module CLJ_ME1 = Macro_expand_clojure
 
 [@@@warning "-40-42"]
 
@@ -49,6 +50,10 @@ module IdentSet = Set.Make (String)
 type ctx = { entity_names : IdentSet.t }
 type stmts = stmt list
 
+type rec_point_lvals =
+  | Loop_rec_point of lval list (* loop binding lvals *)
+  | Fn_rec_point of lval (* one parameter, destructured in body. *)
+
 type env = {
   lang : Lang.t;
   (* stmts hidden inside expressions that we want to move out of 'exp',
@@ -61,13 +66,21 @@ type env = {
   stmts : stmts;
   break_labels : label list;
   cont_label : label option;
+  rec_point_label : label option;
   ctx : ctx;
+  rec_point_lvals : rec_point_lvals option;
 }
 
 let empty_ctx = { entity_names = IdentSet.empty }
 
 let empty_env (lang : Lang.t) : env =
-  { stmts = []; break_labels = []; cont_label = None; ctx = empty_ctx; lang }
+  { stmts = [];
+    break_labels = [];
+    cont_label = None;
+    rec_point_label = None;
+    ctx = empty_ctx;
+    rec_point_lvals = None;
+    lang }
 
 (*****************************************************************************)
 (* Error management *)
@@ -258,7 +271,7 @@ let add_entity_name ctx ident =
 
 let def_expr_evaluates_to_value (lang : Lang.t) =
   match lang with
-  | Elixir -> true
+  | Elixir (* | Clojure *) -> true
   | _else_ -> false
 
 let is_constructor env ret_ty id_info =
@@ -370,7 +383,7 @@ and pattern env pat =
         env ~eorig:(Related (G.P pat_inner)) tmp_fetch_e pat_inner
     in
     (* NOTE: Order of statements determines scope in cases like: `[x; y] as x`
-     *  here we will see the whole value as `x`. Not important. *)
+     * here we will see the whole value as `x`. Not important. *)
     (env, tmp_lval, inner_ss @ [ alias_assign_stmt ])
   | G.PatList (_tok1, pats, tok2)
   | G.PatTuple (_tok1, pats, tok2) ->
@@ -399,14 +412,28 @@ and pattern env pat =
       pattern env pat1
   | G.PatConstructor (G.Id ((_s, tok), _id_info), pats) ->
     pattern env (G.PatTuple (G.fake "(", pats, tok))
-  | G.PatKeyVal (key_pat, val_pat) ->
-    (* TODO: Now sure about offsets here, as created by the PatTuple case. *)
-    pattern env (G.PatTuple (G.fake "(", [ key_pat; val_pat ], G.fake ")"))
+  (* TODO: This can help with field sensitivity, if we consider
+   * which atom is actually used to extract the value in key_pat.
+   * For now we ignore the value part. Note that these patterns
+   * are of the shape '{ x :a }' etc. But can also come from
+   * '{ :keys [a] }' which in this case becomes equivalent to
+   * '{ a :a }'. *)
+  | G.PatKeyVal (key_pat, G.OtherPat (((":" | "::"), _tk_col),
+                                      [G.Name _atom_name]))
+    when env.lang =*= Lang.Clojure ->
+    pattern env key_pat
+  (* Only seems to be used in Ruby, modulo the above case for Clojure. *)
+  | G.PatKeyVal (_key_pat, val_pat) when env.lang =*= Lang.Ruby ->
+    (* My understanding is that the new variables are introduced on the rhs. *)
+    pattern env val_pat 
   | G.PatRecord (tok1, fields, tok2) ->
     (* TODO: But here the offset is not an index..., should we do proper?
+     * But at least some taint will be propagated with this solution. 
      * In fact we cannot recover the G.name of the dotted_ident in PatRecord,
      * so cannot easily create a Dot offset. We have no sid and id_info.
-     * For this reason we do this hack. *)
+     * For this reason we do this hack.
+     * TODO: Check this encoding with FieldDefCol used in a lot of places,
+     * have something native that does the same. *)
     let pats = List_.map (fun (_dot_ident, pat) -> pat) fields in
     pattern env (G.PatTuple (tok1, pats, tok2))
   | G.PatWhen (pat_inner, when_expr) ->
@@ -641,7 +668,7 @@ and expr_aux env ?(void = false) g_expr =
   (* args_with_pre_stmts *)
   | G.Call ({ e = G.IdSpecial (G.Op op, tok); _ }, args) -> (
       match op with
-      | G.Elvis when env.lang =*= Lang.Kotlin -> (
+      | G.Elvis when env.lang =*= Lang.Kotlin || env.lang =*= Lang.Csharp -> (
           (* This implements the logic:
            * result = lhs
            * if (result == null) { result = rhs; }
@@ -680,6 +707,12 @@ and expr_aux env ?(void = false) g_expr =
               in
               (env, mk_e (Fetch result_lval) eorig)
             end
+          (* TODO: simply getting rid of the elvis here is semantically not correct, *)
+          (* but should not affect the analysis in practical cases. The proper implememntation *)
+          (* requires more gymnastics with IL, for which we first need a deeper refactoring *)
+          (* of AST_to_IL *)
+          | [ G.Arg arg ] when env.lang =*= Lang.Csharp ->
+              expr_aux env ~void arg
           | _ -> impossible env.stmts (G.E g_expr))
       | _ -> (
           (* All other operators *)
@@ -828,6 +861,22 @@ and expr_aux env ?(void = false) g_expr =
           let env = { env with stmts } in
           let fixme = fixme_exp kind any_generic (related_exp g_expr) in
           add_call env tok eorig ~void (fun res -> Call (res, fixme, args)))
+  | G.Call (e, args) when env.lang =*= Lang.Clojure ->
+      let tok = G.fake "call" in
+      let arg_list = Tok.unbracket args in
+      let arg_list_unwrapped =
+        List_.map (function
+            | G.Arg expr -> expr
+            | _ -> failwith "Expected G.Arg")
+          arg_list
+      in
+      let arg_container =
+            [ G.Arg
+                (G.Container
+                   (G.List, Tok.unsafe_fake_bracket arg_list_unwrapped)
+                 |> G.e) ]
+      in
+      call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket arg_container)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
       call_generic env ~void tok eorig e args
@@ -920,6 +969,7 @@ and expr_aux env ?(void = false) g_expr =
       let env, new_stmts = pattern_assign_statements env ~eorig exp pat in
       let env = add_stmts env new_stmts in
       (env, mk_unit (G.fake "()") NoOrig)
+  (* TODO: Use instead of ExprBlock? But we also have scope for block. *)
   | G.Seq xs -> (
       match List.rev xs with
       | [] -> impossible env.stmts (G.E g_expr)
@@ -930,6 +980,12 @@ and expr_aux env ?(void = false) g_expr =
           in
           expr env last)
   | G.Record fields -> record env fields
+  | G.Container (G.Dict, (l, entries, r))
+    when AST_modifications.is_lua_array_table env.lang entries ->
+      (* Lua array-like table: {1, 2, 3} parsed as Dict with NextArrayIndex keys *)
+      let values = AST_modifications.extract_lua_array_values entries in
+      let env, vs = List.fold_left_map (fun env v -> expr env v) env values in
+      (env, mk_e (Composite (CList, (l, vs, r))) eorig)
   | G.Container (G.Dict, xs) -> dict env xs g_expr
   | G.Container (kind, xs) ->
       let l, xs, r = xs in
@@ -939,7 +995,7 @@ and expr_aux env ?(void = false) g_expr =
   | G.Comprehension _ -> todo env.stmts (G.E g_expr)
   | G.Lambda fdef ->
       let lval = fresh_lval (snd fdef.fkind) in
-      let _, fdef =
+      let _, final_fdef =
         (* NOTE(config.stmts): This is a recursive call to
          * `function_definition` and we need to pass it a fresh
          * `stmts` ref list. If we reuse the same `stmts` ref list,
@@ -949,9 +1005,15 @@ and expr_aux env ?(void = false) g_expr =
          * `foo(bar(), (x) => { ... })`, because the instruction added
          * to `stmts` by the translation of `bar()` is still present
          * when traslating `(x) => { ... }`. *)
-        function_definition { env with stmts = [] } fdef
+        function_definition
+          { env with stmts = [];
+                     cont_label = None;
+                     break_labels = [];
+                     rec_point_label = None;
+                     rec_point_lvals = None }
+          fdef
       in
-      let env = add_instr env (mk_i (AssignAnon (lval, Lambda fdef)) eorig) in
+      let env = add_instr env (mk_i (AssignAnon (lval, Lambda final_fdef)) eorig) in
       (env, mk_e (Fetch lval) eorig)
   | G.AnonClass def ->
       (* TODO: should use def.ckind *)
@@ -1059,6 +1121,180 @@ and expr_aux env ?(void = false) g_expr =
   | G.DotAccessEllipsis _ ->
       sgrep_construct env.stmts (G.E g_expr)
   | G.StmtExpr st -> stmt_expr env ~g_expr st
+  | G.OtherExpr (("ShortLambda", _), _) when env.lang =*= Lang.Elixir ->
+      let lambda_expr = AST_modifications.convert_elixir_short_lambda g_expr in
+      expr env lambda_expr
+  (* The idea here is that this is like a block, and we only
+   * really care about the last expression. *)
+  (* TODO: What if a statement creeps in? E.g. an If, `fn`..?
+   * What we really must avoid is Block. *)
+  | G.OtherExpr
+      (* Other cases are macroexpanded to these. TODO: Confirm which. *)
+      ((todo_kind,
+        tok), any_exprs)
+    when env.lang =*= Lang.Clojure && CLJ_ME1.expands_as_block todo_kind ->
+    let env, exprs =
+      List.fold_left_map
+        (fun env any_expr ->
+          match any_expr with
+          | G.E exp -> expr env exp
+          | _else_ -> (env, fixme_exp ToDo any_expr (related_tok tok)))
+        env any_exprs
+    in
+    begin match List.rev exprs with
+    | [] -> (env, mk_unit (G.fake "()") NoOrig)
+    | e_last :: _e_rest -> (env, e_last)
+    end
+  (* Clojure loop. *)
+  | G.OtherExpr (("Loop", tok),
+                 G.E { e = G.OtherExpr
+                           (("LoopPatternBindings", lpbs_tok),
+                            bindings); _ }
+                 :: body_exprs)
+    when env.lang =*= Lang.Clojure ->
+    let env =
+      {env with rec_point_lvals = None; rec_point_label = None}
+    in
+    let (env, lvals) =
+      List.fold_left
+        (fun (env, lvals) any_expr ->
+          match any_expr with
+          | G.E {e = G.LetPattern (pat, e); _} ->
+            let env, exp = expr env e in
+            let env, lval, new_stmts =
+              try
+                let env, lval, ss = pattern env pat in
+                (env,
+                 Some lval,
+                 [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ] @ ss)
+              with
+              | Fixme (stmts, kind, any_generic) ->
+                  ({ env with stmts }, None, fixme_stmt kind any_generic)
+            in
+            let env = add_stmts env new_stmts in
+            begin match lval with
+              | Some lval -> env, lval :: lvals
+              | None -> env, lvals
+            end
+          | _else_ -> (* This should not happen in our translation *) env, lvals)
+        (env, []) bindings
+    in
+    let env =
+      { env with rec_point_lvals = Loop_rec_point (List.rev lvals) |> Option.some }
+    in
+    let _rec_point_label, rec_point_label_stmts, rec_point_env =
+      mk_recursion_point_label env lpbs_tok
+    in
+    let env = add_stmts rec_point_env rec_point_label_stmts in
+    let env, exprs =
+      List.fold_left_map
+        (fun env any_expr ->
+          match any_expr with
+          | G.E exp -> expr env exp
+          | _else_ -> (env, fixme_exp ToDo any_expr (related_tok tok)))
+        env body_exprs
+    in
+    begin match List.rev exprs with
+    | [] -> (env, mk_unit (G.fake "()") NoOrig)
+    | e_last :: _e_rest -> (env, e_last)
+    end
+  (* Clojure recur. *)
+  | G.OtherExpr (("Recur", tok), args)
+    when env.lang =*= Lang.Clojure ->
+    let env =
+      match env.rec_point_lvals with
+      | Some (Loop_rec_point rec_point_lvals) ->
+        let rec_point_lvals, args =
+        match (List.length rec_point_lvals) - (List.length args) with
+        | 0 -> (rec_point_lvals, args)
+        (* User did not pass all values for bindings, add nil bindings. *)
+        | n when n > 0 ->
+          (rec_point_lvals,
+           args @ (List.init n (fun _ ->
+               G.E (G.L (G.Null (G.fake "nil")) |> G.e))))
+        (* User passed more values than expected for bindings; ignore
+         * the extra ones. *)
+        | n (* < 0 *) -> (List.take n rec_point_lvals, args)
+      in
+      (* Assign bindings to recursion point lvals. *)
+      List.fold_left2
+        (fun env lval arg_expr ->
+           let arg = match arg_expr with
+             | G.E e -> e
+             | _else_ -> impossible env.stmts (G.E g_expr)
+           in
+          let env, arg_exp = expr env arg in
+          add_instr env (mk_i (Assign (lval, arg_exp)) NoOrig))
+        env rec_point_lvals args
+      (* In this case there is one lval, which is where the unique
+       * parameter is stored in clojure, ie, before destructuring.
+       * TODO: How about short lambdas? *)
+      | Some (Fn_rec_point lval) ->
+        let args = List_.map (function
+            | G.E e -> e
+            | _else_ -> impossible env.stmts (G.E g_expr))
+          args
+        in
+        let env, arg_container_exp =
+          G.Container (G.List, Tok.unsafe_fake_bracket args) |> G.e
+          |> expr env
+        in
+        add_instr env (mk_i (Assign (lval, arg_container_exp)) NoOrig)
+      | _ ->
+        impossible env.stmts (G.E g_expr)
+    in
+    begin match env.rec_point_label with
+      | None ->
+        impossible env.stmts (G.Tk tok)
+      | Some lbl ->
+        add_stmts env [ mk_s (Goto (tok, lbl)) ],
+        mk_unit tok NoOrig
+    end
+  (* OtherExpr("Apply", Call) ~> Call(concat [a_1 .. n_k] a_k+1).
+   * So the difference is in how we construct the arguments vector. *)
+  | G.OtherExpr (("Apply", _tok), [ G.E ({e = Call(e, args); _} as call_exp) ])
+    when env.lang =*= Lang.Clojure ->
+      let tok = G.fake "call" in
+      let arg_list = Tok.unbracket args in
+      let arg_list_unwrapped =
+        List_.map (function
+            | G.Arg expr -> expr
+            | _ -> failwith "Expected G.Arg")
+          arg_list
+      in
+      begin match e.G.e, List.rev arg_list_unwrapped with
+        | G.IdSpecial _, _ | _, [] ->
+          (* No arguments or special, fallback to standard call.
+           * TODO: For idSpecial with args, use Call IdSpecial Spread
+           * to at least show the correct semantics. *)
+          expr env call_exp
+        | _, last_arg :: rest_args_rev ->
+          let rest_args_container =
+                (G.Container
+                   (G.List, Tok.unsafe_fake_bracket (List.rev rest_args_rev))
+                 |> G.e)
+          in
+          let apply_arg =
+            [ G.Arg (G.opcall (G.Concat, G.fake "concat")
+                       [ rest_args_container; last_arg ]) ]
+          in
+          call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket apply_arg)
+      end
+  (* Clojure: a kind of macroexpansion (macroexpand-1). *)
+  | G.OtherExpr ((todo_kind, tok), _ :: _)
+    when env.lang =*= Lang.Clojure && CLJ_ME1.is_macroexpandable todo_kind ->
+    (try let macro_expanded = CLJ_ME1.macro_expand_1 (* env? *) g_expr in
+    (* Log.debug
+         (fun fmt ->
+           fmt "Clojure macroexpand-1 (->): Source: \n%s \n=> \nExpanded: \n%s"
+           ( G.show_expr g_expr )
+           ( G.show_expr macro_expanded )); *)
+    expr env macro_expanded
+    with
+    | CLJ_ME1.Macroexpansion_error (_msg, any_expr) ->
+      (env, fixme_exp ToDo any_expr (related_tok tok))
+    | exn -> raise exn)
+  (* Default. *)
   | G.OtherExpr ((str, tok), xs) ->
       let env, es =
         List.fold_left_map
@@ -1194,12 +1430,18 @@ and record env ((_tok, origfields, _) as record_def) =
               | G.FieldDefColon { G.vinit = Some fdeforig; _ } ->
                   expr env fdeforig
               (* Some languages such as javascript allow function
-                  definitions in object literal syntax. *)
+                 definitions in object literal syntax. *)
               | G.FuncDef fdef ->
                   let lval = fresh_lval (snd fdef.fkind) in
                   (* See NOTE(config.stmts)! *)
                   let _, fdef =
-                    function_definition { env with stmts = [] } fdef
+                    function_definition
+                      { env with stmts = [];
+                                 cont_label = None;
+                                 rec_point_label = None;
+                                 break_labels = [];
+                                 rec_point_lvals = None }
+                      fdef
                   in
                   let forig = Related (G.Fld forig) in
                   let env =
@@ -1503,6 +1745,7 @@ and lval_of_ent env ent =
   | G.EN name -> lval env (G.N name |> G.e)
   | G.EDynamic eorig -> lval env eorig
   | G.EPattern (PatId (id, id_info)) -> lval env (G.N (Id (id, id_info)) |> G.e)
+  (* Why not more here, if we are to support more patterns? *)
   | G.EPattern _ -> (
       let any = G.En ent in
       log_fixme ToDo any;
@@ -1592,16 +1835,22 @@ and parameters params : param list =
   |> List_.map (function
        | G.Param { pname = Some i; pinfo; pdefault; _ } ->
            Param { pname = var_of_id_info i pinfo; pdefault }
-       | G.ParamPattern pat -> PatternParam pat
+       | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
+           ParamRest { pname = var_of_id_info i pinfo; pdefault }
+       | G.ParamPattern pat -> ParamPattern pat
        | G.ParamReceiver _param ->
            (* TODO: Treat receiver as this parameter *)
-           FixmeParam (* TODO *)
+           ParamFixme (* TODO *)
+       (* Ruby/PHP block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
+       | G.OtherParam (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
+         ->
+           Param { pname = var_of_id_info i pinfo; pdefault }
        | G.Param { pname = None; _ }
        | G.ParamRest (_, _)
        | G.ParamHashSplat (_, _)
        | G.ParamEllipsis _
        | G.OtherParam (_, _) ->
-           FixmeParam (* TODO *))
+           ParamFixme (* TODO *))
 
 (*****************************************************************************)
 (* Type *)
@@ -1657,7 +1906,8 @@ and type_opt_with_pre_stmts env opt_ty =
 and no_switch_fallthrough : Lang.t -> bool = function
   | Go
   | Ruby
-  | Rust ->
+  | Rust
+  | Clojure->
       true
   | _ -> false
 
@@ -1681,6 +1931,13 @@ and mk_switch_break_label env tok =
     { env with break_labels = break_label :: env.break_labels }
   in
   (break_label, [ mk_s (Label break_label) ], switch_env)
+
+and mk_recursion_point_label env tok =
+  let rec_point_label = fresh_label ~label:"__rec_point" tok in
+  let rec_point_env =
+    { env with rec_point_label = Some rec_point_label }
+  in
+  (rec_point_label, [ mk_s (Label rec_point_label) ], rec_point_env)
 
 and implicit_return env eorig tok =
   (* We always expect a value from an expression that is implicitly
@@ -1873,6 +2130,28 @@ and stmt_aux env st =
       let xs = xs |> Tok.unbracket in
       let env, list_of_lists = List.fold_left_map stmt env xs in
       (env, List.concat list_of_lists)
+  (* Rust: if let Some(x) = some_x { ... } etc. *)
+  (* TODO: Handle LetChain too, see Parse_rust_tree_sitter. *)
+  | G.If (tok, G.OtherCond (("LetCond", _tk), [G.P pat; G.E e]), st1, st2)
+    when env.lang =*= Lang.Rust  ->
+    (* Convert to switch(e) { pat -> if_branch, _ -> else_branch }. *)
+    let cond_opt = Some (G.Cond e) in
+    let if_case_and_body =
+      G.CasesAndBody ([ G.Case (G.fake "case", pat) ], st1)
+    in
+    let cases_and_bodies =
+      match st2 with
+      | Some st2 ->
+          [
+            if_case_and_body;
+            G.CasesAndBody ([ G.Case (G.fake "case", G.PatWildcard (G.fake "_")) ], st2);
+          ]
+      | None -> [ if_case_and_body ]
+    in
+    let switch =
+      G.Switch (tok, cond_opt, cases_and_bodies) |> G.s
+    in
+    stmt env switch
   | G.If (tok, cond, st1, st2) ->
       let env, ss, e' = cond_with_pre_stmts env cond in
       let env, st1 = stmt env st1 in
@@ -2297,7 +2576,20 @@ and python_with_stmt env manager opt_pat body =
 
 and function_definition env fdef =
   let fparams = parameters fdef.G.fparams in
+  let env, rec_point_label_stmts = match env.lang, fparams with
+    (* NOTE: Clojure functions are translated to have one formal parameter,
+     * which is then destructured in a Switch (this is how multi-arity works). *)
+    | Lang.Clojure, [ Param { pname; _ } ] ->
+      let lval = IL_helpers.lval_of_var pname in
+      let _rec_point_label, rec_point_label_stmts, rec_point_env =
+        mk_recursion_point_label env (G.fake "fun_rec_point")
+      in
+      {rec_point_env with rec_point_lvals = Some (Fn_rec_point lval)},
+      rec_point_label_stmts
+    | _ -> env, []
+  in
   let env, fbody = function_body env fdef.G.fbody in
+  let fbody = rec_point_label_stmts @ fbody in
   (env, { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody })
 
 (*****************************************************************************)

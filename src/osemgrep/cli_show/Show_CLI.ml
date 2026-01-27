@@ -24,6 +24,7 @@ type conf = {
   (* mix of --dump-ast/--dump-rule/... *)
   show_kind : show_kind;
   json : bool;
+  html : bool;
 }
 
 (* coupling: if you add a command you probably need to modify [combine]
@@ -44,8 +45,11 @@ and show_kind =
    * alt: we could accept multiple Files via multiple target_roots *)
   | DumpCST of Fpath.t * Lang.t
   | DumpAST of Fpath.t * Lang.t
+  | DumpIL  of Fpath.t * Lang.t
   | DumpConfig of Rules_config.config_string
+  | DumpRule of Fpath.t
   | DumpRuleV2 of Fpath.t
+  | DumpPatternsOfRule of Fpath.t
   (* 'semgrep show ???'
    * accessible also as 'semgrep scan --dump-engine-path
    * LATER: get rid of it? *)
@@ -54,6 +58,10 @@ and show_kind =
    * accessible also as 'semgrep scan --dump-command-for-core' (or just '-d')
    * LATER: get rid of it *)
   | DumpCommandForCore
+  (* 'semgrep show dump-intrafile-graph' *)
+  | DumpIntrafileGraph of Fpath.t * Lang.t
+  (* 'semgrep show dump-taint-signatures' *)
+  | DumpTaintSignatures of Fpath.t * Fpath.t (* rule_file * target_file *)
 [@@deriving show]
 
 (*************************************************************************)
@@ -68,7 +76,11 @@ let o_json : bool Term.t =
   let info = Arg.info [ "json" ] ~doc:{|Output results in JSON format.|} in
   Arg.value (Arg.flag info)
 
-(* ------------------------------------------------------------------ *)
+let o_html : bool Term.t =
+  let info = Arg.info [ "html" ] ~doc:{|Output results as an HTML page.|} in
+  Arg.value (Arg.flag info)
+
+ (* ------------------------------------------------------------------ *)
 (* Positional arguments *)
 (* ------------------------------------------------------------------ *)
 let o_args : string list Term.t =
@@ -84,7 +96,7 @@ let o_args : string list Term.t =
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common json =
+  let combine args common json html =
     let show_kind =
       (* coupling: if you add a command here, update also the man page
        * further below
@@ -92,7 +104,9 @@ let cmdline_term : conf Term.t =
       match args with
       | [ "version" ] -> Version
       | [ "dump-config"; config_str ] -> DumpConfig config_str
+      | [ "dump-rule"; file ] -> DumpRule (Fpath.v file)
       | [ "dump-rule-v2"; file ] -> DumpRuleV2 (Fpath.v file)
+      | [ "dump-patterns-of-rule"; file ] -> DumpPatternsOfRule (Fpath.v file)
       | [ "dump-cst"; file ] ->
           let path = Fpath.v file in
           let lang = Lang.lang_of_filename_exn path in
@@ -107,9 +121,25 @@ let cmdline_term : conf Term.t =
       | [ "dump-ast"; lang_str; file ] ->
           let lang = Lang.of_string lang_str in
           DumpAST (Fpath.v file, lang)
+      | [ "dump-il"; file ] ->
+          let path = Fpath.v file in
+          let lang = Lang.lang_of_filename_exn path in
+          DumpIL (path, lang)
+      | [ "dump-il"; lang_str; file ] ->
+          let lang = Lang.of_string lang_str in
+          DumpIL (Fpath.v file, lang)
       | [ "dump-pattern"; lang_str; pattern ] ->
           let lang = Lang.of_string lang_str in
           DumpPattern (pattern, lang)
+      | [ "dump-intrafile-graph"; file ] ->
+          let path = Fpath.v file in
+          let lang = Lang.lang_of_filename_exn path in
+          DumpIntrafileGraph (path, lang)
+      | [ "dump-intrafile-graph"; lang_str; file ] ->
+          let lang = Lang.of_string lang_str in
+          DumpIntrafileGraph (Fpath.v file, lang)
+      | [ "dump-taint-signatures"; rule_file; target_file ] ->
+          DumpTaintSignatures (Fpath.v rule_file, Fpath.v target_file)
       | [ "supported-languages" ] -> SupportedLanguages
       | [] ->
           Error.abort
@@ -119,10 +149,10 @@ let cmdline_term : conf Term.t =
           Error.abort
             (spf "show command not supported: %s" (String.concat " " args))
     in
-    { show_kind; json; common }
+    { show_kind; json; html; common }
   in
 
-  Term.(const combine $ o_args $ CLI_common.o_common $ o_json)
+  Term.(const combine $ o_args $ CLI_common.o_common $ o_json $ o_html)
 
 let doc = "Show various types of information"
 
@@ -139,16 +169,26 @@ let man : Cmdliner.Manpage.block list =
     `P "Print a list of languages that are currently supported by Opengrep.";
     `Pre "opengrep show dump-config <STRING>";
     `P "Dump the internal representation of the result of --config=<STRING>";
+    `Pre "opengrep show dump-rule <FILE>";
+    `P "Dump the internal representation of a rule";
     `Pre "opengrep show dump-rule-v2 <FILE>";
     `P "Dump the internal representation of a rule using the new (v2) syntax";
+    `Pre "opengrep show dump-patterns-of-rule <FILE>";
+    `P "Dump the internal representation of all patterns found in a rule";
     `Pre "opengrep show dump-ast [<LANG>] <FILE>";
     `P
       "Dump the abstract syntax tree of the file (with some names/types \
        resolved)";
+    `Pre "opengrep show dump-il [<LANG>] <FILE>";
+    `P "Dump the internal representation of the file";
     `Pre "opengrep show dump-cst [<LANG>] <FILE>";
     `P "Dump the concrete syntax tree of the file (tree sitter only)";
     `Pre "opengrep show dump-pattern <LANG> <STRING>";
     `P "Dump the abstract syntax tree of the pattern string";
+    `Pre "opengrep show dump-intrafile-graph [<LANG>] <FILE>";
+    `P "Dump the intrafile call graph in DOT format";
+    `Pre "opengrep show dump-taint-signatures <RULE_FILE> <TARGET_FILE>";
+    `P "Dump taint signatures for all functions in target file using the taint rule";
   ]
   @ CLI_common.help_page_bottom
 

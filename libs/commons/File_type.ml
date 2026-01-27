@@ -61,6 +61,7 @@ and pl_type =
   | ObjectiveC of string
   | Swift
   | Apex
+  | Dart
   (* advanced script *)
   | Julia
   | Perl
@@ -276,8 +277,8 @@ let file_type_of_file file =
   | "tf" -> Config Terraform
   | "toml" -> Config Toml
   (* sometimes people use foo.Dockerfile *)
-  | "Dockerfile"
-  | "Containerfile" ->
+  | "dockerfile"
+  | "containerfile" ->
       Config Dockerfile
   | "sql" -> PL (Web Sql)
   | "sqlite" -> PL (Web Sql)
@@ -405,6 +406,7 @@ let file_type_of_file file =
   | "r" -> PL R
   | "ex" | "exs" -> PL Elixir
   | "cls" | "trigger" -> PL Apex
+  | "dart" -> PL Dart
   | "vb" -> PL Vb
   | _ when UFile.is_executable file -> Binary e
   | _ when b = "Makefile" || b = "mkfile" || b = "Imakefile" -> Config Makefile

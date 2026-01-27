@@ -196,6 +196,9 @@ type expr =
   (* e.g. f(...$x) *)
   | Unpack of expr
   | Call of expr * argument list bracket
+  (* PHP 8.1: first-class callable syntax - strlen(...), $obj->method(...), etc.
+   * Will be desugared to Closure::fromCallable(...) *)
+  | FirstClassCallable of expr * tok (* ... *)
   | Throw of tok * expr
   (* todo? transform into Call (builtin ...) ? *)
   | Infix of AST_generic.incr_decr wrap * expr
@@ -269,7 +272,11 @@ and hint_type =
   | HintArray of tok
   | HintQuestion of tok * hint_type
   | HintTuple of hint_type list bracket
-  | HintUnion of hint_type list
+  (* first type, then list of (| tok, type) pairs *)
+  | HintUnion of hint_type * (tok * hint_type) list
+  (* PHP 8.1 intersection types, PHP 8.2 DNF types *)
+  (* first type, then list of (& tok, type) pairs, wrapped in parens *)
+  | HintIntersection of (hint_type * (tok * hint_type) list) bracket
   | HintCallback of hint_type list * hint_type option
   | HintTypeConst of hint_type * tok * hint_type (* ?? *)
   | HintVariadic of tok * hint_type option
@@ -380,6 +387,10 @@ and keyword_modifier =
   | Final
   | Static
   | Async
+  | Readonly
+  (* PHP 8.4 asymmetric visibility *)
+  | PrivateSet
+  | ProtectedSet
 
 (* normally either an Id or Call with only static arguments *)
 and attribute = expr
@@ -389,6 +400,8 @@ and constant_def = {
   cst_name : ident;
   (* normally a static scalar *)
   cst_body : expr;
+  (* PHP 7.1: class constant visibility *)
+  cst_modifiers : modifier list;
 }
 
 and enum_type = { e_base : hint_type; e_constraint : hint_type option }
@@ -413,12 +426,22 @@ and class_def = {
 and class_kind = Class | Interface | Trait | Enum
 and xhp_field = class_var * bool
 
+(* PHP 8.4 property hooks *)
+and property_hook = {
+  ph_kind : property_hook_kind;
+  ph_params : parameter list; (* set($value) parameter *)
+  ph_body : stmt option; (* None for abstract, Some for body *)
+}
+
+and property_hook_kind = PhGet of tok | PhSet of tok
+
 and class_var = {
   (* note that the name will contain a $ *)
   cv_name : var;
   cv_type : hint_type option;
   cv_value : expr option;
   cv_modifiers : modifier list;
+  cv_hooks : property_hook list; (* PHP 8.4 property hooks *)
 }
 
 and method_def = func_def

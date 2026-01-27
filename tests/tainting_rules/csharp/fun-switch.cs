@@ -8,7 +8,7 @@ void F(object x)
             break;
 
         default:
-            sink(5)
+            sink(5);
             break;
     }
 }

@@ -1,0 +1,12 @@
+rules:
+  - id: toplevel-hof-callback-taint
+    mode: taint
+    languages: [python]
+    message: "Taint flows through HOF callback to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

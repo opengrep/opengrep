@@ -27,6 +27,8 @@ val fixpoint :
   ?name:Shape_and_sig.fn_id ->
   ?class_name:string ->
   ?signature_db:Shape_and_sig.signature_database ->
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?call_graph:Function_call_graph.FuncGraph.t ->
   IL.fun_cfg ->
   Shape_and_sig.Effects.t * mapping
 (** Main entry point, [fixpoint config cfg] returns a mapping (effectively a set)

@@ -1,5 +1,109 @@
 # Changelog
 
+## [1.15.1](https://github.com/opengrep/opengrep/releases/tag/v1.15.1) - 16-01-2026
+
+### Bug fixes
+
+* Clojure translation improvements by @dimitris-m in #534
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.15.0...v1.15.1
+
+
+## [1.15.0](https://github.com/opengrep/opengrep/releases/tag/v1.15.0) - 14-01-2026
+
+### Improvements
+
+* Clojure translation part III by @dimitris-m in #527
+* Php modernisation by @corneliuhoffman in #529
+* Intrafile tainting with variadic functions by @maciejpirog in #538
+* C#: The `field` implicit parameter can be skipped in a pattern by @maciejpirog in #525
+* C#: Add conditional array access (`?[...]`) to l-values by @maciejpirog in #535
+* C#: Collection expressions vs attributes with targets (parser fix) by @maciejpirog in #539
+* Add `noopengrep` to the default nosem patterns by @dimitris-m in #533
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.14.1...v1.15.0
+
+
+## [1.14.1](https://github.com/opengrep/opengrep/releases/tag/v1.14.1) - 06-01-2026
+
+### Improvements
+
+* Clojure translation part II by @dimitris-m in #517
+* C#: Allow implicit variables in properties to be taint sources by @maciejpirog in #516
+* Add core flags `dump_rule` and `dump_patterns_of_rule` as options in the show command by @maciejpirog in #519
+
+### Bug fixes
+
+* Fix: pass sig db to lambda analysis, handle method mutation tainting by @corneliuhoffman in #520
+
+### Tech debt
+
+* Fix CHANGELOG.md, OPENGREP.md, remove unused files by @dimitris-m in #523
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.14.0...v1.14.1
+
+
+## [1.14.0](https://github.com/opengrep/opengrep/releases/tag/v1.14.0) - 31-12-2025
+
+### Improvements
+
+* Support for higher-order functions in intrafile taint analysis by @corneliuhoffman in #469 and #513
+* Clojure: Improved support for Clojure (incl. tainting) by @dimitris-m in #501
+* Dart: Improved support for Dart by @maciejpirog in #508
+* C#: Better handing of extension methods and extension blocks by @maciejpirog in #514
+
+### CI fixes
+
+* Bump cygwin install action by @dimitris-m in #503 and #509
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.13.2...v1.14.0
+
+
+## [1.13.2](https://github.com/opengrep/opengrep/releases/tag/v1.13.2) - 17-12-2025
+
+### Improvements
+
+* C#: Add matching on function argument modifiers (ref, in, scoped, etc.) by @maciejpirog in #494
+* C#: Support extension blocks by @maciejpirog in #496 
+
+### Release process
+
+* Validate tag input on release by @lae in #493
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.13.1...v1.13.2
+
+
+## [1.13.1](https://github.com/opengrep/opengrep/releases/tag/v1.13.1) - 15-12-2025
+
+### CI fixes
+
+* Force python 3.13 for osx binary workflow by @dimitris-m in #490
+
+#### Notes
+
+* Version 1.13.0 (#489) intentionally skipped.
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.12.1...v1.13.1
+
+
+## [1.13.0](https://github.com/opengrep/opengrep/releases/tag/v1.13.0) - 15-12-2025
+
+### Improvements
+
+* Improve handling of patterns and `AST_to_IL` translation by @dimitris-m in #483
+* Improve rust tainting by @dimitris-m in #485
+* Dump generic AST to HTML by @maciejpirog in #484
+* Modernise C# by @maciejpirog in #487
+
+### Bug fixes
+
+* Fix for kotlin double-annotation bug by @maciejpirog in #480
+* Fix PCRE2 test making OSX build fail by @dimitris-m in #486
+* Fix: in `LetPattern(pat, e)`, `e` should be visited first by @dimitris-m in #488
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.12.1...v1.13.0
+
+
 ## [1.12.1](https://github.com/opengrep/opengrep/releases/tag/v1.12.1) - 02-12-2025
 
 ### Bug fixes

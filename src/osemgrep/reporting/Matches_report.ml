@@ -177,18 +177,49 @@ let cut s idx1 idx2 =
 
 let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
   (* Helper to print a location with bold highlighting *)
+  (* NOTE: We need to consider that the location can span > 1 lines, which
+   * seems to happen with matches related to macroexpanded clojure code. *)
   let print_location prefix (loc : OutJ.location) =
+    let start_line_num = loc.start.line in
+    let end_line_num = loc.end_.line in
+    let start_col = max 0 (loc.start.col - 1) in
+    let end_col =
+      if Int.(equal start_line_num end_line_num)
+      then max start_col (loc.end_.col - 1) else (max 0 (loc.end_.col - 1))
+    in
     try
       let file_content = UFile.read_file loc.path in
-      let lines = String.split_on_char '\n' file_content in
-      let line_num = loc.start.line in
-      let line = List.nth lines (line_num - 1) in
-      let start_col = max 0 (loc.start.col - 1) in
-      let end_col = max start_col (loc.end_.col - 1) in
-      let a, b, c = cut line start_col end_col in
-      Fmt.pf ppf "%s%4d┆ %s%a%s@." prefix line_num a
+      let lines = String.split_on_char '\n' file_content |> Array.of_list in
+      let lines_to_print =
+        Array.sub lines (start_line_num - 1) (end_line_num - start_line_num + 1)
+        |> Array.to_list |> String.concat ("\n" ^ prefix ^ "    ┆ ")
+        (* Below is an example of what can be printed now, while it would raise an
+         * exception previously, showing nothing in the output. In clojure, this is
+         * macroexpanded to:
+         *   (sink (:user x))
+         * before matching and the resulting range is applied to the original term:
+         *  
+         * This is how taint reaches the sink:
+         *   338┆   (some-> x
+         *      ┆       (:user)
+         *      ┆       (sink)))
+         *)
+      in
+      let a, b, c = cut lines_to_print start_col end_col in
+      Fmt.pf ppf "%s%4d┆ %s%a%s@." prefix start_line_num a
         Fmt.(styled `Bold string) b c
-    with _ -> ()
+    with ex ->
+      Log.debug (fun m ->
+          m "Could not read file %a (line_num = %d, start_col = %d, end_col = %d): %s"
+            Fpath.pp loc.path
+            start_line_num
+            start_col
+            end_col
+            (Exception.(catch ex |> to_string)));
+      Log.debug (fun m ->
+          m "Location: %a"
+            OutJ.pp_location loc);
+      ()
   in
 
   (* Helper to print tokens with no consecutive duplicates *)

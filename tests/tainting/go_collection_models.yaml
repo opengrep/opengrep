@@ -1,0 +1,12 @@
+rules:
+  - id: go-collection-taint
+    mode: taint
+    languages: [go]
+    message: "Taint flows through Go sync.Map to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: sink(...)

@@ -33,3 +33,7 @@ val register_exception_printers : unit -> unit
 
 (* this can raise exn; useful in test context *)
 val main_exn : Cap.all_caps -> string array -> unit
+
+(* exporting for re-use in opengrep experimental *)
+
+val dump_patterns_of_rule : Fpath.t -> unit

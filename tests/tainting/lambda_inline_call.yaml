@@ -1,0 +1,12 @@
+rules:
+  - id: lambda-inline-call-taint
+    mode: taint
+    languages: [python]
+    message: "Taint flows through inline lambda call to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

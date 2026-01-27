@@ -657,7 +657,36 @@ and map_capture_expression (env : env) (x : CST.capture_expression) =
       fun tand -> ShortLambda (tand, (v1, v2, v3))
   | `Exp x ->
       let e = map_expression env x in
-      fun tand -> Capture (tand, e)
+      fun tand ->
+        (* Check if this is &fun/arity and convert to ShortLambda *)
+        match e with
+        | BinaryOp (fun_name, (O Div, _), L (Int (Some arity, tok_arity))) ->
+            (* Only convert if fun_name is a proper name (not PlaceHolder like &1) *)
+            (* Handle both direct names and calls with no args like IO.puts *)
+            let actual_fun_name = match fun_name with
+              | Call (inner, (_, ([], []), _), None) -> inner
+              | other -> other
+            in
+            (match actual_fun_name with
+            | I _ | Alias _ | DotAlias _ | DotRemote _ ->
+                (* Convert &fun/arity to &(fun(&1, &2, ...)) *)
+                let arity_int = Int64.to_int arity in
+                (* Create PlaceHolder arguments: &1, &2, ... *)
+                let placeholder_args =
+                  List.init arity_int (fun i ->
+                    let n = Int64.of_int (i + 1) in
+                    PlaceHolder (tand, (Some n, tok_arity)))
+                in
+                (* Create the call: fun_name(&1, &2, ...) *)
+                let call_expr = Call (actual_fun_name, (tand, (placeholder_args, []), tand), None) in
+                (* Convert to ShortLambda: &(fun(&1, &2, ...)) *)
+                ShortLambda (tand, (tand, call_expr, tand))
+            | _ ->
+                (* Fallback for other captures like &(&1/2) *)
+                Capture (tand, e))
+        | _ ->
+            (* For other capture forms (e.g., &(&1 + &2)), keep as Capture *)
+            Capture (tand, e)
 
 and map_catch_block (env : env) ((v1, v2, v3) : CST.catch_block) =
   let v1 = (Catch, (* "catch" *) token env v1) in

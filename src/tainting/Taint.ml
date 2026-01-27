@@ -137,8 +137,6 @@ type offset = Ofld of IL.name | Oint of int | Ostr of string | Oany
 
 type lval = { base : base; offset : offset list }
 
-let hook_offset_of_IL = ref None
-
 let compare_lval { base = base1; offset = offset1 }
     { base = base2; offset = offset2 } =
   match compare_base base1 base2 with
@@ -166,14 +164,14 @@ let show_offset_list offset =
 let show_lval { base; offset } = show_base base ^ show_offset_list offset
 
 let offset_of_IL (o : IL.offset) =
-  match !hook_offset_of_IL with
-  | None -> (
-      match o.o with
-      | Dot n -> Ofld n
-      | Index _ ->
-          (* no index-sensitivity in OSS *)
-          Oany)
-  | Some offset_of_IL -> offset_of_IL o
+match o.o with
+| IL.Dot n -> Ofld n
+| IL.Index { e = IL.Literal (Int pi); _ } -> (
+    match Parsed_int.to_int_opt pi with
+    | Some i -> Oint i
+    | None -> Oany)
+| IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
+| IL.Index _ -> Oany
 
 let offset_of_rev_IL_offset ~rev_offset = List.rev_map offset_of_IL rev_offset
 
@@ -502,6 +500,13 @@ module Taint_set = struct
      to simply map the codomain taint, and then take its `orig` as the key.
   *)
   let map f set = set |> Taints.to_seq |> Seq.map f |> Taints.of_seq
+
+  let bind set f =
+    set
+    |> Taints.to_seq
+    |> Seq.flat_map (fun x -> Taints.to_seq (f x))
+    |> Taints.of_seq
+  
   let iter f set = Taints.iter f set
   let fold f set acc = Taints.fold f set acc
   let filter f set = Taints.filter f set
@@ -559,8 +564,8 @@ let rec solve_precondition ~ignore_poly_taint ~taints pre : bool option =
     | R.PLabel l ->
         if LabelSet.mem l sure_labels then Some true
         else if
-          (not (LabelSet.mem l maybe_labels))
-          && ((not has_poly_taint) || ignore_poly_taint)
+          not (LabelSet.mem l maybe_labels)
+          && (not has_poly_taint || ignore_poly_taint)
         then Some false
         else None
     | R.PVariable _var_name ->

@@ -635,6 +635,7 @@ and canonical_name env = function
 and id_qualified env { name_last = id, _toptTODO; name_middle; name_top; _ } =
   (match name_top with
   | None -> ""
+  | Some Tok.FakeTok (s, _) when env.lang =*= Lang.Clojure -> s
   | Some _t -> "::")
   ^
   match name_middle with

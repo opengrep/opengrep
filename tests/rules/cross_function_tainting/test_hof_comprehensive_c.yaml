@@ -1,0 +1,11 @@
+rules:
+  - id: test-hof-taint
+    message: Taint should flow through higher-order functions (custom and built-in)
+    languages:
+      - c
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

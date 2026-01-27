@@ -83,9 +83,6 @@ type lval = {
 
 val lval_of_arg : arg -> lval
 
-val hook_offset_of_IL : (IL.offset -> offset) option ref
-(** Pro index sensitivity *)
-
 type source = {
   call_trace : Rule.taint_source call_trace;
   label : string;
@@ -200,6 +197,7 @@ module Taint_set : sig
   val union : t -> t -> t
   val diff : t -> t -> t
   val map : (taint -> taint) -> t -> t
+  val bind : t -> (taint -> t) -> t
   val iter : (taint -> unit) -> t -> unit
   val fold : (taint -> 'a -> 'a) -> t -> 'a -> 'a
   val filter : (taint -> bool) -> t -> t

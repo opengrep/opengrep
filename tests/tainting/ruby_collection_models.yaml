@@ -1,0 +1,12 @@
+rules:
+  - id: ruby-collection-taint
+    mode: taint
+    languages: [ruby]
+    message: "Taint flows through Ruby collection to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: sink(...)

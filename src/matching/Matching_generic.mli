@@ -133,6 +133,7 @@ val m_list_with_dots :
   less_is_ok:bool -> 'a matcher -> ('a -> bool) -> 'a list matcher
 
 val m_list_with_dots_and_metavar_ellipsis :
+  ?can_skip:('a -> bool) ->
   less_is_ok:bool ->
   f:'a matcher ->
   is_dots:('a -> bool) ->

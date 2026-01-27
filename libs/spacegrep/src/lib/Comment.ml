@@ -15,9 +15,14 @@ type style = comment_syntax list
 let shell_style = [ End_of_line "#" ]
 let c_style = [ Multiline ("/*", "*/") ]
 let cpp_style = End_of_line "//" :: c_style
+let clojure_style = [ End_of_line ";"; End_of_line ";;" ]
+    (* Don't care for ;;; etc. *)
 
 let predefined_styles =
-  [ ("c", c_style); ("cpp", cpp_style); ("shell", shell_style) ]
+  [ ("c", c_style);
+    ("cpp", cpp_style);
+    ("shell", shell_style);
+    ("clojure", clojure_style) ]
 
 (* TODO: replace whole unicode characters by exactly space to avoid
          location errors, then rename the function to 'whiteout_utf8'. *)

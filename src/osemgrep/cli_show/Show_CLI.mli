@@ -13,6 +13,7 @@ type conf = {
   (* mix of --dump-ast/--dump-rule/... *)
   show_kind : show_kind;
   json : bool;
+  html : bool;
 }
 
 and show_kind =
@@ -22,10 +23,15 @@ and show_kind =
   | DumpPattern of string * Lang.t
   | DumpCST of Fpath.t * Lang.t
   | DumpAST of Fpath.t * Lang.t
+  | DumpIL  of Fpath.t * Lang.t
   | DumpConfig of Rules_config.config_string
+  | DumpRule of Fpath.t
   | DumpRuleV2 of Fpath.t
+  | DumpPatternsOfRule of Fpath.t
   | DumpEnginePath of bool (* pro = true *)
   | DumpCommandForCore
+  | DumpIntrafileGraph of Fpath.t * Lang.t
+  | DumpTaintSignatures of Fpath.t * Fpath.t
 [@@deriving show]
 
 (*

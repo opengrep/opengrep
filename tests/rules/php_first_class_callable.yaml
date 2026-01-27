@@ -1,0 +1,6 @@
+rules:
+- id: first-class-callable
+  message: Detected first-class callable (desugared to Closure::fromCallable)
+  languages: [php]
+  severity: INFO
+  pattern: Closure::fromCallable(...)

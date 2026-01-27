@@ -153,7 +153,7 @@
  *    'Return of tok * expr option * tok' for the ending semicolon
  *    (alt: have the range info in each expr/stmt/pattern but big refactoring)
  *  - to correctly compute a CFG (Control Flow Graph), the stmt type
- *    should list all constructs that contains other statements and
+ *    should list all constructs that contain other statements and
  *    try to avoid to use the very generic 'OtherXxx of any'
  *  - to correctly compute a DFG (Data Flow Graph), and to correctly resolve
  *    names (see Naming_AST.ml), each constructs that introduce a new
@@ -835,6 +835,8 @@ and expr_kind =
    * TODO? replace 'any list' by 'expr list'? any way there's still
    * StmtExpr above to wrap stmt if it's not an expr but a stmt
    *)
+  (* NOTE: If you put statements (blocks?) here, you are doomed!
+   * The CFG will be wrong and tainting will be lost. *)
   | OtherExpr of todo_kind * any list
   (* Embed an untranslated or partially translated subtree generated
      by ocaml-tree-sitter *)
@@ -877,7 +879,7 @@ and literal =
   | Null of tok
   | Undefined of tok (* JS *)
   | Imag of string wrap
-  (* Go, Python *)
+  (* Go, Python, Clojure *)
   | Ratio of string wrap
 
 (* The type of an unknown constant. *)
@@ -1236,7 +1238,7 @@ and stmt_kind =
       * case_and_body list (* TODO brace *)
   | Continue of tok * label_ident * sc
   | Break of tok * label_ident * sc
-  (* todo? remove stmt argument? more symetric to Goto *)
+  (* todo? remove stmt argument? more symmetric to Goto *)
   | Label of label * stmt
   | Goto of tok * label * sc (* less: use label_ident for computed goto in C*)
   (* TODO? move in expr! in C++ the expr can be an option *)
@@ -2392,7 +2394,12 @@ let tparam_of_id ?(tp_attrs = []) ?tp_variance ?(tp_bounds = []) ?tp_default
 (* Statements *)
 (* ------------------------------------------------------------------------- *)
 
-let exprstmt e = s (ExprStmt (e, sc))
+let exprstmt e =
+  (* NOTE: The commented out code below cannot be used without
+   * breaking tests that are related to implicit return, e.g. for scala. *)
+  (* match e.e with
+       | StmtExpr st -> st
+       | _else_ -> *) s (ExprStmt (e, sc))
 
 (* alt: EmptyStmt of sc? of ExprStmt of expr option * sc *)
 let emptystmt t = s (Block (t, [], t))
@@ -2405,7 +2412,11 @@ let emptystmt t = s (Block (t, [], t))
  * See also AST_generic_helpers with expr_to_pattern, expr_to_type,
  * pattern_to_expr, etc.
  *)
-let stmt_to_expr st = e (StmtExpr st)
+let stmt_to_expr st =
+  match st.s with
+  | ExprStmt (e, _) -> e
+  | _else_ -> e (StmtExpr st)
+
 let empty_body = Tok.unsafe_fake_bracket []
 
 let stmt1 xs =

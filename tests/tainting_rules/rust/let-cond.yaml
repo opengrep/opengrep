@@ -1,0 +1,13 @@
+rules:
+- id: taint
+  mode: taint
+  languages: [rust]
+  message: "tainted"
+  severity: INFO
+  pattern-sources:
+    - patterns:
+        - pattern-inside: |
+            fn $F(..., $P: $_, ...){...}
+        - focus-metavariable: $P
+  pattern-sinks:
+    - pattern: sink($R)

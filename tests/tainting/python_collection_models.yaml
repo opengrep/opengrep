@@ -1,0 +1,12 @@
+rules:
+  - id: python-collection-taint
+    mode: taint
+    languages: [python]
+    message: "Taint flows through Python collection to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: sink(...)

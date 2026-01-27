@@ -136,7 +136,9 @@ let subexprs_of_expr with_symbolic_propagation e =
   | Alias (_, e)
   | LocalImportAll (_, _, e)
   | DeepEllipsis (_, e, _)
-  | DotAccessEllipsis (e, _) ->
+  | DotAccessEllipsis (e, _)
+  | LetPattern (_, e) ->
+      (* TODO: e :: subexprs_of_pattern _, for PatWhen. *)
       [ e ]
   | Assign (e1, _, e2)
   | AssignOp (e1, _, e2)
@@ -187,8 +189,7 @@ let subexprs_of_expr with_symbolic_propagation e =
   | RegexpTemplate ((_l, e, _r), _opt) -> [ e ]
   (* currently skipped over but could recurse *)
   | Constructor _
-  | AnonClass _
-  | LetPattern _ ->
+  | AnonClass _ ->
       []
   | DisjExpr _ -> raise Common.Impossible
 [@@profiling]
@@ -215,6 +216,9 @@ let subexprs_of_expr_implicit (with_symbolic_propagation : bool) (e : expr) :
   | Assign (_e1, _, e2)
   | AssignOp (_e1, _, e2) ->
       [ e2 ]
+  | LetPattern (_pat, e) ->
+      (* TODO: Also extract expressions from patterns (PatWhen)? *)
+      [ e ]
   (* TODO? special case for Bash and Dockerfile to prevent
    * 'RUN b' to also match 'RUN a && b' (but still allowing
    *  'RUN a' to match 'RUN a && b'?)
@@ -248,6 +252,9 @@ let subexprs_of_expr_implicit (with_symbolic_propagation : bool) (e : expr) :
   | Record (_, flds, _) ->
       flds |> Common2.map_flatten (function F st -> subexprs_of_stmt st)
   (* cases where we should not extract a subexpr *)
+  | Seq xs -> xs (* TODO: Take up to N from xs? *)
+  | OtherExpr (("ExprBlock", _tk), xs) (* when lang =*= Clojure *) ->
+      subexprs_of_any_list xs
   | L _
   | N _
   | IdSpecial _
@@ -257,7 +264,7 @@ let subexprs_of_expr_implicit (with_symbolic_propagation : bool) (e : expr) :
   | DeRef (_, _e) ->
       []
   | Conditional (_e1, _e2, _e3) -> []
-  | Seq _xs -> []
+  (* | Seq _xs -> [] *)
   | ArrayAccess (_e1, (_, _e2, _)) -> []
   | SliceAccess (_e1, _e2) -> []
   | Comprehension (_, (_, (_e, _xs), _)) -> []
@@ -270,8 +277,8 @@ let subexprs_of_expr_implicit (with_symbolic_propagation : bool) (e : expr) :
   | Constructor _ -> []
   | RegexpTemplate _ -> []
   | AnonClass _def -> []
+  (* TODO: Why not go into lambda? *)
   | Lambda _def -> []
-  | LetPattern _ -> []
   | TypedMetavar _
   | DeepEllipsis _
   | DotAccessEllipsis _

@@ -29,6 +29,7 @@ and pl_type =
   | ObjectiveC of string
   | Swift
   | Apex
+  | Dart
   | Julia
   | Perl
   | Python

@@ -1,0 +1,8 @@
+;; DO NOT WRITE PATTERNS LIKE THIS ONE.
+;; This test is added to confirm we can deal with some patterns in
+;; existing semgrep-rules, which otherwise fail to parse.
+(defn ... ... ( ... ))
+;; ~>  (defn $_ [...] ( ... )), noting that ( ... ) is an expression block,
+;; equivalent to (do ...).
+;; Also, a correct pattern would use just ... to  match any function
+;; body.

@@ -392,8 +392,18 @@ and case_item (env : env) ((v1, v2, v3, v4, v5) : CST.case_item) : case_clause =
   let loc = (fst (AST_bash_loc.expression_loc first_pattern), end_tok) in
   (loc, patterns, paren, case_body, Some terminator)
 
+and redirect (env : env) (v : CST.redirect) : redirect =
+  match v with
+  | `File_redi x -> file_redirect env x
+  | `Here_redi_a9657de x ->
+      let todo = heredoc_redirect env x in
+      Read_heredoc todo
+  | `Here_redi_7d3292d x ->
+      let todo = herestring_redirect env x in
+      Read_herestring todo
+
 and command (env : env) ((v1, v2, v3) : CST.command) : cmd_redir =
-  let assignments, redirects =
+  let assignments, redirects1 =
     Either_.partition
       (fun x ->
         match x with
@@ -402,11 +412,11 @@ and command (env : env) ((v1, v2, v3) : CST.command) : cmd_redir =
       v1
   in
   let name = command_name env v2 in
-  let args =
-    List_.map
+  let args, redirects2 =
+    Either_.partition
       (fun x ->
         match x with
-        | `Choice_conc x -> literal env x
+        | `Choice_conc x -> Left (literal env x)
         | `Choice_EQTILDE_choice_choice_conc (v1, v2) ->
             (* Not sure why we have this here. Should be only within
                test commands [[ ... ]]. *)
@@ -427,9 +437,11 @@ and command (env : env) ((v1, v2, v3) : CST.command) : cmd_redir =
                 (AST_bash_loc.eq_op_loc eq)
                 (AST_bash_loc.right_eq_operand_loc right)
             in
-            Equality_test (loc, eq, right))
+            Left (Equality_test (loc, eq, right))
+        | `Redi r -> Right (redirect env r))
       v3
   in
+  let redirects = redirects1 @ redirects2 in
   let arguments = name :: args in
   let loc =
     let loc1 = Tok_range.of_list AST_bash_loc.assignment_loc assignments in
@@ -609,6 +621,23 @@ and expansion (env : env) ((v1, v2, v3, v4) : CST.expansion) :
         Complex_expansion_TODO loc
   in
   (open_, complex_expansion, close)
+
+and stmt_of_xstmt (x : CST.xstatement) : CST.statement =
+    match x with
+    | `Decl_cmd x -> `Decl_cmd x 
+    | `Unset_cmd x -> `Unset_cmd x 
+    | `Test_cmd x -> `Test_cmd x 
+    | `Nega_cmd x -> `Nega_cmd x 
+    | `For_stmt x -> `For_stmt x 
+    | `C_style_for_stmt x -> `C_style_for_stmt x 
+    | `While_stmt x -> `While_stmt x 
+    | `If_stmt x -> `If_stmt x 
+    | `Case_stmt x -> `Case_stmt x 
+    | `Pipe x -> `Pipe x 
+    | `List x -> `List x 
+    | `Subs x -> `Subs x 
+    | `Comp_stmt x -> `Comp_stmt x 
+    | `Func_defi x -> `Func_defi x
 
 (* This covers
    - sh test commands: [ ... ]
@@ -935,7 +964,7 @@ and statement (env : env) (x : CST.statement) : tmp_stmt =
          test case:
          echo a > /tmp/foo b
       *)
-      let pip = pipeline_statement env v1 in
+      let pip = pipeline_statement env (stmt_of_xstmt v1) in
       let redirects =
         List_.filter_map
           (fun x ->

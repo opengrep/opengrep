@@ -1,0 +1,12 @@
+rules:
+  - id: rust-collection-taint
+    mode: taint
+    languages: [rust]
+    message: "Taint flows through Rust collection to sink"
+    severity: WARNING
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: sink(...)

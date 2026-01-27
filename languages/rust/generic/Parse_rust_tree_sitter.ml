@@ -2915,6 +2915,10 @@ and map_type_ (env : env) (x : CST.type_) : G.type_ =
       let name = map_generic_type_name env x in
       G.TyN name |> G.t
   | `Scoped_type_id x ->
+      (*TODO Record the fully-qualified name.
+        We only record `B` for `A::B` right now.
+        We have examples of this sort of pattern
+        in tests/parsing/rust/types.rs *)
       let n = map_scoped_type_identifier_name env x in
       G.TyN n |> G.t
   | `Tuple_type x -> map_tuple_type env x
@@ -2922,6 +2926,7 @@ and map_type_ (env : env) (x : CST.type_) : G.type_ =
       let lparen = str env v1 (* "(" *) in
       let rparen = str env v2 (* ")" *) in
       let str = List_.map fst [ lparen; rparen ] |> String.concat "" in
+      (* 'unit' type is literally '()' *)
       G.ty_builtin (str, Tok.combine_toks (snd lparen) [ snd rparen ])
   | `Array_type x -> map_array_type env x
   | `Func_type x -> map_function_type env x
@@ -3396,12 +3401,10 @@ and map_declaration_statement_bis (env : env) outer_attrs (*_visibility*) x :
       (* pattern (r#)?[a-zA-Zα-ωΑ-Ωµ_][a-zA-Zα-ωΑ-Ωµ\d_]* *)
       let type_params = Option.map (map_type_parameters env) v3 in
       let _equals = token env v4 (* "=" *) in
-      let _tyTODO = map_type_ env v5 in
+      let ty = map_type_ env v5 in
       let _where_clauseTODO = Option.map (fun x -> map_where_clause env x) v6 in
       let _semicolon = token env v7 (* ";" *) in
-      let type_def =
-        { G.tbody = G.NewType (G.TyN (H2.name_of_id ident) |> G.t) }
-      in
+      let type_def = { G.tbody = G.AliasType ty } in
       let ent =
         {
           G.name = G.EN (H2.name_of_id ident);

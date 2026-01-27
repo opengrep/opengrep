@@ -229,7 +229,6 @@ and vof_id_info
   in
   let bnd = ("id_flags", arg) in
   let bnds = bnd :: bnds in
-  let bnds = bnd :: bnds in
   OCaml.VDict bnds
 
 and vof_xml

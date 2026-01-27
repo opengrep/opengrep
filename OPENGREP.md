@@ -8,13 +8,19 @@
 
 - Switched to **OCaml 5.3.0** with large-scale refactoring to support multicore execution with shared-memory parallelism. At the time of the fork, the project was using **OCaml 4** and parallelism was achieved using a process forking approach, which did not work on Windows.
 
-- Added support for **Windows**.
-
-- Added support for languages that are not available in Semgrep CE: **Apex** and **Elixir**.
+- Added native support for **Windows**.
 
 - Added support for languages that are not available in Semgrep CE or Semgrep PRO: **Visual Basic**.
 
+- Added support for languages that are not available in Semgrep CE: **Apex** and **Elixir**.
+
+- Improved support for **Clojure** which now supports tainting, while in Semgrep the translation is very limited.
+
+- Added support for intrafile cross-function tainting, with the flag `--taint-intrafile`, supporting higher-order functions. This works similarly to Semgrep's `--pro-intrafile`.
+
 ### Features
+
+- Improvements in many **existing languages** such as C, C#, C++, Dart, Elixir, Java, Javascript, Kotlin, Php, Ruby, Rust, Scala.
 
 - **Self-contained binaries** for multiple architectures, built using **Nuitka** for fast and self-contained executables. This is a departure from Semgrep, which is typically distributed using python wheels or homebrew. Now user environments do not need to have python installed, and the performance is comparable to the python wheel.
 
@@ -26,13 +32,13 @@
 
 - Added support for reporting the **enclosing context** of a match (e.g., class, function, module) in the JSON output. Use the flag: `--output-enclosing-context`
 
-- **Per rule timeouts** that override the `--timeout` CLI parameter. Require `--allow-rule-timeout-control` and also a CLI `--timeout` that is bigger than 0 (which disables timeouts). Set using the `timeout` rule option.
+- **Per rule timeouts** that override the `--timeout` CLI parameter. Requires `--allow-rule-timeout-control` and also a CLI `--timeout` that is bigger than 0 (which disables timeouts). Set using the `timeout` rule option.
 
 - **Dynamic timeouts** that scale with file size. Enabled via `--dynamic-timeout`, but can also be controlled per rule using `dynamic_timeout: true` together with `--allow-rule-timeout-control`. The behaviour can be finetuned with `--dynamic-timeout-unit-kb` (rule option: `dynamic_timeout_unit_kb`) and `--dynamic-timeout-max-multiplier` (rule option `dynamic_timeout_max_multiplier`); see the CLI man page for details.
 
 - Added a per-rule **limit on the number of reported matches**. Use the rule option: `max-match-per-file`.
 
-- Taint analysis now supports **per-rule timeout configuration**. Use the rule option: `taint-fixpoint-timeout`. (This should be mostly be reserved for cases where results are not very stable on consecutive runs, and should remain relatively low, for example between 0.2 and 2 seconds.)
+- Taint analysis now supports **per-rule timeout configuration**. Use the rule option: `taint-fixpoint-timeout`. This should be mostly be reserved for cases where results are not very stable on consecutive runs, and should remain relatively low, for example between 0.2 and 2 seconds. **Update:** this is now deprecated: taint fixpoint timeouts no longer exist.
 
 - **Postprocessing** (autofix and `nosem` annotations) now works with **incremental output**. Use the flag: `--incremental-output-postprocess.`
 
@@ -46,7 +52,9 @@
 
 - The `test` command now accepts **multiple target files**.
 
-- Multiple **performance** improvements.
+- Many **performance** improvements.
+
+- Many **bug** fixes.
 
 ### Important bug fixes and language feature support
 
@@ -59,6 +67,8 @@
 - **C/C++**: Make C/C++ parser more lenient when dealing with preprocessor directives [#393](https://github.com/opengrep/opengrep/pull/393)
 
 - **C#**: Fix string literals in the parser [#186](https://github.com/opengrep/opengrep/pull/186)
+
+- **Clojure**: New translation in [#501](https://github.com/opengrep/opengrep/pull/501) and [#517](https://github.com/opengrep/opengrep/pull/517)
 
 - **Kotlin**: Fix string templates [#191](https://github.com/opengrep/opengrep/pull/191)
 

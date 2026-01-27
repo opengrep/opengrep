@@ -82,6 +82,10 @@ let modifierbis = function
   | Abstract -> G.Abstract
   | Final -> G.Final
   | Async -> G.Async
+  | Readonly -> G.Const
+  (* PHP 8.4 asymmetric visibility - handled separately *)
+  | PrivateSet -> G.Private (* fallback, actual handling in modifier function *)
+  | ProtectedSet -> G.Protected
 
 let ptype (x, t) =
   match x with
@@ -356,6 +360,44 @@ and expr e : G.expr =
   | Call (v1, v2) ->
       let v1 = expr v1 and v2 = bracket (list argument) v2 in
       G.Call (v1, v2) |> G.e
+  (* PHP 8.1: first-class callable - desugar to Closure::fromCallable(...) *)
+  | FirstClassCallable (callable_expr, tok) ->
+      let callable_arg =
+        match callable_expr with
+        (* strlen(...) → Closure::fromCallable('strlen') *)
+        | Id [ name ] ->
+            G.Arg (G.L (G.String (fb name)) |> G.e)
+        (* $obj->method(...) → Closure::fromCallable([$obj, 'method']) *)
+        | Obj_get (obj, _arrow, Id [ method_name ]) ->
+            let obj_expr = expr obj in
+            let method_str =
+              G.L (G.String (fb method_name)) |> G.e
+            in
+            G.Arg
+              (G.Container (G.Array, fb [ obj_expr; method_str ]) |> G.e)
+        (* Foo::bar(...) → Closure::fromCallable([Foo::class, 'bar']) *)
+        | Class_get (class_ref, _colons, Id [ method_name ]) ->
+            let class_expr = expr class_ref in
+            let method_str =
+              G.L (G.String (fb  method_name)) |> G.e
+            in
+            G.Arg (G.Container (G.Array, fb [ class_expr; method_str ]) |> G.e)
+        (* For other forms, pass as-is *)
+        | _ -> G.Arg (expr callable_expr)
+      in
+      let closure_class =
+        G.N
+          (G.IdQualified
+             {
+               G.name_last = (("fromCallable", tok), None);
+               name_middle =
+                 Some (G.QDots [ (("Closure", tok), None) ]);
+               name_top = None;
+               name_info = G.empty_id_info ();
+             })
+        |> G.e
+      in
+      G.Call (closure_class, fb [ callable_arg ]) |> G.e
   | Throw (t, v1) ->
       let v1 = expr v1 in
       let st = G.Throw (t, v1, G.sc) |> G.s in
@@ -499,9 +541,18 @@ and hint_type = function
   | HintTuple (t1, v1, t2) ->
       let v1 = list hint_type v1 in
       G.TyTuple (t1, v1, t2) |> G.t
-  | HintUnion v1 -> (* TODO: Why are union types traslated to tuples? *)
-      let v1 = list hint_type v1 in
-      G.TyTuple (fb v1) |> G.t
+  | HintUnion (first, rest) ->
+      let first = hint_type first in
+      (* Fold into nested TyOr using real | tokens *)
+      List.fold_left
+        (fun acc (tok, ty) -> G.TyOr (acc, tok, hint_type ty) |> G.t)
+        first rest
+  | HintIntersection (_lparen, (first, rest), _rparen) ->
+      let first = hint_type first in
+      (* Fold into nested TyAnd using real & tokens *)
+      List.fold_left
+        (fun acc (tok, ty) -> G.TyAnd (acc, tok, hint_type ty) |> G.t)
+        first rest
   | HintCallback (v1, v2) ->
       let v1 = list hint_type v1 and v2 = option hint_type v2 in
       let params = v1 |> List_.map (fun x -> G.Param (G.param_of_type x)) in
@@ -536,9 +587,7 @@ and func_def
   let params = parameters f_params in
   let fret = option hint_type f_return_type in
   let _is_refTODO = bool f_ref in
-  let modifiers =
-    list modifier m_modifiers |> List_.map (fun m -> G.KeywordAttr m)
-  in
+  let modifiers = list modifier_to_attr m_modifiers in
   (* todo: transform in UseOuterDecl before first body stmt *)
   let _lusesTODO =
     list
@@ -592,7 +641,15 @@ and parameter_classic { p_type; p_ref; p_name; p_default; p_attrs; p_variadic }
   | _, Some tok -> G.OtherParam (("Ref", tok), [ G.Pa (G.Param pclassic) ])
   | Some tok, None -> G.ParamRest (tok, pclassic)
 
-and modifier v = wrap modifierbis v
+(* PHP 8.4 asymmetric visibility: private(set) and protected(set)
+   are converted to OtherAttribute like Swift does *)
+and modifier_to_attr (m, tok) =
+  match m with
+  | PrivateSet ->
+      G.OtherAttribute (("private(set)", tok), [])
+  | ProtectedSet ->
+      G.OtherAttribute (("protected(set)", tok), [])
+  | _ -> G.KeywordAttr (modifierbis m, tok)
 
 (* TODO: attributes are probably case-insensitive because they refer
    to class names. This need to be verified. *)
@@ -608,10 +665,11 @@ and attribute v =
   | _ -> raise Impossible
 
 (* see ast_php_build.ml *)
-and constant_def { cst_name; cst_body; cst_tok = tok } =
+and constant_def { cst_name; cst_body; cst_tok = tok; cst_modifiers } =
   let id = ident cst_name in
   let body = expr cst_body in
-  let attr = [ G.KeywordAttr (G.Const, tok) ] in
+  let modifiers = list modifier_to_attr cst_modifiers in
+  let attr = G.KeywordAttr (G.Const, tok) :: modifiers in
   let ent = G.basic_entity id ~case_insensitive:false ~attrs:attr in
   (ent, { G.vinit = Some body; vtype = None; vtok = G.no_sc })
 
@@ -645,18 +703,21 @@ and class_def
 
   let _enum = option (enum_type tok) c_enum_type in
 
-  let modifiers =
-    list modifier c_modifiers |> List_.map (fun m -> G.KeywordAttr m)
-  in
+  let modifiers = list modifier_to_attr c_modifiers in
   let attrs = list attribute c_attrs in
 
   let csts = list constant_def c_constants in
   let vars = list class_var c_variables in
   let methods = list method_def c_methods in
 
+  (* Extract var defs and property hooks from vars *)
+  let var_fields = vars |> List_.map (fun (ent, var, _hooks) -> (ent, G.VarDef var)) in
+  let hook_fields = vars |> List.concat_map (fun (_ent, _var, hooks) -> hooks) in
+
   let fields =
     (csts |> List_.map (fun (ent, var) -> (ent, G.VarDef var)))
-    @ (vars |> List_.map (fun (ent, var) -> (ent, G.VarDef var)))
+    @ var_fields
+    @ hook_fields
     @ (methods |> List_.map (fun (ent, var) -> (ent, G.FuncDef var)))
   in
 
@@ -694,16 +755,35 @@ and class_var
       cv_type = ctype;
       cv_value = cvalue;
       cv_modifiers = cmodifiers;
+      cv_hooks = chooks;
     } =
   let id = var cname in
   let typ = option hint_type ctype in
   let value = option expr cvalue in
-  let modifiers =
-    list modifier cmodifiers |> List_.map (fun m -> G.KeywordAttr m)
-  in
+  let modifiers = list modifier_to_attr cmodifiers in
   let ent = G.basic_entity id ~case_insensitive:false ~attrs:modifiers in
   let def = { G.vtype = typ; vinit = value; vtok = G.no_sc } in
-  (ent, def)
+  let hooks = list property_hook chooks in
+  (ent, def, hooks)
+
+and property_hook { ph_kind; ph_params; ph_body } =
+  let attr, tok, name_str = match ph_kind with
+    | PhGet tok -> (G.KeywordAttr (G.Getter, tok), tok, "get")
+    | PhSet tok -> (G.KeywordAttr (G.Setter, tok), tok, "set")
+  in
+  let params = list parameter ph_params in
+  let body = match ph_body with
+    | None -> G.FBNothing
+    | Some s -> G.FBStmt (stmt s)
+  in
+  let fdef = {
+    G.fkind = (G.Method, tok);
+    fparams = (fake "(", params, fake ")");
+    frettype = None;
+    fbody = body;
+  } in
+  let ent = G.basic_entity (name_str, tok) ~case_insensitive:false ~attrs:[attr] in
+  (ent, G.FuncDef fdef)
 
 and method_def v = func_def v
 
