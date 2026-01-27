@@ -1,4 +1,15 @@
-(* TODO: Keep the file paths normalized from the construction *)
+(** Function identifiers  **)
+
+(* This module defines a type used to identify functions globally. 
+   It is used as the type of nodes in the call graph and as keys in
+   the signature database. It is abstract and can be constructed from
+   an IL.name that is used in _function definition_, but not a name
+   used to refer to that function elsewhere: you need to use the call
+   graph to translate the call-site identifier to the proper id of the
+   function that it referes to. *)
+
+(* TODO: Keep the file paths always normalized, which should
+   speed up comparison. *)
 
 type t = IL.ident
 
@@ -17,7 +28,7 @@ let key ((id, tok) : t) =
 
 let hash (v : t) = Hashtbl.hash (key v)
 
-(* TODO: mid the definition from Sig_and_shape *)
+(* TODO: mind the followinf definition from Sig_and_shape *)
 (* Compare IL.name by string name and position to differentiate functions with
    the same name in different modules/classes. This matches FuncVertex
    in Function_call_graph.ml. *)
