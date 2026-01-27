@@ -65,18 +65,10 @@ module Dot = Graph.Graphviz.Dot (Display)
 module Topo = Graph.Topological.Make (G)
 module SCC = Graph.Components.Make (G)
 
-
-(** Node tracking for incremental updates *)
-let removed_node_keys : (string, unit) Hashtbl.t = Hashtbl.create 1000
-
 let node_key (n : node) =
   let name = Function_id.show n in 
   let filename, line, col = Function_id.to_file_line_col n in
   Printf.sprintf "%s|%s|%d|%d" name filename line col
-
-let clear_removed_nodes () = Hashtbl.clear removed_node_keys
-let mark_node_removed (n : node) = Hashtbl.add removed_node_keys (node_key n) ()
-let was_node_removed (n : node) = Hashtbl.mem removed_node_keys (node_key n)
 
 (** Helpers **)
 
