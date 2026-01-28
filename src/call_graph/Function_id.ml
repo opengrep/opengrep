@@ -26,6 +26,7 @@ let normalize_file (file : Fpath.t) : string =
   with Unix.Unix_error _ -> print_endline "realpath: <ERROR>"; Fpath.to_string (Fpath.normalize file)
 
 let key ((id, tok) : t) =
+  let a,b,c,d =
   if Tok.is_fake tok then
     (id, "", 0, 0)
   else
@@ -33,6 +34,9 @@ let key ((id, tok) : t) =
     let line = Tok.line_of_tok tok in
     let col = Tok.col_of_tok tok in
     (id, normalize_file file, line, col)
+  in
+  print_endline (Printf.sprintf "****** key: (%s, %s, %i, %i)" a b c d);
+  (a,b,c,d)
 
 let hash (v : t) = Hashtbl.hash (key v)
 
