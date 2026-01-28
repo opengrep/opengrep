@@ -3,10 +3,6 @@ module Log = Log_call_graph.Log
 (** Call graph node - just a function identifier (IL.name) *)
 type node = Function_id.t
 
-(* Helper to extract normalized key for node comparison.
-   Resolves file paths to canonical form to handle different representations
-   of the same file (e.g., /foo/bar vs /foo/baz/../bar). *)
-
 let hash_node = Function_id.hash
 
 let compare_node = Function_id.compare

@@ -12,7 +12,10 @@
    speed up comparison. *)
 
 type t = IL.ident
-
+ 
+(* Helper to extract normalized key for node comparison.
+   Resolves file paths to canonical form to handle different representations
+   of the same file (e.g., /foo/bar vs /foo/baz/../bar). *)
 let normalize_file (file : Fpath.t) : string =
   try Unix.realpath (Fpath.to_string file)
   with Unix.Unix_error _ -> Fpath.to_string (Fpath.normalize file)
