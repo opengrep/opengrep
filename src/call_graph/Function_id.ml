@@ -38,6 +38,9 @@ let key ((id, tok) : t) =
   print_endline (Printf.sprintf "****** key: (%s, %s, %i, %i)" a b c d);
   (a,b,c,d)
 
+let show_key ((a,b,c,d) : string * string * int * int) =
+  print_endline (Printf.sprintf "key: (%s, %s, %i, %i)" a b c d)
+
 let hash (v : t) = Hashtbl.hash (key v)
 
 (* TODO: mind the followinf definition from Sig_and_shape *)
@@ -58,10 +61,20 @@ let compare_func_key n1 n2 =
 *)
 
 let compare (n1 : t) (n2 : t) : int =
-  compare (key n1) (key n2)
+  let k1 = key n1 in
+  let k2 = key n2 in
+  print_endline "****** compare:";
+  show_key k1;
+  show_key k2;
+  compare k1 k2
 
 let equal (n1 : t) (n2 : t) : bool =
-  key n1 = key n2
+  let k1 = key n1 in
+  let k2 = key n2 in
+  print_endline "****** compare:";
+  show_key k1;
+  show_key k2;
+  k1 = k2
 
 let show ((id, _) : t) : string =
   id
