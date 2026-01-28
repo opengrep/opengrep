@@ -209,9 +209,9 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
   env
 
 let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
-    ?(name = []) ?(signature_db : signature_database option)
+    ?(name : IL.name option) ?(signature_db : signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(call_graph : Function_call_graph.FuncGraph.t option = None)
+    ?(call_graph : Call_graph.G.t option = None)
     (func_cfg : IL.fun_cfg) : extraction_result =
   let params = Signature.of_IL_params func_cfg.params in
   let param_assumptions = mk_param_assumptions ~taint_inst func_cfg.params in
@@ -221,7 +221,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
     | None -> param_assumptions
   in
   let fixpoint_effects, mapping =
-    Dataflow_tainting.fixpoint taint_inst ~in_env:combined_env ~name
+    Dataflow_tainting.fixpoint taint_inst ~in_env:combined_env ?name
       ?signature_db ?builtin_signature_db ?call_graph func_cfg
   in
   let effects_with_preconditions =
@@ -273,7 +273,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                * from propagating taint through helper functions like `return x;`.
                * We now keep parameter/global/control taints so callers can
                * materialize them, while still discarding purely shape-only summaries. *)
-              let func_name = Shape_and_sig.show_fn_id name in
+              let func_name = Option.fold ~none:"<anonymous>" ~some:IL.str_of_name name in
               Log.debug (fun m ->
                   m "TAINT_SIG: ToReturn effect captured for %s" func_name);
               let filtered_data_taints =
@@ -379,75 +379,18 @@ let extract_global_var_sids_from_ast (ast : G.program) :
        []
   |> List.rev
 
-(* Check if a target position falls within a range *)
-let pos_in_range target_pos range_opt =
-  match range_opt with
-  | Some (s, e) ->
-      (* Convert target token position to charpos for comparison *)
-      Tok.compare_location s target_pos <= 0
-      && Tok.compare_location e target_pos >= 0
-  | None -> false
-
-(* Simple visitor to find class context for a function *)
-class class_finder =
-  object
-    inherit [_] G.iter as super
-
-    method! visit_definition (loc, (found_class : IL.name option ref) as env) (entity, def_kind) =
-      match def_kind with
-      | G.ClassDef _ ->
-          (match entity.G.name with
-          | G.EN (G.Id ((class_name, _), _)) ->
-              let class_range =
-                AST_generic_helpers.range_of_any_opt (Def (entity, def_kind))
-              in
-              if pos_in_range loc class_range then
-                let fake_tok = Tok.unsafe_fake_tok class_name in
-                found_class :=
-                  Some
-                    {
-                      IL.ident = (class_name, fake_tok);
-                      sid = G.SId.unsafe_default;
-                      id_info = G.empty_id_info ();
-                    }
-          | _ -> ());
-          super#visit_definition env (entity, def_kind)
-      | _ -> super#visit_definition env (entity, def_kind)
-  end
-
-let class_finder_visitor_instance = new class_finder
-let find_class_for_function (ast : G.program) (target_name : IL.name)
-    : IL.name option =
-  let tok = snd target_name.IL.ident in
-  match Tok.loc_of_tok tok with
-  | Ok loc ->
-      let found_class : IL.name option ref = ref None in
-      class_finder_visitor_instance#visit_program (loc, found_class) ast;
-      !found_class
-  | _ -> None
-
 let extract_signature_with_file_context
     ~arity
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
-    ?(name = [])
-    ?(method_properties : G.expr list = [])
-    ?(call_graph : Function_call_graph.FuncGraph.t option = None)
+    ~(name : IL.name)
+    ?(method_properties : AST_generic.expr list = [])
+    ?(call_graph : Call_graph.G.t option = None)
     (taint_inst : Taint_rule_inst.t)
     func_cfg
     (ast : G.program) : signature_database * Signature.t =
   let global_sids = extract_global_var_sids_from_ast ast in
   let global_env = mk_global_assumptions_with_sids global_sids in
-
-  (* If we have a function name but no class name, try to detect it from AST *)
-  let final_name =
-    match name with
-    | [ None; Some func_name ] -> (
-        match find_class_for_function ast func_name with
-        | Some detected_class -> [ Some detected_class; Some func_name ]
-        | None -> name)
-    | _ -> name
-  in
 
   (* Add method property assumptions for methods with properties *)
   let combined_global_env =
@@ -461,10 +404,10 @@ let extract_signature_with_file_context
   in
 
   let { signature; _ } =
-    extract_signature taint_inst ~in_env:combined_global_env ~name:final_name
+    extract_signature taint_inst ~in_env:combined_global_env ~name
       ~signature_db:db ?builtin_signature_db ~call_graph func_cfg
   in
-  let updated_db = Shape_and_sig.add_signature db final_name {sig_ = signature; arity} in
+  let updated_db = Shape_and_sig.add_signature db (Function_id.of_il_name name) {sig_ = signature; arity} in
   (updated_db, signature)
 
 let show_signature_extraction func_name signature =

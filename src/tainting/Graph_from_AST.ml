@@ -1,9 +1,34 @@
 open Common
 module G = AST_generic
-module Log = Log_tainting.Log
-open Shape_and_sig
+module Log = Log_call_graph.Log
+(*  *open Shape_and_sig *)
+module Reachable = Graph_reachability
 
 (* Type for function information including AST node *)
+
+(* Function identifier as a path from outermost to innermost scope.
+ * For example:
+ * - [Some class_name; Some method_name; Some nested_fn] for nested function
+ * - [Some class_name; Some method_name] for a method
+ * - [Some fn_name] for a top-level function
+ * - [] for top-level/anonymous
+ *)
+type fn_id = IL.name option list
+[@@deriving show, eq, ord]
+
+let show_fn_id (fn_id : fn_id) : string =
+  match fn_id with
+  | [] -> "<anonymous>"
+  | path ->
+      path
+      |> List.map (fun name_opt ->
+          Option.value ~default:"<anon>" (Option.map (fun name -> fst name.IL.ident) name_opt))
+      |> String.concat "::"
+
+(** Extract the function name (last element) from the fn_id path *)
+let get_fn_name (fn_id : fn_id) : IL.name option =
+  List_.last_opt fn_id |> Option.join
+
 type func_info = {
   fn_id : fn_id;
   entity : G.entity option;
@@ -21,102 +46,17 @@ let get_func_arity (fdef : G.function_definition) : int =
   let params = fdef.fparams in
   List.length (Tok.unbracket params)
 
-(* OCamlgraph: Define vertex module for functions *)
-module FuncVertex = struct
-  type t = fn_id
+(* Graph node type - reuse from Call_graph for consistency *)
+type node = Call_graph.node
 
-  (* Compare by string name and position only to handle
-     cases where call site and definition have different SIds. We use
-     position as well to differentiate methods with the same name.
-     We need to guard for FakeToks. *)
-  let compare f1 f2 =
-    let compare_il_name n1 n2 =
-      let open Tok in
-      let st = String.compare (fst n1.IL.ident) (fst n2.IL.ident) in
-      if st <> 0 then st
-      else
-        match (snd n1.IL.ident, snd n2.IL.ident) with
-        | FakeTok _, FakeTok _ -> 0
-        | FakeTok _, _ -> -1
-        | _, FakeTok _ -> 1
-        | _ -> Tok.compare_pos (snd n1.IL.ident) (snd n2.IL.ident)
-    in
-    List.compare (Option.compare compare_il_name) f1 f2
+(* Extract graph node from fn_id - takes the last element *)
+let fn_id_to_node (fn_id : fn_id) : node option =
+  match List.rev fn_id with
+  | Some name :: _ -> Some (Function_id.of_il_name name)
+  | _ -> None
 
-  let hash (f : fn_id) =
-    Hashtbl.hash
-      (List.map
-         (Option.map (fun n -> fst n.IL.ident))
-         f)
-
-  let equal f1 f2 = Int.equal (compare f1 f2) 0
-end
-
-(* Edge label containing call site information *)
-type call_edge = {
-  callee_fn_id : fn_id; (* Function identifier of callee *)
-  call_site : Tok.t; (* Token at the call site *)
-}
-
-(* OCamlgraph: Create imperative labeled graph *)
-module FuncGraph = Graph.Imperative.Digraph.ConcreteLabeled (FuncVertex)
-    (struct
-      type t = call_edge
-
-      let compare e1 e2 =
-        let cmp = FuncVertex.compare e1.callee_fn_id e2.callee_fn_id in
-        if cmp <> 0 then cmp
-        else Tok.compare e1.call_site e2.call_site
-
-      let default =
-        {
-          callee_fn_id = [];
-          call_site = Tok.unsafe_fake_tok "";
-        }
-    end)
-
-(* OCamlgraph: Use built-in algorithms *)
-module Topo = Graph.Topological.Make (FuncGraph)
-module SCC = Graph.Components.Make (FuncGraph)
-
-(* Reachability module for computing relevant subgraphs *)
-module Reachable = Graph_functor.Reachable (FuncGraph)
-
-(* Graphviz output for debugging *)
-module Dot = Graph.Graphviz.Dot (struct
-  include FuncGraph
-
-  let graph_attributes _ = []
-  let default_vertex_attributes _ = []
-
-  (* Helper to show position info from a token *)
-  let pos_of_tok tok =
-    if Tok.is_fake tok then
-      let content = Tok.content_of_tok tok in
-      Printf.sprintf "fake:%s" content
-    else
-      let pos = Tok.unsafe_loc_of_tok tok in
-      Printf.sprintf "L%d:C%d" pos.Tok.pos.line pos.Tok.pos.column
-
-  let vertex_name v =
-    let name_str =
-      v
-      |> List.filter_map (Option.map (fun n ->
-          let pos = pos_of_tok (snd n.IL.ident) in
-          Printf.sprintf "%s@%s" (fst n.IL.ident) pos))
-      |> String.concat "."
-    in
-    Printf.sprintf "\"%s\"" (if name_str = "" then "???" else name_str)
-
-  let vertex_attributes _ = []
-  let get_subgraph _ = None
-  let default_edge_attributes _ = []
-
-  let edge_attributes e =
-    let label = FuncGraph.E.label e in
-    let call_site_str = pos_of_tok label.call_site in
-    [`Label call_site_str]
-end)
+(* Equality for fn_id using compare_fn_id *)
+let equal_fn_id f1 f2 = Int.equal (compare_fn_id f1 f2) 0
 
 (* Extract Go receiver type from method *)
 let extract_go_receiver_type (fdef : G.function_definition) : string option =
@@ -191,7 +131,7 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
 let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
   ids |>
   List.sort_uniq (fun (f1, t1) (f2, t2) ->
-    let cmp = FuncVertex.compare f1 f2 in
+    let cmp = compare_fn_id f1 f2 in
     if cmp <> 0 then cmp else Tok.compare t1 t2)
 
 (* Extract all calls from a function body and resolve them to fn_ids *)
@@ -503,21 +443,25 @@ let detect_user_hof (fdef : G.function_definition) : (string * int) list =
     if c <> 0 then c else Int.compare i1 i2)
 
 (* Helper to extract callback name from an argument expression.
-   Handles: foo, &foo, Module.foo *)
-let extract_callback_from_arg (arg_expr : G.expr) : IL.name option =
+   Handles: foo, &foo, Module.foo, module.func (DotAccess) *)
+let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t) option =
   match arg_expr.G.e with
   (* Plain identifier: foo *)
   | G.N (G.Id (id, id_info)) ->
       let callback_name = AST_to_IL.var_of_id_info id id_info in
-      Some callback_name
+      Some (callback_name, snd id)
   (* Address-of operator: &foo (C/C++ function pointers) *)
   | G.Ref (_, { e = G.N (G.Id (id, id_info)); _ }) ->
       let callback_name = AST_to_IL.var_of_id_info id id_info in
-      Some callback_name
+      Some (callback_name, snd id)
   (* Qualified identifier: Module.foo *)
   | G.N (G.IdQualified { name_last = id, _; name_info; _ }) ->
       let callback_name = AST_to_IL.var_of_id_info id name_info in
-      Some callback_name
+      Some (callback_name, snd id)
+  (* DotAccess: module.func or obj.method - common in Python/JS *)
+  | G.DotAccess (_, _, G.FN (G.Id (id, id_info))) ->
+      let callback_name = AST_to_IL.var_of_id_info id id_info in
+      Some (callback_name, snd id)
   | _ -> None
 
 (* Helper to identify a callback fn_id, checking nested functions in same scope first *)
@@ -579,21 +523,21 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
 (* Extract HOF callbacks from a function body, returning fn_ids of callbacks with call site tokens.
    Uses same identification logic as extract_calls to build proper fn_ids. *)
 
-(* Try to identify a callback from a G.argument, returning fn_id and fake token if found *)
+(* Try to identify a callback from a G.argument, returning fn_id and real token if found *)
 let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) : (fn_id * Tok.t) option =
   match arg with
   | G.Arg expr ->
       (* Also handle this.foo pattern *)
       let callback_opt = match expr.G.e with
         | G.DotAccess ({ e = G.IdSpecial ((G.This | G.Self), _); _ }, _, G.FN (G.Id (id, id_info))) ->
-            Some (AST_to_IL.var_of_id_info id id_info)
+            Some (AST_to_IL.var_of_id_info id id_info, snd id)
         | _ -> extract_callback_from_arg expr
       in
       (match callback_opt with
-      | Some callback_name ->
-          let hof_tok = Tok.unsafe_fake_tok (Printf.sprintf "<hof_callback:%s>" (fst callback_name.IL.ident)) in
+      | Some (callback_name, tok) ->
+          (* Use real token from the callback argument *)
           identify_callback ~all_funcs ~caller_parent_path callback_name
-          |> Option.map (fun fn_id -> (fn_id, hof_tok))
+          |> Option.map (fun fn_id -> (fn_id, tok))
       | None -> None)
   | _ -> None
 
@@ -606,7 +550,13 @@ let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_
     | Some arg -> try_arg arg
     | None -> None
   in
-  match callee.G.e with
+  (* First, check ALL arguments for function references - any function passed as arg is a callback *)
+  let all_callback_args =
+    Tok.unbracket args
+    |> List.filter_map try_arg
+  in
+  (* Then check for specific configured HOF patterns for additional context *)
+  let configured_callbacks = match callee.G.e with
   (* Method HOF: arr.map(callback) - callback at index 0 *)
   | G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _)))
     when List.mem method_name method_hofs ->
@@ -641,20 +591,23 @@ let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_
               params |> List.filter_map (fun (_, idx) -> try_arg_at_index idx)
           | None -> []))
   | _ -> []
+  in
+  (* Combine and deduplicate *)
+  all_callback_args @ configured_callbacks |> dedup_fn_ids
 
 let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs = [])
     ?(caller_parent_path = [])
     ~(lang : Lang.t) (fdef : G.function_definition) : (fn_id * Tok.t) list =
-  let hof_configs = Builtin_models.get_hof_configs lang in
+  let hof_configs = (Lang_config.get lang).hof_configs in
   let method_hofs =
     hof_configs |> List.concat_map (function
-      | Builtin_models.MethodHOF { methods; _ } -> methods
-      | Builtin_models.ReturningFunctionHOF { methods; _ } -> methods
+      | Lang_config.MethodHOF { methods; _ } -> methods
+      | Lang_config.ReturningFunctionHOF { methods; _ } -> methods
       | _ -> [])
   in
   let function_hofs =
     hof_configs |> List.filter_map (function
-      | Builtin_models.FunctionHOF { functions; callback_index; _ } ->
+      | Lang_config.FunctionHOF { functions; callback_index; _ } ->
           Some (functions, callback_index)
       | _ -> None)
   in
@@ -681,16 +634,16 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs
 (* Build call graph - Visit_function_defs handles regular functions,
    arrow functions, and lambda assignments like const x = () => {} *)
 let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
-    : FuncGraph.t =
-  let graph = FuncGraph.create () in
+    : Call_graph.G.t =
+  let graph = Call_graph.G.create () in
 
   (* Create a special top_level node to represent code outside functions *)
-  let top_level_name =
+  let top_level_node : node =
     let fake_tok = Tok.unsafe_fake_tok "<top_level>" in
-    Some IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = AST_generic.empty_id_info () }
+    let il_name = IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = AST_generic.empty_id_info () } in
+    Function_id.of_il_name il_name
   in
-  let top_level_fn_id = [None; top_level_name] in
-  FuncGraph.add_vertex graph top_level_fn_id;
+  Call_graph.G.add_vertex graph top_level_node;
 
   let funcs =
     Visit_function_defs.fold_with_parent_path
@@ -698,7 +651,10 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
         match fn_id_of_entity ~lang opt_ent parent_path fdef with
         | Some fn_id ->
             let func = { fn_id; entity = opt_ent; fdef } in
-            FuncGraph.add_vertex graph fn_id;
+            (* Add vertex using the node (last element of fn_id) *)
+            (match fn_id_to_node fn_id with
+            | Some node -> Call_graph.G.add_vertex graph node
+            | None -> ());
             func :: funcs
         | None -> funcs)
       [] ast
@@ -719,9 +675,10 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     (fun opt_ent parent_path fdef ->
       match fn_id_of_entity ~lang opt_ent parent_path fdef with
       | Some fn_id ->
-          (* Check if this is a top-level lambda/block (parent_path is [None] or []) *)
-          let is_toplevel_lambda = match parent_path with
-            | [None] | [] -> true
+          (* Check if this is a top-level lambda/block (no entity AND parent_path is [None] or []) *)
+          (* Named functions (def foo) have opt_ent = Some _, lambdas have opt_ent = None *)
+          let is_toplevel_lambda = match (opt_ent, parent_path) with
+            | (None, [None]) | (None, []) -> true
             | _ -> false
           in
 
@@ -733,11 +690,12 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
           (* Add labeled edges for each call - edge from callee to caller for bottom-up analysis *)
           List.iter
             (fun (callee_fn_id, call_tok) ->
-              let edge_label = { callee_fn_id; call_site = call_tok } in
-              FuncGraph.add_edge_e graph (FuncGraph.E.create callee_fn_id edge_label fn_id);
-              (* For top-level lambdas, also add edge to <top_level> *)
-              if is_toplevel_lambda then
-                FuncGraph.add_edge_e graph (FuncGraph.E.create callee_fn_id edge_label top_level_fn_id))
+              match fn_id_to_node callee_fn_id, fn_id_to_node fn_id with
+              | Some callee_node, Some caller_node ->
+                  Call_graph.add_edge graph ~src:callee_node ~dst:caller_node ~call_tok;
+                  if is_toplevel_lambda then
+                    Call_graph.add_edge graph ~src:callee_node ~dst:top_level_node ~call_tok
+              | _ -> ())
             callee_calls;
 
           (* Extract HOF callbacks and add edges: callback -> caller *)
@@ -747,11 +705,12 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
           (* Add labeled edges for each callback - edge from callback to caller for bottom-up analysis *)
           List.iter
             (fun (callback_fn_id, call_tok) ->
-              let edge_label = { callee_fn_id = callback_fn_id; call_site = call_tok } in
-              FuncGraph.add_edge_e graph (FuncGraph.E.create callback_fn_id edge_label fn_id);
-              (* For top-level lambdas, also add edge to <top_level> *)
-              if is_toplevel_lambda then
-                FuncGraph.add_edge_e graph (FuncGraph.E.create callback_fn_id edge_label top_level_fn_id))
+              match fn_id_to_node callback_fn_id, fn_id_to_node fn_id with
+              | Some callback_node, Some caller_node ->
+                  Call_graph.add_edge graph ~src:callback_node ~dst:caller_node ~call_tok;
+                  if is_toplevel_lambda then
+                    Call_graph.add_edge graph ~src:callback_node ~dst:top_level_node ~call_tok
+              | _ -> ())
             callback_calls
       | None -> ())
     ast;
@@ -760,23 +719,25 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
   let toplevel_calls = extract_toplevel_calls ~object_mappings ~all_funcs:funcs ast in
   List.iter
     (fun (callee_fn_id, call_tok) ->
-      let edge_label = { callee_fn_id; call_site = call_tok } in
-      FuncGraph.add_edge_e graph (FuncGraph.E.create callee_fn_id edge_label top_level_fn_id))
+      match fn_id_to_node callee_fn_id with
+      | Some callee_node ->
+          Call_graph.add_edge graph ~src:callee_node ~dst:top_level_node ~call_tok
+      | None -> ())
     toplevel_calls;
   Log.debug (fun m -> m "CALL_GRAPH: Added %d edges from top-level calls" (List.length toplevel_calls));
 
   (* Extract HOF callbacks from top-level code and add edges to <top_level> *)
   let toplevel_hof_callbacks =
-    let hof_configs = Builtin_models.get_hof_configs lang in
+    let hof_configs = (Lang_config.get lang).hof_configs in
     let method_hofs =
       hof_configs |> List.concat_map (function
-        | Builtin_models.MethodHOF { methods; _ } -> methods
-        | Builtin_models.ReturningFunctionHOF { methods; _ } -> methods
+        | Lang_config.MethodHOF { methods; _ } -> methods
+        | Lang_config.ReturningFunctionHOF { methods; _ } -> methods
         | _ -> [])
     in
     let function_hofs =
       hof_configs |> List.filter_map (function
-        | Builtin_models.FunctionHOF { functions; callback_index; _ } ->
+        | Lang_config.FunctionHOF { functions; callback_index; _ } ->
             Some (functions, callback_index)
         | _ -> None)
     in
@@ -789,8 +750,10 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     ) [] ast
   in
   toplevel_hof_callbacks |> List.iter (fun (callback_fn_id, call_tok) ->
-    let edge_label = { callee_fn_id = callback_fn_id; call_site = call_tok } in
-    FuncGraph.add_edge_e graph (FuncGraph.E.create callback_fn_id edge_label top_level_fn_id));
+    match fn_id_to_node callback_fn_id with
+    | Some callback_node ->
+        Call_graph.add_edge graph ~src:callback_node ~dst:top_level_node ~call_tok
+    | None -> ());
   Log.debug (fun m -> m "CALL_GRAPH: Added %d edges from top-level HOF callbacks" (List.length toplevel_hof_callbacks));
 
   (* Add implicit edges from constructors to all methods in the same class.
@@ -829,15 +792,15 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
                    class_name_opt other_class_opt)
             funcs
         in
-        (* Add implicit edge from constructor to each method *)
+        (* Add implicit edge from constructor to each method, only if no explicit edge exists *)
         List.iter
           (fun method_func ->
-            (* Implicit edge - no real call site, use fake token *)
-            let edge_label = {
-              callee_fn_id = method_func.fn_id;
-              call_site = Tok.unsafe_fake_tok "<implicit:constructor>"
-            } in
-            FuncGraph.add_edge_e graph (FuncGraph.E.create func.fn_id edge_label method_func.fn_id))
+            match fn_id_to_node func.fn_id, fn_id_to_node method_func.fn_id with
+            | Some constructor_node, Some method_node ->
+                if not (Call_graph.G.mem_edge graph constructor_node method_node) then
+                  Call_graph.add_edge graph ~src:constructor_node ~dst:method_node
+                    ~call_tok:(Tok.unsafe_fake_tok "<implicit:constructor>")
+            | _ -> ())
           same_class_methods)
     funcs;
 
@@ -849,13 +812,13 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
   List.iter (fun class_g_name ->
     let class_il_name = AST_to_IL.var_of_name class_g_name in
     let class_str = fst class_il_name.IL.ident in
-    (* Create Class:* fn_id *)
-    let class_node_name =
+    (* Create Class:* node *)
+    let class_init_node : node =
       let fake_tok = Tok.unsafe_fake_tok ("Class:" ^ class_str) in
-      Some IL.{ ident = ("Class:" ^ class_str, fake_tok); sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
+      let il_name = IL.{ ident = ("Class:" ^ class_str, fake_tok); sid = G.SId.unsafe_default; id_info = G.empty_id_info () } in
+      Function_id.of_il_name il_name
     in
-    let class_fn_id = [None; class_node_name] in
-    FuncGraph.add_vertex graph class_fn_id;
+    Call_graph.G.add_vertex graph class_init_node;
 
     (* Find all methods in this class *)
     let class_methods =
@@ -871,11 +834,11 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     (* Add implicit edge from Class:* to each method (class init happens first, then methods) *)
     List.iter
       (fun method_func ->
-        let edge_label = {
-          callee_fn_id = method_func.fn_id;
-          call_site = Tok.unsafe_fake_tok "<implicit:class-init>"
-        } in
-        FuncGraph.add_edge_e graph (FuncGraph.E.create class_fn_id edge_label method_func.fn_id))
+        match fn_id_to_node method_func.fn_id with
+        | Some method_node ->
+            Call_graph.add_edge graph ~src:class_init_node ~dst:method_node
+              ~call_tok:(Tok.unsafe_fake_tok "<implicit:class-init>")
+        | None -> ())
       class_methods)
     class_names;
 
@@ -883,7 +846,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
 
 (* Identify functions that contain byte ranges (from pattern matches) *)
 let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
-    (ranges : Range.t list) : fn_id list =
+    (ranges : Range.t list) : Function_id.t list =
   (* Hash table to track ALL functions containing each range, along with function size *)
   let range_to_funcs : (Range.t, (fn_id * int) list) Hashtbl.t = Hashtbl.create 10 in
   List.iter (fun range -> Hashtbl.add range_to_funcs range []) ranges;
@@ -940,7 +903,7 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
                       in
                       let class_fn_id = [None; class_node_name] in
                       let existing = Hashtbl.find range_to_funcs range in
-                      if not (List.exists (fun (fid, _) -> FuncVertex.equal fid class_fn_id) existing) then
+                      if not (List.exists (fun (fid, _) -> equal_fn_id fid class_fn_id) existing) then
                         Hashtbl.replace range_to_funcs range ((class_fn_id, class_size) :: existing)
                   | None -> ()
                 )
@@ -973,7 +936,7 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
                   match fn_id_of_entity ~lang (Some ent) visitor_parent_path fdef with
                   | Some fn_id ->
                       let existing = Hashtbl.find range_to_funcs range in
-                      if not (List.exists (fun (fid, _) -> FuncVertex.equal fid fn_id) existing) then
+                      if not (List.exists (fun (fid, _) -> equal_fn_id fid fn_id) existing) then
                         Hashtbl.replace range_to_funcs range ((fn_id, func_size) :: existing)
                   | None -> ()
                 )
@@ -1028,31 +991,4 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       else
         innermost_fn_id :: matching_funcs
   ) [] ranges
-
-
-(* Compute the subgraph containing only functions relevant for taint flow
-   from sources to sinks. This uses the nearest common descendant algorithm
-   to find all paths between source and sink functions. *)
-let compute_relevant_subgraph (graph : FuncGraph.t) (sources : fn_id list)
-    (sinks : fn_id list) : FuncGraph.t =
-  match (sources, sinks) with
-  | [], _ | _, [] ->
-      (* No sources or sinks, return empty graph *)
-      FuncGraph.create ()
-  | _ :: _, _ :: _ ->
-      (* Compute union of all nearest common descendant subgraphs
-         for each source-sink pair *)
-      let result = FuncGraph.create () in
-      List.iter
-        (fun source ->
-          List.iter
-            (fun sink ->
-              let subgraph =
-                Reachable.nearest_common_descendant_subgraph graph source sink
-              in
-              (* Add all vertices and edges from subgraph to result *)
-              FuncGraph.iter_vertex (FuncGraph.add_vertex result) subgraph;
-              FuncGraph.iter_edges_e (FuncGraph.add_edge_e result) subgraph)
-            sinks)
-        sources;
-      result
+  |> List.filter_map fn_id_to_node

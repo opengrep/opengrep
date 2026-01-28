@@ -25,9 +25,13 @@ let pr2_ranges (file : Fpath.t) (rwms : RM.t list) : unit =
 let test_tainting taint_inst def =
   UCommon.pr2 "\nDataflow";
   UCommon.pr2 "--------";
+  let test_name =
+    let fake_tok = Tok.unsafe_fake_tok "<test>" in
+    IL.{ ident = ("<test>", fake_tok); sid = AST_generic.SId.unsafe_default; id_info = AST_generic.empty_id_info () }
+  in
   let fcfg, _effects_IGNORED, mapping =
     Match_tainting_mode.check_fundef taint_inst
-      [None; None]
+      test_name
       AST_to_IL.empty_ctx def
   in
   DataflowX.display_mapping fcfg.cfg mapping Taint_lval_env.to_string

@@ -1,0 +1,21 @@
+(library
+ (name call_graph)
+ (public_name semgrep.call_graph)
+ (wrapped false)
+ (libraries
+  commons
+  semgrep_core
+  semgrep.il
+  semgrep.matching
+  ast_generic
+  ocamlgraph
+  ppx_deriving_yojson.runtime
+  yojson
+  fpath
+ )
+ (preprocess
+  (pps
+   ppx_deriving.show
+   ppx_deriving.eq
+   ppx_deriving.ord
+   ppx_deriving_yojson)))
