@@ -87,6 +87,7 @@
               "name": "rules.assert-eqeq-is-ok",
               "properties": {
                 "precision": "very-high",
+                "security-severity": "8.0",
                 "tags": [
                   "security",
                   "sometag"
@@ -111,6 +112,7 @@
               "name": "rules.eqeq-is-bad",
               "properties": {
                 "precision": "very-high",
+                "security-severity": "8.0",
                 "tags": [
                   "security",
                   "sometag"
@@ -135,6 +137,7 @@
               "name": "rules.javascript-basic-eqeq-bad",
               "properties": {
                 "precision": "very-high",
+                "security-severity": "8.0",
                 "tags": [
                   "cwe te",
                   "security",
@@ -160,6 +163,7 @@
               "name": "rules.python37-compatability-os-module",
               "properties": {
                 "precision": "very-high",
+                "security-severity": "8.0",
                 "tags": [
                   "security",
                   "sometag"
