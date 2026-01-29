@@ -521,41 +521,36 @@ let profiling_to_profiling (profiling_data : Core_profiling.t) : Out.profile =
       profiling_data.file_times
       |> List_.map
            (fun { Core_profiling.file = target; rule_times; run_time; file_size_bytes } ->
-             let (rule_id_to_rule_prof
-                   : (Rule_ID.t, Core_profiling.rule_profiling) Hashtbl.t) =
+             (* Match times: only store (rule_id, time) for rules that ran. *)
+             let match_times : (Rule_ID.t * float) list =
+               rule_times
+               |> List_.filter_map (fun (rp : Core_profiling.rule_profiling) ->
+                    (* Only include rules with non-zero match time *)
+                    if rp.rule_match_time > 0.0 then
+                      Some (rp.rule_id, rp.rule_match_time)
+                    else None)
+             in
+             (* Estimate parse time by subtracting all matching time from total time.
+              * run_time = parse_time + sum(match_times)
+              *
+              * This "parse_time" actually includes:
+              * - Prefiltering (typically enabled): reading file as string,
+              *   running regex checks.
+              * - AST parsing (conditional): only if rules pass prefiltering.
+              *
+              * Files with empty match_times[] spent time on prefiltering only. *)
+             let total_match_time : float =
                rule_times
                |> List_.map (fun (rp : Core_profiling.rule_profiling) ->
-                      (rp.rule_id, rp))
-               |> Hashtbl_.hash_of_list
+                    rp.rule_match_time)
+               |> List.fold_left ( +. ) 0.0
              in
-
+             let estimated_parse_time : float = run_time -. total_match_time in
              Out.
                {
                  path = target;
-                 match_times =
-                   rule_ids
-                   |> List_.map (fun rule_id ->
-                          try
-                            let rprof : Core_profiling.rule_profiling =
-                              Hashtbl.find rule_id_to_rule_prof rule_id
-                            in
-                            rprof.rule_match_time
-                          with
-                          | Not_found -> 0.);
-                 (* TODO: we could probably just aggregate in a single
-                  * float instead of returning those list of parse_time
-                  * which don't really make sense; we just parse once a file.
-                  *)
-                 parse_times =
-                   rule_ids
-                   |> List_.map (fun rule_id ->
-                          try
-                            let rprof : Core_profiling.rule_profiling =
-                              Hashtbl.find rule_id_to_rule_prof rule_id
-                            in
-                            rprof.rule_parse_time
-                          with
-                          | Not_found -> 0.);
+                 match_times;
+                 parse_time = estimated_parse_time;
                  num_bytes = Option.value ~default:0 file_size_bytes;
                  run_time;
                });
