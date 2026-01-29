@@ -791,7 +791,7 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
       let was_scanned = not (List_.null rules) in
 
       (* TODO: can we skip all of this if there are no applicable
-          rules? In particular, can we skip print_cli_progress? *)
+         rules? In particular, can we skip print_cli_progress? *)
       let xtarget = Xtarget.resolve parse_and_resolve_name target in
       let match_hook _ = () in
       let xconf =
@@ -824,10 +824,24 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
         Match_rules.check ~match_hook ~timeout ~dependency_match_table xconf
           rules xtarget
       in
+      (* Add file size when profiling is on. *)
+      let matches =
+        {matches with
+         profiling =
+           Option.map
+             (fun (p : Core_profiling.partial_profiling) ->
+                let p_file_size_bytes =
+                  if Lazy.is_val xtarget.lazy_content then
+                    Some (String.length (Lazy.force xtarget.lazy_content))
+                  else None
+                in
+                {p with Core_profiling.p_file_size_bytes})
+             matches.profiling}
+      in
       (* So we can display matches incrementally in osemgrep!
        * Note that this is run in one of the domains, so the hook should
        * not rely on shared memory unless if done in a thread-safe way.
-      *)
+       *)
       config.file_match_hook |> Option.iter (fun hook -> hook file matches);
       print_cli_progress config;
       (matches, was_scanned)

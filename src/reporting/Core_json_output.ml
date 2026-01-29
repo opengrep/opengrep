@@ -520,7 +520,7 @@ let profiling_to_profiling (profiling_data : Core_profiling.t) : Out.profile =
     targets =
       profiling_data.file_times
       |> List_.map
-           (fun { Core_profiling.file = target; rule_times; run_time } ->
+           (fun { Core_profiling.file = target; rule_times; run_time; file_size_bytes } ->
              let (rule_id_to_rule_prof
                    : (Rule_ID.t, Core_profiling.rule_profiling) Hashtbl.t) =
                rule_times
@@ -556,7 +556,7 @@ let profiling_to_profiling (profiling_data : Core_profiling.t) : Out.profile =
                             rprof.rule_parse_time
                           with
                           | Not_found -> 0.);
-                 num_bytes = UFile.filesize target;
+                 num_bytes = Option.value ~default:0 file_size_bytes;
                  run_time;
                });
     rules = rule_ids;
@@ -567,8 +567,8 @@ let profiling_to_profiling (profiling_data : Core_profiling.t) : Out.profile =
      *)
     total_bytes =
       profiling_data.file_times
-      |> List_.map (fun { Core_profiling.file = target; _ } ->
-             UFile.filesize target)
+      |> List_.map (fun { Core_profiling.file_size_bytes; _ } ->
+             Option.value ~default:0 file_size_bytes)
       |> Common2.sum_int;
     (* those are filled later in pysemgrep from the Profiler class *)
     profiling_times = [];
