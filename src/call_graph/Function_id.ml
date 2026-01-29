@@ -17,8 +17,7 @@ type t = IL.ident
    Resolves file paths to canonical form to handle different representations
    of the same file (e.g., /foo/bar vs /foo/baz/../bar). *)
 let normalize_file (file : Fpath.t) : string =
-  try Unix.realpath (Fpath.to_string file)
-  with Unix.Unix_error _ -> Fpath.to_string (Fpath.normalize file)
+  Fpath.to_string (Fpath.normalize file)
 
 let key ((id, tok) : t) =
   if Tok.is_fake tok then
