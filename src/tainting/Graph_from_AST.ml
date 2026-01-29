@@ -443,25 +443,43 @@ let detect_user_hof (fdef : G.function_definition) : (string * int) list =
     if c <> 0 then c else Int.compare i1 i2)
 
 (* Helper to extract callback name from an argument expression.
-   Handles: foo, &foo, Module.foo, module.func (DotAccess) *)
-let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t) option =
+   Handles: foo, &foo, Module.foo, module.func (DotAccess), Elixir &func/n
+   Returns: (callback_name, tok, shortlambda_tmp_opt)
+   - shortlambda_tmp_opt is Some IL.name for the _tmp wrapper node when this is an Elixir ShortLambda *)
+let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t * IL.name option) option =
   match arg_expr.G.e with
   (* Plain identifier: foo *)
   | G.N (G.Id (id, id_info)) ->
       let callback_name = AST_to_IL.var_of_id_info id id_info in
-      Some (callback_name, snd id)
+      Some (callback_name, snd id, None)
   (* Address-of operator: &foo (C/C++ function pointers) *)
   | G.Ref (_, { e = G.N (G.Id (id, id_info)); _ }) ->
       let callback_name = AST_to_IL.var_of_id_info id id_info in
-      Some (callback_name, snd id)
+      Some (callback_name, snd id, None)
   (* Qualified identifier: Module.foo *)
   | G.N (G.IdQualified { name_last = id, _; name_info; _ }) ->
       let callback_name = AST_to_IL.var_of_id_info id name_info in
-      Some (callback_name, snd id)
+      Some (callback_name, snd id, None)
   (* DotAccess: module.func or obj.method - common in Python/JS *)
   | G.DotAccess (_, _, G.FN (G.Id (id, id_info))) ->
       let callback_name = AST_to_IL.var_of_id_info id id_info in
-      Some (callback_name, snd id)
+      Some (callback_name, snd id, None)
+  (* Elixir: &func/n - ShortLambda wrapping a call to the named function.
+     Structure: OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
+     Create a _tmp node to match what AST_to_IL creates for the anonymous wrapper. *)
+  | G.OtherExpr (("ShortLambda", shortlambda_tok), [G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ }]) ->
+      (match inner_e.G.e with
+      | G.Call ({ e = G.N (G.Id (id, id_info)); _ }, _) ->
+          let callback_name = AST_to_IL.var_of_id_info id id_info in
+          (* Create _tmp IL.name using Tok.fake_tok like AST_to_IL.fresh_var does *)
+          let tmp_tok = Tok.fake_tok shortlambda_tok "_tmp" in
+          let tmp_name = IL.{
+            ident = ("_tmp", tmp_tok);
+            sid = G.SId.unsafe_default;
+            id_info = G.empty_id_info ();
+          } in
+          Some (callback_name, snd id, Some tmp_name)
+      | _ -> None)
   | _ -> None
 
 (* Helper to identify a callback fn_id, checking nested functions in same scope first *)
@@ -523,27 +541,29 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
 (* Extract HOF callbacks from a function body, returning fn_ids of callbacks with call site tokens.
    Uses same identification logic as extract_calls to build proper fn_ids. *)
 
-(* Try to identify a callback from a G.argument, returning fn_id and real token if found *)
-let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) : (fn_id * Tok.t) option =
+(* Try to identify a callback from a G.argument, returning fn_id, token, and optional _tmp node.
+   The _tmp node is present for Elixir ShortLambda to create the intermediate wrapper node. *)
+let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) : (fn_id * Tok.t * IL.name option) option =
   match arg with
   | G.Arg expr ->
       (* Also handle this.foo pattern *)
       let callback_opt = match expr.G.e with
         | G.DotAccess ({ e = G.IdSpecial ((G.This | G.Self), _); _ }, _, G.FN (G.Id (id, id_info))) ->
-            Some (AST_to_IL.var_of_id_info id id_info, snd id)
+            Some (AST_to_IL.var_of_id_info id id_info, snd id, None)
         | _ -> extract_callback_from_arg expr
       in
       (match callback_opt with
-      | Some (callback_name, tok) ->
+      | Some (callback_name, tok, tmp_opt) ->
           (* Use real token from the callback argument *)
           identify_callback ~all_funcs ~caller_parent_path callback_name
-          |> Option.map (fun fn_id -> (fn_id, tok))
+          |> Option.map (fun fn_id -> (fn_id, tok, tmp_opt))
       | None -> None)
   | _ -> None
 
-(* Extract HOF callbacks from a single call expression *)
+(* Extract HOF callbacks from a single call expression.
+   Returns list of (fn_id, tok, tmp_opt) where tmp_opt is the _tmp node for ShortLambda. *)
 let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_funcs
-    ~caller_parent_path (callee : G.expr) (args : G.arguments) : (fn_id * Tok.t) list =
+    ~caller_parent_path (callee : G.expr) (args : G.arguments) : (fn_id * Tok.t * IL.name option) list =
   let try_arg arg = try_identify_callback_arg ~all_funcs ~caller_parent_path arg in
   let try_arg_at_index idx =
     match List.nth_opt (Tok.unbracket args) idx with
@@ -592,12 +612,14 @@ let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_
           | None -> []))
   | _ -> []
   in
-  (* Combine and deduplicate *)
-  all_callback_args @ configured_callbacks |> dedup_fn_ids
+  (* Combine - dedup would need to handle the tmp_opt too, skip for now *)
+  all_callback_args @ configured_callbacks
 
+(* Extract HOF callbacks, returning (fn_id, tok, tmp_opt) tuples.
+   tmp_opt is Some IL.name for ShortLambda callbacks that need a _tmp intermediate node. *)
 let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs = [])
     ?(caller_parent_path = [])
-    ~(lang : Lang.t) (fdef : G.function_definition) : (fn_id * Tok.t) list =
+    ~(lang : Lang.t) (fdef : G.function_definition) : (fn_id * Tok.t * IL.name option) list =
   let hof_configs = (Lang_config.get lang).hof_configs in
   let method_hofs =
     hof_configs |> List.concat_map (function
@@ -629,7 +651,7 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs
     end
   in
   v#visit_function_definition () fdef;
-  !callbacks |> dedup_fn_ids
+  !callbacks
 
 (* Build call graph - Visit_function_defs handles regular functions,
    arrow functions, and lambda assignments like const x = () => {} *)
@@ -698,18 +720,26 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
               | _ -> ())
             callee_calls;
 
-          (* Extract HOF callbacks and add edges: callback -> caller *)
+          (* Extract HOF callbacks and add edges: callback -> caller (or callback -> _tmp -> caller for ShortLambda) *)
           let callback_calls =
             extract_hof_callbacks ~_object_mappings:object_mappings ~user_hofs ~all_funcs:funcs ~caller_parent_path:fn_id ~lang fdef
           in
-          (* Add labeled edges for each callback - edge from callback to caller for bottom-up analysis *)
+          (* Add labeled edges for each callback - edge from callback to caller for bottom-up analysis.
+             For ShortLambda, create intermediate _tmp node: callback -> _tmp -> caller *)
           List.iter
-            (fun (callback_fn_id, call_tok) ->
+            (fun (callback_fn_id, call_tok, tmp_opt) ->
               match fn_id_to_node callback_fn_id, fn_id_to_node fn_id with
               | Some callback_node, Some caller_node ->
-                  Call_graph.add_edge graph ~src:callback_node ~dst:caller_node ~call_tok;
+                  let src_to_caller = match tmp_opt with
+                    | Some tmp_name ->
+                        let tmp_node = Function_id.of_il_name tmp_name in
+                        Call_graph.add_edge graph ~src:callback_node ~dst:tmp_node ~call_tok;
+                        tmp_node
+                    | None -> callback_node
+                  in
+                  Call_graph.add_edge graph ~src:src_to_caller ~dst:caller_node ~call_tok;
                   if is_toplevel_lambda then
-                    Call_graph.add_edge graph ~src:callback_node ~dst:top_level_node ~call_tok
+                    Call_graph.add_edge graph ~src:src_to_caller ~dst:top_level_node ~call_tok
               | _ -> ())
             callback_calls
       | None -> ())
@@ -749,10 +779,17 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
       found @ acc
     ) [] ast
   in
-  toplevel_hof_callbacks |> List.iter (fun (callback_fn_id, call_tok) ->
+  toplevel_hof_callbacks |> List.iter (fun (callback_fn_id, call_tok, tmp_opt) ->
     match fn_id_to_node callback_fn_id with
     | Some callback_node ->
-        Call_graph.add_edge graph ~src:callback_node ~dst:top_level_node ~call_tok
+        let src_to_caller = match tmp_opt with
+          | Some tmp_name ->
+              let tmp_node = Function_id.of_il_name tmp_name in
+              Call_graph.add_edge graph ~src:callback_node ~dst:tmp_node ~call_tok;
+              tmp_node
+          | None -> callback_node
+        in
+        Call_graph.add_edge graph ~src:src_to_caller ~dst:top_level_node ~call_tok
     | None -> ());
   Log.debug (fun m -> m "CALL_GRAPH: Added %d edges from top-level HOF callbacks" (List.length toplevel_hof_callbacks));
 
@@ -841,6 +878,12 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
         | None -> ())
       class_methods)
     class_names;
+
+  (* DEBUG: Uncomment to dump call graph to DOT file
+  let oc = open_out "/tmp/call_graph.dot" in
+  Call_graph.Dot.output_graph oc graph;
+  close_out oc;
+  *)
 
   graph
 

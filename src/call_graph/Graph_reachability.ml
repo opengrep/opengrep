@@ -21,7 +21,7 @@ let reverse_reachable_subgraph (g : graph) (targets : vertex list) : graph =
       if not (G.mem_vertex sg t) then G.add_vertex sg t;
       if G.mem_vertex g t then
         RBfs.fold_component
-          (fun v sg -> G.fold_pred_e (fun e sg -> G.add_edge_e sg e; sg) sg g v)
+          (fun v sg -> G.fold_pred_e (fun e sg -> G.add_edge_e sg e; sg) g v sg)
           sg g t
       else sg)
     (G.create ()) targets

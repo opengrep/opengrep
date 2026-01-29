@@ -24,7 +24,7 @@ defmodule TestHOF do
 
   # ===== Named function reference tests =====
 
-  def process(x) do
+  def process_custom_map(x) do
     # ruleid: test-hof-taint
     sink(x)
     x
@@ -33,25 +33,43 @@ defmodule TestHOF do
   # Test custom HOF delegating to built-in + named function
   def test_custom_map_builtin_named() do
     arr = [source()]
-    mapped = custom_map_builtin(arr, &process/1)
+    mapped = custom_map_builtin(arr, &process_custom_map/1)
+  end
+
+  def process_builtin_map(x) do
+    # ruleid: test-hof-taint
+    sink(x)
+    x
   end
 
   def test_builtin_map_named() do
     arr = [source()]
-    mapped = Enum.map(arr, &process/1)
+    mapped = Enum.map(arr, &process_builtin_map/1)
+  end
+
+  def process_custom_foreach(x) do
+    # ruleid: test-hof-taint
+    sink(x)
+    x
   end
 
   def test_custom_foreach_named() do
     arr = [source()]
-    mapped = custom_for_each(arr, &process/1)
+    mapped = custom_for_each(arr, &process_custom_foreach/1)
+  end
+
+  def process_builtin_each(x) do
+    # ruleid: test-hof-taint
+    sink(x)
+    x
   end
 
   def test_builtin_each_named() do
     arr = [source()]
-    mapped = Enum.each(arr, &process/1)
+    mapped = Enum.each(arr, &process_builtin_each/1)
   end
 
-  def process_filter(x) do
+  def process_custom_filter(x) do
     # ruleid: test-hof-taint
     sink(x)
     true
@@ -59,16 +77,28 @@ defmodule TestHOF do
 
   def test_custom_filter_named() do
     arr = [source()]
-    filtered = custom_filter(arr, &process_filter/1)
+    filtered = custom_filter(arr, &process_custom_filter/1)
+  end
+
+  def process_builtin_filter(x) do
+    # ruleid: test-hof-taint
+    sink(x)
+    true
   end
 
   def test_builtin_filter_named() do
     arr = [source()]
-    filtered = Enum.filter(arr, &process_filter/1)
+    filtered = Enum.filter(arr, &process_builtin_filter/1)
+  end
+
+  def process_direct_call(x) do
+    # ruleid: test-hof-taint
+    sink(x)
+    x
   end
 
   def test_direct_call_named() do
-    result = direct_call(&process/1)
+    result = direct_call(&process_direct_call/1)
   end
 
   # ===== Regular fn lambda tests =====
