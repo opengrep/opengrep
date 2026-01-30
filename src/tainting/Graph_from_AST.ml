@@ -118,11 +118,12 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
           Some (adjusted_parent_path @ [Some name])
       | None -> None)
   | None ->
-      (* Anonymous function - use _tmp with token for identification.
-         This matches what AST_to_IL does. Token position ensures uniqueness. *)
+      (* Anonymous function - use _tmp with fake token to match AST_to_IL behavior.
+         AST_to_IL.fresh_var creates fake tokens for _tmp variables. *)
       let tok = match fdef.fkind with (_, tok) -> tok in
+      let fake_tok = Tok.fake_tok tok "_tmp" in
       let tmp_name = IL.{
-        ident = ("_tmp", tok);
+        ident = ("_tmp", fake_tok);
         sid = G.SId.unsafe_default;
         id_info = G.empty_id_info ();
       } in

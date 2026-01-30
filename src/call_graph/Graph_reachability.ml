@@ -1,7 +1,5 @@
 module G = Call_graph.G
 module Bfs = Graph.Traverse.Bfs (G)
-module Oper = Graph.Oper.I (G)
-module Comp = Graph.Components.Make (G)
 
 type graph = G.t
 type vertex = G.V.t
@@ -38,17 +36,43 @@ let reachable_vertices_batch (g : graph) (starts : vertex list) : VSet.t =
     VSet.empty starts
 
 (* Compute the subgraph containing only functions relevant for taint flow
-   from sources to sinks. Optimized batched version using sets. *)
+   from sources to sinks. Excludes dead-end nodes that have no independent
+   source/sink connections. *)
 let compute_relevant_subgraph (graph : Call_graph.G.t)
     ~(sources : Function_id.t list) ~(sinks : Function_id.t list) : Call_graph.G.t =
   match (sources, sinks) with
   | [], _ | _, [] ->
       Call_graph.G.create ()
   | _ :: _, _ :: _ ->
-      (* Batch: compute reachable vertex SETS (no intermediate graphs) *)
+      let source_set = VSet.of_list sources in
+      let sink_set = VSet.of_list sinks in
+      let is_source_or_sink v = VSet.mem v source_set || VSet.mem v sink_set in
+
+      (* Batch: compute reachable vertex SETS *)
       let from_sources = reachable_vertices_batch graph sources in
       let from_sinks = reachable_vertices_batch graph sinks in
       (* Fast set intersection *)
       let common = VSet.inter from_sources from_sinks in
-      (* Reverse BFS from all common descendants to get ancestor edges *)
-      reverse_reachable_subgraph graph (VSet.elements common)
+
+      (* A node is relevant if:
+         1. It's a source or sink, OR
+         2. It has a predecessor that is source/sink or in XOR (entry point), OR
+         3. It has multiple predecessors in common (bridge between groups) *)
+      let is_relevant v =
+        is_source_or_sink v ||
+        (try
+          let preds = G.fold_pred (fun p acc -> p :: acc) graph v [] in
+          (* Entry point: has pred that is source/sink or in XOR *)
+          let is_entry = List.exists (fun pred ->
+            is_source_or_sink pred ||
+            (VSet.mem pred from_sources <> VSet.mem pred from_sinks)
+          ) preds in
+          (* Bridge: has multiple predecessors in common *)
+          let preds_in_common = List.filter (fun p -> VSet.mem p common) preds in
+          is_entry || List.length preds_in_common > 1
+        with _ -> false)
+      in
+      let relevant = VSet.filter is_relevant common in
+
+      (* Reverse BFS from relevant nodes on original graph to get ancestor edges *)
+      reverse_reachable_subgraph graph (VSet.elements relevant)
