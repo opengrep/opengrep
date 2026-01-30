@@ -132,7 +132,7 @@ setuptools.setup(
     name="opengrep",
     version="1.16.0",
     author="Semgrep Inc., Opengrep",
-    author_email="support@opengrep.com",
+    author_email="support@opengrep.dev",
     description="Lightweight static analysis for many languages. Find bug variants with patterns that look like source code.",
     cmdclass=cmdclass,
     install_requires=install_requires,
