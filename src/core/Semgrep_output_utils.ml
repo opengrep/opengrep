@@ -75,7 +75,7 @@ let position_of_token_location loc =
 
 let position_range min_loc max_loc =
   let end_line, end_col, end_charpos = Tok.end_pos_of_loc max_loc in
-  (* alt: could call position_of_token_location but more symetric like that*)
+  (* alt: could call position_of_token_location but more symmetric like that. *)
   ( {
       line = min_loc.Tok.pos.line;
       col = adjust_column min_loc.Tok.pos.column;

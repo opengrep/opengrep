@@ -1,0 +1,19 @@
+(executables
+ (names Main)
+ (libraries
+   cmdliner
+   commons
+   semgrep_core_rule ; for Semgrep_output_v1_j
+   semgrep.core ; for Semgrep_output_utils
+   str
+   unix
+ )
+ (preprocess (pps ppx_deriving_yojson))
+ (modes native)
+)
+
+(install
+ (package semgrep)
+ (section bin)
+ (files (Main.exe as opengrep-diff))
+)
