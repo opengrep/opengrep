@@ -165,7 +165,7 @@ def main() -> None:
             tests = [test for test in TESTS if test.name == args.name]
         else:
             tests = TESTS
-        results = run_tests("input", tests, args.no_cache, args.max_cache)
+        run_tests("input", tests, args.no_cache, args.max_cache)
 
 
 if __name__ == "__main__":
