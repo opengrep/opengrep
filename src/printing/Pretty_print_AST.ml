@@ -64,9 +64,11 @@ type env = { lang : Lang.t; (* indentation level *) level : int }
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
+
+(* when we don't have a nice representation, just print out the AST.
+ * This is used only in logs and dumps. *)
 let todo any =
-  Log.warn (fun m -> m "Pretty_print_AST TODO: %s" (show_any any));
-  "*TODO*"
+  show_any any
 
 let rec indent = function
   | 0 -> ""
