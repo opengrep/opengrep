@@ -2287,6 +2287,8 @@ and stmt_aux env st =
   | G.Throw (tok, e, _) ->
       let env, ss, e = expr_with_pre_stmts env e in
       (env, ss @ [ mk_s (Throw (tok, e)) ])
+  | G.OtherStmt (G.OS_Go, [G.E call]) ->
+      expr_stmt env call G.sc
   | G.OtherStmt (G.OS_ThrowNothing, [ G.Tk tok ]) ->
       (* Python's `raise` without arguments *)
       let eorig = related_tok tok in
