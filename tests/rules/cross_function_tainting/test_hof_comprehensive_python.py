@@ -23,12 +23,6 @@ def direct_call(callback):
 
 # ===== Test Cases =====
 
-# Named function for testing
-def process(x):
-    # ruleid: test-hof-taint
-    sink(x)
-    return x
-
 # Test custom HOF with manual loop + lambda
 def test_custom_map_loop_lambda():
     arr = [source()]
@@ -37,10 +31,15 @@ def test_custom_map_loop_lambda():
         sink(x)
     ))
 
+def process_custom_map_loop(x):
+    # ruleid: test-hof-taint
+    sink(x)
+    return x
+
 # Test custom HOF with manual loop + named function
 def test_custom_map_loop_named():
     arr = [source()]
-    custom_map_loop(arr, process)
+    custom_map_loop(arr, process_custom_map_loop)
 
 # Test custom HOF delegating to built-in + lambda
 def test_custom_map_builtin_lambda():
@@ -50,10 +49,15 @@ def test_custom_map_builtin_lambda():
         sink(x)
     ))
 
+def process_custom_map_builtin(x):
+    # ruleid: test-hof-taint
+    sink(x)
+    return x
+
 # Test custom HOF delegating to built-in + named function
 def test_custom_map_builtin_named():
     arr = [source()]
-    custom_map_builtin(arr, process)
+    custom_map_builtin(arr, process_custom_map_builtin)
 
 def test_custom_for_each():
     arr = [source()]
