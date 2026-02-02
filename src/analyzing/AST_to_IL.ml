@@ -663,7 +663,7 @@ and expr_aux env ?(void = false) g_expr =
   | G.Call
       ( { e = G.IdSpecial (G.Op ((G.And | G.Or) as op), tok); _ },
         (_, arg0 :: args, _) )
-    when not void ->
+    when not void || env.lang =*= Lang.Ruby ->
       expr_lazy_op env op tok arg0 args eorig
   (* args_with_pre_stmts *)
   | G.Call ({ e = G.IdSpecial (G.Op op, tok); _ }, args) -> (
