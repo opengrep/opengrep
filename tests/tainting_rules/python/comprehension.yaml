@@ -1,0 +1,16 @@
+rules:
+  
+- id: taint
+  languages: [python]
+  message: "tainted data reached sink"
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  pattern-sanitizers:
+    - pattern: |
+        sanitize(...)

@@ -992,6 +992,8 @@ and expr_aux env ?(void = false) g_expr =
       let env, xs = List.fold_left_map (fun env x -> expr env x) env xs in
       let kind = composite_kind ~g_expr kind in
       (env, mk_e (Composite (kind, (l, xs, r))) eorig)
+  | G.Comprehension (_op, (_l, (er, [CompFor (tok_for, pat, tok_in, e)]), _r)) ->
+      comprehension_for env er tok_for pat tok_in e
   | G.Comprehension _ -> todo env.stmts (G.E g_expr)
   | G.Lambda fdef ->
       let lval = fresh_lval (snd fdef.fkind) in
@@ -1642,6 +1644,52 @@ and xml_expr env ~void eorig xml =
              (CTuple, (tok, List.rev_append filtered_attrs filtered_body, tok)))
           (Related (G.Xmls xml.G.xml_body)) )
 
+(* Adjusted from for_each *)
+and comprehension_for env result_expr tok_for pat tok_in collection_expr =
+  let tmp = fresh_lval ~str:"_comprehension_tmp" tok_in in
+  let cont_label_s, break_label_s, env = mk_break_continue_labels env tok_for in
+  let env, ss, e' = expr_with_pre_stmts env collection_expr in
+  let next_lval = fresh_lval tok_in in
+  let hasnext_lval = fresh_lval tok_in in
+  let hasnext_call =
+    mk_s
+      (Instr
+         (mk_i
+            (CallSpecial
+               (Some hasnext_lval, (ForeachHasNext, tok_in), [ Unnamed e' ]))
+            (related_tok tok_in)))
+  in
+  let next_call =
+    mk_s
+      (Instr
+         (mk_i
+            (CallSpecial (Some next_lval, (ForeachNext, tok_in), [ Unnamed e' ]))
+            (related_tok tok_in)))
+  in
+  
+  let env, assign_st =
+    pattern_assign_statements env
+      (mk_e (Fetch next_lval) (related_tok tok_in))
+      ~eorig:(related_tok tok_in) pat
+  in
+  let env, e_eres = expr env ~void:false result_expr in
+  let e_plus = mk_e (Operator ((G.Plus, Tok.unsafe_fake_tok "+="), [Unnamed e_eres])) NoOrig in
+  let st = mk_s (Instr (mk_i (Assign (tmp, e_plus)) NoOrig)) in
+  let cond = mk_e (Fetch hasnext_lval) (related_tok tok_in) in
+  let env = add_stmts env
+    (ss @
+    [ hasnext_call;
+      mk_s
+          (Loop
+             ( tok_in,
+               cond,
+               next_call :: assign_st @ st :: cont_label_s
+               @ [ (* ss @ ?*) hasnext_call ] ));
+    ]
+    @ break_label_s)
+  in
+  env, mk_e (Fetch tmp) NoOrig
+  
 and stmt_expr env ?g_expr st =
   let todo stmts =
     match g_expr with
