@@ -29,24 +29,35 @@ Apex · Bash · C · C++ · C# · Clojure · Dart · Dockerfile · Elixir · Go 
 
 ## Installation
 
-You can install Opengrep using our official install script.
-
 ### Quick Install (Recommended)
+
+#### Linux / macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
 ```
 
-If you've cloned the repo and `install.sh` is in the root directory, you can run:
+Or if you've cloned the repo:
 
 ```bash
 ./install.sh
 ```
 
-which will install the latest version of Opengrep.
+#### Windows (PowerShell)
 
-You can also install manually:
-* Binaries available in the [release page](https://github.com/opengrep/opengrep/releases).
+```powershell
+irm https://raw.githubusercontent.com/opengrep/opengrep/main/install.ps1 | iex
+```
+
+Or with a specific version:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/opengrep/opengrep/main/install.ps1))) -Version v1.16.0
+```
+
+### Manual Install
+
+Binaries are available on the [releases page](https://github.com/opengrep/opengrep/releases).
 
 ## Getting started
 

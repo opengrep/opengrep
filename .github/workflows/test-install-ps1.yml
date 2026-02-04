@@ -1,0 +1,84 @@
+name: test-install-ps1
+
+on:
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'install.ps1'
+  # pull_request:
+  #   paths:
+  #     - 'install.ps1'
+  workflow_dispatch:
+
+jobs:
+  test-install-script:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      # Test help output
+      - name: Test -Help flag
+        shell: pwsh
+        run: .\install.ps1 -Help
+
+      # Test listing versions
+      - name: Test -List flag
+        shell: pwsh
+        run: .\install.ps1 -List
+
+      # Test installing latest version
+      - name: Install latest version
+        shell: pwsh
+        run: .\install.ps1
+
+      # Verify installation
+      - name: Verify installation
+        shell: pwsh
+        run: |
+          $binary = "$env:USERPROFILE\.opengrep\cli\latest\opengrep.exe"
+          if (Test-Path $binary) {
+            & $binary --version
+          } else {
+            Write-Error "Binary not found at $binary"
+            exit 1
+          }
+
+      # Test specific version install (re-install same or older version)
+      - name: Install specific version
+        shell: pwsh
+        run: .\install.ps1 -Version v1.15.0
+
+      # Test remote execution style (one-liner simulation)
+      - name: Test script from stdin
+        shell: pwsh
+        run: |
+          $script = Get-Content -Raw .\install.ps1
+          & ([scriptblock]::Create($script)) -Help
+
+  test-with-cosign:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Verify cosign installed
+        shell: pwsh
+        run: cosign version
+
+      - name: Install with signature verification
+        shell: pwsh
+        run: .\install.ps1 -VerifySignatures
+
+      - name: Verify installation
+        shell: pwsh
+        run: |
+          & "$env:USERPROFILE\.opengrep\cli\latest\opengrep.exe" --version
