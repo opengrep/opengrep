@@ -11,8 +11,8 @@
 #    Windows: Binary is named 'opengrep.exe'
 #
 # 3. Architecture Support
-#    Currently only x86_64 builds are available. ARM64 is not yet supported
-#    (though it will run under x86 emulation on Windows ARM64).
+#    Currently only x86_64 builds are available. On ARM64 Windows, the x86_64
+#    build is installed and runs under emulation.
 #
 # 4. PATH Integration
 #    Provides instructions for manually adding to PATH. No automatic
@@ -221,9 +221,8 @@ function Main {
         $dist = "opengrep_windows_x86.exe"
     }
     elseif ($arch -eq "ARM64") {
-        Write-Host "Error: ARM64 Windows builds are not yet available." -ForegroundColor Red
-        Write-Host "You may try running the x86_64 build under emulation."
-        exit 1
+        Write-Host "Warning: ARM64 Windows builds are not yet available. Installing x86_64 build (runs under emulation)." -ForegroundColor Yellow
+        $dist = "opengrep_windows_x86.exe"
     }
     else {
         Write-Host "Error: Architecture '$arch' is unsupported." -ForegroundColor Red
