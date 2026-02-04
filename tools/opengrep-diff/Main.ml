@@ -93,10 +93,38 @@ end
 module FindingKeySet = Set.Make (FindingKey)
 module FindingKeyMap = Map.Make (FindingKey)
 module RuleFileKeyMap = Map.Make (RuleFileKey)
+module FpathSet = Set.Make (Fpath)
+
+(*****************************************************************************)
+(* Path coverage *)
+(*****************************************************************************)
+
+type path_coverage = {
+  scanned_both : FpathSet.t;
+  only_scanned_first : FpathSet.t;
+  only_scanned_second : FpathSet.t;
+  total_first : int;
+  total_second : int;
+}
+
+let compute_path_coverage (output1 : Out.cli_output) (output2 : Out.cli_output) : path_coverage =
+  let paths1 = FpathSet.of_list output1.Out.paths.scanned in
+  let paths2 = FpathSet.of_list output2.Out.paths.scanned in
+  {
+    scanned_both = FpathSet.inter paths1 paths2;
+    only_scanned_first = FpathSet.diff paths1 paths2;
+    only_scanned_second = FpathSet.diff paths2 paths1;
+    total_first = FpathSet.cardinal paths1;
+    total_second = FpathSet.cardinal paths2;
+  }
+
+(* Check if a finding's path was scanned in the given set *)
+let path_was_scanned (m : Out.cli_match) (scanned : FpathSet.t) : bool =
+  FpathSet.mem m.Out.path scanned
 
 (*****************************************************************************)
 (* Matching logic *)
-(*****************************************************************************)
+(****************************************************************************)
 
 (* Check if two spans are "close enough" to be the same finding.
    Uses byte offsets for precise comparison across line boundaries.
@@ -156,15 +184,21 @@ type proximity_match = {
   file2_match : Out.cli_match;
 }
 
+type unmatched_finding = {
+  finding : Out.cli_match;
+  file_scanned_by_other : bool;  (* Was this file scanned by the other tool? *)
+}
+
 type comparison_result = {
   exact_matches : int;
   proximity_matches : proximity_match list;
-  only_in_first : Out.cli_match list;
-  only_in_second : Out.cli_match list;
+  only_in_first : unmatched_finding list;
+  only_in_second : unmatched_finding list;
+  path_coverage : path_coverage;
 }
 
-let compare_matches ~(tolerance : int) (matches1 : Out.cli_match list)
-    (matches2 : Out.cli_match list) : comparison_result =
+let compare_matches ~(tolerance : int) ~(path_coverage : path_coverage)
+    (matches1 : Out.cli_match list) (matches2 : Out.cli_match list) : comparison_result =
   (* Build maps for exact matching *)
   let map1 = List.fold_left (fun acc m -> FindingKeyMap.add (FindingKey.of_match m) m acc)
       FindingKeyMap.empty matches1 in
@@ -191,7 +225,18 @@ let compare_matches ~(tolerance : int) (matches1 : Out.cli_match list)
   let proximity_matches =
     List.map (fun (m1, m2) -> { file1_match = m1; file2_match = m2 }) proximity_matched
   in
-  { exact_matches; proximity_matches; only_in_first = final1; only_in_second = final2 }
+
+  (* Scanned path sets for annotation *)
+  let scanned1 = FpathSet.union path_coverage.scanned_both path_coverage.only_scanned_first in
+  let scanned2 = FpathSet.union path_coverage.scanned_both path_coverage.only_scanned_second in
+
+  let annotate_first m = { finding = m; file_scanned_by_other = path_was_scanned m scanned2 } in
+  let annotate_second m = { finding = m; file_scanned_by_other = path_was_scanned m scanned1 } in
+
+  { exact_matches; proximity_matches;
+    only_in_first = List.map annotate_first final1;
+    only_in_second = List.map annotate_second final2;
+    path_coverage }
 
 (*****************************************************************************)
 (* JSON output *)
@@ -211,9 +256,33 @@ type match_summary = {
 }
 [@@deriving yojson]
 
+type unmatched_summary = {
+  check_id : string;
+  path : string;
+  start_line : int;
+  start_col : int;
+  end_line : int;
+  end_col : int;
+  start_offset : int;
+  end_offset : int;
+  message : string;
+  fingerprint : string;
+  file_scanned_by_other : bool;
+}
+[@@deriving yojson]
+
 type proximity_match_json = {
   file1_match : match_summary;
   file2_match : match_summary;
+}
+[@@deriving yojson]
+
+type path_coverage_json = {
+  scanned_by_both : int;
+  only_scanned_by_first : int;
+  only_scanned_by_second : int;
+  total_first : int;
+  total_second : int;
 }
 [@@deriving yojson]
 
@@ -222,9 +291,10 @@ type comparison_result_json = {
   proximity_match_count : int;
   only_in_first_count : int;
   only_in_second_count : int;
-  only_in_first : match_summary list;
-  only_in_second : match_summary list;
+  only_in_first : unmatched_summary list;
+  only_in_second : unmatched_summary list;
   proximity_matches : proximity_match_json list;
+  path_coverage : path_coverage_json;
 }
 [@@deriving yojson]
 
@@ -242,18 +312,44 @@ let summarize (m : Out.cli_match) : match_summary =
     fingerprint = m.Out.extra.fingerprint;
   }
 
+let summarize_unmatched (u : unmatched_finding) : unmatched_summary =
+  let m = u.finding in
+  {
+    check_id = Rule_ID.to_string m.Out.check_id;
+    path = Fpath.to_string m.Out.path;
+    start_line = m.Out.start.line;
+    start_col = m.Out.start.col;
+    end_line = m.Out.end_.line;
+    end_col = m.Out.end_.col;
+    start_offset = m.Out.start.offset;
+    end_offset = m.Out.end_.offset;
+    message = m.Out.extra.message;
+    fingerprint = m.Out.extra.fingerprint;
+    file_scanned_by_other = u.file_scanned_by_other;
+  }
+
+let path_coverage_to_json (pc : path_coverage) : path_coverage_json =
+  {
+    scanned_by_both = FpathSet.cardinal pc.scanned_both;
+    only_scanned_by_first = FpathSet.cardinal pc.only_scanned_first;
+    only_scanned_by_second = FpathSet.cardinal pc.only_scanned_second;
+    total_first = pc.total_first;
+    total_second = pc.total_second;
+  }
+
 let to_json (r : comparison_result) : comparison_result_json =
   {
     exact_match_count = r.exact_matches;
     proximity_match_count = List.length r.proximity_matches;
     only_in_first_count = List.length r.only_in_first;
     only_in_second_count = List.length r.only_in_second;
-    only_in_first = List.map summarize r.only_in_first;
-    only_in_second = List.map summarize r.only_in_second;
+    only_in_first = List.map summarize_unmatched r.only_in_first;
+    only_in_second = List.map summarize_unmatched r.only_in_second;
     proximity_matches = List.map (fun (pm : proximity_match) ->
       { file1_match = summarize pm.file1_match;
         file2_match = summarize pm.file2_match;
       }) r.proximity_matches;
+    path_coverage = path_coverage_to_json r.path_coverage;
   }
 
 (*****************************************************************************)
@@ -290,16 +386,25 @@ let print_grouped ~show_code ~max_items (matches : Out.cli_match list) : unit =
       Printf.printf "\n")
     grouped
 
-let print_only_section ~verbose ~show_code ~max_default filename matches : unit =
-  let count = List.length matches in
+let print_only_section ~verbose ~show_code ~max_default ~other_name filename
+    (unmatched : unmatched_finding list) : unit =
+  let count = List.length unmatched in
+  let not_scanned = List.filter
+      (fun (u : unmatched_finding) -> not u.file_scanned_by_other) unmatched in
+  let not_scanned_count = List.length not_scanned in
   Printf.printf "## Only in `%s`: %d matches\n\n" filename count;
-  if count > 0 then
+  if not_scanned_count > 0 then
+    Printf.printf "**Note**: %d of these are in files not scanned by %s\n\n"
+      not_scanned_count other_name;
+  if count > 0 then begin
+    let matches = List.map (fun (u : unmatched_finding) -> u.finding) unmatched in
     if verbose || count <= max_default then
       print_grouped ~show_code ~max_items:None matches
     else begin
       print_grouped ~show_code ~max_items:(Some max_default) matches;
       Printf.printf "*Showing first %d of %d. Use `--verbose` to see all.*\n\n" max_default count
     end
+  end
 
 let print_proximity_section ~verbose ~max_default file1 file2 (matches : proximity_match list) : unit =
   if matches <> [] then begin
@@ -322,6 +427,22 @@ let print_proximity_section ~verbose ~max_default file1 file2 (matches : proximi
       Printf.printf "*Showing first %d of %d.*\n\n" max_default (List.length matches)
   end
 
+let print_path_coverage ~file1 ~file2 (pc : path_coverage) : unit =
+  let both = FpathSet.cardinal pc.scanned_both in
+  let only1 = FpathSet.cardinal pc.only_scanned_first in
+  let only2 = FpathSet.cardinal pc.only_scanned_second in
+  if only1 > 0 || only2 > 0 then begin
+    Printf.printf "## Path Coverage\n\n";
+    Printf.printf "| Metric | Count |\n";
+    Printf.printf "|--------|-------|\n";
+    Printf.printf "| Scanned by both | %d |\n" both;
+    if only1 > 0 then
+      Printf.printf "| Only scanned by `%s` | %d |\n" file1 only1;
+    if only2 > 0 then
+      Printf.printf "| Only scanned by `%s` | %d |\n" file2 only2;
+    Printf.printf "\n"
+  end
+
 let output_text ~verbose ~show_code ~tolerance ~file1 ~file2
     ~(stats1 : int * int) ~(stats2 : int * int) (r : comparison_result) : unit =
   let total1, unique1 = stats1 in
@@ -333,8 +454,9 @@ let output_text ~verbose ~show_code ~tolerance ~file1 ~file2
   Printf.printf "|------|-------|--------|-------|\n";
   Printf.printf "| `%s` | %d | %d | %d |\n" file1 total1 unique1 (total1 - unique1);
   Printf.printf "| `%s` | %d | %d | %d |\n\n" file2 total2 unique2 (total2 - unique2);
-  print_only_section ~verbose ~show_code ~max_default:20 file1 r.only_in_first;
-  print_only_section ~verbose ~show_code ~max_default:20 file2 r.only_in_second;
+  print_path_coverage ~file1 ~file2 r.path_coverage;
+  print_only_section ~verbose ~show_code ~max_default:20 ~other_name:file2 file1 r.only_in_first;
+  print_only_section ~verbose ~show_code ~max_default:20 ~other_name:file1 file2 r.only_in_second;
   Printf.printf "## Exact matches: %d\n\n" r.exact_matches;
   print_proximity_section ~verbose ~max_default:10 file1 file2 r.proximity_matches
 
@@ -351,8 +473,9 @@ let diff_files verbose show_code tolerance json_output file1 file2 =
     let output2 = read_and_parse file2 in
     let matches1 = output1.Out.results in
     let matches2 = output2.Out.results in
+    let path_coverage = compute_path_coverage output1 output2 in
 
-    let result = compare_matches ~tolerance matches1 matches2 in
+    let result = compare_matches ~tolerance ~path_coverage matches1 matches2 in
 
     if json_output then
       Printf.printf "%s\n" (Yojson.Safe.pretty_to_string

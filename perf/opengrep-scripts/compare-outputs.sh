@@ -89,7 +89,9 @@ if [[ -z "$repos" ]]; then
     exit 1
 fi
 
-# Collect rows and format with column
+# Collect rows and path coverage warnings
+path_warnings=""
+
 {
     echo "Repo|Reference|${variant_label}|Exact|Proximity|Only Ref|Only ${variant_label}"
 
@@ -114,6 +116,20 @@ fi
         only_ref=$(jq '.only_in_first_count' <<< "$cmp_json")
         only_cmp=$(jq '.only_in_second_count' <<< "$cmp_json")
 
+        # Check path coverage
+        only_ref_paths=$(jq '.path_coverage.only_scanned_by_first' <<< "$cmp_json")
+        only_cmp_paths=$(jq '.path_coverage.only_scanned_by_second' <<< "$cmp_json")
+        if [[ "$only_ref_paths" -gt 0 || "$only_cmp_paths" -gt 0 ]]; then
+            path_warnings="${path_warnings}${repo}: ref scanned ${only_ref_paths} unique paths, ${comparison_variant} scanned ${only_cmp_paths} unique paths\n"
+        fi
+
         echo "${repo}|${ref_total}|${cmp_total}|${exact}|${proximity}|${only_ref}|${only_cmp}"
     done
 } | column -t -s'|' | awk 'NR==1 {print; gsub(/[^ ] /, "--"); gsub(/[^ ]/, "-"); print; next} {print}'
+
+# Print path coverage warnings if any
+if [[ -n "$path_warnings" ]]; then
+    echo ""
+    echo "Path coverage differences detected:"
+    echo -e "$path_warnings"
+fi
