@@ -118,9 +118,7 @@ let lookup_callee_from_graph (graph : G.t option)
         | Some edge ->
             Some (G.E.src edge)
         | None ->
-            (* Fallback: check for implicit/HOF edges by matching line 0 *)
-            incoming_edges
-            |> List.find_opt (fun edge ->
-                let label = G.E.label edge in
-                Int.equal label.call_site.Pos.line 0)
-            |> Option.map G.E.src
+            (* No fallback - return None so external calls use direct signature lookup.
+               Previously there was a line 0 fallback that matched implicit/HOF edges,
+               but this caused wrong signature lookups for external method calls. *)
+            None
