@@ -11,13 +11,44 @@
 
 ### Welcome to Opengrep, a fork of Semgrep, under the LGPL 2.1 license
 
-_Opengrep is a fork of Semgrep, created by Semgrep Inc. Opengrep is not affiliated with or endorsed by Semgrep Inc._
+**Opengrep is the most advanced open source SAST engine.**
 
-Let's make secure software development a shared standard. Opengrep provides every developer and organization with open and advanced static code analysis. 
+Let's make secure software development a shared standard. Opengrep provides every developer and organisation with open and advanced static code analysis.
 
-Opengrep is initiated by a collective of AppSec organizations, including: Aikido.dev, Arnica, Amplify, Endor, Jit, Kodem, Mobb, and Orca Security. To join as a sponsor or contributor, open an [issue](https://github.com/opengrep/opengrep/issues). To learn more, read the manifesto at [opengrep.dev](https://opengrep.dev/). We aim to make SAST widely accessible, advance the engine with new impactful features, and ensure it remains open and vendor-neutral for the long-term.
+Opengrep is backed by a consortium of 10+ AppSec organisations, including: [Aikido](https://www.aikido.dev/), [Arnica](https://www.arnica.io), [Amplify](https://amplify.security/), [Endor Labs](https://www.endorlabs.com/), [Jit](https://www.jit.io/), [Kodem](https://www.kodemsecurity.com/), [Legit](https://www.legitsecurity.com/), [Mobb](https://www.mobb.ai/), [Orca Security](https://orca.security/), and [Phoenix Security](https://phoenix.security/). To learn more, read the manifesto at [opengrep.dev](https://opengrep.dev/).
 
-Opengrep is open to any individual or organization to leverage and contribute, [join the open roadmap sessions](https://lu.ma/opengrep).
+## Why Opengrep?
+
+Opengrep was created when Semgrep moved critical features behind a commercial licence. We believe advanced static analysis should remain open and accessible to all.
+
+**Key advantages:**
+- **Compatible with Semgrep rules** - your existing rules and rulesets work unchanged
+- **Standard outputs** - JSON and SARIF formats for easy integration
+- **Open governance** - contributions accepted on merit, not commercial interest
+- **Long-term assurance** - committed to open-source under LGPL 2.1
+
+## Key Improvements
+
+Opengrep has introduced significant improvements since the fork. Highlights include:
+
+**Superior Taint Analysis** (`--taint-intrafile`):
+- Constructor and field assignment tracking
+- Inter-method taint flow
+- Higher-order function support across 12 languages
+- Collection method tainting (map, filter, reduce, etc.)
+
+See the [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial) and [Higher-Order Functions Tutorial](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial) for details.
+
+**Language Support:**
+- **Visual Basic** - not available in Semgrep CE or Pro
+- **Apex, Elixir** - not in Semgrep CE
+- **Improved**: Clojure (tainting support), PHP 8.4, C# 14
+
+**Distribution:**
+- Self-contained binaries via Nuitka (no Python required)
+- Signed releases with Cosign
+
+See [OPENGREP.md](OPENGREP.md) for the full list of improvements since the fork.
 
 # Opengrep: Fast and Powerful Code Pattern Search
 
@@ -220,8 +251,28 @@ To obtain SARIF output:
 }
 ```
 
+## Documentation
+
+- [Wiki](https://github.com/opengrep/opengrep/wiki) - tutorials and language guides
+- [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/Intrafile-tainting-tutorial)
+- [Higher-Order Functions Tutorial](https://github.com/opengrep/opengrep/wiki/Higher-order-functions-tutorial)
+- [C# Support](https://github.com/opengrep/opengrep/wiki/Support-for-C%23) (C# 12/13/14)
+- [PHP Support](https://github.com/opengrep/opengrep/wiki/Support-for-Php) (PHP 7.1-8.4)
+- [Visual Basic Support](https://github.com/opengrep/opengrep/wiki/Support-for-Visual-Basic)
+
+## Community
+
+- [X / Twitter](https://x.com/opengrep)
+- [Reddit](https://www.reddit.com/r/opengrep)
+- [Manifesto](https://opengrep.dev/) - why we forked
+- [Open roadmap sessions](https://lu.ma/opengrep) - join the conversation
+
 ## More
 
 - [Contributing](CONTRIBUTING.md)
 - [Build instructions for developers](INSTALL.md)
 - [License (LGPL-2.1)](LICENSE)
+
+---
+
+_Opengrep is a fork of Semgrep v1.100.0, created by Semgrep Inc. Opengrep is not affiliated with or endorsed by Semgrep Inc._
