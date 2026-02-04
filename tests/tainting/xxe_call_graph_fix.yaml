@@ -1,0 +1,19 @@
+rules:
+  - id: xxe-call-graph-fix
+    severity: ERROR
+    message: "XXE vulnerability - DocumentBuilderFactory without secure configuration"
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - by-side-effect: true
+        pattern: $FACTORY = DocumentBuilderFactory.newInstance();
+    pattern-sinks:
+      - pattern: $FACTORY.newDocumentBuilder();
+    pattern-sanitizers:
+      - by-side-effect: true
+        patterns:
+          - pattern: $FACTORY.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+          - focus-metavariable: $FACTORY
+    languages:
+      - java
