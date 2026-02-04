@@ -82,3 +82,33 @@ jobs:
         shell: pwsh
         run: |
           & "$env:USERPROFILE\.opengrep\cli\latest\opengrep.exe" --version
+
+  test-arm64-emulation:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      # Test that ARM64 gets a warning but still installs
+      - name: Install on ARM64 (should warn and use x86 emulation)
+        shell: pwsh
+        run: |
+          $output = .\install.ps1 *>&1 | Out-String
+          Write-Host $output
+          if ($output -notmatch "Warning.*ARM64.*emulation") {
+            Write-Error "Expected ARM64 warning message not found"
+            exit 1
+          }
+
+      - name: Verify installation works under emulation
+        shell: pwsh
+        run: |
+          $binary = "$env:USERPROFILE\.opengrep\cli\latest\opengrep.exe"
+          if (Test-Path $binary) {
+            & $binary --version
+          } else {
+            Write-Error "Binary not found at $binary"
+            exit 1
+          }
