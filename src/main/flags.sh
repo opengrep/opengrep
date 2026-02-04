@@ -66,9 +66,14 @@ else
             # collector.
             # old: was just '--copt -static --copy -no-pie' before we depended
             # on libcurl
+            #
+            # -Wl,-z,stack-size=8388608: Set default pthread stack size to 8MB.
+            # musl libc defaults to only 128KB which causes stack overflow in
+            # PCRE's recursive pattern matching (used by aliengrep).
+            # See: https://wiki.musl-libc.org/functional-differences-from-glibc.html
             FLAGS=()
             CCLIB=("-lidn2" "-lunistring" "-lpsl" "-lssl" "-lcrypto" "-lz")
-            CCOPT=("-static" "-no-pie")
+            CCOPT=("-static" "-no-pie" "-Wl,-z,stack-size=8388608")
         else
             # On non-Alpine Linux distros (e.g., Ubuntu), we just dynamically
             # link for dev. Note that Alpine is used for our Docker builds.

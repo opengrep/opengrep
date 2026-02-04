@@ -78,13 +78,6 @@ val rules_for_analyzer : analyzer:Xlang.t -> Rule.t list -> Rule.t list
 *)
 val print_cli_progress : Core_scan_config.t -> unit
 
-(* This function prints the number of additional targets, which is consumed by
-   pysemgrep to update the progress bar, if the output_format is Json true.
-   This was used by extract-mode (TODO still useful?).
-   See `core_runner.py`
-*)
-val print_cli_additional_targets : Core_scan_config.t -> int -> unit
-
 type target_handler = Target.t -> Core_result.matches_single_file * bool
 
 val iter_targets_and_get_matches_and_exn_to_errors :

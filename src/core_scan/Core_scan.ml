@@ -139,13 +139,6 @@ type target_handler = Target.t -> Core_result.matches_single_file * bool
 (*****************************************************************************)
 (* LATER: remove once osegmrep is fully done *)
 
-(* Print additional target count so the Python progress bar knows *)
-let print_cli_additional_targets (config : Core_scan_config.t) (n : int) : unit
-    =
-  match config.output_format with
-  | Json true -> UConsole.print (string_of_int n)
-  | _ -> ()
-
 (* TODO: suspicious: this runs in a child process. Please explain how it's
    safe to write a dot on stdout in a child process and why it's mixed with
    JSON output.
