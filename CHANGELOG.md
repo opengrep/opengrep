@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.16.0](https://github.com/opengrep/opengrep/releases/tag/v1.16.0) - 04-02-2026
+
+### Improvements
+
+* Dart: Add typed metavariabless by @maciejpirog in #551
+* Dart: Use case of identifier to guess call vs new by @maciejpirog in #555
+* Go: Enable goroutines in taint tracking by @maciejpirog in #559
+* Add taint propagation via "for" comprehensions by @maciejpirog in #564
+
+### Bug fixes
+
+* Rust: Missing Rust type alias translation by @smith-xyz in #549
+* Fix: Ensure that linux binaries have 8mb stack size (musl) by @dimitris-m in #563
+* Fixed a perf regression by removing system calls and improving the reachability graph and the callee lookup by @corneliuhoffman in #556
+* Fixed intrafile bug introduced by a superfluous fallback by @corneliuhoffman in #567
+* Ruby: Always translate `or` and `and` to expression by @maciejpirog in #562
+* Bash: Allow redirects before command arguments by @maciejpirog in #548
+
+## Internal Improvements
+
+* Add `show dump-intrafile-graph` and `show dump-taint-signatures` commands by @corneliuhoffman in #552
+* Improve tainting code by @maciejpirog in #546
+* Graph refactoring by @corneliuhoffman in #553
+
+## New Contributors
+
+* @smith-xyz made their first contribution in #549
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.15.1...v1.16.0
+
+
 ## [1.15.1](https://github.com/opengrep/opengrep/releases/tag/v1.15.1) - 16-01-2026
 
 ### Bug fixes
