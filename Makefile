@@ -114,6 +114,17 @@ minimal-build:
 	chmod +w bin/opengrep-core$(EXE)
 	strip bin/opengrep-core$(EXE)
 
+.PHONY: opengrep-diff
+opengrep-diff:
+	dune build $(BUILD)/install/default/bin/opengrep-diff
+# Run performance benchmarks. Prepares repos/rules then runs hyperfine.
+# Results are saved to perf/opengrep-scripts/bench_results/<timestamp>/.
+# See perf/opengrep-scripts/README.md for details.
+# Usage: make bench [BENCH_ARGS="--dry-run"]
+.PHONY: bench
+bench: core
+	cd perf/opengrep-scripts && ./run-benchmarks.sh $(BENCH_ARGS)
+
 #coupling: The 'semgrep-oss' is the name of the step in the Dockerfile, the
 # 'semgrep' the name of the docker image produced (will be semgrep:latest)
 .PHONY: build-docker
@@ -551,13 +562,6 @@ test-bc:
 install-deps-for-semgrep-core-bc: install-deps-for-semgrep-core
 	dune build @install # Generate the treesitter stubs for below
 	dune install # Needed to install treesitter_<lang> stubs for use by bytecode
-
-# Run perf benchmarks
-# Running this will reset your `semgrep` command to point to your local version
-# For more information, see "Reproducing the CI benchmarks" in perf/README.md
-.PHONY: perf-bench
-perf-bench:
-	scripts/run-benchmarks.sh
 
 # Run matching performance tests
 .PHONY: perf-matching

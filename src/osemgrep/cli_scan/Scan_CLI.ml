@@ -545,29 +545,6 @@ let o_time : bool Term.t =
  provides times for each pair (rule, target). This feature is meant for internal use and may be changed or removed without warning. At the current moment, --trace is better supported.
 |}
 
-(* TODO: Remove, it's disabled. *)
-(* let o_trace : bool Term.t =
-     H.negatable_flag [ "trace" ] ~neg_options:[ "no-trace" ]
-       ~default:default.trace
-       ~doc:
-         {|Record traces from Semgrep scans to help debugging. This feature is
-   meant for internal use and may be changed or removed without warning.
-   |} *)
-
-(* TODO: Remove, it's disabled. *)
-(* let o_trace_endpoint : string option Term.t =
-     let info =
-       Arg.info [ "trace-endpoint" ]
-         ~env:(Cmd.Env.info "SEMGREP_OTEL_ENDPOINT")
-         ~doc:
-           {|Endpoint to send OpenTelemetry traces to, if `--trace` is present.
-   The value may be `semgrep-prod` (default), `semgrep-dev`,
-   `semgrep-local`, or any valid URL.  This feature is meant for
-   internal use and may be changed or removed wihtout warning.
-   |}
-     in
-     Arg.value (Arg.opt Arg.(some string) None info) *)
-
 let o_nosem : bool Term.t =
   H.negatable_flag ~default:true [ "enable-nosem" ]
     ~neg_options:[ "disable-nosem" ]

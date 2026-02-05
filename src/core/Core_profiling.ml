@@ -74,6 +74,8 @@ type rule_profiling = {
 (* Save time information as we run each file *)
 type file_profiling = {
   file : Fpath.t;
+  (* Derived from length of Xtarget.lazy_content, to avoid system calls later. *)
+  file_size_bytes : int option;
   rule_times : rule_profiling list;
   run_time : float;
 }
@@ -81,6 +83,7 @@ type file_profiling = {
 
 type partial_profiling = {
   p_file : Fpath.t;
+  p_file_size_bytes : int option;
   p_rule_times : rule_profiling list;
 }
 [@@deriving show]
@@ -93,7 +96,7 @@ type t = {
   rules_parse_time : float;
   file_times : file_profiling list;
   (* This is meant to represent the maximum amount of memory used by
-     Semgrep during the course of its execution.
+     Opengrep during the course of its execution.
 
      This is useful to emit with the other profiling data for telemetry
      purposes, particuarly as it relates to measuring memory management
@@ -131,7 +134,7 @@ let add_times (a : times) (b : times) : times =
 (*****************************************************************************)
 
 let empty_partial_profiling file : partial_profiling =
-  { p_file = file; p_rule_times = [] }
+  { p_file = file; p_rule_times = []; p_file_size_bytes = None }
 
 let empty_rule_profiling (rule : Rule.t) : rule_profiling =
   { rule_id = fst rule.Rule.id; rule_parse_time = 0.0; rule_match_time = 0.0 }

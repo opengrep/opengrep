@@ -14,6 +14,7 @@ type rule_profiling = {
 (* Save time information as we run each file *)
 type file_profiling = {
   file : Fpath.t;
+  file_size_bytes : int option;
   rule_times : rule_profiling list;
   run_time : float;
 }
@@ -21,6 +22,7 @@ type file_profiling = {
 
 type partial_profiling = {
   p_file : Fpath.t;
+  p_file_size_bytes : int option;
   p_rule_times : rule_profiling list;
 }
 [@@deriving show]

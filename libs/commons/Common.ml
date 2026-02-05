@@ -26,13 +26,6 @@ module Log = Log_commons.Log
  *)
 let debugger = ref false
 
-(* You should set this to true when you run code compiled by js_of_ocaml
- * so some functions can change their implementation and rely
- * less on non-portable API like Unix which does not work well under
- * node or in the browser.
- *)
-let jsoo = ref false
-
 (*****************************************************************************)
 (* Circular dependencies *)
 (*****************************************************************************)

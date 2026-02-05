@@ -1,7 +1,7 @@
 module Y = Yojson.Basic
 
 (* a JSON value as a string, e.g., "\"Foobar\"", "true", "[1,2]".
- * TODO: use a JsonStr of string instead of an alias for stricter typeing?
+ * TODO: use a JsonStr of string instead of an alias for stricter typing?
  *)
 type str = string
 

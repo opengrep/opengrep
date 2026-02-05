@@ -170,8 +170,11 @@ let add_run_time (run_time : float)
     (match_result : Core_profiling.partial_profiling match_result) :
     Core_profiling.file_profiling match_result =
   match_result
-  |> map_profiling (fun { Core_profiling.p_file; p_rule_times } ->
-         { Core_profiling.file = p_file; rule_times = p_rule_times; run_time })
+  |> map_profiling (fun { Core_profiling.p_file; p_rule_times; p_file_size_bytes } ->
+      { Core_profiling.file = p_file;
+        file_size_bytes = p_file_size_bytes;
+        rule_times = p_rule_times;
+        run_time })
 
 let add_rule (rule : Rule.rule)
     (match_result : Core_profiling.times match_result) :
@@ -250,7 +253,10 @@ let collate_rule_results (file : Fpath.t)
   in
   let final profiling =
     let (p : Core_profiling.partial_profiling) =
-      { p_file = file; p_rule_times = profiling }
+      let
+        p_file_size_bytes = None (* Filled in later. *)
+      in
+      { p_file = file; p_rule_times = profiling; p_file_size_bytes }
     in
     Core_profiling.profiling_opt p
   in
