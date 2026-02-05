@@ -687,20 +687,30 @@ class ['self] resolve_visitor env lang =
       (* In Rust, the left-hand side (lhs) of the let variable definition is
        * parsed as a pattern.
        * TODO handle more cases than just the simple identifier pattern. *)
-      | ( { name = EPattern (PatId (id, id_info)); _ },
+      | ( { name = EPattern (PatId (id, id_info)); attrs; tparams },
           VarDef { vinit; vtype; vtok = _ } )
-      | { name = EN (Id (id, id_info)); _ }, VarDef { vinit; vtype; vtok = _ }
+      | { name = EN (Id (id, id_info)); attrs; tparams },
+        VarDef { vinit; vtype; vtok = _ }
       (* note that some languages such as Python do not have VarDef
        * construct
        * todo? should add those somewhere instead of in_lvalue detection? *)
         when is_resolvable_name_ctx env lang ->
-          (* Need to visit expressions first so that the id_type of
-           * an id gets populated, e.g.
-           * if we do var a = 3, then var b = a, we want to propagate the
-           * type of a.
-           * alt: do the lookup type in resolved_type
+          (* The RHS resolves to existing bindings before declaring the
+           * new variable. This is needed for variable shadowing like
+           * `let x = x;` in Rust - the RHS x must refer to the outer
+           * binding, not the newly declared one.
+           * We cannot use super#visit_definition here because it would
+           * visit the entity name (EPattern/EN), triggering visit_pattern
+           * which declares the variable before vinit is visited.
+           * See also the handling of LetPattern in visit_expr.
            *)
-          super#visit_definition venv x;
+          Option.iter (self#visit_expr venv) vinit;
+          (* Visit attrs and tparams before vtype, matching the original order
+           * in the generic visitor. This matters for C++ template variables
+           * where vtype may reference type parameters from tparams. *)
+          List.iter (self#visit_attribute venv) attrs;
+          Option.iter (self#visit_type_parameters venv) tparams;
+          Option.iter (self#visit_type_ venv) vtype;
           declare_var env lang id id_info ~explicit:true vinit vtype
       (* Left the case above because we have the type information `vtype` which
        * would be lost here. *)

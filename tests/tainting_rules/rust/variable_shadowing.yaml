@@ -1,0 +1,16 @@
+rules:
+- id: taint
+  mode: taint
+  languages: [rust]
+  message: "tainted data flows to sink through variable shadowing"
+  severity: INFO
+  pattern-sources:
+    - patterns:
+        - pattern-inside: |
+            fn $F(..., $P: $_, ...){...}
+        - metavariable-regex:
+            metavariable: $P
+            regex: ^tainted$
+        - focus-metavariable: $P
+  pattern-sinks:
+    - pattern: sink(...)
