@@ -286,3 +286,36 @@ bench_results/
 - [hyperfine](https://github.com/sharkdp/hyperfine) - benchmarking tool
 - `timeout` (coreutils) - for `--max-time` support
 - `jq` - for JSON formatting
+- `opengrep-diff` - finding comparison tool (see below)
+
+## opengrep-diff
+
+The `opengrep-diff` tool compares two opengrep/semgrep JSON output files and classifies findings as exact matches, proximity matches, or unique to one file. It is built with `make opengrep-diff` and installed to `_build/install/default/bin/opengrep-diff`.
+
+```bash
+opengrep-diff [options] <file1.json> <file2.json>
+```
+
+Options:
+- `-t, --tolerance BYTES` - Byte tolerance for proximity matching (default: 5)
+- `-v, --verbose` - Show all matches (not just first N)
+- `-c, --show-code` - Display code fragments for findings
+- `-j, --json` - Output as JSON instead of markdown
+
+Matching stages:
+1. **Exact matching**: All fields identical (rule_id, path, line/column, message)
+2. **Proximity matching**: Same rule and file, byte offsets within tolerance or one span contains the other
+
+Examples:
+```bash
+# Compare two scan outputs
+opengrep-diff opengrep_output.json semgrep_output.json
+
+# With larger tolerance and code display
+opengrep-diff -t 10 --show-code opengrep_output.json semgrep_output.json
+
+# JSON output for scripting
+opengrep-diff --json opengrep_output.json semgrep_output.json | jq '.only_in_first_count'
+```
+
+The `compare-outputs.sh` script uses this tool internally to produce summary tables from benchmark results.
