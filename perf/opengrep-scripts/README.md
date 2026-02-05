@@ -1,5 +1,25 @@
 # Opengrep perf scripts
 
+## Quickstart
+
+**Benchmark your changes against a release:**
+```bash
+./bench-against-sha.sh v1.15.0 --repo jellyfin:3
+```
+
+**Compare opengrep vs semgrep:**
+```bash
+./run-benchmarks.sh --reference-binary ~/.local/bin/opengrep --binary semgrep --repo jellyfin:3
+```
+
+**Re-generate reports from existing results:**
+```bash
+./generate-reports.sh                    # latest results
+./generate-reports.sh bench_results/...  # specific directory
+```
+
+Results are saved to `bench_results/<timestamp>/` with timing, findings, and stability reports.
+
 ## Scripts
 
 ### `bench-against-sha.sh`
@@ -226,6 +246,27 @@ Example:
 ```bash
 ./benchmark-report.sh bench_results/20260128_213555
 ```
+
+### `generate-reports.sh`
+
+Generate benchmark reports for all configurations in a results directory. Calls `benchmark-report.sh` for each configuration subdirectory.
+
+```bash
+./generate-reports.sh [directory]
+```
+
+If no directory is specified, uses the most recent `bench_results/` directory.
+
+Examples:
+```bash
+# Generate reports for the most recent benchmark run
+./generate-reports.sh
+
+# Generate reports for a specific run
+./generate-reports.sh bench_results/20260203_222652
+```
+
+This script is automatically called by `run-benchmarks.sh` after benchmarks complete.
 
 ## Output
 

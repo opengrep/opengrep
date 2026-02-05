@@ -86,3 +86,9 @@ echo
 
 echo "=== All benchmarks complete ==="
 echo "Results saved to: $run_dir"
+echo
+
+# Generate reports for each configuration (skip in dry-run mode)
+if [[ -z "$dry_run" ]]; then
+  ./generate-reports.sh "$run_dir"
+fi
