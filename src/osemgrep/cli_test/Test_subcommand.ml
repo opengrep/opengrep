@@ -189,20 +189,24 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
    * the targets as in `osemgrep test --config tests/rules/ tests/targets/
    * see https://semgrep.dev/docs/writing-rules/testing-rules#storing-rules-and-test-targets-in-different-directories
    *)
-  | Test_CLI.Dir (_dir_targets, Some config_str) -> (
+  | Test_CLI.Dir (dir_targets, Some config_str) -> (
       match Rules_config.parse_config_string ~in_docker:false config_str with
-      | Dir _dir_rules ->
-          (* TODO: this was working at some point when we were both doing
-           * the file tarteting phase (plan) and analysis phase (results)
-           * together because we were (incorrectly) getting all the rules
-           * in the directory and then running all those rules on all
-           * the targets.
-           * The right thing to do instead is to match each rule file
-           * in dir with a target file in the other dir
-           *)
-          failwith
-            "TODO: the split of tests/ and rules/ is not supported yet in \
-             opengrep test"
+      | Dir dir_rules ->
+          let rule_files = Rule_tests.get_config_filenames dir_rules in
+          Rule_tests.get_config_test_filenames ~original_config:dir_rules
+            ~configs:rule_files ~original_target:dir_targets
+          |> List_.filter_map (fun (rule_file, targets) ->
+                 if List_.null targets then (
+                   Logs.warn (fun m ->
+                       m "could not find target for %s" !!rule_file);
+                   Stack_.push (MissingTest rule_file) errors;
+                   None)
+                 else (
+                   Logs.debug (fun m ->
+                       m "found targets for %s: %s" !!rule_file
+                         (targets |> List_.map Fpath.to_string
+                         |> String.concat ", "));
+                   Some (rule_file, targets)))
       | File _
       | URL _
       | R _
