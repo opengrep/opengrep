@@ -60,9 +60,6 @@ pushd cli
   --include-data-dir="$SRC_SEMGREP_DIR/templates=semgrep/templates" \
   --include-data-file="$SRC_SEMGREP_DIR/semgrep_interfaces/lang.json=semgrep/semgrep_interfaces/lang.json" \
   --include-data-file="$SRC_SEMGREP_DIR/semgrep_interfaces/rule_schema_v1.yaml=semgrep/semgrep_interfaces/rule_schema_v1.yaml" \
-  --include-package=google.protobuf \
-  --include-package=jaraco \
-  --include-module=chardet \
   --no-deployment-flag=self-execution \
   --windows-icon-from-ico=spec/opengrep.ico \
   --linux-icon=spec/opengrep.ico \

@@ -104,7 +104,6 @@ install_requires = [
     # coupling: if you add a dep here, it would be appreciated if you could add
     # it to the top level flake.nix file as well, in
     # pysemgrep.propagatedBuildInputs
-    # NOTE: maybe add here `protobuf` and `jaraco`.
     "attrs>=21.3",
     "boltons~=21.0",
     "click-option-group~=0.5",
@@ -123,8 +122,6 @@ install_requires = [
     "typing-extensions~=4.2",
     "urllib3~=2.0",
     "wcmatch~=8.3",
-    "protobuf",
-    "jaraco.text"
 ]
 
 
