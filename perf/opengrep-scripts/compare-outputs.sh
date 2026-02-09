@@ -61,6 +61,23 @@ done
 
 suffix="${intrafile_suffix}${experimental_suffix}"
 
+# Check whether opengrep-diff is available
+HAS_OPENGREP_DIFF=true
+if ! command -v opengrep-diff &>/dev/null; then
+    HAS_OPENGREP_DIFF=false
+    cat >&2 <<'EOF'
+Warning: opengrep-diff not found in PATH. Skipping findings diff.
+
+To enable detailed comparison (exact/proximity/only-in-ref/only-in-cmp),
+build and install opengrep-diff:
+
+    cd <opengrep-repo>
+    make opengrep-diff
+    export PATH="$PWD/_build/install/default/bin:$PATH"
+
+EOF
+fi
+
 # Auto-detect comparison variant if not specified
 if [[ -z "$comparison_variant" ]]; then
     if ls "$OUTPUT_DIR"/semgrep_*"${suffix}"_[0-9]*.json &>/dev/null; then
@@ -93,7 +110,11 @@ fi
 path_warnings=""
 
 {
-    echo "Repo|Reference|${variant_label}|Exact|Proximity|Only Ref|Only ${variant_label}"
+    if [[ "$HAS_OPENGREP_DIFF" == true ]]; then
+        echo "Repo|Reference|${variant_label}|Exact|Proximity|Only Ref|Only ${variant_label}"
+    else
+        echo "Repo|Reference|${variant_label}"
+    fi
 
     for repo in $repos; do
         # Get first file for each tool
@@ -109,26 +130,30 @@ path_warnings=""
         ref_total=$(jq '.results | length' "$ref_file")
         cmp_total=$(jq '.results | length' "$cmp_file")
 
-        # Run comparison and extract stats via JSON
-        cmp_json=$(opengrep-diff "$ref_file" "$cmp_file" -t "$TOLERANCE" --json)
-        exact=$(jq '.exact_match_count' <<< "$cmp_json")
-        proximity=$(jq '.proximity_match_count' <<< "$cmp_json")
-        only_ref=$(jq '.only_in_first_count' <<< "$cmp_json")
-        only_cmp=$(jq '.only_in_second_count' <<< "$cmp_json")
+        if [[ "$HAS_OPENGREP_DIFF" == true ]]; then
+            # Run comparison and extract stats via JSON
+            cmp_json=$(opengrep-diff "$ref_file" "$cmp_file" -t "$TOLERANCE" --json)
+            exact=$(jq '.exact_match_count' <<< "$cmp_json")
+            proximity=$(jq '.proximity_match_count' <<< "$cmp_json")
+            only_ref=$(jq '.only_in_first_count' <<< "$cmp_json")
+            only_cmp=$(jq '.only_in_second_count' <<< "$cmp_json")
 
-        # Check path coverage
-        only_ref_paths=$(jq '.path_coverage.only_scanned_by_first' <<< "$cmp_json")
-        only_cmp_paths=$(jq '.path_coverage.only_scanned_by_second' <<< "$cmp_json")
-        if [[ "$only_ref_paths" -gt 0 || "$only_cmp_paths" -gt 0 ]]; then
-            path_warnings="${path_warnings}${repo}: ref scanned ${only_ref_paths} unique paths, ${comparison_variant} scanned ${only_cmp_paths} unique paths\n"
+            # Check path coverage
+            only_ref_paths=$(jq '.path_coverage.only_scanned_by_first' <<< "$cmp_json")
+            only_cmp_paths=$(jq '.path_coverage.only_scanned_by_second' <<< "$cmp_json")
+            if [[ "$only_ref_paths" -gt 0 || "$only_cmp_paths" -gt 0 ]]; then
+                path_warnings="${path_warnings}${repo}: ref scanned ${only_ref_paths} unique paths, ${comparison_variant} scanned ${only_cmp_paths} unique paths\n"
+            fi
+
+            echo "${repo}|${ref_total}|${cmp_total}|${exact}|${proximity}|${only_ref}|${only_cmp}"
+        else
+            echo "${repo}|${ref_total}|${cmp_total}"
         fi
-
-        echo "${repo}|${ref_total}|${cmp_total}|${exact}|${proximity}|${only_ref}|${only_cmp}"
     done
 } | column -t -s'|' | awk 'NR==1 {print; gsub(/[^ ] /, "--"); gsub(/[^ ]/, "-"); print; next} {print}'
 
 # Print path coverage warnings if any
-if [[ -n "$path_warnings" ]]; then
+if [[ "$HAS_OPENGREP_DIFF" == true && -n "$path_warnings" ]]; then
     echo ""
     echo "Path coverage differences detected:"
     echo -e "$path_warnings"

@@ -81,7 +81,10 @@ echo "=== Running benchmarks: search rules (no intrafile) ==="
 echo
 
 echo "=== Running benchmarks: taint rules (intrafile) ==="
-./bench.sh --output-dir "$run_dir/intrafile_taint" --intrafile --taint-rules-only "$@"
+if ! ./bench.sh --output-dir "$run_dir/intrafile_taint" --intrafile --taint-rules-only "$@"; then
+  echo "Warning: intrafile benchmarks skipped (see above)" >&2
+  rm -rf "$run_dir/intrafile_taint"
+fi
 echo
 
 echo "=== All benchmarks complete ==="

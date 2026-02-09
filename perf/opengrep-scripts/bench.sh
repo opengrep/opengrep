@@ -1,4 +1,4 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 # Copyright (c) 2026 Opengrep Authors
 #
 # SPDX-License-Identifier: LGPL-2.1-only
@@ -162,6 +162,18 @@ fi
 
 if [ -n "$output_dir" ] && [ -d "$output_dir" ]; then
   echo "Error: --output-dir '$output_dir' already exists" >&2
+  exit 1
+fi
+
+# Validate dependencies
+MIN_HYPERFINE_VERSION="1.20.0"
+if ! command -v hyperfine &>/dev/null; then
+  echo "Error: hyperfine not found. Install it from https://github.com/sharkdp/hyperfine" >&2
+  exit 1
+fi
+hf_version=$(hyperfine --version | awk '{print $2}')
+if printf '%s\n%s\n' "$MIN_HYPERFINE_VERSION" "$hf_version" | sort -V | head -1 | grep -qv "^${MIN_HYPERFINE_VERSION}$"; then
+  echo "Error: hyperfine >= $MIN_HYPERFINE_VERSION required (found $hf_version)" >&2
   exit 1
 fi
 
