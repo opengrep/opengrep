@@ -87,5 +87,5 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
       | xs ->
           Fmt.pf ppf "  Scan skipped: %s.@\n" (String.concat ", " xs);
           Fmt.pf ppf
-            "  For a full list of skipped files, run semgrep with the \
+            "  For a full list of skipped files, run opengrep with the \
              --verbose flag.@\n")
