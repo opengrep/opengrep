@@ -83,6 +83,12 @@ type conf = {
 
 val default_conf : conf
 
+type 'a targets = {
+  targets : 'a list;
+  skipped : Semgrep_output_v1_t.skipped_target list;
+  git_repo : bool
+}
+
 (* Entry point used by osemgrep.
 
    Take a set of scanning roots which are files or folders (directories) and
@@ -102,13 +108,13 @@ val default_conf : conf
 val get_targets :
   conf ->
   Scanning_root.t list ->
-  Fppath.t list * Semgrep_output_v1_t.skipped_target list
+  Fppath.t targets
 
 (* Same as get_targets but drop the ppath (path within the project) *)
 val get_target_fpaths :
   conf ->
   Scanning_root.t list ->
-  Fpath.t list * Semgrep_output_v1_t.skipped_target list
+  Fpath.t targets
 
 (* internals used also in Find_targets_old.ml *)
 val get_reason_for_exclusion :

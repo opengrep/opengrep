@@ -175,7 +175,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                 | PRO Engine_type.{ analysis = Interprocedural; _ } ->
                     (* Keeping all the PRO stuff since we will probably need
                      * these code paths. *)
-                    let all_in_baseline, _ =
+                    let { Find_targets.targets = all_in_baseline; _ } =
                       Find_targets.get_target_fpaths conf.targeting_conf
                         conf.target_roots
                     in

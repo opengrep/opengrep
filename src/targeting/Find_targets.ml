@@ -246,6 +246,17 @@ let default_conf : conf =
     diff_depth = 2;
   }
 
+
+(*************************************************************************)
+(* The actual returned type *)
+(*************************************************************************)
+
+type 'a targets = {
+  targets : 'a list;
+  skipped : Semgrep_output_v1_t.skipped_target list;
+  git_repo : bool
+}
+
 (*************************************************************************)
 (* Diagnostic *)
 (*************************************************************************)
@@ -866,6 +877,7 @@ let get_targets_for_project conf (project_roots : Project.roots) =
     | _, None ->
         get_targets_from_filesystem conf project_roots
   in
+  let is_git_repo = Option.is_some git_tracked in 
   let selected_targets, skipped_targets =
     force_select_scanning_roots
       ~apply_includes_excludes_to_files:conf.apply_includes_excludes_to_file_targets
@@ -873,7 +885,7 @@ let get_targets_for_project conf (project_roots : Project.roots) =
       selected_targets
       skipped_targets
   in
-  (selected_targets, skipped_targets)
+  (selected_targets, skipped_targets, is_git_repo)
 
 (* for semgrep query console *)
 let clone_if_remote_project_root conf =
@@ -898,34 +910,33 @@ let clone_if_remote_project_root conf =
 (* Entry point *)
 (*************************************************************************)
 
-let get_targets conf scanning_roots : Fppath.t list * Out.skipped_target list =
+(* TODO: The 'git_repo' fields is needed to print out a warning to the *)
+(* user, because some files in a git repo can be ignored. When multiple *)
+(* roots are specified, we display this warning to the user when *)
+(* at least one root is a git repo. Should we be more precise and *)
+(* display which roots are git repos? *)
+let get_targets conf scanning_roots : Fppath.t targets =
   clone_if_remote_project_root conf;
-  let grouped_scanning_roots =
-    scanning_roots |> group_scanning_roots_by_project conf
+  let path_set, raw_skipped, git_repo =
+    List.fold_left
+      (fun (t, s, gr) root ->
+        let t', s', gr' = get_targets_for_project conf root in
+        Fppath_set.union t t', s' @ s, gr || gr')
+      (Fppath_set.empty, [], false)
+      (group_scanning_roots_by_project conf scanning_roots)
   in
-  grouped_scanning_roots
-  |> List_.map (get_targets_for_project conf)
-  |> List_.split
-  |> fun (path_set_list, skipped_paths_list) ->
-  let paths, skipped_size_minified =
-    let path_set =
-      List.fold_left Fppath_set.union Fppath_set.empty path_set_list
-    in
+  let targets, big_and_minified =
     Fppath_set.elements path_set
-    |> filter_size_and_minified conf.max_target_bytes
-         conf.exclude_minified_files
+    |> filter_size_and_minified conf.max_target_bytes conf.exclude_minified_files
   in
-  let sorted_skipped_targets =
-    let skipped_paths_list =
-      List_.flatten skipped_paths_list @ skipped_size_minified
-    in
-    skipped_paths_list
-    |> List.sort (fun (a : Out.skipped_target) (b : Out.skipped_target) ->
-           Fpath.compare a.path b.path)
+  let skipped =
+    List.sort_uniq
+      (fun (a : Out.skipped_target) (b : Out.skipped_target) -> Fpath.compare a.path b.path)
+      (big_and_minified @ raw_skipped)
   in
-  (paths, sorted_skipped_targets)
+  { targets; skipped; git_repo } 
 [@@profiling]
 
 let get_target_fpaths conf scanning_roots =
-  let selected, skipped = get_targets conf scanning_roots in
-  (List_.map (fun { Fppath.fpath; _ } -> fpath) selected, skipped)
+  let v = get_targets conf scanning_roots in
+  { v with targets = List_.map (fun { Fppath.fpath; _ } -> fpath) v.targets }

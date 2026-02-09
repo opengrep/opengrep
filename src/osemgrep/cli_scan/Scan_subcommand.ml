@@ -443,7 +443,7 @@ let check_targets_with_rules
       ; Cap.memory_limit
       ; .. >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
     (rules_and_origins : Rule_fetching.rules_and_origin list)
-    (targets_and_skipped : Fpath.t list * Out.skipped_target list) :
+    (targets_and_skipped : Fpath.t Find_targets.targets) :
     (Rule.rule list * Core_runner.result * Out.cli_output, Exit_code.t) result =
   (* step 1: last touch on rules *)
   let rules, invalid_rules =
@@ -505,7 +505,8 @@ let check_targets_with_rules
       *)
       let rules = Rule_filtering.filter_rules conf.rule_filtering_conf rules in
       (* step 2: printing the skipped targets *)
-      let targets, skipped = targets_and_skipped in
+      let targets = targets_and_skipped.Find_targets.targets
+      and skipped = targets_and_skipped.Find_targets.skipped in
       Log_targeting.Log.debug (fun m ->
           m "%a" Targets_report.pp_targets_debug
             (conf.target_roots, skipped, targets));
@@ -614,6 +615,7 @@ let check_targets_with_rules
               m "%a"
                 (Summary_report.pp_summary
                    ~respect_gitignore:conf.targeting_conf.respect_gitignore
+                   ~is_git_repo:targets_and_skipped.Find_targets.git_repo
                    ~maturity:conf.common.maturity
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
                    ~skipped_groups)
