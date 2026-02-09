@@ -116,23 +116,34 @@ function Validate-Version {
     }
 }
 
+function Find-Cosign {
+    # Check known binary names: official installs use 'cosign',
+    # winget and manual downloads use 'cosign-windows-amd64'.
+    foreach ($name in @('cosign', 'cosign-windows-amd64')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($null -ne $cmd) {
+            return $cmd.Source
+        }
+    }
+    return $null
+}
+
 function Test-CosignInstalled {
-    $cosign = Get-Command cosign -ErrorAction SilentlyContinue
-    return $null -ne $cosign
+    return $null -ne (Find-Cosign)
 }
 
 function Get-CosignMajorVersion {
+    $cosignPath = Find-Cosign
+    if ($null -eq $cosignPath) { return $null }
     try {
-        $versionOutput = & cosign version 2>&1
+        $versionOutput = & $cosignPath version 2>&1
         $versionLine = $versionOutput | Where-Object { $_ -match "GitVersion" }
         if ($versionLine -match "v?(\d+)") {
             return [int]$Matches[1]
         }
     }
-    catch {
-        return 0
-    }
-    return 0
+    catch {}
+    return $null
 }
 
 function Validate-Signature {
@@ -140,19 +151,26 @@ function Validate-Signature {
 
     if ($script:HasCosign) {
         Write-Host "Verifying signatures for $InstallPath\opengrep.cert"
-        $result = & cosign verify-blob `
-            --cert "$InstallPath\opengrep.cert" `
-            --signature "$InstallPath\opengrep.sig" `
-            --certificate-identity-regexp "https://github.com/opengrep/opengrep.+" `
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
-            "$InstallPath\opengrep.exe" 2>&1
+        $cosignPath = Find-Cosign
+        # Run cosign in a child scope with $ErrorActionPreference = "Continue"
+        # so that stderr text (e.g. "Verified OK") is not treated as a
+        # terminating ErrorRecord under PS 5.1's global "Stop" preference.
+        $result = & {
+            $ErrorActionPreference = "Continue"
+            & $cosignPath verify-blob `
+                --cert "$InstallPath\opengrep.cert" `
+                --signature "$InstallPath\opengrep.sig" `
+                --certificate-identity-regexp "https://github.com/opengrep/opengrep.+" `
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
+                "$InstallPath\opengrep.exe" 2>&1
+        } | Out-String
 
         if ($LASTEXITCODE -eq 0) {
             Write-Host "Signature valid."
         }
         else {
             Write-Host "Error: Signature validation error." -ForegroundColor Red
-            Write-Host $result
+            Write-Host $result.Trim()
             exit 1
         }
     }
@@ -352,12 +370,6 @@ function Main {
 
 # Check for cosign
 $script:HasCosign = Test-CosignInstalled
-if ($script:HasCosign) {
-    $cosignMajor = Get-CosignMajorVersion
-    if ($cosignMajor -lt 2) {
-        Write-Host "Warning: cosign version is less than 2.0.0, signature validation may fail." -ForegroundColor Yellow
-    }
-}
 
 # Validate argument combinations
 if ($Help -and ($List -or $Version -or $VerifySignatures)) {
@@ -380,6 +392,23 @@ if ($VerifySignatures -and -not $script:HasCosign) {
 elseif (-not $script:HasCosign) {
     Write-Host "Warning: cosign is required for -VerifySignatures but is not installed. Skipping signature validation." -ForegroundColor Yellow
     Write-Host "Go to https://github.com/sigstore/cosign to install it."
+}
+elseif ($script:HasCosign) {
+    $cosignMajor = Get-CosignMajorVersion
+    if ($null -eq $cosignMajor) {
+        if ($VerifySignatures) {
+            Write-Host "Error: could not determine cosign version and -VerifySignatures was requested." -ForegroundColor Red
+            Write-Host "Your cosign binary may have been built without version metadata (e.g. distro packages)."
+            Write-Host "Install cosign from https://github.com/sigstore/cosign or run without -VerifySignatures."
+            exit 1
+        }
+        else {
+            Write-Host "Warning: could not determine cosign version. Signature validation may not work correctly." -ForegroundColor Yellow
+        }
+    }
+    elseif ($cosignMajor -lt 2) {
+        Write-Host "Warning: cosign version is less than 2.0.0, signature validation may fail." -ForegroundColor Yellow
+    }
 }
 
 if ($Help) {

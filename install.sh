@@ -266,10 +266,7 @@ main() {
 # Argument parsing
 if command -v cosign &> /dev/null; then
     HAS_COSIGN=true
-    COSIGN_MAJOR_VERSION=$(cosign version | grep GitVersion | sed 's/GitVersion:[[:space:]]*v\{0,1\}//' | grep -oE '^[0-9]+')
-    if [[ "$COSIGN_MAJOR_VERSION" -lt 2 ]]; then
-        echo "Warning: cosign version is less than 2.0.0, signature validation may fail."
-    fi;
+    COSIGN_MAJOR_VERSION=$(cosign version | grep GitVersion | sed 's/GitVersion:[[:space:]]*v\{0,1\}//' | grep -oE '^[0-9]+' || true)
 else
     HAS_COSIGN=false
 fi
@@ -323,6 +320,17 @@ if $VERIFY_SIGNATURES && ! $HAS_COSIGN; then
 elif ! $HAS_COSIGN; then
     echo "Warning: cosign is required for --verify-signatures but is not installed. Skipping signature validation."
     echo "Go to https:/github.com/sigstore/cosign to install it."
+elif [[ -z "$COSIGN_MAJOR_VERSION" ]]; then
+    if $VERIFY_SIGNATURES; then
+        echo "Error: could not determine cosign version and --verify-signatures was requested."
+        echo "Your cosign binary may have been built without version metadata (e.g. distro packages)."
+        echo "Install cosign from https://github.com/sigstore/cosign or run without --verify-signatures."
+        exit 1
+    else
+        echo "Warning: could not determine cosign version. Signature validation may not work correctly."
+    fi
+elif [[ "$COSIGN_MAJOR_VERSION" -lt 2 ]]; then
+    echo "Warning: cosign version is less than 2.0.0, signature validation may fail."
 fi
 
 if "$HELP"; then
