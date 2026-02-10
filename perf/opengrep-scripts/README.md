@@ -114,7 +114,7 @@ Options:
 - `--experimental` - Match files with `_experimental` suffix
 
 Environment variables:
-- `TOLERANCE` - Line tolerance for proximity matching (default: 8)
+- `TOLERANCE` - Byte tolerance for proximity matching (default: 8)
 
 Examples:
 ```bash
