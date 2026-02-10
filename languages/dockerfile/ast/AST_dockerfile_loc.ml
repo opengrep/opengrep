@@ -84,6 +84,10 @@ let command_loc = function
 
 let param_loc ((loc, _) : param) : loc = loc
 
+let copy_param_loc = function
+  | CopyParam p -> param_loc p
+  | CopyFlag (loc, _) -> loc
+
 let param_or_ellipsis_loc : param_or_ellipsis -> loc = function
   | ParamParam param -> param_loc param
   | ParamEllipsis tok -> (tok, tok)

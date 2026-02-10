@@ -178,6 +178,11 @@ type command =
 type param =
   loc * (tok (* -- *) * string wrap (* name *) * tok (* = *) * string wrap)
 
+(* Boolean flag with no value, e.g. --link, --parents for COPY/ADD *)
+type copy_param =
+  | CopyParam of param (* --name=value *)
+  | CopyFlag of loc * (tok (* -- *) * string wrap (* name *))
+
 (* For positions where `...` is a valid parameter. TODO should we refactor to
  * allow ellipsis everywhere parameters may be? *)
 type param_or_ellipsis = ParamParam of param | ParamEllipsis of tok
@@ -229,7 +234,7 @@ type expose_port =
   | Expose_semgrep_ellipsis of tok
 
 type add_or_copy =
-  loc * string wrap * param list * path_or_ellipsis list * docker_string
+  loc * string wrap * copy_param list * path_or_ellipsis list * docker_string
 
 type instruction =
   | From of
