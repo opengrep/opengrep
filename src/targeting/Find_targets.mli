@@ -84,7 +84,7 @@ type conf = {
 val default_conf : conf
 
 type 'a targets = {
-  targets : 'a list;
+  selected : 'a list;
   skipped : Semgrep_output_v1_t.skipped_target list;
   git_repo : bool
 }

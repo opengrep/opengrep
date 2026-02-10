@@ -77,7 +77,7 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
             printf "--- '--exclude' patterns ---\n";
             patterns |> List.iter (fun pat -> printf "%s\n" pat));
         printf "--- Selected targets ---\n";
-        targets.targets |> List.iter (fun path -> printf "selected %s\n" !!path);
+        targets.selected |> List.iter (fun path -> printf "selected %s\n" !!path);
         printf "--- Skipped targets ---\n";
         targets.skipped
         |> List.iter (fun (x : Out.skipped_target) ->

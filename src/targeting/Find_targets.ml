@@ -252,7 +252,7 @@ let default_conf : conf =
 (*************************************************************************)
 
 type 'a targets = {
-  targets : 'a list;
+  selected : 'a list;
   skipped : Semgrep_output_v1_t.skipped_target list;
   git_repo : bool
 }
@@ -925,7 +925,7 @@ let get_targets conf scanning_roots : Fppath.t targets =
       (Fppath_set.empty, [], false)
       (group_scanning_roots_by_project conf scanning_roots)
   in
-  let targets, big_and_minified =
+  let selected, big_and_minified =
     Fppath_set.elements path_set
     |> filter_size_and_minified conf.max_target_bytes conf.exclude_minified_files
   in
@@ -934,9 +934,9 @@ let get_targets conf scanning_roots : Fppath.t targets =
       (fun (a : Out.skipped_target) (b : Out.skipped_target) -> Fpath.compare a.path b.path)
       (big_and_minified @ raw_skipped)
   in
-  { targets; skipped; git_repo } 
+  { selected; skipped; git_repo }
 [@@profiling]
 
 let get_target_fpaths conf scanning_roots =
   let v = get_targets conf scanning_roots in
-  { v with targets = List_.map (fun { Fppath.fpath; _ } -> fpath) v.targets }
+  { v with selected = List_.map (fun { Fppath.fpath; _ } -> fpath) v.selected }

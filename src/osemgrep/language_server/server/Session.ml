@@ -125,7 +125,7 @@ let get_targets session (root : Fpath.t) =
       }
       [ Scanning_root.of_fpath root ]
   in
-  targets.Find_targets.targets
+  targets.Find_targets.selected
 
 (*****************************************************************************)
 (* State getters *)

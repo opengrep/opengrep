@@ -15,7 +15,7 @@ let default_format = Paths_only
 
 let run ~target_roots ~targeting_conf:conf ~format () =
   let targets = Find_targets.get_target_fpaths conf target_roots in
-  targets.targets |> List.sort Fpath.compare
+  targets.selected |> List.sort Fpath.compare
   |> List.iter (fun (x : Fpath.t) ->
          match format with
          | Paths_only -> UConsole.print (Fpath.to_string x)
