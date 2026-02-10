@@ -329,6 +329,17 @@ let param (env : env) ((v1, v2, v3, v4) : CST.param) : param =
   let loc = (dashdash, snd value) in
   (loc, (dashdash, key, equal, value))
 
+let flag_param (env : env) ((v1, v2) : CST.flag_param) : copy_param =
+  let dashdash = token env v1 (* "--" *) in
+  let name = str env v2 (* pattern [a-z][-a-z]* *) in
+  let loc = (dashdash, snd name) in
+  CopyFlag (loc, (dashdash, name))
+
+let copy_or_add_param (env : env) x : copy_param =
+  match x with
+  | `Param x -> CopyParam (param env x)
+  | `Flag_param x -> flag_param env x
+
 let expose_port (env : env) (x : CST.expose_port) : expose_port =
   match x with
   | `Semg_ellips tok -> Expose_semgrep_ellipsis (token env tok (* "..." *))
@@ -900,7 +911,7 @@ let runlike_instruction (env : env) name params cmd =
 let add_or_copy (env : env) (v1, v2, src_paths, v4, heredoc_bodies) :
     add_or_copy =
   let name = str env v1 in
-  let param = List_.map (param env) v2 in
+  let param = List_.map (copy_or_add_param env) v2 in
   let src = reattach_heredoc_bodies env src_paths heredoc_bodies in
   (* heredocs are not allowed as the destination file name *)
   let dst =
