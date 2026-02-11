@@ -276,6 +276,102 @@ let get_arity params info lang =
   in
   List.length filtered_params
 
+(** Convert a Case pattern back into a [G.parameter list] for per-arity
+    signature extraction (Clojure multi-arity / Elixir multi-clause). *)
+let params_of_case_pattern (pat : G.pattern) : G.parameter list =
+  let unwrap_guard (p : G.pattern) : G.pattern =
+    match p with
+    | G.PatWhen (inner, _guard) -> inner
+    | _ -> p
+  in
+  let param_of_pat (p : G.pattern) : G.parameter =
+    match p with
+    | G.PatId (ident, id_info) ->
+        G.Param
+          {
+            G.pname = Some ident;
+            pinfo = id_info;
+            ptype = None;
+            pdefault = None;
+            pattrs = [];
+          }
+    | G.PatConstructor (G.Id (("&", _amp_tok), _), [ G.PatId (ident, id_info) ])
+      ->
+        (* Clojure rest params: (& rest) *)
+        G.ParamRest
+          ( Tok.unsafe_fake_tok "&",
+            {
+              G.pname = Some ident;
+              pinfo = id_info;
+              ptype = None;
+              pdefault = None;
+              pattrs = [];
+            } )
+    | _ -> G.OtherParam (("PatUnknown", G.fake ""), [])
+  in
+  let inner = unwrap_guard pat in
+  let pats =
+    match inner with
+    | G.PatList (_, pats, _)
+    | G.PatTuple (_, pats, _) ->
+        pats
+    | _ -> [ inner ]
+  in
+  List_.map param_of_pat pats
+
+(** For Clojure/Elixir functions with a single implicit param and a Switch
+    body, extract per-arity cases. Returns a list of
+    (params, function_body, sig_arity) sorted by decreasing arity. *)
+let extract_multi_arity_cases (fdef : G.function_definition) :
+    (G.parameter list * G.function_body * Shape_and_sig.sig_arity) list option =
+  let params = Tok.unbracket fdef.G.fparams in
+  let has_implicit =
+    match params with
+    | [ G.Param { G.pname = Some (name, _); _ } ] ->
+        G.is_implicit_param name
+    | _ -> false
+  in
+  if not has_implicit then None
+  else
+    match fdef.G.fbody with
+    | G.FBStmt { G.s = G.Switch (_, _, cases); _ } ->
+        let arity_cases =
+          cases
+          |> List.filter_map (fun (cab : G.case_and_body) ->
+                 match cab with
+                 | G.CasesAndBody (case_list, body) -> (
+                     match case_list with
+                     | [ G.Case (_, pat) ] ->
+                         let case_params = params_of_case_pattern pat in
+                         let rest, fixed =
+                           List.partition
+                             (function
+                               | G.ParamRest _ -> true
+                               | _ -> false)
+                             case_params
+                         in
+                         let arity : Shape_and_sig.sig_arity =
+                           match rest with
+                           | _ :: _ -> Arity_at_least (List.length fixed)
+                           | [] -> Arity_exact (List.length fixed)
+                         in
+                         Some (case_params, G.FBStmt body, arity)
+                     | _ -> None)
+                 | G.CaseEllipsis _ -> None)
+        in
+        let sorted =
+          List.sort
+            (fun (_, _, a1) (_, _, a2) ->
+              let n1 = Shape_and_sig.int_of_sig_arity a1 in
+              let n2 = Shape_and_sig.int_of_sig_arity a2 in
+              Int.compare n2 n1)
+            arity_cases
+        in
+        (match sorted with
+        | [] -> None
+        | _ -> Some sorted)
+    | _ -> None
+
 let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     ?(signature_db : Shape_and_sig.signature_database option)
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
@@ -534,108 +630,20 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   m "TAINT_TOPO: [%d] %s" i (Function_id.show node)))
             analysis_order;
 
-          (* Convert a Case pattern back into a [G.parameter list] for per-arity
-           * signature extraction (Clojure multi-arity / Elixir multi-clause). *)
-          let params_of_case_pattern (pat : G.pattern) : G.parameter list =
-            let unwrap_guard (p : G.pattern) : G.pattern =
-              match p with
-              | G.PatWhen (inner, _guard) -> inner
-              | _ -> p
-            in
-            let param_of_pat (p : G.pattern) : G.parameter =
-              match p with
-              | G.PatId (ident, id_info) ->
-                  G.Param
-                    {
-                      G.pname = Some ident;
-                      pinfo = id_info;
-                      ptype = None;
-                      pdefault = None;
-                      pattrs = [];
-                    }
-              | G.PatConstructor (G.Id (("&", _amp_tok), _), [ G.PatId (ident, id_info) ]) ->
-                  (* Clojure rest params: (& rest) *)
-                  G.ParamRest
-                    ( Tok.unsafe_fake_tok "&",
-                      {
-                        G.pname = Some ident;
-                        pinfo = id_info;
-                        ptype = None;
-                        pdefault = None;
-                        pattrs = [];
-                      } )
-              | _ -> G.OtherParam (("PatUnknown", G.fake ""), [])
-            in
-            let inner = unwrap_guard pat in
-            let pats =
-              match inner with
-              | G.PatList (_, pats, _)
-              | G.PatTuple (_, pats, _) ->
-                  pats
-              | _ -> [ inner ]
-            in
-            List_.map param_of_pat pats
-          in
-
-          (* For Clojure/Elixir functions with a single implicit param and a Switch
-           * body, extract per-arity cases. Returns a list of
-           * (params, function_body, sig_arity) sorted by decreasing arity. *)
-          let extract_multi_arity_cases (fdef : G.function_definition)
-              : (G.parameter list * G.function_body * Shape_and_sig.sig_arity) list option =
-            let params = Tok.unbracket fdef.G.fparams in
-            let has_implicit =
-              match params with
-              | [ G.Param { G.pname = Some (name, _); _ } ] ->
-                  G.is_implicit_param name
-              | _ -> false
-            in
-            if not has_implicit then None
-            else
-              match fdef.G.fbody with
-              | G.FBStmt { G.s = G.Switch (_, _, cases); _ } ->
-                  let arity_cases =
-                    cases
-                    |> List.filter_map
-                         (fun (cab : G.case_and_body) ->
-                           match cab with
-                           | G.CasesAndBody (case_list, body) -> (
-                               match case_list with
-                               | [ G.Case (_, pat) ] ->
-                                   let case_params = params_of_case_pattern pat in
-                                   let has_rest =
-                                     List.exists
-                                       (function
-                                         | G.ParamRest _ -> true
-                                         | _ -> false)
-                                       case_params
-                                   in
-                                   let n_fixed =
-                                     List.length
-                                       (List.filter
-                                          (function
-                                            | G.ParamRest _ -> false
-                                            | _ -> true)
-                                          case_params)
-                                   in
-                                   let arity : Shape_and_sig.sig_arity =
-                                     if has_rest then Arity_at_least n_fixed
-                                     else Arity_exact n_fixed
-                                   in
-                                   Some (case_params, G.FBStmt body, arity)
-                               | _ -> None)
-                           | G.CaseEllipsis _ -> None)
-                  in
-                  (* Sort by decreasing arity so higher arities are extracted first *)
-                  let sorted =
-                    List.sort
-                      (fun (_, _, a1) (_, _, a2) ->
-                        let n1 = Shape_and_sig.int_of_sig_arity a1 in
-                        let n2 = Shape_and_sig.int_of_sig_arity a2 in
-                        Int.compare n2 n1)
-                      arity_cases
-                  in
-                  if List.length sorted > 0 then Some sorted else None
-              | _ -> None
+          let run_check_fundef_if_needed (info : fun_info)
+              (updated_db : Shape_and_sig.signature_database) :
+              Shape_and_sig.signature_database =
+            if info.is_lambda_assignment then updated_db
+            else begin
+              let _flow, fdef_effects, _mapping =
+                check_fundef taint_inst info.name !ctx ~glob_env
+                  ?class_name:info.class_name_str ~signature_db:updated_db
+                  ?builtin_signature_db
+                  ?call_graph:(Some relevant_graph) info.fdef
+              in
+              record_matches fdef_effects;
+              updated_db
+            end
           in
 
           let process_fun_info info db =
@@ -668,18 +676,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                       db')
                     db arity_cases
                 in
-                (* Run check_fundef on the ORIGINAL fdef for intra-function findings *)
-                if info.is_lambda_assignment then updated_db
-                else begin
-                  let _flow, fdef_effects, _mapping =
-                    check_fundef taint_inst info.name !ctx ~glob_env
-                      ?class_name:info.class_name_str
-                      ~signature_db:updated_db ?builtin_signature_db
-                      ?call_graph:(Some relevant_graph) info.fdef
-                  in
-                  record_matches fdef_effects;
-                  updated_db
-                end
+                run_check_fundef_if_needed info updated_db
             | None ->
                 (* Single-arity path (unchanged logic) *)
                 let params = Tok.unbracket info.fdef.fparams in
@@ -717,16 +714,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                     else updated_db
                   else updated_db
                 in
-                if info.is_lambda_assignment then updated_db
-                else
-                  let _flow, fdef_effects, _mapping =
-                    check_fundef taint_inst info.name !ctx ~glob_env
-                      ?class_name:info.class_name_str ~signature_db:updated_db
-                      ?builtin_signature_db
-                      ?call_graph:(Some relevant_graph) info.fdef
-                  in
-                  record_matches fdef_effects;
-                  updated_db
+                run_check_fundef_if_needed info updated_db
           in
 
           let signature_db_after_order =
