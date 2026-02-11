@@ -87,6 +87,33 @@
 (defn test-multi-arity []
   (multi-arity-call (source)))
 
+;; Variadic arity with & rest
+(defn variadic-call
+  ([x] (variadic-call x nil))
+  ([x y & rest]
+   ;; ruleid: test-hof-taint
+   (sink x)))
+
+(defn test-variadic-arity []
+  (variadic-call (source)))
+
+;; Variadic: 1-arity does NOT delegate to 2-arity with sink
+(defn variadic-no-delegate
+  ([x] x)
+  ([x y & rest]
+   ;; ok: test-hof-taint
+   (sink x)))
+
+(defn test-variadic-no-delegate []
+  (variadic-no-delegate (source)))
+
+(defn variadic-rest-sink [x & rest]
+  ;; ruleid: test-hof-taint
+  (sink rest))
+
+(defn test-variadic-rest-sink []
+  (variadic-rest-sink nil (source)))
+
 ;; ===== Cross-function return taint (implicit return) =====
 
 (defn get-history [name owner]
