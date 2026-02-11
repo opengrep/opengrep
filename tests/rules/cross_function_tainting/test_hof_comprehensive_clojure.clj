@@ -87,6 +87,23 @@
 (defn test-multi-arity []
   (multi-arity-call (source)))
 
+;; Variadic arity with & rest
+(defn variadic-call
+  ([x] (variadic-call x nil))
+  ([x y & rest]
+   ;; ruleid: test-hof-taint
+   (sink x)))
+
+(defn test-variadic-arity []
+  (variadic-call (source)))
+
+(defn variadic-rest-sink [x & rest]
+  ;; ruleid: test-hof-taint
+  (sink rest))
+
+(defn test-variadic-rest-sink []
+  (variadic-rest-sink nil (source)))
+
 ;; ===== Cross-function return taint (implicit return) =====
 
 (defn get-history [name owner]
