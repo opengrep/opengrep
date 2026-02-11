@@ -223,10 +223,10 @@ let create_builtin_models (lang : Lang.t) : builtin_signature_database =
       match hof_config with
       | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
           add_hof_signatures acc_db methods arity ~taint_arg_index ()
-      | Lang_config.FunctionHOF { functions; arity; callback_index; data_index } ->
+      | Lang_config.FunctionHOF { functions; arity; callback_index; data_index; taint_arg_index } ->
           let params = make_params arity callback_index in
           add_function_hof_signatures acc_db functions arity ~callback_index
-            ~data_index ~params ()
+            ~data_index ~params ~taint_arg_index ()
       | Lang_config.ReturningFunctionHOF { methods } ->
           add_hof_returning_function_signatures acc_db methods ())
     db config.hof_configs
