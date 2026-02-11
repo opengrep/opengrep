@@ -751,44 +751,45 @@ let add_builtin_signature (db : builtin_signature_database) (func_name : string)
 let int_of_sig_arity : sig_arity -> int = function
   | Arity_exact n | Arity_at_least n -> n
 
-let lookup_builtin_signature (db : builtin_signature_database) (func_name : string) (arity : int)
-    : Signature.t option =
+(** Given a non-empty set of signatures, find the best match for [arity].
+    Returns the unique sig if only one exists, then tries [Arity_exact arity],
+    then falls back to the most specific [Arity_at_least n] where [n <= arity]. *)
+let find_by_arity (sigs : SignatureSet.t) (arity : int) : Signature.t option =
+  if Int.equal (SignatureSet.cardinal sigs) 1 then
+    Some (SignatureSet.choose sigs).sig_
+  else
+    let exact =
+      SignatureSet.filter
+        (fun (x : extended_sig) -> equal_sig_arity x.arity (Arity_exact arity))
+        sigs
+    in
+    if Int.equal (SignatureSet.cardinal exact) 1 then
+      Some (SignatureSet.choose exact).sig_
+    else
+      let at_least =
+        SignatureSet.filter
+          (fun (x : extended_sig) ->
+            match x.arity with
+            | Arity_at_least n -> n <= arity
+            | Arity_exact _ -> false)
+          sigs
+      in
+      SignatureSet.fold
+        (fun (x : extended_sig) (acc : extended_sig option) ->
+          match acc with
+          | None -> Some x
+          | Some prev ->
+              if int_of_sig_arity x.arity > int_of_sig_arity prev.arity then
+                Some x
+              else acc)
+        at_least None
+      |> Option.map (fun (x : extended_sig) -> x.sig_)
+
+let lookup_builtin_signature (db : builtin_signature_database)
+    (func_name : string) (arity : int) : Signature.t option =
   match BuiltinMap.find_opt func_name db with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      let total_sigs_card = SignatureSet.cardinal sigs in
-      if Int.equal total_sigs_card 1 then
-        Some (SignatureSet.choose sigs).sig_
-      else
-        (* Try exact match first *)
-        let exact =
-          SignatureSet.filter
-            (fun x -> equal_sig_arity x.arity (Arity_exact arity))
-            sigs
-        in
-        if SignatureSet.cardinal exact =|= 1 then
-          Some (SignatureSet.choose exact).sig_
-        else
-          (* Fall back to best Arity_at_least match *)
-          let at_least =
-            SignatureSet.filter
-              (fun x ->
-                match x.arity with
-                | Arity_at_least n -> n <= arity
-                | Arity_exact _ -> false)
-              sigs
-          in
-          let best =
-            SignatureSet.fold
-              (fun x acc ->
-                match acc with
-                | None -> Some x
-                | Some prev ->
-                    if int_of_sig_arity x.arity > int_of_sig_arity prev.arity
-                    then Some x
-                    else acc)
-              at_least None
-          in
-          Option.map (fun x -> x.sig_) best
+      find_by_arity sigs arity
   | _ -> None
 
 let show_name (name_opt : IL.name option) =
@@ -799,46 +800,11 @@ let show_name (name_opt : IL.name option) =
 let empty_signature_database () : signature_database =
   { signatures = FunctionMap.empty; object_mappings = [] }
 
-let lookup_signature (db : signature_database) (name : Function_id.t) (arity : int)
-    : Signature.t option =
-  let signatures = FunctionMap.find_opt name db.signatures in
-  match signatures with
+let lookup_signature (db : signature_database) (name : Function_id.t)
+    (arity : int) : Signature.t option =
+  match FunctionMap.find_opt name db.signatures with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      let total_sigs_card = SignatureSet.cardinal sigs in
-      (* If there's only one signature for this function name, return it regardless of arity *)
-      if total_sigs_card =*= 1 then
-        Some (SignatureSet.choose sigs).sig_
-      else
-        (* Try exact match first *)
-        let exact =
-          SignatureSet.filter
-            (fun x -> equal_sig_arity x.arity (Arity_exact arity))
-            sigs
-        in
-        if SignatureSet.cardinal exact =|= 1 then
-          Some (SignatureSet.choose exact).sig_
-        else
-          (* Fall back to best Arity_at_least match *)
-          let at_least =
-            SignatureSet.filter
-              (fun x ->
-                match x.arity with
-                | Arity_at_least n -> n <= arity
-                | Arity_exact _ -> false)
-              sigs
-          in
-          let best =
-            SignatureSet.fold
-              (fun x acc ->
-                match acc with
-                | None -> Some x
-                | Some prev ->
-                    if int_of_sig_arity x.arity > int_of_sig_arity prev.arity
-                    then Some x
-                    else acc)
-              at_least None
-          in
-          Option.map (fun x -> x.sig_) best
+      find_by_arity sigs arity
   | _ -> None
 
 let add_signature (db : signature_database) (name : Function_id.t)

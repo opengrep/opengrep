@@ -406,17 +406,23 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
   v#visit_program () ast;
   !calls |> dedup_fn_ids
 
+let sid_of_id_info (info : G.id_info) : G.sid option =
+  match !(info.G.id_resolved) with
+  | Some (_, sid) -> Some sid
+  | None -> None
+
+let stmts_of_fbody (fbody : G.function_body) : G.stmt list =
+  match fbody with
+  | G.FBStmt s -> [ s ]
+  | G.FBExpr e -> [ G.exprstmt e ]
+  | G.FBDecl _ | G.FBNothing -> []
+
 (* Detect if a function is a user-defined HOF by checking if it calls any of its parameters.
    Returns a list of (parameter_name, parameter_index) for called parameters.
    Uses id_resolved (sid) for comparison to avoid false positives from shadowed names.
    For Clojure-style implicit params, descends into the Switch/CasesAndBody structure
    to find the real parameters per arity branch. *)
 let detect_user_hof (fdef : G.function_definition) : (string * int) list =
-  let sid_of_id_info (info : G.id_info) : G.sid option =
-    match !(info.G.id_resolved) with
-    | Some (_, sid) -> Some sid
-    | None -> None
-  in
   (* Extract (name, index, sid option) from a formal parameter *)
   let param_entry (idx : int) (param : G.parameter) :
       (string * int * G.sid option) option =
@@ -468,12 +474,6 @@ let detect_user_hof (fdef : G.function_definition) : (string * int) list =
     in
     List.iter (v#visit_stmt ()) stmts;
     !found
-  in
-  let stmts_of_fbody (fbody : G.function_body) : G.stmt list =
-    match fbody with
-    | G.FBStmt s -> [s]
-    | G.FBExpr e -> [G.exprstmt e]
-    | G.FBDecl _ | G.FBNothing -> []
   in
   let (_lp, params, _rp) = fdef.G.fparams in
   let param_entries =
