@@ -87,6 +87,20 @@
 (defn test-multi-arity []
   (multi-arity-call (source)))
 
+;; ===== Cross-function return taint (implicit return) =====
+
+(defn get-history [name owner]
+  (source))
+
+(defn process-history [node]
+  ;; ruleid: test-hof-taint
+  (sink node)
+  [node])
+
+(defn test-complex-example []
+  (let [history (get-history "name" "owner")]
+    (mapcat process-history [history])))
+
 ;; ===== Built-in HOF with named callbacks =====
 
 (defn process-builtin-map [x]
