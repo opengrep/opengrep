@@ -407,39 +407,111 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
   !calls |> dedup_fn_ids
 
 (* Detect if a function is a user-defined HOF by checking if it calls any of its parameters.
-   Returns a list of (parameter_name, parameter_index) for called parameters. *)
+   Returns a list of (parameter_name, parameter_index) for called parameters.
+   Uses id_resolved (sid) for comparison to avoid false positives from shadowed names.
+   For Clojure-style implicit params, descends into the Switch/CasesAndBody structure
+   to find the real parameters per arity branch. *)
 let detect_user_hof (fdef : G.function_definition) : (string * int) list =
-  (* Get parameter names - handle both regular params and Ruby's &block params *)
-  let (_lp, params, _rp) = fdef.fparams in
-  let param_names =
-    params
-    |> List.filter_map (fun param ->
-        match param with
-        | G.Param { pname = Some (id, _); _ } -> Some id
-        (* Ruby block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
-        | G.OtherParam (_, [G.Pa (G.Param { pname = Some (id, _); _ })]) -> Some id
-        | _ -> None)
+  let sid_of_id_info (info : G.id_info) : G.sid option =
+    match !(info.G.id_resolved) with
+    | Some (_, sid) -> Some sid
+    | None -> None
   in
-  (* Check which parameters are called in the function body *)
-  let called_params = ref [] in
-  let v =
-    object
-      inherit [_] G.iter as super
+  (* Extract (name, index, sid option) from a formal parameter *)
+  let param_entry (idx : int) (param : G.parameter) :
+      (string * int * G.sid option) option =
+    match param with
+    | G.Param { G.pname = Some (id, _); pinfo; _ } ->
+        Some (id, idx, sid_of_id_info pinfo)
+    (* Ruby block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
+    | G.OtherParam (_, [G.Pa (G.Param { G.pname = Some (id, _); pinfo; _ })]) ->
+        Some (id, idx, sid_of_id_info pinfo)
+    | _ -> None
+  in
+  (* Extract (name, index, sid option) from a pattern (for Clojure arity branches).
+     TODO: descend into nested/complex patterns to extract leaf PatId entries. *)
+  let param_entry_of_pat (idx : int) (pat : G.pattern) :
+      (string * int * G.sid option) option =
+    match pat with
+    | G.PatId ((name, _), id_info) -> Some (name, idx, sid_of_id_info id_info)
+    | _ -> None
+  in
+  (* Find which param entries are called as functions in the given statements.
+     Matches by sid when both sides have one; this correctly handles shadowing. *)
+  let find_called_params
+      (param_entries : (string * int * G.sid option) list)
+      (stmts : G.stmt list) : (string * int) list =
+    let found = ref [] in
+    let v =
+      object
+        inherit [_] G.iter as super
 
-      method! visit_expr env e =
-        match e.G.e with
-        (* Check for calls to parameter names *)
-        | G.Call ({ e = G.N (G.Id ((name, _), _)); _ }, _args) ->
-            (match List.find_index (fun p -> p = name) param_names with
-            | Some idx ->
-                called_params := (name, idx) :: !called_params;
-                super#visit_expr env e
-            | None -> super#visit_expr env e)
-        | _ -> super#visit_expr env e
-    end
+        method! visit_expr env e =
+          match e.G.e with
+          | G.Call ({ e = G.N (G.Id ((_, _), callee_info)); _ }, _args) ->
+              let callee_sid = sid_of_id_info callee_info in
+              let matched =
+                List.find_opt
+                  (fun (_pname, _pidx, psid) ->
+                    match (psid, callee_sid) with
+                    | Some ps, Some cs -> G.SId.equal ps cs
+                    | _ -> false)
+                  param_entries
+              in
+              (match matched with
+              | Some (pname, pidx, _) ->
+                  found := (pname, pidx) :: !found
+              | None -> ());
+              super#visit_expr env e
+          | _ -> super#visit_expr env e
+      end
+    in
+    List.iter (v#visit_stmt ()) stmts;
+    !found
   in
-  v#visit_function_definition () fdef;
-  !called_params |> List.sort_uniq (fun (n1, i1) (n2, i2) ->
+  let stmts_of_fbody (fbody : G.function_body) : G.stmt list =
+    match fbody with
+    | G.FBStmt s -> [s]
+    | G.FBExpr e -> [G.exprstmt e]
+    | G.FBDecl _ | G.FBNothing -> []
+  in
+  let (_lp, params, _rp) = fdef.G.fparams in
+  let param_entries =
+    List.mapi param_entry params |> List.filter_map Fun.id
+  in
+  (* Check for Clojure-style implicit param (single !!_implicit_param!) *)
+  let has_implicit_param_only =
+    match param_entries with
+    | [(name, _, _)] -> G.is_implicit_param name
+    | _ -> false
+  in
+  let called_params =
+    if has_implicit_param_only then
+      (* Descend into Switch/CasesAndBody to find real params per arity branch *)
+      match fdef.G.fbody with
+      | G.FBStmt { G.s = G.Switch (_, _, cases); _ } ->
+          cases
+          |> List.concat_map (fun (case_and_body : G.case_and_body) ->
+              match case_and_body with
+              | G.CasesAndBody (cases, body) ->
+                  let branch_params =
+                    cases |> List.concat_map (fun (case : G.case) ->
+                      match case with
+                      | G.Case (_, G.PatList (_, pats, _))
+                      (* NOTE: the top-level pattern for Clojure multi-arity functions
+                         is always PatList; PatTuple does not occur in practice. *)
+                      | G.Case (_, G.PatTuple (_, pats, _)) ->
+                          List.mapi param_entry_of_pat pats
+                          |> List.filter_map Fun.id
+                      | _ -> [])
+                  in
+                  find_called_params branch_params [body]
+              | G.CaseEllipsis _ -> [])
+      | _ -> []
+    else
+      find_called_params param_entries (stmts_of_fbody fdef.G.fbody)
+  in
+  called_params |> List.sort_uniq (fun (n1, i1) (n2, i2) ->
     let c = String.compare n1 n2 in
     if c <> 0 then c else Int.compare i1 i2)
 
@@ -468,7 +540,8 @@ let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t * IL.name o
   (* Elixir: &func/n - ShortLambda wrapping a call to the named function.
      Structure: OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
      Create a _tmp node to match what AST_to_IL creates for the anonymous wrapper. *)
-  | G.OtherExpr (("ShortLambda", shortlambda_tok), [G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ }]) ->
+  | G.OtherExpr (("ShortLambda", shortlambda_tok),
+                 [G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ }]) ->
       (match inner_e.G.e with
       | G.Call ({ e = G.N (G.Id (id, id_info)); _ }, _) ->
           let callback_name = AST_to_IL.var_of_id_info id id_info in

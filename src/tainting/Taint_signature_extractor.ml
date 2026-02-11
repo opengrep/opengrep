@@ -380,7 +380,7 @@ let extract_global_var_sids_from_ast (ast : G.program) :
   |> List.rev
 
 let extract_signature_with_file_context
-    ~arity
+    ~(arity : Shape_and_sig.sig_arity)
     ?(db : signature_database = Shape_and_sig.empty_signature_database ())
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ~(name : IL.name)

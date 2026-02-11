@@ -363,7 +363,17 @@ let julia = {
 }
 
 let clojure = {
-  hof_configs = [];
+  hof_configs = [
+    FunctionHOF {
+      functions = ["map"; "filter"; "keep"; "remove"; "some";
+                   "mapv"; "filterv"; "mapcat"];
+      arity = 2; callback_index = 0; data_index = 1;
+    };
+    FunctionHOF {
+      functions = ["reduce"];
+      arity = 3; callback_index = 0; data_index = 2;
+    };
+  ];
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
