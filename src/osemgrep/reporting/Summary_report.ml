@@ -15,7 +15,7 @@ module OutJ = Semgrep_output_v1_t
 (* Entry point *)
 (*****************************************************************************)
 
-let pp_summary ~respect_gitignore ~(maturity : Maturity.t) ~max_target_bytes
+let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_target_bytes
     ~skipped_groups ppf () : unit =
   let {
     Skipped_report.ignored = semgrep_ignored;
@@ -36,8 +36,7 @@ let pp_summary ~respect_gitignore ~(maturity : Maturity.t) ~max_target_bytes
                 "Scan was limited to files changed since baseline commit."
             )
   *)
-  let out_limited =
-    if respect_gitignore then
+  if respect_gitignore && is_git_repo then
       (* # Each target could be a git repo, and we respect the git ignore
          # of each target, so to be accurate with this print statement we
          # need to check if any target is a git repo and not just the cwd
@@ -52,9 +51,7 @@ let pp_summary ~respect_gitignore ~(maturity : Maturity.t) ~max_target_bytes
                      targets_not_in_git += 1
                      continue
          if targets_not_in_git != dir_targets: *)
-      Some "Scan was limited to files tracked by git."
-    else None
-  in
+    Fmt.pf ppf "Scan was limited to files tracked by git.@\n";
   let opt_msg msg = function
     | [] -> None
     | xs -> Some (string_of_int (List.length xs) ^ " " ^ msg)
@@ -80,16 +77,15 @@ let pp_summary ~respect_gitignore ~(maturity : Maturity.t) ~max_target_bytes
       "files only partially analyzed due to a parsing or internal Opengrep error"
       errors
   in
-  match (out_skipped, out_partial, out_limited, skipped_groups.ignored) with
-  | [], None, None, [] -> ()
-  | xs, parts, limited, _ignored -> (
+  match (out_skipped, out_partial, skipped_groups.ignored) with
+  | [], None, [] -> ()
+  | xs, parts, _ignored -> (
       Fmt.pf ppf "Some files were skipped or only partially analyzed.@\n";
-      Option.iter (fun txt -> Fmt.pf ppf "  %s@\n" txt) limited;
       Option.iter (fun txt -> Fmt.pf ppf "  Partially scanned: %s@\n" txt) parts;
       match xs with
       | [] -> ()
       | xs ->
           Fmt.pf ppf "  Scan skipped: %s.@\n" (String.concat ", " xs);
           Fmt.pf ppf
-            "  For a full list of skipped files, run semgrep with the \
+            "  For a full list of skipped files, run opengrep with the \
              --verbose flag.@\n")

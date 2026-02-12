@@ -36,8 +36,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Some files were skipped or only partially analyzed.
-  Scan was limited to files tracked by git.
+Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 3 findings.
 ASSERT exit code

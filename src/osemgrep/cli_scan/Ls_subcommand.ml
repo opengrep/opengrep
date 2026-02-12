@@ -14,8 +14,8 @@ type format = Paths_only | Long [@@deriving show]
 let default_format = Paths_only
 
 let run ~target_roots ~targeting_conf:conf ~format () =
-  let selected, skipped = Find_targets.get_target_fpaths conf target_roots in
-  selected |> List.sort Fpath.compare
+  let targets = Find_targets.get_target_fpaths conf target_roots in
+  targets.selected |> List.sort Fpath.compare
   |> List.iter (fun (x : Fpath.t) ->
          match format with
          | Paths_only -> UConsole.print (Fpath.to_string x)
@@ -23,7 +23,7 @@ let run ~target_roots ~targeting_conf:conf ~format () =
   (match format with
   | Paths_only -> ()
   | Long ->
-      skipped
+      targets.skipped
       |> List.sort (fun (a : OutJ.skipped_target) (b : OutJ.skipped_target) ->
              Fpath.compare a.path b.path)
       |> List.iter (fun (x : OutJ.skipped_target) ->

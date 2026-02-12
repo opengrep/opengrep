@@ -443,7 +443,7 @@ let check_targets_with_rules
       ; Cap.memory_limit
       ; .. >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
     (rules_and_origins : Rule_fetching.rules_and_origin list)
-    (targets_and_skipped : Fpath.t list * Out.skipped_target list) :
+    (targets_and_skipped : Fpath.t Find_targets.targets) :
     (Rule.rule list * Core_runner.result * Out.cli_output, Exit_code.t) result =
   (* step 1: last touch on rules *)
   let rules, invalid_rules =
@@ -505,10 +505,11 @@ let check_targets_with_rules
       *)
       let rules = Rule_filtering.filter_rules conf.rule_filtering_conf rules in
       (* step 2: printing the skipped targets *)
-      let targets, skipped = targets_and_skipped in
+      let selected = targets_and_skipped.Find_targets.selected
+      and skipped = targets_and_skipped.Find_targets.skipped in
       Log_targeting.Log.debug (fun m ->
           m "%a" Targets_report.pp_targets_debug
-            (conf.target_roots, skipped, targets));
+            (conf.target_roots, skipped, selected));
       Log_targeting.Log.debug (fun m ->
           skipped
           |> List.iter (fun (x : Semgrep_output_v1_t.skipped_target) ->
@@ -525,7 +526,7 @@ let check_targets_with_rules
           m "scan subcommand: %i valid rules, %i invalid rules, %i targets"
             (List.length rules)
             (List.length invalid_rules)
-            (List.length targets));
+            (List.length selected));
       Logs.info (fun m -> m "running the opengrep engine");
       let (result_or_exn : Core_result.result_or_exn) =
         match conf.targeting_conf.baseline_commit with
@@ -537,7 +538,7 @@ let check_targets_with_rules
                 in
                 run ?file_match_hook
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
-                  (rules, invalid_rules) targets)
+                  (rules, invalid_rules) selected)
         | Some baseline_commit ->
             (* scan_baseline calls internally Profiler.record "head_core_time"  *)
             (* diff scan mode *)
@@ -553,7 +554,7 @@ let check_targets_with_rules
             in
             Diff_scan.scan_baseline
               (caps :> < Cap.chdir ; Cap.tmp >)
-              conf profiler baseline_commit targets rules diff_scan_func
+              conf profiler baseline_commit selected rules diff_scan_func
       in
       match result_or_exn with
       | Error exn ->
@@ -614,6 +615,7 @@ let check_targets_with_rules
               m "%a"
                 (Summary_report.pp_summary
                    ~respect_gitignore:conf.targeting_conf.respect_gitignore
+                   ~is_git_repo:targets_and_skipped.Find_targets.git_repo
                    ~maturity:conf.common.maturity
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
                    ~skipped_groups)

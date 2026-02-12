@@ -62,7 +62,7 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
             exclude = excludes;
           }
         in
-        let targets, skipped_targets =
+        let targets =
           Find_targets.get_target_fpaths conf
             [ Scanning_root.of_fpath (Fpath.v scanning_root) ]
         in
@@ -77,9 +77,9 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
             printf "--- '--exclude' patterns ---\n";
             patterns |> List.iter (fun pat -> printf "%s\n" pat));
         printf "--- Selected targets ---\n";
-        targets |> List.iter (fun path -> printf "selected %s\n" !!path);
+        targets.selected |> List.iter (fun path -> printf "selected %s\n" !!path);
         printf "--- Skipped targets ---\n";
-        skipped_targets
+        targets.skipped
         |> List.iter (fun (x : Out.skipped_target) ->
                printf "ignored %s [%s]\n" !!(x.path)
                  (Out.show_skip_reason x.reason)))
