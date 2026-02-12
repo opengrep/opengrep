@@ -126,16 +126,6 @@ type project_root =
 
 and git_remote = { url : Uri.t } [@@deriving show]
 
-module Fppath_set = struct
-  module Self = Set.Make (Fppath)
-  include Self
-
-  (* This is for occasional debugging *)
-  let[@warning "-unused-value-declaration"] show set =
-    spf "[%s]"
-      (set |> Self.elements |> List_.map Fppath.show |> String.concat ", ")
-end
-
 (* Yet another file path related type ...
 
    This module is a bit fragile as it assumes that target file paths found in
@@ -251,6 +241,7 @@ let default_conf : conf =
 (* The actual returned type *)
 (*************************************************************************)
 
+(* 'a is either Fpath or Fppath *)
 type 'a targets = {
   selected : 'a list;
   skipped : Semgrep_output_v1_t.skipped_target list;
@@ -359,7 +350,7 @@ let filter_path (ign : Gitignore.filter)
 *)
 let filter_paths
     ((ign, include_filter) : Gitignore.filter * Include_filter.t option)
-    (target_files : Fppath.t list) : Fppath_set.t * Out.skipped_target list =
+    (target_files : Fppath.t list) : Fppath.t list * Out.skipped_target list =
   let (selected_paths : Fppath.t list ref) = ref [] in
   let (skipped : Out.skipped_target list ref) = ref [] in
   let add path = Stack_.push path selected_paths in
@@ -380,8 +371,11 @@ let filter_paths
          | Skip x -> skip x
          | Ignore_silently ->
              Log.debug (fun m -> m "ignore silently: %s" !!(fppath.fpath)));
-  (Fppath_set.of_list !selected_paths, !skipped)
+  (!selected_paths, !skipped)
 
+(* Note: throughout this file we use List.rev_append instead of (@) for
+ * concatenating file lists, since it is tail-recursive. The order does not
+ * matter because we sort and deduplicate at the end in get_targets. *)
 let filter_size_and_minified max_target_bytes exclude_minified_files paths =
   let selected_fppaths, skipped_size =
     Result_.partition
@@ -401,7 +395,7 @@ let filter_size_and_minified max_target_bytes exclude_minified_files paths =
   in
   Log.debug (fun m -> m "skipped_size: %d" (List.length skipped_size));
   Log.debug (fun m -> m "skipped_minified: %d" (List.length skipped_minified));
-  (selected_fppaths, skipped_size @ skipped_minified)
+  (selected_fppaths, List.rev_append skipped_size skipped_minified)
 
 (*************************************************************************)
 (* Finding by walking *)
@@ -488,14 +482,14 @@ let walk_skip_and_collect (ign : Gitignore.filter)
 *)
 let git_list_files ~exclude_standard
     (file_kinds : Git_wrapper.ls_files_kind list)
-    (project_roots : Project.roots) : Fppath_set.t option =
+    (project_roots : Project.roots) : Fppath.t list option =
   Log.debug (fun m ->
       m "Find_targets.git_list_files for project %s"
         (Project.show project_roots.project));
   let project = project_roots.project in
   (* TODO: we should not call git_list_files when the project
    * is not a Git_project. We should assert it and not return
-   * an option type but an Fppath_set.t instead.
+   * an option type but an Fppath.t list instead.
    *)
   match project.kind with
   | Git_project ->
@@ -592,8 +586,7 @@ let git_list_files ~exclude_standard
                  (* scanning root is neither a file nor a folder *)
                  Log.warn (fun m ->
                      m "invalid scanning root %s" !!(sc_root.fpath));
-                 []))
-        |> Fppath_set.of_list)
+                 [])))
   | _ -> None
 
 (*
@@ -605,13 +598,10 @@ let git_list_files ~exclude_standard
    determined by the semgrepignore rules separately, along with the gitignored
    files that are not being tracked.
 
-   Returning a set gives us the option to take the union, set difference,
-   etc. with other sets of targets.
-
    We could also provide similar functions for other file tracking systems
    (Mercurial/hg, Subversion/svn, ...)
 *)
-let git_list_tracked_files (project_roots : Project.roots) : Fppath_set.t option
+let git_list_tracked_files (project_roots : Project.roots) : Fppath.t list option
     =
   git_list_files ~exclude_standard:false [ Cached ] project_roots
 
@@ -622,7 +612,7 @@ let git_list_tracked_files (project_roots : Project.roots) : Fppath_set.t option
    This is the complement of git_list_tracked_files (except for '.git/').
 *)
 let git_list_untracked_files ~respect_gitignore (project_roots : Project.roots)
-    : Fppath_set.t option =
+    : Fppath.t list option =
   git_list_files ~exclude_standard:respect_gitignore [ Others ] project_roots
 
 (*************************************************************************)
@@ -795,9 +785,9 @@ let get_targets_from_filesystem conf (project_roots : Project.roots) =
         | S_SOCK ->
             ([], [])
       in
-      ( Fppath_set.union selected (Fppath_set.of_list selected2),
+      ( List.rev_append selected2 selected,
         List.rev_append skipped2 skipped ))
-    (Fppath_set.empty, []) project_roots.scanning_roots
+    ([], []) project_roots.scanning_roots
 
 (*
    Select the scanning roots that are regular files or symlinks to regular
@@ -808,9 +798,9 @@ let get_targets_from_filesystem conf (project_roots : Project.roots) =
 let force_select_scanning_roots
     ?(apply_includes_excludes_to_files = false)
     (project_roots : Project.roots)
-    (selected_targets : Fppath_set.t)
+    (selected_targets : Fppath.t list)
     (skipped_targets : Out.skipped_target list) :
-    Fppath_set.t * Out.skipped_target list =
+    Fppath.t list * Out.skipped_target list =
   let regular_files_to_add =
     if not apply_includes_excludes_to_files then
       (* default behaviour: *)
@@ -829,9 +819,7 @@ let force_select_scanning_roots
     |> List.filter (fun (skipped : Out.skipped_target) ->
            not (Set_.mem skipped.path regular_files_to_add))
   in
-  let selected_targets =
-    Fppath_set.union selected_targets (Fppath_set.of_list regular_files_to_add)
-  in
+  let selected_targets = List.rev_append selected_targets regular_files_to_add in
   (selected_targets, skipped_targets)
 
 (*
@@ -853,7 +841,7 @@ let force_select_scanning_roots
       Typically, the sets of files produced by (2) and (3) overlap vastly.
    4. Take the union of (2) and (3).
 *)
-let get_targets_for_project conf (project_roots : Project.roots) =
+let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targets =
   Log.debug (fun m -> m "Find_target.get_targets_for_project");
   (* Obtain the list of files from git if possible because it does it
      faster than what we can do by scanning the filesystem: *)
@@ -868,16 +856,15 @@ let get_targets_for_project conf (project_roots : Project.roots) =
     | Some tracked, Some untracked ->
         Log.debug (fun m ->
             m "target file candidates from git: tracked: %i, untracked: %i"
-              (Fppath_set.cardinal tracked)
-              (Fppath_set.cardinal untracked));
-        let all_files = Fppath_set.union tracked untracked in
-        all_files |> Fppath_set.elements |> filter_targets conf project_roots
+              (List.length tracked)
+              (List.length untracked));
+        filter_targets conf project_roots (List.rev_append tracked untracked)
     (* Non-Git projects *)
     | None, _
     | _, None ->
         get_targets_from_filesystem conf project_roots
   in
-  let is_git_repo = Option.is_some git_tracked in 
+  let is_git_repo = Option.is_some git_tracked in
   let selected_targets, skipped_targets =
     force_select_scanning_roots
       ~apply_includes_excludes_to_files:conf.apply_includes_excludes_to_file_targets
@@ -885,7 +872,7 @@ let get_targets_for_project conf (project_roots : Project.roots) =
       selected_targets
       skipped_targets
   in
-  (selected_targets, skipped_targets, is_git_repo)
+  { selected = selected_targets; skipped = skipped_targets; git_repo = is_git_repo }
 
 (* for semgrep query console *)
 let clone_if_remote_project_root conf =
@@ -910,31 +897,34 @@ let clone_if_remote_project_root conf =
 (* Entry point *)
 (*************************************************************************)
 
-(* TODO: The 'git_repo' fields is needed to print out a warning to the *)
-(* user, because some files in a git repo can be ignored. When multiple *)
-(* roots are specified, we display this warning to the user when *)
-(* at least one root is a git repo. Should we be more precise and *)
-(* display which roots are git repos? *)
+(* TODO: The 'git_repo' field is needed to print out a warning to the
+ * user, because some files in a git repo can be ignored. When multiple
+ * roots are specified, we display this warning to the user when
+ * at least one root is a git repo. Should we be more precise and
+ * display which roots are git repos? Maybe in verbose mode? *)
 let get_targets conf scanning_roots : Fppath.t targets =
   clone_if_remote_project_root conf;
-  let path_set, raw_skipped, git_repo =
+  let raw =
     List.fold_left
-      (fun (t, s, gr) root ->
-        let t', s', gr' = get_targets_for_project conf root in
-        Fppath_set.union t t', s' @ s, gr || gr')
-      (Fppath_set.empty, [], false)
+      (fun acc root ->
+        let r = get_targets_for_project conf root in
+        { selected = List.rev_append r.selected acc.selected;
+          skipped = List.rev_append r.skipped acc.skipped;
+          git_repo = r.git_repo || acc.git_repo })
+      { selected = []; skipped = []; git_repo = false }
       (group_scanning_roots_by_project conf scanning_roots)
   in
   let selected, big_and_minified =
-    Fppath_set.elements path_set
+    raw.selected
+    |> List.sort_uniq Fppath.compare
     |> filter_size_and_minified conf.max_target_bytes conf.exclude_minified_files
   in
   let skipped =
     List.sort_uniq
       (fun (a : Out.skipped_target) (b : Out.skipped_target) -> Fpath.compare a.path b.path)
-      (big_and_minified @ raw_skipped)
+      (List.rev_append big_and_minified raw.skipped)
   in
-  { selected; skipped; git_repo }
+  { selected; skipped; git_repo = raw.git_repo }
 [@@profiling]
 
 let get_target_fpaths conf scanning_roots =
