@@ -406,12 +406,7 @@ let clojure = {
       data_index = 2;  (* Collection is third arg when init is provided *)
     };
   ];
-  collection_configs = [
-    (* Collection accessors that return tainted data from a tainted collection *)
-    ThisTaintsReturn { methods = ["first"; "second"; "last"; "peek"]; arity = 0 };
-    ThisTaintsReturn { methods = ["nth"; "get"]; arity = 1 };
-    ThisTaintsReturn { methods = ["get"]; arity = 2 };
-  ];
+  collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
 }
