@@ -365,30 +365,35 @@ let julia = {
 let clojure = {
   hof_configs = [
     (* Core Clojure HOFs: (map f coll), (filter pred coll), etc. *)
+    (* Both unqualified and namespace-qualified versions *)
     FunctionHOF {
       functions = ["map"; "mapv"; "filter"; "filterv"; "reduce"; "keep"; "keep-indexed"; 
-                   "map-indexed"; "mapcat"; "remove"; "every?"; "some"; "not-any?"; "not-every?"];
+                   "map-indexed"; "mapcat"; "remove"; "every?"; "some"; "not-any?"; "not-every?";
+                   "clojure.core/map"; "clojure.core/mapv"; "clojure.core/filter"; "clojure.core/filterv";
+                   "clojure.core/reduce"; "clojure.core/keep"; "clojure.core/keep-indexed";
+                   "clojure.core/map-indexed"; "clojure.core/mapcat"; "clojure.core/remove";
+                   "clojure.core/every?"; "clojure.core/some"; "clojure.core/not-any?"; "clojure.core/not-every?"];
       arity = 2;
       callback_index = 0;  (* Callback is first arg *)
       data_index = 1;      (* Data is second arg *)
     };
     (* Apply and partial application *)
     FunctionHOF {
-      functions = ["apply"; "partial"];
+      functions = ["apply"; "partial"; "clojure.core/apply"; "clojure.core/partial"];
       arity = 2;
       callback_index = 0;
       data_index = 1;
     };
     (* Threading HOFs that take a function *)
     FunctionHOF {
-      functions = ["iterate"; "repeatedly"];
+      functions = ["iterate"; "repeatedly"; "clojure.core/iterate"; "clojure.core/repeatedly"];
       arity = 2;
       callback_index = 0;
       data_index = 1;
     };
     (* HOFs with 3-arity: (reduce f init coll) *)
     FunctionHOF {
-      functions = ["reduce"; "reductions"];
+      functions = ["reduce"; "reductions"; "clojure.core/reduce"; "clojure.core/reductions"];
       arity = 3;
       callback_index = 0;
       data_index = 2;  (* Collection is third arg when init is provided *)

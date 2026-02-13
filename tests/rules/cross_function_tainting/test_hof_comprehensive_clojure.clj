@@ -294,6 +294,29 @@
         (conj)
         (sink))))
 
+;; ===== Namespace-qualified function tests =====
+
+(defn test-qualified-map-named []
+  (let [arr [(source)]]
+    (clojure.core/map process-builtin-map arr)))
+
+(defn test-qualified-filter-fn-lambda []
+  (let [arr [(source)]]
+    (clojure.core/filter (fn [x]
+                           ;; ruleid: test-hof-taint
+                           (sink x)
+                           true)
+                         arr)))
+
+(defn test-qualified-reduce-shorthand []
+  (let [arr [(source)]]
+    ;; ruleid: test-hof-taint
+    (clojure.core/reduce #(do (sink %2) (conj %1 %2)) [] arr)))
+
+(defn test-qualified-apply []
+  ;; ruleid: test-hof-taint
+  (clojure.core/apply sink [(source)]))
+
 ;; Stub functions
 (defn source []
   "tainted")
