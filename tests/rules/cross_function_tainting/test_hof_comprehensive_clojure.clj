@@ -239,9 +239,10 @@
 ;; ===== Collection operation tests =====
 
 (defn test-collection-conj []
+  ;; Tests that taint flows from a tainted collection element through conj and first
   (let [coll [(source)]
-        ;; ruleid: test-hof-taint
-        result (conj coll (source))]
+        result (conj coll 42)]
+    ;; ruleid: test-hof-taint
     (sink (first result))))
 
 (defn test-collection-get []

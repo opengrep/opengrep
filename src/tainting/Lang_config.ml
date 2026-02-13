@@ -408,7 +408,7 @@ let clojure = {
   ];
   collection_configs = [
     (* Collection accessors that return tainted data from a tainted collection *)
-    ThisTaintsReturn { methods = ["first"; "second"; "last"; "nth"; "peek"; "get"]; arity = 0 };
+    ThisTaintsReturn { methods = ["first"; "second"; "last"; "peek"]; arity = 0 };
     ThisTaintsReturn { methods = ["nth"; "get"]; arity = 1 };
     ThisTaintsReturn { methods = ["get"]; arity = 2 };
   ];
