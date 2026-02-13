@@ -367,10 +367,10 @@ let clojure = {
     (* Core Clojure HOFs: (map f coll), (filter pred coll), etc. *)
     (* Both unqualified and namespace-qualified versions *)
     FunctionHOF {
-      functions = ["map"; "mapv"; "filter"; "filterv"; "reduce"; "keep"; "keep-indexed"; 
+      functions = ["map"; "mapv"; "filter"; "filterv"; "keep"; "keep-indexed"; 
                    "map-indexed"; "mapcat"; "remove"; "every?"; "some"; "not-any?"; "not-every?";
                    "clojure.core/map"; "clojure.core/mapv"; "clojure.core/filter"; "clojure.core/filterv";
-                   "clojure.core/reduce"; "clojure.core/keep"; "clojure.core/keep-indexed";
+                   "clojure.core/keep"; "clojure.core/keep-indexed";
                    "clojure.core/map-indexed"; "clojure.core/mapcat"; "clojure.core/remove";
                    "clojure.core/every?"; "clojure.core/some"; "clojure.core/not-any?"; "clojure.core/not-every?"];
       arity = 2;
@@ -391,7 +391,14 @@ let clojure = {
       callback_index = 0;
       data_index = 1;
     };
-    (* HOFs with 3-arity: (reduce f init coll) *)
+    (* Reduce with 2-arity: (reduce f coll) *)
+    FunctionHOF {
+      functions = ["reduce"; "clojure.core/reduce"];
+      arity = 2;
+      callback_index = 0;
+      data_index = 1;
+    };
+    (* Reduce with 3-arity: (reduce f init coll) *)
     FunctionHOF {
       functions = ["reduce"; "reductions"; "clojure.core/reduce"; "clojure.core/reductions"];
       arity = 3;
@@ -400,10 +407,7 @@ let clojure = {
     };
   ];
   collection_configs = [
-    (* Collection methods that taint the collection *)
-    ArgTaintsThis { methods = ["conj"; "assoc"; "cons"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    ArgTaintsThis { methods = ["conj"; "assoc"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* Collection accessors that return tainted data *)
+    (* Collection accessors that return tainted data from a tainted collection *)
     ThisTaintsReturn { methods = ["first"; "second"; "last"; "nth"; "peek"; "get"]; arity = 0 };
     ThisTaintsReturn { methods = ["nth"; "get"]; arity = 1 };
     ThisTaintsReturn { methods = ["get"]; arity = 2 };
