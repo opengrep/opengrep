@@ -363,8 +363,46 @@ let julia = {
 }
 
 let clojure = {
-  hof_configs = [];
-  collection_configs = [];
+  hof_configs = [
+    (* Core Clojure HOFs: (map f coll), (filter pred coll), etc. *)
+    FunctionHOF {
+      functions = ["map"; "mapv"; "filter"; "filterv"; "reduce"; "keep"; "keep-indexed"; 
+                   "map-indexed"; "mapcat"; "remove"; "every?"; "some"; "not-any?"; "not-every?"];
+      arity = 2;
+      callback_index = 0;  (* Callback is first arg *)
+      data_index = 1;      (* Data is second arg *)
+    };
+    (* Apply and partial application *)
+    FunctionHOF {
+      functions = ["apply"; "partial"];
+      arity = 2;
+      callback_index = 0;
+      data_index = 1;
+    };
+    (* Threading HOFs that take a function *)
+    FunctionHOF {
+      functions = ["iterate"; "repeatedly"];
+      arity = 2;
+      callback_index = 0;
+      data_index = 1;
+    };
+    (* HOFs with 3-arity: (reduce f init coll) *)
+    FunctionHOF {
+      functions = ["reduce"; "reductions"];
+      arity = 3;
+      callback_index = 0;
+      data_index = 2;  (* Collection is third arg when init is provided *)
+    };
+  ];
+  collection_configs = [
+    (* Collection methods that taint the collection *)
+    ArgTaintsThis { methods = ["conj"; "assoc"; "cons"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgTaintsThis { methods = ["conj"; "assoc"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    (* Collection accessors that return tainted data *)
+    ThisTaintsReturn { methods = ["first"; "second"; "last"; "nth"; "peek"; "get"]; arity = 0 };
+    ThisTaintsReturn { methods = ["nth"; "get"]; arity = 1 };
+    ThisTaintsReturn { methods = ["get"]; arity = 2 };
+  ];
   constructor_names = [];
   uses_new_keyword = false;
 }
