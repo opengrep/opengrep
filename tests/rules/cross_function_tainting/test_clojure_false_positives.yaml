@@ -1,0 +1,15 @@
+rules:
+  - id: test-clojure-fp
+    message: Taint should NOT flow through these paths (false positive check)
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source ...)
+    pattern-sinks:
+      - pattern: (sink ...)
+    pattern-sanitizers:
+      - pattern: (sanitize ...)

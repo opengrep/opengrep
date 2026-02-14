@@ -61,6 +61,18 @@ let fold :
                     f acc id ii None
                 | G.F _ -> acc)
               acc fields
+        (* Clojure shorthand lambda: PatList elements are separate params.
+         * For PatAs aliases, use the alias name since that's what the body uses. *)
+        | ParamPattern (G.PatList (_, pats, _)) ->
+            List.fold_left (fun acc pat_elem ->
+              match pat_elem with
+            | G.PatId (id, id_info) -> f acc id id_info None
+              | G.PatAs (_inner_pat, (alias_id, alias_info)) ->
+                  (* Use alias name: body references use it (e.g., % not %1) *)
+                  f acc alias_id alias_info None
+              | G.PatEllipsis _ -> acc
+            | _ -> acc
+            ) acc pats
         | ParamPattern pat ->
             (* Here, we just get all the identifiers in the pattern, which may
                themselves be sources.

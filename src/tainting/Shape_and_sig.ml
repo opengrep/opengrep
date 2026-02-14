@@ -643,18 +643,25 @@ end = struct
 
   let of_IL_params il_params =
     il_params
-    |> List_.map (function
-         | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
+    |> List.concat_map (function
+         | IL.Param { pname = { ident = s, _; _ }; _ } -> [P s]
          (* functions signatures don't look into the shape of the argument. *)
-         | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
+         | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> [PRest s]
          | IL.ParamPattern pat -> (
              (* Extract parameter name from pattern for Rust function parameters *)
              match pat with
-             | AST_generic.PatId (name, _) -> P (fst name)
+             | AST_generic.PatId (name, _) -> [P (fst name)]
              | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
-                 P (fst name)
-             | _ -> Other)
-         | IL.ParamFixme -> Other)
+                 [P (fst name)]
+             | AST_generic.PatList (_, pats, _) ->
+                 (* Clojure shorthand lambda: each PatList element is a separate param *)
+                 pats |> List.filter_map (function
+                   | AST_generic.PatId (name, _) -> Some (P (fst name))
+                   | AST_generic.PatAs (_inner, (alias_name, _)) -> Some (P (fst alias_name))
+                   | AST_generic.PatEllipsis _ -> None
+                   | _ -> Some Other)
+             | _ -> [Other])
+         | IL.ParamFixme -> [Other])
 
   (*************************************)
   (* Signatures *)

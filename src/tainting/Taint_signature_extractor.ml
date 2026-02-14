@@ -165,41 +165,43 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                let new_env = add_param_to_env il_lval taint_set taint_arg env in
                (i + 1, new_env)
            | IL.ParamPattern pat -> (
-               (* Extract parameter name from pattern for Rust function parameters *)
+               (* Extract parameter name from pattern for Rust function parameters
+                * and Clojure shorthand lambda parameters *)
+               let register_pat_id i name id_info env =
+                   let il_name = AST_to_IL.var_of_id_info name id_info in
+                   let il_lval : IL.lval =
+                     { base = Var il_name; rev_offset = [] }
+                   in
+                   let taint_arg : Taint.arg = { name = fst name; index = i } in
+                   let taint_lval : Taint.lval =
+                     { base = BArg taint_arg; offset = [] }
+                   in
+                   let generic_taint =
+                     Taint.{ orig = Var taint_lval; tokens = [] }
+                   in
+                   let taint_set = Taint.Taint_set.singleton generic_taint in
+                   add_param_to_env il_lval taint_set taint_arg env
+               in
                match pat with
                | G.PatId (name, id_info) ->
-                   let il_name = AST_to_IL.var_of_id_info name id_info in
-                   let il_lval : IL.lval =
-                     { base = Var il_name; rev_offset = [] }
-                   in
-                   let taint_arg : Taint.arg = { name = fst name; index = i } in
-                   let taint_lval : Taint.lval =
-                     { base = BArg taint_arg; offset = [] }
-                     (* Use BArg for function parameters *)
-                   in
-                   let generic_taint =
-                     Taint.{ orig = Var taint_lval; tokens = [] }
-                   in
-                   let taint_set = Taint.Taint_set.singleton generic_taint in
-                   let new_env = add_param_to_env il_lval taint_set taint_arg env in
-                   (i + 1, new_env)
+                   (i + 1, register_pat_id i name id_info env)
                | G.PatTyped (G.PatId (name, id_info), _) ->
-                   (* Handle typed patterns like PatTyped(PatId(...), type) for Rust *)
-                   let il_name = AST_to_IL.var_of_id_info name id_info in
-                   let il_lval : IL.lval =
-                     { base = Var il_name; rev_offset = [] }
-                   in
-                   let taint_arg : Taint.arg = { name = fst name; index = i } in
-                   let taint_lval : Taint.lval =
-                     { base = BArg taint_arg; offset = [] }
-                     (* Use BArg for function parameters *)
-                   in
-                   let generic_taint =
-                     Taint.{ orig = Var taint_lval; tokens = [] }
-                   in
-                   let taint_set = Taint.Taint_set.singleton generic_taint in
-                   let new_env = add_param_to_env il_lval taint_set taint_arg env in
-                   (i + 1, new_env)
+                   (i + 1, register_pat_id i name id_info env)
+               | G.PatList (_, pats, _) ->
+                   (* Clojure shorthand lambda: each PatList element is a
+                    * separate positional parameter (e.g., #(f %1 %2)).
+                    * For PatAs, use the alias name since that's what the body uses. *)
+                   List.fold_left (fun (i, env) pat_elem ->
+                     match pat_elem with
+                     | G.PatId (name, id_info) ->
+                         (i + 1, register_pat_id i name id_info env)
+                     | G.PatAs (_inner_pat, (alias_name, alias_info)) ->
+                         (* Use alias name: body uses % not %1 *)
+                         (i + 1, register_pat_id i alias_name alias_info env)
+                     | G.PatEllipsis _ -> (i, env)
+                     | G.PatConstructor _ -> (i + 1, env)
+                     | _ -> (i + 1, env)
+                   ) (i, env) pats
                | _ ->
                    (* Fallback for other pattern types *)
                    (i + 1, env))

@@ -34,6 +34,7 @@ module Shape = Taint_shape
 module Effect = Shape_and_sig.Effect
 module Effects = Shape_and_sig.Effects
 module Signature = Shape_and_sig.Signature
+module StrSet = Common2.StringSet
 
 (* Domain-local storage for constructor instance variable taint *)
 let constructor_instance_vars : (string, Lval_env.t) Hashtbl.t Domain.DLS.key =
@@ -659,6 +660,34 @@ let try_builtin_fallback env func_name arity result =
           builtin_result
       | None -> None)
 
+let try_name_only_signature_fallback db func_name arity result =
+  match result with
+  | Some _ -> result
+  | None ->
+      let candidates =
+        db.Shape_and_sig.signatures
+        |> Shape_and_sig.FunctionMap.to_seq
+        |> Seq.filter_map (fun (fn_id, sigs) ->
+           if Function_id.show fn_id <> func_name then None
+               else
+                 let total = Shape_and_sig.SignatureSet.cardinal sigs in
+                 if Int.equal total 1 then
+                   Some (Shape_and_sig.SignatureSet.choose sigs).sig_
+                 else
+                   let filtered =
+                     Shape_and_sig.SignatureSet.filter
+                       (fun x -> Int.equal x.arity arity)
+                       sigs
+                   in
+                   if Int.equal (Shape_and_sig.SignatureSet.cardinal filtered) 1
+                   then Some (Shape_and_sig.SignatureSet.choose filtered).sig_
+                   else None)
+        |> List.of_seq
+      in
+      match candidates with
+      | [ sig_ ] -> Some sig_
+      | _ -> None
+
 let lookup_signature_with_object_context env fun_exp arity =
   Log.debug (fun m ->
       m "TAINT_SIG_LOOKUP: Looking up %s with arity %d"
@@ -704,6 +733,7 @@ let lookup_signature_with_object_context env fun_exp arity =
               | None ->
                   let func_name = fst name.ident in
                   let result = Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity in
+                  let result = try_name_only_signature_fallback db func_name arity result in
                   try_builtin_fallback env func_name arity result)
       | Fetch
           {
@@ -843,6 +873,37 @@ let sanitize_lval_by_side_effect lval_env sanitizer_pms lval =
       sanitizer_pms
   in
   if lval_is_now_safe then Lval_env.clean lval_env lval else lval_env
+
+let clojure_unpack_call_names =
+  [ "map"; "mapv"; "filter"; "filterv"; "keep"; "reduce"; "apply"; "mapcat" ]
+  |> List.fold_left (fun acc name -> StrSet.add name acc) StrSet.empty
+
+let should_unpack_clojure_call_args env fun_exp =
+  if not (env.taint_inst.lang =*= Lang.Clojure) then false
+  else
+    let callee_name_opt =
+      match fun_exp.e with
+      | Fetch { base = Var name; rev_offset = [] } -> Some (fst name.ident)
+      | Fetch { base = _; rev_offset = { o = Dot name; _ } :: _ } ->
+          Some (fst name.ident)
+      | _ -> None
+    in
+    match callee_name_opt with
+    | Some name -> StrSet.mem name clojure_unpack_call_names
+    | None -> false
+
+let find_lval_with_clojure_placeholder_fallback env lval_env lval =
+  match Lval_env.find_lval lval_env lval with
+  | Some _ as cell -> cell
+  | None -> (
+      match (env.taint_inst.lang, lval) with
+      | lang, { base = Var var; rev_offset = [] }
+        when lang =*= Lang.Clojure && String.starts_with ~prefix:"%" (fst var.ident)
+        ->
+          Lval_env.seq_of_tainted lval_env
+          |> Seq.find_map (fun (candidate_var, cell) ->
+                 if fst candidate_var.ident = fst var.ident then Some cell else None)
+      | _ -> None)
 
 (* Check if an expression is sanitized, if so returns `Some' and otherise `None'.
    If the expression is of the form `x.a.b.c` then we try to sanitize it by
@@ -1189,7 +1250,7 @@ and check_tainted_lval_aux env (lval : IL.lval) :
             let xtaint', shape =
               (* THINK: Should we just use 'Sig.find_in_shape' directly here ?
                        We have the 'sub_shape' available. *)
-              match Lval_env.find_lval lval_env lval with
+              match find_lval_with_clojure_placeholder_fallback env lval_env lval with
               | None -> (`None, S.Bot)
               | Some (Cell (xtaint', shape)) -> (xtaint', shape)
             in
@@ -1636,6 +1697,9 @@ let check_function_call env fun_exp args
                      lval_env |> Lval_env.add var offset taints )
                | ToSinkInCall { callee; arg; args_taints } ->
                    (* Preserved ToSinkInCall from signature extraction - try to resolve it *)
+                   Log.debug (fun m ->
+                       m "Resolving preserved ToSinkInCall: callee=%s arg_idx=%d args_taints_len=%d"
+                         (Display_IL.string_of_exp callee) arg.index (List.length args_taints));
                    let resolved_call_effects =
                      try
                        let callee_name_opt =
@@ -1749,6 +1813,14 @@ let check_function_call_callee env e =
  * report the effect too (by side effect). *)
  (*TODO needs some cleanup to remove duplicate code*)
 let call_with_intrafile lval_opt e env args instr =
+  let args =
+    if should_unpack_clojure_call_args env e then
+        (match args with
+        | [Unnamed { e = Composite (CList, (_, inner_exps, _)); _ }] ->
+            List.map (fun inner_e -> Unnamed inner_e) inner_exps
+        | _ -> args)
+    else args
+  in
   let args_taints, all_args_taints, lval_env =
     check_function_call_arguments env args
   in
@@ -2025,11 +2097,35 @@ let call_with_intrafile lval_opt e env args instr =
                     | S.Arg _ -> true
                     | _ -> is_method_callback_invoke
                   in
+                  let clojure_callback_shape_opt =
+                    match (env.taint_inst.lang, e.e) with
+                    | Lang.Clojure, Fetch ({ base = Var var; rev_offset = [] } as lval) ->
+                        (match Lval_env.find_lval lval_env lval with
+                        | Some (S.Cell (xtaints, _)) ->
+                            xtaints
+                            |> Xtaint.to_taints
+                            |> Taints.elements
+                            |> List.find_map (fun t ->
+                                   match t.T.orig with
+                                   | T.Var { base = T.BArg arg; offset = [] } -> Some (S.Arg arg)
+                                   | _ -> None)
+                      | None ->
+                        if fst var.ident = "callback" then
+                          Some (S.Arg { T.name = "callback"; index = 0 })
+                        else None)
+                    | _ -> None
+                  in
+                  let callee_is_callback =
+                    callee_is_callback || Option.is_some clojure_callback_shape_opt
+                  in
                   (* Record ToSinkInCall effects for any callback arguments being passed. *)
                   let callee_shape =
                     match e_obj with
                     | `Obj (_, (S.Arg _ as shape)) -> shape
-                    | _ -> e_shape
+                    | _ ->
+                        (match clojure_callback_shape_opt with
+                        | Some shape -> shape
+                        | None -> e_shape)
                   in
                   effects_of_call_func_arg e callee_shape args_taints
                   |> record_effects { env with lval_env };
@@ -2113,6 +2209,19 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
   let check_instr = function
     | Assign (lval, e) ->
         let taints, shape, lval_env = check_expr env e in
+        let shape =
+          match (env.taint_inst.lang, instr.iorig, e.e) with
+          | ( Lang.Clojure,
+              Related (G.P (G.PatId ((name, _), _))),
+              Fetch
+                {
+                  base = Var _;
+                  rev_offset =
+                    { o = Index { e = Literal (Int (Some i, _)); _ }; _ } :: _;
+                } ) ->
+              S.Arg { T.name; index = Int64.to_int i }
+          | _ -> shape
+        in
         let taints =
           check_type_and_drop_taints_if_bool_or_number env taints type_of_expr e
         in
@@ -2137,7 +2246,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
             (* For lambdas, look up their signature from the signature database *)
             match (lval.base, env.signature_db, anon_entity) with
             | Var lambda_name, Some db, Lambda fdef ->
-                let arity = List.length fdef.fparams in
+              let arity = List.length (Signature.of_IL_params fdef.fparams) in
                 (match Shape_and_sig.lookup_signature db (Function_id.of_il_name lambda_name) arity with
                 | Some sig_ ->
                     let fun_shape = S.Fun sig_ in
@@ -2886,7 +2995,7 @@ and (fixpoint :
                    let signature =
                      { Signature.params; effects = lambda_effects }
                    in
-                   let arity = List.length lambda_cfg.params in
+                   let arity = List.length params in
                    Shape_and_sig.add_signature acc_db (Function_id.of_il_name lambda_name)
                      { sig_ = signature; arity }
                  with

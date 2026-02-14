@@ -899,16 +899,54 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
             m ~tags:sigs_tag "- Instantiating %s: Call to function arg '%s'"
               (Display_IL.string_of_exp callee)
               (Display_IL.string_of_exp fun_exp));
+        let effective_args =
+          match args with
+          | Some [ IL.Unnamed { IL.e = IL.Composite (IL.CList, (_, inner_exps, _)); _ } ] ->
+              Some (List.map (fun exp -> IL.Unnamed exp) inner_exps)
+          | _ -> args
+        in
         let fun_sig_opt =
           let fun_lval = T.lval_of_arg fun_arg in
+          let lookup_arity = List.length fun_args_taints in
+          let exp_looks_like_function_arg exp =
+            let from_lval_env =
+              match exp.IL.e with
+              | Fetch { base = Var var_name; rev_offset = []; _ } ->
+                  let taint_lval = { T.base = BGlob var_name; offset = [] } in
+                  (match lval_to_taints taint_lval with
+                  | Some (_taints, Fun _sig_) -> true
+                  | _ -> false)
+              | _ -> false
+            in
+            if from_lval_env then true
+            else
+              match lookup_sig with
+              | Some lookup_fn -> Option.is_some (lookup_fn exp lookup_arity)
+              | None -> false
+          in
           (* Get the actual function expression from args if available *)
           let actual_fun_exp =
-            match args with
-            | Some actual_args when fun_arg.index < List.length actual_args ->
-                (match List.nth actual_args fun_arg.index with
-                | IL.Unnamed exp -> Some exp
-                | IL.Named (_, exp) -> Some exp)
-            | _ -> None
+            match effective_args with
+            | Some actual_args ->
+                let exp_at_index =
+                  if fun_arg.index < List.length actual_args then
+                    match List.nth actual_args fun_arg.index with
+                    | IL.Unnamed exp
+                    | IL.Named (_, exp) ->
+                        Some exp
+                  else None
+                in
+                let fallback_exp =
+                  actual_args
+                  |> List.find_map (function
+                       | IL.Unnamed exp
+                       | IL.Named (_, exp) ->
+                           if exp_looks_like_function_arg exp then Some exp else None)
+                in
+                (match exp_at_index with
+                | Some exp when exp_looks_like_function_arg exp -> Some exp
+                | _ -> fallback_exp)
+            | None -> None
           in
           Log.debug (fun m ->
               m "ToSinkInCall: actual_fun_exp = %s, lookup_sig = %s"
@@ -999,7 +1037,6 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                     | _ -> exp_to_lookup
                   in
                   (* Try to look up the signature - assume arity matches the args_taints *)
-                  let lookup_arity = List.length fun_args_taints in
                   Log.debug (fun m ->
                       m "TOSINKINCALL: Looking up signature for '%s' with arity %d"
                         (Display_IL.string_of_exp exp_to_lookup) lookup_arity);
@@ -1061,6 +1098,14 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
         (* Handle the callback signature resolution *)
         match fun_sig_opt with
         | Some fun_sig ->
+            let args_taints =
+              let expected_params = List.length fun_sig.Signature.params in
+              let provided_args = List.length args_taints in
+              if Int.equal expected_params 2 && Int.equal provided_args 1 then
+                let empty_arg = IL.Unnamed (Taints.empty, Bot) in
+                [ empty_arg; List.hd args_taints ]
+              else args_taints
+            in
             Log.debug (fun m ->
                 m ~tags:sigs_tag
                   "** %s: Instantiated function call '%s' arguments: %s -> %s"
@@ -1074,13 +1119,13 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
             (* Pass through the outer args so we can extract the actual callback expression *)
             (match
                instantiate_function_signature lval_env fun_sig ~callee:fun_exp
-                 ~args args_taints ?lookup_sig ~depth:(depth + 1) ()
+                 ~args:effective_args args_taints ?lookup_sig ~depth:(depth + 1) ()
              with
              | Some call_effects -> call_effects
              | None ->
                  (* Could not instantiate the callback signature, preserve ToSinkInCall *)
                  let callee_exp, updated_arg =
-                   match args with
+                   match effective_args with
                    | Some actual_args when fun_arg.index < List.length actual_args ->
                        (match List.nth actual_args fun_arg.index with
                        | IL.Unnamed exp | IL.Named (_, exp) ->
@@ -1115,7 +1160,7 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
             (* No signature found for callback (parameter during signature extraction).
              * Preserve the ToSinkInCall effect, but update arg to refer to the enclosing function's parameter. *)
             let callee_exp, updated_arg =
-              match args with
+              match effective_args with
               | Some actual_args when fun_arg.index < List.length actual_args ->
                   (match List.nth actual_args fun_arg.index with
                   | IL.Unnamed exp | IL.Named (_, exp) ->
