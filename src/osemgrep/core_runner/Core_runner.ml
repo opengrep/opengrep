@@ -87,6 +87,7 @@ type result = {
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
+    ?num_targets_hook:(int -> unit) ->
     conf ->
     (* TODO alt: pass a bool alongside each target path that indicates whether
        the target is explicit i.e. occurs directly on the command line *)
@@ -439,7 +440,7 @@ let mk_result ?(inline = false) (all_rules : Rule.rule list) (res : Core_result.
 
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
-  let run ?file_match_hook (conf : conf) (targeting_conf : Find_targets.conf)
+  let run ?file_match_hook ?num_targets_hook (conf : conf) (targeting_conf : Find_targets.conf)
       (matching_conf : Match_patterns.matching_conf)
       (rules_and_invalid : Rule_error.rules_and_invalid)
       (targets : Fpath.t list) : Core_result.result_or_exn =
@@ -483,6 +484,7 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
       add_possibly_lockfile_to_regular_target lockfiles code_targets
       @ (lockfiles |> List_.map (fun x -> Target.Lockfile x))
     in
+    Option.iter (fun cb -> cb (List.length final_targets)) num_targets_hook;
     Logs.debug (fun m ->
         m "core runner: %i applicable rules of %i valid rules, %i invalid rules"
           (List.length applicable_rules)

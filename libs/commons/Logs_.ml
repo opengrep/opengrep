@@ -27,6 +27,8 @@ module TLS = Thread_local_storage
 (*****************************************************************************)
 
 let logs_mutex = Mutex.create ()
+let before_log_hook : (unit -> unit) ref = ref (fun () -> ())
+let after_log_hook : (unit -> unit) ref = ref (fun () -> ())
 
 (* unix time in seconds *)
 let now () : float = UUnix.gettimeofday ()
@@ -260,9 +262,14 @@ let read_level_from_env (vars : string list) : Logs.level option option =
 (* Enable threaded logging. *)
 
 let _ =
-  let lock () = Mutex.lock logs_mutex
-  and unlock () = Mutex.unlock logs_mutex in
-Logs.set_reporter_mutex ~lock ~unlock
+  let lock () =
+    Mutex.lock logs_mutex;
+    !before_log_hook ()
+  and unlock () =
+    !after_log_hook ();
+    Mutex.unlock logs_mutex
+  in
+  Logs.set_reporter_mutex ~lock ~unlock
 
 (* We previously used use a re-entrant mutex above because otherwise tests
  * using [make core-test] raise an error when trying to lock the already locked
