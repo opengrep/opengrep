@@ -2748,18 +2748,40 @@ let enum_member_declaration (env : env) (x : CST.enum_member_declaration) =
       OrEnum (v2, v3)
   | `Ellips tok -> OrEllipsis (token env tok)
 
-let base_list (env : env) ((v1, v2, v3) : CST.base_list) : G.class_parent list =
-  let _v1 = token env v1 (* ":" *) in
-  let v2 = type_pattern env v2 in
-  let v3 =
-    List_.map
-      (fun (v1, v2) ->
-        let _v1 = token env v1 (* "," *) in
-        let v2 = type_pattern env v2 in
-        v2)
-      v3
-  in
-  v2 :: v3 |> List_.map (fun t -> (t, None))
+let base_list (env : env) (x : CST.base_list) : G.class_parent list =
+  match x with
+  | `COLON_type_rep_COMMA_type (v1, v2, v3) ->
+      let _v1 = token env v1 (* ":" *) in
+      let v2 = type_pattern env v2 in
+      let v3 =
+        List_.map
+          (fun (v1, v2) ->
+            let _v1 = token env v1 (* "," *) in
+            let v2 = type_pattern env v2 in
+            v2)
+          v3
+      in
+      v2 :: v3 |> List_.map (fun t -> (t, None))
+  | `COLON_prim_cons_base_type_opt_COMMA_type_rep_COMMA_type (v1, v2, v3) ->
+      let _v1 = token env v1 (* ":" *) in
+      let (v2_type, v2_args) = v2 in
+      let base_type = type_name env v2_type in
+      let base_args = argument_list env v2_args in
+      let rest =
+        match v3 with
+        | Some (_comma, first, others) ->
+            let first = type_pattern env first in
+            let others =
+              List_.map
+                (fun (v1, v2) ->
+                  let _v1 = token env v1 (* "," *) in
+                  type_pattern env v2)
+                others
+            in
+            (first :: others) |> List_.map (fun t -> (t, None))
+        | None -> []
+      in
+      (base_type, Some base_args) :: rest
 
 let accessor_list (env : env) ((v1, v2, v3) : CST.accessor_list) =
   let v1 = token env v1 (* "{" *) in
