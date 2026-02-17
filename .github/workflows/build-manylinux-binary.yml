@@ -86,7 +86,7 @@ jobs:
 
       - name: Install nuitka
         run: |
-          python3 -m pip install nuitka
+          python3 -m pip install nuitka==2.8.9
           # /opt/python/cp39-cp39/bin/pip install pyinstaller
 
       - name: Install opengrep

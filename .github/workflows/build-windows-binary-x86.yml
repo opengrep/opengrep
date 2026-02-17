@@ -79,7 +79,7 @@ jobs:
       - name: Install setuptools with --upgrade
         run: pip3 install --upgrade setuptools
       - name: Install nuitka
-        run: pip3 install nuitka protobuf
+        run: pip3 install nuitka==2.8.9 protobuf
 
       - uses: actions/download-artifact@v4
         with:
