@@ -5,5 +5,5 @@ CMD echo "bar"
 
 CMD echo "foo" && \
    # Bug happens because of this comment (remove comment and see no bug) \
-   # MATCH:
+   # MATCH: \
    echo "bar"

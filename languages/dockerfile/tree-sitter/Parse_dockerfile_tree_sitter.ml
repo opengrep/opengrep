@@ -1193,6 +1193,19 @@ let source_file (env : env) (xs : CST.source_file) =
    See https://github.com/camdencheek/tree-sitter-dockerfile/issues/22
    Appending a trailing newline to the input works around this segfault.
 *)
+(* Windows-style CRLF line endings cause tree-sitter-dockerfile to fail
+   parsing. We strip all \r characters before passing content to tree-sitter.
+   This is only needed for the Dockerfile parser because it's the only
+   tree-sitter parser that reads files manually via UFile.read_file and
+   Parse.string, rather than using Parse.file which handles CRLF natively.
+   The position mapping (line_col_to_pos) still works correctly because it
+   reads the original file where \r only appears at line ends, so column
+   positions for actual content are unaffected. *)
+let normalize_line_endings str =
+  if String.contains str '\r' then
+    String.concat "" (String.split_on_char '\r' str)
+  else str
+
 let ensure_trailing_newline str =
   if str <> "" then
     let len = String.length str in
@@ -1204,7 +1217,10 @@ let ensure_trailing_newline str =
 let parse file =
   H.wrap_parser
     (fun () ->
-      let contents = UFile.read_file file |> ensure_trailing_newline in
+      let contents =
+        UFile.read_file file |> normalize_line_endings
+        |> ensure_trailing_newline
+      in
       Tree_sitter_dockerfile.Parse.string ~src_file:!!file contents)
     (fun cst _extras ->
       let env =
