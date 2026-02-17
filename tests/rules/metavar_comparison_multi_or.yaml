@@ -1,0 +1,12 @@
+rules:
+  - id: metavar-comparison-multi-or
+    severity: WARNING
+    languages:
+      - python
+    message: test
+    patterns:
+      - pattern: |
+          foo($A, $B, $C)
+      - metavariable-comparison:
+          metavariable: $A
+          comparison: $A < 16 or $B < 0 or $C > 0
