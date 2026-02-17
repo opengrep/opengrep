@@ -1,5 +1,44 @@
 # Changelog
 
+## [1.16.1](https://github.com/opengrep/opengrep/releases/tag/v1.16.1) - 17-02-2026
+
+### Improvements
+
+* Remove redundant pip and Nuitka dependencies by @dimitris-m in #573
+* Support split rule/target directories in test subcommand by @qkaiser in #576
+
+### Benchmarking
+
+* New benchmarking using hyperfine by @dimitris-m in #557 and #579
+
+### Bug fixes
+
+* Allow multiple logical operators in metavariable comparison by @maciejpirog in #590
+* In `--experimental`, don't report git untracked files as skipped with `--use-git-ignore` by @maciejpirog in #577
+* C#: Add primary constructor arguments to base class by @maciejpirog in #589
+* Dockerfile: Add missing buildkit constructs by @maciejpirog in #581
+* Dockerfile: Fix CRLF and comment-in-continuation parsing by @abezdina in #586
+* Rust: Fix taint propagation through variable shadowing by @dimitris-m in #572
+* TS/TSX: Add support for the `satisfies` construct by @maciejpirog in #592
+
+### Installation
+
+* Add Windows install script (pwsh) by @dimitris-m in #569
+* Ensure that install.ps1 works on ARM by @dimitris-m in #571
+* Fix: handle unparseable cosign version in install.sh by @dimitris-m in #580
+
+### Documentation
+
+* Improve the README by @dimitris-m in #570
+
+### New Contributors
+
+* @qkaiser made their first contribution in #576
+* @abezdina made their first contribution in #586
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.16.0...v1.16.1
+
+
 ## [1.16.0](https://github.com/opengrep/opengrep/releases/tag/v1.16.0) - 04-02-2026
 
 ### Improvements
@@ -18,13 +57,13 @@
 * Ruby: Always translate `or` and `and` to expression by @maciejpirog in #562
 * Bash: Allow redirects before command arguments by @maciejpirog in #548
 
-## Internal Improvements
+### Internal improvements
 
 * Add `show dump-intrafile-graph` and `show dump-taint-signatures` commands by @corneliuhoffman in #552
 * Improve tainting code by @maciejpirog in #546
 * Graph refactoring by @corneliuhoffman in #553
 
-## New Contributors
+### New Contributors
 
 * @smith-xyz made their first contribution in #549
 
