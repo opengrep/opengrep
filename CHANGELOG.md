@@ -4,6 +4,7 @@
 
 ### Improvements
 
+* Pin Nuitka to 2.8.9 across all build workflows by @dimitris-m in #594
 * Remove redundant pip and Nuitka dependencies by @dimitris-m in #573
 * Support split rule/target directories in test subcommand by @qkaiser in #576
 
