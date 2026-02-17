@@ -1028,6 +1028,9 @@ and class_body (env : env) ((v1, v2, v3) : CST.class_body) :
     | [] -> []
     | x :: xs -> (
         match x with
+        | `Semg_ellips tok ->
+            let tok = token env tok in
+            [ FieldEllipsis tok ] @ aux [] xs
         | `Deco x ->
             let attr = decorator env x in
             aux (attr :: acc_decorators) xs
@@ -1613,6 +1616,11 @@ and expression (env : env) (x : CST.expression) : expr =
         | `Temp_lit_type x -> map_template_literal_type env x
       in
       TypeAssert (e, tas, ty)
+  | `Satiss_exp (v1, v2, v3) ->
+      let e = expression env v1 in
+      let tsat = token env v2 (* "satisfies" *) in
+      let ty = type_ env v3 in
+      TypeAssert (e, tsat, ty)
   | `Inte_module x -> (
       (* namespace (deprecated in favor of ES modules) *)
       (* TODO represent namespaces properly in the AST instead of the nonsense

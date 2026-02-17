@@ -553,7 +553,8 @@ and class_ = (
 and class_body = (
     Token.t (* "{" *)
   * [
-        `Deco of decorator
+        `Semg_ellips of Token.t (* "..." *)
+      | `Deco of decorator
       | `Meth_defi_opt_choice_auto_semi of (
             method_definition
           * semicolon option
@@ -777,6 +778,7 @@ and expression = [
       * Token.t (* "as" *)
       * [ `Type of type_ | `Temp_lit_type of template_literal_type ]
     )
+  | `Satiss_exp of (expression * Token.t (* "satisfies" *) * type_)
   | `Type_asse of (type_arguments * expression)
   | `Inte_module of internal_module
   | `Prim_exp of primary_expression
@@ -1654,6 +1656,10 @@ type as_expression (* inlined *) = (
     expression
   * Token.t (* "as" *)
   * [ `Type of type_ | `Temp_lit_type of template_literal_type ]
+)
+
+type satisfies_expression (* inlined *) = (
+    expression * Token.t (* "satisfies" *) * type_
 )
 
 type assignment_expression (* inlined *) = (
