@@ -20,8 +20,25 @@ let normalize_file (file : Fpath.t) : string =
   Fpath.to_string (Fpath.normalize file)
 
 let key ((id, tok) : t) =
+  (* For Go lambda names (starting with "_tmp"), extract position even from fake
+   * tokens that have position info. This is important for distinguishing
+   * different lambdas that all have "_tmp" names.
+   * For other languages or regular functions with fake tokens, use empty key
+   * to preserve the original matching behavior. *)
+  let is_lambda_name = String.length id >= 4 && String.sub id 0 4 = "_tmp" in
+  let is_go_file loc =
+    let langs = Lang.langs_of_filename loc.Tok.pos.file in
+    List.mem Lang.Go langs
+  in
   if Tok.is_fake tok then
-    (id, "", 0, 0)
+    if is_lambda_name then
+      match Tok.loc_of_tok tok with
+      | Ok loc when is_go_file loc ->
+          (id, normalize_file loc.Tok.pos.file, loc.Tok.pos.line, loc.Tok.pos.column)
+      | _ ->
+          (id, "", 0, 0)
+    else
+      (id, "", 0, 0)
   else
     let file = Tok.file_of_tok tok in
     let line = Tok.line_of_tok tok in

@@ -1,0 +1,11 @@
+rules:
+  - id: test-lambda-nested-param
+    message: Tainted data flows to sink through nested lambda parameters
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

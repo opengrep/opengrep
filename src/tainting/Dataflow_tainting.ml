@@ -792,6 +792,17 @@ let lambdas_to_analyze_in_node env lambdas node =
   in
   Option.to_list unused_lambda_def @ lambdas_used_in_node lambdas node
 
+(* Collect ALL lambdas recursively from a fun_cfg, in innermost-first order.
+   This ensures nested lambda signatures are extracted before their parents. *)
+let rec collect_all_lambdas_innermost_first (fun_cfg : IL.fun_cfg)
+    : (IL.name * IL.fun_cfg) list =
+  IL.NameMap.fold (fun name lcfg results ->
+    (* First collect nested lambdas from this lambda *)
+    let nested = collect_all_lambdas_innermost_first lcfg in
+    (* Then add this lambda after its nested ones *)
+    results @ nested @ [(name, lcfg)]
+  ) fun_cfg.lambdas []
+
 (*****************************************************************************)
 (* Miscellaneous *)
 (*****************************************************************************)
@@ -1546,7 +1557,27 @@ let check_function_call env fun_exp args
         (Display_IL.string_of_exp fun_exp) arity
         env.taint_inst.options.taint_intrafile);
   let sig_result =
-    if env.taint_inst.options.taint_intrafile then lookup_signature env fun_exp arity
+    if env.taint_inst.options.taint_intrafile then
+      let from_db = lookup_signature env fun_exp arity in
+      match from_db with
+      | Some _ -> from_db
+      | None ->
+          (* lookup_signature failed - check if callee has a Fun shape in lval_env.
+           * This handles the case where a lambda is assigned to a variable like:
+           *   callback := func(x) { sink(x) }
+           *   callback(source())
+           * The signature is stored under the lambda's internal name (_tmp:N),
+           * but the variable 'callback' has the Fun shape from the assignment. *)
+          (match fun_exp.e with
+          | Fetch lval ->
+              (match Lval_env.find_lval env.lval_env lval with
+              | Some (S.Cell (_, S.Fun fun_sig)) ->
+                  Log.debug (fun m ->
+                      m "SIG_FROM_SHAPE: Found Fun shape for %s"
+                        (Display_IL.string_of_exp fun_exp));
+                  Some fun_sig
+              | _ -> None)
+          | _ -> None)
     else None
   in
   match sig_result with
@@ -2795,13 +2826,17 @@ and (fixpoint :
       | None -> in_env
     else in_env
   in
-  (* Extract signatures for all lambdas in the function for HOF support *)
+  (* Extract signatures for all lambdas in the function for HOF support.
+     We collect ALL lambdas (including nested ones) in innermost-first order,
+     so nested lambda signatures are available when processing their parents. *)
   let signature_db_with_lambdas =
     if taint_inst.options.taint_intrafile then
       match signature_db with
       | Some db ->
-          IL.NameMap.fold
-            (fun lambda_name lambda_cfg acc_db ->
+          (* Collect all lambdas recursively, innermost first *)
+          let all_lambdas_list = collect_all_lambdas_innermost_first fun_cfg in
+          List.fold_left
+            (fun acc_db (lambda_name, lambda_cfg) ->
               try
                    Log.debug (fun m ->
                        m "Extracting signature for lambda %s"
@@ -2896,7 +2931,7 @@ and (fixpoint :
                            (IL.str_of_name lambda_name)
                            (Printexc.to_string e));
                      acc_db)
-            fun_cfg.lambdas db
+            db all_lambdas_list
           |> Option.some
       | None -> signature_db
     else signature_db
