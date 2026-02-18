@@ -121,12 +121,12 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
           Some (adjusted_parent_path @ [Some name])
       | None -> None)
   | None ->
-      (* Anonymous function - use _tmp with fake token to match AST_to_IL behavior.
-         AST_to_IL.fresh_var creates fake tokens for _tmp variables. *)
+      (* Anonymous function - use _tmp_lambda with fake token to match AST_to_IL behavior.
+         AST_to_IL.fresh_var creates fake tokens for lambda variables. *)
       let tok = match fdef.fkind with (_, tok) -> tok in
-      let fake_tok = Tok.fake_tok tok "_tmp" in
+      let fake_tok = Tok.fake_tok tok "_tmp_lambda" in
       let tmp_name = IL.{
-        ident = ("_tmp", fake_tok);
+        ident = ("_tmp_lambda", fake_tok);
         sid = G.SId.unsafe_default;
         id_info = G.empty_id_info ();
       } in
@@ -557,10 +557,10 @@ let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t * IL.name o
       | G.Call ({ e = G.N (G.Id (id, id_info))
                     | G.DotAccess (_, _, G.FN (G.Id (id, id_info))); _ }, _) ->
           let callback_name = AST_to_IL.var_of_id_info id id_info in
-          (* Create _tmp IL.name using Tok.fake_tok like AST_to_IL.fresh_var does *)
-          let tmp_tok = Tok.fake_tok shortlambda_tok "_tmp" in
+          (* Create _tmp_lambda IL.name using Tok.fake_tok like AST_to_IL.fresh_var does *)
+          let tmp_tok = Tok.fake_tok shortlambda_tok "_tmp_lambda" in
           let tmp_name = IL.{
-            ident = ("_tmp", tmp_tok);
+            ident = ("_tmp_lambda", tmp_tok);
             sid = G.SId.unsafe_default;
             id_info = G.empty_id_info ();
           } in
@@ -700,6 +700,16 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
       inherit [_] G.iter as super
       method! visit_expr env e =
         (match e.G.e with
+        (* Ruby/Scala block pattern: f(args) { block } is Call(Call(callee, inner_args), [block]).
+           Merge inner_args and block args so the HOF detection sees all arguments together. *)
+        | G.Call ({ e = G.Call (callee, inner_args); _ }, outer_args) ->
+            let merged_args = Tok.unsafe_fake_bracket
+              (Tok.unbracket inner_args @ Tok.unbracket outer_args) in
+            let found = extract_hof_callbacks_from_call
+              ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
+              callee merged_args
+            in
+            callbacks := found @ !callbacks
         | G.Call (callee, args) ->
             let found = extract_hof_callbacks_from_call
               ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path

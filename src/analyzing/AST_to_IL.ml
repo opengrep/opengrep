@@ -858,6 +858,34 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                  |> G.e) ]
       in
       call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket arg_container)
+  (* Ruby do-block flattening: `f(args) do |x| ... end` is parsed as
+     Call(Call(f, args), [Lambda]) but the block is semantically an argument
+     to f, not to its return value. Flatten into Call(f, args @ [Lambda]). *)
+  | G.Call ({ e = G.Call (callee, inner_args); _ }, outer_args)
+    when env.lang =*= Lang.Ruby
+         && List.exists
+              (function
+               | G.Arg { G.e = G.Lambda _; _ } -> true
+               | _ -> false)
+              (Tok.unbracket outer_args) ->
+      let merged_args =
+        Tok.unsafe_fake_bracket
+          (Tok.unbracket inner_args @ Tok.unbracket outer_args)
+      in
+      expr_aux env ~void (G.Call (callee, merged_args) |> G.e)
+  (* Ruby: when the callee is a plain identifier (G.N), evaluate it via
+     `lval` instead of `expr` to skip the `ident_function_call_hack` (see
+     the G.N arm below, ~line 892). That hack wraps bare identifiers in a
+     0-arg Call for Ruby (where `foo` can mean `foo()`), but here we already
+     have an explicit G.Call — going through `expr` would produce a spurious
+     nested Call(Call(f, []), args) instead of Call(f, args). *)
+  | G.Call (({ G.e = G.N _; _ } as e), args) when env.lang =*= Lang.Ruby ->
+      let tok = G.fake "call" in
+      let ss_callee, callee_lval = lval env e in
+      let callee_exp = mk_e (Fetch callee_lval) (related_exp e) in
+      let ss_args, il_args = arguments env (Tok.unbracket args) in
+      let ss_call, call_exp = call_instr tok eorig ~void (fun res -> Call (res, callee_exp, il_args)) in
+      (ss_callee @ ss_args @ ss_call, call_exp)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
       call_generic env ~void tok eorig e args
@@ -988,7 +1016,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.Comprehension (_op, (_l, (er, clauses), _r)) ->
       comprehension env er clauses
   | G.Lambda fdef ->
-      let lval = fresh_lval (snd fdef.fkind) in
+      let lval = fresh_lval ~str:"_tmp_lambda" (snd fdef.fkind) in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -1408,7 +1436,7 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
               (* Some languages such as javascript allow function
                  definitions in object literal syntax. *)
               | G.FuncDef fdef ->
-                  let lval = fresh_lval (snd fdef.fkind) in
+                  let lval = fresh_lval ~str:"_tmp_lambda" (snd fdef.fkind) in
                   (* See NOTE about resetting control-flow labels for lambdas. *)
                   let fdef =
                     function_definition
