@@ -504,6 +504,52 @@ class Target:
             if match.is_file() and not match.is_symlink()
         )
 
+    def files_from_filesystem_with_dir_pruning(
+        self,
+        preprocessed_patterns: Tuple[str, ...],
+        file_ignore: Optional[FileIgnore] = None,
+    ) -> FrozenSet[Path]:
+        """
+        Like files_from_filesystem but uses os.walk with directory-level pruning.
+        Receives already-preprocessed wcmatch patterns (via preprocess_path_patterns).
+        Optionally also accepts a FileIgnore to prune .semgrepignore-excluded dirs.
+        Directories matching either source of patterns are removed from dirnames
+        in-place so os.walk never descends into them.
+        """
+        if not preprocessed_patterns and file_ignore is None:
+            return self.files_from_filesystem()
+
+        result: Set[Path] = set()
+        for dirpath_str, dirnames, filenames in os.walk(
+            str(self.path), topdown=True, followlinks=False
+        ):
+            dirpath = Path(dirpath_str)
+            # Prune directories in-place — os.walk won't descend into removed entries.
+            # Use paths relative to self.path so that patterns like **/node_modules
+            # (which have no leading /) match correctly.
+            dirnames[:] = [
+                d
+                for d in dirnames
+                if not wcglob.globfilter(
+                    [str((dirpath / d).relative_to(self.path))],
+                    list(preprocessed_patterns),
+                    flags=wcglob.GLOBSTAR | wcglob.DOTGLOB,
+                )
+                # For .semgrepignore: check a virtual sentinel file inside the
+                # directory. _survives() is pure pattern-matching (no filesystem
+                # access) and checking `dir/__check__` correctly handles both `dir`
+                # patterns (matched via `dir/**`) and `dir/` folder patterns.
+                and (
+                    file_ignore is None
+                    or file_ignore._survives((dirpath / d / ".__check__").absolute())
+                )
+            ]
+            for filename in filenames:
+                filepath = dirpath / filename
+                if filepath.is_file() and not filepath.is_symlink():
+                    result.add(filepath)
+        return frozenset(result)
+
     @lru_cache(maxsize=None)
     def files(self, ignore_baseline_handler: bool = False) -> FrozenSet[Path]:
         """
@@ -750,6 +796,61 @@ class TargetManager:
         )
 
     @lru_cache(maxsize=None)
+    def get_all_files_with_dir_pruning(
+        self,
+        exclude_patterns: Tuple[str, ...],
+        ignore_baseline_handler: bool = False,
+        file_ignore: Optional[FileIgnore] = None,
+    ) -> FrozenSet[Path]:
+        """
+        Like get_all_files but performs directory-level pruning during filesystem
+        traversal for directory targets that use the filesystem scanner.
+
+        Mirrors Target.files() logic exactly, substituting
+        files_from_filesystem_with_dir_pruning wherever files_from_filesystem
+        would be called so that excluded directories are pruned during the walk
+        regardless of which fallback path leads to the filesystem scan.
+        """
+        preprocessed = tuple(
+            TargetManager.preprocess_path_patterns(list(exclude_patterns))
+        )
+        result: Set[Path] = set()
+        for target in self.targets:
+            if not target.path.is_dir():
+                # Explicit file target (or non-directory path) — no pruning needed.
+                result |= target.files(ignore_baseline_handler)
+                continue
+
+            # --- Directory target: replicate Target.files() fallback chain,
+            #     but replace files_from_filesystem() with the pruned variant. ---
+
+            if target.baseline_handler is not None:
+                if ignore_baseline_handler:
+                    # Scan all files ignoring the baseline (e.g. SCA lockfile scan).
+                    result |= target.files_from_filesystem_with_dir_pruning(preprocessed, file_ignore)
+                    continue
+                try:
+                    result |= target.files_from_git_diff()
+                    continue
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    logger.verbose(
+                        f"Unable to target only the changed files since baseline commit. Running on all git tracked files instead..."
+                    )
+
+            if target.git_tracked_only:
+                try:
+                    result |= target.files_from_git_ls()
+                    continue
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    logger.verbose(
+                        f"Unable to ignore files ignored by git ({target.path} is not a git directory or git is not installed). Running on all files instead..."
+                    )
+
+            result |= target.files_from_filesystem_with_dir_pruning(preprocessed, file_ignore)
+
+        return frozenset(result)
+
+    @lru_cache(maxsize=None)
     def get_files_for_language(
         self,
         lang: Union[None, Language, Literal["dependency_source_files"]],
@@ -773,7 +874,17 @@ class TargetManager:
 
         ignore_baseline_handler: if True, will ignore the baseline handler and scan all files. Used in the context of scanning unchanged lockfiles for their dependencies and doing reachability analysis.
         """
-        all_files = self.get_all_files(ignore_baseline_handler)
+        all_excludes_for_pruning = tuple(
+            list(self.excludes.get(product, [])) + list(PATHS_ALWAYS_SKIPPED)
+        )
+        file_ignore_for_pruning = (
+            self.ignore_profiles.get(product)
+            if self.respect_semgrepignore
+            else None
+        )
+        all_files = self.get_all_files_with_dir_pruning(
+            all_excludes_for_pruning, ignore_baseline_handler, file_ignore_for_pruning
+        )
 
         if isinstance(lang, Language):
             files = self.filter_by_language(lang, candidates=all_files)
