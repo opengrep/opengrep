@@ -36,6 +36,7 @@ val check_targets_with_rules :
   ; .. > ->
   ?on_target_scanned_hook:(unit -> unit) ->
   ?num_targets_hook:(int -> unit) ->
+  ?before_output_hook:(unit -> unit) ->
   Scan_CLI.conf ->
   Profiler.t ->
   Rule_fetching.rules_and_origin list ->

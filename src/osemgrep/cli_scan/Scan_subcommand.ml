@@ -239,61 +239,6 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
 (* Printing stuff for CLI UX *)
 (*****************************************************************************)
 
-let print_logo () : unit =
-  let logo =
-    Ocolor_format.asprintf
-      {|
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-|}
-  in
-  Logs.app (fun m -> m "%s" logo);
-  ()
-
-let feature_status ~(enabled : bool) : string =
-  if enabled then Ocolor_format.asprintf {|@{<green>✔@}|}
-  else Ocolor_format.asprintf {|@{<red>✘@}|}
-
-let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) *) () :
-    unit =
-  (* let secrets_enabled =
-       match engine with
-       | PRO
-           Engine_type.
-             { secrets_config = Some Engine_type.{ allow_all_origins = _; _ }; _ }
-         ->
-           true
-       | OSS
-       | PRO Engine_type.{ secrets_config = None; _ } ->
-           false
-     in *)
-  let features =
-    [
-      ( "Opengrep OSS",
-        "Basic security coverage for first-party code vulnerabilities.",
-        true );
-      (* ( "Semgrep Code (SAST)",
-           "Find and fix vulnerabilities in the code you write with advanced \
-            scanning and expert security rules.",
-           includes_token );
-         ( "Semgrep Secrets",
-           "Detect and validate potential secrets in your code.",
-           secrets_enabled ); *)
-    ]
-  in
-  (* Print our set of features and whether each is enabled *)
-  List.iter
-    (fun (feature_name, desc, is_enabled) ->
-      Logs.app (fun m ->
-          m "%s %s"
-            (feature_status ~enabled:is_enabled)
-            (Ocolor_format.asprintf {|@{<bold>%s@}|} feature_name));
-      Logs.app (fun m ->
-          m "  %s %s\n" (feature_status ~enabled:is_enabled) desc))
-    features;
-  ()
-
 let display_rule_source ~(rule_source : Rules_source.t) : unit =
   let msg =
     match rule_source with
@@ -308,14 +253,13 @@ let display_rule_source ~(rule_source : Rules_source.t) : unit =
                 (fun str ->
                   Rules_config.parse_config_string ~in_docker:false str)
                 xs) ->
-        Ocolor_format.asprintf {|  %s|}
-          "Loading rules from registry..."
+        "Loading rules from registry..."
     | Configs _ ->
-        Ocolor_format.asprintf {|  %s|}
-          "Loading rules from local config..."
-    | Pattern _ -> Ocolor_format.asprintf {|@{  %s@}|} "Using custom pattern."
+        "Loading rules from local config..."
+    | Pattern _ ->
+        "Using custom pattern."
   in
-  Logs.app (fun m -> m "%s" msg);
+  Logs.info (fun m -> m "%s" msg);
   ()
 
 (*************************************************************************)
@@ -437,7 +381,7 @@ let check_targets_with_rules
       ; Cap.fork
       ; Cap.time_limit
       ; Cap.memory_limit
-      ; .. >) ?on_target_scanned_hook ?num_targets_hook
+      ; .. >) ?on_target_scanned_hook ?num_targets_hook ?before_output_hook
     (conf : Scan_CLI.conf) (profiler : Profiler.t)
     (rules_and_origins : Rule_fetching.rules_and_origin list)
     (targets_and_skipped : Fpath.t Find_targets.targets) :
@@ -587,6 +531,7 @@ let check_targets_with_rules
 
           (* step 5: report the matches *)
           Logs.info (fun m -> m "reporting matches if any");
+          Option.iter (fun f -> f ()) before_output_hook;
           (* outputting the result on stdout! in JSON/Text/... depending on conf *)
           let cli_output =
             Output.output_result
@@ -659,7 +604,7 @@ let check_targets_with_rules
 let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
   (* Print The logo ASAP to minimize time to first meaningful content paint *)
-  print_logo ();
+  Cli_visuals.logo ();
 
   (* imitate pysemgrep for backward compatible profiling metrics ? *)
   let profiler = Profiler.make () in
@@ -667,21 +612,6 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   Profiler.start profiler ~name:"total_time";
 
   Core_profiling.profiling := conf.core_runner_conf.time_flag;
-
-  (* Print feature section for enabled products if pattern mode is not used.
-     Ideally, pattern mode should be a different subcommand, but for now we will
-     conditionally print the feature section.
-  *)
-  (match conf.rules_source with
-  | Pattern _ ->
-      Logs.app (fun m ->
-          m "%s"
-            (Ocolor_format.asprintf {|@{<bold>  %s@}|}
-               "Code scanning.\n"))
-  | _ ->
-      print_feature_section
-        (* ~includes_token:(settings.api_token <> None) *)
-        (* ~engine:conf.engine_type) *) ());
 
   (* Create the status bar (only active with --experimental/--develop + TTY) *)
   let status_bar =
@@ -739,12 +669,17 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
         fun n -> Atomic.set scanning_total n
       ) status_bar in
 
-      (* Finish the status bar before outputting findings so the progress bar
-         is cleared before results are printed. *)
-      Option.iter Status_bar.finish status_bar;
-      status_bar_ref := None;
-
       (* step3: let's go *)
+      let before_output_hook =
+        (* Finish the status bar just before findings are printed so the
+           progress bar is cleared first. Setting the ref to None prevents
+           the finally from calling finish a second time (double Thread.join
+           is undefined behaviour in pthreads). *)
+        Option.map (fun bar -> fun () ->
+          Status_bar.finish bar;
+          status_bar_ref := None
+        ) status_bar
+      in
       let res =
         check_targets_with_rules
           (caps
@@ -754,7 +689,7 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
                ; Cap.fork
                ; Cap.time_limit
                ; Cap.memory_limit >)
-          ?on_target_scanned_hook ?num_targets_hook
+          ?on_target_scanned_hook ?num_targets_hook ?before_output_hook
           conf profiler rules_and_origins targets_and_skipped
       in
 
