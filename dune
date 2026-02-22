@@ -34,4 +34,5 @@
   languages
   src
   tools
+  opam
 )

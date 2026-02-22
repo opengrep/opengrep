@@ -35,7 +35,6 @@ echo "Building in $(pwd)"
 if [ "$SHOULD_INIT_OPAM" = true ]; then
   opam init --yes --disable-sandboxing --root=$OPAMROOT --compiler=$OCAML_VERSION
   opam install dune
-  ./scripts/install-memprof-limits-dev.sh
   make install-opam-deps
 else
   echo "OPAM switch already exists, skipping creation: SHOULD_INIT_OPAM=$SHOULD_INIT_OPAM"

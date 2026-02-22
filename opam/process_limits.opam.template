@@ -1,0 +1,3 @@
+pin-depends: [
+  ["memprof-limits.dev" "git+https://gitlab.com/dimitris-m/memprof-limits.git#c2cced325a93d2271379f0712db85867b29dbee1"]
+]
