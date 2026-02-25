@@ -52,6 +52,8 @@
 
 - The `test` command now accepts **multiple target files**.
 
+- **Taint intrafile**: support for rest/variadic parameters in IL and taint signatures [#538](https://github.com/opengrep/opengrep/pull/538)
+
 - Many **performance** improvements.
 
 - Many **bug** fixes.
@@ -68,7 +70,23 @@
 
 - **C#**: Fix string literals in the parser [#186](https://github.com/opengrep/opengrep/pull/186)
 
+- **C#**: Allow implicit variables in properties to be taint sources [#516](https://github.com/opengrep/opengrep/pull/516)
+
+- **C#**: Conditional array access in l-values [#535](https://github.com/opengrep/opengrep/pull/535)
+
+- **C#**: Primary constructor arguments on base class [#589](https://github.com/opengrep/opengrep/pull/589)
+
 - **Clojure**: New translation in [#501](https://github.com/opengrep/opengrep/pull/501) and [#517](https://github.com/opengrep/opengrep/pull/517)
+
+- **Dart**: Use identifier casing to guess Call vs New [#555](https://github.com/opengrep/opengrep/pull/555)
+
+- **Dart**: Add typed metavariables [#551](https://github.com/opengrep/opengrep/pull/551)
+
+- **Dockerfile**: Add missing BuildKit constructs [#581](https://github.com/opengrep/opengrep/pull/581)
+
+- **Elixir**: Fix short lambdas [#556](https://github.com/opengrep/opengrep/pull/556)
+
+- **Go**: Add goroutine call to IL [#559](https://github.com/opengrep/opengrep/pull/559)
 
 - **Kotlin**: Fix string templates [#191](https://github.com/opengrep/opengrep/pull/191)
 
@@ -84,9 +102,17 @@
 
 - **PHP**: Add `match` and `enum` in the primary parser [#306](https://github.com/opengrep/opengrep/pull/306)
 
+- **PHP**: Property hooks, asymmetric visibility, first-class callable syntax, union/intersection DNF types [#529](https://github.com/opengrep/opengrep/pull/529)
+
+- **Python**: Taint propagation via for comprehensions [#564](https://github.com/opengrep/opengrep/pull/564)
+
 - **Ruby**: Improve Ruby tainting [#324](https://github.com/opengrep/opengrep/pull/324)
 
-- **Scala**: Support metavariabless as elements in interpolated strings [#403](https://github.com/opengrep/opengrep/pull/403)
+- **Rust**: Propagate taint through variable shadowing [#572](https://github.com/opengrep/opengrep/pull/572)
+
+- **Rust**: Fix missing type alias translation [#549](https://github.com/opengrep/opengrep/pull/549)
+
+- **Scala**: Support metavariables as elements in interpolated strings [#403](https://github.com/opengrep/opengrep/pull/403)
 
 - **Typescript**: Fix bug related to lambdas [#378](https://github.com/opengrep/opengrep/pull/378)
 
