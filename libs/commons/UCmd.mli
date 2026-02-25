@@ -2,6 +2,11 @@
  * is for Unsafe use of Cmd (hence the name). see TCB/Cap.mli for more info.
  *)
 
+(* Hooks called around stderr capture to pause/unpause the status bar
+   render loop so it doesn't write to stderr during the redirect. *)
+val pause_stderr_hook : (unit -> unit) ref
+val unpause_stderr_hook : (unit -> unit) ref
+
 (*
    The following functions capture the error output of the command being run
    and logs it as the info level, allowing it to be silenced by adjusting

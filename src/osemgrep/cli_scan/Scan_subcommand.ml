@@ -239,61 +239,6 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
 (* Printing stuff for CLI UX *)
 (*****************************************************************************)
 
-let print_logo () : unit =
-  let logo =
-    Ocolor_format.asprintf
-      {|
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-|}
-  in
-  Logs.app (fun m -> m "%s" logo);
-  ()
-
-let feature_status ~(enabled : bool) : string =
-  if enabled then Ocolor_format.asprintf {|@{<green>✔@}|}
-  else Ocolor_format.asprintf {|@{<red>✘@}|}
-
-let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) *) () :
-    unit =
-  (* let secrets_enabled =
-       match engine with
-       | PRO
-           Engine_type.
-             { secrets_config = Some Engine_type.{ allow_all_origins = _; _ }; _ }
-         ->
-           true
-       | OSS
-       | PRO Engine_type.{ secrets_config = None; _ } ->
-           false
-     in *)
-  let features =
-    [
-      ( "Opengrep OSS",
-        "Basic security coverage for first-party code vulnerabilities.",
-        true );
-      (* ( "Semgrep Code (SAST)",
-           "Find and fix vulnerabilities in the code you write with advanced \
-            scanning and expert security rules.",
-           includes_token );
-         ( "Semgrep Secrets",
-           "Detect and validate potential secrets in your code.",
-           secrets_enabled ); *)
-    ]
-  in
-  (* Print our set of features and whether each is enabled *)
-  List.iter
-    (fun (feature_name, desc, is_enabled) ->
-      Logs.app (fun m ->
-          m "%s %s"
-            (feature_status ~enabled:is_enabled)
-            (Ocolor_format.asprintf {|@{<bold>%s@}|} feature_name));
-      Logs.app (fun m ->
-          m "  %s %s\n" (feature_status ~enabled:is_enabled) desc))
-    features;
-  ()
-
 let display_rule_source ~(rule_source : Rules_source.t) : unit =
   let msg =
     match rule_source with
@@ -308,14 +253,13 @@ let display_rule_source ~(rule_source : Rules_source.t) : unit =
                 (fun str ->
                   Rules_config.parse_config_string ~in_docker:false str)
                 xs) ->
-        Ocolor_format.asprintf {|@{<bold>  %s@}|}
-          "Loading rules from registry..."
+        "Loading rules from registry..."
     | Configs _ ->
-        Ocolor_format.asprintf {|@{<bold>  %s@}|}
-          "Loading rules from local config..."
-    | Pattern _ -> Ocolor_format.asprintf {|@{  %s@}|} "Using custom pattern."
+        "Loading rules from local config..."
+    | Pattern _ ->
+        "Using custom pattern."
   in
-  Logs.app (fun m -> m "%s" msg);
+  Logs.info (fun m -> m "%s" msg);
   ()
 
 (*************************************************************************)
@@ -363,20 +307,13 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >)
 
 let rules_from_rules_source ~rewrite_rule_ids ~strict caps
     rules_source =
-  (* Create the wait hook for our progress indicator *)
-  let spinner_ls =
-    if Console_Spinner.should_show_spinner () then
-      [ Console_Spinner.spinner_async () ]
-    else []
-  in
-  (* Fetch the rules *)
   let rules_and_origins =
     Rule_fetching.rules_from_rules_source_async ~rewrite_rule_ids
       ~strict
       (caps :> < Cap.network ; Cap.tmp >)
       rules_source
   in
-  Lwt_platform.run (Lwt.pick (rules_and_origins :: spinner_ls))
+  Lwt_platform.run rules_and_origins
 [@@profiling]
 
 let adjust_skipped (skipped : Out.skipped_target list)
@@ -433,6 +370,9 @@ let adjust_nosemgrep_and_autofix ~keep_ignored (res : Core_runner.result) :
 (* this is called also from Ci_subcommand.ml.
  * caps = topevel caps - Cap.network
  *)
+(* Status bar reporting hooks:
+   - on_target_scanned_hook: called after each target is scanned
+   - num_targets_hook: called with the total number of targets once known *)
 let check_targets_with_rules
     (caps :
       < Cap.stdout
@@ -441,7 +381,8 @@ let check_targets_with_rules
       ; Cap.fork
       ; Cap.time_limit
       ; Cap.memory_limit
-      ; .. >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
+      ; .. >) ?on_target_scanned_hook ?num_targets_hook ?before_output_hook
+    (conf : Scan_CLI.conf) (profiler : Profiler.t)
     (rules_and_origins : Rule_fetching.rules_and_origin list)
     (targets_and_skipped : Fpath.t Find_targets.targets) :
     (Rule.rule list * Core_runner.result * Out.cli_output, Exit_code.t) result =
@@ -521,6 +462,16 @@ let check_targets_with_rules
       let output_format, file_match_hook =
         choose_output_format_and_match_hook (caps :> < Cap.stdout >) conf rules
       in
+      (* Compose on_target_scanned_hook with file_match_hook so that the
+         status bar is notified after each target is scanned. *)
+      let file_match_hook =
+        match (file_match_hook, on_target_scanned_hook) with
+        | Some hook, Some notify ->
+            Some (fun file matches -> hook file matches; notify ())
+        | None, Some notify ->
+            Some (fun _file _matches -> notify ())
+        | h, None -> h
+      in
       (* step 3': call the engine! *)
       Logs.info (fun m ->
           m "scan subcommand: %i valid rules, %i invalid rules, %i targets"
@@ -536,7 +487,7 @@ let check_targets_with_rules
                   mk_core_run_for_osemgrep caps conf
                     Differential_scan_config.WholeScan
                 in
-                run ?file_match_hook
+                run ?file_match_hook ?num_targets_hook
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
                   (rules, invalid_rules) selected)
         | Some baseline_commit ->
@@ -548,7 +499,7 @@ let check_targets_with_rules
               let { run } : Core_runner.func =
                 mk_core_run_for_osemgrep caps conf diff_config
               in
-              run ?file_match_hook
+              run ?file_match_hook ?num_targets_hook
                 conf.core_runner_conf conf.targeting_conf conf.matching_conf
                 (rules, invalid_rules) targets
             in
@@ -580,6 +531,7 @@ let check_targets_with_rules
 
           (* step 5: report the matches *)
           Logs.info (fun m -> m "reporting matches if any");
+          Option.iter (fun f -> f ()) before_output_hook;
           (* outputting the result on stdout! in JSON/Text/... depending on conf *)
           let cli_output =
             Output.output_result
@@ -652,7 +604,7 @@ let check_targets_with_rules
 let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
   (* Print The logo ASAP to minimize time to first meaningful content paint *)
-  print_logo ();
+  Cli_visuals.logo ();
 
   (* imitate pysemgrep for backward compatible profiling metrics ? *)
   let profiler = Profiler.make () in
@@ -661,21 +613,20 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
 
   Core_profiling.profiling := conf.core_runner_conf.time_flag;
 
-  (* Print feature section for enabled products if pattern mode is not used.
-     Ideally, pattern mode should be a different subcommand, but for now we will
-     conditionally print the feature section.
-  *)
-  (match conf.rules_source with
-  | Pattern _ ->
-      Logs.app (fun m ->
-          m "%s"
-            (Ocolor_format.asprintf {|@{<bold>  %s@}|}
-               "Code scanning.\n"))
-  | _ ->
-      print_feature_section
-        (* ~includes_token:(settings.api_token <> None) *)
-        (* ~engine:conf.engine_type) *) ());
-
+  (* Create the status bar (only active with --experimental/--develop + TTY) *)
+  let status_bar =
+    if conf.no_progress_bar || conf.incremental_output then None
+    else Status_bar.create conf.common.maturity Loading_rules
+  in
+  (* We need to finish the status bar before output (so findings don't appear
+     with the progress bar still on screen), but also keep a finally handler
+     that cleans up if an exception is raised before we get there. A plain
+     double-call to Status_bar.finish would be unsafe: it calls Thread.join,
+     and joining an already-joined thread is undefined behaviour in pthreads.
+     The ref lets us nil it out after the early finish so the finally becomes
+     a no-op on the happy path, while still firing on the exception path. *)
+  let status_bar_ref = ref status_bar in
+  Common.protect ~finally:(fun () -> Option.iter Status_bar.finish !status_bar_ref) (fun () ->
   (* step1: getting the rules *)
   Logs.info (fun m -> m "Getting the rules");
   (* Display a (possibly interactive) message to denote rule fetching *)
@@ -698,12 +649,37 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* but with no fatal rule errors, we can proceed with the scan! *)
   | [] -> (
       (* step2: getting the targets *)
+      Option.iter (fun b -> Status_bar.set_phase b Analyzing_targets) status_bar;
       Logs.info (fun m -> m "Computing the targets");
       let targets_and_skipped =
         Find_targets.get_target_fpaths conf.targeting_conf conf.target_roots
       in
 
+      (* Set up hooks needed for progress tracking in the status bar *)
+      let scanning_total = Atomic.make 0 in
+      let scanning_completed = Atomic.make 0 in
+      Option.iter (fun b ->
+        Status_bar.set_phase b
+          (Scanning { total = scanning_total; completed = scanning_completed })
+      ) status_bar;
+      let on_target_scanned_hook = Option.map (fun b ->
+        fun () -> Status_bar.notify_file_done b
+      ) status_bar in
+      let num_targets_hook = Option.map (fun _b ->
+        fun n -> Atomic.set scanning_total n
+      ) status_bar in
+
       (* step3: let's go *)
+      let before_output_hook =
+        (* Finish the status bar just before findings are printed so the
+           progress bar is cleared first. Setting the ref to None prevents
+           the finally from calling finish a second time (double Thread.join
+           is undefined behaviour in pthreads). *)
+        Option.map (fun bar -> fun () ->
+          Status_bar.finish bar;
+          status_bar_ref := None
+        ) status_bar
+      in
       let res =
         check_targets_with_rules
           (caps
@@ -713,6 +689,7 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
                ; Cap.fork
                ; Cap.time_limit
                ; Cap.memory_limit >)
+          ?on_target_scanned_hook ?num_targets_hook ?before_output_hook
           conf profiler rules_and_origins targets_and_skipped
       in
 
@@ -725,7 +702,7 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
             Exit_code.findings ~__LOC__
           else
             exit_code_of_errors ~strict:conf.core_runner_conf.strict
-              res.core.errors)
+              res.core.errors))
 
 (*****************************************************************************)
 (* Run 'scan' or 'test' or 'validate' or 'show' (or fallback to pysemgrep) *)
