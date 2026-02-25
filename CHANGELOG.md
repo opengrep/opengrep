@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.16.2](https://github.com/opengrep/opengrep/releases/tag/v1.16.2) - 25-02-2026
+
+### Improvements
+
+* Python CLI: Optimize `--exclude` and `.semgrepignore`` to ignore directories without listing their content by @maciejpirog in #596
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.16.1...1.16.2
+
+
 ## [1.16.1](https://github.com/opengrep/opengrep/releases/tag/v1.16.1) - 17-02-2026
 
 ### Improvements
