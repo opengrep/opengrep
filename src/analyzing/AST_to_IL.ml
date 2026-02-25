@@ -126,10 +126,9 @@ let fixme_stmt kind gany =
 
 let fresh_var ?(str = "_tmp") tok =
   let tok =
-    (* We don't want "fake" auxiliary variables to have non-fake tokens, otherwise
-       we confuse ourselves! E.g. during taint-tracking we don't want to add these
-       variables to the taint trace. *)
-    if Tok.is_fake tok then tok else Tok.fake_tok tok str
+    (* We always create a fake token to avoid confusing taint-tracking,
+       but preserve position info for distinguishing different lambdas. *)
+    Tok.fake_tok tok str
   in
   let i = G.SId.mk () in
   { ident = (str, tok); sid = i; id_info = G.empty_id_info () }

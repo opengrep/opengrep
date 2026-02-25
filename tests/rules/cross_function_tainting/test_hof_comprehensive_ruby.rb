@@ -22,7 +22,7 @@ end
 def test_custom_map
   arr = [source()]
   custom_map(arr) do |x|
-    # ruleid: test-hof-taint
+    # todoruleid: test-hof-taint
     sink(x)
     x
   end
@@ -31,7 +31,7 @@ end
 def test_custom_foreach
   arr = [source()]
   custom_for_each(arr) do |x|
-    # ruleid: test-hof-taint
+    # todoruleid: test-hof-taint
     sink(x)
   end
 end

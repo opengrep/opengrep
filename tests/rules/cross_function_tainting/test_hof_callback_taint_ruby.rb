@@ -22,8 +22,7 @@ end
 # === Callback-only HOF tests ===
 
 def test_callback_only_propagating_lambda()
-  # todoruleid: test-hof-callback-taint
-  # TODO: Ruby lambda callback not yet working
+  # ruleid: test-hof-callback-taint
   sink(app_callback_only(->(x) { x }, source()))
 end
 
@@ -37,14 +36,12 @@ end
 # === Direct flow HOF tests (taint always flows via + x) ===
 
 def test_direct_flow_propagating_lambda()
-  # todoruleid: test-hof-callback-taint
-  # TODO: Ruby lambda callback not yet working
+  # ruleid: test-hof-callback-taint
   sink(app_with_direct_flow(->(x) { x }, source()))
 end
 
 def test_direct_flow_sanitizing_lambda()
-  # todoruleid: test-hof-callback-taint
-  # TODO: Ruby lambda callback not yet working - but taint should flow via + x
+  # ruleid: test-hof-callback-taint
   sink(app_with_direct_flow(->(x) { "3" }, source()))
 end
 

@@ -251,6 +251,7 @@ class ['self] visitor_with_parent_path =
                   self#visit_stmt f body)
           | G.DefStmt
               (ent, G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ }) ->
+              (* Handle lambda assignments in class fields *)
               let class_il = Option.bind !current_class g_name_to_il_name in
               let func_il = entity_to_il_name ent in
               let visitor_parent_path, current_fn_id =
