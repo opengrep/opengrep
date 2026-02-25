@@ -1,0 +1,11 @@
+rules:
+  - id: test-lambda-deeply-nested-php
+    message: Tainted data flows to sink through deeply nested lambdas
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

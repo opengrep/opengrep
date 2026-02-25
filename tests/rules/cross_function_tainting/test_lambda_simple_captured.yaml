@@ -1,0 +1,11 @@
+rules:
+  - id: test-lambda-simple-captured
+    message: Tainted data flows to sink via captured variable in lambda
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
