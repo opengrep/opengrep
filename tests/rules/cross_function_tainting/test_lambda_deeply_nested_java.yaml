@@ -1,0 +1,11 @@
+rules:
+  - id: test-lambda-deeply-nested-java
+    message: Tainted data flows to sink through deeply nested lambdas
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

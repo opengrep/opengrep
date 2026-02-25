@@ -428,8 +428,15 @@ let detect_user_hof (fdef : G.function_definition) : (string * int) list =
 
       method! visit_expr env e =
         match e.G.e with
-        (* Check for calls to parameter names *)
+        (* Check for direct calls to parameter names: callback(item) *)
         | G.Call ({ e = G.N (G.Id ((name, _), _)); _ }, _args) ->
+            (match List.find_index (fun p -> p = name) param_names with
+            | Some idx ->
+                called_params := (name, idx) :: !called_params;
+                super#visit_expr env e
+            | None -> super#visit_expr env e)
+        (* Check for method calls on parameter names: callback.call(item) *)
+        | G.Call ({ e = G.DotAccess ({ e = G.N (G.Id ((name, _), _)); _ }, _, _); _ }, _args) ->
             (match List.find_index (fun p -> p = name) param_names with
             | Some idx ->
                 called_params := (name, idx) :: !called_params;
@@ -641,6 +648,16 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs
       inherit [_] G.iter as super
       method! visit_expr env e =
         (match e.G.e with
+        (* Ruby/Scala block pattern: f(args) { block } is Call(Call(callee, inner_args), [block]).
+           Merge inner_args and block args so the HOF detection sees all arguments together. *)
+        | G.Call ({ e = G.Call (callee, inner_args); _ }, outer_args) ->
+            let merged_args = Tok.unsafe_fake_bracket
+              (Tok.unbracket inner_args @ Tok.unbracket outer_args) in
+            let found = extract_hof_callbacks_from_call
+              ~method_hofs ~function_hofs ~user_hofs ~all_funcs ~caller_parent_path
+              callee merged_args
+            in
+            callbacks := found @ !callbacks
         | G.Call (callee, args) ->
             let found = extract_hof_callbacks_from_call
               ~method_hofs ~function_hofs ~user_hofs ~all_funcs ~caller_parent_path

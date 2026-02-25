@@ -2250,20 +2250,10 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                       (* Check if this is a call to a function parameter (either direct or via method) *)
                       (match e_obj with
                       | `Obj (_obj_taints, S.Arg _fun_arg) ->
-                          (* This is a method call on a function parameter (e.g., callback.apply in Java).
-                           * Treat it as invoking the callback.
-                           * EXCEPTION: Ruby's .call method should NOT be treated this way during signature
-                           * extraction, as it creates infinite recursion. Ruby blocks are handled via
-                           * implicit lambda detection instead. *)
-                          let is_ruby_call_method =
-                            match (e.e, env.taint_inst.lang) with
-                            | Fetch { base = _; rev_offset = [{ o = Dot method_name; _ }] }, lang
-                              when Lang.(lang =*= Ruby) && fst method_name.ident = "call" -> true
-                            | _ -> false
-                          in
-                          if not is_ruby_call_method then
-                            effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
-                            |> record_effects { env with lval_env }
+                          (* This is a method call on a function parameter (e.g., callback.apply in Java,
+                           * callback.call in Ruby). Treat it as invoking the callback. *)
+                          effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
+                          |> record_effects { env with lval_env }
                       | _ ->
                           effects_of_call_func_arg e e_shape args_taints
                           |> record_effects { env with lval_env });
