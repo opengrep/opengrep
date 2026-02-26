@@ -2104,6 +2104,17 @@ and stmt_aux env st =
          sake. *)
       | { e = Yield (_, Some e, _); _ } when env.lang =*= Lang.Python ->
           implicit_return env e tok
+      (* Clojure wraps function bodies in OtherExpr("ExprBlock", ...).
+         mark_first_instr_ancestor sets is_implicit_return on the inner
+         expression (referenced by iorig), but this match sees the outer
+         wrapper. Propagate by checking the last expression in the block. *)
+      | { e = G.OtherExpr ((kind, _), exprs); _ }
+        when env.lang =*= Lang.Clojure
+             && CLJ_ME1.expands_as_block kind
+             && (match List.rev exprs with
+                 | G.E { G.is_implicit_return = true; _ } :: _ -> true
+                 | _ -> false) ->
+          implicit_return env eorig tok
       | _ -> expr_stmt env eorig tok)
   | G.DefStmt
       ( { name = EN obj; _ },

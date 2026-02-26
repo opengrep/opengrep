@@ -1749,6 +1749,21 @@ let check_function_call_callee env e =
  * report the effect too (by side effect). *)
  (*TODO needs some cleanup to remove duplicate code*)
 let call_with_intrafile lval_opt e env args instr =
+  (* Clojure: AST_to_IL wraps all call arguments in a single CList to match
+   * the !!_implicit_param! calling convention. Unwrap the CList so that the
+   * individual arguments are visible to the taint analysis. Signatures use
+   * PRest for !!_implicit_param!, so find_pos_in_actual_args gathers these
+   * unwrapped args into a combined indexed shape via combine_rest_args. *)
+  let args =
+    match env.taint_inst.lang with
+    | Lang.Clojure -> (
+        match args with
+        | [ IL.Unnamed { IL.e = IL.Composite (IL.CList, (_, elements, _)); _ } ]
+          ->
+            List_.map (fun (e : IL.exp) -> IL.Unnamed e) elements
+        | _ -> args)
+    | _ -> args
+  in
   let args_taints, all_args_taints, lval_env =
     check_function_call_arguments env args
   in
@@ -2886,7 +2901,9 @@ and (fixpoint :
                    let signature =
                      { Signature.params; effects = lambda_effects }
                    in
-                   let arity = List.length lambda_cfg.params in
+                   let arity =
+                     Shape_and_sig.Arity_exact (List.length lambda_cfg.params)
+                   in
                    Shape_and_sig.add_signature acc_db (Function_id.of_il_name lambda_name)
                      { sig_ = signature; arity }
                  with

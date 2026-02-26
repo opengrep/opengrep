@@ -74,7 +74,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
   (* Add signatures for all methods using simple string keys *)
   List.fold_left
     (fun acc_db method_name ->
-      add_builtin_signature acc_db method_name { sig_ = method_sig; arity = 0 })
+      add_builtin_signature acc_db method_name { sig_ = method_sig; arity = Arity_exact 0 })
     db method_names
 
 (** Helper function to add HOF signatures for standalone functions (not
@@ -137,7 +137,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
   (* Add signatures for all functions using simple string keys *)
   List.fold_left
     (fun acc_db function_name ->
-      add_builtin_signature acc_db function_name { sig_ = hof_sig; arity })
+      add_builtin_signature acc_db function_name { sig_ = hof_sig; arity = Arity_exact arity })
     db function_names
 
 (** Helper function to add HOF signatures for a list of methods. This creates a
@@ -203,7 +203,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
   List.fold_left
     (fun acc_db method_name ->
       let transformed_name = method_name_transform method_name in
-      add_builtin_signature acc_db transformed_name { sig_ = hof_sig; arity })
+      add_builtin_signature acc_db transformed_name { sig_ = hof_sig; arity = Arity_exact arity })
     db method_names
 
 (** Create params list from arity and callback_index *)
@@ -223,10 +223,10 @@ let create_builtin_models (lang : Lang.t) : builtin_signature_database =
       match hof_config with
       | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
           add_hof_signatures acc_db methods arity ~taint_arg_index ()
-      | Lang_config.FunctionHOF { functions; arity; callback_index; data_index } ->
+      | Lang_config.FunctionHOF { functions; arity; callback_index; data_index; taint_arg_index } ->
           let params = make_params arity callback_index in
           add_function_hof_signatures acc_db functions arity ~callback_index
-            ~data_index ~params ()
+            ~data_index ~params ~taint_arg_index ()
       | Lang_config.ReturningFunctionHOF { methods } ->
           add_hof_returning_function_signatures acc_db methods ())
     db config.hof_configs
@@ -260,7 +260,7 @@ let add_method_signatures db method_names arity effects =
   let params = List.init arity (fun _ -> Signature.Other) in
   let sig_ = { Signature.params; effects } in
   List.fold_left
-    (fun acc_db name -> add_builtin_signature acc_db name { sig_; arity })
+    (fun acc_db name -> add_builtin_signature acc_db name { sig_; arity = Arity_exact arity })
     db method_names
 
 (* Collection model signature builders *)

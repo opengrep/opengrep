@@ -20,6 +20,7 @@ type hof_kind =
       arity : int;
       callback_index : int;
       data_index : int;
+      taint_arg_index : int;
     }
   | ReturningFunctionHOF of {
       methods : string list;
@@ -65,7 +66,7 @@ let empty = {
 
 let python = {
   hof_configs = [
-    FunctionHOF { functions = ["map"; "filter"]; arity = 2; callback_index = 0; data_index = 1 };
+    FunctionHOF { functions = ["map"; "filter"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
   ];
   collection_configs = [
     (* list.append(item), set.add(item) - item taints this *)
@@ -295,8 +296,8 @@ let swift = {
 
 let php = {
   hof_configs = [
-    FunctionHOF { functions = ["array_map"]; arity = 2; callback_index = 0; data_index = 1 };
-    FunctionHOF { functions = ["array_filter"; "array_walk"]; arity = 2; callback_index = 1; data_index = 0 };
+    FunctionHOF { functions = ["array_map"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
+    FunctionHOF { functions = ["array_filter"; "array_walk"]; arity = 2; callback_index = 1; data_index = 0; taint_arg_index = 0 };
   ];
   collection_configs = [];  (* PHP collections are mostly handled via builtin functions *)
   constructor_names = ["__construct"];
@@ -305,8 +306,8 @@ let php = {
 
 let cpp = {
   hof_configs = [
-    FunctionHOF { functions = ["for_each"]; arity = 3; callback_index = 2; data_index = 0 };
-    FunctionHOF { functions = ["transform"]; arity = 4; callback_index = 3; data_index = 0 };
+    FunctionHOF { functions = ["for_each"]; arity = 3; callback_index = 2; data_index = 0; taint_arg_index = 0 };
+    FunctionHOF { functions = ["transform"]; arity = 4; callback_index = 3; data_index = 0; taint_arg_index = 0 };
   ];
   collection_configs = [];
   constructor_names = [];
@@ -346,6 +347,7 @@ let elixir = {
       arity = 2;
       callback_index = 1;
       data_index = 0;
+      taint_arg_index = 0;
     };
   ];
   collection_configs = [];
@@ -355,7 +357,7 @@ let elixir = {
 
 let julia = {
   hof_configs = [
-    FunctionHOF { functions = ["map"; "foreach"; "filter"]; arity = 2; callback_index = 0; data_index = 1 };
+    FunctionHOF { functions = ["map"; "foreach"; "filter"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
   ];
   collection_configs = [];
   constructor_names = [];
@@ -363,7 +365,21 @@ let julia = {
 }
 
 let clojure = {
-  hof_configs = [];
+  hof_configs = [
+    FunctionHOF {
+      functions = ["map"; "filter"; "keep"; "remove"; "some"; "every?";
+                   "mapv"; "filterv"; "mapcat"];
+      arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0;
+    };
+    FunctionHOF {
+      functions = ["reduce"];
+      arity = 3; callback_index = 0; data_index = 2; taint_arg_index = 1;
+    };
+    FunctionHOF {
+      functions = ["reduce"];
+      arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 1;
+    };
+  ];
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
