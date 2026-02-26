@@ -43,6 +43,22 @@ let severity_of_severity sev : Sarif.notification_level =
   | `Inventory ->
       raise Todo
 
+(* GitHub Code Scanning security-severity score mapping.
+ * See https://docs.github.com/en/code-security/code-scanning/integrating-with-code-scanning/sarif-support-for-code-scanning#reportingdescriptor-object
+ * GitHub translates numerical scores as follows:
+ *   over 9.0 = critical
+ *   7.0 to 8.9 = high
+ *   4.0 to 6.9 = medium
+ *   0.1 to 3.9 = low
+ *)
+let security_severity_of_severity sev : string =
+  match sev with
+  | `Critical -> "9.0"
+  | `High | `Error -> "8.0"
+  | `Medium | `Warning -> "6.0"
+  | `Low | `Info -> "3.0"
+  | `Experiment | `Inventory -> "1.0"
+
 let message ?markdown text = Sarif.create_message ?markdown ~text ()
 
 let multiformat_message ?markdown text =
@@ -106,6 +122,14 @@ let tags_of_metadata metadata =
   let all_tags = cwe @ owasp @ confidence @ semgrep_policy_slug @ tags in
   List.sort_uniq String.compare all_tags
 
+(* Check if a rule is security-related based on its metadata.
+ * A rule is considered security-related if metadata.category = "security".
+ *)
+let is_security_rule metadata =
+  match JSON.member "category" metadata with
+  | Some (JSON.String s) -> String.lowercase_ascii s = "security"
+  | _ -> false
+
 (* We want to produce a json object? with the following shape:
    { id; name;
      shortDescription; fullDescription;
@@ -134,10 +158,18 @@ let rule (rule_id, rule) : Sarif.reporting_descriptor =
         rule.message
   in
   let security_severity =
-    (* TODO: no test case for this *)
+    (* Use explicit security-severity from metadata if provided,
+     * otherwise compute it from rule severity for security-related rules.
+     * This enables GitHub Code Scanning to display findings with
+     * security severities (Critical/High/Medium/Low) instead of
+     * quality severities (Error/Warning/Note).
+     * See https://github.com/opengrep/opengrep/issues/540
+     *)
     match JSON.member "security-severity" metadata with
     | Some json ->
         [ ("security-severity", (JSON.to_yojson json :> Yojson.Safe.t)) ]
+    | None when is_security_rule metadata ->
+        [ ("security-severity", `String (security_severity_of_severity rule.severity)) ]
     | None -> []
   in
   let properties =
