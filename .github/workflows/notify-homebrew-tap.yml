@@ -1,0 +1,19 @@
+name: Notify Homebrew Tap
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Only run on non-prerelease releases
+    if: github.event.release.prerelease == false
+    steps:
+      - name: Trigger homebrew-tap update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: opengrep/homebrew-tap
+          event-type: new-release
+          client-payload: '{"version": "${{ github.event.release.tag_name }}"}'
