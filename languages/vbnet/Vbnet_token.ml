@@ -53,23 +53,50 @@ let token_line_terminator (tok : t) : bool =
   | { kind = LineTerminator; _ } -> true
   | _ -> false
 
+let is_ident (tok : t) : bool =
+  match tok.kind with Identifier -> true | _ -> false
+
+let is_keyword (tok : t) : bool =
+  match tok.kind with Keyword -> true | _ -> false
+
+let is_operator (tok : t) : bool =
+  match tok.kind with Operator -> true | _ -> false
+
+let is_punctuation (tok : t) : bool =
+  match tok.kind with Punctuation -> true | _ -> false
+
+let is_int_literal (tok : t) : bool =
+  match tok.kind with IntLiteral _ -> true | _ -> false
+
+let is_float_literal (tok : t) : bool =
+  match tok.kind with FloatLiteral -> true | _ -> false
+
+let is_char_literal (tok : t) : bool =
+  match tok.kind with CharLiteral _ -> true | _ -> false
+
+let is_string_literal (tok : t) : bool =
+  match tok.kind with StringLiteral _ -> true | _ -> false
+
+let is_string_segment (tok : t) : bool =
+  match tok.kind with StringSegment -> true | _ -> false
+
+let is_date_literal (tok : t) : bool =
+  match tok.kind with DateLiteral -> true | _ -> false
+
+let is_cdata (tok : t) : bool =
+  match tok.kind with CDATA _ -> true | _ -> false
+
+let is_other (tok : t) : bool =
+  match tok.kind with Other -> true | _ -> false
+
+let is_line_terminator (tok : t) : bool =
+  match tok.kind with LineTerminator -> true | _ -> false
+
+let is_eof (tok : t) : bool =
+  match tok.kind with EOF -> true | _ -> false
+
 let token_match (s : string) (tok : t) : bool =
-  match s, tok with
-  | "<IDENT>", { kind = Identifier; _ }
-  | "<KEYWORD>", { kind = Keyword; _ }
-  | "<OPERATOR>", { kind = Operator; _ }
-  | "<PUNCTUATION>", { kind = Punctuation; _ }
-  | "<INT>", { kind = IntLiteral _; _ }
-  | "<FLOAT>", { kind = FloatLiteral; _ }
-  | "<CHAR>", { kind = CharLiteral _; _ }
-  | "<STRING>", { kind = StringLiteral _; _ }
-  | "<STRING_SEGMENT>", { kind = StringSegment; _ }
-  | "<DATE>", { kind = DateLiteral; _ }
-  | "<CDATA>", { kind = CDATA _; _ }
-  | "<LINE_TERMINATOR>", { kind = LineTerminator; _ }
-  | "<OTHER>", { kind = Other; _ }
-  | "<EOF>", { kind = EOF; _ } -> true
-  | _, _ -> String.equal s tok.content
+  String.equal s tok.content
 
 let print_token (t : t) : unit =
   match t with
