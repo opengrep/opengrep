@@ -3163,11 +3163,35 @@ and class_block (attrs : G.attribute list) : G.stmt parser = fun __n -> (
   pure (G.DefStmt (entity, def) |> G.s)
 ) __n
 
+and class_declarations_list (class_name : G.name) : G.field list parser = fun __n -> (
+  (* Analogous to statements_list, but for class body declarations. *)
+  choice [
+    begin
+      let* decl = class_block_declaration class_name in
+      let* decls = list_of
+        begin
+          let* _ = look_ahead_pred T.is_line_terminator in
+          class_block_declaration class_name
+        end
+      in
+      pure (decl @ List.concat decls)
+    end;
+    begin
+      pure []
+    end;
+  ]
+) __n
+
 and class_block_declaration (class_name : G.name) : G.field list parser = fun __n -> (
   let* attrs = list_of attribute_list in
   let* modifiers = list_of modifier in
   let attrs = modifiers @ List.concat attrs in
   choice [
+    begin
+      (* class_block_declaration -> #If [#ElseIf]* [#Else] #End If *)
+      let* _ = if List.is_empty attrs then pure () else fail in
+      if_directive_block (class_declarations_list class_name) ~combine:List.concat
+    end;
     begin
       (* class_block_declaration -> attribute_list* method_modifier* class_block_kw_declaration *)
       let* s = class_block_kw_declaration attrs class_name in

@@ -147,7 +147,10 @@ let tests =
               |> List.length = 2);
 
       (* full program *)
-      assert (is_ok "Module M\nSub Foo\nx = 1\n#If A\ny = 2\n#Else\nz = 3\n#End If\nk = 4\nEnd Sub\nEnd Module")
+      assert (is_ok "Module M\nSub Foo\nx = 1\n#If A\ny = 2\n#Else\nz = 3\n#End If\nk = 4\nEnd Sub\nEnd Module");
+
+      (* class body #If *)
+      assert (is_ok "Class C\n#If A\nSub X\nEnd Sub\n#Else\nSub Y\nEnd Sub\n#End If\nEnd Class")
       );
 
     Testo.create "parser result (AST generic) smoke test" (fun () ->
