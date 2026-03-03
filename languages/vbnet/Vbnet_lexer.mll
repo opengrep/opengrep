@@ -275,10 +275,10 @@ let line_continuation =
   '_' whitespace* (comment_end_of_line | line_terminator)
 
 let ignored_preproc_directives_end_of_line =
-    "#" whitespace* ("If" | "Else" | "Region" | "End" | "ExternalSource" | "Const" | "ExternalChecksum" | "Enable" | "Disable") not_line_terminator* line_terminator
+    "#" whitespace* ("Region" | "End" | "ExternalSource" | "Const" | "ExternalChecksum" | "Enable" | "Disable") not_line_terminator* line_terminator
 
 let ignored_preproc_directives_end_of_file =
-    "#" whitespace* ("If" | "Else" | "Region" | "End" | "ExternalSource" | "Const" | "ExternalChecksum" | "Enable" | "Disable") not_line_terminator* eof
+    "#" whitespace* ("Region" | "End" | "ExternalSource" | "Const" | "ExternalChecksum" | "Enable" | "Disable") not_line_terminator* eof
 
 (* ======================== *)
 (* Keywords and identifiers *)
@@ -431,10 +431,27 @@ and read state = parse
   | line_continuation { read state lexbuf }
   | line_terminator { T.make lexbuf T.LineTerminator }
 
+(* preprocessing directives: #End If before general #End rule *)
+  | "#" whitespace* "End" whitespace+ "If" not_line_terminator* line_terminator
+    { T.make lexbuf T.EndIfDirective }
+  | "#" whitespace* "End" whitespace+ "If" not_line_terminator* eof
+    { T.make lexbuf T.EndIfDirective }
+  | "#" whitespace* "ElseIf" not_line_terminator* line_terminator
+    { T.make lexbuf T.ElseIfDirective }
+  | "#" whitespace* "ElseIf" not_line_terminator* eof
+    { T.make lexbuf T.ElseIfDirective }
+  | "#" whitespace* "Else" not_line_terminator* line_terminator
+    { T.make lexbuf T.ElseDirective }
+  | "#" whitespace* "Else" not_line_terminator* eof
+    { T.make lexbuf T.ElseDirective }
+  | "#" whitespace* "If" not_line_terminator* line_terminator
+    { T.make lexbuf T.IfDirective }
+  | "#" whitespace* "If" not_line_terminator* eof
+    { T.make lexbuf T.IfDirective }
+
 (* ignored preprocessing directives *)
   | ignored_preproc_directives_end_of_line { T.make lexbuf T.LineTerminator }
   | ignored_preproc_directives_end_of_file { T.make lexbuf T.LineTerminator }
-  | "#Else" [^'#']* "#End If" { T.make lexbuf T.LineTerminator }
 
 (* XML CDATA *)
   | "<![CDATA[" (([^']'] | ']' [^']'] | "]]" [^'>'] )* as s) "]]>" { T.make lexbuf (T.CDATA s) }

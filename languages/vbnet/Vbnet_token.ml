@@ -11,6 +11,10 @@ type token_kind =
   | DateLiteral
   | CDATA of string
   | LineTerminator
+  | IfDirective
+  | ElseIfDirective
+  | ElseDirective
+  | EndIfDirective
   | Other
   | EOF
 
@@ -91,6 +95,18 @@ let is_other (tok : t) : bool =
 
 let is_line_terminator (tok : t) : bool =
   match tok.kind with LineTerminator -> true | _ -> false
+
+let is_if_directive (tok : t) : bool =
+  match tok.kind with IfDirective -> true | _ -> false
+
+let is_elseif_directive (tok : t) : bool =
+  match tok.kind with ElseIfDirective -> true | _ -> false
+
+let is_else_directive (tok : t) : bool =
+  match tok.kind with ElseDirective -> true | _ -> false
+
+let is_end_if_directive (tok : t) : bool =
+  match tok.kind with EndIfDirective -> true | _ -> false
 
 let is_eof (tok : t) : bool =
   match tok.kind with EOF -> true | _ -> false

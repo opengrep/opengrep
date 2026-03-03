@@ -10,8 +10,6 @@ type token = T.t
 
 let token_match = T.token_match
 
-let token_ghost = T.token_ghost
-
 type 'a parsing_result = {
   next : token list;
   value : 'a
@@ -106,11 +104,32 @@ let pure (value : 'a) : 'a parser =
 let fail : 'a parser =
   fun _next -> empty
 
-let rec token (t : token_name) : token parser =
+let rec skip_directives (tokens : token list) : token list =
+  match tokens with
+  | [] -> []
+  | w :: ws when T.is_line_terminator w  -> skip_directives ws
+  | w :: ws when T.is_if_directive w     -> skip_directives ws
+  | w :: ws when T.is_end_if_directive w -> skip_directives ws
+  | w :: ws when T.is_else_directive w
+              || T.is_elseif_directive w  -> skip_to_end_if ws 1
+  | _ -> tokens
+
+and skip_to_end_if (tokens : token list) (depth : int) : token list =
+  match tokens with
+  | [] -> []
+  | w :: ws when T.is_if_directive w     -> skip_to_end_if ws (depth + 1)
+  | w :: ws when T.is_end_if_directive w ->
+      if depth = 1 then skip_directives ws
+      else skip_to_end_if ws (depth - 1)
+  | _ :: ws -> skip_to_end_if ws depth
+
+let rec skip_line_terminators : token list -> token list = function
+  | w :: ws when T.is_line_terminator w -> skip_line_terminators ws
+  | tokens -> tokens
+
+let token (t : token_name) : token parser =
   fun next ->
-    match next with
-    | w :: ws when token_ghost w ->
-        token t ws
+    match skip_directives next with
     | w :: ws when token_match t w ->
         let loc = Tok.unsafe_loc_of_tok w.tok in
         if loc.pos.bytepos > DLS.get last_pos then
@@ -125,11 +144,9 @@ let pure_token (t : token_name) : unit parser =
   let* _ = token t in
   pure ()
 
-let rec token_pred (pred : T.t -> bool) : token parser =
+let token_pred (pred : T.t -> bool) : token parser =
   fun next ->
-    match next with
-    | w :: ws when token_ghost w ->
-        token_pred pred ws
+    match skip_directives next with
     | w :: ws when pred w ->
         let loc = Tok.unsafe_loc_of_tok w.tok in
         if loc.pos.bytepos > DLS.get last_pos then
@@ -166,6 +183,41 @@ let cdata_tok          = token_pred T.is_cdata
 let other_tok          = token_pred T.is_other
 let eof_tok            = token_pred T.is_eof
 let line_terminator_tok = token_pred T.is_line_terminator
+
+(* Directive token combinators: use lite skip (LineTerminators only) so that
+   directive tokens are visible rather than being consumed by skip_directives *)
+let if_directive_tok : token parser =
+  fun next ->
+    match skip_line_terminators next with
+    | w :: ws when T.is_if_directive w -> single { next = ws; value = w }
+    | _ -> empty
+
+let elseif_directive_tok : token parser =
+  fun next ->
+    match skip_line_terminators next with
+    | w :: ws when T.is_elseif_directive w -> single { next = ws; value = w }
+    | _ -> empty
+
+let else_directive_tok : token parser =
+  fun next ->
+    match skip_line_terminators next with
+    | w :: ws when T.is_else_directive w -> single { next = ws; value = w }
+    | _ -> empty
+
+let end_if_directive_tok : token parser =
+  fun next ->
+    match skip_line_terminators next with
+    | w :: ws when T.is_end_if_directive w -> single { next = ws; value = w }
+    | _ -> empty
+
+(* Succeeds when there is at least one non-EOF token remaining after skipping
+   ghost tokens. Used in statement-list loops to continue parsing after an
+   if_directive_block, which consumes the trailing newline of #End If. *)
+let look_ahead_non_eof : unit parser =
+  fun next ->
+    match skip_directives next with
+    | [] | { kind = T.EOF; _ } :: _ -> empty
+    | _ -> single { next; value = () }
 
 let choice (ps : 'a parser list) : 'a parser =
   fun next ->
@@ -315,6 +367,51 @@ let s_range (tl : Tok.t) (tr : Tok.t) (stmt : G.stmt) : G.stmt =
   let r = Tok.unsafe_loc_of_tok tr in
   stmt.s_range <- Some (l, r);
   stmt
+
+(* Splits the token stream (after IfDirective was consumed) into branches.
+   Splits at ElseIfDirective/ElseDirective at depth 0; stops at EndIfDirective
+   at depth 0. Returns (branches, rest_after_EndIfDirective). *)
+let split_if_block (tokens : token list) : token list list * token list =
+  let rec collect tokens depth current acc =
+    match tokens with
+    | [] ->
+        (List.rev (List.rev current :: acc), [])
+    | w :: ws when T.is_if_directive w ->
+        collect ws (depth + 1) (w :: current) acc
+    | w :: ws when T.is_end_if_directive w && depth > 0 ->
+        collect ws (depth - 1) (w :: current) acc
+    | w :: ws when T.is_end_if_directive w ->
+        (List.rev (List.rev current :: acc), ws)
+    | w :: ws when (T.is_else_directive w || T.is_elseif_directive w) && depth = 0 ->
+        collect ws 0 [] (List.rev current :: acc)
+    | w :: ws ->
+        collect ws depth (w :: current) acc
+  in
+  collect tokens 0 [] []
+
+let parse_branch (p : 'a parser) (tokens : token list) : 'a option =
+  match Seq.uncons (p tokens) with
+  | Some ({ value; next }, _) when skip_directives next = [] -> Some value
+  | _ -> None
+
+let if_directive_block
+    (p : 'a parser)
+    ~(combine : 'a list -> 'a)
+    : 'a parser =
+  let* _ = if_directive_tok in
+  fun tokens ->
+    let (branches, rest) = split_if_block tokens in
+    let parsed = List.filter_map (parse_branch p) branches in
+    if List.length parsed = List.length branches
+    then
+      (* The EndIfDirective token consumed the trailing newline, so we prepend a
+         synthetic LineTerminator to 'rest' to satisfy the
+         look_ahead_pred T.is_line_terminator guard in statement-list loops. *)
+      let synthetic_lt : T.t =
+        { T.kind = T.LineTerminator; content = "\n"; tok = Tok.unsafe_fake_tok "\n" }
+      in
+      single { next = synthetic_lt :: rest; value = combine parsed }
+    else empty
 
 (* parser *)
 
@@ -767,8 +864,30 @@ and multi_line_statement : G.stmt parser = fun __n -> (
   ]
 ) __n
 
+and statements_list : G.stmt list parser = fun __n -> (
+  choice [
+    begin
+      let* stmt = statements_block_item in
+      let* stmts = list_of
+        begin
+          let* _ = look_ahead_pred T.is_line_terminator in
+          statements_block_item
+        end
+      in
+      pure (stmt @ List.concat stmts)
+    end;
+    begin
+      pure []
+    end;
+  ]
+) __n
+
 and statements_block_item : G.stmt list parser = fun __n -> (
   choice [
+    begin
+      (* statements_block_item -> #If [#ElseIf]* [#Else] #End If *)
+      if_directive_block statements_list ~combine:List.concat
+    end;
     begin
       (* statements_block_item -> multi_line_statement *)
       let* s = multi_line_statement in
