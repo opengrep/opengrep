@@ -90,6 +90,22 @@ class ['self] visitor =
             }
           in
           S (D (FuncDef def))
+      | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
+          (_, ([ Call (I ident, args, None) ],
+               [ Kw_expr ((X1 (do_kw, _), _tok_colon), body) ]), _),
+          None) when String.starts_with ~prefix:"do:" do_kw ->
+          let body = self#visit_expr env body in
+          let params = params_of_args args in
+          let def =
+            {
+              f_def = tdef;
+              f_name = ident;
+              f_params = params;
+              f_body = Tok.unsafe_fake_bracket [ body ];
+              f_is_private = String.equal def_str "defp";
+            }
+          in
+          S (D (FuncDef def))
       (* https://hexdocs.pm/elixir/Kernel.html#defmodule/2 *)
       | ( I (Id ("defmodule", tdefmodule)),
           (_, ([ Alias mname ], []), _),
