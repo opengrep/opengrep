@@ -428,12 +428,14 @@ let rec compilation_unit : G.program parser = fun __n -> (
 ) __n |> cut
 
 and toplevel : G.stmt list parser = fun __n -> (
-  (* toplevel -> option_statement* imports_statement* attributes_statement* toplevel_declaration* *)
+  (* toplevel -> option_statement* imports_statement* (attributes_statement | toplevel_declaration)* *)
   let* options = list_of option_statement in
   let* imports = list_of imports_statement in
-  let* attrs = list_of attributes_statement in
-  let* decls = list_of toplevel_declaration in
-  pure (options @ List.concat imports @ List.concat attrs @ decls)
+  let* decls = list_of (choice [
+    attributes_statement;
+    (let* d = toplevel_declaration in pure [d]);
+  ]) in
+  pure (options @ List.concat imports @ List.concat decls)
 ) __n
 
 and option_statement_mandatory : G.ident parser = fun __n -> (
@@ -522,8 +524,8 @@ and import_alias_clause : G.alias parser = fun __n -> (
 ) __n
 
 and attributes_statement : G.stmt list parser = fun __n -> (
-  (* attributes_statement -> attribute_list+ *)
-  let* attrs = ne_list_of attribute_list in
+  (* attributes_statement -> toplevel_attribute_list+ *)
+  let* attrs = ne_list_of toplevel_attribute_list in
   let attrs = List.concat attrs in
   let make_stmt (a : G.attribute) : G.stmt =
     let directive =
@@ -551,9 +553,9 @@ and attribute_list : G.attribute list parser = fun __n -> (
 ) __n
 
 and toplevel_attribute_list : G.attribute list parser = fun __n -> (
-  (* toplevel_attribute_list -> '<' attribute (',' attribute)* '>' *)
+  (* toplevel_attribute_list -> '<' toplevel_attribute (',' attribute)* '>' *)
   let* _lt = token "<" in
-  let* attr = attribute in
+  let* attr = toplevel_attribute in
   let* attrs = list_of
     begin
       let* _comma = token "," in
@@ -583,7 +585,7 @@ and attribute : G.attribute parser = fun __n -> (
 ) __n
 
 and toplevel_attribute : G.attribute parser = fun __n -> (
-  (* toplevel_attribute -> attribute_target? type argument_list? *)
+  (* toplevel_attribute -> attribute_target type argument_list? *)
   let* target = attribute_target in
   let* name = qualified_name in
   let name = collapse_names [target; name] in
