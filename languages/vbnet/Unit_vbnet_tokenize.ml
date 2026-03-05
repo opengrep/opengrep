@@ -54,6 +54,14 @@ let tests =
       in
       assert (s = r));
 
+    Testo.create "lexer (#If directives)" (fun () ->
+      let s = tokenize "#If DEBUG\nx = 1\n#ElseIf RELEASE\ny = 2\n#Else\nz = 3\n#End If\n"
+              |> List.map preview in
+      T.(assert (List.mem (IfDirective, "#If DEBUG\n") s));
+      T.(assert (List.mem (ElseIfDirective, "#ElseIf RELEASE\n") s));
+      T.(assert (List.mem (ElseDirective, "#Else\n") s));
+      T.(assert (List.mem (EndIfDirective, "#End If\n") s)));
+
     Testo.create "lexer (date literals)" (fun () ->
       [ "# 8/23/1970 3:45:39AM #"
       ; "# 8/23/1970 #"

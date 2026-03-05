@@ -125,6 +125,34 @@ let tests =
       assert (is_partial "Namespace n \n Module c \n End Module \n xxx yyy zzz \n End Namespace")
       );
 
+    Testo.create "preprocessing directives (#If / #Else / #End If)" (fun () ->
+      let stmts s =
+        T.tokenize s |> P.run P.statements_list |> List.hd |> get_val
+      in
+
+      (* both branches kept when self-contained *)
+      assert (stmts "x = 1\n#If A\ny = 2\n#Else\nz = 3\n#End If\nk = 4"
+              |> List.length = 4);
+
+      (* then-only when no #Else *)
+      assert (stmts "x = 1\n#If A\ny = 2\n#End If\nz = 3"
+              |> List.length = 3);
+
+      (* all branches kept with #ElseIf *)
+      assert (stmts "#If A\nx = 1\n#ElseIf B\ny = 2\n#Else\nz = 3\n#End If"
+              |> List.length = 3);
+
+      (* nested #If *)
+      assert (stmts "#If A\n#If B\nx = 1\n#End If\n#Else\ny = 2\n#End If"
+              |> List.length = 2);
+
+      (* full program *)
+      assert (is_ok "Module M\nSub Foo\nx = 1\n#If A\ny = 2\n#Else\nz = 3\n#End If\nk = 4\nEnd Sub\nEnd Module");
+
+      (* class body #If *)
+      assert (is_ok "Class C\n#If A\nSub X\nEnd Sub\n#Else\nSub Y\nEnd Sub\n#End If\nEnd Class")
+      );
+
     Testo.create "parser result (AST generic) smoke test" (fun () ->
       assert (smoke1 ());
       assert (smoke2 ())
