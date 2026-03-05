@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.16.3](https://github.com/opengrep/opengrep/releases/tag/v1.16.3) - 05-03-2026
+
+### Improvements
+
+* Elixir: Parse short function form (`def f(), do: ...`) by @maciejpirog in #605
+* VB parser updates: no sentinel strings, better handling of compiler directives and attributes by @maciejpirog in #603
+* Allow `--semgrepignore-filename` to be an absolute path by @dimitris-m in #608
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.16.2...v1.16.3
+
+
 ## [1.16.2](https://github.com/opengrep/opengrep/releases/tag/v1.16.2) - 25-02-2026
 
 ### Improvements
