@@ -22,7 +22,11 @@ let load t dir_path =
       let patterns =
         List.fold_left
           (fun acc (file : gitignore_filename) ->
-            let file_path = Fpath.add_seg path file.filename in
+            let fname = Fpath.v file.filename in
+            let file_path =
+              if Fpath.is_abs fname then fname
+              else Fpath.add_seg path file.filename
+            in
             if Sys.file_exists (Fpath.to_string file_path) then
               acc
               @ Parse_gitignore.from_file ~format:file.format ~anchor

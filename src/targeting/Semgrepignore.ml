@@ -154,7 +154,12 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
   *)
   let root_semgrepignore_exists =
     let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
-    let semgrepignore_path = Fpath.add_seg root_dir semgrepignore_filename in
+    let semgrepignore_fname = Fpath.v semgrepignore_filename in
+    let semgrepignore_path =
+      if Fpath.is_abs semgrepignore_fname
+      then semgrepignore_fname
+      else Fpath.add_seg root_dir semgrepignore_filename
+    in
     Sys.file_exists (Fpath.to_string semgrepignore_path)
   in
 
