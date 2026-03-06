@@ -30,12 +30,11 @@ let origin rule =
 (*****************************************************************************)
 
 let pp_status ~num_rules ~num_targets ~respect_gitignore lang_jobs ppf =
-  Fmt_.pp_heading ppf "Scan Status";
-  Fmt.pf ppf "  Scanning %s%s with %s"
+  Fmt.pf ppf " Scanning %s%s with %s"
     (String_.unit_str num_targets "file")
     (* TODO: validate if target is actually within a git repo *)
     (if respect_gitignore then " tracked by git" else "")
-    (String_.unit_str num_rules "Code rule");
+    (String_.unit_str num_rules "rule");
 
   (* TODO if sca_rules ...
      Fmt.(option ~none:(any "") (any ", " ++ int ++ any "Supply Chain rule" *)

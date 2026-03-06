@@ -173,3 +173,12 @@ val array : ('a -> string) -> 'a array -> string
 (* The mutex used for logging, exposed so it can
  * be shared by pretty-printing functions. *)
 val logs_mutex : Mutex.t
+
+(* Hook called inside the log mutex lock, before any log output.
+ * Used by Status_bar to erase the status line before log messages. *)
+val before_log_hook : (unit -> unit) ref
+
+(* Hook called inside the log mutex lock, after log output.
+ * Used by Status_bar to immediately redraw the status line. *)
+val after_log_hook : (unit -> unit) ref
+

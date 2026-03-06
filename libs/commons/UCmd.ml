@@ -34,12 +34,21 @@ let log_shell_command cmd =
    not a general-purpose library. Bos doesn't seem to provide a simple
    equivalent (?)
 *)
+(* Hooks called by capture_and_log_stderr to pause/unpause the status bar
+   render loop so it doesn't write to stderr during the capture. *)
+let pause_stderr_hook : (unit -> unit) ref = ref (fun () -> ())
+let unpause_stderr_hook : (unit -> unit) ref = ref (fun () -> ())
+
 let capture_and_log_stderr func =
-  let res, err = Testo.with_capture UStdlib.stderr func in
-  if err <> "" then
-    (* nosemgrep: no-logs-in-library *)
-    Logs.info (fun m -> m "error output: %s" err);
-  res
+  !pause_stderr_hook ();
+  Common.protect
+    ~finally:(fun () -> !unpause_stderr_hook ())
+    (fun () ->
+      let res, err = Testo.with_capture UStdlib.stderr func in
+      if err <> "" then
+        (* nosemgrep: no-logs-in-library *)
+        Logs.info (fun m -> m "error output: %s" err);
+      res)
 
 (*****************************************************************************)
 (* Old Common.cmd_to_list *)
