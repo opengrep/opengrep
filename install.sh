@@ -1,4 +1,4 @@
-#!/usr/bin/env bash 
+#!/usr/bin/env bash
 # Opengrep installation script
 
 set -euo pipefail
@@ -38,12 +38,29 @@ check_has_curl() {
     }
 }
 
+retry() {
+    local retry_count=3
+    local retry_delay=2
+
+    local n=1
+    until "$@"; do
+        if (( n >= retry_count )); then
+            printf 'attempt %d/%d failed for: %s\n' "$n" "$retry_count" "$*" >&2
+            return 1
+        fi
+        printf 'attempt %d/%d failed for: %s; retrying in %ds\n' "$n" "$retry_count" "$*" "$retry_delay" >&2
+        sleep "$retry_delay"
+        ((n++))
+    done
+}
+
+
 # Function to get available versions - already checked when running main
 get_available_versions() {
     check_has_curl
-    curl -s https://api.github.com/repos/opengrep/opengrep/releases |
-        grep '"tag_name":' |
-        sed -E 's/.*"([^"]+)".*/\1/'
+    retry curl -s --fail https://api.github.com/repos/opengrep/opengrep/releases \
+      | grep '"tag_name":' \
+      | sed -E 's/.*"([^"]+)".*/\1/'
 }
 
 # Function to validate version
@@ -51,7 +68,11 @@ validate_version() {
     local VERSION="$1"
     local AVAILABLE_VERSIONS
     AVAILABLE_VERSIONS=$(get_available_versions)
-    if echo "$AVAILABLE_VERSIONS" | grep -q "^$VERSION$"; then
+
+    if [ -z "$AVAILABLE_VERSIONS" ]; then
+        echo "Error: Unable to fetch available versions. Please check your internet connection." 1>&2
+        return 1
+    elif echo "$AVAILABLE_VERSIONS" | grep -q "^$VERSION$"; then
         return 0
     else
         echo "Error: Version $VERSION not found"
@@ -98,10 +119,11 @@ cleanup_on_failure() {
 }
 
 main() {
-    local VERSION="$1"
+    local REQUESTED_VERSION="$1"
     local VERIFY_SIGNATURES="$2"
+    local FINAL_VERSION="$REQUESTED_VERSION"
+
     PREFIX="${HOME}/.opengrep/cli"
-    INST="${PREFIX}/${VERSION}"
     LATEST="${PREFIX}/latest"
 
     OS="${OS:-$(uname -s)}"
@@ -138,7 +160,33 @@ main() {
         exit 1
     fi
 
-    URL="https://github.com/opengrep/opengrep/releases/download/${VERSION}/${DIST}"
+    if [ "$REQUESTED_VERSION" = "latest" ]; then
+        # Use GitHub's latest release redirect
+        URL="https://github.com/opengrep/opengrep/releases/latest/download/${DIST}"
+
+        # Get the final version from the redirect
+        REDIRECT_URL=$(curl -sI "$URL" 2>/dev/null | grep -i '^location:' | sed 's/location: //i' | tr -d '\r\n' || true)
+        if [ -n "$REDIRECT_URL" ]; then
+            # Extract version from the redirect URL
+            FINAL_VERSION=$(echo "$REDIRECT_URL" | sed -E 's|.*/download/([^/]+)/.*|\1|')
+        else
+            echo "Failed to resolve latest version. The redirect from $URL did not work." 1>&2
+            echo "Please check your internet connection or specify a version with -v" 1>&2
+            exit 1
+        fi
+
+        echo
+        echo "*** Installing Opengrep ${FINAL_VERSION} for ${OS} (${ARCH}) ***"
+        echo
+    else
+        URL="https://github.com/opengrep/opengrep/releases/download/${REQUESTED_VERSION}/${DIST}"
+        echo
+        echo "*** Installing Opengrep ${REQUESTED_VERSION} for ${OS} (${ARCH}) ***"
+        echo
+    fi
+
+    # Now set INST with the final version
+    INST="${PREFIX}/${FINAL_VERSION}"
 
     # check if binary already exists
     if [ -f "${INST}/opengrep" ]; then
@@ -150,19 +198,35 @@ main() {
             echo "Signature verification skipped for existing installation."
         fi
     else
-        echo
-        echo "*** Installing Opengrep ${VERSION} for ${OS} (${ARCH}) ***"
-
         # cleanup on error
         trap '[ "$?" -eq 0 ] || cleanup_on_failure $INST' EXIT
 
-        mkdir -p "${INST}"
-        if [ ! -d "${INST}" ]; then
-            echo "Failed to create install directory ${INST}." 1>&2
+        # Download to temp file first
+        TEMP_FILE=$(mktemp)
+        trap 'rm -f $TEMP_FILE' EXIT
+
+        if ! retry curl --fail --location --progress-bar "${URL}" > "${TEMP_FILE}"; then
+            # Download failed - if user provided a version, validate it to show available versions
+            if [ "$REQUESTED_VERSION" != "latest" ]; then
+                echo
+                echo "Error: Failed to download version ${REQUESTED_VERSION}" 1>&2
+                # This will show available versions and exit
+                validate_version "$REQUESTED_VERSION"
+            fi
+            rm -f "$TEMP_FILE"
             exit 1
         fi
 
-        curl --fail --location --progress-bar "${URL}" > "${INST}/opengrep"
+        # Only create directory after successful download
+        mkdir -p "${INST}"
+        if [ ! -d "${INST}" ]; then
+            echo "Failed to create install directory ${INST}." 1>&2
+            rm -f "$TEMP_FILE"
+            exit 1
+        fi
+
+        # Move temp file to final location
+        mv "$TEMP_FILE" "${INST}/opengrep"
 
         local SIG_EXISTS=true
 
@@ -346,10 +410,9 @@ fi
 
 shift $((OPTIND - 1))
 
+# If no version specified, we'll use "latest" and let curl resolve it
 if [ -z "$VERSION" ]; then
-    VERSION=$(get_available_versions | head -1)
-else
-    validate_version "$VERSION"
+    VERSION="latest"
 fi
 
 main "$VERSION" "$VERIFY_SIGNATURES"
