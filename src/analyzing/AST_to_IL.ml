@@ -126,10 +126,9 @@ let fixme_stmt kind gany =
 
 let fresh_var ?(str = "_tmp") tok =
   let tok =
-    (* We don't want "fake" auxiliary variables to have non-fake tokens, otherwise
-       we confuse ourselves! E.g. during taint-tracking we don't want to add these
-       variables to the taint trace. *)
-    if Tok.is_fake tok then tok else Tok.fake_tok tok str
+    (* We always create a fake token to avoid confusing taint-tracking,
+       but preserve position info for distinguishing different lambdas. *)
+    Tok.fake_tok tok str
   in
   let i = G.SId.mk () in
   { ident = (str, tok); sid = i; id_info = G.empty_id_info () }
@@ -877,9 +876,35 @@ and expr_aux env ?(void = false) g_expr =
                  |> G.e) ]
       in
       call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket arg_container)
+  (* Ruby do-block flattening: `f(args) do |x| ... end` is parsed as
+     Call(Call(f, args), [Lambda]) but the block is semantically an argument
+     to f, not to its return value. Flatten into Call(f, args @ [Lambda]). *)
+  | G.Call ({ e = G.Call (callee, inner_args); _ }, outer_args)
+    when env.lang =*= Lang.Ruby
+         && List.exists
+              (function
+               | G.Arg { G.e = G.Lambda _; _ } -> true
+               | _ -> false)
+              (Tok.unbracket outer_args) ->
+      let merged_args =
+        Tok.unsafe_fake_bracket
+          (Tok.unbracket inner_args @ Tok.unbracket outer_args)
+      in
+      expr_aux env ~void (G.Call (callee, merged_args) |> G.e)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
-      call_generic env ~void tok eorig e args
+      (* For Ruby, when the callee is a plain identifier, evaluate it as a simple
+         Fetch (not through ident_function_call_hack) to avoid creating a spurious
+         0-arg Call. The identifier IS being called — via this G.Call node. *)
+      let env, callee_exp =
+        match e.G.e with
+        | G.N _ when env.lang =*= Lang.Ruby ->
+            let env, l = lval env e in
+            (env, mk_e (Fetch l) (related_exp e))
+        | _ -> expr env e
+      in
+      let env, il_args = arguments env (Tok.unbracket args) in
+      add_call env tok eorig ~void (fun res -> Call (res, callee_exp, il_args))
   | G.L lit -> (env, mk_e (Literal lit) eorig)
   | G.DotAccess ({ e = N (Id (("var", _), _)); _ }, _, FN (Id ((s, t), id_info)))
     when is_hcl env.lang ->
