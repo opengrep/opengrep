@@ -38,7 +38,7 @@ val mk_global_tracking_without_taint :
 (** Register global variables for tracking without pre-tainting them *)
 
 val extract_signature_with_file_context :
-  arity:int ->
+  arity:Shape_and_sig.sig_arity ->
   ?db:signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   name:IL.name ->

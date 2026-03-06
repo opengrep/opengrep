@@ -644,7 +644,13 @@ end = struct
   let of_IL_params il_params =
     il_params
     |> List_.map (function
-         | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
+         | IL.Param { pname = { ident = s, _; _ }; _ } ->
+             (* Clojure's !!_implicit_param! is a synthetic wrapper for all actual
+              * arguments. Mark it as PRest so that find_pos_in_actual_args gathers
+              * the unwrapped CList arguments into a combined indexed shape, enabling
+              * correct resolution of per-element offsets (Oint i) during signature
+              * instantiation. *)
+             if AST_generic.is_implicit_param s then PRest s else P s
          (* functions signatures don't look into the shape of the argument. *)
          | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
          | IL.ParamPattern pat -> (
@@ -693,10 +699,16 @@ type func_key = Function_id.t
 
 module FunctionMap = Map.Make (Function_id)
 
+(** Arity tag for disambiguating multi-arity function signatures.
+    [Arity_exact n] matches call sites with exactly [n] arguments.
+    [Arity_at_least n] matches call sites with >= [n] arguments (rest params). *)
+type sig_arity = Arity_exact of int | Arity_at_least of int
+[@@deriving show, eq, ord]
+
 type extended_sig = {
   sig_ : Signature.t;
       [@printer fun fmt s -> Format.fprintf fmt "%s" (Signature.show s)]
-  arity : int;
+  arity : sig_arity;
 }
 [@@deriving show]
 
@@ -706,7 +718,7 @@ module SignatureSet = Set.Make (struct
   let compare = fun x y ->
     let sig_cmp = Signature.compare x.sig_ y.sig_ in
     if sig_cmp <> 0 then sig_cmp
-    else Int.compare x.arity y.arity
+    else compare_sig_arity x.arity y.arity
 end)
 
 type signature_database = {
@@ -735,21 +747,49 @@ let add_builtin_signature (db : builtin_signature_database) (func_name : string)
       | None -> Some (SignatureSet.singleton signature))
     db
 
-let lookup_builtin_signature (db : builtin_signature_database) (func_name : string) (arity : int)
-    : Signature.t option =
+(** Extract the concrete arity from a [sig_arity] for comparison purposes. *)
+let int_of_sig_arity : sig_arity -> int = function
+  | Arity_exact n | Arity_at_least n -> n
+
+(** Given a non-empty set of signatures, find the best match for [arity].
+    Returns the unique sig if only one exists, then tries [Arity_exact arity],
+    then falls back to the most specific [Arity_at_least n] where [n <= arity]. *)
+let find_by_arity (sigs : SignatureSet.t) (arity : int) : Signature.t option =
+  if Int.equal (SignatureSet.cardinal sigs) 1 then
+    Some (SignatureSet.choose sigs).sig_
+  else
+    let exact =
+      SignatureSet.filter
+        (fun (x : extended_sig) -> equal_sig_arity x.arity (Arity_exact arity))
+        sigs
+    in
+    if Int.equal (SignatureSet.cardinal exact) 1 then
+      Some (SignatureSet.choose exact).sig_
+    else
+      let at_least =
+        SignatureSet.filter
+          (fun (x : extended_sig) ->
+            match x.arity with
+            | Arity_at_least n -> n <= arity
+            | Arity_exact _ -> false)
+          sigs
+      in
+      SignatureSet.fold
+        (fun (x : extended_sig) (acc : extended_sig option) ->
+          match acc with
+          | None -> Some x
+          | Some prev ->
+              if int_of_sig_arity x.arity > int_of_sig_arity prev.arity then
+                Some x
+              else acc)
+        at_least None
+      |> Option.map (fun (x : extended_sig) -> x.sig_)
+
+let lookup_builtin_signature (db : builtin_signature_database)
+    (func_name : string) (arity : int) : Signature.t option =
   match BuiltinMap.find_opt func_name db with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      let total_sigs_card = SignatureSet.cardinal sigs in
-      if Int.equal total_sigs_card 1 then
-        Some (SignatureSet.choose sigs).sig_
-      else
-        let filtered_sigs =
-          SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
-        in
-        let signatures_card = SignatureSet.cardinal filtered_sigs in
-        if Int.equal signatures_card 1 then
-          Some (SignatureSet.choose filtered_sigs).sig_
-        else None
+      find_by_arity sigs arity
   | _ -> None
 
 let show_name (name_opt : IL.name option) =
@@ -760,23 +800,11 @@ let show_name (name_opt : IL.name option) =
 let empty_signature_database () : signature_database =
   { signatures = FunctionMap.empty; object_mappings = [] }
 
-let lookup_signature (db : signature_database) (name : Function_id.t) (arity : int)
-    : Signature.t option =
-  let signatures = FunctionMap.find_opt name db.signatures in
-  match signatures with
+let lookup_signature (db : signature_database) (name : Function_id.t)
+    (arity : int) : Signature.t option =
+  match FunctionMap.find_opt name db.signatures with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      let total_sigs_card = SignatureSet.cardinal sigs in      
-      (* If there's only one signature for this function name, return it regardless of arity *)
-      if total_sigs_card =*= 1 then
-        Some (SignatureSet.choose sigs).sig_
-      else
-        let filtered_sigs =
-          SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
-        in
-        let signatures_card = SignatureSet.cardinal filtered_sigs in
-        if signatures_card =*= 1 then
-          Some (SignatureSet.choose filtered_sigs).sig_
-        else None
+      find_by_arity sigs arity
   | _ -> None
 
 let add_signature (db : signature_database) (name : Function_id.t)
