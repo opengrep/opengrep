@@ -340,14 +340,16 @@ fi
 
 if $LIST; then
     echo "Available versions (latest 3):"
-    get_available_versions | head -3
+    AVAILABLE_VERSIONS=$(get_available_versions)
+    echo "$AVAILABLE_VERSIONS" | head -3
     exit 0
 fi
 
 shift $((OPTIND - 1))
 
 if [ -z "$VERSION" ]; then
-    VERSION=$(get_available_versions | head -1)
+    AVAILABLE_VERSIONS=$(get_available_versions)
+    VERSION=$(echo "$AVAILABLE_VERSIONS" | head -1)
 else
     validate_version "$VERSION"
 fi
