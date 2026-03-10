@@ -519,7 +519,7 @@ class OutputHandler:
             save_path = Path(destination)
             # create the folders if not exists
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            with save_path.open(mode="w") as fout:
+            with save_path.open(mode="w", encoding="utf-8") as fout:
                 fout.write(output)
 
     def _post_output(self, output_url: str, output: str) -> None:

@@ -62,7 +62,7 @@ def _really_read(io: IO[str], size: int) -> str:
             logger.error(f"0 bytes read from RPC input stream")
             break
         out = out + new.encode(ENCODING)
-    return out.decode(ENCODING)
+    return out.decode(ENCODING, errors="replace")
 
 
 def _read_packet(io: IO[str]) -> Optional[str]:
@@ -117,6 +117,7 @@ def rpc_call(call: out.FunctionCall, cls: Type[T]) -> Optional[T]:
         stdout=subprocess.PIPE,
         text=True,
         encoding=ENCODING,
+        errors="replace",
     ) as proc:
         try:
             # These need to be local variables because otherwise mypy doesn't
