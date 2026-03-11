@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.16.4](https://github.com/opengrep/opengrep/releases/tag/v1.16.4) - 11-03-2026
+
+### Improvements
+
+* Improvements in the install script by @dimitris-m in #610
+* Fix text encoding in python CLI to prevent a bug when reading a non-utf8 character by @maciejpirog in #611
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.16.3...v1.16.4
+
+
 ## [1.16.3](https://github.com/opengrep/opengrep/releases/tag/v1.16.3) - 05-03-2026
 
 ### Improvements
