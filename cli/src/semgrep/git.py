@@ -48,6 +48,7 @@ def git_check_output(command: Sequence[str], cwd: Optional[str] = None) -> str:
             command,
             stderr=subprocess.PIPE,
             encoding="utf-8",
+            errors="replace",
             timeout=env.git_command_timeout,
             cwd=cwd,
         ).strip()
@@ -215,6 +216,7 @@ class BaselineHandler:
                 timeout=env.git_command_timeout,
                 capture_output=True,
                 encoding="utf-8",
+                errors="replace",
                 check=True,
             ).stdout
 
@@ -231,6 +233,7 @@ class BaselineHandler:
                     timeout=env.git_command_timeout,
                     capture_output=True,
                     encoding="utf-8",
+                    errors="replace",
                     check=True,
                 ).stdout
             else:

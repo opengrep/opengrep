@@ -26,6 +26,10 @@ def handle_command_errors(func: Callable) -> Callable:
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> NoReturn:
+        # Ensure stdout uses UTF-8 with replacement characters so that scan
+        # results containing non-UTF-8 file content never cause a crash.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         # When running semgrep as a command line tool
         # silence root level logger otherwise logs higher
         # than warning are handled twice
