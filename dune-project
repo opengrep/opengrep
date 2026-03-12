@@ -4,7 +4,7 @@
 ;; to autogenerate the semgrep.opam for 'opam'.
 
 (pin
- (url "git+https://gitlab.com/dimitris-m/memprof-limits.git#dm/ocaml-5.3.0-opengrep")
+ (url "git+https://gitlab.com/dimitris-m/memprof-limits.git#c2cced325a93d2271379f0712db85867b29dbee1")
  (package (name memprof-limits)))
 
 ;; classic dune-project settings
@@ -386,7 +386,7 @@ time and memory used by Semgrep.
     (ocaml (>= "5.3.0"))
     (dune (>= "3.2.0" ))
     (commons (>= "1.5.5"))
-    (memprof-limits (= "dev"))
+    memprof-limits
   )
 )
 
@@ -525,7 +525,7 @@ For more information see https://opengrep.dev.
     ; make our GHA opam cache useless. We might need to install here instead
     ; packages that would avoid this effect.
     git-unix
-    (memprof-limits (= "dev")) ; NOTE: Just to invalidate CI cache for now.
+    memprof-limits
     thread-local-storage ; NOTE: We should not mess with memprof-limits, but in
                          ; fact there is a TLS module in there also; however, it's
                          ; not exposed in the public interface.

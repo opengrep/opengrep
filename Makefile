@@ -261,7 +261,6 @@ install-deps-for-semgrep-core:
 	cd libs/ocaml-tree-sitter-core \
 	&& ./configure \
 	&& ./scripts/install-tree-sitter-lib
-	./scripts/install-memprof-limits-dev.sh
 	make install-opam-deps
 
 # Install OCaml dependencies (globally) from *.opam files.
@@ -456,24 +455,19 @@ shell:
 	nix develop -c $(USER_SHELL)
 
 # Build targets
-# For all the .?submodules=1 we need because nix is weird:
-# https://github.com/NixOS/nix/issues/4423#issuecomment-791352686
-nix-osemgrep:
-	nix build ".?submodules=1#osemgrep"
+nix-build-opengrep:
+	nix build ".#opengrep"
 
-nix-semgrep-core:
-	nix build ".?submodules=1#semgrep-core"
+nix-build-pyopengrep:
+	nix build ".#pyopengrep"
 
-nix-semgrep:
-	nix build ".?submodules=1#semgrep"
-
-# Build + run tests (doesn't run python tests yet)
+# Run tests
 nix-check:
-	nix flake check ".?submodules=1#"
+	nix flake check
 
-# verbose and sandboxing are disabled to enable networking for tests
+# Verbose tests
 nix-check-verbose:
-	nix flake check -L ".?submodules=1#"
+	nix flake check -L
 
 # check flake is valid and not stale
 nix-check-flake:
