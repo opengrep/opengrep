@@ -43,7 +43,13 @@ let map_option f env x = Option.map (f env) x
 
 let either_to_either3 = function
   | Left x -> Left3 x
-  | Right (l, x, r) -> Right3 (l, Some x, r)
+  (* Use Middle3 (not Right3) so that G.interpolated emits the expression
+   * directly as Arg(e) rather than wrapping it in Call(InterpolatedElement,...).
+   * This keeps the ConcatString arg list flat: literal string parts and
+   * interpolated expressions appear at the same level, which is what both
+   * pattern matching (m_arguments_concat) and taint analysis expect.
+   * Note: AST_to_IL already unwraps InterpolatedElement anyway. *)
+  | Right (_l, x, _r) -> Middle3 x
 
 exception UnhandledIdEllipsis
 
@@ -61,9 +67,23 @@ type do_block_generic =
   * (exn_clause_kind wrap * body_or_clauses_generic) list)
   bracket
 
+(* Merge consecutive Left (literal) entries so that escape sequences like \'
+ * don't fragment a single text segment into multiple concat args.
+ * e.g. [Left("foo=", t); Left("\\'", t)] → [Left("foo=\\'", t)] *)
+let merge_adjacent_lefts xs =
+  let rev_merged =
+    List.fold_left
+      (fun acc x ->
+        match (x, acc) with
+        | Left3 (s2, _), Left3 (s1, tok1) :: rest -> Left3 (s1 ^ s2, tok1) :: rest
+        | _ -> x :: acc)
+      [] xs
+  in
+  List.rev rev_merged
+
 let expr_of_quoted (quoted : quoted_generic) : G.expr =
   let l, xs, r = quoted in
-  G.interpolated (l, xs |> List_.map either_to_either3, r)
+  G.interpolated (l, xs |> List_.map either_to_either3 |> merge_adjacent_lefts, r)
 
 let keyval_of_pair p : G.expr =
   match p with
