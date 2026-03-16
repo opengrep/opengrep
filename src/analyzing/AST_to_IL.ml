@@ -1955,7 +1955,8 @@ and no_switch_fallthrough : Lang.t -> bool = function
   | Go
   | Ruby
   | Rust
-  | Clojure->
+  | Clojure
+  | Elixir ->
       true
   | _ -> false
 

@@ -4,6 +4,6 @@ def foo() do
 end
 
 #ERROR:
-def foo(), do: 42
+def bar(), do: 42
 
 

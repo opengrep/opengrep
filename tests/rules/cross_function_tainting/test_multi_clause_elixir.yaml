@@ -1,0 +1,12 @@
+rules:
+  - id: multi_clause_elixir_taint
+    message: Multi-clause Elixir cross-function taint
+    languages:
+      - elixir
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - patterns:
+          - pattern: sink($X)

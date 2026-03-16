@@ -312,7 +312,7 @@ and stmt =
 (* Definitions *)
 (* ------------------------------------------------------------------------- *)
 and definition =
-  | FuncDef of function_definition
+  | FuncDef of function_definition list
   | ModuleDef of module_definition
 
 and function_definition = {
@@ -323,6 +323,7 @@ and function_definition = {
    *)
   f_name : ident;
   f_params : parameters;
+  f_guard : expr option;
   (* bracket is do/end *)
   f_body : stmts bracket;
   f_is_private : bool;

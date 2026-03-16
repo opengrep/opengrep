@@ -390,46 +390,27 @@ and map_stmt env (v : stmt) : G.stmt =
       let d = map_definition env def in
       G.DefStmt d |> G.s
 
-and map_definition env (v : definition) : G.definition =
-  match v with
-  | FuncDef { f_def; f_name; f_params; f_body; f_is_private } ->
-      let id = map_ident_should_not_use env f_name in
-      let ent = G.basic_entity
-          ~attrs:(if f_is_private
-                  then [G.KeywordAttr (G.Private, Tok.fake_tok f_def "" (* vs. [G.fake ""] *))]
-                  else [])
-          id
+and map_param_as_arg env (p : parameter) : G.argument =
+  match p with
+  | P { pname; pdefault = None } ->
+      let e =
+        match pname with
+        | IdEllipsis tok -> G.Ellipsis tok |> G.e
+        | Id _ | IdMetavar _ ->
+            let id = map_ident_should_not_use env pname in
+            G.N (H.name_of_id id) |> G.e
       in
-      let fparams = map_parameters env f_params in
-      let body = map_compound env f_body in
-      let def =
-        {
-          G.fkind = (G.Function, f_def);
-          fparams;
-          frettype = None;
-          fbody = G.FBStmt body;
-        }
-      in
-      (ent, G.FuncDef def)
-  | ModuleDef { m_defmodule = _; m_name; m_body = _tdo, xs, _tend } ->
-      (* TODO: split alias in components, and then use name_of_ids *)
-      let v = map_alias env m_name in
-      let n = H.name_of_id v in
-      let ent = { G.name = G.EN n; attrs = []; tparams = None } in
-      let items = map_stmts env xs in
-      (* alt: we could also generate a Package directive instead *)
-      let def = { G.mbody = G.ModuleStruct (None, items) } in
-      (ent, G.ModuleDef def)
+      G.Arg e
+  | P { pname; pdefault = Some _ } ->
+      let id = map_ident_should_not_use env pname in
+      G.Arg (G.N (H.name_of_id id) |> G.e)
+  | OtherParamExpr e -> G.Arg (map_expr env e)
+  | OtherParamPair (kwd, e) ->
+      let kwd = map_keyword env kwd in
+      let e = map_expr env e in
+      argument_of_pair (Left (kwd, e))
 
-and map_compound env (v : stmts bracket) : G.stmt =
-  let l, xs, r = v in
-  let xs = map_stmts env xs in
-  G.Block (l, xs, r) |> G.s
-
-and map_parameters env (params : parameters) : G.parameters =
-  map_bracket (map_list map_parameter) env params
-
-and map_parameter env (p : parameter) : G.parameter =
+and map_param_to_gparam env (p : parameter) : G.parameter =
   match p with
   | P { pname; pdefault } -> (
       match (pname, pdefault, env) with
@@ -439,12 +420,9 @@ and map_parameter env (p : parameter) : G.parameter =
           let pdefault =
             match pdefault with
             | None -> None
-            | Some (_tk, e) ->
-                let e = map_expr env e in
-                Some e
+            | Some (_tk, e) -> Some (map_expr env e)
           in
-          let pclassic = G.param_of_id ?pdefault id in
-          G.Param pclassic)
+          G.Param (G.param_of_id ?pdefault id))
   | OtherParamExpr e ->
       let e = map_expr env e in
       G.OtherParam (("OtherParamExpr", G.fake ""), [ G.E e ])
@@ -453,6 +431,116 @@ and map_parameter env (p : parameter) : G.parameter =
       let e = map_expr env e in
       let e = keyval_of_pair (Left (kwd, e)) in
       G.OtherParam (("OtherParamPair", G.fake ""), [ G.E e ])
+
+and map_func_clause_to_stab env (clause : function_definition) :
+    stab_clause_generic =
+  let _, params, _ = clause.f_params in
+  let args = List_.map (map_param_as_arg env) params in
+  let guard_opt =
+    match clause.f_guard with
+    | None -> None
+    | Some guard -> Some (G.fake "when", map_expr env guard)
+  in
+  let body = map_body env (let _, b, _ = clause.f_body in b) in
+  ((args, guard_opt), G.fake "->", body)
+
+and map_definition env (v : definition) : G.definition =
+  match v with
+  | FuncDef [ { f_def; f_name; f_params; f_guard = None; f_body; f_is_private } ] ->
+      (* Single clause, no guard: use direct param names (original behavior).
+       * This preserves the simple fparams=[x,y,...] representation so that
+       * taint analysis can match call arguments to parameters by position
+       * without any call-site wrapping. *)
+      let id = map_ident_should_not_use env f_name in
+      let ent =
+        G.basic_entity
+          ~attrs:
+            (if f_is_private then
+               [ G.KeywordAttr (G.Private, Tok.fake_tok f_def "") ]
+             else [])
+          id
+      in
+      let fparams = map_bracket (map_list map_param_to_gparam) env f_params in
+      let l, body, r = f_body in
+      let body_stmts = map_stmts env body in
+      let fdef =
+        {
+          G.fkind = (G.Function, f_def);
+          fparams;
+          frettype = None;
+          fbody = G.FBStmt (G.Block (l, body_stmts, r) |> G.s);
+        }
+      in
+      (ent, G.FuncDef fdef)
+  | FuncDef (clause :: _ as clauses) ->
+      (* Multi-clause or guarded: N synthetic params + Switch.
+       * We build Container(Tuple, [__p0__, ..., __pN__]) as the switch
+       * discriminant so that PatTuple case patterns can destructure it.
+       * Calls remain as N-argument calls (no wrapping needed), and
+       * find_pos_in_actual_args maps each call arg to __pI__ by position. *)
+      let id = map_ident_should_not_use env clause.f_name in
+      let ent =
+        G.basic_entity
+          ~attrs:
+            (if clause.f_is_private then
+               [ G.KeywordAttr (G.Private, Tok.fake_tok clause.f_def "") ]
+             else [])
+          id
+      in
+      let tk = clause.f_def in
+      let _, first_params, _ = clause.f_params in
+      let n = List.length first_params in
+      let param_ids = List.init n (fun i -> (Printf.sprintf "__p%d__" i, tk)) in
+      let synthetic_fparams =
+        Tok.unsafe_fake_bracket
+          (List_.map (fun pid -> G.Param (G.param_of_id pid)) param_ids)
+      in
+      let switch_cond =
+        match param_ids with
+        | [] -> G.L (G.Null tk) |> G.e
+        | ids ->
+            let refs = List_.map (fun pid -> G.N (H.name_of_id pid) |> G.e) ids in
+            G.Container (G.Tuple, Tok.unsafe_fake_bracket refs) |> G.e
+      in
+      let cases =
+        clauses
+        |> List_.map (fun c ->
+               let stab = map_func_clause_to_stab env c in
+               case_and_body_of_stab_clause stab)
+      in
+      let body_stmt =
+        G.Switch (tk, Some (G.Cond switch_cond), cases) |> G.s
+      in
+      let fdef =
+        {
+          G.fkind = (G.Function, tk);
+          fparams = synthetic_fparams;
+          frettype = None;
+          fbody = G.FBStmt body_stmt;
+        }
+      in
+      (ent, G.FuncDef fdef)
+  | FuncDef [] ->
+      let fake_tok = G.fake "def" in
+      let ent = G.basic_entity ("?", fake_tok) in
+      let fdef =
+        {
+          G.fkind = (G.Function, fake_tok);
+          fparams = Tok.unsafe_fake_bracket [];
+          frettype = None;
+          fbody = G.FBStmt (G.Block (Tok.unsafe_fake_bracket []) |> G.s);
+        }
+      in
+      (ent, G.FuncDef fdef)
+  | ModuleDef { m_defmodule = _; m_name; m_body = _tdo, xs, _tend } ->
+      (* TODO: split alias in components, and then use name_of_ids *)
+      let v = map_alias env m_name in
+      let n = H.name_of_id v in
+      let ent = { G.name = G.EN n; attrs = []; tparams = None } in
+      let items = map_stmts env xs in
+      (* alt: we could also generate a Package directive instead *)
+      let def = { G.mbody = G.ModuleStruct (None, items) } in
+      (ent, G.ModuleDef def)
 
 and map_stmts env (xs : stmts) : G.stmt list =
   xs
