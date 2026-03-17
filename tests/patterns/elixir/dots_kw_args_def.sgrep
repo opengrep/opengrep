@@ -1,3 +1,3 @@
-def my_function(..., key1: $_, ...) do
+def $F(..., key1: $_, ...) do
   ...
 end
