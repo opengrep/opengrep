@@ -4,8 +4,6 @@ module Log = Log_call_graph.Log
 (*  *open Shape_and_sig *)
 module Reachable = Graph_reachability
 
-(* Type for function information including AST node *)
-
 (* Function identifier as a path from outermost to innermost scope.
  * For example:
  * - [Some class_name; Some method_name; Some nested_fn] for nested function
@@ -29,17 +27,12 @@ let show_fn_id (fn_id : fn_id) : string =
 let get_fn_name (fn_id : fn_id) : IL.name option =
   List_.last_opt fn_id |> Option.join
 
+(* Type for function information including AST node *)
 type func_info = {
   fn_id : fn_id;
   entity : G.entity option;
   fdef : G.function_definition;
 }
-
-let compare_as_str f1 f2 =
-  let compare_il_name n1 n2 =
-    String.compare (fst n1.IL.ident) (fst n2.IL.ident)
-  in
-  List.compare (Option.compare compare_il_name) f1 f2
 
 (* Position-aware equality for fn_id paths. Compares function identifiers
    using both name AND source position (file, line, column) via Function_id.equal. *)
@@ -145,7 +138,6 @@ let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
     let cmp = compare_fn_id f1 f2 in
     if cmp <> 0 then cmp else Tok.compare t1 t2)
 
-(* Extract all calls from a function body and resolve them to fn_ids *)
 (* Helper function to identify the callee fn_id from a call expression's callee *)
 let identify_callee ?(object_mappings = []) ?(all_funcs = [])
     ?(caller_parent_path = []) ?(call_arity : int option) (callee : G.expr) : fn_id option =
@@ -302,6 +294,7 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                   (G.show_expr callee));
             None
 
+(* Extract all calls from a function body and resolve them to fn_ids *)
 let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path = [])
     (fdef : G.function_definition) : (fn_id * Tok.t) list =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for function");
@@ -503,12 +496,12 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
     | _ -> None
   in
 
-  (* First check if it's a nested function in the same scope - match by string name *)
+  (* First check if it's a nested function in the same scope - position-aware match *)
   let nested_match = List.find_opt (fun f ->
     match List_.init_and_last_opt f.fn_id with
-    | Some (f_parent, Some name) when fst name.IL.ident = callback_name_str ->
+    | Some (f_parent, Some name) when String.equal (fst name.IL.ident) callback_name_str ->
         (* Check if it's in the caller's scope *)
-        Int.equal (compare_as_str f_parent caller_parent_path) 0
+        equal_with_pos f_parent caller_parent_path
     | _ -> false
   ) all_funcs in
 
@@ -548,9 +541,6 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
           | None ->
               Log.debug (fun m -> m "HOF_EXTRACT: Callback %s not found in functions list" callback_name_str);
               None)))
-
-(* Extract HOF callbacks from a function body, returning fn_ids of callbacks with call site tokens.
-   Uses same identification logic as extract_calls to build proper fn_ids. *)
 
 (* Try to identify a callback from a G.argument, returning fn_id, token, and optional _tmp node.
    The _tmp node is present for Elixir ShortLambda to create the intermediate wrapper node. *)
