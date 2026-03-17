@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.16.5](https://github.com/opengrep/opengrep/releases/tag/v1.16.5) - 17-03-2026
+
+### Improvements
+
+* Improvements in recognizing language-specific built-in functions in intrafile tainting by @corneliuhoffman in #617
+* Elixir: Support for multi-clause functions and interpolated strings by @maciejpirog in #614
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.16.4...v1.16.5
+
+
 ## [1.16.4](https://github.com/opengrep/opengrep/releases/tag/v1.16.4) - 11-03-2026
 
 ### Improvements
