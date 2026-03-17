@@ -124,7 +124,7 @@ install_requires = [
 
 setuptools.setup(
     name="opengrep",
-    version="1.16.4",
+    version="1.16.5",
     author="Semgrep Inc., Opengrep",
     author_email="support@opengrep.dev",
     description="Lightweight static analysis for many languages. Find bug variants with patterns that look like source code.",
