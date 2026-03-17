@@ -739,17 +739,13 @@ let lookup_builtin_signature (db : builtin_signature_database) (func_name : stri
     : Signature.t option =
   match BuiltinMap.find_opt func_name db with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      let total_sigs_card = SignatureSet.cardinal sigs in
-      if Int.equal total_sigs_card 1 then
-        Some (SignatureSet.choose sigs).sig_
-      else
-        let filtered_sigs =
-          SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
-        in
-        let signatures_card = SignatureSet.cardinal filtered_sigs in
-        if Int.equal signatures_card 1 then
-          Some (SignatureSet.choose filtered_sigs).sig_
-        else None
+      let filtered_sigs =
+        SignatureSet.filter (fun x -> Int.equal arity x.arity) sigs
+      in
+      let signatures_card = SignatureSet.cardinal filtered_sigs in
+      if Int.equal signatures_card 1 then
+        Some (SignatureSet.choose filtered_sigs).sig_
+      else None
   | _ -> None
 
 let show_name (name_opt : IL.name option) =
@@ -765,7 +761,7 @@ let lookup_signature (db : signature_database) (name : Function_id.t) (arity : i
   let signatures = FunctionMap.find_opt name db.signatures in
   match signatures with
   | Some sigs when not (SignatureSet.is_empty sigs) ->
-      let total_sigs_card = SignatureSet.cardinal sigs in      
+      let total_sigs_card = SignatureSet.cardinal sigs in
       (* If there's only one signature for this function name, return it regardless of arity *)
       if total_sigs_card =*= 1 then
         Some (SignatureSet.choose sigs).sig_

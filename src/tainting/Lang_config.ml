@@ -69,7 +69,9 @@ let python = {
   ];
   collection_configs = [
     (* list.append(item), set.add(item) - item taints this *)
-    ArgTaintsThis { methods = ["append"; "add"; "insert"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgTaintsThis { methods = ["append"; "add"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    (* list.insert(index, item) - item taints this *)
+    ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
     (* list.extend(iterable), dict.update - iterable taints this *)
     ArgTaintsThis { methods = ["extend"; "update"]; arity = 1; taint_arg_index = 0; returns_this = false };
     (* list.pop(), dict.get(key), dict.pop(key) - this taints return *)
@@ -104,6 +106,7 @@ let ruby = {
     ThisTaintsReturn { methods = ["fetch"; "dig"; "slice"]; arity = 1 };
     ThisTaintsReturn { methods = ["fetch"; "dig"]; arity = 2 };
     ThisTaintsReturn { methods = ["to_s"; "join"; "flatten"]; arity = 0 };
+    ThisTaintsReturn { methods = ["join"]; arity = 1 };
   ];
   constructor_names = ["initialize"];
   uses_new_keyword = false;
@@ -127,10 +130,11 @@ let javascript = {
     ArgTaintsThis { methods = ["add"]; arity = 1; taint_arg_index = 0; returns_this = true };
     (* Map.get(key), Array.pop(), Array.shift() - this taints return *)
     ThisTaintsReturn { methods = ["get"]; arity = 1 };
-    ThisTaintsReturn { methods = ["pop"; "shift"; "at"]; arity = 0 };
+    ThisTaintsReturn { methods = ["pop"; "shift"]; arity = 0 };
     ThisTaintsReturn { methods = ["at"]; arity = 1 };
     (* String methods that return modified strings *)
     ThisTaintsReturn { methods = ["toString"; "valueOf"; "join"]; arity = 0 };
+    ThisTaintsReturn { methods = ["join"]; arity = 1 };
   ];
   constructor_names = ["constructor"];
   uses_new_keyword = true;
@@ -154,7 +158,9 @@ let java = {
     (* List: add(index, item) - item (arg 1) taints this, returns void *)
     ArgTaintsThis { methods = ["add"; "set"]; arity = 2; taint_arg_index = 1; returns_this = false };
     (* StringBuilder: append(str) - str (arg 0) taints this, RETURNS THIS for fluent chaining *)
-    ArgTaintsThis { methods = ["append"; "insert"]; arity = 1; taint_arg_index = 0; returns_this = true };
+    ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = true };
+    (* StringBuilder: insert(offset, str) - str (arg 1) taints this, RETURNS THIS *)
+    ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = true };
     (* Collection accessors: get(key/index) - this taints return *)
     ThisTaintsReturn { methods = ["get"; "getFirst"; "getLast"; "peek"; "poll"; "pop"; "remove"]; arity = 1 };
     (* No-arg accessors *)
@@ -187,7 +193,8 @@ let kotlin = {
     (* StringBuilder.append - returns this *)
     ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = true };
     (* get, removeAt, removeLast - this taints return *)
-    ThisTaintsReturn { methods = ["get"; "getOrNull"; "getOrDefault"]; arity = 1 };
+    ThisTaintsReturn { methods = ["get"; "getOrNull"]; arity = 1 };
+    ThisTaintsReturn { methods = ["getOrDefault"]; arity = 2 };
     ThisTaintsReturn { methods = ["first"; "last"; "removeFirst"; "removeLast"]; arity = 0 };
     ThisTaintsReturn { methods = ["toString"]; arity = 0 };
   ];
@@ -209,7 +216,7 @@ let scala = {
     (* mutable Map: put(key, value) or update(key, value) *)
     ArgTaintsThis { methods = ["put"; "update"; "addOne"]; arity = 2; taint_arg_index = 1; returns_this = false };
     (* accessors *)
-    ThisTaintsReturn { methods = ["head"; "last"; "apply"; "get"]; arity = 0 };
+    ThisTaintsReturn { methods = ["head"; "last"]; arity = 0 };
     ThisTaintsReturn { methods = ["apply"; "get"; "getOrElse"]; arity = 1 };
     ThisTaintsReturn { methods = ["mkString"; "toString"]; arity = 0 };
   ];
@@ -227,7 +234,9 @@ let csharp = {
   ];
   collection_configs = [
     (* List.Add, HashSet.Add - item taints this *)
-    ArgTaintsThis { methods = ["Add"; "Push"; "Enqueue"; "Insert"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgTaintsThis { methods = ["Add"; "Push"; "Enqueue"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    (* List.Insert(index, item) - item taints this *)
+    ArgTaintsThis { methods = ["Insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
     (* Dictionary.Add(key, value) - value taints this *)
     ArgTaintsThis { methods = ["Add"; "TryAdd"]; arity = 2; taint_arg_index = 1; returns_this = false };
     (* List[i], Dictionary[key], Queue.Dequeue, Stack.Pop - this taints return *)
@@ -282,7 +291,9 @@ let swift = {
   ];
   collection_configs = [
     (* Array.append - item taints this *)
-    ArgTaintsThis { methods = ["append"; "insert"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    (* Array.insert(element, at:) - element taints this *)
+    ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 0; returns_this = false };
     (* Dictionary updateValue(value, forKey:) - value taints this *)
     ArgTaintsThis { methods = ["updateValue"]; arity = 2; taint_arg_index = 0; returns_this = false };
     (* Array subscript, popLast, removeFirst - this taints return *)

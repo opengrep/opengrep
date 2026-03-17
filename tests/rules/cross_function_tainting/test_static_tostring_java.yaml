@@ -1,0 +1,15 @@
+rules:
+  - id: test-tostring-taint
+    languages: [java]
+    mode: taint
+    pattern-sources:
+      - pattern: "(HttpServletRequest $REQ).getParameterValues(...)"
+    pattern-propagators:
+      - pattern: "$VAR = $TAINTED"
+        from: "$TAINTED"
+        to: "$VAR"
+    pattern-sinks:
+      - pattern: "$LOG.info($STR + ...)"
+      - pattern: "$LOG.info(... + $STR)"
+    message: tainted data in log
+    severity: ERROR

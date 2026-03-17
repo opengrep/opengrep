@@ -1,0 +1,12 @@
+rules:
+  - id: taint-func-param
+    message: Tainted data reaches sink
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - focus-metavariable: $SOURCE
+          - pattern: func (..., $SOURCE $TYPE, ...) { ... }
+    pattern-sinks:
+      - pattern: sink($X)

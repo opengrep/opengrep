@@ -41,6 +41,16 @@ let compare_as_str f1 f2 =
   in
   List.compare (Option.compare compare_il_name) f1 f2
 
+(* Position-aware equality for fn_id paths. Compares function identifiers
+   using both name AND source position (file, line, column) via Function_id.equal. *)
+let equal_with_pos f1 f2 =
+  let equal_il_name n1 n2 =
+    Function_id.equal
+      (Function_id.of_il_name n1)
+      (Function_id.of_il_name n2)
+  in
+  List.equal (Option.equal equal_il_name) f1 f2
+
 (* Get arity of a function from its definition *)
 let get_func_arity (fdef : G.function_definition) : int =
   let params = fdef.fparams in
@@ -148,13 +158,13 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
     (* Simple function call: foo() *)
     | G.N (G.Id ((id, _), _id_info)) ->
         let callee_name_str = id in
-        (* First check if it's a nested function in the same scope - use string matching *)
+        (* First check if it's a nested function in the same scope.
+           Use position-aware match to distinguish same-named parent functions. *)
         let nested_match =
           List.find_opt (fun f ->
             match List_.init_and_last_opt f.fn_id with
             | Some (f_parent, Some name) when String.equal (fst name.IL.ident) callee_name_str ->
-                (* Check if parent path matches *)
-                Int.equal (compare_as_str f_parent caller_parent_path) 0
+                equal_with_pos f_parent caller_parent_path
             | _ -> false
           ) all_funcs
         in
