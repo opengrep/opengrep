@@ -41,9 +41,15 @@ check_has_curl() {
 # Function to get available versions - already checked when running main
 get_available_versions() {
     check_has_curl
-    curl -s https://api.github.com/repos/opengrep/opengrep/releases |
+    local VERSIONS
+    VERSIONS=$(curl -sS https://api.github.com/repos/opengrep/opengrep/releases |
         grep '"tag_name":' |
-        sed -E 's/.*"([^"]+)".*/\1/'
+        sed -E 's/.*"([^"]+)".*/\1/') || true
+    if [ -z "$VERSIONS" ]; then
+        echo "Error: Failed to fetch available versions from GitHub." 1>&2
+        exit 1
+    fi
+    echo "$VERSIONS"
 }
 
 # Function to validate version
@@ -162,7 +168,7 @@ main() {
             exit 1
         fi
 
-        curl --fail --location --progress-bar "${URL}" > "${INST}/opengrep"
+        curl --fail --show-error --location --progress-bar "${URL}" > "${INST}/opengrep"
 
         local SIG_EXISTS=true
 
