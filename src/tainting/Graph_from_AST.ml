@@ -670,13 +670,15 @@ let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_
                 let class_name_str = fst cls.IL.ident in
                 List.find_map (fun (fn_id, params) ->
                   match fn_id with
-                  | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callee_name_str -> Some params
+                  | [Some c; Some m]
+                    when String.equal (fst c.IL.ident) class_name_str
+                      && String.equal (fst m.IL.ident) callee_name_str -> Some params
                   | _ -> None
                 ) user_hofs
             | None ->
                 List.find_map (fun (fn_id, params) ->
                   match fn_id with
-                  | [None; Some m] when fst m.IL.ident = callee_name_str -> Some params
+                  | [None; Some m] when String.equal (fst m.IL.ident) callee_name_str -> Some params
                   | _ -> None
                 ) user_hofs
           in
