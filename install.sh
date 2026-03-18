@@ -216,11 +216,20 @@ main() {
 
         echo "Testing binary..."
         # Test by calling --version on the downloaded binary
-        TEST=$("${INST}/opengrep" --version 2> /dev/null || true)
+        STDERR_LOG=$(mktemp)
+        TEST=$("${INST}/opengrep" --version 2>"$STDERR_LOG" || true)
         if [ -z "$TEST" ]; then
             echo "Failed to execute installed binary: ${INST}/opengrep." 1>&2
+            if [ -s "$STDERR_LOG" ]; then
+                echo "Error output:" 1>&2
+                cat "$STDERR_LOG" 1>&2
+                echo 1>&2
+                echo "Full error log saved to: $STDERR_LOG" 1>&2
+            fi
+            echo "If reporting this issue, please include the above output." 1>&2
             exit 1
         fi
+        rm -f "$STDERR_LOG"
 
         echo
         echo "Successfully installed Opengrep binary at ${INST}/opengrep"
