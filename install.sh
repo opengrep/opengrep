@@ -41,9 +41,15 @@ check_has_curl() {
 # Function to get available versions - already checked when running main
 get_available_versions() {
     check_has_curl
-    curl -s https://api.github.com/repos/opengrep/opengrep/releases |
+    local VERSIONS
+    VERSIONS=$(curl -sS https://api.github.com/repos/opengrep/opengrep/releases |
         grep '"tag_name":' |
-        sed -E 's/.*"([^"]+)".*/\1/'
+        sed -E 's/.*"([^"]+)".*/\1/') || true
+    if [ -z "$VERSIONS" ]; then
+        echo "Error: Failed to fetch available versions from GitHub." 1>&2
+        exit 1
+    fi
+    echo "$VERSIONS"
 }
 
 # Function to validate version
@@ -162,7 +168,7 @@ main() {
             exit 1
         fi
 
-        curl --fail --location --progress-bar "${URL}" > "${INST}/opengrep"
+        curl --fail --show-error --location --progress-bar "${URL}" > "${INST}/opengrep"
 
         local SIG_EXISTS=true
 
@@ -216,11 +222,20 @@ main() {
 
         echo "Testing binary..."
         # Test by calling --version on the downloaded binary
-        TEST=$("${INST}/opengrep" --version 2> /dev/null || true)
+        STDERR_LOG=$(mktemp)
+        TEST=$("${INST}/opengrep" --version 2>"$STDERR_LOG" || true)
         if [ -z "$TEST" ]; then
             echo "Failed to execute installed binary: ${INST}/opengrep." 1>&2
+            if [ -s "$STDERR_LOG" ]; then
+                echo "Error output:" 1>&2
+                cat "$STDERR_LOG" 1>&2
+                echo 1>&2
+                echo "Full error log saved to: $STDERR_LOG" 1>&2
+            fi
+            echo "If reporting this issue, please include the above output." 1>&2
             exit 1
         fi
+        rm -f "$STDERR_LOG"
 
         echo
         echo "Successfully installed Opengrep binary at ${INST}/opengrep"
