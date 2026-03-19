@@ -79,6 +79,16 @@ jobs:
     needs: build-windows-x86
     uses: ./.github/workflows/build-windows-binary-x86.yml
 
+  test-homebrew-formula-arm64:
+    needs: build-osx-binary-arm64
+    uses: ./.github/workflows/test-homebrew-formula.yml
+
+  test-homebrew-formula-x86:
+    needs: build-osx-binary-x86
+    uses: ./.github/workflows/test-homebrew-formula.yml
+    with:
+      arch: x86_64
+
   release:
     runs-on: ubuntu-latest
 
@@ -95,6 +105,8 @@ jobs:
       - build-osx-binary-x86
       - build-windows-x86 # redundant
       - build-windows-binary-x86
+      - test-homebrew-formula-arm64
+      - test-homebrew-formula-x86
 
     steps:
       - name: Download All Artifacts
