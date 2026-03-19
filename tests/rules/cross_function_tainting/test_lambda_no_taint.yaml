@@ -1,0 +1,11 @@
+rules:
+  - id: test-lambda-no-taint
+    message: Tainted data flows to sink
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
