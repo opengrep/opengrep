@@ -69,6 +69,7 @@ type env = {
   rec_point_label : label option;
   ctx : ctx;
   rec_point_lvals : rec_point_lvals option;
+  inside_function : bool;
 }
 
 let empty_ctx = { entity_names = IdentSet.empty }
@@ -80,6 +81,7 @@ let empty_env (lang : Lang.t) : env =
     rec_point_label = None;
     ctx = empty_ctx;
     rec_point_lvals = None;
+    inside_function = false;
     lang }
 
 (*****************************************************************************)
@@ -2173,6 +2175,22 @@ and stmt_aux env st =
       (* We want to analyze any expressions in 'ty'. *)
       let env, ss, _ = type_with_pre_stmts env ty in
       (env, ss)
+  | G.DefStmt (ent, G.FuncDef fdef) when env.inside_function ->
+      (* Translate nested function declarations as lambda assignments so that
+       * the CFG builder extracts them into lambdas_cfgs, enabling the taint
+       * engine to propagate closure-captured variables through them. *)
+      let env, lv = lval_of_ent env ent in
+      let _, il_fdef =
+        (* See NOTE(config.stmts)! *)
+        function_definition
+          { env with stmts = [];
+                     cont_label = None;
+                     break_labels = [];
+                     rec_point_label = None;
+                     rec_point_lvals = None }
+          fdef
+      in
+      (env, [ mk_s (Instr (mk_i (AssignAnon (lv, Lambda il_fdef)) (Related (G.S st)))) ])
   | G.DefStmt def -> (env, [ mk_s (MiscStmt (DefStmt def)) ])
   | G.DirectiveStmt dir -> (env, [ mk_s (MiscStmt (DirectiveStmt dir)) ])
   | G.Block xs ->
@@ -2639,6 +2657,7 @@ and function_definition env fdef =
       rec_point_label_stmts
     | _ -> env, []
   in
+  let env = { env with inside_function = true } in
   let env, fbody = function_body env fdef.G.fbody in
   let fbody = rec_point_label_stmts @ fbody in
   (env, { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody })
