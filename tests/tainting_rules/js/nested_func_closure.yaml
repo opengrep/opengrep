@@ -1,0 +1,11 @@
+rules:
+  - id: test-nested-func-closure
+    message: Taint flows through closure variable in nested function declaration
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
