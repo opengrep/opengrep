@@ -16,10 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate tag input
+        env:
+          TAG_INPUT: ${{ inputs.tag }}
         run: |
-          echo "${{ inputs.tag }}" | grep -P '^(v\d+\.\d+\.\d+(-\S+)?|[^v\d].*)$' || {
+          echo "$TAG_INPUT" | grep -P '^(v\d+\.\d+\.\d+(-\S+)?|[^v\d].*)$' || {
             echo "Tag must follow semantic versioning (e.g. v1.2.3 or v1.2.3-beta)."
-            echo "Provided tag: '${{ inputs.tag }}'"
+            echo "Provided tag: '$TAG_INPUT'"
             exit 1
           }
 
