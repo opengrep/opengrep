@@ -2532,9 +2532,9 @@ and function_definition env fdef : function_definition =
   let fbody = rec_point_label_stmts @ fbody in
   { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }
 
-(*****************************************************************************)
+(****************************************************************************)
 (* Entry points *)
-(*****************************************************************************)
+(****************************************************************************)
 
 let function_definition lang ?ctx fdef : function_definition =
   let env = { (empty_env lang) with ctx = ctx ||| empty_ctx } in
