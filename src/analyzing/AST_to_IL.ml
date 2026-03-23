@@ -83,15 +83,15 @@ let empty_env (lang : Lang.t) : env =
 (* Error management *)
 (*****************************************************************************)
 
-exception Fixme of stmts * fixme_kind * G.any
+exception Fixme of fixme_kind * G.any
 
 let sgrep_construct any_generic : 'a =
-  raise (Fixme ([], Sgrep_construct, any_generic))
+  raise (Fixme (Sgrep_construct, any_generic))
 
-let todo any_generic : 'a = raise (Fixme ([], ToDo, any_generic))
+let todo any_generic : 'a = raise (Fixme (ToDo, any_generic))
 
 let impossible any_generic : 'a =
-  raise (Fixme ([], Impossible, any_generic))
+  raise (Fixme (Impossible, any_generic))
 
 let log_fixme kind gany : unit =
   let toks = AST_generic_helpers.ii_of_any gany in
@@ -441,8 +441,8 @@ and pattern_assign_statements env ?(eorig = NoOrig) exp pat : stmt list =
     let pre_ss, lval, post_ss = pattern env pat in
     pre_ss @ [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ] @ post_ss
   with
-  | Fixme (stmts, kind, any_generic) ->
-      stmts @ fixme_stmt kind any_generic
+  | Fixme (kind, any_generic) ->
+      fixme_stmt kind any_generic
 
 (*****************************************************************************)
 (* Exceptions *)
@@ -486,11 +486,11 @@ and assign env ~g_expr lhs tok rhs_exp : stmts * exp =
         let instr = mk_s (Instr (mk_i (Assign (lval, rhs_exp)) eorig)) in
         (ss_lv @ [instr], mk_e (Fetch lval) (SameAs lhs))
       with
-      | Fixme (stmts, kind, any_generic) ->
+      | Fixme (kind, any_generic) ->
           (* lval translation failed, we use a fresh lval instead *)
           let fixme_lval = fresh_lval ~str:"_FIXME" tok in
           let instr = mk_s (Instr (mk_i (Assign (fixme_lval, rhs_exp)) eorig)) in
-          (stmts @ [instr], fixme_exp kind any_generic (related_exp g_expr)))
+          ([instr], fixme_exp kind any_generic (related_exp g_expr)))
   | G.Container (((G.Tuple | G.List | G.Array) as ckind), (tok1, lhss, tok2)) ->
       (* TODO: handle cases like [a, b, ...rest] = e *)
       (* E1, ..., En = RHS *)
@@ -766,7 +766,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
               let ss_lv, lv = lval env obj in
               (ss_lv, lv)
             with
-            | Fixme (_stmts, _, _) ->
+            | Fixme _ ->
                 ([], fresh_lval ~str:"Fixme" tok))
         | _ -> ([], fresh_lval tok)
       in
@@ -812,7 +812,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
             CallSpecial (res, special, args)) in
         (ss_args @ call_ss, call_exp)
       with
-      | Fixme (_stmts, kind, any_generic) ->
+      | Fixme (kind, any_generic) ->
           let fixme = fixme_exp kind any_generic (related_exp g_expr) in
           let call_ss, call_exp = call_instr tok eorig ~void (fun res -> Call (res, fixme, args)) in
           (ss_args @ call_ss, call_exp))
@@ -1115,8 +1115,8 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                 (Some lval,
                  pre_ss @ [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ] @ post_ss)
               with
-              | Fixme (stmts, kind, any_generic) ->
-                  (None, stmts @ fixme_stmt kind any_generic)
+              | Fixme (kind, any_generic) ->
+                  (None, fixme_stmt kind any_generic)
             in
             begin match lval with
               | Some lval -> (ss_e @ new_stmts) :: ss_acc, lval :: lvals
@@ -1261,8 +1261,8 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
 
 and expr env ?void e_gen : stmts * exp =
   try expr_aux env ?void e_gen with
-  | Fixme (stmts, kind, any_generic) ->
-      (stmts, fixme_exp kind any_generic (related_exp e_gen))
+  | Fixme (kind, any_generic) ->
+      ([], fixme_exp kind any_generic (related_exp e_gen))
 
 and expr_opt env tok : G.expr option -> stmts * exp = function
   | None ->
@@ -2459,7 +2459,7 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
 
 and stmt env st : stmt list =
   try stmt_aux env st with
-  | Fixme (_stmts, kind, any_generic) -> fixme_stmt kind any_generic
+  | Fixme (kind, any_generic) -> fixme_stmt kind any_generic
 
 (* We keep it really simple, very far from what would be the proper translation
  * (see https://www.python.org/dev/peps/pep-0343/):
