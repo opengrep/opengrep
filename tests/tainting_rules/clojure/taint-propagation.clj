@@ -92,6 +92,15 @@
   ;; ruleid: taint-call
   (sink y1))
 
+;; map destructuring without :as or :or
+(defn f [{x :a}]
+  ;; ruleid: taint-call
+  (sink x))
+
+(defn f [{x :x [y1 y2] :y}]
+  ;; ruleid: taint-call
+  (sink y1))
+
 (defn f [{:syms [::x y] :as opts}]
   (if opts
     ;; ruleid: taint-call

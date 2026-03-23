@@ -409,43 +409,6 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
   v#visit_program () ast;
   !calls |> dedup_fn_ids
 
-(* Detect if a function is a user-defined HOF by checking if it calls any of its parameters.
-   Returns a list of (parameter_name, parameter_index) for called parameters. *)
-let detect_user_hof (fdef : G.function_definition) : (string * int) list =
-  (* Get parameter names - handle both regular params and Ruby's &block params *)
-  let (_lp, params, _rp) = fdef.fparams in
-  let param_names =
-    params
-    |> List.filter_map (fun param ->
-        match param with
-        | G.Param { pname = Some (id, _); _ } -> Some id
-        (* Ruby block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
-        | G.OtherParam (_, [G.Pa (G.Param { pname = Some (id, _); _ })]) -> Some id
-        | _ -> None)
-  in
-  (* Check which parameters are called in the function body *)
-  let called_params = ref [] in
-  let v =
-    object
-      inherit [_] G.iter as super
-
-      method! visit_expr env e =
-        match e.G.e with
-        (* Check for calls to parameter names *)
-        | G.Call ({ e = G.N (G.Id ((name, _), _)); _ }, _args) ->
-            (match List.find_index (fun p -> p = name) param_names with
-            | Some idx ->
-                called_params := (name, idx) :: !called_params;
-                super#visit_expr env e
-            | None -> super#visit_expr env e)
-        | _ -> super#visit_expr env e
-    end
-  in
-  v#visit_function_definition () fdef;
-  !called_params |> List.sort_uniq (fun (n1, i1) (n2, i2) ->
-    let c = String.compare n1 n2 in
-    if c <> 0 then c else Int.compare i1 i2)
-
 (* Helper to extract callback name from an argument expression.
    Handles: foo, &foo, Module.foo, module.func (DotAccess), Elixir &func/n
    Returns: (callback_name, tok, shortlambda_tmp_opt)
@@ -471,7 +434,8 @@ let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t * IL.name o
   (* Elixir: &func/n - ShortLambda wrapping a call to the named function.
      Structure: OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
      Create a _tmp node to match what AST_to_IL creates for the anonymous wrapper. *)
-  | G.OtherExpr (("ShortLambda", shortlambda_tok), [G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ }]) ->
+  | G.OtherExpr (("ShortLambda", shortlambda_tok),
+                 [G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ }]) ->
       (match inner_e.G.e with
       | G.Call ({ e = G.N (G.Id (id, id_info)); _ }, _) ->
           let callback_name = AST_to_IL.var_of_id_info id id_info in
@@ -563,7 +527,7 @@ let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) 
 
 (* Extract HOF callbacks from a single call expression.
    Returns list of (fn_id, tok, tmp_opt) where tmp_opt is the _tmp node for ShortLambda. *)
-let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_funcs
+let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~all_funcs
     ~caller_parent_path (callee : G.expr) (args : G.arguments) : (fn_id * Tok.t * IL.name option) list =
   let try_arg arg = try_identify_callback_arg ~all_funcs ~caller_parent_path arg in
   let try_arg_at_index idx =
@@ -571,54 +535,31 @@ let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~user_hofs ~all_
     | Some arg -> try_arg arg
     | None -> None
   in
-  (* First, check ALL arguments for function references - any function passed as arg is a callback *)
+  (* Check ALL arguments for function references - any function passed as arg is a callback *)
   let all_callback_args =
     Tok.unbracket args
     |> List.filter_map try_arg
   in
-  (* Then check for specific configured HOF patterns for additional context *)
+  (* Check for specific configured HOF patterns for additional context *)
   let configured_callbacks = match callee.G.e with
   (* Method HOF: arr.map(callback) - callback at index 0 *)
   | G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _)))
     when List.mem method_name method_hofs ->
       try_arg_at_index 0 |> Option.to_list
   (* Function HOF: map(callback, arr) *)
-  | G.N (G.Id (id, id_info)) ->
+  | G.N (G.Id (id, _id_info)) ->
       let func_name = fst id in
-      let callee_name_str = fst (AST_to_IL.var_of_id_info id id_info).IL.ident in
       (match List.find_opt (fun (names, _) -> List.mem func_name names) function_hofs with
       | Some (_, callback_index) ->
           try_arg_at_index callback_index |> Option.to_list
-      | None ->
-          (* Check user-defined HOFs *)
-          let current_class = List_.hd_opt caller_parent_path |> Option.join in
-          let hof_params = match current_class with
-            | Some cls ->
-                let class_name_str = fst cls.IL.ident in
-                List.find_map (fun (fn_id, params) ->
-                  match fn_id with
-                  | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callee_name_str -> Some params
-                  | _ -> None
-                ) user_hofs
-            | None ->
-                List.find_map (fun (fn_id, params) ->
-                  match fn_id with
-                  | [None; Some m] when fst m.IL.ident = callee_name_str -> Some params
-                  | _ -> None
-                ) user_hofs
-          in
-          (match hof_params with
-          | Some params ->
-              params |> List.filter_map (fun (_, idx) -> try_arg_at_index idx)
-          | None -> []))
+      | None -> [])
   | _ -> []
   in
-  (* Combine - dedup would need to handle the tmp_opt too, skip for now *)
   all_callback_args @ configured_callbacks
 
 (* Extract HOF callbacks, returning (fn_id, tok, tmp_opt) tuples.
    tmp_opt is Some IL.name for ShortLambda callbacks that need a _tmp intermediate node. *)
-let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs = [])
+let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
     ?(caller_parent_path = [])
     ~(lang : Lang.t) (fdef : G.function_definition) : (fn_id * Tok.t * IL.name option) list =
   let hof_configs = (Lang_config.get lang).hof_configs in
@@ -643,7 +584,7 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(user_hofs = []) ?(all_funcs
         (match e.G.e with
         | G.Call (callee, args) ->
             let found = extract_hof_callbacks_from_call
-              ~method_hofs ~function_hofs ~user_hofs ~all_funcs ~caller_parent_path
+              ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
               callee args
             in
             callbacks := found @ !callbacks
@@ -682,17 +623,6 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
         | None -> funcs)
       [] ast
   in
-  (* Detect user-defined HOFs *)
-  let user_hofs =
-    funcs
-    |> List.filter_map (fun { fn_id; fdef; _ } ->
-         let called_params = detect_user_hof fdef in
-         if List.is_empty called_params then
-           None
-         else
-           Some (fn_id, called_params))
-  in
-
   (* Visit all calls in the AST, tracking the current function context *)
   Visit_function_defs.visit_with_parent_path
     (fun opt_ent parent_path fdef ->
@@ -723,7 +653,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
 
           (* Extract HOF callbacks and add edges: callback -> caller (or callback -> _tmp -> caller for ShortLambda) *)
           let callback_calls =
-            extract_hof_callbacks ~_object_mappings:object_mappings ~user_hofs ~all_funcs:funcs ~caller_parent_path:fn_id ~lang fdef
+            extract_hof_callbacks ~_object_mappings:object_mappings ~all_funcs:funcs ~caller_parent_path:fn_id ~lang fdef
           in
           (* Add labeled edges for each callback - edge from callback to caller for bottom-up analysis.
              For ShortLambda, create intermediate _tmp node: callback -> _tmp -> caller *)
@@ -774,7 +704,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     in
     Visit_function_defs.fold_toplevel_calls (fun acc _call_e callee args ->
       let found = extract_hof_callbacks_from_call
-        ~method_hofs ~function_hofs ~user_hofs ~all_funcs:funcs ~caller_parent_path:[]
+        ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
         callee args
       in
       found @ acc
