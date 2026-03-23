@@ -173,6 +173,34 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
         in
         Visit_function_defs.visit report_func_def_with_name ast;
       Exit_code.ok ~__LOC__
+  | DumpILPP (file, lang) ->
+      let parse = Parse_target.parse_and_resolve_name lang file in
+      let ast = parse.Parsing_result2.ast in
+      let xs = AST_to_IL.stmt lang (AST_generic.stmt1 ast) in
+      print "// === Toplevel ===";
+      (match xs with
+      | [] -> print "// (none)"
+      | _ -> print (IL_pp.pp_stmts xs));
+      let report_func_def_with_name ent_opt fdef =
+        let name =
+          match ent_opt with
+          | None -> "<lambda>"
+          | Some { G.name = EN n; _ } -> (
+              match n with
+              | G.Id ((s, _), _) -> s
+              | G.IdQualified { name_last = ((s, _), _); _ } -> s)
+          | Some _ -> "<entity>"
+        in
+        (* Creating a CFG and throwing it away here so the implicit return
+         * analysis pass may be run in order to mark implicit return nodes.
+         *)
+        let _ = CFG_build.cfg_of_gfdef lang fdef in
+        let il_fdef = AST_to_IL.function_definition lang fdef in
+        print "";
+        print (IL_pp.pp_function_definition ~name il_fdef)
+      in
+      Visit_function_defs.visit report_func_def_with_name ast;
+      Exit_code.ok ~__LOC__
   | DumpConfig config_str ->
       let in_docker = !Semgrep_envvars.v.in_docker in
       let config = Rules_config.parse_config_string ~in_docker config_str in
