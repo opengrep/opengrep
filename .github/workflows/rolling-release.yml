@@ -159,7 +159,7 @@ jobs:
           popd
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Sign all binaries in artifacts
         run: |
