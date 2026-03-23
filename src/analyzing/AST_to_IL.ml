@@ -1792,7 +1792,13 @@ and parameters params : param list =
   params |> Tok.unbracket
   |> List_.map (function
        | G.Param { pname = Some i; pinfo; pdefault; _ } ->
-           Param { pname = var_of_id_info i pinfo; pdefault }
+           let pname = var_of_id_info i pinfo in
+           (* Clojure/Elixir/OCaml encode multi-clause functions with a
+              single synthetic !!_implicit_param! that wraps all actual
+              arguments. Translate it as ParamRest so the taint signature
+              layer treats it as a rest param without a special-case check. *)
+           if G.is_implicit_param (fst i) then ParamRest { pname; pdefault }
+           else Param { pname; pdefault }
        | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
            ParamRest { pname = var_of_id_info i pinfo; pdefault }
        | G.ParamPattern pat -> ParamPattern pat

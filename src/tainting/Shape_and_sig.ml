@@ -644,13 +644,7 @@ end = struct
   let of_IL_params il_params =
     il_params
     |> List_.map (function
-         | IL.Param { pname = { ident = s, _; _ }; _ } ->
-             (* Clojure's !!_implicit_param! is a synthetic wrapper for all actual
-              * arguments. Mark it as PRest so that find_pos_in_actual_args gathers
-              * the unwrapped CList arguments into a combined indexed shape, enabling
-              * correct resolution of per-element offsets (Oint i) during signature
-              * instantiation. *)
-             if AST_generic.is_implicit_param s then PRest s else P s
+         | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
          (* functions signatures don't look into the shape of the argument. *)
          | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
          | IL.ParamPattern pat -> (
