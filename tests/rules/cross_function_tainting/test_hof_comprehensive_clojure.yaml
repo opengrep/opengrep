@@ -1,0 +1,15 @@
+rules:
+  - id: test-hof-taint
+    message: Taint should flow through higher-order functions (custom and built-in)
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+        - pattern: |
+            (source ...)
+    pattern-sinks:
+      - pattern-either:
+        - pattern: |
+            (sink ...)

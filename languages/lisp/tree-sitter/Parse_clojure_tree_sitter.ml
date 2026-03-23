@@ -1126,6 +1126,7 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
           (G.PatKeyVal (key, value) :: acc)
           rest_forms
       | (`Kwd_lit _or_as  :: _  as rest_forms)-> List.rev acc, rest_forms
+      | [] -> List.rev acc, []
       | _ -> raise_parse_error "Invalid map binding form."
     in
     let pats, rest = keyval_and_rest [] forms in
