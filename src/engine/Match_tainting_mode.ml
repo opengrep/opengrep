@@ -586,10 +586,8 @@ let build_interfile_rule_context (xconf : Match_env.xconfig)
       in
       let project_targets =
         xtargets
-        |> List_.filter_map (fun xtarget ->
-               let { path = { internal_path_to_content = file; _ }; _ } =
-                 xtarget
-               in
+        |> List_.filter_map (fun (xtarget : Xtarget.t) ->
+               let file = xtarget.path.internal_path_to_content in
                let ast, _skipped_tokens = lazy_force xtarget.lazy_ast_and_errors in
                let per_file_formula_cache =
                  Formula_cache.mk_specialized_formula_cache [ rule ]

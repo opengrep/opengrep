@@ -916,7 +916,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
                  else None
              | _ -> None)
     in
-    if interfile_rules = [] then ([], None, [])
+    if List_.null interfile_rules then ([], None, [])
     else
       let resolved_xtargets =
         targets

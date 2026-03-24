@@ -614,14 +614,15 @@ let filter_irrelevant_rules_tests () =
 
 let interfile_taint_tests () =
   [
-    t "interfile taint across files" (fun () ->
+    t "interfile taint across python imports" (fun () ->
         Testutil_files.with_tempdir ~chdir:true (fun root ->
             let rule_file = root / "rule.yaml" in
+            let source_file = root / "source.py" in
             let helper_file = root / "helpers.py" in
             let app_file = root / "app.py" in
+            let safe_app_file = root / "safe_app.py" in
             UFile.write_file rule_file
-              {|
-rules:
+              {|rules:
 - id: interfile-python
   languages:
     - python
@@ -635,16 +636,27 @@ rules:
   pattern-sinks:
     - pattern: sink(...)
 |};
-            UFile.write_file helper_file
-              {|
-def helper():
+            UFile.write_file source_file
+              {|def source():
     return tainted()
 |};
             UFile.write_file app_file
-              {|
-from helpers import helper
+              {|import helpers
 
-sink(helper())  # ruleid: interfile-python
+def run():
+    sink(helpers.helper())  # ruleid: interfile-python
+|};
+            UFile.write_file helper_file
+              {|from source import source
+
+def helper():
+    return source()
+|};
+            UFile.write_file safe_app_file
+              {|import helpers
+
+def run():
+    sink("safe")
 |};
             let rule =
               match Parse_rule.parse rule_file |> Result.get_ok with
@@ -652,30 +664,46 @@ sink(helper())  # ruleid: interfile-python
                   { rule with mode }
               | _ -> Alcotest.fail "expected a single taint rule"
             in
-            let helper_xtarget =
-              Test_engine.xtarget_of_file (Xlang.of_lang Lang.Python)
-                helper_file
-            in
-            let app_xtarget =
-              Test_engine.xtarget_of_file (Xlang.of_lang Lang.Python) app_file
-            in
+            let xlang = Xlang.of_lang Lang.Python in
+            let xtarget_of_file = Test_engine.xtarget_of_file xlang in
+            let source_xtarget = xtarget_of_file source_file in
+            let helper_xtarget = xtarget_of_file helper_file in
+            let app_xtarget = xtarget_of_file app_file in
+            let safe_app_xtarget = xtarget_of_file safe_app_file in
             let xconf = Match_env.default_xconfig in
             let interfile_context =
               Match_tainting_mode.build_interfile_contexts xconf
-                [ (rule, [ helper_xtarget; app_xtarget ]) ]
+                [
+                  ( rule,
+                    [
+                      source_xtarget;
+                      helper_xtarget;
+                      app_xtarget;
+                      safe_app_xtarget;
+                    ] );
+                ]
             in
-            let res =
+            let check_target xtarget =
               Match_rules.check ~match_hook:(fun _pm -> ()) ~timeout:None
-                ~interfile_context xconf [ (rule :> R.rule) ] app_xtarget
+                ~interfile_context xconf [ (rule :> R.rule) ] xtarget
             in
-            let actual_matches = res.matches |> List_.map TCM.location_of_pm in
+            let app_matches =
+              let res = check_target app_xtarget in
+              res.matches |> List_.map TCM.location_of_pm
+            in
+            let safe_app_matches =
+              let res = check_target safe_app_xtarget in
+              res.matches |> List_.map TCM.location_of_pm
+            in
             Alcotest.(check int) "one interfile finding" 1
-              (List.length actual_matches);
-            let actual_file, actual_line = List.hd actual_matches in
+              (List.length app_matches);
+            let actual_file, actual_line = List.hd app_matches in
             Alcotest.(check bool) "match is reported on the sink file" true
               (Fpath.equal app_file actual_file);
             Alcotest.(check int) "match is reported on the sink line" 3
-              actual_line));
+              actual_line;
+            Alcotest.(check int) "no finding in safe file" 0
+              (List.length safe_app_matches)));
   ]
 
 let lang_tainting_tests () =

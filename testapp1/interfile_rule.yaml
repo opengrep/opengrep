@@ -1,0 +1,13 @@
+rules:
+- id: testapp1.python-interfile-taint
+  languages:
+    - python
+  severity: ERROR
+  message: Tainted data crosses files and reaches sink()
+  mode: taint
+  options:
+    interfile: true
+  pattern-sources:
+    - pattern: tainted(...)
+  pattern-sinks:
+    - pattern: sink(...)

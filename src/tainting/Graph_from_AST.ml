@@ -250,13 +250,14 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                   Option.map (fun f -> f.fn_id) free_fn_match
         end)
         (* Qualified call: Module.foo() *)
-        | G.N (G.IdQualified { name_last = (id, _), name_info; _ }) -> (
+        | G.N
+            (G.IdQualified { name_last = id, _typeargsTODO; name_info; _ }) -> (
             match !(name_info.G.id_resolved) with
             | Some (G.ImportedEntity canonical, _sid) ->
                 lookup_imported_entity imported_entity_index canonical
             | Some _
             | None ->
-                let callee_name_str = id in
+                let callee_name_str = fst id in
                 (* Use string matching to find the qualified function *)
                 let qualified_match = List.find_opt (fun f ->
                   is_local_function f &&
@@ -703,7 +704,7 @@ let collect_functions ~(lang : Lang.t) (ast : G.program) : func_info list =
 
 (* Build call graph - Visit_function_defs handles regular functions,
    arrow functions, and lambda assignments like const x = () => {} *)
-let build_call_graph ~(lang : Lang.t) ?(object_mappings = [])
+let build_call_graph_with_context ~(lang : Lang.t) ?(object_mappings = [])
     ?(all_funcs : func_info list option)
     ?(imported_entity_index = CanonicalMap.empty)
     ?(current_file : Fpath.t option) (ast : G.program) : Call_graph.G.t =
@@ -935,6 +936,10 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = [])
 
   graph
 
+let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
+    : Call_graph.G.t =
+  build_call_graph_with_context ~lang ~object_mappings ast
+
 let common_seg_prefix paths =
   let rec common_prefix xs ys =
     match (xs, ys) with
@@ -1023,7 +1028,8 @@ let build_project_call_graph ~(lang : Lang.t)
   files
   |> List.iter (fun file ->
          let local_graph =
-           build_call_graph ~lang ~object_mappings:file.object_mappings
+           build_call_graph_with_context ~lang
+             ~object_mappings:file.object_mappings
              ~all_funcs ~imported_entity_index
              ~current_file:file.path.internal_path_to_content file.ast
          in
