@@ -130,20 +130,26 @@ let is_relevant_rule_for_xtarget r xconf xtarget =
   in
   let xconf = Match_env.adjust_xconfig_with_rule_options xconf r.R.options in
   let is_relevant =
-    match xconf.filter_irrelevant_rules with
-    | NoPrefiltering -> true
-    | PrefilterWithCache cache -> (
-        match Analyze_rule.regexp_prefilter_of_rule ~cache:(Some cache) r with
-        | None -> true
-        | Some (prefilter_formula, func) ->
-          (* NOTE: If [lazy_content] is shared in > 1 thread, then this is not
-           * thread-safe. However, each [Xtarget.t] is only accessed in 1 worker
-           * task, so there should be no race. *)
-          let content = Lazy.force lazy_content in
-          Log.info (fun m ->
-              let s = Semgrep_prefilter_j.string_of_formula prefilter_formula in
-              m "looking for %s in %s" s !!internal_path_to_content);
-          func content)
+    if xconf.config.interfile then
+      (* Regex prefiltering is file-local, but interfile taint rules may split
+       * their source and sink across different files. Skipping the prefilter
+       * avoids falsely dropping files that only contain one side of the flow. *)
+      true
+    else
+      match xconf.filter_irrelevant_rules with
+      | NoPrefiltering -> true
+      | PrefilterWithCache cache -> (
+          match Analyze_rule.regexp_prefilter_of_rule ~cache:(Some cache) r with
+          | None -> true
+          | Some (prefilter_formula, func) ->
+            (* NOTE: If [lazy_content] is shared in > 1 thread, then this is not
+             * thread-safe. However, each [Xtarget.t] is only accessed in 1 worker
+             * task, so there should be no race. *)
+            let content = Lazy.force lazy_content in
+            Log.info (fun m ->
+                let s = Semgrep_prefilter_j.string_of_formula prefilter_formula in
+                m "looking for %s in %s" s !!internal_path_to_content);
+            func content)
   in
   if not is_relevant then
     Log.info (fun m ->

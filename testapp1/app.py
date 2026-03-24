@@ -1,14 +1,12 @@
-import helpers
+from flask import Flask
+from handlers import read_cmd
+import runner
+
+app = Flask(__name__)
 
 
-def sink(value):
-    print(value)
-
-
-def main():
-    payload = helpers.build_payload()
-    sink(payload)
-
-
-if __name__ == "__main__":
-    main()
+@app.route("/run")
+def run_from_request():
+    cmd = read_cmd()
+    runner.run_cmd(cmd)
+    return "ok"

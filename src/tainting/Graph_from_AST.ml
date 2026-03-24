@@ -308,7 +308,17 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
             | Some _
             | None ->
                 let method_name_str = id in
-                (* Look up obj's class in object_mappings *)
+                (* First try: treat obj as a module name and look up in
+                   imported entities. This handles bare `import runner` in
+                   Python where the naming pass does not set ImportedModule. *)
+                let module_lookup =
+                  lookup_imported_entity imported_entity_index
+                    [ _obj_name; method_name_str ]
+                in
+                (match module_lookup with
+                | Some _ as result -> result
+                | None ->
+                (* Fall back: look up obj's class in object_mappings *)
                 let obj_class_opt =
                   object_mappings
                   |> List.find_opt (fun (var_name, _class_name) ->
@@ -344,7 +354,7 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                             | [single_match] -> Some single_match.fn_id
                             | _ -> None)  (* Still 0 or multiple matches *)
                         | None -> None))  (* No arity info, can't disambiguate *)
-                | None -> None))
+                | None -> None)))
         (* Method call: obj.method() - look up obj's class *)
         | _ ->
             Log.debug (fun m ->

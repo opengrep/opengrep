@@ -616,6 +616,7 @@ let interfile_taint_tests () =
   [
     t "interfile taint across python imports" (fun () ->
         Testutil_files.with_tempdir ~chdir:true (fun root ->
+            let _ = Domain.DLS.set cache (Hashtbl.create 101) in
             let rule_file = root / "rule.yaml" in
             let source_file = root / "source.py" in
             let helper_file = root / "helpers.py" in
@@ -670,7 +671,12 @@ def run():
             let helper_xtarget = xtarget_of_file helper_file in
             let app_xtarget = xtarget_of_file app_file in
             let safe_app_xtarget = xtarget_of_file safe_app_file in
-            let xconf = Match_env.default_xconfig in
+            let xconf =
+              {
+                Match_env.default_xconfig with
+                filter_irrelevant_rules = Match_env.PrefilterWithCache cache;
+              }
+            in
             let interfile_context =
               Match_tainting_mode.build_interfile_contexts xconf
                 [
