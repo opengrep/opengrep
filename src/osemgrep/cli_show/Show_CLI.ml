@@ -46,6 +46,7 @@ and show_kind =
   | DumpCST of Fpath.t * Lang.t
   | DumpAST of Fpath.t * Lang.t
   | DumpIL  of Fpath.t * Lang.t
+  | DumpILPP of Fpath.t * Lang.t
   | DumpConfig of Rules_config.config_string
   | DumpRule of Fpath.t
   | DumpRuleV2 of Fpath.t
@@ -128,6 +129,13 @@ let cmdline_term : conf Term.t =
       | [ "dump-il"; lang_str; file ] ->
           let lang = Lang.of_string lang_str in
           DumpIL (Fpath.v file, lang)
+      | [ "dump-il-pp"; file ] ->
+          let path = Fpath.v file in
+          let lang = Lang.lang_of_filename_exn path in
+          DumpILPP (path, lang)
+      | [ "dump-il-pp"; lang_str; file ] ->
+          let lang = Lang.of_string lang_str in
+          DumpILPP (Fpath.v file, lang)
       | [ "dump-pattern"; lang_str; pattern ] ->
           let lang = Lang.of_string lang_str in
           DumpPattern (pattern, lang)
@@ -181,6 +189,8 @@ let man : Cmdliner.Manpage.block list =
        resolved)";
     `Pre "opengrep show dump-il [<LANG>] <FILE>";
     `P "Dump the internal representation of the file";
+    `Pre "opengrep show dump-il-pp [<LANG>] <FILE>";
+    `P "Dump the IL of the file in C-like syntax (human-readable pretty-print)";
     `Pre "opengrep show dump-cst [<LANG>] <FILE>";
     `P "Dump the concrete syntax tree of the file (tree sitter only)";
     `Pre "opengrep show dump-pattern <LANG> <STRING>";
