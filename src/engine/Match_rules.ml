@@ -276,6 +276,7 @@ let scc_match_hook (match_hook : Core_match.t -> unit)
 
 let check
     ?(dependency_match_table : Match_SCA_mode.dependency_match_table option)
+    ?(interfile_context : Match_tainting_mode.interfile_context option)
     ~match_hook ~(timeout : timeout_config option) (xconf : Match_env.xconfig)
     (rules : Rule.rules) (xtarget : Xtarget.t) : Core_result.matches_single_file
     =
@@ -319,6 +320,7 @@ let check
     taint_rules_groups
     |> List.concat_map (fun taint_rules ->
            Match_tainting_mode.check_rules ~match_hook
+             ?interfile_context
              ~per_rule_boilerplate_fn:per_rule_boilerplate_fn_opt
              taint_rules xconf xtarget)
   in

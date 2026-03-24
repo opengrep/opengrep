@@ -612,6 +612,72 @@ let filter_irrelevant_rules_tests () =
 (* Tainting tests *)
 (*****************************************************************************)
 
+let interfile_taint_tests () =
+  [
+    t "interfile taint across files" (fun () ->
+        Testutil_files.with_tempdir ~chdir:true (fun root ->
+            let rule_file = root / "rule.yaml" in
+            let helper_file = root / "helpers.py" in
+            let app_file = root / "app.py" in
+            UFile.write_file rule_file
+              {|
+rules:
+- id: interfile-python
+  languages:
+    - python
+  severity: ERROR
+  message: Interfile taint
+  mode: taint
+  options:
+    interfile: true
+  pattern-sources:
+    - pattern: tainted(...)
+  pattern-sinks:
+    - pattern: sink(...)
+|};
+            UFile.write_file helper_file
+              {|
+def helper():
+    return tainted()
+|};
+            UFile.write_file app_file
+              {|
+from helpers import helper
+
+sink(helper())  # ruleid: interfile-python
+|};
+            let rule =
+              match Parse_rule.parse rule_file |> Result.get_ok with
+              | [ ({ R.mode = `Taint _ as mode; _ } as rule) ] ->
+                  { rule with mode }
+              | _ -> Alcotest.fail "expected a single taint rule"
+            in
+            let helper_xtarget =
+              Test_engine.xtarget_of_file (Xlang.of_lang Lang.Python)
+                helper_file
+            in
+            let app_xtarget =
+              Test_engine.xtarget_of_file (Xlang.of_lang Lang.Python) app_file
+            in
+            let xconf = Match_env.default_xconfig in
+            let interfile_context =
+              Match_tainting_mode.build_interfile_contexts xconf
+                [ (rule, [ helper_xtarget; app_xtarget ]) ]
+            in
+            let res =
+              Match_rules.check ~match_hook:(fun _pm -> ()) ~timeout:None
+                ~interfile_context xconf [ (rule :> R.rule) ] app_xtarget
+            in
+            let actual_matches = res.matches |> List_.map TCM.location_of_pm in
+            Alcotest.(check int) "one interfile finding" 1
+              (List.length actual_matches);
+            let actual_file, actual_line = List.hd actual_matches in
+            Alcotest.(check bool) "match is reported on the sink file" true
+              (Fpath.equal app_file actual_file);
+            Alcotest.(check int) "match is reported on the sink line" 3
+              actual_line));
+  ]
+
 let lang_tainting_tests () =
   let taint_tests_path = tests_path / "tainting_rules" in
   let lang_specs =
@@ -802,6 +868,7 @@ let tests () =
       lang_autofix_tests ~polyglot_pattern_path;
       eval_regression_tests ();
       filter_irrelevant_rules_tests ();
+      interfile_taint_tests ();
       maturity_tests ();
       full_rule_taint_maturity_tests ();
       full_rule_regression_tests ();

@@ -3,6 +3,11 @@ module G = AST_generic
 module Log = Log_call_graph.Log
 (*  *open Shape_and_sig *)
 module Reachable = Graph_reachability
+module CanonicalMap = Map.Make (struct
+  type t = string list
+
+  let compare = Stdlib.compare
+end)
 
 (* Function identifier as a path from outermost to innermost scope.
  * For example:
@@ -34,6 +39,13 @@ type func_info = {
   fdef : G.function_definition;
 }
 
+type project_file = {
+  path : Target.path;
+  ast : G.program;
+  object_mappings : (G.name * G.name) list;
+  funcs : func_info list;
+}
+
 (* Position-aware equality for fn_id paths. Compares function identifiers
    using both name AND source position (file, line, column) via Function_id.equal. *)
 let equal_with_pos f1 f2 =
@@ -60,6 +72,23 @@ let fn_id_to_node (fn_id : fn_id) : node option =
 
 (* Equality for fn_id using compare_fn_id *)
 let equal_fn_id f1 f2 = Int.equal (compare_fn_id f1 f2) 0
+
+let normalize_file = Fun.compose Fpath.to_string Fpath.normalize
+
+let matches_current_file current_file (func : func_info) =
+  match fn_id_to_node func.fn_id with
+  | Some node ->
+      let file, _, _ = Function_id.to_file_line_col node in
+      String.equal file (normalize_file current_file)
+  | None -> false
+
+let lookup_imported_entity imported_entity_index canonical =
+  match CanonicalMap.find_opt canonical imported_entity_index with
+  | Some [ func ] -> Some func.fn_id
+  | Some (_ :: _ :: _)
+  | Some []
+  | None ->
+      None
 
 (* Extract Go receiver type from method *)
 let extract_go_receiver_type (fdef : G.function_definition) : string option =
@@ -140,15 +169,27 @@ let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
 
 (* Helper function to identify the callee fn_id from a call expression's callee *)
 let identify_callee ?(object_mappings = []) ?(all_funcs = [])
-    ?(caller_parent_path = []) ?(call_arity : int option) (callee : G.expr) : fn_id option =
+    ?(imported_entity_index = CanonicalMap.empty) ?(current_file : Fpath.t option)
+    ?(caller_parent_path = []) ?(call_arity : int option) (callee : G.expr) :
+    fn_id option =
   (* Extract class from caller_parent_path if present *)
   let current_class = match caller_parent_path with
     | Some cls :: _ -> Some cls
     | _ -> None
   in
+  let is_local_function func =
+    match current_file with
+    | Some file -> matches_current_file file func
+    | None -> true
+  in
   match callee.G.e with
     (* Simple function call: foo() *)
-    | G.N (G.Id ((id, _), _id_info)) ->
+    | G.N (G.Id ((id, _), id_info)) -> (
+        match !(id_info.G.id_resolved) with
+        | Some (G.ImportedEntity canonical, _sid) ->
+            lookup_imported_entity imported_entity_index canonical
+        | Some _
+        | None ->
         let callee_name_str = id in
         (* First check if it's a nested function in the same scope.
            Use position-aware match to distinguish same-named parent functions. *)
@@ -173,6 +214,7 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                   let class_name_str = fst class_name.IL.ident in
                   (* Check if this method exists in the class - use string matching *)
                   let method_match = List.find_opt (fun f ->
+                      is_local_function f &&
                       match f.fn_id with
                       | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callee_name_str -> true
                       | _ -> false
@@ -190,6 +232,7 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                   | None ->
                       (* It's a free function call, not a method - use string matching *)
                       let free_fn_match = List.find_opt (fun f ->
+                          is_local_function f &&
                           match f.fn_id with
                           | [None; Some name] when fst name.IL.ident = callee_name_str -> true
                           | _ -> false
@@ -199,22 +242,29 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                   (* Top-level free function - use string matching *)
                   let free_fn_match =
                     List.find_opt (fun f ->
+                      is_local_function f &&
                       match f.fn_id with
                       | [None; Some name] when fst name.IL.ident = callee_name_str -> true
                       | _ -> false
                     ) all_funcs in
                   Option.map (fun f -> f.fn_id) free_fn_match
-        end
+        end)
         (* Qualified call: Module.foo() *)
-        | G.N (G.IdQualified { name_last = (id, _), _; _ }) ->
-            let callee_name_str = id in
-            (* Use string matching to find the qualified function *)
-            let qualified_match = List.find_opt (fun f ->
-              match f.fn_id with
-              | [None; Some name] when fst name.IL.ident = callee_name_str -> true
-              | _ -> false
-            ) all_funcs in
-            Option.map (fun f -> f.fn_id) qualified_match
+        | G.N (G.IdQualified { name_last = (id, _), name_info; _ }) -> (
+            match !(name_info.G.id_resolved) with
+            | Some (G.ImportedEntity canonical, _sid) ->
+                lookup_imported_entity imported_entity_index canonical
+            | Some _
+            | None ->
+                let callee_name_str = id in
+                (* Use string matching to find the qualified function *)
+                let qualified_match = List.find_opt (fun f ->
+                  is_local_function f &&
+                  match f.fn_id with
+                  | [None; Some name] when fst name.IL.ident = callee_name_str -> true
+                  | _ -> false
+                ) all_funcs in
+                Option.map (fun f -> f.fn_id) qualified_match)
         (* Method call: this.method() or self.method() *)
         | G.DotAccess
             ( { e = G.IdSpecial ((G.This | G.Self), _); _ },
@@ -227,6 +277,7 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                 let class_name_str = fst class_name.IL.ident in
                 (* Find all methods matching class and name *)
                 let method_matches = List.filter (fun f ->
+                  is_local_function f &&
                   match f.fn_id with
                   | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
                   | _ -> false
@@ -246,48 +297,54 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                         | _ -> None)  (* Still 0 or multiple matches *)
                     | None -> None))  (* No arity info, can't disambiguate *)
             | None -> None)
-        (* Method call: obj.method() - look up obj's class *)
         | G.DotAccess
-            ( { e = G.N (G.Id ((obj_name, _), _)); _ },
+            ( { e = G.N (G.Id ((_obj_name, _), obj_info)); _ },
               _,
-              G.FN (G.Id ((id, _), _id_info)) ) ->
-            let method_name_str = id in
-            (* Look up obj's class in object_mappings *)
-            let obj_class_opt =
-              object_mappings
-              |> List.find_opt (fun (var_name, _class_name) ->
-                     match var_name with
-                     | G.Id ((var_str, _), _) -> var_str = obj_name
-                     | _ -> false)
-              |> Option.map (fun (_var_name, class_name) -> class_name)
-            in
-            (match obj_class_opt with
-            | Some class_name ->
-                let class_name_str = match class_name with
-                  | G.Id ((str, _), _) -> str
-                  | _ -> ""
+              G.FN (G.Id ((id, _), _id_info)) ) -> (
+            match !(obj_info.G.id_resolved) with
+            | Some (G.ImportedModule canonical_module, _sid) ->
+                lookup_imported_entity imported_entity_index (canonical_module @ [ id ])
+            | Some _
+            | None ->
+                let method_name_str = id in
+                (* Look up obj's class in object_mappings *)
+                let obj_class_opt =
+                  object_mappings
+                  |> List.find_opt (fun (var_name, _class_name) ->
+                         match var_name with
+                         | G.Id ((var_str, _), _) -> var_str = _obj_name
+                         | _ -> false)
+                  |> Option.map (fun (_var_name, class_name) -> class_name)
                 in
-                (* Find all methods matching class and name *)
-                let method_matches = List.filter (fun f ->
-                  match f.fn_id with
-                  | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
-                  | _ -> false
-                ) all_funcs in
-                (match method_matches with
-                | [single_match] -> Some single_match.fn_id  (* Exactly one match by name *)
-                | [] -> None
-                | _ ->
-                    (* Multiple matches - filter by arity if available *)
-                    (match call_arity with
-                    | Some arity ->
-                        let arity_matches = List.filter (fun f ->
-                          Int.equal (get_func_arity f.fdef) arity
-                        ) method_matches in
-                        (match arity_matches with
-                        | [single_match] -> Some single_match.fn_id
-                        | _ -> None)  (* Still 0 or multiple matches *)
-                    | None -> None))  (* No arity info, can't disambiguate *)
-            | None -> None)
+                (match obj_class_opt with
+                | Some class_name ->
+                    let class_name_str = match class_name with
+                      | G.Id ((str, _), _) -> str
+                      | _ -> ""
+                    in
+                    (* Find all methods matching class and name *)
+                    let method_matches = List.filter (fun f ->
+                      is_local_function f &&
+                      match f.fn_id with
+                      | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
+                      | _ -> false
+                    ) all_funcs in
+                    (match method_matches with
+                    | [single_match] -> Some single_match.fn_id  (* Exactly one match by name *)
+                    | [] -> None
+                    | _ ->
+                        (* Multiple matches - filter by arity if available *)
+                        (match call_arity with
+                        | Some arity ->
+                            let arity_matches = List.filter (fun f ->
+                              Int.equal (get_func_arity f.fdef) arity
+                            ) method_matches in
+                            (match arity_matches with
+                            | [single_match] -> Some single_match.fn_id
+                            | _ -> None)  (* Still 0 or multiple matches *)
+                        | None -> None))  (* No arity info, can't disambiguate *)
+                | None -> None))
+        (* Method call: obj.method() - look up obj's class *)
         | _ ->
             Log.debug (fun m ->
                 m "CALL_EXTRACT: Unmatched call pattern: %s"
@@ -296,6 +353,7 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
 
 (* Extract all calls from a function body and resolve them to fn_ids *)
 let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path = [])
+    ?(imported_entity_index = CanonicalMap.empty) ?(current_file : Fpath.t option)
     (fdef : G.function_definition) : (fn_id * Tok.t) list =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for function");
   let calls = ref [] in
@@ -311,7 +369,11 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
             (match !(id_info.G.id_resolved) with
             | None ->
                 (* Unresolved - try to identify it as a function *)
-                (match identify_callee ~object_mappings ~all_funcs ~caller_parent_path arg_exp with
+                (match
+                   identify_callee ~object_mappings ~all_funcs
+                     ~imported_entity_index ?current_file ~caller_parent_path
+                     arg_exp
+                 with
                 | Some fn_id ->
                     Log.debug (fun m -> m "CALL_EXTRACT: Found unresolved Id that is a function, adding as implicit call");
                     calls := (fn_id, tok) :: !calls
@@ -329,7 +391,11 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
         | G.Call (callee, args) ->
             let (_, args_list, _) = args in
             let call_arity = List.length args_list in
-            (match identify_callee ~object_mappings ~all_funcs ~caller_parent_path ~call_arity callee with
+            (match
+               identify_callee ~object_mappings ~all_funcs
+                 ~imported_entity_index ?current_file ~caller_parent_path
+                 ~call_arity callee
+             with
             | Some fn_id ->
                 (* Extract token from the call expression for edge label *)
                 let tok =
@@ -355,7 +421,9 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
 
 (* Extract calls from top-level statements (outside any function).
    This returns a list of (callee_fn_id, call_tok) pairs. *)
-let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.program) : (fn_id * Tok.t) list =
+let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = [])
+    ?(imported_entity_index = CanonicalMap.empty) ?(current_file : Fpath.t option)
+    (ast : G.program) : (fn_id * Tok.t) list =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for top-level statements");
   let calls = ref [] in
 
@@ -390,7 +458,11 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
             in
             if call_pos >= 0 && not (is_inside_function call_pos) then (
               (* Top-level call - no class context *)
-              match identify_callee ~object_mappings ~all_funcs ~caller_parent_path:[] callee with
+              match
+                identify_callee ~object_mappings ~all_funcs
+                  ~imported_entity_index ?current_file ~caller_parent_path:[]
+                  callee
+              with
               | Some fn_id ->
                   let tok =
                     match AST_generic_helpers.ii_of_any (G.E e) with
@@ -452,6 +524,7 @@ let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t * IL.name o
 
 (* Helper to identify a callback fn_id, checking nested functions in same scope first *)
 let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
+    ?(imported_entity_index = CanonicalMap.empty) ?(current_file : Fpath.t option)
     (callback_name : IL.name) : fn_id option =
   let callback_name_str = fst callback_name.IL.ident in
   (* Extract class from caller_parent_path if present *)
@@ -459,6 +532,16 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
     | Some cls :: _ -> Some cls
     | _ -> None
   in
+  let is_local_function func =
+    match current_file with
+    | Some file -> matches_current_file file func
+    | None -> true
+  in
+  match !(callback_name.IL.id_info.G.id_resolved) with
+  | Some (G.ImportedEntity canonical, _sid) ->
+      lookup_imported_entity imported_entity_index canonical
+  | Some _
+  | None ->
 
   (* First check if it's a nested function in the same scope - position-aware match *)
   let nested_match = List.find_opt (fun f ->
@@ -479,6 +562,7 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
         | Some cls ->
             let class_name_str = fst cls.IL.ident in
             List.find_opt (fun f ->
+              is_local_function f &&
               match f.fn_id with
               | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callback_name_str -> true
               | _ -> false
@@ -493,6 +577,7 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
       | None ->
           (* Check for top-level function - match by string name *)
           let top_level_match = List.find_opt (fun f ->
+            is_local_function f &&
             match f.fn_id with
             | [None; Some name] when fst name.IL.ident = callback_name_str -> true
             | _ -> false
@@ -508,7 +593,10 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
 
 (* Try to identify a callback from a G.argument, returning fn_id, token, and optional _tmp node.
    The _tmp node is present for Elixir ShortLambda to create the intermediate wrapper node. *)
-let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) : (fn_id * Tok.t * IL.name option) option =
+let try_identify_callback_arg ~all_funcs ~caller_parent_path
+    ?(imported_entity_index = CanonicalMap.empty)
+    ?(current_file : Fpath.t option) (arg : G.argument) :
+    (fn_id * Tok.t * IL.name option) option =
   match arg with
   | G.Arg expr ->
       (* Also handle this.foo pattern *)
@@ -520,7 +608,8 @@ let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) 
       (match callback_opt with
       | Some (callback_name, tok, tmp_opt) ->
           (* Use real token from the callback argument *)
-          identify_callback ~all_funcs ~caller_parent_path callback_name
+          identify_callback ~all_funcs ~imported_entity_index ?current_file
+            ~caller_parent_path callback_name
           |> Option.map (fun fn_id -> (fn_id, tok, tmp_opt))
       | None -> None)
   | _ -> None
@@ -528,8 +617,13 @@ let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) 
 (* Extract HOF callbacks from a single call expression.
    Returns list of (fn_id, tok, tmp_opt) where tmp_opt is the _tmp node for ShortLambda. *)
 let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~all_funcs
-    ~caller_parent_path (callee : G.expr) (args : G.arguments) : (fn_id * Tok.t * IL.name option) list =
-  let try_arg arg = try_identify_callback_arg ~all_funcs ~caller_parent_path arg in
+    ~caller_parent_path ?(imported_entity_index = CanonicalMap.empty)
+    ?(current_file : Fpath.t option) (callee : G.expr) (args : G.arguments) :
+    (fn_id * Tok.t * IL.name option) list =
+  let try_arg arg =
+    try_identify_callback_arg ~all_funcs ~imported_entity_index ?current_file
+      ~caller_parent_path arg
+  in
   let try_arg_at_index idx =
     match List.nth_opt (Tok.unbracket args) idx with
     | Some arg -> try_arg arg
@@ -560,7 +654,8 @@ let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~all_funcs
 (* Extract HOF callbacks, returning (fn_id, tok, tmp_opt) tuples.
    tmp_opt is Some IL.name for ShortLambda callbacks that need a _tmp intermediate node. *)
 let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
-    ?(caller_parent_path = [])
+    ?(imported_entity_index = CanonicalMap.empty)
+    ?(current_file : Fpath.t option) ?(caller_parent_path = [])
     ~(lang : Lang.t) (fdef : G.function_definition) : (fn_id * Tok.t * IL.name option) list =
   let hof_configs = (Lang_config.get lang).hof_configs in
   let method_hofs =
@@ -584,7 +679,8 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
         (match e.G.e with
         | G.Call (callee, args) ->
             let found = extract_hof_callbacks_from_call
-              ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
+              ~method_hofs ~function_hofs ~all_funcs ~imported_entity_index
+              ?current_file ~caller_parent_path
               callee args
             in
             callbacks := found @ !callbacks
@@ -595,11 +691,28 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
   v#visit_function_definition () fdef;
   !callbacks
 
+let collect_functions ~(lang : Lang.t) (ast : G.program) : func_info list =
+  Visit_function_defs.fold_with_parent_path
+    (fun funcs opt_ent parent_path fdef ->
+      match fn_id_of_entity ~lang opt_ent parent_path fdef with
+      | Some fn_id ->
+          let func = { fn_id; entity = opt_ent; fdef } in
+          func :: funcs
+      | None -> funcs)
+    [] ast
+
 (* Build call graph - Visit_function_defs handles regular functions,
    arrow functions, and lambda assignments like const x = () => {} *)
-let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
-    : Call_graph.G.t =
+let build_call_graph ~(lang : Lang.t) ?(object_mappings = [])
+    ?(all_funcs : func_info list option)
+    ?(imported_entity_index = CanonicalMap.empty)
+    ?(current_file : Fpath.t option) (ast : G.program) : Call_graph.G.t =
   let graph = Call_graph.G.create () in
+  let is_local_function func =
+    match current_file with
+    | Some file -> matches_current_file file func
+    | None -> true
+  in
 
   (* Create a special top_level node to represent code outside functions *)
   let top_level_node : node =
@@ -609,20 +722,13 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
   in
   Call_graph.G.add_vertex graph top_level_node;
 
-  let funcs =
-    Visit_function_defs.fold_with_parent_path
-      (fun funcs opt_ent parent_path fdef ->
-        match fn_id_of_entity ~lang opt_ent parent_path fdef with
-        | Some fn_id ->
-            let func = { fn_id; entity = opt_ent; fdef } in
-            (* Add vertex using the node (last element of fn_id) *)
-            (match fn_id_to_node fn_id with
-            | Some node -> Call_graph.G.add_vertex graph node
-            | None -> ());
-            func :: funcs
-        | None -> funcs)
-      [] ast
-  in
+  let local_funcs = collect_functions ~lang ast in
+  let funcs = Option.value ~default:local_funcs all_funcs in
+  funcs
+  |> List.iter (fun func ->
+         match fn_id_to_node func.fn_id with
+         | Some node -> Call_graph.G.add_vertex graph node
+         | None -> ());
   (* Visit all calls in the AST, tracking the current function context *)
   Visit_function_defs.visit_with_parent_path
     (fun opt_ent parent_path fdef ->
@@ -637,7 +743,9 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
 
           (* Extract calls - class context is already in fn_id *)
           let callee_calls =
-            extract_calls ~object_mappings ~all_funcs:funcs ~caller_parent_path:fn_id fdef
+            extract_calls ~object_mappings ~all_funcs:funcs
+              ~imported_entity_index ?current_file ~caller_parent_path:fn_id
+              fdef
           in
 
           (* Add labeled edges for each call - edge from callee to caller for bottom-up analysis *)
@@ -653,7 +761,9 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
 
           (* Extract HOF callbacks and add edges: callback -> caller (or callback -> _tmp -> caller for ShortLambda) *)
           let callback_calls =
-            extract_hof_callbacks ~_object_mappings:object_mappings ~all_funcs:funcs ~caller_parent_path:fn_id ~lang fdef
+            extract_hof_callbacks ~_object_mappings:object_mappings
+              ~all_funcs:funcs ~imported_entity_index ?current_file
+              ~caller_parent_path:fn_id ~lang fdef
           in
           (* Add labeled edges for each callback - edge from callback to caller for bottom-up analysis.
              For ShortLambda, create intermediate _tmp node: callback -> _tmp -> caller *)
@@ -677,7 +787,10 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     ast;
 
   (* Extract calls from top-level code (outside any function) and add edges to <top_level> *)
-  let toplevel_calls = extract_toplevel_calls ~object_mappings ~all_funcs:funcs ast in
+  let toplevel_calls =
+    extract_toplevel_calls ~object_mappings ~all_funcs:funcs
+      ~imported_entity_index ?current_file ast
+  in
   List.iter
     (fun (callee_fn_id, call_tok) ->
       match fn_id_to_node callee_fn_id with
@@ -704,7 +817,8 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     in
     Visit_function_defs.fold_toplevel_calls (fun acc _call_e callee args ->
       let found = extract_hof_callbacks_from_call
-        ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
+        ~method_hofs ~function_hofs ~all_funcs:funcs
+        ~imported_entity_index ?current_file ~caller_parent_path:[]
         callee args
       in
       found @ acc
@@ -751,6 +865,8 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
               let other_class_name_str =
                 Option.map (fun n -> fst n.IL.ident) other_class_opt
               in
+              is_local_function other
+              &&
               (not
                  (Object_initialization.is_constructor lang other_name
                     other_class_name_str))
@@ -792,6 +908,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     let class_methods =
       List.filter
         (fun func ->
+          is_local_function func &&
           let func_class_opt = match func.fn_id with class_opt :: _ -> class_opt | [] -> None in
           match func_class_opt with
           | Some func_class_il_name ->
@@ -816,6 +933,102 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
   close_out oc;
   *)
 
+  graph
+
+let common_seg_prefix paths =
+  let rec common_prefix xs ys =
+    match (xs, ys) with
+    | x :: xs', y :: ys' when String.equal x y -> x :: common_prefix xs' ys'
+    | _ -> []
+  in
+  match paths with
+  | [] -> []
+  | path :: rest ->
+      List.fold_left
+        (fun prefix next -> common_prefix prefix (Fpath.segs (Fpath.normalize next)))
+        (Fpath.segs (Fpath.normalize path))
+        rest
+
+let rec drop_prefix prefix xs =
+  match (prefix, xs) with
+  | p :: ps, x :: xs' when String.equal p x -> drop_prefix ps xs'
+  | _ -> xs
+
+let module_candidates_of_path common_prefix (path : Fpath.t) =
+  let rel_segs =
+    Fpath.segs (Fpath.normalize path) |> drop_prefix common_prefix
+  in
+  match List.rev rel_segs with
+  | [] -> []
+  | base :: rev_dirs ->
+      let dirs = List.rev rev_dirs in
+      let _, base_name, _ = Filename_.dbe_of_filename_noext_ok base in
+      let module_path, basename_only =
+        match base_name with
+        | "__init__"
+        | "index" -> (
+            let basename_only =
+              match List.rev dirs with
+              | dir :: _ -> [ dir ]
+              | [] -> []
+            in
+            (dirs, basename_only))
+        | _ -> (dirs @ [ base_name ], [ base_name ])
+      in
+      [ module_path; basename_only ]
+      |> List.filter (fun segments -> segments <> [])
+      |> List.sort_uniq Stdlib.compare
+
+let build_imported_entity_index (files : project_file list) =
+  let common_prefix =
+    files |> List_.map (fun file -> file.path.internal_path_to_content)
+    |> common_seg_prefix
+  in
+  List.fold_left
+    (fun acc file ->
+      let module_candidates =
+        module_candidates_of_path common_prefix file.path.internal_path_to_content
+      in
+      file.funcs
+      |> List.fold_left
+           (fun acc func ->
+             match func.fn_id with
+             | [ None; Some name ] ->
+                 let name_str = fst name.IL.ident in
+                 module_candidates
+                 |> List.fold_left
+                      (fun acc module_name ->
+                        let canonical = module_name @ [ name_str ] in
+                        CanonicalMap.update canonical
+                          (function
+                            | Some funcs -> Some (func :: funcs)
+                            | None -> Some [ func ])
+                          acc)
+                      acc
+             | _ -> acc)
+           acc)
+    CanonicalMap.empty files
+
+let build_project_call_graph ~(lang : Lang.t)
+    (files : (Target.path * G.program * (G.name * G.name) list) list) :
+    Call_graph.G.t =
+  let files =
+    files
+    |> List_.map (fun (path, ast, object_mappings) ->
+           { path; ast; object_mappings; funcs = collect_functions ~lang ast })
+  in
+  let graph = Call_graph.G.create () in
+  let imported_entity_index = build_imported_entity_index files in
+  let all_funcs = files |> List.concat_map (fun file -> file.funcs) in
+  files
+  |> List.iter (fun file ->
+         let local_graph =
+           build_call_graph ~lang ~object_mappings:file.object_mappings
+             ~all_funcs ~imported_entity_index
+             ~current_file:file.path.internal_path_to_content file.ast
+         in
+         Call_graph.G.iter_vertex (Call_graph.G.add_vertex graph) local_graph;
+         Call_graph.G.iter_edges_e (Call_graph.G.add_edge_e graph) local_graph);
   graph
 
 (* Identify functions that contain byte ranges (from pattern matches) *)

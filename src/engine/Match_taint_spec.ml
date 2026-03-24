@@ -441,13 +441,14 @@ let mk_taint_spec_match_preds rule matches =
 
 let default_effect_handler _fun_name new_effects = new_effects
 
-let taint_config_of_rule ~per_file_formula_cache
+let taint_config_of_rule ~per_file_formula_cache ?(require_source_sink = true)
     ?(handle_effects = default_effect_handler) xconf lang file ast_and_errors
     ({ mode = `Taint spec; _ } as rule : R.taint_rule) =
   match spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
       ast_and_errors rule with
-  | { sinks = []; _ }, _
-  | { sources = []; _ }, _ -> None
+  | ({ sinks = []; _ }, _ | { sources = []; _ }, _)
+    when require_source_sink ->
+      None
   | spec_matches, expls ->
       let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
       let options = xconf.config in
