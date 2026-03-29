@@ -4,7 +4,7 @@ class Converter
   end
 
   def taint_method
-    return source
+    return source()
   end
 
   def get_data
@@ -23,28 +23,28 @@ class Converter
 end
 
 def test_new_with_parens
-  obj = Converter.new(source)
+  obj = Converter.new(source())
   result = obj.get_data()
   # ruleid: test-ruby-zero-arg-dispatch
   sink(result)
 end
 
 def test_new_no_parens
-  obj = Converter.new source
+  obj = Converter.new source()
   result = obj.get_data()
   # ruleid: test-ruby-zero-arg-dispatch
   sink(result)
 end
 
 def test_new_with_parens_get_no_parens
-  obj = Converter.new(source)
+  obj = Converter.new(source())
   result = obj.get_data
   # ruleid: test-ruby-zero-arg-dispatch
   sink(result)
 end
 
 def test_new_no_parens_get_no_parens
-  obj = Converter.new source
+  obj = Converter.new source()
   result = obj.get_data
   # ruleid: test-ruby-zero-arg-dispatch
   sink(result)

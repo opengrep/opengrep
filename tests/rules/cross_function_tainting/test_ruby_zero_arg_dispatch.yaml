@@ -5,6 +5,6 @@ rules:
     severity: ERROR
     mode: taint
     pattern-sources:
-      - pattern: source
+      - pattern: source(...)
     pattern-sinks:
       - pattern: sink(...)
