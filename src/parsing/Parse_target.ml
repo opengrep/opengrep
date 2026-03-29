@@ -104,12 +104,18 @@ let just_resolve_name lang ast =
    * module instance in AST_generic. *)
   (* AST_generic.SId.unsafe_reset_counter (); *)
   Naming_AST.resolve lang ast;
-  run_analyses_after_name_resolution lang ast
+  (* In Ruby, bare unresolved identifiers are method calls. *)
+  let ast =
+    if Lang.equal lang Lang.Ruby then Disambiguate_ruby_calls.disambiguate ast
+    else ast
+  in
+  run_analyses_after_name_resolution lang ast;
+  ast
 
 let parse_and_resolve_name lang file =
   let res = just_parse_with_lang lang file in
-  let ast = res.ast in
-  just_resolve_name lang ast;
+  let ast = just_resolve_name lang res.ast in
+  let res = { res with ast } in
   Log.info (fun m -> m "Parse_target.parse_and_resolve_name done");
   res
 [@@profiling]

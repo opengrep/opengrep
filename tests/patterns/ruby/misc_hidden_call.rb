@@ -7,5 +7,6 @@ foo(1,2,3)
 foo
 
 a = bar
-# unfortunately this will not be detected, this may not be a funcall
+# In Ruby, a bare identifier with no prior assignment is a method call.
+#ERROR: match
 b = foo

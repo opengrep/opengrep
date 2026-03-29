@@ -13,8 +13,8 @@ val just_parse_with_lang : Lang.t -> Fpath.t -> Parsing_result2.t
 (* typing, const-prop, implicit-return, etc *)
 val run_analyses_after_name_resolution : Lang.t -> AST_generic.program -> unit
 
-(* no parsing, just naming *)
-val just_resolve_name : Lang.t -> AST_generic.program -> unit
+(* no parsing, just naming (may return a new AST for Ruby disambiguation) *)
+val just_resolve_name : Lang.t -> AST_generic.program -> AST_generic.program
 
 (* used in test code *)
 val parse_program : Fpath.t -> AST_generic.program
