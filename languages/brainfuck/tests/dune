@@ -1,0 +1,4 @@
+(executable
+ (name test_parse_brainfuck)
+ (libraries parser_brainfuck)
+)

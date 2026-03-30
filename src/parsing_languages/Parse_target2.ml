@@ -58,6 +58,15 @@ let just_parse_with_lang lang file : Parsing_result2.t =
         tolerated_errors = [];
         stat = Parsing_stat.default_stat !!file;
       }
+  | Lang.Brainfuck ->
+      {
+        ast = Parse_brainfuck.program !!file;
+        errors = [];
+        skipped_tokens = [];
+        inserted_tokens = [];
+        tolerated_errors = [];
+        stat = Parsing_stat.default_stat !!file;
+      }
   (* Menhir and Tree-sitter *)
   | Lang.C
   | Lang.Cpp ->

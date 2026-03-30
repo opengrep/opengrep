@@ -215,6 +215,7 @@ let parse_pattern options lang str =
       let res = Parse_circom_tree_sitter.parse_pattern str in
       extract_pattern_from_tree_sitter_result res
   | Lang.Vb -> Vbnet_parser.parse_pattern str
+  | Lang.Brainfuck -> Parse_brainfuck.parse_pattern str
 
 let dump_tree_sitter_pattern_cst (lang : Lang.t) (path : Fpath.t) : unit =
   let file = !!path in

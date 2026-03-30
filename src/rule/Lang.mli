@@ -17,6 +17,7 @@
 type t = Language.t =
   | Apex
   | Bash
+  | Brainfuck
   | C
   | Cairo
   | Circom
