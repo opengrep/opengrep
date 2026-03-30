@@ -1,0 +1,10 @@
+rules:
+  - id: test-ruby-zero-arg-dispatch
+    message: Taint through zero-arg method call without parens
+    languages: [ruby]
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

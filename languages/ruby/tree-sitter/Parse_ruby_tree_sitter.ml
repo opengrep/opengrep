@@ -2261,7 +2261,15 @@ and lhs (env : env) (x : CST.lhs) : AST.expr =
         DotAccess (v1, v2, MethodOperator (Op_AREF, v2))
       in
       Call (e, (v2, v3, v4), None)
-  | `Call_ x -> call_ env x
+  | `Call_ x -> (
+      let e = call_ env x in
+      match e with
+      (* In Ruby, `obj.method` is always a method call with zero arguments,
+         so wrap the DotAccess produced by call_ in a Call. *)
+      | DotAccess _ -> Call (e, fb [], None)
+      (* DotAccessEllipsis is a pattern construct (`. ...`); wrapping it
+         in Call would prevent the ellipsis from matching zero elements. *)
+      | _ -> e)
 
 and method_name (env : env) (x : CST.method_name) : AST.method_name =
   match x with

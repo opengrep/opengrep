@@ -752,6 +752,9 @@ let semgrep_rules_repo_tests () : Testo.t list =
              | s when s =~ ".*/semgrep-rules/clojure/lang/security/command-injection-shell-call.yaml" -> None
              (* FIXME: This fails, unblocking to create a binary for testing. *)
              | s when s =~ ".*/semgrep-rules/clojure/lang/security/documentbuilderfactory-xxe.yaml" -> None
+             (* FIXME: The rule is too restrictive, the patterns should contain a (...); see the comment in PR
+             https://github.com/opengrep/opengrep/pull/626 *)
+             | s when s =~ ".*/semgrep-rules/ruby/lang/security/weak-hashes-sha1.yaml" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming
