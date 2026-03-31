@@ -1,23 +1,20 @@
-Hello World program
+ruleid: find-output
 +++++++++[>++++++++<-]>.
 
-echo loop
+ruleid: find-output ruleid: echo-loop
 [,.]
 
-echo with comments that regex cannot match
+ruleid: find-output ruleid: echo-loop
 [ read a byte , then print it . ]
 
-nested loop clear inside a loop
+ruleid: nested-loop
 [[-]]
 
-nested with comments no regex can handle this
+ruleid: nested-loop
 [ clear the cell [-] then end ]
 
-multiply by 3 idiom (nested loop)
-[>+++<-]
-
-deep nesting with outer logic
+ruleid: nested-loop
 [>++[>+<-]<-]
 
-not nested just sequential
+ok: find-output ok: echo-loop ok: nested-loop
 [-][+]
