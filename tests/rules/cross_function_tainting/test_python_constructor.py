@@ -20,7 +20,7 @@ def intermediateFun ():
     tainted_input = source()
     user = User(tainted_input)
     return user
-def sink_ex(user):
+def sink_ex(user : User):
     return user.get_profile()
 class FieldUser:
     def __init__(self):
