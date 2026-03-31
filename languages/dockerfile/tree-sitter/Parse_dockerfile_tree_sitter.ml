@@ -1214,12 +1214,147 @@ let ensure_trailing_newline str =
     | _ -> str ^ "\n"
   else str
 
+(* Pre-process Dockerfile content before passing to tree-sitter.
+
+   This fixes three classes of issues that the grammar alone can't handle:
+
+   1. Trailing whitespace after a line-continuation backslash (e.g. "\ "
+      at end of line).  The grammar already accepts /\\[ \t]*\n/ as
+      line_continuation, but combine_sparse_toks in concat_shell_fragments
+      fills gaps with the fixed 2-byte string "\\\n".  When the original gap
+      is wider (e.g. 4 bytes for "\   \n") the byte-offset arithmetic goes
+      off, which can surface as a Tok.NoTokenLocation crash.  Stripping the
+      trailing whitespace makes every continuation token exactly "\\\n".
+
+   2. The "# escape=X" parser directive lets authors use an alternative
+      character (commonly the backtick on Windows/PowerShell Dockerfiles) as
+      the line-continuation marker.  tree-sitter's grammar hard-codes the
+      backslash, so we replace each occurrence of X at the end of a line
+      with '\' before handing off to tree-sitter.
+
+   3. A comment line inside a multi-line continuation is transparent to the
+      continuation: Docker removes it before execution, so
+
+        RUN echo a \
+        # comment
+        b
+
+      is equivalent to "RUN echo a b".  tree-sitter's extras mechanism
+      already handles comments between tokens, but the OCaml post-processing
+      code (concat_shell_fragments) relies on the gap between shell-fragment
+      tokens to reconstruct positions.  A comment line in that gap does not
+      carry a synthetic continuation, so the chain can break.  We replace
+      comment lines with spaces of the same byte count and, when inside a
+      continuation, append a '\' at the last position so tree-sitter sees an
+      unbroken chain of line_continuation extras.
+
+   Position safety: line_col_to_pos reads the *original* file and maps
+   (line, col) pairs to byte offsets.  Our transforms only modify characters
+   at or after the last real token on each line (trailing whitespace, comment
+   text, the escape character itself).  The (line, col) of every real token
+   is therefore unchanged between the original file and the preprocessed
+   content, so the position table remains valid.  line_continuation tokens
+   live in the tree-sitter extras bucket; the OCaml callback discards them
+   via the `_extras` parameter and never calls conv on their positions, so
+   the synthetic '\' we insert on replaced comment lines is also harmless.
+*)
+
+(* Matches "# escape=X" (case-insensitive, spaces optional around '=').
+   Group 1 captures the single non-whitespace escape character. *)
+let escape_directive_re =
+  Pcre2_.regexp ~flags:[ `CASELESS ] {|^#\s*escape\s*=\s*(\S)|}
+
+(* If line looks like "# escape=X", return Some X, otherwise None. *)
+let parse_escape_directive (line : string) : char option =
+  match Pcre2_.exec_noerr ~rex:escape_directive_re line with
+  | None -> None
+  | Some substrings -> Some (Pcre2.get_substring substrings 1).[0]
+
+(* Return the index of the last non-whitespace character in s, or -1. *)
+let last_nws_index (s : string) : int =
+  let is_ws c = Char.equal c ' ' || Char.equal c '\t' in
+  let rec go i = if i < 0 || not (is_ws s.[i]) then i else go (i - 1) in
+  go (String.length s - 1)
+
+type preprocess_state = {
+  escape_char : char;
+  in_header : bool;
+  in_continuation : bool;
+}
+
+ (* Process one line (without its trailing '\n') and return the updated state
+   together with the transformed line. *)
+let process_line (st : preprocess_state) (line : string) : preprocess_state * string =
+  let len = String.length line in
+  let lnws = last_nws_index line in
+
+  if lnws < 0 then
+    (* Blank / all-whitespace line: pass through verbatim, leave header zone. *)
+    ({ st with in_header = false }, line)
+  else if Char.equal line.[0] '#' then begin
+    (* Comment line or parser directive. *)
+    match if st.in_header then parse_escape_directive line else None with
+    | Some c ->
+        (* Parser directive: record new escape char and keep line as-is. *)
+        ({ st with escape_char = c }, line)
+    | None ->
+        (* Regular comment: replace with spaces of the same byte count.
+           If we are mid-continuation, put a synthetic '\' at the end so
+           tree-sitter sees an unbroken continuation chain.
+           in_continuation is left unchanged: comment lines are transparent
+           to continuation state, just as Docker specifies. *)
+        let out =
+          if st.in_continuation && len >= 1 then
+            String.make (len - 1) ' ' ^ "\\"
+          else
+            String.make len ' '
+        in
+        (st, out)
+  end else begin
+    (* Regular instruction line. *)
+    let bytes = Bytes.of_string line in
+
+    (* Replace an alternative escape char at end of line with '\'. *)
+    if (not (Char.equal st.escape_char '\\'))
+       && Char.equal (Bytes.get bytes lnws) st.escape_char
+    then Bytes.set bytes lnws '\\';
+
+    (* Break a trailing "\\" pair so tree-sitter does not greedily consume it
+       as a shell_fragment before recognising the final '\' as
+       line_continuation. *)
+    if lnws >= 1
+       && Char.equal (Bytes.get bytes lnws) '\\'
+       && Char.equal (Bytes.get bytes (lnws - 1)) '\\'
+    then Bytes.set bytes (lnws - 1) ' ';
+
+    (* Strip trailing whitespace: emit only up to the last non-ws char so the
+       continuation token is exactly "\\\n", matching combine_sparse_toks. *)
+    let out = Bytes.sub_string bytes 0 (lnws + 1) in
+    let continues = Char.equal out.[lnws] '\\' in
+    ({ escape_char = st.escape_char; in_header = false; in_continuation = continues }, out)
+  end
+
+let preprocess_dockerfile (content : string) : string =
+  let init = { escape_char = '\\'; in_header = true; in_continuation = false } in
+  let lines = String.split_on_char '\n' content in
+  let _state, rev_lines =
+    List.fold_left
+      (fun (st, acc) line ->
+        let st', out = process_line st line in
+        (st', out :: acc))
+      (init, [])
+      lines
+  in
+  String.concat "\n" (List.rev rev_lines)
+
 let parse file =
   H.wrap_parser
     (fun () ->
       let contents =
-        UFile.read_file file |> normalize_line_endings
+        UFile.read_file file
+        |> normalize_line_endings
         |> ensure_trailing_newline
+        |> preprocess_dockerfile
       in
       Tree_sitter_dockerfile.Parse.string ~src_file:!!file contents)
     (fun cst _extras ->
@@ -1236,7 +1371,10 @@ let parse_pattern str =
   let input_kind = AST_bash.Pattern in
   H.wrap_parser
     (fun () ->
-      str |> ensure_trailing_newline |> Tree_sitter_dockerfile.Parse.string)
+      str
+      |> ensure_trailing_newline
+      |> preprocess_dockerfile
+      |> Tree_sitter_dockerfile.Parse.string)
     (fun cst _extras ->
       let file = Fpath.v "<pattern>" in
       let env =
