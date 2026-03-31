@@ -1962,6 +1962,59 @@ let call_with_intrafile lval_opt e env args instr =
             | None ->
                 (all_args_taints, S.Bot, lval_env)))
     | None ->
+        (* Constructor call handling for ClassName() and ClassName.new().
+         *
+         * When taint flows through a constructor (e.g., `obj = Foo(tainted)`),
+         * the constructor signature may contain ToLval(BThis.field, taint)
+         * effects that assign taint to fields of the new object. For Sig_inst
+         * to correctly map BThis onto the target variable `obj`, we need the
+         * callee expression to be `obj.Constructor` rather than just
+         * `Constructor`. We check the call graph to determine if this call
+         * resolves to a constructor, and if so, remap the callee accordingly. *)
+        let resolves_to_constructor =
+          Option.is_some env.signature_db &&
+          let call_tok = tok_of_eorig ~default:(Tok.unsafe_fake_tok "") e in
+          not (Tok.is_fake call_tok) &&
+          match Call_graph.lookup_callee_from_graph
+                  env.call_graph
+                  (Option.map Function_id.of_il_name env.func.name)
+                  call_tok with
+          | Some callee_node ->
+              Object_initialization.is_constructor env.taint_inst.lang
+                (Function_id.show callee_node) None
+          | None -> false
+        in
+        (* Remap: ClassName() → obj.ClassName(), ClassName.new() → obj.ClassName()
+         * This makes the callee a method-call shape so that Sig_inst maps
+         * BThis to obj (the assignment target) when instantiating the
+         * constructor's ToLval effects. *)
+        let e =
+          if resolves_to_constructor then
+            match (lval_opt, e.e) with
+            | Some lval, Fetch { base = Var name; rev_offset = ([] | [{ o = Dot _; _ }]) } ->
+                IL.{ e = Fetch { base = lval.base;
+                                 rev_offset = [{ o = Dot name; oorig = NoOrig }] };
+                     eorig = e.eorig }
+            | _ -> e
+          else e
+        in
+        (* Python's __init__ has an explicit `self` parameter but constructor
+         * call sites (e.g., `Foo(x)`) don't pass it. Prepend the receiver
+         * variable so Sig_inst maps self → obj and user_name → x correctly.
+         * Ruby's initialize does NOT have explicit self, so this is
+         * Python-specific. *)
+        let args, args_taints =
+          if resolves_to_constructor
+             && Lang.(env.taint_inst.lang =*= Python) then
+            match lval_opt with
+            | Some lval ->
+                let self_exp = IL.{ e = Fetch lval; eorig = NoOrig } in
+                let self_arg = IL.Unnamed self_exp in
+                let self_taint = IL.Unnamed (Taints.empty, S.Bot) in
+                (self_arg :: args, self_taint :: args_taints)
+            | None -> (args, args_taints)
+          else (args, args_taints)
+        in
         (* No implicit lambda, try unified constructor execution *)
         let check_function_call_wrapper env' e' args' args_taints' =
           check_function_call env' e' args' args_taints' ()
@@ -1970,11 +2023,29 @@ let call_with_intrafile lval_opt e env args instr =
           Object_initialization.execute_unified_constructor e args args_taints
             check_function_call_wrapper { env with lval_env }
         with
-        | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
+        | Some (call_taints, shape, lval_env) ->
+            (* Constructor ToLval effects (e.g., this.data = tainted_arg)
+             * update lval_env with field-level taint on the target variable,
+             * but the return shape may still be Bot (constructors typically
+             * don't return a value). Read back the shape from lval_env so
+             * it propagates through intermediate assignments like
+             * `_tmp = Foo(x); obj = _tmp`. Without this, the shape is lost
+             * at the assignment boundary. *)
+            let shape =
+              if resolves_to_constructor then
+                match lval_opt with
+                | Some lval -> (
+                    match Lval_env.find_lval lval_env lval with
+                    | Some (S.Cell (_, s)) when
+                      (match s with
+                      | S.Bot -> false
+                      | _ -> true) -> s
+                    | _ -> shape)
+                | None -> shape
+              else shape
+            in
+            (call_taints, shape, lval_env)
         | None -> (
-            (* Regular function call processing *)
-            Log.debug (fun m ->
-                m "INTRAFILE: Checking function call %s" (Display_IL.string_of_exp e));
             match check_function_call { env with lval_env } e args args_taints () with
         | Some (call_taints, shape, lval_env) ->
             Log.debug (fun m ->
