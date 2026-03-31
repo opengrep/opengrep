@@ -633,11 +633,24 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
-let get_signature_for_object graph caller_node db method_name obj arity =
-  (* Method call: obj.method() *)
-  (* Use obj's token (start of call expression) to match edge labels *)
-  let call_tok = snd obj.ident in
-  (* First try to look up via call graph to get the correct node with definition token *)
+(* Call graph edges are keyed by source-level token positions, but IL
+   expressions often carry tokens from IL construction (e.g., fresh
+   variables from class_construction). The eorig back-pointer preserves
+   the original source position, which we need for call graph lookups. *)
+let tok_of_eorig ~(default : Tok.t) (exp : IL.exp) : Tok.t =
+  match exp.eorig with
+  | SameAs orig_exp ->
+      (match AST_generic_helpers.ii_of_any (G.E orig_exp) with
+      | tok :: _ when not (Tok.is_fake tok) -> tok
+      | _ -> default)
+  | Related orig_any ->
+      (match AST_generic_helpers.ii_of_any orig_any with
+      | tok :: _ when not (Tok.is_fake tok) -> tok
+      | _ -> default)
+  | NoOrig -> default
+
+let get_signature_for_object graph caller_node db method_name obj (fun_exp : IL.exp) arity =
+  let call_tok = tok_of_eorig ~default:(snd obj.ident) fun_exp in
   match Call_graph.lookup_callee_from_graph
           graph (Option.map Function_id.of_il_name caller_node) call_tok with
   | Some callee_node ->
@@ -671,23 +684,7 @@ let lookup_signature_with_object_context env fun_exp arity =
       match fun_exp.e with
       | Fetch { base = Var name; rev_offset = [] } ->
           (* Simple function call *)
-          (* Try to look up via call graph using the ORIGINAL AST token position.
-             This handles temp variables like _tmp:N which have eorig pointing to
-             the actual callback reference in the original AST. *)
-          let call_tok =
-            match fun_exp.eorig with
-            | SameAs orig_exp ->
-                (* Use first token from original AST expression *)
-                (match AST_generic_helpers.ii_of_any (G.E orig_exp) with
-                | tok :: _ when not (Tok.is_fake tok) -> tok
-                | _ -> snd name.ident)
-            | Related orig_any ->
-                (* Related contains G.any, extract tokens directly *)
-                (match AST_generic_helpers.ii_of_any orig_any with
-                | tok :: _ when not (Tok.is_fake tok) -> tok
-                | _ -> snd name.ident)
-            | NoOrig -> snd name.ident
-          in
+          let call_tok = tok_of_eorig ~default:(snd name.ident) fun_exp in
           (match
             Call_graph.lookup_callee_from_graph
               env.call_graph
@@ -733,6 +730,7 @@ let lookup_signature_with_object_context env fun_exp arity =
               db
               (Function_id.of_il_name method_name)
               obj
+              fun_exp
               arity
           with
           | Some _ as result -> result
@@ -1640,7 +1638,8 @@ let check_function_call env fun_exp args
                      try
                        let callee_name_opt =
                          match callee.e with
-                         | Fetch { base = Var name; rev_offset = [] } -> Some name
+                         | Fetch { base = Var name; rev_offset = [] }
+                         | Fetch { base = Var name; rev_offset = [{ o = Dot _; _ }] } -> Some name
                          | _ -> None
                        in
                        match callee_name_opt with
