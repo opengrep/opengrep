@@ -139,7 +139,26 @@ let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
     if cmp <> 0 then cmp else Tok.compare t1 t2)
 
 (* Helper function to identify the callee fn_id from a call expression's callee *)
-let identify_callee ?(object_mappings = []) ?(all_funcs = [])
+(* Resolve a type to its constructor fn_id using lang config.
+   e.g. Foo → Foo#<init> (Java), Foo → Foo#__init__ (Python), Foo → Foo#initialize (Ruby) *)
+let resolve_constructor_from_type ~(lang : Lang.t) ~all_funcs (ty : G.type_) : fn_id option =
+  let class_name = match ty.G.t with
+    | G.TyN (G.Id ((name, _), _)) -> Some name
+    | G.TyExpr { G.e = G.N (G.Id ((name, _), _)); _ } -> Some name
+    | _ -> None
+  in
+  match class_name with
+  | None -> None
+  | Some cls ->
+      List.find_opt (fun f ->
+        match f.fn_id with
+        | [Some c; Some m] ->
+            fst c.IL.ident = cls
+            && Object_initialization.is_constructor lang (fst m.IL.ident) (Some cls)
+        | _ -> false
+      ) all_funcs |> Option.map (fun f -> f.fn_id)
+
+let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
     ?(caller_parent_path = []) ?(call_arity : int option) (callee : G.expr) : fn_id option =
   (* Extract class from caller_parent_path if present *)
   let current_class = match caller_parent_path with
@@ -203,7 +222,12 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                       | [None; Some name] when fst name.IL.ident = callee_name_str -> true
                       | _ -> false
                     ) all_funcs in
-                  Option.map (fun f -> f.fn_id) free_fn_match
+                  (match Option.map (fun f -> f.fn_id) free_fn_match with
+                  | Some _ as r -> r
+                  | None ->
+                      (* Try as constructor: ClassName() → ClassName#__init__ etc. *)
+                      let ty = G.{ t = TyN (G.Id ((callee_name_str, G.fake callee_name_str), G.empty_id_info ())); t_attrs = [] } in
+                      resolve_constructor_from_type ~lang ~all_funcs ty)
         end
         (* Qualified call: Module.foo() *)
         | G.N (G.IdQualified { name_last = (id, _), _; _ }) ->
@@ -248,18 +272,30 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
             | None -> None)
         (* Method call: obj.method() - look up obj's class *)
         | G.DotAccess
-            ( { e = G.N (G.Id ((obj_name, _), _)); _ },
+            ( { e = G.N (G.Id ((obj_name, _), obj_id_info)); _ },
               _,
               G.FN (G.Id ((id, _), _id_info)) ) ->
             let method_name_str = id in
-            (* Look up obj's class in object_mappings *)
+            let obj_resolved = !(obj_id_info.G.id_resolved) in
             let obj_class_opt =
               object_mappings
               |> List.find_opt (fun (var_name, _class_name) ->
                      match var_name with
-                     | G.Id ((var_str, _), _) -> var_str = obj_name
+                     | G.Id ((var_str, _), var_id_info) ->
+                         var_str = obj_name &&
+                         (match (obj_resolved, !(var_id_info.G.id_resolved)) with
+                          | Some (_, sid1), Some (_, sid2) -> G.SId.equal sid1 sid2
+                          | _ -> true (* fallback to name-only if unresolved *))
                      | _ -> false)
               |> Option.map (fun (_var_name, class_name) -> class_name)
+            in
+            (* Fallback: use the type annotation (e.g. `def f(x: ClassName)`) *)
+            let obj_class_opt = match obj_class_opt with
+              | Some _ -> obj_class_opt
+              | None -> (match !(obj_id_info.G.id_type) with
+                  | Some { G.t = G.TyN (G.Id _ as n); _ }
+                  | Some { G.t = G.TyExpr { G.e = G.N (G.Id _ as n); _ }; _ } -> Some n
+                  | _ -> None)
             in
             (match obj_class_opt with
             | Some class_name ->
@@ -287,7 +323,10 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                         | [single_match] -> Some single_match.fn_id
                         | _ -> None)  (* Still 0 or multiple matches *)
                     | None -> None))  (* No arity info, can't disambiguate *)
-            | None -> None)
+            | None ->
+                (* obj not in object_mappings — try as ClassName.new() constructor *)
+                let ty = G.{ t = TyN (G.Id ((obj_name, G.fake obj_name), G.empty_id_info ())); t_attrs = [] } in
+                resolve_constructor_from_type ~lang ~all_funcs ty)
         | _ ->
             Log.debug (fun m ->
                 m "CALL_EXTRACT: Unmatched call pattern: %s"
@@ -295,7 +334,7 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
             None
 
 (* Extract all calls from a function body and resolve them to fn_ids *)
-let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path = [])
+let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path = [])
     (fdef : G.function_definition) : (fn_id * Tok.t) list =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for function");
   let calls = ref [] in
@@ -311,7 +350,7 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
             (match !(id_info.G.id_resolved) with
             | None ->
                 (* Unresolved - try to identify it as a function *)
-                (match identify_callee ~object_mappings ~all_funcs ~caller_parent_path arg_exp with
+                (match identify_callee ~lang ~object_mappings ~all_funcs ~caller_parent_path arg_exp with
                 | Some fn_id ->
                     Log.debug (fun m -> m "CALL_EXTRACT: Found unresolved Id that is a function, adding as implicit call");
                     calls := (fn_id, tok) :: !calls
@@ -329,7 +368,7 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
         | G.Call (callee, args) ->
             let (_, args_list, _) = args in
             let call_arity = List.length args_list in
-            (match identify_callee ~object_mappings ~all_funcs ~caller_parent_path ~call_arity callee with
+            (match identify_callee ~lang ~object_mappings ~all_funcs ~caller_parent_path ~call_arity callee with
             | Some fn_id ->
                 (* Extract token from the call expression for edge label *)
                 let tok =
@@ -346,6 +385,22 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
             self#visit_expr env callee;
             (* Continue visiting arguments for nested calls *)
             super#visit_arguments env args
+        | G.New (_tok, ty, _id_info, args) ->
+            (* Constructor call: new ClassName(args).
+               Use the class name token so it matches the eorig token
+               in class_construction's constructor expression. *)
+            (match resolve_constructor_from_type ~lang ~all_funcs ty with
+            | Some fn_id ->
+                let tok =
+                  match AST_generic_helpers.ii_of_any (G.T ty) with
+                  | tok :: _ -> tok
+                  | [] -> Tok.unsafe_fake_tok ""
+                in
+                calls := (fn_id, tok) :: !calls
+            | None -> ());
+            let (_, args_list, _) = args in
+            List.iter check_arg_for_unresolved_function_call args_list;
+            super#visit_arguments env args
         | _ -> super#visit_expr env e
     end
   in
@@ -355,7 +410,7 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
 
 (* Extract calls from top-level statements (outside any function).
    This returns a list of (callee_fn_id, call_tok) pairs. *)
-let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.program) : (fn_id * Tok.t) list =
+let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) (ast : G.program) : (fn_id * Tok.t) list =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for top-level statements");
   let calls = ref [] in
 
@@ -390,7 +445,7 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = []) (ast : G.pr
             in
             if call_pos >= 0 && not (is_inside_function call_pos) then (
               (* Top-level call - no class context *)
-              match identify_callee ~object_mappings ~all_funcs ~caller_parent_path:[] callee with
+              match identify_callee ~lang ~object_mappings ~all_funcs ~caller_parent_path:[] callee with
               | Some fn_id ->
                   let tok =
                     match AST_generic_helpers.ii_of_any (G.E e) with
@@ -637,7 +692,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
 
           (* Extract calls - class context is already in fn_id *)
           let callee_calls =
-            extract_calls ~object_mappings ~all_funcs:funcs ~caller_parent_path:fn_id fdef
+            extract_calls ~lang ~object_mappings ~all_funcs:funcs ~caller_parent_path:fn_id fdef
           in
 
           (* Add labeled edges for each call - edge from callee to caller for bottom-up analysis *)
@@ -677,7 +732,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     ast;
 
   (* Extract calls from top-level code (outside any function) and add edges to <top_level> *)
-  let toplevel_calls = extract_toplevel_calls ~object_mappings ~all_funcs:funcs ast in
+  let toplevel_calls = extract_toplevel_calls ~lang ~object_mappings ~all_funcs:funcs ast in
   List.iter
     (fun (callee_fn_id, call_tok) ->
       match fn_id_to_node callee_fn_id with
