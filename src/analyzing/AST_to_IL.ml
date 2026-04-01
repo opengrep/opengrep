@@ -237,12 +237,23 @@ let is_hcl lang : bool =
   | Lang.Terraform -> true
   | _ -> false
 
+(* Extract the class name from a G.New type to build the constructor
+   reference in the IL New instruction. Only called from class_construction,
+   which only runs for G.New nodes (always constructor calls).
+
+   The TyExpr case exists because the JS parser produces TyExpr where
+   it should produce TyN.
+
+   Previously this had a guard `when Option.is_some !(cons_id_info.id_resolved)`
+   which meant it only worked when the pro engine's naming pass had run.
+   In OSS mode id_resolved is never set, so the IL New always got
+   constructor=None, falling through to all_args_taints (accidental leak).
+   The guard was removed because G.New is always a constructor call and
+   the fallback behavior is unchanged when no signature is found. *)
 let mk_class_constructor_name (ty : G.type_) cons_id_info : G.name option =
   match ty with
   | { t = TyN (G.Id (id, _)); _ }
-  | { t = TyExpr { e = G.N (G.Id (id, _)); _ }; _ }
-  (* FIXME: JS parser produces this ^ although it should be parsed as a 'TyN'. *)
-    when Option.is_some !(cons_id_info.G.id_resolved) ->
+  | { t = TyExpr { e = G.N (G.Id (id, _)); _ }; _ } ->
       Some (G.Id (id, cons_id_info))
   | __else__ -> None
 
