@@ -204,6 +204,7 @@ let rec expr_to_pattern e =
   | Container (Dict, (t1, xs, t2)) ->
       PatList (t1, xs |> List_.map expr_to_pattern, t2)
   | Ellipsis t -> PatEllipsis t
+  | OtherExpr (tag, [ E e ]) -> OtherPat (tag, [ P (expr_to_pattern e) ])
   | Cast (ty, _tok, expr) -> PatTyped (expr_to_pattern expr, ty)
   (* TODO: PatKeyVal and more *)
   | _ -> OtherPat (("ExprToPattern", fake ""), [ E e ])
@@ -220,6 +221,7 @@ let rec pattern_to_expr p =
   | PatList (t1, xs, t2) ->
       Container (List, (t1, xs |> List_.map pattern_to_expr, t2))
   | OtherPat (("ExprToPattern", _), [ E e ]) -> e.e
+  | OtherPat (tag, [ P p ]) -> OtherExpr (tag, [ E (pattern_to_expr p) ])
   | _ -> raise NotAnExpr)
   |> G.e
 

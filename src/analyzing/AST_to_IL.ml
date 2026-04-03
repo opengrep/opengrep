@@ -436,6 +436,9 @@ and pattern env pat : stmts * lval * stmts =
     (* XXX: Assume same bound variables on lhs and rhs, as is imposed on most
      * languages. Hence we only recurse on one side. Seems good enough for now. *)
     pattern env pat1
+  | G.OtherPat ((("MapPairArrow" | "MapPairKeyword"), _), [ G.P inner ])
+    when env.lang =*= Lang.Elixir ->
+    pattern env inner
   | G.PatEllipsis _ -> sgrep_construct (G.P pat)
   | _ -> todo (G.P pat)
 
