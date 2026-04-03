@@ -1465,6 +1465,14 @@ and dict env (_, orig_entries, _) orig : stmts * exp =
             let ss_k, ke = expr env korig in
             let ss_v, ve = expr env vorig in
             (ss_k @ ss_v, Entry (ke, ve))
+        | G.OtherExpr ((("MapPairArrow" | "MapPairKeyword"), _), [ G.E inner ])
+          when env.lang =*= Lang.Elixir ->
+            (match inner.G.e with
+            | G.Container (G.Tuple, (_, [ korig; vorig ], _)) ->
+                let ss_k, ke = expr env korig in
+                let ss_v, ve = expr env vorig in
+                (ss_k @ ss_v, Entry (ke, ve))
+            | _ -> todo (G.E orig))
         | __else__ -> todo (G.E orig))
       orig_entries
   in
