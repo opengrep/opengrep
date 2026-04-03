@@ -54,4 +54,8 @@ def main():
     intermethod_obj = IntermethodClass()
     intermethod_result = intermethod_obj.sink_method()
 
+    # Test chained method call: Constructor(tainted).method()
+    # ruleid:python_constructor_sqli
+    chained_result = f"SELECT * FROM users WHERE name = {User(source()).get_profile()}"
+
     return result
