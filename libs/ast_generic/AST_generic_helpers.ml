@@ -201,6 +201,8 @@ let rec expr_to_pattern e =
   | L l -> PatLiteral l
   | Container (List, (t1, xs, t2)) ->
       PatList (t1, xs |> List_.map expr_to_pattern, t2)
+  | Container (Dict, (t1, xs, t2)) ->
+      PatList (t1, xs |> List_.map expr_to_pattern, t2)
   | Ellipsis t -> PatEllipsis t
   | Cast (ty, _tok, expr) -> PatTyped (expr_to_pattern expr, ty)
   (* TODO: PatKeyVal and more *)

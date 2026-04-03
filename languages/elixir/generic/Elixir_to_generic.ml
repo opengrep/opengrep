@@ -445,12 +445,12 @@ and map_param_to_gparam env (p : parameter) : G.parameter =
           G.Param (G.param_of_id ?pdefault id))
   | OtherParamExpr e ->
       let e = map_expr env e in
-      G.OtherParam (("OtherParamExpr", G.fake ""), [ G.E e ])
+      G.ParamPattern (H.expr_to_pattern e)
   | OtherParamPair (kwd, e) ->
       let kwd = map_keyword env kwd in
       let e = map_expr env e in
       let e = keyval_of_pair (Left (kwd, e)) in
-      G.OtherParam (("OtherParamPair", G.fake ""), [ G.E e ])
+      G.ParamPattern (H.expr_to_pattern e)
 
 and map_func_clause_to_stab env (clause : function_definition) :
     stab_clause_generic =
