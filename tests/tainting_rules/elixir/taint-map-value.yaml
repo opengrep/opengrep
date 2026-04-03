@@ -1,0 +1,21 @@
+rules:
+- id: taint-map-value
+  mode: taint
+  languages: [elixir]
+  message: "tainted via map value"
+  severity: INFO
+
+  pattern-sources:
+    - patterns:
+      - pattern-either:
+          - pattern-inside: |
+              fn ..., $X, ... -> ... end
+          - pattern-inside: |
+              def $_(..., $X, ...) do
+              ...
+              end
+      - focus-metavariable: $X
+
+  pattern-sinks:
+    - pattern: |
+        sink($R)
