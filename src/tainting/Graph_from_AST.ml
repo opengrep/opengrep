@@ -359,7 +359,22 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                       && fst m.IL.ident = method_name
                   | _ -> false
                 ) all_funcs in
-                (match method_matches with
+                (* Filter by arity when available, then require exactly one match.
+                   Python methods have an explicit self param in the definition
+                   that is not passed at the call site. *)
+                let self_offset =
+                  if Lang.(lang =*= Python) then 1 else 0
+                in
+                let candidates = match call_arity with
+                  | Some arity ->
+                      List.filter (fun f ->
+                        let def_arity = get_func_arity f.fdef in
+                        Int.equal def_arity arity
+                        || Int.equal def_arity (arity + self_offset)
+                      ) method_matches
+                  | None -> method_matches
+                in
+                (match candidates with
                 | [single_match] -> Some single_match.fn_id
                 | _ -> None)
             | None -> None)
