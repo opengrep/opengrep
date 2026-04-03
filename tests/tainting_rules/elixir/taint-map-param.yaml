@@ -1,0 +1,27 @@
+rules:
+- id: taint-map-param
+  mode: taint
+  languages: [elixir]
+  message: "tainted via map param"
+  severity: INFO
+
+  pattern-sources:
+    - patterns:
+      - pattern-either:
+          - pattern-inside: |
+              def $_(..., $X, ...) do
+              ...
+              end
+          - pattern-inside: |
+              def $_(..., %{..., $_: $X, ...}, ...) do
+              ...
+              end
+          - pattern-inside: |
+              def $_(..., %{..., $_ => $X, ...}, ...) do
+              ...
+              end
+      - focus-metavariable: $X
+
+  pattern-sinks:
+    - pattern: |
+        sink($R)
