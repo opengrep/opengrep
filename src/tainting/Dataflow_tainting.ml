@@ -633,41 +633,16 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
-(* Call graph edges are keyed by source-level token positions, but IL
-   expressions often carry tokens from IL construction (e.g., fresh
-   variables from class_construction). The eorig back-pointer preserves
-   the original source position, which we need for call graph lookups. *)
-let tok_of_eorig ~(default : Tok.t) (exp : IL.exp) : Tok.t =
-  match exp.eorig with
-  | SameAs orig_exp ->
-      (match AST_generic_helpers.ii_of_any (G.E orig_exp) with
-      | tok :: _ when not (Tok.is_fake tok) -> tok
-      | _ -> default)
-  | Related orig_any ->
-      (match AST_generic_helpers.ii_of_any orig_any with
-      | tok :: _ when not (Tok.is_fake tok) -> tok
-      | _ -> default)
-  | NoOrig -> default
 
-let get_signature_for_object graph caller_node db method_name obj (fun_exp : IL.exp) arity =
+let get_signature_for_object graph caller_node db method_name arity =
   let caller = Option.map Function_id.of_il_name caller_node in
   let method_tok = Function_id.tok method_name in
-  let call_tok = tok_of_eorig ~default:(snd obj.ident) fun_exp in
-  (* Try method name token first: for chained calls like
-     ClassName(...).method(), the eorig token (call_tok) points to
-     ClassName which collides with the constructor edge. The method
-     token points to the actual method and avoids this collision. *)
-  let try_graph tok =
-    match Call_graph.lookup_callee_from_graph graph caller tok with
-    | Some callee_node -> Shape_and_sig.(lookup_signature db callee_node arity)
-    | None -> None
-  in
-  match try_graph method_tok with
-  | Some _ as r -> r
-  | None ->
-      (match try_graph call_tok with
-      | Some _ as r -> r
-      | None -> Shape_and_sig.lookup_signature db method_name arity)
+  (* Look up via method name token — call graph edges for DotAccess calls
+     are stored at the method token position (see extract_calls). *)
+  match Call_graph.lookup_callee_from_graph graph caller method_tok with
+  | Some callee_node ->
+      Shape_and_sig.(lookup_signature db callee_node arity)
+  | None -> Shape_and_sig.lookup_signature db method_name arity
 
 (* Helper to fallback to builtin signature database if regular lookup fails *)
 let try_builtin_fallback env func_name arity result =
@@ -695,8 +670,8 @@ let lookup_signature_with_object_context env fun_exp arity =
   | Some db -> (
       match fun_exp.e with
       | Fetch { base = Var name; rev_offset = [] } ->
-          (* Simple function call *)
-          let call_tok = tok_of_eorig ~default:(snd name.ident) fun_exp in
+          (* Simple function call — edge stored at function name token *)
+          let call_tok = snd name.ident in
           (match
             Call_graph.lookup_callee_from_graph
               env.call_graph
@@ -716,19 +691,17 @@ let lookup_signature_with_object_context env fun_exp arity =
                   try_builtin_fallback env func_name arity result)
       | Fetch
           {
-            base = VarSpecial ((Self | This), self_tok);
+            base = VarSpecial ((Self | This), _);
             rev_offset = [ { o = Dot method_name; _ } ];
           }
         when Option.is_some env.class_name -> (
           (* Method call on self/this: self.method() or this.method() *)
-          (* First try to look up via call graph to get the correct fn_id *)
-          (* Use self_tok (start of call expression) to match edge labels *)
-          let call_tok = self_tok in
+          let method_tok = snd method_name.IL.ident in
           match
             Call_graph.lookup_callee_from_graph
               env.call_graph
               (Option.map Function_id.of_il_name env.func.name)
-              call_tok
+              method_tok
           with
           | Some callee_node ->
               Shape_and_sig.(lookup_signature db callee_node arity)
@@ -741,8 +714,6 @@ let lookup_signature_with_object_context env fun_exp arity =
               env.func.name
               db
               (Function_id.of_il_name method_name)
-              obj
-              fun_exp
               arity
           with
           | Some _ as result -> result
@@ -1996,7 +1967,12 @@ let call_with_intrafile lval_opt e env args instr =
                  || not Lang.(env.taint_inst.lang =*= Ruby) -> false
           | _ -> true) &&
           Option.is_some env.signature_db &&
-          let call_tok = tok_of_eorig ~default:(Tok.unsafe_fake_tok "") e in
+          (* The constructor edge is stored at the class name token position
+             (first token of the call expression). Extract it from the callee. *)
+          let call_tok = match e.e with
+            | Fetch { base = Var name; _ } -> snd name.ident
+            | _ -> Tok.unsafe_fake_tok ""
+          in
           not (Tok.is_fake call_tok) &&
           match Call_graph.lookup_callee_from_graph
                   env.call_graph

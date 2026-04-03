@@ -417,14 +417,19 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(c
             let call_arity = List.length args_list in
             (match identify_callee ~lang ~object_mappings ~all_funcs ~caller_parent_path ~call_arity callee with
             | Some fn_id ->
-                (* For chained calls like ClassName(...).method(), the first
-                   token of the full expression is ClassName — same as the
-                   constructor edge. Use the method name token to avoid
-                   collision. For regular obj.method() calls, keep using the
-                   full expression's first token. *)
+                (* For DotAccess calls, use the method name token so it
+                   matches the method_tok lookup in get_signature_for_object.
+                   Exception: Ruby's ClassName.new() — use the class name
+                   token (top of expression) since the constructor machinery
+                   uses tok_of_eorig which points to the class name. *)
                 let tok =
                   match callee.G.e with
-                  | G.DotAccess ({ e = (G.Call _ | G.New _); _ }, _, G.FN (G.Id ((_, method_tok), _))) ->
+                  | G.DotAccess (_, _, G.FN (G.Id (("new", _), _)))
+                    when Lang.(lang =*= Ruby) ->
+                      (match AST_generic_helpers.ii_of_any (G.E e) with
+                      | tok :: _ -> tok
+                      | [] -> Tok.unsafe_fake_tok "")
+                  | G.DotAccess (_, _, G.FN (G.Id ((_, method_tok), _))) ->
                       method_tok
                   | _ ->
                       (match AST_generic_helpers.ii_of_any (G.E e) with
