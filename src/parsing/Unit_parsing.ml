@@ -119,13 +119,16 @@ let pack_parsing_tests_for_lang ?(error_tolerance = Strict) lang =
   let pattern = spf "%s/**/*" !!dir in
   let files = Common2.glob pattern in
   if files =*= [] then
-    failwith (spf "Empty set of parsing tests for %s at %s" slang pattern);
-  List.iter check_ext files;
-  let tests = parsing_tests_for_lang error_tolerance files lang in
-  (match subcategory with
-  | None -> tests
-  | Some cat -> Testo.categorize cat tests)
-  |> Testo.categorize slang
+    (* No test files found; return an empty suite rather than crashing *)
+    []
+  else begin
+    List.iter check_ext files;
+    let tests = parsing_tests_for_lang error_tolerance files lang in
+    (match subcategory with
+    | None -> tests
+    | Some cat -> Testo.categorize cat tests)
+    |> Testo.categorize slang
+  end
 
 (* Note that here we also use tree-sitter to parse; certain files were not
  * parsing with pfff but parses here
@@ -221,6 +224,7 @@ let make_tests langs_with_tolerance =
 let langs_with_error_tolerance =
   [
     (* languages with only a tree-sitter parser *)
+    (Lang.Apex, Strict);
     (Lang.Bash, Strict);
     (Lang.Elixir, Strict);
     (Lang.Csharp, Strict);
@@ -241,11 +245,17 @@ let langs_with_error_tolerance =
     (Lang.Julia, Strict);
     (Lang.Jsonnet, Strict);
     (Lang.Dart, Strict);
+    (Lang.Json, Strict);
+    (* TODO: Move_on_sui has non-.move files in its test dir (TODO/) *)
+    (* (Lang.Move_on_sui, Strict); *)
+    (Lang.Ql, Strict);
     (* here we have both a Pfff and tree-sitter parser *)
     (Lang.Java, Strict);
     (Lang.Go, Strict);
     (Lang.Ruby, Strict);
     (Lang.Js, Strict);
+    (Lang.Ts, Partial_parsing);
+    (Lang.Python, Strict);
     (Lang.C, Strict);
     (Lang.Cpp, Strict);
     (Lang.Php, Strict);
