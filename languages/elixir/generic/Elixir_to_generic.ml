@@ -369,6 +369,25 @@ and map_items env (v1, v2) : G.expr list =
   let v2 = map_keywords env v2 in
   v1 @ List_.map keyval_of_pair v2
 
+(* Like map_items but wraps each pair in OtherExpr to distinguish
+ * arrow syntax (%{"k" => v}) from keyword syntax (%{k: v}). *)
+and map_map_items env (v1, v2) : G.expr list =
+  let v1 = (map_list map_expr) env v1 in
+  let v2 = map_keywords env v2 in
+  let wrap_arrow (e : G.expr) : G.expr =
+    match e.G.e with
+    | G.Ellipsis _ -> e
+    | _ -> G.OtherExpr (("MapPairArrow", G.fake "=>"), [ G.E e ]) |> G.e
+  in
+  let wrap_keyword p : G.expr =
+    match p with
+    | Right e -> e (* ellipsis or metavar, pass through unwrapped *)
+    | Left _ ->
+        let e = keyval_of_pair p in
+        G.OtherExpr (("MapPairKeyword", G.fake ":"), [ G.E e ]) |> G.e
+  in
+  List_.map wrap_arrow v1 @ List_.map wrap_keyword v2
+
 and map_keywords env v = (map_list map_pair) env v
 
 and map_pair_kw_expr env (v1, v2) =
@@ -445,12 +464,12 @@ and map_param_to_gparam env (p : parameter) : G.parameter =
           G.Param (G.param_of_id ?pdefault id))
   | OtherParamExpr e ->
       let e = map_expr env e in
-      G.OtherParam (("OtherParamExpr", G.fake ""), [ G.E e ])
+      G.ParamPattern (H.expr_to_pattern e)
   | OtherParamPair (kwd, e) ->
       let kwd = map_keyword env kwd in
       let e = map_expr env e in
       let e = keyval_of_pair (Left (kwd, e)) in
-      G.OtherParam (("OtherParamPair", G.fake ""), [ G.E e ])
+      G.ParamPattern (H.expr_to_pattern e)
 
 and map_func_clause_to_stab env (clause : function_definition) :
     stab_clause_generic =
@@ -596,6 +615,8 @@ and map_binary_op env v1 v2 v3 =
   let e2 = map_expr env v3 in
   match op with
   | Left (op, tk) -> G.opcall (op, tk) [ e1; e2 ]
+  | Right (("=>", tk) as _id) ->
+      G.keyval e1 tk e2
   | Right id ->
       let n = G.N (H.name_of_id id) |> G.e in
       G.Call (n, fb ([ e1; e2 ] |> List_.map G.arg)) |> G.e
@@ -661,7 +682,7 @@ and map_expr env v : G.expr =
       |> G.e
   | Map (v1, v2, v3) -> (
       let v2 = (map_option map_astruct) env v2 in
-      let l, xs, r = (map_bracket map_items) env v3 in
+      let l, xs, r = (map_bracket map_map_items) env v3 in
       match v2 with
       | None ->
           let l = Tok.combine_toks v1 [ l ] in
