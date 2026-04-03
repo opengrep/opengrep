@@ -1992,7 +1992,8 @@ let call_with_intrafile lval_opt e env args instr =
              ClassName.new() pattern. *)
           (match e.e with
           | Fetch { rev_offset = [{ o = Dot name; _ }]; _ }
-            when fst name.IL.ident <> "new" -> false
+            when fst name.IL.ident <> "new"
+                 || not Lang.(env.taint_inst.lang =*= Ruby) -> false
           | _ -> true) &&
           Option.is_some env.signature_db &&
           let call_tok = tok_of_eorig ~default:(Tok.unsafe_fake_tok "") e in
