@@ -327,6 +327,42 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                 (* obj not in object_mappings — try as ClassName.new() constructor *)
                 let ty = G.{ t = TyN (G.Id ((obj_name, G.fake obj_name), G.empty_id_info ())); t_attrs = [] } in
                 resolve_constructor_from_type ~lang ~all_funcs ty)
+        (* Chained call: Constructor(...).method() — receiver is a constructor.
+           Python/Kotlin/Scala: ClassName(args).method()
+           Java/JS/TS/C#:       new ClassName(args).method()
+           Ruby:                ClassName.new(args).method() *)
+        | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _))) ->
+            let class_name_opt = match receiver.G.e with
+              (* Python/Kotlin/Scala: ClassName(args) *)
+              | G.Call ({ e = G.N (G.Id ((cn, _), _)); _ }, _)
+                when Lang.(lang =*= Python || lang =*= Kotlin || lang =*= Scala) -> Some cn
+              (* Java/JS/TS/C#: new ClassName(args) *)
+              | G.New (_, ty, _, _)
+                when Lang.(lang =*= Java || lang =*= Js || lang =*= Ts || lang =*= Csharp) ->
+                  (match ty.G.t with
+                  | G.TyN (G.Id ((cn, _), _)) -> Some cn
+                  | G.TyExpr { G.e = G.N (G.Id ((cn, _), _)); _ } -> Some cn
+                  | _ -> None)
+              (* Ruby: ClassName.new(args) *)
+              | G.Call ({ e = G.DotAccess (
+                    { e = G.N (G.Id ((cn, _), _)); _ }, _,
+                    G.FN (G.Id (("new", _), _))); _ }, _)
+                when Lang.(lang =*= Ruby) -> Some cn
+              | _ -> None
+            in
+            (match class_name_opt with
+            | Some class_name ->
+                let method_matches = List.filter (fun f ->
+                  match f.fn_id with
+                  | [Some c; Some m] ->
+                      fst c.IL.ident = class_name
+                      && fst m.IL.ident = method_name
+                  | _ -> false
+                ) all_funcs in
+                (match method_matches with
+                | [single_match] -> Some single_match.fn_id
+                | _ -> None)
+            | None -> None)
         | _ ->
             Log.debug (fun m ->
                 m "CALL_EXTRACT: Unmatched call pattern: %s"
@@ -370,11 +406,19 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(c
             let call_arity = List.length args_list in
             (match identify_callee ~lang ~object_mappings ~all_funcs ~caller_parent_path ~call_arity callee with
             | Some fn_id ->
-                (* Extract token from the call expression for edge label *)
+                (* For chained calls like ClassName(...).method(), the first
+                   token of the full expression is ClassName — same as the
+                   constructor edge. Use the method name token to avoid
+                   collision. For regular obj.method() calls, keep using the
+                   full expression's first token. *)
                 let tok =
-                  match AST_generic_helpers.ii_of_any (G.E e) with
-                  | tok :: _ -> tok
-                  | [] -> Tok.unsafe_fake_tok ""
+                  match callee.G.e with
+                  | G.DotAccess ({ e = (G.Call _ | G.New _); _ }, _, G.FN (G.Id ((_, method_tok), _))) ->
+                      method_tok
+                  | _ ->
+                      (match AST_generic_helpers.ii_of_any (G.E e) with
+                      | tok :: _ -> tok
+                      | [] -> Tok.unsafe_fake_tok "")
                 in
                 calls := (fn_id, tok) :: !calls
             | None -> ());

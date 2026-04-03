@@ -650,12 +650,24 @@ let tok_of_eorig ~(default : Tok.t) (exp : IL.exp) : Tok.t =
   | NoOrig -> default
 
 let get_signature_for_object graph caller_node db method_name obj (fun_exp : IL.exp) arity =
+  let caller = Option.map Function_id.of_il_name caller_node in
+  let method_tok = Function_id.tok method_name in
   let call_tok = tok_of_eorig ~default:(snd obj.ident) fun_exp in
-  match Call_graph.lookup_callee_from_graph
-          graph (Option.map Function_id.of_il_name caller_node) call_tok with
-  | Some callee_node ->
-      Shape_and_sig.(lookup_signature db callee_node arity)
-  | None -> Shape_and_sig.lookup_signature db method_name arity
+  (* Try method name token first: for chained calls like
+     ClassName(...).method(), the eorig token (call_tok) points to
+     ClassName which collides with the constructor edge. The method
+     token points to the actual method and avoids this collision. *)
+  let try_graph tok =
+    match Call_graph.lookup_callee_from_graph graph caller tok with
+    | Some callee_node -> Shape_and_sig.(lookup_signature db callee_node arity)
+    | None -> None
+  in
+  match try_graph method_tok with
+  | Some _ as r -> r
+  | None ->
+      (match try_graph call_tok with
+      | Some _ as r -> r
+      | None -> Shape_and_sig.lookup_signature db method_name arity)
 
 (* Helper to fallback to builtin signature database if regular lookup fails *)
 let try_builtin_fallback env func_name arity result =
@@ -1972,6 +1984,16 @@ let call_with_intrafile lval_opt e env args instr =
          * `Constructor`. We check the call graph to determine if this call
          * resolves to a constructor, and if so, remap the callee accordingly. *)
         let resolves_to_constructor =
+          (* Method calls on objects (e.g., _tmp.get_data()) should not be
+             remapped as constructors. Their eorig may share a token with a
+             constructor edge (e.g., in Passthrough(source()).get_data(), both
+             the constructor and the method eorig start at "Passthrough").
+             Skip the constructor check for Dot accesses unless it's Ruby's
+             ClassName.new() pattern. *)
+          (match e.e with
+          | Fetch { rev_offset = [{ o = Dot name; _ }]; _ }
+            when fst name.IL.ident <> "new" -> false
+          | _ -> true) &&
           Option.is_some env.signature_db &&
           let call_tok = tok_of_eorig ~default:(Tok.unsafe_fake_tok "") e in
           not (Tok.is_fake call_tok) &&

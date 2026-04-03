@@ -63,5 +63,9 @@ function main() {
     // ruleid: javascript_constructor_sqli
     sink(a);
 
+    // Test chained method call: new Constructor(tainted).method()
+    // ruleid: javascript_constructor_sqli
+    sink(new User(source()).getProfile());
+
     return result;
 }
