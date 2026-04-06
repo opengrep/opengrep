@@ -753,19 +753,16 @@ and map_expr env v : G.expr =
   | Map (v1, v2, v3) -> (
       let v2 = (map_option map_astruct) env v2 in
       let l, xs, r = (map_bracket map_map_items) env v3 in
+      let dict_l = Tok.combine_toks v1 [ l ] in
+      let dict_body = G.Container (G.Dict, (dict_l, xs, r)) |> G.e in
       match v2 with
-      | None ->
-          let l = Tok.combine_toks v1 [ l ] in
-          G.Container (G.Dict, (l, xs, r)) |> G.e
-      | Some astruct ->
-          (* TODO?
-             | Some (Left id) ->
-                 let n = H2.name_of_id id in
-                 let ty = G.TyN n |> G.t in
-                 G.New (tpercent, ty, G.empty_id_info (), (l, List_.map G.arg xs, r))
-                 |> G.e
-          *)
-          G.Call (astruct, (l, List_.map G.arg xs, r)) |> G.e)
+      | None -> dict_body
+      | Some name_expr -> (
+          match H.name_of_dot_access name_expr with
+          | Some n -> G.Constructor (n, fb [ dict_body ]) |> G.e
+          | None ->
+              (* Fallback for dynamic struct names that can't be statically resolved *)
+              G.Call (name_expr, fb [ G.arg dict_body ]) |> G.e))
   | Alias v ->
       (* TODO: split alias in components, and then use name_of_ids *)
       let v = map_alias env v in
