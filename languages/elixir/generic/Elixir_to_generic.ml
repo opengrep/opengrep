@@ -823,7 +823,7 @@ and map_expr env v : G.expr =
       let e1 = map_expr env v1 in
       let v3 = map_expr_or_kwds env v3 in
       let e3 = expr_of_expr_or_kwds v3 in
-      G.OtherExpr (("Join", tbar), [ G.E e1; G.E e3 ]) |> G.e
+      G.Constructor (H.name_of_id ("|", tbar), fb [ e1; e3 ]) |> G.e
   | Lambda (tfn, v2, _tend) ->
       let xs = map_clauses env v2 in
       let fdef = stab_clauses_to_function_definition tfn xs in
