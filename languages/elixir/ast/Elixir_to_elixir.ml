@@ -54,7 +54,9 @@ class ['self] visitor =
         exprs
         |> List_.map (function
              | I id -> P { pname = id; pdefault = None }
-             (* TODO: recognize default value with \\ *)
+             (* In Elixir you can have a default value only for ident params (no pats) *)
+             | BinaryOp (I id, (ODefault, tok), d) -> 
+                 P { pname = id; pdefault = Some (tok, d) }
              | x -> OtherParamExpr x)
       in
       let ys =
