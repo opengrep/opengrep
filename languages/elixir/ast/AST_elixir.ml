@@ -326,6 +326,9 @@ and function_definition = {
   f_guard : expr option;
   (* bracket is do/end *)
   f_body : stmts bracket;
+  (* rescue/catch/after/else clauses from the implicit-try form:
+   *   def foo(x) do body rescue E -> handler end *)
+  f_rescue : (exn_clause_kind wrap * body_or_clauses) list;
   f_is_private : bool;
 }
 

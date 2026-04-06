@@ -28,7 +28,7 @@ open AST_elixir
 (*****************************************************************************)
 (* Visitor *)
 (*****************************************************************************)
-let make_funcdef ~tdef ~ident ~params ~guard ~tdo ~body ~tend ~def_str =
+let make_funcdef ~tdef ~ident ~params ~guard ~tdo ~body ~tend ~rescue ~def_str =
     let f_body =
     match tdo, tend with
     | Some tdo, Some tend -> (tdo, body, tend)
@@ -41,6 +41,7 @@ let make_funcdef ~tdef ~ident ~params ~guard ~tdo ~body ~tend ~def_str =
         f_params = params;
         f_guard = guard;
         f_body;
+        f_rescue = rescue;
         f_is_private = String.equal def_str "defp";
     }
     in
@@ -92,15 +93,17 @@ class ['self] visitor =
               (* TODO? warning about unrecognized form? failwith ? *)
               Call (self#visit_call env x))
       (* https://hexdocs.pm/elixir/Kernel.html#def/2
-       * TODO: handle "implicit try" form
+       * The optional extras (rescue/catch/after/else) are the "implicit try"
+       * form; they are stored in f_rescue and translated to a Try block in
+       * Elixir_to_generic.ml.
        *)
       | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ Call (I ident, args, None) ], []), _),
-          Some (tdo, (Body body, []), tend) ) ->
+          Some (tdo, (Body body, extras), tend) ) ->
           let body = self#visit_body env body in
           let params = params_of_args args in
           make_funcdef ~tdef ~ident ~params ~guard:None ~tdo:(Some tdo)
-                       ~body ~tend:(Some tend) ~def_str 
+                       ~body ~tend:(Some tend) ~rescue:extras ~def_str
       | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ Call (I ident, args, None) ],
                [ Kw_expr ((X1 (do_kw, _), _tok_colon), body) ]), _),
@@ -108,16 +111,16 @@ class ['self] visitor =
           let body = self#visit_expr env body in
           let params = params_of_args args in
           make_funcdef ~tdef ~ident ~params ~guard:None ~tdo:None
-                       ~body:([ body ]) ~tend:None ~def_str 
+                       ~body:([ body ]) ~tend:None ~rescue:[] ~def_str
       (* def foo(x) when guard do ... end *)
       | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ When (Call (I ident, args, None), _twhen, E guard) ], []), _),
-          Some (tdo, (Body body, []), tend) ) ->
+          Some (tdo, (Body body, extras), tend) ) ->
           let guard = self#visit_expr env guard in
           let body = self#visit_body env body in
           let params = params_of_args args in
           make_funcdef ~tdef ~ident ~params ~guard:(Some guard) ~tdo:(Some tdo)
-                       ~body ~tend:(Some tend) ~def_str 
+                       ~body ~tend:(Some tend) ~rescue:extras ~def_str
       (* def foo(x) when guard, do: body *)
       | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ When (Call (I ident, args, None), _twhen, E guard) ],
@@ -127,7 +130,7 @@ class ['self] visitor =
           let body = self#visit_expr env body in
           let params = params_of_args args in
           make_funcdef ~tdef ~ident ~params ~guard:(Some guard) ~tdo:None
-                       ~body:([ body ]) ~tend:None ~def_str 
+                       ~body:([ body ]) ~tend:None ~rescue:[] ~def_str
       (* https://hexdocs.pm/elixir/Kernel.html#defmodule/2 *)
       | ( I (Id ("defmodule", tdefmodule)),
           (_, ([ Alias mname ], []), _),
