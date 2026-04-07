@@ -164,6 +164,10 @@ class ['self] visitor =
             }
           in
           S (D (ModuleDef def))
+      (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#throw/1 *)
+      | ( I (Id ("throw", tthrow)), (_, ([ arg ], []), _), None ) ->
+          let arg = self#visit_expr env arg in
+          S (Throw (tthrow, arg))
       (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#try/1 *)
       | ( I (Id ("try", ttry)), (_, ([], []), _), Some do_block ) ->
           let do_block = self#visit_do_block env do_block in

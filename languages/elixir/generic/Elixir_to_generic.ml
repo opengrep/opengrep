@@ -425,6 +425,9 @@ and map_stmt env (v : stmt) : G.stmt =
       in
       let st1 = G.Block (tdo, then_, tthenend) |> G.s in
       G.If (tif, G.Cond e, st1, elseopt) |> G.s
+  | Throw (tthrow, e) ->
+      let e = map_expr env e in
+      G.Throw (tthrow, e, G.sc) |> G.s
   | Try (ttry, (tdo, (boc, extras), tend)) ->
       let body_stmts =
         match boc with
