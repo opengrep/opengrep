@@ -425,6 +425,17 @@ and map_stmt env (v : stmt) : G.stmt =
       in
       let st1 = G.Block (tdo, then_, tthenend) |> G.s in
       G.If (tif, G.Cond e, st1, elseopt) |> G.s
+  | Throw (tthrow, e) ->
+      let e = map_expr env e in
+      G.Throw (tthrow, e, G.sc) |> G.s
+  | Try (ttry, (tdo, (boc, extras), tend)) ->
+      let body_stmts =
+        match boc with
+        | Body stmts -> map_stmts env stmts
+        | Clauses _ -> (* unreachable: try body is always Body stmts *) []
+      in
+      let body_stmt = G.Block (tdo, body_stmts, tend) |> G.s in
+      wrap_with_rescue env ttry body_stmt extras
   | D def ->
       let d = map_definition env def in
       G.DefStmt d |> G.s
@@ -474,21 +485,27 @@ and map_param_to_gparam env (p : parameter) : G.parameter =
 (* Convert one rescue/catch stab clause to a G.catch arm.
  * Each stab has a list of exception-type expressions and a handler body. *)
 and map_rescue_stab_to_catch env tok (stab : stab_clause) : G.catch =
-  let ((args, _kwargs), _guard_opt), _tarrow, body_stmts = stab in
-  let catch_exn =
+  let ((args, _kwargs), guard_opt), _tarrow, body_stmts = stab in
+  let catch_pat =
     match args with
-    | [] -> G.CatchPattern (G.PatEllipsis tok)
+    | [] -> G.PatEllipsis tok
     | [arg] ->
         let e = map_expr env arg in
-        G.CatchPattern (H.expr_to_pattern e)
+        H.expr_to_pattern e
     | args ->
         let pats = List_.map (fun a -> H.expr_to_pattern (map_expr env a)) args in
         let pat =
           List.fold_right (fun p acc -> G.DisjPat (p, acc))
             (List.tl pats) (List.hd pats)
         in
-        G.CatchPattern pat
+        pat
   in
+  let catch_pat =
+    match guard_opt with
+    | Some (_tok, guard) -> G.PatWhen (catch_pat, map_expr env guard)
+    | None -> catch_pat
+  in
+  let catch_exn = G.CatchPattern catch_pat in
   let body = map_stmts env body_stmts in
   (tok, catch_exn, G.Block (Tok.unsafe_fake_bracket body) |> G.s)
 

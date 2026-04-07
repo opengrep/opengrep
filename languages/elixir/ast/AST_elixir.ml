@@ -306,6 +306,8 @@ and stmt =
       * stmts
       * (tok * stmts) option
       * tok (* 'end' *)
+  | Try of tok (* 'try' *) * do_block
+  | Throw of tok (* 'throw' *) * expr
   | D of definition
 
 (* ------------------------------------------------------------------------- *)
