@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.18.0](https://github.com/opengrep/opengrep/releases/tag/v1.18.0) - 07-04-2026
+
+### Improvements
+
+* Elixir: Updates to syntax (part 1) by @maciejpirog in #642
+* Elixir: Updates to syntax (part 2) by @maciejpirog in #646
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.17.0...v1.18.0
+
+
 ## [1.17.0](https://github.com/opengrep/opengrep/releases/tag/v1.17.0) - 03-04-2026
 
 ### Improvements
