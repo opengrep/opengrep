@@ -208,7 +208,8 @@ let rec expr_to_pattern e =
   | Ellipsis t -> PatEllipsis t
   | OtherExpr (tag, [ E e ]) -> OtherPat (tag, [ P (expr_to_pattern e) ])
   | Cast (ty, _tok, expr) -> PatTyped (expr_to_pattern expr, ty)
-  (* TODO: PatKeyVal and more *)
+  | LetPattern (p, {e = N (Id (i, info)); _} ) -> PatAs (p, (i, info))
+   (* TODO: PatKeyVal and more *)
   | _ -> OtherPat (("ExprToPattern", fake ""), [ E e ])
 
 exception NotAnExpr
