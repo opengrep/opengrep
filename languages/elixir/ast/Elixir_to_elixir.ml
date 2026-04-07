@@ -47,6 +47,24 @@ let make_funcdef ~tdef ~ident ~params ~guard ~tdo ~body ~tend ~rescue ~def_str =
     in
     S (D (FuncDef [def]))
 
+(* In Elixir, we can skip the arg list in function definition if it is empty.
+ * We preprocess these cases to avoid code duplication in the visitor. *)
+let normalize_function_header (x : call) : call =
+  match x with
+  |  (I (Id (( "def" | "defp" ), _)) as a),
+     (l, ([ I ident ], kw), r),
+     c ->
+     a,
+     (l, ([ Call (I ident, Tok.unsafe_fake_bracket ([], []), None) ], kw), r),
+     c
+  |  (I (Id (( "def" | "defp" ), _)) as a),
+     (l, ([ When (I ident, wtok, wguard) ], kw), r),
+     c ->
+     a,
+     (l, ([ When (Call (I ident, Tok.unsafe_fake_bracket ([], []), None), wtok, wguard) ], kw), r),
+     c
+  | _ -> x
+
 class ['self] visitor =
   let params_of_args (args : arguments bracket) : parameters =
       let l, (exprs, kwdargs), r = args in
@@ -77,7 +95,7 @@ class ['self] visitor =
 
     
     method! visit_Call env (x : call) =
-      match x with
+      match normalize_function_header x with
       (* https://hexdocs.pm/elixir/Kernel.html#if/2
        * TODO? recognize also the compact form 'if(cond, :do then)' ?
        *)
