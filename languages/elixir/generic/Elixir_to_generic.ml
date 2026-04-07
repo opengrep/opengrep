@@ -425,6 +425,14 @@ and map_stmt env (v : stmt) : G.stmt =
       in
       let st1 = G.Block (tdo, then_, tthenend) |> G.s in
       G.If (tif, G.Cond e, st1, elseopt) |> G.s
+  | Try (ttry, (tdo, (boc, extras), tend)) ->
+      let body_stmts =
+        match boc with
+        | Body stmts -> map_stmts env stmts
+        | Clauses _ -> (* unreachable: try body is always Body stmts *) []
+      in
+      let body_stmt = G.Block (tdo, body_stmts, tend) |> G.s in
+      wrap_with_rescue env ttry body_stmt extras
   | D def ->
       let d = map_definition env def in
       G.DefStmt d |> G.s
