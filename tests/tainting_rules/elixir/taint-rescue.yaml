@@ -1,0 +1,16 @@
+rules:
+- id: taint-rescue
+  mode: taint
+  languages: [elixir]
+  message: "tainted in function with rescue clause"
+  severity: INFO
+  pattern-sources:
+    - patterns:
+        - pattern-inside: |
+            def $_(..., $X, ...) do
+            ...
+            end
+      - focus-metavariable: $X
+  pattern-sinks:
+    - pattern: |
+        sink($R)

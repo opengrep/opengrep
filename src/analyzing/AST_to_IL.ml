@@ -439,6 +439,13 @@ and pattern env pat : stmts * lval * stmts =
   | G.OtherPat ((("MapPairArrow" | "MapPairKeyword"), _), [ G.P inner ])
     when env.lang =*= Lang.Elixir ->
     pattern env inner
+  | G.OtherPat (("ExprToPattern", tok), [ G.E e ]) ->
+    (* expr_to_pattern fallback: the expression couldn't be statically
+     * converted to a known pattern. Evaluate the expression so that
+     * side-effects and taint flow are captured, then bind a fresh tmp. *)
+    let pre_ss, _e' = expr env e in
+    let tmp = fresh_lval tok in
+    (pre_ss, tmp, [])
   | G.PatEllipsis _ -> sgrep_construct (G.P pat)
   | _ -> todo (G.P pat)
 
