@@ -126,6 +126,12 @@ let rec expr e =
            * and `f($X)` will match `f(x)`. *)
           let barg = b |> expr |> G.arg in
           G.Call (G.e e_call, (lb, [ barg ], rb)))
+  | ArrayAccess (e, (lb, args, rb)) ->
+      let e = expr e in
+      let args = list argument args in
+      let exprs = List.filter_map (function G.Arg e -> Some e | _ -> None) args in
+      let index = G.Container (G.Array, (lb, exprs, rb)) |> G.e in
+      G.ArrayAccess (e, (lb, index, rb))
   | DotAccess (e, t, m) -> (
       let e = expr e in
       match m with
