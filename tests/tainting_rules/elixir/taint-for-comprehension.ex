@@ -16,9 +16,9 @@ end
 
 def multiple_generators(xs, ys) do
   for x <- xs, y <- ys do
-    # todoruleid: for_comp_taint
+    # ruleid: for_comp_taint
     sink(x)
-    # todoruleid: for_comp_taint
+    # ruleid: for_comp_taint
     sink(y)
   end
 end

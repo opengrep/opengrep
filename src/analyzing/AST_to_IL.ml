@@ -980,9 +980,8 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let xs = List.map snd results in
       let kind = composite_kind ~g_expr kind in
       (ss, mk_e (Composite (kind, (l, xs, r))) eorig)
-  | G.Comprehension (_op, (_l, (er, [CompFor (tok_for, pat, tok_in, e)]), _r)) ->
-      comprehension_for env er tok_for pat tok_in e
-  | G.Comprehension _ -> todo (G.E g_expr)
+  | G.Comprehension (_op, (_l, (er, clauses), _r)) ->
+      comprehension env er clauses
   | G.Lambda fdef ->
       let lval = fresh_lval (snd fdef.fkind) in
       let final_fdef =
@@ -1606,9 +1605,10 @@ and xml_expr env ~void eorig xml : stmts * exp =
              (CTuple, (tok, List.rev_append filtered_attrs filtered_body, tok)))
           (Related (G.Xmls xml.G.xml_body)) )
 
-(* Adjusted from for_each *)
-and comprehension_for env result_expr tok_for pat tok_in collection_expr : stmts * exp =
-  let tmp = fresh_lval ~str:"_comprehension_tmp" tok_in in
+(* Build a single foreach loop around [inner_body] IL stmts.
+ * Adjusted from for_each; used by [comprehension] below. *)
+and comprehension_loop env tok_for (pat : G.pattern) (tok_in : tok)
+    (collection_expr : G.expr) (inner_body : stmts) : stmts =
   let cont_label_s, break_label_s, env = break_continue_labels env tok_for in
   let ss, e' = expr env collection_expr in
   let next_lval = fresh_lval tok_in in
@@ -1633,22 +1633,44 @@ and comprehension_for env result_expr tok_for pat tok_in collection_expr : stmts
       (mk_e (Fetch next_lval) (related_tok tok_in))
       ~eorig:(related_tok tok_in) pat
   in
+  let cond = mk_e (Fetch hasnext_lval) (related_tok tok_in) in
+  ss @
+  [ hasnext_call;
+    mk_s
+        (Loop
+           ( tok_in,
+             cond,
+             next_call :: assign_st @ inner_body @ cont_label_s
+             @ [ hasnext_call ] ));
+  ]
+  @ break_label_s
+
+(* Recursively build nested loops/guards from comprehension clauses,
+ * wrapping [inner_body] at the innermost level.
+ * Mirrors the MultiForEach nesting in [stmt]. *)
+and comprehension_clauses env (clauses : G.for_or_if_comp list)
+    (inner_body : stmts) : stmts =
+  match clauses with
+  | [] -> inner_body
+  | G.CompFor (tok_for, pat, tok_in, collection_expr) :: rest ->
+      let body = comprehension_clauses env rest inner_body in
+      comprehension_loop env tok_for pat tok_in collection_expr body
+  | G.CompIf (tok_if, guard_expr) :: rest ->
+      let body = comprehension_clauses env rest inner_body in
+      let ss, e' = expr env guard_expr in
+      ss @ [ mk_s (If (tok_if, e', body, [])) ]
+
+(* Compile a comprehension: create an accumulator, build nested
+ * loops from the clause list, append each result to the accumulator. *)
+and comprehension env (result_expr : G.expr)
+    (clauses : G.for_or_if_comp list) : stmts * exp =
+  let tok = G.fake "comprehension" in
+  let tmp = fresh_lval ~str:"_comprehension_tmp" tok in
   let ss_res, e_eres = expr env ~void:false result_expr in
   let e_plus = mk_e (Operator ((G.Plus, Tok.unsafe_fake_tok "+="), [Unnamed e_eres])) NoOrig in
-  let st = mk_s (Instr (mk_i (Assign (tmp, e_plus)) NoOrig)) in
-  let cond = mk_e (Fetch hasnext_lval) (related_tok tok_in) in
-  let loop_stmts =
-    ss @
-    [ hasnext_call;
-      mk_s
-          (Loop
-             ( tok_in,
-               cond,
-               next_call :: assign_st @ ss_res @ [st] @ cont_label_s
-               @ [ hasnext_call ] ));
-    ]
-    @ break_label_s
-  in
+  let append_st = mk_s (Instr (mk_i (Assign (tmp, e_plus)) NoOrig)) in
+  let inner_body = ss_res @ [ append_st ] in
+  let loop_stmts = comprehension_clauses env clauses inner_body in
   (loop_stmts, mk_e (Fetch tmp) NoOrig)
   
 and stmt_expr env ?g_expr st : stmts * exp =
