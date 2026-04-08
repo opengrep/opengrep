@@ -428,6 +428,25 @@ and map_stmt env (v : stmt) : G.stmt =
   | Throw (tthrow, e) ->
       let e = map_expr env e in
       G.Throw (tthrow, e, G.sc) |> G.s
+  | For (tfor, clauses, (tdo, body, tend)) ->
+      let comp_clauses = List_.map (fun (clause : for_clause) ->
+        match clause with
+        | ForGenerator (pat, tarrow, collection) ->
+            let pat = map_expr env pat |> H.expr_to_pattern in
+            let collection = map_expr env collection in
+            G.CompFor (tfor, pat, tarrow, collection)
+        | ForFilter e ->
+            let e = map_expr env e in
+            G.CompIf (G.fake "if", e)
+      ) clauses in
+      let body_stmts = map_stmts env body in
+      let body_expr =
+        match body_stmts with
+        | [ { G.s = G.ExprStmt (e, _sc); _ } ] -> e
+        | _ -> G.stmt_to_expr (G.Block (tdo, body_stmts, tend) |> G.s)
+      in
+      let comp = G.Comprehension (G.List, (tdo, (body_expr, comp_clauses), tend)) in
+      G.ExprStmt (comp |> G.e, G.sc) |> G.s
   | Try (ttry, (tdo, (boc, extras), tend)) ->
       let body_stmts =
         match boc with
@@ -708,6 +727,24 @@ and map_binary_op env v1 v2 v3 =
       let n = G.N (H.name_of_id id) |> G.e in
       G.Call (n, fb ([ e1; e2 ] |> List_.map G.arg)) |> G.e
 
+(* Desugar pipe: x |> f(a, b) becomes f(x, a, b), tagged with
+ * OtherExpr("PipelineCall", ...) so search patterns can distinguish
+ * piped calls from direct calls. *)
+and map_pipeline env (v1 : expr) (tk : tok) (v3 : expr) : G.expr =
+  let desugared =
+    match v3 with
+    | Call (fn, (l, (args, kwds), r), blk) ->
+        (* Insert v1 as first argument at the Elixir AST level;
+         * map_call will call map_expr on v1, handling nested pipes. *)
+        map_call env (fn, (l, (v1 :: args, kwds), r), blk)
+    | _ ->
+        (* Bare function reference: x |> f  becomes  f(x) *)
+        let e1 = map_expr env v1 in
+        let e2 = map_expr env v3 in
+        G.Call (e2, fb [ G.Arg e1 ]) |> G.e
+  in
+  G.OtherExpr (("PipelineCall", tk), [ G.E desugared ]) |> G.e
+
 and map_match env v1 v2 =
   (* Single LHS names are VarDefs.
    * Otherwise, including ellipsis, we consider them LetPatterns.
@@ -826,6 +863,7 @@ and map_expr env v : G.expr =
   | BinaryOp (v1, v2, v3) -> (
       match v2 with
       | OMatch, _tk -> map_match env v1 v3
+      | OPipeline, tk -> map_pipeline env v1 tk v3
       | _else_ -> map_binary_op env v1 v2 v3)
   | OpArity (v1, tslash, pi) ->
       let id = map_wrap_operator_ident env v1 in
