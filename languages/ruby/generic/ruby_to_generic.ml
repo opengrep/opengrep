@@ -569,21 +569,10 @@ and expr_as_stmt = function
   | D x -> definition x
   | e -> (
       let e = expr e in
-      match e.G.e with
-      (* targets only: a single name on its own line is probably an hidden fun call,
-         * unless it's a metavariable
-      *)
-      | G.N (G.Id ((s, _), _)) ->
-          if AST_generic.is_metavar_name s || (Domain.DLS.get Flag_parsing.sgrep_mode) then
-            G.exprstmt e
-          else
-            let call = G.Call (e, fb []) |> G.e in
-            G.exprstmt call
-      | _ -> (
-          match expr_special_cases e with
-          | G.S s -> s
-          | G.E e -> G.exprstmt e
-          | _ -> raise Impossible))
+      match expr_special_cases e with
+      | G.S s -> s
+      | G.E e -> G.exprstmt e
+      | _ -> raise Impossible)
 
 and stmt st =
   match st with
