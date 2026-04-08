@@ -308,7 +308,16 @@ and stmt =
       * tok (* 'end' *)
   | Try of tok (* 'try' *) * do_block
   | Throw of tok (* 'throw' *) * expr
+  (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#for/1 *)
+  | For of tok (* 'for' *) * for_clause list * stmts bracket (* do body *)
   | D of definition
+
+(* ref: https://hexdocs.pm/elixir/Kernel.SpecialForms.html#for/1
+ * A for_clause is either a generator (pattern <- collection) or a filter.
+ *)
+and for_clause =
+  | ForGenerator of expr (* pattern *) * tok (* '<-' *) * expr (* collection *)
+  | ForFilter of expr
 
 (* ------------------------------------------------------------------------- *)
 (* Definitions *)

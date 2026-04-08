@@ -93,7 +93,18 @@ class ['self] visitor =
   object (self : 'self)
     inherit [_] map
 
-    
+    method private for_clauses env (args : expr list) : for_clause list =
+      List_.map (fun (arg : expr) ->
+        match arg with
+        | BinaryOp (pat, (OLeftArrow, tarrow), collection) ->
+            let pat = self#visit_expr env pat in
+            let collection = self#visit_expr env collection in
+            ForGenerator (pat, tarrow, collection)
+        | e ->
+            let e = self#visit_expr env e in
+            ForFilter e
+      ) args
+
     method! visit_Call env (x : call) =
       match normalize_function_header x with
       (* https://hexdocs.pm/elixir/Kernel.html#if/2
@@ -172,6 +183,32 @@ class ['self] visitor =
       | ( I (Id ("try", ttry)), (_, ([], []), _), Some do_block ) ->
           let do_block = self#visit_do_block env do_block in
           S (Try (ttry, do_block))
+      (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#for/1
+       * for pattern <- collection, filter, ... do body end *)
+      | ( I (Id ("for", tfor)),
+          (_, (args, _kwds), _),
+          Some (tdo, (Body body, []), tend) ) ->
+          let clauses = self#for_clauses env args in
+          let body = self#visit_body env body in
+          S (For (tfor, clauses, (tdo, body, tend)))
+      (* for pattern <- collection, do: body (compact keyword form) *)
+      | ( I (Id ("for", tfor)),
+          (_, (args, kwds), _),
+          None ) -> (
+          match List.find_opt (fun (kwd : pair) ->
+            match kwd with
+            | Kw_expr ((X1 (do_kw, _), _), _)
+              when String.starts_with ~prefix:"do:" do_kw -> true
+            | _ -> false
+          ) kwds with
+          | Some (Kw_expr (_, body_expr)) ->
+              let clauses = self#for_clauses env args in
+              let body_expr = self#visit_expr env body_expr in
+              let fake = Tok.unsafe_fake_tok "" in
+              S (For (tfor, clauses, (fake, [ body_expr ], fake)))
+          | _ ->
+              let x = self#visit_call env x in
+              Call x)
       | _else_ ->
           let x = self#visit_call env x in
           Call x
