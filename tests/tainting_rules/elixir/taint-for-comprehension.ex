@@ -7,9 +7,9 @@ end
 
 def with_pipe(data) do
   for line <- data do
+    # ruleid: for_comp_taint
     line
     |> Base.decode64!()
-    # todoruleid: for_comp_taint
     |> sink()
   end
 end
