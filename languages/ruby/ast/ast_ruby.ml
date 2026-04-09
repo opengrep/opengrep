@@ -213,7 +213,7 @@ type expr =
   | Ternary of expr * tok (* ? *) * expr * tok (* : *) * expr
   (* the brackets can be fake when the call is a "Command" *)
   | Call of expr * arguments bracket * expr option
-  (* TODO: ArrayAccess of expr * expr list bracket *)
+  | ArrayAccess of expr * arguments bracket
   (* old: was Binop(e1, Op_DOT, e2) before *)
   | DotAccess of expr * tok (* . or &. *) * method_name
   | DotAccessEllipsis of expr * tok (* '...' *)
