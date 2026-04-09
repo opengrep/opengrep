@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.19.0](https://github.com/opengrep/opengrep/releases/tag/v1.19.0) - 09-04-2026
+
+### Improvements
+
+* Elixir: fix taint propagation through for comprehensions and pipes by @dimitris-m in #650
+* Ruby: remove redundant Call wrapping in `expr_as_stmt` by @dimitris-m in #651
+* Fix `obj[key]` parsing in ruby by @corneliuhoffman in #649
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.18.0...v1.19.0
+
+
 ## [1.18.0](https://github.com/opengrep/opengrep/releases/tag/v1.18.0) - 07-04-2026
 
 ### Improvements
