@@ -15,10 +15,31 @@
 
 module G = AST_generic
 
-class ['self] pat_id_visitor =
+(* This one is used in OtherPattern(("ExprToPattern"),...) [E e]).
+ * In such a case variables in e should be understood as pattern variables.
+ * NOTE: we need two visitors, because not all expr-variables are
+ * pat-variables (e.g. in PatWhen(p,e), vars in e are not pat-vars). *)
+class ['self] expr_id_visitor =
   object (_self : 'self)
     inherit ['self] AST_generic.iter_no_id_info as super
 
+    method! visit_expr_kind store e =
+      match e with
+      | G.N (G.Id (id, id_info)) ->
+          super#visit_expr_kind store e;
+          Stack_.push (id, id_info) store
+      | _ -> super#visit_expr_kind store e
+
+    method! visit_pattern _store _pat =
+      ()
+  end
+
+let expr_id_visitor_instance = new expr_id_visitor
+
+class ['self] pat_id_visitor =
+  object (_self : 'self)
+    inherit ['self] AST_generic.iter_no_id_info as super
+    
     method! visit_pattern store pat =
       match pat with
       | PatAs (_, (id, id_info))
@@ -49,6 +70,10 @@ class ['self] pat_id_visitor =
                   Stack_.push (local_id, local_idinfo) store
               | _else_ -> ())
             fields
+      | G.OtherPat (("ExprToPattern", _), [ G.E { e; _ } ]) ->
+          let ids = ref [] in
+          expr_id_visitor_instance#visit_expr_kind ids e;
+          store := !ids @ !store
       | PatRecord _
       | PatLiteral _
       | PatConstructor _
@@ -67,6 +92,7 @@ class ['self] pat_id_visitor =
   end
 
 let pat_id_visitor_instance = new pat_id_visitor
+  
 let visit : AST_generic.any -> (G.ident * G.id_info) list =
   fun any ->
     let ids = ref [] in
