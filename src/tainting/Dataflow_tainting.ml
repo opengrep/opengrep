@@ -809,13 +809,20 @@ let lookup_signature_with_object_context env fun_exp arity =
           | None ->
               lookup_direct_or_by_name method_name)
       | Fetch { base = Var obj; rev_offset = [ { o = Dot method_name; _ } ] } -> (
+          let call_tok =
+            if
+              Lang.(env.taint_inst.lang =*= Ruby)
+              && String.equal (fst method_name.ident) "new"
+            then snd obj.ident
+            else call_tok_of_fun_exp ~default_tok:(snd obj.ident) fun_exp
+          in
           match
             get_signature_for_object
               env.call_graph
               env.func.name
               db
               (Function_id.of_il_name method_name)
-              ~call_tok:(call_tok_of_fun_exp ~default_tok:(snd obj.ident) fun_exp)
+              ~call_tok
               arity
           with
           | Some _ as result -> result
@@ -860,6 +867,11 @@ let receiver_lval_for_constructor_call env lval_opt fun_exp =
             Some (call_tok_of_fun_exp ~default_tok:(snd name.ident) fun_exp)
         | Fetch { base = VarSpecial ((Self | This), self_tok); rev_offset = _ } ->
             Some (call_tok_of_fun_exp ~default_tok:self_tok fun_exp)
+        | Fetch { base = Var obj; rev_offset = { o = Dot method_name; _ } :: _ }
+          when
+            Lang.(env.taint_inst.lang =*= Ruby)
+            && String.equal (fst method_name.ident) "new" ->
+            Some (snd obj.ident)
         | Fetch { base = Var obj; rev_offset = _ } ->
             Some (call_tok_of_fun_exp ~default_tok:(snd obj.ident) fun_exp)
         | _ -> None
@@ -2093,6 +2105,87 @@ let call_with_intrafile lval_opt e env args instr =
             | None ->
                 (all_args_taints, S.Bot, lval_env)))
     | None ->
+        (* Constructor call handling for ClassName() and ClassName.new().
+         *
+         * When taint flows through a constructor (e.g., `obj = Foo(tainted)`),
+         * the constructor signature may contain ToLval(BThis.field, taint)
+         * effects that assign taint to fields of the new object. For Sig_inst
+         * to correctly map BThis onto the target variable `obj`, we need the
+         * callee expression to be `obj.Constructor` rather than just
+         * `Constructor`. We check the call graph to determine if this call
+         * resolves to a constructor, and if so, remap the callee accordingly. *)
+        let resolves_to_constructor =
+          (match e.e with
+          | Fetch { rev_offset = [ { o = Dot name; _ } ]; _ }
+            when
+              not
+                (Lang.(env.taint_inst.lang =*= Ruby)
+                && String.equal (fst name.IL.ident) "new") ->
+              false
+          | _ -> true)
+          && Option.is_some env.signature_db
+          &&
+          let call_tok =
+            match e.e with
+            | Fetch { base = Var name; rev_offset = [] } -> snd name.ident
+            | Fetch
+                {
+                  base = Var name;
+                  rev_offset = [ { o = Dot method_name; _ } ];
+                }
+              when
+                Lang.(env.taint_inst.lang =*= Ruby)
+                && String.equal (fst method_name.ident) "new" ->
+                snd name.ident
+            | _ -> Tok.unsafe_fake_tok ""
+          in
+          not (Tok.is_fake call_tok)
+          &&
+          match
+            Call_graph.lookup_callee_from_graph
+              env.call_graph
+              (Option.map Function_id.of_il_name env.func.name)
+              call_tok
+          with
+          | Some callee_node ->
+              Object_initialization.is_constructor env.taint_inst.lang
+                (Function_id.show callee_node) None
+          | None -> false
+        in
+        let e =
+          if resolves_to_constructor then
+            match (lval_opt, e.e) with
+            | ( Some lval,
+                Fetch
+                  {
+                    base = Var name;
+                    rev_offset = ([] | [ { o = Dot _; _ } ]);
+                  } ) ->
+                IL.
+                  {
+                    e =
+                      Fetch
+                        {
+                          base = lval.base;
+                          rev_offset = [ { o = Dot name; oorig = NoOrig } ];
+                        };
+                    eorig = e.eorig;
+                  }
+            | _ -> e
+          else e
+        in
+        let args, args_taints =
+          if resolves_to_constructor && Lang.(env.taint_inst.lang =*= Python)
+          then
+            match lval_opt with
+            | Some lval ->
+                let self_exp = IL.{ e = Fetch lval; eorig = NoOrig } in
+                let self_arg = IL.Unnamed self_exp in
+                let self_taint = IL.Unnamed (Taints.empty, S.Bot) in
+                (self_arg :: args, self_taint :: args_taints)
+            | None -> (args, args_taints)
+          else (args, args_taints)
+        in
         (* No implicit lambda, try unified constructor execution *)
         let receiver_lval =
           receiver_lval_for_constructor_call env lval_opt e
@@ -2104,7 +2197,19 @@ let call_with_intrafile lval_opt e env args instr =
           Object_initialization.execute_unified_constructor e args args_taints
             check_function_call_wrapper { env with lval_env }
         with
-        | Some (call_taints, shape, lval_env) -> (call_taints, shape, lval_env)
+        | Some (call_taints, shape, lval_env) ->
+            let shape =
+              if resolves_to_constructor then
+                match lval_opt with
+                | Some lval -> (
+                    match Lval_env.find_lval lval_env lval with
+                    | Some (S.Cell (_, s)) when not (match s with S.Bot -> true | _ -> false) ->
+                        s
+                    | _ -> shape)
+                | None -> shape
+              else shape
+            in
+            (call_taints, shape, lval_env)
         | None -> (
             (* Regular function call processing *)
             Log.debug (fun m ->

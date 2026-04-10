@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.19.0](https://github.com/opengrep/opengrep/releases/tag/v1.19.0) - 09-04-2026
+
+### Improvements
+
+* Elixir: fix taint propagation through for comprehensions and pipes by @dimitris-m in #650
+* Ruby: remove redundant Call wrapping in `expr_as_stmt` by @dimitris-m in #651
+* Fix `obj[key]` parsing in ruby by @corneliuhoffman in #649
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.18.0...v1.19.0
+
+
+## [1.18.0](https://github.com/opengrep/opengrep/releases/tag/v1.18.0) - 07-04-2026
+
+### Improvements
+
+* Elixir: Updates to syntax (part 1) by @maciejpirog in #642
+* Elixir: Updates to syntax (part 2) by @maciejpirog in #646
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.17.0...v1.18.0
+
+
+## [1.17.0](https://github.com/opengrep/opengrep/releases/tag/v1.17.0) - 03-04-2026
+
+### Improvements
+
+* Treat nested functions as lambdas by @dimitris-m in #621
+* Tainting: per-arity signature extraction for Clojure and Elixir by @dimitris-m in #582
+* Dockerfile: Preprocess for better line continuations and comments by @maciejpirog in #633
+* Elixir: fix map destructuring in function parameters by @dimitris-m in #637
+* Elixir: fix taint propagation through map value expressions by @dimitris-m in #640
+* Support chained method calls on constructor results with --taint-intrafile by @corneliuhoffman in #638
+
+### Bug fixes
+
+* Fix(Ruby): zero argument method call syntax by @corneliuhoffman in #626
+* Fix: proper constructor taint analysis by @corneliuhoffman in #628
+* Fix: Elixir scanner CRLF handling by @dimitris-m in #639
+
+### Refactoring
+
+* Refactoring of AST-to-IL, Step 1 by @maciejpirog in #622
+
+### Developer tooling
+
+* Pretty-print IL in C-style syntax by @maciejpirog in #623
+
+### Installation
+
+* Improve error reporting in install.sh by @dimitris-m in #620
+
+### Security
+
+* [Aikido] AI Fix for Template Injection in GitHub Workflows Action by @aikido-autofix[bot] in #624
+* [Aikido] AI Fix for 3rd party Github Actions should be pinned by @aikido-autofix[bot] in #625
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.16.5...v1.17.0
+
+
 ## [1.16.5](https://github.com/opengrep/opengrep/releases/tag/v1.16.5) - 17-03-2026
 
 ### Improvements

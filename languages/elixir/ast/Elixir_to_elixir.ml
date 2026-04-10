@@ -28,7 +28,7 @@ open AST_elixir
 (*****************************************************************************)
 (* Visitor *)
 (*****************************************************************************)
-let make_funcdef ~tdef ~ident ~params ~guard ~tdo ~body ~tend ~def_str =
+let make_funcdef ~tdef ~ident ~params ~guard ~tdo ~body ~tend ~rescue ~def_str =
     let f_body =
     match tdo, tend with
     | Some tdo, Some tend -> (tdo, body, tend)
@@ -41,10 +41,29 @@ let make_funcdef ~tdef ~ident ~params ~guard ~tdo ~body ~tend ~def_str =
         f_params = params;
         f_guard = guard;
         f_body;
+        f_rescue = rescue;
         f_is_private = String.equal def_str "defp";
     }
     in
     S (D (FuncDef [def]))
+
+(* In Elixir, we can skip the arg list in function definition if it is empty.
+ * We preprocess these cases to avoid code duplication in the visitor. *)
+let normalize_function_header (x : call) : call =
+  match x with
+  |  (I (Id (( "def" | "defp" ), _)) as a),
+     (l, ([ I ident ], kw), r),
+     c ->
+     a,
+     (l, ([ Call (I ident, Tok.unsafe_fake_bracket ([], []), None) ], kw), r),
+     c
+  |  (I (Id (( "def" | "defp" ), _)) as a),
+     (l, ([ When (I ident, wtok, wguard) ], kw), r),
+     c ->
+     a,
+     (l, ([ When (Call (I ident, Tok.unsafe_fake_bracket ([], []), None), wtok, wguard) ], kw), r),
+     c
+  | _ -> x
 
 class ['self] visitor =
   let params_of_args (args : arguments bracket) : parameters =
@@ -53,7 +72,9 @@ class ['self] visitor =
         exprs
         |> List_.map (function
              | I id -> P { pname = id; pdefault = None }
-             (* TODO: recognize default value with \\ *)
+             (* In Elixir you can have a default value only for ident params (no pats) *)
+             | BinaryOp (I id, (ODefault, tok), d) -> 
+                 P { pname = id; pdefault = Some (tok, d) }
              | x -> OtherParamExpr x)
       in
       let ys =
@@ -72,9 +93,20 @@ class ['self] visitor =
   object (self : 'self)
     inherit [_] map
 
-    
+    method private for_clauses env (args : expr list) : for_clause list =
+      List_.map (fun (arg : expr) ->
+        match arg with
+        | BinaryOp (pat, (OLeftArrow, tarrow), collection) ->
+            let pat = self#visit_expr env pat in
+            let collection = self#visit_expr env collection in
+            ForGenerator (pat, tarrow, collection)
+        | e ->
+            let e = self#visit_expr env e in
+            ForFilter e
+      ) args
+
     method! visit_Call env (x : call) =
-      match x with
+      match normalize_function_header x with
       (* https://hexdocs.pm/elixir/Kernel.html#if/2
        * TODO? recognize also the compact form 'if(cond, :do then)' ?
        *)
@@ -92,15 +124,17 @@ class ['self] visitor =
               (* TODO? warning about unrecognized form? failwith ? *)
               Call (self#visit_call env x))
       (* https://hexdocs.pm/elixir/Kernel.html#def/2
-       * TODO: handle "implicit try" form
+       * The optional extras (rescue/catch/after/else) are the "implicit try"
+       * form; they are stored in f_rescue and translated to a Try block in
+       * Elixir_to_generic.ml.
        *)
       | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ Call (I ident, args, None) ], []), _),
-          Some (tdo, (Body body, []), tend) ) ->
+          Some (tdo, (Body body, extras), tend) ) ->
           let body = self#visit_body env body in
           let params = params_of_args args in
           make_funcdef ~tdef ~ident ~params ~guard:None ~tdo:(Some tdo)
-                       ~body ~tend:(Some tend) ~def_str 
+                       ~body ~tend:(Some tend) ~rescue:extras ~def_str
       | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ Call (I ident, args, None) ],
                [ Kw_expr ((X1 (do_kw, _), _tok_colon), body) ]), _),
@@ -108,16 +142,16 @@ class ['self] visitor =
           let body = self#visit_expr env body in
           let params = params_of_args args in
           make_funcdef ~tdef ~ident ~params ~guard:None ~tdo:None
-                       ~body:([ body ]) ~tend:None ~def_str 
+                       ~body:([ body ]) ~tend:None ~rescue:[] ~def_str
       (* def foo(x) when guard do ... end *)
       | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ When (Call (I ident, args, None), _twhen, E guard) ], []), _),
-          Some (tdo, (Body body, []), tend) ) ->
+          Some (tdo, (Body body, extras), tend) ) ->
           let guard = self#visit_expr env guard in
           let body = self#visit_body env body in
           let params = params_of_args args in
           make_funcdef ~tdef ~ident ~params ~guard:(Some guard) ~tdo:(Some tdo)
-                       ~body ~tend:(Some tend) ~def_str 
+                       ~body ~tend:(Some tend) ~rescue:extras ~def_str
       (* def foo(x) when guard, do: body *)
       | ( I (Id (( "def" | "defp" ) as def_str, tdef)),
           (_, ([ When (Call (I ident, args, None), _twhen, E guard) ],
@@ -127,7 +161,7 @@ class ['self] visitor =
           let body = self#visit_expr env body in
           let params = params_of_args args in
           make_funcdef ~tdef ~ident ~params ~guard:(Some guard) ~tdo:None
-                       ~body:([ body ]) ~tend:None ~def_str 
+                       ~body:([ body ]) ~tend:None ~rescue:[] ~def_str
       (* https://hexdocs.pm/elixir/Kernel.html#defmodule/2 *)
       | ( I (Id ("defmodule", tdefmodule)),
           (_, ([ Alias mname ], []), _),
@@ -141,6 +175,40 @@ class ['self] visitor =
             }
           in
           S (D (ModuleDef def))
+      (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#throw/1 *)
+      | ( I (Id ("throw", tthrow)), (_, ([ arg ], []), _), None ) ->
+          let arg = self#visit_expr env arg in
+          S (Throw (tthrow, arg))
+      (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#try/1 *)
+      | ( I (Id ("try", ttry)), (_, ([], []), _), Some do_block ) ->
+          let do_block = self#visit_do_block env do_block in
+          S (Try (ttry, do_block))
+      (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#for/1
+       * for pattern <- collection, filter, ... do body end *)
+      | ( I (Id ("for", tfor)),
+          (_, (args, _kwds), _),
+          Some (tdo, (Body body, []), tend) ) ->
+          let clauses = self#for_clauses env args in
+          let body = self#visit_body env body in
+          S (For (tfor, clauses, (tdo, body, tend)))
+      (* for pattern <- collection, do: body (compact keyword form) *)
+      | ( I (Id ("for", tfor)),
+          (_, (args, kwds), _),
+          None ) -> (
+          match List.find_opt (fun (kwd : pair) ->
+            match kwd with
+            | Kw_expr ((X1 (do_kw, _), _), _)
+              when String.starts_with ~prefix:"do:" do_kw -> true
+            | _ -> false
+          ) kwds with
+          | Some (Kw_expr (_, body_expr)) ->
+              let clauses = self#for_clauses env args in
+              let body_expr = self#visit_expr env body_expr in
+              let fake = Tok.unsafe_fake_tok "" in
+              S (For (tfor, clauses, (fake, [ body_expr ], fake)))
+          | _ ->
+              let x = self#visit_call env x in
+              Call x)
       | _else_ ->
           let x = self#visit_call env x in
           Call x

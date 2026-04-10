@@ -68,6 +68,10 @@ public class Main {
         IntermethodClass intermethodObj = new IntermethodClass();
         String intermethodResult = intermethodObj.sinkMethod();
 
+        // Test chained method call: new Constructor(tainted).method()
+        // ruleid: java_constructor_sqli
+        String chainedResult = "SELECT * FROM users WHERE name = " + new User(source()).getProfile();
+
         return;
     }
 }

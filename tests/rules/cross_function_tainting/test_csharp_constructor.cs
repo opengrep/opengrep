@@ -62,7 +62,11 @@ public class Program
         FieldUser fieldUser = new FieldUser();
         fieldUser.name = taintedInput2;
         string fieldResult = fieldUser.GetProfile();
-        
+
+        // Test chained method call: new Constructor(tainted).method()
+        // ruleid: csharp_constructor_sqli
+        string chainedResult = "SELECT * FROM users WHERE name = " + new User(source()).GetProfile();
+
         return;
     }
 }

@@ -67,5 +67,9 @@ fun main() {
     val intermethodObj = IntermethodClass()
     val intermethodResult = intermethodObj.sinkMethod()
 
+    // Test chained method call: Constructor(tainted).method()
+    // ruleid: kotlin_constructor_sqli
+    sink(User(source()).getProfile())
+
     return
 }

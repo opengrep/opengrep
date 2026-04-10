@@ -1,0 +1,16 @@
+rules:
+- id: taint-try
+  mode: taint
+  languages: [elixir]
+  message: "tainted value flows through standalone try block"
+  severity: INFO
+  pattern-sources:
+    - patterns:
+        - pattern-inside: |
+              def $_(..., $X, ...) do
+              ...
+              end
+        - focus-metavariable: $X
+  pattern-sinks:
+    - pattern: |
+        sink($R)

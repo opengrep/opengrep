@@ -12,4 +12,6 @@ val show_debug : t -> string
 
 val of_il_name : IL.name -> t
 
+val tok : t -> Tok.t
+
 val to_file_line_col : t -> string * int * int

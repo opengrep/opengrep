@@ -1,0 +1,20 @@
+rules:
+  - id: taint-pattern-as
+    message: taint 
+    severity: WARNING
+    languages:
+      - elixir
+    mode: taint
+    pattern-sources:
+      - patterns:
+        - pattern-either:
+          - pattern-inside: |
+              def $_(..., $X, ...) do
+              ...
+              end
+        - focus-metavariable: $X
+    pattern-sinks:
+      - patterns:
+          - focus-metavariable: $X
+          - pattern-either:
+            - pattern: sink($X)
