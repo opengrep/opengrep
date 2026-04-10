@@ -429,8 +429,22 @@ let type_of_lval env lval =
       Typing.resolved_type_of_id_info env.taint_inst.lang fld.id_info
   | __else__ -> Type.NoType
 
+let java_type_of_expr_is_unreliable_for_deep_chain (eorig : G.expr) =
+  match eorig.G.e with
+  | G.Call
+      ( { G.e = G.DotAccess ({ G.e = (G.Call _ | G.DotAccess _); _ }, _, _); _ },
+        _ ) ->
+      true
+  | G.DotAccess ({ G.e = (G.Call _ | G.DotAccess _); _ }, _, _) ->
+      true
+  | _ -> false
+
 let type_of_expr env e =
   match e.eorig with
+  | SameAs eorig
+    when env.taint_inst.lang =*= Lang.Java
+         && java_type_of_expr_is_unreliable_for_deep_chain eorig ->
+      Type.NoType
   | SameAs eorig -> Typing.type_of_expr env.taint_inst.lang eorig |> fst
   | __else__ -> Type.NoType
 
@@ -641,13 +655,23 @@ let get_signature_for_object graph caller_node db method_name ~call_tok arity =
   let caller = Option.map Function_id.of_il_name caller_node in
   let method_tok = Function_id.tok method_name in
   let lookup tok = Call_graph.lookup_callee_from_graph graph caller tok in
-  match lookup call_tok with
+  let lookup_signature_for_tok tok =
+    match lookup tok with
+    | Some callee_node ->
+        Shape_and_sig.(lookup_signature db callee_node arity)
+    | None -> None
+  in
+  let same_tok = Tok.equal call_tok method_tok in
+  match lookup_signature_for_tok method_tok with
   | Some callee_node ->
-      Shape_and_sig.(lookup_signature db callee_node arity)
+      Some callee_node
   | None -> (
-      match lookup method_tok with
+      match
+        if same_tok || Tok.is_fake call_tok then None
+        else lookup_signature_for_tok call_tok
+      with
       | Some callee_node ->
-          Shape_and_sig.(lookup_signature db callee_node arity)
+          Some callee_node
       | None -> Shape_and_sig.lookup_signature db method_name arity)
 
 (* Helper to fallback to builtin signature database if regular lookup fails *)
@@ -869,6 +893,9 @@ let receiver_lval_for_constructor_call env lval_opt fun_exp =
             Some (call_tok_of_fun_exp ~default_tok:(snd name.ident) fun_exp)
         | Fetch { base = VarSpecial ((Self | This), self_tok); rev_offset = _ } ->
             Some (call_tok_of_fun_exp ~default_tok:self_tok fun_exp)
+        | Fetch { base = Var obj; rev_offset = { o = Dot method_name; _ } :: _ }
+          when looks_like_constructor_name (fst method_name.ident) ->
+            Some (snd obj.ident)
         | Fetch { base = Var obj; rev_offset = _ } ->
             Some (call_tok_of_fun_exp ~default_tok:(snd obj.ident) fun_exp)
         | _ -> None
@@ -892,6 +919,9 @@ let receiver_lval_for_constructor_call env lval_opt fun_exp =
             let callee_name = fst name.ident in
             looks_like_constructor_name callee_name
             || bare_call_name_looks_like_constructor callee_name
+        | Fetch { base = Var obj; rev_offset = { o = Dot method_name; _ } :: _ } ->
+            Object_initialization.is_constructor env.taint_inst.lang
+              (fst method_name.ident) (Some (fst obj.ident))
         | _ -> false
       in
       if resolved_constructor || syntactic_fallback then Some receiver_lval
@@ -1393,10 +1423,17 @@ and check_tainted_lval_aux env (lval : IL.lval) :
         effects_of_tainted_sinks { env with lval_env } all_taints sinks
       in
       record_effects { env with lval_env } effects;
+      let sub_taints =
+        (* Preserve freshly-computed taint on the receiver sub-lvalue, not just
+         * taint already materialized in the environment. Chained method calls
+         * such as `obj.getItems(key).get(0)` rely on the intermediate receiver
+         * carrying taint into the next call within the same expression. *)
+        Taints.union sub_new_taints (Xtaint.to_taints sub_in_env)
+      in
       ( new_taints,
         lval_in_env,
         lval_shape,
-        `Sub (Xtaint.to_taints sub_in_env, sub_shape),
+        `Sub (sub_taints, sub_shape),
         lval_env )
 
 and check_tainted_lval_base env base =
@@ -1914,6 +1951,49 @@ let call_with_intrafile lval_opt e env args instr =
   let e_obj, e_taints, e_shape, lval_env =
     check_function_call_callee { env with lval_env } e
   in
+  let apply_java_getter_result_fallback call_taints shape =
+    let getter_mode_opt =
+      match e.e with
+      | Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
+          let method_name = fst name.ident in
+          if env.taint_inst.lang =*= Lang.Java
+             && String.length method_name > 3
+          && String.starts_with ~prefix:"get" method_name
+          then
+            Some
+              (if List.length args > 0 then `Preserve_incoming else `Fallback_only)
+          else None
+      | _ -> None
+    in
+    match getter_mode_opt with
+    | None -> (call_taints, shape)
+    | Some getter_mode ->
+        let receiver_taints =
+          match e_obj with
+          | `Obj (obj_taints, _) -> obj_taints
+          | `Fun -> Taints.empty
+        in
+        let fallback_taints = receiver_taints |> Taints.union all_args_taints in
+        if Taints.is_empty fallback_taints then (call_taints, shape)
+        else
+          match getter_mode with
+          | `Preserve_incoming ->
+              (* Java accessor-style methods with parameters often behave like
+               * lookups/selectors. Even if intrafile signatures say "return a
+               * field", semgrep-rules expects us to conservatively preserve the
+               * tainted receiver/selector arguments through the result. *)
+              (Taints.union call_taints fallback_taints, shape)
+          | `Fallback_only ->
+              let no_precise_result =
+                Taints.is_empty call_taints
+                &&
+                match shape with
+                | S.Bot -> true
+                | _ -> false
+              in
+              if not no_precise_result then (call_taints, shape)
+              else (Taints.union call_taints fallback_taints, shape)
+  in
   check_orig_if_sink { env with lval_env } instr.iorig all_args_taints Bot
     ~filter_sinks:(fun m -> not (m.spec.sink_exact && m.spec.sink_has_focus));
   let call_taints, shape, lval_env =
@@ -2204,6 +2284,10 @@ let call_with_intrafile lval_opt e env args instr =
                 | None -> shape
               else shape
             in
+            let call_taints, shape =
+              if resolves_to_constructor then (call_taints, shape)
+              else apply_java_getter_result_fallback call_taints shape
+            in
             (call_taints, shape, lval_env)
         | None -> (
             (* Regular function call processing *)
@@ -2219,6 +2303,9 @@ let call_with_intrafile lval_opt e env args instr =
                   (Display_IL.string_of_exp e)
                   (T.show_taints call_taints)
                   (S.show_shape shape));
+            let call_taints, shape =
+              apply_java_getter_result_fallback call_taints shape
+            in
             (call_taints, shape, lval_env)
         | None -> (
             Log.debug (fun m ->

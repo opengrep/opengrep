@@ -605,6 +605,14 @@ let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
 let resolve_constructor_from_type ~(lang : Lang.t) ~all_funcs
     ?(imported_entity_index = CanonicalMap.empty)
     ?(current_file : Fpath.t option) (ty : G.type_) : fn_id option =
+  let is_constructor_fn_id fn_id =
+    match fn_id with
+    | [ Some cls; Some meth ] ->
+        let class_name = fst cls.IL.ident in
+        Object_initialization.is_constructor lang (fst meth.IL.ident)
+          (Some class_name)
+    | _ -> false
+  in
   let is_local_function func =
     match current_file with
     | Some file -> matches_current_file file func
@@ -652,7 +660,11 @@ let resolve_constructor_from_type ~(lang : Lang.t) ~all_funcs
   match
     canonicals
     |> List.find_map (fun canonical ->
-           lookup_imported_entity ?current_file imported_entity_index canonical)
+           match lookup_imported_func ?current_file imported_entity_index canonical with
+           | Some func when is_constructor_fn_id func.fn_id -> Some func.fn_id
+           | Some _
+           | None ->
+               None)
   with
   | Some _ as result -> result
   | None -> Option.bind class_name_opt lookup_local_constructor
@@ -967,7 +979,10 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                               method_name_str)
                     | None
                       when Object_initialization.is_constructor lang
-                             method_name_str (Some obj_name) ->
+                             method_name_str (Some obj_name)
+                           || ((not
+                                  (Object_initialization.uses_new_keyword lang))
+                              && String.equal method_name_str "new") ->
                         let ty =
                           G.
                             {
