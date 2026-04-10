@@ -98,11 +98,8 @@ let lookup_callee_from_graph (graph : G.t option)
           m "CALL_GRAPH: caller_node is None during lookup!");
       None
   | Some g, Some caller ->
-      if not (G.mem_vertex g caller) then (
-        Log.debug (fun m ->
-            m "CALL_GRAPH: Caller %s not in graph" (show_node caller));
-        None
-      ) else
+      if not (G.mem_vertex g caller) then None
+      else
         let call_pos = pos_of_tok call_tok in
         (* Get edges coming INTO the caller (callee -> caller) *)
         let incoming_edges = G.pred_e g caller in
@@ -115,8 +112,7 @@ let lookup_callee_from_graph (graph : G.t option)
               Pos.equal label.call_site call_pos)
         in
         match exact_match with
-        | Some edge ->
-            Some (G.E.src edge)
+        | Some edge -> Some (G.E.src edge)
         | None ->
             (* No fallback - return None so external calls use direct signature lookup.
                Previously there was a line 0 fallback that matched implicit/HOF edges,

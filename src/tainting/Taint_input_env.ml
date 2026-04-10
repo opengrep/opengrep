@@ -17,6 +17,7 @@ module G = AST_generic
 module H = AST_generic_helpers
 module T = Taint
 module Effects = Shape_and_sig.Effects
+module Shape = Shape_and_sig.Shape
 module Log = Log_tainting.Log
 
 let check_var_def (taint_inst : Taint_rule_inst.t) env id ii expr =
@@ -77,13 +78,34 @@ let add_to_env taint_inst (env, effects) id id_info opt_expr =
   let env, new_effects = add_to_env_aux taint_inst env id id_info opt_expr in
   (env, Effects.union new_effects effects)
 
+let add_param_shape (i, env) id id_info _opt_expr =
+  let var = AST_to_IL.var_of_id_info id id_info in
+  let il_lval : IL.lval = { base = Var var; rev_offset = [] } in
+  let taint_arg : T.arg = { name = fst id; index = i } in
+  let env =
+    Taint_lval_env.add_lval_shape il_lval T.Taint_set.empty (Shape.Arg taint_arg)
+      env
+  in
+  (i + 1, env)
+
+let mk_fun_param_shapes (fparams : IL.param list) =
+  let _, env =
+    fparams |> Fold_IL_params.fold add_param_shape (0, Taint_lval_env.empty)
+  in
+  env
+
 let mk_fun_input_env taint_inst ?(glob_env = Taint_lval_env.empty)
     (fparams : IL.param list) =
   let add_to_env = add_to_env taint_inst in
-  fparams
-  (* For each argument, check if it's a source and, if so, add it to the input
-     * environment. *)
-  |> Fold_IL_params.fold add_to_env (glob_env, Effects.empty)
+  let env, effects =
+    fparams
+    (* The callback/HOF summaries rely on Arg-shaped parameter assumptions being
+       available at function entry; otherwise the taint engine loses the link
+       between callback parameters and the actual arguments supplied by callers. *)
+    |> Fold_IL_params.fold add_to_env (glob_env, Effects.empty)
+  in
+  let param_assumptions = mk_fun_param_shapes fparams in
+  (Taint_lval_env.union env param_assumptions, effects)
 
 let is_global (id_info : G.id_info) =
   let* kind, _sid = !(id_info.id_resolved) in

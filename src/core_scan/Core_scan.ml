@@ -21,6 +21,13 @@ module MR = Mini_rule
 module R = Rule
 module Out = Semgrep_output_v1_j
 module TLS = Thread_local_storage
+module PathOrd = struct
+  type t = Fpath.t
+
+  let compare = Fpath.compare
+end
+
+module PathMap = Map.Make (PathOrd)
 
 (*****************************************************************************)
 (* Purpose *)
@@ -754,9 +761,24 @@ let sca_rules_filtering (target : Target.regular) (rules : Rule.t list) :
 (*****************************************************************************)
 
 (* build the callback for iter_targets_and_get_matches_and_exn_to_errors *)
+let mk_xconf (config : Core_scan_config.t)
+    (prefilter_cache_opt : Match_env.prefilter_config) : Match_env.xconfig =
+  {
+    Match_env.config =
+      { Rule_options.default with taint_intrafile = config.taint_intrafile };
+    equivs = parse_equivalences config.equivalences_file;
+    nested_formula = false;
+    matching_conf = config.matching_conf;
+    matching_explanations = config.matching_explanations;
+    filter_irrelevant_rules = prefilter_cache_opt;
+  }
+
 let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
     (valid_rules : Rule.t list)
-    (prefilter_cache_opt : Match_env.prefilter_config) : target_handler =
+    (prefilter_cache_opt : Match_env.prefilter_config)
+    ?(resolved_xtargets : Xtarget.t PathMap.t option)
+    ?(interfile_context : Match_tainting_mode.interfile_context option) :
+    target_handler =
   function
   | Lockfile ({ path; kind } as lockfile) ->
       (* TODO: (sca) we always pass None as the manifest target here, but this
@@ -792,18 +814,15 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
 
       (* TODO: can we skip all of this if there are no applicable
          rules? In particular, can we skip print_cli_progress? *)
-      let xtarget = Xtarget.resolve parse_and_resolve_name target in
-      let match_hook _ = () in
-      let xconf =
-        {
-          Match_env.config = { Rule_options.default with taint_intrafile = config.taint_intrafile };
-          equivs = parse_equivalences config.equivalences_file;
-          nested_formula = false;
-          matching_conf = config.matching_conf;
-          matching_explanations = config.matching_explanations;
-          filter_irrelevant_rules = prefilter_cache_opt;
-        }
+      let xtarget =
+        match resolved_xtargets with
+        | Some xtargets ->
+            PathMap.find_opt file xtargets
+            |> Option.value ~default:(Xtarget.resolve parse_and_resolve_name target)
+        | None -> Xtarget.resolve parse_and_resolve_name target
       in
+      let match_hook _ = () in
+      let xconf = mk_xconf config prefilter_cache_opt in
       let rules, dependency_match_table = sca_rules_filtering target rules in
       let timeout =
         let caps = (caps :> < Cap.time_limit >) in
@@ -821,8 +840,8 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
       in
       let matches : Core_result.matches_single_file =
         (* !!Calling Match_rules!! Calling the matching engine!! *)
-        Match_rules.check ~match_hook ~timeout ~dependency_match_table xconf
-          rules xtarget
+        Match_rules.check ~match_hook ~timeout ~dependency_match_table
+          ?interfile_context xconf rules xtarget
       in
       (* Add file size when profiling is on. *)
       let matches =
@@ -882,6 +901,72 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       end
     else NoPrefiltering
   in
+  let base_xconf = mk_xconf config prefilter_cache_opt in
+  let interfile_rule_targets, resolved_xtargets, interfile_languages_used =
+    let interfile_rules =
+      valid_rules
+      |> List_.filter_map (fun rule ->
+             match rule.R.mode with
+             | `Taint _ as mode ->
+                 let xconf_rule =
+                   Match_env.adjust_xconfig_with_rule_options base_xconf
+                     rule.R.options
+                 in
+                 if xconf_rule.config.interfile then Some { rule with mode }
+                 else None
+             | _ -> None)
+    in
+    if List_.null interfile_rules then ([], None, [])
+    else
+      let resolved_xtargets =
+        targets
+        |> List.fold_left
+             (fun acc target ->
+               match target with
+               | Target.Regular regular ->
+                   let xtarget = Xtarget.resolve parse_and_resolve_name regular in
+                   PathMap.add regular.path.internal_path_to_content xtarget acc
+               | Target.Lockfile _ -> acc)
+             PathMap.empty
+      in
+      let interfile_rule_targets =
+        interfile_rules
+        |> List_.map (fun rule ->
+               let xtargets =
+                 targets
+                 |> List_.filter_map (function
+                      | Target.Regular regular ->
+                          let applicable =
+                            rules_for_target ~analyzer:regular.analyzer
+                              ~products:regular.products
+                              ~origin:regular.path.origin
+                              ~respect_rule_paths:config.respect_rule_paths
+                              [ (rule :> R.rule) ]
+                            <> []
+                          in
+                          if applicable then
+                            PathMap.find_opt regular.path.internal_path_to_content
+                              resolved_xtargets
+                          else None
+                      | Target.Lockfile _ -> None)
+               in
+               (rule, xtargets))
+      in
+      let interfile_languages_used =
+        interfile_rules
+        |> List_.map (fun rule -> rule.R.target_analyzer)
+        |> List.sort_uniq Stdlib.compare
+      in
+      (interfile_rule_targets, Some resolved_xtargets, interfile_languages_used)
+  in
+  let interfile_context =
+    match interfile_rule_targets with
+    | [] -> None
+    | _ ->
+        Some
+          (Match_tainting_mode.build_interfile_contexts base_xconf
+             interfile_rule_targets)
+  in
   let file_results, scanned_targets =
     targets
     |> iter_targets_and_get_matches_and_exn_to_errors
@@ -889,15 +974,13 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
          config
          (mk_target_handler
             (caps :> < Cap.time_limit >)
-            config valid_rules prefilter_cache_opt)
+            config valid_rules prefilter_cache_opt ?resolved_xtargets
+            ?interfile_context)
   in
 
   (* TODO: Delete any lockfile-only findings whose rule produced a code+lockfile
      finding in that lockfile in scanned_targets?
   *)
-
-  (* the OSS engine was invoked so no interfile langs *)
-  let interfile_languages_used = [] in
   let (res : Core_result.t) =
     Core_result.mk_result file_results
       (List_.map (fun r -> (r, `OSS)) valid_rules)

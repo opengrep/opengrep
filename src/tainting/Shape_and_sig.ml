@@ -805,6 +805,23 @@ let lookup_signature (db : signature_database) (name : Function_id.t)
       find_by_arity sigs arity
   | _ -> None
 
+let lookup_signature_by_text_name (db : signature_database) ~(name : string)
+    (arity : int) : Signature.t option =
+  let matches =
+    FunctionMap.fold
+      (fun fn_id sigs acc ->
+        if String.equal (Function_id.show fn_id) name then
+          match find_by_arity sigs arity with
+          | Some sig_ -> sig_ :: acc
+          | None -> acc
+        else acc)
+      db.signatures []
+    |> List.sort_uniq Signature.compare
+  in
+  match matches with
+  | [ sig_ ] -> Some sig_
+  | _ -> None
+
 let add_signature (db : signature_database) (name : Function_id.t)
     (signature : extended_sig) : signature_database =
   let signatures =

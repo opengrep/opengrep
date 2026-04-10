@@ -23,12 +23,12 @@ end
 
 def test_callback_only_propagating_lambda()
   # todoruleid: test-hof-callback-taint
-  # TODO: Ruby lambda callback not yet working
+  # TODO: Ruby lambda return propagation is still not modeled reliably here.
   sink(app_callback_only(->(x) { x }, source()))
 end
 
-# NOTE: Ruby lambda callbacks not yet working
-# This test would pass for wrong reason - skipping until callbacks work
+# NOTE: Ruby callback-only sanitizing lambdas are still overtainted.
+# Keep this disabled until callback return sanitization is implemented.
 # def test_callback_only_sanitizing_lambda()
 #   # ok: test-hof-callback-taint
 #   sink(app_callback_only(->(x) { "3" }, source()))
@@ -38,13 +38,13 @@ end
 
 def test_direct_flow_propagating_lambda()
   # todoruleid: test-hof-callback-taint
-  # TODO: Ruby lambda callback not yet working
+  # TODO: Ruby lambda callback invocation is still not modeled reliably here.
   sink(app_with_direct_flow(->(x) { x }, source()))
 end
 
 def test_direct_flow_sanitizing_lambda()
   # todoruleid: test-hof-callback-taint
-  # TODO: Ruby lambda callback not yet working - but taint should flow via + x
+  # TODO: Ruby lambda callback invocation is still not modeled reliably here.
   sink(app_with_direct_flow(->(x) { "3" }, source()))
 end
 

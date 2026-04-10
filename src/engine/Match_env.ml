@@ -109,9 +109,12 @@ let adjust_xconfig_with_rule_options xconf options =
     match options with
     | None -> xconf.config
     | Some (rule_opts : Rule_options.t) ->
-        (* Merge rule options with existing config, preserving command-line taint_intrafile setting *)
+        (* Interfile tainting reuses the same summary machinery as taint_intrafile,
+         * so enabling it at the rule level must also enable taint_intrafile. *)
         { rule_opts with
-          taint_intrafile = xconf.config.taint_intrafile || rule_opts.taint_intrafile
+          taint_intrafile =
+            xconf.config.taint_intrafile || rule_opts.taint_intrafile
+            || rule_opts.interfile
         }
   in
   { xconf with config }

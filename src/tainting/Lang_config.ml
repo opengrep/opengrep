@@ -13,6 +13,7 @@ type hof_kind =
   | MethodHOF of {
       methods : string list;
       arity : int;
+      callback_index : int;
       taint_arg_index : int;
     }
   | FunctionHOF of {
@@ -91,6 +92,7 @@ let ruby = {
     MethodHOF {
       methods = ["map"; "each"; "select"; "filter"; "flat_map"; "collect"; "find"; "detect"];
       arity = 1;
+      callback_index = 0;
       taint_arg_index = 0;
     };
     ReturningFunctionHOF {
@@ -118,9 +120,21 @@ let javascript = {
     MethodHOF {
       methods = ["map"; "flatMap"; "filter"; "forEach"; "find"; "findIndex"; "some"; "every"];
       arity = 1;
+      callback_index = 0;
       taint_arg_index = 0;
     };
-    MethodHOF { methods = ["reduce"; "reduceRight"]; arity = 2; taint_arg_index = 1 };
+    MethodHOF {
+      methods = ["reduce"; "reduceRight"];
+      arity = 2;
+      callback_index = 0;
+      taint_arg_index = 1;
+    };
+    MethodHOF {
+      methods = ["on"; "addEventListener"];
+      arity = 2;
+      callback_index = 1;
+      taint_arg_index = 0;
+    };
   ];
   collection_configs = [
     (* Map.set(key, value) - value taints this, returns this (fluent) *)
@@ -149,7 +163,12 @@ let typescript = {
 
 let java = {
   hof_configs = [
-    MethodHOF { methods = ["map"; "filter"; "forEach"; "flatMap"]; arity = 1; taint_arg_index = 0 };
+    MethodHOF {
+      methods = ["map"; "filter"; "forEach"; "flatMap"];
+      arity = 1;
+      callback_index = 0;
+      taint_arg_index = 0;
+    };
   ];
   collection_configs = [
     (* HashMap/Map: put(key, value) - value (arg 1) taints this, returns previous value (not this) *)
@@ -178,11 +197,13 @@ let kotlin = {
     MethodHOF {
       methods = ["map"; "filter"; "forEach"; "flatMap"; "find"; "any"; "all"];
       arity = 0;
+      callback_index = 0;
       taint_arg_index = 0;
     };
     MethodHOF {
       methods = ["map"; "filter"; "forEach"; "flatMap"; "find"; "any"; "all"];
       arity = 1;
+      callback_index = 0;
       taint_arg_index = 0;
     };
   ];
@@ -208,6 +229,7 @@ let scala = {
     MethodHOF {
       methods = ["map"; "filter"; "foreach"; "flatMap"; "find"; "exists"; "forall"];
       arity = 1;
+      callback_index = 0;
       taint_arg_index = 0;
     };
   ];
@@ -230,6 +252,7 @@ let csharp = {
     MethodHOF {
       methods = ["Select"; "Where"; "ForEach"; "SelectMany"; "First"; "Any"; "All"];
       arity = 1;
+      callback_index = 0;
       taint_arg_index = 0;
     };
   ];
@@ -265,6 +288,7 @@ let rust = {
     MethodHOF {
       methods = ["map"; "for_each"; "filter"; "flat_map"; "find"; "any"; "all"];
       arity = 1;
+      callback_index = 0;
       taint_arg_index = 0;
     };
   ];
@@ -287,6 +311,7 @@ let swift = {
     MethodHOF {
       methods = ["map"; "filter"; "forEach"; "flatMap"; "compactMap"; "first"; "contains"];
       arity = 1;
+      callback_index = 0;
       taint_arg_index = 0;
     };
   ];

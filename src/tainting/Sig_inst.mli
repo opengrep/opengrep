@@ -22,6 +22,7 @@ val instantiate_function_signature :
   callee:IL.exp ->
   args:IL.exp IL.argument list option (** actual arguments *) ->
   (Taint.Taint_set.t * Shape_and_sig.Shape.shape) IL.argument list ->
+  ?receiver_lval:IL.lval ->
   ?lookup_sig:(IL.exp -> int -> Shape_and_sig.Signature.t option) ->
   ?depth:int ->
   unit ->

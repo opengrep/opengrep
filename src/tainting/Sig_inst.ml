@@ -440,6 +440,26 @@ let%test _ =
   Option.equal (=|=) (func {name = "";  index = 2})  (Some 2) &&
   Option.equal (=|=) (func {name = "";  index = 3})  (Some 3)
 
+let uses_implicit_receiver (fun_exp : IL.exp) =
+  match fun_exp.e with
+  | Fetch
+      {
+        base = (Var _ | VarSpecial ((Self | This), _));
+        rev_offset = { o = Dot _; _ } :: _;
+      } ->
+      true
+  | _ -> false
+
+let adjust_fparams_for_implicit_receiver ?receiver_lval (fun_exp : IL.exp)
+    (fparams : Signature.params) num_args =
+  match fparams with
+  | Signature.P ("self" | "cls" | "this") :: rest
+    when
+      (uses_implicit_receiver fun_exp || Option.is_some receiver_lval)
+         && Int.equal (List.length fparams) (num_args + 1) ->
+      rest
+  | _ -> fparams
+
 let combine_rest_args_exp (es : IL.exp list) : IL.exp =
   let e = IL.Composite (IL.CList, Tok.unsafe_fake_bracket es) in
   let eorig =
@@ -461,8 +481,13 @@ let combine_rest_args_exp (es : IL.exp list) : IL.exp =
     TODO(shapes): This is needed for stuff that is not yet fully adapted to shapes,
              in theory we should only need 'instantiate_lval_using_shape'.
 *)
-let instantiate_lval_using_actual_exps (fun_exp : IL.exp) fparams args_exps
-    (tlval : T.lval) : (IL.name * T.offset list * T.tainted_token) option =
+let instantiate_lval_using_actual_exps ?receiver_lval (fun_exp : IL.exp) fparams
+    args_exps (tlval : T.lval) :
+    (IL.name * T.offset list * T.tainted_token) option =
+  let fparams =
+    adjust_fparams_for_implicit_receiver ?receiver_lval fun_exp fparams
+      (List.length args_exps)
+  in
   (* Error handling  *)
   let log_error () =
     Log.err (fun m ->
@@ -502,6 +527,12 @@ let instantiate_lval_using_actual_exps (fun_exp : IL.exp) fparams args_exps
           Some (var, offset @ tlval.offset, snd obj.ident)
       | __else__ -> None)
   | BThis -> (
+      match receiver_lval with
+      | Some receiver_lval -> (
+          let* var, receiver_offset = Lval_env.normalize_lval receiver_lval in
+          Some (var, receiver_offset @ tlval.offset, snd var.ident))
+      | None ->
+      (
       (*
           A field of the callee object, e.g.:
 
@@ -548,7 +579,7 @@ let instantiate_lval_using_actual_exps (fun_exp : IL.exp) fparams args_exps
               Some (var, offset @ tlval.offset, snd method_.ident))
       | __else__ ->
           log_error ();
-          None)
+          None))
 
 (* HACK(implicit-taint-variables-in-env):
  * We have a function call with a taint variable, corresponding to a global or
@@ -631,14 +662,23 @@ let combine_rest_args_taint (ts : (Taints.t * shape) list) : Taints.t * shape =
   in
   (taints, shape) 
 
-let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
-    lval : (Taints.t * shape) option =
+let instantiate_lval_using_shape ?receiver_lval lval_env fparams
+    (fun_exp : IL.exp) args_taints lval : (Taints.t * shape) option =
+  let fparams =
+    adjust_fparams_for_implicit_receiver ?receiver_lval fun_exp fparams
+      (List.length args_taints)
+  in
   let { T.base; offset } = lval in
   let* base, offset =
     match base with
     | T.BArg pos -> Some (`Arg pos, offset)
     | BThis -> (
         (* TODO: Should we refactor this with 'instantiate_lval_using_actual_exps' ? *)
+        match receiver_lval with
+        | Some receiver_lval -> (
+            let* var, receiver_offset = Lval_env.normalize_lval receiver_lval in
+            Some (`Var var, receiver_offset @ offset))
+        | None -> (
         match fun_exp with
         | {
          e = Fetch { base = Var obj; rev_offset = [ { o = Dot _method; _ } ] };
@@ -654,7 +694,7 @@ let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
             | [] -> Some (`Var var, offset)
             | Ofld var :: offset -> Some (`Var var, offset)
             | (Oint _ | Ostr _ | Oany) :: _ -> None)
-        | __else__ -> None)
+        | __else__ -> None))
     | BGlob var -> Some (`Var var, offset)
   in
   let* base_taints, base_shape =
@@ -671,10 +711,11 @@ let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
   Shape.find_in_shape_poly ~taints:base_taints offset base_shape
 
 (* What is the taint denoted by 'sig_lval' ? *)
-let instantiate_lval lval_env fparams fun_exp args_exps
+let instantiate_lval ?receiver_lval lval_env fparams fun_exp args_exps
     (args_taints : (Taints.t * shape) IL.argument list) (sig_lval : T.lval) =
   match
-    instantiate_lval_using_shape lval_env fparams fun_exp args_taints sig_lval
+    instantiate_lval_using_shape ?receiver_lval lval_env fparams fun_exp
+      args_taints sig_lval
   with
   | Some (taints, shape) -> Some (taints, shape)
   | None -> (
@@ -692,8 +733,8 @@ let instantiate_lval lval_env fparams fun_exp args_exps
            *   see 'lval_of_sig_lval'.
            *)
           let* var, offset, _obj =
-            instantiate_lval_using_actual_exps fun_exp fparams args_exps
-              sig_lval
+            instantiate_lval_using_actual_exps ?receiver_lval fun_exp fparams
+              args_exps sig_lval
           in
           let lval_taints, shape =
             match Lval_env.find_poly lval_env var offset with
@@ -717,6 +758,7 @@ let instantiate_lval lval_env fparams fun_exp args_exps
 let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
     ~callee ~(args : _ option)
     (args_taints : (Taints.t * shape) IL.argument list)
+    ?receiver_lval
     ?(lookup_sig : (IL.exp -> int -> Signature.t option) option)
     ?(depth : int = 0) () : call_effects option =
   Log.debug (fun m ->
@@ -737,7 +779,8 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
        So we will isolate this as a specific step to be applied as necessary.
     *)
     let opt_taints_shape =
-      instantiate_lval lval_env taint_sig.params callee args args_taints lval
+      instantiate_lval ?receiver_lval lval_env taint_sig.params callee args
+        args_taints lval
     in
     Log.debug (fun m ->
         m ~tags:sigs_tag "- Instantiating %s: %s -> %s"
@@ -877,8 +920,8 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                     (T.show_lval dst_sig_lval));
               None
           | Some args ->
-              instantiate_lval_using_actual_exps callee taint_sig.params args
-                dst_sig_lval
+              instantiate_lval_using_actual_exps ?receiver_lval callee
+                taint_sig.params args dst_sig_lval
         in
         let taints =
           taints

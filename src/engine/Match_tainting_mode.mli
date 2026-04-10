@@ -1,3 +1,14 @@
+module CanonicalBindingMap : Map.S with type key = string list
+
+type interfile_rule_context = {
+  signature_db : Shape_and_sig.signature_database;
+  builtin_signature_db : Shape_and_sig.builtin_signature_database;
+  call_graph : Call_graph.G.t;
+  imported_global_index : Shape_and_sig.Shape.cell list CanonicalBindingMap.t;
+}
+
+type interfile_context = interfile_rule_context Rule_ID.Map.t
+
 val hook_setup_hook_function_taint_signature :
   (Rule.taint_rule -> Taint_rule_inst.t -> Xtarget.t -> unit) option ref
 (** This is used for intra-file inter-procedural taint-tracking, and the idea is
@@ -13,6 +24,11 @@ val hook_setup_hook_function_taint_signature :
   *   We only need to analyze anonymous functions which do not get taint signatures
   *   (or we could infer a signature for them too...).
   *)
+
+val build_interfile_contexts :
+  Match_env.xconfig ->
+  (Rule.taint_rule * Xtarget.t list) list ->
+  interfile_context
 
 val check_fundef :
   Taint_rule_inst.t ->
@@ -38,6 +54,7 @@ val check_rule :
   (Core_match.t list -> Core_match.t list) ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?interfile_rule_context:interfile_rule_context ->
   ?shared_call_graph:(Call_graph.G.t * (AST_generic.name * AST_generic.name) list) option ->
   Match_env.xconfig ->
   Xtarget.t ->
@@ -52,6 +69,7 @@ val check_rules :
     (Rule.rule ->
     (unit -> Core_profiling.rule_profiling Core_result.match_result option) ->
     Core_profiling.rule_profiling Core_result.match_result option) ->
+  ?interfile_context:interfile_context ->
   Rule.taint_rule list ->
   Match_env.xconfig ->
   Xtarget.t ->

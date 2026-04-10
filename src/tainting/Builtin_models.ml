@@ -211,7 +211,6 @@ let make_params arity callback_index =
   List.init arity (fun i ->
     if i = callback_index then Signature.P "callback"
     else Signature.Other)
-
 (** Create a builtin signature database with built-in models for standard library HOFs *)
 let create_builtin_models (lang : Lang.t) : builtin_signature_database =
   let db = empty_builtin_signature_database () in
@@ -221,8 +220,11 @@ let create_builtin_models (lang : Lang.t) : builtin_signature_database =
   List.fold_left
     (fun acc_db hof_config ->
       match hof_config with
-      | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
-          add_hof_signatures acc_db methods arity ~taint_arg_index ()
+      | Lang_config.MethodHOF
+          { methods; arity; callback_index; taint_arg_index } ->
+          let params = make_params arity callback_index in
+          add_hof_signatures acc_db methods arity ~callback_index ~params
+            ~taint_arg_index ()
       | Lang_config.FunctionHOF { functions; arity; callback_index; data_index; taint_arg_index } ->
           let params = make_params arity callback_index in
           add_function_hof_signatures acc_db functions arity ~callback_index

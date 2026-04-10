@@ -20,13 +20,13 @@ let normalize_file (file : Fpath.t) : string =
   Fpath.to_string (Fpath.normalize file)
 
 let key ((id, tok) : t) =
-  if Tok.is_fake tok then
-    (id, "", 0, 0)
-  else
-    let file = Tok.file_of_tok tok in
-    let line = Tok.line_of_tok tok in
-    let col = Tok.col_of_tok tok in
-    (id, normalize_file file, line, col)
+  match Tok.loc_of_tok tok with
+  | Ok loc ->
+      let file = loc.pos.file in
+      let line = loc.pos.line in
+      let col = loc.pos.column in
+      (id, normalize_file file, line, col)
+  | Error _ -> (id, "", 0, 0)
 
 let hash (v : t) = Hashtbl.hash (key v)
 
@@ -63,5 +63,7 @@ let of_il_name (n : IL.name) : t =
   n.IL.ident
 
 let to_file_line_col ((_, tok) : t) : string * int * int =
-  if Tok.is_fake tok then ("unknown", 0, 0)
-  else (normalize_file (Tok.file_of_tok tok), Tok.line_of_tok tok, Tok.col_of_tok tok)
+  match Tok.loc_of_tok tok with
+  | Ok loc ->
+      (normalize_file loc.pos.file, loc.pos.line, loc.pos.column)
+  | Error _ -> ("unknown", 0, 0)

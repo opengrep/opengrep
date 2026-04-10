@@ -63,6 +63,10 @@ val extract_method_properties :
   AST_generic.function_definition -> AST_generic.expr list
 (** Extract this.x and self.x property accesses from a function definition *)
 
+val mk_param_assumptions :
+  ?taint_inst:Taint_rule_inst.t -> IL.param list -> Taint_lval_env.t
+(** Create parameter assumptions with Arg shapes so callback parameters can be
+    modeled as function arguments during taint analysis. *)
 
 val detect_object_initialization : AST_generic.program -> Lang.t -> (AST_generic.name * AST_generic.name) list
 (** Detect object initialization patterns in the AST for the given language *)
