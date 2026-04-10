@@ -199,9 +199,7 @@ let rec expr_to_pattern e =
   | Container (Tuple, (t1, xs, t2)) ->
       PatTuple (t1, xs |> List_.map expr_to_pattern, t2)
   | L l -> PatLiteral l
-  | Container (List, (t1, xs, t2)) ->
-      PatList (t1, xs |> List_.map expr_to_pattern, t2)
-  | Container (Dict, (t1, xs, t2)) ->
+  | Container ((List | Dict), (t1, xs, t2)) ->
       PatList (t1, xs |> List_.map expr_to_pattern, t2)
   | Constructor (n, (_, args, _)) ->
       PatConstructor (n, args |> List_.map expr_to_pattern)
