@@ -51,7 +51,9 @@ module Display = struct
   let default_vertex_attributes _ = []
   let vertex_attributes _ = []
   let default_edge_attributes _ = []
-  let edge_attributes _ = []
+  let edge_attributes (_, label, _) =
+    let pos = label.call_site in
+    [ `Label (Printf.sprintf "l:%d c:%d" pos.Pos.line pos.Pos.column) ]
   let get_subgraph _ = None
 end
 

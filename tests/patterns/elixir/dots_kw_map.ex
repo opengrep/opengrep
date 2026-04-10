@@ -12,3 +12,9 @@
 
 # MATCH: 2 other elements
 %{some_other_item: 1, some_item: 0, yet_another_other_item: 2}
+
+# no match: arrow syntax, not keyword
+%{"some_item" => 0}
+
+# no match: arrow syntax with other elements
+%{"some_item" => 0, "some_other_item" => 1}

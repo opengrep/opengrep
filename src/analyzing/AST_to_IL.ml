@@ -237,12 +237,23 @@ let is_hcl lang : bool =
   | Lang.Terraform -> true
   | _ -> false
 
+(* Extract the class name from a G.New type to build the constructor
+   reference in the IL New instruction. Only called from class_construction,
+   which only runs for G.New nodes (always constructor calls).
+
+   The TyExpr case exists because the JS parser produces TyExpr where
+   it should produce TyN.
+
+   Previously this had a guard `when Option.is_some !(cons_id_info.id_resolved)`
+   which meant it only worked when the pro engine's naming pass had run.
+   In OSS mode id_resolved is never set, so the IL New always got
+   constructor=None, falling through to all_args_taints (accidental leak).
+   The guard was removed because G.New is always a constructor call and
+   the fallback behavior is unchanged when no signature is found. *)
 let mk_class_constructor_name (ty : G.type_) cons_id_info : G.name option =
   match ty with
   | { t = TyN (G.Id (id, _)); _ }
-  | { t = TyExpr { e = G.N (G.Id (id, _)); _ }; _ }
-  (* FIXME: JS parser produces this ^ although it should be parsed as a 'TyN'. *)
-    when Option.is_some !(cons_id_info.G.id_resolved) ->
+  | { t = TyExpr { e = G.N (G.Id (id, _)); _ }; _ } ->
       Some (G.Id (id, cons_id_info))
   | __else__ -> None
 
@@ -425,6 +436,16 @@ and pattern env pat : stmts * lval * stmts =
     (* XXX: Assume same bound variables on lhs and rhs, as is imposed on most
      * languages. Hence we only recurse on one side. Seems good enough for now. *)
     pattern env pat1
+  | G.OtherPat ((("MapPairArrow" | "MapPairKeyword"), _), [ G.P inner ])
+    when env.lang =*= Lang.Elixir ->
+    pattern env inner
+  | G.OtherPat (("ExprToPattern", tok), [ G.E e ]) ->
+    (* expr_to_pattern fallback: the expression couldn't be statically
+     * converted to a known pattern. Evaluate the expression so that
+     * side-effects and taint flow are captured, then bind a fresh tmp. *)
+    let pre_ss, _e' = expr env e in
+    let tmp = fresh_lval tok in
+    (pre_ss, tmp, [])
   | G.PatEllipsis _ -> sgrep_construct (G.P pat)
   | _ -> todo (G.P pat)
 
@@ -959,9 +980,8 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let xs = List.map snd results in
       let kind = composite_kind ~g_expr kind in
       (ss, mk_e (Composite (kind, (l, xs, r))) eorig)
-  | G.Comprehension (_op, (_l, (er, [CompFor (tok_for, pat, tok_in, e)]), _r)) ->
-      comprehension_for env er tok_for pat tok_in e
-  | G.Comprehension _ -> todo (G.E g_expr)
+  | G.Comprehension (_op, (_l, (er, clauses), _r)) ->
+      comprehension env er clauses
   | G.Lambda fdef ->
       let lval = fresh_lval (snd fdef.fkind) in
       let final_fdef =
@@ -1069,6 +1089,12 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.OtherExpr (("ShortLambda", _), _) when env.lang =*= Lang.Elixir ->
       let lambda_expr = AST_modifications.convert_elixir_short_lambda g_expr in
       expr env lambda_expr
+  (* Elixir pipe: OtherExpr("PipelineCall", [E call]) is a desugared
+   * x |> f(a) => f(x, a). The tag preserves search distinction; for
+   * IL/taint we evaluate the inner call transparently. *)
+  | G.OtherExpr (("PipelineCall", _tk), [ G.E inner ])
+    when env.lang =*= Lang.Elixir ->
+      expr env inner
   (* The idea here is that this is like a block, and we only
    * really care about the last expression. *)
   (* TODO: What if a statement creeps in? E.g. an If, `fn`..?
@@ -1451,6 +1477,14 @@ and dict env (_, orig_entries, _) orig : stmts * exp =
             let ss_k, ke = expr env korig in
             let ss_v, ve = expr env vorig in
             (ss_k @ ss_v, Entry (ke, ve))
+        | G.OtherExpr ((("MapPairArrow" | "MapPairKeyword"), _), [ G.E inner ])
+          when env.lang =*= Lang.Elixir ->
+            (match inner.G.e with
+            | G.Container (G.Tuple, (_, [ korig; vorig ], _)) ->
+                let ss_k, ke = expr env korig in
+                let ss_v, ve = expr env vorig in
+                (ss_k @ ss_v, Entry (ke, ve))
+            | _ -> todo (G.E orig))
         | __else__ -> todo (G.E orig))
       orig_entries
   in
@@ -1571,9 +1605,10 @@ and xml_expr env ~void eorig xml : stmts * exp =
              (CTuple, (tok, List.rev_append filtered_attrs filtered_body, tok)))
           (Related (G.Xmls xml.G.xml_body)) )
 
-(* Adjusted from for_each *)
-and comprehension_for env result_expr tok_for pat tok_in collection_expr : stmts * exp =
-  let tmp = fresh_lval ~str:"_comprehension_tmp" tok_in in
+(* Build a single foreach loop around [inner_body] IL stmts.
+ * Adjusted from for_each; used by [comprehension] below. *)
+and comprehension_loop env tok_for (pat : G.pattern) (tok_in : tok)
+    (collection_expr : G.expr) (inner_body : stmts) : stmts =
   let cont_label_s, break_label_s, env = break_continue_labels env tok_for in
   let ss, e' = expr env collection_expr in
   let next_lval = fresh_lval tok_in in
@@ -1598,22 +1633,44 @@ and comprehension_for env result_expr tok_for pat tok_in collection_expr : stmts
       (mk_e (Fetch next_lval) (related_tok tok_in))
       ~eorig:(related_tok tok_in) pat
   in
+  let cond = mk_e (Fetch hasnext_lval) (related_tok tok_in) in
+  ss @
+  [ hasnext_call;
+    mk_s
+        (Loop
+           ( tok_in,
+             cond,
+             next_call :: assign_st @ inner_body @ cont_label_s
+             @ [ hasnext_call ] ));
+  ]
+  @ break_label_s
+
+(* Recursively build nested loops/guards from comprehension clauses,
+ * wrapping [inner_body] at the innermost level.
+ * Mirrors the MultiForEach nesting in [stmt]. *)
+and comprehension_clauses env (clauses : G.for_or_if_comp list)
+    (inner_body : stmts) : stmts =
+  match clauses with
+  | [] -> inner_body
+  | G.CompFor (tok_for, pat, tok_in, collection_expr) :: rest ->
+      let body = comprehension_clauses env rest inner_body in
+      comprehension_loop env tok_for pat tok_in collection_expr body
+  | G.CompIf (tok_if, guard_expr) :: rest ->
+      let body = comprehension_clauses env rest inner_body in
+      let ss, e' = expr env guard_expr in
+      ss @ [ mk_s (If (tok_if, e', body, [])) ]
+
+(* Compile a comprehension: create an accumulator, build nested
+ * loops from the clause list, append each result to the accumulator. *)
+and comprehension env (result_expr : G.expr)
+    (clauses : G.for_or_if_comp list) : stmts * exp =
+  let tok = G.fake "comprehension" in
+  let tmp = fresh_lval ~str:"_comprehension_tmp" tok in
   let ss_res, e_eres = expr env ~void:false result_expr in
   let e_plus = mk_e (Operator ((G.Plus, Tok.unsafe_fake_tok "+="), [Unnamed e_eres])) NoOrig in
-  let st = mk_s (Instr (mk_i (Assign (tmp, e_plus)) NoOrig)) in
-  let cond = mk_e (Fetch hasnext_lval) (related_tok tok_in) in
-  let loop_stmts =
-    ss @
-    [ hasnext_call;
-      mk_s
-          (Loop
-             ( tok_in,
-               cond,
-               next_call :: assign_st @ ss_res @ [st] @ cont_label_s
-               @ [ hasnext_call ] ));
-    ]
-    @ break_label_s
-  in
+  let append_st = mk_s (Instr (mk_i (Assign (tmp, e_plus)) NoOrig)) in
+  let inner_body = ss_res @ [ append_st ] in
+  let loop_stmts = comprehension_clauses env clauses inner_body in
   (loop_stmts, mk_e (Fetch tmp) NoOrig)
   
 and stmt_expr env ?g_expr st : stmts * exp =

@@ -1,0 +1,27 @@
+rules:
+- id: taint-struct-param
+  mode: taint
+  languages: [elixir]
+  message: "tainted via struct param"
+  severity: INFO
+
+  pattern-sources:
+    - patterns:
+      - pattern-either:
+          - pattern-inside: |
+              def $_(..., $X, ...) do
+              ...
+              end
+          - pattern-inside: |
+              def $_(..., %$_{..., $_: $X, ...}, ...) do
+              ...
+              end
+          - pattern-inside: |
+              def $_(..., %$_{..., $_ => $X, ...}, ...) do
+              ...
+              end
+      - focus-metavariable: $X
+
+  pattern-sinks:
+    - pattern: |
+        sink($R)

@@ -126,6 +126,12 @@ let rec expr e =
            * and `f($X)` will match `f(x)`. *)
           let barg = b |> expr |> G.arg in
           G.Call (G.e e_call, (lb, [ barg ], rb)))
+  | ArrayAccess (e, (lb, args, rb)) ->
+      let e = expr e in
+      let args = list argument args in
+      let exprs = List.filter_map (function G.Arg e -> Some e | _ -> None) args in
+      let index = G.Container (G.Array, (lb, exprs, rb)) |> G.e in
+      G.ArrayAccess (e, (lb, index, rb))
   | DotAccess (e, t, m) -> (
       let e = expr e in
       match m with
@@ -569,21 +575,10 @@ and expr_as_stmt = function
   | D x -> definition x
   | e -> (
       let e = expr e in
-      match e.G.e with
-      (* targets only: a single name on its own line is probably an hidden fun call,
-         * unless it's a metavariable
-      *)
-      | G.N (G.Id ((s, _), _)) ->
-          if AST_generic.is_metavar_name s || (Domain.DLS.get Flag_parsing.sgrep_mode) then
-            G.exprstmt e
-          else
-            let call = G.Call (e, fb []) |> G.e in
-            G.exprstmt call
-      | _ -> (
-          match expr_special_cases e with
-          | G.S s -> s
-          | G.E e -> G.exprstmt e
-          | _ -> raise Impossible))
+      match expr_special_cases e with
+      | G.S s -> s
+      | G.E e -> G.exprstmt e
+      | _ -> raise Impossible)
 
 and stmt st =
   match st with

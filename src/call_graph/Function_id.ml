@@ -53,6 +53,8 @@ let compare (n1 : t) (n2 : t) : int =
 let equal (n1 : t) (n2 : t) : bool =
   key n1 = key n2
 
+let tok ((_, tok) : t) : Tok.t = tok
+
 let show ((id, _) : t) : string =
   id
 

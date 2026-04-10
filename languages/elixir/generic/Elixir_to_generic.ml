@@ -369,6 +369,25 @@ and map_items env (v1, v2) : G.expr list =
   let v2 = map_keywords env v2 in
   v1 @ List_.map keyval_of_pair v2
 
+(* Like map_items but wraps each pair in OtherExpr to distinguish
+ * arrow syntax (%{"k" => v}) from keyword syntax (%{k: v}). *)
+and map_map_items env (v1, v2) : G.expr list =
+  let v1 = (map_list map_expr) env v1 in
+  let v2 = map_keywords env v2 in
+  let wrap_arrow (e : G.expr) : G.expr =
+    match e.G.e with
+    | G.Ellipsis _ -> e
+    | _ -> G.OtherExpr (("MapPairArrow", G.fake "=>"), [ G.E e ]) |> G.e
+  in
+  let wrap_keyword p : G.expr =
+    match p with
+    | Right e -> e (* ellipsis or metavar, pass through unwrapped *)
+    | Left _ ->
+        let e = keyval_of_pair p in
+        G.OtherExpr (("MapPairKeyword", G.fake ":"), [ G.E e ]) |> G.e
+  in
+  List_.map wrap_arrow v1 @ List_.map wrap_keyword v2
+
 and map_keywords env v = (map_list map_pair) env v
 
 and map_pair_kw_expr env (v1, v2) =
@@ -406,6 +425,36 @@ and map_stmt env (v : stmt) : G.stmt =
       in
       let st1 = G.Block (tdo, then_, tthenend) |> G.s in
       G.If (tif, G.Cond e, st1, elseopt) |> G.s
+  | Throw (tthrow, e) ->
+      let e = map_expr env e in
+      G.Throw (tthrow, e, G.sc) |> G.s
+  | For (tfor, clauses, (tdo, body, tend)) ->
+      let comp_clauses = List_.map (fun (clause : for_clause) ->
+        match clause with
+        | ForGenerator (pat, tarrow, collection) ->
+            let pat = map_expr env pat |> H.expr_to_pattern in
+            let collection = map_expr env collection in
+            G.CompFor (tfor, pat, tarrow, collection)
+        | ForFilter e ->
+            let e = map_expr env e in
+            G.CompIf (G.fake "if", e)
+      ) clauses in
+      let body_stmts = map_stmts env body in
+      let body_expr =
+        match body_stmts with
+        | [ { G.s = G.ExprStmt (e, _sc); _ } ] -> e
+        | _ -> G.stmt_to_expr (G.Block (tdo, body_stmts, tend) |> G.s)
+      in
+      let comp = G.Comprehension (G.List, (tdo, (body_expr, comp_clauses), tend)) in
+      G.ExprStmt (comp |> G.e, G.sc) |> G.s
+  | Try (ttry, (tdo, (boc, extras), tend)) ->
+      let body_stmts =
+        match boc with
+        | Body stmts -> map_stmts env stmts
+        | Clauses _ -> (* unreachable: try body is always Body stmts *) []
+      in
+      let body_stmt = G.Block (tdo, body_stmts, tend) |> G.s in
+      wrap_with_rescue env ttry body_stmt extras
   | D def ->
       let d = map_definition env def in
       G.DefStmt d |> G.s
@@ -445,12 +494,84 @@ and map_param_to_gparam env (p : parameter) : G.parameter =
           G.Param (G.param_of_id ?pdefault id))
   | OtherParamExpr e ->
       let e = map_expr env e in
-      G.OtherParam (("OtherParamExpr", G.fake ""), [ G.E e ])
+      G.ParamPattern (H.expr_to_pattern e)
   | OtherParamPair (kwd, e) ->
       let kwd = map_keyword env kwd in
       let e = map_expr env e in
       let e = keyval_of_pair (Left (kwd, e)) in
-      G.OtherParam (("OtherParamPair", G.fake ""), [ G.E e ])
+      G.ParamPattern (H.expr_to_pattern e)
+
+(* Convert one rescue/catch stab clause to a G.catch arm.
+ * Each stab has a list of exception-type expressions and a handler body. *)
+and map_rescue_stab_to_catch env tok (stab : stab_clause) : G.catch =
+  let ((args, _kwargs), guard_opt), _tarrow, body_stmts = stab in
+  let catch_pat =
+    match args with
+    | [] -> G.PatEllipsis tok
+    | [arg] ->
+        let e = map_expr env arg in
+        H.expr_to_pattern e
+    | args ->
+        let pats = List_.map (fun a -> H.expr_to_pattern (map_expr env a)) args in
+        let pat =
+          List.fold_right (fun p acc -> G.DisjPat (p, acc))
+            (List.tl pats) (List.hd pats)
+        in
+        pat
+  in
+  let catch_pat =
+    match guard_opt with
+    | Some (_tok, guard) -> G.PatWhen (catch_pat, map_expr env guard)
+    | None -> catch_pat
+  in
+  let catch_exn = G.CatchPattern catch_pat in
+  let body = map_stmts env body_stmts in
+  (tok, catch_exn, G.Block (Tok.unsafe_fake_bracket body) |> G.s)
+
+(* Wrap a body statement in a G.Try when there are rescue/catch/after clauses.
+ * `tok` is used as the try token. *)
+and wrap_with_rescue env tok body_stmt rescue =
+  match rescue with
+  | [] -> body_stmt
+  | extras ->
+      let catches, try_else, finally =
+        List.fold_left
+          (fun (catches, try_else, finally) ((kind, t), boc) ->
+            match (kind : exn_clause_kind) with
+            | Rescue | Catch ->
+                let s =
+                  match boc with
+                  | Clauses stabs ->
+                      let cs = List_.map (map_rescue_stab_to_catch env t) stabs in
+                      catches @ cs
+                  | Body _ -> catches
+                in
+                (s,
+                 try_else,
+                 finally)
+            | Else ->
+                let s =
+                  match boc with
+                  | Clauses stabs ->
+                      stabs |> List.concat_map (fun (_, _, b) -> map_stmts env b)
+                  | Body _ -> []
+                in
+                (catches,
+                 Some (t, G.Block (Tok.unsafe_fake_bracket s) |> G.s),
+                 finally)
+            | After ->
+                let s =
+                  match boc with
+                  | Clauses stabs ->
+                      stabs |> List.concat_map (fun (_, _, b) -> map_stmts env b)
+                  | Body stmts -> map_stmts env stmts
+                in
+                (catches,
+                 try_else,
+                 Some (t, G.Block (Tok.unsafe_fake_bracket s) |> G.s)))
+          ([], None, None) extras
+      in
+      G.Try (tok, body_stmt, catches, try_else, finally) |> G.s
 
 and map_func_clause_to_stab env (clause : function_definition) :
     stab_clause_generic =
@@ -466,7 +587,7 @@ and map_func_clause_to_stab env (clause : function_definition) :
 
 and map_definition env (v : definition) : G.definition =
   match v with
-  | FuncDef [ { f_def; f_name; f_params; f_guard = None; f_body; f_is_private } ] ->
+  | FuncDef [ { f_def; f_name; f_params; f_guard = None; f_body; f_rescue; f_is_private } ] ->
       (* Single clause, no guard: use direct param names (original behavior).
        * This preserves the simple fparams=[x,y,...] representation so that
        * taint analysis can match call arguments to parameters by position
@@ -483,12 +604,15 @@ and map_definition env (v : definition) : G.definition =
       let fparams = map_bracket (map_list map_param_to_gparam) env f_params in
       let l, body, r = f_body in
       let body_stmts = map_stmts env body in
+      let body_stmt =
+        wrap_with_rescue env l (G.Block (l, body_stmts, r) |> G.s) f_rescue
+      in
       let fdef =
         {
           G.fkind = (G.Function, f_def);
           fparams;
           frettype = None;
-          fbody = G.FBStmt (G.Block (l, body_stmts, r) |> G.s);
+          fbody = G.FBStmt body_stmt;
         }
       in
       (ent, G.FuncDef fdef)
@@ -528,9 +652,10 @@ and map_definition env (v : definition) : G.definition =
                let stab = map_func_clause_to_stab env c in
                case_and_body_of_stab_clause stab)
       in
-      let body_stmt =
-        G.Switch (tk, Some (G.Cond switch_cond), cases) |> G.s
-      in
+      let switch_stmt = G.Switch (tk, Some (G.Cond switch_cond), cases) |> G.s in
+      (* Aggregate rescue/catch/after clauses from all function clauses *)
+      let all_rescue = List.concat_map (fun c -> c.f_rescue) clauses in
+      let body_stmt = wrap_with_rescue env tk switch_stmt all_rescue in
       let fdef =
         {
           G.fkind = (G.Function, tk);
@@ -596,9 +721,29 @@ and map_binary_op env v1 v2 v3 =
   let e2 = map_expr env v3 in
   match op with
   | Left (op, tk) -> G.opcall (op, tk) [ e1; e2 ]
+  | Right (("=>", tk) as _id) ->
+      G.keyval e1 tk e2
   | Right id ->
       let n = G.N (H.name_of_id id) |> G.e in
       G.Call (n, fb ([ e1; e2 ] |> List_.map G.arg)) |> G.e
+
+(* Desugar pipe: x |> f(a, b) becomes f(x, a, b), tagged with
+ * OtherExpr("PipelineCall", ...) so search patterns can distinguish
+ * piped calls from direct calls. *)
+and map_pipeline env (v1 : expr) (tk : tok) (v3 : expr) : G.expr =
+  let desugared =
+    match v3 with
+    | Call (fn, (l, (args, kwds), r), blk) ->
+        (* Insert v1 as first argument at the Elixir AST level;
+         * map_call will call map_expr on v1, handling nested pipes. *)
+        map_call env (fn, (l, (v1 :: args, kwds), r), blk)
+    | _ ->
+        (* Bare function reference: x |> f  becomes  f(x) *)
+        let e1 = map_expr env v1 in
+        let e2 = map_expr env v3 in
+        G.Call (e2, fb [ G.Arg e1 ]) |> G.e
+  in
+  G.OtherExpr (("PipelineCall", tk), [ G.E desugared ]) |> G.e
 
 and map_match env v1 v2 =
   (* Single LHS names are VarDefs.
@@ -661,20 +806,17 @@ and map_expr env v : G.expr =
       |> G.e
   | Map (v1, v2, v3) -> (
       let v2 = (map_option map_astruct) env v2 in
-      let l, xs, r = (map_bracket map_items) env v3 in
+      let l, xs, r = (map_bracket map_map_items) env v3 in
+      let dict_l = Tok.combine_toks v1 [ l ] in
+      let dict_body = G.Container (G.Dict, (dict_l, xs, r)) |> G.e in
       match v2 with
-      | None ->
-          let l = Tok.combine_toks v1 [ l ] in
-          G.Container (G.Dict, (l, xs, r)) |> G.e
-      | Some astruct ->
-          (* TODO?
-             | Some (Left id) ->
-                 let n = H2.name_of_id id in
-                 let ty = G.TyN n |> G.t in
-                 G.New (tpercent, ty, G.empty_id_info (), (l, List_.map G.arg xs, r))
-                 |> G.e
-          *)
-          G.Call (astruct, (l, List_.map G.arg xs, r)) |> G.e)
+      | None -> dict_body
+      | Some name_expr -> (
+          match H.name_of_dot_access name_expr with
+          | Some n -> G.Constructor (n, fb [ dict_body ]) |> G.e
+          | None ->
+              (* Fallback for dynamic struct names that can't be statically resolved *)
+              G.Call (name_expr, fb [ G.arg dict_body ]) |> G.e))
   | Alias v ->
       (* TODO: split alias in components, and then use name_of_ids *)
       let v = map_alias env v in
@@ -721,6 +863,7 @@ and map_expr env v : G.expr =
   | BinaryOp (v1, v2, v3) -> (
       match v2 with
       | OMatch, _tk -> map_match env v1 v3
+      | OPipeline, tk -> map_pipeline env v1 tk v3
       | _else_ -> map_binary_op env v1 v2 v3)
   | OpArity (v1, tslash, pi) ->
       let id = map_wrap_operator_ident env v1 in
@@ -735,7 +878,7 @@ and map_expr env v : G.expr =
       let e1 = map_expr env v1 in
       let v3 = map_expr_or_kwds env v3 in
       let e3 = expr_of_expr_or_kwds v3 in
-      G.OtherExpr (("Join", tbar), [ G.E e1; G.E e3 ]) |> G.e
+      G.Constructor (H.name_of_id ("|", tbar), fb [ e1; e3 ]) |> G.e
   | Lambda (tfn, v2, _tend) ->
       let xs = map_clauses env v2 in
       let fdef = stab_clauses_to_function_definition tfn xs in

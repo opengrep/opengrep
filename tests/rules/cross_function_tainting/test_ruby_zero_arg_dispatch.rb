@@ -105,13 +105,13 @@ end
 def test_zero_arg_new_with_parens
   obj = TaintedService.new()
   result = obj.get_data()
-  # todoruleid: test-ruby-zero-arg-dispatch
+  # ruleid: test-ruby-zero-arg-dispatch
   sink(result)
 end
 
 def test_zero_arg_new_no_parens
   obj = TaintedService.new
   result = obj.get_data()
-  # todoruleid: test-ruby-zero-arg-dispatch
+  # ruleid: test-ruby-zero-arg-dispatch
   sink(result)
 end

@@ -31,5 +31,9 @@ def main
   intermethod_obj = IntermethodClass.new()
   intermethod_result = intermethod_obj.sink_method()
 
+  # Test chained method call: ClassName.new(tainted).method()
+  # ruleid: ruby_constructor_sqli
+  chained_result = "SELECT * FROM users WHERE name = #{User.new(taint).get_profile()}"
+
   return result
 end
