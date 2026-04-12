@@ -64,5 +64,9 @@ function main(): void {
     // ruleid: typescript_constructor_sqli
     const query: string = `SELECT * FROM users WHERE name = ${a}`;
 
+    // Test chained method call: new Constructor(tainted).method()
+    // ruleid: typescript_constructor_sqli
+    const chainedQuery: string = `SELECT * FROM users WHERE name = ${new User(source()).getProfile()}`;
+
     return;
 }

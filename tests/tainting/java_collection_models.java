@@ -3,7 +3,9 @@
 
 import java.util.HashMap;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class CollectionModelsTest {
 
@@ -51,7 +53,53 @@ public class CollectionModelsTest {
         sink(value);
     }
 
+    // Test that getter-style lookups preserve taint through deep chains
+    public void testDeepGetterChain(String tainted, Foo foo) {
+        String value = foo.getBars(tainted).get(0).getX();
+        // ruleid: java-collection-taint
+        sink(value);
+    }
+
+    // Test that getter-style lookups preserve taint through chained fields
+    public void testDeepFieldChain(String tainted, SiteModel siteModel) {
+        Integer value = siteModel.getPrefixes(tainted).sites.ids.get(0);
+        // ruleid: java-collection-taint
+        sink(String.valueOf(value));
+    }
+
     private void sink(String data) {
         System.out.println(data);
     }
+}
+
+class Bar {
+    String x;
+
+    String getX() {
+        return x;
+    }
+}
+
+class Foo {
+    List<Bar> bars;
+
+    List<Bar> getBars(String name) {
+        return bars;
+    }
+}
+
+class SiteModel {
+    PrefixSiteIds prefixes;
+
+    PrefixSiteIds getPrefixes(String name) {
+        return prefixes;
+    }
+}
+
+class PrefixSiteIds {
+    SiteIds sites;
+}
+
+class SiteIds {
+    Set<Integer> ids = new HashSet<>();
 }

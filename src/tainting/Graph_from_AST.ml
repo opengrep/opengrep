@@ -489,6 +489,22 @@ let rec callsite_tok_of_callee_expr (expr : G.expr) : Tok.t option =
       | tok :: _ when not (Tok.is_fake tok) -> Some tok
       | _ -> None)
 
+let callsite_tok_for_call ~(lang : Lang.t) (call_expr : G.expr)
+    (callee : G.expr) : Tok.t =
+  match callee.G.e with
+  | G.DotAccess (_, _, G.FN (G.Id (("new", _), _)))
+    when Lang.(lang =*= Ruby) -> (
+      match AST_generic_helpers.ii_of_any (G.E call_expr) with
+      | tok :: _ -> tok
+      | [] -> Tok.unsafe_fake_tok "")
+  | _ -> (
+      match callsite_tok_of_callee_expr callee with
+      | Some tok -> tok
+      | None -> (
+          match AST_generic_helpers.ii_of_any (G.E call_expr) with
+          | tok :: _ -> tok
+          | [] -> Tok.unsafe_fake_tok ""))
+
 (* Extract Go receiver type from method *)
 let extract_go_receiver_type (fdef : G.function_definition) : string option =
   let params = Tok.unbracket fdef.fparams in
@@ -586,7 +602,74 @@ let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
     if cmp <> 0 then cmp else Tok.compare t1 t2)
 
 (* Helper function to identify the callee fn_id from a call expression's callee *)
-let identify_callee ?(object_mappings = []) ?(all_funcs = [])
+let resolve_constructor_from_type ~(lang : Lang.t) ~all_funcs
+    ?(imported_entity_index = CanonicalMap.empty)
+    ?(current_file : Fpath.t option) (ty : G.type_) : fn_id option =
+  let is_constructor_fn_id fn_id =
+    match fn_id with
+    | [ Some cls; Some meth ] ->
+        let class_name = fst cls.IL.ident in
+        Object_initialization.is_constructor lang (fst meth.IL.ident)
+          (Some class_name)
+    | _ -> false
+  in
+  let is_local_function func =
+    match current_file with
+    | Some file -> matches_current_file file func
+    | None -> true
+  in
+  let lookup_local_constructor class_name =
+    List.find_opt
+      (fun f ->
+        is_local_function f
+        &&
+        match f.fn_id with
+        | [ Some c; Some m ] ->
+            fst c.IL.ident = class_name
+            && Object_initialization.is_constructor lang (fst m.IL.ident)
+                 (Some class_name)
+        | _ -> false)
+      all_funcs
+    |> Option.map (fun f -> f.fn_id)
+  in
+  let canonicals, class_name_opt =
+    match ty.G.t with
+    | G.TyN (G.Id ((name, _), id_info))
+    | G.TyExpr { G.e = G.N (G.Id ((name, _), id_info)); _ } ->
+        let canonicals =
+          match !(id_info.G.id_resolved) with
+          | Some (G.ImportedEntity canonical, _sid)
+          | Some (G.ImportedModule canonical, _sid) -> [ canonical ]
+          | _ -> [ [ name ] ]
+        in
+        (canonicals, Some name)
+    | G.TyExpr
+        { G.e = G.N (G.IdQualified ({ name_info; _ } as qualified_info)); _ } ->
+        let canonical =
+          match !(name_info.G.id_resolved) with
+          | Some (G.ImportedEntity canonical, _sid)
+          | Some (G.ImportedModule canonical, _sid) -> canonical
+          | _ ->
+              AST_generic_helpers.dotted_ident_of_name
+                (G.IdQualified qualified_info)
+              |> List_.map fst
+        in
+        ([ canonical ], List_.last_opt canonical)
+    | _ -> ([], None)
+  in
+  match
+    canonicals
+    |> List.find_map (fun canonical ->
+           match lookup_imported_func ?current_file imported_entity_index canonical with
+           | Some func when is_constructor_fn_id func.fn_id -> Some func.fn_id
+           | Some _
+           | None ->
+               None)
+  with
+  | Some _ as result -> result
+  | None -> Option.bind class_name_opt lookup_local_constructor
+
+let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
     ?(import_binding_timeline = StringMap.empty)
     ?(local_import_binding_timeline = StringMap.empty)
     ?(imported_entity_index = CanonicalMap.empty) ?(current_file : Fpath.t option)
@@ -719,18 +802,36 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
     | G.N (G.Id ((id, _), id_info)) -> (
         match resolve_local_function_call id with
         | Some _ as result -> result
-        | None -> (
-            match !(id_info.G.id_resolved) with
-            | Some (G.ImportedEntity canonical, _sid) when is_import_binding_active id ->
-                lookup_imported_entity ?current_file imported_entity_index
-                  canonical
-            | Some (G.ImportedModule _, _sid) -> None
-            | None when is_import_binding_active id ->
-                lookup_imported_entity ?current_file imported_entity_index
-                  [ id ]
-            | Some _
+        | None ->
+            let imported_result =
+              match !(id_info.G.id_resolved) with
+              | Some (G.ImportedEntity canonical, _sid)
+                when is_import_binding_active id ->
+                  lookup_imported_entity ?current_file imported_entity_index
+                    canonical
+              | Some (G.ImportedModule _, _sid) -> None
+              | None when is_import_binding_active id ->
+                  lookup_imported_entity ?current_file imported_entity_index
+                    [ id ]
+              | Some _
+              | None ->
+                  None
+            in
+            (match imported_result with
+            | Some _ as result -> result
             | None ->
-                None))
+                let ty =
+                  G.
+                    {
+                      t =
+                        TyN
+                          (G.Id
+                             ((id, G.fake id), G.empty_id_info ()));
+                      t_attrs = [];
+                    }
+                in
+                resolve_constructor_from_type ~lang ~all_funcs
+                  ~imported_entity_index ?current_file ty))
         (* Qualified call: Module.foo() *)
         | G.N
             (G.IdQualified
@@ -804,77 +905,98 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                   (canonical_module @ [ id ])
             | None -> None)
         | G.DotAccess
-            ( { e = G.N (G.Id ((_obj_name, _), obj_info)); _ },
+            ( { e = G.N (G.Id ((obj_name, _), obj_id_info)); _ },
               _,
               G.FN (G.Id ((id, _), _id_info)) ) -> (
-            match !(obj_info.G.id_resolved) with
+            match !(obj_id_info.G.id_resolved) with
             | Some (G.ImportedModule canonical_module, _sid)
-              when is_import_binding_active _obj_name ->
+              when is_import_binding_active obj_name ->
                 lookup_imported_entity ?current_file imported_entity_index
                   (canonical_module @ [ id ])
             | Some (G.ImportedEntity canonical_entity, _sid)
-              when is_import_binding_active _obj_name ->
+              when is_import_binding_active obj_name ->
                 lookup_imported_entity ?current_file imported_entity_index
                   (canonical_entity @ [ id ])
             | Some _
             | None ->
                 let method_name_str = id in
-                (* First try: treat obj as a module name and look up in
-                   imported entities. This handles bare `import runner` in
-                   Python where the naming pass does not set ImportedModule. *)
                 let module_lookup =
-                  if is_import_binding_active _obj_name then
+                  if is_import_binding_active obj_name then
                     lookup_imported_entity ?current_file imported_entity_index
-                      [ _obj_name; method_name_str ]
+                      [ obj_name; method_name_str ]
                   else None
                 in
                 (match module_lookup with
                 | Some _ as result -> result
                 | None ->
-                (* Fall back: look up obj's class in object_mappings *)
-                let obj_class_opt =
-                  object_mappings
-                  |> List.find_opt (fun (var_name, _class_name) ->
-                         match var_name with
-                         | G.Id ((var_str, _), _) -> var_str = _obj_name
-                         | _ -> false)
-                  |> Option.map (fun (_var_name, class_name) -> class_name)
-                in
-                (match obj_class_opt with
-                | Some class_name ->
-                    let class_name_str = match class_name with
-                      | G.Id ((str, _), _) -> str
-                      | _ -> ""
+                    let obj_resolved = !(obj_id_info.G.id_resolved) in
+                    let obj_class_opt =
+                      object_mappings
+                      |> List.find_opt (fun (var_name, _class_name) ->
+                             match var_name with
+                             | G.Id ((var_str, _), var_id_info) ->
+                                 var_str = obj_name
+                                 &&
+                                 (match
+                                    (obj_resolved, !(var_id_info.G.id_resolved))
+                                  with
+                                 | Some (_, sid1), Some (_, sid2) ->
+                                     G.SId.equal sid1 sid2
+                                 | _ -> true)
+                             | _ -> false)
+                      |> Option.map (fun (_var_name, class_name) -> class_name)
                     in
-                    let imported_method =
-                      lookup_imported_entity ?current_file imported_entity_index
-                        [ class_name_str; method_name_str ]
+                    let obj_class_opt =
+                      match obj_class_opt with
+                      | Some _ -> obj_class_opt
+                      | None -> (
+                          match !(obj_id_info.G.id_type) with
+                          | Some { G.t = G.TyN (G.Id _ as n); _ }
+                          | Some
+                              {
+                                G.t = G.TyExpr { G.e = G.N (G.Id _ as n); _ };
+                                _;
+                              } ->
+                              Some n
+                          | _ -> None)
                     in
-                    (* Find all methods matching class and name *)
-                    let method_matches = List.filter (fun f ->
-                      is_local_function f &&
-                      match f.fn_id with
-                      | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
-                      | _ -> false
-                    ) all_funcs in
-                    (match imported_method with
-                    | Some _ as result -> result
-                    | None ->
-                    match method_matches with
-                    | [single_match] -> Some single_match.fn_id  (* Exactly one match by name *)
-                    | [] -> None
-                    | _ ->
-                        (* Multiple matches - filter by arity if available *)
-                        (match call_arity with
-                        | Some arity ->
-                            let arity_matches = List.filter (fun f ->
-                              Int.equal (get_func_arity f.fdef) arity
-                            ) method_matches in
-                            (match arity_matches with
-                            | [single_match] -> Some single_match.fn_id
-                            | _ -> None)  (* Still 0 or multiple matches *)
-                        | None -> None))  (* No arity info, can't disambiguate *)
-                | None -> None)))
+                    (match obj_class_opt with
+                    | Some class_name ->
+                        let class_name_str =
+                          match class_name with
+                          | G.Id ((str, _), _) -> str
+                          | _ -> ""
+                        in
+                        let imported_method =
+                          lookup_imported_entity ?current_file
+                            imported_entity_index
+                            [ class_name_str; method_name_str ]
+                        in
+                        (match imported_method with
+                        | Some _ as result -> result
+                        | None ->
+                            resolve_method_call_in_class class_name_str
+                              method_name_str)
+                    | None
+                      when Object_initialization.is_constructor lang
+                             method_name_str (Some obj_name)
+                           || ((not
+                                  (Object_initialization.uses_new_keyword lang))
+                              && String.equal method_name_str "new") ->
+                        let ty =
+                          G.
+                            {
+                              t =
+                                TyN
+                                  (G.Id
+                                     ((obj_name, G.fake obj_name),
+                                      G.empty_id_info ()));
+                              t_attrs = [];
+                            }
+                        in
+                        resolve_constructor_from_type ~lang ~all_funcs
+                          ~imported_entity_index ?current_file ty
+                    | None -> None)))
         | G.DotAccess
             ({ e = G.Call (constructor_callee, _); _ }, _,
              G.FN (G.Id ((id, _), _id_info))) -> (
@@ -920,6 +1042,10 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                 let class_name_str_opt =
                   match constructor_callee.G.e with
                   | G.N (G.Id ((class_name, _), _)) -> Some class_name
+                  | G.N (G.IdQualified qualified_info) ->
+                      AST_generic_helpers.dotted_ident_of_name
+                        (G.IdQualified qualified_info)
+                      |> List_.map fst |> List_.last_opt
                   | _ ->
                       (match dotted_name_segments_of_expr constructor_callee with
                       | Some canonical -> List_.last_opt canonical
@@ -927,6 +1053,22 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
                 in
                 Option.bind class_name_str_opt (fun class_name_str ->
                     resolve_method_call_in_class class_name_str method_name_str))
+        | G.DotAccess
+            ({ e = G.New (_, ty, _, _); _ }, _, G.FN (G.Id ((method_name, _), _)))
+          when Lang.(lang =*= Java || lang =*= Js || lang =*= Ts || lang =*= Csharp)
+          -> (
+            let class_name_opt =
+              match ty.G.t with
+              | G.TyN (G.Id ((cn, _), _)) -> Some cn
+              | G.TyExpr { G.e = G.N (G.Id ((cn, _), _)); _ } -> Some cn
+              | G.TyExpr { G.e = G.N (G.IdQualified qualified_info); _ } ->
+                  AST_generic_helpers.dotted_ident_of_name
+                    (G.IdQualified qualified_info)
+                  |> List_.map fst |> List_.last_opt
+              | _ -> None
+            in
+            Option.bind class_name_opt (fun class_name_str ->
+                resolve_method_call_in_class class_name_str method_name))
         (* Method call: obj.method() - look up obj's class *)
         | _ ->
             Log.debug (fun m ->
@@ -935,7 +1077,7 @@ let identify_callee ?(object_mappings = []) ?(all_funcs = [])
             None
 
 (* Extract all calls from a function body and resolve them to fn_ids *)
-let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path = [])
+let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path = [])
     ?(import_binding_timeline = StringMap.empty)
     ?(imported_entity_index = CanonicalMap.empty) ?(current_file : Fpath.t option)
     (fdef : G.function_definition) : (fn_id * Tok.t) list =
@@ -957,7 +1099,7 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
             | None ->
                 (* Unresolved - try to identify it as a function *)
                 (match
-                   identify_callee ~object_mappings ~all_funcs
+                   identify_callee ~lang ~object_mappings ~all_funcs
                      ~import_binding_timeline
                      ~local_import_binding_timeline
                      ~imported_entity_index ?current_file ~caller_parent_path
@@ -981,16 +1123,9 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
         | G.Call (callee, args) ->
             let (_, args_list, _) = args in
             let call_arity = List.length args_list in
-            let tok =
-              match callsite_tok_of_callee_expr callee with
-              | Some tok -> tok
-              | None -> (
-                  match AST_generic_helpers.ii_of_any (G.E e) with
-                  | tok :: _ -> tok
-                  | [] -> Tok.unsafe_fake_tok "")
-            in
+            let tok = callsite_tok_for_call ~lang e callee in
             (match
-               identify_callee ~object_mappings ~all_funcs
+               identify_callee ~lang ~object_mappings ~all_funcs
                  ~import_binding_timeline
                  ~local_import_binding_timeline
                  ~imported_entity_index ?current_file ~caller_parent_path
@@ -1006,6 +1141,22 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
             self#visit_expr env callee;
             (* Continue visiting arguments for nested calls *)
             super#visit_arguments env args
+        | G.New (_tok, ty, _id_info, args) ->
+            (* Constructor call: new ClassName(args).
+               Use the class name token so it matches the eorig token
+               in class_construction's constructor expression. *)
+            (match resolve_constructor_from_type ~lang ~all_funcs ty with
+            | Some fn_id ->
+                let tok =
+                  match AST_generic_helpers.ii_of_any (G.T ty) with
+                  | tok :: _ -> tok
+                  | [] -> Tok.unsafe_fake_tok ""
+                in
+                calls := (fn_id, tok) :: !calls
+            | None -> ());
+            let (_, args_list, _) = args in
+            List.iter check_arg_for_unresolved_function_call args_list;
+            super#visit_arguments env args
         | _ -> super#visit_expr env e
     end
   in
@@ -1015,10 +1166,11 @@ let extract_calls ?(object_mappings = []) ?(all_funcs = []) ?(caller_parent_path
 
 (* Extract calls from top-level statements (outside any function).
    This returns a list of (callee_fn_id, call_tok) pairs. *)
-let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = [])
-    ?(import_binding_timeline = StringMap.empty)
-    ?(imported_entity_index = CanonicalMap.empty) ?(current_file : Fpath.t option)
-    (ast : G.program) : (fn_id * Tok.t) list =
+let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = [])
+    ?(all_funcs = []) ?(import_binding_timeline = StringMap.empty)
+    ?(imported_entity_index = CanonicalMap.empty)
+    ?(current_file : Fpath.t option) (ast : G.program) :
+    (fn_id * Tok.t) list =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for top-level statements");
   let calls = ref [] in
 
@@ -1060,16 +1212,9 @@ let extract_toplevel_calls ?(object_mappings = []) ?(all_funcs = [])
             in
             if call_pos >= 0 && not (is_inside_function call_pos) then (
               (* Top-level call - no class context *)
-              let tok =
-                match callsite_tok_of_callee_expr callee with
-                | Some tok -> tok
-                | None -> (
-                    match AST_generic_helpers.ii_of_any (G.E e) with
-                    | tok :: _ -> tok
-                    | [] -> Tok.unsafe_fake_tok "")
-              in
+              let tok = callsite_tok_for_call ~lang e callee in
               match
-                identify_callee ~object_mappings ~all_funcs
+                identify_callee ~lang ~object_mappings ~all_funcs
                   ~import_binding_timeline
                   ~imported_entity_index ?current_file ~caller_parent_path:[]
                   ~call_tok:tok ~import_lookup_scope:(TopLevelAtCallSite tok)
@@ -1386,7 +1531,7 @@ let build_call_graph_with_context ~(lang : Lang.t) ?(object_mappings = [])
 
           (* Extract calls - class context is already in fn_id *)
           let callee_calls =
-            extract_calls ~object_mappings ~all_funcs:funcs
+            extract_calls ~lang ~object_mappings ~all_funcs:funcs
               ~import_binding_timeline
               ~imported_entity_index ?current_file ~caller_parent_path:fn_id
               fdef
@@ -1432,7 +1577,7 @@ let build_call_graph_with_context ~(lang : Lang.t) ?(object_mappings = [])
 
   (* Extract calls from top-level code (outside any function) and add edges to <top_level> *)
   let toplevel_calls =
-    extract_toplevel_calls ~object_mappings ~all_funcs:funcs
+    extract_toplevel_calls ~lang ~object_mappings ~all_funcs:funcs
       ~import_binding_timeline
       ~imported_entity_index ?current_file ast
   in
