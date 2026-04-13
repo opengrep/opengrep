@@ -873,19 +873,6 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           (Tok.unbracket inner_args @ Tok.unbracket outer_args)
       in
       expr_aux env ~void (G.Call (callee, merged_args) |> G.e)
-  (* Ruby: when the callee is a plain identifier (G.N), evaluate it via
-     `lval` instead of `expr` to skip the `ident_function_call_hack` (see
-     the G.N arm below, ~line 892). That hack wraps bare identifiers in a
-     0-arg Call for Ruby (where `foo` can mean `foo()`), but here we already
-     have an explicit G.Call — going through `expr` would produce a spurious
-     nested Call(Call(f, []), args) instead of Call(f, args). *)
-  | G.Call (({ G.e = G.N _; _ } as e), args) when env.lang =*= Lang.Ruby ->
-      let tok = G.fake "call" in
-      let ss_callee, callee_lval = lval env e in
-      let callee_exp = mk_e (Fetch callee_lval) (related_exp e) in
-      let ss_args, il_args = arguments env (Tok.unbracket args) in
-      let ss_call, call_exp = call_instr tok eorig ~void (fun res -> Call (res, callee_exp, il_args)) in
-      (ss_callee @ ss_args @ ss_call, call_exp)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
       call_generic env ~void tok eorig e args
@@ -902,23 +889,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.ArrayAccess (_, _)
   | G.DeRef (_, _) ->
       let ss_lv, lval = lval env g_expr in
-      let exp = mk_e (Fetch lval) eorig in
-      let ident_function_call_hack ss exp =
-        (* Taking into account Ruby's ability to allow function calls without
-         * parameters or parentheses, we are conducting a check to determine
-         * if a function with the same name as the identifier exists, specifically
-         * for Ruby. *)
-        match lval with
-        | { base = Var { ident; id_info; _ }; _ }
-          when env.lang =*= Lang.Ruby
-               && Option.is_none !(id_info.id_resolved)
-               && IdentSet.mem (H.str_of_ident ident) env.ctx.entity_names ->
-            let tok = G.fake "call" in
-            let call_ss, call_exp = call_instr tok eorig ~void (fun res -> Call (res, exp, [])) in
-            (ss @ call_ss, call_exp)
-        | _ -> (ss, exp)
-      in
-      ident_function_call_hack ss_lv exp
+      (ss_lv, mk_e (Fetch lval) eorig)
   (* x = ClassName(args ...) in Python *)
   (* ClassName has been resolved to __init__ by the pro engine. *)
   (* Identified and treated as x = New ClassName(args ...) to support

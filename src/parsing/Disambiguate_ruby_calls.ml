@@ -23,8 +23,16 @@ class ['self] visitor =
 
     method! visit_expr_kind env ek =
       match ek with
-      (* Do not recurse into the callee of a Call -- only visit arguments. *)
+      (* Do not recurse into the direct callee of a Call, but DO visit
+         the receiver of a DotAccess callee — in `helper.process()`,
+         `helper` may be an unresolved method call that needs wrapping. *)
       | Call (callee, args) ->
+          let callee = match callee.e with
+            | DotAccess (receiver, tok, field) ->
+                let receiver = self#visit_expr env receiver in
+                { callee with e = DotAccess (receiver, tok, field) }
+            | _ -> callee
+          in
           let args = self#visit_arguments env args in
           Call (callee, args)
       (* Bare unresolved lowercase identifier -- wrap in a zero-arg Call. *)
