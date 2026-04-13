@@ -17,7 +17,6 @@ val hook_setup_hook_function_taint_signature :
 val check_fundef :
   Taint_rule_inst.t ->
   IL.name (** entity being analyzed *) ->
-  AST_to_IL.ctx ->
   ?glob_env:Taint_lval_env.t ->
   ?class_name:string ->
   ?signature_db:Shape_and_sig.signature_database ->

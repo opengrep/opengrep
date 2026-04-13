@@ -1547,7 +1547,7 @@ let check_function_call env fun_exp args
            * This handles the case where a lambda is assigned to a variable like:
            *   callback := func(x) { sink(x) }
            *   callback(source())
-           * The signature is stored under the lambda's internal name (_tmp:N),
+           * The signature is stored under the lambda's internal name (_tmp_lambda:N),
            * but the variable 'callback' has the Fun shape from the assignment. *)
           (match fun_exp.e with
           | Fetch lval ->

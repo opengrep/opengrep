@@ -45,9 +45,6 @@ let log_error ?tok msg : unit = Log.err (fun m -> m "%s" (locate ?tok msg))
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
-module IdentSet = Set.Make (String)
-
-type ctx = { entity_names : IdentSet.t }
 type stmts = stmt list
 
 type rec_point_lvals =
@@ -63,18 +60,14 @@ type env = {
   break_labels : label list;
   cont_label : label option;
   rec_point_label : label option;
-  ctx : ctx;
   rec_point_lvals : rec_point_lvals option;
   inside_function : bool;
 }
-
-let empty_ctx : ctx = { entity_names = IdentSet.empty }
 
 let empty_env (lang : Lang.t) : env =
   { break_labels = [];
     cont_label = None;
     rec_point_label = None;
-    ctx = empty_ctx;
     rec_point_lvals = None;
     inside_function = false;
     lang }
@@ -257,8 +250,6 @@ let mk_class_constructor_name (ty : G.type_) cons_id_info : G.name option =
       Some (G.Id (id, cons_id_info))
   | __else__ -> None
 
-let add_entity_name ctx ident : ctx =
-  { entity_names = IdentSet.add (H.str_of_ident ident) ctx.entity_names }
 
 let def_expr_evaluates_to_value (lang : Lang.t) : bool =
   match lang with
@@ -2614,8 +2605,8 @@ and function_definition env fdef : function_definition =
 (* Entry points *)
 (****************************************************************************)
 
-let function_definition lang ?ctx fdef : function_definition =
-  let env = { (empty_env lang) with ctx = ctx ||| empty_ctx } in
+let function_definition lang fdef : function_definition =
+  let env = empty_env lang in
   function_definition env fdef
 
 let stmt lang st : stmts =

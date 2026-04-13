@@ -23,16 +23,16 @@ class ['self] visitor =
 
     method! visit_expr_kind env ek =
       match ek with
-      (* Do not recurse into the direct callee of a Call, but DO visit
-         the receiver of a DotAccess callee — in `helper.process()`,
-         `helper` may be an unresolved method call that needs wrapping. *)
+      (* Visit the callee of a Call unless it is a bare N(Id(...)) —
+         visiting that would wrap it in another Call, producing a spurious
+         Call(Call(f, []), args). For compound callees (DotAccess,
+         ArrayAccess, etc.) we DO recurse so that nested bare identifiers
+         like `helper` in `helper.process()` get properly wrapped. *)
+      | Call ({ e = N (Id _); _ } as callee, args) ->
+          let args = self#visit_arguments env args in
+          Call (callee, args)
       | Call (callee, args) ->
-          let callee = match callee.e with
-            | DotAccess (receiver, tok, field) ->
-                let receiver = self#visit_expr env receiver in
-                { callee with e = DotAccess (receiver, tok, field) }
-            | _ -> callee
-          in
+          let callee = self#visit_expr env callee in
           let args = self#visit_arguments env args in
           Call (callee, args)
       (* Bare unresolved lowercase identifier -- wrap in a zero-arg Call. *)
