@@ -118,6 +118,40 @@ let expr_of_expr_or_kwds (x : (G.expr, keywords_generic) Either_.t) : G.expr =
   | Left e -> e
   | Right kwds -> list_container_of_kwds kwds
 
+(* This is a modified version of Ast_generic_helpers.expr_to_pattern *)
+let rec expr_to_pattern (e : G.expr) : G.pattern =
+  match e.e with
+  | G.N (G.Id (id, info)) -> G.PatId (id, info)
+  | G.Container (G.Tuple, (t1, xs, t2)) ->
+      G.PatTuple (t1, List_.map expr_to_pattern xs, t2)
+  | G.L l -> G.PatLiteral l
+  | G.Container ((List | Dict), (t1, xs, t2)) ->
+      G.PatList (t1, List_.map expr_to_pattern xs, t2)
+  | G.Constructor (n, (_, args, _)) ->
+      G.PatConstructor (n, List_.map expr_to_pattern args)
+  | G.Ellipsis t -> G.PatEllipsis t
+  | G.OtherExpr (tag, [ G.E e ]) -> G.OtherPat (tag, [ G.P (expr_to_pattern e) ])
+  | G.Cast (ty, _tok, expr) -> G.PatTyped (expr_to_pattern expr, ty)
+  | G.LetPattern (p, {e = G.N (G.Id (i, info)); _} ) -> G.PatAs (p, (i, info))
+  | G.Call (f, args) ->
+      begin match f.e, Tok.unbracket args with
+      | G.N (G.Id (("<>", _), _) as n),
+        [ G.Arg ({ e = G.L (G.String _); _ } as l);
+          G.Arg ({ e = G.N _; _ } as r) ] ->
+          G.PatConstructor (n, [ expr_to_pattern l; expr_to_pattern r ])
+      | G.N (G.Id (("^", _), _)),
+        [ G.Arg ({ e = G.N _; _ } as rhs) ] ->
+          let tmp = "__tmp", Tok.unsafe_fake_tok "__tmp" in
+          let tmp_info = G.empty_id_info ~hidden:true () in
+          let lhs = G.N (G.Id (tmp, tmp_info)) |> G.e in
+          let op = G.IdSpecial (G.Op G.Eq, Tok.unsafe_fake_tok "==") |> G.e in
+          let cmp = G.Call (op, Tok.unsafe_fake_bracket [ G.Arg lhs; G.Arg rhs ]) |> G.e in
+          G.PatWhen (G.PatId (tmp, tmp_info), cmp)
+      | _ -> OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E e ])
+      end
+  (* TODO: PatKeyVal and more *)
+  | _ -> OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E e ])
+           
 (* TODO: lots of work here to detect when args is really a single
  * pattern, or tuples *)
 let pat_of_args_and_when (args, when_opt) : G.pattern =
@@ -129,8 +163,8 @@ let pat_of_args_and_when (args, when_opt) : G.pattern =
   let pats =
     List_.map
       (function
-        | G.OtherArg (("ArgKwdQuoted", _), [ G.E e ]) -> H.expr_to_pattern e
-        | arg -> H.argument_to_expr arg |> H.expr_to_pattern)
+        | G.OtherArg (("ArgKwdQuoted", _), [ G.E e ]) -> expr_to_pattern e
+        | arg -> H.argument_to_expr arg |> expr_to_pattern)
       args
   in
   let pat =
@@ -432,7 +466,7 @@ and map_stmt env (v : stmt) : G.stmt =
       let comp_clauses = List_.map (fun (clause : for_clause) ->
         match clause with
         | ForGenerator (pat, tarrow, collection) ->
-            let pat = map_expr env pat |> H.expr_to_pattern in
+            let pat = map_expr env pat |> expr_to_pattern in
             let collection = map_expr env collection in
             G.CompFor (tfor, pat, tarrow, collection)
         | ForFilter e ->
@@ -494,12 +528,12 @@ and map_param_to_gparam env (p : parameter) : G.parameter =
           G.Param (G.param_of_id ?pdefault id))
   | OtherParamExpr e ->
       let e = map_expr env e in
-      G.ParamPattern (H.expr_to_pattern e)
+      G.ParamPattern (expr_to_pattern e)
   | OtherParamPair (kwd, e) ->
       let kwd = map_keyword env kwd in
       let e = map_expr env e in
       let e = keyval_of_pair (Left (kwd, e)) in
-      G.ParamPattern (H.expr_to_pattern e)
+      G.ParamPattern (expr_to_pattern e)
 
 (* Convert one rescue/catch stab clause to a G.catch arm.
  * Each stab has a list of exception-type expressions and a handler body. *)
@@ -510,9 +544,9 @@ and map_rescue_stab_to_catch env tok (stab : stab_clause) : G.catch =
     | [] -> G.PatEllipsis tok
     | [arg] ->
         let e = map_expr env arg in
-        H.expr_to_pattern e
+        expr_to_pattern e
     | args ->
-        let pats = List_.map (fun a -> H.expr_to_pattern (map_expr env a)) args in
+        let pats = List_.map (fun a -> expr_to_pattern (map_expr env a)) args in
         let pat =
           List.fold_right (fun p acc -> G.DisjPat (p, acc))
             (List.tl pats) (List.hd pats)
@@ -708,10 +742,10 @@ and map_vardef env v1 v2 =
 (* TODO: Elixir also has these patterns:
  *   ^x = 0 meaning x cannot be re-assigned later, and
  *   [x|y] = [0, 1, 2] where x maps to 0, and y maps to the rest
- * and H.expr_to_pattern doesn't cover these cases.
+ * and expr_to_pattern doesn't cover these cases.
  *)
 and map_letpattern env v1 v2 =
-  let e1 = H.expr_to_pattern (map_expr env v1) in
+  let e1 = expr_to_pattern (map_expr env v1) in
   let e2 = map_expr env v2 in
   G.LetPattern (e1, e2) |> G.e
 
