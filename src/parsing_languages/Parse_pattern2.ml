@@ -154,6 +154,9 @@ let parse_pattern options lang str =
   | Lang.Hack ->
       let res = Parse_hack_tree_sitter.parse_pattern str in
       extract_pattern_from_tree_sitter_result res
+  | Lang.Haskell ->
+      let res = Parse_haskell_tree_sitter.parse_pattern str in
+      extract_pattern_from_tree_sitter_result res
   | Lang.Html
   | Lang.Xml ->
       let res = Parse_html_tree_sitter.parse_pattern str in

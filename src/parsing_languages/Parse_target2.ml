@@ -200,6 +200,8 @@ let just_parse_with_lang lang file : Parsing_result2.t =
       run file [ TreeSitter Parse_protobuf_tree_sitter.parse ] (fun x -> x)
   | Lang.Rust ->
       run file [ TreeSitter Parse_rust_tree_sitter.parse ] (fun x -> x)
+  | Lang.Haskell ->
+      run file [ TreeSitter Parse_haskell_tree_sitter.parse ] (fun x -> x)
   | Lang.Solidity ->
       run file [ TreeSitter Parse_solidity_tree_sitter.parse ] (fun x -> x)
   | Lang.Swift ->
