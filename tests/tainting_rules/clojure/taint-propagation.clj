@@ -101,6 +101,20 @@
   ;; ruleid: taint-call
   (sink y1))
 
+;; map destructuring with string keys
+(defn f [{x "a"}]
+  ;; ruleid: taint-call
+  (sink x))
+
+(defn f [{x "a" y "b"}]
+  ;; ruleid: taint-call
+  (sink y))
+
+;; mixed keyword and string keys
+(defn f [{x :kw y "str"}]
+  ;; ruleid: taint-call
+  (sink y))
+
 (defn f [{:syms [::x y] :as opts}]
   (if opts
     ;; ruleid: taint-call
