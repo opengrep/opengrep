@@ -114,6 +114,7 @@ let (comment_syntaxes : (string * string option) list) =
     ("{/*", Some "*/}");
     ("'", None); (* vb.net *)
     (";;", None); (* (";", None) *) (* clojure *)
+    ("--", None); (* Haskell *)
   ]
 
 (*****************************************************************************)

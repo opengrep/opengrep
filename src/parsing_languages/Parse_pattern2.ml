@@ -234,4 +234,7 @@ let dump_tree_sitter_pattern_cst (lang : Lang.t) (path : Fpath.t) : unit =
   | Lang.Kotlin ->
       Tree_sitter_kotlin.Parse.file file
       |> dump_and_print_errors Tree_sitter_kotlin.Boilerplate.dump_tree
+  | Lang.Haskell ->
+      Tree_sitter_haskell.Parse.file file
+      |> dump_and_print_errors Tree_sitter_haskell.Boilerplate.dump_tree
   | __else__ -> ()

@@ -221,7 +221,11 @@ let dump_tree_sitter_cst (lang : Lang.t) (file : Fpath.t) : unit =
   | Lang.Elixir ->
       Tree_sitter_elixir.Parse.file !!file
       |> dump_and_print_errors Tree_sitter_elixir.Boilerplate.dump_tree
-        Tree_sitter_elixir.Boilerplate.dump_extras
+           Tree_sitter_elixir.Boilerplate.dump_extras
+  | Lang.Haskell ->
+      Tree_sitter_haskell.Parse.file !!file
+      |> dump_and_print_errors Tree_sitter_haskell.Boilerplate.dump_tree
+           Tree_sitter_haskell.Boilerplate.dump_extras
   | Lang.Julia ->
       Tree_sitter_julia.Parse.file !!file
       |> dump_and_print_errors Tree_sitter_julia.Boilerplate.dump_tree
@@ -297,6 +301,8 @@ let test_parse_tree_sitter lang root_paths =
                  Tree_sitter_hcl.Parse.file file |> fail_on_error |> ignore
              | Lang.Elixir ->
                  Tree_sitter_elixir.Parse.file file |> fail_on_error |> ignore
+             | Lang.Haskell ->
+                 Tree_sitter_haskell.Parse.file file |> fail_on_error |> ignore
              | Lang.Dart ->
                  Tree_sitter_dart.Parse.file file |> fail_on_error |> ignore
              | Lang.Move_on_sui ->
@@ -592,8 +598,8 @@ let diff_pfff_tree_sitter xs =
                Parse_target.parse_program file)
          in
          let ast2 =
-           Common.save_excursion_unsafe Flag_semgrep.tree_sitter_only true (fun () ->
-               Parse_target.parse_program file)
+           Common.save_excursion_unsafe Flag_semgrep.tree_sitter_only true
+             (fun () -> Parse_target.parse_program file)
          in
          let s1 = AST_generic.show_program ast1 in
          let s2 = AST_generic.show_program ast2 in

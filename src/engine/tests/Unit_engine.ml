@@ -53,6 +53,7 @@ let full_lang_info =
     (Lang.Dockerfile, "dockerfile", ".dockerfile");
     (Lang.Elixir, "elixir", ".ex");
     (Lang.Go, "go", ".go");
+    (Lang.Haskell, "haskell", ".hs");
     (Lang.Hack, "hack", ".hack");
     (Lang.Html, "html", ".html");
     (Lang.Java, "java", ".java");
@@ -233,6 +234,29 @@ let language_exceptions =
     (Lang.Move_on_aptos, [ "metavar_key_value"; "regexp_string" ]);
     (* Experimental languages *)
 
+    (* Experimental languages *)
+    ( Lang.Haskell,
+      [
+        "metavar_class_def";
+        "metavar_func_def";
+        "metavar_anno";
+        "metavar_cond";
+        "metavar_stmt";
+        "metavar_equality_stmt";
+        "metavar_import";
+        "dots_method_chaining";
+        "dots_for";
+        "dots_nested_stmts";
+        "metavar_key_value";
+        (* curried application makes positional arg ellipsis NA *)
+        "dots_args";
+        (* string ellipsis "..." not supported *)
+        "dots_string";
+        (* multi-statement patterns in do-blocks not supported *)
+        "dots_stmts";
+        (* requires multi-statement pattern support *)
+        "metavar_equality_var";
+      ] );
     (* TODO: dots_nested_stmts to fix for C and C++ *)
     (Lang.C, [ "dots_nested_stmts" ]);
     (Lang.Cpp, [ "dots_nested_stmts" ]);
@@ -317,7 +341,8 @@ let maturity_tests () =
       make_maturity_tests Lang.Julia "julia" ".jl" Experimental;
       (* YAML has too many NA, not worth it *)
       make_maturity_tests Lang.Jsonnet "jsonnet" ".jsonnet" Experimental;
-      make_maturity_tests Lang.Clojure "clojure" ".clj" Experimental
+      make_maturity_tests Lang.Clojure "clojure" ".clj" Experimental;
+      make_maturity_tests Lang.Haskell "haskell" ".hs" Experimental
       (* Not even experimental yet *)
       (* HTML, XML, Dart *);
     ]
