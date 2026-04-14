@@ -1,0 +1,7 @@
+module MetaEqVar where
+
+main = do
+  h <- openFile "test.txt" ReadMode
+  contents <- hGetContents h
+--ERROR:
+  hClose h
