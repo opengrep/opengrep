@@ -878,6 +878,10 @@ and map_expr env v : G.expr =
       G.OtherExpr (("DotAnon", tdot), [ G.E e ]) |> G.e
   (* only inside a Call *)
   | DotRemote v -> map_remote_dot env v
+  (* Elixir field access: `foo.bar` (no parens). Translate to a plain
+   * DotAccess so downstream analysis treats it as field access, not a
+   * zero-arity function call. *)
+  | FieldAccess v -> map_remote_dot env v
   | ModuleVarAccess (tat, v2) ->
       let e = map_expr env v2 in
       G.OtherExpr (("AttrExpr", tat), [ G.E e ]) |> G.e
