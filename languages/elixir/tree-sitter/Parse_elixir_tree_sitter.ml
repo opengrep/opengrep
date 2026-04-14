@@ -674,7 +674,7 @@ and map_capture_expression (env : env) (x : CST.capture_expression) =
               | other -> other
             in
             (match actual_fun_name with
-            | I _ | Alias _ | DotAlias _ | DotRemote _ ->
+            | I _ | Alias _ | DotAlias _ | DotRemote _ | FieldAccess _ ->
                 (* Convert &fun/arity to &(fun(&1, &2, ...)) *)
                 let arity_int = Int64.to_int arity in
                 (* Create PlaceHolder arguments: &1, &2, ... *)

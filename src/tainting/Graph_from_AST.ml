@@ -546,13 +546,16 @@ let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t * IL.name o
   | G.DotAccess (_, _, G.FN (G.Id (id, id_info))) ->
       let callback_name = AST_to_IL.var_of_id_info id id_info in
       Some (callback_name, snd id, None)
-  (* Elixir: &func/n - ShortLambda wrapping a call to the named function.
-     Structure: OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
+  (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
+     named (local or remote) function. Structure:
+     OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
+     where func is either a plain Id or a DotAccess(..., FN(Id)).
      Create a _tmp node to match what AST_to_IL creates for the anonymous wrapper. *)
   | G.OtherExpr (("ShortLambda", shortlambda_tok),
                  [G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ }]) ->
       (match inner_e.G.e with
-      | G.Call ({ e = G.N (G.Id (id, id_info)); _ }, _) ->
+      | G.Call ({ e = G.N (G.Id (id, id_info))
+                    | G.DotAccess (_, _, G.FN (G.Id (id, id_info))); _ }, _) ->
           let callback_name = AST_to_IL.var_of_id_info id id_info in
           (* Create _tmp IL.name using Tok.fake_tok like AST_to_IL.fresh_var does *)
           let tmp_tok = Tok.fake_tok shortlambda_tok "_tmp" in
