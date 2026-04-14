@@ -63,11 +63,6 @@ module Dot = Graph.Graphviz.Dot (Display)
 module Topo = Graph.Topological.Make (G)
 module SCC = Graph.Components.Make (G)
 
-let node_key (n : node) =
-  let name = Function_id.show n in 
-  let filename, line, col = Function_id.to_file_line_col n in
-  Printf.sprintf "%s|%s|%d|%d" name filename line col
-
 (** Helpers **)
 
 let pos_of_tok (tok : Tok.t) : Pos.t =

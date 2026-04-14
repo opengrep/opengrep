@@ -411,6 +411,11 @@ and pattern env pat : stmts * lval * stmts =
                                       [G.Name _atom_name]))
     when env.lang =*= Lang.Clojure ->
     pattern env key_pat
+  (* Clojure string-key destructuring, e.g. `(let [{x "a"} o] x)`. The value
+   * is a string literal used as the map lookup key; only `key_pat` binds. *)
+  | G.PatKeyVal (key_pat, G.PatLiteral (G.String _))
+    when env.lang =*= Lang.Clojure ->
+    pattern env key_pat
   (* Only seems to be used in Ruby, modulo the above case for Clojure. *)
   | G.PatKeyVal (_key_pat, val_pat) when env.lang =*= Lang.Ruby ->
     (* My understanding is that the new variables are introduced on the rhs. *)
