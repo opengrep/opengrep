@@ -209,6 +209,10 @@ and expr =
   | DotAnon of expr * tok
   (* only inside Call *)
   | DotRemote of remote_dot
+  (* Elixir map/struct field access: `foo.bar` with no parens, no args,
+   * no do-block. Distinct from `foo.bar(...)` which is a remote call
+   * (encoded as `Call (DotRemote _, _, _)`). *)
+  | FieldAccess of remote_dot
   | ModuleVarAccess of tok (* @ *) * expr
   | ArrayAccess of expr * expr bracket
   (* a Call can be a thousand things, including function and module definitions
