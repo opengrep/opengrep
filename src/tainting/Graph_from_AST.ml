@@ -702,10 +702,11 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
         (match e.G.e with
         (* Ruby/Scala block pattern: f(args) { block } is Call(Call(callee, inner_args), [block]).
            Merge inner_args and block args so the HOF detection sees all arguments together. *)
-        | G.Call ({ e = G.Call (callee, inner_args); _ }, outer_args)
+        | G.Call ({ e = G.Call (callee, inner_args); _ },
+                  (_, ([ G.Arg { G.e = G.Lambda _; _ } ] as outer_arg), _))
           when Lang.(lang =*= Ruby || lang =*= Scala) ->
             let merged_args = Tok.unsafe_fake_bracket
-              (Tok.unbracket inner_args @ Tok.unbracket outer_args) in
+              (Tok.unbracket inner_args @ outer_arg) in
             let found = extract_hof_callbacks_from_call
               ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
               callee merged_args
