@@ -1,0 +1,11 @@
+rules:
+  - id: test-invoke-methods-ruby
+    message: Taint flows through lambda invoked via .call()
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

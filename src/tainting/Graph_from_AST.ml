@@ -437,7 +437,26 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(c
                       | [] -> Tok.unsafe_fake_tok "")
                 in
                 calls := (fn_id, tok) :: !calls
-            | None -> ());
+            | None ->
+                (* Invoke-method pattern: var.run() where var is a lambda.
+                   If the method name is a configured invoke method, look for
+                   a lambda with the receiver's name in the current scope. *)
+                let invoke_methods = (Lang_config.get lang).invoke_methods in
+                (match callee.G.e with
+                | G.DotAccess ({ e = G.N (G.Id ((var_name, _), _)); _ }, _,
+                               G.FN (G.Id ((method_name, method_tok), _)))
+                  when List.mem method_name invoke_methods ->
+                    let lambda_match = List.find_opt (fun (f : func_info) ->
+                      match List_.init_and_last_opt f.fn_id with
+                      | Some (f_parent, Some name)
+                        when String.equal (fst name.IL.ident) var_name ->
+                          equal_with_pos f_parent caller_parent_path
+                      | _ -> false
+                    ) all_funcs in
+                    (match lambda_match with
+                    | Some f -> calls := (f.fn_id, method_tok) :: !calls
+                    | None -> ())
+                | _ -> ()));
             (* Check arguments for unresolved function calls (Ruby-style) *)
             List.iter check_arg_for_unresolved_function_call args_list;
             (* Visit callee expression for nested calls (e.g., Ruby's File.open(path_for(x)) do ... end

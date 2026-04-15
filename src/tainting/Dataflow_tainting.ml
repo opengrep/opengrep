@@ -1544,14 +1544,22 @@ let check_function_call env fun_exp args
       | Some _ -> from_db
       | None ->
           (* lookup_signature failed - check if callee has a Fun shape in lval_env.
-           * This handles the case where a lambda is assigned to a variable like:
-           *   callback := func(x) { sink(x) }
-           *   callback(source())
-           * The signature is stored under the lambda's internal name (_tmp_lambda:N),
-           * but the variable 'callback' has the Fun shape from the assignment. *)
+           * This handles two cases:
+           *   callback(source())       -- direct call, lval = callback
+           *   callback.run(source())   -- invoke method, lval = callback.run
+           * For invoke methods (e.g. Java Runnable.run), strip the method offset
+           * and look up the base variable. *)
           (match fun_exp.e with
           | Fetch lval ->
-              (match Lval_env.find_lval env.lval_env lval with
+              let lval_to_check =
+                let invoke_methods = (Lang_config.get env.taint_inst.lang).invoke_methods in
+                match lval.rev_offset with
+                | [{ o = Dot method_name; _ }]
+                  when List.mem (fst method_name.ident) invoke_methods ->
+                    { lval with rev_offset = [] }
+                | _ -> lval
+              in
+              (match Lval_env.find_lval env.lval_env lval_to_check with
               | Some (S.Cell (_, S.Fun fun_sig)) ->
                   Log.debug (fun m ->
                       m "SIG_FROM_SHAPE: Found Fun shape for %s"
@@ -2123,16 +2131,12 @@ let call_with_intrafile lval_opt e env args instr =
                    * In this case we return empty taints - the callback's return will be handled
                    * when the ToSinkInCall effect is instantiated. *)
                   let is_method_callback_invoke =
-                    (* Check if this is a method call pattern on a callback parameter *)
-                    match env.taint_inst.lang, e_obj, e.e with
-                    | Lang.Java, `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
-                        (* Java Function.apply or similar callback invocation methods *)
-                        let method_name = fst name.ident in
-                        method_name = "apply" || method_name = "accept" || method_name = "test" || method_name = "get"
-                    | Lang.Ruby, `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
-                        (* Ruby proc/lambda.call invocation *)
-                        let method_name = fst name.ident in
-                        method_name = "call"
+                    (* Check if this is a method call on a callback parameter
+                     * via a configured invoke method (e.g. .apply, .call, .run). *)
+                    match e_obj, e.e with
+                    | `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
+                        let invoke_methods = (Lang_config.get env.taint_inst.lang).invoke_methods in
+                        List.mem (fst name.ident) invoke_methods
                     | _ -> false
                   in
                   let callee_is_callback =

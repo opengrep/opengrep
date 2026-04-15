@@ -51,6 +51,10 @@ type t = {
   collection_configs : collection_model_kind list;
   constructor_names : string list;
   uses_new_keyword : bool;
+  (* Methods that invoke `self` as a function.  E.g. Runnable.run() in Java,
+     Proc#call in Ruby.  When a variable with Fun shape is the receiver of one
+     of these methods, the call is treated as a direct lambda invocation. *)
+  invoke_methods : string list;
 }
 
 (* ========================================================================== *)
@@ -62,6 +66,7 @@ let empty = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let python = {
@@ -84,6 +89,7 @@ let python = {
   ];
   constructor_names = ["__init__"];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let ruby = {
@@ -111,6 +117,7 @@ let ruby = {
   ];
   constructor_names = ["initialize"];
   uses_new_keyword = false;
+  invoke_methods = ["call"];
 }
 
 let javascript = {
@@ -139,6 +146,7 @@ let javascript = {
   ];
   constructor_names = ["constructor"];
   uses_new_keyword = true;
+  invoke_methods = [];
 }
 
 let typescript = {
@@ -171,6 +179,7 @@ let java = {
   ];
   constructor_names = ["<init>"];
   uses_new_keyword = true;
+  invoke_methods = ["run"; "call"; "apply"; "accept"; "invoke"];
 }
 
 let kotlin = {
@@ -201,6 +210,7 @@ let kotlin = {
   ];
   constructor_names = ["<init>"; "init"; "constructor"];
   uses_new_keyword = false;
+  invoke_methods = ["invoke"];
 }
 
 let scala = {
@@ -223,6 +233,7 @@ let scala = {
   ];
   constructor_names = ["<init>"];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let csharp = {
@@ -247,6 +258,7 @@ let csharp = {
   ];
   constructor_names = [".ctor"];
   uses_new_keyword = true;
+  invoke_methods = ["Invoke"];
 }
 
 let go = {
@@ -258,6 +270,7 @@ let go = {
   ];
   constructor_names = [];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let rust = {
@@ -280,6 +293,7 @@ let rust = {
   ];
   constructor_names = ["new"];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let swift = {
@@ -303,6 +317,7 @@ let swift = {
   ];
   constructor_names = ["init"];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let php = {
@@ -313,6 +328,7 @@ let php = {
   collection_configs = [];  (* PHP collections are mostly handled via builtin functions *)
   constructor_names = ["__construct"];
   uses_new_keyword = true;
+  invoke_methods = [];
 }
 
 let cpp = {
@@ -323,6 +339,7 @@ let cpp = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let c = {
@@ -335,6 +352,7 @@ let ocaml_lang = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let lua = {
@@ -342,6 +360,7 @@ let lua = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let dart = {
@@ -349,6 +368,7 @@ let dart = {
   collection_configs = [];
   constructor_names = ["constructor"];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let elixir = {
@@ -364,6 +384,7 @@ let elixir = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let julia = {
@@ -373,6 +394,7 @@ let julia = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let clojure = {
@@ -394,6 +416,7 @@ let clojure = {
   collection_configs = [];
   constructor_names = [];
   uses_new_keyword = false;
+  invoke_methods = [];
 }
 
 let apex = {
@@ -401,6 +424,7 @@ let apex = {
   collection_configs = [];
   constructor_names = ["<init>"];
   uses_new_keyword = true;
+  invoke_methods = [];
 }
 
 let vb = {
@@ -408,6 +432,7 @@ let vb = {
   collection_configs = [];
   constructor_names = ["New"];
   uses_new_keyword = true;
+  invoke_methods = [];
 }
 
 (* ========================================================================== *)

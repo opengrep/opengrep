@@ -9,11 +9,11 @@ class TestLambdaDeeplyNested {
                     // ruleid: test-lambda-deeply-nested-java
                     sink(x);
                 };
-                level3();
+                level3.run();
             };
-            level2();
+            level2.run();
         };
-        level1();
+        level1.run();
     }
 
     // Test: Deeply nested lambdas split across functions
@@ -23,9 +23,9 @@ class TestLambdaDeeplyNested {
                 // ruleid: test-lambda-deeply-nested-java
                 sink(x);
             };
-            level3();
+            level3.run();
         };
-        level2();
+        level2.run();
     }
 
     static void test4_caller() {
