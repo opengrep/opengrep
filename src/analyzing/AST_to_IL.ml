@@ -194,12 +194,22 @@ let aux_var ?(force = false) ?str _env tok exp : stmts * name * lval =
       let lval = lval_of_base (Var var) in
       ([mk_s (Instr (mk_i (Assign (lval, exp)) NoOrig))], var, lval)
 
-let call_instr tok eorig ~void mk_call : stmts * exp =
+let call_instr tok eorig ~void ?dst mk_call : stmts * exp =
   if void then
     ([mk_s (Instr (mk_i (mk_call None) eorig))], mk_unit tok NoOrig)
   else
-    let lval = fresh_lval tok in
+    let lval = Option.value dst ~default:(fresh_lval tok) in
     ([mk_s (Instr (mk_i (mk_call (Some lval)) eorig))], mk_e (Fetch lval) NoOrig)
+
+(* Returns true if [exp] consumed [dst], i.e. the assignment to [dst] was
+ * already emitted inside the expression translation. *)
+let dst_consumed (dst : lval) (exp : exp) : bool =
+  match exp.e with
+  | Fetch { base = b1; rev_offset = [] } ->
+    (match dst with
+     | { base = b2; rev_offset = [] } -> equal_base b1 b2
+     | _ -> false)
+  | _ -> false
 
 let ident_of_entity_opt ent : (G.ident * G.id_info) option =
   match ent.G.name with
@@ -264,6 +274,7 @@ let def_expr_evaluates_to_value (lang : Lang.t) : bool =
   match lang with
   | Elixir (* | Clojure *) -> true
   | _else_ -> false
+
 
 let is_constructor env ret_ty id_info : bool =
   match id_info.G.id_resolved.contents with
@@ -648,7 +659,7 @@ and assign_to_record env (tok1, fields, tok2) rhs_exp lhs_orig : stmts * exp =
 (* We set `void` to `true` when the value of the expression is being discarded, in
  * which case, for certain expressions and in certain languages, we assume that the
  * expression has side-effects. See translation of operators below. *)
-and expr_aux env ?(void = false) g_expr : stmts * exp =
+and expr_aux env ?(void = false) ?dst g_expr : stmts * exp =
   let eorig = SameAs g_expr in
   match g_expr.G.e with
   | G.Call
@@ -857,10 +868,10 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                    (G.List, Tok.unsafe_fake_bracket arg_list_unwrapped)
                  |> G.e) ]
       in
-      call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket arg_container)
+      call_generic env ~void ?dst tok eorig e (Tok.unsafe_fake_bracket arg_container)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
-      call_generic env ~void tok eorig e args
+      call_generic env ~void ?dst tok eorig e args
   | G.L lit -> ([], mk_e (Literal lit) eorig)
   | G.DotAccess ({ e = N (Id (("var", _), _)); _ }, _, FN (Id ((s, t), id_info)))
     when is_hcl env.lang ->
@@ -926,16 +937,53 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       in
       (ss, mk_e (Fetch lval) (SameAs obj_e))
   | G.Assign (e1, tok, e2) ->
-      let ss_e2, exp = expr env e2 in
-      let ss_assign, result = assign env ~g_expr e1 tok exp in
-      (ss_e2 @ ss_assign, result)
+      (* Optimization: when assigning a call result directly to a simple name,
+       * pass the destination lval into expr so that call_instr can emit
+       * `lval = Call(...)` directly, avoiding a fresh _tmp intermediate.
+       * Not safe in languages where assignment may be the first declaration of
+       * a variable, as the lval may carry stale taint from a prior assignment. *)
+      (match e1.G.e with
+      | G.N _ when not (Naming_AST.assign_implicitly_declares env.lang) ->
+          (try
+            let ss_lv, lval = lval env e1 in
+            let ss_e2, exp = expr env ~dst:lval e2 in
+            let final =
+              if dst_consumed lval exp then []
+              else [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ]
+            in
+            (ss_lv @ ss_e2 @ final, mk_e (Fetch lval) (SameAs e1))
+          with
+          | Fixme _ ->
+              let ss_e2, exp = expr env e2 in
+              let ss_assign, result = assign env ~g_expr e1 tok exp in
+              (ss_e2 @ ss_assign, result))
+      | _ ->
+          let ss_e2, exp = expr env e2 in
+          let ss_assign, result = assign env ~g_expr e1 tok exp in
+          (ss_e2 @ ss_assign, result))
   | G.AssignOp (e1, (G.Eq, tok), e2) ->
       (* AsssignOp(Eq) is used to represent plain assignment in some languages,
        * e.g. Go's `:=` is represented as `AssignOp(Eq)`, and C#'s assignments
        * are all represented this way too. *)
-      let ss_e2, exp = expr env e2 in
-      let ss_assign, result = assign env ~g_expr e1 tok exp in
-      (ss_e2 @ ss_assign, result)
+      (match e1.G.e with
+      | G.N _ when not (Naming_AST.assign_implicitly_declares env.lang) ->
+          (try
+            let ss_lv, lval = lval env e1 in
+            let ss_e2, exp = expr env ~dst:lval e2 in
+            let final =
+              if dst_consumed lval exp then []
+              else [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ]
+            in
+            (ss_lv @ ss_e2 @ final, mk_e (Fetch lval) (SameAs e1))
+          with
+          | Fixme _ ->
+              let ss_e2, exp = expr env e2 in
+              let ss_assign, result = assign env ~g_expr e1 tok exp in
+              (ss_e2 @ ss_assign, result))
+      | _ ->
+          let ss_e2, exp = expr env e2 in
+          let ss_assign, result = assign env ~g_expr e1 tok exp in
+          (ss_e2 @ ss_assign, result))
   | G.AssignOp (e1, op, e2) ->
       let ss_e2, exp = expr env e2 in
       let ss_lv, lval = lval env e1 in
@@ -1290,8 +1338,8 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       (ss @ aux_ss, fixme_exp ToDo (G.E g_expr) (related_tok tok) ~partial)
   | G.RawExpr _ -> todo (G.E g_expr)
 
-and expr env ?void e_gen : stmts * exp =
-  try expr_aux env ?void e_gen with
+and expr env ?void ?dst e_gen : stmts * exp =
+  try expr_aux env ?void ?dst e_gen with
   | Fixme (kind, any_generic) ->
       ([], fixme_exp kind any_generic (related_exp e_gen))
 
@@ -1322,10 +1370,10 @@ and expr_lazy_op env op tok arg0 args eorig : stmts * exp =
   in
   (ss0 @ acc_ss, mk_e (Operator ((op, tok), arg0' :: args')) eorig)
 
-and call_generic env ?(void = false) tok eorig e args : stmts * exp =
+and call_generic env ?(void = false) ?dst tok eorig e args : stmts * exp =
   let ss_e, e = expr env e in
   let ss_args, args = arguments env (Tok.unbracket args) in
-  let call_ss, call_exp = call_instr tok eorig ~void (fun res -> Call (res, e, args)) in
+  let call_ss, call_exp = call_instr tok eorig ~void ?dst (fun res -> Call (res, e, args)) in
   (ss_e @ ss_args @ call_ss, call_exp)
 
 and call_special _env (x, tok) : call_special * Tok.t =
@@ -2100,10 +2148,14 @@ and stmt_aux env st : stmts =
       in
       new_stmts
   | G.DefStmt (ent, G.VarDef { G.vinit = Some e; vtype = opt_ty; vtok = _ }) ->
-      let ss1, e' = expr env e in
       let ss_lv, lv = lval_of_ent env ent in
       let ss2, () = type_opt env opt_ty in
-      ss1 @ ss_lv @ ss2 @ [ mk_s (Instr (mk_i (Assign (lv, e')) (Related (G.S st)))) ]
+      let ss1, e' = expr env ~dst:lv e in
+      let final =
+        if dst_consumed lv e' then []
+        else [ mk_s (Instr (mk_i (Assign (lv, e')) (Related (G.S st)))) ]
+      in
+      ss1 @ ss_lv @ ss2 @ final
   | G.DefStmt (ent, G.VarDef { G.vinit = None; vtype = Some ty; vtok = _ })
     when env.lang =*= Lang.Cpp ->
       (* Handle C++ constructor calls like: User user(taintedInput) *)
