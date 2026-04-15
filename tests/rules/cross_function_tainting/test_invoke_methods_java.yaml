@@ -1,0 +1,11 @@
+rules:
+  - id: test-invoke-methods-java
+    message: Taint flows through lambda invoked via functional interface method
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

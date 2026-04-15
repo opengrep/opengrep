@@ -20,8 +20,21 @@ let normalize_file (file : Fpath.t) : string =
   Fpath.to_string (Fpath.normalize file)
 
 let key ((id, tok) : t) =
+  (* For lambda names (starting with "_tmp_lambda"), extract position even from
+   * fake tokens that have position info. This is important for distinguishing
+   * different lambdas that would otherwise all collide on the same name.
+   * For regular functions with fake tokens, use empty key
+   * to preserve the original matching behavior. *)
+  let is_lambda_name = String.starts_with ~prefix:"_tmp_lambda" id in
   if Tok.is_fake tok then
-    (id, "", 0, 0)
+    if is_lambda_name then
+      match Tok.loc_of_tok tok with
+      | Ok loc ->
+          (id, normalize_file loc.Tok.pos.file, loc.Tok.pos.line, loc.Tok.pos.column)
+      | _ ->
+          (id, "", 0, 0)
+    else
+      (id, "", 0, 0)
   else
     let file = Tok.file_of_tok tok in
     let line = Tok.line_of_tok tok in
@@ -64,6 +77,12 @@ let show_debug (id, tok) : string =
 let of_il_name (n : IL.name) : t =
   n.IL.ident
 
+(* Unlike [key], we don't gate on is_lambda_name here: this is only used for
+   display/serialization, not identity, so extracting position from any fake
+   token that has it is strictly better than returning "unknown". *)
 let to_file_line_col ((_, tok) : t) : string * int * int =
-  if Tok.is_fake tok then ("unknown", 0, 0)
+  if Tok.is_fake tok then
+    match Tok.loc_of_tok tok with
+    | Ok loc -> (normalize_file loc.Tok.pos.file, loc.Tok.pos.line, loc.Tok.pos.column)
+    | _ -> ("unknown", 0, 0)
   else (normalize_file (Tok.file_of_tok tok), Tok.line_of_tok tok, Tok.col_of_tok tok)

@@ -773,6 +773,17 @@ let lambdas_to_analyze_in_node env lambdas node =
   in
   Option.to_list unused_lambda_def @ lambdas_used_in_node lambdas node
 
+(* Collect ALL lambdas recursively from a fun_cfg, in innermost-first order.
+   This ensures nested lambda signatures are extracted before their parents. *)
+let rec collect_all_lambdas_innermost_first (fun_cfg : IL.fun_cfg)
+    : (IL.name * IL.fun_cfg) list =
+  IL.NameMap.fold (fun name lcfg results ->
+    (* First collect nested lambdas from this lambda *)
+    let nested = collect_all_lambdas_innermost_first lcfg in
+    (* Then add this lambda after its nested ones *)
+    results @ nested @ [(name, lcfg)]
+  ) fun_cfg.lambdas []
+
 (*****************************************************************************)
 (* Miscellaneous *)
 (*****************************************************************************)
@@ -1527,7 +1538,35 @@ let check_function_call env fun_exp args
         (Display_IL.string_of_exp fun_exp) arity
         env.taint_inst.options.taint_intrafile);
   let sig_result =
-    if env.taint_inst.options.taint_intrafile then lookup_signature env fun_exp arity
+    if env.taint_inst.options.taint_intrafile then
+      let from_db = lookup_signature env fun_exp arity in
+      match from_db with
+      | Some _ -> from_db
+      | None ->
+          (* lookup_signature failed - check if callee has a Fun shape in lval_env.
+           * This handles two cases:
+           *   callback(source())       -- direct call, lval = callback
+           *   callback.run(source())   -- invoke method, lval = callback.run
+           * For invoke methods (e.g. Java Runnable.run), strip the method offset
+           * and look up the base variable. *)
+          (match fun_exp.e with
+          | Fetch lval ->
+              let lval_to_check =
+                let invoke_methods = (Lang_config.get env.taint_inst.lang).invoke_methods in
+                match lval.rev_offset with
+                | [{ o = Dot method_name; _ }]
+                  when List.mem (fst method_name.ident) invoke_methods ->
+                    { lval with rev_offset = [] }
+                | _ -> lval
+              in
+              (match Lval_env.find_lval env.lval_env lval_to_check with
+              | Some (S.Cell (_, S.Fun fun_sig)) ->
+                  Log.debug (fun m ->
+                      m "SIG_FROM_SHAPE: Found Fun shape for %s"
+                        (Display_IL.string_of_exp fun_exp));
+                  Some fun_sig
+              | _ -> None)
+          | _ -> None)
     else None
   in
   match sig_result with
@@ -2092,16 +2131,12 @@ let call_with_intrafile lval_opt e env args instr =
                    * In this case we return empty taints - the callback's return will be handled
                    * when the ToSinkInCall effect is instantiated. *)
                   let is_method_callback_invoke =
-                    (* Check if this is a method call pattern on a callback parameter *)
-                    match env.taint_inst.lang, e_obj, e.e with
-                    | Lang.Java, `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
-                        (* Java Function.apply or similar callback invocation methods *)
-                        let method_name = fst name.ident in
-                        method_name = "apply" || method_name = "accept" || method_name = "test" || method_name = "get"
-                    | Lang.Ruby, `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
-                        (* Ruby proc/lambda.call invocation *)
-                        let method_name = fst name.ident in
-                        method_name = "call"
+                    (* Check if this is a method call on a callback parameter
+                     * via a configured invoke method (e.g. .apply, .call, .run). *)
+                    match e_obj, e.e with
+                    | `Obj (_, S.Arg _), Fetch { rev_offset = { o = Dot name; _ } :: _; _ } ->
+                        let invoke_methods = (Lang_config.get env.taint_inst.lang).invoke_methods in
+                        List.mem (fst name.ident) invoke_methods
                     | _ -> false
                   in
                   let callee_is_callback =
@@ -2303,20 +2338,10 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                       (* Check if this is a call to a function parameter (either direct or via method) *)
                       (match e_obj with
                       | `Obj (_obj_taints, S.Arg _fun_arg) ->
-                          (* This is a method call on a function parameter (e.g., callback.apply in Java).
-                           * Treat it as invoking the callback.
-                           * EXCEPTION: Ruby's .call method should NOT be treated this way during signature
-                           * extraction, as it creates infinite recursion. Ruby blocks are handled via
-                           * implicit lambda detection instead. *)
-                          let is_ruby_call_method =
-                            match (e.e, env.taint_inst.lang) with
-                            | Fetch { base = _; rev_offset = [{ o = Dot method_name; _ }] }, lang
-                              when Lang.(lang =*= Ruby) && fst method_name.ident = "call" -> true
-                            | _ -> false
-                          in
-                          if not is_ruby_call_method then
-                            effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
-                            |> record_effects { env with lval_env }
+                          (* This is a method call on a function parameter (e.g., callback.apply in Java,
+                           * callback.call in Ruby). Treat it as invoking the callback. *)
+                          effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
+                          |> record_effects { env with lval_env }
                       | _ ->
                           effects_of_call_func_arg e e_shape args_taints
                           |> record_effects { env with lval_env });
@@ -2879,13 +2904,17 @@ and (fixpoint :
       | None -> in_env
     else in_env
   in
-  (* Extract signatures for all lambdas in the function for HOF support *)
+  (* Extract signatures for all lambdas in the function for HOF support.
+     We collect ALL lambdas (including nested ones) in innermost-first order,
+     so nested lambda signatures are available when processing their parents. *)
   let signature_db_with_lambdas =
     if taint_inst.options.taint_intrafile then
       match signature_db with
       | Some db ->
-          IL.NameMap.fold
-            (fun lambda_name lambda_cfg acc_db ->
+          (* Collect all lambdas recursively, innermost first *)
+          let all_lambdas_list = collect_all_lambdas_innermost_first fun_cfg in
+          List.fold_left
+            (fun acc_db (lambda_name, lambda_cfg) ->
               try
                    Log.debug (fun m ->
                        m "Extracting signature for lambda %s"
@@ -2982,7 +3011,7 @@ and (fixpoint :
                            (IL.str_of_name lambda_name)
                            (Printexc.to_string e));
                      acc_db)
-            fun_cfg.lambdas db
+            db all_lambdas_list
           |> Option.some
       | None -> signature_db
     else signature_db

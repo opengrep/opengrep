@@ -121,12 +121,12 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
           Some (adjusted_parent_path @ [Some name])
       | None -> None)
   | None ->
-      (* Anonymous function - use _tmp with fake token to match AST_to_IL behavior.
-         AST_to_IL.fresh_var creates fake tokens for _tmp variables. *)
+      (* Anonymous function - use _tmp_lambda with fake token to match AST_to_IL behavior.
+         AST_to_IL.fresh_var creates fake tokens for lambda variables. *)
       let tok = match fdef.fkind with (_, tok) -> tok in
-      let fake_tok = Tok.fake_tok tok "_tmp" in
+      let fake_tok = Tok.fake_tok tok "_tmp_lambda" in
       let tmp_name = IL.{
-        ident = ("_tmp", fake_tok);
+        ident = ("_tmp_lambda", fake_tok);
         sid = G.SId.unsafe_default;
         id_info = G.empty_id_info ();
       } in
@@ -437,7 +437,26 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(c
                       | [] -> Tok.unsafe_fake_tok "")
                 in
                 calls := (fn_id, tok) :: !calls
-            | None -> ());
+            | None ->
+                (* Invoke-method pattern: var.run() where var is a lambda.
+                   If the method name is a configured invoke method, look for
+                   a lambda with the receiver's name in the current scope. *)
+                let invoke_methods = (Lang_config.get lang).invoke_methods in
+                (match callee.G.e with
+                | G.DotAccess ({ e = G.N (G.Id ((var_name, _), _)); _ }, _,
+                               G.FN (G.Id ((method_name, method_tok), _)))
+                  when List.mem method_name invoke_methods ->
+                    let lambda_match = List.find_opt (fun (f : func_info) ->
+                      match List_.init_and_last_opt f.fn_id with
+                      | Some (f_parent, Some name)
+                        when String.equal (fst name.IL.ident) var_name ->
+                          equal_with_pos f_parent caller_parent_path
+                      | _ -> false
+                    ) all_funcs in
+                    (match lambda_match with
+                    | Some f -> calls := (f.fn_id, method_tok) :: !calls
+                    | None -> ())
+                | _ -> ()));
             (* Check arguments for unresolved function calls (Ruby-style) *)
             List.iter check_arg_for_unresolved_function_call args_list;
             (* Visit callee expression for nested calls (e.g., Ruby's File.open(path_for(x)) do ... end
@@ -557,10 +576,10 @@ let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t * IL.name o
       | G.Call ({ e = G.N (G.Id (id, id_info))
                     | G.DotAccess (_, _, G.FN (G.Id (id, id_info))); _ }, _) ->
           let callback_name = AST_to_IL.var_of_id_info id id_info in
-          (* Create _tmp IL.name using Tok.fake_tok like AST_to_IL.fresh_var does *)
-          let tmp_tok = Tok.fake_tok shortlambda_tok "_tmp" in
+          (* Create _tmp_lambda IL.name using Tok.fake_tok like AST_to_IL.fresh_var does *)
+          let tmp_tok = Tok.fake_tok shortlambda_tok "_tmp_lambda" in
           let tmp_name = IL.{
-            ident = ("_tmp", tmp_tok);
+            ident = ("_tmp_lambda", tmp_tok);
             sid = G.SId.unsafe_default;
             id_info = G.empty_id_info ();
           } in
@@ -700,6 +719,18 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
       inherit [_] G.iter as super
       method! visit_expr env e =
         (match e.G.e with
+        (* Ruby/Scala block pattern: f(args) { block } is Call(Call(callee, inner_args), [block]).
+           Merge inner_args and block args so the HOF detection sees all arguments together. *)
+        | G.Call ({ e = G.Call (callee, inner_args); _ },
+                  (_, ([ G.Arg { G.e = G.Lambda _; _ } ] as outer_arg), _))
+          when Lang.(lang =*= Ruby || lang =*= Scala) ->
+            let merged_args = Tok.unsafe_fake_bracket
+              (Tok.unbracket inner_args @ outer_arg) in
+            let found = extract_hof_callbacks_from_call
+              ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
+              callee merged_args
+            in
+            callbacks := found @ !callbacks
         | G.Call (callee, args) ->
             let found = extract_hof_callbacks_from_call
               ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path

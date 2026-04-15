@@ -9,5 +9,5 @@ val cfg_of_fdef : IL.function_definition -> IL.fun_cfg
 (** Compute the control flow graph of an IL function definition. *)
 
 val cfg_of_gfdef :
-  Lang.t -> ?ctx:AST_to_IL.ctx -> AST_generic.function_definition -> IL.fun_cfg
+  Lang.t -> AST_generic.function_definition -> IL.fun_cfg
 (** Same as 'cfg_of_fdef' but takes a Generic function definition. *)

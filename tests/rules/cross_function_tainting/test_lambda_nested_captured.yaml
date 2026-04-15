@@ -1,0 +1,11 @@
+rules:
+  - id: test-lambda-nested-captured
+    message: Tainted data flows to sink via captured variable from outer lambda
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

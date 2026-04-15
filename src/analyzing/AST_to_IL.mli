@@ -1,11 +1,5 @@
-type ctx
-
-val empty_ctx : ctx
-val add_entity_name : ctx -> AST_generic.ident -> ctx
-
 val function_definition :
   Lang.t ->
-  ?ctx:ctx ->
   AST_generic.function_definition ->
   IL.function_definition
 

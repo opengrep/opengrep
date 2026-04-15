@@ -241,9 +241,9 @@ let pms_of_effect ~match_on (effect_ : Effect.t) =
 (* Main entry points *)
 (*****************************************************************************)
 
-let check_fundef (taint_inst : Taint_rule_inst.t) (name : IL.name) ctx ?glob_env ?class_name
+let check_fundef (taint_inst : Taint_rule_inst.t) (name : IL.name) ?glob_env ?class_name
     ?signature_db ?builtin_signature_db ?call_graph fdef =
-  let fdef = AST_to_IL.function_definition taint_inst.lang ~ctx fdef in
+  let fdef = AST_to_IL.function_definition taint_inst.lang fdef in
   let fcfg = CFG_build.cfg_of_fdef fdef in
   let in_env, env_effects =
     Taint_input_env.mk_fun_input_env taint_inst ?glob_env fdef.fparams
@@ -428,16 +428,6 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
   with
   | None -> (None, None)
   | Some (taint_inst, spec_matches, expls) ->
-      (* FIXME: This is no longer needed, now we can just check the type 'n'. *)
-      let ctx = ref AST_to_IL.empty_ctx in
-      Visit_function_defs.visit
-        (fun opt_ent _fdef ->
-          match opt_ent with
-          | Some { name = EN (Id (n, _)); _ } ->
-              ctx := AST_to_IL.add_entity_name !ctx n
-          | __else__ -> ())
-        ast;
-
       let glob_env, glob_effects = Taint_input_env.mk_file_env taint_inst ast in
       record_matches glob_effects;
 
@@ -483,7 +473,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                             in
                             let fdef_il =
                               AST_to_IL.function_definition taint_inst.lang
-                                ~ctx:!ctx fdef
+                                fdef
                             in
                             let cfg = CFG_build.cfg_of_fdef fdef_il in
                             let info =
@@ -530,8 +520,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                               []
                         in
                         let fdef_il =
-                          AST_to_IL.function_definition taint_inst.lang ~ctx:!ctx
-                            fdef
+                          AST_to_IL.function_definition taint_inst.lang                            fdef
                         in
                         let cfg = CFG_build.cfg_of_fdef fdef_il in
                         let info =
@@ -636,7 +625,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             if info.is_lambda_assignment then updated_db
             else begin
               let _flow, fdef_effects, _mapping =
-                check_fundef taint_inst info.name !ctx ~glob_env
+                check_fundef taint_inst info.name ~glob_env
                   ?class_name:info.class_name_str ~signature_db:updated_db
                   ?builtin_signature_db
                   ?call_graph:(Some relevant_graph) info.fdef
@@ -662,8 +651,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                         }
                       in
                       let fdef_il =
-                        AST_to_IL.function_definition lang ~ctx:!ctx
-                          synthetic_fdef
+                        AST_to_IL.function_definition lang                          synthetic_fdef
                       in
                       let cfg = CFG_build.cfg_of_fdef fdef_il in
                       let db', _sig =
@@ -776,7 +764,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                              --------------------"
                             (IL.str_of_name name));
                       let _flow, fdef_effects, _mapping =
-                        check_fundef taint_inst name !ctx ~glob_env
+                        check_fundef taint_inst name ~glob_env
                           ?builtin_signature_db fdef
                       in
                       record_matches fdef_effects)
