@@ -852,16 +852,12 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   (* Ruby do-block flattening: `f(args) do |x| ... end` is parsed as
      Call(Call(f, args), [Lambda]) but the block is semantically an argument
      to f, not to its return value. Flatten into Call(f, args @ [Lambda]). *)
-  | G.Call ({ e = G.Call (callee, inner_args); _ }, outer_args)
-    when env.lang =*= Lang.Ruby
-         && List.exists
-              (function
-               | G.Arg { G.e = G.Lambda _; _ } -> true
-               | _ -> false)
-              (Tok.unbracket outer_args) ->
+  | G.Call ({ e = G.Call (callee, inner_args); _ },
+            (_, ([ G.Arg { G.e = G.Lambda _; _ } ] as outer_arg), _ ))
+    when env.lang =*= Lang.Ruby ->
       let merged_args =
         Tok.unsafe_fake_bracket
-          (Tok.unbracket inner_args @ Tok.unbracket outer_args)
+          (Tok.unbracket inner_args @ outer_arg)
       in
       expr_aux env ~void (G.Call (callee, merged_args) |> G.e)
   | G.Call (e, args) ->
