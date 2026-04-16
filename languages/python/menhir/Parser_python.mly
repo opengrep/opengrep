@@ -130,6 +130,10 @@ let mk_str ii =
  NONE TRUE FALSE
  ASYNC AWAIT
  NONLOCAL
+ (* python3.10+: soft keywords, produced by Parsing_hacks_python
+  * out of NAME("match")/NAME("case") only in match-statement contexts
+  * so that plain identifiers "match"/"case" remain valid names. *)
+ MATCH CASE
  (* python2: *)
  PRINT EXEC
 
@@ -550,6 +554,7 @@ compound_stmt:
   | for_stmt    { $1 }
   | try_stmt    { $1 }
   | with_stmt   { $1 }
+  | match_stmt  { $1 }
 
   | funcdef     { $1 }
   | classdef    { $1 }
@@ -638,6 +643,32 @@ with_inner_in_parens:
   | test AS expr ","                      { fun (t, body) -> With (t, ($1, Some $3), body) }
   | test         "," with_inner_in_parens { fun (t, body) -> With (t, ($1, None), [$3 (t, body)]) }
   | test AS expr "," with_inner_in_parens { fun (t, body) -> With (t, ($1, Some $3), [$5 (t, body)]) }
+
+(* python3.10+ (PEP 634): structural pattern matching.
+ * `match` and `case` are *soft keywords* in Python — they are valid
+ * identifiers outside of match-statement contexts. The MATCH/CASE tokens
+ * used here are synthesized by Parsing_hacks_python only when the
+ * surrounding shape is unambiguously a match statement.
+ * Patterns are represented as plain expressions (AST_python.pattern = expr),
+ * which matches what the tree-sitter Python frontend already does.
+ * Note: `case pattern if guard:` is not accepted here — an unadorned `if`
+ * after a test would collide with the conditional-expression ternary
+ * (`a if b else c`) and introduce a shift/reduce conflict. Files that rely
+ * on case guards will fall back to the tree-sitter parser. *)
+match_stmt:
+  | MATCH tuple(namedexpr_test) ":" NEWLINE INDENT case_block+ DEDENT
+      { Switch ($1, tuple_expr $2, $6) }
+
+case_block:
+  | CASE tuple(test_or_star_expr) ":" suite
+      { CasesAndBody ([Case ($1, tuple_expr $2)], $4) }
+  (* PEP 634 as-pattern `case pattern as name:`. TODO: preserve the binding.
+   * Note: PEP 634 scopes `as` to the rightmost element of a comma-separated
+   * pattern list, but here `as` binds to the whole tuple — which is fine
+   * because we discard the name; revisit if the binding is ever preserved.
+   *)
+  | CASE tuple(test_or_star_expr) AS NAME ":" suite
+      { CasesAndBody ([Case ($1, tuple_expr $2)], $6) }
 
 (* python3-ext: *)
 async_stmt:
