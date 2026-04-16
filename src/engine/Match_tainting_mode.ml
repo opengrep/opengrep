@@ -635,35 +635,31 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                Effects whose taint is purely parameterized (BArg) still ride
                through the signature at resolved call sites; effects mixing
                both get an Src-only slice surfaced here. *)
+            let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
+              match eff with
+              | Effect.ToSink si ->
+                  let items, precond = si.taints_with_precondition in
+                  let src_items =
+                    List.filter
+                      (fun (i : Effect.taint_to_sink_item) ->
+                        match i.taint.orig with
+                        | Taint.Src _ -> true
+                        | _ -> false)
+                      items
+                  in
+                  if List_.null src_items then None
+                  else
+                    Some
+                      (Effect.ToSink
+                         {
+                           si with
+                           taints_with_precondition = (src_items, precond);
+                         })
+              | _ -> None
+            in
             let effects_to_record =
               if info.is_lambda_assignment then
-                fdef_effects
-                |> Effects.elements
-                |> List.filter_map (fun eff ->
-                       match eff with
-                       | Effect.ToSink sink_info ->
-                           let items, _ =
-                             sink_info.taints_with_precondition
-                           in
-                           let src_items =
-                             List.filter
-                               (fun (item : Effect.taint_to_sink_item) ->
-                                 match item.taint.orig with
-                                 | Taint.Src _ -> true
-                                 | _ -> false)
-                               items
-                           in
-                           if List_.null src_items then None
-                           else
-                             Some
-                               (Effect.ToSink
-                                  {
-                                    sink_info with
-                                    taints_with_precondition =
-                                      (src_items, Rule.PBool true);
-                                  })
-                       | _ -> None)
-                |> Effects.of_list
+                Effects.filter_map keep_src_toSink_only fdef_effects
               else fdef_effects
             in
             record_matches effects_to_record;
