@@ -1,0 +1,12 @@
+rules:
+- id: case_taint_rule
+  languages: [elixir]
+  message: "tainted data reached sink"
+  severity: ERROR
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)

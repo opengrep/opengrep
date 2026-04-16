@@ -151,7 +151,19 @@ let rec expr_to_pattern (e : G.expr) : G.pattern =
       end
   (* TODO: PatKeyVal and more *)
   | _ -> OtherPat (("ExprToPattern", Tok.unsafe_fake_tok ""), [ G.E e ])
-           
+
+let pats_of_args (args : G.argument list) : G.pattern list =
+  List_.map
+    (function
+      | G.OtherArg (("ArgKwdQuoted", _), [ G.E e ]) -> expr_to_pattern e
+      | arg -> H.argument_to_expr arg |> expr_to_pattern)
+    args
+
+let wrap_when (when_opt : (Tok.t * G.expr) option) (pat : G.pattern) : G.pattern =
+  match when_opt with
+  | None -> pat
+  | Some (_tok, e) -> G.PatWhen (pat, e)
+
 (* TODO: lots of work here to detect when args is really a single
  * pattern, or tuples *)
 let pat_of_args_and_when (args, when_opt) : G.pattern =
@@ -160,23 +172,13 @@ let pat_of_args_and_when (args, when_opt) : G.pattern =
        | None -> []
        | Some (_tok, e) -> [ G.E e ]
      in *)
-  let pats =
-    List_.map
-      (function
-        | G.OtherArg (("ArgKwdQuoted", _), [ G.E e ]) -> expr_to_pattern e
-        | arg -> H.argument_to_expr arg |> expr_to_pattern)
-      args
-  in
   let pat =
-    match pats with
+    match pats_of_args args with
     | [] -> G.PatLiteral (G.Null (G.fake "no_arg")) (* invalid syntax anyway. *)
-    | _ ->
-      G.PatTuple (fb pats)
+    | pats -> G.PatTuple (fb pats)
   in
   (* G.OtherPat (("ArgsAndWhenOpt", G.fake ""), G.Args args :: rest) |> G.p *)
-  match when_opt with
-    | None -> pat
-    | Some (_tok, e) -> G.PatWhen (pat, e)
+  wrap_when when_opt pat
 
 let case_and_body_of_stab_clause (x : stab_clause_generic) : G.case_and_body =
   (* body can be empty *)
@@ -184,6 +186,17 @@ let case_and_body_of_stab_clause (x : stab_clause_generic) : G.case_and_body =
   let pat = pat_of_args_and_when args_and_when in
   let stmt = G.stmt1 stmts in
   G.case_of_pat_and_stmt (pat, stmt)
+
+let case_and_body_of_case_clause (x : stab_clause_generic) : G.case_and_body =
+  let (args, when_opt), _tarrow, stmts = x in
+  let pat =
+    match pats_of_args args with
+    | [] -> G.PatLiteral (G.Null (G.fake "no_arg"))
+    | [ single ] -> single
+    | pats -> G.PatTuple (fb pats)
+  in
+  let pat = wrap_when when_opt pat in
+  G.case_of_pat_and_stmt (pat, G.stmt1 stmts)
 
 (* TODO: if the list contains just one element, can be a simple lambda
  * as in 'fn (x, y) -> x + y end'. Otherwise it can be a multiple-cases
@@ -553,7 +566,7 @@ and map_rescue_stab_to_catch env tok (stab : stab_clause) : G.catch =
         in
         pat
   in
-  let catch_pat =
+  let catch_pat = 
     match guard_opt with
     | Some (_tok, guard) -> G.PatWhen (catch_pat, map_expr env guard)
     | None -> catch_pat
@@ -958,15 +971,27 @@ and map_body env v : G.stmt list =
   xs |> List_.map exprstmt
 
 and map_call env (v1, v2, v3) : G.expr =
+  match (v1, v2, v3) with
+  (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#case/2
+   * case expr do pattern -> body end *)
+  | ( I (Id ("case", tcase)),
+    (_, ([ scrutinee ], []), _),
+    Some (_tdo, (Clauses clauses, []), _tend) ) ->
+      let e = map_expr env scrutinee in
+      let xs = map_clauses env clauses in
+      let cases = xs |> List_.map case_and_body_of_case_clause in
+      G.Switch (tcase, Some (G.Cond e), cases) |> G.s |> G.stmt_to_expr
+  | _ ->
   (* Special handling for DotAnon - extract the inner expression to use as callee *)
-  let e = match v1 with
-    | DotAnon (inner_expr, _tdot) -> map_expr env inner_expr
-    | _ -> map_expr env v1
-  in
-  let l, args, r = (map_bracket map_arguments) env v2 in
-  let v3 = (map_option map_do_block) env v3 in
-  let args' = args_of_do_block_opt v3 in
-  G.Call (e, (l, args @ args', r)) |> G.e
+    let e =
+      match v1 with
+      | DotAnon (inner_expr, _tdot) -> map_expr env inner_expr
+      | _ -> map_expr env v1
+    in
+    let l, args, r = (map_bracket map_arguments) env v2 in
+    let v3 = (map_option map_do_block) env v3 in
+    let args' = args_of_do_block_opt v3 in
+    G.Call (e, (l, args @ args', r)) |> G.e
 
 and map_remote_dot env (v1, tdot, v3) : G.expr =
   let e = map_expr env v1 in
