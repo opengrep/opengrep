@@ -622,17 +622,52 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           let run_check_fundef_if_needed (info : fun_info)
               (updated_db : Shape_and_sig.signature_database) :
               Shape_and_sig.signature_database =
-            if info.is_lambda_assignment then updated_db
-            else begin
-              let _flow, fdef_effects, _mapping =
-                check_fundef taint_inst info.name ~glob_env
-                  ?class_name:info.class_name_str ~signature_db:updated_db
-                  ?builtin_signature_db
-                  ?call_graph:(Some relevant_graph) info.fdef
-              in
-              record_matches fdef_effects;
-              updated_db
-            end
+            let _flow, fdef_effects, _mapping =
+              check_fundef taint_inst info.name ~glob_env
+                ?class_name:info.class_name_str ~signature_db:updated_db
+                ?builtin_signature_db
+                ?call_graph:(Some relevant_graph) info.fdef
+            in
+            (* For lambda assignments we only record "unconditional" ToSink
+               effects — those where the taint at the sink comes from a
+               concrete pattern-source match (e.g. a parameter declared as a
+               source via `pattern-inside: function $X(..., $RES, ...) {...}`).
+               Effects whose taint is purely parameterized (BArg) still ride
+               through the signature at resolved call sites; effects mixing
+               both get an Src-only slice surfaced here. *)
+            let effects_to_record =
+              if info.is_lambda_assignment then
+                fdef_effects
+                |> Effects.elements
+                |> List.filter_map (fun eff ->
+                       match eff with
+                       | Effect.ToSink sink_info ->
+                           let items, _ =
+                             sink_info.taints_with_precondition
+                           in
+                           let src_items =
+                             List.filter
+                               (fun (item : Effect.taint_to_sink_item) ->
+                                 match item.taint.orig with
+                                 | Taint.Src _ -> true
+                                 | _ -> false)
+                               items
+                           in
+                           if List_.null src_items then None
+                           else
+                             Some
+                               (Effect.ToSink
+                                  {
+                                    sink_info with
+                                    taints_with_precondition =
+                                      (src_items, Rule.PBool true);
+                                  })
+                       | _ -> None)
+                |> Effects.of_list
+              else fdef_effects
+            in
+            record_matches effects_to_record;
+            updated_db
           in
 
           let process_fun_info info db =

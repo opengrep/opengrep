@@ -11,6 +11,7 @@ func test(input string) {
 func test(input string) {
 	var fn = func(s string) {
 		// ok: taint-func-param
-		sink(s)
+		safe(s)
 	}
+	fn("")
 }
