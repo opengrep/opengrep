@@ -546,10 +546,10 @@ and map_body (env : env) ((v1, v2, v3, v4) : CST.body) : body =
   let _v4 = map_terminator_opt env v4 in
   v2 :: v3
 
-and map_call (env : env) (x : CST.call) : call =
+and map_call (env : env) (x : CST.call) : expr =
   match x with
   | `Call_with_parens_b98484c x -> map_call_without_parentheses env x
-  | `Call_with_parens_403315d x -> map_call_with_parentheses env x
+  | `Call_with_parens_403315d x -> Call (map_call_with_parentheses env x)
 
 and map_call_arguments_with_parentheses (env : env)
     ((v1, v2, v3) : CST.call_arguments_with_parentheses) : arguments bracket =
@@ -627,26 +627,32 @@ and map_call_with_parentheses (env : env) (x : CST.call_with_parentheses) : call
       mk_call_parens (Call call1) args blopt
 
 and map_call_without_parentheses (env : env) (x : CST.call_without_parentheses)
-    : call =
+    : expr =
   match x with
   | `Local_call_with_parens (v1, v2, v3) ->
       let id = map_identifier env v1 in
       let args = map_call_arguments_without_parentheses env v2 in
       let blopt = map_anon_opt_opt_nl_before_do_do_blk_3eff85f env v3 in
-      mk_call_no_parens (Left id) args blopt
+      Call (mk_call_no_parens (Left id) args blopt)
   | `Local_call_just_do_blk (v1, v2) ->
       let id = map_identifier env v1 in
       let bl = map_do_block env v2 in
-      mk_call_no_parens (Left id) ([], []) (Some bl)
+      Call (mk_call_no_parens (Left id) ([], []) (Some bl))
   | `Remote_call_with_parens (v1, v2, v3) ->
       let rdot = map_remote_dot env v1 in
-      let args : arguments =
-        match v2 with
-        | Some x -> map_call_arguments_without_parentheses env x
-        | None -> ([], [])
-      in
       let blopt = map_anon_opt_opt_nl_before_do_do_blk_3eff85f env v3 in
-      mk_call_no_parens (Right rdot) args blopt
+      (match v2, blopt with
+       | None, None ->
+           (* Elixir map/struct field access: `foo.bar` with no parens,
+            * no args, no do-block. Not a function call. *)
+           FieldAccess rdot
+       | _ ->
+           let args : arguments =
+             match v2 with
+             | Some x -> map_call_arguments_without_parentheses env x
+             | None -> ([], [])
+           in
+           Call (mk_call_no_parens (Right rdot) args blopt))
 
 and map_capture_expression (env : env) (x : CST.capture_expression) =
   match x with
@@ -668,7 +674,7 @@ and map_capture_expression (env : env) (x : CST.capture_expression) =
               | other -> other
             in
             (match actual_fun_name with
-            | I _ | Alias _ | DotAlias _ | DotRemote _ ->
+            | I _ | Alias _ | DotAlias _ | DotRemote _ | FieldAccess _ ->
                 (* Convert &fun/arity to &(fun(&1, &2, ...)) *)
                 let arity_int = Int64.to_int arity in
                 (* Create PlaceHolder arguments: &1, &2, ... *)
@@ -884,9 +890,7 @@ and map_expression (env : env) (x : CST.expression) : expr =
   | `Un_op x -> map_unary_operator env x
   | `Bin_op x -> map_binary_operator env x
   | `Dot x -> map_dot env x
-  | `Call x ->
-      let c = map_call env x in
-      Call c
+  | `Call x -> map_call env x
   (* semantic: transformed in Access.get/2 *)
   | `Access_call (v1, v2, v3, v4) ->
       let v1 = map_expression env v1 in

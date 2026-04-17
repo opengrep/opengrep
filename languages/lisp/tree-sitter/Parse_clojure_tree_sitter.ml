@@ -1111,17 +1111,24 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
     in
     with_or_as s (token env tk) pats rest
 
-  (* Standard map binding, eg, {x :a, [y z] :b}. *)
-  | _bind_form :: `Kwd_lit _  :: _ ->
-    let rec keyval_and_rest acc = function
-      | bind_form :: `Kwd_lit kwd_lit  :: rest_forms  ->
-        let key = map_binding_form env bind_form in
-        (* TODO: PatRecord of (dotted_ident * pattern) list bracket *)
+  (* Standard map binding, eg, {x :a, [y z] :b, z "str-key"}. *)
+  | _bind_form :: (`Kwd_lit _ | `Str_lit _) :: _ ->
+    let map_value_key_pattern = function
+      | `Kwd_lit kwd_lit ->
         let atom_kind, tok_colon, atom_name =
           map_kwd_expr_aux env kwd_lit
         in
-        let value = G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name]) in
-        (* let value = G.PatLiteral (map_kwd_lit env kwd_lit) in *)
+        G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
+      | `Str_lit str_tok ->
+        let s, t = H.str env str_tok in
+        let s_no_quotes = String.sub s 1 (String.length s - 2) in
+        G.PatLiteral (G.String (Tok.unsafe_fake_bracket (s_no_quotes, t)))
+    in
+    let rec keyval_and_rest acc = function
+      | bind_form :: (`Kwd_lit _ | `Str_lit _ as kv) :: rest_forms ->
+        let key = map_binding_form env bind_form in
+        (* TODO: PatRecord of (dotted_ident * pattern) list bracket *)
+        let value = map_value_key_pattern kv in
         keyval_and_rest
           (G.PatKeyVal (key, value) :: acc)
           rest_forms

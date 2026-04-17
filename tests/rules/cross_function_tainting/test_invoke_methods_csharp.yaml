@@ -1,0 +1,11 @@
+rules:
+  - id: test-invoke-methods-csharp
+    message: Taint flows through lambda invoked via .Invoke()
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

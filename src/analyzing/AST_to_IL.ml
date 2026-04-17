@@ -45,9 +45,6 @@ let log_error ?tok msg : unit = Log.err (fun m -> m "%s" (locate ?tok msg))
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
-module IdentSet = Set.Make (String)
-
-type ctx = { entity_names : IdentSet.t }
 type stmts = stmt list
 
 type rec_point_lvals =
@@ -63,18 +60,14 @@ type env = {
   break_labels : label list;
   cont_label : label option;
   rec_point_label : label option;
-  ctx : ctx;
   rec_point_lvals : rec_point_lvals option;
   inside_function : bool;
 }
-
-let empty_ctx : ctx = { entity_names = IdentSet.empty }
 
 let empty_env (lang : Lang.t) : env =
   { break_labels = [];
     cont_label = None;
     rec_point_label = None;
-    ctx = empty_ctx;
     rec_point_lvals = None;
     inside_function = false;
     lang }
@@ -257,8 +250,6 @@ let mk_class_constructor_name (ty : G.type_) cons_id_info : G.name option =
       Some (G.Id (id, cons_id_info))
   | __else__ -> None
 
-let add_entity_name ctx ident : ctx =
-  { entity_names = IdentSet.add (H.str_of_ident ident) ctx.entity_names }
 
 let def_expr_evaluates_to_value (lang : Lang.t) : bool =
   match lang with
@@ -409,6 +400,11 @@ and pattern env pat : stmts * lval * stmts =
    * '{ a :a }'. *)
   | G.PatKeyVal (key_pat, G.OtherPat (((":" | "::"), _tk_col),
                                       [G.Name _atom_name]))
+    when env.lang =*= Lang.Clojure ->
+    pattern env key_pat
+  (* Clojure string-key destructuring, e.g. `(let [{x "a"} o] x)`. The value
+   * is a string literal used as the map lookup key; only `key_pat` binds. *)
+  | G.PatKeyVal (key_pat, G.PatLiteral (G.String _))
     when env.lang =*= Lang.Clojure ->
     pattern env key_pat
   (* Only seems to be used in Ruby, modulo the above case for Clojure. *)
@@ -853,6 +849,17 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                  |> G.e) ]
       in
       call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket arg_container)
+  (* Ruby do-block flattening: `f(args) do |x| ... end` is parsed as
+     Call(Call(f, args), [Lambda]) but the block is semantically an argument
+     to f, not to its return value. Flatten into Call(f, args @ [Lambda]). *)
+  | G.Call ({ e = G.Call (callee, inner_args); _ },
+            (_, ([ G.Arg { G.e = G.Lambda _; _ } ] as outer_arg), _ ))
+    when env.lang =*= Lang.Ruby ->
+      let merged_args =
+        Tok.unsafe_fake_bracket
+          (Tok.unbracket inner_args @ outer_arg)
+      in
+      expr_aux env ~void (G.Call (callee, merged_args) |> G.e)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
       call_generic env ~void tok eorig e args
@@ -869,23 +876,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.ArrayAccess (_, _)
   | G.DeRef (_, _) ->
       let ss_lv, lval = lval env g_expr in
-      let exp = mk_e (Fetch lval) eorig in
-      let ident_function_call_hack ss exp =
-        (* Taking into account Ruby's ability to allow function calls without
-         * parameters or parentheses, we are conducting a check to determine
-         * if a function with the same name as the identifier exists, specifically
-         * for Ruby. *)
-        match lval with
-        | { base = Var { ident; id_info; _ }; _ }
-          when env.lang =*= Lang.Ruby
-               && Option.is_none !(id_info.id_resolved)
-               && IdentSet.mem (H.str_of_ident ident) env.ctx.entity_names ->
-            let tok = G.fake "call" in
-            let call_ss, call_exp = call_instr tok eorig ~void (fun res -> Call (res, exp, [])) in
-            (ss @ call_ss, call_exp)
-        | _ -> (ss, exp)
-      in
-      ident_function_call_hack ss_lv exp
+      (ss_lv, mk_e (Fetch lval) eorig)
   (* x = ClassName(args ...) in Python *)
   (* ClassName has been resolved to __init__ by the pro engine. *)
   (* Identified and treated as x = New ClassName(args ...) to support
@@ -983,7 +974,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.Comprehension (_op, (_l, (er, clauses), _r)) ->
       comprehension env er clauses
   | G.Lambda fdef ->
-      let lval = fresh_lval (snd fdef.fkind) in
+      let lval = fresh_lval ~str:"_tmp_lambda" (snd fdef.fkind) in
       let final_fdef =
         (* NOTE: Reset control-flow labels so that break/continue/recur from
          * the enclosing scope don't bleed into the lambda body. *)
@@ -1403,7 +1394,7 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
               (* Some languages such as javascript allow function
                  definitions in object literal syntax. *)
               | G.FuncDef fdef ->
-                  let lval = fresh_lval (snd fdef.fkind) in
+                  let lval = fresh_lval ~str:"_tmp_lambda" (snd fdef.fkind) in
                   (* See NOTE about resetting control-flow labels for lambdas. *)
                   let fdef =
                     function_definition
@@ -2610,8 +2601,8 @@ and function_definition env fdef : function_definition =
 (* Entry points *)
 (****************************************************************************)
 
-let function_definition lang ?ctx fdef : function_definition =
-  let env = { (empty_env lang) with ctx = ctx ||| empty_ctx } in
+let function_definition lang fdef : function_definition =
+  let env = empty_env lang in
   function_definition env fdef
 
 let stmt lang st : stmts =

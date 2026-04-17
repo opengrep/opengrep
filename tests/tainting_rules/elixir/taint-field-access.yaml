@@ -1,0 +1,17 @@
+rules:
+- id: taint-field-access
+  mode: taint
+  languages: [elixir]
+  message: "tainted field access reaches sink"
+  severity: INFO
+  options:
+    taint_assume_safe_functions: true
+  pattern-sources:
+    - patterns:
+        - pattern-inside: |
+            def $_(..., $P, ...) do
+            ...
+            end
+        - focus-metavariable: $P
+  pattern-sinks:
+    - pattern: sink(...)

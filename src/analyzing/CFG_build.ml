@@ -456,6 +456,6 @@ and cfg_of_fdef fdef =
   mark_at_exit_nodes cfg;
   IL.{ params = fdef.fparams; cfg; lambdas }
 
-let cfg_of_gfdef lang ?ctx fdef =
-  let fdef_il = AST_to_IL.function_definition lang ?ctx fdef in
+let cfg_of_gfdef lang fdef =
+  let fdef_il = AST_to_IL.function_definition lang fdef in
   cfg_of_fdef fdef_il

@@ -248,6 +248,27 @@ defmodule TestHOF do
     # Top-level user-defined HOF
     custom_for_each(toplevel_items, &toplevel_handler/1)
   end
+
+  # Remote-capture short lambdas `&Mod.fun/arity`: the left of `/` is a
+  # dot expression, exercising the ShortLambda conversion path for
+  # remote dots (FieldAccess) -- local captures `&fn/arity` do not.
+  def test_remote_capture_builtin() do
+    arr = [source()]
+    mapped = Enum.map(arr, &RemoteHelper.process_remote/1)
+  end
+
+  def test_remote_capture_custom() do
+    arr = [source()]
+    mapped = custom_map_builtin(arr, &RemoteHelper.process_remote/1)
+  end
+end
+
+defmodule RemoteHelper do
+  def process_remote(x) do
+    # ruleid: test-hof-taint
+    sink(x)
+    x
+  end
 end
 
  def toplevel_handler(x) do

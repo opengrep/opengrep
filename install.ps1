@@ -333,9 +333,26 @@ function Main {
             }
 
             Write-Host "Testing binary..."
-            # Test by calling --version on the downloaded binary
-            $testOutput = & $binaryPath --version 2>&1
-            if (-not $testOutput -or $LASTEXITCODE -ne 0) {
+            # Test by calling --version on the downloaded binary.
+            # We route stderr through a temp file rather than using `2>&1`, so
+            # that harmless runtime warnings (e.g. requests' RequestsDependency-
+            # Warning) are not surfaced by PowerShell as NativeCommandError
+            # records and misinterpreted as failures. We still surface them to
+            # the user via Write-Host, and rely on $LASTEXITCODE to decide
+            # whether the binary actually ran.
+            $stderrFile = New-TemporaryFile
+            try {
+                $testOutput = & $binaryPath --version 2>$stderrFile
+                $testExit   = $LASTEXITCODE
+                $testStderr = (Get-Content -Raw -ErrorAction SilentlyContinue $stderrFile)
+            }
+            finally {
+                Remove-Item -Force -ErrorAction SilentlyContinue $stderrFile
+            }
+            if ($testStderr) {
+                Write-Host $testStderr
+            }
+            if ($testExit -ne 0 -or -not $testOutput) {
                 throw "Failed to execute installed binary: $binaryPath"
             }
 

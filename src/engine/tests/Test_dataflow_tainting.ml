@@ -32,7 +32,7 @@ let test_tainting taint_inst def =
   let fcfg, _effects_IGNORED, mapping =
     Match_tainting_mode.check_fundef taint_inst
       test_name
-      AST_to_IL.empty_ctx def
+      def
   in
   DataflowX.display_mapping fcfg.cfg mapping Taint_lval_env.to_string
 
