@@ -49,6 +49,52 @@ let get_func_arity (fdef : G.function_definition) : int =
   let params = fdef.fparams in
   List.length (Tok.unbracket params)
 
+(* Disambiguate among candidate functions matching a call site by name.
+   [matches] are the candidates; [call_arity] is the number of arguments
+   at the call site ([None] when arity info is not available). Returns
+   [Some] only when the result is unambiguous:
+   - exactly one candidate by name: use it regardless of arity;
+   - multiple candidates with arity info: filter by exact arity, accept
+     iff exactly one survives;
+   - multiple candidates without arity info: cannot disambiguate, give
+     up rather than guess.
+   Unlike [Shape_and_sig.find_by_arity], which disambiguates among
+   stored signatures of a single function and understands variadic tags
+   ([Arity_at_least]), this helper only sees raw parameter lists and
+   uses strict exact-arity matching. *)
+let pick_by_arity (call_arity : int option) (matches : func_info list)
+    : fn_id option =
+  match matches with
+  | [single_match] -> Some single_match.fn_id
+  | [] ->
+      Log.debug (fun m -> m "PICK_BY_ARITY: no candidates");
+      None
+  | _ ->
+      (match call_arity with
+      | Some arity ->
+          let arity_matches = List.filter (fun f ->
+            Int.equal (get_func_arity f.fdef) arity
+          ) matches in
+          (match arity_matches with
+          | [single_match] -> Some single_match.fn_id
+          | [] ->
+              Log.debug (fun m ->
+                m "PICK_BY_ARITY: %d candidates, none with arity %d; giving up"
+                  (List.length matches) arity);
+              None
+          | _ ->
+              (* Should not fire: requires two functions sharing both name
+                 and arity, with the same class/module scope; defensive. *)
+              Log.debug (fun m ->
+                m "PICK_BY_ARITY: %d candidates, %d still match arity %d; giving up"
+                  (List.length matches) (List.length arity_matches) arity);
+              None)
+      | None ->
+          Log.debug (fun m ->
+            m "PICK_BY_ARITY: %d candidates, no arity info; giving up"
+              (List.length matches));
+          None)
+
 (* Graph node type - reuse from Call_graph for consistency *)
 type node = Call_graph.node
 
@@ -255,20 +301,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                   | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
                   | _ -> false
                 ) all_funcs in
-                (match method_matches with
-                | [single_match] -> Some single_match.fn_id  (* Exactly one match by name *)
-                | [] -> None
-                | _ ->
-                    (* Multiple matches - filter by arity if available *)
-                    (match call_arity with
-                    | Some arity ->
-                        let arity_matches = List.filter (fun f ->
-                          Int.equal (get_func_arity f.fdef) arity
-                        ) method_matches in
-                        (match arity_matches with
-                        | [single_match] -> Some single_match.fn_id
-                        | _ -> None)  (* Still 0 or multiple matches *)
-                    | None -> None))  (* No arity info, can't disambiguate *)
+                pick_by_arity call_arity method_matches
             | None -> None)
         (* Method call: obj.method() - look up obj's class *)
         | G.DotAccess
@@ -309,20 +342,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                   | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
                   | _ -> false
                 ) all_funcs in
-                (match method_matches with
-                | [single_match] -> Some single_match.fn_id  (* Exactly one match by name *)
-                | [] -> None
-                | _ ->
-                    (* Multiple matches - filter by arity if available *)
-                    (match call_arity with
-                    | Some arity ->
-                        let arity_matches = List.filter (fun f ->
-                          Int.equal (get_func_arity f.fdef) arity
-                        ) method_matches in
-                        (match arity_matches with
-                        | [single_match] -> Some single_match.fn_id
-                        | _ -> None)  (* Still 0 or multiple matches *)
-                    | None -> None))  (* No arity info, can't disambiguate *)
+                pick_by_arity call_arity method_matches
             | None ->
                 (* obj not in object_mappings — try as ClassName.new() constructor *)
                 let ty = G.{ t = TyN (G.Id ((obj_name, G.fake obj_name), G.empty_id_info ())); t_attrs = [] } in
@@ -359,20 +379,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                       && fst m.IL.ident = method_name
                   | _ -> false
                 ) all_funcs in
-                (match method_matches with
-                | [single_match] -> Some single_match.fn_id
-                | [] -> None
-                | _ ->
-                    (* Multiple matches — disambiguate by arity *)
-                    (match call_arity with
-                    | Some arity ->
-                        let arity_matches = List.filter (fun f ->
-                          Int.equal (get_func_arity f.fdef) arity
-                        ) method_matches in
-                        (match arity_matches with
-                        | [single_match] -> Some single_match.fn_id
-                        | _ -> None)
-                    | None -> None))
+                pick_by_arity call_arity method_matches
             | None -> None)
         | _ ->
             Log.debug (fun m ->
