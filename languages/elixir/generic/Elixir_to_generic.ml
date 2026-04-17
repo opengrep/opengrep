@@ -475,6 +475,11 @@ and map_stmt env (v : stmt) : G.stmt =
   | Throw (tthrow, e) ->
       let e = map_expr env e in
       G.Throw (tthrow, e, G.sc) |> G.s
+  | Case (tcase, e, (_tdo, clauses, _tend)) ->
+      let e = map_expr env e in
+      let xs = map_clauses env clauses in
+      let cases = xs |> List_.map case_and_body_of_case_clause in
+      G.Switch (tcase, Some (G.Cond e), cases) |> G.s
   | For (tfor, clauses, (tdo, body, tend)) ->
       let comp_clauses = List_.map (fun (clause : for_clause) ->
         match clause with
@@ -971,27 +976,16 @@ and map_body env v : G.stmt list =
   xs |> List_.map exprstmt
 
 and map_call env (v1, v2, v3) : G.expr =
-  match (v1, v2, v3) with
-  (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#case/2
-   * case expr do pattern -> body end *)
-  | ( I (Id ("case", tcase)),
-    (_, ([ scrutinee ], []), _),
-    Some (_tdo, (Clauses clauses, []), _tend) ) ->
-      let e = map_expr env scrutinee in
-      let xs = map_clauses env clauses in
-      let cases = xs |> List_.map case_and_body_of_case_clause in
-      G.Switch (tcase, Some (G.Cond e), cases) |> G.s |> G.stmt_to_expr
-  | _ ->
   (* Special handling for DotAnon - extract the inner expression to use as callee *)
-    let e =
-      match v1 with
-      | DotAnon (inner_expr, _tdot) -> map_expr env inner_expr
-      | _ -> map_expr env v1
-    in
-    let l, args, r = (map_bracket map_arguments) env v2 in
-    let v3 = (map_option map_do_block) env v3 in
-    let args' = args_of_do_block_opt v3 in
-    G.Call (e, (l, args @ args', r)) |> G.e
+  let e =
+    match v1 with
+    | DotAnon (inner_expr, _tdot) -> map_expr env inner_expr
+    | _ -> map_expr env v1
+  in
+  let l, args, r = (map_bracket map_arguments) env v2 in
+  let v3 = (map_option map_do_block) env v3 in
+  let args' = args_of_do_block_opt v3 in
+  G.Call (e, (l, args @ args', r)) |> G.e
 
 and map_remote_dot env (v1, tdot, v3) : G.expr =
   let e = map_expr env v1 in

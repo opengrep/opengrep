@@ -175,6 +175,14 @@ class ['self] visitor =
             }
           in
           S (D (ModuleDef def))
+      (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#case/2
+       * case expr do pattern -> body ... end *)
+      | ( I (Id ("case", tcase)),
+          (_, ([ e ], []), _),
+          Some (tdo, (Clauses clauses, []), tend) ) ->
+          let e = self#visit_expr env e in
+          let clauses = self#visit_clauses env clauses in
+          S (Case (tcase, e, (tdo, clauses, tend)))
       (* https://hexdocs.pm/elixir/Kernel.SpecialForms.html#throw/1 *)
       | ( I (Id ("throw", tthrow)), (_, ([ arg ], []), _), None ) ->
           let arg = self#visit_expr env arg in
@@ -271,6 +279,15 @@ and group_in_expr (e : expr) : expr =
           clauses
       in
       S (D (FuncDef clauses))
+  | S (Case (tcase, e, (tdo, clauses, tend))) ->
+      let e = group_in_expr e in
+      let clauses =
+        List_.map
+          (fun ((args, guard_opt), tarrow, body) ->
+            ((args, guard_opt), tarrow, group_in_program body))
+          clauses
+      in
+      S (Case (tcase, e, (tdo, clauses, tend)))
   | _ -> e
 
 (*****************************************************************************)
