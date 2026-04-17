@@ -239,16 +239,34 @@
       url = "github:ocaml/opam-repository";
       flake = false;
     };
+    # Fork of memprof-limits compatible with OCaml 5.3.0. Referenced as
+    # `memprof-limits {= "dev"}` in semgrep.opam / process_limits.opam. The
+    # `(pin ...)` stanza in dune-project only influences plain-opam builds, so
+    # we inject the fork as an opam repo for the nix flow below.
+    memprof-limits-src = {
+      url = "git+https://gitlab.com/dimitris-m/memprof-limits.git?ref=dm/ocaml-5.3.0-opengrep";
+      flake = false;
+    };
   };
-  outputs = { self, nixpkgs, flake-utils, opam-nix, opam-repository }@inputs:
+  outputs = { self, nixpkgs, flake-utils, opam-nix, opam-repository, memprof-limits-src }@inputs:
     let package = "semgrep";
     in flake-utils.lib.eachDefaultSystem (system:
       let
         # TODO Use pkgsStatic if on linux
         pkgs = nixpkgs.legacyPackages.${system};
         on = opam-nix.lib.${system};
-        pythonPackages = pkgs.python310Packages;
-        opamRepos = [ "${opam-repository}" ];
+        pythonPackages = pkgs.python314Packages;
+        # Build a local opam repo containing the memprof-limits fork, with its
+        # `version:` line stripped so opam-nix exposes it as version "dev"
+        # (matching the `{= "dev"}` constraints in our opam files).
+        memprof-limits-pin-src =
+          pkgs.runCommand "memprof-limits-dev-src" { } ''
+            cp -r ${memprof-limits-src} $out
+            chmod -R u+w $out
+            sed -i '/^version:/d' $out/memprof-limits.opam
+          '';
+        memprof-limits-repo = on.makeOpamRepo memprof-limits-pin-src;
+        opamRepos = [ memprof-limits-repo "${opam-repository}" ];
         lib = pkgs.lib;
         isDarwin = lib.strings.hasSuffix "darwin" system;
         hasSubmodules = !builtins.hasAttr "submodules" self || self.submodules;
@@ -268,14 +286,15 @@
         };
         opamQuery = devOpamPackagesQuery // {
           ## You can force versions of certain packages here
-          # force the ocaml compiler to be 4.14.2 and from opam
-          ocaml-base-compiler = "4.14.2";
+          # Force the OCaml compiler to match the lower bound declared by our
+          # opam packages (process_limits and the memprof-limits fork require
+          # >= 5.3.0; semgrep.opam requires >= 5.2.1).
+          ocaml-base-compiler = "5.3.0";
           #TODO: needed for semgrep pro, should be in ../flake.nix instead
           #coupling: if you add one thing here, need to update also the
           # buildInputs overlay below
           junit_alcotest = "*";
           git-unix = "*";
-          mirage-runtime = "4.4.2";
           notty = "*";
           tsort = "*";
           # needed for tests
@@ -398,6 +417,15 @@
             src = ./cli;
             # TODO checks
             doCheck = false;
+
+            # Newer nixpkgs' buildPythonApplication requires an explicit build
+            # format; the cli uses a PEP 517 pyproject.toml backed by setuptools.
+            pyproject = true;
+            build-system = [ setuptools wheel ];
+            # The wheel's install_requires pins (e.g. `boltons~=21.0`) are
+            # tighter than nixpkgs' tree; skip the automatic runtime-deps
+            # check and trust the versions listed in propagatedBuildInputs.
+            dontCheckRuntimeDeps = true;
 
             # coupling: anything added to the pysemgrep setup.py should be added here
             propagatedBuildInputs = [
