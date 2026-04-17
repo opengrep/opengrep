@@ -682,7 +682,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                         }
                       in
                       let fdef_il =
-                        AST_to_IL.function_definition lang                          synthetic_fdef
+                        AST_to_IL.function_definition lang synthetic_fdef
                       in
                       let cfg = CFG_build.cfg_of_fdef fdef_il in
                       let db', _sig =
