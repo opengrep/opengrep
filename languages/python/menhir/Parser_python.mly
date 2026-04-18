@@ -88,6 +88,13 @@ let mk_str ii =
   let s = Tok.content_of_tok ii in
   Str (s, ii)
 
+(* Match the tree-sitter Python frontend's shape: a match-statement subject
+ * and each case pattern are always wrapped in a Tuple, even for a single
+ * element, so semgrep matching stays uniform across parser backends.
+ * The Param context mirrors `no_ctx` in Parse_python_tree_sitter.ml. *)
+let match_tuple xs =
+  Tuple (CompList (Tok.unsafe_fake_bracket xs), Param)
+
 %}
 
 (*************************************************************************)
@@ -649,26 +656,28 @@ with_inner_in_parens:
  * identifiers outside of match-statement contexts. The MATCH/CASE tokens
  * used here are synthesized by Parsing_hacks_python only when the
  * surrounding shape is unambiguously a match statement.
- * Patterns are represented as plain expressions (AST_python.pattern = expr),
- * which matches what the tree-sitter Python frontend already does.
+ * Patterns are represented as expressions (AST_python.pattern = expr) and
+ * the subject and case patterns are always wrapped in a Tuple via
+ * `match_tuple` (even single-element ones), mirroring the tree-sitter
+ * Python frontend so semgrep matching is uniform across parser backends.
  * Note: `case pattern if guard:` is not accepted here — an unadorned `if`
  * after a test would collide with the conditional-expression ternary
  * (`a if b else c`) and introduce a shift/reduce conflict. Files that rely
  * on case guards will fall back to the tree-sitter parser. *)
 match_stmt:
   | MATCH tuple(namedexpr_test) ":" NEWLINE INDENT case_block+ DEDENT
-      { Switch ($1, tuple_expr $2, $6) }
+      { Switch ($1, match_tuple (to_list $2), $6) }
 
 case_block:
   | CASE tuple(test_or_star_expr) ":" suite
-      { CasesAndBody ([Case ($1, tuple_expr $2)], $4) }
+      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $4) }
   (* PEP 634 as-pattern `case pattern as name:`. TODO: preserve the binding.
    * Note: PEP 634 scopes `as` to the rightmost element of a comma-separated
    * pattern list, but here `as` binds to the whole tuple — which is fine
    * because we discard the name; revisit if the binding is ever preserved.
    *)
   | CASE tuple(test_or_star_expr) AS NAME ":" suite
-      { CasesAndBody ([Case ($1, tuple_expr $2)], $6) }
+      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $6) }
 
 (* python3-ext: *)
 async_stmt:
