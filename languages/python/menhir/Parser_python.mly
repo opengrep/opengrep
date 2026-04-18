@@ -660,24 +660,37 @@ with_inner_in_parens:
  * the subject and case patterns are always wrapped in a Tuple via
  * `match_tuple` (even single-element ones), mirroring the tree-sitter
  * Python frontend so semgrep matching is uniform across parser backends.
- * Note: `case pattern if guard:` is not accepted here — an unadorned `if`
- * after a test would collide with the conditional-expression ternary
- * (`a if b else c`) and introduce a shift/reduce conflict. Files that rely
- * on case guards will fall back to the tree-sitter parser. *)
+ * The case-pattern non-terminal is `test_nocond` (no conditional ternary)
+ * so that an `if` after the pattern is unambiguously a guard, not the
+ * `else`-less head of `a if b else c`. Starred patterns (`*rest`) are
+ * not allowed at the top of a case pattern in PEP 634 — they only appear
+ * inside sequence patterns (`case [a, *rest]:`), parsed via the list-
+ * literal atom — so dropping `star_expr` here also tightens the grammar.
+ * The `if guard` clause is parsed-and-discarded, matching the tree-sitter
+ * frontend (Parse_python_tree_sitter.ml:1433-1443 computes a `cond` value
+ * and never uses it because AST_python.case has no guard slot).
+ * TODO: extend AST_python.case with an `expr option` for the guard, plumb
+ * through both parsers, and emit `G.PatWhen (pat, guard)` in
+ * Python_to_generic.case — see ocaml_to_generic, scala_to_generic, and
+ * Parse_rust_tree_sitter for prior art. The same TODO applies to the
+ * as-pattern's bound name, which is also currently dropped. *)
 match_stmt:
   | MATCH tuple(namedexpr_test) ":" NEWLINE INDENT case_block+ DEDENT
       { Switch ($1, match_tuple (to_list $2), $6) }
 
 case_block:
-  | CASE tuple(test_or_star_expr) ":" suite
+  | CASE tuple(test_nocond) ":" suite
       { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $4) }
-  (* PEP 634 as-pattern `case pattern as name:`. TODO: preserve the binding.
-   * Note: PEP 634 scopes `as` to the rightmost element of a comma-separated
-   * pattern list, but here `as` binds to the whole tuple — which is fine
-   * because we discard the name; revisit if the binding is ever preserved.
-   *)
-  | CASE tuple(test_or_star_expr) AS NAME ":" suite
+  | CASE tuple(test_nocond) IF test ":" suite
       { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $6) }
+  (* PEP 634 as-pattern: `case pattern as name [if guard]:`. Note that PEP
+   * 634 scopes `as` to the rightmost element of a comma-separated pattern
+   * list, but here `as` binds to the whole tuple — which is fine because
+   * we discard the name; revisit when the binding is preserved. *)
+  | CASE tuple(test_nocond) AS NAME ":" suite
+      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $6) }
+  | CASE tuple(test_nocond) AS NAME IF test ":" suite
+      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $8) }
 
 (* python3-ext: *)
 async_stmt:
