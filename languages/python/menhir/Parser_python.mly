@@ -88,6 +88,13 @@ let mk_str ii =
   let s = Tok.content_of_tok ii in
   Str (s, ii)
 
+(* Match the tree-sitter Python frontend's shape: a match-statement subject
+ * and each case pattern are always wrapped in a Tuple, even for a single
+ * element, so semgrep matching stays uniform across parser backends.
+ * The Param context mirrors `no_ctx` in Parse_python_tree_sitter.ml. *)
+let match_tuple xs =
+  Tuple (CompList (Tok.unsafe_fake_bracket xs), Param)
+
 %}
 
 (*************************************************************************)
@@ -130,6 +137,10 @@ let mk_str ii =
  NONE TRUE FALSE
  ASYNC AWAIT
  NONLOCAL
+ (* python3.10+: soft keywords, produced by Parsing_hacks_python
+  * out of NAME("match")/NAME("case") only in match-statement contexts
+  * so that plain identifiers "match"/"case" remain valid names. *)
+ MATCH CASE
  (* python2: *)
  PRINT EXEC
 
@@ -550,6 +561,7 @@ compound_stmt:
   | for_stmt    { $1 }
   | try_stmt    { $1 }
   | with_stmt   { $1 }
+  | match_stmt  { $1 }
 
   | funcdef     { $1 }
   | classdef    { $1 }
@@ -638,6 +650,47 @@ with_inner_in_parens:
   | test AS expr ","                      { fun (t, body) -> With (t, ($1, Some $3), body) }
   | test         "," with_inner_in_parens { fun (t, body) -> With (t, ($1, None), [$3 (t, body)]) }
   | test AS expr "," with_inner_in_parens { fun (t, body) -> With (t, ($1, Some $3), [$5 (t, body)]) }
+
+(* python3.10+ (PEP 634): structural pattern matching.
+ * `match` and `case` are *soft keywords* in Python — they are valid
+ * identifiers outside of match-statement contexts. The MATCH/CASE tokens
+ * used here are synthesized by Parsing_hacks_python only when the
+ * surrounding shape is unambiguously a match statement.
+ * Patterns are represented as expressions (AST_python.pattern = expr) and
+ * the subject and case patterns are always wrapped in a Tuple via
+ * `match_tuple` (even single-element ones), mirroring the tree-sitter
+ * Python frontend so semgrep matching is uniform across parser backends.
+ * The case-pattern non-terminal is `test_nocond` (no conditional ternary)
+ * so that an `if` after the pattern is unambiguously a guard, not the
+ * `else`-less head of `a if b else c`. Starred patterns (`*rest`) are
+ * not allowed at the top of a case pattern in PEP 634 — they only appear
+ * inside sequence patterns (`case [a, *rest]:`), parsed via the list-
+ * literal atom — so dropping `star_expr` here also tightens the grammar.
+ * The `if guard` clause is parsed-and-discarded, matching the tree-sitter
+ * frontend (Parse_python_tree_sitter.ml:1433-1443 computes a `cond` value
+ * and never uses it because AST_python.case has no guard slot).
+ * TODO: extend AST_python.case with an `expr option` for the guard, plumb
+ * through both parsers, and emit `G.PatWhen (pat, guard)` in
+ * Python_to_generic.case — see ocaml_to_generic, scala_to_generic, and
+ * Parse_rust_tree_sitter for prior art. The same TODO applies to the
+ * as-pattern's bound name, which is also currently dropped. *)
+match_stmt:
+  | MATCH tuple(namedexpr_test) ":" NEWLINE INDENT case_block+ DEDENT
+      { Switch ($1, match_tuple (to_list $2), $6) }
+
+case_block:
+  | CASE tuple(test_nocond) ":" suite
+      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $4) }
+  | CASE tuple(test_nocond) IF test ":" suite
+      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $6) }
+  (* PEP 634 as-pattern: `case pattern as name [if guard]:`. Note that PEP
+   * 634 scopes `as` to the rightmost element of a comma-separated pattern
+   * list, but here `as` binds to the whole tuple — which is fine because
+   * we discard the name; revisit when the binding is preserved. *)
+  | CASE tuple(test_nocond) AS NAME ":" suite
+      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $6) }
+  | CASE tuple(test_nocond) AS NAME IF test ":" suite
+      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $8) }
 
 (* python3-ext: *)
 async_stmt:
