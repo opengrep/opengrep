@@ -45,13 +45,17 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
           submodules: true
+      - name: Compute OPAM cache fingerprint
+        run: ./scripts/opam-cache-fingerprint.sh
       - env:
           SEGMENT_DOWNLOAD_TIMEOUT_MINS: 2
         # if: ${{ inputs.use-cache == 'true' || inputs.use-cache == '' }}
         name: Set GHA cache for OPAM in ~/.opam
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
         with:
-          key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('opam/*.opam') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('.ci-cache/opam-fingerprint.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-
           path: ~/.opam
       - name: Install dependencies
         run: ./scripts/osx-setup-for-release.sh ${{ matrix.ocaml_version }}

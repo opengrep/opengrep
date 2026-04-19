@@ -122,19 +122,27 @@ jobs:
           key: dune-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ github.run_id }}
           restore-keys: dune-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-
       
+      - name: Compute OPAM cache fingerprint
+        shell: bash
+        run: ./scripts/opam-cache-fingerprint.sh
+
       - name: Restore _opam
         id: cache-opam-win32-64
         uses: actions/cache/restore@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache/restore@v4
         with:
           path: _opam
-          key: opam-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('opam/*.opam') }}
+          key: opam-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('.ci-cache/opam-fingerprint.txt') }}
+          restore-keys: |
+            opam-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-
 
       - name: Restore OPAM_ROOT
         id: cache-opamroot-win32-64
         uses: actions/cache/restore@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache/restore@v4
         with:
           path: ${{ env.OPAMROOT }} # C:\Users\runneradmin\AppData\Local\opam
-          key: opamroot-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('opam/*.opam') }}
+          key: opamroot-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('.ci-cache/opam-fingerprint.txt') }}
+          restore-keys: |
+            opamroot-cache-${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-
           
       - name: Install OPAM
         env:
@@ -281,7 +289,6 @@ jobs:
           export CYGWIN_MINGW_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
           export PATH="${CYGWIN_ROOT_BIN}:${PATH}:${CYGWIN_MINGW_BIN}"
           make install-deps-WINDOWS-for-semgrep-core
-          ./scripts/install-memprof-limits-dev.sh
           make install-opam-deps
 
       - name: Prepare _opam for saving
