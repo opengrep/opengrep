@@ -387,7 +387,10 @@ let filter_paths
              (* Git tracks symlinks as blob entries, so we must filter them
                 out just like the filesystem walker (filter_path) does. *)
              match (Unix.lstat !!(fppath.fpath)).st_kind with
-             | S_REG -> add fppath
+             | S_REG -> (
+                 match Skip_target.filter_file_access_permissions fppath.fpath with
+                 | Ok _ -> add fppath
+                 | Error skipped -> skip skipped)
              | S_LNK | S_DIR | S_FIFO | S_CHR | S_BLK | S_SOCK ->
                  Log.debug (fun m ->
                      m "ignore non-regular file: %s" !!(fppath.fpath))
@@ -828,13 +831,18 @@ let get_targets_from_filesystem conf (project_roots : Project.roots) =
    files regardless of filters (gitignore, semgrepignore, --include,
    --exclude, ...).
    If they already occur in the list of skipped targets, they will be removed.
+
+   Returns a third value: the subset of scanning roots that were force-added
+   to 'selected_targets'. The caller is expected to re-apply size/minified
+   limits to these, since those limits must not be bypassed even for
+   explicit scanning roots.
 *)
 let force_select_scanning_roots
     ?(apply_includes_excludes_to_files = false)
     (project_roots : Project.roots)
     (selected_targets : Fppath.t list)
     (skipped_targets : Out.skipped_target list) :
-    Fppath.t list * Out.skipped_target list =
+    Fppath.t list * Out.skipped_target list * Fppath.t list =
   let regular_files_to_add =
     if not apply_includes_excludes_to_files then
       (* default behaviour: *)
@@ -854,7 +862,7 @@ let force_select_scanning_roots
            not (Set_.mem skipped.path regular_files_to_add))
   in
   let selected_targets = List.rev_append selected_targets regular_files_to_add in
-  (selected_targets, skipped_targets)
+  (selected_targets, skipped_targets, regular_files_to_add)
 
 (*
    Filter files by size, optionally using committed sizes from
@@ -915,12 +923,24 @@ let filter_size ?(git_sizes : (string, int) Hashtbl.t option)
             git_known
         else (git_known, [])
       in
+      (* Minification is content-based (reads first block), so no git
+         acceleration is possible — apply it here to the git_known files
+         that survived the size check, otherwise --exclude-minified-files
+         would be silently skipped for tracked, unmodified files. *)
+      let ok, skip_minified =
+        if exclude_minified_files then
+          Result_.partition
+            (fun (fp : Fppath.t) ->
+              Result.map (fun _ -> fp) (Skip_target.is_minified fp.fpath))
+            ok
+        else (ok, [])
+      in
       (* Dirty or unknown files fall back to stat() *)
       let stat_ok, stat_skip =
         filter_size_and_minified max_target_bytes exclude_minified_files
           need_stat
       in
-      (ok @ stat_ok, skip @ stat_skip)
+      (ok @ stat_ok, skip @ skip_minified @ stat_skip)
 
 (*
    Two-stage filter for git-listed files:
@@ -1050,13 +1070,32 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
         (ok, skipped @ skipped_size)
   in
   let is_git_repo = Option.is_some git_tracked in
-  let selected_targets, skipped_targets =
+  let selected_targets, skipped_targets, forced =
     force_select_scanning_roots
       ~apply_includes_excludes_to_files:conf.apply_includes_excludes_to_file_targets
       project_roots
       selected_targets
       skipped_targets
   in
+  (* Re-apply size/minified limits to force-added scanning roots so that
+     explicit CLI file arguments still honour --max-target-bytes and
+     --exclude-minified-files. Only the forced subset is checked; the rest
+     of 'selected_targets' has already been filtered above. *)
+  let _, forced_skipped =
+    filter_size_and_minified conf.max_target_bytes conf.exclude_minified_files
+      forced
+  in
+  let forced_skipped_paths =
+    forced_skipped
+    |> List_.map (fun (s : Out.skipped_target) -> s.path)
+    |> Set_.of_list
+  in
+  let selected_targets =
+    List.filter
+      (fun (fp : Fppath.t) -> not (Set_.mem fp.fpath forced_skipped_paths))
+      selected_targets
+  in
+  let skipped_targets = List.rev_append forced_skipped skipped_targets in
   { selected = selected_targets; skipped = skipped_targets; git_repo = is_git_repo }
 
 (* for semgrep query console *)
