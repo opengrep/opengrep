@@ -35,7 +35,7 @@ env:
   OPAMROOT: D:/.opam
   DUNE_CACHE_ROOT: D:/dune
   OPAMCONFIRMLEVEL: unsafe-yes
-  OPAM_VERSION: "2.3.0"
+  OPAM_VERSION: "2.5.1"
 
 jobs:
 

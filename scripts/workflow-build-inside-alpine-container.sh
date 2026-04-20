@@ -7,15 +7,40 @@ export DUNE_CACHE_ROOT=/workspace/_dune
 export OPAMCONFIRMLEVEL=unsafe-yes
 export OPAMCOLOR=always
 
-# OPAM_VERSION="2.3.0"
+OPAM_VERSION=${OPAM_VERSION:-"2.5.1"}
 OCAML_VERSION=${OCAML_VERSION:-"5.3.0"}
 SHOULD_INIT_OPAM=${SHOULD_INIT_OPAM:-true}
 
-# Install opam and other dependencies.
+# Install build dependencies. Note: opam is fetched separately below from the
+# upstream release so we get a known, current version regardless of what Alpine
+# packages ship. gnupg is needed to verify the opam signature.
 apk add --no-cache \
-    opam git build-base zip bash libffi-dev \
+    git build-base zip bash libffi-dev \
     libpsl-static zstd-static libidn2-static \
-    libunistring-static tar zstd
+    libunistring-static tar zstd gnupg
+
+# Install opam from the official upstream release. Alpine's packaged opam lags
+# behind, so we pin to OPAM_VERSION and fetch the matching static binary for
+# the host architecture, then verify the signature against the upstream key.
+case "$(uname -m)" in
+    x86_64)  OPAM_ARCH="x86_64" ;;
+    aarch64) OPAM_ARCH="arm64" ;;
+    *)       echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+OPAM_BASE="opam-${OPAM_VERSION}-${OPAM_ARCH}-linux"
+OPAM_URL="https://github.com/ocaml/opam/releases/download/${OPAM_VERSION}/${OPAM_BASE}"
+OPAM_TMP="$(mktemp -d)"
+mkdir -m 0700 "${OPAM_TMP}/gnupg"
+wget -qO "${OPAM_TMP}/${OPAM_BASE}"     "${OPAM_URL}"
+wget -qO "${OPAM_TMP}/${OPAM_BASE}.sig" "${OPAM_URL}.sig"
+wget -qO "${OPAM_TMP}/opam-pubkey.pgp"  "https://opam.ocaml.org/opam-dev-pubkey.pgp"
+gpg --homedir "${OPAM_TMP}/gnupg" --batch --quiet \
+    --import "${OPAM_TMP}/opam-pubkey.pgp"
+gpg --homedir "${OPAM_TMP}/gnupg" --batch --verify \
+    "${OPAM_TMP}/${OPAM_BASE}.sig" "${OPAM_TMP}/${OPAM_BASE}"
+install -m 0755 "${OPAM_TMP}/${OPAM_BASE}" /usr/local/bin/opam
+rm -rf "${OPAM_TMP}"
+opam --version
 
 make install-deps-ALPINE-for-semgrep-core
 
