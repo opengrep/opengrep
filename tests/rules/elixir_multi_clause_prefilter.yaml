@@ -1,0 +1,9 @@
+rules:
+  - id: find-multi-clause
+    patterns:
+      - pattern: |
+          def greet("hello"), do: "hi"
+          def greet("bye"), do: "goodbye"
+    languages: [elixir]
+    message: found multi-clause
+    severity: INFO
