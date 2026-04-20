@@ -1,0 +1,11 @@
+rules:
+  - id: find-caret
+    patterns:
+      - pattern: |
+          case $X do
+            ^$Y -> :match
+            _ -> :no_match
+          end
+    languages: [elixir]
+    message: found caret pin match
+    severity: INFO
