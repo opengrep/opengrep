@@ -4,8 +4,8 @@
 
 # Many targets in this Makefile assume some commands have been run before to
 # setup the correct build environment supporting the different languages
-# used for Semgrep development:
-#  - for OCaml: 'ocamlc' and 'ocamlopt' (currently 4.14.0), 'dune', 'opam'
+# used for Opengrep development:
+#  - for OCaml: 'ocamlc' and 'ocamlopt' (currently 5.3.0), 'dune', 'opam'
 #  - for C: 'gcc', 'ld', 'pkgconfig', but also some C libs like PCRE, gmp
 #  - for Python: 'python3', 'pip', 'pipenv'
 #
@@ -18,15 +18,14 @@
 #
 #     $ make install-deps
 #
-# to install the dependencies proper to semgrep (e.g., the necessary OPAM
-# packages used by semgrep-core).
+# to install the dependencies proper to opengrep (e.g., the necessary OPAM
+# packages used by opengrep-core).
 #
-# Then to compile semgrep simply type:
+# Then to compile opengrep simply type:
 #
 #     $ make all
 #
 # See INSTALL.md for more information
-# See also https://semgrep.dev/docs/contributing/contributing-code/
 
 # Most of the targets in this Makefile should work equally under
 # Linux (Alpine, Ubuntu, Arch), macOS (x86 and arm64), Windows (WSL, Cygwin),
@@ -64,7 +63,7 @@ endif
 # This file is created by ocaml-tree-sitter-core's configure script.
 #
 # Because of these required environment variables, we can't call dune directly
-# to build semgrep-core, unless you manually execute first
+# to build opengrep-core, unless you manually execute first
 #  `source src/ocaml-tree-sitter-core/tree-sitter-config.sh`
 #
 # I use '-include' and not 'include' because before 'make setup' this file does
@@ -86,7 +85,6 @@ all:
 	cd cli && pipenv install --dev
 	$(MAKE) -C cli build
 
-#history: was called the 'all' target in semgrep-core/Makefile before
 .PHONY: core
 core:
 	$(MAKE) minimal-build
@@ -97,9 +95,9 @@ copy-core-for-cli:
 	rm -f cli/src/semgrep/bin/opengrep-core$(EXE)
 	cp bin/opengrep-core$(EXE) cli/src/semgrep/bin/
 
-# Minimal build of the semgrep-core executable. Intended for the docker build.
+# Minimal build of the opengrep-core executable.
 # If you need other binaries, look at the build-xxx rules below.
-# We do not use .../bin/{semgrep-core,osemgrep,semgrep} below to
+# We do not use .../bin/{opengrep-core,opengrep-cli,opengrep} below to
 # factorize because make under Alpine uses busybox/ash for /bin/sh which
 # does not support this bash feature.
 .PHONY: minimal-build
@@ -124,12 +122,6 @@ opengrep-diff:
 .PHONY: bench
 bench: core
 	cd perf/opengrep-scripts && ./run-benchmarks.sh $(BENCH_ARGS)
-
-#coupling: The 'semgrep-oss' is the name of the step in the Dockerfile, the
-# 'semgrep' the name of the docker image produced (will be semgrep:latest)
-.PHONY: build-docker
-build-docker:
-	docker build -t semgrep --target semgrep-oss .
 
 .PHONY: build-otarzan
 build-otarzan:
@@ -163,9 +155,9 @@ clean:
 # Install targets
 ###############################################################################
 
-# Install semgrep on a developer's machine with pip and opam installed.
+# Install opengrep on a developer's machine with pip and opam installed.
 # This should *not* install the open-source libraries that we maintain
-# as part of the semgrep project.
+# as part of the opengrep project.
 .PHONY: install
 install:
 	$(MAKE) copy-core-for-cli
@@ -237,10 +229,10 @@ core-test-e2e:
 # about some 'libs/ocaml-tree-sitter-core/../../.git/...' not being a git
 # repo.
 #
-# EXTRA_OPAM_DEPS allows us to add more opam files when building semgrep
-# as part of a larger project (e.g. semgrep-proprietary). Using a single
-# 'opam install' command to install all the dependencies allows us to detect
-# version constraints incompatibilities.
+# EXTRA_OPAM_DEPS allows us to add more opam files when building opengrep
+# as part of a larger project. Using a single 'opam install' command to
+# install all the dependencies allows us to detect version constraints
+# incompatibilities.
 #
 REQUIRED_DEPS = \
  ./opam/semgrep.opam \
@@ -297,18 +289,6 @@ install-deps: install-deps-for-semgrep-core
 # Platform-dependent dependencies installation
 # **************************************************
 
-# The constants and targets below are used in our Dockerfile and a few
-# GHA workflows. There are pros and cons of having those commands here
-# instead of in the Dockerfile and GHA workflows:
-# cons:
-#  - this requires the Makefile and so to checkout (COPY in Docker
-#    or actions/checkout@v3 in GHA) semgrep first,
-#    which prevent some caching Docker/GHA could do. This is alleviated
-#    a bit by the fact that anyway we use a special returntocorp/ocaml
-#    container with many things pre-installed.
-# pro:
-#  - it avoids repeating yourself everywhere
-
 # -------------------------------------------------
 # Packages
 # -------------------------------------------------
@@ -319,12 +299,12 @@ install-deps: install-deps-for-semgrep-core
 # support also Windows!
 # So we should generalize our use of WINDOWS_OPAM_DEPEXT_DEPS to all platforms.
 
-# Here is why we need those external packages to compile semgrep-core:
+# Here is why we need those external packages to compile opengrep-core:
 # - pkgconf (name of pkg-config clone in arch): required by opam/dune
 #   so it can find the location of the other libs
-# - pcre: for ocaml-pcre now used in semgrep-core (used by spacegrep)
+# - pcre: for ocaml-pcre now used in opengrep-core (used by spacegrep)
 # - pcre2: new version of pcre needed by Cooper
-# - gmp: for osemgrep and its use of cohttp (LGPL since gmp 6)
+# - gmp: for opengrep-cli and its use of cohttp (LGPL since gmp 6)
 # - libev: ?? for Austin
 # - curl: for opentelemetry, which we use for tracing for Emma
 # - openssl: ??
@@ -388,13 +368,6 @@ install-deps-ALPINE: install-deps-ALPINE-for-semgrep-core
 # Note that we're not using --no-cache below otherwise opam does not
 # recognize that pkg-config and other packages have been installed
 # (See https://github.com/ocaml/opam/issues/5186)
-#alt: we could use --no-depexts (and --cli=2.1) in 'install-opam-deps'
-# and keep the --no-cache below, as anyway we're managing external
-# dependencies ourselves in the make install-deps-XXX-for-semgrep-core,
-# but then this requires a recent opam (2.1) which is still not available
-# in our setup-ocaml@v2 GHA for windows, so simpler to just use --no-cache
-# (anyway this is used in an intermediate step in our Docker image, not
-# the final image, so we don't really need --no-cache)
 install-deps-ALPINE-for-semgrep-core:
 	apk add $(ALPINE_APK_DEPS_CORE)
 
@@ -418,10 +391,6 @@ install-deps-MACOS-for-semgrep-core:
 #
 # We don't use just 'make install-deps-for-semgrep-core' because Homebrew
 # installs its own version of tree-sitter, globally.
-# The Homebrew package definition ("formula") lives at:
-#   https://github.com/Homebrew/homebrew-core/blob/master/Formula/semgrep.rb
-# Some of this can be tested on Linux, see instructions in
-#   dockerfiles/linuxbrew.Dockerfile
 .PHONY: homebrew-setup
 homebrew-setup:
 	cd libs/ocaml-tree-sitter-core \
@@ -534,7 +503,7 @@ gitclean:
 release:
 	./scripts/release/bump
 
-# Run utop with all the semgrep-core libraries loaded.
+# Run utop with all the opengrep-core libraries loaded.
 .PHONY: utop
 utop:
 	dune utop
@@ -556,7 +525,7 @@ core-bc:
 	dune build $(BUILD)/install/default/bin/opengrep-cli.bc
 test-bc:
 	dune build $(BUILD_DEFAULT)/src/tests/test.bc
-# The bytecode version of semgrep-core needs dlls for tree-sitter
+# The bytecode version of opengrep-core needs dlls for tree-sitter
 # stubs installed into ~/.opam/<switch>/lib/stublibs to be able to run.
 install-deps-for-semgrep-core-bc: install-deps-for-semgrep-core
 	dune build @install # Generate the treesitter stubs for below
@@ -572,45 +541,10 @@ perf-matching:
 	@echo "--- maximum caching ---"
 	cd ./perf/perf-matching && ./run-perf-suite --max-cache
 
-# Run matching performance tests and post them to the semgrep dashboard
-# at https://dashboard.semgrep.dev/
-#
-# This is meant for CI, which hopefully runs on similar machines each time.
-#
-.PHONY: report-perf-matching
-report-perf-matching:
-	cd ./perf/perf-matching && ./run-perf-suite --upload
-
-###############################################################################
-# Dogfood!
-###############################################################################
-# There are a few places where we currently dogfood Semgrep:
-#
-# - in this Makefile with 'make check' below, which tests semgrep in PATH
-#   and with 'make check_with_docker' which tests semgrep Docker image,
-#   and where we use semgrep.jsonnet in both targets
-#
-# - in pre-commit in .pre-commit-config.yaml which tests the semgrep
-#   Docker image used in a pre-commit 'language: docker_image' context,
-#   as well as semgrep official pre-commit hooks in .pre-commit-hooks.yaml
-#   in a 'language: python' context (which itself uses setup.py to install semgrep),
-#   with semgrep.jsonnet but also with p/python and p/bandit rulesets.
-#
-# - in circle CI in .circle/config.yml which uses the Docker image
-#   and where we use semgrep.jsonnet
-#
-# - in Github Actions (GHA) in .github/workflows/semgrep.yml where
-#   we use semgrep-actions and the App to get the rules
-#
-# Note that many of those places use semgrep.jsonnet and so would report
-# the same findings, but they are useful anyway to test all the different
-# places where you can plug semgrep (Makefile, pre-commit, circleCI, GHA, GHA+App).
-
-#coupling: see also .circleci/config.yml and its 'semgrep' job
+# Dogfood opengrep on itself
 SEMGREP_ARGS=--experimental --config semgrep.jsonnet --error --strict --exclude tests
 # you can add --verbose for debugging
 
-#Dogfooding osemgrep!
 .PHONY: check
 check:
 	./bin/opengrep-cli$(EXE) $(SEMGREP_ARGS)
@@ -618,51 +552,18 @@ check:
 check_for_emacs:
 	./bin/opengrep-cli$(EXE) $(SEMGREP_ARGS) --emacs --quiet
 
-DOCKER_IMAGE=semgrep/semgrep:develop
-
-# If you get parsing errors while running this command, maybe you have an old
-# cached version of the docker image. You can invalidate the cache with
-#   'docker rmi semgrep/semgrep:develop`
-check_with_docker:
-	docker run --rm -v "${PWD}:/src" $(DOCKER_IMAGE) semgrep $(SEMGREP_ARGS)
-
 ###############################################################################
 # Martin's targets
 ###############################################################################
-# Build executables and place them where semgrep expects them.
+# Build executables and place them where opengrep expects them.
 # These are normally copied by '/cli/setup.py' but it doesn't happen if we
 # run only 'dune build'.
 #
 # Usage:
 #  $ make dev
-#  $ PIPENV_PIPFILE=~/semgrep/cli/Pipfile pipenv run semgrep ...
+#  $ PIPENV_PIPFILE=~/opengrep/cli/Pipfile pipenv run opengrep ...
 .PHONY: dev
 dev:
 	$(MAKE) core
 	$(MAKE) copy-core-for-cli
 
-###############################################################################
-# Pad's targets
-###############################################################################
-
-# TODO: Remove this, or edit accordingly:
-
-pr:
-	git push origin `git rev-parse --abbrev-ref HEAD`
-	hub pull-request -b develop -r returntocorp/pa
-push:
-	git push origin `git rev-parse --abbrev-ref HEAD`
-merge:
-	A=`git rev-parse --abbrev-ref HEAD` && git checkout develop && git pull && git branch -D $$A
-
-# see https://github.com/aryx/codegraph for information on codegraph_build
-index:
-	codegraph_build -lang cmt -derived_data .
-# see https://github.com/aryx/codecheck for information on codecheck
-check2:
-	codecheck -lang ml -with_graph_code graph_code.marshall -filter 3 .
-# see https://github.com/aryx/codemap for information on codemap
-visual:
-	codemap -screen_size 3 -filter semgrep -efuns_client efuns_client -emacs_client /dev/null .
-visual2:
-	codemap -screen_size 3 -filter semgrep -efuns_client efuns_client -emacs_client /dev/null src
