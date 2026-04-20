@@ -1,0 +1,8 @@
+rules:
+  - id: find-scala-cases
+    patterns:
+      - pattern: |
+          $XS.map { case 1 => "one"; case $N => "other" }
+    languages: [scala]
+    message: found cases lambda
+    severity: INFO
