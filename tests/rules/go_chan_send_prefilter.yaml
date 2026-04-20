@@ -1,0 +1,7 @@
+rules:
+  - id: go-chan-out
+    pattern: |
+      func $F($P chan<- $T) { ... }
+    languages: [go]
+    message: go send-only chan (synthetic "send")
+    severity: INFO

@@ -1,0 +1,7 @@
+rules:
+  - id: go-chan-bidir
+    pattern: |
+      func $F($P chan $T) { ... }
+    languages: [go]
+    message: go bidirectional chan (synthetic "bidirectional")
+    severity: INFO

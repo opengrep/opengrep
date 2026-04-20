@@ -77,6 +77,3 @@ let is_special_identifier ?lang str =
    * these identifiers are not expected to be found in the source files!
    * Else targets are skipped when they should not be. *)
   || AST_generic.is_implicit_param str
-  (* Elixir multi-clause functions are lowered to synthetic __pN__
-   * parameters in Elixir_to_generic; these are never present in source. *)
-  || (lang =*= Some Lang.Elixir && AST_generic.is_elixir_synthetic_param str)

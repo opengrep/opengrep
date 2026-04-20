@@ -1,0 +1,7 @@
+rules:
+  - id: swift-dict-literal
+    pattern: |
+      let $M: [$K: $V] = $E
+    languages: [swift]
+    message: swift dict literal desugared to Dictionary<K,V>
+    severity: INFO

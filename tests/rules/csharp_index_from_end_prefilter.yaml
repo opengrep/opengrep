@@ -1,0 +1,6 @@
+rules:
+  - id: csharp-index-from-end
+    pattern: $ARR[^$N]
+    languages: [csharp]
+    message: csharp from-end index ^N (synthetic System.Index)
+    severity: INFO

@@ -687,15 +687,23 @@ and map_definition env (v : definition) : G.definition =
       let _, first_params, _ = clause.f_params in
       let n = List.length first_params in
       let param_ids = List.init n (fun i -> (Printf.sprintf "__p%d__" i, tk)) in
+      (* The __pN__ names are synthesised for the multi-clause lowering
+         and never appear in Elixir source; mark hidden so the prefilter
+         regex doesn't require them. *)
       let synthetic_fparams =
         Tok.unsafe_fake_bracket
-          (List_.map (fun pid -> G.Param (G.param_of_id pid)) param_ids)
+          (List_.map (fun pid -> G.Param (G.param_of_id ~hidden:true pid))
+             param_ids)
       in
       let switch_cond =
         match param_ids with
         | [] -> G.L (G.Null tk) |> G.e
         | ids ->
-            let refs = List_.map (fun pid -> G.N (H.name_of_id pid) |> G.e) ids in
+            let refs =
+              List_.map (fun pid ->
+                  G.N (H.name_of_id ~hidden:true pid) |> G.e)
+                ids
+            in
             G.Container (G.Tuple, Tok.unsafe_fake_bracket refs) |> G.e
       in
       let cases =

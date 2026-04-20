@@ -1100,15 +1100,18 @@ and channel_type (env : env) (x : CST.channel_type) =
       let v2 = type_ env v2 in
       TChan (v1, TBidirectional, v2)
   | `Chan_LTDASH_choice_simple_type (v1, v2, v3) ->
+      (* `chan<- T` is a send-only channel. The menhir Go parser labels
+         this TSend; tree-sitter was previously swapped. *)
       let v1 = token env v1 (* "chan" *) in
       let _v2 = token env v2 (* "<-" *) in
       let v3 = type_ env v3 in
-      TChan (v1, TRecv, v3)
+      TChan (v1, TSend, v3)
   | `LTDASH_chan_choice_simple_type (v1, v2, v3) ->
+      (* `<-chan T` is a receive-only channel. *)
       let _v1 = token env v1 (* "<-" *) in
       let v2 = token env v2 (* "chan" *) in
       let v3 = type_ env v3 in
-      TChan (v2, TSend, v3)
+      TChan (v2, TRecv, v3)
 
 and parameter_list (env : env) ((v1, v2, v3) : CST.parameter_list) :
     parameter_binding list bracket =

@@ -2353,13 +2353,13 @@ let raw_of_stmt (x : stmt) : any Raw_tree.t = Any (S x)
 (* ------------------------------------------------------------------------- *)
 
 (* alt: could use @@deriving make *)
-let param_of_id ?(pattrs = []) ?ptype ?pdefault id =
+let param_of_id ?(pattrs = []) ?ptype ?pdefault ?(hidden = false) id =
   {
     pname = Some id;
     pdefault;
     ptype;
     pattrs;
-    pinfo = basic_id_info (Parameter, SId.unsafe_default);
+    pinfo = basic_id_info ~hidden (Parameter, SId.unsafe_default);
   }
 
 let param_of_type ?(pattrs = []) ?pdefault ?pname typ =
@@ -2378,12 +2378,6 @@ let implicit_param = "!!_implicit_param!"
 let implicit_param_id tk = (implicit_param, tk)
 let is_implicit_param s = String.starts_with ~prefix:"!!_implicit_param!" s
 
-(* Synthetic positional parameters inserted by Elixir_to_generic for
- * multi-clause function definitions (__p0__, __p1__, ...). These names
- * are not present in source code, so the prefilter must not require
- * them. Coupling: languages/elixir/generic/Elixir_to_generic.ml where
- * these are generated, and src/rule/Pattern.ml is_special_identifier. *)
-let is_elixir_synthetic_param s = Common.(s =~ "^__p[0-9]+__$")
 
 (* ------------------------------------------------------------------------- *)
 (* Types *)

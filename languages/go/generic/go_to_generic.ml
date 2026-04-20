@@ -153,11 +153,17 @@ let top_func () =
   and type_argument v =
     let t = type_ v in
     G.TA t
-  and chan_dir = function
-    | TSend -> G.TyN (G.Id (unsafe_fake_id "send", G.empty_id_info ())) |> G.t
-    | TRecv -> G.TyN (G.Id (unsafe_fake_id "recv", G.empty_id_info ())) |> G.t
+  and chan_dir =
+    (* The direction names are synthetic — Go source never literally
+       contains "send"/"recv"/"bidirectional"; they come from the
+       `chan<-` / `<-chan` / `chan` syntax. Mark hidden so the prefilter
+       doesn't demand these strings in the target. *)
+    let hidden () = G.empty_id_info ~hidden:true () in
+    function
+    | TSend -> G.TyN (G.Id (unsafe_fake_id "send", hidden ())) |> G.t
+    | TRecv -> G.TyN (G.Id (unsafe_fake_id "recv", hidden ())) |> G.t
     | TBidirectional ->
-        G.TyN (G.Id (unsafe_fake_id "bidirectional", G.empty_id_info ())) |> G.t
+        G.TyN (G.Id (unsafe_fake_id "bidirectional", hidden ())) |> G.t
   and func_type { ftok; fparams = l, params, r; fresults } :
       G.tok * G.parameters * G.type_ option =
     let fparams = list parameter_binding params in

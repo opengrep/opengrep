@@ -254,10 +254,13 @@ and map_qualifier env = function
          It's like a dynamic IdQualified, really more suited for something
          like a DotAccess of a Call to `decltype`, for programs like
          decltype(e)::foo
-         Let's just make something up for now.
+         We use the `!!_implicit_param!` prefix so the prefilter's
+         is_implicit_param check skips this synthesised ident.
       *)
       let _v1 = map_tok env v1 and _v2 = map_bracket env (map_expr env) v2 in
-      let v1 = ("DecltypeId", G.fake "DecltypeId") in
+      let v1 =
+        (G.implicit_param ^ "decltype", G.fake (G.implicit_param ^ "decltype"))
+      in
       (v1, None)
 
 and map_a_class_name env v = map_name env v
