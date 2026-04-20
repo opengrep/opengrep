@@ -43,7 +43,10 @@ let v_list = List_.map
 let v_option = Option.map
 
 let cases_to_lambda lb cases : G.function_definition =
-  let id = ("!hidden_scala_param!", lb) in
+  (* Use the generic implicit-param name so the prefilter exclusion in
+   * Pattern.is_special_identifier (via AST_generic.is_implicit_param)
+   * applies — otherwise rules over `{ case ... }` blocks are filtered out. *)
+  let id = G.implicit_param_id lb in
   let param = G.Param (G.param_of_id id) in
   let body =
     G.Switch (lb, Some (G.Cond (G.N (H.name_of_id id) |> G.e)), cases) |> G.s

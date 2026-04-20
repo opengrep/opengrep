@@ -1,0 +1,8 @@
+rules:
+  - id: find-kt-map-const
+    patterns:
+      - pattern: |
+          $XS.map { $E }
+    languages: [kotlin]
+    message: found map with constant lambda
+    severity: INFO

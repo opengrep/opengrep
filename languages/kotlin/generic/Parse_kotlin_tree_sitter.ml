@@ -1432,7 +1432,15 @@ and lambda_literal (env : env) ((v1, v2, v3, v4) : CST.lambda_literal) =
          * the dataflow engine to track taint into the lambda body.
         *)
         let fake_it_tok = Tok.fake_tok v1 "it" in
-        let it_param = G.Param (G.param_of_id ("it", fake_it_tok)) in
+        (* Mark the synthetic param's pinfo as hidden so the prefilter in
+         * Analyze_pattern.ml does not require 'it' to appear in the target
+         * source (e.g. when the source uses an explicit parameter name). *)
+        let it_pinfo =
+          G.basic_id_info ~hidden:true (G.Parameter, G.SId.unsafe_default)
+        in
+        let it_param =
+          G.Param { (G.param_of_id ("it", fake_it_tok)) with pinfo = it_pinfo }
+        in
         ([it_param], v1)
   in
   let v3 =

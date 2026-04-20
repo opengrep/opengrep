@@ -63,6 +63,24 @@ class ['self] extract_strings_and_mvars_visitor =
             ()
         | _ -> super#visit_name env x
 
+      (* Same rationale as [visit_name] above, but for parameters whose
+       * [pname] is synthesised by a *_to_generic converter (e.g. Kotlin's
+       * implicit `it` for parameterless lambdas): when [pinfo] is marked
+       * hidden the pname is not in the target source and must not appear
+       * in the prefilter regex. *)
+      method! visit_parameter_classic env p =
+        if IdFlags.is_hidden !(p.pinfo.id_flags) then ()
+        else super#visit_parameter_classic env p
+
+      (* Same rationale for pattern identifiers synthesised by a
+       * *_to_generic converter (e.g. Elixir's `__tmp` for the `^` pin
+       * operator): when [id_info] is marked hidden the ident must not
+       * leak into the prefilter regex. *)
+      method! visit_pattern env x =
+        match x with
+        | PatId (_, { id_flags; _ }) when IdFlags.is_hidden !id_flags -> ()
+        | _ -> super#visit_pattern env x
+
       method! visit_directive (strings, _mvars, _lang as env) x =
         match x with
         | { d = ImportFrom (_, FileName (str, _), _); _ }
