@@ -1,13 +1,9 @@
-# This file contains Semgrep rules. See https://semgrep.dev for more info.
+# This file contains Opengrep rules. See https://opengrep.dev for more info.
 #
-# You can use this file locally either with:
-#  - docker run --rm -v "${PWD}:/home/repo" returntocorp/semgrep:develop --config semgrep.yml
-# or if you have already installed semgrep:
-#  - semgrep --config semgrep.yml .
+# You can use this file locally with:
+#  - opengrep --config semgrep.yml .
 #
-# This file is also used in CI, see .circleci/config.yml
-#
-# Put semgrep-specific rules here.
+# Put opengrep-specific rules here.
 # Put general OCaml or Python rules in the semgrep-rules repository
 # under ocaml/ or python/.
 
@@ -29,10 +25,10 @@ rules:
               ...
               [@@action]
     message: you should not print anything on stdout as it may interfere with
-      the JSON output we must return to pysemgrep from semgrep-core, or it may
-      interfere with the output of osemgrep.
+      the JSON output we must return to pyopengrep from opengrep-core, or it may
+      interfere with the output of opengrep-cli.
       Use Logs.debug() for debugging, UConsole.print() for actual valid output
-      in semgrep-core, or Logs.app() and CapConsole.print() in osemgrep.
+      in opengrep-core, or Logs.app() and CapConsole.print() in opengrep-cli.
     languages: [ocaml]
     severity: ERROR
     paths:
@@ -363,7 +359,7 @@ rules:
     message: >-
       `Fun.protect` does not block SIGALRM, which we use to implement timeouts (see
       module 'Time_limit'). The alarm could trigger while we are executing a 'finally'
-      ths causing Semgrep to crash. Use `Common.protect` instead.
+      ths causing Opengrep to crash. Use `Common.protect` instead.
     fix: Common.protect
     languages: [ocaml]
     severity: ERROR
