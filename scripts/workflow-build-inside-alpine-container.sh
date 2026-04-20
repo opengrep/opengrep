@@ -17,7 +17,7 @@ SHOULD_INIT_OPAM=${SHOULD_INIT_OPAM:-true}
 apk add --no-cache \
     git build-base zip bash libffi-dev \
     libpsl-static zstd-static libidn2-static \
-    libunistring-static tar zstd gnupg
+    libunistring-static tar zstd gnupg curl
 
 # Install opam from the official upstream release. Alpine's packaged opam lags
 # behind, so we pin to OPAM_VERSION and fetch the matching static binary for
