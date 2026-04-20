@@ -41,9 +41,10 @@ jobs:
           path: _opam
         
       - name: Set SHOULD_INIT_OPAM based on Cache
-        if: steps.cache-opam-linux-aarch64.outputs.cache-hit == 'true'
         run: |
-          echo "SHOULD_INIT_OPAM=false" >> $GITHUB_ENV
+          if [ -d _opam ]; then
+            echo "SHOULD_INIT_OPAM=false" >> $GITHUB_ENV
+          fi
 
       - name: Run build inside container
         run: |

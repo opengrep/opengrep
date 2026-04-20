@@ -204,8 +204,7 @@ jobs:
           OPAMCOLOR: always
           # OPAMROOT: C:/Users/runneradmin/AppData/Local/opam
         shell: bash
-        if: steps.cache-opamroot-win32-64.outputs.cache-hit != 'true'
-        # if: steps.cache-opam-win32-64.outputs.cache-hit != 'true'
+        if: steps.cache-opamroot-win32-64.outputs.cache-matched-key == ''
         run: |
           opam init \
           --no-setup \
@@ -225,7 +224,7 @@ jobs:
           OPAMSOLVERTIMEOUT: 600
           OPAMCOLOR: always
         shell: bash
-        if: steps.cache-opam-win32-64.outputs.cache-hit != 'true'
+        if: steps.cache-opam-win32-64.outputs.cache-matched-key == ''
         run: |
           export OCAML_VERSION=${{ matrix.ocaml_version }}
           echo "Creating local switch with OCaml $OCAML_VERSION..."
@@ -245,7 +244,7 @@ jobs:
           # OPAMCONFIRMLEVEL: unsafe-yes
           OPAMCOLOR: always
         shell: bash
-        if: steps.cache-opam-win32-64.outputs.cache-hit != 'true'
+        if: steps.cache-opam-win32-64.outputs.cache-matched-key == ''
         run: |
           eval $(opam env)
 
