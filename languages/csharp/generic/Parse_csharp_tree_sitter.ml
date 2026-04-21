@@ -272,8 +272,13 @@ let linq_to_expr (from : linq_query_part) (body : linq_query_part list) =
   | _ -> raise Impossible
 
 let new_index_from_end tok expr =
+  (* `arr[^N]` is desugared to `new System.Index(N, true)`. Neither
+     `System` nor `Index` appears in the source `^N` syntax, so mark
+     the synthesised qualified name hidden so the prefilter regex
+     doesn't demand them. *)
   let name =
-    H2.name_of_ids [ ("System", fake "System"); ("Index", fake "Index") ]
+    H2.name_of_ids ~hidden:true
+      [ ("System", fake "System"); ("Index", fake "Index") ]
   in
   let index = TyN name |> G.t in
   New
@@ -3262,8 +3267,15 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
               accs
               |> List_.map (fun (attrs, id, fbody) ->
                      let iname, itok = id in
+                     (* CLR-style `get_<PropName>` / `set_<PropName>`;
+                        the prefix-metavar support in m_ident (see
+                        Generic_vs_generic.decompose_prefix_metavar)
+                        lets patterns like `set_$P` match these. Mark
+                        hidden so the prefilter regex doesn't demand
+                        the literal mangled string. *)
                      let ent =
-                       basic_entity (iname ^ "_" ^ fname, itok) ~attrs
+                       basic_entity ~hidden:true
+                         (iname ^ "_" ^ fname, itok) ~attrs
                      in
                      let valparam =
                        Param
@@ -3272,6 +3284,10 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                            ptype = Some v4;
                            pdefault = None;
                            pattrs = [];
+                           (* C# setter's implicit `value` — the word
+                              appears in source when the setter body uses
+                              it. Eval_generic uses [is_hidden] to gate
+                              `metavariable-regex`, so don't mark hidden. *)
                            pinfo = empty_id_info ();
                          }
                      in
@@ -3455,7 +3471,10 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
       let _v4TODO = Option.map (explicit_interface_specifier env) v4 in
       let v5 = identifier env v5 (* identifier *) in
       let fname, _ftok = v5 in
-      (* The C#14 "field" keyword is mapped as an additional argument to get and set *)
+      (* The C#14 "field" keyword is mapped as an additional argument to
+         get and set. The keyword `field` can appear in source when the
+         accessor body uses it, so we don't mark pinfo hidden —
+         Eval_generic uses [is_hidden] to gate `metavariable-regex`. *)
       let fieldParam tok =
         Param
           {
@@ -3492,7 +3511,12 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                        else G.KeywordAttr (G.Setter, itok)
                   in
                   let attrs = attrs in
-                  let ent = basic_entity (iname ^ "_" ^ fname, itok) ~attrs in
+                  (* CLR-style accessor name; see other accessor site
+                     above for rationale. *)
+                  let ent =
+                    basic_entity ~hidden:true
+                      (iname ^ "_" ^ fname, itok) ~attrs
+                  in
                   let itok_loc = Tok.unsafe_loc_of_tok itok in
                   let new_loc loc n =
                       Tok.({
@@ -3534,7 +3558,8 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                              else []) @ [fieldParam field_token]);
                         (* NOTE: In order to make "set" be recognised by a $T $FOO(...) {...} pattern, *)
                         (* we need to give it the void type and point to a real token. *)
-                        frettype = (if has_return then Some v3 else Some (G.TyN (Id (("void", itok), G.empty_id_info ())) |> G.t));
+                        (* Synthetic `void` return — hidden to keep it out of the prefilter. *)
+                        frettype = (if has_return then Some v3 else Some (G.TyN (Id (("void", itok), G.empty_id_info ~hidden:true ())) |> G.t));
                         (* TODO Should this be "void"? *)
                         fbody;
                       }
@@ -3553,12 +3578,15 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
             ((open_br, funcs, close_br), v2)
         | `Arrow_exp_clause_SEMI (v1, v2) ->
             (* public int SomeProp => 3;
-             * Convert it to `get_SomeProp { return 3; }`
-             *)
+             * Convert it to `get_SomeProp { return 3; }` — CLR-style
+             * accessor name; patterns use `set_$P` / `get_$P` and the
+             * prefix-metavar support in m_ident binds the metavar.
+             * Hidden so the prefilter regex doesn't demand the mangled
+             * string literally. *)
             let v1 = arrow_expression_clause env v1 in
             let v2 = token env v2 (* ";" *) in
             let arrow, expr = v1 in
-            let ent = basic_entity ("get_" ^ fname, arrow) in
+            let ent = basic_entity ~hidden:true ("get_" ^ fname, arrow) in
             let funcdef =
               FuncDef
                 {

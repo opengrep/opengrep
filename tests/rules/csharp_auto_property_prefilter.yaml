@@ -1,0 +1,9 @@
+rules:
+  - id: csharp-auto-property
+    pattern: |
+      class $C {
+          public int $P { get; set; }
+      }
+    languages: [csharp]
+    message: csharp auto-property get/set
+    severity: INFO

@@ -1372,15 +1372,18 @@ and declaration (env : env) (x : CST.declaration) : G.stmt =
       let events = v6 :: v7 in
       let v8 = (* ")" *) token env v8 in
       let v9 = trigger_body env v9 in
+      (* __trigger_events / __trigger_object are synthetic attribute
+         names not present in Apex source; mark hidden so they don't
+         leak into the prefilter regex. *)
       let entity =
         { name = G.EN (G.Id (v2, G.empty_id_info ()));
           attrs = [G.NamedAttr
                      (fake "@",
-                      G.Id (("__trigger_events", fake ""), empty_id_info ()),
+                      G.Id (("__trigger_events", fake ""), empty_id_info ~hidden:true ()),
                       (v5, events, v8));
                    G.NamedAttr
                      (fake "@",
-                      G.Id (("__trigger_object", fake ""), empty_id_info ()),
+                      G.Id (("__trigger_object", fake ""), empty_id_info ~hidden:true ()),
                       fb [G.Arg (G.N (G.Id (v4, empty_id_info ())) |> G.e)])];
           tparams = None }
       in
@@ -1681,7 +1684,13 @@ match v4 with
             let iname = String.lowercase_ascii iname in
             let has_params = iname <> "get" in
             let has_return = iname = "get" in
-            let ent = basic_entity (iname ^ "_" ^ fname, itok) ~attrs in
+            (* CLR-style `get_<P>` / `set_<P>` accessor name; the
+               prefix-metavar support in m_ident lets patterns like
+               `set_$P` match these. Hidden so the prefilter regex
+               doesn't demand the mangled string literally. *)
+            let ent =
+              basic_entity ~hidden:true (iname ^ "_" ^ fname, itok) ~attrs
+            in
             let funcdef =
               FuncDef
                 {
@@ -1690,6 +1699,11 @@ match v4 with
                     fb
                       (if has_params then
                           [
+                            (* Apex setter's implicit `value`. The word
+                               appears in source when the setter body
+                               uses it, so we don't mark pinfo hidden —
+                               Eval_generic uses [is_hidden] to gate
+                               `metavariable-regex` evaluation. *)
                             Param
                               {
                                 pname = Some ("value", fake "value");

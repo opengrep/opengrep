@@ -1,0 +1,7 @@
+rules:
+  - id: go-chan-in
+    pattern: |
+      func $F($P <-chan $T) $R { ... }
+    languages: [go]
+    message: go recv-only chan (synthetic "recv")
+    severity: INFO

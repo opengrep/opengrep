@@ -100,11 +100,15 @@ let add_type_args_opt_to_name name topt =
   | None -> name
   | Some t -> add_type_args_to_name name t
 
-let name_of_ids ?name_top ?(case_insensitive = false) xs =
+(* NOTE: [~hidden] flags only the envelope; inner qualifier idents
+   in [name_middle] are not marked hidden. Current prefilter visitor
+   short-circuits at the envelope so this is fine — keep in mind if
+   you add a visitor that descends into [name_middle]. *)
+let name_of_ids ?name_top ?(case_insensitive = false) ?(hidden = false) xs =
   match List.rev xs with
   | [] -> failwith "name_of_ids: empty ids"
   | [ x ] when Option.is_none name_top ->
-    Id (x, empty_id_info ~case_insensitive ())
+    Id (x, empty_id_info ~case_insensitive ~hidden ())
   | x :: xs ->
       let qualif =
         if xs =*= [] then None
@@ -115,7 +119,7 @@ let name_of_ids ?name_top ?(case_insensitive = false) xs =
           name_last = (x, None);
           name_middle = qualif;
           name_top;
-          name_info = empty_id_info ();
+          name_info = empty_id_info ~hidden ();
         }
 
 let add_suffix_to_name suffix name =
@@ -136,8 +140,8 @@ let add_suffix_to_name suffix name =
           name_middle = new_name_middle;
         }
 
-let name_of_id ?(case_insensitive = false) id =
-  Id (id, empty_id_info ~case_insensitive ())
+let name_of_id ?(case_insensitive = false) ?(hidden = false) id =
+  Id (id, empty_id_info ~case_insensitive ~hidden ())
 
 let name_of_dot_access e =
   let rec fetch_ids = function

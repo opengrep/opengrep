@@ -1,0 +1,7 @@
+rules:
+  - id: apex-trigger-events
+    pattern: |
+      trigger $NAME on Account (before insert, after update) { ... }
+    languages: [apex]
+    message: apex trigger (synthetic __trigger_events attr)
+    severity: INFO

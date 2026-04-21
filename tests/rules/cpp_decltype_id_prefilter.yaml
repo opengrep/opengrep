@@ -1,0 +1,7 @@
+rules:
+  - id: cpp-decltype-id
+    pattern: |
+      decltype($E)::$F $X;
+    languages: [cpp]
+    message: cpp decltype(E)::foo qualified name (synthetic DecltypeId)
+    severity: INFO

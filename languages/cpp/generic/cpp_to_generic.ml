@@ -82,14 +82,6 @@ let expr_option t eopt =
   | Some e -> e
   | None -> G.L (G.Unit t) |> G.e
 
-let _name_option t nopt =
-  match nopt with
-  | Some n -> n
-  | None ->
-      (* TODO? gensym? *)
-      let fake_id = ("_ANON", t) in
-      H.name_of_id fake_id
-
 let distribute_access (xs : (G.field, G.attribute) Either.t list) : G.field list
     =
   let rec aux attr_opt xs =
@@ -254,10 +246,13 @@ and map_qualifier env = function
          It's like a dynamic IdQualified, really more suited for something
          like a DotAccess of a Call to `decltype`, for programs like
          decltype(e)::foo
-         Let's just make something up for now.
+         We use the `!!_implicit_param!` prefix so the prefilter's
+         is_implicit_param check skips this synthesised ident.
       *)
       let _v1 = map_tok env v1 and _v2 = map_bracket env (map_expr env) v2 in
-      let v1 = ("DecltypeId", G.fake "DecltypeId") in
+      let v1 =
+       let impl_param = G.implicit_param ^ "decltype" in (impl_param, G.fake impl_param)
+      in
       (v1, None)
 
 and map_a_class_name env v = map_name env v

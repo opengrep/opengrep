@@ -1,0 +1,12 @@
+rules:
+  - id: csharp-prop-setter
+    pattern: |
+      class $C {
+          public int $P {
+              get { return $G; }
+              set { $S = $V; }
+          }
+      }
+    languages: [csharp]
+    message: csharp property with get and set accessors
+    severity: INFO

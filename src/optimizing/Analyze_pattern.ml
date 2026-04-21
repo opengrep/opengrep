@@ -61,6 +61,13 @@ class ['self] extract_strings_and_mvars_visitor =
                 We assume a match is possible without the identifier
                 being present in the target source, so we ignore it. *)
             ()
+        | IdQualified { name_info = { id_flags; _ }; _ }
+          when IdFlags.is_hidden !id_flags ->
+            (* Same rationale for a fully-synthetic qualified name
+               (e.g. C#'s `System.Index` synthesised for `arr[^N]`): if
+               name_info is hidden, the whole path — including the
+               qualifier idents — is absent from source. *)
+            ()
         | _ -> super#visit_name env x
 
       (* Same rationale as [visit_name] above, but for parameters whose

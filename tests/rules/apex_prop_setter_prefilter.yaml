@@ -1,0 +1,12 @@
+rules:
+  - id: apex-prop-setter
+    pattern: |
+      public class $C {
+          public Integer $P {
+              get { return $G; }
+              set { $S = $V; }
+          }
+      }
+    languages: [apex]
+    message: apex property with get and set accessors
+    severity: INFO

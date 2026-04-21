@@ -1302,8 +1302,10 @@ and map_dictionary_type (env : env) ((v1, v2, v3, v4, v5) : CST.dictionary_type)
   let v4 = map_type_ env v4 in
   let v5 = (* "]" *) token env v5 in
   (* Modeled after Semgrep treats map types in Go. In Swift, [Int: Int] is
-   * equivalent to Dictionary<Int, Int>, so we'll just desugar to that. *)
-  let dict_name = H2.name_of_id ("Dictionary", v1) in
+   * equivalent to Dictionary<Int, Int>, so we'll just desugar to that.
+   * "Dictionary" isn't in the source `[K: V]` form — mark hidden so the
+   * prefilter regex doesn't require it. *)
+  let dict_name = H2.name_of_id ~hidden:true ("Dictionary", v1) in
   G.TyApply (G.TyN dict_name |> G.t, (v1, [ G.TA v2; G.TA v4 ], v5)) |> G.t
 
 and map_binding_kind_and_pattern (env : env)

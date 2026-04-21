@@ -174,6 +174,24 @@ let m_id_string case_insensitive =
 (* Name *)
 (*****************************************************************************)
 
+(* Pattern ident "<prefix>$METAVAR" matches source ident "<prefix><s>"
+   by binding $METAVAR to <s>. Used for parser-synthesised mangled
+   names such as C#/Apex property accessors `get_<PropName>` /
+   `set_<PropName>`. Returns [Some (binder)] if it applies (pass
+   [binder] to the matching monad), [None] otherwise. *)
+let match_prefix_metavar stra (strb, tokb) =
+  if Mvar.is_metavar_name stra then None
+  else if Common.(stra =~ "^\\([^$]+\\)\\(\\$[A-Z_][A-Z_0-9]*\\)$") then
+    let pfx, mvar = Common.matched2 stra in
+    let pfx_len = String.length pfx in
+    if String.length strb > pfx_len
+       && Common.(String.sub strb 0 pfx_len =*= pfx)
+    then
+      let middle = String.sub strb pfx_len (String.length strb - pfx_len) in
+      Some (envf (mvar, tokb) (MV.Id ((middle, tokb), None)))
+    else None
+  else None
+
 (* coupling: modify also m_ident_and_id_info *)
 (* You should prefer to use m_ident_and_id_info if you can *)
 let m_ident a b =
@@ -696,6 +714,22 @@ and m_ident_and_id_info (a1, a2) (b1, b2) =
   | (stra, _), (strb, _) when Pattern.is_regexp_string stra ->
       let re_match = Matching_generic.regexp_matcher_of_regexp_string stra in
       if re_match strb then return () else fail ()
+  (* Prefix metavar: pattern "set_$P" matches source "set_X", but
+     only when the pattern-side id_info is marked hidden. Synthetic
+     parser-mangled entities (e.g. C#/Apex `get_<P>` / `set_<P>` or
+     VB.NET `GET_<P>` / `SET_<P>`) are the intended trigger; we avoid
+     spurious decomposition of literal idents containing `$` in JS,
+     Scala, Java etc. by gating on the hidden flag. *)
+  | (stra, _), b1
+    when String.contains stra '$' && IdFlags.is_hidden !(a2.G.id_flags) -> (
+      match match_prefix_metavar stra b1 with
+      | Some tin -> tin
+      | None ->
+          let case_insensitive =
+            G.is_case_insensitive a2 && B.is_case_insensitive b2
+          in
+          let* () = m_wrap (m_id_string case_insensitive) a1 b1 in
+          m_id_info a2 b2)
   (* general case *)
   | _, _ ->
       let case_insensitive =
