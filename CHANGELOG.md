@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.20.0](https://github.com/opengrep/opengrep/releases/tag/v1.20.0) - 21-04-2026
+
+### Improvements
+
+* Elixir: Updates in patterns by @maciejpirog in #655
+* Elixir: Distinguish field access from zero-arity remote call by @dimitris-m in #659
+* Python: Preserve match/case guard and `as` bindings (PEP 634) by @dimitris-m in #679
+* Python: Parse PEP 634 match/case statements in the menhir parser by @raphaeldavidf in #665
+* Clojure: Support string-key map destructuring by @dimitris-m in #658
+* Fix lambda taint tracking in intrafile mode by @corneliuhoffman in #597
+* Unconditional taints in lambdas by @corneliuhoffman in #663
+* Make switch usable as expression in IL by @maciejpirog in #664
+* Exclude more synthetic identifiers from the PCRE prefilter by @dimitris-m in #673
+* Hide synthetic identifiers, add prefix-metavar matching, fix Go `chan` direction by @corneliuhoffman in #677
+
+### Infrastructure
+
+* CI: Set CLCACHE_DIR for nuitka clcache on Windows by @dimitris-m in #680
+* CI: Skip init steps when cache was restored via restore-keys by @dimitris-m in #672
+* CI: Upgrade opam to 2.5.1, re-enable windows sig verification by @dimitris-m in #674
+* CI (Alpine): Add curl to apk install by @dimitris-m in #675
+* Chore: Remove .circleci, drop dead Makefile targets, align terminology by @dimitris-m in #676
+* Fix Windows install: Bundle charset_normalizer, don't treat stderr as fatal by @dimitris-m in #662
+* Opam: Make cache version-invariant and pin memprof-limits via template by @dimitris-m in #670
+
+### New Contributors
+
+* @raphaeldavidf made their first contribution in #665
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.19.0...v1.20.0
+
+
 ## [1.19.0](https://github.com/opengrep/opengrep/releases/tag/v1.19.0) - 09-04-2026
 
 ### Improvements
