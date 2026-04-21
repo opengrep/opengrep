@@ -100,6 +100,10 @@ let add_type_args_opt_to_name name topt =
   | None -> name
   | Some t -> add_type_args_to_name name t
 
+(* NOTE: [~hidden] flags only the envelope; inner qualifier idents
+   in [name_middle] are not marked hidden. Current prefilter visitor
+   short-circuits at the envelope so this is fine — keep in mind if
+   you add a visitor that descends into [name_middle]. *)
 let name_of_ids ?name_top ?(case_insensitive = false) ?(hidden = false) xs =
   match List.rev xs with
   | [] -> failwith "name_of_ids: empty ids"

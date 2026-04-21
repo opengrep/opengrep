@@ -77,3 +77,14 @@ let is_special_identifier ?lang str =
    * these identifiers are not expected to be found in the source files!
    * Else targets are skipped when they should not be. *)
   || AST_generic.is_implicit_param str
+  (* C#/Apex property accessors synthesise parameters named "value"
+   * (setter) and, in C#, "field" (C#14 property-level keyword). The
+   * parameter declarations are never in source text even though the
+   * words sometimes are, so the prefilter must not demand them.
+   * We avoid setting the hidden flag on these pnames because
+   * Eval_generic.text_of_metavariable gates `metavariable-regex`
+   * evaluation on is_hidden, and rules like
+   * `metavariable-regex: field` / `: value` should still see the
+   * bound text. *)
+  || (lang =*= Some Lang.Csharp && (str = "value" || str = "field"))
+  || (lang =*= Some Lang.Apex && str = "value")

@@ -3267,15 +3267,16 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
               accs
               |> List_.map (fun (attrs, id, fbody) ->
                      let iname, itok = id in
-                     (* Use the source keyword (`get`/`set`/`init`) as
-                        the accessor entity name rather than the CLR-style
-                        `get_X`/`set_X`. The mangling broke pattern
-                        matching of `set { ... }` against `$P { set; }`
-                        because `set_$P` is treated as one opaque ident
-                        instead of `set_` + metavar `$P`, and it's not
-                        needed for taint analysis at this layer. *)
-                     let _fname = fname in
-                     let ent = basic_entity (iname, itok) ~attrs in
+                     (* CLR-style `get_<PropName>` / `set_<PropName>`;
+                        the prefix-metavar support in m_ident (see
+                        Generic_vs_generic.decompose_prefix_metavar)
+                        lets patterns like `set_$P` match these. Mark
+                        hidden so the prefilter regex doesn't demand
+                        the literal mangled string. *)
+                     let ent =
+                       basic_entity ~hidden:true
+                         (iname ^ "_" ^ fname, itok) ~attrs
+                     in
                      let valparam =
                        Param
                          {
@@ -3510,10 +3511,12 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
                        else G.KeywordAttr (G.Setter, itok)
                   in
                   let attrs = attrs in
-                  (* Keep `get`/`set`/`init` as the entity name — see
-                     the other accessor site above for rationale. *)
-                  let _fname = fname in
-                  let ent = basic_entity (iname, itok) ~attrs in
+                  (* CLR-style accessor name; see other accessor site
+                     above for rationale. *)
+                  let ent =
+                    basic_entity ~hidden:true
+                      (iname ^ "_" ^ fname, itok) ~attrs
+                  in
                   let itok_loc = Tok.unsafe_loc_of_tok itok in
                   let new_loc loc n =
                       Tok.({
@@ -3575,12 +3578,15 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
             ((open_br, funcs, close_br), v2)
         | `Arrow_exp_clause_SEMI (v1, v2) ->
             (* public int SomeProp => 3;
-             * Convert it to `get_SomeProp { return 3; }`
-             *)
+             * Convert it to `get_SomeProp { return 3; }` — CLR-style
+             * accessor name; patterns use `set_$P` / `get_$P` and the
+             * prefix-metavar support in m_ident binds the metavar.
+             * Hidden so the prefilter regex doesn't demand the mangled
+             * string literally. *)
             let v1 = arrow_expression_clause env v1 in
             let v2 = token env v2 (* ";" *) in
             let arrow, expr = v1 in
-            let ent = basic_entity ("get_" ^ fname, arrow) in
+            let ent = basic_entity ~hidden:true ("get_" ^ fname, arrow) in
             let funcdef =
               FuncDef
                 {

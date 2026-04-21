@@ -2378,7 +2378,6 @@ let implicit_param = "!!_implicit_param!"
 let implicit_param_id tk = (implicit_param, tk)
 let is_implicit_param s = String.starts_with ~prefix:"!!_implicit_param!" s
 
-
 (* ------------------------------------------------------------------------- *)
 (* Types *)
 (* ------------------------------------------------------------------------- *)

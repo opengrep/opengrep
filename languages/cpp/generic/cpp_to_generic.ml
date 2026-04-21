@@ -82,14 +82,6 @@ let expr_option t eopt =
   | Some e -> e
   | None -> G.L (G.Unit t) |> G.e
 
-let _name_option t nopt =
-  match nopt with
-  | Some n -> n
-  | None ->
-      (* TODO? gensym? *)
-      let fake_id = ("_ANON", t) in
-      H.name_of_id fake_id
-
 let distribute_access (xs : (G.field, G.attribute) Either.t list) : G.field list
     =
   let rec aux attr_opt xs =

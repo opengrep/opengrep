@@ -1,0 +1,12 @@
+rules:
+  - id: csharp-arrow-property
+    pattern: |
+      class $C {
+          public int $P => $E;
+      }
+    languages: [csharp]
+    message: >
+      Arrow-property `public int P => E;`. Previously this was parsed
+      with a CLR-mangled `get_P` accessor entity name; now uses `get`
+      so $P can bind as a metavariable.
+    severity: INFO

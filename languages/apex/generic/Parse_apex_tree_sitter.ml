@@ -1684,10 +1684,13 @@ match v4 with
             let iname = String.lowercase_ascii iname in
             let has_params = iname <> "get" in
             let has_return = iname = "get" in
-            (* Use the source keyword (`get`/`set`) as the accessor entity
-               name; mangling to `get_X`/`set_X` broke pattern matching. *)
-            let _fname = fname in
-            let ent = basic_entity (iname, itok) ~attrs in
+            (* CLR-style `get_<P>` / `set_<P>` accessor name; the
+               prefix-metavar support in m_ident lets patterns like
+               `set_$P` match these. Hidden so the prefilter regex
+               doesn't demand the mangled string literally. *)
+            let ent =
+              basic_entity ~hidden:true (iname ^ "_" ^ fname, itok) ~attrs
+            in
             let funcdef =
               FuncDef
                 {
