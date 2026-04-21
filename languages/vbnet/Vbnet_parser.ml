@@ -305,15 +305,16 @@ let ident_of_token (t : T.t) : G.ident =
 let expr_of_id (id : G.ident) =
   G.N (G.Id (id, G.empty_id_info ~case_insensitive:true ())) |> G.e
 
-let make_name (ident : G.ident) (type_args : G.type_arguments option) : G.name =
+let make_name ?(hidden = false) (ident : G.ident)
+    (type_args : G.type_arguments option) : G.name =
   match type_args with
-  | None -> G.Id (ident, G.empty_id_info ~case_insensitive:true ())
+  | None -> G.Id (ident, G.empty_id_info ~case_insensitive:true ~hidden ())
   | Some _ ->
       G.IdQualified
         { name_last = (ident, type_args);
           name_middle = None;
           name_top = None;
-          name_info = G.empty_id_info ~case_insensitive:true () }
+          name_info = G.empty_id_info ~case_insensitive:true ~hidden () }
 
 let rec split_last (xs : 'a list) : 'a list * 'a =
   match xs with
@@ -3083,7 +3084,7 @@ and property_accessor_block ((property_name_str, _) : G.ident)
       let* _ = token "END" in
       let* _ = token "GET" in
       let entity =
-        G.{ name = G.EN (make_name ("GET_" ^ property_name_str,  get.tok) None);
+        G.{ name = G.EN (make_name ~hidden:true ("GET_" ^ property_name_str, get.tok) None);
             attrs = modifiers @ List.concat attrs;
             tparams = None }
       in
@@ -3106,7 +3107,7 @@ and property_accessor_block ((property_name_str, _) : G.ident)
       let* _ = token "END" in
       let* _ = token "SET" in
       let entity =
-        G.{ name = G.EN (make_name ("SET_" ^ property_name_str, set.tok) None);
+        G.{ name = G.EN (make_name ~hidden:true ("SET_" ^ property_name_str, set.tok) None);
             attrs = modifiers @ List.concat attrs;
             tparams = None }
       in

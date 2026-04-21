@@ -207,11 +207,6 @@ let m_ident a b =
   | (stra, _), (strb, _) when Pattern.is_regexp_string stra ->
       let re_match = Matching_generic.regexp_matcher_of_regexp_string stra in
       if re_match strb then return () else fail ()
-  (* Prefix metavar: pattern "set_$P" matches source "set_X". *)
-  | (stra, _), b when String.contains stra '$' -> (
-      match match_prefix_metavar stra b with
-      | Some tin -> tin
-      | None -> m_wrap m_string a b)
   (* Note: We should try to avoid allowing case insensitive
    *  identifiers to get here because we have no way of
    *  distinguishing them from case sensitive identifiers
@@ -719,8 +714,14 @@ and m_ident_and_id_info (a1, a2) (b1, b2) =
   | (stra, _), (strb, _) when Pattern.is_regexp_string stra ->
       let re_match = Matching_generic.regexp_matcher_of_regexp_string stra in
       if re_match strb then return () else fail ()
-  (* Prefix metavar: pattern "set_$P" matches source "set_X". *)
-  | (stra, _), b1 when String.contains stra '$' -> (
+  (* Prefix metavar: pattern "set_$P" matches source "set_X", but
+     only when the pattern-side id_info is marked hidden. Synthetic
+     parser-mangled entities (e.g. C#/Apex `get_<P>` / `set_<P>` or
+     VB.NET `GET_<P>` / `SET_<P>`) are the intended trigger; we avoid
+     spurious decomposition of literal idents containing `$` in JS,
+     Scala, Java etc. by gating on the hidden flag. *)
+  | (stra, _), b1
+    when String.contains stra '$' && IdFlags.is_hidden !(a2.G.id_flags) -> (
       match match_prefix_metavar stra b1 with
       | Some tin -> tin
       | None ->

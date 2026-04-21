@@ -1,0 +1,16 @@
+rules:
+  - id: vbnet-prop-setter
+    pattern: |
+      Public Class $C
+          Public Property $P As Integer
+              Get
+                  Return $G
+              End Get
+              Set(ByVal value As Integer)
+                  $S = value
+              End Set
+          End Property
+      End Class
+    languages: [vbnet]
+    message: vbnet property with get and set accessors
+    severity: INFO
