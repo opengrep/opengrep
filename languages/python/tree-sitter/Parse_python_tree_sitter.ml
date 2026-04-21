@@ -422,14 +422,17 @@ and map_expression (env : env) (x : CST.expression) : expr =
       let e = map_type_ env v3 in
       NamedExpr (name_of_id v1, teq, e)
   | `As_pat (v1, v2, v3) ->
-      (* This site should be guarded, so it shouldn't be reached ideally.
-         As-patterns are not truly expressions, but they can occur in the context of a `with` or
-         `except`.
-      *)
+      (* PEP 634 as_pattern. Tree-sitter puts `as_pattern` in the
+       * `expression` choice, so it can surface inside any match-case
+       * sub-pattern (sequence/mapping/class). The alias target is always
+       * an identifier (see grammar rule `alias: alias($.expression,
+       * $.as_pattern_target)`). *)
       let v1 = map_type_ env v1 in
       let v2 = (* "as" *) token env v2 in
       let v3 = map_type_ env v3 in
-      invalid ()
+      (match v3 with
+       | Name (id, _) -> AsPattern (v1, v2, id)
+       | _ -> invalid ())
 
 and map_expression_list (env : env) ((v1, v2) : CST.expression_list) : expr list
     =
@@ -1425,12 +1428,12 @@ and map_case_clause (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.case_clause)
         map_anon_choice_type_756d23d env v2)
       v3
   in
-  let v4 =
+  let _v4 =
     match v4 with
     | Some _tok -> (* "," *) ()
     | None -> ()
   in
-  let cond =
+  let guard =
     match v5 with
     | Some x -> (
         match map_if_clause env x with
@@ -1438,9 +1441,15 @@ and map_case_clause (env : env) ((v1, v2, v3, v4, v5, v6, v7) : CST.case_clause)
         | CompFor _ -> raise Common.Impossible)
     | None -> None
   in
-  let v6 = (* ":" *) token env v6 in
+  let _v6 = (* ":" *) token env v6 in
   let stmts = map_suite env v7 in
-  CasesAndBody ([ Case (v1, Tuple (CompList (fb (e :: es)), no_ctx)) ], stmts)
+  let pats = Tuple (CompList (fb (e :: es)), no_ctx) in
+  let cp =
+    match guard with
+    | None -> CasePat pats
+    | Some g -> CasePatWhen (CasePat pats, g)
+  in
+  CasesAndBody ([ Case (v1, cp) ], stmts)
 
 and map_class_definition (env : env)
     ((v1, v2, v3, v4, v5) : CST.class_definition) : class_definition =

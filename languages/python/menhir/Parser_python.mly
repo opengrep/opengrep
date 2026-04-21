@@ -656,41 +656,147 @@ with_inner_in_parens:
  * identifiers outside of match-statement contexts. The MATCH/CASE tokens
  * used here are synthesized by Parsing_hacks_python only when the
  * surrounding shape is unambiguously a match statement.
- * Patterns are represented as expressions (AST_python.pattern = expr) and
- * the subject and case patterns are always wrapped in a Tuple via
- * `match_tuple` (even single-element ones), mirroring the tree-sitter
- * Python frontend so semgrep matching is uniform across parser backends.
- * The case-pattern non-terminal is `test_nocond` (no conditional ternary)
- * so that an `if` after the pattern is unambiguously a guard, not the
- * `else`-less head of `a if b else c`. Starred patterns (`*rest`) are
- * not allowed at the top of a case pattern in PEP 634 — they only appear
- * inside sequence patterns (`case [a, *rest]:`), parsed via the list-
- * literal atom — so dropping `star_expr` here also tightens the grammar.
- * The `if guard` clause is parsed-and-discarded, matching the tree-sitter
- * frontend (Parse_python_tree_sitter.ml:1433-1443 computes a `cond` value
- * and never uses it because AST_python.case has no guard slot).
- * TODO: extend AST_python.case with an `expr option` for the guard, plumb
- * through both parsers, and emit `G.PatWhen (pat, guard)` in
- * Python_to_generic.case — see ocaml_to_generic, scala_to_generic, and
- * Parse_rust_tree_sitter for prior art. The same TODO applies to the
- * as-pattern's bound name, which is also currently dropped. *)
+ * Patterns are represented via `case_pattern` (at the top) wrapping an
+ * `expr` (which may carry `AsPattern` at any depth for PEP 634 `as NAME`
+ * bindings); the subject and case patterns are always wrapped in a Tuple
+ * via `match_tuple` (even single-element ones), mirroring tree-sitter.
+ * The case-pattern element non-terminal is `case_pat_test` (a parallel
+ * to `test_nocond` that additionally accepts `AS NAME` at any position
+ * where a full pattern can appear per PEP 634), implemented as a full
+ * parallel hierarchy from `case_pat_atom` up to `case_pat_test`. *)
 match_stmt:
   | MATCH tuple(namedexpr_test) ":" NEWLINE INDENT case_block+ DEDENT
       { Switch ($1, match_tuple (to_list $2), $6) }
 
 case_block:
-  | CASE tuple(test_nocond) ":" suite
-      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $4) }
-  | CASE tuple(test_nocond) IF test ":" suite
-      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $6) }
-  (* PEP 634 as-pattern: `case pattern as name [if guard]:`. Note that PEP
-   * 634 scopes `as` to the rightmost element of a comma-separated pattern
-   * list, but here `as` binds to the whole tuple — which is fine because
-   * we discard the name; revisit when the binding is preserved. *)
-  | CASE tuple(test_nocond) AS NAME ":" suite
-      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $6) }
-  | CASE tuple(test_nocond) AS NAME IF test ":" suite
-      { CasesAndBody ([Case ($1, match_tuple (to_list $2))], $8) }
+  | CASE case_patterns ":" suite
+      { CasesAndBody
+          ([Case ($1, CasePat (match_tuple $2))], $4) }
+  | CASE case_patterns IF test ":" suite
+      { CasesAndBody
+          ([Case ($1,
+             CasePatWhen (CasePat (match_tuple $2), $4))], $6) }
+
+(*************************************************************************)
+(* PEP 634 case-pattern grammar                                          *)
+(*************************************************************************)
+(* Follows CPython's pegen approach: a dedicated pattern hierarchy with
+ * its own productions rather than a parallel mirror of the expression
+ * grammar. Rules emit regular `expr` AST nodes so that the existing
+ * Python_to_generic translation (via H.expr_to_pattern) works unchanged.
+ * This structure avoids the reduce/reduce conflicts that arise when
+ * atom/case_atom productions share the same terminal RHS. *)
+
+(* Top-level comma-separated pattern list for a `case` header. *)
+case_patterns:
+  | case_pattern                                     { [$1] }
+  | case_pattern ","                                 { [$1] }
+  | case_pattern "," case_patterns                   { $1 :: $3 }
+
+case_pattern:
+  | case_or_pattern                     { $1 }
+  | case_or_pattern AS NAME             { AsPattern ($1, $2, $3) }
+
+case_or_pattern:
+  | case_closed_pattern                                  { $1 }
+  | case_closed_pattern BITOR case_or_pattern
+      { BinOp ($1, (BitOr, $2), $3) }
+
+case_closed_pattern:
+  | case_literal_pattern   { $1 }
+  | case_name_pattern      { $1 }
+  | case_group_pattern     { $1 }
+  | case_sequence_pattern  { $1 }
+  | case_mapping_pattern   { $1 }
+  (* sgrep-ext: typing-ext: do not put Flag_parsing.sgrep_guard for '...' *)
+  | "..."                  { Ellipsis $1 }
+
+(* Literals. PEP 634 grants signed numbers as literals; a trailing
+ * `+ NUMBER` / `- NUMBER` forms a complex literal like `1+2j`. *)
+case_literal_pattern:
+  | case_signed_number                                    { $1 }
+  | case_signed_number ADD case_imag { BinOp ($1, (Add,$2), $3) }
+  | case_signed_number SUB case_imag { BinOp ($1, (Sub,$2), $3) }
+  | string+
+      { match $1 with
+        | [] -> raise Common.Impossible
+        | [x] -> x
+        | xs -> ConcatenatedString xs }
+  | NONE          { None_ $1 }
+  | TRUE          { Bool (true, $1) }
+  | FALSE         { Bool (false, $1) }
+
+case_signed_number:
+  | case_unsigned_number                            { $1 }
+  | ADD case_unsigned_number                        { UnaryOp ((UAdd,$1), $2) }
+  | SUB case_unsigned_number                        { UnaryOp ((USub,$1), $2) }
+
+case_unsigned_number:
+  | INT           { Num (Int $1) }
+  | LONGINT       { Num (LongInt $1) }
+  | FLOAT         { Num (Float $1) }
+  | IMAG          { Num (Imag $1) }
+
+case_imag:
+  | IMAG          { Num (Imag $1) }
+
+(* Capture / wildcard / value / class patterns, all starting with NAME.
+ * `NAME` alone is a capture/wildcard; `NAME.NAME[.NAME...]` is a value
+ * pattern; `path(args)` is a class pattern. *)
+case_name_pattern:
+  | case_name_path                                         { $1 }
+  | case_name_path "(" ")"
+      { Call ($1, ($2, [], $3)) }
+  | case_name_path "(" list_comma(case_pattern_arg) ")"
+      { Call ($1, ($2, $3, $4)) }
+
+case_name_path:
+  | NAME                              { Name ($1, Load) }
+  | case_name_path "." NAME           { Attribute ($1, $2, $3, Load) }
+
+case_pattern_arg:
+  | case_pattern                      { Arg $1 }
+  | NAME "=" case_pattern             { ArgKwd ($1, $3) }
+
+(* Group pattern `(p)` vs tuple sequence_pattern `(p,)` / `(p, q, ...)`.
+ * PEP 634 sequence_pattern: `'[' [maybe_sequence_pattern] ']'` or
+ * `'(' [open_sequence_pattern] ')'`, so a paren-wrapped single pattern
+ * without a trailing comma is group, not tuple. *)
+case_group_pattern:
+  | "(" case_pattern ")"                    { ParenExpr ($1, $2, $3) }
+
+case_sequence_pattern:
+  | "[" "]"
+      { List (CompList ($1, [], $2), Load) }
+  | "[" case_maybe_star_patterns "]"
+      { List (CompList ($1, $2, $3), Load) }
+  | "(" ")"
+      { Tuple (CompList ($1, [], $2), Load) }
+  | "(" case_pattern "," ")"
+      { Tuple (CompList ($1, [$2], $4), Load) }
+  | "(" case_pattern "," case_maybe_star_patterns ")"
+      { Tuple (CompList ($1, $2 :: $4, $5), Load) }
+
+case_maybe_star_patterns:
+  | case_maybe_star_pattern                              { [$1] }
+  | case_maybe_star_pattern ","                          { [$1] }
+  | case_maybe_star_pattern "," case_maybe_star_patterns { $1 :: $3 }
+
+case_maybe_star_pattern:
+  | case_pattern                     { $1 }
+  | "*" NAME                         { ExprStar (Name ($2, Load)) }
+
+(* Mapping pattern: `{literal_or_value: pattern, ..., **rest}`. *)
+case_mapping_pattern:
+  | "{" "}"
+      { DictOrSet (CompList ($1, [], $2)) }
+  | "{" list_comma(case_key_value_pattern) "}"
+      { DictOrSet (CompList ($1, $2, $3)) }
+
+case_key_value_pattern:
+  | case_literal_pattern ":" case_pattern    { KeyVal ($1, $3) }
+  | case_name_path ":" case_pattern          { KeyVal ($1, $3) }
+  | "**" NAME                                { PowInline (Name ($2, Load)) }
 
 (* python3-ext: *)
 async_stmt:
