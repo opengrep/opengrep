@@ -8,6 +8,10 @@ env:
   CYGWIN: winsymlinks:native
   PYTHONUTF8: "1"
   NUITKA_CACHE_DIR: D:/_nuitka
+  # Nuitka's inline clcache reads CLCACHE_DIR from os.environ directly, not
+  # from the Scons env it builds; without this it falls back to ~/clcache
+  # and the GHA cache of NUITKA_CACHE_DIR never contains the object store.
+  CLCACHE_DIR: D:/_nuitka/clcache
 
 jobs:
 
