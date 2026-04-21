@@ -251,7 +251,7 @@ and map_qualifier env = function
       *)
       let _v1 = map_tok env v1 and _v2 = map_bracket env (map_expr env) v2 in
       let v1 =
-        (G.implicit_param ^ "decltype", G.fake (G.implicit_param ^ "decltype"))
+       let impl_param = G.implicit_param ^ "decltype" in (impl_param, G.fake impl_param)
       in
       (v1, None)
 
