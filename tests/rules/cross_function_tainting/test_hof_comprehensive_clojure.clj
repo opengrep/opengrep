@@ -23,7 +23,7 @@
 (defn multi-arity-call
   ([x] (multi-arity-call x nil))
   ([x y]
-   ;; todoruleid: test-hof-taint
+   ;; ruleid: test-hof-taint
    (sink x)))
 
 ;; ===== Custom HOF with named callbacks =====
@@ -91,7 +91,7 @@
 (defn variadic-call
   ([x] (variadic-call x nil))
   ([x y & rest]
-   ;; todoruleid: test-hof-taint
+   ;; ruleid: test-hof-taint
    (sink x)))
 
 (defn test-variadic-arity []
@@ -113,6 +113,35 @@
 
 (defn test-variadic-rest-sink []
   (variadic-rest-sink nil (source)))
+
+;; ===== Self-recursion across arities =====
+;; The higher arity calls the lower arity (reverse of the usual pattern).
+;; Any extraction strategy that processes arities in descending order and
+;; looks up the lower arity's signature from a database misses the sink
+;; lifted from arity-1 into arity-2. The self-sig fixpoint exposes it on a
+;; second pass.
+
+(defn multi-arity-reverse
+  ([x]
+   ;; ruleid: test-hof-taint
+   (sink x))
+  ([x y] (multi-arity-reverse y)))
+
+(defn test-multi-arity-reverse []
+  (multi-arity-reverse nil (source)))
+
+;; Same pattern, three arities chained upward: arity-3 -> arity-2 -> arity-1,
+;; where only arity-1 contains the sink. Taint is threaded at each hop.
+
+(defn multi-arity-reverse-3
+  ([x]
+   ;; ruleid: test-hof-taint
+   (sink x))
+  ([x y] (multi-arity-reverse-3 y))
+  ([x y z] (multi-arity-reverse-3 y z)))
+
+(defn test-multi-arity-reverse-3 []
+  (multi-arity-reverse-3 nil nil (source)))
 
 ;; ===== Cross-function return taint (implicit return) =====
 

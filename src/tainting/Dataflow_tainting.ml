@@ -93,6 +93,10 @@ let mk_empty_java_props_cache () = Hashtbl.create 30
 
 type func = {
   name : IL.name option;
+  sig_params : Signature.params;
+      (** Signature-level parameters of the function under analysis. Used to
+          synthesise a "self-sig" view of the in-progress signature for
+          self-recursive calls (see [lookup_signature_with_object_context]). *)
   best_matches : TM.Best_matches.t;
       (** Best matches for the taint sources/etc, see 'Taint_spec_match'. *)
   used_lambdas : IL.NameSet.t;
@@ -117,6 +121,11 @@ type env = {
           well as 'Taint_lambda.find_vars_to_track_across_lambdas'. *)
   lval_env : Lval_env.t;
   effects_acc : Effects.t ref;
+  did_self_recurse : bool ref;
+      (** Set to [true] when [self_sig_if_recursive] returns a sig during the
+          current pass. Used to gate the outer self-sig convergence loop in
+          [fixpoint_aux]: a pass without any self-recursive call needs no
+          retry. *)
   signature_db : Shape_and_sig.signature_database option;
       (** Signature database for inter-procedural taint analysis *)
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
@@ -766,12 +775,38 @@ let lookup_signature_with_object_context env fun_exp arity =
               try_builtin_fallback env (fst method_name.ident) arity result)
       | _ -> None)
 
-let lookup_signature env fun_exp =
+(* If [fun_exp] resolves through the call graph to the function currently
+ * under analysis, return a synthesised signature built from the effects
+ * accumulated so far. The surrounding dataflow fixpoint iterates, so each
+ * pass picks up effects recorded by the previous one — converging to a
+ * least-fixed-point over direct self-recursion. *)
+let self_sig_if_recursive env fun_exp =
+  match (fun_exp.e, env.func.name) with
+  | Fetch { base = Var callee; rev_offset = [] }, Some self_name -> (
+      let self_id = Function_id.of_il_name self_name in
+      let call_tok = snd callee.ident in
+      match
+        Call_graph.lookup_callee_from_graph env.call_graph (Some self_id)
+          call_tok
+      with
+      | Some callee_node when Function_id.equal callee_node self_id ->
+          env.did_self_recurse := true;
+          Some
+            {
+              Signature.params = env.func.sig_params;
+              effects = !(env.effects_acc);
+            }
+      | _ -> None)
+  | _ -> None
+
+let lookup_signature env fun_exp arity =
   Log.debug (fun m ->
       m "LOOKUP_SIG_ENTRY: Looking up %s from caller %s"
         (Display_IL.string_of_exp fun_exp)
         (Option.fold ~none:"<none>" ~some:Call_graph.show_node (Option.map Function_id.of_il_name env.func.name)));
-  lookup_signature_with_object_context env fun_exp
+  match lookup_signature_with_object_context env fun_exp arity with
+  | Some _ as r -> r
+  | None -> self_sig_if_recursive env fun_exp
 
 (*****************************************************************************)
 (* Lambdas *)
@@ -2969,6 +3004,7 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
       lval_env = enter_lval_env;
       needed_vars;
       effects_acc = ref Effects.empty;
+      did_self_recurse = ref false;
       signature_db;
       builtin_signature_db;
       call_graph;
@@ -3002,9 +3038,43 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
     if taint_inst.options.taint_intrafile then base_timeout *. 20.0
     else base_timeout
   in
+  (* The inner [DataflowX.fixpoint] converges on per-node [lval_env]
+   * stability, but not on [effects_acc] — the latter is function-global
+   * monotonic state that grows as the body records taint effects. Direct
+   * self-recursive calls need to see effects recorded by earlier passes via
+   * [self_sig_if_recursive]. We wrap the inner fixpoint in an outer loop
+   * that re-runs only if a self-recursive call happened AND the effects set
+   * grew, terminating when stable (or at a safety cap).
+   *
+   * Gated by [needs_self_sig_fixpoint]: only languages where self-sig
+   * lifting can yield outcomes that body-direct effect recording would
+   * miss. Today that's just Clojure (arity-guarded multi-arity dispatch);
+   * other languages rely on direct recording and the outer loop would be a
+   * wasted pass. *)
+  let needs_self_sig_fixpoint =
+    match taint_inst.lang with Lang.Clojure -> true | _ -> false
+  in
   let end_mapping, timeout_status =
-    DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
-      ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
+    if needs_self_sig_fixpoint then
+      let max_self_recursive_passes = 5 in
+      let rec run_to_sig_fixpoint passes =
+        let prev_effects = !(env.effects_acc) in
+        env.did_self_recurse := false;
+        let end_mapping, status =
+          DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+            ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
+        in
+        if
+          (not !(env.did_self_recurse))
+          || passes >= max_self_recursive_passes
+          || Effects.equal prev_effects !(env.effects_acc)
+        then (end_mapping, status)
+        else run_to_sig_fixpoint (passes + 1)
+      in
+      run_to_sig_fixpoint 0
+    else
+      DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
+        ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
   in
   log_timeout_warning taint_inst env.func.name timeout_status;
   let exit_lval_env = end_mapping.(flow.exit).D.out_env in
@@ -3140,6 +3210,8 @@ and (fixpoint :
                    let lambda_func =
                      {
                        name = Some lambda_name;
+                       sig_params =
+                         Signature.of_IL_params lambda_cfg.params;
                        best_matches = lambda_best_matches;
                        used_lambdas = IL.NameSet.empty;
                      }
@@ -3201,7 +3273,14 @@ and (fixpoint :
            sources |> Seq.append sanitizers |> Seq.append sinks)
   in
   let used_lambdas = lambdas_used_in_cfg fun_cfg in
-  let func = { name; best_matches; used_lambdas } in
+  let func =
+    {
+      name;
+      sig_params = Signature.of_IL_params fun_cfg.params;
+      best_matches;
+      used_lambdas;
+    }
+  in
   let effects, mapping =
     fixpoint_aux taint_inst func ~enter_lval_env:enhanced_in_env ~in_lambda:None
       ~class_name ?signature_db:signature_db_with_lambdas ?builtin_signature_db ?call_graph fun_cfg
