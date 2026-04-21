@@ -170,8 +170,10 @@ and unify_shape shape1 shape2 =
               (Signature.show_params params1)
               (Signature.show_params params2));
         shape1)
-  | Arg arg1, Arg arg2 ->
-      if T.equal_arg arg1 arg2 then shape1
+  | Arg (arg1, off1), Arg (arg2, off2) ->
+      if T.equal_arg arg1 arg2
+         && Int.equal (List.compare T.compare_offset off1 off2) 0
+      then shape1
       else (
         (* TODO: We do not handle this right now, we would need to record and
          *   solve constraints. It can happen with code like e.g.
@@ -289,8 +291,9 @@ let rec gather_all_taints_in_cell_acc acc cell =
 and gather_all_taints_in_shape_acc acc = function
   | Bot -> acc
   | Obj obj -> gather_all_taints_in_obj_acc acc obj
-  | Arg arg ->
-      let taint = { T.orig = T.Shape_var (T.lval_of_arg arg); tokens = [] } in
+  | Arg (arg, off) ->
+      let lval = { T.base = T.BArg arg; offset = off } in
+      let taint = { T.orig = T.Shape_var lval; tokens = [] } in
       Taints.add taint acc
   | Fun _ ->
       (* Consider a third-party/opaque function to which we pass a record that
@@ -334,12 +337,26 @@ and find_in_shape_w_carry ~taints offset shape =
   (* offset <> [] *)
   | Bot -> not_found
   | Obj obj -> find_in_obj_w_carry ~taints offset obj
-  | Arg _ ->
-      (* TODO: Here we should "refine" the arg shape, it should be an Obj shape. *)
-      Log.debug (fun m ->
-          m "Could not find offset %s in polymorphic shape %s"
-            (debug_offset offset) (show_shape shape));
-      not_found
+  | Arg (arg, base_off) ->
+      (* Extend the Arg shape only for integer-indexed access (destructured
+       * element of a packed composite, e.g. [callback = impl[0]]). Method
+       * or field access on an Arg-shaped value shouldn't turn the receiver
+       * into a callback-like shape, so those fall through to the existing
+       * poly-taint-extension path. *)
+      let all_int =
+        List.for_all
+          (function T.Oint _ -> true | _ -> false)
+          offset
+      in
+      if all_int then
+        let refined = Arg (arg, base_off @ offset) in
+        let taints = fix_poly_taint_with_offset offset taints in
+        `Found (Cell (Xtaint.of_taints taints, refined))
+      else (
+        Log.debug (fun m ->
+            m "Could not find offset %s in polymorphic shape %s"
+              (debug_offset offset) (show_shape shape));
+        not_found)
   | Fun _ ->
       (* This is an error, we just don't want to crash here. *)
       Log.err (fun m ->

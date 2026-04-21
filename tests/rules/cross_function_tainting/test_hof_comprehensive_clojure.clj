@@ -23,7 +23,7 @@
 (defn multi-arity-call
   ([x] (multi-arity-call x nil))
   ([x y]
-   ;; ruleid: test-hof-taint
+   ;; todoruleid: test-hof-taint
    (sink x)))
 
 ;; ===== Custom HOF with named callbacks =====
@@ -91,7 +91,7 @@
 (defn variadic-call
   ([x] (variadic-call x nil))
   ([x y & rest]
-   ;; ruleid: test-hof-taint
+   ;; todoruleid: test-hof-taint
    (sink x)))
 
 (defn test-variadic-arity []

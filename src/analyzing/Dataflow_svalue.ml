@@ -145,6 +145,14 @@ let rec is_symbolic_expr expr =
       let args = Tok.unbracket args in
       List.for_all is_symbolic_arg args
   | G.Record (_, fields, _) -> List.for_all is_symbolic_field fields
+  (* Sequence containers: allow propagation of literal list/tuple/array/set
+   * expressions as symbolic values. Clojure's calling convention wraps every
+   * call's arguments into a single list (see AST_to_IL's Clojure case), so
+   * propagating these containers lets svalue recover the argument count at
+   * the callee's Switch conditions. Also contributes to sym-prop precision
+   * for unrelated cases (e.g. array-length reasoning in generic code). *)
+  | G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, exprs, _)) ->
+      List.for_all is_symbolic_expr exprs
   | __else__ -> false
 
 and is_symbolic_arg arg =

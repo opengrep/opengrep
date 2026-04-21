@@ -467,6 +467,24 @@ let params_of_parameters env params : scope =
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
+       (* Ruby [&callback] block parameter and PHP [&$var] by-reference
+        * parameter are both produced as
+        * [OtherParam("Ref", [Pa(Param(...))])] by their respective AST
+        * converters. Treat the inner [Param] as a regular parameter so
+        * references to it in the body resolve correctly. Scoped to these
+        * two languages to avoid accidentally shadowing any other future
+        * use of the [("Ref", _)] tag. *)
+       | OtherParam
+           ( ("Ref", _),
+             [ Pa (Param { pname = Some id; pinfo = id_info; ptype = typ; _ })
+             ] )
+         when (match env.lang with
+               | Lang.Ruby | Lang.Php -> true
+               | _ -> false) ->
+           let sid = SId.mk () in
+           let resolved = { entname = (Parameter, sid); enttype = typ } in
+           set_resolved env id_info resolved;
+           Some (H.str_of_ident id, resolved)
        (* TODO: ParamPattern *)
        | _ -> None)
 

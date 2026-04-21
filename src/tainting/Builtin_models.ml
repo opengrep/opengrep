@@ -45,7 +45,9 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
             eorig = NoOrig;
           };
         arg = { Taint.name = "callback"; index = 0 };
+        arg_offset = [];
         args_taints;
+        guards = Effect_guard.Set.empty;
       }
   in
 
@@ -65,6 +67,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
         data_shape = Shape.Fun returned_fun_sig;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
+        guards = Effect_guard.Set.empty;
       }
   in
   let method_sig =
@@ -116,7 +119,9 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
             eorig = NoOrig;
           };
         arg = callback_arg;
+        arg_offset = [];
         args_taints;
+        guards = Effect_guard.Set.empty;
       }
   in
 
@@ -129,6 +134,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
         data_shape = Shape.Bot;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
+        guards = Effect_guard.Set.empty;
       }
   in
 
@@ -180,7 +186,9 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
             eorig = NoOrig;
           };
         arg = callback_arg;
+        arg_offset = [];
         args_taints;
+        guards = Effect_guard.Set.empty;
       }
   in
 
@@ -194,6 +202,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
         data_shape = Shape.Bot;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
+        guards = Effect_guard.Set.empty;
       }
   in
 
@@ -212,24 +221,143 @@ let make_params arity callback_index =
     if i = callback_index then Signature.P "callback"
     else Signature.Other)
 
+(** Build the effects contributed by a single FunctionHOF overload in the
+    packed-CList form Clojure uses. Each effect is guarded by
+    [LenEq(impl, arity)] so that multiple overloads for the same function
+    name (e.g. [reduce/2] and [reduce/3]) can share one IL-arity-1
+    signature and get disambiguated by the caller's CList length at
+    instantiation time.
+
+    The callback invocation is itself packed in Clojure — [(cb x y)] lowers
+    to [cb(CList[x, y])] — so we emit a single-element [args_taints] whose
+    sole shape is an [Obj] with the per-position taints indexed. *)
+let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
+  let impl_arg = { Taint.name = "impl"; index = 0 } in
+  let callback_var = make_callback_var () in
+  let data_param_taint =
+    Taint.
+      {
+        orig = Var { base = BArg impl_arg; offset = [ Oint data_index ] };
+        tokens = [];
+      }
+  in
+  let data_taint_set = Taint.Taint_set.singleton data_param_taint in
+  (* Packed callback args: a single Obj-shaped CList whose [taint_arg_index]
+   * slot carries the data taint. *)
+  let callback_obj =
+    let tainted_cell = Shape.Cell (`Tainted data_taint_set, Shape.Bot) in
+    Shape.Obj (Fields.singleton (Taint.Oint taint_arg_index) tainted_cell)
+  in
+  let args_taints =
+    [ IL.Unnamed (Taint.Taint_set.empty, callback_obj) ]
+  in
+  let guards =
+    Effect_guard.Set.singleton (Effect_guard.LenEq (impl_arg, arity))
+  in
+  let hof_effect =
+    Effect.ToSinkInCall
+      {
+        callee =
+          {
+            IL.e = IL.Fetch { base = IL.Var callback_var; rev_offset = [] };
+            eorig = NoOrig;
+          };
+        arg = impl_arg;
+        arg_offset = [ Oint callback_index ];
+        args_taints;
+        guards;
+      }
+  in
+  let return_effect =
+    Effect.ToReturn
+      {
+        data_taints = data_taint_set;
+        data_shape = Shape.Bot;
+        control_taints = Taint.Taint_set.empty;
+        return_tok = Tok.unsafe_fake_tok "builtin_hof";
+        guards;
+      }
+  in
+  [ hof_effect; return_effect ]
+
+(** Register Clojure FunctionHOF overloads grouped by name, one packed-form
+    signature per name. Each overload contributes effects guarded by its
+    language-level arity. *)
+let add_function_hof_signatures_clojure db (grouped : (string * Lang_config.hof_kind list) list) =
+  List.fold_left
+    (fun acc_db (function_name, overloads) ->
+      let effects =
+        overloads
+        |> List.concat_map (function
+             | Lang_config.FunctionHOF
+                 { arity; callback_index; data_index; taint_arg_index; _ } ->
+                 clojure_hof_effects ~arity ~callback_index ~data_index
+                   ~taint_arg_index
+             | _ -> [])
+      in
+      let hof_sig =
+        {
+          Signature.params = [ Signature.P "impl" ];
+          effects = Effects.of_list effects;
+        }
+      in
+      add_builtin_signature acc_db function_name
+        { sig_ = hof_sig; arity = Arity_exact 1 })
+    db grouped
+
 (** Create a builtin signature database with built-in models for standard library HOFs *)
 let create_builtin_models (lang : Lang.t) : builtin_signature_database =
   let db = empty_builtin_signature_database () in
   let config = Lang_config.get lang in
 
-  (* Convert configs to signatures *)
-  List.fold_left
-    (fun acc_db hof_config ->
-      match hof_config with
-      | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
-          add_hof_signatures acc_db methods arity ~taint_arg_index ()
-      | Lang_config.FunctionHOF { functions; arity; callback_index; data_index; taint_arg_index } ->
-          let params = make_params arity callback_index in
-          add_function_hof_signatures acc_db functions arity ~callback_index
-            ~data_index ~params ~taint_arg_index ()
-      | Lang_config.ReturningFunctionHOF { methods } ->
-          add_hof_returning_function_signatures acc_db methods ())
-    db config.hof_configs
+  if Lang.equal lang Lang.Clojure then (
+    (* Clojure: every FunctionHOF overload shares the same IL-arity (1, from
+     * packed-CList lowering), so we group overloads by name and emit one
+     * signature per name with per-overload guards to disambiguate. *)
+    let grouped_function_hofs =
+      config.hof_configs
+      |> List.fold_left
+           (fun acc -> function
+             | Lang_config.FunctionHOF { functions; _ } as hof ->
+                 List.fold_left
+                   (fun acc fn ->
+                     let overloads =
+                       match List.assoc_opt fn acc with
+                       | Some xs -> xs
+                       | None -> []
+                     in
+                     (fn, hof :: overloads)
+                     :: List.filter (fun (n, _) -> n <> fn) acc)
+                   acc functions
+             | _ -> acc)
+           []
+    in
+    let db = add_function_hof_signatures_clojure db grouped_function_hofs in
+    List.fold_left
+      (fun acc_db hof_config ->
+        match hof_config with
+        | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
+            add_hof_signatures acc_db methods arity ~taint_arg_index ()
+        | Lang_config.FunctionHOF _ -> acc_db
+        | Lang_config.ReturningFunctionHOF { methods } ->
+            add_hof_returning_function_signatures acc_db methods ())
+      db config.hof_configs)
+  else
+    (* Convert configs to signatures *)
+    List.fold_left
+      (fun acc_db hof_config ->
+        match hof_config with
+        | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
+            add_hof_signatures acc_db methods arity ~taint_arg_index ()
+        | Lang_config.FunctionHOF
+            { functions; arity; callback_index; data_index; taint_arg_index }
+          ->
+            let params = make_params arity callback_index in
+            add_function_hof_signatures acc_db functions arity ~callback_index
+              ~data_index ~params ~taint_arg_index ()
+        | Lang_config.ReturningFunctionHOF { methods } ->
+            add_hof_returning_function_signatures acc_db methods ())
+      db config.hof_configs
 
 (* ========================================================================== *)
 (* Primitive helpers for building taint sets and effects *)
@@ -251,10 +379,16 @@ let return_effect taint_set =
       data_shape = Shape.Bot;
       control_taints = Taint.Taint_set.empty;
       return_tok = Tok.unsafe_fake_tok "builtin";
+      guards = Effect_guard.Set.empty;
     }
 
 let to_lval_this taint_set =
-  Effect.ToLval (taint_set, { Taint.base = BThis; offset = [] })
+  Effect.ToLval
+    {
+      taints = taint_set;
+      lval = { Taint.base = BThis; offset = [] };
+      guards = Effect_guard.Set.empty;
+    }
 
 let add_method_signatures db method_names arity effects =
   let params = List.init arity (fun _ -> Signature.Other) in

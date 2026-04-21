@@ -117,7 +117,7 @@ let mk_method_property_assumptions (properties : G.expr list)
 
 (** Helper to add a parameter with Arg shape to the environment *)
 let add_param_to_env il_lval taint_set taint_arg env =
-  let param_shape = Shape.Arg taint_arg in
+  let param_shape = Shape.Arg (taint_arg, []) in
   Taint_lval_env.add_lval_shape il_lval taint_set param_shape env
 
 let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t =
@@ -297,7 +297,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                 in
                 Effects.add (Effect.ToReturn filtered_return_info) acc
               else acc
-           | Effect.ToLval (taints, _lval) ->
+           | Effect.ToLval { taints; lval = _; guards = _ } ->
                (* Keep ToLval effects - they represent legitimate data flow patterns
                 * that become important when parameters receive real source taint *)
                let has_relevant_taint =
