@@ -6,7 +6,5 @@ rules:
       }
     languages: [csharp]
     message: >
-      Arrow-property `public int P => E;`. Previously this was parsed
-      with a CLR-mangled `get_P` accessor entity name; now uses `get`
-      so $P can bind as a metavariable.
+      Arrow-property `public int P => E;`
     severity: INFO
