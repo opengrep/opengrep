@@ -320,6 +320,13 @@ let rec expr env (x : expr) =
       let e = expr env e in
       H.set_e_range l r e;
       e
+  | AsPattern (v1, _v2, v3) ->
+      let inner = expr env v1 in
+      let id = name env v3 in
+      G.LetPattern
+        ( H.expr_to_pattern inner,
+          G.N (G.Id (id, G.empty_id_info ())) |> G.e )
+      |> G.e
 
 and argument env = function
   | Arg e ->
@@ -840,10 +847,16 @@ and cases_and_body env = function
       G.CaseEllipsis x
 
 and case env = function
-  | Case (tok, pat) ->
+  | Case (tok, cp) ->
       let x = info tok in
-      let pat = expr env pat in
-      G.Case (x, H.expr_to_pattern pat)
+      let rec to_gexpr = function
+        | CasePat e -> expr env e
+        | CasePatWhen (cp, g) ->
+            G.OtherExpr
+              (("CasePatWhen", x), [ G.E (to_gexpr cp); G.E (expr env g) ])
+            |> G.e
+      in
+      G.Case (x, H.expr_to_pattern (to_gexpr cp))
 
 and ident_and_id_info env x =
   let x = name env x in

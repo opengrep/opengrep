@@ -1,0 +1,3 @@
+match $X:
+    case $C if $G:
+        $Y

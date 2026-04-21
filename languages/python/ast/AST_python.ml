@@ -167,6 +167,9 @@ type expr =
   | TypedMetavar of name * tok * type_
   | DotAccessEllipsis of expr * tok (* ... *)
   | ParenExpr of expr bracket
+  (* PEP 634 as_pattern. Emitted only inside match/case pattern contexts
+   * by both grammars. *)
+  | AsPattern of expr * tok (* 'as' *) * name
 
 and number =
   | Int of Parsed_int.t
@@ -393,7 +396,13 @@ and case_and_body =
   (* sgrep-ext: *)
   | CaseEllipsis of (* ... *) tok
 
-and case = Case of tok * pattern
+and case = Case of tok * case_pattern
+
+(* PEP 634 case pattern. `AsPattern` bindings live inside the inner expr;
+ * the guard is captured at this level. *)
+and case_pattern =
+  | CasePat of expr
+  | CasePatWhen of case_pattern * expr (* guard *)
 
 and excepthandler =
   | ExceptHandler of

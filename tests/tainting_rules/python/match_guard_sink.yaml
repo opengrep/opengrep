@@ -1,0 +1,11 @@
+rules:
+  - id: test
+    languages:
+      - python
+    message: Tainted value reaches a sink inside a case guard.
+    mode: taint
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-sources:
+      - pattern: source()
+    severity: WARNING

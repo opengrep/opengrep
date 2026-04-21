@@ -1,0 +1,11 @@
+rules:
+  - id: test
+    languages:
+      - python
+    message: Tainted value reaches a sink via a name bound by a case pattern.
+    mode: taint
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-sources:
+      - pattern: source()
+    severity: WARNING
