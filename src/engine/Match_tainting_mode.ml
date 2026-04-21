@@ -184,6 +184,7 @@ let pms_of_effect ~match_on (effect_ : Effect.t) =
         taints_with_precondition = taints, requires;
         sink = { pm = sink_pm; _ } as sink;
         merged_env;
+        _;
       } -> (
       let actual_taints = List_.map (fun t -> t.Effect.taint) taints in
       let satisfies = T.taints_satisfy_requires actual_taints requires in
@@ -275,102 +276,6 @@ let get_arity params info lang =
     | _ -> params
   in
   List.length filtered_params
-
-(** Convert a Case pattern back into a [G.parameter list] for per-arity
-    signature extraction (Clojure multi-arity / Elixir multi-clause). *)
-let params_of_case_pattern (pat : G.pattern) : G.parameter list =
-  let unwrap_guard (p : G.pattern) : G.pattern =
-    match p with
-    | G.PatWhen (inner, _guard) -> inner
-    | _ -> p
-  in
-  let param_of_pat (p : G.pattern) : G.parameter =
-    match p with
-    | G.PatId (ident, id_info) ->
-        G.Param
-          {
-            G.pname = Some ident;
-            pinfo = id_info;
-            ptype = None;
-            pdefault = None;
-            pattrs = [];
-          }
-    | G.PatConstructor (G.Id (("&", _amp_tok), _), [ G.PatId (ident, id_info) ])
-      ->
-        (* Clojure rest params: (& rest) *)
-        G.ParamRest
-          ( Tok.unsafe_fake_tok "&",
-            {
-              G.pname = Some ident;
-              pinfo = id_info;
-              ptype = None;
-              pdefault = None;
-              pattrs = [];
-            } )
-    | _ -> G.OtherParam (("PatUnknown", G.fake ""), [])
-  in
-  let inner = unwrap_guard pat in
-  let pats =
-    match inner with
-    | G.PatList (_, pats, _)
-    | G.PatTuple (_, pats, _) ->
-        pats
-    | _ -> [ inner ]
-  in
-  List_.map param_of_pat pats
-
-(** For Clojure/Elixir functions with a single implicit param and a Switch
-    body, extract per-arity cases. Returns a list of
-    (params, function_body, sig_arity) sorted by decreasing arity. *)
-let extract_multi_arity_cases (fdef : G.function_definition) :
-    (G.parameter list * G.function_body * Shape_and_sig.sig_arity) list option =
-  let params = Tok.unbracket fdef.G.fparams in
-  let has_implicit =
-    match params with
-    | [ G.Param { G.pname = Some (name, _); _ } ] ->
-        G.is_implicit_param name
-    | _ -> false
-  in
-  if not has_implicit then None
-  else
-    match fdef.G.fbody with
-    | G.FBStmt { G.s = G.Switch (_, _, cases); _ } ->
-        let arity_cases =
-          cases
-          |> List.filter_map (fun (cab : G.case_and_body) ->
-                 match cab with
-                 | G.CasesAndBody (case_list, body) -> (
-                     match case_list with
-                     | [ G.Case (_, pat) ] ->
-                         let case_params = params_of_case_pattern pat in
-                         let rest, fixed =
-                           List.partition
-                             (function
-                               | G.ParamRest _ -> true
-                               | _ -> false)
-                             case_params
-                         in
-                         let arity : Shape_and_sig.sig_arity =
-                           match rest with
-                           | _ :: _ -> Arity_at_least (List.length fixed)
-                           | [] -> Arity_exact (List.length fixed)
-                         in
-                         Some (case_params, G.FBStmt body, arity)
-                     | _ -> None)
-                 | G.CaseEllipsis _ -> None)
-        in
-        let sorted =
-          List.sort
-            (fun (_, _, a1) (_, _, a2) ->
-              let n1 = Shape_and_sig.int_of_sig_arity a1 in
-              let n2 = Shape_and_sig.int_of_sig_arity a2 in
-              Int.compare n2 n1)
-            arity_cases
-        in
-        (match sorted with
-        | [] -> None
-        | _ -> Some sorted)
-    | _ -> None
 
 let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     ?(signature_db : Shape_and_sig.signature_database option)
@@ -667,73 +572,41 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           in
 
           let process_fun_info info db =
-            match extract_multi_arity_cases info.fdef with
-            | Some arity_cases ->
-                (* Multi-arity function: extract one signature per arity branch *)
-                let updated_db =
-                  List.fold_left
-                    (fun acc_db (case_params, case_body, arity) ->
-                      let synthetic_fdef : G.function_definition =
-                        {
-                          G.fparams = Tok.unsafe_fake_bracket case_params;
-                          frettype = None;
-                          fkind = info.fdef.G.fkind;
-                          fbody = case_body;
-                        }
-                      in
-                      let fdef_il =
-                        AST_to_IL.function_definition lang synthetic_fdef
-                      in
-                      let cfg = CFG_build.cfg_of_fdef fdef_il in
-                      let db', _sig =
-                        Taint_signature_extractor
-                        .extract_signature_with_file_context ~arity ~db:acc_db
-                          ?builtin_signature_db taint_inst ~name:info.name
-                          ~method_properties:info.method_properties
-                          ~call_graph:(Some relevant_graph) cfg ast
-                      in
-                      db')
-                    db arity_cases
+            let params = Tok.unbracket info.fdef.fparams in
+            let arity = get_arity params info lang in
+            let updated_db, _signature =
+              Taint_signature_extractor.extract_signature_with_file_context
+                ~arity:(Shape_and_sig.Arity_exact arity) ~db
+                ?builtin_signature_db taint_inst ~name:info.name
+                ~method_properties:info.method_properties
+                ~call_graph:(Some relevant_graph) info.cfg ast
+            in
+            (* For Kotlin, if the last parameter is a lambda (function type),
+             * also extract signature with arity-1 to handle trailing lambda syntax:
+             * f(a, b) vs f(a) { b } *)
+            let updated_db =
+              if Lang.equal lang Lang.Kotlin && arity >= 1 then
+                let last_param_is_lambda =
+                  match List.rev params with
+                  | G.Param { G.ptype = Some { t = G.TyFun _; _ }; _ } :: _ ->
+                      true
+                  | _ -> false
                 in
-                run_check_fundef_if_needed info updated_db
-            | None ->
-                (* Single-arity path (unchanged logic) *)
-                let params = Tok.unbracket info.fdef.fparams in
-                let arity = get_arity params info lang in
-                let updated_db, _signature =
-                  Taint_signature_extractor.extract_signature_with_file_context
-                    ~arity:(Shape_and_sig.Arity_exact arity) ~db
-                    ?builtin_signature_db taint_inst ~name:info.name
-                    ~method_properties:info.method_properties
-                    ~call_graph:(Some relevant_graph) info.cfg ast
-                in
-                (* For Kotlin, if the last parameter is a lambda (function type),
-                 * also extract signature with arity-1 to handle trailing lambda syntax:
-                 * f(a, b) vs f(a) { b } *)
-                let updated_db =
-                  if Lang.equal lang Lang.Kotlin && arity >= 1 then
-                    let last_param_is_lambda =
-                      match List.rev params with
-                      | G.Param { G.ptype = Some { t = G.TyFun _; _ }; _ } :: _
-                        ->
-                          true
-                      | _ -> false
-                    in
-                    if last_param_is_lambda then
-                      let db', _ =
-                        Taint_signature_extractor
-                        .extract_signature_with_file_context
-                          ~arity:(Shape_and_sig.Arity_exact (arity - 1))
-                          ~db:updated_db ?builtin_signature_db taint_inst
-                          ~name:info.name
-                          ~method_properties:info.method_properties
-                          ~call_graph:(Some relevant_graph) info.cfg ast
-                      in
-                      db'
-                    else updated_db
-                  else updated_db
-                in
-                run_check_fundef_if_needed info updated_db
+                if last_param_is_lambda then
+                  let db', _ =
+                    Taint_signature_extractor
+                    .extract_signature_with_file_context
+                      ~arity:(Shape_and_sig.Arity_exact (arity - 1))
+                      ~db:updated_db ?builtin_signature_db taint_inst
+                      ~name:info.name
+                      ~method_properties:info.method_properties
+                      ~call_graph:(Some relevant_graph) info.cfg ast
+                  in
+                  db'
+                else updated_db
+              else updated_db
+            in
+            run_check_fundef_if_needed info updated_db
           in
 
           let signature_db_after_order =

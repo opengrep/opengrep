@@ -11,6 +11,7 @@ type call_effect =
   | ToSinkInCall of {
       callee : IL.exp;
       arg : Taint.arg;
+      arg_offset : Taint.offset list;
       args_taints : Shape_and_sig.Effect.args_taints;
     }
 

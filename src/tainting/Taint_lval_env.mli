@@ -130,6 +130,13 @@ val filter_tainted : (IL.name -> bool) -> env -> env
 val add_control_taints : env -> Taint.taints -> env
 val get_control_taints : env -> Taint.taints
 
+val active_guards : env -> Effect_guard.Set.t
+(** The set of guards that hold at the current program point. *)
+
+val add_active_guard : Effect_guard.t -> env -> env
+(** Add a guard to the active set at the current program point. Called at
+    [TrueNode] of a recognised arity-check condition during the transfer. *)
+
 val union : env -> env -> env
 (** Compute the environment for the join of two branches.
 

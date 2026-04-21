@@ -47,17 +47,35 @@
   ;; ruleid: taint-call
   (sink x))
 
-(fn f 
-  ([] 1) 
+(fn f
+  ([] 1)
   ([x]
     ;; ruleid: taint-call
-   (sink x)) 
+   (sink x))
   ([x y]
    ;; ruleid: taint-call
    (sink y))
   ([a b c]
    ;; ok
    (sink x)))
+
+;; multi-arity anonymous fn with nested destructuring in a rest leg
+(fn
+  ([x]
+    ;; ruleid: taint-call
+    (sink x))
+  ([a & [k r & rest]]
+    ;; ruleid: taint-call
+    (sink rest)))
+
+;; multi-arity defn with nested destructuring in a rest leg
+(defn multi-destr
+  ([x]
+    ;; ruleid: taint-call
+    (sink x))
+  ([a & [k r & rest]]
+    ;; ruleid: taint-call
+    (sink rest)))
 
 (def res
   (fn [careful input]

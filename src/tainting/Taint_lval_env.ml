@@ -51,6 +51,15 @@ type t = {
     THINK: A more general solution could be to use a "taint variable" as we do for
       the arguments of the function under analysis.
     *)
+  active_guards : Effect_guard.Set.t;
+      (** Guards that hold at the current program point. Propagated forward
+          through the transfer: a [TrueNode] of a recognised arity-check adds
+          its guard; an unrelated [FalseNode] leaves the set alone (we do not
+          represent negation). At a Join this set is merged by INTERSECTION —
+          only guards that held on every incoming path survive — so post-join
+          code carries no guard specific to one branch. Effects recorded while
+          the set is non-empty are stamped with it, and at signature
+          instantiation those guards are evaluated against the caller. *)
 }
 
 type env = t
@@ -80,6 +89,7 @@ let empty =
     control = Taints.empty;
     taints_to_propagate = VarMap.empty;
     pending_propagation_dests = VarMap.empty;
+    active_guards = Effect_guard.Set.empty;
   }
 
 let empty_inout = { Dataflow_core.in_env = empty; out_env = empty }
@@ -101,6 +111,11 @@ let union le1 le2 =
        * propagation between call arguments, so for now we just kill them all
        * at JOINs. *)
       VarMap.empty;
+    active_guards =
+      (* INTERSECTION, not union: a guard survives a Join only if it held on
+       * every incoming path. Post-join code therefore carries no guard that
+       * was specific to a single branch. *)
+      Effect_guard.Set.inter le1.active_guards le2.active_guards;
   }
 
 let union_list ?(default = empty) les = List.fold_left union default les
@@ -181,8 +196,13 @@ let check_tainted_lvals_limit tainted new_var =
   else Some tainted
 
 let add_shape var offset new_taints new_shape
-    ({ tainted; control; taints_to_propagate; pending_propagation_dests } as
-     lval_env) =
+    ({
+       tainted;
+       control;
+       taints_to_propagate;
+       pending_propagation_dests;
+       active_guards;
+     } as lval_env) =
   match check_tainted_lvals_limit tainted var with
   | None -> lval_env
   | Some tainted ->
@@ -203,6 +223,7 @@ let add_shape var offset new_taints new_shape
         control;
         taints_to_propagate;
         pending_propagation_dests;
+        active_guards;
       }
 
 let add_lval_shape lval new_taints new_shape lval_env =
@@ -284,8 +305,13 @@ let pending_propagation prop_var lval env =
   }
 
 let clean
-    ({ tainted; control; taints_to_propagate; pending_propagation_dests } as
-     lval_env) lval =
+    ({
+       tainted;
+       control;
+       taints_to_propagate;
+       pending_propagation_dests;
+       active_guards;
+     } as lval_env) lval =
   match normalize_lval lval with
   | None ->
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
@@ -302,6 +328,7 @@ let clean
         control;
         taints_to_propagate;
         pending_propagation_dests;
+        active_guards;
         (* THINK: Should we clean propagations before they are executed? *)
       }
 
@@ -315,23 +342,31 @@ let add_control_taints lval_env taints =
 
 let get_control_taints { control; _ } = control
 
+let active_guards { active_guards; _ } = active_guards
+
+let add_active_guard g env =
+  { env with active_guards = Effect_guard.Set.add g env.active_guards }
+
 let equal
     {
       tainted = tainted1;
       control = control1;
       taints_to_propagate = _;
       pending_propagation_dests = _;
+      active_guards = guards1;
     }
     {
       tainted = tainted2;
       control = control2;
       taints_to_propagate = _;
       pending_propagation_dests = _;
+      active_guards = guards2;
     } =
   NameMap.equal equal_cell tainted1 tainted2
   (* NOTE: We ignore 'taints_to_propagate' and 'pending_propagation_dests',
    * we just care how they affect 'tainted'. *)
   && Taints.equal control1 control2
+  && Effect_guard.Set.equal guards1 guards2
 
 let equal_by_lval { tainted = tainted1; _ } { tainted = tainted2; _ } lval =
   match normalize_lval lval with
@@ -343,7 +378,7 @@ let equal_by_lval { tainted = tainted1; _ } { tainted = tainted2; _ } lval =
       Option.equal equal_cell (NameMap.find_opt var tainted1) (NameMap.find_opt var tainted2)
 
 let to_string
-    { tainted; control; taints_to_propagate; pending_propagation_dests } =
+    { tainted; control; taints_to_propagate; pending_propagation_dests; _ } =
   (* FIXME: lval_to_str *)
   (if NameMap.is_empty tainted then ""
    else

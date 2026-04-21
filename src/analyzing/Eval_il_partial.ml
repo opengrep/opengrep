@@ -270,6 +270,12 @@ and eval_lval env lval =
 
 and eval_op env wop args =
   let op, tok = wop in
+  (* Length is handled separately so we can fold it on a Composite argument.
+   * Eval.eval on Composite returns NotCst, so routing through [cs] first
+   * would discard the shape we need. *)
+  match (op, args) with
+  | G.Length, [ Unnamed arg ] -> eval_length env arg
+  | _ ->
   let cs = args |> List_.map IL_helpers.exp_of_arg |> List_.map (eval env) in
   match (op, cs) with
   | G.Plus, [ c1 ] -> c1
@@ -300,6 +306,23 @@ and eval_op env wop args =
       let t1 = H.ctype_of_literal l1 in
       G.Cst (union_ctype t1 t2)
   | ___else___ -> G.NotCst
+
+(* Fold [length(arg)] when [arg] denotes a sequence whose size we can recover:
+ *   - a Composite (CList | CTuple | CArray | CSet) literal in the IL;
+ *   - a variable whose svalue is a G.Sym of a Generic Container (same kinds);
+ *   - a string literal.
+ * Otherwise NotCst. *)
+and eval_length env arg =
+  match arg.e with
+  | Composite ((CList | CTuple | CArray | CSet), (_, xs, _)) ->
+      G.Lit (literal_of_int (Int64.of_int (List.length xs)))
+  | _ -> (
+      match eval env arg with
+      | G.Sym { G.e = G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)); _ } ->
+          G.Lit (literal_of_int (Int64.of_int (List.length xs)))
+      | G.Lit (G.String (_, (s, _), _)) ->
+          G.Lit (literal_of_int (Int64.of_int (String.length s)))
+      | _ -> G.NotCst)
 
 let eval_concat (env : env) args =
   match List_.map (eval env) args with

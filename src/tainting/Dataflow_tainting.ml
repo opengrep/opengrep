@@ -301,6 +301,19 @@ let record_effects env new_effects =
     let new_effects =
       env.taint_inst.handle_effects env.func.name new_effects
     in
+    (* Stamp each new effect with the guards active at the current program
+     * point, so a caller can drop effects whose guard its argument shape
+     * cannot satisfy. When no guard is active, [add_guards] is a no-op. *)
+    let active = Lval_env.active_guards env.lval_env in
+    let new_effects =
+      if Effect_guard.Set.is_empty active then new_effects
+      else (
+        Log.debug (fun m ->
+            m "GUARD_STAMP: stamping %d effect(s) with %s"
+              (List.length new_effects)
+              (Effect_guard.show_set active));
+        List.map (Effect.add_guards active) new_effects)
+    in
     env.effects_acc := Effects.add_list new_effects !(env.effects_acc)
 
 let unify_mvars_sets env mvars1 mvars2 =
@@ -565,6 +578,7 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
                       taints_with_precondition = ([ t ], R.get_sink_requires ts);
                       sink;
                       merged_env;
+                      guards = Effect_guard.Set.empty;
                     }))
       else
         match
@@ -580,6 +594,7 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
                     (List_.map fst taints_and_bindings, R.get_sink_requires ts);
                   sink;
                   merged_env;
+                  guards = Effect_guard.Set.empty;
                 };
             ])
 
@@ -615,7 +630,13 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
     in
     [
       Effect.ToReturn
-        { data_taints; data_shape = shape; control_taints; return_tok };
+        {
+          data_taints;
+          data_shape = shape;
+          control_taints;
+          return_tok;
+          guards = Effect_guard.Set.empty;
+        };
     ]
   else []
 
@@ -623,9 +644,22 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
  * shape and we record its effects with an "effect variable" (that's kind of what
  * 'ToSinkInCall' does). *)
 let effects_of_call_func_arg fun_exp fun_shape args_taints =
+  Log.debug (fun m ->
+      m "HOF_DISPATCH: callee=%s shape=%s"
+        (Display_IL.string_of_exp fun_exp)
+        (S.show_shape fun_shape));
   match fun_shape with
-  | S.Arg fun_arg ->
-      [ Effect.ToSinkInCall { callee = fun_exp; arg = fun_arg; args_taints } ]
+  | S.Arg (fun_arg, arg_offset) ->
+      [
+        Effect.ToSinkInCall
+          {
+            callee = fun_exp;
+            arg = fun_arg;
+            arg_offset;
+            args_taints;
+            guards = Effect_guard.Set.empty;
+          };
+      ]
   | __else__ ->
       Log.debug (fun m ->
           m "Function (?) %s has shape %s"
@@ -1447,6 +1481,13 @@ and check_tainted_expr ?(arity = 0) env exp : Taints.t * S.shape * Lval_env.t =
         match exp.e with
         | Fetch lval ->
             let taints, shape, _sub, lval_env = check_tainted_lval env lval in
+            Log.debug (fun m ->
+                m "FETCH_CHECK[fn=%s]: %s -> taints=%d shape=%s"
+                  (match env.func.name with
+                  | Some n -> fst n.IL.ident
+                  | None -> "?")
+                  (Display_IL.string_of_exp exp) (Taints.cardinal taints)
+                  (S.show_shape shape));
             let shape =
               (* Check if 'exp' is a known top-level function/method and, if it is,
                * give it a proper 'Fun' shape. Skip if we already have a Fun shape
@@ -1502,6 +1543,10 @@ and check_function_call_arguments env args =
            let taints, shape, lval_env =
              check_tainted_expr { env with lval_env } e
            in
+           Log.debug (fun m ->
+               m "CHECK_ARGS: exp=%s -> taints=%d shape=%s"
+                 (Display_IL.string_of_exp e) (Taints.cardinal taints)
+                 (S.show_shape shape));
            let taints =
              check_type_and_drop_taints_if_bool_or_number env taints
                type_of_expr e
@@ -1607,8 +1652,11 @@ let check_function_call env fun_exp args
                 m "INSTANTIATE_SIG: Effect[%d] ToLval with %d taints"
                   i
                   (Taint.Taint_set.cardinal taints))
-        | Sig_inst.ToSinkInCall _ ->
-            Log.debug (fun m -> m "INSTANTIATE_SIG: Effect[%d] ToSinkInCall" i)
+        | Sig_inst.ToSinkInCall { args_taints; arg; arg_offset; _ } ->
+            Log.debug (fun m ->
+                m "INSTANTIATE_SIG: Effect[%d] ToSinkInCall arg=%s offset=%s args=%s"
+                  i (T.show_arg arg) (T.show_offset_list arg_offset)
+                  (Effect.show_args_taints args_taints))
       ) call_effects;
       Some
         (call_effects
@@ -1645,7 +1693,7 @@ let check_function_call env fun_exp args
                      data_taints = taints;
                      data_shape = shape;
                      control_taints;
-                     return_tok = _;
+                     _;
                    } ->
                    ( Taints.union taints taints_acc,
                      Shape.unify_shape shape shape_acc,
@@ -1654,7 +1702,8 @@ let check_function_call env fun_exp args
                    ( taints_acc,
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
-               | ToSinkInCall { callee; arg; args_taints } ->
+               | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
+                   ignore arg_offset;
                    (* Preserved ToSinkInCall from signature extraction - try to resolve it *)
                    let resolved_call_effects =
                      try
@@ -1725,15 +1774,15 @@ let check_function_call env fun_exp args
                                 Lval_env.add_control_taints lval_env control_taints)
                            | ToLval (taints, var, offset) ->
                                (taints_acc, shape_acc, lval_env |> Lval_env.add var offset taints)
-                           | ToSinkInCall { callee; arg; args_taints } ->
+                           | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
                                (* Re-record nested ToSinkInCall for next iteration *)
-                               record_effects env [Effect.ToSinkInCall { callee; arg; args_taints }];
+                               record_effects env [Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards = Effect_guard.Set.empty }];
                                (taints_acc, shape_acc, lval_env))
                          (taints_acc, shape_acc, lval_env)
                          resolved_effects
                    | None ->
                       (* Could not resolve - re-record for next iteration *)
-                      record_effects env [Effect.ToSinkInCall { callee; arg; args_taints }];
+                      record_effects env [Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards = Effect_guard.Set.empty }];
                        (taints_acc, shape_acc, lval_env)))
              (Taints.empty, Bot, env.lval_env))
   | None ->
@@ -1770,21 +1819,6 @@ let check_function_call_callee env e =
  * report the effect too (by side effect). *)
  (*TODO needs some cleanup to remove duplicate code*)
 let call_with_intrafile lval_opt e env args instr =
-  (* Clojure: AST_to_IL wraps all call arguments in a single CList to match
-   * the !!_implicit_param! calling convention. Unwrap the CList so that the
-   * individual arguments are visible to the taint analysis. Signatures use
-   * PRest for !!_implicit_param!, so find_pos_in_actual_args gathers these
-   * unwrapped args into a combined indexed shape via combine_rest_args. *)
-  let args =
-    match env.taint_inst.lang with
-    | Lang.Clojure -> (
-        match args with
-        | [ IL.Unnamed { IL.e = IL.Composite (IL.CList, (_, elements, _)); _ } ]
-          ->
-            List_.map (fun (e : IL.exp) -> IL.Unnamed e) elements
-        | _ -> args)
-    | _ -> args
-  in
   let args_taints, all_args_taints, lval_env =
     check_function_call_arguments env args
   in
@@ -1877,7 +1911,7 @@ let call_with_intrafile lval_opt e env args instr =
                           | ToLval (taints, lval_name, offset) ->
                               let lval_env = Lval_env.add lval_name offset taints lval_env in
                               (taints_acc, shape_acc, lval_env)
-                          | ToSinkInCall { callee; arg; args_taints = args_taints_inner } ->
+                          | ToSinkInCall { callee; arg; arg_offset; args_taints = args_taints_inner } ->
                               (* Preserved ToSinkInCall from signature extraction - try to resolve it *)
                               let resolved_call_effects =
                                 try
@@ -1949,13 +1983,13 @@ let call_with_intrafile lval_opt e env args instr =
                                           (taints_acc, shape_acc, lval_env |> Lval_env.add var offset taints)
                                       | ToSinkInCall _ ->
                                           (* Nested ToSinkInCall - just record it *)
-                                          record_effects env [ Effect.ToSinkInCall { callee; arg; args_taints = args_taints_inner } ];
+                                          record_effects env [ Effect.ToSinkInCall { callee; arg; arg_offset; args_taints = args_taints_inner; guards = Effect_guard.Set.empty } ];
                                           (taints_acc, shape_acc, lval_env))
                                     (taints_acc, shape_acc, lval_env)
                                     resolved_effects
                               | None ->
                                   (* Could not resolve - record as effect *)
-                                  record_effects env [ Effect.ToSinkInCall { callee; arg; args_taints = args_taints_inner } ];
+                                  record_effects env [ Effect.ToSinkInCall { callee; arg; arg_offset; args_taints = args_taints_inner; guards = Effect_guard.Set.empty } ];
                                   (taints_acc, shape_acc, lval_env)))
                         (Taints.empty, S.Bot, env.lval_env)
                         call_effects
@@ -2139,6 +2173,14 @@ let call_with_intrafile lval_opt e env args instr =
                         List.mem (fst name.ident) invoke_methods
                     | _ -> false
                   in
+                  Log.debug (fun m ->
+                      m "INVOKE_CHECK: e=%s e_shape=%s e_obj_is_Arg=%b invoke=%b"
+                        (Display_IL.string_of_exp e)
+                        (S.show_shape e_shape)
+                        (match e_obj with
+                        | `Obj (_, S.Arg _) -> true
+                        | _ -> false)
+                        is_method_callback_invoke);
                   let callee_is_callback =
                     match e_shape with
                     | S.Arg _ -> true
@@ -2169,7 +2211,12 @@ let call_with_intrafile lval_opt e env args instr =
                             { T.base = T.BThis; offset = [] }
                           in
                           let receiver_effect =
-                            Effect.ToLval (obj_taints, receiver_taint_lval)
+                            Effect.ToLval
+                              {
+                                taints = obj_taints;
+                                lval = receiver_taint_lval;
+                                guards = Effect_guard.Set.empty;
+                              }
                           in
                           record_effects { env with lval_env } [ receiver_effect ];
                           call_taints |> Taints.union obj_taints
@@ -2187,6 +2234,11 @@ let call_with_intrafile lval_opt e env args instr =
     check_type_and_drop_taints_if_bool_or_number env all_call_taints
       type_of_expr e
   in
+  Log.debug (fun m ->
+      m "CALL_RESULT: %s -> e_taints=%d call_taints=%d all=%d shape=%s"
+        (Display_IL.string_of_exp e)
+        (Taints.cardinal e_taints) (Taints.cardinal call_taints)
+        (Taints.cardinal all_call_taints) (S.show_shape shape));
   (* Handle result variable assignment for Call instruction *)
   let lval_env =
     match lval_opt with
@@ -2245,7 +2297,16 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                  T.offset_of_rev_IL_offset ~rev_offset:lval.rev_offset
                in
                let taint_lval = { T.base = T.BThis; offset } in
-               let effects = [ Effect.ToLval (taints, taint_lval) ] in
+               let effects =
+                 [
+                   Effect.ToLval
+                     {
+                       taints;
+                       lval = taint_lval;
+                       guards = Effect_guard.Set.empty;
+                     };
+                 ]
+               in
                record_effects env effects
            | _ -> ());
         (* Let the transfer function handle the actual lval assignment *)
@@ -2337,7 +2398,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                     else (
                       (* Check if this is a call to a function parameter (either direct or via method) *)
                       (match e_obj with
-                      | `Obj (_obj_taints, S.Arg _fun_arg) ->
+                      | `Obj (_obj_taints, S.Arg _) ->
                           (* This is a method call on a function parameter (e.g., callback.apply in Java,
                            * callback.call in Ruby). Treat it as invoking the callback. *)
                           effects_of_call_func_arg e (match e_obj with `Obj (_, shape) -> shape | `Fun -> e_shape) args_taints
@@ -2510,7 +2571,13 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
                         let new_taints = Taints.diff exit_taints enter_taints in
                         (* TODO: Also report if taints are _cleaned_. *)
                         if not (Taints.is_empty new_taints) then
-                          Some (Effect.ToLval (new_taints, lval))
+                          Some
+                            (Effect.ToLval
+                               {
+                                 taints = new_taints;
+                                 lval;
+                                 guards = Effect_guard.Set.empty;
+                               })
                         else None)))
   |> Seq.concat |> List.of_seq
 
@@ -2592,6 +2659,80 @@ let mk_lambda_in_env env lcfg =
          |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
        env.lval_env
 
+(* At [TrueNode] / [FalseNode], if [cond] evaluates to a constant boolean that
+ * contradicts the branch direction, the branch is unreachable and the taint
+ * env flowing through it is set to [Lval_env.empty]. Applies to any constant-
+ * folded condition, e.g. [if (true)] or [if (length(x) == 1)] when the shape
+ * of [x] is statically known.
+ *
+ * FIXME: Currently a no-op. The live logic is shown below commented out.
+ *        Re-enable once the rest of the guard-stamping and Sig_inst
+ *        evaluation is in place and we can verify this pruner does not hide
+ *        intermediate regressions during development. *)
+let prune_branch_if_unreachable (_lang : Lang.t) (_cond : IL.exp)
+    (_branch_direction : bool) (in' : Lval_env.t) : Lval_env.t =
+  (*
+   * let eval_env = Eval_il_partial.mk_env lang Var_env.VarMap.empty in
+   * match Eval_il_partial.eval eval_env cond with
+   * | G.Lit (G.Bool (b, _)) when not (Bool.equal b branch_direction) ->
+   *     Lval_env.empty
+   * | _ -> in'
+   *)
+  in'
+
+(* Recognise a list-length comparison emitted by [AST_to_IL] for a [PatList]
+ * case — shape [length(param_ref) == N] or [length(param_ref) >= N] where
+ * [param_ref] refers to one of the current function's formal params. Returns
+ * a normalised [Effect_guard.t] referring to that param by index. Any other
+ * condition returns [None]. Used at [TrueNode] in the transfer to add the
+ * guard to the env's [active_guards]. Effects recorded while that set is
+ * non-empty are stamped with it, so a caller can drop them when the caller-
+ * side length cannot satisfy the guard. *)
+let arity_guard_of_cond (params : IL.param list) (cond : IL.exp) :
+    Effect_guard.t option =
+  let taint_arg_of_fetch (e : IL.exp) : Taint.arg option =
+    match e.e with
+    | Fetch { base = Var name; rev_offset = [] } ->
+        let rec find i = function
+          | [] -> None
+          | (IL.Param { pname; _ } | IL.ParamRest { pname; _ }) :: _
+            when IL.equal_name pname name ->
+              Some { Taint.name = fst name.ident; index = i }
+          | _ :: rest -> find (i + 1) rest
+        in
+        find 0 params
+    | _ -> None
+  in
+  let length_of (e : IL.exp) : Taint.arg option =
+    match e.e with
+    | Operator ((G.Length, _), [ Unnamed arg_exp ]) -> taint_arg_of_fetch arg_exp
+    | _ -> None
+  in
+  let int_of (e : IL.exp) : int option =
+    match e.e with
+    | Literal (G.Int pi) -> Parsed_int.to_int_opt pi
+    | _ -> None
+  in
+  (* [switch_expr_and_cases_to_exp] in AST_to_IL wraps each case's condition
+   * in an [Or]-of-one-element (the outer Switch reduces to an OR of all case
+   * conds, with a vacuous unary Or when a [CasesAndBody] has a single case).
+   * Peek through that Or wrapper so we see the underlying comparison. *)
+  let rec unwrap_or (e : IL.exp) =
+    match e.e with
+    | Operator ((G.Or, _), [ Unnamed inner ]) -> unwrap_or inner
+    | _ -> e
+  in
+  match (unwrap_or cond).e with
+  | Operator ((op, _), [ Unnamed lhs; Unnamed rhs ]) -> (
+      match (length_of lhs, int_of rhs) with
+      | Some arg, Some n -> (
+          match op with
+          | G.Eq -> Some (Effect_guard.LenEq (arg, n))
+          | G.GtE -> Some (Effect_guard.LenGe (arg, n))
+          | _ -> None)
+      | _ -> None)
+  | _ -> None
+
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
  fun enter_env ~fun_cfg
      (* the transfer function to update the mapping at node index ni *)
@@ -2661,11 +2802,24 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         let effects = effects_of_tainted_return env taints shape tok in
         record_effects env effects;
         lval_env'
+    | TrueNode cond ->
+        let pruned =
+          prune_branch_if_unreachable env.taint_inst.lang cond true in'
+        in
+        (* Extend [active_guards] with the case guard, if [cond] matches the
+         * list-length comparison emitted by [AST_to_IL]. The FalseNode path
+         * carries no such guard, since we do not represent negation. *)
+        (match arity_guard_of_cond fun_cfg.params cond with
+        | None -> pruned
+        | Some g ->
+            Log.debug (fun m ->
+                m "GUARD_STAMP: TrueNode adds %s" (Effect_guard.show g));
+            Lval_env.add_active_guard g pruned)
+    | FalseNode cond ->
+        prune_branch_if_unreachable env.taint_inst.lang cond false in'
     | NGoto _
     | Enter
     | Exit
-    | TrueNode _
-    | FalseNode _
     | Join
     | NOther _
     | NTodo _ ->
@@ -2943,7 +3097,7 @@ and (fixpoint :
                                 Taint.Taint_set.singleton generic_taint
                               in
                               (* Give the parameter an Arg shape so it can be used in HOF *)
-                              let param_shape = S.Arg taint_arg in
+                              let param_shape = S.Arg (taint_arg, []) in
                               let new_env =
                                 Lval_env.add_lval_shape il_lval taint_set
                                   param_shape env

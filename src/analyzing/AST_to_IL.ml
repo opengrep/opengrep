@@ -275,6 +275,34 @@ let is_constructor env ret_ty id_info : bool =
   | _ -> false
 
 (*****************************************************************************)
+(* Pattern helpers *)
+(*****************************************************************************)
+
+(* Detect a list-shaped case pattern and return the arity check that should be
+ * used as the Switch discriminator.
+ *
+ * A [PatList [p1; ...; pN]] with no trailing [&] matches iff the scrutinee is a
+ * list of length exactly [N] — the condition is [length(scrutinee) = N].
+ *
+ * A [PatList [p1; ...; pK; PatConstructor("&", _)]] with a trailing variadic
+ * slot matches iff the scrutinee has at least [K] elements — the condition is
+ * [length(scrutinee) >= K].
+ *
+ * Any other shape (tuple, literal, constructor, value pattern) returns [None]
+ * and the caller falls back to a [fixme] condition — which leaves dataflow to
+ * conservatively take every branch, as today. *)
+let rec list_pat_arity (pat : G.pattern) : (G.operator * int) option =
+  match pat with
+  | G.PatWhen (inner, _guard) -> list_pat_arity inner
+  | G.PatList (_, slots, _) ->
+      let n = List.length slots in
+      (match List.rev slots with
+       | G.PatConstructor (G.Id (("&", _), _), _) :: _ ->
+           Some (G.GtE, n - 1)
+       | _ -> Some (G.Eq, n))
+  | _ -> None
+
+(*****************************************************************************)
 (* lvalue *)
 (*****************************************************************************)
 
@@ -1878,11 +1906,11 @@ and parameters params : param list =
        | G.Param { pname = Some i; pinfo; pdefault; _ } ->
            let pname = var_of_id_info i pinfo in
            (* Clojure/Elixir/OCaml encode multi-clause functions with a
-              single synthetic !!_implicit_param! that wraps all actual
-              arguments. Translate it as ParamRest so the taint signature
-              layer treats it as a rest param without a special-case check. *)
-           if G.is_implicit_param (fst i) then ParamRest { pname; pdefault }
-           else Param { pname; pdefault }
+              single synthetic !!_implicit_param! that already receives the
+              CList of actual arguments (the call site wraps them). Keep it
+              as a plain positional Param so the signature layer binds the
+              CList directly instead of re-wrapping it. *)
+           Param { pname; pdefault }
        | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
            ParamRest { pname = var_of_id_info i pinfo; pdefault }
        | G.ParamPattern pat -> ParamPattern pat
@@ -2465,8 +2493,34 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
                `Or`ed together cases. It's handled specially in cases_and_bodies_to_stmts
             *)
             impossible (G.Tk tok)
-        | G.Case (tok, _) ->
-            (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es)
+        | G.Case (tok, pat) -> (
+            (* For list-shaped patterns we encode the arity check as a
+             * condition on the scrutinee's length. Clojure multi-arity
+             * functions lower as a Switch over a single list-valued implicit
+             * parameter; without a real condition here the effects of every
+             * leg would merge at the caller's signature instantiation. *)
+            match list_pat_arity pat with
+            | None -> (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es)
+            | Some (op, n) ->
+                let length_exp =
+                  {
+                    e = Operator ((G.Length, tok), [ Unnamed switch_expr ]);
+                    eorig = related_tok tok;
+                  }
+                in
+                let n_exp =
+                  {
+                    e = Literal (G.Int (Parsed_int.of_int n));
+                    eorig = related_tok tok;
+                  }
+                in
+                ( ss,
+                  {
+                    e =
+                      Operator ((op, tok), [ Unnamed length_exp; Unnamed n_exp ]);
+                    eorig = related_tok tok;
+                  }
+                  :: es ))
         | G.OtherCase ((_todo_categ, tok), _any) ->
             (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es))
       ([], []) cases
