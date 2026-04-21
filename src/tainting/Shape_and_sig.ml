@@ -607,11 +607,15 @@ end = struct
   let show_taints_and_traces taints =
     Common2.string_of_list show_taint_to_sink_item taints
 
-  let show_taints_to_sink { taints_with_precondition = taints, _; sink; _ } =
-    Common.spf "%s ~~~> %s" (show_taints_and_traces taints) (show_sink sink)
+  let show_taints_to_sink
+      { taints_with_precondition = taints, _; sink; guards; _ } =
+    Common.spf "%s%s ~~~> %s" (show_taints_and_traces taints)
+      (Effect_guard.show_set guards)
+      (show_sink sink)
 
-  let show_taints_to_return { data_taints; data_shape; control_taints; _ } =
-    Printf.sprintf "return (%s & %s & CTRL:%s)"
+  let show_taints_to_return { data_taints; data_shape; control_taints; guards; _ } =
+    Printf.sprintf "return%s (%s & %s & CTRL:%s)"
+      (Effect_guard.show_set guards)
       (T.show_taints data_taints)
       (Shape.show_shape data_shape)
       (T.show_taints control_taints)
@@ -630,11 +634,13 @@ end = struct
   let show = function
     | ToSink tts -> show_taints_to_sink tts
     | ToReturn ttr -> show_taints_to_return ttr
-    | ToLval { taints; lval; _ } ->
-        Printf.sprintf "%s ----> %s" (T.show_taints taints) (T.show_lval lval)
-    | ToSinkInCall { callee = _; arg; args_taints; _ } ->
-        Printf.sprintf "'call<%s>%s" (T.show_arg arg)
+    | ToLval { taints; lval; guards; _ } ->
+        Printf.sprintf "%s%s ----> %s" (T.show_taints taints)
+          (Effect_guard.show_set guards) (T.show_lval lval)
+    | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
+        Printf.sprintf "'call<%s>%s%s" (T.show_arg arg)
           (show_args_taints args_taints)
+          (Effect_guard.show_set guards)
 
   let add_guards gs eff =
     if Effect_guard.Set.is_empty gs then eff
