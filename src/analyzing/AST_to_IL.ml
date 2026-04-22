@@ -303,6 +303,29 @@ let rec list_pat_arity (pat : G.pattern) : (G.operator * int) option =
   | _ -> None
 
 (*****************************************************************************)
+(* Implicit-return helper *)
+(*****************************************************************************)
+
+(* Clojure wraps function bodies and macro-expanded forms such as [->>] in
+ * [OtherExpr("ExprBlock", ...)] / [OtherExpr("->>", ...)] wrappers whose last
+ * sub-expression carries the value. [mark_first_instr_ancestor] sets
+ * [is_implicit_return] on the inner value-producing G.expr (e.g. the Call), but
+ * the lowering sites check the flag on the outer ExprStmt's eorig, which is
+ * the wrapper, not the inner expression. This helper treats a wrapper as
+ * implicitly-returned when its last sub-expression is. *)
+let effective_implicit_return env (eorig : G.expr) : bool =
+  if eorig.is_implicit_return then true
+  else
+    match eorig.e with
+    | G.OtherExpr ((kind, _), exprs)
+      when env.lang =*= Lang.Clojure
+           && CLJ_ME1.expands_as_block kind -> (
+        match List.rev exprs with
+        | G.E { is_implicit_return = true; _ } :: _ -> true
+        | _ -> false)
+    | _ -> false
+
+(*****************************************************************************)
 (* lvalue *)
 (*****************************************************************************)
 
@@ -1701,7 +1724,7 @@ and stmt_expr env ?g_expr st : stmts * exp =
   match st.G.s with
   | G.ExprStmt (eorig, tok) ->
       let ss, e = expr env eorig in
-      if eorig.is_implicit_return then
+      if effective_implicit_return env eorig then
         let ret_stmt = mk_s (Return (tok, e)) in
         let ss_unit, unit_e = expr_opt env tok None in
         (ss @ [ret_stmt] @ ss_unit, unit_e)
@@ -2113,7 +2136,8 @@ and stmt_aux env st : stmts =
   match st.G.s with
   | G.ExprStmt (eorig, tok) -> (
       match eorig with
-      | { is_implicit_return = true; _ } -> implicit_return env eorig tok
+      | _ when effective_implicit_return env eorig ->
+          implicit_return env eorig tok
       (* Python's yield statement functions similarly to a return
          statement but with the added capability of saving the
          function's state. While this analogy isn't entirely precise,
@@ -2121,17 +2145,6 @@ and stmt_aux env st : stmts =
          sake. *)
       | { e = Yield (_, Some e, _); _ } when env.lang =*= Lang.Python ->
           implicit_return env e tok
-      (* Clojure wraps function bodies in OtherExpr("ExprBlock", ...).
-         mark_first_instr_ancestor sets is_implicit_return on the inner
-         expression (referenced by iorig), but this match sees the outer
-         wrapper. Propagate by checking the last expression in the block. *)
-      | { e = G.OtherExpr ((kind, _), exprs); _ }
-        when env.lang =*= Lang.Clojure
-             && CLJ_ME1.expands_as_block kind
-             && (match List.rev exprs with
-                 | G.E { G.is_implicit_return = true; _ } :: _ -> true
-                 | _ -> false) ->
-          implicit_return env eorig tok
       | _ -> expr_stmt env eorig tok)
   | G.DefStmt
       ( { name = EN obj; _ },

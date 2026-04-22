@@ -126,6 +126,11 @@ val clean : env -> IL.lval -> env
     clean the entire array! This seems drastic but it should help reducing FPs.
  *)
 
+val clean_all : env -> env
+(** Mark every tracked l-value [`Clean]. Used to neutralise an unreachable
+    branch so its body runs but reads see no taint, while at the Join the live
+    branch's taints survive via [Xtaint.union (Tainted, Clean) = Tainted]. *)
+
 val filter_tainted : (IL.name -> bool) -> env -> env
 val add_control_taints : env -> Taint.taints -> env
 val get_control_taints : env -> Taint.taints

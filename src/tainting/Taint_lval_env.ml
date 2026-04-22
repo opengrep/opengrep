@@ -336,6 +336,17 @@ let filter_tainted pred ({ tainted; _ } as lval_env) =
   let tainted = tainted |> NameMap.filter (fun var _cell -> pred var) in
   { lval_env with tainted }
 
+(* Mark every tracked l-value as [`Clean]. Used to neutralise an unreachable
+ * branch: its body still executes and propagates through assignments at the
+ * lval_env level, but reads of previously-tainted l-values return [`Clean],
+ * so sinks inside it do not fire, and at the Join [Xtaint.union] makes the
+ * live branch's taints survive (tainted ∪ clean = tainted). *)
+let clean_all lval_env =
+  let tainted =
+    lval_env.tainted |> NameMap.map (fun cell -> Shape.clean_cell [] cell)
+  in
+  { lval_env with tainted; control = Taints.empty }
+
 let add_control_taints lval_env taints =
   if Taints.is_empty taints then lval_env
   else { lval_env with control = Taints.union taints lval_env.control }
