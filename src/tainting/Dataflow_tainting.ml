@@ -3061,7 +3061,6 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
   in
   let end_mapping, timeout_status =
     if needs_self_sig_fixpoint then
-      let max_self_recursive_passes = 5 in
       let rec run_to_sig_fixpoint passes =
         let prev_effects = !(env.effects_acc) in
         env.did_self_recurse := false;
@@ -3071,7 +3070,7 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
         in
         if
           (not !(env.did_self_recurse))
-          || passes >= max_self_recursive_passes
+          || passes >= Limits_semgrep.taint_MAX_SELF_SIG_PASSES
           || Effects.equal prev_effects !(env.effects_acc)
         then (end_mapping, status)
         else run_to_sig_fixpoint (passes + 1)

@@ -77,3 +77,11 @@ let taint_MAX_POLY_OFFSET = 1
  * unbounded recursive structures. When both shapes exceed this depth, we
  * consider them equal (widening approximation) to force fixpoint convergence. *)
 let taint_MAX_SHAPE_DEPTH = 50
+
+(** Maximum number of outer fixpoint passes for the self-sig convergence
+ * loop in [Dataflow_tainting.fixpoint_aux]. Each pass re-runs the
+ * inner dataflow fixpoint while a direct self-recursive call has
+ * produced new effects; the loop stops once the effects set is stable
+ * or this cap is reached. Only Clojure multi-arity self-recursion
+ * currently triggers the loop. *)
+let taint_MAX_SELF_SIG_PASSES = 5
