@@ -2718,25 +2718,19 @@ let mk_lambda_in_env env lcfg =
        env.lval_env
 
 (* At [TrueNode] / [FalseNode], if [cond] evaluates to a constant boolean that
- * contradicts the branch direction, the branch is unreachable and the taint
- * env flowing through it is set to [Lval_env.empty]. Applies to any constant-
- * folded condition, e.g. [if (true)] or [if (length(x) == 1)] when the shape
- * of [x] is statically known.
- *
- * FIXME: Currently a no-op. The live logic is shown below commented out.
- *        Re-enable once the rest of the guard-stamping and Sig_inst
- *        evaluation is in place and we can verify this pruner does not hide
- *        intermediate regressions during development. *)
-let prune_branch_if_unreachable (_lang : Lang.t) (_cond : IL.exp)
-    (_branch_direction : bool) (in' : Lval_env.t) : Lval_env.t =
-  (*
-   * let eval_env = Eval_il_partial.mk_env lang Var_env.VarMap.empty in
-   * match Eval_il_partial.eval eval_env cond with
-   * | G.Lit (G.Bool (b, _)) when not (Bool.equal b branch_direction) ->
-   *     Lval_env.empty
-   * | _ -> in'
-   *)
-  in'
+ * contradicts the branch direction, the branch is unreachable and every
+ * tracked l-value on the incoming env is marked [`Clean]. The pruned branch
+ * still executes, but its reads see no taint, so sinks inside it cannot fire;
+ * at the Join, [Xtaint.union (Tainted, Clean) = Tainted] preserves the live
+ * branch's taints. Applies to any constant-folded condition, e.g. [if (true)]
+ * or [if (length(x) == 1)] when the shape of [x] is statically known. *)
+let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
+    (branch_direction : bool) (in' : Lval_env.t) : Lval_env.t =
+  let eval_env = Eval_il_partial.mk_env lang Var_env.VarMap.empty in
+  match Eval_il_partial.eval eval_env cond with
+  | G.Lit (G.Bool (b, _)) when not (Bool.equal b branch_direction) ->
+      Lval_env.clean_all in'
+  | _ -> in'
 
 (* Recognise a list-length comparison emitted by [AST_to_IL] for a [PatList]
  * case — shape [length(param_ref) == N] or [length(param_ref) >= N] where
@@ -2864,9 +2858,6 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         let pruned =
           prune_branch_if_unreachable env.taint_inst.lang cond true in'
         in
-        (* Extend [active_guards] with the case guard, if [cond] matches the
-         * list-length comparison emitted by [AST_to_IL]. The FalseNode path
-         * carries no such guard, since we do not represent negation. *)
         (match arity_guard_of_cond fun_cfg.params cond with
         | None -> pruned
         | Some g ->

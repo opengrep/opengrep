@@ -356,8 +356,8 @@
 
 ;; cond->
 (defn f [x]
-  ;; ruleid: taint-call
   (cond-> x
+      ;; ruleid: taint-call
       true (->> sink)
       false (->> sanitizes sink)))
 
@@ -368,8 +368,8 @@
       false sinkz))
 
 (defn f [x]
-  ;; ok: taint-call
   (cond->> x
+      ;; ruleid: taint-call
       true sink
       true sanitize
       true sink))
@@ -404,7 +404,7 @@
        (finally (sink x))))
 
 (defn f [x]
-  ;; ruleid: taint-call
+  ;; ok: taint-call
   (and false (sink x)))
 
 ;; loop
