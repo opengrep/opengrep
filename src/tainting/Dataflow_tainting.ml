@@ -306,6 +306,12 @@ let taints_of_matches env ~incoming sources =
   (data_taints, lval_env)
 
 let record_effects env new_effects =
+  Log.debug (fun m ->
+      let fn = Option.fold ~none:"<anon>" ~some:IL.str_of_name env.func.name in
+      let effects_str =
+        new_effects |> List.map Effect.show |> String.concat " ; "
+      in
+      m "REC_EFFECTS in %s: [%s]" fn effects_str);
   if not (List_.null new_effects) then
     let new_effects =
       env.taint_inst.handle_effects env.func.name new_effects
@@ -871,6 +877,23 @@ let check_orig_if_sink env ?filter_sinks orig taints shape =
     | Some sink_pred -> sinks |> List.filter sink_pred
   in
   let sinks = sinks |> List_.map TM.sink_of_match in
+  Log.debug (fun m ->
+      let range_str =
+        let any =
+          match orig with
+          | IL.SameAs e -> G.E e
+          | IL.Related a -> a
+          | IL.NoOrig -> G.Anys []
+        in
+        match AST_generic_helpers.range_of_any_opt any with
+        | Some (s, e) ->
+            Printf.sprintf "%d-%d" (s.Tok.pos.bytepos) (e.Tok.pos.bytepos)
+        | None -> "?"
+      in
+      m "SINK_CHECK[range=%s]: taints=%d sinks=%d effects_would_be=%d"
+        range_str
+        (Taints.cardinal taints) (List.length sinks)
+        (if Taints.is_empty taints || List.is_empty sinks then 0 else 1));
   let effects = effects_of_tainted_sinks env taints sinks in
   record_effects env effects
 

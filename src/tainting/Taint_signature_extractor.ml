@@ -224,6 +224,14 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
     Dataflow_tainting.fixpoint taint_inst ~in_env:combined_env ?name
       ?signature_db ?builtin_signature_db ?call_graph func_cfg
   in
+  Log.debug (fun m ->
+      let fn = Option.fold ~none:"<anon>" ~some:IL.str_of_name name in
+      let items =
+        fixpoint_effects |> Effects.elements
+        |> List.map Effect.show |> String.concat " | "
+      in
+      m "SIG_RAW_EFFECTS: %s has %d effect(s): [%s]" fn
+        (List.length (Effects.elements fixpoint_effects)) items);
   let effects_with_preconditions =
     fixpoint_effects |> Effects.elements
     |> List.fold_left
@@ -315,6 +323,11 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
          Effects.empty
   in
   let signature = { Signature.params; effects = effects_with_preconditions } in
+  Log.debug (fun m ->
+      let func_name = Option.map IL.str_of_name name in
+      m "SIG_EXTRACTED: Function %s signature: %s"
+        (Option.value func_name ~default:"<anonymous>")
+        (Signature.show signature));
   { signature; mapping }
 
 let mk_global_assumptions_with_sids
