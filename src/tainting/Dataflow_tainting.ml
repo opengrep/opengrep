@@ -2765,16 +2765,7 @@ let arity_guard_of_cond (params : IL.param list) (cond : IL.exp) :
     | Literal (G.Int pi) -> Parsed_int.to_int_opt pi
     | _ -> None
   in
-  (* [switch_expr_and_cases_to_exp] in AST_to_IL wraps each case's condition
-   * in an [Or]-of-one-element (the outer Switch reduces to an OR of all case
-   * conds, with a vacuous unary Or when a [CasesAndBody] has a single case).
-   * Peek through that Or wrapper so we see the underlying comparison. *)
-  let rec unwrap_or (e : IL.exp) =
-    match e.e with
-    | Operator ((G.Or, _), [ Unnamed inner ]) -> unwrap_or inner
-    | _ -> e
-  in
-  match (unwrap_or cond).e with
+  match cond.e with
   | Operator ((op, _), [ Unnamed lhs; Unnamed rhs ]) -> (
       match (length_of lhs, int_of rhs) with
       | Some arg, Some n -> (

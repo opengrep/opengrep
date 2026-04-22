@@ -2538,11 +2538,17 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
             (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es))
       ([], []) cases
   in
+  (* A [CasesAndBody] with a single case does not need the [Or] wrapper —
+   * unwrapping it here keeps downstream consumers (e.g. the arity-guard
+   * recogniser in the taint transfer) from having to peel it off. *)
   ( ss,
-    {
-      e = Operator ((Or, tok), mk_unnamed_args es);
-      eorig = SameAs switch_expr_orig;
-    } )
+    match es with
+    | [ single ] -> single
+    | _ ->
+        {
+          e = Operator ((Or, tok), mk_unnamed_args es);
+          eorig = SameAs switch_expr_orig;
+        } )
 
 and cases_to_exp tok env cases : stmts * exp =
   (* If we have no scrutinee, the cases are boolean expressions, so we Or them together *)
@@ -2568,7 +2574,11 @@ and cases_to_exp tok env cases : stmts * exp =
       ([], []) cases
   in
   ( ss,
-    { e = Operator ((Or, tok), mk_unnamed_args es); eorig = related_tok tok } )
+    match es with
+    | [ single ] -> single
+    | _ ->
+        { e = Operator ((Or, tok), mk_unnamed_args es); eorig = related_tok tok }
+  )
 
 and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_cases
     lower_body : G.case_and_body list -> stmts * stmts = function
