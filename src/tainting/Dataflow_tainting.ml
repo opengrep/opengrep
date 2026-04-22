@@ -1795,7 +1795,6 @@ let check_function_call env fun_exp args
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
                | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
-                   ignore arg_offset;
                    (* Preserved ToSinkInCall from signature extraction - try to resolve it *)
                    let resolved_call_effects =
                      try
