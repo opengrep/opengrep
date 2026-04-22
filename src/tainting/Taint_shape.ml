@@ -338,17 +338,23 @@ and find_in_shape_w_carry ~taints offset shape =
   | Bot -> not_found
   | Obj obj -> find_in_obj_w_carry ~taints offset obj
   | Arg (arg, base_off) ->
-      (* Extend the Arg shape only for integer-indexed access (destructured
-       * element of a packed composite, e.g. [callback = impl[0]]). Method
-       * or field access on an Arg-shaped value shouldn't turn the receiver
-       * into a callback-like shape, so those fall through to the existing
-       * poly-taint-extension path. *)
-      let all_int =
-        List.for_all
-          (function T.Oint _ -> true | _ -> false)
+      (* Mirror the method-vs-field discriminator from
+       * [fix_poly_taint_with_offset]: when any offset segment has a
+       * function type ([TyFun]), this is a method call on an [Arg]-shaped
+       * value (e.g. [arr.begin()] in C++). Extending the Arg shape through
+       * the method would make the receiver look like a callback and fire
+       * false HOF dispatch. Fall through to the poly-taint path instead. *)
+      let offset_is_method =
+        List.exists
+          (function
+            | T.Ofld n -> (
+                match !(n.id_info.id_type) with
+                | Some { t = G.TyFun _; _ } -> true
+                | _ -> false)
+            | _ -> false)
           offset
       in
-      if all_int then
+      if not offset_is_method then
         let refined = Arg (arg, base_off @ offset) in
         let taints = fix_poly_taint_with_offset offset taints in
         `Found (Cell (Xtaint.of_taints taints, refined))
