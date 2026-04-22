@@ -1,0 +1,10 @@
+--- begin input files ---
+metavariable_type.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 23 insertions(+)
+ create mode 100644 metavariable_type.yaml
+ create mode 100644 stupid.py
+{"version":"2.1.0","runs":[{"invocations":[{"executionSuccessful":true,"toolExecutionNotifications":[]}],"results":[],"tool":{"driver":{"name":"Opengrep OSS","rules":[{"defaultConfiguration":{"level":"error"},"fullDescription":{"text":"rules with metavariable type"},"help":{"markdown":"rules with metavariable type","text":"rules with metavariable type"},"id":"metavar-type","name":"metavar-type","properties":{"precision":"very-high","tags":[]},"shortDescription":{"text":"Opengrep Finding: metavar-type"}}],<MASKED>}}}],"$schema":"https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"}

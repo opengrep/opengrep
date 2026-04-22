@@ -157,6 +157,7 @@ let tests (caps : Cap.all_caps) =
       (* osemgrep e2e subcommand tests *)
       (* Test_login_subcommand.tests (caps :> Login_subcommand.caps); *)
       Test_scan_subcommand.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_sarif.tests (caps :> Scan_subcommand.caps);
       Unit_test_subcommand.tests (caps :> Test_subcommand.caps);
       Test_show_subcommand.tests (caps :> Show_subcommand.caps);
       (* Test_publish_subcommand.tests
