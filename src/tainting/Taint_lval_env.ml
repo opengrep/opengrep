@@ -195,15 +195,8 @@ let check_tainted_lvals_limit tainted new_var =
         None)
   else Some tainted
 
-let add_shape var offset new_taints new_shape
-    ({
-       tainted;
-       control;
-       taints_to_propagate;
-       pending_propagation_dests;
-       active_guards;
-     } as lval_env) =
-  match check_tainted_lvals_limit tainted var with
+let add_shape var offset new_taints new_shape lval_env =
+  match check_tainted_lvals_limit lval_env.tainted var with
   | None -> lval_env
   | Some tainted ->
       let new_taints =
@@ -214,16 +207,13 @@ let add_shape var offset new_taints new_shape
           |> Taints.map (fun t -> { t with tokens = var_tok :: t.tokens })
       in
       {
+        lval_env with
         tainted =
           NameMap.update var
             (fun opt_var_ref ->
               Shape.update_offset_and_unify new_taints new_shape offset
                 opt_var_ref)
             tainted;
-        control;
-        taints_to_propagate;
-        pending_propagation_dests;
-        active_guards;
       }
 
 let add_lval_shape lval new_taints new_shape lval_env =
@@ -304,32 +294,24 @@ let pending_propagation prop_var lval env =
       VarMap.add prop_var lval env.pending_propagation_dests;
   }
 
-let clean
-    ({
-       tainted;
-       control;
-       taints_to_propagate;
-       pending_propagation_dests;
-       active_guards;
-     } as lval_env) lval =
+let clean lval_env lval =
   match normalize_lval lval with
   | None ->
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
          variable. We just return the same environment untouched. *)
       lval_env
   | Some (var, offsets) ->
+      (* THINK: Should we clean propagations before they are executed?
+         (taints_to_propagate / pending_propagation_dests flow through
+         [with] unchanged below.) *)
       {
+        lval_env with
         tainted =
           NameMap.update var
             (function
               | None -> None
               | Some var_ref -> Some (Shape.clean_cell offsets var_ref))
-            tainted;
-        control;
-        taints_to_propagate;
-        pending_propagation_dests;
-        active_guards;
-        (* THINK: Should we clean propagations before they are executed? *)
+            lval_env.tainted;
       }
 
 let filter_tainted pred ({ tainted; _ } as lval_env) =
