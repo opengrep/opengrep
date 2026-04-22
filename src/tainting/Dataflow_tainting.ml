@@ -1624,6 +1624,127 @@ let check_tainted_var env (var : IL.name) : Taints.t * S.shape * Lval_env.t =
   in
   (taints, shape, lval_env)
 
+(* A [Sig_inst.call_effect.ToSinkInCall] bubbling out of instantiation means
+ * the callback's signature could not be resolved inside [Sig_inst]. This
+ * helper gives it one more chance at the use site by name-looking-up the
+ * saved [callee] expression, and — on success — consumes the callback's
+ * resolved effects (recording sinks, propagating return taints/shapes, and
+ * applying lval updates) against the fold's running accumulator. On any
+ * failure it re-records the preserved effect so a caller one frame up can
+ * try again.
+ *
+ * Nested [ToSinkInCall] effects returned by the resolver are re-recorded
+ * with their own [callee/arg/arg_offset/args_taints]; the outer preserved
+ * effect is only re-recorded when resolution fails outright. *)
+let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
+    (taints_acc, shape_acc, lval_env) =
+  let resolved_call_effects =
+    try
+      let callee_name_opt =
+        match callee.e with
+        | Fetch { base = Var name; rev_offset = [] }
+        | Fetch { base = Var name; rev_offset = [ { o = Dot _; _ } ] } ->
+            Some name
+        | _ -> None
+      in
+      match callee_name_opt with
+      | Some callee_name ->
+          let arity = List.length args_taints in
+          (match lookup_signature env callee arity with
+          | Some callee_sig ->
+              Log.debug (fun m ->
+                  m "Resolving ToSinkInCall for '%s' at use site"
+                    (IL.str_of_name callee_name));
+              Sig_inst.instantiate_function_signature env.lval_env callee_sig
+                ~callee ~args:None args_taints
+                ~lookup_sig:(fun exp _depth ->
+                  let arity = List.length args_taints in
+                  lookup_signature env exp arity)
+                ()
+          | None ->
+              Log.debug (fun m ->
+                  m "ToSinkInCall: No signature found for '%s'"
+                    (IL.str_of_name callee_name));
+              None)
+      | None ->
+          Log.debug (fun m ->
+              m "ToSinkInCall: Could not resolve callee '%s'"
+                (Display_IL.string_of_exp callee));
+          None
+    with e ->
+      Log.warn (fun m ->
+          m "Exception while resolving ToSinkInCall: %s" (Common.exn_to_s e));
+      None
+  in
+  match resolved_call_effects with
+  | Some resolved_effects ->
+      List.fold_left
+        (fun (taints_acc, shape_acc, lval_env)
+             (resolved_effect : Sig_inst.call_effect) ->
+          match resolved_effect with
+          | ToSink
+              { taints_with_precondition = incoming_taints, requires; sink; _ }
+            ->
+              let sink_effects =
+                effects_of_tainted_sink env incoming_taints sink
+              in
+              let corrected_sink_effects =
+                sink_effects
+                |> List.map (function
+                     | Effect.ToSink eff ->
+                         Effect.ToSink
+                           {
+                             eff with
+                             taints_with_precondition =
+                               (fst eff.taints_with_precondition, requires);
+                           }
+                     | other -> other)
+              in
+              record_effects env corrected_sink_effects;
+              (taints_acc, shape_acc, lval_env)
+          | ToReturn
+              {
+                data_taints = taints;
+                data_shape = shape;
+                control_taints;
+                _;
+              } ->
+              ( Taints.union taints taints_acc,
+                Shape.unify_shape shape shape_acc,
+                Lval_env.add_control_taints lval_env control_taints )
+          | ToLval (taints, var, offset) ->
+              ( taints_acc,
+                shape_acc,
+                lval_env |> Lval_env.add var offset taints )
+          | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
+              record_effects env
+                [
+                  Effect.ToSinkInCall
+                    {
+                      callee;
+                      arg;
+                      arg_offset;
+                      args_taints;
+                      guards = Effect_guard.Set.empty;
+                    };
+                ];
+              (taints_acc, shape_acc, lval_env))
+        (taints_acc, shape_acc, lval_env)
+        resolved_effects
+  | None ->
+      record_effects env
+        [
+          Effect.ToSinkInCall
+            {
+              callee;
+              arg;
+              arg_offset;
+              args_taints;
+              guards = Effect_guard.Set.empty;
+            };
+        ];
+      (taints_acc, shape_acc, lval_env)
+
 (* This function is consuming the taint signature of a function to determine
    a few things:
    1) What is the status of taint in the current environment, after the function
@@ -1795,86 +1916,9 @@ let check_function_call env fun_exp args
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
                | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
-                   (* Preserved ToSinkInCall from signature extraction - try to resolve it *)
-                   let resolved_call_effects =
-                     try
-                       let callee_name_opt =
-                         match callee.e with
-                         | Fetch { base = Var name; rev_offset = [] }
-                         | Fetch { base = Var name; rev_offset = [{ o = Dot _; _ }] } -> Some name
-                         | _ -> None
-                       in
-                       match callee_name_opt with
-                       | Some callee_name ->
-                           (* Try to look up the callback's signature *)
-                           let arity = List.length args_taints in
-                           (match lookup_signature env callee arity with
-                           | Some callee_sig ->
-                               Log.debug (fun m ->
-                                   m "Resolving ToSinkInCall for '%s' at use site"
-                                     (IL.str_of_name callee_name));
-                               (* Instantiate the callback's signature with the args_taints *)
-                               Sig_inst.instantiate_function_signature env.lval_env
-                                 callee_sig ~callee ~args:None
-                                 args_taints
-                                 ~lookup_sig:(fun exp _depth ->
-                                   let arity = List.length args_taints in
-                                   lookup_signature env exp arity)
-                                 ()
-                           | None ->
-                               Log.debug (fun m ->
-                                   m "ToSinkInCall: No signature found for '%s'"
-                                     (IL.str_of_name callee_name));
-                               None)
-                       | None ->
-                           Log.debug (fun m ->
-                               m "ToSinkInCall: Could not resolve callee '%s'"
-                                 (Display_IL.string_of_exp callee));
-                           None
-                     with
-                     | e ->
-                         Log.warn (fun m ->
-                             m "Exception while resolving ToSinkInCall: %s"
-                               (Common.exn_to_s e));
-                         None
-                   in
-                   (match resolved_call_effects with
-                   | Some resolved_effects ->
-                       (* Process the resolved effects recursively *)
-                       List.fold_left
-                         (fun (taints_acc, shape_acc, lval_env) (resolved_effect : Sig_inst.call_effect) ->
-                           match resolved_effect with
-                           | ToSink { taints_with_precondition = incoming_taints, requires; sink; _ } ->
-                               let sink_effects =
-                                 effects_of_tainted_sink env incoming_taints sink
-                               in
-                               let corrected_sink_effects =
-                                 sink_effects
-                                 |> List.map (function
-                                      | Effect.ToSink eff ->
-                                          Effect.ToSink
-                                            { eff with taints_with_precondition =
-                                                (fst eff.taints_with_precondition, requires) }
-                                      | other -> other)
-                               in
-                               record_effects env corrected_sink_effects;
-                               (taints_acc, shape_acc, lval_env)
-                           | ToReturn { data_taints = taints; data_shape = shape; control_taints; _ } ->
-                               (Taints.union taints taints_acc,
-                                Shape.unify_shape shape shape_acc,
-                                Lval_env.add_control_taints lval_env control_taints)
-                           | ToLval (taints, var, offset) ->
-                               (taints_acc, shape_acc, lval_env |> Lval_env.add var offset taints)
-                           | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
-                               (* Re-record nested ToSinkInCall for next iteration *)
-                               record_effects env [Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards = Effect_guard.Set.empty }];
-                               (taints_acc, shape_acc, lval_env))
-                         (taints_acc, shape_acc, lval_env)
-                         resolved_effects
-                   | None ->
-                      (* Could not resolve - re-record for next iteration *)
-                      record_effects env [Effect.ToSinkInCall { callee; arg; arg_offset; args_taints; guards = Effect_guard.Set.empty }];
-                       (taints_acc, shape_acc, lval_env)))
+                   resolve_preserved_to_sink_in_call env ~callee ~arg
+                     ~arg_offset ~args_taints
+                     (taints_acc, shape_acc, lval_env))
              (Taints.empty, Bot, env.lval_env))
   | None ->
       Log.debug (fun m ->
@@ -1908,7 +1952,6 @@ let check_function_call_callee env e =
 
 (* Test whether an instruction is tainted, and if it is also a sink,
  * report the effect too (by side effect). *)
- (*TODO needs some cleanup to remove duplicate code*)
 let call_with_intrafile lval_opt e env args instr =
   let args_taints, all_args_taints, lval_env =
     check_function_call_arguments env args
@@ -2002,86 +2045,10 @@ let call_with_intrafile lval_opt e env args instr =
                           | ToLval (taints, lval_name, offset) ->
                               let lval_env = Lval_env.add lval_name offset taints lval_env in
                               (taints_acc, shape_acc, lval_env)
-                          | ToSinkInCall { callee; arg; arg_offset; args_taints = args_taints_inner } ->
-                              (* Preserved ToSinkInCall from signature extraction - try to resolve it *)
-                              let resolved_call_effects =
-                                try
-                                  let callee_name_opt =
-                                    match callee.e with
-                                    | Fetch { base = Var name; rev_offset = [] } -> Some name
-                                    | _ -> None
-                                  in
-                                  match callee_name_opt with
-                                  | Some callee_name ->
-                                      (* Try to look up the callback's signature *)
-                                      let arity = List.length args_taints_inner in
-                                      (match lookup_signature env callee arity with
-                                      | Some callee_sig ->
-                                          Log.debug (fun m ->
-                                              m "Resolving ToSinkInCall for '%s' at use site (lambda)"
-                                                (IL.str_of_name callee_name));
-                                          (* Instantiate the callback's signature with the args_taints *)
-                                          Sig_inst.instantiate_function_signature env.lval_env
-                                            callee_sig ~callee ~args:None
-                                            args_taints_inner
-                                            ~lookup_sig:(fun exp _depth ->
-                                              let arity = List.length args_taints_inner in
-                                              lookup_signature env exp arity)
-                                            ()
-                                      | None ->
-                                          Log.debug (fun m ->
-                                              m "ToSinkInCall (lambda): No signature found for '%s'"
-                                                (IL.str_of_name callee_name));
-                                          None)
-                                  | None ->
-                                      Log.debug (fun m ->
-                                          m "ToSinkInCall (lambda): Could not resolve callee '%s'"
-                                            (Display_IL.string_of_exp callee));
-                                      None
-                                with
-                                | e ->
-                                    Log.warn (fun m ->
-                                        m "Exception while resolving ToSinkInCall (lambda): %s"
-                                          (Common.exn_to_s e));
-                                    None
-                              in
-                              (match resolved_call_effects with
-                              | Some resolved_effects ->
-                                  (* Process the resolved effects recursively *)
-                                  List.fold_left
-                                    (fun (taints_acc, shape_acc, lval_env) (resolved_effect : Sig_inst.call_effect) ->
-                                      match resolved_effect with
-                                      | ToSink { taints_with_precondition = incoming_taints, requires; sink; _ } ->
-                                          let sink_effects =
-                                            effects_of_tainted_sink env incoming_taints sink
-                                          in
-                                          let corrected_sink_effects =
-                                            sink_effects
-                                            |> List.map (function
-                                                 | Effect.ToSink eff ->
-                                                     Effect.ToSink
-                                                       { eff with taints_with_precondition =
-                                                           (fst eff.taints_with_precondition, requires) }
-                                                 | other -> other)
-                                          in
-                                          record_effects env corrected_sink_effects;
-                                          (taints_acc, shape_acc, lval_env)
-                                      | ToReturn { data_taints = taints; data_shape = shape; control_taints; _ } ->
-                                          (Taints.union taints taints_acc,
-                                           Shape.unify_shape shape shape_acc,
-                                           Lval_env.add_control_taints lval_env control_taints)
-                                      | ToLval (taints, var, offset) ->
-                                          (taints_acc, shape_acc, lval_env |> Lval_env.add var offset taints)
-                                      | ToSinkInCall _ ->
-                                          (* Nested ToSinkInCall - just record it *)
-                                          record_effects env [ Effect.ToSinkInCall { callee; arg; arg_offset; args_taints = args_taints_inner; guards = Effect_guard.Set.empty } ];
-                                          (taints_acc, shape_acc, lval_env))
-                                    (taints_acc, shape_acc, lval_env)
-                                    resolved_effects
-                              | None ->
-                                  (* Could not resolve - record as effect *)
-                                  record_effects env [ Effect.ToSinkInCall { callee; arg; arg_offset; args_taints = args_taints_inner; guards = Effect_guard.Set.empty } ];
-                                  (taints_acc, shape_acc, lval_env)))
+                          | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
+                              resolve_preserved_to_sink_in_call env ~callee
+                                ~arg ~arg_offset ~args_taints
+                                (taints_acc, shape_acc, lval_env))
                         (Taints.empty, S.Bot, env.lval_env)
                         call_effects
                     in

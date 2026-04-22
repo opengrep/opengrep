@@ -1162,6 +1162,25 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
               Some (outer_arg, outer_off)
           | _ -> None
         in
+        (* If [exp] is a variable reference whose taints carry a [BArg]
+         * origin, return that outer parameter. Used by the preserve paths
+         * below to rebind the preserved effect's [arg] field so the caller
+         * sees it as referring to an enclosing-frame parameter. *)
+        let enclosing_param_of_exp (exp : IL.exp) : Taint.arg option =
+          match exp.IL.e with
+          | Fetch { base = Var var; rev_offset = [] } -> (
+              let lval = { T.base = BGlob var; offset = [] } in
+              match lval_to_taints lval with
+              | Some (taints, _shape) ->
+                  taints
+                  |> Taints.elements
+                  |> List.find_map (fun t ->
+                         match t.T.orig with
+                         | Var { base = BArg arg; offset = [] } -> Some arg
+                         | _ -> None)
+              | None -> None)
+          | _ -> None
+        in
         let fun_sig_opt =
           (* Get the actual function expression from args if available. When
            * [fun_arg_offset] is non-empty (the callback was bound from
@@ -1400,26 +1419,11 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                  (* Could not instantiate the callback signature, preserve ToSinkInCall *)
                  let callee_exp, updated_arg =
                    match args with
-                   | Some actual_args when fun_arg.index < List.length actual_args ->
-                       (match List.nth actual_args fun_arg.index with
+                   | Some actual_args
+                     when fun_arg.index < List.length actual_args -> (
+                       match List.nth actual_args fun_arg.index with
                        | IL.Unnamed exp | IL.Named (_, exp) ->
-                           (* Check if this expression is a parameter of the enclosing function *)
-                           let arg_opt = match exp.IL.e with
-                             | Fetch { base = Var var; rev_offset = [] } ->
-                                 (* Check if this variable is in lval_env as a parameter *)
-                                 let lval = { T.base = BGlob var; offset = [] } in
-                                 (match lval_to_taints lval with
-                                 | Some (taints, _shape) ->
-                                     (* Look for a taint from a parameter *)
-                                     taints
-                                     |> Taints.elements
-                                     |> List.find_map (fun t ->
-                                          match t.T.orig with
-                                          | Var { base = BArg arg; offset = [] } -> Some arg
-                                          | _ -> None)
-                                 | None -> None)
-                             | _ -> None
-                           in
+                           let arg_opt = enclosing_param_of_exp exp in
                            (exp, Option.value arg_opt ~default:fun_arg))
                    | _ -> (fun_exp, fun_arg)
                  in
@@ -1447,31 +1451,18 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
              * the enclosing frame, so rebind to that directly (precise). *)
             let callee_exp, updated_arg, updated_offset =
               match args with
-              | Some actual_args when fun_arg.index < List.length actual_args ->
-                  (match List.nth actual_args fun_arg.index with
-                  | IL.Unnamed exp | IL.Named (_, exp) ->
-                      (* Check if this expression is a parameter of the enclosing function *)
-                      let arg_opt = match exp.IL.e with
-                        | Fetch { base = Var var; rev_offset = [] } ->
-                            (* Check if this variable is in lval_env as a parameter *)
-                            let lval = { T.base = BGlob var; offset = [] } in
-                            (match lval_to_taints lval with
-                            | Some (taints, _shape) ->
-                                (* Look for a taint from a parameter *)
-                                taints
-                                |> Taints.elements
-                                |> List.find_map (fun t ->
-                                     match t.T.orig with
-                                     | Var { base = BArg arg; offset = [] } -> Some arg
-                                     | _ -> None)
-                            | None -> None)
-                        | _ -> None
-                      in
-                      (match rebind_arg_to_outer with
+              | Some actual_args
+                when fun_arg.index < List.length actual_args -> (
+                  match List.nth actual_args fun_arg.index with
+                  | IL.Unnamed exp | IL.Named (_, exp) -> (
+                      match rebind_arg_to_outer with
                       | Some (outer_arg, outer_off) ->
                           (exp, outer_arg, outer_off)
                       | None ->
-                          (exp, Option.value arg_opt ~default:fun_arg, fun_arg_offset)))
+                          let arg_opt = enclosing_param_of_exp exp in
+                          ( exp,
+                            Option.value arg_opt ~default:fun_arg,
+                            fun_arg_offset )))
               | _ -> (fun_exp, fun_arg, fun_arg_offset)
             in
             Log.debug (fun m ->
