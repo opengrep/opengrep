@@ -839,7 +839,20 @@ class TargetManager:
 
             if target.git_tracked_only:
                 try:
-                    result |= target.files_from_git_ls()
+                    git_files = target.files_from_git_ls()
+                    # `files_from_git_ls` ignores the caller's
+                    # `--exclude`/`--semgrepignore` patterns, so when
+                    # they're present we intersect with the
+                    # dir-pruned filesystem walk. That walker never
+                    # descends into excluded directories (so a huge
+                    # `.m2` exclude costs almost nothing), and the
+                    # intersection restores the git-tracked semantics.
+                    if preprocessed or file_ignore is not None:
+                        pruned = target.files_from_filesystem_with_dir_pruning(
+                            preprocessed, file_ignore
+                        )
+                        git_files = git_files & pruned
+                    result |= git_files
                     continue
                 except (subprocess.CalledProcessError, FileNotFoundError):
                     logger.verbose(
