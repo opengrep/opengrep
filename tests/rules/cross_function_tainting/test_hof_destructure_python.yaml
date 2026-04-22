@@ -1,0 +1,13 @@
+rules:
+  - id: test-hof-destructure-taint
+    message: Test HOF destructured callback taint propagation
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

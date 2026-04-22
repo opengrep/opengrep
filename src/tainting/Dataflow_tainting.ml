@@ -1668,7 +1668,41 @@ let check_function_call env fun_exp args
                       m "SIG_FROM_SHAPE: Found Fun shape for %s"
                         (Display_IL.string_of_exp fun_exp));
                   Some fun_sig
-              | _ -> None)
+              | _ ->
+                  (* Sym-prop fallback: if the variable's [id_svalue] resolves
+                   * to a bare function reference (e.g. [cb = handler]), look
+                   * up the referenced function's signature in the DB. *)
+                  (match lval_to_check.base, lval_to_check.rev_offset with
+                  | Var x, [] -> (
+                      match !(x.id_info.id_svalue) with
+                      | Some
+                          (G.Sym
+                             {
+                               e = G.N (G.Id (ident, id_info));
+                               _;
+                             }) ->
+                          let il_name =
+                            AST_to_IL.var_of_id_info ident id_info
+                          in
+                          let aliased_exp =
+                            {
+                              IL.e =
+                                IL.Fetch
+                                  {
+                                    base = IL.Var il_name;
+                                    rev_offset = [];
+                                  };
+                              eorig = IL.NoOrig;
+                            }
+                          in
+                          Log.debug (fun m ->
+                              m
+                                "SIG_FROM_SVALUE: var=%s resolves to %s"
+                                (IL.str_of_name x)
+                                (IL.str_of_name il_name));
+                          lookup_signature env aliased_exp arity
+                      | _ -> None)
+                  | _ -> None))
           | _ -> None)
     else None
   in

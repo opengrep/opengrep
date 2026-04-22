@@ -474,6 +474,127 @@ let try_extract_length (arg_exp : IL.exp) : int option =
       | _ -> None)
   | _ -> None
 
+(* Walk a caller-side [IL.exp] by [fun_arg_offset] to recover the concrete
+ * sub-expression at that path. Used when instantiating a [ToSinkInCall]
+ * effect: the callee's signature says the callback lives at
+ * [arg[i][fun_arg_offset]]; the surrounding signature-resolution code then
+ * uses the resolved expression to find the callback's Fun signature (via
+ * the signature DB's [lookup_sig] or, as a secondary fallback,
+ * [lval_to_taints] if a Fun cell is stored in the current [lval_env]).
+ *
+ * Each [index_into] step handles:
+ *   - [Composite (List|Tuple|Array|Set)] + [Oint] — positional access.
+ *   - [RecordOrDict] + [Ofld|Ostr] — record/dict literal field access.
+ *   - [Fetch var] + any offset — follows the variable's [id_svalue] when
+ *     it is a [G.Sym] of a Container/Dict, walks the G.expr one level,
+ *     and wraps the resolved [G.N] leaf back as an [IL.exp] so the fold
+ *     continues uniformly. This covers aliased records like
+ *     [let opts = {cb: handler, ...}; my_hof(opts)] where the structural
+ *     argument at the call site is only a variable reference.
+ *
+ * Returns [(consumed, leftover)]:
+ *   - [consumed] is the deepest expression resolved via the steps above.
+ *   - [leftover] is the offset suffix we could not consume. In the common
+ *     svalue-walk case this is empty. *)
+let resolve_callee_expr (base_exp : IL.exp) (fun_arg_offset : Taint.offset list)
+    : IL.exp * Taint.offset list =
+  let field_name_matches (key : IL.exp) (target : string) =
+    match key.IL.e with
+    | IL.Literal (G.String (_, (s, _), _)) -> String.equal s target
+    | _ -> false
+  in
+  let find_in_record entries target =
+    List.find_map
+      (function
+        | IL.Field (fname, v)
+          when String.equal (IL.str_of_name fname) target ->
+            Some v
+        | IL.Entry (k, v) when field_name_matches k target -> Some v
+        | _ -> None)
+      entries
+  in
+  let string_of_offset = function
+    | Taint.Ofld name -> Some (IL.str_of_name name)
+    | Taint.Ostr s -> Some s
+    | _ -> None
+  in
+  let generic_key_matches (k : G.expr) (target : string) =
+    match k.G.e with
+    | G.L (G.String (_, (s, _), _)) -> String.equal s target
+    | G.L (G.Atom (_, (s, _))) -> String.equal s target
+    | G.N (G.Id ((s, _), _)) -> String.equal s target
+    | _ -> false
+  in
+  let step_generic (g_exp : G.expr) (off : Taint.offset) : G.expr option =
+    match (g_exp.G.e, off) with
+    | ( G.Container
+          ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)),
+        Taint.Oint i )
+      when i < List.length xs ->
+        Some (List.nth xs i)
+    | G.Container (G.Dict, (_, kvs, _)), off -> (
+        match string_of_offset off with
+        | None -> None
+        | Some target ->
+            List.find_map
+              (fun kv ->
+                match kv.G.e with
+                | G.Container (G.Tuple, (_, [ k; v ], _))
+                  when generic_key_matches k target ->
+                    Some v
+                | _ -> None)
+              kvs)
+    | _ -> None
+  in
+  let svalue_leaf_to_il_exp (leaf : G.expr) : IL.exp option =
+    match leaf.G.e with
+    | G.N (G.Id (ident, id_info)) ->
+        let il_name = AST_to_IL.var_of_id_info ident id_info in
+        Some
+          {
+            IL.e =
+              IL.Fetch
+                { IL.base = IL.Var il_name; rev_offset = [] };
+            eorig = IL.SameAs leaf;
+          }
+    | _ -> None
+  in
+  let index_into (exp : IL.exp) (off : Taint.offset) : IL.exp option =
+    match (exp.IL.e, off) with
+    | ( IL.Composite
+          ((IL.CList | IL.CTuple | IL.CArray | IL.CSet), (_, xs, _)),
+        Taint.Oint i )
+      when i < List.length xs ->
+        Some (List.nth xs i)
+    | IL.RecordOrDict entries, Taint.Ofld name ->
+        find_in_record entries (IL.str_of_name name)
+    | IL.RecordOrDict entries, Taint.Ostr s ->
+        find_in_record entries s
+    | IL.Fetch { base = Var x; rev_offset = []; _ }, off ->
+        let result =
+          match !(x.id_info.id_svalue) with
+          | Some (G.Sym g_exp) ->
+              Option.bind (step_generic g_exp off) svalue_leaf_to_il_exp
+          | _ -> None
+        in
+        Log.debug (fun m ->
+            m "RESOLVE_SVALUE: var=%s -> %s" (IL.str_of_name x)
+              (match result with
+              | Some exp -> Display_IL.string_of_exp exp
+              | None -> "<none>"));
+        result
+    | _ -> None
+  in
+  List.fold_left
+    (fun (acc, left) off ->
+      match left with
+      | [] -> (
+          match index_into acc off with
+          | Some sub -> (sub, [])
+          | None -> (acc, [ off ]))
+      | _ -> (acc, left @ [ off ]))
+    (base_exp, []) fun_arg_offset
+
 (* Evaluate a single [Effect_guard.t] against a resolver that maps a callee-
  * side [Taint.arg] reference to the corresponding caller-side [IL.exp]. The
  * result is [Some true] / [Some false] when we can decide, [None] otherwise
@@ -1046,35 +1167,25 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
            * [fun_arg_offset] is non-empty (the callback was bound from
            * [arg[i]] in the callee), take the [i]-th element of the caller's
            * composite expression to recover the concrete callback. *)
-          let actual_fun_exp =
+          let actual_fun_exp, leftover_offset =
             match args with
-            | Some actual_args when fun_arg.index < List.length actual_args -> (
+            | Some actual_args when fun_arg.index < List.length actual_args ->
                 let base_exp =
                   match List.nth actual_args fun_arg.index with
                   | IL.Unnamed exp -> exp
                   | IL.Named (_, exp) -> exp
                 in
-                let index_into exp off =
-                  match (exp.IL.e, off) with
-                  | ( IL.Composite
-                        ( (IL.CList | IL.CTuple | IL.CArray | IL.CSet),
-                          (_, xs, _) ),
-                      T.Oint i )
-                    when i < List.length xs ->
-                      Some (List.nth xs i)
-                  | _ -> None
+                let consumed, leftover =
+                  resolve_callee_expr base_exp fun_arg_offset
                 in
-                match
-                  List.fold_left
-                    (fun acc off ->
-                      match acc with
-                      | None -> None
-                      | Some exp -> index_into exp off)
-                    (Some base_exp) fun_arg_offset
-                with
-                | Some exp -> Some exp
-                | None -> Some base_exp)
-            | _ -> None
+                Log.debug (fun m ->
+                    m "RESOLVE_CALLEE: base=%s offset=%s -> consumed=%s leftover=%s"
+                      (Display_IL.string_of_exp base_exp)
+                      (T.show_offset_list fun_arg_offset)
+                      (Display_IL.string_of_exp consumed)
+                      (T.show_offset_list leftover));
+                (Some consumed, leftover)
+            | _ -> (None, fun_arg_offset)
           in
           Log.debug (fun m ->
               m "ToSinkInCall: actual_fun_exp = %s, lookup_sig = %s"
@@ -1084,10 +1195,18 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
           let fun_sig_opt =
             match actual_fun_exp with
             | Some ({ IL.e = Fetch { base = Var var_name; rev_offset = []; _ }; _ }) ->
-                (* Simple variable reference like _tmp:67 *)
-                let taint_lval = { T.base = BGlob var_name; offset = [] } in
+                (* Variable reference — look it up at [leftover_offset] so
+                 * that callbacks reached via record/map field access
+                 * (e.g. [opts[Ofld "cb"]]) resolve to the Fun cell stored
+                 * in [lval_env] when the caller-side structural form
+                 * could not be indexed through directly. *)
+                let taint_lval =
+                  { T.base = BGlob var_name; offset = leftover_offset }
+                in
                 Log.debug (fun m ->
-                    m "ToSinkInCall: Trying lval_to_taints for var %s" (IL.str_of_name var_name));
+                    m "ToSinkInCall: Trying lval_to_taints for var %s offset=%s"
+                      (IL.str_of_name var_name)
+                      (T.show_offset_list leftover_offset));
                 (match lval_to_taints taint_lval with
                 | Some (_taints, Fun sig_) ->
                     Log.debug (fun m -> m "ToSinkInCall: Found signature in lval_env");
