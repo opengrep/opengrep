@@ -87,6 +87,7 @@
               "name": "rules.rule-with-cwe-tag",
               "properties": {
                 "precision": "very-high",
+                "security-severity": "8.0",
                 "tags": [
                   "CWE-88888888: Another fake CWE",
                   "CWE-99999999: Fake CWE",
