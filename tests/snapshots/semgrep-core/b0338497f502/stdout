@@ -1,0 +1,10 @@
+--- begin input files ---
+regex-nosemgrep.txt
+regex-nosemgrep.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 13 insertions(+)
+ create mode 100644 regex-nosemgrep.txt
+ create mode 100644 regex-nosemgrep.yaml
+{"version":"2.1.0","runs":[{"invocations":[{"executionSuccessful":true,"toolExecutionNotifications":[]}],"results":[{"fingerprints":{"matchBasedId/v1":"811e6ee58e5168f689c538dcacfc68978de06c07fc5fd8f0bca933bdba7fe398740ff4bfe5cc10b0a95cdfaadca6c05b4562fc5160fcd9192316c097f54091d1_0"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"regex-nosemgrep.txt","uriBaseId":"%SRCROOT%"},"region":{"endColumn":30,"endLine":1,"snippet":{"text":"aws_account_id = 123456789012  # nosemgrep"},"startColumn":1,"startLine":1}}}],"message":{"text":"AWS Account ID detected"},"properties":{},"ruleId":"detected-aws-account-id","suppressions":[{"kind":"inSource"}]},{"fingerprints":{"matchBasedId/v1":"811e6ee58e5168f689c538dcacfc68978de06c07fc5fd8f0bca933bdba7fe398740ff4bfe5cc10b0a95cdfaadca6c05b4562fc5160fcd9192316c097f54091d1_1"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"regex-nosemgrep.txt","uriBaseId":"%SRCROOT%"},"region":{"endColumn":28,"endLine":3,"snippet":{"text":"aws_account_id:123456789012"},"startColumn":1,"startLine":3}}}],"message":{"text":"AWS Account ID detected"},"properties":{},"ruleId":"detected-aws-account-id"}],"tool":{"driver":{"name":"Opengrep OSS","rules":[{"defaultConfiguration":{"level":"error"},"fullDescription":{"text":"AWS Account ID detected"},"help":{"markdown":"AWS Account ID detected","text":"AWS Account ID detected"},"id":"detected-aws-account-id","name":"detected-aws-account-id","properties":{"precision":"very-high","tags":[]},"shortDescription":{"text":"Opengrep Finding: detected-aws-account-id"}}],<MASKED>}}}],"$schema":"https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"}

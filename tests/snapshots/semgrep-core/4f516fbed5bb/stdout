@@ -1,0 +1,10 @@
+--- begin input files ---
+cwe_tag.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 28 insertions(+)
+ create mode 100644 cwe_tag.yaml
+ create mode 100644 stupid.py
+{"version":"2.1.0","runs":[{"invocations":[{"executionSuccessful":true,"toolExecutionNotifications":[]}],"results":[{"fingerprints":{"matchBasedId/v1":"75838482e2c036e690bf1b43990d2a832bea3671076bc382143944f15b6e491d306b97a0008ec98e84aa7a892724b4c875640b8b3164e5306d6ad493777176a7_0"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"stupid.py","uriBaseId":"%SRCROOT%"},"region":{"endColumn":17,"endLine":3,"snippet":{"text":"    return a + b == a + b"},"startColumn":12,"startLine":3}}}],"message":{"text":"Fake message."},"properties":{},"ruleId":"rule-with-cwe-tag"},{"fingerprints":{"matchBasedId/v1":"75838482e2c036e690bf1b43990d2a832bea3671076bc382143944f15b6e491d306b97a0008ec98e84aa7a892724b4c875640b8b3164e5306d6ad493777176a7_1"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"stupid.py","uriBaseId":"%SRCROOT%"},"region":{"endColumn":26,"endLine":3,"snippet":{"text":"    return a + b == a + b"},"startColumn":21,"startLine":3}}}],"message":{"text":"Fake message."},"properties":{},"ruleId":"rule-with-cwe-tag"}],"tool":{"driver":{"name":"Opengrep OSS","rules":[{"defaultConfiguration":{"level":"error"},"fullDescription":{"text":"Fake message."},"help":{"markdown":"Fake message.","text":"Fake message."},"id":"rule-with-cwe-tag","name":"rule-with-cwe-tag","properties":{"precision":"very-high","tags":["CWE-88888888: Another fake CWE","CWE-99999999: Fake CWE","security"]},"shortDescription":{"text":"Opengrep Finding: rule-with-cwe-tag"}}],<MASKED>}}}],"$schema":"https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"}
