@@ -1,7 +1,7 @@
 def foo():
     x = 'test string format {}'.format('foo')
     a = source1()
-    if True:
+    if False:
         b = a
         b = sanitize1()
     else:
