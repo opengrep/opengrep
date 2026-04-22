@@ -170,26 +170,33 @@ and unify_shape shape1 shape2 =
               (Signature.show_params params1)
               (Signature.show_params params2));
         shape1)
-  | Arg (arg1, off1), Arg (arg2, off2) ->
-      if T.equal_arg arg1 arg2
-         && Int.equal (List.compare T.compare_offset off1 off2) 0
-      then shape1
-      else (
-        (* TODO: We do not handle this right now, we would need to record and
-         *   solve constraints. It can happen with code like e.g.
-         *
-         *     def foo(a, b):
-         *       tup = (a,)
-         *       tup[0] = b
-         *       return tup
-         *
-         * Then the consequence would be that the signature of `foo` would ignore
-         * the shape of `b`.
-         *)
-        Log.warn (fun m ->
-            m "Trying to unify two different arg shapes: %s ~ %s"
-              (T.show_arg arg1) (T.show_arg arg2));
-        shape1)
+  | Arg (arg1, off1), Arg (arg2, off2) when T.equal_arg arg1 arg2 ->
+      (* Same parameter, possibly different offsets — widen to the longest
+       * common prefix of the two paths. If the paths agree we keep the full
+       * offset; if they diverge we retain whatever they share and forget
+       * the rest. *)
+      let rec longest_common_prefix l1 l2 =
+        match (l1, l2) with
+        | x :: xs, y :: ys when T.equal_offset x y ->
+            x :: longest_common_prefix xs ys
+        | _ -> []
+      in
+      Arg (arg1, longest_common_prefix off1 off2)
+  | Arg (arg1, _), Arg (arg2, _) ->
+      (* Different parameters: the shape lattice would need constraint
+       * solving to handle this precisely. See e.g.
+       *
+       *     def foo(a, b):
+       *       tup = (a,)
+       *       tup[0] = b
+       *       return tup
+       *
+       * Here the signature of [foo] would ignore the shape of [b].
+       * TODO: record and solve constraints. *)
+      Log.warn (fun m ->
+          m "Trying to unify two different arg shapes: %s ~ %s"
+            (T.show_arg arg1) (T.show_arg arg2));
+      shape1
   (* 'Arg' acts like a shape variable. *)
   | Arg _, (Obj _ as obj)
   | (Obj _ as obj), Arg _ ->
