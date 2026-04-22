@@ -280,6 +280,25 @@ let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
   in
   [ hof_effect; return_effect ]
 
+(** Group [FunctionHOF] configs by function name. A single Clojure
+    function name (e.g. [reduce]) can appear in several [FunctionHOF]
+    configs, one per arity; we collect them so
+    [add_function_hof_signatures_clojure] can emit one IL-arity-1
+    signature per name whose effects carry per-overload guards. *)
+let group_function_hofs_by_name (hof_configs : Lang_config.hof_kind list) :
+    (string * Lang_config.hof_kind list) list =
+  let rec add_overload fn hof = function
+    | [] -> [ (fn, [ hof ]) ]
+    | (n, xs) :: rest when String.equal n fn -> (n, hof :: xs) :: rest
+    | entry :: rest -> entry :: add_overload fn hof rest
+  in
+  List.fold_left
+    (fun acc -> function
+      | Lang_config.FunctionHOF { functions; _ } as hof ->
+          List.fold_left (fun acc fn -> add_overload fn hof acc) acc functions
+      | _ -> acc)
+    [] hof_configs
+
 (** Register Clojure FunctionHOF overloads grouped by name, one packed-form
     signature per name. Each overload contributes effects guarded by its
     language-level arity. *)
@@ -309,55 +328,32 @@ let add_function_hof_signatures_clojure db (grouped : (string * Lang_config.hof_
 let create_builtin_models (lang : Lang.t) : builtin_signature_database =
   let db = empty_builtin_signature_database () in
   let config = Lang_config.get lang in
-
-  if Lang.equal lang Lang.Clojure then (
-    (* Clojure: every FunctionHOF overload shares the same IL-arity (1, from
-     * packed-CList lowering), so we group overloads by name and emit one
-     * signature per name with per-overload guards to disambiguate. *)
-    let grouped_function_hofs =
-      config.hof_configs
-      |> List.fold_left
-           (fun acc -> function
-             | Lang_config.FunctionHOF { functions; _ } as hof ->
-                 List.fold_left
-                   (fun acc fn ->
-                     let overloads =
-                       match List.assoc_opt fn acc with
-                       | Some xs -> xs
-                       | None -> []
-                     in
-                     (fn, hof :: overloads)
-                     :: List.filter (fun (n, _) -> n <> fn) acc)
-                   acc functions
-             | _ -> acc)
-           []
-    in
-    let db = add_function_hof_signatures_clojure db grouped_function_hofs in
-    List.fold_left
-      (fun acc_db hof_config ->
-        match hof_config with
-        | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
-            add_hof_signatures acc_db methods arity ~taint_arg_index ()
-        | Lang_config.FunctionHOF _ -> acc_db
-        | Lang_config.ReturningFunctionHOF { methods } ->
-            add_hof_returning_function_signatures acc_db methods ())
-      db config.hof_configs)
-  else
-    (* Convert configs to signatures *)
-    List.fold_left
-      (fun acc_db hof_config ->
-        match hof_config with
-        | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
-            add_hof_signatures acc_db methods arity ~taint_arg_index ()
-        | Lang_config.FunctionHOF
-            { functions; arity; callback_index; data_index; taint_arg_index }
-          ->
+  let is_clojure = Lang.equal lang Lang.Clojure in
+  (* Clojure: every FunctionHOF overload shares the same IL-arity (1, from
+   * packed-CList lowering), so we group overloads by name and emit one
+   * signature per name with per-overload guards to disambiguate. *)
+  let db =
+    if is_clojure then
+      add_function_hof_signatures_clojure db
+        (group_function_hofs_by_name config.hof_configs)
+    else db
+  in
+  (* Convert configs to signatures *)
+  List.fold_left
+    (fun acc_db hof_config ->
+      match hof_config with
+      | Lang_config.MethodHOF { methods; arity; taint_arg_index } ->
+          add_hof_signatures acc_db methods arity ~taint_arg_index ()
+      | Lang_config.FunctionHOF
+          { functions; arity; callback_index; data_index; taint_arg_index } ->
+          if is_clojure then acc_db
+          else
             let params = make_params arity callback_index in
             add_function_hof_signatures acc_db functions arity ~callback_index
               ~data_index ~params ~taint_arg_index ()
-        | Lang_config.ReturningFunctionHOF { methods } ->
-            add_hof_returning_function_signatures acc_db methods ())
-      db config.hof_configs
+      | Lang_config.ReturningFunctionHOF { methods } ->
+          add_hof_returning_function_signatures acc_db methods ())
+    db config.hof_configs
 
 (* ========================================================================== *)
 (* Primitive helpers for building taint sets and effects *)
