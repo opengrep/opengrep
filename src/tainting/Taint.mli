@@ -52,6 +52,7 @@ type offset =
   | Oany  (** An arbitrary non-constant index, `[*]` *)
 
 val compare_offset : offset -> offset -> int
+val equal_offset : offset -> offset -> bool
 val show_offset : offset -> string
 val show_offset_list : offset list -> string
 val offset_of_IL : IL.offset -> offset

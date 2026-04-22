@@ -133,7 +133,7 @@ type arg = { name : string; index : int } [@@deriving eq, ord]
 type base = BGlob of IL.name | BThis | BArg of arg [@@deriving ord]
 
 type offset = Ofld of IL.name | Oint of int | Ostr of string | Oany
-[@@deriving ord]
+[@@deriving eq, ord]
 
 type lval = { base : base; offset : offset list }
 
