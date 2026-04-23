@@ -340,6 +340,9 @@ let active_guards { active_guards; _ } = active_guards
 let add_active_guard g env =
   { env with active_guards = Effect_guard.Set.add g env.active_guards }
 
+let clear_active_guards env =
+  { env with active_guards = Effect_guard.Set.empty }
+
 let equal
     {
       tainted = tainted1;

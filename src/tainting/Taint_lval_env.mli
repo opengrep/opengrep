@@ -142,6 +142,15 @@ val add_active_guard : Effect_guard.t -> env -> env
 (** Add a guard to the active set at the current program point. Called at
     [TrueNode] of a recognised arity-check condition during the transfer. *)
 
+val clear_active_guards : env -> env
+(** Empty the active-guards set while preserving the rest of the env. Used at
+    lambda entry so the lambda's transfer does not inherit its enclosing
+    frame's guards — those guards are parameter-indexed relative to the
+    enclosing, and would be mis-interpreted if they rode along into the
+    lambda's own frame. The enclosing's active guards are re-applied to the
+    lambda's upflowed effects at [Dataflow_tainting.do_lambdas], where the
+    frame of reference is correct. *)
+
 val union : env -> env -> env
 (** Compute the environment for the join of two branches.
 
