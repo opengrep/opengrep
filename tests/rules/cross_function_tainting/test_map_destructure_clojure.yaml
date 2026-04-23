@@ -1,0 +1,17 @@
+rules:
+  - id: test-map-destructure-taint
+    message: |
+      Field-sensitive taint through a Clojure map destructure. The
+      callee destructures [{body :body user :user}] and sinks [body];
+      taint at the caller-side [:body] must fire, but taint at a
+      sibling key ([:user]) must not.
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)
