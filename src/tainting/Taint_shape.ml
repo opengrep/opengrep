@@ -57,13 +57,40 @@ let debug_offset offset =
 (* Misc *)
 (*********************************************************)
 
-let taints_and_shape_are_relevant taints shape =
-  match (Taints.is_empty taints, shape) with
-  | true, Bot -> false
-  | __else__ ->
-      (* Either 'taints' is non-empty, or 'shape' is non-'Bot' and hence
-       * by INVARIANT(cell) it contains some taint or has field marked clean. *)
+(* Does [shape] carry any content relevant to taint propagation?
+ * - [`Tainted] xtaint on any cell — direct taint.
+ * - [Arg _] — polymorphic caller-supplied taint yet to be instantiated.
+ * - [Fun _] — function reference; HOF analysis tracks the callback's
+ *   signature via this shape, so an assignment of a lambda to a
+ *   variable is not a sanitizer even though no [`Tainted] cell is
+ *   reachable through the shape.
+ * - [`Clean] cell with [Bot] subshape — literal construction observed
+ *   no taint here; does NOT count as content.
+ * - [Bot] — nothing. *)
+let rec shape_has_relevant_content = function
+  | Bot -> false
+  | Arg _
+  | Fun _ ->
       true
+  | Obj obj ->
+      Fields.exists (fun _ cell -> cell_has_relevant_content cell) obj
+
+and cell_has_relevant_content (Cell (xtaint, shape)) =
+  Xtaint.is_tainted xtaint || shape_has_relevant_content shape
+
+let taints_and_shape_are_relevant taints shape =
+  (* An assignment whose RHS carries neither taints nor tainted shape
+   * content triggers the [Lval_env.clean] side-effect in the transfer
+   * function — i.e. the RHS acts as a sanitizer for the LHS's prior
+   * taint. Before literal record/dict construction could produce
+   * [Obj {field = Cell (`Clean, Bot); …}] shapes (all fields known
+   * clean), a non-[Bot] shape was guaranteed to carry taint by the
+   * invariant, and a [shape ≠ Bot] check was enough. With the clean-
+   * cell preservation in [add_field_to_obj_check_invariant], we must
+   * now walk the shape and confirm it contains at least one [`Tainted]
+   * cell (or an [Arg] polymorphic taint) before treating the RHS as
+   * "relevant". *)
+  (not (Taints.is_empty taints)) || shape_has_relevant_content shape
 
 (* TODO: This should fix shapes too. *)
 let fix_poly_taint_with_offset offset taints =
@@ -226,8 +253,18 @@ and unify_obj obj1 obj2 =
 let add_field_to_obj_check_invariant obj offset taints shape =
   match (Xtaint.of_taints taints, shape) with
   | `None, Bot ->
-      (* We skip this offset to maintain INVARIANT(cell). *)
-      obj
+      (* Literal record/tuple construction observed this field with no
+       * taint and no sub-structure. Record it as [`Clean] rather than
+       * dropping it: a missing entry in an [Obj] makes
+       * [find_in_obj_w_carry] fall through to [`Not_found] and leak
+       * the caller's flattened poly-taint, breaking field-sensitive
+       * taint across literal record/dict construction. [`Clean] blocks
+       * that fallback in [find_in_cell_w_carry] while still letting
+       * later writes (e.g. [obj.body = source()]) take effect via
+       * [Xtaint.union `Clean (`Tainted _) = `Tainted _]. The cell
+       * [(`Clean, Bot)] satisfies INVARIANT(cell).1 (xtaint ≠ None)
+       * and INVARIANT(cell).2 (Clean ⇒ shape = Bot). *)
+      Fields.add offset (Cell (`Clean, Bot)) obj
   | xtaint, shape -> Fields.add offset (Cell (xtaint, shape)) obj
 
 let tuple_like_obj taints_and_shapes : shape =
