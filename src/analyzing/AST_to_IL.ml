@@ -1310,6 +1310,43 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let tmp = fresh_lval tok in
       let instr = mk_s (Instr (mk_i (CallSpecial (Some tmp, (Ref, tok), [ Unnamed e1 ])) eorig)) in
       (ss_e1 @ [instr], mk_e (Fetch tmp) NoOrig)
+  (* Rust struct literal [S { f1: v1; f2: v2 }]: each element in
+   * [esorig] arrives as [G.Assign (N (Id f), _, v)] — a field-init.
+   * Lower as a [RecordOrDict] of [Entry (L (String f), v)] so the
+   * shape layer builds per-field [Ostr] cells and caller-side
+   * field-sensitivity survives the struct construction — the default
+   * [Composite (Constructor, …)] is positional and collapses fields. *)
+  | G.Constructor (_cname, (_tok1, esorig, _tok2))
+    when env.lang =*= Lang.Rust && esorig <> []
+         && List.for_all
+              (function
+                | { G.e = G.Assign ({ G.e = G.N (G.Id _); _ }, _, _); _ } ->
+                    true
+                | _ -> false)
+              esorig ->
+      let entries_ss, entries =
+        esorig
+        |> List.map (fun eiorig ->
+               match eiorig.G.e with
+               | G.Assign
+                   ( { G.e = G.N (G.Id ((field_name, field_tok), _)); _ },
+                     _,
+                     value_expr ) ->
+                   let ss_v, ve = expr env value_expr in
+                   let key =
+                     mk_e
+                       (Literal
+                          (G.String
+                             (Tok.unsafe_fake_bracket (field_name, field_tok))))
+                       (related_tok field_tok)
+                   in
+                   (ss_v, Entry (key, ve))
+               | _ -> assert false
+               (* guarded by [List.for_all] above *))
+        |> List.split
+      in
+      let ss = List.concat entries_ss in
+      (ss, mk_e (RecordOrDict entries) eorig)
   | G.Constructor (cname, (tok1, esorig, tok2)) ->
       let cname = var_of_name cname in
       let results = List.map (fun eiorig ->
