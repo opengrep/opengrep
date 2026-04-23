@@ -345,8 +345,12 @@ let filter_path (ign : Gitignore.filter)
 
 (*
    Filter a pre-expanded list of target files, such as a list of files
-   obtained with 'git ls-files'. A strong postcondition is that the
-   paths returned must correspond to existing regular files!
+   obtained with 'git ls-files'.
+
+   We apply gitignore/semgrepignore and include filters because
+   a tracked file can match a .gitignore pattern (added after tracking).
+   We also filter out symlinks and other non-regular files via lstat,
+   since git tracks symlinks as blob entries.
 *)
 let filter_paths
     ((ign, include_filter) : Gitignore.filter * Include_filter.t option)
@@ -356,21 +360,43 @@ let filter_paths
   let add path = Stack_.push path selected_paths in
   let skip target = Stack_.push target skipped in
   target_files
-  |> List.iter (fun fppath ->
-         match filter_path ign include_filter fppath with
-         | Keep -> (
-             (* This section is similar to what we have in
-                'walk_skip_and_collect' but the rest is sufficiently different
-                that sharing code makes things complicated
-                (e.g. no dir access filtering for git targets) *)
-             match Skip_target.filter_file_access_permissions fppath.fpath with
-             | Ok _path -> add fppath
-             | Error skipped -> skip skipped)
-         (* shouldn't happen if we work on the output of 'git ls-files *)
-         | Dir -> ()
-         | Skip x -> skip x
-         | Ignore_silently ->
-             Log.debug (fun m -> m "ignore silently: %s" !!(fppath.fpath)));
+  |> List.iter (fun (fppath : Fppath.t) ->
+         let status, selection_events =
+           Gitignore_filter.select ign fppath.ppath
+         in
+         let status, selection_events =
+           apply_include_filter status selection_events include_filter
+             fppath.ppath
+         in
+         match status with
+         | Gitignore.Ignored ->
+             Log.debug (fun m ->
+                 m "Ignoring path %s:\n%s" !!(fppath.fpath)
+                   (Gitignore.show_selection_events selection_events));
+             skip
+               {
+                 Out.path = fppath.fpath;
+                 reason = get_reason_for_exclusion selection_events;
+                 details =
+                   Some
+                     "excluded by --include/--exclude, gitignore, or \
+                      semgrepignore";
+                 rule_id = None;
+               }
+         | Gitignore.Not_ignored -> (
+             (* Git tracks symlinks as blob entries, so we must filter them
+                out just like the filesystem walker (filter_path) does. *)
+             match (Unix.lstat !!(fppath.fpath)).st_kind with
+             | S_REG -> (
+                 match Skip_target.filter_file_access_permissions fppath.fpath with
+                 | Ok _ -> add fppath
+                 | Error skipped -> skip skipped)
+             | S_LNK | S_DIR | S_FIFO | S_CHR | S_BLK | S_SOCK ->
+                 Log.debug (fun m ->
+                     m "ignore non-regular file: %s" !!(fppath.fpath))
+             | exception Unix.Unix_error _ ->
+                 Log.debug (fun m ->
+                     m "lstat failed, ignoring: %s" !!(fppath.fpath))));
   (!selected_paths, !skipped)
 
 (* Note: throughout this file we use List.rev_append instead of (@) for
@@ -606,6 +632,22 @@ let git_list_tracked_files (project_roots : Project.roots) : Fppath.t list optio
   git_list_files ~exclude_standard:false [ Cached ] project_roots
 
 (*
+   Get tracked files that match gitignore patterns.  These are files that
+   were added to git before the gitignore rule was created.
+
+   We use this to split the tracked set: files NOT in this set can skip
+   .gitignore pattern evaluation entirely (fast path), while files IN
+   this set must go through the full filter so that .semgrepignore '!'
+   negation patterns can override the gitignore exclusion.
+
+   Uses 'git ls-files --cached --ignored --exclude-standard' which
+   returns tracked files that WOULD be ignored if they weren't tracked.
+*)
+let git_list_tracked_gitignored_files (project_roots : Project.roots) :
+    Fppath.t list option =
+  git_list_files ~exclude_standard:true [ Cached; Ignored ] project_roots
+
+(*
    List all the files that are not being tracked by git except those in
    '.git/'. Return a list of paths relative to the project root.
 
@@ -748,11 +790,6 @@ let setup_path_filters conf (project_roots : Project.roots) :
   in
   (semgrepignore_filter, include_filter)
 
-(* Work from a list of target paths obtained with git *)
-let filter_targets conf project_roots (all_files : Fppath.t list) =
-  let ign = setup_path_filters conf project_roots in
-  filter_paths ign all_files
-
 let get_targets_from_filesystem conf (project_roots : Project.roots) =
   let ign, include_filter = setup_path_filters conf project_roots in
   List.fold_left
@@ -794,13 +831,18 @@ let get_targets_from_filesystem conf (project_roots : Project.roots) =
    files regardless of filters (gitignore, semgrepignore, --include,
    --exclude, ...).
    If they already occur in the list of skipped targets, they will be removed.
+
+   Returns a third value: the subset of scanning roots that were force-added
+   to 'selected_targets'. The caller is expected to re-apply size/minified
+   limits to these, since those limits must not be bypassed even for
+   explicit scanning roots.
 *)
 let force_select_scanning_roots
     ?(apply_includes_excludes_to_files = false)
     (project_roots : Project.roots)
     (selected_targets : Fppath.t list)
     (skipped_targets : Out.skipped_target list) :
-    Fppath.t list * Out.skipped_target list =
+    Fppath.t list * Out.skipped_target list * Fppath.t list =
   let regular_files_to_add =
     if not apply_includes_excludes_to_files then
       (* default behaviour: *)
@@ -820,31 +862,137 @@ let force_select_scanning_roots
            not (Set_.mem skipped.path regular_files_to_add))
   in
   let selected_targets = List.rev_append selected_targets regular_files_to_add in
-  (selected_targets, skipped_targets)
+  (selected_targets, skipped_targets, regular_files_to_add)
 
 (*
-   Target files are identified by following these steps:
+   Filter files by size, optionally using committed sizes from
+   'git ls-tree' to avoid per-file stat() syscalls.
 
-   1. A list of folders or files are specified explicitly on the command line.
-      These are referred to as "explicit" targets and they should not
-      be filtered out even if they match some exclusion patterns.
-      This is the input of the 'get_targets' function.
-   2. If the project is a git project, use 'git ls-files' or
-      equivalent to expand the scanning roots into a list of files.
-      This list may include files that would be excluded by the gitignore
-      mechanism but are nonetheless being tracked by git (it happens).
-   3. The scanning roots from step (1) are expanded using our own
-      semgrepignore mechanism. This allows the inclusion of additional
-      files that are not under git control because .semgrepignore
-      files allows de-exclusion/re-inclusion patterns such as e.g.
-      '!*.min.js'.
-      Typically, the sets of files produced by (2) and (3) overlap vastly.
-   4. Take the union of (2) and (3).
+   When git_sizes is provided (a hashtable from git-relative path to
+   committed size in bytes), we look up each file's size in the table
+   instead of calling stat().  Files that were modified since the last
+   commit (present in the 'dirty' set) or missing from the table are
+   handled via the stat()-based fallback (filter_size_and_minified),
+   since their on-disk size may differ from the committed size.
+
+   When git_sizes is None, all files go through the stat()-based path.
+*)
+let filter_size ?(git_sizes : (string, int) Hashtbl.t option)
+    ?(dirty : string Set_.t option) max_target_bytes exclude_minified_files
+    (files : Fppath.t list) : Fppath.t list * Out.skipped_target list =
+  match git_sizes with
+  | None -> filter_size_and_minified max_target_bytes exclude_minified_files files
+  | Some size_map ->
+      let dirty_set = Option.value ~default:Set_.empty dirty in
+      (* Ppath uses project-relative paths with a leading '/' (e.g. "/src/foo.ml")
+         while git ls-tree uses repo-relative paths without it (e.g. "src/foo.ml").
+         Strip the leading '/' to match. *)
+      let to_rel (ppath : Ppath.t) =
+        let s = Ppath.to_string_fast ppath in
+        if String.length s > 0 && Char.equal s.[0] '/' then
+          String.sub s 1 (String.length s - 1)
+        else s
+      in
+      (* Partition into files whose committed size we can trust (present in
+         ls-tree output and not locally modified) vs files that need stat(). *)
+      let git_known, need_stat =
+        List.partition
+          (fun (fp : Fppath.t) ->
+            let rel = to_rel fp.ppath in
+            Hashtbl.mem size_map rel && not (Set_.mem rel dirty_set))
+          files
+      in
+      (* Size-check using the committed sizes from the hashtable *)
+      let ok, skip =
+        if max_target_bytes > 0 then
+          List.partition_map
+            (fun (fp : Fppath.t) ->
+              let size = Hashtbl.find size_map (to_rel fp.ppath) in
+              if size > max_target_bytes then
+                Right
+                  {
+                    Out.path = fp.fpath;
+                    reason = Too_big;
+                    details =
+                      Some
+                        (spf "target file size exceeds %i bytes at %i bytes"
+                           max_target_bytes size);
+                    rule_id = None;
+                  }
+              else Left fp)
+            git_known
+        else (git_known, [])
+      in
+      (* Minification is content-based (reads first block), so no git
+         acceleration is possible — apply it here to the git_known files
+         that survived the size check, otherwise --exclude-minified-files
+         would be silently skipped for tracked, unmodified files. *)
+      let ok, skip_minified =
+        if exclude_minified_files then
+          Result_.partition
+            (fun (fp : Fppath.t) ->
+              Result.map (fun _ -> fp) (Skip_target.is_minified fp.fpath))
+            ok
+        else (ok, [])
+      in
+      (* Dirty or unknown files fall back to stat() *)
+      let stat_ok, stat_skip =
+        filter_size_and_minified max_target_bytes exclude_minified_files
+          need_stat
+      in
+      (ok @ stat_ok, skip @ skip_minified @ stat_skip)
+
+(*
+   Two-stage filter for git-listed files:
+   1. Apply gitignore/semgrepignore/include patterns (filter_paths)
+   2. Apply size limits, using git ls-tree sizes when available (filter_size)
+
+   The caller controls which patterns are active via the 'ign' filter —
+   e.g. passing a filter with respect_gitignore=false skips .gitignore
+   pattern matching but still evaluates .semgrepignore rules.
+*)
+let filter_git_files ign ?git_sizes ?dirty ~max_target_bytes
+    ~exclude_minified_files (files : Fppath.t list) :
+    Fppath.t list * Out.skipped_target list =
+  let selected, skipped = filter_paths ign files in
+  let ok, skipped_size =
+    filter_size max_target_bytes exclude_minified_files ?git_sizes ?dirty
+      selected
+  in
+  (ok, skipped @ skipped_size)
+
+(*
+   For git projects, we optimise target discovery by delegating expensive
+   work to git:
+
+   1. File enumeration: 'git ls-files' lists tracked and untracked files
+      without us walking the filesystem.
+
+   2. Gitignore evaluation: instead of loading every per-directory .gitignore
+      file and matching patterns against each path segment (the previous
+      bottleneck — ~5s for 40k files), we ask git which tracked files match
+      gitignore patterns ('git ls-files --cached --ignored --exclude-standard').
+      This lets us split tracked files into two sets:
+
+        - tracked_clean: NOT matched by any .gitignore pattern.
+          These go through the fast path: a filter that only loads
+          per-directory .semgrepignore files (no .gitignore), since git
+          already told us they don't match any .gitignore rule.
+
+        - tracked_gitignored: matched by a .gitignore pattern despite being
+          tracked (happens when a file was added before the gitignore rule).
+          These go through the full filter (.gitignore + .semgrepignore) so
+          that .semgrepignore '!' negation patterns can override the gitignore
+          exclusion and re-include these files.
+
+   3. Size checking: 'git ls-tree -r -l HEAD' provides committed file sizes
+      in a single invocation. We use these sizes instead of stat() for files
+      that haven't been modified since HEAD (not in 'git diff --name-only').
+
+   For non-git projects, we fall back to the filesystem walker.
 *)
 let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targets =
   Log.debug (fun m -> m "Find_target.get_targets_for_project");
-  (* Obtain the list of files from git if possible because it does it
-     faster than what we can do by scanning the filesystem: *)
   let git_tracked = git_list_tracked_files project_roots in
   let git_untracked =
     git_list_untracked_files ~respect_gitignore:conf.respect_gitignore
@@ -852,26 +1000,102 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
   in
   let selected_targets, skipped_targets =
     match (git_tracked, git_untracked) with
-    (* Git only *)
     | Some tracked, Some untracked ->
         Log.debug (fun m ->
             m "target file candidates from git: tracked: %i, untracked: %i"
               (List.length tracked)
               (List.length untracked));
-        filter_targets conf project_roots (List.rev_append tracked untracked)
-    (* Non-Git projects *)
+        (* Full filter: loads both .gitignore and .semgrepignore per directory.
+           Used for gitignored tracked files (to honour '!' negation in
+           .semgrepignore) and untracked files. *)
+        let ign_full = setup_path_filters conf project_roots in
+        (* Lightweight filter: only loads .semgrepignore per directory,
+           skips .gitignore.  Safe for tracked files that git already
+           confirmed don't match any gitignore pattern. *)
+        let ign_no_gitignore =
+          setup_path_filters
+            { conf with respect_gitignore = false }
+            project_roots
+        in
+        let project_root =
+          Rpath.to_fpath (Rfpath.to_rpath project_roots.project.root)
+        in
+        (* Committed file sizes — avoids one stat() per unmodified file *)
+        let git_sizes = Git_wrapper.ls_tree_sizes ~cwd:project_root () in
+        (* Files modified since HEAD — these need stat() for accurate size *)
+        let dirty = Git_wrapper.diff_names ~cwd:project_root () in
+        let max_target_bytes = conf.max_target_bytes in
+        let exclude_minified_files = conf.exclude_minified_files in
+        (* Split tracked files by gitignore status *)
+        let tracked_clean, tracked_gitignored =
+          match git_list_tracked_gitignored_files project_roots with
+          | Some ignored ->
+              let ignored_set =
+                ignored
+                |> List_.map (fun (fp : Fppath.t) -> fp.fpath)
+                |> Set_.of_list
+              in
+              List.partition
+                (fun (fp : Fppath.t) -> not (Set_.mem fp.fpath ignored_set))
+                tracked
+          | None -> (tracked, [])
+        in
+        (* Fast path: semgrepignore only, no gitignore pattern matching *)
+        let clean_ok, clean_skip =
+          filter_git_files ign_no_gitignore ~git_sizes ~dirty
+            ~max_target_bytes ~exclude_minified_files tracked_clean
+        in
+        (* Slow path: full filter for tracked-but-gitignored files *)
+        let gi_ok, gi_skip =
+          filter_git_files ign_full ~git_sizes ~dirty
+            ~max_target_bytes ~exclude_minified_files tracked_gitignored
+        in
+        (* Untracked files: full filter, no git sizes (not in ls-tree) *)
+        let untracked_ok, untracked_skip =
+          filter_git_files ign_full
+            ~max_target_bytes ~exclude_minified_files untracked
+        in
+        ( clean_ok @ gi_ok @ untracked_ok,
+          clean_skip @ gi_skip @ untracked_skip )
     | None, _
     | _, None ->
-        get_targets_from_filesystem conf project_roots
+        (* Non-git project: walk the filesystem and use stat() for sizes *)
+        let selected, skipped =
+          get_targets_from_filesystem conf project_roots
+        in
+        let ok, skipped_size =
+          filter_size conf.max_target_bytes conf.exclude_minified_files
+            selected
+        in
+        (ok, skipped @ skipped_size)
   in
   let is_git_repo = Option.is_some git_tracked in
-  let selected_targets, skipped_targets =
+  let selected_targets, skipped_targets, forced =
     force_select_scanning_roots
       ~apply_includes_excludes_to_files:conf.apply_includes_excludes_to_file_targets
       project_roots
       selected_targets
       skipped_targets
   in
+  (* Re-apply size/minified limits to force-added scanning roots so that
+     explicit CLI file arguments still honour --max-target-bytes and
+     --exclude-minified-files. Only the forced subset is checked; the rest
+     of 'selected_targets' has already been filtered above. *)
+  let _, forced_skipped =
+    filter_size_and_minified conf.max_target_bytes conf.exclude_minified_files
+      forced
+  in
+  let forced_skipped_paths =
+    forced_skipped
+    |> List_.map (fun (s : Out.skipped_target) -> s.path)
+    |> Set_.of_list
+  in
+  let selected_targets =
+    List.filter
+      (fun (fp : Fppath.t) -> not (Set_.mem fp.fpath forced_skipped_paths))
+      selected_targets
+  in
+  let skipped_targets = List.rev_append forced_skipped skipped_targets in
   { selected = selected_targets; skipped = skipped_targets; git_repo = is_git_repo }
 
 (* for semgrep query console *)
@@ -914,15 +1138,13 @@ let get_targets conf scanning_roots : Fppath.t targets =
       { selected = []; skipped = []; git_repo = false }
       (group_scanning_roots_by_project conf scanning_roots)
   in
-  let selected, big_and_minified =
-    raw.selected
-    |> List.sort_uniq Fppath.compare
-    |> filter_size_and_minified conf.max_target_bytes conf.exclude_minified_files
-  in
+  (* Size/minified filtering is now done per-project in
+     get_targets_for_project, so we only need to deduplicate and sort here. *)
+  let selected = raw.selected |> List.sort_uniq Fppath.compare in
   let skipped =
     List.sort_uniq
       (fun (a : Out.skipped_target) (b : Out.skipped_target) -> Fpath.compare a.path b.path)
-      (List.rev_append big_and_minified raw.skipped)
+      raw.skipped
   in
   { selected; skipped; git_repo = raw.git_repo }
 [@@profiling]
