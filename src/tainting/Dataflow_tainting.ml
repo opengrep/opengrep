@@ -2823,6 +2823,12 @@ let mk_lambda_in_env env lcfg =
    *
    * so we can propagate taint from `obj` to `x`.
    *)
+  (* Clear [active_guards] at the lambda boundary: the enclosing frame's
+   * guards are parameter-indexed into the enclosing, and would be mis-
+   * interpreted if they rode along into the lambda's own frame. The
+   * enclosing's active guards are re-applied to the lambda's upflowed
+   * effects at [do_lambdas], where the frame of reference is correct. *)
+  let base_env = Lval_env.clear_active_guards env.lval_env in
   let lval_env =
     lcfg.params
     |> Fold_IL_params.fold_top_level
@@ -2838,7 +2844,7 @@ let mk_lambda_in_env env lcfg =
            in
            lval_env
            |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
-         env.lval_env
+         base_env
   in
   (* Destructuring ParamPatterns: the top-level pass above seeded only
    * the implicit binder. Each leaf inside the pattern also needs its
@@ -3101,6 +3107,20 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
     |> List_.split
   in
   let effects = Effects.union_list effects_lambdas in
+  (* Restamp the lambda's upflowed effects with the enclosing frame's
+   * currently-active guards — the guards in scope at the node where the
+   * lambda is being evaluated. Paired with [mk_lambda_in_env]'s
+   * [clear_active_guards], this keeps the invariant that every effect in
+   * a function's signature references only that function's own-frame
+   * parameters: lambda-frame guards stay within the lambda (stamped on
+   * effects inside the lambda's own fixpoint), and enclosing-frame guards
+   * are applied here at the upflow boundary where the frame of reference
+   * is the enclosing's. *)
+  let effects =
+    let active = Lval_env.active_guards env.lval_env in
+    if Effect_guard.Set.is_empty active then effects
+    else Effects.map (Effect.add_guards active) effects
+  in
   let out_env =
     if node_is_call then
       (* We only take the side-effects of the lambda into consideration if the

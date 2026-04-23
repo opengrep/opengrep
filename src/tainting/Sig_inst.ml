@@ -1484,6 +1484,29 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
   in
   let effects_list = taint_sig.effects |> Effects.elements in
   let call_effects = effects_list |> List.concat_map inst_effect in
+  (* Post-instantiation invariant: the callee's frame-relative guards have
+   * been consumed by [inst_effect] (dropped if false, stripped otherwise).
+   * Any [call_effect] leaving here with a non-empty [guards] field would be
+   * a regression — the caller would re-stamp with its own-frame guards via
+   * [record_effects], and the stale callee-frame guard would be evaluated
+   * against the wrong arguments. Log visibly rather than silently. *)
+  call_effects
+  |> List.iter (function
+       | ToSink { guards; _ } when not (Effect_guard.Set.is_empty guards) ->
+           Log.err (fun m ->
+               m
+                 "INVARIANT: post-instantiation ToSink carries guards %s \
+                  (callee=%s)"
+                 (Effect_guard.show_set guards)
+                 (Display_IL.string_of_exp callee))
+       | ToReturn { guards; _ } when not (Effect_guard.Set.is_empty guards) ->
+           Log.err (fun m ->
+               m
+                 "INVARIANT: post-instantiation ToReturn carries guards %s \
+                  (callee=%s)"
+                 (Effect_guard.show_set guards)
+                 (Display_IL.string_of_exp callee))
+       | _ -> ());
   Log.debug (fun m ->
       m ~tags:sigs_tag "Instantiated call to %s: %s"
         (Display_IL.string_of_exp callee)

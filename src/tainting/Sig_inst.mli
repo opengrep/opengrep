@@ -3,7 +3,13 @@
 (** Like 'Shape_and_sig.Effect.t' but instantiated for a specific call site.
  * 'ToLval' effects refer to specific 'IL.lval's rather than to 'Taint.lval's.
  * 'ToSinkInCall' effects are preserved when the callback cannot be resolved
- * (e.g., during signature extraction when the callback is a parameter). *)
+ * (e.g., during signature extraction when the callback is a parameter).
+ *
+ * Invariant: the 'guards' field on the 'ToSink'/'ToReturn' records is empty
+ * after instantiation — 'inst_effect' either drops the effect (some guard
+ * resolvable to false) or strips the guard set on output. The caller
+ * restamps with its own-frame guards via
+ * 'Dataflow_tainting.record_effects'. *)
 type call_effect =
   | ToSink of Shape_and_sig.Effect.taints_to_sink
   | ToReturn of Shape_and_sig.Effect.taints_to_return
