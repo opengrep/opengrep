@@ -21,6 +21,16 @@ val hook_check_tainted_at_exit_sinks :
   ref
 (** Pro: support for `at-exit: true` sinks *)
 
+val pattern_leaves_with_offsets :
+  AST_generic.pattern -> (IL.name * Taint.offset list) list
+(** Walk a [ParamPattern]'s inner pattern and enumerate each leaf with
+    its offset path from the enclosing implicit binder. Used by taint
+    env setup paths (in [mk_lambda_in_env], the lambda signature
+    builder, and [Taint_signature_extractor.mk_param_assumptions]) to
+    seed each leaf with a [Shape.Arg (taint_arg, offset_path)] shape
+    without emitting IL Assigns. Pattern shapes without a clean
+    structural projection path contribute no leaves. *)
+
 val fixpoint :
   Taint_rule_inst.t ->
   ?in_env:Taint_lval_env.t ->

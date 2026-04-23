@@ -299,10 +299,10 @@ and formal_param = function
       in
       G.Param p
   | Formal_fwd t -> G.ParamRest (t, G.param_of_id ("...", t))
-  | Formal_tuple (_t1, xs, _t2) ->
+  | Formal_tuple (t1, xs, _t2) ->
       let xs = list formal_param_pattern xs in
       let pat = G.PatTuple (Tok.unsafe_fake_bracket xs) in
-      G.ParamPattern pat
+      G.ParamPattern (pat, G.implicit_param_classic t1)
   | ParamEllipsis tok -> G.ParamEllipsis tok
 
 and formal_param_pattern = function

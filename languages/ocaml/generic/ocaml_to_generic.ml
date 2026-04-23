@@ -560,7 +560,9 @@ and parameter = function
       | G.PatId (id, _idinfo) -> G.Param (G.param_of_id id)
       | G.PatTyped (G.PatId (id, _idinfo), ty) ->
           G.Param { (G.param_of_id id) with G.ptype = Some ty }
-      | _ -> G.ParamPattern v)
+      | _ ->
+          let tk = AST_generic_helpers.first_info_of_any (G.P v) in
+          G.ParamPattern (v, G.implicit_param_classic tk))
   | ParamTodo x -> G.OtherParam (x, [])
 
 and class_field (fld : class_field) : G.field =

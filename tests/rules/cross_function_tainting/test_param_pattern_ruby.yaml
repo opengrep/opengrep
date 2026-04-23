@@ -1,0 +1,13 @@
+rules:
+  - id: test-param-pattern-taint
+    message: Taint must route through destructuring parameters
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

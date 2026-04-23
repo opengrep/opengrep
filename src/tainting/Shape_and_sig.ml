@@ -760,15 +760,11 @@ end = struct
     il_params
     |> List_.map (function
          | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
-         (* functions signatures don't look into the shape of the argument. *)
+         (* function signatures don't look into the shape of the argument. *)
          | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
-         | IL.ParamPattern pat -> (
-             (* Extract parameter name from pattern for Rust function parameters *)
-             match pat with
-             | AST_generic.PatId (name, _) -> P (fst name)
-             | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
-                 P (fst name)
-             | _ -> Other)
+         (* Destructuring parameter: use the synthetic implicit binder's
+          * name; the signature needs only the single binder. *)
+         | IL.ParamPattern ({ pname = { ident = s, _; _ }; _ }, _) -> P s
          | IL.ParamFixme -> Other)
 
   (*************************************)

@@ -85,12 +85,34 @@ let expr_of_quoted (quoted : quoted_generic) : G.expr =
   let l, xs, r = quoted in
   G.interpolated (l, xs |> List_.map either_to_either3 |> merge_adjacent_lefts, r)
 
+(* Normalise keyword text produced by tree-sitter. The token span for
+ * [body:] in [%{body: v}] is captured as ["body: "] or ["body:"] —
+ * strip the trailing [:] and whitespace so the field name is the bare
+ * [body] in both [keyval_of_pair] (expression-side map literals) and
+ * [expr_to_pattern] below (pattern-side map destructures). This keeps
+ * caller-side [%{body: v}] and callee-side [%{body: v}] projecting the
+ * same offset. *)
+let strip_keyword_suffix (id : string AST_generic.wrap) :
+    string AST_generic.wrap =
+  let s, tok = id in
+  (String_.strip_wrapping_char ':' s, tok)
+
 let keyval_of_pair p : G.expr =
   match p with
   | Left (kwd, e) ->
     let key =
       match kwd with
-      | Left id -> G.N (H.name_of_id id) |> G.e
+      | Left id ->
+          (* Keyword-form key [%{body: v}] is semantically the atom
+           * [:body]; represent it as a [String] literal at the generic
+           * level so [Taint_shape.record_or_dict_like_obj] treats it as
+           * an [Ostr] offset and produces per-field cells. Emitting it
+           * as [N(Id …)] would fall into the [Oany] bucket there and
+           * collapse all fields, breaking field-sensitive taint. The
+           * arrow form [%{k => v}] is a runtime lookup and stays as
+           * whatever [expr_of_quoted] produces. *)
+          let s, tok = strip_keyword_suffix id in
+          G.L (G.String (Tok.unsafe_fake_bracket (s, tok))) |> G.e
       | Right (quoted : quoted_generic) -> expr_of_quoted quoted
     in
     G.keyval key (G.fake "=>") e
@@ -130,6 +152,19 @@ let rec expr_to_pattern (e : G.expr) : G.pattern =
   | G.Constructor (n, (_, args, _)) ->
       G.PatConstructor (n, List_.map expr_to_pattern args)
   | G.Ellipsis t -> G.PatEllipsis t
+  | G.OtherExpr
+      ((("MapPairKeyword" | "MapPairArrow") as tag, tk), [ G.E inner ]) ->
+      (* [keyval_of_pair] built the map pair as
+       * [Container(Tuple, [key; val])]. The default [OtherExpr]→[OtherPat]
+       * path below would convert the tuple into [PatTuple([k; v])] and
+       * lose the k/v role. Convert to [PatKeyVal(k_pat, v_pat)] so
+       * downstream (AST_to_IL, pattern_leaves_with_offsets) can read the
+       * key as a field offset and the value as the binding. *)
+      (match inner.e with
+      | G.Container (G.Tuple, (_, [ k; v ], _)) ->
+          G.OtherPat ((tag, tk),
+                      [ G.P (G.PatKeyVal (expr_to_pattern k, expr_to_pattern v)) ])
+      | _ -> G.OtherPat ((tag, tk), [ G.P (expr_to_pattern inner) ]))
   | G.OtherExpr (tag, [ G.E e ]) -> G.OtherPat (tag, [ G.P (expr_to_pattern e) ])
   | G.Cast (ty, _tok, expr) -> G.PatTyped (expr_to_pattern expr, ty)
   | G.LetPattern (p, {e = G.N (G.Id (i, info)); _} ) -> G.PatAs (p, (i, info))
@@ -546,12 +581,16 @@ and map_param_to_gparam env (p : parameter) : G.parameter =
           G.Param (G.param_of_id ?pdefault id))
   | OtherParamExpr e ->
       let e = map_expr env e in
-      G.ParamPattern (expr_to_pattern e)
+      let pat = expr_to_pattern e in
+      let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+      G.ParamPattern (pat, G.implicit_param_classic tk)
   | OtherParamPair (kwd, e) ->
       let kwd = map_keyword env kwd in
       let e = map_expr env e in
       let e = keyval_of_pair (Left (kwd, e)) in
-      G.ParamPattern (expr_to_pattern e)
+      let pat = expr_to_pattern e in
+      let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+      G.ParamPattern (pat, G.implicit_param_classic tk)
 
 (* Convert one rescue/catch stab clause to a G.catch arm.
  * Each stab has a list of exception-type expressions and a handler body. *)

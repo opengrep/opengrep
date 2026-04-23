@@ -159,10 +159,17 @@ let encode_short_lambda (env : env) (tok (* # *) : Tok.t) (body_expr : G.expr) :
         let param_id = (param_name, tok) in
         match i + 1, has_shorthand with
         | 1, true ->
-          (* implicit param % == %1 *)
-          let id_info = G.empty_id_info () in
-          G.PatAs (* the alias ensures both % and %1 are resolved. *)
-            (G.PatId (param_id, id_info), (("%", tok), id_info))
+          (* implicit param % == %1: alias binding that declares both
+           * names. Use separate id_info records so Naming_AST assigns
+           * each its own sid; the AST_to_IL destructure prelude then
+           * emits independent assigns from tmp[0] to each lval. Sharing
+           * the id_info would cause the second declaration to overwrite
+           * the first's sid, leaving the body's reference resolved to a
+           * scope entry whose id_info points to a different sid than
+           * the prelude's assign. *)
+          G.PatAs
+            (G.PatId (param_id, G.empty_id_info ()),
+             (("%", tok), G.empty_id_info ()))
         | _ ->
           G.PatId (param_id, G.empty_id_info ()))
   in
@@ -185,7 +192,8 @@ let encode_short_lambda (env : env) (tok (* # *) : Tok.t) (body_expr : G.expr) :
       params
   in
   let final_param =
-    G.ParamPattern (G.PatList (Tok.unsafe_fake_bracket params_with_rest))
+    let pat = G.PatList (Tok.unsafe_fake_bracket params_with_rest) in
+    G.ParamPattern (pat, G.implicit_param_classic tok)
   in
   (* Structure that Naming_AST can recognize for scope handling *)
   G.OtherExpr (("ShortLambda", tok),
@@ -1111,14 +1119,18 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
     let pats = List_.map
         (function
           | `Sym_lit ((_meta, (loc, s)) as x) ->
-            let key = map_sym_lit_pat_qualified env x in
+            let bound = map_sym_lit_pat_qualified env x in
             let atom_kind, tok_colon, atom_name =
-              map_kwd_expr_aux env (loc, ":" ^ s) 
+              map_kwd_expr_aux env (loc, ":" ^ s)
             in
-            let value =
+            let lookup_key =
               G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
             in
-            G.PatKeyVal (key, value)
+            (* Canonical [PatKeyVal(lookup_key, binding)]: first argument
+             * is the map lookup key (the atom/string that selects the
+             * field on the incoming value), second is the pattern that
+             * receives what was fetched. *)
+            G.PatKeyVal (lookup_key, bound)
           | `Kwd_lit ((_loc, s) as kwd)
             when String.starts_with ~prefix:"::" s ->
              let s, t = H.str env kwd in
@@ -1128,16 +1140,16 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
              let _tok_colon, tok_name =
                Tok.split_tok_at_bytepos 2 t
              in
-             let key =
+             let bound =
                G.PatId ((s_no_colon, tok_name), G.empty_id_info ())
              in
             let atom_kind, tok_colon, atom_name =
-              map_kwd_expr_aux env kwd 
+              map_kwd_expr_aux env kwd
             in
-            let value =
+            let lookup_key =
               G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
             in
-            G.PatKeyVal (key, value)
+            G.PatKeyVal (lookup_key, bound)
           | _ -> raise_parse_error ~related_ast:(G.Tk (token env tk))
                    "Invalid associative binding form"
         )
@@ -1160,11 +1172,11 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
     in
     let rec keyval_and_rest acc = function
       | bind_form :: (`Kwd_lit _ | `Str_lit _ as kv) :: rest_forms ->
-        let key = map_binding_form env bind_form in
+        let bound = map_binding_form env bind_form in
         (* TODO: PatRecord of (dotted_ident * pattern) list bracket *)
-        let value = map_value_key_pattern kv in
+        let lookup_key = map_value_key_pattern kv in
         keyval_and_rest
-          (G.PatKeyVal (key, value) :: acc)
+          (G.PatKeyVal (lookup_key, bound) :: acc)
           rest_forms
       | (`Kwd_lit _or_as  :: _  as rest_forms)-> List.rev acc, rest_forms
       | [] -> List.rev acc, []
