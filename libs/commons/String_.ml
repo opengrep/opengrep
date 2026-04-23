@@ -40,6 +40,23 @@ let trim_cr s =
   let len = String.length s in
   if len > 0 && s.[len - 1] = '\r' then String.sub s 0 (len - 1) else s
 
+(* Strip runs of [c] from both ends of [s], trimming ASCII whitespace
+ * around each step. Useful for normalising map-pair keys that carry
+ * language-specific delimiters such as Clojure's [:body] or [::body]
+ * atoms and Elixir's ["body: "] keyword form onto the bare name. *)
+let strip_wrapping_char (c : char) (s : string) : string =
+  let rec drop_prefix s =
+    if String.length s > 0 && Char.equal s.[0] c then
+      drop_prefix (String.sub s 1 (String.length s - 1))
+    else s
+  in
+  let rec drop_suffix s =
+    let n = String.length s in
+    if n > 0 && Char.equal s.[n - 1] c then drop_suffix (String.sub s 0 (n - 1))
+    else s
+  in
+  s |> String.trim |> drop_prefix |> String.trim |> drop_suffix |> String.trim
+
 let lines_of_range (start_offset, end_offset) str =
   let len = String.length str in
   if
