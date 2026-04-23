@@ -1013,6 +1013,85 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           let fixme = fixme_exp kind any_generic (related_exp g_expr) in
           let call_ss, call_exp = call_instr tok eorig ~void (fun res -> Call (res, fixme, args)) in
           (ss_args @ call_ss, call_exp))
+  (* Clojure keyword-as-function [(:body m)]: a single-argument map
+   * lookup by the atom [:body]. Lower as a field access
+   * [Fetch (m, [Dot :body])] so the shape layer projects the caller's
+   * [Obj] by the matching [Ostr] offset — symmetric with the
+   * map-literal key lowering in [dict]. Macro-expanded chains like
+   * [(-> m :body :nested)] arrive as nested [Call] forms, so the
+   * recursive [nested_lval] on the argument handles the threaded
+   * case. *)
+  | G.Call
+      ( { e = G.OtherExpr
+              ( ("Atom", _),
+                [ G.Name (G.IdQualified {
+                    name_last = (s, atom_tok), _;
+                    name_middle = Some (G.QDots [ ((prefix, _), _) ]);
+                    _ }) ] ); _ } as callee,
+        ( _, [ G.Arg map_expr ], _ ) )
+    when env.lang =*= Lang.Clojure
+         && (String.equal prefix ":" || String.equal prefix "::") ->
+      let bare = String_.strip_wrapping_char ':' s in
+      let field_name =
+        { ident = (prefix ^ bare, atom_tok);
+          sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () }
+      in
+      let ss_map, map_lval = nested_lval env atom_tok map_expr in
+      let offset = { o = Dot field_name; oorig = SameAs callee } in
+      let field_lval =
+        { map_lval with rev_offset = offset :: map_lval.rev_offset }
+      in
+      (ss_map, mk_e (Fetch field_lval) eorig)
+  (* Clojure [(:body m default)]: two-argument form with a default
+   * returned when the key is absent. Lower as [tmp = m.:body; if tmp
+   * is falsy: tmp = default] so both the field-access and default
+   * paths contribute to the result via [Lval_env]'s branch union. *)
+  | G.Call
+      ( { e = G.OtherExpr
+              ( ("Atom", _),
+                [ G.Name (G.IdQualified {
+                    name_last = (s, atom_tok), _;
+                    name_middle = Some (G.QDots [ ((prefix, _), _) ]);
+                    _ }) ] ); _ } as callee,
+        ( _, [ G.Arg map_expr; G.Arg default_expr ], _ ) )
+    when env.lang =*= Lang.Clojure
+         && (String.equal prefix ":" || String.equal prefix "::") ->
+      let bare = String_.strip_wrapping_char ':' s in
+      let field_name =
+        { ident = (prefix ^ bare, atom_tok);
+          sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () }
+      in
+      let ss_map, map_lval = nested_lval env atom_tok map_expr in
+      let offset = { o = Dot field_name; oorig = SameAs callee } in
+      let field_lval =
+        { map_lval with rev_offset = offset :: map_lval.rev_offset }
+      in
+      let tmp = fresh_var atom_tok in
+      let tmp_lval = lval_of_base (Var tmp) in
+      let assign_field =
+        mk_s
+          (Instr (mk_i (Assign (tmp_lval, mk_e (Fetch field_lval) eorig)) eorig))
+      in
+      (* Clojure is strict: [default] is evaluated eagerly at the call
+       * site regardless of whether [m.:body] is nil. Lift its side
+       * effects out of the [if] so they always run. *)
+      let ss_default, default_exp = expr env default_expr in
+      let null_lit = mk_e (Literal (G.Null atom_tok)) NoOrig in
+      let cond_exp =
+        mk_e
+          (Operator
+             ( (G.Eq, atom_tok),
+               [ Unnamed (mk_e (Fetch tmp_lval) NoOrig); Unnamed null_lit ] ))
+          NoOrig
+      in
+      let then_branch =
+        [ mk_s (Instr (mk_i (Assign (tmp_lval, default_exp)) eorig)) ]
+      in
+      let if_stmt = mk_s (If (atom_tok, cond_exp, then_branch, [])) in
+      ( ss_map @ [ assign_field ] @ ss_default @ [ if_stmt ],
+        mk_e (Fetch tmp_lval) eorig )
   | G.Call (e, args) when env.lang =*= Lang.Clojure ->
       let tok = G.fake "call" in
       let arg_list = Tok.unbracket args in

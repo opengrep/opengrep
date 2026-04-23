@@ -1,0 +1,16 @@
+rules:
+  - id: test-atom-access-taint
+    message: |
+      Field-sensitive taint through Clojure's keyword-as-function
+      read form [(:k m)] and its default-value variant
+      [(:k m default)].
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)
