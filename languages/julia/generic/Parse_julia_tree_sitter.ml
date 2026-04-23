@@ -531,7 +531,10 @@ and map_anon_choice_id_6965274 (env : env) (x : CST.anon_choice_id_6965274) =
   | `Slurp_param x -> map_slurp_parameter env x
   | `Typed_param x -> map_typed_parameter env x
   | `LPAR_choice_id_RPAR x -> map_paren_parameter env x
-  | `Tuple_exp x -> ParamPattern (map_tuple_pat env x)
+  | `Tuple_exp x ->
+      let pat = map_tuple_pat env x in
+      let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+      ParamPattern (pat, G.implicit_param_classic tk)
 
 and map_id_parameter env (tok : CST.identifier) =
   let id = map_identifier env tok in
@@ -543,7 +546,10 @@ and map_paren_parameter env (l, param, r) =
   let _v3 = (* ")" *) token env r in
   v2
 
-and map_tuple_parameter env x = ParamPattern (map_tuple_pat env x)
+and map_tuple_parameter env x =
+  let pat = map_tuple_pat env x in
+  let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+  ParamPattern (pat, G.implicit_param_classic tk)
 
 and map_call_parameter env x =
   (* It is unclear to me why a parameter to a function ought to be a function call.
@@ -577,7 +583,10 @@ and map_anon_choice_id_150150 (env : env) x =
   match x with
   | `Id tok -> map_id_parameter env tok
   | `Typed_param x -> map_typed_parameter env x
-  | `Tuple_exp x -> ParamPattern (map_tuple_pat env x)
+  | `Tuple_exp x ->
+      let pat = map_tuple_pat env x in
+      let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+      ParamPattern (pat, G.implicit_param_classic tk)
 
 and map_anon_choice_id_c087cf9 (env : env) (x : CST.anon_choice_id_c087cf9) =
   match x with

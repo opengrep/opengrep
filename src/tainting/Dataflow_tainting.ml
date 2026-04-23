@@ -2693,6 +2693,128 @@ let input_env ~enter_env ~(flow : F.cfg) mapping ni =
       | [ penv ] -> penv
       | penv1 :: penvs -> List.fold_left Lval_env.union penv1 penvs)
 
+(* Walk a [ParamPattern]'s inner pattern and enumerate each leaf
+ * together with its offset path from the enclosing implicit binder.
+ *
+ * The offset path is the projection needed to reach the leaf from the
+ * caller's actual argument. For example, the pattern [{body}] yields
+ * one leaf [body] at offset [[Ofld "body"]]; [(a, b)] yields [a] at
+ * offset [[Oint 0]] and [b] at offset [[Oint 1]]; [PatAs(inner, id)]
+ * yields [id] at the same offset as [inner]'s root plus [inner]'s
+ * own leaves.
+ *
+ * Map/dict destructures (Clojure [{:keys [body]}] / [{body :body}],
+ * Elixir [%{body: body}]) arrive as a [PatList]/[PatConstructor] of
+ * [PatKeyVal(lookup_key, binding)] — possibly wrapped in a single
+ * [OtherPat("MapPairKeyword" | "MapPairArrow", …)] for Elixir's
+ * [:]/[=>] source-level distinction. In that case the offset is the
+ * key name (after stripping Clojure's [:] prefix and Elixir's [: ]
+ * suffix), not the positional index.
+ *
+ * Pattern shapes without a clean structural offset path (PatDisj,
+ * [PatKeyVal] with an opaque key, PatConstructor, PatWildcard,
+ * PatLiteral, other [OtherPat] tags, PatWhen, …) contribute no
+ * leaves — rule-focused source pre-seeding still runs on those via
+ * [mk_fun_input_env] / [check_tainted_var], but they do not receive
+ * an [Arg _] shape here. *)
+let pattern_leaves_with_offsets (pat : AST_generic.pattern) :
+    (IL.name * Taint.offset list) list =
+  let mk_field (s, tok) : IL.name =
+    {
+      ident = (s, tok);
+      sid = G.SId.unsafe_default;
+      id_info = G.empty_id_info ();
+    }
+  in
+  let stripped (s, tok) = (String_.strip_wrapping_char ':' s, tok) in
+  (* The [OtherPat((":"|"::"), …)] branches below match the Clojure
+   * parser's atom-key encoding; [:body] and [::body] denote distinct
+   * runtime atoms and must produce distinct offsets. [G.Atom] cannot
+   * currently carry the [:]/[::] distinction, so we reconstruct the
+   * surface form from the tag prefix. Mirrors the handling in
+   * [AST_to_IL.key_offset_of_pattern]; if [G.Atom] is later extended
+   * with a kind, this branch collapses into the [PatLiteral (G.Atom
+   * …)] branch. *)
+  let ofld_of_key_pat (key_pat : G.pattern) : Taint.offset option =
+    match key_pat with
+    | G.PatId (id, _) -> Some (Taint.Ofld (mk_field (stripped id)))
+    | G.PatLiteral (G.String (_, id, _)) ->
+        Some (Taint.Ofld (mk_field (stripped id)))
+    | G.PatLiteral (G.Atom (_, id)) ->
+        Some (Taint.Ofld (mk_field (stripped id)))
+    | G.OtherPat ((((":" | "::") as prefix), _), [ G.Name (G.Id (id, _)) ]) ->
+        let s, tok = id in
+        Some
+          (Taint.Ofld
+             (mk_field (prefix ^ String_.strip_wrapping_char ':' s, tok)))
+    | G.OtherPat
+        ( (((":" | "::") as prefix), _),
+          [ G.Name (G.IdQualified { name_last = (id, _); _ }) ] ) ->
+        let s, tok = id in
+        Some
+          (Taint.Ofld
+             (mk_field (prefix ^ String_.strip_wrapping_char ':' s, tok)))
+    | _ -> None
+  in
+  let unwrap_map_pair (p : G.pattern) : G.pattern =
+    match p with
+    | G.OtherPat
+        ( (("MapPairKeyword" | "MapPairArrow"), _),
+          [ G.P (G.PatKeyVal (_, _) as inner) ] ) ->
+        inner
+    | _ -> p
+  in
+  let is_map_pair (p : G.pattern) : bool =
+    match p with
+    | G.PatKeyVal (_, _) -> true
+    | G.OtherPat
+        ( (("MapPairKeyword" | "MapPairArrow"), _),
+          [ G.P (G.PatKeyVal (_, _)) ] ) ->
+        true
+    | _ -> false
+  in
+  let rec go offset pat acc =
+    match pat with
+    | G.PatId (id, id_info) ->
+        let il_name = AST_to_IL.var_of_id_info id id_info in
+        (il_name, List.rev offset) :: acc
+    | G.PatTyped (inner, _) -> go offset inner acc
+    | G.PatTuple (_, pats, _) | G.PatList (_, pats, _)
+      when pats <> [] && List.for_all is_map_pair pats ->
+        (* Map/dict destructure: project by key, not by position. *)
+        List.fold_left (go_map_pair offset) acc pats
+    | G.PatTuple (_, pats, _) | G.PatList (_, pats, _) ->
+        List.fold_left
+          (fun acc (i, p) -> go (Taint.Oint i :: offset) p acc)
+          acc
+          (List.mapi (fun i p -> (i, p)) pats)
+    | G.PatConstructor (_, pats)
+      when pats <> [] && List.for_all is_map_pair pats ->
+        (* Clojure [:keys] / [Assoc] destructure wraps its key-value
+         * pairs in a [PatConstructor]; treat like a map destructure. *)
+        List.fold_left (go_map_pair offset) acc pats
+    | G.PatRecord (_, fields, _) ->
+        List.fold_left
+          (fun acc (dot_ident, p) ->
+            match List.rev dot_ident with
+            | [] -> acc
+            | last :: _ -> go (Taint.Ofld (mk_field (stripped last)) :: offset) p acc)
+          acc fields
+    | G.PatAs (inner, (alias_id, alias_id_info)) ->
+        let alias_name = AST_to_IL.var_of_id_info alias_id alias_id_info in
+        let acc = (alias_name, List.rev offset) :: acc in
+        go offset inner acc
+    | _ -> acc
+  and go_map_pair offset acc pat =
+    match unwrap_map_pair pat with
+    | G.PatKeyVal (key_pat, val_pat) -> (
+        match ofld_of_key_pat key_pat with
+        | Some k -> go (k :: offset) val_pat acc
+        | None -> acc (* opaque key — skip this leaf *))
+    | _ -> acc
+  in
+  List.rev (go [] pat [])
+
 let mk_lambda_in_env env lcfg =
   (* We do some processing of the lambda parameters but it's mainly
    * to enable taint propagation, e.g.
@@ -2701,21 +2823,75 @@ let mk_lambda_in_env env lcfg =
    *
    * so we can propagate taint from `obj` to `x`.
    *)
-  lcfg.params
-  |> Fold_IL_params.fold
-       (fun lval_env id id_info _pdefault ->
-         let var = AST_to_IL.var_of_id_info id id_info in
-         (* This is a *new* variable, so we clean any taint that we may have
-          * attached to it previously. This can happen when a lambda is called
-          * inside a loop. *)
-         let lval_env = Lval_env.clean lval_env (LV.lval_of_var var) in
-         (* Now check if the parameter is itself a taint source. *)
-         let taints, shape, lval_env =
+  let lval_env =
+    lcfg.params
+    |> Fold_IL_params.fold_top_level
+         (fun lval_env id id_info _pdefault ->
+           let var = AST_to_IL.var_of_id_info id id_info in
+           (* This is a *new* variable, so we clean any taint that we may
+            * have attached to it previously. This can happen when a
+            * lambda is called inside a loop. *)
+           let lval_env = Lval_env.clean lval_env (LV.lval_of_var var) in
+           (* Now check if the parameter is itself a taint source. *)
+           let taints, shape, lval_env =
              check_tainted_var { env with lval_env } var
-         in
-         lval_env
-         |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
-       env.lval_env
+           in
+           lval_env
+           |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
+         env.lval_env
+  in
+  (* Destructuring ParamPatterns: the top-level pass above seeded only
+   * the implicit binder. Each leaf inside the pattern also needs its
+   * own env entry so body references to destructured names pick up
+   * taint. Seed each leaf with both a [Var (BArg taint_arg, offset)]
+   * taint (so body references propagate the caller's taint
+   * conservatively when no structural shape is available) and an
+   * [Arg (taint_arg, offset_path)] shape (so the shape system can
+   * project the caller's actual argument down to the leaf at HOF
+   * call-site instantiation). Also merge in any source taints from
+   * rules that focus on leaf positions via [check_tainted_var]. *)
+  let _, lval_env =
+    lcfg.params
+    |> List.fold_left
+         (fun (i, lval_env) param ->
+           match param with
+           | IL.ParamPattern ({ pname; _ }, pat) ->
+               let taint_arg : Taint.arg =
+                 { name = fst pname.ident; index = i }
+               in
+               let lval_env =
+                 pattern_leaves_with_offsets pat
+                 |> List.fold_left
+                      (fun lval_env (leaf_name, offset) ->
+                        let leaf_lval : IL.lval =
+                          { base = Var leaf_name; rev_offset = [] }
+                        in
+                        let lval_env = Lval_env.clean lval_env leaf_lval in
+                        let source_taints, _shape, lval_env =
+                          check_tainted_var { env with lval_env } leaf_name
+                        in
+                        let leaf_shape = S.Arg (taint_arg, offset) in
+                        let leaf_taint_lval : T.lval =
+                          { base = BArg taint_arg; offset }
+                        in
+                        let leaf_taint =
+                          T.{ orig = Var leaf_taint_lval; tokens = [] }
+                        in
+                        let leaf_taints =
+                          T.Taint_set.add leaf_taint source_taints
+                        in
+                        Lval_env.add_lval_shape leaf_lval leaf_taints
+                          leaf_shape lval_env)
+                      lval_env
+               in
+               (i + 1, lval_env)
+           | IL.Param _
+           | IL.ParamRest _
+           | IL.ParamFixme ->
+               (i + 1, lval_env))
+         (0, lval_env)
+  in
+  lval_env
 
 (* At [TrueNode] / [FalseNode], if [cond] evaluates to a constant boolean that
  * contradicts the branch direction, the branch is unreachable and every
@@ -3148,35 +3324,88 @@ and (fixpoint :
                        m "Extracting signature for lambda %s"
                          (IL.str_of_name lambda_name));
                    let params = Signature.of_IL_params lambda_cfg.params in
-                   (* Create assumptions for lambda parameters using Fold_IL_params *)
+                   (* Create assumptions for lambda parameters using Fold_IL_params.
+                    * [fold_top_level] yields one entry per declared parameter;
+                    * the loop index [i] must line up with actual call-site args,
+                    * which rules out enumerating destructured leaves here. *)
                    let param_assumptions =
                      let _, env =
                        lambda_cfg.params
-                       |> Fold_IL_params.fold
-                            (fun (i, env) id id_info _pdefault ->
-                              let var = AST_to_IL.var_of_id_info id id_info in
-                              let il_lval : IL.lval =
-                                { base = Var var; rev_offset = [] }
-                              in
-                              let taint_arg : Taint.arg =
-                                { name = fst var.ident; index = i }
-                              in
-                              let taint_lval : Taint.lval =
-                                { base = BArg taint_arg; offset = [] }
-                              in
-                              let generic_taint =
-                                Taint.{ orig = Var taint_lval; tokens = [] }
-                              in
-                              let taint_set =
-                                Taint.Taint_set.singleton generic_taint
-                              in
-                              (* Give the parameter an Arg shape so it can be used in HOF *)
-                              let param_shape = S.Arg (taint_arg, []) in
-                              let new_env =
-                                Lval_env.add_lval_shape il_lval taint_set
-                                  param_shape env
-                              in
-                              (i + 1, new_env))
+                       |> List.fold_left
+                            (fun (i, env) param ->
+                              match param with
+                              | IL.Param { pname; _ }
+                              | IL.ParamRest { pname; _ }
+                              | IL.ParamPattern ({ pname; _ }, _) ->
+                                  let var = pname in
+                                  let il_lval : IL.lval =
+                                    { base = Var var; rev_offset = [] }
+                                  in
+                                  let taint_arg : Taint.arg =
+                                    { name = fst var.ident; index = i }
+                                  in
+                                  let taint_lval : Taint.lval =
+                                    { base = BArg taint_arg; offset = [] }
+                                  in
+                                  let generic_taint =
+                                    Taint.{ orig = Var taint_lval; tokens = [] }
+                                  in
+                                  let taint_set =
+                                    Taint.Taint_set.singleton generic_taint
+                                  in
+                                  (* Give the parameter an Arg shape so it can be used in HOF *)
+                                  let param_shape = S.Arg (taint_arg, []) in
+                                  let env =
+                                    Lval_env.add_lval_shape il_lval taint_set
+                                      param_shape env
+                                  in
+                                  (* Destructuring ParamPattern: also seed
+                                   * each leaf with both a
+                                   * [Var (BArg taint_arg, offset)] taint
+                                   * (so body references propagate taint
+                                   * conservatively) and an
+                                   * [Arg (taint_arg, offset_path)] shape
+                                   * (so the shape system can project the
+                                   * caller's actual argument down to the
+                                   * leaf at HOF call-site instantiation). *)
+                                  let env =
+                                    match param with
+                                    | IL.ParamPattern (_, pat) ->
+                                        pattern_leaves_with_offsets pat
+                                        |> List.fold_left
+                                             (fun env (leaf_name, offset) ->
+                                               let leaf_lval : IL.lval =
+                                                 {
+                                                   base = Var leaf_name;
+                                                   rev_offset = [];
+                                                 }
+                                               in
+                                               let leaf_shape =
+                                                 S.Arg (taint_arg, offset)
+                                               in
+                                               let leaf_taint_lval : Taint.lval
+                                                   =
+                                                 { base = BArg taint_arg; offset }
+                                               in
+                                               let leaf_taint =
+                                                 Taint.
+                                                   {
+                                                     orig = Var leaf_taint_lval;
+                                                     tokens = [];
+                                                   }
+                                               in
+                                               let leaf_taints =
+                                                 Taint.Taint_set.singleton
+                                                   leaf_taint
+                                               in
+                                               Lval_env.add_lval_shape
+                                                 leaf_lval leaf_taints
+                                                 leaf_shape env)
+                                             env
+                                    | _ -> env
+                                  in
+                                  (i + 1, env)
+                              | IL.ParamFixme -> (i + 1, env))
                             (0, Lval_env.empty)
                      in
                      env

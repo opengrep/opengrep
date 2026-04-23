@@ -1552,7 +1552,9 @@ and map_lambda_bindings (env : env) ((v1, v2, v3, v4) : CST.lambda_bindings) =
   in
   let rp = token env v4 in
   (* "|" *)
-  let bind_params = List_.map (fun x -> G.ParamPattern x) all_binds in
+  let bind_params =
+    List_.map (fun x -> G.ParamPattern (x, G.implicit_param_classic lp)) all_binds
+  in
   let params = (lp, bind_params, rp) in
   (lp, params, rp)
 

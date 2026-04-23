@@ -472,7 +472,9 @@ and parameters env xs : G.parameter list =
            G.Param { (G.param_of_id n) with G.ptype = topt }
        | ParamPattern (PatternTuple pat, _) ->
            let pat = list (param_pattern env) pat in
-           G.ParamPattern (G.PatTuple (Tok.unsafe_fake_bracket pat))
+           let pat = G.PatTuple (Tok.unsafe_fake_bracket pat) in
+           let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+           G.ParamPattern (pat, G.implicit_param_classic tk)
        | ParamStar (t, (n, topt)) ->
            let n = name env n in
            let topt = option (type_ env) topt in

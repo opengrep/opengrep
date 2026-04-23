@@ -579,7 +579,10 @@ and fun_ { f_kind; f_attrs = f_props; f_params; f_body; f_rettype } =
 
 and parameter_binding = function
   | ParamClassic x -> parameter x
-  | ParamPattern x -> G.ParamPattern (pattern x)
+  | ParamPattern x ->
+      let pat = pattern x in
+      let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+      G.ParamPattern (pat, G.implicit_param_classic tk)
   | ParamEllipsis x -> G.ParamEllipsis x
 
 and pattern x =

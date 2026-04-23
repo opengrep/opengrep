@@ -991,7 +991,7 @@ let map_lambda_bind_list (env : env) ((v1, v2, v3, v4) : CST.lambda_bind_list) =
     v2
     |> Option.map (map_anon_bind_rep_COMMA_bind_38cc8c1 env)
     |> Option.value ~default:[]
-    |> List_.map (fun x -> G.ParamPattern x)
+    |> List_.map (fun x -> G.ParamPattern (x, G.implicit_param_classic lp))
   in
   let _comma = v3 |> Option.map (fun x -> (* "," *) token env x) in
   let rp = (* "|" *) token env v4 in

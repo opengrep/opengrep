@@ -203,8 +203,65 @@ let rec expr_to_pattern e =
   | Container (Tuple, (t1, xs, t2)) ->
       PatTuple (t1, xs |> List_.map expr_to_pattern, t2)
   | L l -> PatLiteral l
-  | Container ((List | Dict), (t1, xs, t2)) ->
+  | Container (List, (t1, xs, t2)) ->
       PatList (t1, xs |> List_.map expr_to_pattern, t2)
+  (* Dict destructuring (e.g. Python [{"a": x}], Elixir map patterns
+   * after the frontend lowers them). Each entry is
+   * [Container(Tuple, [key; val])]. Entries whose key is a static
+   * ident / string / atom are routed through [PatRecord]; the
+   * [AST_to_IL.PatRecord] lowering emits a [Dot] offset per field,
+   * which is what makes field-sensitive lookups and destructured HOF
+   * callbacks work end-to-end.
+   *
+   * Entries with non-static keys are dropped here; their values never
+   * bind usefully through pattern destructuring. *)
+  | Container (Dict, (t1, xs, t2)) ->
+      let fields =
+        List.filter_map
+          (fun entry ->
+            match entry.e with
+            | Container (Tuple, (_, [ k; v ], _)) -> (
+                let key_ident =
+                  match k.e with
+                  | L (String (_, (s, tok), _)) -> Some (s, tok)
+                  | L (Atom (tok, (s, _))) -> Some (s, tok)
+                  | N (Id (id, _)) -> Some id
+                  | _ -> None
+                in
+                match key_ident with
+                | Some ident -> Some ([ ident ], expr_to_pattern v)
+                | None -> None)
+            | _ -> None)
+          xs
+      in
+      PatRecord (t1, fields, t2)
+  (* Object/record literal used as a destructuring pattern (JS/TS
+   * [{cb, data}] or [{cb: handler}]). Each field is a [DefStmt] whose
+   * entity name is the field label and whose [vinit] (or the
+   * [FieldDefColon]'s [vinit]) is the value pattern.
+   *
+   * For JS shorthand [{cb}], the field's [vinit] is a reference [N (Id
+   * ("cb", _))]; recursing into [expr_to_pattern] on that turns the
+   * reference into a [PatId] binding, which Naming_AST later resolves. *)
+  | Record (t1, fields, t2) ->
+      let pat_fields =
+        List.filter_map
+          (fun f ->
+            match f with
+            | F
+                {
+                  s =
+                    DefStmt
+                      ( { name = EN (Id (id, _)); tparams = None; _ },
+                        ( VarDef { vinit = Some v_expr; _ }
+                        | FieldDefColon { vinit = Some v_expr; _ } ) );
+                  _;
+                } ->
+                Some ([ id ], expr_to_pattern v_expr)
+            | _ -> None)
+          fields
+      in
+      PatRecord (t1, pat_fields, t2)
   | Constructor (n, (_, args, _)) ->
       PatConstructor (n, args |> List_.map expr_to_pattern)
   | Ellipsis t -> PatEllipsis t
@@ -214,7 +271,6 @@ let rec expr_to_pattern e =
   (* coupling: emitted by Python_to_generic for `case ... if guard:`. *)
   | OtherExpr (("CasePatWhen", _), [ E inner; E guard ]) ->
       PatWhen (expr_to_pattern inner, guard)
-   (* TODO: PatKeyVal and more *)
   | _ -> OtherPat (("ExprToPattern", fake ""), [ E e ])
 
 exception NotAnExpr
@@ -403,7 +459,7 @@ let parameter_to_catch_exn_opt p =
   match p with
   | Param p -> Some (CatchParam p)
   | ParamEllipsis t -> Some (CatchPattern (PatEllipsis t))
-  | ParamPattern p -> Some (G.CatchPattern p)
+  | ParamPattern (p, _) -> Some (G.CatchPattern p)
   (* TODO: valid in exn spec? *)
   | ParamRest (_, _p)
   | ParamHashSplat (_, _p) ->

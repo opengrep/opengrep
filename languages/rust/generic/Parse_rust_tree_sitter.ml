@@ -852,7 +852,8 @@ and map_anon_choice_param_2c23cdc (env : env) _outer_attrTODO
   | `Vari_param tok -> G.ParamEllipsis (token env tok) (* "..." *)
   | `X__ tok ->
       (* ellided parameter *)
-      G.ParamPattern (G.PatWildcard (token env tok))
+      let tk = token env tok in
+      G.ParamPattern (G.PatWildcard tk, G.implicit_param_classic tk)
   | `Type x -> (
       let ty = map_type_ env x in
       match ty.t with
@@ -889,7 +890,8 @@ and map_closure_parameter (env : env) (x : CST.anon_choice_pat_4717dcc) :
   match x with
   | `Pat x ->
       let pattern = map_pattern env x in
-      G.ParamPattern pattern
+      let tk = AST_generic_helpers.first_info_of_any (G.P pattern) in
+      G.ParamPattern (pattern, G.implicit_param_classic tk)
   | `Param x -> map_parameter env x
 
 and map_field_initializer (env : env)
@@ -2434,7 +2436,8 @@ and map_parameter (env : env) ((v1, v2, v3, v4) : CST.parameter) : G.parameter =
   | `Pat x ->
       let pattern = map_pattern env x in
       let pat = G.PatTyped (pattern, ty) in
-      G.ParamPattern pat
+      let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+      G.ParamPattern (pat, G.implicit_param_classic tk)
   | `Self tok ->
       let ident = ident env tok in
       (* "self" *)

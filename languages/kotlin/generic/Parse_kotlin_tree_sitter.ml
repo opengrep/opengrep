@@ -1480,7 +1480,7 @@ and lambda_parameter (env : env) (x : CST.lambda_parameter) : G.parameter =
   | Either.Left (id, ptype) -> G.Param (G.param_of_id id ?ptype)
   | Either.Right (l, xs, r) ->
       let pat = vars_to_pattern (l, xs, r) in
-      G.ParamPattern pat
+      G.ParamPattern (pat, G.implicit_param_classic l)
 
 and lambda_parameter_for_loop (env : env) (x : CST.lambda_parameter) =
   match var_or_multivar env x with

@@ -326,6 +326,75 @@ let effective_implicit_return env (eorig : G.expr) : bool =
     | _ -> false
 
 (*****************************************************************************)
+(* Map-pair pattern helpers *)
+(*****************************************************************************)
+
+(* A [PatList] / [PatConstructor] holds "map pairs" when every element is a
+ * [PatKeyVal] in the canonical [(lookup_key, binding_pattern)] order,
+ * possibly wrapped by exactly one [OtherPat("MapPairKeyword" |
+ * "MapPairArrow", …)]. That tag is emitted by the Elixir parser to
+ * preserve the source-level [:] vs [=>] distinction for rule matching;
+ * no other parser uses it, and no parser nests it. *)
+let is_map_pair_pattern (p : G.pattern) : bool =
+  match p with
+  | G.PatKeyVal (_, _) -> true
+  | G.OtherPat
+      ( (("MapPairKeyword" | "MapPairArrow"), _),
+        [ G.P (G.PatKeyVal (_, _)) ] ) ->
+      true
+  | _ -> false
+
+let unwrap_map_pair_pattern (p : G.pattern) : G.pattern =
+  match p with
+  | G.OtherPat
+      ( (("MapPairKeyword" | "MapPairArrow"), _),
+        [ G.P (G.PatKeyVal (_, _) as inner) ] ) ->
+      inner
+  | _ -> p
+
+(* Build a field [Dot] offset from a map-pair key pattern. Returns [None]
+ * for opaque keys — callers fall back to binding the value without a key
+ * projection, losing field-sensitivity for that leaf.
+ *
+ * The [OtherPat((":"|"::"), …)] branches below recognise the Clojure
+ * parser's encoding of atom keys; no other parser emits that tag.
+ * Clojure distinguishes [:body] (plain keyword) from [::body]
+ * (auto-resolved namespaced keyword) — they denote different runtime
+ * atoms and must produce different offsets. [G.Atom] cannot currently
+ * carry that distinction, so we reconstruct the surface form
+ * [":body"] / [":body"] from the tag prefix. If [G.Atom] is later
+ * extended with a "kind" field, this handling can collapse into the
+ * [PatLiteral (G.Atom …)] branch — option (3) in the design
+ * discussion. *)
+let key_offset_of_pattern (key_pat : G.pattern) : offset option =
+  let mk_dot (s, tok) =
+    {
+      o =
+        Dot
+          {
+            ident = (s, tok);
+            sid = G.SId.unsafe_default;
+            id_info = G.empty_id_info ();
+          };
+      oorig = NoOrig;
+    }
+  in
+  let stripped (s, tok) = (String_.strip_wrapping_char ':' s, tok) in
+  match key_pat with
+  | G.PatId (id, _) -> Some (mk_dot (stripped id))
+  | G.PatLiteral (G.String (_, id, _)) -> Some (mk_dot (stripped id))
+  | G.PatLiteral (G.Atom (_, id)) -> Some (mk_dot (stripped id))
+  | G.OtherPat ((((":" | "::") as prefix), _), [ G.Name (G.Id (id, _)) ]) ->
+      let s, tok = id in
+      Some (mk_dot (prefix ^ String_.strip_wrapping_char ':' s, tok))
+  | G.OtherPat
+      ( (((":" | "::") as prefix), _),
+        [ G.Name (G.IdQualified { name_last = (id, _); _ }) ] ) ->
+      let s, tok = id in
+      Some (mk_dot (prefix ^ String_.strip_wrapping_char ':' s, tok))
+  | _ -> None
+
+(*****************************************************************************)
 (* lvalue *)
 (*****************************************************************************)
 
@@ -418,60 +487,102 @@ and pattern env pat : stmts * lval * stmts =
     ([], tmp_lval, inner_ss @ [ alias_assign_stmt ])
   | G.PatList (_tok1, pats, tok2)
   | G.PatTuple (_tok1, pats, tok2) ->
-      (* P1, ..., Pn *)
       let tmp = fresh_var tok2 in
       let tmp_lval = lval_of_base (Var tmp) in
-      (* Pi = tmp[i] *)
       let ss =
-        List.concat_map
-          (fun (pat_i, i) ->
-            let eorig = Related (G.P pat_i) in
-            let index_i = Literal (G.Int (Parsed_int.of_int i)) in
-            let offset_i =
-              { o = Index { e = index_i; eorig }; oorig = NoOrig }
-            in
-            let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
-            pattern_assign_statements env
-              (mk_e (Fetch lval_i) eorig)
-              ~eorig pat_i)
-          (List_.index_list pats)
+        if pats <> [] && List.for_all is_map_pair_pattern pats then
+          (* Map/dict destructure: every element is a [PatKeyVal] (possibly
+           * tagged). Each binding fetches [tmp.key], not [tmp[i]]. *)
+          List.concat_map (map_pair_assign_stmts env tmp) pats
+        else
+          (* Positional tuple/list destructure: [pat_i = tmp[i]]. *)
+          List.concat_map
+            (fun (pat_i, i) ->
+              let eorig = Related (G.P pat_i) in
+              let index_i = Literal (G.Int (Parsed_int.of_int i)) in
+              let offset_i =
+                { o = Index { e = index_i; eorig }; oorig = NoOrig }
+              in
+              let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+              pattern_assign_statements env
+                (mk_e (Fetch lval_i) eorig)
+                ~eorig pat_i)
+            (List_.index_list pats)
       in
       ([], tmp_lval, ss)
   | G.PatTyped (pat1, ty) ->
       let pre_ss, _ = type_ env ty in
       let inner_pre_ss, lval, post_ss = pattern env pat1 in
       (pre_ss @ inner_pre_ss, lval, post_ss)
+  | G.PatConstructor (G.Id ((_s, tok), _id_info), pats)
+    when pats <> [] && List.for_all is_map_pair_pattern pats ->
+      (* Clojure [:keys] / [Assoc] map destructure: the constructor wraps
+       * a flat list of [PatKeyVal]s over the incoming map. Lower as a
+       * map destructure rather than a positional tuple. *)
+      pattern env (G.PatList (G.fake "[", pats, tok))
   | G.PatConstructor (G.Id ((_s, tok), _id_info), pats) ->
-    pattern env (G.PatTuple (G.fake "(", pats, tok))
-  (* TODO: This can help with field sensitivity, if we consider
-   * which atom is actually used to extract the value in key_pat.
-   * For now we ignore the value part. Note that these patterns
-   * are of the shape '{ x :a }' etc. But can also come from
-   * '{ :keys [a] }' which in this case becomes equivalent to
-   * '{ a :a }'. *)
-  | G.PatKeyVal (key_pat, G.OtherPat (((":" | "::"), _tk_col),
-                                      [G.Name _atom_name]))
-    when env.lang =*= Lang.Clojure ->
-    pattern env key_pat
-  (* Clojure string-key destructuring, e.g. `(let [{x "a"} o] x)`. The value
-   * is a string literal used as the map lookup key; only `key_pat` binds. *)
-  | G.PatKeyVal (key_pat, G.PatLiteral (G.String _))
-    when env.lang =*= Lang.Clojure ->
-    pattern env key_pat
-  (* Only seems to be used in Ruby, modulo the above case for Clojure. *)
-  | G.PatKeyVal (_key_pat, val_pat) when env.lang =*= Lang.Ruby ->
-    (* My understanding is that the new variables are introduced on the rhs. *)
-    pattern env val_pat
-  | G.PatRecord (tok1, fields, tok2) ->
-    (* TODO: But here the offset is not an index..., should we do proper?
-     * But at least some taint will be propagated with this solution.
-     * In fact we cannot recover the G.name of the dotted_ident in PatRecord,
-     * so cannot easily create a Dot offset. We have no sid and id_info.
-     * For this reason we do this hack.
-     * TODO: Check this encoding with FieldDefCol used in a lot of places,
-     * have something native that does the same. *)
-    let pats = List_.map (fun (_dot_ident, pat) -> pat) fields in
-    pattern env (G.PatTuple (tok1, pats, tok2))
+      pattern env (G.PatTuple (G.fake "(", pats, tok))
+  | G.PatKeyVal (key_pat, val_pat) ->
+      (* Standalone [PatKeyVal] outside a [PatList]/[PatConstructor]
+       * container. Rare; lower by projecting a fresh [tmp] by the key.
+       * The common case (multiple pairs inside a [PatList]) takes the
+       * map-pair branch of the [PatList] handler above. *)
+      let tok =
+        match key_offset_of_pattern key_pat with
+        | Some { o = Dot { ident = _, t; _ }; _ } -> t
+        | _ -> Tok.unsafe_fake_tok "_patkv"
+      in
+      let tmp = fresh_var tok in
+      let tmp_lval = lval_of_base (Var tmp) in
+      let eorig = Related (G.P val_pat) in
+      let ss =
+        match key_offset_of_pattern key_pat with
+        | Some offset_i ->
+            let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+            pattern_assign_statements env
+              (mk_e (Fetch lval_i) eorig)
+              ~eorig val_pat
+        | None ->
+            pattern_assign_statements env
+              (mk_e (Fetch tmp_lval) eorig)
+              ~eorig val_pat
+      in
+      ([], tmp_lval, ss)
+  | G.PatRecord (_tok1, fields, tok2) ->
+    (* Each field is (dotted_ident, pattern). The dotted_ident carries only
+     * the field label (string * tok) with no id_info; we synthesise an
+     * IL.name with empty id_info and the default sid. That matches the
+     * shape of caller-side field access (via [var_of_id_info] on an
+     * unresolved id_info) and of record-literal field keys, which also
+     * land with the default sid. The inner pattern [pat_i] comes from the
+     * source AST and has already been processed by Naming_AST, so its
+     * bound variable's id_info (if any) is already resolved.
+     *
+     * For qualified field names (e.g. [M.field] in OCaml), we use the last
+     * segment as the field label; the qualifier is dropped. *)
+    let tmp = fresh_var tok2 in
+    let tmp_lval = lval_of_base (Var tmp) in
+    let synth_name ident =
+      { ident; sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
+    in
+    let last_ident_of dot_ident =
+      match List.rev dot_ident with
+      | last :: _ -> last
+      | [] -> ("", tok2)
+    in
+    let ss =
+      List.concat_map
+        (fun (dot_ident, pat_i) ->
+          let eorig = Related (G.P pat_i) in
+          let field_name = synth_name (last_ident_of dot_ident) in
+          let offset_i = { o = Dot field_name; oorig = NoOrig } in
+          let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+          pattern_assign_statements env
+            (mk_e (Fetch lval_i) eorig)
+            ~eorig pat_i)
+        fields
+    in
+    ([], tmp_lval, ss)
   | G.PatWhen (pat_inner, when_expr) ->
       let pre_ss, lval, pat_stmts = pattern env pat_inner in
       let guard_stmts, _e_guard = expr env when_expr in
@@ -495,6 +606,24 @@ and pattern env pat : stmts * lval * stmts =
     (pre_ss, tmp, [])
   | G.PatEllipsis _ -> sgrep_construct (G.P pat)
   | _ -> todo (G.P pat)
+
+(* Lower one map-pair element of a [PatList]/[PatConstructor] destructure.
+ * Unwraps the [OtherPat("MapPair*", …)] tag if present and emits
+ * [binding = tmp.key]. If the key form is opaque (no literal name we
+ * can turn into a [Dot] offset) or the element is not a [PatKeyVal]
+ * after unwrapping, emit a [fixme_stmt] so the gap is visible in the IL
+ * rather than silently dropping the binding. *)
+and map_pair_assign_stmts env tmp (pat : G.pattern) : stmt list =
+  match unwrap_map_pair_pattern pat with
+  | G.PatKeyVal (key_pat, val_pat) -> (
+      match key_offset_of_pattern key_pat with
+      | Some offset_i ->
+          let eorig = Related (G.P pat) in
+          let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+          let exp = mk_e (Fetch lval_i) eorig in
+          pattern_assign_statements env exp ~eorig val_pat
+      | None -> fixme_stmt ToDo (G.P pat))
+  | _ -> fixme_stmt ToDo (G.P pat)
 
 and _catch_exn env exn : stmts * lval * stmts =
   match exn with
@@ -1510,22 +1639,61 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
   let fields = List.filter_map snd results in
   (all_ss, mk_e (RecordOrDict fields) (SameAs e_gen))
 
+and clojure_atom_key_literal (e : G.expr) : exp option =
+  (* When [env.lang] is Clojure, a map-literal key like [:body] or
+   * [::body] arrives here as [OtherExpr("Atom", [Name IdQualified
+   * {name_middle = Some (QDots [(prefix, _)]); name_last = (s, tok)}])],
+   * where [prefix] is [":" / "::"] — the auto-resolved-namespace
+   * marker — and [s] carries the atom's surface text (still prefixed
+   * with a [:]). We need [:body] and [::body] to produce distinct
+   * [Ostr] offsets downstream so field-sensitive taint can tell them
+   * apart; emit a [String] literal whose text is [prefix ^ bare] so
+   * that [:body] stays [":body"] and [::body] stays ["::body"].
+   * [G.Atom] cannot currently carry the [:]/[::] distinction, hence
+   * the bespoke path here — see the comment on
+   * [key_offset_of_pattern] for the matching pattern-side. *)
+  match e.G.e with
+  | G.OtherExpr
+      ( ("Atom", _),
+        [
+          G.Name
+            (G.IdQualified
+              {
+                name_last = (s, tok), _;
+                name_middle = Some (G.QDots [ ((prefix, _), _) ]);
+                _;
+              });
+        ] )
+    when String.equal prefix ":" || String.equal prefix "::" ->
+      let bare = String_.strip_wrapping_char ':' s in
+      Some
+        (mk_e
+           (Literal (G.String (Tok.unsafe_fake_bracket (prefix ^ bare, tok))))
+           (SameAs e))
+  | _ -> None
+
 and dict env (_, orig_entries, _) orig : stmts * exp =
+  let entry_of_kv korig vorig =
+    let ss_v, ve = expr env vorig in
+    match
+      if env.lang =*= Lang.Clojure then clojure_atom_key_literal korig else None
+    with
+    | Some ke -> (ss_v, Entry (ke, ve))
+    | None ->
+        let ss_k, ke = expr env korig in
+        (ss_k @ ss_v, Entry (ke, ve))
+  in
   let results =
     List.map
       (fun orig_entry ->
         match orig_entry.G.e with
         | G.Container (G.Tuple, (_, [ korig; vorig ], _)) ->
-            let ss_k, ke = expr env korig in
-            let ss_v, ve = expr env vorig in
-            (ss_k @ ss_v, Entry (ke, ve))
+            entry_of_kv korig vorig
         | G.OtherExpr ((("MapPairArrow" | "MapPairKeyword"), _), [ G.E inner ])
           when env.lang =*= Lang.Elixir ->
             (match inner.G.e with
             | G.Container (G.Tuple, (_, [ korig; vorig ], _)) ->
-                let ss_k, ke = expr env korig in
-                let ss_v, ve = expr env vorig in
-                (ss_k @ ss_v, Entry (ke, ve))
+                entry_of_kv korig vorig
             | _ -> todo (G.E orig))
         | __else__ -> todo (G.E orig))
       orig_entries
@@ -1925,7 +2093,8 @@ and for_var_or_expr_list env xs : stmts =
 (*****************************************************************************)
 and parameters params : param list =
   params |> Tok.unbracket
-  |> List_.map (function
+  |> List_.mapi (fun idx gparam ->
+       match gparam with
        | G.Param { pname = Some i; pinfo; pdefault; _ } ->
            let pname = var_of_id_info i pinfo in
            (* Clojure/Elixir/OCaml encode multi-clause functions with a
@@ -1936,7 +2105,19 @@ and parameters params : param list =
            Param { pname; pdefault }
        | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
            ParamRest { pname = var_of_id_info i pinfo; pdefault }
-       | G.ParamPattern pat -> ParamPattern pat
+       | G.ParamPattern (pat, { pname = Some i; pinfo; pdefault; _ }) ->
+           (* The synthetic [!!_implicit_param!] binder from
+            * [implicit_param_classic] becomes the IL name_param. Rename
+            * it to [!!_implicit_param!_idx] so multiple destructuring
+            * params in the same function get distinguishable Arg entries
+            * in the taint signature layer; the [is_implicit_param] prefix
+            * check still recognises the indexed form. The inner pattern
+            * is lowered separately by [function_definition] as a
+            * [pattern_assign_statements] prelude over this name. *)
+           let _, tk = i in
+           let i = G.implicit_param_id_indexed idx tk in
+           let pname = var_of_id_info i pinfo in
+           ParamPattern ({ pname; pdefault }, pat)
        | G.ParamReceiver _param ->
            (* TODO: Treat receiver as this parameter *)
            ParamFixme (* TODO *)
@@ -1949,7 +2130,12 @@ and parameters params : param list =
        | G.ParamHashSplat (_, _)
        | G.ParamEllipsis _
        | G.OtherParam (_, _) ->
-           ParamFixme (* TODO *))
+           ParamFixme (* TODO *)
+       | G.ParamPattern (_, { pname = None; _ }) ->
+           (* Every [G.ParamPattern] is built via [implicit_param_classic]
+            * which always sets [pname = Some ...]. This case cannot be
+            * reached from any current parser. *)
+           ParamFixme)
 
 (*****************************************************************************)
 (* Type *)
@@ -2707,6 +2893,18 @@ and function_definition env fdef : function_definition =
     | _ -> env, []
   in
   let env = { env with inside_function = true } in
+  (* ParamPattern destructuring is expressed declaratively: the
+   * parameter_classic's implicit binder is the signature's Arg slot,
+   * and each leaf of the pattern is pre-seeded at taint-env setup
+   * time with shape [Arg (taint_arg, offset_path)]. See
+   * [Taint_signature_extractor.mk_param_assumptions]. No IL
+   * instructions are needed here — the shape system handles the
+   * projection from caller's argument to leaf at call-site
+   * signature instantiation. This avoids the destructive overwrite
+   * that an IL [Assign] would cause on [mk_fun_input_env]'s pre-
+   * seeded source taints, and avoids introducing origs that would
+   * falsely match enclosing-sink ranges via
+   * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody = function_body env fdef.G.fbody in
   let fbody = rec_point_label_stmts @ fbody in
   { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }

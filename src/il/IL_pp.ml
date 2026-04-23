@@ -348,7 +348,7 @@ let pp_param p =
   match p with
   | Param { pname; _ } -> pp_name pname
   | ParamRest { pname; _ } -> "..." ^ pp_name pname
-  | ParamPattern _ -> "<pattern>"
+  | ParamPattern ({ pname; _ }, _) -> "<pattern>" ^ pp_name pname
   | ParamFixme -> "<fixme>"
 
 let pp_function_definition ~name (fdef : function_definition) =

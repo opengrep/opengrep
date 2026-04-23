@@ -3026,7 +3026,7 @@ and m_pattern a b =
   | G.PatTuple a1, B.PatTuple b1 -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1
   | G.PatList a1, B.PatList b1 -> m_bracket (m_list_with_ellipsis m_pattern) a1 b1
   | G.PatRecord a1, B.PatRecord b1 ->
-    m_bracket (m_list(*_with_ellipsis ?*) m_field_pattern) a1 b1
+      m_bracket m_list__m_field_pattern a1 b1
   | G.PatKeyVal (a1, a2), B.PatKeyVal (b1, b2) ->
       m_pattern a1 b1 >>= fun () -> m_pattern a2 b2
   | G.PatWildcard a1, B.PatWildcard b1 -> m_tok a1 b1
@@ -3061,7 +3061,36 @@ and m_pattern a b =
 
 and m_field_pattern a b =
   match (a, b) with
+  | ([ (s_field, _) ], (G.PatId ((s_bound, _), _) as a2)), (_, b2)
+    when String.equal s_field s_bound && Mvar.is_metavar_name s_field ->
+      (* Shorthand record pattern like [{ $X }] — the field-label and the
+       * bound-var pattern carry the same metavariable name. Bind it once
+       * via the inner [PatId] (which carries the target's resolved
+       * id_info) instead of binding twice in conflicting forms. *)
+      m_pattern a2 b2
   | (a1, a2), (b1, b2) -> m_dotted_name a1 b1 >>= fun () -> m_pattern a2 b2
+
+(* Subset-semantic, order-independent matching of [PatRecord] field lists.
+ * Every pattern field must match some target field (by [m_field_pattern]),
+ * but the target may have additional fields that the pattern does not
+ * mention. That matches how destructuring patterns are typically used in
+ * sgrep rules — [{$X}] means "has at least field $X", not "has exactly one
+ * field named $X". *)
+and m_list__m_field_pattern xsa xsb =
+  match (xsa, xsb) with
+  | [], _ -> return ()
+  | a :: xsa, xsb ->
+      let candidates = all_elem_and_rest_of_list xsb in
+      let rec aux xs =
+        match xs with
+        | [] -> fail ()
+        | (b, xsb_rest) :: xs ->
+            m_field_pattern a b
+            >>= (fun () ->
+                  m_list__m_field_pattern xsa (lazy_rest_of_list xsb_rest))
+            >||> aux xs
+      in
+      aux candidates
 
 (*****************************************************************************)
 (* Definitions *)
@@ -3339,7 +3368,7 @@ and m_parameter a b =
   | G.ParamHashSplat (a1, a2), B.ParamHashSplat (b1, b2) ->
       let* () = m_tok a1 b1 in
       m_parameter_classic a2 b2
-  | G.ParamPattern a1, B.ParamPattern b1 -> m_pattern a1 b1
+  | G.ParamPattern (a1, _), B.ParamPattern (b1, _) -> m_pattern a1 b1
   | G.ParamReceiver a1, B.ParamReceiver b1 -> m_parameter_classic a1 b1
   | G.OtherParam (a1, a2), B.OtherParam (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2

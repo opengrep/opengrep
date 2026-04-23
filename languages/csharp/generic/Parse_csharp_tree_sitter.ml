@@ -118,8 +118,13 @@ let param_from_lambda_params lambda_params =
           pinfo = empty_id_info ();
         }
   | ids ->
+      let tk =
+        match ids with
+        | (_, t) :: _ -> t
+        | [] -> Tok.unsafe_fake_tok ""
+      in
       let ids = List_.map (fun id -> PatId (id, empty_id_info ())) ids in
-      ParamPattern (PatTuple (fb ids))
+      ParamPattern (PatTuple (fb ids), implicit_param_classic tk)
 
 (* create lambda lambda_params -> expr *)
 let create_lambda lambda_params expr =
