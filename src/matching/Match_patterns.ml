@@ -315,7 +315,7 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
   xml_attribute_rules fld_rules flds_rules partial_rules name_rules
   raw_rules
   =
-  object (_self : 'self)
+  object (self : 'self)
     inherit [_] Matching_visitor.matching_visitor as super
 
     val range_filter = range_filter
@@ -534,6 +534,25 @@ class ['self] check_visitor range_filter m_env has_as_metavariable
         x
 
     method! visit_pattern env x =
+      (* Binding patterns (e.g. the [body] in a destructured [{ body }]
+       * parameter, or the [a], [b] in [(a, b)]) are simultaneously a
+       * binding site and a reference to the bound names. Rules written
+       * against the reference position — e.g. [focus-metavariable: $REQ]
+       * followed by [pattern: body] — expect an expression node at
+       * that token, which did exist under the old
+       * [OtherPat "ExprToPattern"] encoding but no longer does under
+       * [PatRecord]/[PatId]. [AST_generic_helpers.pattern_to_expr]
+       * formalises the pattern/expression equivalence for the forms
+       * that have an expression view ([PatId], [PatTuple], [PatList],
+       * [PatConstructor], [PatLiteral]); use it to run the expression
+       * rules against the synthesised expression at the same tokens.
+       * For forms without a clean expression view ([PatRecord],
+       * [PatAs], [PatTyped], …) it raises [NotAnExpr] and we simply
+       * skip — [super#visit_pattern] below still recurses into their
+       * children, so inner [PatId] leaves are caught at their own
+       * [visit_pattern] call. *)
+      (try self#visit_expr env (AST_generic_helpers.pattern_to_expr x)
+       with AST_generic_helpers.NotAnExpr -> ());
       match_rules_and_recurse mp_env pattern_rules match_p_p
         (super#visit_pattern env)
         (fun x -> P x)
