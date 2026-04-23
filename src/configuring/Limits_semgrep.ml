@@ -69,8 +69,17 @@ let taint_MAX_OBJ_FIELDS = 10
  *)
 let taint_MAX_TAINT_SET_SIZE = 25
 
-(** Bounds the length of the offsets we can track per arg/poly-taint. *)
-let taint_MAX_POLY_OFFSET = 1
+(** Bounds the length of the offsets we can track per arg/poly-taint.
+ *
+ * Previously [1] as a perf guard against long dotted chains (see
+ * [fix_poly_taint_with_offset] comment). Bumped to [2] so destructures
+ * that go through a Switch case — e.g. Clojure's arity-dispatched
+ * [PatList([PatConstructor(:keys, [PatKeyVal …])])] — can still
+ * address [arg[0].:field] at full length without truncating to
+ * [arg[0]] (which conflates all fields and breaks field-sensitivity).
+ * Direct [ParamPattern] destructures (Elixir, JS, Rust, …) only need
+ * length 1 and are unaffected. *)
+let taint_MAX_POLY_OFFSET = 2
 
 (** Maximum depth for shape equality comparison to prevent infinite recursion
  * in pathological patterns like obj[key] = [obj[key], item] that create
