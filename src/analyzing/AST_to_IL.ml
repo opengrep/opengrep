@@ -1579,6 +1579,18 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
       emit_field_access env ~callee:receiver ~eorig receiver id None
+  (* Go [delete(m, literal)] — builtin for clearing a map entry.
+   * Unique to maps in Go, so no type gate is needed. [delete]
+   * returns nothing; we reuse [emit_field_remove] which also emits
+   * a Fetch of the prior value, but that return is never consumed
+   * in Go source. *)
+  | G.Call
+      ( { e = G.N (G.Id (("delete", _), _)); _ } as callee,
+        (_, [ G.Arg map_expr; G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Go
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_remove env ~callee ~eorig map_expr id
   | G.Call
       ( { e = G.N (G.Id (("get_in", _), _)); _ } as callee,
         ((_, [ G.Arg map_expr; G.Arg keys_expr ], _) as args) )
