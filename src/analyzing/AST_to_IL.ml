@@ -1376,6 +1376,61 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       in
       let ret_tmp = fresh_lval key_tok in
       (ss_recv @ ss_v @ [ assign_stmt ], mk_e (Fetch ret_tmp) eorig)
+  (* C# library-call field-access idioms, type-gated on the receiver
+   * being a known [System.Collections.Generic.IDictionary] subtype.
+   * The bare [d[k]] indexer is already field-sensitive after the C#
+   * parser's single-argument unwrap; these recognisers add the same
+   * treatment to the explicit method-call forms. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("GetValueOrDefault", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Csharp
+         && csharp_receiver_is_dictionary receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver [ id ] None
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("GetValueOrDefault", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Csharp
+         && csharp_receiver_is_dictionary receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver [ id ] (Some default_expr)
+  (* [d.Add(literal, v)] and [d.TryAdd(literal, v)] on a dictionary-
+   * typed receiver — lower as [d.literal = v]. [Add] throws on
+   * duplicate keys and [TryAdd] returns a bool; we ignore both
+   * behaviours. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("Add" | "TryAdd"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Csharp
+         && csharp_receiver_is_dictionary receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      let _, key_tok = id in
+      let ss_recv, recv_lval = nested_lval env key_tok receiver in
+      let field_name =
+        { ident = id;
+          sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () }
+      in
+      let offset = { o = Dot field_name; oorig = SameAs callee } in
+      let field_lval =
+        { recv_lval with rev_offset = offset :: recv_lval.rev_offset }
+      in
+      let ss_v, ve = expr env value_expr in
+      let assign_stmt =
+        mk_s (Instr (mk_i (Assign (field_lval, ve)) eorig))
+      in
+      let ret_tmp = fresh_lval key_tok in
+      (ss_recv @ ss_v @ [ assign_stmt ], mk_e (Fetch ret_tmp) eorig)
   | G.Call
       ( { e = G.N (G.Id (("get_in", _), _)); _ } as callee,
         ((_, [ G.Arg map_expr; G.Arg keys_expr ], _) as args) )
@@ -2082,12 +2137,12 @@ and type_head_name (ty : G.type_) : string option =
       | _ -> None)
   | _ -> None
 
-(* Is [receiver] known to have a [java.util.Map]-family type?
+(* Read the head class name of [receiver]'s declared type, if any.
  * Relies on [id_info.id_type] being populated by [Naming_AST];
  * currently set for locals and fields with explicit annotation,
- * not for bare parameters. Returns [false] conservatively when no
- * type info is available so the [call_generic] fallback takes over. *)
-and java_receiver_is_map (receiver : G.expr) : bool =
+ * not for bare parameters. Used to gate language-specific library-
+ * call field-access rewrites on the receiver's type family. *)
+and receiver_type_head (receiver : G.expr) : string option =
   let id_info_opt =
     match receiver.G.e with
     | G.N (G.Id (_, id_info)) -> Some id_info
@@ -2095,29 +2150,61 @@ and java_receiver_is_map (receiver : G.expr) : bool =
     | _ -> None
   in
   match id_info_opt with
-  | None -> false
+  | None -> None
   | Some id_info -> (
       match !(id_info.G.id_type) with
-      | None -> false
-      | Some ty -> (
-          match type_head_name ty with
-          | None -> false
-          | Some s ->
-              List.exists (String.equal s)
-                [
-                  "Map";
-                  "HashMap";
-                  "LinkedHashMap";
-                  "ConcurrentHashMap";
-                  "Hashtable";
-                  "Properties";
-                  "TreeMap";
-                  "IdentityHashMap";
-                  "EnumMap";
-                  "WeakHashMap";
-                  "SortedMap";
-                  "NavigableMap";
-                ]))
+      | None -> None
+      | Some ty -> type_head_name ty)
+
+(* Is [receiver] known to have a [java.util.Map]-family type? *)
+and java_receiver_is_map (receiver : G.expr) : bool =
+  match receiver_type_head receiver with
+  | None -> false
+  | Some s ->
+      List.exists (String.equal s)
+        [
+          "Map";
+          "HashMap";
+          "LinkedHashMap";
+          "ConcurrentHashMap";
+          "Hashtable";
+          "Properties";
+          "TreeMap";
+          "IdentityHashMap";
+          "EnumMap";
+          "WeakHashMap";
+          "SortedMap";
+          "NavigableMap";
+        ]
+
+(* Is [receiver] known to have a [System.Collections.*.IDictionary]-
+ * family type? Covers the mutable generic dictionaries, the
+ * read-only views, the concurrent and immutable variants, and the
+ * non-generic legacy collections. Non-dictionary receivers fall
+ * through to the generic call. *)
+and csharp_receiver_is_dictionary (receiver : G.expr) : bool =
+  match receiver_type_head receiver with
+  | None -> false
+  | Some s ->
+      List.exists (String.equal s)
+        [
+          "Dictionary";
+          "IDictionary";
+          "IReadOnlyDictionary";
+          "ConcurrentDictionary";
+          "SortedDictionary";
+          "SortedList";
+          "ImmutableDictionary";
+          "ImmutableSortedDictionary";
+          "FrozenDictionary";
+          "ReadOnlyDictionary";
+          "Hashtable";
+          "StringDictionary";
+          "OrderedDictionary";
+          "HybridDictionary";
+          "ListDictionary";
+          "NameValueCollection";
+        ]
 
 (* Walk a [G.argument] list and return the longest prefix of literal
  * field keys together with whatever follows (possibly empty). Used
