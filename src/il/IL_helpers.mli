@@ -4,6 +4,28 @@ val is_pro_resolved_global : IL.name -> bool
 val is_class_name : IL.name -> bool
 val exp_of_arg : IL.exp IL.argument -> IL.exp
 
+val pname_of_param : IL.param -> IL.name option
+(** [Some pname] for [Param]/[ParamRest]/[ParamPattern]; [None] for
+    [ParamFixme]. *)
+
+val offset_is_resolvable : IL.offset -> bool
+(** Whether the offset step can be resolved statically: a [Dot] field
+    or an [Index] of a literal [Int]/[String]. *)
+
+val param_index : IL.param list -> IL.name -> int option
+(** Position (zero-based) of a parameter whose [pname] matches [name]
+    via [IL.equal_name]. *)
+
+val cond_param_refs :
+  IL.param list -> IL.exp -> (IL.name * int) list option
+(** Collect [(IL.name, index)] pairs for every free [Fetch] in [cond]
+    whose base is a parameter in the given list (matched via
+    [IL.equal_name]) with a statically-resolvable offset path. Returns
+    [None] if any free [Fetch] fails to anchor, any offset step fails
+    [offset_is_resolvable], or the cond contains an [IL.exp] kind not
+    modelled here (e.g. [Composite], [RecordOrDict], [Cast],
+    [FixmeExp]). *)
+
 (** Lvalue/Rvalue helpers working on the IL *)
 
 val lval_of_var : IL.name -> IL.lval
