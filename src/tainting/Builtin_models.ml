@@ -223,10 +223,10 @@ let make_params arity callback_index =
 
 (** Build the effects contributed by a single FunctionHOF overload in the
     packed-CList form Clojure uses. Each effect is guarded by
-    [LenEq(impl, arity)] so that multiple overloads for the same function
-    name (e.g. [reduce/2] and [reduce/3]) can share one IL-arity-1
-    signature and get disambiguated by the caller's CList length at
-    instantiation time.
+    [length(impl) == arity] so that multiple overloads for the same
+    function name (e.g. [reduce/2] and [reduce/3]) can share one
+    IL-arity-1 signature and get disambiguated by the caller's CList
+    length at instantiation time.
 
     The callback invocation is itself packed in Clojure — [(cb x y)] lowers
     to [cb(CList[x, y])] — so we emit a single-element [args_taints] whose
@@ -251,8 +251,49 @@ let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
   let args_taints =
     [ IL.Unnamed (Taint.Taint_set.empty, callback_obj) ]
   in
+  (* Build the guard [length(impl) == arity] as an IL.exp. [impl_il_name]
+   * is the synthetic [IL.name] used in the cond's [Fetch] base and in
+   * [param_refs]; the evaluator matches them back via [IL.equal_name]. *)
   let guards =
-    Effect_guard.Set.singleton (Effect_guard.LenEq (impl_arg, arity))
+    let fake_tok = Tok.unsafe_fake_tok "builtin_hof" in
+    let impl_il_name : IL.name =
+      {
+        ident = ("impl", fake_tok);
+        sid = AST_generic.SId.unsafe_default;
+        id_info = AST_generic.empty_id_info ();
+      }
+    in
+    let impl_fetch : IL.exp =
+      {
+        IL.e = IL.Fetch { base = IL.Var impl_il_name; rev_offset = [] };
+        eorig = IL.NoOrig;
+      }
+    in
+    let length_exp : IL.exp =
+      {
+        IL.e =
+          IL.Operator
+            ((AST_generic.Length, fake_tok), [ IL.Unnamed impl_fetch ]);
+        eorig = IL.NoOrig;
+      }
+    in
+    let arity_exp : IL.exp =
+      {
+        IL.e = IL.Literal (AST_generic.Int (Parsed_int.of_int arity));
+        eorig = IL.NoOrig;
+      }
+    in
+    let cond : IL.exp =
+      {
+        IL.e =
+          IL.Operator
+            ( (AST_generic.Eq, fake_tok),
+              [ IL.Unnamed length_exp; IL.Unnamed arity_exp ] );
+        eorig = IL.NoOrig;
+      }
+    in
+    Effect_guard.Set.singleton
+      { Effect_guard.cond; param_refs = [ (impl_il_name, 0) ] }
   in
   let hof_effect =
     Effect.ToSinkInCall

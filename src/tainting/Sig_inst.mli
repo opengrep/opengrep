@@ -24,6 +24,7 @@ type call_effect =
 type call_effects = call_effect list
 
 val instantiate_function_signature :
+  lang:Lang.t ->
   Taint_lval_env.t ->
   Shape_and_sig.Signature.t ->
   callee:IL.exp ->
