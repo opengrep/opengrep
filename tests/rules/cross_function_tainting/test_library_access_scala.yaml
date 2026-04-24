@@ -1,0 +1,16 @@
+rules:
+  - id: test-library-access-taint
+    message: |
+      Cross-function field-sensitive taint through Scala's
+      mutable.Map library-call recognisers. Maps flow across
+      function boundaries; field-sensitivity must survive the call.
+    languages:
+      - scala
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

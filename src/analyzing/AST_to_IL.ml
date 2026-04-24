@@ -1496,6 +1496,89 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let id = Option.get (literal_field_ident key_expr) in
       emit_field_access_or_lambda env ~callee ~eorig receiver id key_expr
         lambda_expr
+  (* Scala library-call field-access idioms, type-gated on the
+   * receiver being in the [scala.collection.Map] /
+   * [scala.collection.mutable.Map] family. The [m(k) = v]
+   * apply-assign sugar is desugared to [m.update(k, v)] by the
+   * [assign] helper, so it flows through the [.update] recogniser
+   * below. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("get" | "apply"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Scala
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id None
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("getOrElse", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Scala
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id (Some default_expr)
+  (* [m.put(k, v)] and [m.update(k, v)] — field assign, return
+   * prior. [put] returns [Option[V]], [update] returns [Unit];
+   * both are captured identically by the helper. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("put" | "update"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Scala
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* [m += (k -> v)] — the tuple is constructed via the [.->] method
+   * call on the key, so we match the nested Call shape. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("+=", _), _))); _ } as
+          callee,
+        (_, [ G.Arg
+                { e = G.Call
+                        ( { e = G.DotAccess
+                                  ( key_expr,
+                                    _,
+                                    G.FN (G.Id (("->", _), _)) );
+                            _
+                          },
+                          (_, [ G.Arg value_expr ], _) );
+                  _
+                } ], _) )
+    when env.lang =*= Lang.Scala
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* Bare apply-read [m(k)] — Scala's apply-syntax, equivalent to
+   * [m.apply(k)]. The callee is a plain [Name] (not a DotAccess).
+   * Gate on the name resolving to a variable-kind (LocalVar /
+   * Parameter / Global / EnclosedVar) so constructor calls like
+   * [Map("a" -> 1)] where [Map] resolves to an [ImportedEntity] /
+   * [TypeName] / [None] are not rewritten as reads. *)
+  | G.Call
+      ( ({ e =
+             ( G.N (G.Id (_, id_info))
+             | G.N (G.IdQualified { name_info = id_info; _ }) );
+           _
+         } as receiver),
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Scala
+         && (match !(id_info.G.id_resolved) with
+            | Some ((G.LocalVar | G.Parameter | G.Global | G.EnclosedVar), _) ->
+                true
+            | _ -> false)
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee:receiver ~eorig receiver id None
   | G.Call
       ( { e = G.N (G.Id (("get_in", _), _)); _ } as callee,
         ((_, [ G.Arg map_expr; G.Arg keys_expr ], _) as args) )
@@ -1581,6 +1664,26 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
         class_construction env obj' origin_exp ret_ty id_info args
       in
       (ss, mk_e (Fetch lval) (SameAs obj_e))
+  (* Scala [m(k) = v] is sugar for [m.update(k, v)]. The parser
+   * faithfully produces [Assign(Call(m, [k]), _, v)] so the surface
+   * form [$M($K) = $V] stays distinct from the explicit
+   * [$M.update($K, $V)] at the pattern layer. Rewrite the AST to a
+   * plain method call before the rhs gets lowered. *)
+  | G.Assign
+      ({ e = G.Call (receiver, (lb, args_list, rb)); _ }, tok, rhs)
+    when env.lang =*= Lang.Scala ->
+      let update_callee =
+        G.DotAccess
+          ( receiver,
+            tok,
+            G.FN (G.Id (("update", tok), G.empty_id_info ())) )
+        |> G.e
+      in
+      let update_call =
+        G.Call (update_callee, (lb, args_list @ [ G.Arg rhs ], rb))
+        |> G.e
+      in
+      expr_aux env ~void update_call
   | G.Assign (e1, tok, e2) ->
       let ss_e2, exp = expr env e2 in
       let ss_assign, result = assign env ~g_expr e1 tok exp in
@@ -2305,6 +2408,29 @@ and kotlin_receiver_is_map (receiver : G.expr) : bool =
           "SortedMap";
           "NavigableMap";
           "Hashtable";
+        ]
+
+(* Is [receiver] known to have a Scala [Map] / [mutable.Map] family
+ * type? Covers the stdlib interfaces and the Java collections
+ * commonly used via interop. Non-map receivers fall through to the
+ * generic call. *)
+and scala_receiver_is_map (receiver : G.expr) : bool =
+  match receiver_type_head receiver with
+  | None -> false
+  | Some s ->
+      List.exists (String.equal s)
+        [
+          "Map";
+          "MutableMap";
+          "HashMap";
+          "LinkedHashMap";
+          "TreeMap";
+          "SortedMap";
+          "ConcurrentHashMap";
+          "ConcurrentMap";
+          "NavigableMap";
+          "Hashtable";
+          "WeakHashMap";
         ]
 
 (* Walk a [G.argument] list and return the longest prefix of literal
