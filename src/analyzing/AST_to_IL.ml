@@ -1324,9 +1324,15 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                     true
                 | _ -> false)
               esorig ->
+      (* Each element is guaranteed by the [for_all] guard to be a
+       * field-init [Assign (N (Id …), _, _)]; any non-matching shape
+       * would indicate a parser change, in which case we skip that
+       * element rather than assert — a missing [Entry] is a precision
+       * loss, not a crash — and emit a warning so the drift is
+       * traceable. *)
       let entries_ss, entries =
         esorig
-        |> List.map (fun eiorig ->
+        |> List.filter_map (fun eiorig ->
                match eiorig.G.e with
                | G.Assign
                    ( { G.e = G.N (G.Id ((field_name, field_tok), _)); _ },
@@ -1340,9 +1346,14 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                              (Tok.unsafe_fake_bracket (field_name, field_tok))))
                        (related_tok field_tok)
                    in
-                   (ss_v, Entry (key, ve))
-               | _ -> assert false
-               (* guarded by [List.for_all] above *))
+                   Some (ss_v, Entry (key, ve))
+               | _ ->
+                   Log.warn (fun m ->
+                       m
+                         "Rust struct-literal field init had unexpected \
+                          shape; skipping (element: %s)"
+                         (G.show_expr_kind eiorig.G.e));
+                   None)
         |> List.split
       in
       let ss = List.concat entries_ss in
