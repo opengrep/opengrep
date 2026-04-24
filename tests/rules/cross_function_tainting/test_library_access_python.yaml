@@ -1,0 +1,16 @@
+rules:
+  - id: test-library-access-taint
+    message: |
+      Field-sensitive taint through Python's dict.get and getattr
+      library-call idioms. A source at the bound key fires; a source
+      at a sibling key does not.
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)
