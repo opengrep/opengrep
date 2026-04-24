@@ -297,6 +297,7 @@ let record_or_dict_like_obj taints_and_shapes : shape =
                      | None -> T.Oany
                      | Some i -> T.Oint i)
                  | Literal (String (_, (s, _), _)) -> Ostr s
+                 | Literal (Atom (_, (s, _))) -> Ostr s
                  | __else__ -> T.Oany
                in
                add_field_to_obj_check_invariant obj offset taints shape
