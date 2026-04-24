@@ -1319,6 +1319,63 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       in
       ( ss_map @ [ assign_field; if_stmt ],
         mk_e (Fetch result_lval) eorig )
+  (* Java library-call field-access idioms, type-gated on the
+   * receiver being a known [java.util.Map] subtype — [.get] and
+   * [.getOrDefault] exist on many unrelated Java types, so we only
+   * rewrite when [id_info.id_type] resolves to a Map-family class.
+   * Untyped receivers (e.g. parameters without populated [id_type])
+   * fall through to the generic call. *)
+  | G.Call
+      ( { e = G.DotAccess (receiver, _, G.FN (G.Id (("get", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Java
+         && java_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver [ id ] None
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("getOrDefault", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Java
+         && java_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver [ id ] (Some default_expr)
+  (* [m.put(literal, v)] on a Map-typed receiver — lower as a field
+   * assign [m.literal = v] so literal-key construction builds a
+   * per-field [Obj] shape and field-sensitive [.get] reads flow
+   * through. The real [put] returns the previous value; we return a
+   * fresh clean [tmp] (effectively [null]) since callers of [put]
+   * rarely inspect that value and modelling it precisely adds
+   * complexity without taint benefit. *)
+  | G.Call
+      ( { e = G.DotAccess (receiver, _, G.FN (G.Id (("put", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Java
+         && java_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      let _, key_tok = id in
+      let ss_recv, recv_lval = nested_lval env key_tok receiver in
+      let field_name =
+        { ident = id;
+          sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () }
+      in
+      let offset = { o = Dot field_name; oorig = SameAs callee } in
+      let field_lval =
+        { recv_lval with rev_offset = offset :: recv_lval.rev_offset }
+      in
+      let ss_v, ve = expr env value_expr in
+      let assign_stmt =
+        mk_s (Instr (mk_i (Assign (field_lval, ve)) eorig))
+      in
+      let ret_tmp = fresh_lval key_tok in
+      (ss_recv @ ss_v @ [ assign_stmt ], mk_e (Fetch ret_tmp) eorig)
   | G.Call
       ( { e = G.N (G.Id (("get_in", _), _)); _ } as callee,
         ((_, [ G.Arg map_expr; G.Arg keys_expr ], _) as args) )
@@ -2006,6 +2063,61 @@ and literal_field_ident (e : G.expr) : G.ident option =
       Some (String_.strip_wrapping_char ':' s, tok)
   | G.L (G.String (_, id, _)) -> Some id
   | _ -> None
+
+(* Extract the head class name from a [G.type_], unwrapping [TyApply]
+ * to its inner [TyN]. Returns [None] for types that are not a named
+ * class (function types, arrays, tuples, anonymous, …). Used to
+ * gate Java [.get]/[.getOrDefault] rewrites on the receiver having
+ * a known Map-family type. *)
+and type_head_name (ty : G.type_) : string option =
+  let name_head = function
+    | G.Id ((s, _), _) -> Some s
+    | G.IdQualified { name_last = (s, _), _; _ } -> Some s
+  in
+  match ty.G.t with
+  | G.TyN name -> name_head name
+  | G.TyApply (inner, _) -> (
+      match inner.G.t with
+      | G.TyN name -> name_head name
+      | _ -> None)
+  | _ -> None
+
+(* Is [receiver] known to have a [java.util.Map]-family type?
+ * Relies on [id_info.id_type] being populated by [Naming_AST];
+ * currently set for locals and fields with explicit annotation,
+ * not for bare parameters. Returns [false] conservatively when no
+ * type info is available so the [call_generic] fallback takes over. *)
+and java_receiver_is_map (receiver : G.expr) : bool =
+  let id_info_opt =
+    match receiver.G.e with
+    | G.N (G.Id (_, id_info)) -> Some id_info
+    | G.N (G.IdQualified { name_info; _ }) -> Some name_info
+    | _ -> None
+  in
+  match id_info_opt with
+  | None -> false
+  | Some id_info -> (
+      match !(id_info.G.id_type) with
+      | None -> false
+      | Some ty -> (
+          match type_head_name ty with
+          | None -> false
+          | Some s ->
+              List.exists (String.equal s)
+                [
+                  "Map";
+                  "HashMap";
+                  "LinkedHashMap";
+                  "ConcurrentHashMap";
+                  "Hashtable";
+                  "Properties";
+                  "TreeMap";
+                  "IdentityHashMap";
+                  "EnumMap";
+                  "WeakHashMap";
+                  "SortedMap";
+                  "NavigableMap";
+                ]))
 
 (* Walk a [G.argument] list and return the longest prefix of literal
  * field keys together with whatever follows (possibly empty). Used
