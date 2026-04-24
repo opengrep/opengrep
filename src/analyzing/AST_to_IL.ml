@@ -1143,10 +1143,20 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
             | _ -> false) -> (
       match (callee.G.e, ruby_field_access_decode method_name args) with
       | ( G.DotAccess (receiver, _, _),
-          Some (field_idents, [], default_opt) ) ->
-          emit_field_access env ~callee ~eorig receiver field_idents default_opt
+          Some (first_id :: rest_ids, [], default_opt) ) ->
+          let ss_recv, head_lval = build_field_lval env ~callee receiver first_id in
+          let chained_lval =
+            List.fold_left
+              (fun acc id -> extend_field_lval ~callee id acc)
+              head_lval rest_ids
+          in
+          let ss_fetch, result =
+            emit_fetch_with_optional_default env ~eorig chained_lval
+              (snd first_id) default_opt
+          in
+          (ss_recv @ ss_fetch, result)
       | ( G.DotAccess (receiver, _, _),
-          Some (field_idents, (_ :: _ as tail_args), None) ) ->
+          Some (first_id :: rest_ids, (_ :: _ as tail_args), None) ) ->
           (* Hybrid [h.dig(:a, :b, x, …)]: the literal prefix
            * [:a; :b] is precise; the tail starts with a dynamic key
            * so we hand it back to the generic call as
@@ -1154,10 +1164,18 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
            * tmp, then reconstruct a synthetic [G.Call (G.DotAccess
            * (prefix_tmp_as_expr, _, dig), tail_args)] and feed it
            * through [expr_aux]. *)
-          let first_tok = snd (List.hd field_idents) in
-          let ss_prefix, prefix_exp =
-            emit_field_access env ~callee ~eorig receiver field_idents None
+          let first_tok = snd first_id in
+          let ss_recv, head_lval = build_field_lval env ~callee receiver first_id in
+          let chained_lval =
+            List.fold_left
+              (fun acc id -> extend_field_lval ~callee id acc)
+              head_lval rest_ids
           in
+          let ss_fetch, prefix_exp =
+            emit_fetch_with_optional_default env ~eorig chained_lval
+              first_tok None
+          in
+          let ss_prefix = ss_recv @ ss_fetch in
           let prefix_tmp = fresh_var first_tok in
           let prefix_tmp_lval = lval_of_base (Var prefix_tmp) in
           let assign_prefix =
@@ -1212,14 +1230,14 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
     when env.lang =*= Lang.Python
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      emit_field_access env ~callee ~eorig obj_expr [ id ] None
+      emit_field_access env ~callee ~eorig obj_expr id None
   | G.Call
       ( { e = G.N (G.Id (("getattr", _), _)); _ } as callee,
         (_, [ G.Arg obj_expr; G.Arg key_expr; G.Arg default_expr ], _) )
     when env.lang =*= Lang.Python
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      emit_field_access env ~callee ~eorig obj_expr [ id ] (Some default_expr)
+      emit_field_access env ~callee ~eorig obj_expr id (Some default_expr)
   (* Elixir library-call field-access idioms:
    * - [Map.get(m, :k)] / [Map.get(m, :k, default)]
    * - [Map.fetch(m, :k)] / [Map.fetch!(m, :k)] — both lower to a
@@ -1241,7 +1259,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && (match method_name with "get" | "fetch!" -> true | _ -> false)
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      emit_field_access env ~callee ~eorig map_expr [ id ] None
+      emit_field_access env ~callee ~eorig map_expr id None
   (* [Map.get(m, :k, default)] — eager default, conditional assign. *)
   | G.Call
       ( { e = G.DotAccess
@@ -1252,7 +1270,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
     when env.lang =*= Lang.Elixir
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      emit_field_access env ~callee ~eorig map_expr [ id ] (Some default_expr)
+      emit_field_access env ~callee ~eorig map_expr id (Some default_expr)
   (* [Map.fetch(m, :k)] returns [{:ok, value} | :error]. Emit both
    * branches so a caller [case] pattern-matching [{:ok, v}] or
    * [:error] destructures correctly. The branch condition
@@ -1333,7 +1351,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && java_receiver_is_map receiver
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      emit_field_access env ~callee ~eorig receiver [ id ] None
+      emit_field_access env ~callee ~eorig receiver id None
   | G.Call
       ( { e = G.DotAccess
               (receiver, _, G.FN (G.Id (("getOrDefault", _), _))); _ } as
@@ -1343,14 +1361,13 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && java_receiver_is_map receiver
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      emit_field_access env ~callee ~eorig receiver [ id ] (Some default_expr)
+      emit_field_access env ~callee ~eorig receiver id (Some default_expr)
   (* [m.put(literal, v)] on a Map-typed receiver — lower as a field
    * assign [m.literal = v] so literal-key construction builds a
    * per-field [Obj] shape and field-sensitive [.get] reads flow
-   * through. The real [put] returns the previous value; we return a
-   * fresh clean [tmp] (effectively [null]) since callers of [put]
-   * rarely inspect that value and modelling it precisely adds
-   * complexity without taint benefit. *)
+   * through. [put] returns the previous value; the emit helper
+   * captures that precisely via [tmp = Fetch m.k] before the
+   * write. *)
   | G.Call
       ( { e = G.DotAccess (receiver, _, G.FN (G.Id (("put", _), _))); _ } as
           callee,
@@ -1359,23 +1376,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && java_receiver_is_map receiver
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      let _, key_tok = id in
-      let ss_recv, recv_lval = nested_lval env key_tok receiver in
-      let field_name =
-        { ident = id;
-          sid = G.SId.unsafe_default;
-          id_info = G.empty_id_info () }
-      in
-      let offset = { o = Dot field_name; oorig = SameAs callee } in
-      let field_lval =
-        { recv_lval with rev_offset = offset :: recv_lval.rev_offset }
-      in
-      let ss_v, ve = expr env value_expr in
-      let assign_stmt =
-        mk_s (Instr (mk_i (Assign (field_lval, ve)) eorig))
-      in
-      let ret_tmp = fresh_lval key_tok in
-      (ss_recv @ ss_v @ [ assign_stmt ], mk_e (Fetch ret_tmp) eorig)
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
   (* C# library-call field-access idioms, type-gated on the receiver
    * being a known [System.Collections.Generic.IDictionary] subtype.
    * The bare [d[k]] indexer is already field-sensitive after the C#
@@ -1390,7 +1391,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && csharp_receiver_is_dictionary receiver
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      emit_field_access env ~callee ~eorig receiver [ id ] None
+      emit_field_access env ~callee ~eorig receiver id None
   | G.Call
       ( { e = G.DotAccess
               (receiver, _, G.FN (G.Id (("GetValueOrDefault", _), _))); _ } as
@@ -1400,11 +1401,11 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && csharp_receiver_is_dictionary receiver
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      emit_field_access env ~callee ~eorig receiver [ id ] (Some default_expr)
+      emit_field_access env ~callee ~eorig receiver id (Some default_expr)
   (* [d.Add(literal, v)] and [d.TryAdd(literal, v)] on a dictionary-
    * typed receiver — lower as [d.literal = v]. [Add] throws on
-   * duplicate keys and [TryAdd] returns a bool; we ignore both
-   * behaviours. *)
+   * duplicate keys and [TryAdd] returns a bool; both return the
+   * prior value, which the emit helper captures precisely. *)
   | G.Call
       ( { e = G.DotAccess
               (receiver, _, G.FN (G.Id ((("Add" | "TryAdd"), _), _))); _ } as
@@ -1414,23 +1415,87 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && csharp_receiver_is_dictionary receiver
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
-      let _, key_tok = id in
-      let ss_recv, recv_lval = nested_lval env key_tok receiver in
-      let field_name =
-        { ident = id;
-          sid = G.SId.unsafe_default;
-          id_info = G.empty_id_info () }
-      in
-      let offset = { o = Dot field_name; oorig = SameAs callee } in
-      let field_lval =
-        { recv_lval with rev_offset = offset :: recv_lval.rev_offset }
-      in
-      let ss_v, ve = expr env value_expr in
-      let assign_stmt =
-        mk_s (Instr (mk_i (Assign (field_lval, ve)) eorig))
-      in
-      let ret_tmp = fresh_lval key_tok in
-      (ss_recv @ ss_v @ [ assign_stmt ], mk_e (Fetch ret_tmp) eorig)
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* Kotlin library-call field-access idioms, type-gated on the
+   * receiver being in the [kotlin.collections.Map] /
+   * [kotlin.collections.MutableMap] family. The bare indexer
+   * [m[k]] is already field-sensitive; these recognisers cover the
+   * explicit method-call forms. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("get" | "getValue"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id None
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("getOrDefault", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id (Some default_expr)
+  (* [m.put(k, v)] / [m.set(k, v)] — field assign, return prior. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("put" | "set"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* [m.putIfAbsent(k, v)] — conditional field assign, return prior. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("putIfAbsent", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_if_absent env ~callee ~eorig receiver id value_expr
+  (* [m.remove(k)] — clear cell, return prior. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("remove", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_remove env ~callee ~eorig receiver id
+  (* [m.getOrElse(k) { body }] — Kotlin trailing-lambda. The parser
+   * encodes this as [Call(Call(m.getOrElse, [k]), [lambda])], so we
+   * match the nested-Call shape and invoke the lambda with the key
+   * on the fall-through branch. *)
+  | G.Call
+      ( { e = G.Call
+              ( { e = G.DotAccess
+                      ( receiver,
+                        _,
+                        G.FN (G.Id (("getOrElse", _), _)) );
+                  _
+                } as callee,
+                (_, [ G.Arg key_expr ], _) );
+          _
+        },
+        (_, [ G.Arg lambda_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access_or_lambda env ~callee ~eorig receiver id key_expr
+        lambda_expr
   | G.Call
       ( { e = G.N (G.Id (("get_in", _), _)); _ } as callee,
         ((_, [ G.Arg map_expr; G.Arg keys_expr ], _) as args) )
@@ -1443,11 +1508,25 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                      elts
             | _ -> false) -> (
       match keys_expr.G.e with
-      | G.Container (G.List, (_, elts, _)) ->
-          let idents =
-            List.filter_map literal_field_ident elts
+      | G.Container (G.List, (_, first_id :: rest_ids, _))
+        when List.for_all
+               (fun e -> Option.is_some (literal_field_ident e))
+               (first_id :: rest_ids) ->
+          let first = Option.get (literal_field_ident first_id) in
+          let rest = List.filter_map literal_field_ident rest_ids in
+          let ss_recv, head_lval =
+            build_field_lval env ~callee map_expr first
           in
-          emit_field_access env ~callee ~eorig map_expr idents None
+          let chained_lval =
+            List.fold_left
+              (fun acc id -> extend_field_lval ~callee id acc)
+              head_lval rest
+          in
+          let ss_fetch, result =
+            emit_fetch_with_optional_default env ~eorig chained_lval
+              (snd first) None
+          in
+          (ss_recv @ ss_fetch, result)
       | _ ->
           let tok = G.fake "call" in
           call_generic env ~void tok eorig callee args)
@@ -2206,6 +2285,28 @@ and csharp_receiver_is_dictionary (receiver : G.expr) : bool =
           "NameValueCollection";
         ]
 
+(* Is [receiver] known to have a Kotlin [Map] / [MutableMap] family
+ * type? Covers the Kotlin stdlib interfaces and the Java collections
+ * commonly used via interop. Non-map receivers fall through to the
+ * generic call. *)
+and kotlin_receiver_is_map (receiver : G.expr) : bool =
+  match receiver_type_head receiver with
+  | None -> false
+  | Some s ->
+      List.exists (String.equal s)
+        [
+          "Map";
+          "MutableMap";
+          "HashMap";
+          "LinkedHashMap";
+          "TreeMap";
+          "ConcurrentHashMap";
+          "ConcurrentMap";
+          "SortedMap";
+          "NavigableMap";
+          "Hashtable";
+        ]
+
 (* Walk a [G.argument] list and return the longest prefix of literal
  * field keys together with whatever follows (possibly empty). Used
  * to give partial field-sensitivity to mixed-key accessors like
@@ -2252,46 +2353,59 @@ and ruby_field_access_decode (method_name : string) (args : G.arguments) :
       else None
   | _ -> None
 
-(* Emit a field-access lowering from [receiver.field_idents], optionally
- * followed by the eager-default conditional [if tmp == nil then tmp =
- * default]. Used by the per-language library-call recognisers (Ruby
- * [fetch]/[send]/[dig], Python [get]/[getattr], …) to avoid
- * duplicating the Fetch+If emission. *)
-and emit_field_access env ~callee ~eorig (receiver : G.expr)
-    (field_idents : G.ident list) (default_opt : G.expr option) : stmts * exp =
-  let first_tok = snd (List.hd field_idents) in
-  let ss_recv, recv_lval = nested_lval env first_tok receiver in
-  let offsets =
-    List.map
-      (fun id ->
-        let field_name =
-          {
-            ident = id;
-            sid = G.SId.unsafe_default;
-            id_info = G.empty_id_info ();
-          }
-        in
-        { o = Dot field_name; oorig = SameAs callee })
-      field_idents
+(* Build the [receiver.id] lval with a single [Dot] offset, for
+ * both the field-access read path and the field-write/remove paths. *)
+and build_field_lval env ~callee (receiver : G.expr) (id : G.ident) :
+    stmts * lval =
+  let tok = snd id in
+  let ss_recv, recv_lval = nested_lval env tok receiver in
+  let field_name =
+    {
+      ident = id;
+      sid = G.SId.unsafe_default;
+      id_info = G.empty_id_info ();
+    }
   in
+  let offset = { o = Dot field_name; oorig = SameAs callee } in
   let field_lval =
-    { recv_lval with rev_offset = List.rev offsets @ recv_lval.rev_offset }
+    { recv_lval with rev_offset = offset :: recv_lval.rev_offset }
   in
+  (ss_recv, field_lval)
+
+(* Extend an existing [lval] with a further [Dot id] offset. Chained
+ * callers (Ruby [dig], Elixir [get_in]) fold this over their key
+ * list after a [build_field_lval] for the head. *)
+and extend_field_lval ~callee (id : G.ident) (lval : lval) : lval =
+  let field_name =
+    {
+      ident = id;
+      sid = G.SId.unsafe_default;
+      id_info = G.empty_id_info ();
+    }
+  in
+  let offset = { o = Dot field_name; oorig = SameAs callee } in
+  { lval with rev_offset = offset :: lval.rev_offset }
+
+(* Emit [Fetch field_lval] with an optional [if tmp == nil then tmp =
+ * default] conditional when [default_opt] is [Some]. Shared between
+ * single-field access and the chained [dig] / [get_in] paths. *)
+and emit_fetch_with_optional_default env ~eorig (field_lval : lval)
+    (tok : G.tok) (default_opt : G.expr option) : stmts * exp =
   let field_exp = mk_e (Fetch field_lval) eorig in
   match default_opt with
-  | None -> (ss_recv, field_exp)
+  | None -> ([], field_exp)
   | Some default_expr ->
-      let tmp = fresh_var first_tok in
+      let tmp = fresh_var tok in
       let tmp_lval = lval_of_base (Var tmp) in
       let assign_field =
         mk_s (Instr (mk_i (Assign (tmp_lval, field_exp)) eorig))
       in
       let ss_default, default_exp = expr env default_expr in
-      let null_lit = mk_e (Literal (G.Null first_tok)) NoOrig in
+      let null_lit = mk_e (Literal (G.Null tok)) NoOrig in
       let cond_exp =
         mk_e
           (Operator
-             ( (G.Eq, first_tok),
+             ( (G.Eq, tok),
                [
                  Unnamed (mk_e (Fetch tmp_lval) NoOrig);
                  Unnamed null_lit;
@@ -2301,9 +2415,148 @@ and emit_field_access env ~callee ~eorig (receiver : G.expr)
       let then_branch =
         [ mk_s (Instr (mk_i (Assign (tmp_lval, default_exp)) eorig)) ]
       in
-      let if_stmt = mk_s (If (first_tok, cond_exp, then_branch, [])) in
-      ( ss_recv @ [ assign_field ] @ ss_default @ [ if_stmt ],
+      let if_stmt = mk_s (If (tok, cond_exp, then_branch, [])) in
+      ( [ assign_field ] @ ss_default @ [ if_stmt ],
         mk_e (Fetch tmp_lval) eorig )
+
+(* Single-field convenience: build [receiver.id] and emit
+ * [Fetch ...] with optional default. Used by the per-language
+ * library-call recognisers (Ruby [fetch]/[send], Python
+ * [get]/[getattr], …) that access one key. *)
+and emit_field_access env ~callee ~eorig (receiver : G.expr)
+    (id : G.ident) (default_opt : G.expr option) : stmts * exp =
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let ss_rest, result =
+    emit_fetch_with_optional_default env ~eorig field_lval (snd id)
+      default_opt
+  in
+  (ss_recv @ ss_rest, result)
+
+(* Precise [m.k = v] lowering that mirrors Java/Kotlin [put] /
+ * C# [Add]/[TryAdd] / Kotlin [set] — returns the prior value of
+ * [m.k] as these APIs do:
+ *   tmp = Fetch m.k
+ *   m.k = v
+ *   return Fetch tmp
+ *)
+and emit_field_write_returning_prior env ~callee ~eorig (receiver : G.expr)
+    (id : G.ident) (value_expr : G.expr) : stmts * exp =
+  let _, key_tok = id in
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let prior_tmp = fresh_lval key_tok in
+  let read_prior =
+    mk_s
+      (Instr
+         (mk_i
+            (Assign (prior_tmp, mk_e (Fetch field_lval) eorig))
+            eorig))
+  in
+  let ss_v, ve = expr env value_expr in
+  let assign_stmt = mk_s (Instr (mk_i (Assign (field_lval, ve)) eorig)) in
+  ( ss_recv @ [ read_prior ] @ ss_v @ [ assign_stmt ],
+    mk_e (Fetch prior_tmp) eorig )
+
+(* [m.putIfAbsent(k, v)]: assign only when the key is absent, return
+ * the prior value (null when the key was absent, i.e. when the
+ * assignment happened):
+ *   tmp = Fetch m.k
+ *   if tmp == null then m.k = v
+ *   return Fetch tmp
+ *)
+and emit_field_write_if_absent env ~callee ~eorig (receiver : G.expr)
+    (id : G.ident) (value_expr : G.expr) : stmts * exp =
+  let _, key_tok = id in
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let prior_tmp = fresh_lval key_tok in
+  let read_prior =
+    mk_s
+      (Instr
+         (mk_i
+            (Assign (prior_tmp, mk_e (Fetch field_lval) eorig))
+            eorig))
+  in
+  let null_lit = mk_e (Literal (G.Null key_tok)) NoOrig in
+  let cond_exp =
+    mk_e
+      (Operator
+         ( (G.Eq, key_tok),
+           [
+             Unnamed (mk_e (Fetch prior_tmp) NoOrig); Unnamed null_lit;
+           ] ))
+      NoOrig
+  in
+  let ss_v, ve = expr env value_expr in
+  let then_branch =
+    ss_v @ [ mk_s (Instr (mk_i (Assign (field_lval, ve)) eorig)) ]
+  in
+  let if_stmt = mk_s (If (key_tok, cond_exp, then_branch, [])) in
+  ( ss_recv @ [ read_prior; if_stmt ],
+    mk_e (Fetch prior_tmp) eorig )
+
+(* [m.remove(k)]: clear the cell and return the prior value:
+ *   tmp = Fetch m.k
+ *   m.k = null
+ *   return Fetch tmp
+ *)
+and emit_field_remove env ~callee ~eorig (receiver : G.expr) (id : G.ident) :
+    stmts * exp =
+  let _, key_tok = id in
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let prior_tmp = fresh_lval key_tok in
+  let read_prior =
+    mk_s
+      (Instr
+         (mk_i
+            (Assign (prior_tmp, mk_e (Fetch field_lval) eorig))
+            eorig))
+  in
+  let null_lit = mk_e (Literal (G.Null key_tok)) NoOrig in
+  let clear =
+    mk_s (Instr (mk_i (Assign (field_lval, null_lit)) eorig))
+  in
+  (ss_recv @ [ read_prior; clear ], mk_e (Fetch prior_tmp) eorig)
+
+(* Kotlin [m.getOrElse(k) { body }]: if [m.k] is missing, invoke the
+ * trailing lambda with the key as argument:
+ *   tmp = Fetch m.k
+ *   if tmp == null then tmp = lambda(k)
+ *   return Fetch tmp
+ * The lambda parameter [it] is already resolved by the Kotlin parser;
+ * synthesising a [G.Call(lambda, [key])] routes through the existing
+ * call-arg-to-parameter binding in the taint engine. *)
+and emit_field_access_or_lambda env ~callee ~eorig (receiver : G.expr)
+    (id : G.ident) (key_expr : G.expr) (lambda_expr : G.expr) :
+    stmts * exp =
+  let _, key_tok = id in
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let prior_tmp = fresh_lval key_tok in
+  let read_prior =
+    mk_s
+      (Instr
+         (mk_i
+            (Assign (prior_tmp, mk_e (Fetch field_lval) eorig))
+            eorig))
+  in
+  let null_lit = mk_e (Literal (G.Null key_tok)) NoOrig in
+  let cond_exp =
+    mk_e
+      (Operator
+         ( (G.Eq, key_tok),
+           [
+             Unnamed (mk_e (Fetch prior_tmp) NoOrig); Unnamed null_lit;
+           ] ))
+      NoOrig
+  in
+  let synth_call =
+    G.Call (lambda_expr, Tok.unsafe_fake_bracket [ G.Arg key_expr ]) |> G.e
+  in
+  let ss_lambda_call, lambda_result = expr env synth_call in
+  let then_branch =
+    ss_lambda_call
+    @ [ mk_s (Instr (mk_i (Assign (prior_tmp, lambda_result)) eorig)) ]
+  in
+  let if_stmt = mk_s (If (key_tok, cond_exp, then_branch, [])) in
+  ( ss_recv @ [ read_prior; if_stmt ], mk_e (Fetch prior_tmp) eorig )
 
 and clojure_atom_key_literal (e : G.expr) : exp option =
   (* When [env.lang] is Clojure, a map-literal key like [:body] or
