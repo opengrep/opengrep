@@ -1,0 +1,13 @@
+rules:
+  - id: test-guards-rebind-js
+    message: Guard rebinding across a call chain (JavaScript)
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

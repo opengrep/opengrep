@@ -5,11 +5,10 @@
  * 'ToSinkInCall' effects are preserved when the callback cannot be resolved
  * (e.g., during signature extraction when the callback is a parameter).
  *
- * Invariant: the 'guards' field on the 'ToSink'/'ToReturn' records is empty
- * after instantiation — 'inst_effect' either drops the effect (some guard
- * resolvable to false) or strips the guard set on output. The caller
- * restamps with its own-frame guards via
- * 'Dataflow_tainting.record_effects'. *)
+ * The 'guards' field of 'ToSink'/'ToReturn' after instantiation contains only
+ * guards rebound into the outer (caller's) parameter namespace — see
+ * 'instantiate_function_signature'. Callee-frame guards are either consumed
+ * (evaluated to a concrete bool at the call) or dropped on output. *)
 type call_effect =
   | ToSink of Shape_and_sig.Effect.taints_to_sink
   | ToReturn of Shape_and_sig.Effect.taints_to_return
@@ -19,12 +18,17 @@ type call_effect =
       arg : Taint.arg;
       arg_offset : Taint.offset list;
       args_taints : Shape_and_sig.Effect.args_taints;
+      guards : Effect_guard.Set.t;
+          (** Rebound guards on the preserved ToSinkInCall. When the
+              caller resolves the callback at a deeper call chain the
+              guards travel with the effect and may still drop it. *)
     }
 
 type call_effects = call_effect list
 
 val instantiate_function_signature :
   lang:Lang.t ->
+  ?outer_params:IL.param list ->
   Taint_lval_env.t ->
   Shape_and_sig.Signature.t ->
   callee:IL.exp ->
@@ -34,7 +38,23 @@ val instantiate_function_signature :
   ?depth:int ->
   unit ->
   call_effects option
-(** Instantiation is meant to replace the taint and shape variables in the
- * signature of a callee function, with the taints and shapes of the parameters
- * at the call site. It also constructs the call trace.
- *)
+(** Replaces taint, shape and guard variables in the callee's signature
+    with the caller-side values, and constructs the call trace.
+
+    Each callee-frame guard is classified as follows at [inst_effect]:
+    {ul
+    {- its substituted [cond] reduces to [G.Lit (G.Bool true)]: guard
+       dropped from the output, effect kept;}
+    {- reduces to [G.Lit (G.Bool false)]: effect dropped;}
+    {- otherwise (unknown), and every free [Fetch] in the substituted
+       cond resolves to a parameter in [outer_params]: the guard is
+       rebound with [param_refs] pointing into [outer_params] and
+       attached to the output;}
+    {- otherwise: the guard is dropped (sound but loses precision).}}
+
+    [outer_params] is the formal parameter list of the function whose
+    signature is currently being built. It is required to produce the
+    [param_refs] of a rebound guard — a guard's [param_refs] is keyed
+    by sig-param position, which the instantiator has no other way to
+    obtain. When [outer_params] is omitted, rebinding does not apply
+    and unknown guards are dropped. *)

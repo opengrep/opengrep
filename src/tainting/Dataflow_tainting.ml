@@ -97,6 +97,11 @@ type func = {
       (** Signature-level parameters of the function under analysis. Used to
           synthesise a "self-sig" view of the in-progress signature for
           self-recursive calls (see [lookup_signature_with_object_context]). *)
+  il_params : IL.param list;
+      (** The same parameters in their [IL.param] form. Used by
+          [Sig_inst.instantiate_function_signature] to rebind
+          callee-frame guards into this function's frame when a called
+          callee's sig carries an unresolved guard. *)
   best_matches : TM.Best_matches.t;
       (** Best matches for the taint sources/etc, see 'Taint_spec_match'. *)
   used_lambdas : IL.NameSet.t;
@@ -1636,8 +1641,8 @@ let check_tainted_var env (var : IL.name) : Taints.t * S.shape * Lval_env.t =
  * Nested [ToSinkInCall] effects returned by the resolver are re-recorded
  * with their own [callee/arg/arg_offset/args_taints]; the outer preserved
  * effect is only re-recorded when resolution fails outright. *)
-let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
-    (taints_acc, shape_acc, lval_env) =
+let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
+    ~args_taints ~rebound_guards (taints_acc, shape_acc, lval_env) =
   let resolved_call_effects =
     try
       let callee_name_opt =
@@ -1656,8 +1661,8 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
                   m "Resolving ToSinkInCall for '%s' at use site"
                     (IL.str_of_name callee_name));
               Sig_inst.instantiate_function_signature
-                ~lang:env.taint_inst.lang env.lval_env callee_sig ~callee
-                ~args:None args_taints
+                ~lang:env.taint_inst.lang ~outer_params:env.func.il_params
+                env.lval_env callee_sig ~callee ~args:None args_taints
                 ~lookup_sig:(fun exp _depth ->
                   let arity = List.length args_taints in
                   lookup_signature env exp arity)
@@ -1684,8 +1689,15 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
              (resolved_effect : Sig_inst.call_effect) ->
           match resolved_effect with
           | ToSink
-              { taints_with_precondition = incoming_taints, requires; sink; _ }
-            ->
+              {
+                taints_with_precondition = incoming_taints, requires;
+                sink;
+                guards = inner_guards;
+                _;
+              } ->
+              let combined_guards =
+                Effect_guard.Set.union rebound_guards inner_guards
+              in
               let sink_effects =
                 effects_of_tainted_sink env incoming_taints sink
               in
@@ -1698,6 +1710,9 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
                              eff with
                              taints_with_precondition =
                                (fst eff.taints_with_precondition, requires);
+                             guards =
+                               Effect_guard.Set.union eff.guards
+                                 combined_guards;
                            }
                      | other -> other)
               in
@@ -1717,7 +1732,14 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
               ( taints_acc,
                 shape_acc,
                 lval_env |> Lval_env.add var offset taints )
-          | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
+          | ToSinkInCall
+              {
+                callee;
+                arg;
+                arg_offset;
+                args_taints;
+                guards = inner_guards;
+              } ->
               record_effects env
                 [
                   Effect.ToSinkInCall
@@ -1726,7 +1748,8 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
                       arg;
                       arg_offset;
                       args_taints;
-                      guards = Effect_guard.Set.empty;
+                      guards =
+                        Effect_guard.Set.union rebound_guards inner_guards;
                     };
                 ];
               (taints_acc, shape_acc, lval_env))
@@ -1741,7 +1764,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
               arg;
               arg_offset;
               args_taints;
-              guards = Effect_guard.Set.empty;
+              guards = rebound_guards;
             };
         ];
       (taints_acc, shape_acc, lval_env)
@@ -1841,7 +1864,8 @@ let check_function_call env fun_exp args
       in
       let* call_effects =
         Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
-          env.lval_env fun_sig ~callee:fun_exp ~args:(Some args) args_taints
+          ~outer_params:env.func.il_params env.lval_env fun_sig
+          ~callee:fun_exp ~args:(Some args) args_taints
           ~lookup_sig:lookup_sig_fn ()
       in
       Log.debug (fun m ->
@@ -1882,6 +1906,7 @@ let check_function_call env fun_exp args
                    {
                      taints_with_precondition = incoming_taints, requires;
                      sink;
+                     guards = rebound_guards;
                      _;
                    } ->
                    (* Call effects_of_tainted_sink to get proper taint traces, then fix the requires condition *)
@@ -1897,6 +1922,9 @@ let check_function_call env fun_exp args
                                   eff with
                                   taints_with_precondition =
                                     (fst eff.taints_with_precondition, requires);
+                                  guards =
+                                    Effect_guard.Set.union eff.guards
+                                      rebound_guards;
                                 }
                           | other -> other)
                    in
@@ -1916,9 +1944,16 @@ let check_function_call env fun_exp args
                    ( taints_acc,
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
-               | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
+               | ToSinkInCall
+                   {
+                     callee;
+                     arg;
+                     arg_offset;
+                     args_taints;
+                     guards = rebound_guards;
+                   } ->
                    resolve_preserved_to_sink_in_call env ~callee ~arg
-                     ~arg_offset ~args_taints
+                     ~arg_offset ~args_taints ~rebound_guards
                      (taints_acc, shape_acc, lval_env))
              (Taints.empty, Bot, env.lval_env))
   | None ->
@@ -2025,8 +2060,10 @@ let call_with_intrafile lval_opt e env args instr =
                   else None
                 in
                 (match Sig_inst.instantiate_function_signature
-                         ~lang:env.taint_inst.lang env.lval_env fun_sig
-                         ~callee:inner_e ~args:(Some [lambda_arg]) args_taints
+                         ~lang:env.taint_inst.lang
+                         ~outer_params:env.func.il_params env.lval_env
+                         fun_sig ~callee:inner_e
+                         ~args:(Some [lambda_arg]) args_taints
                          ~lookup_sig:lookup_sig_fn () with
                 | Some call_effects ->
                     (* ToSinkInCall effects should have been recursively instantiated by Sig_inst,
@@ -2047,9 +2084,16 @@ let call_with_intrafile lval_opt e env args instr =
                           | ToLval (taints, lval_name, offset) ->
                               let lval_env = Lval_env.add lval_name offset taints lval_env in
                               (taints_acc, shape_acc, lval_env)
-                          | ToSinkInCall { callee; arg; arg_offset; args_taints } ->
+                          | ToSinkInCall
+                              {
+                                callee;
+                                arg;
+                                arg_offset;
+                                args_taints;
+                                guards = rebound_guards;
+                              } ->
                               resolve_preserved_to_sink_in_call env ~callee
-                                ~arg ~arg_offset ~args_taints
+                                ~arg ~arg_offset ~args_taints ~rebound_guards
                                 (taints_acc, shape_acc, lval_env))
                         (Taints.empty, S.Bot, env.lval_env)
                         call_effects
@@ -2932,75 +2976,9 @@ let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
  * [guard_of_cond]. [None] is returned when the leaf cannot be expressed
  * as a guard. *)
 
-(* An offset step is statically resolvable when it is a field access by
- * name ([Dot]) or an [Index] whose key is a literal [Int] or [String].
- * [Index] with any other literal or with a non-literal expression is
- * rejected. Compare to [Taint.offset_of_IL] which returns [Oany] in the
- * rejected cases; here we need a boolean predicate because [Oany] would
- * make [param_refs] ambiguous. *)
-let offset_is_resolvable (off : IL.offset) : bool =
-  match off.o with
-  | IL.Dot _ -> true
-  | IL.Index { e = IL.Literal (G.Int _ | G.String _); _ } -> true
-  | IL.Index _ -> false
-
-let pname_of_param (p : IL.param) : IL.name option =
-  match p with
-  | IL.Param { pname; _ } -> Some pname
-  | IL.ParamRest { pname; _ } -> Some pname
-  | IL.ParamPattern ({ pname; _ }, _) -> Some pname
-  | IL.ParamFixme -> None
-
-let param_index (params : IL.param list) (name : IL.name) : int option =
-  let rec find i = function
-    | [] -> None
-    | p :: rest -> (
-        match pname_of_param p with
-        | Some pname when IL.equal_name pname name -> Some i
-        | _ -> find (i + 1) rest)
-  in
-  find 0 params
-
-(* Walk [cond] and collect [(name, index)] pairs for every [Fetch] whose
- * base is a formal parameter. Returns [None] if any [Fetch] fails to
- * resolve to a parameter, any offset step fails [offset_is_resolvable],
- * or the cond contains an [IL.exp] kind we do not model here. *)
-let cond_param_refs (params : IL.param list) (cond : IL.exp) :
-    (IL.name * int) list option =
-  let merge refs1 refs2 =
-    List.fold_left
-      (fun acc ((n, _) as r) ->
-        if List.exists (fun (n', _) -> IL.equal_name n' n) acc then acc
-        else r :: acc)
-      refs1 refs2
-  in
-  let rec of_exp (e : IL.exp) : (IL.name * int) list option =
-    match e.e with
-    | IL.Literal _ -> Some []
-    | IL.Fetch lval -> (
-        match lval.base with
-        | IL.Var name -> (
-            match param_index params name with
-            | None -> None
-            | Some idx ->
-                if List.for_all offset_is_resolvable lval.rev_offset then
-                  Some [ (name, idx) ]
-                else None)
-        | IL.VarSpecial _ | IL.Mem _ -> None)
-    | IL.Operator (_, args) -> of_args [] args
-    | IL.Composite _ | IL.RecordOrDict _ | IL.Cast _ | IL.FixmeExp _ -> None
-  and of_args acc = function
-    | [] -> Some acc
-    | a :: rest -> (
-        match of_exp (IL_helpers.exp_of_arg a) with
-        | None -> None
-        | Some refs -> of_args (merge acc refs) rest)
-  in
-  of_exp cond
-
 let guard_of_cond (params : IL.param list) (cond : IL.exp) :
     Effect_guard.t option =
-  match cond_param_refs params cond with
+  match IL_helpers.cond_param_refs params cond with
   | None -> None
   | Some param_refs -> Some { Effect_guard.cond; param_refs }
 
@@ -3549,6 +3527,7 @@ and (fixpoint :
                        name = Some lambda_name;
                        sig_params =
                          Signature.of_IL_params lambda_cfg.params;
+                       il_params = lambda_cfg.params;
                        best_matches = lambda_best_matches;
                        used_lambdas = IL.NameSet.empty;
                      }
@@ -3614,6 +3593,7 @@ and (fixpoint :
     {
       name;
       sig_params = Signature.of_IL_params fun_cfg.params;
+      il_params = fun_cfg.params;
       best_matches;
       used_lambdas;
     }

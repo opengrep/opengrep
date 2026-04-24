@@ -43,6 +43,7 @@ type call_effect =
       arg : Taint.arg;
       arg_offset : Taint.offset list;
       args_taints : Effect.args_taints;
+      guards : Effect_guard.Set.t;
     }
 
 type call_effects = call_effect list
@@ -786,40 +787,59 @@ let substitute_free_fetches (param_refs : (IL.name * int) list)
   in
   walk cond
 
-(* Evaluate a single [Effect_guard.t] against a resolver that maps a
- * [Taint.arg] (a sig-parameter reference by name/index) to the
- * corresponding caller-side [IL.exp]. Returns [Some true] / [Some false]
- * when [Eval_il_partial.eval] reduces the substituted cond to
- * [G.Lit (G.Bool _)]; [None] otherwise. *)
-let evaluate_guard ~(lang : Lang.t)
-    (resolve_arg : Taint.arg -> IL.exp option) (guard : Effect_guard.t) :
-    bool option =
-  let substituted =
-    substitute_free_fetches guard.param_refs resolve_arg guard.cond
-  in
+(* Classification of an effect's callee-frame guard set against the
+ * caller's actuals and (when available) the outer function's formal
+ * parameters. *)
+type guard_decision =
+  | Drop_effect
+      (** Some guard reduced to [G.Lit (G.Bool false)]. *)
+  | Keep_guards of Effect_guard.Set.t
+      (** Effect kept. The returned set contains the survivors: each
+          was either unknown at this call (and no rebinding was
+          possible) or rebound into [outer_params]' frame. Guards that
+          proved [G.Lit (G.Bool true)] are removed; guards that were
+          unknown and not rebindable are dropped. *)
+
+let classify_guards ~(lang : Lang.t)
+    ?(outer_params : IL.param list option) resolve_arg
+    (guards : Effect_guard.Set.t) : guard_decision =
   let eval_env =
     Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty
   in
-  match Eval_il_partial.eval eval_env substituted with
-  | G.Lit (G.Bool (true, _)) -> Some true
-  | G.Lit (G.Bool (false, _)) -> Some false
-  | _ -> None
-
-(* Return [true] iff at least one of the guards resolves to [Some false]
- * (definitively violated), causing the effect to be dropped. Guards that
- * resolve to [Some true] or to unknown do not trigger the drop. *)
-let guards_definitely_false ~(lang : Lang.t) resolve_arg guards =
-  Effect_guard.Set.exists
-    (fun g ->
-      let result = evaluate_guard ~lang resolve_arg g in
-      Log.debug (fun m ->
-          m "GUARD_EVAL: %s => %s" (Effect_guard.show g)
-            (match result with
-            | Some true -> "true"
-            | Some false -> "false"
-            | None -> "unknown"));
-      match result with Some false -> true | _ -> false)
-    guards
+  Effect_guard.Set.fold
+    (fun g acc ->
+      match acc with
+      | Drop_effect -> Drop_effect
+      | Keep_guards kept -> (
+          let substituted =
+            substitute_free_fetches g.param_refs resolve_arg g.cond
+          in
+          let res = Eval_il_partial.eval eval_env substituted in
+          Log.debug (fun m ->
+              m "GUARD_EVAL: %s => %s" (Effect_guard.show g)
+                (match res with
+                | G.Lit (G.Bool (true, _)) -> "true"
+                | G.Lit (G.Bool (false, _)) -> "false"
+                | _ -> "unknown"));
+          match res with
+          | G.Lit (G.Bool (true, _)) -> Keep_guards kept
+          | G.Lit (G.Bool (false, _)) -> Drop_effect
+          | _ -> (
+              match outer_params with
+              | None -> Keep_guards kept
+              | Some op -> (
+                  match IL_helpers.cond_param_refs op substituted with
+                  | None -> Keep_guards kept
+                  | Some param_refs ->
+                      let rebound =
+                        { Effect_guard.cond = substituted; param_refs }
+                      in
+                      Log.debug (fun m ->
+                          m "GUARD_REBIND: %s -> %s"
+                            (Effect_guard.show g)
+                            (Effect_guard.show rebound));
+                      Keep_guards (Effect_guard.Set.add rebound kept)))))
+    guards (Keep_guards Effect_guard.Set.empty)
 
 (* Given a function/method call 'fun_exp'('args_exps'), and a taint variable 'tlval'
     from the taint signature of the called function/method 'fun_exp', we want to
@@ -1094,7 +1114,8 @@ let instantiate_lval lval_env fparams fun_exp args_exps
    2) Are there any effects that occur within the function due to taints being
       input into the function body, from the calling context?
 *)
-let rec instantiate_function_signature ~(lang : Lang.t) lval_env
+let rec instantiate_function_signature ~(lang : Lang.t)
+    ?(outer_params : IL.param list option) lval_env
     (taint_sig : Signature.t) ~callee ~(args : _ option)
     (args_taints : (Taints.t * shape) IL.argument list)
     ?(lookup_sig : (IL.exp -> int -> Signature.t option) option)
@@ -1172,9 +1193,11 @@ let rec instantiate_function_signature ~(lang : Lang.t) lval_env
   (* Instatiate effects *)
   let inst_effect : Effect.t -> call_effect list =
    fun eff ->
-    if guards_definitely_false ~lang resolve_arg (Effect.guards_of eff) then
-      []
-    else
+    match
+      classify_guards ~lang ?outer_params resolve_arg (Effect.guards_of eff)
+    with
+    | Drop_effect -> []
+    | Keep_guards out_guards ->
       match eff with
     | Effect.ToReturn { data_taints; data_shape; control_taints; return_tok; _ } ->
         Log.debug (fun m ->
@@ -1204,7 +1227,7 @@ let rec instantiate_function_signature ~(lang : Lang.t) lval_env
                 data_shape;
                 control_taints;
                 return_tok;
-                guards = Effect_guard.Set.empty;
+                guards = out_guards;
               };
           ]
         else []
@@ -1288,7 +1311,7 @@ let rec instantiate_function_signature ~(lang : Lang.t) lval_env
                 taints_with_precondition = (taints, requires);
                 sink;
                 merged_env;
-                guards = Effect_guard.Set.empty;
+                guards = out_guards;
               };
           ]
     | Effect.ToLval { taints; lval = dst_sig_lval; guards = _ } ->
@@ -1595,8 +1618,8 @@ let rec instantiate_function_signature ~(lang : Lang.t) lval_env
                * so that any guards in the callback's signature stay unknown
                * rather than being evaluated against the wrong args. *)
               (match
-                 instantiate_function_signature ~lang lval_env fun_sig
-                   ~callee:fun_exp ~args:None args_taints ?lookup_sig
+                 instantiate_function_signature ~lang ?outer_params lval_env
+                   fun_sig ~callee:fun_exp ~args:None args_taints ?lookup_sig
                    ~depth:(depth + 1) ()
                with
               | Some call_effects ->
@@ -1631,6 +1654,7 @@ let rec instantiate_function_signature ~(lang : Lang.t) lval_env
                        arg = updated_arg;
                        arg_offset = fun_arg_offset;
                        args_taints;
+                       guards = out_guards;
                      };
                  ])
               )
@@ -1670,31 +1694,44 @@ let rec instantiate_function_signature ~(lang : Lang.t) lval_env
                   arg = updated_arg;
                   arg_offset = updated_offset;
                   args_taints;
+                  guards = out_guards;
                 };
             ])
   in
   let effects_list = taint_sig.effects |> Effects.elements in
   let call_effects = effects_list |> List.concat_map inst_effect in
-  (* Post-instantiation invariant: the callee's frame-relative guards have
-   * been consumed by [inst_effect] (dropped if false, stripped otherwise).
-   * Any [call_effect] leaving here with a non-empty [guards] field would be
-   * a regression — the caller would re-stamp with its own-frame guards via
-   * [record_effects], and the stale callee-frame guard would be evaluated
-   * against the wrong arguments. Log visibly rather than silently. *)
+  (* Post-instantiation invariant: every [Effect_guard.t] on an output
+   * [ToSink]/[ToReturn] must refer to [outer_params]. Guards that were
+   * anchored in the callee's frame have been either evaluated to a
+   * concrete bool (and consumed), rebound to [outer_params]' frame, or
+   * dropped. When [outer_params] is absent, no guards can be rebound
+   * and the output must have an empty [guards] set.
+   * Log visibly rather than silently on violation. *)
+  let guards_in_outer_frame (guards : Effect_guard.Set.t) : bool =
+    match outer_params with
+    | None -> Effect_guard.Set.is_empty guards
+    | Some op ->
+        Effect_guard.Set.for_all
+          (fun g ->
+            List.for_all
+              (fun (n, _) -> Option.is_some (IL_helpers.param_index op n))
+              g.param_refs)
+          guards
+  in
   call_effects
   |> List.iter (function
-       | ToSink { guards; _ } when not (Effect_guard.Set.is_empty guards) ->
+       | ToSink { guards; _ } when not (guards_in_outer_frame guards) ->
            Log.err (fun m ->
                m
                  "INVARIANT: post-instantiation ToSink carries guards %s \
-                  (callee=%s)"
+                  not anchored in outer_params (callee=%s)"
                  (Effect_guard.show_set guards)
                  (Display_IL.string_of_exp callee))
-       | ToReturn { guards; _ } when not (Effect_guard.Set.is_empty guards) ->
+       | ToReturn { guards; _ } when not (guards_in_outer_frame guards) ->
            Log.err (fun m ->
                m
                  "INVARIANT: post-instantiation ToReturn carries guards %s \
-                  (callee=%s)"
+                  not anchored in outer_params (callee=%s)"
                  (Effect_guard.show_set guards)
                  (Display_IL.string_of_exp callee))
        | _ -> ());
