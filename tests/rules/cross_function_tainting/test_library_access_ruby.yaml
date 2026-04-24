@@ -1,0 +1,16 @@
+rules:
+  - id: test-library-access-taint
+    message: |
+      Field-sensitive taint through Ruby's Hash#fetch / Object#send /
+      Object#public_send / Hash#dig library-call idioms. A source at
+      the bound key fires; a source at a sibling key does not.
+    languages:
+      - ruby
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

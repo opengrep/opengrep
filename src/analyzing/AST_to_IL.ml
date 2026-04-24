@@ -1119,6 +1119,134 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           (Tok.unbracket inner_args @ outer_arg)
       in
       expr_aux env ~void (G.Call (callee, merged_args) |> G.e)
+  (* Ruby library-call field-access idioms: [h.fetch(:k)],
+   * [h.fetch(:k, default)], [obj.send(:k)], [obj.public_send(:k)],
+   * [h.dig(:a, :b, …)]. Lower as a [Fetch] with a [Dot] offset (and
+   * a conditional default-assign for the two-argument [fetch] form)
+   * so the shape layer projects the caller's [Obj] by the matching
+   * [Ostr] offset — symmetric with bracket access [h[:k]] and with
+   * the Clojure keyword-as-function lowering above. [ruby_field_
+   * access_decode] returns [None] for dynamic keys or unrecognised
+   * shapes; in that case we fall through to the generic call
+   * lowering rather than mis-rewriting. *)
+  | G.Call
+      ( { e = G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _))); _ } as
+          callee,
+        args )
+    when env.lang =*= Lang.Ruby
+         && (match method_name with
+            | "fetch"
+            | "send"
+            | "public_send"
+            | "dig" ->
+                true
+            | _ -> false) -> (
+      match (callee.G.e, ruby_field_access_decode method_name args) with
+      | ( G.DotAccess (receiver, _, dig_name),
+          Some (field_idents, tail_args, default_opt) ) ->
+          let first_tok = snd (List.hd field_idents) in
+          let ss_recv, recv_lval = nested_lval env first_tok receiver in
+          let offsets =
+            List.map
+              (fun id ->
+                let field_name =
+                  {
+                    ident = id;
+                    sid = G.SId.unsafe_default;
+                    id_info = G.empty_id_info ();
+                  }
+                in
+                { o = Dot field_name; oorig = SameAs callee })
+              field_idents
+          in
+          let field_lval =
+            {
+              recv_lval with
+              rev_offset = List.rev offsets @ recv_lval.rev_offset;
+            }
+          in
+          let field_exp = mk_e (Fetch field_lval) eorig in
+          (match (default_opt, tail_args) with
+          | None, [] -> (ss_recv, field_exp)
+          | Some default_expr, [] ->
+              (* [h.fetch(:k, default)]: Ruby is strict, evaluate
+               * [default] eagerly before the conditional and emit
+               * [tmp = h.k; if tmp == nil then tmp = default]. *)
+              let tmp = fresh_var first_tok in
+              let tmp_lval = lval_of_base (Var tmp) in
+              let assign_field =
+                mk_s
+                  (Instr (mk_i (Assign (tmp_lval, field_exp)) eorig))
+              in
+              let ss_default, default_exp = expr env default_expr in
+              let null_lit = mk_e (Literal (G.Null first_tok)) NoOrig in
+              let cond_exp =
+                mk_e
+                  (Operator
+                     ( (G.Eq, first_tok),
+                       [
+                         Unnamed (mk_e (Fetch tmp_lval) NoOrig);
+                         Unnamed null_lit;
+                       ] ))
+                  NoOrig
+              in
+              let then_branch =
+                [
+                  mk_s
+                    (Instr (mk_i (Assign (tmp_lval, default_exp)) eorig));
+                ]
+              in
+              let if_stmt =
+                mk_s (If (first_tok, cond_exp, then_branch, []))
+              in
+              ( ss_recv @ [ assign_field ] @ ss_default @ [ if_stmt ],
+                mk_e (Fetch tmp_lval) eorig )
+          | None, _ :: _ ->
+              (* Hybrid [h.dig(:a, :b, x, …)]: the literal prefix
+               * [:a; :b] is precise; the tail starts with a dynamic
+               * key so we hand it back to the generic call as
+               * [prefix_tmp.dig(tail_args)]. Emit [prefix_tmp =
+               * h.a.b] first, then reconstruct a synthetic [G.Call
+               * (G.DotAccess (prefix_tmp_as_expr, _, dig), tail_args)]
+               * and feed it through [expr_aux]. *)
+              let prefix_tmp = fresh_var first_tok in
+              let prefix_tmp_lval = lval_of_base (Var prefix_tmp) in
+              let assign_prefix =
+                mk_s
+                  (Instr (mk_i (Assign (prefix_tmp_lval, field_exp)) eorig))
+              in
+              let prefix_tmp_id = prefix_tmp.ident in
+              let prefix_tmp_id_info = prefix_tmp.id_info in
+              let prefix_tmp_g_expr =
+                G.N (G.Id (prefix_tmp_id, prefix_tmp_id_info)) |> G.e
+              in
+              let dig_dot_tok = first_tok in
+              let tail_call_gexpr =
+                G.Call
+                  ( G.DotAccess
+                      ( prefix_tmp_g_expr,
+                        dig_dot_tok,
+                        G.FN (G.Id (("dig", first_tok), G.empty_id_info ())) )
+                    |> G.e,
+                    Tok.unsafe_fake_bracket tail_args )
+                |> G.e
+              in
+              let _ = dig_name in
+              let ss_call, call_exp = expr env tail_call_gexpr in
+              (ss_recv @ [ assign_prefix ] @ ss_call, call_exp)
+          | Some _, _ :: _ ->
+              (* Unreachable: [fetch] is a 1- or 2-arg form, [dig]
+               * never carries a default. Fall through defensively
+               * rather than assert. *)
+              Log.warn (fun m ->
+                  m
+                    "Ruby field-access decode produced an unexpected \
+                     (default + tail) combination; falling through");
+              let tok = G.fake "call" in
+              call_generic env ~void tok eorig callee args)
+      | _ ->
+          let tok = G.fake "call" in
+          call_generic env ~void tok eorig callee args)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
       call_generic env ~void tok eorig e args
@@ -1765,6 +1893,65 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
   let all_ss = List.concat_map fst results in
   let fields = List.filter_map snd results in
   (all_ss, mk_e (RecordOrDict fields) (SameAs e_gen))
+
+(* Extract a literal field-key identifier from an expression used as
+ * an index or an atom/string library-call key. Used by the per-
+ * language library-call field-access recognisers (Ruby, future
+ * Python/Java/…) to decide when to lower [x.get("k")] / [x.fetch(:k)]
+ * / similar idioms as a [Fetch] with a [Dot] offset. Returns [None]
+ * for dynamic keys so callers can fall through to the generic call
+ * lowering without losing correctness. *)
+and literal_field_ident (e : G.expr) : G.ident option =
+  match e.G.e with
+  | G.L (G.Atom (_, id)) -> Some id
+  | G.L (G.String (_, id, _)) -> Some id
+  | _ -> None
+
+(* Walk a [G.argument] list and return the longest prefix of literal
+ * field keys together with whatever follows (possibly empty). Used
+ * to give partial field-sensitivity to mixed-key accessors like
+ * Ruby's [h.dig(:a, :b, x, :c)]: the [:a; :b] prefix is a precise
+ * [Fetch] chain, while [x, :c] fall back to a generic call on the
+ * intermediate result. *)
+and longest_literal_key_prefix (args : G.argument list) :
+    G.ident list * G.argument list =
+  let rec go acc = function
+    | G.Arg e :: rest -> (
+        match literal_field_ident e with
+        | Some id -> go (id :: acc) rest
+        | None -> (List.rev acc, G.Arg e :: rest))
+    | other -> (List.rev acc, other)
+  in
+  go [] args
+
+(* Decode a Ruby library-call field-access. Returns [None] for
+ * dynamic keys or unrecognised shapes so the caller can fall back
+ * to the generic call lowering. Covers:
+ * - [h.fetch(:k)]             → ([:k], [], None)
+ * - [h.fetch(:k, default)]    → ([:k], [], Some default)
+ * - [obj.send(:m)]            → ([:m], [], None)
+ * - [obj.public_send(:m)]     → ([:m], [], None)
+ * - [h.dig(:a, :b, …)]        → ([:a; :b; …], [tail_args], None)
+ * The [tail_args] list is empty when every [dig] key is literal;
+ * when non-empty, the literal prefix is precise and the tail is
+ * handed to the generic call as [prefix_lval.dig(tail_args)]. *)
+and ruby_field_access_decode (method_name : string) (args : G.arguments) :
+    (G.ident list * G.argument list * G.expr option) option =
+  let arg_list = Tok.unbracket args in
+  match (method_name, arg_list) with
+  | ("fetch" | "send" | "public_send"), [ G.Arg key_expr ] -> (
+      match literal_field_ident key_expr with
+      | Some id -> Some ([ id ], [], None)
+      | None -> None)
+  | "fetch", [ G.Arg key_expr; G.Arg default_expr ] -> (
+      match literal_field_ident key_expr with
+      | Some id -> Some ([ id ], [], Some default_expr)
+      | None -> None)
+  | "dig", (_ :: _ as key_args) ->
+      let prefix, tail = longest_literal_key_prefix key_args in
+      if List.compare_length_with prefix 0 > 0 then Some (prefix, tail, None)
+      else None
+  | _ -> None
 
 and clojure_atom_key_literal (e : G.expr) : exp option =
   (* When [env.lang] is Clojure, a map-literal key like [:body] or
