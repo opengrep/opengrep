@@ -521,9 +521,52 @@ let resolve_callee_expr (base_exp : IL.exp) (fun_arg_offset : Taint.offset list)
                     Some v
                 | _ -> None)
               kvs)
+    | G.Record (_, fields, _), off ->
+        (* Record fields carry a Generic [Id] whose ident is the bare
+         * field name (no sid resolution). Compare against the bare name
+         * from the offset, not [IL.str_of_name] (which appends the sid). *)
+        let target_opt =
+          match off with
+          | Taint.Ofld name -> Some (fst name.ident)
+          | Taint.Ostr s -> Some s
+          | _ -> None
+        in
+        (match target_opt with
+        | None -> None
+        | Some target ->
+            List.find_map
+              (fun f ->
+                match f with
+                | G.F
+                    {
+                      s =
+                        G.DefStmt
+                          ( { name = G.EN (G.Id ((s, _), _)); _ },
+                            G.FieldDefColon { vinit = Some v; _ } );
+                      _;
+                    }
+                  when String.equal s target ->
+                    Some v
+                | _ -> None)
+              fields)
     | _ -> None
   in
-  let svalue_leaf_to_il_exp (leaf : G.expr) : IL.exp option =
+  (* Convert a [G.expr] leaf (returned by [step_generic] after walking a
+   * caller variable's [id_svalue]) back into an [IL.exp] so the outer
+   * fold can continue uniformly.
+   *
+   * Handles:
+   *   - [G.N (G.Id ...)]   -> [Fetch (Var ...)] — a name reference.
+   *   - [G.L lit]          -> [Literal lit] — a literal value.
+   *   - [G.Container ((List|Tuple|Array|Set), xs)]
+   *                        -> [Composite (kind, xs)] where each [x]
+   *                        is recursively converted; returns [None] if
+   *                        any sub-expression does not convert.
+   *   - [G.Container (Dict, kvs)]
+   *                        -> [RecordOrDict entries] via [IL.Entry];
+   *                        each entry's key and value are recursively
+   *                        converted. *)
+  let rec svalue_leaf_to_il_exp (leaf : G.expr) : IL.exp option =
     match leaf.G.e with
     | G.N (G.Id (ident, id_info)) ->
         let il_name = AST_to_IL.var_of_id_info ident id_info in
@@ -534,6 +577,89 @@ let resolve_callee_expr (base_exp : IL.exp) (fun_arg_offset : Taint.offset list)
                 { IL.base = IL.Var il_name; rev_offset = [] };
             eorig = IL.SameAs leaf;
           }
+    | G.L lit -> Some { IL.e = IL.Literal lit; eorig = IL.SameAs leaf }
+    | G.Container
+        (((G.List | G.Tuple | G.Array | G.Set) as gkind), (l, xs, r)) ->
+        let kind =
+          match gkind with
+          | G.List -> IL.CList
+          | G.Tuple -> IL.CTuple
+          | G.Array -> IL.CArray
+          | G.Set -> IL.CSet
+          | G.Dict -> assert false
+        in
+        let rec convert_all = function
+          | [] -> Some []
+          | x :: rest -> (
+              match svalue_leaf_to_il_exp x with
+              | None -> None
+              | Some y -> (
+                  match convert_all rest with
+                  | None -> None
+                  | Some ys -> Some (y :: ys)))
+        in
+        Option.map
+          (fun xs_il ->
+            {
+              IL.e = IL.Composite (kind, (l, xs_il, r));
+              eorig = IL.SameAs leaf;
+            })
+          (convert_all xs)
+    | G.Container (G.Dict, (_, kvs, _)) ->
+        let rec convert_kvs = function
+          | [] -> Some []
+          | kv :: rest -> (
+              match kv.G.e with
+              | G.Container (G.Tuple, (_, [ k; v ], _)) -> (
+                  match
+                    (svalue_leaf_to_il_exp k, svalue_leaf_to_il_exp v)
+                  with
+                  | Some k_il, Some v_il ->
+                      Option.map
+                        (fun ys -> IL.Entry (k_il, v_il) :: ys)
+                        (convert_kvs rest)
+                  | _ -> None)
+              | _ -> None)
+        in
+        Option.map
+          (fun entries ->
+            { IL.e = IL.RecordOrDict entries; eorig = IL.SameAs leaf })
+          (convert_kvs kvs)
+    | G.Record (_, fields, _) ->
+        (* A record field [F(DefStmt({name=EN Id(s,idinfo); _},
+         *   FieldDefColon{vinit=Some v; _}))] becomes
+         * [IL.Field(il_name_of_s, v_il)]. Any other field kind
+         * (no name, no [vinit], non-Id name) fails the conversion. *)
+        let rec convert_fields = function
+          | [] -> Some []
+          | f :: rest -> (
+              match f with
+              | G.F
+                  {
+                    s =
+                      G.DefStmt
+                        ( {
+                            name = G.EN (G.Id (ident, id_info));
+                            _;
+                          },
+                          G.FieldDefColon { vinit = Some v; _ } );
+                    _;
+                  } -> (
+                  match svalue_leaf_to_il_exp v with
+                  | None -> None
+                  | Some v_il ->
+                      let il_name =
+                        AST_to_IL.var_of_id_info ident id_info
+                      in
+                      Option.map
+                        (fun ys -> IL.Field (il_name, v_il) :: ys)
+                        (convert_fields rest))
+              | _ -> None)
+        in
+        Option.map
+          (fun entries ->
+            { IL.e = IL.RecordOrDict entries; eorig = IL.SameAs leaf })
+          (convert_fields fields)
     | _ -> None
   in
   let index_into (exp : IL.exp) (off : Taint.offset) : IL.exp option =

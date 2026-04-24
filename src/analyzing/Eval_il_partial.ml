@@ -296,10 +296,18 @@ and eval_op env wop args =
     ->
       c (* Python: False or 42 -> 42 *)
   (* Equality / inequality fold uniformly via [eq] on [G.svalue], so any
-   * two [Lit] operands — Bool, Int, String, etc. — produce a [Lit Bool]. *)
-  | (G.Eq | G.NotEq), [ (G.Lit _ as c1); (G.Lit _ as c2) ] ->
+   * two [Lit] operands — Bool, Int, String, etc. — produce a [Lit Bool].
+   * [PhysEq]/[NotPhysEq] are JS [===]/[!==] and OCaml [==]/[!=]; folding
+   * them on literals gives the same result as value equality since
+   * literals have no object identity distinct from their value. *)
+  | ( (G.Eq | G.NotEq | G.PhysEq | G.NotPhysEq),
+      [ (G.Lit _ as c1); (G.Lit _ as c2) ] ) ->
       let equal = eq c1 c2 in
-      let r = match op with G.Eq -> equal | _ -> not equal in
+      let r =
+        match op with
+        | G.Eq | G.PhysEq -> equal
+        | _ -> not equal
+      in
       G.Lit (literal_of_bool r)
   | op, [ G.Lit (G.Bool (b1, _)); G.Lit (G.Bool (b2, _)) ] ->
       eval_binop_bool op b1 b2
