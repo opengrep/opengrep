@@ -451,29 +451,6 @@ let combine_rest_args_exp (es : IL.exp list) : IL.exp =
   in
   {e; eorig}
 
-(* Attempt to read the length of a caller-side argument expression from what
- * the dataflow knows about it. Looks at two cases:
- *   - the expression is itself a literal sequence Composite;
- *   - the expression is [Fetch var] and [var.id_info.id_svalue] is a
- *     [G.Sym] wrapping a Generic Container of the same kinds.
- * Returns [None] when the length is not statically knowable. *)
-let try_extract_length (arg_exp : IL.exp) : int option =
-  match arg_exp.e with
-  | IL.Composite ((IL.CList | IL.CTuple | IL.CArray | IL.CSet), (_, xs, _)) ->
-      Some (List.length xs)
-  | IL.Fetch { base = Var x; rev_offset = [] } -> (
-      match !(x.id_info.id_svalue) with
-      | Some
-          (G.Sym
-             {
-               G.e =
-                 G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _));
-               _;
-             }) ->
-          Some (List.length xs)
-      | _ -> None)
-  | _ -> None
-
 (* Walk a caller-side [IL.exp] by [fun_arg_offset] to recover the concrete
  * sub-expression at that path. Used when instantiating a [ToSinkInCall]
  * effect: the callee's signature says the callback lives at
@@ -595,33 +572,120 @@ let resolve_callee_expr (base_exp : IL.exp) (fun_arg_offset : Taint.offset list)
       | _ -> (acc, left @ [ off ]))
     (base_exp, []) fun_arg_offset
 
-(* Evaluate a single [Effect_guard.t] against a resolver that maps a callee-
- * side [Taint.arg] reference to the corresponding caller-side [IL.exp]. The
- * result is [Some true] / [Some false] when we can decide, [None] otherwise
- * (e.g. the arg's length is not statically knowable). *)
-let evaluate_guard (resolve_arg : Taint.arg -> IL.exp option)
-    (guard : Effect_guard.t) : bool option =
-  let length_at taint_arg =
-    match resolve_arg taint_arg with
-    | None -> None
-    | Some arg_exp -> try_extract_length arg_exp
+(* Convert an [IL.offset list] in reverse order (as stored on an
+ * [IL.lval]) to a forward-order [Taint.offset list]. Returns [None] if
+ * any step cannot be statically resolved — this should not happen for
+ * cond [Fetch]es produced by [Dataflow_tainting]'s recogniser, which
+ * already checks every step via [offset_is_resolvable], but the check
+ * is repeated here defensively. *)
+let t_offset_of_il_rev_offset (rev_offset : IL.offset list) :
+    T.offset list option =
+  let rec go acc = function
+    | [] -> Some acc
+    | o :: rest -> (
+        match o.IL.o with
+        | IL.Dot name -> go (T.Ofld name :: acc) rest
+        | IL.Index { e = IL.Literal (G.Int pi); _ } -> (
+            match Parsed_int.to_int_opt pi with
+            | Some i -> go (T.Oint i :: acc) rest
+            | None -> None)
+        | IL.Index { e = IL.Literal (G.String (_, (s, _), _)); _ } ->
+            go (T.Ostr s :: acc) rest
+        | _ -> None)
   in
-  match guard with
-  | Effect_guard.LenEq (arg, n) -> (
-      match length_at arg with
-      | None -> None
-      | Some k -> Some (Int.equal k n))
-  | Effect_guard.LenGe (arg, k) -> (
-      match length_at arg with
-      | None -> None
-      | Some m -> Some (m >= k))
+  go [] rev_offset
 
-(* Keep the effect unless we can prove some guard definitively false. A
- * guard that evaluates to [None] (unknown) is left conservative (kept). *)
-let guards_definitely_false resolve_arg guards =
+(* Substitute every free [Fetch] in [cond] whose base matches an entry
+ * in [param_refs] (by [IL.equal_name]) with the caller-side expression
+ * obtained by resolving the parameter's sig-position via [resolve_arg]
+ * and walking the [Fetch]'s offset path with [resolve_callee_expr]. A
+ * walk that stalls with leftover offsets rebuilds a [Fetch] whose base
+ * is the consumed expression's own [Fetch] (if any), extended with the
+ * leftover; otherwise the original [Fetch] is returned unchanged. *)
+let substitute_free_fetches (param_refs : (IL.name * int) list)
+    (resolve_arg : Taint.arg -> IL.exp option) (cond : IL.exp) : IL.exp =
+  let ext (consumed : IL.exp) (leftover : T.offset list)
+      (original : IL.exp) : IL.exp =
+    match leftover with
+    | [] -> consumed
+    | _ -> (
+        match T.rev_IL_offset_of_offset leftover with
+        | None -> original
+        | Some rev_extra -> (
+            match consumed.IL.e with
+            | IL.Fetch lval ->
+                {
+                  consumed with
+                  IL.e =
+                    IL.Fetch
+                      {
+                        lval with
+                        rev_offset = rev_extra @ lval.rev_offset;
+                      };
+                }
+            | _ -> original))
+  in
+  let rec walk (e : IL.exp) : IL.exp =
+    match e.e with
+    | IL.Fetch lval -> (
+        match lval.base with
+        | IL.Var name -> (
+            match
+              List.find_opt (fun (n, _) -> IL.equal_name n name) param_refs
+            with
+            | None -> e
+            | Some (_, idx) -> (
+                let taint_arg =
+                  { Taint.name = fst name.ident; index = idx }
+                in
+                match resolve_arg taint_arg with
+                | None -> e
+                | Some actual_exp -> (
+                    match t_offset_of_il_rev_offset lval.rev_offset with
+                    | None -> e
+                    | Some t_off ->
+                        let consumed, leftover =
+                          resolve_callee_expr actual_exp t_off
+                        in
+                        ext consumed leftover e)))
+        | IL.VarSpecial _ | IL.Mem _ -> e)
+    | IL.Operator (wop, args) ->
+        { e with IL.e = IL.Operator (wop, List.map walk_arg args) }
+    | IL.Literal _ | IL.Composite _ | IL.RecordOrDict _ | IL.Cast _
+    | IL.FixmeExp _ ->
+        e
+  and walk_arg = function
+    | IL.Unnamed sub -> IL.Unnamed (walk sub)
+    | IL.Named (id, sub) -> IL.Named (id, walk sub)
+  in
+  walk cond
+
+(* Evaluate a single [Effect_guard.t] against a resolver that maps a
+ * [Taint.arg] (a sig-parameter reference by name/index) to the
+ * corresponding caller-side [IL.exp]. Returns [Some true] / [Some false]
+ * when [Eval_il_partial.eval] reduces the substituted cond to
+ * [G.Lit (G.Bool _)]; [None] otherwise. *)
+let evaluate_guard ~(lang : Lang.t)
+    (resolve_arg : Taint.arg -> IL.exp option) (guard : Effect_guard.t) :
+    bool option =
+  let substituted =
+    substitute_free_fetches guard.param_refs resolve_arg guard.cond
+  in
+  let eval_env =
+    Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty
+  in
+  match Eval_il_partial.eval eval_env substituted with
+  | G.Lit (G.Bool (true, _)) -> Some true
+  | G.Lit (G.Bool (false, _)) -> Some false
+  | _ -> None
+
+(* Return [true] iff at least one of the guards resolves to [Some false]
+ * (definitively violated), causing the effect to be dropped. Guards that
+ * resolve to [Some true] or to unknown do not trigger the drop. *)
+let guards_definitely_false ~(lang : Lang.t) resolve_arg guards =
   Effect_guard.Set.exists
     (fun g ->
-      let result = evaluate_guard resolve_arg g in
+      let result = evaluate_guard ~lang resolve_arg g in
       Log.debug (fun m ->
           m "GUARD_EVAL: %s => %s" (Effect_guard.show g)
             (match result with
@@ -904,8 +968,8 @@ let instantiate_lval lval_env fparams fun_exp args_exps
    2) Are there any effects that occur within the function due to taints being
       input into the function body, from the calling context?
 *)
-let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
-    ~callee ~(args : _ option)
+let rec instantiate_function_signature ~(lang : Lang.t) lval_env
+    (taint_sig : Signature.t) ~callee ~(args : _ option)
     (args_taints : (Taints.t * shape) IL.argument list)
     ?(lookup_sig : (IL.exp -> int -> Signature.t option) option)
     ?(depth : int = 0) () : call_effects option =
@@ -982,7 +1046,8 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
   (* Instatiate effects *)
   let inst_effect : Effect.t -> call_effect list =
    fun eff ->
-    if guards_definitely_false resolve_arg (Effect.guards_of eff) then []
+    if guards_definitely_false ~lang resolve_arg (Effect.guards_of eff) then
+      []
     else
       match eff with
     | Effect.ToReturn { data_taints; data_shape; control_taints; return_tok; _ } ->
@@ -1404,7 +1469,7 @@ let rec instantiate_function_signature lval_env (taint_sig : Signature.t)
                * so that any guards in the callback's signature stay unknown
                * rather than being evaluated against the wrong args. *)
               (match
-                 instantiate_function_signature lval_env fun_sig
+                 instantiate_function_signature ~lang lval_env fun_sig
                    ~callee:fun_exp ~args:None args_taints ?lookup_sig
                    ~depth:(depth + 1) ()
                with

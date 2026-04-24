@@ -1655,8 +1655,9 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset ~args_taints
               Log.debug (fun m ->
                   m "Resolving ToSinkInCall for '%s' at use site"
                     (IL.str_of_name callee_name));
-              Sig_inst.instantiate_function_signature env.lval_env callee_sig
-                ~callee ~args:None args_taints
+              Sig_inst.instantiate_function_signature
+                ~lang:env.taint_inst.lang env.lval_env callee_sig ~callee
+                ~args:None args_taints
                 ~lookup_sig:(fun exp _depth ->
                   let arity = List.length args_taints in
                   lookup_signature env exp arity)
@@ -1839,8 +1840,8 @@ let check_function_call env fun_exp args
         else None
       in
       let* call_effects =
-        Sig_inst.instantiate_function_signature env.lval_env fun_sig
-          ~callee:fun_exp ~args:(Some args) args_taints
+        Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
+          env.lval_env fun_sig ~callee:fun_exp ~args:(Some args) args_taints
           ~lookup_sig:lookup_sig_fn ()
       in
       Log.debug (fun m ->
@@ -2023,9 +2024,10 @@ let call_with_intrafile lval_opt e env args instr =
                     lookup_signature env exp arity
                   else None
                 in
-                (match Sig_inst.instantiate_function_signature env.lval_env fun_sig
-                        ~callee:inner_e ~args:(Some [lambda_arg]) args_taints
-                        ~lookup_sig:lookup_sig_fn () with
+                (match Sig_inst.instantiate_function_signature
+                         ~lang:env.taint_inst.lang env.lval_env fun_sig
+                         ~callee:inner_e ~args:(Some [lambda_arg]) args_taints
+                         ~lookup_sig:lookup_sig_fn () with
                 | Some call_effects ->
                     (* ToSinkInCall effects should have been recursively instantiated by Sig_inst,
                      * so we just need to process the resulting effects *)
@@ -2914,49 +2916,121 @@ let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
       Lval_env.clean_all in'
   | _ -> in'
 
-(* Recognise a list-length comparison emitted by [AST_to_IL] for a [PatList]
- * case — shape [length(param_ref) == N] or [length(param_ref) >= N] where
- * [param_ref] refers to one of the current function's formal params. Returns
- * a normalised [Effect_guard.t] referring to that param by index. Any other
- * condition returns [None]. Used at [TrueNode] in the transfer to add the
- * guard to the env's [active_guards]. Effects recorded while that set is
- * non-empty are stamped with it, so a caller can drop them when the caller-
- * side length cannot satisfy the guard. *)
-let arity_guard_of_cond (params : IL.param list) (cond : IL.exp) :
+(* Param-anchoring recogniser for branch conditions. Returns a list of
+ * [Effect_guard.t] to be added to [active_guards] at the branch node;
+ * every effect recorded while those guards are active gets stamped.
+ *
+ * Splitting is partial:
+ *   - [recognise_true_cond]  at [TrueNode]:  [And] is flattened; [Or] is
+ *     kept as a single compound; [Not] descends into
+ *     [recognise_false_cond].
+ *   - [recognise_false_cond] at [FalseNode]: [Or] via De Morgan is
+ *     flattened (each disjunct wrapped in [Not]); [And] is kept compound;
+ *     [Not] descends into [recognise_true_cond].
+ *
+ * A "leaf" cond — anything not an [And]/[Or]/[Not] — is passed through
+ * [guard_of_cond]. [None] is returned when the leaf cannot be expressed
+ * as a guard. *)
+
+(* An offset step is statically resolvable when it is a field access by
+ * name ([Dot]) or an [Index] whose key is a literal [Int] or [String].
+ * [Index] with any other literal or with a non-literal expression is
+ * rejected. Compare to [Taint.offset_of_IL] which returns [Oany] in the
+ * rejected cases; here we need a boolean predicate because [Oany] would
+ * make [param_refs] ambiguous. *)
+let offset_is_resolvable (off : IL.offset) : bool =
+  match off.o with
+  | IL.Dot _ -> true
+  | IL.Index { e = IL.Literal (G.Int _ | G.String _); _ } -> true
+  | IL.Index _ -> false
+
+let pname_of_param (p : IL.param) : IL.name option =
+  match p with
+  | IL.Param { pname; _ } -> Some pname
+  | IL.ParamRest { pname; _ } -> Some pname
+  | IL.ParamPattern ({ pname; _ }, _) -> Some pname
+  | IL.ParamFixme -> None
+
+let param_index (params : IL.param list) (name : IL.name) : int option =
+  let rec find i = function
+    | [] -> None
+    | p :: rest -> (
+        match pname_of_param p with
+        | Some pname when IL.equal_name pname name -> Some i
+        | _ -> find (i + 1) rest)
+  in
+  find 0 params
+
+(* Walk [cond] and collect [(name, index)] pairs for every [Fetch] whose
+ * base is a formal parameter. Returns [None] if any [Fetch] fails to
+ * resolve to a parameter, any offset step fails [offset_is_resolvable],
+ * or the cond contains an [IL.exp] kind we do not model here. *)
+let cond_param_refs (params : IL.param list) (cond : IL.exp) :
+    (IL.name * int) list option =
+  let merge refs1 refs2 =
+    List.fold_left
+      (fun acc ((n, _) as r) ->
+        if List.exists (fun (n', _) -> IL.equal_name n' n) acc then acc
+        else r :: acc)
+      refs1 refs2
+  in
+  let rec of_exp (e : IL.exp) : (IL.name * int) list option =
+    match e.e with
+    | IL.Literal _ -> Some []
+    | IL.Fetch lval -> (
+        match lval.base with
+        | IL.Var name -> (
+            match param_index params name with
+            | None -> None
+            | Some idx ->
+                if List.for_all offset_is_resolvable lval.rev_offset then
+                  Some [ (name, idx) ]
+                else None)
+        | IL.VarSpecial _ | IL.Mem _ -> None)
+    | IL.Operator (_, args) -> of_args [] args
+    | IL.Composite _ | IL.RecordOrDict _ | IL.Cast _ | IL.FixmeExp _ -> None
+  and of_args acc = function
+    | [] -> Some acc
+    | a :: rest -> (
+        match of_exp (IL_helpers.exp_of_arg a) with
+        | None -> None
+        | Some refs -> of_args (merge acc refs) rest)
+  in
+  of_exp cond
+
+let guard_of_cond (params : IL.param list) (cond : IL.exp) :
     Effect_guard.t option =
-  let taint_arg_of_fetch (e : IL.exp) : Taint.arg option =
-    match e.e with
-    | Fetch { base = Var name; rev_offset = [] } ->
-        let rec find i = function
-          | [] -> None
-          | (IL.Param { pname; _ } | IL.ParamRest { pname; _ }) :: _
-            when IL.equal_name pname name ->
-              Some { Taint.name = fst name.ident; index = i }
-          | _ :: rest -> find (i + 1) rest
-        in
-        find 0 params
-    | _ -> None
-  in
-  let length_of (e : IL.exp) : Taint.arg option =
-    match e.e with
-    | Operator ((G.Length, _), [ Unnamed arg_exp ]) -> taint_arg_of_fetch arg_exp
-    | _ -> None
-  in
-  let int_of (e : IL.exp) : int option =
-    match e.e with
-    | Literal (G.Int pi) -> Parsed_int.to_int_opt pi
-    | _ -> None
-  in
+  match cond_param_refs params cond with
+  | None -> None
+  | Some param_refs -> Some { Effect_guard.cond; param_refs }
+
+(* Wrap [cond] in [Operator(Not, [cond])]. Used at [FalseNode] so the
+ * evaluator's single "cond must resolve to [G.Lit (G.Bool true)]" rule
+ * applies whether the effect was recorded under the true or false branch. *)
+let wrap_not (cond : IL.exp) : IL.exp =
+  let tok = Tok.unsafe_fake_tok "!" in
+  {
+    IL.e = IL.Operator ((G.Not, tok), [ IL.Unnamed cond ]);
+    eorig = cond.eorig;
+  }
+
+let rec recognise_true_cond (params : IL.param list) (cond : IL.exp) :
+    Effect_guard.t list =
   match cond.e with
-  | Operator ((op, _), [ Unnamed lhs; Unnamed rhs ]) -> (
-      match (length_of lhs, int_of rhs) with
-      | Some arg, Some n -> (
-          match op with
-          | G.Eq -> Some (Effect_guard.LenEq (arg, n))
-          | G.GtE -> Some (Effect_guard.LenGe (arg, n))
-          | _ -> None)
-      | _ -> None)
-  | _ -> None
+  | IL.Operator ((G.And, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
+      recognise_true_cond params a @ recognise_true_cond params b
+  | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
+      recognise_false_cond params sub
+  | _ -> Option.to_list (guard_of_cond params cond)
+
+and recognise_false_cond (params : IL.param list) (cond : IL.exp) :
+    Effect_guard.t list =
+  match cond.e with
+  | IL.Operator ((G.Or, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
+      recognise_false_cond params a @ recognise_false_cond params b
+  | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
+      recognise_true_cond params sub
+  | _ -> Option.to_list (guard_of_cond params (wrap_not cond))
 
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
  fun enter_env ~fun_cfg
@@ -3031,14 +3105,24 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         let pruned =
           prune_branch_if_unreachable env.taint_inst.lang cond true in'
         in
-        (match arity_guard_of_cond fun_cfg.params cond with
-        | None -> pruned
-        | Some g ->
-            Log.debug (fun m ->
-                m "GUARD_STAMP: TrueNode adds %s" (Effect_guard.show g));
-            Lval_env.add_active_guard g pruned)
+        recognise_true_cond fun_cfg.params cond
+        |> List.fold_left
+             (fun lval_env g ->
+               Log.debug (fun m ->
+                   m "GUARD_STAMP: TrueNode adds %s" (Effect_guard.show g));
+               Lval_env.add_active_guard g lval_env)
+             pruned
     | FalseNode cond ->
-        prune_branch_if_unreachable env.taint_inst.lang cond false in'
+        let pruned =
+          prune_branch_if_unreachable env.taint_inst.lang cond false in'
+        in
+        recognise_false_cond fun_cfg.params cond
+        |> List.fold_left
+             (fun lval_env g ->
+               Log.debug (fun m ->
+                   m "GUARD_STAMP: FalseNode adds %s" (Effect_guard.show g));
+               Lval_env.add_active_guard g lval_env)
+             pruned
     | NGoto _
     | Enter
     | Exit

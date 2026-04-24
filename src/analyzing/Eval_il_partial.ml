@@ -216,6 +216,10 @@ let eval_binop_int tok op opt_i1 opt_i2 =
         | Division_by_zero ->
             warning tok "Found division by zero";
             G.Cst G.Cint)
+  | G.Lt, Some i1, Some i2 -> G.Lit (literal_of_bool (i1 < i2))
+  | G.LtE, Some i1, Some i2 -> G.Lit (literal_of_bool (i1 <= i2))
+  | G.Gt, Some i1, Some i2 -> G.Lit (literal_of_bool (i1 > i2))
+  | G.GtE, Some i1, Some i2 -> G.Lit (literal_of_bool (i1 >= i2))
   | ___else____ -> G.Cst G.Cint
 
 let eval_binop_string ?tok op s1 s2 =
@@ -223,6 +227,10 @@ let eval_binop_string ?tok op s1 s2 =
   | G.Plus
   | G.Concat ->
       G.Lit (literal_of_string ?tok (s1 ^ s2))
+  | G.Lt -> G.Lit (literal_of_bool (String.compare s1 s2 < 0))
+  | G.LtE -> G.Lit (literal_of_bool (String.compare s1 s2 <= 0))
+  | G.Gt -> G.Lit (literal_of_bool (String.compare s1 s2 > 0))
+  | G.GtE -> G.Lit (literal_of_bool (String.compare s1 s2 >= 0))
   | __else__ -> G.Cst G.Cstr
 
 (*****************************************************************************)
@@ -287,6 +295,12 @@ and eval_op env wop args =
   | G.Or, [ G.Lit (G.Bool (false, _)); c ] when Lang.equal env.lang Lang.Python
     ->
       c (* Python: False or 42 -> 42 *)
+  (* Equality / inequality fold uniformly via [eq] on [G.svalue], so any
+   * two [Lit] operands — Bool, Int, String, etc. — produce a [Lit Bool]. *)
+  | (G.Eq | G.NotEq), [ (G.Lit _ as c1); (G.Lit _ as c2) ] ->
+      let equal = eq c1 c2 in
+      let r = match op with G.Eq -> equal | _ -> not equal in
+      G.Lit (literal_of_bool r)
   | op, [ G.Lit (G.Bool (b1, _)); G.Lit (G.Bool (b2, _)) ] ->
       eval_binop_bool op b1 b2
   | op, [ G.Lit (G.Int _ as li1); G.Lit (G.Int _ as li2) ] ->

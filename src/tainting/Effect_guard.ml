@@ -1,41 +1,57 @@
 (* Engine-emitted guards attached to taint effects.
  *
- * A guard is a constraint on the caller-side arguments at a call site; it
- * represents a condition the dataflow engine inferred (e.g. from a Switch
- * case pattern) that an effect's applicability depends on. At signature
- * instantiation time, each guard is evaluated against the caller's actual
- * arguments; if any guard of an effect is definitely-false, the effect is
- * dropped before it can contribute to findings.
+ * A guard represents a boolean condition that must hold at the caller
+ * for an effect to apply. An effect carries a [Set.t] of guards,
+ * interpreted as a conjunction. At signature instantiation, each guard's
+ * [cond] is evaluated against the caller's actual arguments, yielding one
+ * of three outcomes:
  *
- * Separate from 'Rule.precondition', which is author-specified boolean
- * logic over taint LABELS, evaluated at finding time against the taint
- * tokens reaching a sink. Effect guards are engine-emitted, target-shape
- * constraints, evaluated earlier, against the call site's argument values.
+ *   - [G.Lit (G.Bool true)]  : definitively satisfied.
+ *   - [G.Lit (G.Bool false)] : definitively violated.
+ *   - any other [G.svalue]    : undecided at this call site.
  *
- * Semantics: an effect's [guards] list is a conjunction — all must hold.
- * An empty list means "no constraint", as is the case for today's effects. *)
+ * The effect is dropped iff at least one guard evaluates to
+ * [G.Lit (G.Bool false)]. Guards that evaluate to [G.Lit (G.Bool true)]
+ * are removed from the surviving guard set; undecided guards are kept.
+ *
+ * Representation. [cond] is the branch condition as an [IL.exp].
+ * [param_refs] maps each free [Fetch] in [cond] whose base is a formal
+ * parameter to the signature-param index of that parameter. The
+ * mapping is built with [IL.equal_name] (which compares ident, sid, and
+ * id_info). The evaluator uses the same [IL.equal_name] to look up. *)
 
-module T = Taint
+type t = {
+  cond : IL.exp;
+  param_refs : (IL.name * int) list;
+}
 
-type t =
-  | LenEq of T.arg * int
-      (** [LenEq (arg, n)] holds iff the caller's argument bound to [arg]
-          denotes a sequence (CList/CTuple/CArray/CSet) of length exactly
-          [n]. Emitted for list-shaped Switch cases with exact arity. *)
-  | LenGe of T.arg * int
-      (** [LenGe (arg, k)] holds iff the caller's argument bound to [arg]
-          denotes a sequence of length at least [k]. Emitted for list-
-          shaped Switch cases with a trailing variadic slot
-          ([p1; ...; pK; & rest]). *)
-[@@deriving eq, ord]
+(* [Effect_guard.Set] is a [Stdlib.Set] and requires a total order.
+ *
+ * We compare [cond] via [Display_IL.string_of_exp]. [IL.exp] has no
+ * [@@deriving ord], and [Stdlib.compare] on [IL.exp] is unsafe because
+ * [id_info.id_svalue] is a mutable [ref] with potential cycles.
+ * [Display_IL.string_of_exp] includes [sid] in the output of [str_of_name],
+ * so two conds that differ only by the sid of a [Fetch]'s [IL.name]
+ * compare as distinct. *)
+let compare_cond e1 e2 =
+  String.compare (Display_IL.string_of_exp e1) (Display_IL.string_of_exp e2)
 
-let show = function
-  | LenEq (arg, n) -> Printf.sprintf "#%s == %d" (T.show_arg arg) n
-  | LenGe (arg, k) -> Printf.sprintf "#%s >= %d" (T.show_arg arg) k
+let compare_param_ref (n1, i1) (n2, i2) =
+  let c = Int.compare i1 i2 in
+  if c <> 0 then c
+  else String.compare (IL.str_of_name n1) (IL.str_of_name n2)
 
-(* Sets of guards — a conjunction, order-independent. A set is preferred over
- * a list so that accumulating the same guard twice does not make two
- * otherwise-equal effects compare as distinct members of [Effects.t]. *)
+let compare g1 g2 =
+  let c = compare_cond g1.cond g2.cond in
+  if c <> 0 then c
+  else
+    List.compare compare_param_ref
+      (List.sort compare_param_ref g1.param_refs)
+      (List.sort compare_param_ref g2.param_refs)
+
+let equal g1 g2 = compare g1 g2 = 0
+let show g = Display_IL.string_of_exp g.cond
+
 module Set = Stdlib.Set.Make (struct
   type nonrec t = t
 
