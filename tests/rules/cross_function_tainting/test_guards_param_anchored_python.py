@@ -24,6 +24,7 @@ def sink(_x):
 
 def bool_no(flag, x):
     if flag:
+        # ok: test-guards-param-anchored
         sink(x)
 
 def call_bool_no_a():
@@ -51,6 +52,7 @@ def else_no(flag, x):
     if flag:
         pass
     else:
+        # ok: test-guards-param-anchored
         sink(x)
 
 def call_else_no_a():
@@ -78,6 +80,7 @@ def call_else_yes_b():
 
 def eq_no(code, x):
     if code == 0:
+        # ok: test-guards-param-anchored
         sink(x)
 
 def call_eq_no_a():
@@ -103,6 +106,7 @@ def call_eq_yes_b():
 
 def lenpath_no(opts, x):
     if len(opts["data"]) == 2:
+        # ok: test-guards-param-anchored
         sink(x)
 
 def call_lenpath_no_a():
@@ -128,6 +132,7 @@ def call_lenpath_yes_b():
 
 def nested_no(y, x):
     if y["field"]["k"]:
+        # ok: test-guards-param-anchored
         sink(x)
 
 def call_nested_no_a():
@@ -153,7 +158,7 @@ def call_nested_yes_b():
 
 def aliased_no(opts, x):
     if len(opts["data"]) == 2:
-        # todook: test-guards-param-anchored
+        # ok: test-guards-param-anchored
         sink(x)
 
 def call_aliased_no_a():
@@ -183,7 +188,7 @@ def call_aliased_yes_b():
 
 def nested_aliased_no(y, x):
     if y["field"]["k"]:
-        # todook: test-guards-param-anchored
+        # ok: test-guards-param-anchored
         sink(x)
 
 def call_nested_aliased_no():
