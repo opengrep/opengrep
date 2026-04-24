@@ -171,6 +171,7 @@ match o.o with
     | Some i -> Oint i
     | None -> Oany)
 | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
+| IL.Index { e = IL.Literal (Atom (_, (s, _))); _ } -> Ostr s
 | IL.Index _ -> Oany
 
 let offset_of_rev_IL_offset ~rev_offset = List.rev_map offset_of_IL rev_offset
