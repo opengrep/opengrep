@@ -896,7 +896,7 @@ and svalue =
   | Cst of const_type
   | Sym of expr
   (* !CAREFUL with Sym!
-   * Consider that the smbolic value may itself contain variables that also have
+   * Consider that the symbolic value may itself contain variables that also have
    * symbolic values, and so on. While we (should) prevent cycles, the AST "expanded"
    * with these symbolic values may be exponentially larger than the base AST. This
    * can happen with crypto code. Due to memory sharing this is not a problem for the
