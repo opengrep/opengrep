@@ -1220,6 +1220,125 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
          && Option.is_some (literal_field_ident key_expr) ->
       let id = Option.get (literal_field_ident key_expr) in
       emit_field_access env ~callee ~eorig obj_expr [ id ] (Some default_expr)
+  (* Elixir library-call field-access idioms:
+   * - [Map.get(m, :k)] / [Map.get(m, :k, default)]
+   * - [Map.fetch(m, :k)] / [Map.fetch!(m, :k)] — both lower to a
+   *   plain [Fetch]; the [{:ok, _} | :error] wrapping of [fetch] is
+   *   erased (precision loss is acceptable for taint purposes).
+   * - [get_in(m, [:a, :b, …])] — nested lookup; each list element
+   *   must be a literal atom/string.
+   * Dynamic keys fall through to the generic call. *)
+  (* [Map.get(m, :k)] / [Map.fetch!(m, :k)] — both return the value
+   * directly (one as nil-on-absent, the other as raise-on-absent).
+   * Lower as plain [Fetch]. *)
+  | G.Call
+      ( { e = G.DotAccess
+              ( { e = G.N (G.Id (("Map", _), _)); _ },
+                _,
+                G.FN (G.Id ((method_name, _), _)) ); _ } as callee,
+        (_, [ G.Arg map_expr; G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Elixir
+         && (match method_name with "get" | "fetch!" -> true | _ -> false)
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig map_expr [ id ] None
+  (* [Map.get(m, :k, default)] — eager default, conditional assign. *)
+  | G.Call
+      ( { e = G.DotAccess
+              ( { e = G.N (G.Id (("Map", _), _)); _ },
+                _,
+                G.FN (G.Id (("get", _), _)) ); _ } as callee,
+        (_, [ G.Arg map_expr; G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Elixir
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig map_expr [ id ] (Some default_expr)
+  (* [Map.fetch(m, :k)] returns [{:ok, value} | :error]. Emit both
+   * branches so a caller [case] pattern-matching [{:ok, v}] or
+   * [:error] destructures correctly. The branch condition
+   * [tmp == nil] is a rough approximation (a stored [nil] value
+   * conflates with "key absent"); for taint both branches are
+   * visited so imprecision here does not affect flow. *)
+  | G.Call
+      ( { e = G.DotAccess
+              ( { e = G.N (G.Id (("Map", _), _)); _ },
+                _,
+                G.FN (G.Id (("fetch", _), _)) ); _ } as callee,
+        (_, [ G.Arg map_expr; G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Elixir
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      let _, key_tok = id in
+      let ss_map, map_lval = nested_lval env key_tok map_expr in
+      let field_name =
+        { ident = id; sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () }
+      in
+      let offset = { o = Dot field_name; oorig = SameAs callee } in
+      let field_lval =
+        { map_lval with rev_offset = offset :: map_lval.rev_offset }
+      in
+      let tmp = fresh_var key_tok in
+      let tmp_lval = lval_of_base (Var tmp) in
+      let assign_field =
+        mk_s (Instr (mk_i (Assign (tmp_lval, mk_e (Fetch field_lval) eorig)) eorig))
+      in
+      let result_tmp = fresh_var key_tok in
+      let result_lval = lval_of_base (Var result_tmp) in
+      let ok_atom =
+        mk_e (Literal (G.Atom (key_tok, ("ok", key_tok)))) NoOrig
+      in
+      let error_atom =
+        mk_e (Literal (G.Atom (key_tok, ("error", key_tok)))) NoOrig
+      in
+      let ok_tuple =
+        mk_e
+          (Composite
+             ( CTuple,
+               Tok.unsafe_fake_bracket
+                 [ ok_atom; mk_e (Fetch tmp_lval) NoOrig ] ))
+          NoOrig
+      in
+      let null_lit = mk_e (Literal (G.Null key_tok)) NoOrig in
+      let cond_exp =
+        mk_e
+          (Operator
+             ( (G.Eq, key_tok),
+               [ Unnamed (mk_e (Fetch tmp_lval) NoOrig); Unnamed null_lit ]
+             ))
+          NoOrig
+      in
+      let then_branch =
+        [ mk_s (Instr (mk_i (Assign (result_lval, error_atom)) eorig)) ]
+      in
+      let else_branch =
+        [ mk_s (Instr (mk_i (Assign (result_lval, ok_tuple)) eorig)) ]
+      in
+      let if_stmt =
+        mk_s (If (key_tok, cond_exp, then_branch, else_branch))
+      in
+      ( ss_map @ [ assign_field; if_stmt ],
+        mk_e (Fetch result_lval) eorig )
+  | G.Call
+      ( { e = G.N (G.Id (("get_in", _), _)); _ } as callee,
+        ((_, [ G.Arg map_expr; G.Arg keys_expr ], _) as args) )
+    when env.lang =*= Lang.Elixir
+         && (match keys_expr.G.e with
+            | G.Container (G.List, (_, elts, _)) ->
+                elts <> []
+                && List.for_all
+                     (fun e -> Option.is_some (literal_field_ident e))
+                     elts
+            | _ -> false) -> (
+      match keys_expr.G.e with
+      | G.Container (G.List, (_, elts, _)) ->
+          let idents =
+            List.filter_map literal_field_ident elts
+          in
+          emit_field_access env ~callee ~eorig map_expr idents None
+      | _ ->
+          let tok = G.fake "call" in
+          call_generic env ~void tok eorig callee args)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
       call_generic env ~void tok eorig e args
@@ -1869,14 +1988,22 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
 
 (* Extract a literal field-key identifier from an expression used as
  * an index or an atom/string library-call key. Used by the per-
- * language library-call field-access recognisers (Ruby, future
- * Python/Java/…) to decide when to lower [x.get("k")] / [x.fetch(:k)]
- * / similar idioms as a [Fetch] with a [Dot] offset. Returns [None]
- * for dynamic keys so callers can fall through to the generic call
- * lowering without losing correctness. *)
+ * language library-call field-access recognisers to decide when to
+ * lower [x.fetch(:k)] / [Map.get(m, :k)] / similar idioms as a
+ * [Fetch] with a [Dot] offset. Returns [None] for dynamic keys so
+ * callers can fall through to the generic call lowering without
+ * losing correctness.
+ *
+ * The leading [:] is stripped from atom tokens so the produced key
+ * matches map-literal entries from the same language consistently:
+ * Ruby parses [:body] as a bare ["body"] atom while Elixir keeps
+ * the [:] in the token text, and Elixir's keyword-map emitter
+ * strips the trailing [:] from keys, so both ends converge on
+ * ["body"]. *)
 and literal_field_ident (e : G.expr) : G.ident option =
   match e.G.e with
-  | G.L (G.Atom (_, id)) -> Some id
+  | G.L (G.Atom (_, (s, tok))) ->
+      Some (String_.strip_wrapping_char ':' s, tok)
   | G.L (G.String (_, id, _)) -> Some id
   | _ -> None
 
