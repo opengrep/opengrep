@@ -1,0 +1,16 @@
+rules:
+  - id: test-library-access-taint
+    message: |
+      Field-sensitive taint through Elixir's Map.get / Map.fetch /
+      Map.fetch! / get_in library-call idioms. A source at the
+      bound key fires; a source at a sibling key does not.
+    languages:
+      - elixir
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)
