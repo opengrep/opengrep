@@ -233,6 +233,7 @@ and if_stmt env (tok, e, s, sopt) =
     | Lang.Protobuf
     | Lang.Ql
     | Lang.Hack
+    | Lang.Haskell
     | Lang.Yaml
     | Lang.Html
     | Lang.Terraform ->
@@ -310,6 +311,7 @@ and while_stmt env (tok, e, s) =
     | Lang.Protobuf
     | Lang.Dockerfile
     | Lang.Hack
+    | Lang.Haskell
     | Lang.Lua
     | Lang.Yaml
     | Lang.Scala
@@ -364,6 +366,7 @@ and do_while stmt env (s, e) =
     | Lang.Php
     | Lang.Dockerfile
     | Lang.Hack
+    | Lang.Haskell
     | Lang.Lua
     | Lang.Promql
     | Lang.Protobuf
@@ -421,6 +424,7 @@ and for_stmt env (for_tok, hdr, s) =
     | Lang.Html
     | Lang.Dockerfile
     | Lang.Hack
+    | Lang.Haskell
     | Lang.Lua
     | Lang.Yaml
     | Lang.Scala
@@ -566,8 +570,9 @@ and def_stmt env (entity, def_kind) =
             fun _typ id e -> F.sprintf "%s <- %s" id e )
       | Lang.Json
       | Lang.Jsonnet
+      | Lang.Haskell
       | Lang.Ocaml ->
-          failwith "I think JSON/OCaml have no variable definitions"
+          failwith "I think JSON/OCaml/Haskell have no variable definitions"
     in
     let typ, id =
       match ent.name with
