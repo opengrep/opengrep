@@ -79,11 +79,8 @@ let preprocess_metavariables (pattern : string) :
 
 let parse (file : Fpath.t) :
     (AST_generic.program, unit) Tree_sitter_run.Parsing_result.t =
-  (* Create a new parser for each file to avoid thread-safety issues *)
-  let ts_parser = Tree_sitter_haskell.Parse.create_parser () in
-  (* Parse using tree-sitter-haskell C parser directly *)
-  let input_tree = Tree_sitter_run.Tree_sitter_parsing.parse_source_file
-    ts_parser !!file in
+  (* Parse using tree-sitter-haskell C parser via DLS-safe helpers *)
+  let input_tree = Tree_sitter_haskell.Parse.parse_source_file !!file in
   let root_node = Tree_sitter_run.Tree_sitter_parsing.root input_tree in
   let src = Tree_sitter_run.Tree_sitter_parsing.src input_tree in
 
@@ -101,22 +98,12 @@ let parse (file : Fpath.t) :
         src;
         type_signatures = Hashtbl.create 16;
         function_clauses = Hashtbl.create 16;
-        is_pattern_mode = false;  (* Regular code parsing *)
+        is_pattern_mode = false;
         metavar_map = Hashtbl.create 1;
         in_do_block = false;
       } in
       try
         let ast = convert_program_raw env root_node in
-        (* Dump AST if DUMP_HASKELL_AST env var is set *)
-        (match Sys.getenv_opt "DUMP_HASKELL_AST" with
-        | Some ("1" | "true" | "TRUE") ->
-            let prog_str =
-              Meta_AST.vof_any (G.Ss ast) |> OCaml.string_of_v
-            in
-            Printf.eprintf "\n========== HASKELL AST DUMP for %s ==========\n" !!file;
-            Printf.eprintf "Program with %d statements\n%s\n" (List.length ast) prog_str;
-            Printf.eprintf "========== END AST DUMP ==========\n\n%!"
-        | _ -> ());
         Some ast
       with _ ->
         None
@@ -138,11 +125,9 @@ let parse_pattern (str_input : string) :
   (* Pattern: "x = <pattern>" where x is a dummy function *)
   let wrapped_input = "module Pattern where\nx = " ^ preprocessed_pattern in
 
-  (* Create a new parser for each pattern to avoid thread-safety issues *)
-  let ts_parser = Tree_sitter_haskell.Parse.create_parser () in
-  (* Parse wrapped pattern using tree-sitter C parser directly *)
-  let input_tree = Tree_sitter_run.Tree_sitter_parsing.parse_source_string
-    ~src_file:"<pattern>" ts_parser wrapped_input in
+  (* Parse wrapped pattern using DLS-safe helpers *)
+  let input_tree = Tree_sitter_haskell.Parse.parse_source_string
+    ~src_file:"<pattern>" wrapped_input in
   let root_node = Tree_sitter_run.Tree_sitter_parsing.root input_tree in
   let src = Tree_sitter_run.Tree_sitter_parsing.src input_tree in
 
@@ -161,7 +146,7 @@ let parse_pattern (str_input : string) :
         src;
         type_signatures = Hashtbl.create 16;
         function_clauses = Hashtbl.create 16;
-        is_pattern_mode = true;  (* Semgrep pattern parsing *)
+        is_pattern_mode = true;
         metavar_map;
         in_do_block = false;
       } in
