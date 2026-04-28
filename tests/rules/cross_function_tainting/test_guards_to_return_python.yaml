@@ -1,0 +1,19 @@
+rules:
+  - id: test-guards-to-return
+    message: |
+      ToReturn guard propagation across a forwarding chain. [inner]
+      returns a source guarded by a parameter-anchored condition;
+      [outer] forwards its parameter to [inner] and returns the
+      result. A top-level caller that supplies a value satisfying
+      the inner guard must fire; one that supplies a value
+      violating it must not.
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)
