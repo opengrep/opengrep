@@ -145,6 +145,27 @@ let rec is_symbolic_expr expr =
       let args = Tok.unbracket args in
       List.for_all is_symbolic_arg args
   | G.Record (_, fields, _) -> List.for_all is_symbolic_field fields
+  (* Sequence containers: allow propagation of literal list/tuple/array/set
+   * expressions as symbolic values. Clojure's calling convention wraps every
+   * call's arguments into a single list (see AST_to_IL's Clojure case), so
+   * propagating these containers lets svalue recover the argument count at
+   * the callee's Switch conditions. Also contributes to sym-prop precision
+   * for unrelated cases (e.g. array-length reasoning in generic code).
+   *
+   * Dict containers: propagate literal dict/object-literal expressions so
+   * that HOF callback resolution at Sig_inst can walk a caller-side record
+   * alias ([opts = {cb: handler, data: x}; my_hof(opts)]) through the
+   * variable's [id_svalue] and recover the concrete callback at each
+   * field key. *)
+  | G.Container
+      ((G.List | G.Tuple | G.Array | G.Set | G.Dict), (_, exprs, _)) ->
+      List.for_all is_symbolic_expr exprs
+  (* Lambda literals: carry the function identity via sym-prop so that an
+   * assignment like [cb = (lambda x: ...)] leaves [cb.id_svalue] pointing at
+   * the lambda expression. Lets HOF callee-resolution recover the lambda's
+   * signature without relying on the [_tmp_lambda_N] naming convention that
+   * AST_to_IL inserts. *)
+  | G.Lambda _ -> true
   | __else__ -> false
 
 and is_symbolic_arg arg =

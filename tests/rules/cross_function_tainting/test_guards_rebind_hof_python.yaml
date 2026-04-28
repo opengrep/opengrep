@@ -1,0 +1,13 @@
+rules:
+  - id: test-guards-rebind-hof
+    message: HOF guard rebinding across a call chain
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

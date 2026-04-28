@@ -13,6 +13,13 @@
  * LICENSE for more details.
  *)
 
+(* Iterate every identifier each parameter binds. For plain
+ * [Param]/[ParamRest] that is just the parameter's name. For
+ * destructuring [ParamPattern] it is the synthetic [!!_implicit_param!]
+ * followed by every leaf identifier inside the pattern — rules that
+ * match against parameter-level metavariables expect each destructured
+ * identifier to be visited as a potential source, independently of the
+ * control-flow routing that goes through the implicit binder. *)
 let fold :
     ('acc ->
     AST_generic.ident ->
@@ -23,8 +30,6 @@ let fold :
     IL.param list ->
     'acc =
  fun f acc params ->
-  (* For each argument, check if it's a source and, if so, add it to the input
-     environment. *)
   List.fold_left
     IL.(
       fun acc par ->
@@ -32,43 +37,38 @@ let fold :
         | Param { pname = name; pdefault }
         | ParamRest { pname = name; pdefault } ->
             f acc name.ident name.id_info pdefault
-        (* JS: {arg} : type *)
-        | ParamPattern
-            (G.OtherPat
-              ( ("ExprToPattern", _),
-                [
-                  G.E
-                    { e = G.Cast (_, _, { e = G.Record (_, fields, _); _ }); _ };
-                ] ))
-        (* JS: {arg} *)
-        | ParamPattern
-            (G.OtherPat
-              (("ExprToPattern", _), [ G.E { e = G.Record (_, fields, _); _ } ]))
-          ->
-            List.fold_left
-              (fun acc field ->
-                match field with
-                | G.F
-                    {
-                      s =
-                        G.DefStmt
-                          ( _,
-                            G.FieldDefColon
-                              { vinit = Some { e = G.N (G.Id (id, ii)); _ }; _ }
-                          );
-                      _;
-                    } ->
-                    f acc id ii None
-                | G.F _ -> acc)
-              acc fields
-        | ParamPattern pat ->
-            (* Here, we just get all the identifiers in the pattern, which may
-               themselves be sources.
-               This is so we can handle patterns such as:
-               (x, (y, z, (a, b)))
-               and taint all the inner identifiers
-            *)
+        | ParamPattern ({ pname = name; pdefault }, pat) ->
+            let acc = f acc name.ident name.id_info pdefault in
             let ids = Visit_pattern_ids.visit (G.P pat) in
-            List.fold_left (fun acc (id, pinfo) -> f acc id pinfo None) acc ids
+            List.fold_left
+              (fun acc (id, pinfo) -> f acc id pinfo None)
+              acc ids
+        | IL.ParamFixme -> acc)
+    acc params
+
+(* Iterate exactly one identifier per parameter — the top-level
+ * resolved binder (the [name_param]). Use this when the caller needs
+ * positional arg-index correspondence to actual callsite arguments
+ * (HOF signature extraction, lambda in-env setup), since enumerating
+ * destructured leaves via [fold] would fabricate extra Arg entries
+ * that no caller supplies. *)
+let fold_top_level :
+    ('acc ->
+    AST_generic.ident ->
+    AST_generic.id_info ->
+    AST_generic.expr option ->
+    'acc) ->
+    'acc ->
+    IL.param list ->
+    'acc =
+ fun f acc params ->
+  List.fold_left
+    IL.(
+      fun acc par ->
+        match par with
+        | Param { pname = name; pdefault }
+        | ParamRest { pname = name; pdefault }
+        | ParamPattern ({ pname = name; pdefault }, _) ->
+            f acc name.ident name.id_info pdefault
         | IL.ParamFixme -> acc)
     acc params

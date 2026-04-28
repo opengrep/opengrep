@@ -163,7 +163,8 @@ and pp_lval { base; rev_offset } =
     (fun acc off ->
       match off.o with
       | Dot name -> acc ^ "." ^ pp_name name
-      | Index e -> Printf.sprintf "%s[%s]" acc (pp_exp e))
+      | Index e -> Printf.sprintf "%s[%s]" acc (pp_exp e)
+      | Slice lo -> Printf.sprintf "%s[%d..]" acc lo)
     base_str offsets
 
 and pp_composite ck exps =
@@ -348,7 +349,7 @@ let pp_param p =
   match p with
   | Param { pname; _ } -> pp_name pname
   | ParamRest { pname; _ } -> "..." ^ pp_name pname
-  | ParamPattern _ -> "<pattern>"
+  | ParamPattern ({ pname; _ }, _) -> "<pattern>" ^ pp_name pname
   | ParamFixme -> "<fixme>"
 
 let pp_function_definition ~name (fdef : function_definition) =

@@ -29,6 +29,69 @@ let exp_of_arg arg =
   | Unnamed exp -> exp
   | Named (_, exp) -> exp
 
+(***********************************************)
+(* Parameter / offset anchoring *)
+(***********************************************)
+
+let pname_of_param (p : IL.param) : IL.name option =
+  match p with
+  | IL.Param { pname; _ } -> Some pname
+  | IL.ParamRest { pname; _ } -> Some pname
+  | IL.ParamPattern ({ pname; _ }, _) -> Some pname
+  | IL.ParamFixme -> None
+
+let offset_is_resolvable (off : IL.offset) : bool =
+  match off.o with
+  | IL.Dot _ -> true
+  | IL.Index { e = IL.Literal (AST_generic.Int _ | AST_generic.String _); _ }
+    ->
+      true
+  | IL.Index _ -> false
+  | IL.Slice _ -> true
+
+let param_index (params : IL.param list) (name : IL.name) : int option =
+  let rec find i = function
+    | [] -> None
+    | p :: rest -> (
+        match pname_of_param p with
+        | Some pname when IL.equal_name pname name -> Some i
+        | _ -> find (i + 1) rest)
+  in
+  find 0 params
+
+let cond_param_refs (params : IL.param list) (cond : IL.exp) :
+    (IL.name * int) list option =
+  let merge refs1 refs2 =
+    List.fold_left
+      (fun acc ((n, _) as r) ->
+        if List.exists (fun (n', _) -> IL.equal_name n' n) acc then acc
+        else r :: acc)
+      refs1 refs2
+  in
+  let rec of_exp (e : IL.exp) : (IL.name * int) list option =
+    match e.e with
+    | IL.Literal _ -> Some []
+    | IL.Fetch lval -> (
+        match lval.base with
+        | IL.Var name -> (
+            match param_index params name with
+            | None -> None
+            | Some idx ->
+                if List.for_all offset_is_resolvable lval.rev_offset then
+                  Some [ (name, idx) ]
+                else None)
+        | IL.VarSpecial _ | IL.Mem _ -> None)
+    | IL.Operator (_, args) -> of_args [] args
+    | IL.Composite _ | IL.RecordOrDict _ | IL.Cast _ | IL.FixmeExp _ -> None
+  and of_args acc = function
+    | [] -> Some acc
+    | a :: rest -> (
+        match of_exp (exp_of_arg a) with
+        | None -> None
+        | Some refs -> of_args (merge acc refs) rest)
+  in
+  of_exp cond
+
 let rexps_of_instr x =
   match x.i with
   | Assign (({ base = Var _; rev_offset = _ :: _ } as lval), exp) ->
@@ -71,7 +134,8 @@ and lvals_in_lval lval =
       (fun offset ->
         match offset.o with
         | Index e -> lvals_of_exp e
-        | Dot _ -> [])
+        | Dot _ -> []
+        | Slice _ -> [])
       lval.rev_offset
   in
   base_lvals @ offset_lvals
@@ -118,7 +182,9 @@ let is_dots_offset offset =
   |> List.for_all (fun o ->
          match o.o with
          | Dot _ -> true
-         | Index _ -> false)
+         | Index _
+         | Slice _ ->
+             false)
 
 let lval_of_instr_opt x =
   match x.i with

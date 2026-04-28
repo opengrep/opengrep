@@ -49,9 +49,16 @@ type offset =
   | Ofld of IL.name  (** A field, like `.a` *)
   | Oint of int  (** A constant integer index, like `[42]` *)
   | Ostr of string  (** A constant string index, like `['foo']` *)
+  | Oslice of int
+      (** Trailing rest of a list/tuple from index [n], like `[n..]`.
+          Reading element [k] of [Oslice n] resolves to the source's
+          index [n + k]. The engine collapses
+          [Oint k :: Oslice n :: rest] to [Oint (n+k) :: rest] and
+          [Oslice b :: Oslice a :: rest] to [Oslice (a+b) :: rest]. *)
   | Oany  (** An arbitrary non-constant index, `[*]` *)
 
 val compare_offset : offset -> offset -> int
+val equal_offset : offset -> offset -> bool
 val show_offset : offset -> string
 val show_offset_list : offset list -> string
 val offset_of_IL : IL.offset -> offset

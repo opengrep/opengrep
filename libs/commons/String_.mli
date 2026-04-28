@@ -37,6 +37,13 @@ val show : ?max_len:int -> string -> string
  * line feed character ('\n'). *)
 val trim_cr : string -> string
 
+(* [strip_wrapping_char c s] removes runs of [c] from both ends of [s],
+ * trimming ASCII whitespace around each step. Useful for normalising
+ * map-pair keys that carry language-specific delimiters such as
+ * Clojure's [:body] / [::body] atoms and Elixir's ["body: "] keyword
+ * form onto the bare name. *)
+val strip_wrapping_char : char -> string -> string
+
 (* Returns the entirety of all of the lines in the given string that are
  * included in the given range. Strips trailing newline characters from each
  * line. See unit tests for examples. *)

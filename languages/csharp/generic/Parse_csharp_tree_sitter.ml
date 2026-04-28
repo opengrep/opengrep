@@ -118,8 +118,13 @@ let param_from_lambda_params lambda_params =
           pinfo = empty_id_info ();
         }
   | ids ->
+      let tk =
+        match ids with
+        | (_, t) :: _ -> t
+        | [] -> Tok.unsafe_fake_tok ""
+      in
       let ids = List_.map (fun id -> PatId (id, empty_id_info ())) ids in
-      ParamPattern (PatTuple (fb ids))
+      ParamPattern (PatTuple (fb ids), implicit_param_classic tk)
 
 (* create lambda lambda_params -> expr *)
 let create_lambda lambda_params expr =
@@ -1331,7 +1336,18 @@ and lvalue_expression (env : env) (x : CST.lvalue_expression) : G.expr =
           G.Call (G.IdSpecial (G.Op G.Elvis, open_br) |> G.e, fb [ G.Arg v1 ]) |> G.e
         else v1
       in
-        ArrayAccess (inner, (open_br, Container (Tuple, (open_br, exprs, close_br)) |> G.e, close_br)) |> G.e
+      (* Single-argument indexer [d[k]] must not be wrapped in a Tuple
+       * container: downstream [offset_of_IL] matches [Index { e =
+       * Literal (String _) }] to build field-sensitive [Ostr] offsets,
+       * and a [Composite (CTuple, [String])] wrapper defeats that and
+       * collapses every key into [Oany]. Multi-argument indexers (rare)
+       * keep the Tuple. *)
+      let index_expr =
+        match exprs with
+        | [ e ] -> e
+        | _ -> Container (Tuple, (open_br, exprs, close_br)) |> G.e
+      in
+      ArrayAccess (inner, (open_br, index_expr, close_br)) |> G.e
   | `Elem_bind_exp x ->
       Container (Tuple, element_binding_expression env x) |> G.e
   | `Poin_indi_exp (v1, v2) -> DeRef (token env v1, expression env v2) |> G.e
@@ -1455,9 +1471,15 @@ and non_lvalue_expression (env : env) (x : CST.non_lvalue_expression) : G.expr =
       match v3 with
       | `Elem_bind_exp x ->
           let x = element_binding_expression env x in
-          let open_br, _, close_br = x in
-          ArrayAccess (inner, (open_br, Container (Tuple, x) |> G.e, close_br))
-          |> G.e
+          let open_br, exprs, close_br = x in
+          (* Mirror the unwrapping in [lvalue_expression]'s
+           * [`Elem_access_exp] branch — see comment there. *)
+          let index_expr =
+            match exprs with
+            | [ e ] -> e
+            | _ -> Container (Tuple, x) |> G.e
+          in
+          ArrayAccess (inner, (open_br, index_expr, close_br)) |> G.e
       | `Member_bind_exp (x1, x2) ->
           let x1 = token env x1 (* "." *) in
           let x2 = simple_name env x2 in

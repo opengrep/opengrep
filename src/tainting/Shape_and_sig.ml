@@ -37,10 +37,13 @@ module Fields = Map.Make (struct
     | Ofld fld1, Ostr str2 -> String.compare (fst fld1.ident) str2
     | Ostr str1, Ofld fld2 -> String.compare str1 (fst fld2.ident)
     | Oint i1, Oint i2 -> Int.compare i1 i2
+    | Oslice n1, Oslice n2 -> Int.compare n1 n2
     | Oany, Oany -> 0
-    | (Ofld _ | Ostr _), (Oint _ | Oany) -> -1
-    | Oint _, Oany -> -1
-    | Oany, (Ofld _ | Ostr _ | Oint _) -> 1
+    | (Ofld _ | Ostr _), (Oint _ | Oslice _ | Oany) -> -1
+    | Oint _, (Oslice _ | Oany) -> -1
+    | Oslice _, Oany -> -1
+    | Oany, (Ofld _ | Ostr _ | Oint _ | Oslice _) -> 1
+    | Oslice _, (Ofld _ | Ostr _ | Oint _) -> 1
     | Oint _, (Ofld _ | Ostr _) -> 1
 end)
 
@@ -87,13 +90,13 @@ module rec Shape : sig
             Tuples or lists are also represented by 'Obj' shapes! We just treat
             constant indexes as if they were fields, and use 'Oany' to capture
             the non-constant indexes. *)
-    | Arg of Taint.arg
-        (** Represents the yet-unknown shape of a function/method parameter. It is
-            a polymorphic shape variable that is meant to be instantiated at call
-            site. Before adding 'Arg' we assumed parameters had shape 'Bot', and
-            'Arg' still acts like 'Bot' in some places.
-
-            TODO: Generalize to 'Taint.lval', e.g. `function test(o) { return o.x }`. *)
+    | Arg of Taint.arg * Taint.offset list
+        (** Represents the yet-unknown shape of a function/method parameter,
+            optionally extended with an offset path into the parameter (e.g.
+            when a local is bound from [param[0]] during pattern destructuring).
+            It is a polymorphic shape variable that is meant to be instantiated
+            at call site. Bare parameters use [Arg (arg, [])]; a local bound from
+            [param[i]] uses [Arg (arg, [Oint i])]. *)
     | Fun of Signature.t
         (** Function shapes. These enable Semgrep to handle HOFs. *)
 
@@ -169,7 +172,11 @@ module rec Shape : sig
   val show_shape : shape -> string
   val show_obj : obj -> string
 end = struct
-  type shape = Bot | Obj of obj | Arg of T.arg | Fun of Signature.t
+  type shape =
+    | Bot
+    | Obj of obj
+    | Arg of T.arg * T.offset list
+    | Fun of Signature.t
   and cell = Cell of Xtaint.t * shape
   and obj = cell Fields.t
 
@@ -195,7 +202,9 @@ end = struct
       match (shape1, shape2) with
       | Bot, Bot -> true
       | Obj obj1, Obj obj2 -> equal_obj_depth (depth + 1) obj1 obj2
-      | Arg arg1, Arg arg2 -> T.equal_arg arg1 arg2
+      | Arg (arg1, off1), Arg (arg2, off2) ->
+          T.equal_arg arg1 arg2
+          && Int.equal (List.compare T.compare_offset off1 off2) 0
       | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
       | Bot, _
       | Obj _, _
@@ -224,7 +233,10 @@ end = struct
     match (shape1, shape2) with
     | Bot, Bot -> 0
     | Obj obj1, Obj obj2 -> compare_obj obj1 obj2
-    | Arg arg1, Arg arg2 -> T.compare_arg arg1 arg2
+    | Arg (arg1, off1), Arg (arg2, off2) -> (
+        match T.compare_arg arg1 arg2 with
+        | 0 -> List.compare T.compare_offset off1 off2
+        | other -> other)
     | Fun sig1, Fun sig2 -> Signature.compare sig1 sig2
     | Bot, (Obj _ | Arg _ | Fun _)
     | Obj _, (Arg _ | Fun _)
@@ -248,7 +260,11 @@ end = struct
   and show_shape = function
     | Bot -> "_|_"
     | Obj obj -> spf "obj {|%s|}" (show_obj obj)
-    | Arg arg -> "'{" ^ T.show_arg arg ^ "}"
+    | Arg (arg, []) -> "'{" ^ T.show_arg arg ^ "}"
+    | Arg (arg, off) ->
+        "'{" ^ T.show_arg arg
+        ^ (off |> List.map T.show_offset |> String.concat "")
+        ^ "}"
     | Fun fsig -> Signature.show fsig
 
   and show_obj obj =
@@ -283,6 +299,11 @@ and Effect : sig
     merged_env : Metavariable.bindings;
         (** The metavariable environment that results of merging the environment
             from * matching the source and the one from matching the sink. *)
+    guards : Effect_guard.Set.t;
+        (** Engine-emitted arity/shape guards (conjunction). Evaluated at
+            signature instantiation against the caller's actual argument shapes;
+            if any is definitely-false, the effect is dropped before producing
+            a finding. Empty list = unconstrained. *)
   }
 
   type taints_to_return = {
@@ -294,6 +315,15 @@ and Effect : sig
         (** The taints propagated via the control flow (cf., `control: true`
             sources) * used for reachability queries. *)
     return_tok : AST_generic.tok;
+    guards : Effect_guard.Set.t;
+        (** See note on [taints_to_sink.guards]. *)
+  }
+
+  type taints_to_lval = {
+    taints : Taint.taints;
+    lval : Taint.lval;
+    guards : Effect_guard.Set.t;
+        (** See note on [taints_to_sink.guards]. *)
   }
 
   type args_taints = (Taint.taints * Shape.shape) IL.argument list
@@ -329,11 +359,11 @@ and Effect : sig
         (** Taints reach a `return` statement. * * For example: * * def foo(): *
             x = "taint" * return x * * We infer: * * ToReturn(["taint"], Bot,
             ...) *)
-    | ToLval of Taint.taints * Taint.lval
+    | ToLval of taints_to_lval
         (** Taints reach an l-value in the scope of the function/method. * * For
             example: * * x = ["ok"] * * def foo(): * global x * x[0] = "taint" *
-            * We infer: * * ToLval(["taint"], "x[0]") * * TODO: Record taint
-            shapes. *)
+            * We infer: * * ToLval {taints = ["taint"]; lval = "x[0]"; guards =
+            []} * * TODO: Record taint shapes. *)
     | ToSinkInCall of {
         callee : IL.exp;
             (** The function expression being called, it is used for recording a
@@ -341,7 +371,14 @@ and Effect : sig
         arg : Taint.arg;
             (** The formal parameter corresponding to the function shape, this
                 is what we instantiate at a specific call site. *)
+        arg_offset : Taint.offset list;
+            (** When the callback was obtained via indexing/field access into
+                [arg] (e.g. [callback = impl[0]] after destructuring a packed
+                argument list), this is the offset path from [arg] to the
+                callback. Empty when [arg] itself is the callback. *)
         args_taints : args_taints;
+        guards : Effect_guard.Set.t;
+            (** See note on [taints_to_sink.guards]. *)
       }
         (** Essentially a preliminary form of "effect variable". It represents *
             the 'ToSink' effects of a function call where the function is not *
@@ -351,6 +388,14 @@ and Effect : sig
 
   val compare : t -> t -> int
   val show : t -> string
+
+  val add_guards : Effect_guard.Set.t -> t -> t
+  (** [add_guards gs eff] returns [eff] with [gs] unioned into its [guards]
+      field. Used by the transfer when stamping effects with the branch
+      context they were recorded under. Empty [gs] returns [eff] unchanged. *)
+
+  val guards_of : t -> Effect_guard.Set.t
+  (** Return the guards stamped on an effect. *)
 
   (* Mainly for debugging *)
   val show_sink : sink -> string
@@ -373,6 +418,7 @@ end = struct
     taints_with_precondition : taint_to_sink_item list * R.precondition;
     sink : sink;
     merged_env : Metavariable.bindings;
+    guards : Effect_guard.Set.t;
   }
 
   type taints_to_return = {
@@ -380,6 +426,13 @@ end = struct
     data_shape : Shape.shape;
     control_taints : Taint.taints;
     return_tok : AST_generic.tok;
+    guards : Effect_guard.Set.t;
+  }
+
+  type taints_to_lval = {
+    taints : T.taints;
+    lval : T.lval;
+    guards : Effect_guard.Set.t;
   }
 
   type args_taints = (Taints.t * Shape.shape) IL.argument list
@@ -387,11 +440,13 @@ end = struct
   type t =
     | ToSink of taints_to_sink
     | ToReturn of taints_to_return
-    | ToLval of T.taints * T.lval (* TODO: CleanArg ? *)
+    | ToLval of taints_to_lval
     | ToSinkInCall of {
         callee : IL.exp;
         arg : Taint.arg;
+        arg_offset : Taint.offset list;
         args_taints : args_taints;
+        guards : Effect_guard.Set.t;
       }
 
   (*************************************)
@@ -413,18 +468,23 @@ end = struct
         taints_with_precondition = ttsis1, pre1;
         sink = sink1;
         merged_env = env1;
+        guards = guards1;
       }
       {
         taints_with_precondition = ttsis2, pre2;
         sink = sink2;
         merged_env = env2;
+        guards = guards2;
       } =
     match compare_sink sink1 sink2 with
     | 0 -> (
         match List.compare compare_taint_to_sink_item ttsis1 ttsis2 with
         | 0 -> (
             match R.compare_precondition pre1 pre2 with
-            | 0 -> T.compare_metavar_env env1 env2
+            | 0 -> (
+                match T.compare_metavar_env env1 env2 with
+                | 0 -> Effect_guard.Set.compare guards1 guards2
+                | other -> other)
             | other -> other)
         | other -> other)
     | other -> other
@@ -435,17 +495,32 @@ end = struct
         data_shape = data_shape1;
         control_taints = control_taints1;
         return_tok = _;
+        guards = guards1;
       }
       {
         data_taints = data_taints2;
         data_shape = data_shape2;
         control_taints = control_taints2;
         return_tok = _;
+        guards = guards2;
       } =
     match Taints.compare data_taints1 data_taints2 with
     | 0 -> (
         match Shape.compare_shape data_shape1 data_shape2 with
-        | 0 -> Taints.compare control_taints1 control_taints2
+        | 0 -> (
+            match Taints.compare control_taints1 control_taints2 with
+            | 0 -> Effect_guard.Set.compare guards1 guards2
+            | other -> other)
+        | other -> other)
+    | other -> other
+
+  let compare_taints_to_lval
+      { taints = ts1; lval = lv1; guards = guards1 }
+      { taints = ts2; lval = lv2; guards = guards2 } =
+    match Taints.compare ts1 ts2 with
+    | 0 -> (
+        match T.compare_lval lv1 lv2 with
+        | 0 -> Effect_guard.Set.compare guards1 guards2
         | other -> other)
     | other -> other
 
@@ -469,18 +544,36 @@ end = struct
     match (r1, r2) with
     | ToSink tts1, ToSink tts2 -> compare_taints_to_sink tts1 tts2
     | ToReturn ttr1, ToReturn ttr2 -> compare_taints_to_return ttr1 ttr2
-    | ToLval (ts1, lv1), ToLval (ts2, lv2) -> (
-        match Taints.compare ts1 ts2 with
-        | 0 -> T.compare_lval lv1 lv2
-        | other -> other)
-    | ( ToSinkInCall { callee = fexp1; arg = fvar1; args_taints = args_taints1 },
-        ToSinkInCall { callee = fexp2; arg = fvar2; args_taints = args_taints2 }
-      ) -> (
+    | ToLval ttl1, ToLval ttl2 -> compare_taints_to_lval ttl1 ttl2
+    | ( ToSinkInCall
+          {
+            callee = fexp1;
+            arg = fvar1;
+            arg_offset = foff1;
+            args_taints = args_taints1;
+            guards = guards1;
+          },
+        ToSinkInCall
+          {
+            callee = fexp2;
+            arg = fvar2;
+            arg_offset = foff2;
+            args_taints = args_taints2;
+            guards = guards2;
+          } ) -> (
         (* Comparing "fvar"s is cheap so better to do it first. *)
         match T.compare_arg fvar1 fvar2 with
         | 0 -> (
-            match IL.compare_orig fexp1.eorig fexp2.eorig with
-            | 0 -> List.compare compare_arg args_taints1 args_taints2
+            match List.compare T.compare_offset foff1 foff2 with
+            | 0 -> (
+                match IL.compare_orig fexp1.eorig fexp2.eorig with
+                | 0 -> (
+                    match
+                      List.compare compare_arg args_taints1 args_taints2
+                    with
+                    | 0 -> Effect_guard.Set.compare guards1 guards2
+                    | other -> other)
+                | other -> other)
             | other -> other)
         | other -> other)
     | ToSink _, (ToReturn _ | ToLval _ | ToSinkInCall _) -> -1
@@ -517,12 +610,15 @@ end = struct
   let show_taints_and_traces taints =
     Common2.string_of_list show_taint_to_sink_item taints
 
-  let show_taints_to_sink { taints_with_precondition = taints, _; sink; _ } =
-    Common.spf "%s ~~~> %s" (show_taints_and_traces taints) (show_sink sink)
+  let show_taints_to_sink
+      { taints_with_precondition = taints, _; sink; guards; _ } =
+    Common.spf "%s%s ~~~> %s" (show_taints_and_traces taints)
+      (Effect_guard.show_set guards)
+      (show_sink sink)
 
-  let show_taints_to_return
-      { data_taints; data_shape; control_taints; return_tok = _ } =
-    Printf.sprintf "return (%s & %s & CTRL:%s)"
+  let show_taints_to_return { data_taints; data_shape; control_taints; guards; _ } =
+    Printf.sprintf "return%s (%s & %s & CTRL:%s)"
+      (Effect_guard.show_set guards)
       (T.show_taints data_taints)
       (Shape.show_shape data_shape)
       (T.show_taints control_taints)
@@ -541,11 +637,33 @@ end = struct
   let show = function
     | ToSink tts -> show_taints_to_sink tts
     | ToReturn ttr -> show_taints_to_return ttr
-    | ToLval (taints, lval) ->
-        Printf.sprintf "%s ----> %s" (T.show_taints taints) (T.show_lval lval)
-    | ToSinkInCall { callee = _; arg; args_taints } ->
-        Printf.sprintf "'call<%s>%s" (T.show_arg arg)
+    | ToLval { taints; lval; guards; _ } ->
+        Printf.sprintf "%s%s ----> %s" (T.show_taints taints)
+          (Effect_guard.show_set guards) (T.show_lval lval)
+    | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
+        Printf.sprintf "'call<%s>%s%s" (T.show_arg arg)
           (show_args_taints args_taints)
+          (Effect_guard.show_set guards)
+
+  let add_guards gs eff =
+    if Effect_guard.Set.is_empty gs then eff
+    else
+      match eff with
+      | ToSink tts ->
+          ToSink { tts with guards = Effect_guard.Set.union tts.guards gs }
+      | ToReturn ttr ->
+          ToReturn { ttr with guards = Effect_guard.Set.union ttr.guards gs }
+      | ToLval ttl ->
+          ToLval { ttl with guards = Effect_guard.Set.union ttl.guards gs }
+      | ToSinkInCall r ->
+          ToSinkInCall
+            { r with guards = Effect_guard.Set.union r.guards gs }
+
+  let guards_of = function
+    | ToSink { guards; _ } -> guards
+    | ToReturn { guards; _ } -> guards
+    | ToLval { guards; _ } -> guards
+    | ToSinkInCall { guards; _ } -> guards
 end
 
 and Effects : sig
@@ -645,15 +763,11 @@ end = struct
     il_params
     |> List_.map (function
          | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
-         (* functions signatures don't look into the shape of the argument. *)
+         (* function signatures don't look into the shape of the argument. *)
          | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
-         | IL.ParamPattern pat -> (
-             (* Extract parameter name from pattern for Rust function parameters *)
-             match pat with
-             | AST_generic.PatId (name, _) -> P (fst name)
-             | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
-                 P (fst name)
-             | _ -> Other)
+         (* Destructuring parameter: use the synthetic implicit binder's
+          * name; the signature needs only the single binder. *)
+         | IL.ParamPattern ({ pname = { ident = s, _; _ }; _ }, _) -> P s
          | IL.ParamFixme -> Other)
 
   (*************************************)
