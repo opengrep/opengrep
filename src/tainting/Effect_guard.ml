@@ -27,14 +27,17 @@ type t = {
 
 (* [Effect_guard.Set] is a [Stdlib.Set] and requires a total order.
  *
- * We compare [cond] via [Display_IL.string_of_exp]. [IL.exp] has no
+ * We compare [cond] via [IL_pp.pp_exp]. [IL.exp] has no
  * [@@deriving ord], and [Stdlib.compare] on [IL.exp] is unsafe because
  * [id_info.id_svalue] is a mutable [ref] with potential cycles.
- * [Display_IL.string_of_exp] includes [sid] in the output of [str_of_name],
- * so two conds that differ only by the sid of a [Fetch]'s [IL.name]
- * compare as distinct. *)
+ * [IL_pp.pp_exp] renders unary operators (e.g. [Not]) recursively into
+ * the inner expression, so [Not(Eq 1)] and [Not(Eq 2)] compare
+ * distinct; [Display_IL.string_of_exp] elides children of non-binary
+ * operators ("<OP Not ...>"), causing distinct guards to collide.
+ * [pp_name] includes the [sid], so conds differing only by a
+ * [Fetch]'s [IL.name] sid compare as distinct. *)
 let compare_cond e1 e2 =
-  String.compare (Display_IL.string_of_exp e1) (Display_IL.string_of_exp e2)
+  String.compare (IL_pp.pp_exp e1) (IL_pp.pp_exp e2)
 
 let compare_param_ref (n1, i1) (n2, i2) =
   let c = Int.compare i1 i2 in
