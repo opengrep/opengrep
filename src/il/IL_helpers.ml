@@ -47,6 +47,7 @@ let offset_is_resolvable (off : IL.offset) : bool =
     ->
       true
   | IL.Index _ -> false
+  | IL.Slice _ -> true
 
 let param_index (params : IL.param list) (name : IL.name) : int option =
   let rec find i = function
@@ -133,7 +134,8 @@ and lvals_in_lval lval =
       (fun offset ->
         match offset.o with
         | Index e -> lvals_of_exp e
-        | Dot _ -> [])
+        | Dot _ -> []
+        | Slice _ -> [])
       lval.rev_offset
   in
   base_lvals @ offset_lvals
@@ -180,7 +182,9 @@ let is_dots_offset offset =
   |> List.for_all (fun o ->
          match o.o with
          | Dot _ -> true
-         | Index _ -> false)
+         | Index _
+         | Slice _ ->
+             false)
 
 let lval_of_instr_opt x =
   match x.i with

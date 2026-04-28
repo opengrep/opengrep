@@ -132,7 +132,17 @@ let rec show_call_trace show_thing = function
 type arg = { name : string; index : int } [@@deriving eq, ord]
 type base = BGlob of IL.name | BThis | BArg of arg [@@deriving ord]
 
-type offset = Ofld of IL.name | Oint of int | Ostr of string | Oany
+(* [Oslice n] mirrors [IL.Slice n]: the trailing-rest of a list/tuple
+ * scrutinee starting at index [n]. Reading element [k] of a slice
+ * resolves to the source's index [n + k]; the engine collapses
+ * [Oint k :: Oslice n :: rest] to [Oint (n+k) :: rest] and
+ * [Oslice b :: Oslice a :: rest] to [Oslice (a+b) :: rest]. *)
+type offset =
+  | Ofld of IL.name
+  | Oint of int
+  | Ostr of string
+  | Oslice of int
+  | Oany
 [@@deriving eq, ord]
 
 type lval = { base : base; offset : offset list }
@@ -156,6 +166,7 @@ let show_offset offset =
   | Ofld n -> "." ^ fst n.IL.ident
   | Oint i -> Printf.sprintf "[%d]" i
   | Ostr s -> Printf.sprintf "[%s]" s
+  | Oslice n -> Printf.sprintf "[%d..]" n
   | Oany -> "[*]"
 
 let show_offset_list offset =
@@ -173,6 +184,7 @@ match o.o with
 | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
 | IL.Index { e = IL.Literal (Atom (_, (s, _))); _ } -> Ostr s
 | IL.Index _ -> Oany
+| IL.Slice n -> Oslice n
 
 let offset_of_rev_IL_offset ~rev_offset = List.rev_map offset_of_IL rev_offset
 
@@ -207,6 +219,7 @@ let rev_IL_offset_of_offset offset =
                      };
                  oorig = NoOrig;
                }
+         | Oslice n -> Some IL.{ o = Slice n; oorig = NoOrig }
          | Oany -> None)
   in
   os

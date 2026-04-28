@@ -914,7 +914,7 @@ let instantiate_lval_using_actual_exps (fun_exp : IL.exp) fparams args_exps
           match tlval.offset with
           | Ofld var :: offset -> Some (var, offset, snd method_.ident)
           | []
-          | (Oint _ | Ostr _ | Oany) :: _ ->
+          | (Oint _ | Ostr _ | Oslice _ | Oany) :: _ ->
               (* we have no 'var' to take here *)
               log_error ();
               None)
@@ -1045,7 +1045,7 @@ let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
             match offset with
             | [] -> Some (`Var var, offset)
             | Ofld var :: offset -> Some (`Var var, offset)
-            | (Oint _ | Ostr _ | Oany) :: _ -> None)
+            | (Oint _ | Ostr _ | Oslice _ | Oany) :: _ -> None)
         | __else__ -> None)
     | BGlob var -> Some (`Var var, offset)
   in

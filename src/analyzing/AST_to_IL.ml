@@ -495,19 +495,65 @@ and pattern env pat : stmts * lval * stmts =
            * tagged). Each binding fetches [tmp.key], not [tmp[i]]. *)
           List.concat_map (map_pair_assign_stmts env tmp) pats
         else
-          (* Positional tuple/list destructure: [pat_i = tmp[i]]. *)
-          List.concat_map
-            (fun (pat_i, i) ->
-              let eorig = Related (G.P pat_i) in
-              let index_i = Literal (G.Int (Parsed_int.of_int i)) in
-              let offset_i =
-                { o = Index { e = index_i; eorig }; oorig = NoOrig }
-              in
-              let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
-              pattern_assign_statements env
-                (mk_e (Fetch lval_i) eorig)
-                ~eorig pat_i)
-            (List_.index_list pats)
+          (* Positional list/tuple destructure with optional trailing
+           * rest. Each non-rest slot lowers as [pat_i = tmp[i]]. A
+           * trailing [PatConstructor("&", [rest_pat])] (Clojure
+           * variadic rest binding) lowers as [rest_pat = tmp[Slice k]]
+           * — a view of [tmp] from index [k] onwards. The slice offset
+           * carries through to the engine's shape inference: a sink on
+           * [rest_pat] reads positions [k..] only, leaving [tmp[0..k-1]]
+           * (the head bindings) outside its scope. *)
+          let lower_slot pat_i i =
+            let eorig = Related (G.P pat_i) in
+            let index_i = Literal (G.Int (Parsed_int.of_int i)) in
+            let offset_i =
+              { o = Index { e = index_i; eorig }; oorig = NoOrig }
+            in
+            let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+            pattern_assign_statements env
+              (mk_e (Fetch lval_i) eorig)
+              ~eorig pat_i
+          in
+          let lower_rest rest_pat lo =
+            let eorig = Related (G.P rest_pat) in
+            let offset = { o = Slice lo; oorig = NoOrig } in
+            let lval = { base = Var tmp; rev_offset = [ offset ] } in
+            pattern_assign_statements env
+              (mk_e (Fetch lval) eorig)
+              ~eorig rest_pat
+          in
+          let rec split_trailing_rest acc i = function
+            | [] -> (List.rev acc, None)
+            (* Clojure variadic rest: [a b & r] →
+             *   PatList [a; b; PatConstructor("&", [r])]
+             * The "&" wrapper has a single argument (the rest binding);
+             * the rest covers positions [i..] of the scrutinee. *)
+            | [ G.PatConstructor (G.Id (("&", _), _), [ rest_pat ]) ] ->
+                (List.rev acc, Some (rest_pat, i))
+            (* Elixir cons pattern: [a, b | t] →
+             *   PatList [a; PatConstructor("|", [b; t])]
+             *  and [h | t] →
+             *   PatList [PatConstructor("|", [h; t])]
+             * The trailing "|" wrapper carries one final fixed slot
+             * ([last_fixed] at position [i]) plus the tail ([tail_pat]
+             * covering positions [i+1..]). *)
+            | [
+             G.PatConstructor
+               (G.Id (("|", _), _), [ last_fixed; tail_pat ]);
+            ] ->
+                (List.rev ((last_fixed, i) :: acc), Some (tail_pat, i + 1))
+            | p :: rest -> split_trailing_rest ((p, i) :: acc) (i + 1) rest
+          in
+          let fixed, opt_rest = split_trailing_rest [] 0 pats in
+          let fixed_ss =
+            List.concat_map (fun (p, i) -> lower_slot p i) fixed
+          in
+          let rest_ss =
+            match opt_rest with
+            | None -> []
+            | Some (rest_pat, lo) -> lower_rest rest_pat lo
+          in
+          fixed_ss @ rest_ss
       in
       ([], tmp_lval, ss)
   | G.PatTyped (pat1, ty) ->
