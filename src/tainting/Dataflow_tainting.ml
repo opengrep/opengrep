@@ -1938,8 +1938,28 @@ let check_function_call env fun_exp args
                      data_taints = taints;
                      data_shape = shape;
                      control_taints;
+                     guards = inner_guards;
                      _;
                    } ->
+                   (* Merge the callee's rebound guards into [active_guards]
+                    * for the rest of this function's analysis. When the
+                    * outer function later emits its own [ToReturn] at
+                    * [NReturn] via [effects_of_tainted_return -> record_effects],
+                    * [Effect.add_guards] stamps it with the merged set,
+                    * propagating the inner guard through the forwarder.
+                    *
+                    * Limitation: [active_guards] uses join-intersection,
+                    * so guards added inside one branch are lost after a
+                    * Join with a branch that didn't add them. The simple
+                    * forwarding pattern [return inner(p)] (no joins
+                    * between the call and the return) works; cases where
+                    * the call is inside an [if] but the return is after
+                    * the join lose the guard. A future per-lval guard
+                    * tracking would survive joins. *)
+                   let lval_env =
+                     Effect_guard.Set.fold Lval_env.add_active_guard
+                       inner_guards lval_env
+                   in
                    ( Taints.union taints taints_acc,
                      Shape.unify_shape shape shape_acc,
                      Lval_env.add_control_taints lval_env control_taints )
