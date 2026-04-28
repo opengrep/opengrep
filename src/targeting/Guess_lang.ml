@@ -282,7 +282,8 @@ let inspect_file_p (lang : Lang.t) path =
     | Vb
     | Vue
     | Xml
-    | Yaml ->
+    | Yaml
+    | Brainfuck ->
         matches_lang lang
   in
 

@@ -33,6 +33,7 @@ let lang_has_no_dollar_ids =
     | Yaml ->
         true
     | Bash
+    | Brainfuck
     | Cairo
     | Clojure
     | Dockerfile

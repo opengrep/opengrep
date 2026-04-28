@@ -1,0 +1,16 @@
+rules:
+  - id: find-output
+    pattern: "."
+    languages: [brainfuck]
+    message: found output instruction
+    severity: WARNING
+  - id: echo-loop
+    pattern: "[,.]"
+    languages: [brainfuck]
+    message: echo loop - reads input and writes output in a loop
+    severity: INFO
+  - id: nested-loop
+    pattern: "[...[...]...]"
+    languages: [brainfuck]
+    message: "nested loop detected - regex cannot match nested brackets"
+    severity: INFO
