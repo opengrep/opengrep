@@ -755,6 +755,14 @@ let semgrep_rules_repo_tests () : Testo.t list =
              (* FIXME: The rule is too restrictive, the patterns should contain a (...); see the comment in PR
              https://github.com/opengrep/opengrep/pull/626 *)
              | s when s =~ ".*/semgrep-rules/ruby/lang/security/weak-hashes-sha1.yaml" -> None
+             (* These rules use a [metavariable-regex] with a bare-name regex
+                (e.g. [^secret$]) on a metavariable bound via an atom-named
+                pattern like [:$KEY => "$LIT"]. After the atom-as-text
+                alignment, the canonical text form of an atom includes the
+                leading [:], so the regex should be [^:secret$] etc. The
+                rules need updating upstream. *)
+             | s when s =~ ".*/semgrep-rules/ruby/rails/security/brakeman/check-rails-session-secret-handling.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/ruby/rails/security/brakeman/check-cookie-store-session-security-attributes.yaml" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming

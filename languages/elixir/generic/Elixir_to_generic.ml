@@ -103,16 +103,16 @@ let keyval_of_pair p : G.expr =
     let key =
       match kwd with
       | Left id ->
-          (* Keyword-form key [%{body: v}] is semantically the atom
-           * [:body]; represent it as a [String] literal at the generic
-           * level so [Taint_shape.record_or_dict_like_obj] treats it as
-           * an [Ostr] offset and produces per-field cells. Emitting it
-           * as [N(Id …)] would fall into the [Oany] bucket there and
-           * collapse all fields, breaking field-sensitive taint. The
-           * arrow form [%{k => v}] is a runtime lookup and stays as
-           * whatever [expr_of_quoted] produces. *)
+          (* Keyword-form key [%{body: v}] is syntactic sugar for the
+           * atom-arrow form [%{:body => v}]; both produce the same
+           * runtime map keyed by the atom [:body]. Encode them
+           * identically as [L(Atom (tcolon, ("body", _)))] so AST,
+           * pattern matching, and taint shape behave the same way for
+           * both forms. The bare-name string follows the AST_generic
+           * convention ([Atom of tok * string wrap] — the [tok] holds
+           * the [:] and the wrap is the bare name). *)
           let s, tok = strip_keyword_suffix id in
-          G.L (G.String (Tok.unsafe_fake_bracket (s, tok))) |> G.e
+          G.L (G.Atom (tok, (s, tok))) |> G.e
       | Right (quoted : quoted_generic) -> expr_of_quoted quoted
     in
     G.keyval key (G.fake "=>") e
@@ -418,7 +418,10 @@ let map_wrap_operator_ident env v : G.ident =
 let rec map_atom env (tcolon, v2) : G.expr =
   let v2 = (map_or_quoted1 (map_wrap map_string)) env v2 in
   match v2 with
-  | Left x -> G.L (G.Atom (tcolon, x)) |> G.e
+  | Left x ->
+      let s, tok = x in
+      let s = String_.strip_wrapping_char ':' s in
+      G.L (G.Atom (tcolon, (s, tok))) |> G.e
   | Right quoted ->
       let e = expr_of_quoted quoted in
       G.OtherExpr (("AtomExpr", tcolon), [ E e ]) |> G.e
