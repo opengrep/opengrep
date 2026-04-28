@@ -1021,7 +1021,8 @@ and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
      binding to a program — same shape as the identifier-metavar case
      just above. Without this, [m_literal]'s atom-vs-atom path binds as
      [MV.Text], which [metavariable-pattern] cannot consume. *)
-  | G.L (G.Atom (_, (str, tok))), _b when Mvar.is_metavar_name str ->
+  | G.L (G.Atom (_, (str, tok))), B.L (B.Atom _)
+    when Mvar.is_metavar_name str ->
       envf (str, tok) (MV.E b)
   (* metavar: typed! *)
   | G.TypedMetavar ((str, tok), _, t), _b when Mvar.is_metavar_name str ->
