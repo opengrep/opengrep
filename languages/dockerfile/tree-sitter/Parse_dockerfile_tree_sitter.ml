@@ -661,16 +661,8 @@ let shell_fragment (env : env) (xs : CST.shell_fragment) : tok =
   List_.filter_map
     (fun x ->
       match x with
-      | `Here_marker_pat_ea34a52 (_v1, _v2) ->
-          (* TODO:
-             R.Case (
-               "Here_marker_pat_ea34a52",
-               let v1 = (* heredoc_marker *) token env v1 in
-               let v2 = map_pat_ea34a52 env v2 in
-               R.Tuple [v1; v2]
-             )
-          *)
-          None
+      | `Here_marker_pat_ea34a52 (v1, _v2) ->
+          Some (token env v1)
       | `Pat_b1120d3 tok
       | `Pat_f8ab07f tok
       | `Pat_eda9032 tok
@@ -1280,36 +1272,79 @@ type preprocess_state = {
   escape_char : char;
   in_header : bool;
   in_continuation : bool;
+  (* Some '\'' or Some '"' when we are inside a shell quoted string that spans
+   * multiple lines; None otherwise.  We track this so that we can insert a
+   * Dockerfile line-continuation backslash at the end of lines that end
+   * inside a quoted string, turning the embedded newlines into explicit
+   * continuations that tree-sitter can handle.
+   * Only meaningful when in_continuation = true (see process_line). *)
+  in_quote : char option;
 }
 
+(* Scan [s] tracking shell quoting state, starting from [in_quote].
+ * Returns Some c if the string ends inside a quote delimited by c, else None.
+ *
+ * Single-quoted strings ('...') have no escape sequences in POSIX shell, so
+ * every ' unconditionally toggles the state.
+ * Double-quoted strings ("...") treat backslash-quote as an escape so the
+ * quote character does not close the string.  The guard [i + 1 < len] ensures
+ * a backslash that is the last character of the trimmed line (a Dockerfile
+ * line-continuation marker) is NOT treated as an escape, leaving the quote
+ * open for the next continuation line.
+ *
+ * Note: this only fires when st.in_continuation is already true (see
+ * process_line), so a quote that opens on a fresh instruction line and would
+ * span to the next line without an explicit '\' is out of scope — that is an
+ * outright shell error and not a pattern we need to recover from. *)
+let ends_in_quote in_quote s =
+  let len = String.length s in
+  let rec go i in_quote =
+    match in_quote with
+    | _ when i >= len -> in_quote
+    | None when Char.equal s.[i] '\'' || Char.equal s.[i] '"' -> go (i + 1) (Some s.[i])
+    | Some '"' when Char.equal s.[i] '\\' && i + 1 < len ->
+        go (i + 2) in_quote
+    | Some c when Char.equal s.[i] c -> go (i + 1) None
+    | _ -> go (i + 1) in_quote
+  in
+  go 0 in_quote
+
  (* Process one line (without its trailing '\n') and return the updated state
-   together with the transformed line. *)
+  * together with the transformed line. *)
 let process_line (st : preprocess_state) (line : string) : preprocess_state * string =
   let len = String.length line in
   let lnws = last_nws_index line in
 
   if lnws < 0 then
-    (* Blank / all-whitespace line: pass through verbatim, leave header zone. *)
-    ({ st with in_header = false }, line)
+    (* Blank / all-whitespace line: pass through verbatim, leave header zone.
+    * A blank line can never be inside a single-quoted string at the
+    *  Dockerfile level, so reset in_quote. *)
+    ({ st with in_header = false; in_quote = None }, line)
   else if Char.equal line.[0] '#' then begin
-    (* Comment line or parser directive. *)
+    (* Comment line or parser directive.
+     * in_quote is preserved: comment lines inside a continuation are
+     * transparent to quoting state (same as Docker specifies for continuation
+     * state). *)
     match if st.in_header then parse_escape_directive line else None with
     | Some c ->
         (* Parser directive: record new escape char and keep line as-is. *)
         ({ st with escape_char = c }, line)
-    | None ->
-        (* Regular comment: replace with spaces of the same byte count.
-           If we are mid-continuation, put a synthetic '\' at the end so
-           tree-sitter sees an unbroken continuation chain.
-           in_continuation is left unchanged: comment lines are transparent
-           to continuation state, just as Docker specifies. *)
+    | None when st.in_continuation ->
+        (* Comment inside a continuation: replace with spaces + backslash so
+         * tree-sitter sees an unbroken continuation chain.
+         * in_continuation is left unchanged: comment lines are transparent
+         * to continuation state, just as Docker specifies. *)
         let out =
-          if st.in_continuation && len >= 1 then
-            String.make (len - 1) ' ' ^ "\\"
-          else
-            String.make len ' '
+          if len >= 1 then String.make (len - 1) ' ' ^ "\\"
+          else line
         in
         (st, out)
+    | None ->
+        (* Standalone comment or a '#'-line inside a heredoc body: leave as-is.
+         * tree-sitter's 'comment' extra handles ordinary Dockerfile comments.
+         * The heredoc external scanner handles '#!/bin/bash' etc. as
+         * HEREDOC_LINE tokens (external scanner has priority over extras). *)
+        (st, line)
   end else begin
     (* Regular instruction line. *)
     let bytes = Bytes.of_string line in
@@ -1320,22 +1355,43 @@ let process_line (st : preprocess_state) (line : string) : preprocess_state * st
     then Bytes.set bytes lnws '\\';
 
     (* Break a trailing "\\" pair so tree-sitter does not greedily consume it
-       as a shell_fragment before recognising the final '\' as
-       line_continuation. *)
+     * as a shell_fragment before recognising the final '\' as
+     * line_continuation. *)
     if lnws >= 1
        && Char.equal (Bytes.get bytes lnws) '\\'
        && Char.equal (Bytes.get bytes (lnws - 1)) '\\'
     then Bytes.set bytes (lnws - 1) ' ';
 
     (* Strip trailing whitespace: emit only up to the last non-ws char so the
-       continuation token is exactly "\\\n", matching combine_sparse_toks. *)
+     * continuation token is exactly "\\\n", matching combine_sparse_toks. *)
     let out = Bytes.sub_string bytes 0 (lnws + 1) in
     let continues = Char.equal out.[lnws] '\\' in
-    ({ escape_char = st.escape_char; in_header = false; in_continuation = continues }, out)
+
+    (* Update the quote state within an existing continuation chain.
+     * On a fresh instruction line (in_continuation = false) we reset to None:
+     * e.g. "MAINTAINER Bob l'éponge" must not trigger continuation insertion,
+     * and the same applies to a "..." value on a LABEL/ENV/ARG line. *)
+    let new_sq =
+      if st.in_continuation then ends_in_quote st.in_quote out
+      else None
+    in
+
+    if Option.is_some new_sq && not continues then
+      (* The line ends inside a quoted string and there is no explicit
+       * continuation yet. Add one so that tree-sitter treats the next line
+       * as part of the same instruction rather than as a parse error. *)
+      ( { escape_char = st.escape_char; in_header = false;
+          in_continuation = true; in_quote = new_sq },
+        out ^ "\\" )
+    else
+      ( { escape_char = st.escape_char; in_header = false;
+          in_continuation = continues; in_quote = new_sq },
+        out )
   end
 
 let preprocess_dockerfile (content : string) : string =
-  let init = { escape_char = '\\'; in_header = true; in_continuation = false } in
+  let init = { escape_char = '\\'; in_header = true; in_continuation = false;
+               in_quote = None } in
   let lines = String.split_on_char '\n' content in
   let _state, rev_lines =
     List.fold_left
