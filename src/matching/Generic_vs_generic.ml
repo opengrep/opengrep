@@ -995,7 +995,33 @@ and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
       with_lang (fun lang ->
           if lang =*= Lang.Ruby then m_name na nb
           else fail ())
+  (* Elixir/Ruby equivalence: identifier-pattern `body` matches atom literal
+     `:body` (or keyword form `body:` which lowers to the same atom). The
+     keyword shorthand is syntactic sugar for the atom literal in both
+     languages, so a rule written with a bare-identifier reference at a key
+     position should match the corresponding atom-keyed map. Atom inner
+     string is the bare name per AST_generic convention. Exclude metavars
+     so they fall through to the general metavar case below. *)
+  | G.N (G.Id ((str, _), _)), B.L (B.Atom (_, (atom_str, _)))
+    when not (Mvar.is_metavar_name str) ->
+      with_lang (fun lang ->
+          match lang with
+          | Lang.Elixir
+          | Lang.Ruby
+            when String.equal str atom_str ->
+              return ()
+          | _ -> fail ())
   | G.N (G.Id ((str, tok), _id_info)), _b when Mvar.is_metavar_name str ->
+      envf (str, tok) (MV.E b)
+  (* Atom literal whose inner string is a metavariable name. Comes from
+     patterns like [%{$K: $V}] in Elixir or [{:$K => $V}] in Ruby where
+     the parser lowers [$K] in keyword/atom position as
+     [L(Atom (_, ("$K", _)))]. Bind to [MV.E] (the target expression)
+     so [metavariable-pattern]'s [program_of_mvalue] can lift the
+     binding to a program — same shape as the identifier-metavar case
+     just above. Without this, [m_literal]'s atom-vs-atom path binds as
+     [MV.Text], which [metavariable-pattern] cannot consume. *)
+  | G.L (G.Atom (_, (str, tok))), _b when Mvar.is_metavar_name str ->
       envf (str, tok) (MV.E b)
   (* metavar: typed! *)
   | G.TypedMetavar ((str, tok), _, t), _b when Mvar.is_metavar_name str ->
