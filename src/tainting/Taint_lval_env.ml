@@ -149,7 +149,8 @@ let normalize_lval lval =
         | Some (offset, { o = IL.Dot var; _ }) -> Some (var, offset)
         (* we do not handle any other case *)
         | None
-        | Some (_, { o = IL.Index _; _ }) -> None)
+        | Some (_, { o = IL.Index _ | IL.Slice _; _ }) ->
+            None)
     | Mem _ -> None
   in
   let offset = T.offset_of_rev_IL_offset ~rev_offset in

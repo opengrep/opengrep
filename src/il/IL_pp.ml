@@ -163,7 +163,8 @@ and pp_lval { base; rev_offset } =
     (fun acc off ->
       match off.o with
       | Dot name -> acc ^ "." ^ pp_name name
-      | Index e -> Printf.sprintf "%s[%s]" acc (pp_exp e))
+      | Index e -> Printf.sprintf "%s[%s]" acc (pp_exp e)
+      | Slice lo -> Printf.sprintf "%s[%d..]" acc lo)
     base_str offsets
 
 and pp_composite ck exps =

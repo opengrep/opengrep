@@ -148,7 +148,7 @@ let fix_poly_taint_with_offset offset taints =
          | _, Oany ->
             (* Cannot handle this offset. *)
             taints
-         | __any__, ((Ofld _ | Ostr _ | Oint _) as o) ->
+         | __any__, ((Ofld _ | Ostr _ | Oint _ | Oslice _) as o) ->
             (* Not a method call (to the best of our knowledge) or
              * an unresolved Java `getX` method. *)
              taints
@@ -439,6 +439,44 @@ and find_in_obj_w_carry ~taints (offset : T.offset list) obj =
           with
           | None -> not_found
           | Some cell -> `Found cell)
+      | Oslice n -> (
+          (* Read the trailing-rest from index [n]. Filter [Fields] to
+           * entries that intersect the slice [n, infinity), recurse with
+           * the appropriate composed offset, unify all matches.
+           * The composition law lets a coarser sub-slice [Oslice m]
+           * (m < n) contribute its tail-from-(n-m):
+           *   Oslice n :: Oslice m :: rest = Oslice (n-m) :: rest. *)
+          match
+            Fields.fold
+              (fun key cell acc ->
+                let recur_offset =
+                  match key with
+                  | Oint k when k >= n -> Some offset
+                  | Oslice m when m >= n -> Some offset
+                  | Oslice m ->
+                      (* m < n by case order; n - m > 0 *)
+                      Some (T.Oslice (n - m) :: offset)
+                  | Oint _
+                  | Ofld _
+                  | Ostr _
+                  | Oany ->
+                      None
+                in
+                match recur_offset with
+                | None -> acc
+                | Some recur_offset -> (
+                    match
+                      (acc, find_in_cell_w_carry ~taints recur_offset cell)
+                    with
+                    | None, (`Not_found _ | `Clean) -> None
+                    | Some cell, (`Not_found _ | `Clean)
+                    | None, `Found cell ->
+                        Some cell
+                    | Some c1, `Found c2 -> Some (unify_cell c1 c2)))
+              obj None
+          with
+          | None -> not_found
+          | Some cell -> `Found cell)
       | Ofld _
       | Oint _
       | Ostr _ -> (
@@ -524,6 +562,25 @@ and update_offset_in_obj ~f offset obj =
         | Oany (* arbitrary index [*] *) ->
             (* consider all fields/indexes *)
             Fields.filter_map (fun _o' -> update_offset_in_cell ~f offset) obj
+        | Oslice n ->
+            (* Update the trailing-rest from index [n]. For each entry
+             * intersecting [n, infinity), apply the update with the
+             * appropriately composed inner offset; entries outside the
+             * slice pass through unchanged. *)
+            Fields.filter_map
+              (fun key cell ->
+                match key with
+                | Oint k when k >= n -> update_offset_in_cell ~f offset cell
+                | Oslice m when m >= n -> update_offset_in_cell ~f offset cell
+                | Oslice m ->
+                    (* m < n by case order; n - m > 0 *)
+                    update_offset_in_cell ~f (T.Oslice (n - m) :: offset) cell
+                | Oint _
+                | Ofld _
+                | Ostr _
+                | Oany ->
+                    Some cell)
+              obj
         | Ofld _
         | Oint _
         | Ostr _ ->

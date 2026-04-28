@@ -37,10 +37,13 @@ module Fields = Map.Make (struct
     | Ofld fld1, Ostr str2 -> String.compare (fst fld1.ident) str2
     | Ostr str1, Ofld fld2 -> String.compare str1 (fst fld2.ident)
     | Oint i1, Oint i2 -> Int.compare i1 i2
+    | Oslice n1, Oslice n2 -> Int.compare n1 n2
     | Oany, Oany -> 0
-    | (Ofld _ | Ostr _), (Oint _ | Oany) -> -1
-    | Oint _, Oany -> -1
-    | Oany, (Ofld _ | Ostr _ | Oint _) -> 1
+    | (Ofld _ | Ostr _), (Oint _ | Oslice _ | Oany) -> -1
+    | Oint _, (Oslice _ | Oany) -> -1
+    | Oslice _, Oany -> -1
+    | Oany, (Ofld _ | Ostr _ | Oint _ | Oslice _) -> 1
+    | Oslice _, (Ofld _ | Ostr _ | Oint _) -> 1
     | Oint _, (Ofld _ | Ostr _) -> 1
 end)
 

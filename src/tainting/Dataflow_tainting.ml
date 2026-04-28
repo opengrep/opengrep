@@ -1377,6 +1377,9 @@ and check_tainted_lval_offset env offset =
           Taints.empty
       in
       (taints, lval_env)
+  | Slice _ ->
+      (* The slice index is a static int, no expression to check. *)
+      (Taints.empty, env.lval_env)
 
 (* Test whether an expression is tainted, and if it is also a sink,
  * report the finding too (by side effect). *)
@@ -2830,10 +2833,32 @@ let pattern_leaves_with_offsets (pat : AST_generic.pattern) :
         (* Map/dict destructure: project by key, not by position. *)
         List.fold_left (go_map_pair offset) acc pats
     | G.PatTuple (_, pats, _) | G.PatList (_, pats, _) ->
-        List.fold_left
-          (fun acc (i, p) -> go (Taint.Oint i :: offset) p acc)
-          acc
-          (List.mapi (fun i p -> (i, p)) pats)
+        (* Positional list/tuple destructure with optional trailing
+         * rest. Mirrors [AST_to_IL.pattern]'s positional lowering: each
+         * non-rest slot seeds its leaves with [Oint i]; a trailing
+         * Clojure [&] or Elixir [|] constructor seeds the rest leaves
+         * with [Oslice k] so the engine projects positions [k..] of the
+         * caller's argument into the rest binding. *)
+        let rec emit acc i = function
+          | [] -> acc
+          (* Clojure: [a b & rest] → trailing PatConstructor("&", [r])
+           * with a single argument; rest covers positions [i..]. *)
+          | [ G.PatConstructor (G.Id (("&", _), _), [ rest_pat ]) ] ->
+              go (Taint.Oslice i :: offset) rest_pat acc
+          (* Elixir: [a, b | t] → trailing PatConstructor("|", [b; t])
+           * carrying one final fixed slot at index [i] plus a tail at
+           * [i+1..]. *)
+          | [
+           G.PatConstructor
+             (G.Id (("|", _), _), [ last_fixed; tail_pat ]);
+          ] ->
+              let acc = go (Taint.Oint i :: offset) last_fixed acc in
+              go (Taint.Oslice (i + 1) :: offset) tail_pat acc
+          | p :: rest ->
+              let acc = go (Taint.Oint i :: offset) p acc in
+              emit acc (i + 1) rest
+        in
+        emit acc 0 pats
     | G.PatConstructor (_, pats)
       when pats <> [] && List.for_all is_map_pair pats ->
         (* Clojure [:keys] / [Assoc] destructure wraps its key-value
