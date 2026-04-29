@@ -338,9 +338,22 @@ and eval_length env arg =
   match arg.e with
   | Composite ((CList | CTuple | CArray | CSet), (_, xs, _)) ->
       G.Lit (literal_of_int (Int64.of_int (List.length xs)))
+  | RecordOrDict fields
+    when not
+           (List.exists
+              (function IL.Spread _ -> true | _ -> false)
+              fields) ->
+      (* IL-side dict literal. Each [Field] or [Entry] is one entry; a
+       * [Spread] makes the count unknown, so we bail. *)
+      G.Lit (literal_of_int (Int64.of_int (List.length fields)))
   | _ -> (
       match eval env arg with
       | G.Sym { G.e = G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)); _ } ->
+          G.Lit (literal_of_int (Int64.of_int (List.length xs)))
+      | G.Sym { G.e = G.Container (G.Dict, (_, xs, _)); _ } ->
+          (* Sym-propagated dict literal. Each [xs] element is the AST
+           * for one [k: v] pair; the parser produces one element per
+           * entry (no Spread normalisation here). *)
           G.Lit (literal_of_int (Int64.of_int (List.length xs)))
       | G.Lit (G.String (_, (s, _), _)) ->
           G.Lit (literal_of_int (Int64.of_int (String.length s)))
