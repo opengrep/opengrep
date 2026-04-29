@@ -203,8 +203,13 @@ let rec expr_to_pattern e =
   | Container (Tuple, (t1, xs, t2)) ->
       PatTuple (t1, xs |> List_.map expr_to_pattern, t2)
   | L l -> PatLiteral l
-  | Container (List, (t1, xs, t2)) ->
+  | Container ((List | Array), (t1, xs, t2)) ->
       PatList (t1, xs |> List_.map expr_to_pattern, t2)
+  (* JS/TS rest binding [...rest_target] inside a destructure. Recogniser
+   * gating by lang lives downstream in [AST_to_IL.split_trailing_rest]. *)
+  | Call ({ e = IdSpecial (Spread, tok); _ }, (_, [ Arg rest_target ], _)) ->
+      PatConstructor
+        (Id (("...", tok), empty_id_info ()), [ expr_to_pattern rest_target ])
   (* Dict destructuring (e.g. Python [{"a": x}], Elixir map patterns
    * after the frontend lowers them). Each entry is
    * [Container(Tuple, [key; val])]. Entries whose key is a static
