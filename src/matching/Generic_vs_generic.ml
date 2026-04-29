@@ -3395,7 +3395,8 @@ and m_parameter a b =
   | G.ParamHashSplat (a1, a2), B.ParamHashSplat (b1, b2) ->
       let* () = m_tok a1 b1 in
       m_parameter_classic a2 b2
-  | G.ParamPattern (a1, _), B.ParamPattern (b1, _) -> m_pattern a1 b1
+  | G.ParamPattern (a1, a2), B.ParamPattern (b1, b2) ->
+      m_pattern a1 b1 >>= fun () -> m_parameter_classic a2 b2
   | G.ParamReceiver a1, B.ParamReceiver b1 -> m_parameter_classic a1 b1
   | G.OtherParam (a1, a2), B.OtherParam (b1, b2) ->
       m_todo_kind a1 b1 >>= fun () -> (m_list m_any) a2 b2
