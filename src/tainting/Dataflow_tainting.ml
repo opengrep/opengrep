@@ -672,17 +672,19 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
         (Display_IL.string_of_exp fun_exp)
         (S.show_shape fun_shape));
   match fun_shape with
-  | S.Arg (fun_arg, arg_offset) ->
-      [
-        Effect.ToSinkInCall
-          {
-            callee = fun_exp;
-            arg = fun_arg;
-            arg_offset;
-            args_taints;
-            guards = Effect_guard.Set.empty;
-          };
-      ]
+  | S.Arg (fun_arg, arg_offsets) ->
+      (* One ToSinkInCall per alternative path so the resolver
+       * enumerates each possible callback at the call site. *)
+      arg_offsets
+      |> List.map (fun arg_offset ->
+             Effect.ToSinkInCall
+               {
+                 callee = fun_exp;
+                 arg = fun_arg;
+                 arg_offset;
+                 args_taints;
+                 guards = Effect_guard.Set.empty;
+               })
   | __else__ ->
       Log.debug (fun m ->
           m "Function (?) %s has shape %s"
@@ -2970,7 +2972,7 @@ let mk_lambda_in_env env lcfg =
                         let source_taints, _shape, lval_env =
                           check_tainted_var { env with lval_env } leaf_name
                         in
-                        let leaf_shape = S.Arg (taint_arg, offset) in
+                        let leaf_shape = S.Arg (taint_arg, [ offset ]) in
                         let leaf_taint_lval : T.lval =
                           { base = BArg taint_arg; offset }
                         in
@@ -3511,7 +3513,7 @@ and (fixpoint :
                                                  }
                                                in
                                                let leaf_shape =
-                                                 S.Arg (taint_arg, offset)
+                                                 S.Arg (taint_arg, [ offset ])
                                                in
                                                let leaf_taint_lval : Taint.lval
                                                    =

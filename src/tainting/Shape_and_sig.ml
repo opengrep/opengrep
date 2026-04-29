@@ -90,13 +90,16 @@ module rec Shape : sig
             Tuples or lists are also represented by 'Obj' shapes! We just treat
             constant indexes as if they were fields, and use 'Oany' to capture
             the non-constant indexes. *)
-    | Arg of Taint.arg * Taint.offset list
+    | Arg of Taint.arg * Taint.offset list list
         (** Represents the yet-unknown shape of a function/method parameter,
-            optionally extended with an offset path into the parameter (e.g.
-            when a local is bound from [param[0]] during pattern destructuring).
-            It is a polymorphic shape variable that is meant to be instantiated
-            at call site. Bare parameters use [Arg (arg, [])]; a local bound from
-            [param[i]] uses [Arg (arg, [Oint i])]. *)
+            optionally extended with one or more offset paths into the
+            parameter. Each inner [Taint.offset list] is a single path; the
+            outer list is a disjunction of paths — a [cb] bound across two
+            branches as [opts.a] in one and [opts.b] in the other has
+            [Arg (opts, [[Ostr "a"]; [Ostr "b"]])]. Bare parameters use
+            [Arg (arg, [[]])]: one path, empty. At HOF dispatch the engine
+            enumerates each path; at call-site instantiation each path is
+            resolved against the caller's actual argument. *)
     | Fun of Signature.t
         (** Function shapes. These enable Semgrep to handle HOFs. *)
 
@@ -175,7 +178,7 @@ end = struct
   type shape =
     | Bot
     | Obj of obj
-    | Arg of T.arg * T.offset list
+    | Arg of T.arg * T.offset list list
     | Fun of Signature.t
   and cell = Cell of Xtaint.t * shape
   and obj = cell Fields.t
@@ -202,9 +205,12 @@ end = struct
       match (shape1, shape2) with
       | Bot, Bot -> true
       | Obj obj1, Obj obj2 -> equal_obj_depth (depth + 1) obj1 obj2
-      | Arg (arg1, off1), Arg (arg2, off2) ->
+      | Arg (arg1, offsets1), Arg (arg2, offsets2) ->
           T.equal_arg arg1 arg2
-          && Int.equal (List.compare T.compare_offset off1 off2) 0
+          && Int.equal
+               (List.compare (List.compare T.compare_offset)
+                  offsets1 offsets2)
+               0
       | Fun sig1, Fun sig2 -> Signature.equal sig1 sig2
       | Bot, _
       | Obj _, _
@@ -233,9 +239,9 @@ end = struct
     match (shape1, shape2) with
     | Bot, Bot -> 0
     | Obj obj1, Obj obj2 -> compare_obj obj1 obj2
-    | Arg (arg1, off1), Arg (arg2, off2) -> (
+    | Arg (arg1, offsets1), Arg (arg2, offsets2) -> (
         match T.compare_arg arg1 arg2 with
-        | 0 -> List.compare T.compare_offset off1 off2
+        | 0 -> List.compare (List.compare T.compare_offset) offsets1 offsets2
         | other -> other)
     | Fun sig1, Fun sig2 -> Signature.compare sig1 sig2
     | Bot, (Obj _ | Arg _ | Fun _)
@@ -260,11 +266,28 @@ end = struct
   and show_shape = function
     | Bot -> "_|_"
     | Obj obj -> spf "obj {|%s|}" (show_obj obj)
-    | Arg (arg, []) -> "'{" ^ T.show_arg arg ^ "}"
-    | Arg (arg, off) ->
+    | Arg (arg, []) ->
+        (* No offsets recorded — should not arise from normal
+           construction. *)
+        "'{" ^ T.show_arg arg ^ "}"
+    | Arg (arg, [ [] ]) ->
+        (* Single empty offset — bare-parameter shape. *)
+        "'{" ^ T.show_arg arg ^ "}"
+    | Arg (arg, [ off ]) ->
+        (* Single non-empty offset. *)
         "'{" ^ T.show_arg arg
         ^ (off |> List.map T.show_offset |> String.concat "")
         ^ "}"
+    | Arg (arg, offsets) ->
+        (* Disjunctive — multiple alternative offsets, rendered
+           [arg<off1 | off2 | ...>]. *)
+        let show_offset_path off =
+          off |> List.map T.show_offset |> String.concat ""
+        in
+        let offsets_str =
+          offsets |> List.map show_offset_path |> String.concat " | "
+        in
+        "'{" ^ T.show_arg arg ^ offsets_str ^ "}"
     | Fun fsig -> Signature.show fsig
 
   and show_obj obj =
