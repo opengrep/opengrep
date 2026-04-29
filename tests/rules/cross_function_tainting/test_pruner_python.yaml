@@ -1,0 +1,17 @@
+rules:
+  - id: test-pruner-python
+    message: |
+      Unreachable-branch pruning: a statically dead branch must not
+      produce findings, must not contribute to the function's
+      signature (no ToReturn / no ToLval at exit), and must not
+      leak its writes past the Join with a live branch.
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

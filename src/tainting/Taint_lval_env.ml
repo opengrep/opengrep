@@ -60,6 +60,13 @@ type t = {
           code carries no guard specific to one branch. Effects recorded while
           the set is non-empty are stamped with it, and at signature
           instantiation those guards are evaluated against the caller. *)
+  dead : bool;
+      (** [true] iff the current program point is unreachable. Set when
+          a branch's condition folds to a constant that contradicts the
+          branch direction. When dead, source matching, effect emission,
+          and exit-time emission are all suppressed; at a Join the live
+          side wins (see [union]) — so [dead = false] in the result of
+          any Join where at least one predecessor is live. *)
 }
 
 type env = t
@@ -90,33 +97,44 @@ let empty =
     taints_to_propagate = VarMap.empty;
     pending_propagation_dests = VarMap.empty;
     active_guards = Effect_guard.Set.empty;
+    dead = false;
   }
 
 let empty_inout = { Dataflow_core.in_env = empty; out_env = empty }
 
 let union le1 le2 =
-  let tainted =
-    NameMap.union
-      (fun _ x y -> Some (Shape.unify_cell x y))
-      le1.tainted le2.tainted
-  in
-  {
-    tainted;
-    control = Taints.union le1.control le2.control;
-    taints_to_propagate =
-      Var_env.varmap_union Taints.union le1.taints_to_propagate
-        le2.taints_to_propagate;
-    pending_propagation_dests =
-      (* THINK: Pending propagation is just meant to deal with right-to-left
-       * propagation between call arguments, so for now we just kill them all
-       * at JOINs. *)
-      VarMap.empty;
-    active_guards =
-      (* INTERSECTION, not union: a guard survives a Join only if it held on
-       * every incoming path. Post-join code therefore carries no guard that
-       * was specific to a single branch. *)
-      Effect_guard.Set.inter le1.active_guards le2.active_guards;
-  }
+  match (le1.dead, le2.dead) with
+  (* Both dead: result stays dead. Return a clean empty env with the
+   * flag set, so a debugger inspecting post-Join state sees just the
+   * unreachability marker, not stale state from either side. *)
+  | true, true -> { empty with dead = true }
+  (* Live wins over dead: the dead side contributes nothing. *)
+  | true, false -> le2
+  | false, true -> le1
+  | false, false ->
+      let tainted =
+        NameMap.union
+          (fun _ x y -> Some (Shape.unify_cell x y))
+          le1.tainted le2.tainted
+      in
+      {
+        tainted;
+        control = Taints.union le1.control le2.control;
+        taints_to_propagate =
+          Var_env.varmap_union Taints.union le1.taints_to_propagate
+            le2.taints_to_propagate;
+        pending_propagation_dests =
+          (* THINK: Pending propagation is just meant to deal with
+           * right-to-left propagation between call arguments, so for now
+           * we just kill them all at JOINs. *)
+          VarMap.empty;
+        active_guards =
+          (* INTERSECTION, not union: a guard survives a Join only if it
+           * held on every incoming path. Post-join code therefore carries
+           * no guard that was specific to a single branch. *)
+          Effect_guard.Set.inter le1.active_guards le2.active_guards;
+        dead = false;
+      }
 
 let union_list ?(default = empty) les = List.fold_left union default les
 
@@ -344,6 +362,9 @@ let add_active_guard g env =
 let clear_active_guards env =
   { env with active_guards = Effect_guard.Set.empty }
 
+let is_dead env = env.dead
+let mark_dead env = { env with dead = true }
+
 let equal
     {
       tainted = tainted1;
@@ -351,6 +372,7 @@ let equal
       taints_to_propagate = _;
       pending_propagation_dests = _;
       active_guards = guards1;
+      dead = dead1;
     }
     {
       tainted = tainted2;
@@ -358,8 +380,10 @@ let equal
       taints_to_propagate = _;
       pending_propagation_dests = _;
       active_guards = guards2;
+      dead = dead2;
     } =
-  NameMap.equal equal_cell tainted1 tainted2
+  Bool.equal dead1 dead2
+  && NameMap.equal equal_cell tainted1 tainted2
   (* NOTE: We ignore 'taints_to_propagate' and 'pending_propagation_dests',
    * we just care how they affect 'tainted'. *)
   && Taints.equal control1 control2
