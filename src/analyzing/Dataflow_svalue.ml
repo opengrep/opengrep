@@ -129,7 +129,16 @@ let result_of_function_call_constant lang f args =
  * to play it safe. Eventually we could consider lifting up these restrictions
  * and see what happens. The main problem with the current approach is that
  * every now and then somebody requests X to be supported by symbolic propagation.
- *)
+ *
+ * Coupling with branch pruning. The taint engine's
+ * [Dataflow_tainting.prune_branch_if_unreachable] uses
+ * [Eval_il_partial.eval] to fold a branch's condition; that evaluator
+ * consumes [G.Sym] values produced here. Adding or removing a kind in
+ * the match below silently widens or narrows the set of conditions the
+ * pruner can fold. The fixture
+ * [tests/tainting_rules/python/pruner_symbolic.{py,yaml}] pins the
+ * prunable surface for each kind currently propagated; a regression
+ * here will surface as a fixture failure. *)
 let rec is_symbolic_expr expr =
   match expr.G.e with
   | G.L _ -> true
