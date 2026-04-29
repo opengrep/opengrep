@@ -1,6 +1,6 @@
 # ## Overview
 #
-# This is a Nix file for Semgrep developers.
+# This is a Nix file for Opengrep developers.
 #
 # Nix is a dependency manager. Nix allows to use just one command
 # to get a fully functional correct and near identical development
@@ -10,8 +10,8 @@
 #
 # Note that there is also a Nix(OS) file for semgrep here:
 # https://github.com/NixOS/nixpkgs/tree/master/pkgs/tools/security/semgrep
-# so people can install Semgrep on NixOS.
-# However the current file is directed at Semgrep developers, not Semgrep users.
+# so people can install Opengrep on NixOS.
+# However the current file is directed at Opengrep developers, not Opengrep users.
 #
 # ## Quick install of Nix
 #
@@ -65,7 +65,7 @@
 # Docker still relies on Linux, and that Linux distro still relies on some
 # package manager. This means that even if you use Docker, your environment is
 # still not reproducible as packages are not built deterministically like Nix.
-# So you can create a Dockerfile building Semgrep, but you will need a different
+# So you can create a Dockerfile building Opengrep, but you will need a different
 # build script + Dockerfile for every system, and you must determine what the
 # different distributions all ship and have package wise. Meanwhile this Nix
 # file will work (almost) exactly the same across any system.
@@ -90,16 +90,16 @@
 # Our OCaml code is (mostly) correct because that's a focus of the language
 # itself. But it relies on a lot of C code and external dependencies, like
 # `libev`, `libcurl`, `tree-sitter` etc. This means that if someone wants to
-# build and contribute to Semgrep, they must install these dependencies, and
+# build and contribute to Opengrep, they must install these dependencies, and
 # hope that their versions is compatible. For example if you install the OCaml
-# packages needed for osemgrep, and then install libev, things won't work, since
+# packages needed for opengrep-cli, and then install libev, things won't work, since
 # the lwt package needs libev when its initially installed. If you're on mac,
 # you also have to tell opam where libev is before installing lwt. So our OCaml
 # is correct, but only if you can build it, and only if you build it with the
 # right dependencies.
 
 # By using Nix, we can declare all these dependencies explicitly, and then
-# anyone across any *nix system can easily build Semgrep with only one command!
+# anyone across any *nix system can easily build Opengrep with only one command!
 # What's even better, is for regular contributors, these dependencies will auto
 # update and rebuild whenever a new dependency is added. So if someone adds a
 # dependency for lwt, libev will automatically be pulled in with 0 thought from
@@ -121,7 +121,7 @@
 
 # ## Who uses Nix?
 #
-# Not convinced? Here are some other notable OCaml projects using nix:
+# Not convinced? Here are some notable OCaml projects using nix:
 
 # - [dune](https://github.com/ocaml/dune)
 # - [merlin](https://github.com/ocaml/merlin)
@@ -130,14 +130,14 @@
 
 # There's also a ton of projects outside the OCaml world using nix too. Nix is
 # battle tested, and has a huge community, with support for almost anything you
-# can think of. There's even someone packaging Semgrep for nix.
+# can think of. There's even someone packaging Opengrep for nix.
 
 # ## Try it out
 #
 # If you want to see what it's like to use nix, get a clean Linux or macOS box.
 # Then [install nix](https://github.com/DeterminateSystems/nix-installer) with
 # flake support. Finally run `nix develop`. Now you can run `make core` or any
-# make targets in the CLI. That's one command to always be able to build Semgrep
+# make targets in the CLI. That's one command to always be able to build Opengrep
 # vs the 10-20 needed right now, if you're lucky, and then 2-3 every once in
 # awhile to keep up to date.
 
@@ -149,9 +149,9 @@
 # If you don't use bash run `nix develop -c $SHELL` to get an environment with
 # your shell.
 
-# If you want to just build semgrep and run it you can do `nix run
-# ".?submodules=1#"` for semgrep or `nix run ".?submodules=1#<target>"` where
-# target is semgrep, pysemgrep, osemgrep, or semgrep-core.
+# If you want to just build opengrep and run it you can do `nix run
+# ".?submodules=1#"` for opengrep or `nix run ".?submodules=1#<target>"` where
+# target is opengrep, pyopengrep, opengrep-cli, or opengrep-core.
 
 # ## What's the catch?
 #
@@ -174,7 +174,7 @@
 # # Future work
 # ## Some issues with our current usage of Dune and Opam
 #
-# Right now our usage of dune is a little incorrect. In every language semgrep
+# Right now our usage of dune is a little incorrect. In every language opengrep
 # tree-sitter dune file (i.e. bash/tree-sitter/semgrep-bash), we don't pass the
 # standard c/c++ flags to compile the C files. This means that the compiler
 # provided by nix doesn't know if a c++ file is a c++ file, and fails to include
@@ -183,7 +183,7 @@
 # There's a patch for now in the nix configuration but it's a bit ugly.
 
 # Another issue with our opam usage is we don't declare dependencies on
-# libraries provided by semgrep. I.e. we depend on commons, but don't declare
+# libraries provided by opengrep. I.e. we depend on commons, but don't declare
 # that dependency in semgrep.opam. This breaks some autoresolving things in nix,
 # which are patched for now, but would be nice if we fixed our usage of opam.
 
@@ -201,7 +201,7 @@
 # make sure they all have the right package names. If we use nix in CI, all we
 # need is to install nix on the target OS/architecture, then run nix build and
 # it can run all build processes, and all e2e tests. Super simple workflow. It
-# can even build the wheels, and static versions of Semgrep we'd want!
+# can even build the wheels, and static versions of Opengrep we'd want!
 
 # # More reading
 #
@@ -223,11 +223,11 @@
 
 {
   description =
-    "Semgrep OSS is a fast, open-source, static analysis tool for searching code, finding bugs, and enforcing code standards at editor, commit, and CI time.";
+    "Opengrep OSS is a fast, open-source, static analysis tool for searching code, finding bugs, and enforcing code standards at editor, commit, and CI time.";
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     # all the follows here are so we don't use diff versions of
-    # nixpkgs/flake-utils than semgrep. This is good for debugging, and reducing
+    # nixpkgs/flake-utils than opengrep. This is good for debugging, and reducing
     # build time/cache size
     flake-utils.url = "github:numtide/flake-utils";
     opam-nix = {
@@ -239,24 +239,42 @@
       url = "github:ocaml/opam-repository";
       flake = false;
     };
+    # Fork of memprof-limits compatible with OCaml 5.3.0. Referenced as
+    # `memprof-limits {= "dev"}` in semgrep.opam / process_limits.opam. The
+    # `(pin ...)` stanza in dune-project only influences plain-opam builds, so
+    # we inject the fork as an opam repo for the nix flow below.
+    memprof-limits-src = {
+      url = "git+https://gitlab.com/dimitris-m/memprof-limits.git?ref=dm/ocaml-5.3.0-opengrep";
+      flake = false;
+    };
   };
-  outputs = { self, nixpkgs, flake-utils, opam-nix, opam-repository }@inputs:
+  outputs = { self, nixpkgs, flake-utils, opam-nix, opam-repository, memprof-limits-src }@inputs:
     let package = "semgrep";
     in flake-utils.lib.eachDefaultSystem (system:
       let
         # TODO Use pkgsStatic if on linux
         pkgs = nixpkgs.legacyPackages.${system};
         on = opam-nix.lib.${system};
-        pythonPackages = pkgs.python310Packages;
-        opamRepos = [ "${opam-repository}" ];
+        pythonPackages = pkgs.python314Packages;
+        # Build a local opam repo containing the memprof-limits fork, with its
+        # `version:` line stripped so opam-nix exposes it as version "dev"
+        # (matching the `{= "dev"}` constraints in our opam files).
+        memprof-limits-pin-src =
+          pkgs.runCommand "memprof-limits-dev-src" { } ''
+            cp -r ${memprof-limits-src} $out
+            chmod -R u+w $out
+            sed -i '/^version:/d' $out/memprof-limits.opam
+          '';
+        memprof-limits-repo = on.makeOpamRepo memprof-limits-pin-src;
+        opamRepos = [ memprof-limits-repo "${opam-repository}" ];
         lib = pkgs.lib;
         isDarwin = lib.strings.hasSuffix "darwin" system;
         hasSubmodules = !builtins.hasAttr "submodules" self || self.submodules;
-        # TODO split out osemgrep and pysemgrep into diff nix files
+        # TODO split out opengrep-cli and pyopengrep into diff nix files
       in let
 
-        # osemgrep/semgrep-core inputs
-        osemgrepInputs = with pkgs; [ pcre2 tree-sitter ];
+        # opengrep-cli/opengrep-core inputs
+        opengrepCliInputs = with pkgs; [ pcre2 tree-sitter ];
         devOpamPackagesQuery = {
           # You can add "development" ocaml packages here. They will get added
           # to the devShell automatically.
@@ -268,14 +286,15 @@
         };
         opamQuery = devOpamPackagesQuery // {
           ## You can force versions of certain packages here
-          # force the ocaml compiler to be 4.14.2 and from opam
-          ocaml-base-compiler = "4.14.2";
+          # Force the OCaml compiler to match the lower bound declared by our
+          # opam packages (process_limits and the memprof-limits fork require
+          # >= 5.3.0; opengrep.opam requires >= 5.2.1).
+          ocaml-base-compiler = "5.3.0";
           #TODO: needed for semgrep pro, should be in ../flake.nix instead
           #coupling: if you add one thing here, need to update also the
           # buildInputs overlay below
           junit_alcotest = "*";
           git-unix = "*";
-          mirage-runtime = "4.4.2";
           notty = "*";
           tsort = "*";
           # needed for tests
@@ -312,14 +331,14 @@
         devOpamPackages = builtins.attrValues
           (pkgs.lib.getAttrs (builtins.attrNames devOpamPackagesQuery) scope');
 
-        # osemgrep/semgrep-core
+        # opengrep-cli/opengrep-core
         # package with all opam deps but nothing else
         baseOpamPackage = scope'.${package}; # Packages from devPackagesQuery
 
-        # Special environment variables for osemgrep for linking stuff
-        osemgrepEnvDarwin = {
-          # all the dune files of semgrep treesitter <LANG> are missing the
-          # :standard field. Basically all compilers autodetct if something is c
+        # Special environment variables for opengrep-cli for linking stuff
+        opengrepCliEnvDarwin = {
+          # all the dune files of opengrep treesitter <LANG> are missing the
+          # :standard field. Basically all compilers autodetect if something is c
           # or c++ based on file extension, and add the c stdlib based on that.
           # Nix doesn't because reasons:
           # https://github.com/NixOS/nixpkgs/issues/150655 Dune also passes
@@ -328,17 +347,17 @@
           # commit them instead of doing this
           NIX_CFLAGS_COMPILE = "-I${pkgs.libcxx.dev}/include/c++/v1";
         };
-        osemgrepEnv = {
+        opengrepCliEnv = {
           SEMGREP_NIX_BUILD = "1";
-        } // lib.optionalAttrs (isDarwin) osemgrepEnvDarwin;
+        } // lib.optionalAttrs (isDarwin) opengrepCliEnvDarwin;
         #
-        # osemgrep
+        # opengrep-cli
         #
 
-        osemgrep = baseOpamPackage.overrideAttrs (prev: rec {
-          pname = "osemgrep";
-          env = osemgrepEnv;
-          buildInputs = prev.buildInputs ++ osemgrepInputs;
+        opengrep-cli = baseOpamPackage.overrideAttrs (prev: rec {
+          pname = "opengrep-cli";
+          env = opengrepCliEnv;
+          buildInputs = prev.buildInputs ++ opengrepCliInputs;
           buildPhase' = ''
             make core
           '';
@@ -346,16 +365,16 @@
             echo "Derivation ${pname} won't build outside of a nix shell without submodules:"
             echo "  nix build '.?submodules=1#' # build from local sources"
             echo "  nix build '<uri>?submodules=1#' # build from remote sources"
-            echo "  nix run '.?submodules=1#osemgrep' # run osemgrep from local sources"
-            echo "  nix run '<uri>.?submodules=1#osemgrep' # run osemgrep from remote source"
+            echo "  nix run '.?submodules=1#opengrep' # run opengrep from local sources"
+            echo "  nix run '<uri>.?submodules=1#opengrep' # run opengrep from remote source"
             exit 1
           '';
           # make sure we have submodules
           # See https://github.com/NixOS/nix/pull/7862
           buildPhase = if hasSubmodules then
-            osemgrep.buildPhase'
+            opengrep-cli.buildPhase'
           else
-            osemgrep.buildPhaseFail;
+            opengrep-cli.buildPhaseFail;
           nativeCheckInputs = (with pkgs; [ cacert git ]);
           # git init is needed so tests work successfully since many rely on git root existing
           checkPhase = ''
@@ -363,7 +382,7 @@
             make test
           '';
 
-          # DONE! Copy semgrep binaries!!!!
+          # DONE! Copy opengrep binaries!!!!
           installPhase = ''
             mkdir -p $out/bin
             cp _build/install/default/bin/* $out/bin
@@ -371,12 +390,12 @@
 
         });
 
-        # TODO semgrep-js
+        # TODO opengrep-js
         # needs new emscripten: https://github.com/NixOS/nixpkgs/issues/306649
         # for the special wasm pass
 
-        # pysemgrep inputs
-        # coupling: anything added to pysemgrep for testing should be added here
+        # pyopengrep inputs
+        # coupling: anything added to pyopengrep for testing should be added here
         devPipInputs = with pythonPackages; [
           pkgs.git
           flaky
@@ -387,19 +406,28 @@
         ];
 
         #
-        # pysemgrep
+        # pyopengrep
         #
 
-        pysemgrep = with pythonPackages;
+        pyopengrep = with pythonPackages;
           buildPythonApplication {
             # thanks to @06kellyjac
-            pname = "semgrep";
-            inherit (osemgrep) version;
+            pname = "opengrep";
+            inherit (opengrep-cli) version;
             src = ./cli;
             # TODO checks
             doCheck = false;
 
-            # coupling: anything added to the pysemgrep setup.py should be added here
+            # Newer nixpkgs' buildPythonApplication requires an explicit build
+            # format; the cli uses a PEP 517 pyproject.toml backed by setuptools.
+            pyproject = true;
+            build-system = [ setuptools wheel ];
+            # The wheel's install_requires pins (e.g. `boltons~=21.0`) are
+            # tighter than nixpkgs' tree; skip the automatic runtime-deps
+            # check and trust the versions listed in propagatedBuildInputs.
+            dontCheckRuntimeDeps = true;
+
+            # coupling: anything added to the pyopengrep setup.py should be added here
             propagatedBuildInputs = [
               attrs
               boltons
@@ -424,14 +452,14 @@
             dontUseSetuptoolsShellHook = true;
 
             preFixup = ''
-              makeWrapperArgs+=(--prefix PATH : ${osemgrep}/bin)
+              makeWrapperArgs+=(--prefix PATH : ${opengrep-cli}/bin)
             '';
           };
-        # TODO semgrep-js
+        # TODO opengrep-js
       in {
         # For a lot of nix commands, nix uses the cwd's flake. So
         #   nix develop
-        # will run the current flake. But because semgrep has submodules we have
+        # will run the current flake. But because opengrep has submodules we have
         # to specify `.?submodules=1#` to enable checking out submodules`
         #
         # The target of the command is structured
@@ -443,8 +471,8 @@
         #   nix run github:DeterminateSystems/flake-checker
         # to run DeterminateSystem's
         # cool flake checker, without ever needing to install it or anything! Or
-        # other nix users who want to try osemgrep can run
-        #   nix run github:semgrep/semgrep?submodules=1#osemgrep
+        # other nix users who want to try opengrep-cli can run
+        #   nix run github:opengrep/opengrep?submodules=1#opengrep-cli
         #
         # See: https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake.html#types
         # for more on flake refs
@@ -456,43 +484,43 @@
         # builds the below package leaving it empty builds the default. The
         # output will be linked into the cwd in a folder called "result". Also
         # exports packages for other nix packages to use
-        packages.osemgrep = osemgrep;
-        packages.semgrep = pysemgrep;
-        packages.default = pysemgrep;
+        packages.opengrep-cli = opengrep-cli;
+        packages.opengrep = pyopengrep;
+        packages.default = pyopengrep;
 
         #   nix run ".?submodules=1#<PKG_NAME>"
         # builds and runs the package specified, without linking the output
         # result into the cwd. You can try other nixpkgs similarly by running
         # `nix run nixpkgs#<PKG_NAME>` like `nix run nixpkgs#hello_world`.
         apps = {
-          osemgrep = {
+          opengrep-cli = {
             type = "app";
-            program = "${osemgrep}/bin/osemgrep";
+            program = "${opengrep-cli}/bin/opengrep-cli";
           };
-          semgrep-core = {
+          opengrep-core = {
             type = "app";
-            program = "${osemgrep}/bin/semgrep-core";
+            program = "${opengrep-cli}/bin/opengrep-core";
           };
-          semgrep = {
+          opengrep = {
             type = "app";
-            program = "${pysemgrep}/bin/semgrep";
+            program = "${pyopengrep}/bin/opengrep";
           };
-          pysemgrep = {
+          pyopengrep = {
             type = "app";
-            program = "${pysemgrep}/bin/pysemgrep";
+            program = "${pyopengrep}/bin/pyopengrep";
           };
           default = {
             type = "app";
-            program = "${pysemgrep}/bin/semgrep";
+            program = "${pyopengrep}/bin/opengrep";
           };
         };
         #   nix flake check ".?submodules=1#"
         # makes sure the flake is a valid structure, all the derivations are
         # valid, and runs anyting put in checks
         checks = {
-          osemgrep = osemgrep.overrideAttrs (prev: {
+          opengrep-cli = opengrep-cli.overrideAttrs (prev: {
             # We don't want to force people to run the test suite everytime they
-            # build semgrep, but we do want to run it here
+            # build opengrep, but we do want to run it here
             doCheck = true;
           });
         };
@@ -502,14 +530,14 @@
         # formatters here to run also
         formatter = pkgs.nixpkgs-fmt;
         #   nix develop -c $SHELL
-        # runs this shell which has all dependencies needed to make semgrep
+        # runs this shell which has all dependencies needed to make opengrep
         devShells.default = pkgs.mkShell {
-          # See comment above osemgrep.buildPhase for why we need this
+          # See comment above opengrep-cli.buildPhase for why we need this
           # This doesnt work there because idk
           env = {
             # add env vars here
-          } // osemgrepEnv;
-          inputsFrom = [ osemgrep pysemgrep ];
+          } // opengrepCliEnv;
+          inputsFrom = [ opengrep-cli pyopengrep ];
           buildInputs = devOpamPackages ++ devPipInputs ++ (with pkgs; [
             pre-commit
             pipenv
