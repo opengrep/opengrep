@@ -79,7 +79,7 @@ let taint_MAX_TAINT_SET_SIZE = 25
  * [arg[0]] (which conflates all fields and breaks field-sensitivity).
  * Direct [ParamPattern] destructures (Elixir, JS, Rust, …) only need
  * length 1 and are unaffected. *)
-let taint_MAX_POLY_OFFSET = 2
+let taint_MAX_POLY_OFFSET = 4
 
 (** Maximum depth for shape equality comparison to prevent infinite recursion
  * in pathological patterns like obj[key] = [obj[key], item] that create
