@@ -124,7 +124,8 @@ let add_param_to_env il_lval taint_set taint_arg env =
  * module-dependency cycle; this file already depends on
  * [Dataflow_tainting.fixpoint]. *)
 
-let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t =
+let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
+    Taint_lval_env.t =
   let _, env =
     params
     |> List.fold_left
@@ -148,22 +149,20 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                in
                (* Check if this parameter matches a source pattern *)
                let source_taints =
-                 match taint_inst with
-                 | Some tinst ->
-                     let _, tok = pname.ident in
-                     let any = G.Tk tok in
-                     let source_pms = tinst.TRI.preds.is_source any in
-                     if source_pms <> [] then
-                       (* Create Src taints for matching sources using taints_of_pms *)
-                       let pms_with_specs =
-                         source_pms
-                         |> List.map (fun (tm : Rule.taint_source Taint_spec_match.t) ->
-                                (tm.Taint_spec_match.spec_pm, tm.spec))
-                       in
-                       Taint.taints_of_pms ~incoming:Taint.Taint_set.empty pms_with_specs
-                     else
-                       Taint.Taint_set.empty
-                 | None -> Taint.Taint_set.empty
+                 let _, tok = pname.ident in
+                 let any = G.Tk tok in
+                 let source_pms = taint_inst.TRI.preds.is_source any in
+                 if source_pms <> [] then
+                   (* Create Src taints for matching sources using
+                      taints_of_pms *)
+                   let pms_with_specs =
+                     source_pms
+                     |> List.map (fun (tm : Rule.taint_source Taint_spec_match.t) ->
+                            (tm.Taint_spec_match.spec_pm, tm.spec))
+                   in
+                   Taint.taints_of_pms ~incoming:Taint.Taint_set.empty
+                     pms_with_specs
+                 else Taint.Taint_set.empty
                in
                let taint_set = Taint.Taint_set.union (Taint.Taint_set.singleton generic_taint) source_taints in
                (* Give the parameter an Arg shape so it can be used in HOF *)
@@ -175,7 +174,8 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                let new_env =
                  match param with
                  | IL.ParamPattern (_, pat) ->
-                     Dataflow_tainting.pattern_leaves_with_offsets pat
+                     Dataflow_tainting.pattern_leaves_with_offsets
+                       ~lang:taint_inst.TRI.lang pat
                      |> List.fold_left
                           (fun env (leaf_name, offset) ->
                             let leaf_lval : IL.lval =
@@ -208,25 +208,27 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                                 { orig = Var leaf_taint_lval; tokens = [] }
                             in
                             let source_taints =
-                              match taint_inst with
-                              | Some tinst ->
-                                  let _, tok = leaf_name.ident in
-                                  let any = G.Tk tok in
-                                  let source_pms = tinst.TRI.preds.is_source any in
-                                  if source_pms <> [] then
-                                    let pms_with_specs =
-                                      source_pms
-                                      |> List.map
-                                           (fun
-                                             (tm : Rule.taint_source Taint_spec_match.t)
-                                           ->
-                                             (tm.Taint_spec_match.spec_pm, tm.spec))
-                                    in
-                                    Taint.taints_of_pms
-                                      ~incoming:Taint.Taint_set.empty
-                                      pms_with_specs
-                                  else Taint.Taint_set.empty
-                              | None -> Taint.Taint_set.empty
+                              let _, tok = leaf_name.ident in
+                              let any = G.Tk tok in
+                              let source_pms =
+                                taint_inst.TRI.preds.is_source any
+                              in
+                              if source_pms <> [] then
+                                let pms_with_specs =
+                                  source_pms
+                                  |> List.map
+                                       (fun
+                                         (tm :
+                                           Rule.taint_source
+                                           Taint_spec_match.t)
+                                       ->
+                                         ( tm.Taint_spec_match.spec_pm,
+                                           tm.spec ))
+                                in
+                                Taint.taints_of_pms
+                                  ~incoming:Taint.Taint_set.empty
+                                  pms_with_specs
+                              else Taint.Taint_set.empty
                             in
                             let leaf_taints =
                               Taint.Taint_set.add leaf_taint source_taints

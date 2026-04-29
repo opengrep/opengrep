@@ -22,7 +22,9 @@ val hook_check_tainted_at_exit_sinks :
 (** Pro: support for `at-exit: true` sinks *)
 
 val pattern_leaves_with_offsets :
-  AST_generic.pattern -> (IL.name * Taint.offset list) list
+  lang:Lang.t ->
+  AST_generic.pattern ->
+  (IL.name * Taint.offset list) list
 (** Walk a [ParamPattern]'s inner pattern and enumerate each leaf with
     its offset path from the enclosing implicit binder. Used by taint
     env setup paths (in [mk_lambda_in_env], the lambda signature
