@@ -527,8 +527,10 @@ and pattern env pat : stmts * lval * stmts =
             (* Clojure variadic rest: [a b & r] →
              *   PatList [a; b; PatConstructor("&", [r])]
              * The "&" wrapper has a single argument (the rest binding);
-             * the rest covers positions [i..] of the scrutinee. *)
-            | [ G.PatConstructor (G.Id (("&", _), _), [ rest_pat ]) ] ->
+             * the rest covers positions [i..] of the scrutinee. Only
+             * Clojure assigns this meaning to "&" inside a PatList. *)
+            | [ G.PatConstructor (G.Id (("&", _), _), [ rest_pat ]) ]
+              when env.lang =*= Lang.Clojure ->
                 (List.rev acc, Some (rest_pat, i))
             (* Elixir cons pattern: [a, b | t] →
              *   PatList [a; PatConstructor("|", [b; t])]
@@ -536,11 +538,13 @@ and pattern env pat : stmts * lval * stmts =
              *   PatList [PatConstructor("|", [h; t])]
              * The trailing "|" wrapper carries one final fixed slot
              * ([last_fixed] at position [i]) plus the tail ([tail_pat]
-             * covering positions [i+1..]). *)
+             * covering positions [i+1..]). Only Elixir uses "|" as the
+             * cons-pattern marker inside a PatList. *)
             | [
              G.PatConstructor
                (G.Id (("|", _), _), [ last_fixed; tail_pat ]);
-            ] ->
+            ]
+              when env.lang =*= Lang.Elixir ->
                 (List.rev ((last_fixed, i) :: acc), Some (tail_pat, i + 1))
             | p :: rest -> split_trailing_rest ((p, i) :: acc) (i + 1) rest
           in

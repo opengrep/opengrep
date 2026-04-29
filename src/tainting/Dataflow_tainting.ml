@@ -2791,7 +2791,7 @@ let input_env ~enter_env ~(flow : F.cfg) mapping ni =
  * leaves — rule-focused source pre-seeding still runs on those via
  * [mk_fun_input_env] / [check_tainted_var], but they do not receive
  * an [Arg _] shape here. *)
-let pattern_leaves_with_offsets (pat : AST_generic.pattern) :
+let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
     (IL.name * Taint.offset list) list =
   let mk_field (s, tok) : IL.name =
     {
@@ -2867,16 +2867,20 @@ let pattern_leaves_with_offsets (pat : AST_generic.pattern) :
         let rec emit acc i = function
           | [] -> acc
           (* Clojure: [a b & rest] → trailing PatConstructor("&", [r])
-           * with a single argument; rest covers positions [i..]. *)
-          | [ G.PatConstructor (G.Id (("&", _), _), [ rest_pat ]) ] ->
+           * with a single argument; rest covers positions [i..]. Only
+           * Clojure assigns this meaning to "&" inside a PatList. *)
+          | [ G.PatConstructor (G.Id (("&", _), _), [ rest_pat ]) ]
+            when lang =*= Lang.Clojure ->
               go (Taint.Oslice i :: offset) rest_pat acc
           (* Elixir: [a, b | t] → trailing PatConstructor("|", [b; t])
            * carrying one final fixed slot at index [i] plus a tail at
-           * [i+1..]. *)
+           * [i+1..]. Only Elixir uses "|" as the cons-pattern marker
+           * inside a PatList. *)
           | [
            G.PatConstructor
              (G.Id (("|", _), _), [ last_fixed; tail_pat ]);
-          ] ->
+          ]
+            when lang =*= Lang.Elixir ->
               let acc = go (Taint.Oint i :: offset) last_fixed acc in
               go (Taint.Oslice (i + 1) :: offset) tail_pat acc
           | p :: rest ->
@@ -2962,7 +2966,7 @@ let mk_lambda_in_env env lcfg =
                  { name = fst pname.ident; index = i }
                in
                let lval_env =
-                 pattern_leaves_with_offsets pat
+                 pattern_leaves_with_offsets ~lang:env.taint_inst.lang pat
                  |> List.fold_left
                       (fun lval_env (leaf_name, offset) ->
                         let leaf_lval : IL.lval =
@@ -3486,7 +3490,7 @@ and (fixpoint :
                                     Taint.Taint_set.singleton generic_taint
                                   in
                                   (* Give the parameter an Arg shape so it can be used in HOF *)
-                                  let param_shape = S.Arg (taint_arg, []) in
+                                  let param_shape = S.Arg (taint_arg, [ [] ]) in
                                   let env =
                                     Lval_env.add_lval_shape il_lval taint_set
                                       param_shape env
@@ -3503,7 +3507,8 @@ and (fixpoint :
                                   let env =
                                     match param with
                                     | IL.ParamPattern (_, pat) ->
-                                        pattern_leaves_with_offsets pat
+                                        pattern_leaves_with_offsets
+                                          ~lang:taint_inst.lang pat
                                         |> List.fold_left
                                              (fun env (leaf_name, offset) ->
                                                let leaf_lval : IL.lval =
