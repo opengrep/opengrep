@@ -151,6 +151,13 @@ val clear_active_guards : env -> env
     lambda's upflowed effects at [Dataflow_tainting.do_lambdas], where the
     frame of reference is correct. *)
 
+val is_dead : env -> bool
+(** [true] iff the current program point is unreachable. *)
+
+val mark_dead : env -> env
+(** Mark the env as unreachable. Set at a branch whose condition folds
+    to a constant that contradicts the branch direction. *)
+
 val union : env -> env -> env
 (** Compute the environment for the join of two branches.
 

@@ -317,7 +317,10 @@ let record_effects env new_effects =
         new_effects |> List.map Effect.show |> String.concat " ; "
       in
       m "REC_EFFECTS in %s: [%s]" fn effects_str);
-  if not (List_.null new_effects) then
+  if Lval_env.is_dead env.lval_env then
+    (* Unreachable program point — no findings, no signature effects. *)
+    ()
+  else if not (List_.null new_effects) then
     let new_effects =
       env.taint_inst.handle_effects env.func.name new_effects
     in
@@ -2990,19 +2993,19 @@ let mk_lambda_in_env env lcfg =
   in
   lval_env
 
-(* At [TrueNode] / [FalseNode], if [cond] evaluates to a constant boolean that
- * contradicts the branch direction, the branch is unreachable and every
- * tracked l-value on the incoming env is marked [`Clean]. The pruned branch
- * still executes, but its reads see no taint, so sinks inside it cannot fire;
- * at the Join, [Xtaint.union (Tainted, Clean) = Tainted] preserves the live
- * branch's taints. Applies to any constant-folded condition, e.g. [if (true)]
- * or [if (length(x) == 1)] when the shape of [x] is statically known. *)
+(* At [TrueNode] / [FalseNode], if [cond] evaluates to a constant boolean
+ * that contradicts the branch direction, the branch is unreachable. Mark
+ * the env as dead via [Lval_env.mark_dead]; the dead-aware gates in the
+ * source-match path, [record_effects], and exit-time emission then
+ * suppress any observation made from the unreachable region. At the Join
+ * with the live branch, [Lval_env.union] discards the dead side and
+ * preserves the live env. *)
 let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
     (branch_direction : bool) (in' : Lval_env.t) : Lval_env.t =
   let eval_env = Eval_il_partial.mk_env lang Var_env.VarMap.empty in
   match Eval_il_partial.eval eval_env cond with
   | G.Lit (G.Bool (b, _)) when not (Bool.equal b branch_direction) ->
-      Lval_env.clean_all in'
+      Lval_env.mark_dead in'
   | _ -> in'
 
 (* Param-anchoring recogniser for branch conditions. Returns a list of
