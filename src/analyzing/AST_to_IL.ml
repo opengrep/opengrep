@@ -213,16 +213,6 @@ let name_of_entity ent : name option =
       Some name
   | _else_ -> None
 
-let composite_of_container ~g_expr :
-    G.container_operator -> IL.composite_kind =
- fun cont ->
-  match cont with
-  | Array -> CArray
-  | List -> CList
-  | Tuple -> CTuple
-  | Set -> CSet
-  | Dict -> impossible (E g_expr)
-
 let mk_unnamed_args (exps : IL.exp list) : exp argument list = List_.map (fun x -> Unnamed x) exps
 
 let is_hcl lang : bool =
@@ -546,6 +536,11 @@ and pattern env pat : stmts * lval * stmts =
             ]
               when env.lang =*= Lang.Elixir ->
                 (List.rev ((last_fixed, i) :: acc), Some (tail_pat, i + 1))
+            (* JS/TS rest binding: [a, b, ...rest] → trailing
+             * PatConstructor("...", [rest_pat]); rest covers [i..]. *)
+            | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ]
+              when Lang.is_js env.lang ->
+                (List.rev acc, Some (rest_pat, i))
             | p :: rest -> split_trailing_rest ((p, i) :: acc) (i + 1) rest
           in
           let fixed, opt_rest = split_trailing_rest [] 0 pats in
@@ -738,41 +733,26 @@ and assign env ~g_expr lhs tok rhs_exp : stmts * exp =
           let fixme_lval = fresh_lval ~str:"_FIXME" tok in
           let instr = mk_s (Instr (mk_i (Assign (fixme_lval, rhs_exp)) eorig)) in
           ([instr], fixme_exp kind any_generic (related_exp g_expr)))
-  | G.Container (((G.Tuple | G.List | G.Array) as ckind), (tok1, lhss, tok2)) ->
-      (* TODO: handle cases like [a, b, ...rest] = e *)
-      (* E1, ..., En = RHS *)
-      (* tmp = RHS*)
-      let tmp = fresh_var tok2 in
-      let tmp_lval = lval_of_base (Var tmp) in
-      let tmp_assign = mk_s (Instr (mk_i (Assign (tmp_lval, rhs_exp)) eorig)) in
-      (* Ei = tmp[i] *)
-      let tup_results =
-        List.map
-          (fun (lhs_i, i) ->
-            let index_i = Literal (G.Int (Parsed_int.of_int i)) in
-            let offset_i =
-              {
-                o = Index { e = index_i; eorig = related_exp lhs_i };
-                oorig = NoOrig;
-              }
-            in
-            let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
-            let ss, expr =
-              assign env ~g_expr lhs_i tok1
-                { e = Fetch lval_i; eorig = related_exp lhs_i }
-            in
-            (ss, expr))
-          (List_.index_list lhss)
-      in
-      let tup_ss = List.concat_map fst tup_results in
-      let tup_elems = List.map snd tup_results in
-      (* (E1, ..., En) *)
-      ( tmp_assign :: tup_ss,
-        mk_e
-          (Composite
-             ( composite_of_container ~g_expr ckind,
-               (tok1, tup_elems, tok2) ))
-          (related_exp lhs) )
+  | G.Container ((G.Tuple | G.List | G.Array), _) -> (
+      (* Body destructure [a, b, ...rest] = RHS shares its lowering
+       * with parameter destructure: convert the LHS into a [PatList] and
+       * dispatch through [pattern]. The trailing-rest recogniser
+       * (gated by [Lang.is_js]) lives in [split_trailing_rest]. *)
+      try
+        let pat = H.expr_to_pattern lhs in
+        let pre_ss, tmp_lval, post_ss = pattern env pat in
+        let assign_stmt =
+          mk_s (Instr (mk_i (Assign (tmp_lval, rhs_exp)) eorig))
+        in
+        ( pre_ss @ [ assign_stmt ] @ post_ss,
+          mk_e (Fetch tmp_lval) (related_exp lhs) )
+      with
+      | Fixme (kind, any_generic) ->
+          let fixme_lval = fresh_lval ~str:"_FIXME" tok in
+          let instr =
+            mk_s (Instr (mk_i (Assign (fixme_lval, rhs_exp)) eorig))
+          in
+          ([ instr ], fixme_exp kind any_generic (related_exp lhs)))
   | G.Record (tok1, fields, tok2) ->
       assign_to_record env (tok1, fields, tok2) rhs_exp (related_exp lhs)
   | _ ->

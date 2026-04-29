@@ -2883,6 +2883,11 @@ let pattern_leaves_with_offsets ~(lang : Lang.t) (pat : AST_generic.pattern) :
             when lang =*= Lang.Elixir ->
               let acc = go (Taint.Oint i :: offset) last_fixed acc in
               go (Taint.Oslice (i + 1) :: offset) tail_pat acc
+          (* JS/TS: [a, b, ...rest] → trailing PatConstructor("...", [r]);
+           * rest covers positions [i..]. *)
+          | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ]
+            when Lang.is_js lang ->
+              go (Taint.Oslice i :: offset) rest_pat acc
           | p :: rest ->
               let acc = go (Taint.Oint i :: offset) p acc in
               emit acc (i + 1) rest
