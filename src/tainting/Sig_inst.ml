@@ -296,14 +296,30 @@ let instantiate_shape inst_var inst_trace shape =
                  Shape.update_offset_in_cell ~f:inst_xtaint [] cell)
         in
         if Fields.is_empty obj then Bot else Obj obj
-    | Arg (arg, off) -> (
-        let lval = { T.base = T.BArg arg; offset = off } in
-        match inst_var.inst_lval lval with
-        | Some (_taints, shape) -> shape
-        | None ->
+    | Arg (arg, offsets) ->
+        (* For each alternative offset, resolve to the caller's actual
+         * shape; unify the results so the dispatcher sees every
+         * possible callback. *)
+        let resolve_offset off =
+          let lval = { T.base = T.BArg arg; offset = off } in
+          match inst_var.inst_lval lval with
+          | Some (_taints, shape) -> shape
+          | None ->
+              Log.warn (fun m ->
+                  m "Could not instantiate arg shape: %s"
+                    (T.show_lval lval));
+              Arg (arg, [ off ])
+        in
+        (match offsets with
+        | [] ->
             Log.warn (fun m ->
-                m "Could not instantiate arg shape: %s" (T.show_lval lval));
-            Arg (arg, off))
+                m "Could not instantiate arg shape: %s (no offsets recorded)"
+                  (T.show_arg arg));
+            Bot
+        | first :: rest ->
+            List.fold_left
+              (fun acc off -> Shape.unify_shape acc (resolve_offset off))
+              (resolve_offset first) rest)
     | Fun _ as funTODO ->
         (* Right now a function shape can only come from a top-level function,
          * whose shape will not depend on the parameters of another enclosing
@@ -1368,12 +1384,16 @@ let rec instantiate_function_signature ~(lang : Lang.t)
          * heuristics. *)
         let rebind_arg_to_outer =
           match lval_to_taints fun_lval with
-          | Some (_, Arg (outer_arg, outer_off)) ->
+          | Some (_, Arg (outer_arg, outer_offsets)) ->
               Log.debug (fun m ->
+                  let pp_offsets =
+                    outer_offsets
+                    |> List.map T.show_offset_list
+                    |> String.concat " | "
+                  in
                   m "REBIND: fun_lval=%s resolves to Arg(%s, %s)"
-                    (T.show_lval fun_lval) (T.show_arg outer_arg)
-                    (T.show_offset_list outer_off));
-              Some (outer_arg, outer_off)
+                    (T.show_lval fun_lval) (T.show_arg outer_arg) pp_offsets);
+              Some (outer_arg, outer_offsets)
           | _ -> None
         in
         (* If [exp] is a variable reference whose taints carry a [BArg]
@@ -1659,44 +1679,53 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                  ])
               )
         | None ->
-            (* No signature found for callback (parameter during signature extraction).
-             * Preserve the ToSinkInCall effect, but update arg to refer to the enclosing function's parameter.
-             * When [rebind_arg_to_outer] is set, we already learned from the
-             * shape system that the callback is [outer_arg] + [outer_off] in
-             * the enclosing frame, so rebind to that directly (precise). *)
-            let callee_exp, updated_arg, updated_offset =
+            (* No signature found for callback (parameter during signature
+             * extraction). Preserve the ToSinkInCall effect, but update arg
+             * to refer to the enclosing function's parameter. When
+             * [rebind_arg_to_outer] is set, we already learned from the
+             * shape system that the callback is reachable via [outer_arg]
+             * at one or more [outer_offsets]; emit one preserved effect per
+             * outer offset so the enclosing's caller can dispatch each.
+             * Otherwise emit a single effect carrying the inner offset. *)
+            let callee_exp, updated_arg, updated_offsets =
               match args with
               | Some actual_args
                 when fun_arg.index < List.length actual_args -> (
                   match List.nth actual_args fun_arg.index with
                   | IL.Unnamed exp | IL.Named (_, exp) -> (
                       match rebind_arg_to_outer with
-                      | Some (outer_arg, outer_off) ->
-                          (exp, outer_arg, outer_off)
+                      | Some (outer_arg, outer_offsets) ->
+                          (exp, outer_arg, outer_offsets)
                       | None ->
                           let arg_opt = enclosing_param_of_exp exp in
                           ( exp,
                             Option.value arg_opt ~default:fun_arg,
-                            fun_arg_offset )))
-              | _ -> (fun_exp, fun_arg, fun_arg_offset)
+                            [ fun_arg_offset ] )))
+              | _ -> (fun_exp, fun_arg, [ fun_arg_offset ])
             in
             Log.debug (fun m ->
-                m "%s: No signature found for '%s', preserving ToSinkInCall effect with actual callee '%s' (arg=%s offset=%s)"
+                let pp_offsets =
+                  updated_offsets
+                  |> List.map T.show_offset_list
+                  |> String.concat " | "
+                in
+                m
+                  "%s: No signature found for '%s', preserving ToSinkInCall \
+                   effect with actual callee '%s' (arg=%s offsets=%s)"
                   (Display_IL.string_of_exp callee)
                   (Display_IL.string_of_exp fun_exp)
                   (Display_IL.string_of_exp callee_exp)
-                  (T.show_arg updated_arg)
-                  (T.show_offset_list updated_offset));
-            [
-              ToSinkInCall
-                {
-                  callee = callee_exp;
-                  arg = updated_arg;
-                  arg_offset = updated_offset;
-                  args_taints;
-                  guards = out_guards;
-                };
-            ])
+                  (T.show_arg updated_arg) pp_offsets);
+            updated_offsets
+            |> List.map (fun arg_offset ->
+                   ToSinkInCall
+                     {
+                       callee = callee_exp;
+                       arg = updated_arg;
+                       arg_offset;
+                       args_taints;
+                       guards = out_guards;
+                     }))
   in
   let effects_list = taint_sig.effects |> Effects.elements in
   let call_effects = effects_list |> List.concat_map inst_effect in

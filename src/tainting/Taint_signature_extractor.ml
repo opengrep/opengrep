@@ -117,7 +117,7 @@ let mk_method_property_assumptions (properties : G.expr list)
 
 (** Helper to add a parameter with Arg shape to the environment *)
 let add_param_to_env il_lval taint_set taint_arg env =
-  let param_shape = Shape.Arg (taint_arg, []) in
+  let param_shape = Shape.Arg (taint_arg, [ [] ]) in
   Taint_lval_env.add_lval_shape il_lval taint_set param_shape env
 
 (* [pattern_leaves_with_offsets] moved to [Dataflow_tainting] to avoid a
@@ -199,7 +199,7 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                              *   so the only way a source match at the
                              *   declaration can taint the leaf is by
                              *   consulting the rule predicate here. *)
-                            let leaf_shape = Shape.Arg (taint_arg, offset) in
+                            let leaf_shape = Shape.Arg (taint_arg, [ offset ]) in
                             let leaf_taint_lval : Taint.lval =
                               { base = BArg taint_arg; offset }
                             in

@@ -1,0 +1,17 @@
+rules:
+  - id: test-callback-paths
+    message: |
+      When a callback variable is assigned at different offsets of the
+      same parameter across the branches of an if/else, the engine
+      preserves every alternative offset at the Join and dispatches to
+      every resolved callback at the call site.
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

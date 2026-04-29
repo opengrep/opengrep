@@ -197,18 +197,14 @@ and unify_shape shape1 shape2 =
               (Signature.show_params params1)
               (Signature.show_params params2));
         shape1)
-  | Arg (arg1, off1), Arg (arg2, off2) when T.equal_arg arg1 arg2 ->
-      (* Same parameter, possibly different offsets — widen to the longest
-       * common prefix of the two paths. If the paths agree we keep the full
-       * offset; if they diverge we retain whatever they share and forget
-       * the rest. *)
-      let rec longest_common_prefix l1 l2 =
-        match (l1, l2) with
-        | x :: xs, y :: ys when T.equal_offset x y ->
-            x :: longest_common_prefix xs ys
-        | _ -> []
+  | Arg (arg1, offsets1), Arg (arg2, offsets2) when T.equal_arg arg1 arg2 ->
+      (* Same parameter — set-union the alternative offsets so a value
+       * bound to different offsets across branches retains every
+       * alternative. [sort_uniq] gives a canonical order and dedups. *)
+      let merged =
+        List.sort_uniq (List.compare T.compare_offset) (offsets1 @ offsets2)
       in
-      Arg (arg1, longest_common_prefix off1 off2)
+      Arg (arg1, merged)
   | Arg (arg1, _), Arg (arg2, _) ->
       (* Different parameters: the shape lattice would need constraint
        * solving to handle this precisely. See e.g.
@@ -336,10 +332,14 @@ let rec gather_all_taints_in_cell_acc acc cell =
 and gather_all_taints_in_shape_acc acc = function
   | Bot -> acc
   | Obj obj -> gather_all_taints_in_obj_acc acc obj
-  | Arg (arg, off) ->
-      let lval = { T.base = T.BArg arg; offset = off } in
-      let taint = { T.orig = T.Shape_var lval; tokens = [] } in
-      Taints.add taint acc
+  | Arg (arg, offsets) ->
+      (* One [Shape_var] per alternative offset. *)
+      List.fold_left
+        (fun acc off ->
+          let lval = { T.base = T.BArg arg; offset = off } in
+          let taint = { T.orig = T.Shape_var lval; tokens = [] } in
+          Taints.add taint acc)
+        acc offsets
   | Fun _ ->
       (* Consider a third-party/opaque function to which we pass a record that
        * contains a function object. Should be gather the taints in the function
@@ -382,7 +382,7 @@ and find_in_shape_w_carry ~taints offset shape =
   (* offset <> [] *)
   | Bot -> not_found
   | Obj obj -> find_in_obj_w_carry ~taints offset obj
-  | Arg (arg, base_off) ->
+  | Arg (arg, base_offsets) ->
       (* Mirror the method-vs-field discriminator from
        * [fix_poly_taint_with_offset]: when any offset segment has a
        * function type ([TyFun]), this is a method call on an [Arg]-shaped
@@ -400,7 +400,9 @@ and find_in_shape_w_carry ~taints offset shape =
           offset
       in
       if not offset_is_method then
-        let refined = Arg (arg, base_off @ offset) in
+        (* Extend each alternative path with the additional [offset]. *)
+        let extended = List.map (fun base_off -> base_off @ offset) base_offsets in
+        let refined = Arg (arg, extended) in
         let taints = fix_poly_taint_with_offset offset taints in
         `Found (Cell (Xtaint.of_taints taints, refined))
       else (
