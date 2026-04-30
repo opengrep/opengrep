@@ -53,7 +53,10 @@ let compare g1 g2 =
       (List.sort compare_param_ref g2.param_refs)
 
 let equal g1 g2 = compare g1 g2 = 0
-let show g = Display_IL.string_of_exp g.cond
+(* Use [IL_pp.pp_exp] for the same reason [compare_cond] does: it
+ * renders unary children (e.g. [Not]) in full, whereas
+ * [Display_IL.string_of_exp] elides them as "<OP Not ...>". *)
+let show g = IL_pp.pp_exp g.cond
 
 module Set = Stdlib.Set.Make (struct
   type nonrec t = t
