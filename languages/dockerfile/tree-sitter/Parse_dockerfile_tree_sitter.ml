@@ -793,8 +793,8 @@ let label_pair (env : env) (x : CST.label_pair) : label_pair =
         match v1 with
         | `Semg_meta tok ->
             Semgrep_metavar (str env tok (* pattern \$[A-Z_][A-Z_0-9]* *))
-        | `Pat_4128122 tok ->
-            Key (Unquoted (str env tok (* pattern [-a-zA-Z0-9\._]+ *)))
+        | `Pat_f266d6a tok ->
+            Key (Unquoted (str env tok (* pattern [-a-zA-Z0-9\._:]+ *)))
         | `Double_quoted_str x -> Key (double_quoted_string env x)
         | `Single_quoted_str x -> Key (single_quoted_string env x)
       in
@@ -802,6 +802,26 @@ let label_pair (env : env) (x : CST.label_pair) : label_pair =
       let value = string env v3 in
       let loc = key_or_metavar_loc key in
       Label_pair (loc, key, eq, value)
+
+let spaced_label_pair (env : env) ((v1, v2, v3) : CST.spaced_label_pair) :
+    label_pair =
+  let key = Key (Unquoted (str env v1 (* pattern [-a-zA-Z0-9\._:]+ *))) in
+  let blank = token env v2 (* pattern \s+ *) in
+  let value : docker_string =
+    match v3 with
+    | `Semg_meta tok ->
+        let tok = token env tok in
+        ((tok, tok), [ Frag_semgrep_metavar (Tok.content_of_tok tok, tok) ])
+    | `Double_quoted_str x ->
+        let fragment = double_quoted_string env x in
+        (docker_string_fragment_loc fragment, [ fragment ])
+    | `Single_quoted_str x ->
+        let fragment = single_quoted_string env x in
+        (docker_string_fragment_loc fragment, [ fragment ])
+    | `Unqu_str x -> unquoted_string env x
+  in
+  let loc = key_or_metavar_loc key in
+  Label_pair (loc, key, blank, value)
 
 let shell_command (env : env) (x : CST.shell_command) =
   match x with
@@ -964,10 +984,14 @@ let rec instruction (env : env) (x : CST.instruction) : env * instruction =
           (env, Cmd (loc, name, params, cmd))
       | `Label_inst (v1, v2) ->
           let name = str env v1 (* pattern [lL][aA][bB][eE][lL] *) in
-          let label_pairs = List_.map (label_pair env) v2 in
-          let loc = Tok_range.of_list label_pair_loc label_pairs in
+          let pairs =
+            match v2 with
+            | `Rep1_label_pair xs -> List_.map (label_pair env) xs
+            | `Spaced_label_pair x -> [ spaced_label_pair env x ]
+          in
+          let loc = Tok_range.of_list label_pair_loc pairs in
           let loc = Tok_range.extend loc (snd name) in
-          (env, Label (loc, name, label_pairs))
+          (env, Label (loc, name, pairs))
       | `Expose_inst (v1, v2) ->
           let name = str env v1 (* pattern [eE][xX][pP][oO][sS][eE] *) in
           let port_protos =

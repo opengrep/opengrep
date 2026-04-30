@@ -269,7 +269,7 @@ let label_pair_exprs (instr_name : string wrap) (kv_pairs : label_pair list) :
                 sense since each key=value pair gets its own ENV call.
                 Such an ellipsis is ignored. *)
              None
-       | Label_pair (loc, key, _eq, value) ->
+       | Label_pair (loc, key, _sep, value) ->
            let key_expr = key_or_metavar_expr key in
            let value_expr = docker_string_expr value in
            Some (call instr_name loc [ G.Arg key_expr; G.Arg value_expr ]))
