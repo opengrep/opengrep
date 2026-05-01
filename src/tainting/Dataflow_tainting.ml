@@ -335,7 +335,8 @@ let record_effects env new_effects =
             m "GUARD_STAMP: stamping %d effect(s) with %s"
               (List.length new_effects)
               (Effect_guard.show_set active));
-        List.map (Effect.add_guards active) new_effects)
+        let g = Effect_guard.conjoin (Effect_guard.Set.elements active) in
+        List.map (Effect.add_guards g) new_effects)
     in
     env.effects_acc := Effects.add_list new_effects !(env.effects_acc)
 
@@ -441,8 +442,8 @@ let partition_sources_by_side_effect sources_matches =
  * (there is just no point in doing so). *)
 let get_control_taints_to_return env =
   Lval_env.get_control_taints env.lval_env
-  |> Taints.filter (fun ({ orig; _ } : T.taint) ->
-         match orig with
+  |> Taints.filter (fun (b : T.guarded_taint) ->
+         match b.taint.orig with
          | T.Src _ -> true
          | Var _
          | Shape_var _
@@ -601,7 +602,7 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
                       taints_with_precondition = ([ t ], R.get_sink_requires ts);
                       sink;
                       merged_env;
-                      guards = Effect_guard.Set.empty;
+                      guards = Effect_guard.top;
                     }))
       else
         match
@@ -617,7 +618,7 @@ let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
                     (List_.map fst taints_and_bindings, R.get_sink_requires ts);
                   sink;
                   merged_env;
-                  guards = Effect_guard.Set.empty;
+                  guards = Effect_guard.top;
                 };
             ])
 
@@ -636,32 +637,53 @@ let effects_of_tainted_sinks env taints sinks : Effect.t list =
               but it starts out here as just a PM variant.
            *)
            let taints_with_traces =
-             taints |> Taints.elements
-             |> List_.map (fun t ->
+             taints |> Taints.to_taint_list
+             |> List_.map (fun (t : T.taint) ->
                     { Effect.taint = t; sink_trace = T.PM (sink.Effect.pm, ()) })
            in
            effects_of_tainted_sink env taints_with_traces sink)
 
 let effects_of_tainted_return env taints shape return_tok : Effect.t list =
   let control_taints = get_control_taints_to_return env in
-  if
-    Shape.taints_and_shape_are_relevant taints shape
-    || not (Taints.is_empty control_taints)
-  then
-    let data_taints =
-      taints |> Taints.map (fun t -> { t with T.tokens = List.rev t.T.tokens })
+  let relevant_data = Shape.taints_and_shape_are_relevant taints shape in
+  let has_ctrl = not (Taints.is_empty control_taints) in
+  if (not relevant_data) && not has_ctrl then []
+  else
+    (* Emit one [ToReturn] per [(taint, guard)] bundle so that disjunctive
+     * provenance survives instantiation: each bundle's [guard] becomes the
+     * effect's own [guards] field, which [Sig_inst.classify_guards]
+     * evaluates per effect at the caller. *)
+    let data_returns =
+      Taints.elements taints
+      |> List_.map (fun (b : T.guarded_taint) ->
+             let t = { b.taint with T.tokens = List.rev b.taint.T.tokens } in
+             let single =
+               Taints.add (T.lift_taint t) Taints.empty
+             in
+             Effect.ToReturn
+               {
+                 data_taints = single;
+                 data_shape = shape;
+                 control_taints = Taints.empty;
+                 return_tok;
+                 guards = b.guard;
+               })
     in
-    [
-      Effect.ToReturn
-        {
-          data_taints;
-          data_shape = shape;
-          control_taints;
-          return_tok;
-          guards = Effect_guard.Set.empty;
-        };
-    ]
-  else []
+    let ctrl_return =
+      if has_ctrl then
+        [
+          Effect.ToReturn
+            {
+              data_taints = Taints.empty;
+              data_shape = Bot;
+              control_taints;
+              return_tok;
+              guards = Effect_guard.top;
+            };
+        ]
+      else []
+    in
+    data_returns @ ctrl_return
 
 (* If a 'fun_exp' has no known taint signature, then it should have a polymorphic
  * shape and we record its effects with an "effect variable" (that's kind of what
@@ -683,7 +705,7 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
                  arg = fun_arg;
                  arg_offset;
                  args_taints;
-                 guards = Effect_guard.Set.empty;
+                 guards = Effect_guard.top;
                })
   | __else__ ->
       Log.debug (fun m ->
@@ -1032,7 +1054,7 @@ let handle_taint_propagators env thing taints shape =
               match prop.TM.spec.prop.propagator_label with
               | None -> taints
               | Some label ->
-                  Taints.map
+                  Taints.map_taint
                     (propagate_taint_to_label
                        prop.spec.prop.propagator_replace_labels label)
                     taints
@@ -1704,7 +1726,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                 _;
               } ->
               let combined_guards =
-                Effect_guard.Set.union rebound_guards inner_guards
+                Effect_guard.compose_and rebound_guards inner_guards
               in
               let sink_effects =
                 effects_of_tainted_sink env incoming_taints sink
@@ -1719,7 +1741,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                              taints_with_precondition =
                                (fst eff.taints_with_precondition, requires);
                              guards =
-                               Effect_guard.Set.union eff.guards
+                               Effect_guard.compose_and eff.guards
                                  combined_guards;
                            }
                      | other -> other)
@@ -1757,7 +1779,7 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                       arg_offset;
                       args_taints;
                       guards =
-                        Effect_guard.Set.union rebound_guards inner_guards;
+                        Effect_guard.compose_and rebound_guards inner_guards;
                     };
                 ];
               (taints_acc, shape_acc, lval_env))
@@ -1931,7 +1953,7 @@ let check_function_call env fun_exp args
                                   taints_with_precondition =
                                     (fst eff.taints_with_precondition, requires);
                                   guards =
-                                    Effect_guard.Set.union eff.guards
+                                    Effect_guard.compose_and eff.guards
                                       rebound_guards;
                                 }
                           | other -> other)
@@ -1946,25 +1968,17 @@ let check_function_call env fun_exp args
                      guards = inner_guards;
                      _;
                    } ->
-                   (* Merge the callee's rebound guards into [active_guards]
-                    * for the rest of this function's analysis. When the
-                    * outer function later emits its own [ToReturn] at
-                    * [NReturn] via [effects_of_tainted_return -> record_effects],
-                    * [Effect.add_guards] stamps it with the merged set,
-                    * propagating the inner guard through the forwarder.
-                    *
-                    * Limitation: [active_guards] uses join-intersection,
-                    * so guards added inside one branch are lost after a
-                    * Join with a branch that didn't add them. The simple
-                    * forwarding pattern [return inner(p)] (no joins
-                    * between the call and the return) works; cases where
-                    * the call is inside an [if] but the return is after
-                    * the join lose the guard. A future per-lval guard
-                    * tracking would survive joins. *)
-                   let lval_env =
-                     Effect_guard.Set.fold Lval_env.add_active_guard
-                       inner_guards lval_env
-                   in
+                   (* Conjoin the callee's rebound guard onto each per-taint
+                    * bundle. The bundles travel with the value through the
+                    * outer's storage; at outer's later emission sites
+                    * ([effects_of_tainted_return], [record_effects],
+                    * [effects_from_arg_updates_at_exit]) one effect emerges
+                    * per bundle, each carrying its own guard. Fan-in of
+                    * disjoint inner branches is preserved as separate
+                    * bundles in [Taint_set] and fused via [compose_or] at
+                    * joins — the smart-constructor complement rule then
+                    * folds [G or not G] to [top]. *)
+                   let taints = Taints.conjoin_guard inner_guards taints in
                    ( Taints.union taints taints_acc,
                      Shape.unify_shape shape shape_acc,
                      Lval_env.add_control_taints lval_env control_taints )
@@ -2347,7 +2361,7 @@ let call_with_intrafile lval_opt e env args instr =
                               {
                                 taints = obj_taints;
                                 lval = receiver_taint_lval;
-                                guards = Effect_guard.Set.empty;
+                                guards = Effect_guard.top;
                               }
                           in
                           record_effects { env with lval_env } [ receiver_effect ];
@@ -2435,7 +2449,7 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
                      {
                        taints;
                        lval = taint_lval;
-                       guards = Effect_guard.Set.empty;
+                       guards = Effect_guard.top;
                      };
                  ]
                in
@@ -2685,8 +2699,8 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
              (* For each lval in the enter_env, we get its `T.lval`, and check
               * if it got new taints at the exit_env. If so, we generate a 'ToLval'. *)
              match
-               enter_taints |> Taints.elements
-               |> List_.filter_map (fun taint ->
+               enter_taints |> Taints.to_taint_list
+               |> List_.filter_map (fun (taint : T.taint) ->
                       match taint.T.orig with
                       | T.Var lval -> Some lval
                       | _ -> None)
@@ -2708,7 +2722,7 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
                                {
                                  taints = new_taints;
                                  lval;
-                                 guards = Effect_guard.Set.empty;
+                                 guards = Effect_guard.top;
                                })
                         else None)))
   |> Seq.concat |> List.of_seq
@@ -2989,7 +3003,7 @@ let mk_lambda_in_env env lcfg =
                           T.{ orig = Var leaf_taint_lval; tokens = [] }
                         in
                         let leaf_taints =
-                          T.Taint_set.add leaf_taint source_taints
+                          T.Taint_set.add_taint leaf_taint source_taints
                         in
                         Lval_env.add_lval_shape leaf_lval leaf_taints
                           leaf_shape lval_env)
@@ -3041,16 +3055,6 @@ let guard_of_cond (params : IL.param list) (cond : IL.exp) :
   | None -> None
   | Some param_refs -> Some { Effect_guard.cond; param_refs }
 
-(* Wrap [cond] in [Operator(Not, [cond])]. Used at [FalseNode] so the
- * evaluator's single "cond must resolve to [G.Lit (G.Bool true)]" rule
- * applies whether the effect was recorded under the true or false branch. *)
-let wrap_not (cond : IL.exp) : IL.exp =
-  let tok = Tok.unsafe_fake_tok "!" in
-  {
-    IL.e = IL.Operator ((G.Not, tok), [ IL.Unnamed cond ]);
-    eorig = cond.eorig;
-  }
-
 let rec recognise_true_cond (params : IL.param list) (cond : IL.exp) :
     Effect_guard.t list =
   match cond.e with
@@ -3067,7 +3071,7 @@ and recognise_false_cond (params : IL.param list) (cond : IL.exp) :
       recognise_false_cond params a @ recognise_false_cond params b
   | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
       recognise_true_cond params sub
-  | _ -> Option.to_list (guard_of_cond params (wrap_not cond))
+  | _ -> Option.to_list (guard_of_cond params (IL_helpers.wrap_not cond))
 
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
  fun enter_env ~fun_cfg
@@ -3240,7 +3244,9 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
   let effects =
     let active = Lval_env.active_guards env.lval_env in
     if Effect_guard.Set.is_empty active then effects
-    else Effects.map (Effect.add_guards active) effects
+    else
+      let g = Effect_guard.conjoin (Effect_guard.Set.elements active) in
+      Effects.map (Effect.add_guards g) effects
   in
   let out_env =
     if node_is_call then

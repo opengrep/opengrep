@@ -322,11 +322,11 @@ and Effect : sig
     merged_env : Metavariable.bindings;
         (** The metavariable environment that results of merging the environment
             from * matching the source and the one from matching the sink. *)
-    guards : Effect_guard.Set.t;
-        (** Engine-emitted arity/shape guards (conjunction). Evaluated at
-            signature instantiation against the caller's actual argument shapes;
-            if any is definitely-false, the effect is dropped before producing
-            a finding. Empty list = unconstrained. *)
+    guards : Effect_guard.t;
+        (** Engine-emitted arity/shape/branch guard. Evaluated at signature
+            instantiation against the caller's actual arguments; if it folds
+            to definitely-false the effect is dropped before producing a
+            finding. [Effect_guard.top] = unconstrained. *)
   }
 
   type taints_to_return = {
@@ -338,14 +338,14 @@ and Effect : sig
         (** The taints propagated via the control flow (cf., `control: true`
             sources) * used for reachability queries. *)
     return_tok : AST_generic.tok;
-    guards : Effect_guard.Set.t;
+    guards : Effect_guard.t;
         (** See note on [taints_to_sink.guards]. *)
   }
 
   type taints_to_lval = {
     taints : Taint.taints;
     lval : Taint.lval;
-    guards : Effect_guard.Set.t;
+    guards : Effect_guard.t;
         (** See note on [taints_to_sink.guards]. *)
   }
 
@@ -400,7 +400,7 @@ and Effect : sig
                 argument list), this is the offset path from [arg] to the
                 callback. Empty when [arg] itself is the callback. *)
         args_taints : args_taints;
-        guards : Effect_guard.Set.t;
+        guards : Effect_guard.t;
             (** See note on [taints_to_sink.guards]. *)
       }
         (** Essentially a preliminary form of "effect variable". It represents *
@@ -412,13 +412,14 @@ and Effect : sig
   val compare : t -> t -> int
   val show : t -> string
 
-  val add_guards : Effect_guard.Set.t -> t -> t
-  (** [add_guards gs eff] returns [eff] with [gs] unioned into its [guards]
-      field. Used by the transfer when stamping effects with the branch
-      context they were recorded under. Empty [gs] returns [eff] unchanged. *)
+  val add_guards : Effect_guard.t -> t -> t
+  (** [add_guards g eff] returns [eff] with [g] composed via [And] into its
+      [guards] field. [Effect_guard.top] returns [eff] unchanged. Used by the
+      transfer when stamping effects with the branch context they were
+      recorded under. *)
 
-  val guards_of : t -> Effect_guard.Set.t
-  (** Return the guards stamped on an effect. *)
+  val guards_of : t -> Effect_guard.t
+  (** Return the guard stamped on an effect. *)
 
   (* Mainly for debugging *)
   val show_sink : sink -> string
@@ -441,7 +442,7 @@ end = struct
     taints_with_precondition : taint_to_sink_item list * R.precondition;
     sink : sink;
     merged_env : Metavariable.bindings;
-    guards : Effect_guard.Set.t;
+    guards : Effect_guard.t;
   }
 
   type taints_to_return = {
@@ -449,13 +450,13 @@ end = struct
     data_shape : Shape.shape;
     control_taints : Taint.taints;
     return_tok : AST_generic.tok;
-    guards : Effect_guard.Set.t;
+    guards : Effect_guard.t;
   }
 
   type taints_to_lval = {
     taints : T.taints;
     lval : T.lval;
-    guards : Effect_guard.Set.t;
+    guards : Effect_guard.t;
   }
 
   type args_taints = (Taints.t * Shape.shape) IL.argument list
@@ -469,7 +470,7 @@ end = struct
         arg : Taint.arg;
         arg_offset : Taint.offset list;
         args_taints : args_taints;
-        guards : Effect_guard.Set.t;
+        guards : Effect_guard.t;
       }
 
   (*************************************)
@@ -506,7 +507,7 @@ end = struct
             match R.compare_precondition pre1 pre2 with
             | 0 -> (
                 match T.compare_metavar_env env1 env2 with
-                | 0 -> Effect_guard.Set.compare guards1 guards2
+                | 0 -> Effect_guard.compare guards1 guards2
                 | other -> other)
             | other -> other)
         | other -> other)
@@ -532,7 +533,7 @@ end = struct
         match Shape.compare_shape data_shape1 data_shape2 with
         | 0 -> (
             match Taints.compare control_taints1 control_taints2 with
-            | 0 -> Effect_guard.Set.compare guards1 guards2
+            | 0 -> Effect_guard.compare guards1 guards2
             | other -> other)
         | other -> other)
     | other -> other
@@ -543,7 +544,7 @@ end = struct
     match Taints.compare ts1 ts2 with
     | 0 -> (
         match T.compare_lval lv1 lv2 with
-        | 0 -> Effect_guard.Set.compare guards1 guards2
+        | 0 -> Effect_guard.compare guards1 guards2
         | other -> other)
     | other -> other
 
@@ -594,7 +595,7 @@ end = struct
                     match
                       List.compare compare_arg args_taints1 args_taints2
                     with
-                    | 0 -> Effect_guard.Set.compare guards1 guards2
+                    | 0 -> Effect_guard.compare guards1 guards2
                     | other -> other)
                 | other -> other)
             | other -> other)
@@ -636,12 +637,12 @@ end = struct
   let show_taints_to_sink
       { taints_with_precondition = taints, _; sink; guards; _ } =
     Common.spf "%s%s ~~~> %s" (show_taints_and_traces taints)
-      (Effect_guard.show_set guards)
+      (Effect_guard.show_in_brackets guards)
       (show_sink sink)
 
   let show_taints_to_return { data_taints; data_shape; control_taints; guards; _ } =
     Printf.sprintf "return%s (%s & %s & CTRL:%s)"
-      (Effect_guard.show_set guards)
+      (Effect_guard.show_in_brackets guards)
       (T.show_taints data_taints)
       (Shape.show_shape data_shape)
       (T.show_taints control_taints)
@@ -662,25 +663,25 @@ end = struct
     | ToReturn ttr -> show_taints_to_return ttr
     | ToLval { taints; lval; guards; _ } ->
         Printf.sprintf "%s%s ----> %s" (T.show_taints taints)
-          (Effect_guard.show_set guards) (T.show_lval lval)
+          (Effect_guard.show_in_brackets guards) (T.show_lval lval)
     | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
         Printf.sprintf "'call<%s>%s%s" (T.show_arg arg)
           (show_args_taints args_taints)
-          (Effect_guard.show_set guards)
+          (Effect_guard.show_in_brackets guards)
 
-  let add_guards gs eff =
-    if Effect_guard.Set.is_empty gs then eff
+  let add_guards g eff =
+    if Effect_guard.is_top g then eff
     else
       match eff with
       | ToSink tts ->
-          ToSink { tts with guards = Effect_guard.Set.union tts.guards gs }
+          ToSink { tts with guards = Effect_guard.compose_and tts.guards g }
       | ToReturn ttr ->
-          ToReturn { ttr with guards = Effect_guard.Set.union ttr.guards gs }
+          ToReturn { ttr with guards = Effect_guard.compose_and ttr.guards g }
       | ToLval ttl ->
-          ToLval { ttl with guards = Effect_guard.Set.union ttl.guards gs }
+          ToLval { ttl with guards = Effect_guard.compose_and ttl.guards g }
       | ToSinkInCall r ->
           ToSinkInCall
-            { r with guards = Effect_guard.Set.union r.guards gs }
+            { r with guards = Effect_guard.compose_and r.guards g }
 
   let guards_of = function
     | ToSink { guards; _ } -> guards

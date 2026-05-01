@@ -152,17 +152,17 @@ let fix_poly_taint_with_offset offset taints =
             (* Not a method call (to the best of our knowledge) or
              * an unresolved Java `getX` method. *)
              taints
-             |> Taints.map (fun taint ->
-                  match taint.orig with
-                  | Var lval ->
-                      let lval' = add_offset_to_lval o lval in
-                      { taint with orig = Var lval' }
-                  | Shape_var lval ->
-                      let lval' = add_offset_to_lval o lval in
-                      { taint with orig = Shape_var lval' }
-                  | Src _
-                  | Control ->
-                      taint))
+             |> Taints.map_taint (fun (taint : T.taint) ->
+                    match taint.orig with
+                    | Var lval ->
+                        let lval' = add_offset_to_lval o lval in
+                        { taint with orig = Var lval' }
+                    | Shape_var lval ->
+                        let lval' = add_offset_to_lval o lval in
+                        { taint with orig = Shape_var lval' }
+                    | Src _
+                    | Control ->
+                        taint))
        taints
 
 (*********************************************************)
@@ -338,7 +338,7 @@ and gather_all_taints_in_shape_acc acc = function
         (fun acc off ->
           let lval = { T.base = T.BArg arg; offset = off } in
           let taint = { T.orig = T.Shape_var lval; tokens = [] } in
-          Taints.add taint acc)
+          Taints.add_taint taint acc)
         acc offsets
   | Fun _ ->
       (* Consider a third-party/opaque function to which we pass a record that

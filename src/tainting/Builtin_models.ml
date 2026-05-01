@@ -32,7 +32,9 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
   let this_taint =
     Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] }
   in
-  let this_taint_set = Taint.Taint_set.singleton this_taint in
+  let this_taint_set =
+    Taint.Taint_set.singleton this_taint
+  in
   let args_taints = make_args_taints this_taint_set taint_arg_index in
 
   (* The effect when the returned function is called with a callback *)
@@ -47,7 +49,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
         arg = { Taint.name = "callback"; index = 0 };
         arg_offset = [];
         args_taints;
-        guards = Effect_guard.Set.empty;
+        guards = Effect_guard.top;
       }
   in
 
@@ -67,7 +69,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
         data_shape = Shape.Fun returned_fun_sig;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
-        guards = Effect_guard.Set.empty;
+        guards = Effect_guard.top;
       }
   in
   let method_sig =
@@ -121,7 +123,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
         arg = callback_arg;
         arg_offset = [];
         args_taints;
-        guards = Effect_guard.Set.empty;
+        guards = Effect_guard.top;
       }
   in
 
@@ -134,7 +136,7 @@ let add_function_hof_signatures db function_names arity ?(callback_index = 0)
         data_shape = Shape.Bot;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
-        guards = Effect_guard.Set.empty;
+        guards = Effect_guard.top;
       }
   in
 
@@ -174,7 +176,9 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
   let this_taint =
     Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] }
   in
-  let this_taint_set = Taint.Taint_set.singleton this_taint in
+  let this_taint_set =
+    Taint.Taint_set.singleton this_taint
+  in
   let args_taints = make_args_taints this_taint_set taint_arg_index in
 
   let hof_effect =
@@ -188,7 +192,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
         arg = callback_arg;
         arg_offset = [];
         args_taints;
-        guards = Effect_guard.Set.empty;
+        guards = Effect_guard.top;
       }
   in
 
@@ -202,7 +206,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
         data_shape = Shape.Bot;
         control_taints = Taint.Taint_set.empty;
         return_tok = Tok.unsafe_fake_tok "builtin_hof";
-        guards = Effect_guard.Set.empty;
+        guards = Effect_guard.top;
       }
   in
 
@@ -292,8 +296,7 @@ let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
         eorig = IL.NoOrig;
       }
     in
-    Effect_guard.Set.singleton
-      { Effect_guard.cond; param_refs = [ (impl_il_name, 0) ] }
+    { Effect_guard.cond; param_refs = [ (impl_il_name, 0) ] }
   in
   let hof_effect =
     Effect.ToSinkInCall
@@ -416,7 +419,7 @@ let return_effect taint_set =
       data_shape = Shape.Bot;
       control_taints = Taint.Taint_set.empty;
       return_tok = Tok.unsafe_fake_tok "builtin";
-      guards = Effect_guard.Set.empty;
+      guards = Effect_guard.top;
     }
 
 let to_lval_this taint_set =
@@ -424,7 +427,7 @@ let to_lval_this taint_set =
     {
       taints = taint_set;
       lval = { Taint.base = BThis; offset = [] };
-      guards = Effect_guard.Set.empty;
+      guards = Effect_guard.top;
     }
 
 let add_method_signatures db method_names arity effects =

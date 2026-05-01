@@ -231,7 +231,8 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                               else Taint.Taint_set.empty
                             in
                             let leaf_taints =
-                              Taint.Taint_set.add leaf_taint source_taints
+                              Taint.Taint_set.add_taint leaf_taint
+                                source_taints
                             in
                             Taint_lval_env.add_lval_shape leaf_lval leaf_taints
                               leaf_shape env)
@@ -322,8 +323,8 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                   m "TAINT_SIG: ToReturn effect captured for %s" func_name);
               let filtered_data_taints =
                 return_info.data_taints
-                |> Taint.Taint_set.filter (fun taint ->
-                       match taint.Taint.orig with
+                |> Taint.Taint_set.filter (fun (b : Taint.guarded_taint) ->
+                       match b.taint.Taint.orig with
                        | Taint.Shape_var _ -> false (* Shape vars cannot materialize values. *)
                        | _ -> true)
               in
@@ -345,8 +346,8 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                (* Keep ToLval effects - they represent legitimate data flow patterns
                 * that become important when parameters receive real source taint *)
                let has_relevant_taint =
-                 taints |> Taint.Taint_set.elements
-                 |> List.exists (fun taint ->
+                 taints |> Taint.Taint_set.to_taint_list
+                 |> List.exists (fun (taint : Taint.taint) ->
                         match taint.Taint.orig with
                         | Taint.Src _ -> true (* Real source taint *)
                         | Taint.Var _ -> true (* Parameter taint - keep it! *)

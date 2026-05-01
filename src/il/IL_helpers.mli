@@ -51,3 +51,32 @@ val reachable_nodes : IL.fun_cfg -> IL.node Seq.t
 
 val lval_is_lambda : IL.lambdas_cfgs -> IL.lval -> (IL.name * IL.fun_cfg) option
 (** Lookup an 'lval' in a 'lambdas_cfgs' table to obtain the lambda's CFG. *)
+
+(** {2 Boolean smart constructors over [IL.exp]} *)
+
+val lit_bool : eorig:IL.orig -> bool -> IL.exp
+(** Lift a concrete boolean into an [IL.exp] using a fake token. *)
+
+val is_lit_bool : bool -> IL.exp -> bool
+(** [is_lit_bool b e] is true iff [e] is the literal [b]. *)
+
+val wrap_not : IL.exp -> IL.exp
+(** Wrap [cond] in [Operator(Not, [cond])]. *)
+
+val il_exp_equal : IL.exp -> IL.exp -> bool
+(** Compare two [IL.exp]s by their [IL_pp.pp_exp] form; matches
+    [Effect_guard.compare_cond] so syntactic complement detection
+    aligns with guard dedup. *)
+
+val is_complement : IL.exp -> IL.exp -> bool
+(** Direct syntactic complement: [a] vs [Not a]. Catches atom-level
+    negation only; De-Morgan-equivalent compounds are not detected. *)
+
+val wrap_and : IL.exp list -> IL.exp
+(** Smart n-ary [And]. Empty list produces [true]; singletons returned
+    as-is; nested [And] flattened; [true] absorbed; any [false]
+    short-circuits to [false]; direct syntactic complement among args
+    folds to [false]. General case is right-nested binary. *)
+
+val wrap_or : IL.exp list -> IL.exp
+(** Smart n-ary [Or]; dual to [wrap_and]. *)
