@@ -223,7 +223,8 @@ let add_shape var offset new_taints new_shape lval_env =
         if Tok.is_fake var_tok then new_taints
         else
           new_taints
-          |> Taints.map (fun t -> { t with tokens = var_tok :: t.tokens })
+          |> Taints.map_taint (fun (t : T.taint) ->
+                 { t with tokens = var_tok :: t.tokens })
       in
       {
         lval_env with

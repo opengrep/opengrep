@@ -1,0 +1,17 @@
+rules:
+  - id: test-guards-disjoint
+    message: |
+      Disjoint-branch ToReturn through a forwarder. The callee returns
+      tainted values on multiple branches with disjoint guards; the
+      forwarder must propagate the disjunction so every caller
+      satisfying the precondition fires.
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

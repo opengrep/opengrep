@@ -18,10 +18,10 @@ type call_effect =
       arg : Taint.arg;
       arg_offset : Taint.offset list;
       args_taints : Shape_and_sig.Effect.args_taints;
-      guards : Effect_guard.Set.t;
-          (** Rebound guards on the preserved ToSinkInCall. When the
+      guards : Effect_guard.t;
+          (** Rebound guard on the preserved ToSinkInCall. When the
               caller resolves the callback at a deeper call chain the
-              guards travel with the effect and may still drop it. *)
+              guard travels with the effect and may still drop it. *)
     }
 
 type call_effects = call_effect list

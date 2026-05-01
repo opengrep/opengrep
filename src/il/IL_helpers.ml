@@ -265,3 +265,151 @@ let lval_is_lambda lambdas_cfgs lval =
   | { base = Var _ | VarSpecial _ | Mem _; rev_offset = _ } ->
       (* Lambdas are only assigned to plain variables without any offset. *)
       None
+
+(***********************************************)
+(* Boolean smart constructors over IL.exp      *)
+(***********************************************)
+
+(* All taint-engine boolean composition flows through these. The taint
+ * engine uses [Effect_guard.t] (an [IL.exp] cond plus its param refs)
+ * as its single guard representation; smart constructors here keep the
+ * cond in a partially-normalised compound form without expanding to
+ * full CNF or DNF. Composition via [wrap_and]/[wrap_or] supports both
+ * the recogniser's incremental atom collection and the engine's
+ * disjunctive provenance from joins / fan-in. *)
+
+let lit_bool ~(eorig : IL.orig) (b : bool) : IL.exp =
+  let tok = Tok.unsafe_fake_tok (if b then "true" else "false") in
+  { IL.e = IL.Literal (G.Bool (b, tok)); eorig }
+
+let is_lit_bool (b : bool) (e : IL.exp) : bool =
+  match e.e with
+  | IL.Literal (G.Bool (b', _)) -> Bool.equal b b'
+  | _ -> false
+
+(* Wrap [cond] in [Operator(Not, [cond])]. Used at [FalseNode] so the
+ * evaluator's single "cond must resolve to [G.Lit (G.Bool true)]" rule
+ * applies whether the effect was recorded under the true or false
+ * branch. *)
+let wrap_not (cond : IL.exp) : IL.exp =
+  let tok = Tok.unsafe_fake_tok "!" in
+  {
+    IL.e = IL.Operator ((G.Not, tok), [ IL.Unnamed cond ]);
+    eorig = cond.eorig;
+  }
+
+(* Compare two [IL.exp]s by their pretty-printed form; matches
+ * [Effect_guard.compare_cond] so syntactic complement detection is
+ * consistent with guard set dedup semantics. *)
+let il_exp_equal (a : IL.exp) (b : IL.exp) : bool =
+  String.equal (IL_pp.pp_exp a) (IL_pp.pp_exp b)
+
+(* Direct syntactic complement: [a] vs [Not a].
+ *
+ * NOTE: Catches direct atom-level negation only. Compound shapes like
+ * [Op Or [a; b]] vs [Op And [Op Not a; Op Not b]] are
+ * De-Morgan-equivalent but not detected here; they require a vector
+ * walker, deferred. Sound either way: an unsimplified compound cond is
+ * correctly evaluated by [Eval_il_partial.eval] when concrete arguments
+ * are known. *)
+let is_complement (a : IL.exp) (b : IL.exp) : bool =
+  let inner_of_not (e : IL.exp) =
+    match e.e with
+    | IL.Operator ((G.Not, _), [ IL.Unnamed inner ]) -> Some inner
+    | _ -> None
+  in
+  match (inner_of_not a, inner_of_not b) with
+  | Some a', _ -> il_exp_equal a' b
+  | _, Some b' -> il_exp_equal a b'
+  | None, None -> false
+
+(* Flatten nested [Operator(op, _)] of the same kind into a list. *)
+let flatten_same_op (op : G.operator) (es : IL.exp list) : IL.exp list =
+  List.concat_map
+    (fun (e : IL.exp) ->
+      match e.e with
+      | IL.Operator ((op', _), args) when AST_generic.equal_operator op op' ->
+          List.map exp_of_arg args
+      | _ -> [ e ])
+    es
+
+(* Order-preserving dedup by [IL_pp.pp_exp] equality. Used to keep
+ * [wrap_and]/[wrap_or] from growing their operand list with duplicates
+ * across fixpoint iterations: [wrap_or [X; X]] becomes [X], so the
+ * lattice on guards reaches a fixed point on its own rather than
+ * relying on [taint_MAX_VISITS_PER_NODE] to bail. *)
+let dedup_exps (es : IL.exp list) : IL.exp list =
+  let seen = Hashtbl.create 8 in
+  List.filter
+    (fun e ->
+      let key = IL_pp.pp_exp e in
+      if Hashtbl.mem seen key then false
+      else (
+        Hashtbl.add seen key ();
+        true))
+    es
+
+(* Return true iff [es] contains a pair [(a, b)] with [is_complement a b]. *)
+let rec has_complement_pair (es : IL.exp list) : bool =
+  match es with
+  | [] | [ _ ] -> false
+  | x :: rest -> List.exists (is_complement x) rest || has_complement_pair rest
+
+(* Build a right-nested binary [Operator(op, _)] from a non-empty list.
+ * Right-nesting matches [Eval_il_partial.eval]'s binary [Op And/Or]
+ * pattern, which folds two [Lit Bool] operands. *)
+let rec binary_fold_op (op : G.operator) (es : IL.exp list) : IL.exp =
+  let tok =
+    Tok.unsafe_fake_tok
+      (match op with
+      | G.And -> "&&"
+      | G.Or -> "||"
+      | _ -> "?")
+  in
+  match es with
+  | [] -> assert false (* unreachable: callers ensure non-empty *)
+  | [ e ] -> e
+  | first :: rest ->
+      let right = binary_fold_op op rest in
+      {
+        IL.e = IL.Operator ((op, tok), [ IL.Unnamed first; IL.Unnamed right ]);
+        eorig = first.eorig;
+      }
+
+(* Smart [And] over [IL.exp]: empty -> true, singleton returned as-is,
+ * nested same-kind flattened, [true] absorbed, any [false]
+ * short-circuits to false, direct syntactic complement among args
+ * folds to false. Right-nested binary in the general case so
+ * [Eval_il_partial.eval] can fold it. *)
+let wrap_and (es : IL.exp list) : IL.exp =
+  let es = es |> flatten_same_op G.And |> dedup_exps in
+  match es with
+  | [] -> lit_bool ~eorig:IL.NoOrig true
+  | [ e ] -> e
+  | _ when List.exists (is_lit_bool false) es ->
+      lit_bool ~eorig:(List.hd es).eorig false
+  | _ ->
+      let es = List.filter (fun e -> not (is_lit_bool true e)) es in
+      (match es with
+      | [] -> lit_bool ~eorig:IL.NoOrig true
+      | [ e ] -> e
+      | _ when has_complement_pair es ->
+          lit_bool ~eorig:(List.hd es).eorig false
+      | _ -> binary_fold_op G.And es)
+
+(* Smart [Or] over [IL.exp]: dual to [wrap_and]. *)
+let wrap_or (es : IL.exp list) : IL.exp =
+  let es = es |> flatten_same_op G.Or |> dedup_exps in
+  match es with
+  | [] -> lit_bool ~eorig:IL.NoOrig false
+  | [ e ] -> e
+  | _ when List.exists (is_lit_bool true) es ->
+      lit_bool ~eorig:(List.hd es).eorig true
+  | _ ->
+      let es = List.filter (fun e -> not (is_lit_bool false e)) es in
+      (match es with
+      | [] -> lit_bool ~eorig:IL.NoOrig false
+      | [ e ] -> e
+      | _ when has_complement_pair es ->
+          lit_bool ~eorig:(List.hd es).eorig true
+      | _ -> binary_fold_op G.Or es)
