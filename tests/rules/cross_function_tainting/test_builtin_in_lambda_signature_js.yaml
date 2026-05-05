@@ -1,0 +1,11 @@
+rules:
+  - id: test-builtin-in-lambda-signature
+    message: Taint reaches sink via a lambda that uses Array.push internally
+    languages:
+      - js
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: getInput()
+    pattern-sinks:
+      - pattern: sink(...)

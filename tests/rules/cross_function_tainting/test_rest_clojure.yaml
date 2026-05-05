@@ -1,0 +1,17 @@
+rules:
+  - id: test-rest-clojure
+    message: |
+      Clojure variadic rest [& rest] binds the trailing slice of the
+      call's argument list. With the Slice IL primitive, a sink reading
+      [rest] catches taint from any position >= k (the rest start) but
+      not from positions bound by fixed slots before [&].
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)

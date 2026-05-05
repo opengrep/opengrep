@@ -126,9 +126,37 @@ val clean : env -> IL.lval -> env
     clean the entire array! This seems drastic but it should help reducing FPs.
  *)
 
+val clean_all : env -> env
+(** Mark every tracked l-value [`Clean]. Used to neutralise an unreachable
+    branch so its body runs but reads see no taint, while at the Join the live
+    branch's taints survive via [Xtaint.union (Tainted, Clean) = Tainted]. *)
+
 val filter_tainted : (IL.name -> bool) -> env -> env
 val add_control_taints : env -> Taint.taints -> env
 val get_control_taints : env -> Taint.taints
+
+val active_guards : env -> Effect_guard.Set.t
+(** The set of guards that hold at the current program point. *)
+
+val add_active_guard : Effect_guard.t -> env -> env
+(** Add a guard to the active set at the current program point. Called at
+    [TrueNode] of a recognised arity-check condition during the transfer. *)
+
+val clear_active_guards : env -> env
+(** Empty the active-guards set while preserving the rest of the env. Used at
+    lambda entry so the lambda's transfer does not inherit its enclosing
+    frame's guards — those guards are parameter-indexed relative to the
+    enclosing, and would be mis-interpreted if they rode along into the
+    lambda's own frame. The enclosing's active guards are re-applied to the
+    lambda's upflowed effects at [Dataflow_tainting.do_lambdas], where the
+    frame of reference is correct. *)
+
+val is_dead : env -> bool
+(** [true] iff the current program point is unreachable. *)
+
+val mark_dead : env -> env
+(** Mark the env as unreachable. Set at a branch whose condition folds
+    to a constant that contradicts the branch direction. *)
 
 val union : env -> env -> env
 (** Compute the environment for the join of two branches.

@@ -117,10 +117,15 @@ let mk_method_property_assumptions (properties : G.expr list)
 
 (** Helper to add a parameter with Arg shape to the environment *)
 let add_param_to_env il_lval taint_set taint_arg env =
-  let param_shape = Shape.Arg taint_arg in
+  let param_shape = Shape.Arg (taint_arg, [ [] ]) in
   Taint_lval_env.add_lval_shape il_lval taint_set param_shape env
 
-let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t =
+(* [pattern_leaves_with_offsets] moved to [Dataflow_tainting] to avoid a
+ * module-dependency cycle; this file already depends on
+ * [Dataflow_tainting.fixpoint]. *)
+
+let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
+    Taint_lval_env.t =
   let _, env =
     params
     |> List.fold_left
@@ -129,7 +134,8 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
            | IL.Param { pname; _ }
            (* NOTE: from the perspective of the function definition, a "rest" param is just *)
            (* a param. The difference is only at the call site when instantiating the args. *)
-           | IL.ParamRest { pname; _ } ->
+           | IL.ParamRest { pname; _ }
+           | IL.ParamPattern ({ pname; _ }, _) ->
                let il_lval : IL.lval = { base = Var pname; rev_offset = [] } in
                let taint_arg : Taint.arg =
                  { name = fst pname.ident; index = i }
@@ -143,66 +149,97 @@ let mk_param_assumptions ?taint_inst (params : IL.param list) : Taint_lval_env.t
                in
                (* Check if this parameter matches a source pattern *)
                let source_taints =
-                 match taint_inst with
-                 | Some tinst ->
-                     let _, tok = pname.ident in
-                     let any = G.Tk tok in
-                     let source_pms = tinst.TRI.preds.is_source any in
-                     if source_pms <> [] then
-                       (* Create Src taints for matching sources using taints_of_pms *)
-                       let pms_with_specs =
-                         source_pms
-                         |> List.map (fun (tm : Rule.taint_source Taint_spec_match.t) ->
-                                (tm.Taint_spec_match.spec_pm, tm.spec))
-                       in
-                       Taint.taints_of_pms ~incoming:Taint.Taint_set.empty pms_with_specs
-                     else
-                       Taint.Taint_set.empty
-                 | None -> Taint.Taint_set.empty
+                 let _, tok = pname.ident in
+                 let any = G.Tk tok in
+                 let source_pms = taint_inst.TRI.preds.is_source any in
+                 if source_pms <> [] then
+                   (* Create Src taints for matching sources using
+                      taints_of_pms *)
+                   let pms_with_specs =
+                     source_pms
+                     |> List.map (fun (tm : Rule.taint_source Taint_spec_match.t) ->
+                            (tm.Taint_spec_match.spec_pm, tm.spec))
+                   in
+                   Taint.taints_of_pms ~incoming:Taint.Taint_set.empty
+                     pms_with_specs
+                 else Taint.Taint_set.empty
                in
                let taint_set = Taint.Taint_set.union (Taint.Taint_set.singleton generic_taint) source_taints in
                (* Give the parameter an Arg shape so it can be used in HOF *)
                let new_env = add_param_to_env il_lval taint_set taint_arg env in
+               (* For destructuring [ParamPattern], additionally seed each
+                * leaf's lval with its offset path off the implicit binder.
+                * The shape system handles call-site projection from the
+                * caller's actual argument down to each leaf. *)
+               let new_env =
+                 match param with
+                 | IL.ParamPattern (_, pat) ->
+                     Dataflow_tainting.pattern_leaves_with_offsets
+                       ~lang:taint_inst.TRI.lang pat
+                     |> List.fold_left
+                          (fun env (leaf_name, offset) ->
+                            let leaf_lval : IL.lval =
+                              { base = Var leaf_name; rev_offset = [] }
+                            in
+                            (* Seed each leaf with:
+                             * - the [Arg (taint_arg, offset)] shape so the
+                             *   shape system can project the caller's
+                             *   actual argument down to the leaf at HOF
+                             *   call-site instantiation;
+                             * - a [Var (BArg taint_arg, offset)] taint
+                             *   so body references pick up the caller's
+                             *   taint conservatively even when the
+                             *   caller's argument has no structural
+                             *   shape for the projection to walk;
+                             * - any [Src] taints produced by source
+                             *   patterns that match the leaf's own token
+                             *   (e.g. [focus-metavariable: $REQ] with an
+                             *   inner [pattern: body]). There is no IL
+                             *   instruction for a destructured binding,
+                             *   so the only way a source match at the
+                             *   declaration can taint the leaf is by
+                             *   consulting the rule predicate here. *)
+                            let leaf_shape = Shape.Arg (taint_arg, [ offset ]) in
+                            let leaf_taint_lval : Taint.lval =
+                              { base = BArg taint_arg; offset }
+                            in
+                            let leaf_taint =
+                              Taint.
+                                { orig = Var leaf_taint_lval; tokens = [] }
+                            in
+                            let source_taints =
+                              let _, tok = leaf_name.ident in
+                              let any = G.Tk tok in
+                              let source_pms =
+                                taint_inst.TRI.preds.is_source any
+                              in
+                              if source_pms <> [] then
+                                let pms_with_specs =
+                                  source_pms
+                                  |> List.map
+                                       (fun
+                                         (tm :
+                                           Rule.taint_source
+                                           Taint_spec_match.t)
+                                       ->
+                                         ( tm.Taint_spec_match.spec_pm,
+                                           tm.spec ))
+                                in
+                                Taint.taints_of_pms
+                                  ~incoming:Taint.Taint_set.empty
+                                  pms_with_specs
+                              else Taint.Taint_set.empty
+                            in
+                            let leaf_taints =
+                              Taint.Taint_set.add_taint leaf_taint
+                                source_taints
+                            in
+                            Taint_lval_env.add_lval_shape leaf_lval leaf_taints
+                              leaf_shape env)
+                          new_env
+                 | _ -> new_env
+               in
                (i + 1, new_env)
-           | IL.ParamPattern pat -> (
-               (* Extract parameter name from pattern for Rust function parameters *)
-               match pat with
-               | G.PatId (name, id_info) ->
-                   let il_name = AST_to_IL.var_of_id_info name id_info in
-                   let il_lval : IL.lval =
-                     { base = Var il_name; rev_offset = [] }
-                   in
-                   let taint_arg : Taint.arg = { name = fst name; index = i } in
-                   let taint_lval : Taint.lval =
-                     { base = BArg taint_arg; offset = [] }
-                     (* Use BArg for function parameters *)
-                   in
-                   let generic_taint =
-                     Taint.{ orig = Var taint_lval; tokens = [] }
-                   in
-                   let taint_set = Taint.Taint_set.singleton generic_taint in
-                   let new_env = add_param_to_env il_lval taint_set taint_arg env in
-                   (i + 1, new_env)
-               | G.PatTyped (G.PatId (name, id_info), _) ->
-                   (* Handle typed patterns like PatTyped(PatId(...), type) for Rust *)
-                   let il_name = AST_to_IL.var_of_id_info name id_info in
-                   let il_lval : IL.lval =
-                     { base = Var il_name; rev_offset = [] }
-                   in
-                   let taint_arg : Taint.arg = { name = fst name; index = i } in
-                   let taint_lval : Taint.lval =
-                     { base = BArg taint_arg; offset = [] }
-                     (* Use BArg for function parameters *)
-                   in
-                   let generic_taint =
-                     Taint.{ orig = Var taint_lval; tokens = [] }
-                   in
-                   let taint_set = Taint.Taint_set.singleton generic_taint in
-                   let new_env = add_param_to_env il_lval taint_set taint_arg env in
-                   (i + 1, new_env)
-               | _ ->
-                   (* Fallback for other pattern types *)
-                   (i + 1, env))
            | IL.ParamFixme -> (i + 1, env))
          (0, Taint_lval_env.empty)
   in
@@ -224,6 +261,14 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
     Dataflow_tainting.fixpoint taint_inst ~in_env:combined_env ?name
       ?signature_db ?builtin_signature_db ?call_graph func_cfg
   in
+  Log.debug (fun m ->
+      let fn = Option.fold ~none:"<anon>" ~some:IL.str_of_name name in
+      let items =
+        fixpoint_effects |> Effects.elements
+        |> List.map Effect.show |> String.concat " | "
+      in
+      m "SIG_RAW_EFFECTS: %s has %d effect(s): [%s]" fn
+        (List.length (Effects.elements fixpoint_effects)) items);
   let effects_with_preconditions =
     fixpoint_effects |> Effects.elements
     |> List.fold_left
@@ -278,8 +323,8 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                   m "TAINT_SIG: ToReturn effect captured for %s" func_name);
               let filtered_data_taints =
                 return_info.data_taints
-                |> Taint.Taint_set.filter (fun taint ->
-                       match taint.Taint.orig with
+                |> Taint.Taint_set.filter (fun (b : Taint.guarded_taint) ->
+                       match b.taint.Taint.orig with
                        | Taint.Shape_var _ -> false (* Shape vars cannot materialize values. *)
                        | _ -> true)
               in
@@ -297,12 +342,12 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                 in
                 Effects.add (Effect.ToReturn filtered_return_info) acc
               else acc
-           | Effect.ToLval (taints, _lval) ->
+           | Effect.ToLval { taints; lval = _; guards = _ } ->
                (* Keep ToLval effects - they represent legitimate data flow patterns
                 * that become important when parameters receive real source taint *)
                let has_relevant_taint =
-                 taints |> Taint.Taint_set.elements
-                 |> List.exists (fun taint ->
+                 taints |> Taint.Taint_set.to_taint_list
+                 |> List.exists (fun (taint : Taint.taint) ->
                         match taint.Taint.orig with
                         | Taint.Src _ -> true (* Real source taint *)
                         | Taint.Var _ -> true (* Parameter taint - keep it! *)
@@ -315,6 +360,11 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
          Effects.empty
   in
   let signature = { Signature.params; effects = effects_with_preconditions } in
+  Log.debug (fun m ->
+      let func_name = Option.map IL.str_of_name name in
+      m "SIG_EXTRACTED: Function %s signature: %s"
+        (Option.value func_name ~default:"<anonymous>")
+        (Signature.show signature));
   { signature; mapping }
 
 let mk_global_assumptions_with_sids

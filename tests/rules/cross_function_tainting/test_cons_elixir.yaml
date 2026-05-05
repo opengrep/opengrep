@@ -1,0 +1,18 @@
+rules:
+  - id: test-cons-elixir
+    message: |
+      Elixir cons-pattern destructure [h | t] / [a, b | t] binds the
+      tail to the trailing slice of the incoming list. With the Slice
+      IL primitive, a sink reading the tail binding catches taint from
+      any position >= k (the rest start) and not from positions bound
+      by fixed slots before [|].
+    languages:
+      - elixir
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

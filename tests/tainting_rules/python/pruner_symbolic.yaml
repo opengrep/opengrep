@@ -1,0 +1,15 @@
+rules:
+  - id: pruner-symbolic
+    message: |
+      Pins the prunable surface: each case exercises a kind that
+      [Dataflow_svalue.is_symbolic_expr] propagates, in a constant-
+      folded branch condition the pruner should fold to dead.
+      Narrowing [is_symbolic_expr] would surface as a failure here.
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

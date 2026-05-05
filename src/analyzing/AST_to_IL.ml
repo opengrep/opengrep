@@ -213,16 +213,6 @@ let name_of_entity ent : name option =
       Some name
   | _else_ -> None
 
-let composite_of_container ~g_expr :
-    G.container_operator -> IL.composite_kind =
- fun cont ->
-  match cont with
-  | Array -> CArray
-  | List -> CList
-  | Tuple -> CTuple
-  | Set -> CSet
-  | Dict -> impossible (E g_expr)
-
 let mk_unnamed_args (exps : IL.exp list) : exp argument list = List_.map (fun x -> Unnamed x) exps
 
 let is_hcl lang : bool =
@@ -273,6 +263,126 @@ let is_constructor env ret_ty id_info : bool =
       | { G.t = G.TyN _; _ } -> true
       | _ -> false)
   | _ -> false
+
+(*****************************************************************************)
+(* Pattern helpers *)
+(*****************************************************************************)
+
+(* Detect a list-shaped case pattern and return the arity check that should be
+ * used as the Switch discriminator.
+ *
+ * A [PatList [p1; ...; pN]] with no trailing [&] matches iff the scrutinee is a
+ * list of length exactly [N] — the condition is [length(scrutinee) = N].
+ *
+ * A [PatList [p1; ...; pK; PatConstructor("&", _)]] with a trailing variadic
+ * slot matches iff the scrutinee has at least [K] elements — the condition is
+ * [length(scrutinee) >= K].
+ *
+ * Any other shape (tuple, literal, constructor, value pattern) returns [None]
+ * and the caller falls back to a [fixme] condition — which leaves dataflow to
+ * conservatively take every branch, as today. *)
+let rec list_pat_arity (pat : G.pattern) : (G.operator * int) option =
+  match pat with
+  | G.PatWhen (inner, _guard) -> list_pat_arity inner
+  | G.PatList (_, slots, _) ->
+      let n = List.length slots in
+      (match List.rev slots with
+       | G.PatConstructor (G.Id (("&", _), _), _) :: _ ->
+           Some (G.GtE, n - 1)
+       | _ -> Some (G.Eq, n))
+  | _ -> None
+
+(*****************************************************************************)
+(* Implicit-return helper *)
+(*****************************************************************************)
+
+(* Clojure wraps function bodies and macro-expanded forms such as [->>] in
+ * [OtherExpr("ExprBlock", ...)] / [OtherExpr("->>", ...)] wrappers whose last
+ * sub-expression carries the value. [mark_first_instr_ancestor] sets
+ * [is_implicit_return] on the inner value-producing G.expr (e.g. the Call), but
+ * the lowering sites check the flag on the outer ExprStmt's eorig, which is
+ * the wrapper, not the inner expression. This helper treats a wrapper as
+ * implicitly-returned when its last sub-expression is. *)
+let effective_implicit_return env (eorig : G.expr) : bool =
+  if eorig.is_implicit_return then true
+  else
+    match eorig.e with
+    | G.OtherExpr ((kind, _), exprs)
+      when env.lang =*= Lang.Clojure
+           && CLJ_ME1.expands_as_block kind -> (
+        match List.rev exprs with
+        | G.E { is_implicit_return = true; _ } :: _ -> true
+        | _ -> false)
+    | _ -> false
+
+(*****************************************************************************)
+(* Map-pair pattern helpers *)
+(*****************************************************************************)
+
+(* A [PatList] / [PatConstructor] holds "map pairs" when every element is a
+ * [PatKeyVal] in the canonical [(lookup_key, binding_pattern)] order,
+ * possibly wrapped by exactly one [OtherPat("MapPairKeyword" |
+ * "MapPairArrow", …)]. That tag is emitted by the Elixir parser to
+ * preserve the source-level [:] vs [=>] distinction for rule matching;
+ * no other parser uses it, and no parser nests it. *)
+let is_map_pair_pattern (p : G.pattern) : bool =
+  match p with
+  | G.PatKeyVal (_, _) -> true
+  | G.OtherPat
+      ( (("MapPairKeyword" | "MapPairArrow"), _),
+        [ G.P (G.PatKeyVal (_, _)) ] ) ->
+      true
+  | _ -> false
+
+let unwrap_map_pair_pattern (p : G.pattern) : G.pattern =
+  match p with
+  | G.OtherPat
+      ( (("MapPairKeyword" | "MapPairArrow"), _),
+        [ G.P (G.PatKeyVal (_, _) as inner) ] ) ->
+      inner
+  | _ -> p
+
+(* Build a field [Dot] offset from a map-pair key pattern. Returns [None]
+ * for opaque keys — callers fall back to binding the value without a key
+ * projection, losing field-sensitivity for that leaf.
+ *
+ * The [OtherPat((":"|"::"), …)] branches below recognise the Clojure
+ * parser's encoding of atom keys; no other parser emits that tag.
+ * Clojure distinguishes [:body] (plain keyword) from [::body]
+ * (auto-resolved namespaced keyword) — they denote different runtime
+ * atoms and must produce different offsets. [G.Atom] cannot currently
+ * carry that distinction, so we reconstruct the surface form
+ * [":body"] / [":body"] from the tag prefix. If [G.Atom] is later
+ * extended with a "kind" field, this handling can collapse into the
+ * [PatLiteral (G.Atom …)] branch — option (3) in the design
+ * discussion. *)
+let key_offset_of_pattern (key_pat : G.pattern) : offset option =
+  let mk_dot (s, tok) =
+    {
+      o =
+        Dot
+          {
+            ident = (s, tok);
+            sid = G.SId.unsafe_default;
+            id_info = G.empty_id_info ();
+          };
+      oorig = NoOrig;
+    }
+  in
+  let stripped (s, tok) = (String_.strip_wrapping_char ':' s, tok) in
+  match key_pat with
+  | G.PatId (id, _) -> Some (mk_dot (stripped id))
+  | G.PatLiteral (G.String (_, id, _)) -> Some (mk_dot (stripped id))
+  | G.PatLiteral (G.Atom (_, id)) -> Some (mk_dot (stripped id))
+  | G.OtherPat ((((":" | "::") as prefix), _), [ G.Name (G.Id (id, _)) ]) ->
+      let s, tok = id in
+      Some (mk_dot (prefix ^ String_.strip_wrapping_char ':' s, tok))
+  | G.OtherPat
+      ( (((":" | "::") as prefix), _),
+        [ G.Name (G.IdQualified { name_last = (id, _); _ }) ] ) ->
+      let s, tok = id in
+      Some (mk_dot (prefix ^ String_.strip_wrapping_char ':' s, tok))
+  | _ -> None
 
 (*****************************************************************************)
 (* lvalue *)
@@ -367,13 +477,23 @@ and pattern env pat : stmts * lval * stmts =
     ([], tmp_lval, inner_ss @ [ alias_assign_stmt ])
   | G.PatList (_tok1, pats, tok2)
   | G.PatTuple (_tok1, pats, tok2) ->
-      (* P1, ..., Pn *)
       let tmp = fresh_var tok2 in
       let tmp_lval = lval_of_base (Var tmp) in
-      (* Pi = tmp[i] *)
       let ss =
-        List.concat_map
-          (fun (pat_i, i) ->
+        if pats <> [] && List.for_all is_map_pair_pattern pats then
+          (* Map/dict destructure: every element is a [PatKeyVal] (possibly
+           * tagged). Each binding fetches [tmp.key], not [tmp[i]]. *)
+          List.concat_map (map_pair_assign_stmts env tmp) pats
+        else
+          (* Positional list/tuple destructure with optional trailing
+           * rest. Each non-rest slot lowers as [pat_i = tmp[i]]. A
+           * trailing [PatConstructor("&", [rest_pat])] (Clojure
+           * variadic rest binding) lowers as [rest_pat = tmp[Slice k]]
+           * — a view of [tmp] from index [k] onwards. The slice offset
+           * carries through to the engine's shape inference: a sink on
+           * [rest_pat] reads positions [k..] only, leaving [tmp[0..k-1]]
+           * (the head bindings) outside its scope. *)
+          let lower_slot pat_i i =
             let eorig = Related (G.P pat_i) in
             let index_i = Literal (G.Int (Parsed_int.of_int i)) in
             let offset_i =
@@ -382,45 +502,132 @@ and pattern env pat : stmts * lval * stmts =
             let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
             pattern_assign_statements env
               (mk_e (Fetch lval_i) eorig)
-              ~eorig pat_i)
-          (List_.index_list pats)
+              ~eorig pat_i
+          in
+          let lower_rest rest_pat lo =
+            let eorig = Related (G.P rest_pat) in
+            let offset = { o = Slice lo; oorig = NoOrig } in
+            let lval = { base = Var tmp; rev_offset = [ offset ] } in
+            pattern_assign_statements env
+              (mk_e (Fetch lval) eorig)
+              ~eorig rest_pat
+          in
+          let rec split_trailing_rest acc i = function
+            | [] -> (List.rev acc, None)
+            (* Clojure variadic rest: [a b & r] →
+             *   PatList [a; b; PatConstructor("&", [r])]
+             * The "&" wrapper has a single argument (the rest binding);
+             * the rest covers positions [i..] of the scrutinee. Only
+             * Clojure assigns this meaning to "&" inside a PatList. *)
+            | [ G.PatConstructor (G.Id (("&", _), _), [ rest_pat ]) ]
+              when env.lang =*= Lang.Clojure ->
+                (List.rev acc, Some (rest_pat, i))
+            (* Elixir cons pattern: [a, b | t] →
+             *   PatList [a; PatConstructor("|", [b; t])]
+             *  and [h | t] →
+             *   PatList [PatConstructor("|", [h; t])]
+             * The trailing "|" wrapper carries one final fixed slot
+             * ([last_fixed] at position [i]) plus the tail ([tail_pat]
+             * covering positions [i+1..]). Only Elixir uses "|" as the
+             * cons-pattern marker inside a PatList. *)
+            | [
+             G.PatConstructor
+               (G.Id (("|", _), _), [ last_fixed; tail_pat ]);
+            ]
+              when env.lang =*= Lang.Elixir ->
+                (List.rev ((last_fixed, i) :: acc), Some (tail_pat, i + 1))
+            (* JS/TS rest binding: [a, b, ...rest] → trailing
+             * PatConstructor("...", [rest_pat]); rest covers [i..]. *)
+            | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ]
+              when Lang.is_js env.lang ->
+                (List.rev acc, Some (rest_pat, i))
+            | p :: rest -> split_trailing_rest ((p, i) :: acc) (i + 1) rest
+          in
+          let fixed, opt_rest = split_trailing_rest [] 0 pats in
+          let fixed_ss =
+            List.concat_map (fun (p, i) -> lower_slot p i) fixed
+          in
+          let rest_ss =
+            match opt_rest with
+            | None -> []
+            | Some (rest_pat, lo) -> lower_rest rest_pat lo
+          in
+          fixed_ss @ rest_ss
       in
       ([], tmp_lval, ss)
   | G.PatTyped (pat1, ty) ->
       let pre_ss, _ = type_ env ty in
       let inner_pre_ss, lval, post_ss = pattern env pat1 in
       (pre_ss @ inner_pre_ss, lval, post_ss)
+  | G.PatConstructor (G.Id ((_s, tok), _id_info), pats)
+    when pats <> [] && List.for_all is_map_pair_pattern pats ->
+      (* Clojure [:keys] / [Assoc] map destructure: the constructor wraps
+       * a flat list of [PatKeyVal]s over the incoming map. Lower as a
+       * map destructure rather than a positional tuple. *)
+      pattern env (G.PatList (G.fake "[", pats, tok))
   | G.PatConstructor (G.Id ((_s, tok), _id_info), pats) ->
-    pattern env (G.PatTuple (G.fake "(", pats, tok))
-  (* TODO: This can help with field sensitivity, if we consider
-   * which atom is actually used to extract the value in key_pat.
-   * For now we ignore the value part. Note that these patterns
-   * are of the shape '{ x :a }' etc. But can also come from
-   * '{ :keys [a] }' which in this case becomes equivalent to
-   * '{ a :a }'. *)
-  | G.PatKeyVal (key_pat, G.OtherPat (((":" | "::"), _tk_col),
-                                      [G.Name _atom_name]))
-    when env.lang =*= Lang.Clojure ->
-    pattern env key_pat
-  (* Clojure string-key destructuring, e.g. `(let [{x "a"} o] x)`. The value
-   * is a string literal used as the map lookup key; only `key_pat` binds. *)
-  | G.PatKeyVal (key_pat, G.PatLiteral (G.String _))
-    when env.lang =*= Lang.Clojure ->
-    pattern env key_pat
-  (* Only seems to be used in Ruby, modulo the above case for Clojure. *)
-  | G.PatKeyVal (_key_pat, val_pat) when env.lang =*= Lang.Ruby ->
-    (* My understanding is that the new variables are introduced on the rhs. *)
-    pattern env val_pat
-  | G.PatRecord (tok1, fields, tok2) ->
-    (* TODO: But here the offset is not an index..., should we do proper?
-     * But at least some taint will be propagated with this solution.
-     * In fact we cannot recover the G.name of the dotted_ident in PatRecord,
-     * so cannot easily create a Dot offset. We have no sid and id_info.
-     * For this reason we do this hack.
-     * TODO: Check this encoding with FieldDefCol used in a lot of places,
-     * have something native that does the same. *)
-    let pats = List_.map (fun (_dot_ident, pat) -> pat) fields in
-    pattern env (G.PatTuple (tok1, pats, tok2))
+      pattern env (G.PatTuple (G.fake "(", pats, tok))
+  | G.PatKeyVal (key_pat, val_pat) ->
+      (* Standalone [PatKeyVal] outside a [PatList]/[PatConstructor]
+       * container. Rare; lower by projecting a fresh [tmp] by the key.
+       * The common case (multiple pairs inside a [PatList]) takes the
+       * map-pair branch of the [PatList] handler above. *)
+      let tok =
+        match key_offset_of_pattern key_pat with
+        | Some { o = Dot { ident = _, t; _ }; _ } -> t
+        | _ -> Tok.unsafe_fake_tok "_patkv"
+      in
+      let tmp = fresh_var tok in
+      let tmp_lval = lval_of_base (Var tmp) in
+      let eorig = Related (G.P val_pat) in
+      let ss =
+        match key_offset_of_pattern key_pat with
+        | Some offset_i ->
+            let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+            pattern_assign_statements env
+              (mk_e (Fetch lval_i) eorig)
+              ~eorig val_pat
+        | None ->
+            pattern_assign_statements env
+              (mk_e (Fetch tmp_lval) eorig)
+              ~eorig val_pat
+      in
+      ([], tmp_lval, ss)
+  | G.PatRecord (_tok1, fields, tok2) ->
+    (* Each field is (dotted_ident, pattern). The dotted_ident carries only
+     * the field label (string * tok) with no id_info; we synthesise an
+     * IL.name with empty id_info and the default sid. That matches the
+     * shape of caller-side field access (via [var_of_id_info] on an
+     * unresolved id_info) and of record-literal field keys, which also
+     * land with the default sid. The inner pattern [pat_i] comes from the
+     * source AST and has already been processed by Naming_AST, so its
+     * bound variable's id_info (if any) is already resolved.
+     *
+     * For qualified field names (e.g. [M.field] in OCaml), we use the last
+     * segment as the field label; the qualifier is dropped. *)
+    let tmp = fresh_var tok2 in
+    let tmp_lval = lval_of_base (Var tmp) in
+    let synth_name ident =
+      { ident; sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
+    in
+    let last_ident_of dot_ident =
+      match List.rev dot_ident with
+      | last :: _ -> last
+      | [] -> ("", tok2)
+    in
+    let ss =
+      List.concat_map
+        (fun (dot_ident, pat_i) ->
+          let eorig = Related (G.P pat_i) in
+          let field_name = synth_name (last_ident_of dot_ident) in
+          let offset_i = { o = Dot field_name; oorig = NoOrig } in
+          let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+          pattern_assign_statements env
+            (mk_e (Fetch lval_i) eorig)
+            ~eorig pat_i)
+        fields
+    in
+    ([], tmp_lval, ss)
   | G.PatWhen (pat_inner, when_expr) ->
       let pre_ss, lval, pat_stmts = pattern env pat_inner in
       let guard_stmts, _e_guard = expr env when_expr in
@@ -444,6 +651,24 @@ and pattern env pat : stmts * lval * stmts =
     (pre_ss, tmp, [])
   | G.PatEllipsis _ -> sgrep_construct (G.P pat)
   | _ -> todo (G.P pat)
+
+(* Lower one map-pair element of a [PatList]/[PatConstructor] destructure.
+ * Unwraps the [OtherPat("MapPair*", …)] tag if present and emits
+ * [binding = tmp.key]. If the key form is opaque (no literal name we
+ * can turn into a [Dot] offset) or the element is not a [PatKeyVal]
+ * after unwrapping, emit a [fixme_stmt] so the gap is visible in the IL
+ * rather than silently dropping the binding. *)
+and map_pair_assign_stmts env tmp (pat : G.pattern) : stmt list =
+  match unwrap_map_pair_pattern pat with
+  | G.PatKeyVal (key_pat, val_pat) -> (
+      match key_offset_of_pattern key_pat with
+      | Some offset_i ->
+          let eorig = Related (G.P pat) in
+          let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+          let exp = mk_e (Fetch lval_i) eorig in
+          pattern_assign_statements env exp ~eorig val_pat
+      | None -> fixme_stmt ToDo (G.P pat))
+  | _ -> fixme_stmt ToDo (G.P pat)
 
 and _catch_exn env exn : stmts * lval * stmts =
   match exn with
@@ -508,41 +733,26 @@ and assign env ~g_expr lhs tok rhs_exp : stmts * exp =
           let fixme_lval = fresh_lval ~str:"_FIXME" tok in
           let instr = mk_s (Instr (mk_i (Assign (fixme_lval, rhs_exp)) eorig)) in
           ([instr], fixme_exp kind any_generic (related_exp g_expr)))
-  | G.Container (((G.Tuple | G.List | G.Array) as ckind), (tok1, lhss, tok2)) ->
-      (* TODO: handle cases like [a, b, ...rest] = e *)
-      (* E1, ..., En = RHS *)
-      (* tmp = RHS*)
-      let tmp = fresh_var tok2 in
-      let tmp_lval = lval_of_base (Var tmp) in
-      let tmp_assign = mk_s (Instr (mk_i (Assign (tmp_lval, rhs_exp)) eorig)) in
-      (* Ei = tmp[i] *)
-      let tup_results =
-        List.map
-          (fun (lhs_i, i) ->
-            let index_i = Literal (G.Int (Parsed_int.of_int i)) in
-            let offset_i =
-              {
-                o = Index { e = index_i; eorig = related_exp lhs_i };
-                oorig = NoOrig;
-              }
-            in
-            let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
-            let ss, expr =
-              assign env ~g_expr lhs_i tok1
-                { e = Fetch lval_i; eorig = related_exp lhs_i }
-            in
-            (ss, expr))
-          (List_.index_list lhss)
-      in
-      let tup_ss = List.concat_map fst tup_results in
-      let tup_elems = List.map snd tup_results in
-      (* (E1, ..., En) *)
-      ( tmp_assign :: tup_ss,
-        mk_e
-          (Composite
-             ( composite_of_container ~g_expr ckind,
-               (tok1, tup_elems, tok2) ))
-          (related_exp lhs) )
+  | G.Container ((G.Tuple | G.List | G.Array), _) -> (
+      (* Body destructure [a, b, ...rest] = RHS shares its lowering
+       * with parameter destructure: convert the LHS into a [PatList] and
+       * dispatch through [pattern]. The trailing-rest recogniser
+       * (gated by [Lang.is_js]) lives in [split_trailing_rest]. *)
+      try
+        let pat = H.expr_to_pattern lhs in
+        let pre_ss, tmp_lval, post_ss = pattern env pat in
+        let assign_stmt =
+          mk_s (Instr (mk_i (Assign (tmp_lval, rhs_exp)) eorig))
+        in
+        ( pre_ss @ [ assign_stmt ] @ post_ss,
+          mk_e (Fetch tmp_lval) (related_exp lhs) )
+      with
+      | Fixme (kind, any_generic) ->
+          let fixme_lval = fresh_lval ~str:"_FIXME" tok in
+          let instr =
+            mk_s (Instr (mk_i (Assign (fixme_lval, rhs_exp)) eorig))
+          in
+          ([ instr ], fixme_exp kind any_generic (related_exp lhs)))
   | G.Record (tok1, fields, tok2) ->
       assign_to_record env (tok1, fields, tok2) rhs_exp (related_exp lhs)
   | _ ->
@@ -833,6 +1043,85 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           let fixme = fixme_exp kind any_generic (related_exp g_expr) in
           let call_ss, call_exp = call_instr tok eorig ~void (fun res -> Call (res, fixme, args)) in
           (ss_args @ call_ss, call_exp))
+  (* Clojure keyword-as-function [(:body m)]: a single-argument map
+   * lookup by the atom [:body]. Lower as a field access
+   * [Fetch (m, [Dot :body])] so the shape layer projects the caller's
+   * [Obj] by the matching [Ostr] offset — symmetric with the
+   * map-literal key lowering in [dict]. Macro-expanded chains like
+   * [(-> m :body :nested)] arrive as nested [Call] forms, so the
+   * recursive [nested_lval] on the argument handles the threaded
+   * case. *)
+  | G.Call
+      ( { e = G.OtherExpr
+              ( ("Atom", _),
+                [ G.Name (G.IdQualified {
+                    name_last = (s, atom_tok), _;
+                    name_middle = Some (G.QDots [ ((prefix, _), _) ]);
+                    _ }) ] ); _ } as callee,
+        ( _, [ G.Arg map_expr ], _ ) )
+    when env.lang =*= Lang.Clojure
+         && (String.equal prefix ":" || String.equal prefix "::") ->
+      let bare = String_.strip_wrapping_char ':' s in
+      let field_name =
+        { ident = (prefix ^ bare, atom_tok);
+          sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () }
+      in
+      let ss_map, map_lval = nested_lval env atom_tok map_expr in
+      let offset = { o = Dot field_name; oorig = SameAs callee } in
+      let field_lval =
+        { map_lval with rev_offset = offset :: map_lval.rev_offset }
+      in
+      (ss_map, mk_e (Fetch field_lval) eorig)
+  (* Clojure [(:body m default)]: two-argument form with a default
+   * returned when the key is absent. Lower as [tmp = m.:body; if tmp
+   * is falsy: tmp = default] so both the field-access and default
+   * paths contribute to the result via [Lval_env]'s branch union. *)
+  | G.Call
+      ( { e = G.OtherExpr
+              ( ("Atom", _),
+                [ G.Name (G.IdQualified {
+                    name_last = (s, atom_tok), _;
+                    name_middle = Some (G.QDots [ ((prefix, _), _) ]);
+                    _ }) ] ); _ } as callee,
+        ( _, [ G.Arg map_expr; G.Arg default_expr ], _ ) )
+    when env.lang =*= Lang.Clojure
+         && (String.equal prefix ":" || String.equal prefix "::") ->
+      let bare = String_.strip_wrapping_char ':' s in
+      let field_name =
+        { ident = (prefix ^ bare, atom_tok);
+          sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () }
+      in
+      let ss_map, map_lval = nested_lval env atom_tok map_expr in
+      let offset = { o = Dot field_name; oorig = SameAs callee } in
+      let field_lval =
+        { map_lval with rev_offset = offset :: map_lval.rev_offset }
+      in
+      let tmp = fresh_var atom_tok in
+      let tmp_lval = lval_of_base (Var tmp) in
+      let assign_field =
+        mk_s
+          (Instr (mk_i (Assign (tmp_lval, mk_e (Fetch field_lval) eorig)) eorig))
+      in
+      (* Clojure is strict: [default] is evaluated eagerly at the call
+       * site regardless of whether [m.:body] is nil. Lift its side
+       * effects out of the [if] so they always run. *)
+      let ss_default, default_exp = expr env default_expr in
+      let null_lit = mk_e (Literal (G.Null atom_tok)) NoOrig in
+      let cond_exp =
+        mk_e
+          (Operator
+             ( (G.Eq, atom_tok),
+               [ Unnamed (mk_e (Fetch tmp_lval) NoOrig); Unnamed null_lit ] ))
+          NoOrig
+      in
+      let then_branch =
+        [ mk_s (Instr (mk_i (Assign (tmp_lval, default_exp)) eorig)) ]
+      in
+      let if_stmt = mk_s (If (atom_tok, cond_exp, then_branch, [])) in
+      ( ss_map @ [ assign_field ] @ ss_default @ [ if_stmt ],
+        mk_e (Fetch tmp_lval) eorig )
   | G.Call (e, args) when env.lang =*= Lang.Clojure ->
       let tok = G.fake "call" in
       let arg_list = Tok.unbracket args in
@@ -860,6 +1149,512 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
           (Tok.unbracket inner_args @ outer_arg)
       in
       expr_aux env ~void (G.Call (callee, merged_args) |> G.e)
+  (* Ruby library-call field-access idioms: [h.fetch(:k)],
+   * [h.fetch(:k, default)], [obj.send(:k)], [obj.public_send(:k)],
+   * [h.dig(:a, :b, …)]. Lower as a [Fetch] with a [Dot] offset (and
+   * a conditional default-assign for the two-argument [fetch] form)
+   * so the shape layer projects the caller's [Obj] by the matching
+   * [Ostr] offset — symmetric with bracket access [h[:k]] and with
+   * the Clojure keyword-as-function lowering above. [ruby_field_
+   * access_decode] returns [None] for dynamic keys or unrecognised
+   * shapes; in that case we fall through to the generic call
+   * lowering rather than mis-rewriting. *)
+  | G.Call
+      ( { e = G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _))); _ } as
+          callee,
+        args )
+    when env.lang =*= Lang.Ruby
+         && (match method_name with
+            | "fetch"
+            | "send"
+            | "public_send"
+            | "dig" ->
+                true
+            | _ -> false) -> (
+      match (callee.G.e, ruby_field_access_decode method_name args) with
+      | ( G.DotAccess (receiver, _, _),
+          Some (first_id :: rest_ids, [], default_opt) ) ->
+          let ss_recv, head_lval = build_field_lval env ~callee receiver first_id in
+          let chained_lval =
+            List.fold_left
+              (fun acc id -> extend_field_lval ~callee id acc)
+              head_lval rest_ids
+          in
+          let ss_fetch, result =
+            emit_fetch_with_optional_default env ~eorig chained_lval
+              (snd first_id) default_opt
+          in
+          (ss_recv @ ss_fetch, result)
+      | ( G.DotAccess (receiver, _, _),
+          Some (first_id :: rest_ids, (_ :: _ as tail_args), None) ) ->
+          (* Hybrid [h.dig(:a, :b, x, …)]: the literal prefix
+           * [:a; :b] is precise; the tail starts with a dynamic key
+           * so we hand it back to the generic call as
+           * [prefix_tmp.dig(tail_args)]. Emit the prefix Fetch into a
+           * tmp, then reconstruct a synthetic [G.Call (G.DotAccess
+           * (prefix_tmp_as_expr, _, dig), tail_args)] and feed it
+           * through [expr_aux]. *)
+          let first_tok = snd first_id in
+          let ss_recv, head_lval = build_field_lval env ~callee receiver first_id in
+          let chained_lval =
+            List.fold_left
+              (fun acc id -> extend_field_lval ~callee id acc)
+              head_lval rest_ids
+          in
+          let ss_fetch, prefix_exp =
+            emit_fetch_with_optional_default env ~eorig chained_lval
+              first_tok None
+          in
+          let ss_prefix = ss_recv @ ss_fetch in
+          let prefix_tmp = fresh_var first_tok in
+          let prefix_tmp_lval = lval_of_base (Var prefix_tmp) in
+          let assign_prefix =
+            mk_s (Instr (mk_i (Assign (prefix_tmp_lval, prefix_exp)) eorig))
+          in
+          let prefix_tmp_g_expr =
+            G.N (G.Id (prefix_tmp.ident, prefix_tmp.id_info)) |> G.e
+          in
+          let tail_call_gexpr =
+            G.Call
+              ( G.DotAccess
+                  ( prefix_tmp_g_expr,
+                    first_tok,
+                    G.FN (G.Id (("dig", first_tok), G.empty_id_info ())) )
+                |> G.e,
+                Tok.unsafe_fake_bracket tail_args )
+            |> G.e
+          in
+          let ss_call, call_exp = expr env tail_call_gexpr in
+          (ss_prefix @ [ assign_prefix ] @ ss_call, call_exp)
+      | ( G.DotAccess (_, _, _),
+          Some (_, _ :: _, Some _) ) ->
+          (* Unreachable: [fetch] is a 1- or 2-arg form, [dig] never
+           * carries a default. Fall through defensively rather than
+           * assert. *)
+          Log.warn (fun m ->
+              m
+                "Ruby field-access decode produced an unexpected \
+                 (default + tail) combination; falling through");
+          let tok = G.fake "call" in
+          call_generic env ~void tok eorig callee args
+      | _ ->
+          let tok = G.fake "call" in
+          call_generic env ~void tok eorig callee args)
+  (* Python library-call field-access: [getattr(obj, "k")] /
+   * [getattr(obj, "k", default)] — the built-in reflective attribute
+   * read. Lower as a [Fetch] with a [Dot] offset so the shape layer
+   * projects the caller's [Obj] by the matching [Ostr] offset; the
+   * default variant emits [tmp = obj.k; if tmp == nil then tmp =
+   * default] with eager default evaluation. Dynamic keys fall
+   * through to the generic call.
+   *
+   * [d.get("k")] is deliberately NOT rewritten: [.get] is overloaded
+   * across Python's stdlib and third-party libraries (dict, Session,
+   * Queue, Popen, …) and without type info we cannot tell a dict
+   * receiver apart from a method on some other object. A heuristic
+   * rewrite would mis-lower e.g. [requests.Session().get(url)] as
+   * [Session.url] and break unrelated rules. *)
+  | G.Call
+      ( { e = G.N (G.Id (("getattr", _), _)); _ } as callee,
+        (_, [ G.Arg obj_expr; G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Python
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig obj_expr id None
+  | G.Call
+      ( { e = G.N (G.Id (("getattr", _), _)); _ } as callee,
+        (_, [ G.Arg obj_expr; G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Python
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig obj_expr id (Some default_expr)
+  (* Elixir library-call field-access idioms:
+   * - [Map.get(m, :k)] / [Map.get(m, :k, default)]
+   * - [Map.fetch(m, :k)] / [Map.fetch!(m, :k)] — both lower to a
+   *   plain [Fetch]; the [{:ok, _} | :error] wrapping of [fetch] is
+   *   erased (precision loss is acceptable for taint purposes).
+   * - [get_in(m, [:a, :b, …])] — nested lookup; each list element
+   *   must be a literal atom/string.
+   * Dynamic keys fall through to the generic call. *)
+  (* [Map.get(m, :k)] / [Map.fetch!(m, :k)] — both return the value
+   * directly (one as nil-on-absent, the other as raise-on-absent).
+   * Lower as plain [Fetch]. *)
+  | G.Call
+      ( { e = G.DotAccess
+              ( { e = G.N (G.Id (("Map", _), _)); _ },
+                _,
+                G.FN (G.Id ((method_name, _), _)) ); _ } as callee,
+        (_, [ G.Arg map_expr; G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Elixir
+         && (match method_name with "get" | "fetch!" -> true | _ -> false)
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig map_expr id None
+  (* [Map.get(m, :k, default)] — eager default, conditional assign. *)
+  | G.Call
+      ( { e = G.DotAccess
+              ( { e = G.N (G.Id (("Map", _), _)); _ },
+                _,
+                G.FN (G.Id (("get", _), _)) ); _ } as callee,
+        (_, [ G.Arg map_expr; G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Elixir
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig map_expr id (Some default_expr)
+  (* [Map.fetch(m, :k)] returns [{:ok, value} | :error]. Emit both
+   * branches so a caller [case] pattern-matching [{:ok, v}] or
+   * [:error] destructures correctly. The branch condition
+   * [tmp == nil] is a rough approximation (a stored [nil] value
+   * conflates with "key absent"); for taint both branches are
+   * visited so imprecision here does not affect flow. *)
+  | G.Call
+      ( { e = G.DotAccess
+              ( { e = G.N (G.Id (("Map", _), _)); _ },
+                _,
+                G.FN (G.Id (("fetch", _), _)) ); _ } as callee,
+        (_, [ G.Arg map_expr; G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Elixir
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      let _, key_tok = id in
+      let ss_map, map_lval = nested_lval env key_tok map_expr in
+      let field_name =
+        { ident = id; sid = G.SId.unsafe_default;
+          id_info = G.empty_id_info () }
+      in
+      let offset = { o = Dot field_name; oorig = SameAs callee } in
+      let field_lval =
+        { map_lval with rev_offset = offset :: map_lval.rev_offset }
+      in
+      let tmp = fresh_var key_tok in
+      let tmp_lval = lval_of_base (Var tmp) in
+      let assign_field =
+        mk_s (Instr (mk_i (Assign (tmp_lval, mk_e (Fetch field_lval) eorig)) eorig))
+      in
+      let result_tmp = fresh_var key_tok in
+      let result_lval = lval_of_base (Var result_tmp) in
+      let ok_atom =
+        mk_e (Literal (G.Atom (key_tok, ("ok", key_tok)))) NoOrig
+      in
+      let error_atom =
+        mk_e (Literal (G.Atom (key_tok, ("error", key_tok)))) NoOrig
+      in
+      let ok_tuple =
+        mk_e
+          (Composite
+             ( CTuple,
+               Tok.unsafe_fake_bracket
+                 [ ok_atom; mk_e (Fetch tmp_lval) NoOrig ] ))
+          NoOrig
+      in
+      let null_lit = mk_e (Literal (G.Null key_tok)) NoOrig in
+      let cond_exp =
+        mk_e
+          (Operator
+             ( (G.Eq, key_tok),
+               [ Unnamed (mk_e (Fetch tmp_lval) NoOrig); Unnamed null_lit ]
+             ))
+          NoOrig
+      in
+      let then_branch =
+        [ mk_s (Instr (mk_i (Assign (result_lval, error_atom)) eorig)) ]
+      in
+      let else_branch =
+        [ mk_s (Instr (mk_i (Assign (result_lval, ok_tuple)) eorig)) ]
+      in
+      let if_stmt =
+        mk_s (If (key_tok, cond_exp, then_branch, else_branch))
+      in
+      ( ss_map @ [ assign_field; if_stmt ],
+        mk_e (Fetch result_lval) eorig )
+  (* Java library-call field-access idioms, type-gated on the
+   * receiver being a known [java.util.Map] subtype — [.get] and
+   * [.getOrDefault] exist on many unrelated Java types, so we only
+   * rewrite when [id_info.id_type] resolves to a Map-family class.
+   * Untyped receivers (e.g. parameters without populated [id_type])
+   * fall through to the generic call. *)
+  | G.Call
+      ( { e = G.DotAccess (receiver, _, G.FN (G.Id (("get", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Java
+         && java_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id None
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("getOrDefault", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Java
+         && java_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id (Some default_expr)
+  (* [m.put(literal, v)] on a Map-typed receiver — lower as a field
+   * assign [m.literal = v] so literal-key construction builds a
+   * per-field [Obj] shape and field-sensitive [.get] reads flow
+   * through. [put] returns the previous value; the emit helper
+   * captures that precisely via [tmp = Fetch m.k] before the
+   * write. *)
+  | G.Call
+      ( { e = G.DotAccess (receiver, _, G.FN (G.Id (("put", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Java
+         && java_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* C# library-call field-access idioms, type-gated on the receiver
+   * being a known [System.Collections.Generic.IDictionary] subtype.
+   * The bare [d[k]] indexer is already field-sensitive after the C#
+   * parser's single-argument unwrap; these recognisers add the same
+   * treatment to the explicit method-call forms. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("GetValueOrDefault", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Csharp
+         && csharp_receiver_is_dictionary receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id None
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("GetValueOrDefault", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Csharp
+         && csharp_receiver_is_dictionary receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id (Some default_expr)
+  (* [d.Add(literal, v)] and [d.TryAdd(literal, v)] on a dictionary-
+   * typed receiver — lower as [d.literal = v]. [Add] throws on
+   * duplicate keys and [TryAdd] returns a bool; both return the
+   * prior value, which the emit helper captures precisely. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("Add" | "TryAdd"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Csharp
+         && csharp_receiver_is_dictionary receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* Kotlin library-call field-access idioms, type-gated on the
+   * receiver being in the [kotlin.collections.Map] /
+   * [kotlin.collections.MutableMap] family. The bare indexer
+   * [m[k]] is already field-sensitive; these recognisers cover the
+   * explicit method-call forms. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("get" | "getValue"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id None
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("getOrDefault", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id (Some default_expr)
+  (* [m.put(k, v)] / [m.set(k, v)] — field assign, return prior. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("put" | "set"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* [m.putIfAbsent(k, v)] — conditional field assign, return prior. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("putIfAbsent", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_if_absent env ~callee ~eorig receiver id value_expr
+  (* [m.remove(k)] — clear cell, return prior. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("remove", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_remove env ~callee ~eorig receiver id
+  (* [m.getOrElse(k) { body }] — Kotlin trailing-lambda. The parser
+   * encodes this as [Call(Call(m.getOrElse, [k]), [lambda])], so we
+   * match the nested-Call shape and invoke the lambda with the key
+   * on the fall-through branch. *)
+  | G.Call
+      ( { e = G.Call
+              ( { e = G.DotAccess
+                      ( receiver,
+                        _,
+                        G.FN (G.Id (("getOrElse", _), _)) );
+                  _
+                } as callee,
+                (_, [ G.Arg key_expr ], _) );
+          _
+        },
+        (_, [ G.Arg lambda_expr ], _) )
+    when env.lang =*= Lang.Kotlin
+         && kotlin_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access_or_lambda env ~callee ~eorig receiver id key_expr
+        lambda_expr
+  (* Scala library-call field-access idioms, type-gated on the
+   * receiver being in the [scala.collection.Map] /
+   * [scala.collection.mutable.Map] family. The [m(k) = v]
+   * apply-assign sugar is desugared to [m.update(k, v)] by the
+   * [assign] helper, so it flows through the [.update] recogniser
+   * below. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("get" | "apply"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Scala
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id None
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("getOrElse", _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg default_expr ], _) )
+    when env.lang =*= Lang.Scala
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee ~eorig receiver id (Some default_expr)
+  (* [m.put(k, v)] and [m.update(k, v)] — field assign, return
+   * prior. [put] returns [Option[V]], [update] returns [Unit];
+   * both are captured identically by the helper. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id ((("put" | "update"), _), _))); _ } as
+          callee,
+        (_, [ G.Arg key_expr; G.Arg value_expr ], _) )
+    when env.lang =*= Lang.Scala
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* [m += (k -> v)] — the tuple is constructed via the [.->] method
+   * call on the key, so we match the nested Call shape. *)
+  | G.Call
+      ( { e = G.DotAccess
+              (receiver, _, G.FN (G.Id (("+=", _), _))); _ } as
+          callee,
+        (_, [ G.Arg
+                { e = G.Call
+                        ( { e = G.DotAccess
+                                  ( key_expr,
+                                    _,
+                                    G.FN (G.Id (("->", _), _)) );
+                            _
+                          },
+                          (_, [ G.Arg value_expr ], _) );
+                  _
+                } ], _) )
+    when env.lang =*= Lang.Scala
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_write_returning_prior env ~callee ~eorig receiver id value_expr
+  (* Bare apply-read [m(k)] — Scala's apply-syntax, equivalent to
+   * [m.apply(k)]. The callee is a plain [Name] (not a DotAccess).
+   * Gate on the name resolving to a variable-kind (LocalVar /
+   * Parameter / Global / EnclosedVar) so constructor calls like
+   * [Map("a" -> 1)] where [Map] resolves to an [ImportedEntity] /
+   * [TypeName] / [None] are not rewritten as reads. *)
+  | G.Call
+      ( ({ e =
+             ( G.N (G.Id (_, id_info))
+             | G.N (G.IdQualified { name_info = id_info; _ }) );
+           _
+         } as receiver),
+        (_, [ G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Scala
+         && (match !(id_info.G.id_resolved) with
+            | Some ((G.LocalVar | G.Parameter | G.Global | G.EnclosedVar), _) ->
+                true
+            | _ -> false)
+         && scala_receiver_is_map receiver
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_access env ~callee:receiver ~eorig receiver id None
+  (* Go [delete(m, literal)] — builtin for clearing a map entry.
+   * Unique to maps in Go, so no type gate is needed. [delete]
+   * returns nothing; we reuse [emit_field_remove] which also emits
+   * a Fetch of the prior value, but that return is never consumed
+   * in Go source. *)
+  | G.Call
+      ( { e = G.N (G.Id (("delete", _), _)); _ } as callee,
+        (_, [ G.Arg map_expr; G.Arg key_expr ], _) )
+    when env.lang =*= Lang.Go
+         && Option.is_some (literal_field_ident key_expr) ->
+      let id = Option.get (literal_field_ident key_expr) in
+      emit_field_remove env ~callee ~eorig map_expr id
+  | G.Call
+      ( { e = G.N (G.Id (("get_in", _), _)); _ } as callee,
+        ((_, [ G.Arg map_expr; G.Arg keys_expr ], _) as args) )
+    when env.lang =*= Lang.Elixir
+         && (match keys_expr.G.e with
+            | G.Container (G.List, (_, elts, _)) ->
+                elts <> []
+                && List.for_all
+                     (fun e -> Option.is_some (literal_field_ident e))
+                     elts
+            | _ -> false) -> (
+      match keys_expr.G.e with
+      | G.Container (G.List, (_, first_id :: rest_ids, _))
+        when List.for_all
+               (fun e -> Option.is_some (literal_field_ident e))
+               (first_id :: rest_ids) ->
+          let first = Option.get (literal_field_ident first_id) in
+          let rest = List.filter_map literal_field_ident rest_ids in
+          let ss_recv, head_lval =
+            build_field_lval env ~callee map_expr first
+          in
+          let chained_lval =
+            List.fold_left
+              (fun acc id -> extend_field_lval ~callee id acc)
+              head_lval rest
+          in
+          let ss_fetch, result =
+            emit_fetch_with_optional_default env ~eorig chained_lval
+              (snd first) None
+          in
+          (ss_recv @ ss_fetch, result)
+      | _ ->
+          let tok = G.fake "call" in
+          call_generic env ~void tok eorig callee args)
   | G.Call (e, args) ->
       let tok = G.fake "call" in
       call_generic env ~void tok eorig e args
@@ -911,6 +1706,26 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
         class_construction env obj' origin_exp ret_ty id_info args
       in
       (ss, mk_e (Fetch lval) (SameAs obj_e))
+  (* Scala [m(k) = v] is sugar for [m.update(k, v)]. The parser
+   * faithfully produces [Assign(Call(m, [k]), _, v)] so the surface
+   * form [$M($K) = $V] stays distinct from the explicit
+   * [$M.update($K, $V)] at the pattern layer. Rewrite the AST to a
+   * plain method call before the rhs gets lowered. *)
+  | G.Assign
+      ({ e = G.Call (receiver, (lb, args_list, rb)); _ }, tok, rhs)
+    when env.lang =*= Lang.Scala ->
+      let update_callee =
+        G.DotAccess
+          ( receiver,
+            tok,
+            G.FN (G.Id (("update", tok), G.empty_id_info ())) )
+        |> G.e
+      in
+      let update_call =
+        G.Call (update_callee, (lb, args_list @ [ G.Arg rhs ], rb))
+        |> G.e
+      in
+      expr_aux env ~void update_call
   | G.Assign (e1, tok, e2) ->
       let ss_e2, exp = expr env e2 in
       let ss_assign, result = assign env ~g_expr e1 tok exp in
@@ -1051,6 +1866,54 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let tmp = fresh_lval tok in
       let instr = mk_s (Instr (mk_i (CallSpecial (Some tmp, (Ref, tok), [ Unnamed e1 ])) eorig)) in
       (ss_e1 @ [instr], mk_e (Fetch tmp) NoOrig)
+  (* Rust struct literal [S { f1: v1; f2: v2 }]: each element in
+   * [esorig] arrives as [G.Assign (N (Id f), _, v)] — a field-init.
+   * Lower as a [RecordOrDict] of [Entry (L (String f), v)] so the
+   * shape layer builds per-field [Ostr] cells and caller-side
+   * field-sensitivity survives the struct construction — the default
+   * [Composite (Constructor, …)] is positional and collapses fields. *)
+  | G.Constructor (_cname, (_tok1, esorig, _tok2))
+    when env.lang =*= Lang.Rust && esorig <> []
+         && List.for_all
+              (function
+                | { G.e = G.Assign ({ G.e = G.N (G.Id _); _ }, _, _); _ } ->
+                    true
+                | _ -> false)
+              esorig ->
+      (* Each element is guaranteed by the [for_all] guard to be a
+       * field-init [Assign (N (Id …), _, _)]; any non-matching shape
+       * would indicate a parser change, in which case we skip that
+       * element rather than assert — a missing [Entry] is a precision
+       * loss, not a crash — and emit a warning so the drift is
+       * traceable. *)
+      let entries_ss, entries =
+        esorig
+        |> List.filter_map (fun eiorig ->
+               match eiorig.G.e with
+               | G.Assign
+                   ( { G.e = G.N (G.Id ((field_name, field_tok), _)); _ },
+                     _,
+                     value_expr ) ->
+                   let ss_v, ve = expr env value_expr in
+                   let key =
+                     mk_e
+                       (Literal
+                          (G.String
+                             (Tok.unsafe_fake_bracket (field_name, field_tok))))
+                       (related_tok field_tok)
+                   in
+                   Some (ss_v, Entry (key, ve))
+               | _ ->
+                   Log.warn (fun m ->
+                       m
+                         "Rust struct-literal field init had unexpected \
+                          shape; skipping (element: %s)"
+                         (G.show_expr_kind eiorig.G.e));
+                   None)
+        |> List.split
+      in
+      let ss = List.concat entries_ss in
+      (ss, mk_e (RecordOrDict entries) eorig)
   | G.Constructor (cname, (tok1, esorig, tok2)) ->
       let cname = var_of_name cname in
       let results = List.map (fun eiorig ->
@@ -1459,22 +2322,465 @@ and record env ((_tok, origfields, _) as record_def) : stmts * exp =
   let fields = List.filter_map snd results in
   (all_ss, mk_e (RecordOrDict fields) (SameAs e_gen))
 
+(* Extract a literal field-key identifier from an expression used as
+ * an index or an atom/string library-call key. Used by the per-
+ * language library-call field-access recognisers to decide when to
+ * lower [x.fetch(:k)] / [Map.get(m, :k)] / similar idioms as a
+ * [Fetch] with a [Dot] offset. Returns [None] for dynamic keys so
+ * callers can fall through to the generic call lowering without
+ * losing correctness.
+ *
+ * The leading [:] is stripped from atom tokens so the produced key
+ * matches map-literal entries from the same language consistently:
+ * Ruby parses [:body] as a bare ["body"] atom while Elixir keeps
+ * the [:] in the token text, and Elixir's keyword-map emitter
+ * strips the trailing [:] from keys, so both ends converge on
+ * ["body"]. *)
+and literal_field_ident (e : G.expr) : G.ident option =
+  match e.G.e with
+  | G.L (G.Atom (_, (s, tok))) ->
+      Some (String_.strip_wrapping_char ':' s, tok)
+  | G.L (G.String (_, id, _)) -> Some id
+  | _ -> None
+
+(* Extract the head class name from a [G.type_], unwrapping [TyApply]
+ * to its inner [TyN]. Returns [None] for types that are not a named
+ * class (function types, arrays, tuples, anonymous, …). Used to
+ * gate Java [.get]/[.getOrDefault] rewrites on the receiver having
+ * a known Map-family type. *)
+and type_head_name (ty : G.type_) : string option =
+  let name_head = function
+    | G.Id ((s, _), _) -> Some s
+    | G.IdQualified { name_last = (s, _), _; _ } -> Some s
+  in
+  match ty.G.t with
+  | G.TyN name -> name_head name
+  | G.TyApply (inner, _) -> (
+      match inner.G.t with
+      | G.TyN name -> name_head name
+      | _ -> None)
+  | _ -> None
+
+(* Read the head class name of [receiver]'s declared type, if any.
+ * Relies on [id_info.id_type] being populated by [Naming_AST];
+ * currently set for locals and fields with explicit annotation,
+ * not for bare parameters. Used to gate language-specific library-
+ * call field-access rewrites on the receiver's type family. *)
+and receiver_type_head (receiver : G.expr) : string option =
+  let id_info_opt =
+    match receiver.G.e with
+    | G.N (G.Id (_, id_info)) -> Some id_info
+    | G.N (G.IdQualified { name_info; _ }) -> Some name_info
+    | _ -> None
+  in
+  match id_info_opt with
+  | None -> None
+  | Some id_info -> (
+      match !(id_info.G.id_type) with
+      | None -> None
+      | Some ty -> type_head_name ty)
+
+(* Is [receiver] known to have a [java.util.Map]-family type? *)
+and java_receiver_is_map (receiver : G.expr) : bool =
+  match receiver_type_head receiver with
+  | None -> false
+  | Some s ->
+      List.exists (String.equal s)
+        [
+          "Map";
+          "HashMap";
+          "LinkedHashMap";
+          "ConcurrentHashMap";
+          "Hashtable";
+          "Properties";
+          "TreeMap";
+          "IdentityHashMap";
+          "EnumMap";
+          "WeakHashMap";
+          "SortedMap";
+          "NavigableMap";
+        ]
+
+(* Is [receiver] known to have a [System.Collections.*.IDictionary]-
+ * family type? Covers the mutable generic dictionaries, the
+ * read-only views, the concurrent and immutable variants, and the
+ * non-generic legacy collections. Non-dictionary receivers fall
+ * through to the generic call. *)
+and csharp_receiver_is_dictionary (receiver : G.expr) : bool =
+  match receiver_type_head receiver with
+  | None -> false
+  | Some s ->
+      List.exists (String.equal s)
+        [
+          "Dictionary";
+          "IDictionary";
+          "IReadOnlyDictionary";
+          "ConcurrentDictionary";
+          "SortedDictionary";
+          "SortedList";
+          "ImmutableDictionary";
+          "ImmutableSortedDictionary";
+          "FrozenDictionary";
+          "ReadOnlyDictionary";
+          "Hashtable";
+          "StringDictionary";
+          "OrderedDictionary";
+          "HybridDictionary";
+          "ListDictionary";
+          "NameValueCollection";
+        ]
+
+(* Is [receiver] known to have a Kotlin [Map] / [MutableMap] family
+ * type? Covers the Kotlin stdlib interfaces and the Java collections
+ * commonly used via interop. Non-map receivers fall through to the
+ * generic call. *)
+and kotlin_receiver_is_map (receiver : G.expr) : bool =
+  match receiver_type_head receiver with
+  | None -> false
+  | Some s ->
+      List.exists (String.equal s)
+        [
+          "Map";
+          "MutableMap";
+          "HashMap";
+          "LinkedHashMap";
+          "TreeMap";
+          "ConcurrentHashMap";
+          "ConcurrentMap";
+          "SortedMap";
+          "NavigableMap";
+          "Hashtable";
+        ]
+
+(* Is [receiver] known to have a Scala [Map] / [mutable.Map] family
+ * type? Covers the stdlib interfaces and the Java collections
+ * commonly used via interop. Non-map receivers fall through to the
+ * generic call. *)
+and scala_receiver_is_map (receiver : G.expr) : bool =
+  match receiver_type_head receiver with
+  | None -> false
+  | Some s ->
+      List.exists (String.equal s)
+        [
+          "Map";
+          "MutableMap";
+          "HashMap";
+          "LinkedHashMap";
+          "TreeMap";
+          "SortedMap";
+          "ConcurrentHashMap";
+          "ConcurrentMap";
+          "NavigableMap";
+          "Hashtable";
+          "WeakHashMap";
+        ]
+
+(* Walk a [G.argument] list and return the longest prefix of literal
+ * field keys together with whatever follows (possibly empty). Used
+ * to give partial field-sensitivity to mixed-key accessors like
+ * Ruby's [h.dig(:a, :b, x, :c)]: the [:a; :b] prefix is a precise
+ * [Fetch] chain, while [x, :c] fall back to a generic call on the
+ * intermediate result. *)
+and longest_literal_key_prefix (args : G.argument list) :
+    G.ident list * G.argument list =
+  let rec go acc = function
+    | G.Arg e :: rest -> (
+        match literal_field_ident e with
+        | Some id -> go (id :: acc) rest
+        | None -> (List.rev acc, G.Arg e :: rest))
+    | other -> (List.rev acc, other)
+  in
+  go [] args
+
+(* Decode a Ruby library-call field-access. Returns [None] for
+ * dynamic keys or unrecognised shapes so the caller can fall back
+ * to the generic call lowering. Covers:
+ * - [h.fetch(:k)]             → ([:k], [], None)
+ * - [h.fetch(:k, default)]    → ([:k], [], Some default)
+ * - [obj.send(:m)]            → ([:m], [], None)
+ * - [obj.public_send(:m)]     → ([:m], [], None)
+ * - [h.dig(:a, :b, …)]        → ([:a; :b; …], [tail_args], None)
+ * The [tail_args] list is empty when every [dig] key is literal;
+ * when non-empty, the literal prefix is precise and the tail is
+ * handed to the generic call as [prefix_lval.dig(tail_args)]. *)
+and ruby_field_access_decode (method_name : string) (args : G.arguments) :
+    (G.ident list * G.argument list * G.expr option) option =
+  let arg_list = Tok.unbracket args in
+  match (method_name, arg_list) with
+  | ("fetch" | "send" | "public_send"), [ G.Arg key_expr ] -> (
+      match literal_field_ident key_expr with
+      | Some id -> Some ([ id ], [], None)
+      | None -> None)
+  | "fetch", [ G.Arg key_expr; G.Arg default_expr ] -> (
+      match literal_field_ident key_expr with
+      | Some id -> Some ([ id ], [], Some default_expr)
+      | None -> None)
+  | "dig", (_ :: _ as key_args) ->
+      let prefix, tail = longest_literal_key_prefix key_args in
+      if List.compare_length_with prefix 0 > 0 then Some (prefix, tail, None)
+      else None
+  | _ -> None
+
+(* Build the [receiver.id] lval with a single [Dot] offset, for
+ * both the field-access read path and the field-write/remove paths. *)
+and build_field_lval env ~callee (receiver : G.expr) (id : G.ident) :
+    stmts * lval =
+  let tok = snd id in
+  let ss_recv, recv_lval = nested_lval env tok receiver in
+  let field_name =
+    {
+      ident = id;
+      sid = G.SId.unsafe_default;
+      id_info = G.empty_id_info ();
+    }
+  in
+  let offset = { o = Dot field_name; oorig = SameAs callee } in
+  let field_lval =
+    { recv_lval with rev_offset = offset :: recv_lval.rev_offset }
+  in
+  (ss_recv, field_lval)
+
+(* Extend an existing [lval] with a further [Dot id] offset. Chained
+ * callers (Ruby [dig], Elixir [get_in]) fold this over their key
+ * list after a [build_field_lval] for the head. *)
+and extend_field_lval ~callee (id : G.ident) (lval : lval) : lval =
+  let field_name =
+    {
+      ident = id;
+      sid = G.SId.unsafe_default;
+      id_info = G.empty_id_info ();
+    }
+  in
+  let offset = { o = Dot field_name; oorig = SameAs callee } in
+  { lval with rev_offset = offset :: lval.rev_offset }
+
+(* Emit [Fetch field_lval] with an optional [if tmp == nil then tmp =
+ * default] conditional when [default_opt] is [Some]. Shared between
+ * single-field access and the chained [dig] / [get_in] paths. *)
+and emit_fetch_with_optional_default env ~eorig (field_lval : lval)
+    (tok : G.tok) (default_opt : G.expr option) : stmts * exp =
+  let field_exp = mk_e (Fetch field_lval) eorig in
+  match default_opt with
+  | None -> ([], field_exp)
+  | Some default_expr ->
+      let tmp = fresh_var tok in
+      let tmp_lval = lval_of_base (Var tmp) in
+      let assign_field =
+        mk_s (Instr (mk_i (Assign (tmp_lval, field_exp)) eorig))
+      in
+      let ss_default, default_exp = expr env default_expr in
+      let null_lit = mk_e (Literal (G.Null tok)) NoOrig in
+      let cond_exp =
+        mk_e
+          (Operator
+             ( (G.Eq, tok),
+               [
+                 Unnamed (mk_e (Fetch tmp_lval) NoOrig);
+                 Unnamed null_lit;
+               ] ))
+          NoOrig
+      in
+      let then_branch =
+        [ mk_s (Instr (mk_i (Assign (tmp_lval, default_exp)) eorig)) ]
+      in
+      let if_stmt = mk_s (If (tok, cond_exp, then_branch, [])) in
+      ( [ assign_field ] @ ss_default @ [ if_stmt ],
+        mk_e (Fetch tmp_lval) eorig )
+
+(* Single-field convenience: build [receiver.id] and emit
+ * [Fetch ...] with optional default. Used by the per-language
+ * library-call recognisers (Ruby [fetch]/[send], Python
+ * [get]/[getattr], …) that access one key. *)
+and emit_field_access env ~callee ~eorig (receiver : G.expr)
+    (id : G.ident) (default_opt : G.expr option) : stmts * exp =
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let ss_rest, result =
+    emit_fetch_with_optional_default env ~eorig field_lval (snd id)
+      default_opt
+  in
+  (ss_recv @ ss_rest, result)
+
+(* Precise [m.k = v] lowering that mirrors Java/Kotlin [put] /
+ * C# [Add]/[TryAdd] / Kotlin [set] — returns the prior value of
+ * [m.k] as these APIs do:
+ *   tmp = Fetch m.k
+ *   m.k = v
+ *   return Fetch tmp
+ *)
+and emit_field_write_returning_prior env ~callee ~eorig (receiver : G.expr)
+    (id : G.ident) (value_expr : G.expr) : stmts * exp =
+  let _, key_tok = id in
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let prior_tmp = fresh_lval key_tok in
+  let read_prior =
+    mk_s
+      (Instr
+         (mk_i
+            (Assign (prior_tmp, mk_e (Fetch field_lval) eorig))
+            eorig))
+  in
+  let ss_v, ve = expr env value_expr in
+  let assign_stmt = mk_s (Instr (mk_i (Assign (field_lval, ve)) eorig)) in
+  ( ss_recv @ [ read_prior ] @ ss_v @ [ assign_stmt ],
+    mk_e (Fetch prior_tmp) eorig )
+
+(* [m.putIfAbsent(k, v)]: assign only when the key is absent, return
+ * the prior value (null when the key was absent, i.e. when the
+ * assignment happened):
+ *   tmp = Fetch m.k
+ *   if tmp == null then m.k = v
+ *   return Fetch tmp
+ *)
+and emit_field_write_if_absent env ~callee ~eorig (receiver : G.expr)
+    (id : G.ident) (value_expr : G.expr) : stmts * exp =
+  let _, key_tok = id in
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let prior_tmp = fresh_lval key_tok in
+  let read_prior =
+    mk_s
+      (Instr
+         (mk_i
+            (Assign (prior_tmp, mk_e (Fetch field_lval) eorig))
+            eorig))
+  in
+  let null_lit = mk_e (Literal (G.Null key_tok)) NoOrig in
+  let cond_exp =
+    mk_e
+      (Operator
+         ( (G.Eq, key_tok),
+           [
+             Unnamed (mk_e (Fetch prior_tmp) NoOrig); Unnamed null_lit;
+           ] ))
+      NoOrig
+  in
+  let ss_v, ve = expr env value_expr in
+  let then_branch =
+    ss_v @ [ mk_s (Instr (mk_i (Assign (field_lval, ve)) eorig)) ]
+  in
+  let if_stmt = mk_s (If (key_tok, cond_exp, then_branch, [])) in
+  ( ss_recv @ [ read_prior; if_stmt ],
+    mk_e (Fetch prior_tmp) eorig )
+
+(* [m.remove(k)]: clear the cell and return the prior value:
+ *   tmp = Fetch m.k
+ *   m.k = null
+ *   return Fetch tmp
+ *)
+and emit_field_remove env ~callee ~eorig (receiver : G.expr) (id : G.ident) :
+    stmts * exp =
+  let _, key_tok = id in
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let prior_tmp = fresh_lval key_tok in
+  let read_prior =
+    mk_s
+      (Instr
+         (mk_i
+            (Assign (prior_tmp, mk_e (Fetch field_lval) eorig))
+            eorig))
+  in
+  let null_lit = mk_e (Literal (G.Null key_tok)) NoOrig in
+  let clear =
+    mk_s (Instr (mk_i (Assign (field_lval, null_lit)) eorig))
+  in
+  (ss_recv @ [ read_prior; clear ], mk_e (Fetch prior_tmp) eorig)
+
+(* Kotlin [m.getOrElse(k) { body }]: if [m.k] is missing, invoke the
+ * trailing lambda with the key as argument:
+ *   tmp = Fetch m.k
+ *   if tmp == null then tmp = lambda(k)
+ *   return Fetch tmp
+ * The lambda parameter [it] is already resolved by the Kotlin parser;
+ * synthesising a [G.Call(lambda, [key])] routes through the existing
+ * call-arg-to-parameter binding in the taint engine. *)
+and emit_field_access_or_lambda env ~callee ~eorig (receiver : G.expr)
+    (id : G.ident) (key_expr : G.expr) (lambda_expr : G.expr) :
+    stmts * exp =
+  let _, key_tok = id in
+  let ss_recv, field_lval = build_field_lval env ~callee receiver id in
+  let prior_tmp = fresh_lval key_tok in
+  let read_prior =
+    mk_s
+      (Instr
+         (mk_i
+            (Assign (prior_tmp, mk_e (Fetch field_lval) eorig))
+            eorig))
+  in
+  let null_lit = mk_e (Literal (G.Null key_tok)) NoOrig in
+  let cond_exp =
+    mk_e
+      (Operator
+         ( (G.Eq, key_tok),
+           [
+             Unnamed (mk_e (Fetch prior_tmp) NoOrig); Unnamed null_lit;
+           ] ))
+      NoOrig
+  in
+  let synth_call =
+    G.Call (lambda_expr, Tok.unsafe_fake_bracket [ G.Arg key_expr ]) |> G.e
+  in
+  let ss_lambda_call, lambda_result = expr env synth_call in
+  let then_branch =
+    ss_lambda_call
+    @ [ mk_s (Instr (mk_i (Assign (prior_tmp, lambda_result)) eorig)) ]
+  in
+  let if_stmt = mk_s (If (key_tok, cond_exp, then_branch, [])) in
+  ( ss_recv @ [ read_prior; if_stmt ], mk_e (Fetch prior_tmp) eorig )
+
+and clojure_atom_key_literal (e : G.expr) : exp option =
+  (* When [env.lang] is Clojure, a map-literal key like [:body] or
+   * [::body] arrives here as [OtherExpr("Atom", [Name IdQualified
+   * {name_middle = Some (QDots [(prefix, _)]); name_last = (s, tok)}])],
+   * where [prefix] is [":" / "::"] — the auto-resolved-namespace
+   * marker — and [s] carries the atom's surface text (still prefixed
+   * with a [:]). We need [:body] and [::body] to produce distinct
+   * [Ostr] offsets downstream so field-sensitive taint can tell them
+   * apart; emit a [String] literal whose text is [prefix ^ bare] so
+   * that [:body] stays [":body"] and [::body] stays ["::body"].
+   * [G.Atom] cannot currently carry the [:]/[::] distinction, hence
+   * the bespoke path here — see the comment on
+   * [key_offset_of_pattern] for the matching pattern-side. *)
+  match e.G.e with
+  | G.OtherExpr
+      ( ("Atom", _),
+        [
+          G.Name
+            (G.IdQualified
+              {
+                name_last = (s, tok), _;
+                name_middle = Some (G.QDots [ ((prefix, _), _) ]);
+                _;
+              });
+        ] )
+    when String.equal prefix ":" || String.equal prefix "::" ->
+      let bare = String_.strip_wrapping_char ':' s in
+      Some
+        (mk_e
+           (Literal (G.String (Tok.unsafe_fake_bracket (prefix ^ bare, tok))))
+           (SameAs e))
+  | _ -> None
+
 and dict env (_, orig_entries, _) orig : stmts * exp =
+  let entry_of_kv korig vorig =
+    let ss_v, ve = expr env vorig in
+    match
+      if env.lang =*= Lang.Clojure then clojure_atom_key_literal korig else None
+    with
+    | Some ke -> (ss_v, Entry (ke, ve))
+    | None ->
+        let ss_k, ke = expr env korig in
+        (ss_k @ ss_v, Entry (ke, ve))
+  in
   let results =
     List.map
       (fun orig_entry ->
         match orig_entry.G.e with
         | G.Container (G.Tuple, (_, [ korig; vorig ], _)) ->
-            let ss_k, ke = expr env korig in
-            let ss_v, ve = expr env vorig in
-            (ss_k @ ss_v, Entry (ke, ve))
+            entry_of_kv korig vorig
         | G.OtherExpr ((("MapPairArrow" | "MapPairKeyword"), _), [ G.E inner ])
           when env.lang =*= Lang.Elixir ->
             (match inner.G.e with
             | G.Container (G.Tuple, (_, [ korig; vorig ], _)) ->
-                let ss_k, ke = expr env korig in
-                let ss_v, ve = expr env vorig in
-                (ss_k @ ss_v, Entry (ke, ve))
+                entry_of_kv korig vorig
             | _ -> todo (G.E orig))
         | __else__ -> todo (G.E orig))
       orig_entries
@@ -1673,7 +2979,7 @@ and stmt_expr env ?g_expr st : stmts * exp =
   match st.G.s with
   | G.ExprStmt (eorig, tok) ->
       let ss, e = expr env eorig in
-      if eorig.is_implicit_return then
+      if effective_implicit_return env eorig then
         let ret_stmt = mk_s (Return (tok, e)) in
         let ss_unit, unit_e = expr_opt env tok None in
         (ss @ [ret_stmt] @ ss_unit, unit_e)
@@ -1874,18 +3180,31 @@ and for_var_or_expr_list env xs : stmts =
 (*****************************************************************************)
 and parameters params : param list =
   params |> Tok.unbracket
-  |> List_.map (function
+  |> List_.mapi (fun idx gparam ->
+       match gparam with
        | G.Param { pname = Some i; pinfo; pdefault; _ } ->
            let pname = var_of_id_info i pinfo in
            (* Clojure/Elixir/OCaml encode multi-clause functions with a
-              single synthetic !!_implicit_param! that wraps all actual
-              arguments. Translate it as ParamRest so the taint signature
-              layer treats it as a rest param without a special-case check. *)
-           if G.is_implicit_param (fst i) then ParamRest { pname; pdefault }
-           else Param { pname; pdefault }
+              single synthetic !!_implicit_param! that already receives the
+              CList of actual arguments (the call site wraps them). Keep it
+              as a plain positional Param so the signature layer binds the
+              CList directly instead of re-wrapping it. *)
+           Param { pname; pdefault }
        | G.ParamRest (_, { pname = Some i; pinfo; pdefault; _ }) ->
            ParamRest { pname = var_of_id_info i pinfo; pdefault }
-       | G.ParamPattern pat -> ParamPattern pat
+       | G.ParamPattern (pat, { pname = Some i; pinfo; pdefault; _ }) ->
+           (* The synthetic [!!_implicit_param!] binder from
+            * [implicit_param_classic] becomes the IL name_param. Rename
+            * it to [!!_implicit_param!_idx] so multiple destructuring
+            * params in the same function get distinguishable Arg entries
+            * in the taint signature layer; the [is_implicit_param] prefix
+            * check still recognises the indexed form. The inner pattern
+            * is lowered separately by [function_definition] as a
+            * [pattern_assign_statements] prelude over this name. *)
+           let _, tk = i in
+           let i = G.implicit_param_id_indexed idx tk in
+           let pname = var_of_id_info i pinfo in
+           ParamPattern ({ pname; pdefault }, pat)
        | G.ParamReceiver _param ->
            (* TODO: Treat receiver as this parameter *)
            ParamFixme (* TODO *)
@@ -1898,7 +3217,12 @@ and parameters params : param list =
        | G.ParamHashSplat (_, _)
        | G.ParamEllipsis _
        | G.OtherParam (_, _) ->
-           ParamFixme (* TODO *))
+           ParamFixme (* TODO *)
+       | G.ParamPattern (_, { pname = None; _ }) ->
+           (* Every [G.ParamPattern] is built via [implicit_param_classic]
+            * which always sets [pname = Some ...]. This case cannot be
+            * reached from any current parser. *)
+           ParamFixme)
 
 (*****************************************************************************)
 (* Type *)
@@ -2085,7 +3409,8 @@ and stmt_aux env st : stmts =
   match st.G.s with
   | G.ExprStmt (eorig, tok) -> (
       match eorig with
-      | { is_implicit_return = true; _ } -> implicit_return env eorig tok
+      | _ when effective_implicit_return env eorig ->
+          implicit_return env eorig tok
       (* Python's yield statement functions similarly to a return
          statement but with the added capability of saving the
          function's state. While this analogy isn't entirely precise,
@@ -2093,17 +3418,6 @@ and stmt_aux env st : stmts =
          sake. *)
       | { e = Yield (_, Some e, _); _ } when env.lang =*= Lang.Python ->
           implicit_return env e tok
-      (* Clojure wraps function bodies in OtherExpr("ExprBlock", ...).
-         mark_first_instr_ancestor sets is_implicit_return on the inner
-         expression (referenced by iorig), but this match sees the outer
-         wrapper. Propagate by checking the last expression in the block. *)
-      | { e = G.OtherExpr ((kind, _), exprs); _ }
-        when env.lang =*= Lang.Clojure
-             && CLJ_ME1.expands_as_block kind
-             && (match List.rev exprs with
-                 | G.E { G.is_implicit_return = true; _ } :: _ -> true
-                 | _ -> false) ->
-          implicit_return env eorig tok
       | _ -> expr_stmt env eorig tok)
   | G.DefStmt
       ( { name = EN obj; _ },
@@ -2465,17 +3779,49 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
                `Or`ed together cases. It's handled specially in cases_and_bodies_to_stmts
             *)
             impossible (G.Tk tok)
-        | G.Case (tok, _) ->
-            (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es)
+        | G.Case (tok, pat) -> (
+            (* For list-shaped patterns we encode the arity check as a
+             * condition on the scrutinee's length. Clojure multi-arity
+             * functions lower as a Switch over a single list-valued implicit
+             * parameter; without a real condition here the effects of every
+             * leg would merge at the caller's signature instantiation. *)
+            match list_pat_arity pat with
+            | None -> (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es)
+            | Some (op, n) ->
+                let length_exp =
+                  {
+                    e = Operator ((G.Length, tok), [ Unnamed switch_expr ]);
+                    eorig = related_tok tok;
+                  }
+                in
+                let n_exp =
+                  {
+                    e = Literal (G.Int (Parsed_int.of_int n));
+                    eorig = related_tok tok;
+                  }
+                in
+                ( ss,
+                  {
+                    e =
+                      Operator ((op, tok), [ Unnamed length_exp; Unnamed n_exp ]);
+                    eorig = related_tok tok;
+                  }
+                  :: es ))
         | G.OtherCase ((_todo_categ, tok), _any) ->
             (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es))
       ([], []) cases
   in
+  (* A [CasesAndBody] with a single case does not need the [Or] wrapper —
+   * unwrapping it here keeps downstream consumers (e.g. the arity-guard
+   * recogniser in the taint transfer) from having to peel it off. *)
   ( ss,
-    {
-      e = Operator ((Or, tok), mk_unnamed_args es);
-      eorig = SameAs switch_expr_orig;
-    } )
+    match es with
+    | [ single ] -> single
+    | _ ->
+        {
+          e = Operator ((Or, tok), mk_unnamed_args es);
+          eorig = SameAs switch_expr_orig;
+        } )
 
 and cases_to_exp tok env cases : stmts * exp =
   (* If we have no scrutinee, the cases are boolean expressions, so we Or them together *)
@@ -2501,7 +3847,11 @@ and cases_to_exp tok env cases : stmts * exp =
       ([], []) cases
   in
   ( ss,
-    { e = Operator ((Or, tok), mk_unnamed_args es); eorig = related_tok tok } )
+    match es with
+    | [ single ] -> single
+    | _ ->
+        { e = Operator ((Or, tok), mk_unnamed_args es); eorig = related_tok tok }
+  )
 
 and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_cases
     lower_body : G.case_and_body list -> stmts * stmts = function
@@ -2630,6 +3980,18 @@ and function_definition env fdef : function_definition =
     | _ -> env, []
   in
   let env = { env with inside_function = true } in
+  (* ParamPattern destructuring is expressed declaratively: the
+   * parameter_classic's implicit binder is the signature's Arg slot,
+   * and each leaf of the pattern is pre-seeded at taint-env setup
+   * time with shape [Arg (taint_arg, offset_path)]. See
+   * [Taint_signature_extractor.mk_param_assumptions]. No IL
+   * instructions are needed here — the shape system handles the
+   * projection from caller's argument to leaf at call-site
+   * signature instantiation. This avoids the destructive overwrite
+   * that an IL [Assign] would cause on [mk_fun_input_env]'s pre-
+   * seeded source taints, and avoids introducing origs that would
+   * falsely match enclosing-sink ranges via
+   * [Match_taint_spec.any_is_in_matches_OSS]. *)
   let fbody = function_body env fdef.G.fbody in
   let fbody = rec_point_label_stmts @ fbody in
   { fkind = fdef.fkind; fparams; frettype = fdef.G.frettype; fbody }

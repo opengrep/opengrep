@@ -1,0 +1,15 @@
+rules:
+  - id: test-map-destructure-taint
+    message: |
+      Field-sensitive taint through a TypeScript object destructure
+      with a type annotation on the parameter.
+    languages:
+      - typescript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

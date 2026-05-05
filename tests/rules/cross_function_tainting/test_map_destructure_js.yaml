@@ -1,0 +1,17 @@
+rules:
+  - id: test-map-destructure-taint
+    message: |
+      Field-sensitive taint through a JavaScript object destructure.
+      The callee destructures [{ body, user }] and sinks [body];
+      taint at the caller-side [body:] key must fire, but taint at a
+      sibling key ([user:]) must not.
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

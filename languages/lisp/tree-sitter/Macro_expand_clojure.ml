@@ -33,7 +33,7 @@ let macro_expand_1 (expr : G.expr) : G.expr =
   match expr.G.e with
 
   | G.OtherExpr (("ShortLambda", fn_tok),
-                 (G.Params [(G.ParamPattern _pat as param)])
+                 (G.Params [(G.ParamPattern (_pat, _classic) as param)])
                  :: (G.E expr) :: []) ->
     G.Lambda
       {

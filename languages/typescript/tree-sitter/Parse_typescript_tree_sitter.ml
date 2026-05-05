@@ -682,8 +682,11 @@ and pattern (env : env) (x : CST.pattern) : (a_ident, a_pattern) Either.t =
       | _ -> Right lhs)
   | `Rest_pat (v1, v2) ->
       let tok = token env v1 (* "..." *) in
-      let _lhs_TODO = lhs_expression env v2 in
-      Right (IdSpecial (Spread, tok))
+      let lhs = lhs_expression env v2 in
+      (* Wrap the binding inside an [Apply(Spread, [binding])] so the
+       * destructure target preserves the [...rest] name. Mirrors how
+       * spread elements are emitted in array/call-argument contexts. *)
+      Right (Apply (IdSpecial (Spread, tok), fb [ lhs ]))
 
 (*
    This is a pattern for destructuring an object property.

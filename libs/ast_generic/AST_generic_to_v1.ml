@@ -1156,7 +1156,9 @@ and map_parameter = function
       let v0 = map_tok v0 in
       let v1 = map_parameter_classic v1 in
       `ParamHashSplat (v0, v1)
-  | ParamPattern v1 ->
+  | ParamPattern (v1, _) ->
+      (* The v1 synthetic parameter_classic is not part of the v1 spec;
+       * drop it. *)
       let v1 = map_pattern v1 in
       `ParamPattern v1
   | ParamEllipsis v1 -> raise (SemgrepConstruct v1)

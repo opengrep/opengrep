@@ -1,0 +1,17 @@
+rules:
+  - id: test-map-destructure-taint
+    message: |
+      Field-sensitive taint through a Rust struct literal and
+      destructure. The callee destructures [Req { body, user }] and
+      sinks [body]. A source at the caller-side [body:] field fires;
+      a source at [user:] does not.
+    languages:
+      - rust
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

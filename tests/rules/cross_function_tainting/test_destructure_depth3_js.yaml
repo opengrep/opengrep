@@ -1,0 +1,16 @@
+rules:
+  - id: test-destructure-depth3-js
+    message: |
+      JS depth-3 destructure {user: {profile: {body}}}: source bound at
+      a sibling field at depth 3 must not flow to body. With
+      taint_MAX_POLY_OFFSET = 4, the path arg.user.profile.body fits
+      without truncation, so field-sensitive precision is preserved.
+    languages: [js]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

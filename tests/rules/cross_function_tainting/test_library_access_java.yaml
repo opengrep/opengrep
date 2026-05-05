@@ -1,0 +1,17 @@
+rules:
+  - id: test-library-access-taint
+    message: |
+      Field-sensitive taint through Java's Map#get / Map#getOrDefault
+      / Map#put. Type-gated on the receiver having a Map-family type;
+      non-Map receivers fall through to the generic call and carry
+      taint through the opaque call's intrafile return.
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

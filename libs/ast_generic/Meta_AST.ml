@@ -1290,9 +1290,10 @@ and vof_parameter = function
       let v0 = vof_tok v0 in
       let v1 = vof_parameter_classic v1 in
       OCaml.VSum ("ParamHashSplat", [ v0; v1 ])
-  | ParamPattern v1 ->
+  | ParamPattern (v1, v2) ->
       let v1 = vof_pattern v1 in
-      OCaml.VSum ("ParamPattern", [ v1 ])
+      let v2 = vof_parameter_classic v2 in
+      OCaml.VSum ("ParamPattern", [ v1; v2 ])
   | ParamEllipsis v1 ->
       let v1 = vof_tok v1 in
       OCaml.VSum ("ParamEllipsis", [ v1 ])

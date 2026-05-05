@@ -400,6 +400,51 @@ let rec get_resolved_type lang (vinit, vtype) =
           (* alt: lookup id in env to get its type, which would be cleaner *)
           | Some { e = N (Id (_, { id_type; _ })); _ } -> !id_type
           | Some { e = New (_, tp, _, (_, _, _)); _ } -> Some tp
+          (* Scala companion-object apply: [Map(...)],
+           * [mutable.Map[K, V]()], [HashMap[K, V]()]. The head of
+           * the callee gives the type; when the call is
+           * parameterised, we preserve the type arguments as
+           * [TyApply]. Scala-gated so other languages' inference
+           * paths are untouched; non-Map capitalised heads (e.g.
+           * [List(...)]) are harmless — the library-call
+           * recognisers gate against the Map family list. *)
+          | Some { e = Call (callee, _); _ } when lang =*= Lang.Scala ->
+              let name_of_simple_expr (e : expr) =
+                match e.e with
+                | N (Id (id, _)) -> Some id
+                | N (IdQualified { name_last = id, _; _ }) -> Some id
+                | DotAccess (_, _, FN (Id (id, _))) -> Some id
+                | DotAccess
+                    (_, _, FN (IdQualified { name_last = id, _; _ })) ->
+                    Some id
+                | _ -> None
+              in
+              let head_name_and_targs (e : expr) =
+                match e.e with
+                | OtherExpr (("InstanciatedExpr", _), E inner :: rest) ->
+                    let targs =
+                      List.filter_map
+                        (function T t -> Some t | _ -> None)
+                        rest
+                    in
+                    Option.map
+                      (fun id -> (id, targs))
+                      (name_of_simple_expr inner)
+                | _ ->
+                    Option.map (fun id -> (id, [])) (name_of_simple_expr e)
+              in
+              (match head_name_and_targs callee with
+               | Some ((s, tok), []) when String_.is_capitalized s ->
+                   make_type s tok
+               | Some ((s, tok), targs) when String_.is_capitalized s ->
+                   let head_ty =
+                     TyN (Id ((s, tok), empty_id_info ())) |> AST_generic.t
+                   in
+                   let args =
+                     Tok.unsafe_fake_bracket (List.map (fun t -> TA t) targs)
+                   in
+                   Some (TyApply (head_ty, args) |> AST_generic.t)
+               | _ -> None)
           | Some { e = Ref (tok, exp); _ } ->
               Option.bind
                 (get_resolved_type lang (Some exp, None))
@@ -467,13 +512,36 @@ let params_of_parameters env params : scope =
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
-       (* TODO: ParamPattern *)
-       | _ -> None)
-
-let pattern_params_of_parameters _env params : AST_generic.pattern list =
-  params |> Tok.unbracket
-  |> List_.filter_map (function
-       | ParamPattern pat -> Some pat
+       (* Destructuring parameter: the synthetic [parameter_classic]
+        * carries a [!!_implicit_param!] binder that needs to be resolved
+        * as a regular Parameter, so AST_to_IL can generate a
+        * [pattern_assign_statements] prelude referencing it. The inner
+        * pattern's leaves are declared as LocalVars when
+        * [visit_function_definition] iterates [x.fparams] inside the
+        * function scope and visits each pattern. *)
+       | ParamPattern (_pat, { pname = Some id; pinfo = id_info; ptype = typ; _ }) ->
+           let sid = SId.mk () in
+           let resolved = { entname = (Parameter, sid); enttype = typ } in
+           set_resolved env id_info resolved;
+           Some (H.str_of_ident id, resolved)
+       (* Ruby [&callback] block parameter and PHP [&$var] by-reference
+        * parameter are both produced as
+        * [OtherParam("Ref", [Pa(Param(...))])] by their respective AST
+        * converters. Treat the inner [Param] as a regular parameter so
+        * references to it in the body resolve correctly. Scoped to these
+        * two languages to avoid accidentally shadowing any other future
+        * use of the [("Ref", _)] tag. *)
+       | OtherParam
+           ( ("Ref", _),
+             [ Pa (Param { pname = Some id; pinfo = id_info; ptype = typ; _ })
+             ] )
+         when (match env.lang with
+               | Lang.Ruby | Lang.Php -> true
+               | _ -> false) ->
+           let sid = SId.mk () in
+           let resolved = { entname = (Parameter, sid); enttype = typ } in
+           set_resolved env id_info resolved;
+           Some (H.str_of_ident id, resolved)
        | _ -> None)
 
 let js_get_angular_constructor_args env attrs defs =
@@ -563,19 +631,21 @@ class ['self] resolve_visitor env lang =
        * (no need to declarare prototype and forward decls as in C).
        *)
       let new_params = params_of_parameters env x.fparams in
-      (* TODO: How about PatternParam which is ignored in the function
-       * called above? We should visit_pattern for these, inside the scope? *)
       with_new_context InFunction env (fun () ->
           with_new_function_scope new_params env.names (fun () ->
-              (* TODO: Even more accurate to maintain order of adding
-               * to scope, so the interleaving of Param and PatternParam
-               * should be respected. This requires a custom with_function_scope...
-               * Basically to use with_new_block_scope and do manually. *)
-              let pat_params =
-                pattern_params_of_parameters env x.fparams
-              in
-              super#visit_pattern venv
-                (PatTuple (Tok.unsafe_fake_bracket pat_params));
+              (* Each [ParamPattern]'s synthetic implicit binder was just
+               * registered as a Parameter in [new_params]. The inner
+               * pattern's leaves still need to be declared in the
+               * function scope so references in the body resolve: visit
+               * each pattern in source order so the visitor's [PatId]
+               * case calls [declare_var] for each leaf as a LocalVar.
+               * AST_to_IL will later emit a [pattern_assign_statements]
+               * prelude that binds these leaves to projections of the
+               * implicit binder. *)
+              (Tok.unbracket x.fparams)
+              |> List.iter (function
+                | ParamPattern (pat, _) -> super#visit_pattern venv pat
+                | _ -> ());
               (* todo: actually we should first go inside x.fparams.ptype
                * without the new_params (this would also prevent cycle if
                * a parameter name is the same than type name used in ptype
@@ -1110,10 +1180,14 @@ class ['self] resolve_visitor env lang =
        * OtherExpr("ShortLambda", [Params [...]; E body])
        * Create a new scope with the params and visit the body. *)
       | OtherExpr (("ShortLambda", _),
-                   [Params [(ParamPattern pat)]; E body])
+                   [Params [(ParamPattern (pat, classic))]; E body])
         when lang =*= Lang.Clojure ->
+        let new_params =
+          params_of_parameters env
+            (Tok.unsafe_fake_bracket [ ParamPattern (pat, classic) ])
+        in
         with_new_context InFunction env (fun () ->
-            with_new_block_scope env.names (fun () ->
+            with_new_function_scope new_params env.names (fun () ->
                 self#visit_pattern venv pat;
                 self#visit_expr venv body));
           recurse := false

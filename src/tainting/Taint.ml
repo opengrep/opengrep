@@ -16,6 +16,7 @@
 module G = AST_generic
 module PM = Core_match
 module R = Rule
+module EG = Effect_guard
 module LabelSet = Set.Make (String)
 module Log = Log_tainting.Log
 open Common
@@ -132,8 +133,18 @@ let rec show_call_trace show_thing = function
 type arg = { name : string; index : int } [@@deriving eq, ord]
 type base = BGlob of IL.name | BThis | BArg of arg [@@deriving ord]
 
-type offset = Ofld of IL.name | Oint of int | Ostr of string | Oany
-[@@deriving ord]
+(* [Oslice n] mirrors [IL.Slice n]: the trailing-rest of a list/tuple
+ * scrutinee starting at index [n]. Reading element [k] of a slice
+ * resolves to the source's index [n + k]; the engine collapses
+ * [Oint k :: Oslice n :: rest] to [Oint (n+k) :: rest] and
+ * [Oslice b :: Oslice a :: rest] to [Oslice (a+b) :: rest]. *)
+type offset =
+  | Ofld of IL.name
+  | Oint of int
+  | Ostr of string
+  | Oslice of int
+  | Oany
+[@@deriving eq, ord]
 
 type lval = { base : base; offset : offset list }
 
@@ -156,6 +167,7 @@ let show_offset offset =
   | Ofld n -> "." ^ fst n.IL.ident
   | Oint i -> Printf.sprintf "[%d]" i
   | Ostr s -> Printf.sprintf "[%s]" s
+  | Oslice n -> Printf.sprintf "[%d..]" n
   | Oany -> "[*]"
 
 let show_offset_list offset =
@@ -171,7 +183,9 @@ match o.o with
     | Some i -> Oint i
     | None -> Oany)
 | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
+| IL.Index { e = IL.Literal (Atom (_, (s, _))); _ } -> Ostr s
 | IL.Index _ -> Oany
+| IL.Slice n -> Oslice n
 
 let offset_of_rev_IL_offset ~rev_offset = List.rev_map offset_of_IL rev_offset
 
@@ -206,6 +220,7 @@ let rev_IL_offset_of_offset offset =
                      };
                  oorig = NoOrig;
                }
+         | Oslice n -> Some IL.{ o = Slice n; oorig = NoOrig }
          | Oany -> None)
   in
   os
@@ -360,6 +375,20 @@ and show_taint taint =
 (* Taint sets *)
 (*****************************************************************************)
 
+type guarded_taint = { taint : taint; guard : EG.t }
+
+let compare_guarded_taint (gt1 : guarded_taint) (gt2 : guarded_taint) =
+  (* Compare by taint identity only, so same-taint bundles with
+   * different guards collapse to one entry; [Taint_set.add] fuses
+   * their guards via [EG.compose_or] (different paths converging on
+   * the same taint contribute disjunctively). *)
+  compare_taint gt1.taint gt2.taint
+
+let lift_taint (t : taint) : guarded_taint = { taint = t; guard = EG.top }
+
+let with_guard (g : EG.t) (gt : guarded_taint) : guarded_taint =
+  { gt with guard = EG.compose_and gt.guard g }
+
 module Taint_set = struct
   (* NOTE "Taint sets"
    *
@@ -369,11 +398,17 @@ module Taint_set = struct
    * the call trace or the precondition (for labeled taint) that may differ, and
    * we want to pick "the best". This is what this data structure is for, the
    * key functions are 'add' and 'pick_best_taint'.
-   *)
+   *
+   * Each element is a [guarded_taint] carrying the taint plus the
+   * [Effect_guard.t] under which that taint is live. Equality on the
+   * set element is by taint identity only ([compare_guarded_taint]),
+   * so when a bundle with the same taint identity but a different
+   * guard is added, [add] fuses guards via [EG.compose_or] and picks
+   * the best taint via [pick_best_taint]. *)
   module Taints = Set.Make (struct
-    type t = taint
+    type t = guarded_taint
 
-    let compare = compare_taint
+    let compare = compare_guarded_taint
   end)
 
   type t = Taints.t
@@ -386,7 +421,7 @@ module Taint_set = struct
   let to_seq set = set |> Taints.to_seq
   let elements set = set |> to_seq |> List.of_seq
 
-  let rec add alt_taint set =
+  let rec add alt_bundle set =
     (* If two taints are "the same", we still want to pick "the best", e.g.
      * the one with the shortest trace.
      *
@@ -412,18 +447,25 @@ module Taint_set = struct
      *
      * coupling: If this changes, make sure to update docs for the `Taint.signature` type.
      *)
-    match Taints.find_opt alt_taint set with
-    | None -> Taints.add alt_taint set
-    | Some curr_taint ->
-        let best = pick_best_taint alt_taint curr_taint in
+    match Taints.find_opt alt_bundle set with
+    | None -> Taints.add alt_bundle set
+    | Some curr_bundle ->
+        let best_taint = pick_best_taint alt_bundle.taint curr_bundle.taint in
+        let merged_guard =
+          EG.compose_or alt_bundle.guard curr_bundle.guard
+        in
+        let merged = { taint = best_taint; guard = merged_guard } in
         (* Optimization: Do not change the set if there is nothing to change. *)
-        if Common.phys_equal best curr_taint then set
-        else set |> Taints.remove curr_taint |> Taints.add best
+        if
+          Common.phys_equal best_taint curr_bundle.taint
+          && EG.equal merged_guard curr_bundle.guard
+        then set
+        else set |> Taints.remove curr_bundle |> Taints.add merged
 
   and union set1 set2 = Taints.fold add set1 set2
 
-  and of_list taints =
-    List.fold_left (fun set taint -> add taint set) Taints.empty taints
+  and of_list bundles =
+    List.fold_left (fun set b -> add b set) Taints.empty bundles
 
   and pick_best_taint taint1 taint2 =
     (* Here we assume that 'compare taint1 taint2 = 0' so we could keep any
@@ -459,13 +501,16 @@ module Taint_set = struct
                * and not having "Best_sources" [see note "Best matches" in 'Taint_spec_match'].
                * TOOD: Revisit ^^^ now we have `exact: true` sources.
                *)
-              let ts1' = of_list ts1 in
-              let ts2' = of_list ts2 in
+              let ts1' = of_list (List_.map lift_taint ts1) in
+              let ts2' = of_list (List_.map lift_taint ts2) in
               if Taints.equal ts1' ts2' then
                 (* Optimization: prefer sharing. *)
                 Some (ts1, p1)
               else
-                let ts = union ts1' ts2' |> elements in
+                let ts =
+                  union ts1' ts2' |> elements
+                  |> List_.map (fun (b : guarded_taint) -> b.taint)
+                in
                 Some (ts, p1)
         in
         let taint1 = { taint1 with orig = Src { src1 with precondition } } in
@@ -488,7 +533,7 @@ module Taint_set = struct
         taint2
 
   let diff set1 set2 = Taints.diff set1 set2
-  let singleton taint = add taint empty
+  let singleton (t : taint) : t = add (lift_taint t) empty
 
   (* Because `Taint_set` is internally represented with a map, we cannot just
      map the codomain taint, using the internal provided `map` function. We
@@ -506,16 +551,44 @@ module Taint_set = struct
     |> Taints.to_seq
     |> Seq.flat_map (fun x -> Taints.to_seq (f x))
     |> Taints.of_seq
-  
+
   let iter f set = Taints.iter f set
   let fold f set acc = Taints.fold f set acc
   let filter f set = Taints.filter f set
+
+  (* Strip per-taint guards: yields the bare taint identities. Used at
+   * boundaries that don't (yet) consume guards. *)
+  let to_taint_list (set : t) : taint list =
+    set |> elements |> List_.map (fun (b : guarded_taint) -> b.taint)
+
+  (* Lift a list of bare taints with [EG.top] guards. *)
+  let of_taint_list (taints : taint list) : t =
+    of_list (List_.map lift_taint taints)
+
+  (* Conjoin [g] into every bundle's guard. *)
+  let conjoin_guard (g : EG.t) (set : t) : t =
+    set |> map (with_guard g)
+
+  (* Convenience: add a bare taint (with [EG.top] guard) to a set. *)
+  let add_taint (t : taint) (set : t) : t = add (lift_taint t) set
+
+  (* Convenience: add a taint with a specific guard. *)
+  let add_taint_with_guard (t : taint) (g : EG.t) (set : t) : t =
+    add { taint = t; guard = g } set
+
+  (* Map the inner [taint] of every bundle, leaving guards untouched. *)
+  let map_taint (f : taint -> taint) (set : t) : t =
+    set |> map (fun (b : guarded_taint) -> { b with taint = f b.taint })
 end
 
 type taints = Taint_set.t
 
 let show_taints taints =
-  taints |> Taint_set.elements |> List_.map show_taint |> String.concat ", "
+  taints |> Taint_set.elements
+  |> List_.map (fun (b : guarded_taint) ->
+         let guard_str = EG.show_in_brackets b.guard in
+         show_taint b.taint ^ guard_str)
+  |> String.concat ", "
   |> fun str -> "{ " ^ str ^ " }"
 
 (*****************************************************************************)
@@ -570,14 +643,14 @@ let rec solve_precondition ~ignore_poly_taint ~taints pre : bool option =
         else None
     | R.PVariable _var_name ->
         (* Check if any taint in the filtered set has source origins *)
-        let has_source_taint = 
-          taints 
-          |> Taint_set.elements
-          |> List.exists (fun taint ->
-            match taint.orig with
-            | Src _ -> true  (* Actual source taint *)
-            | _ -> false     (* Variable initialization doesn't count *)
-          ) in
+        let has_source_taint =
+          taints
+          |> Taint_set.to_taint_list
+          |> List.exists (fun (taint : taint) ->
+                 match taint.orig with
+                 | Src _ -> true (* Actual source taint *)
+                 | _ -> false (* Variable initialization doesn't count *))
+        in
         if has_source_taint then Some true
         else Some false
     | R.PNot p -> loop p |> Option.map not
@@ -605,8 +678,8 @@ and labels_in_taints taints =
   let sure_labels = ref LabelSet.empty in
   let maybe_labels = ref LabelSet.empty in
   taints
-  |> Taint_set.iter (fun taint ->
-         match taint.orig with
+  |> Taint_set.iter (fun (b : guarded_taint) ->
+         match b.taint.orig with
          | Var _
          | Shape_var _
          | Control ->
@@ -616,7 +689,7 @@ and labels_in_taints taints =
          | Src { label; precondition = Some (incoming, pre); _ } -> (
              match
                solve_precondition ~ignore_poly_taint:false
-                 ~taints:(Taint_set.of_list incoming)
+                 ~taints:(Taint_set.of_taint_list incoming)
                  pre
              with
              | Some true -> sure_labels := LabelSet.add label !sure_labels
@@ -645,7 +718,7 @@ let taints_satisfy_requires taints pre =
    *)
   match
     solve_precondition ~ignore_poly_taint:true
-      ~taints:(Taint_set.of_list taints) pre
+      ~taints:(Taint_set.of_taint_list taints) pre
   with
   | Some b -> b
   | None ->
@@ -658,8 +731,8 @@ let filter_relevant_taints requires taints =
   let labels = labels_in_precondition requires in
   (* If the precondition is 'A' we don't care about taint with label 'B' or 'C'. *)
   taints
-  |> Taint_set.filter (fun t ->
-         match t.orig with
+  |> Taint_set.filter (fun (b : guarded_taint) ->
+         match b.taint.orig with
          | Src src -> LabelSet.mem src.label labels
          | Var _
          | Shape_var _
@@ -678,7 +751,7 @@ let rec map_preconditions f taint =
       let new_incoming =
         incoming
         |> List_.filter_map (map_preconditions f)
-        |> f |> Taint_set.of_list
+        |> f |> Taint_set.of_taint_list
       in
       let new_incoming = filter_relevant_taints expr new_incoming in
       match
@@ -688,7 +761,7 @@ let rec map_preconditions f taint =
       | Some true ->
           Some { taint with orig = Src { src with precondition = None } }
       | None ->
-          let new_incoming = new_incoming |> Taint_set.elements in
+          let new_incoming = new_incoming |> Taint_set.to_taint_list in
           let new_precondition = Some (new_incoming, expr) in
           Some
             {
@@ -722,7 +795,7 @@ let src_of_pm ~incoming (pm, (source : Rule.taint_source)) =
              precondition = None;
            })
   | None ->
-      let taints_list = Taint_set.elements relevant_incoming in
+      let taints_list = Taint_set.to_taint_list relevant_incoming in
       let precondition =
         match pc with
         | Rule.PBool true -> None
@@ -758,7 +831,8 @@ let taints_of_pms ~incoming pms =
       | [] -> taints
       | _ :: _ ->
           let taints' =
-            Taint_set.of_list new_taint_list |> Taint_set.union taints
+            Taint_set.of_taint_list new_taint_list
+            |> Taint_set.union taints
           in
           go (i + 1) taints' pms_left
   in

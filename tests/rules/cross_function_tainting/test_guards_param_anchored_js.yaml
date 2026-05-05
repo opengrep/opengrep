@@ -1,0 +1,13 @@
+rules:
+  - id: test-guards-param-anchored-js
+    message: Parameter-anchored branch guard at signature instantiation
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

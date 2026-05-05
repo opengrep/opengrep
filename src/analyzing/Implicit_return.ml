@@ -13,6 +13,7 @@
  * LICENSE for more details.
  *)
 open AST_generic
+module Log = Log_analyzing.Log
 
 (*****************************************************************************)
 (* Prelude *)
@@ -52,8 +53,21 @@ let rec mark_first_instr_ancestor (cfg : IL.cfg) i =
       match instr with
       | { i = Assign (_, { eorig = SameAs e; _ }); _ }
       | { i = Call _; iorig = SameAs e } ->
+          Log.debug (fun m ->
+            m "IMPL_RET_MARK: flag set on %s"
+              (match AST_generic_helpers.range_of_any_opt (E e) with
+               | Some (s, ee) ->
+                 Printf.sprintf "range=%d-%d"
+                   s.Tok.pos.bytepos ee.Tok.pos.bytepos
+               | None -> "?"));
           e.is_implicit_return <- true
-      | _else_ -> ())
+      | _else_ ->
+          (* Not a mark-eligible instruction (e.g. an aux_var temp-chain
+             Assign with [eorig = NoOrig]). Walk past it to reach the
+             upstream instruction that carries a [SameAs] origin. *)
+          CFG.predecessors cfg i
+          |> List.iter (fun (pred_i, _) ->
+                 mark_first_instr_ancestor cfg pred_i))
   | _else_ -> ()
 
 (*****************************************************************************)

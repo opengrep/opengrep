@@ -289,6 +289,19 @@ let rec expr env (x : expr) =
           in
           let anys = anyops @ (v3 |> List_.map (fun e -> G.E e)) in
           G.OtherExpr (("CmpOps", unsafe_fake ""), anys) |> G.e)
+  (* Lower the builtin single-arg [len(x)] to an [IdSpecial (Op Length)]
+   * call so that [AST_to_IL] produces [Operator (Length, [x])] —
+   * the shape [Eval_il_partial.eval_length] and the taint guard
+   * recogniser in [Dataflow_tainting] can fold. A user function
+   * named [len] would be mis-lowered here; we treat the builtin as
+   * the expected meaning and leave the general [Call] path as a
+   * fallback for anything we do not match. *)
+  | Call (Name (("len", len_tok), _), (p1, [ Arg arg ], p2)) ->
+      let arg = G.Arg (expr env arg) in
+      G.Call
+        ( G.IdSpecial (G.Op G.Length, len_tok) |> G.e,
+          (p1, [ arg ], p2) )
+      |> G.e
   | Call (v1, v2) ->
       let v1 = expr env v1 in
       let v2 = bracket (list (argument env)) v2 in
@@ -472,7 +485,9 @@ and parameters env xs : G.parameter list =
            G.Param { (G.param_of_id n) with G.ptype = topt }
        | ParamPattern (PatternTuple pat, _) ->
            let pat = list (param_pattern env) pat in
-           G.ParamPattern (G.PatTuple (Tok.unsafe_fake_bracket pat))
+           let pat = G.PatTuple (Tok.unsafe_fake_bracket pat) in
+           let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+           G.ParamPattern (pat, G.implicit_param_classic tk)
        | ParamStar (t, (n, topt)) ->
            let n = name env n in
            let topt = option (type_ env) topt in
