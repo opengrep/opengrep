@@ -3602,7 +3602,8 @@ and (fixpoint :
                      fixpoint_aux taint_inst lambda_func
                        ~enter_lval_env:combined_env
                        ~in_lambda:(Some lambda_name) ~class_name:None
-                       ~signature_db:acc_db ?call_graph lambda_cfg
+                       ~signature_db:acc_db ?builtin_signature_db
+                       ?call_graph lambda_cfg
                    in
                    let signature =
                      { Signature.params; effects = lambda_effects }
