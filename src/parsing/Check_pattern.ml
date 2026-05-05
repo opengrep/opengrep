@@ -10,6 +10,7 @@ let lang_has_no_dollar_ids =
     | Dart
     | Elixir
     | Go
+    | Haskell
     | Html
     | Java
     | Json

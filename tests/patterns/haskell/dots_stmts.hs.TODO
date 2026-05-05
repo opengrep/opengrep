@@ -1,0 +1,10 @@
+module DotsStmts where
+
+main = do
+  v <- getLine
+--ERROR:
+  putStrLn v
+--ERROR:
+  putStrLn "done"
+
+other = return ()

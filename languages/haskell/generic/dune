@@ -1,0 +1,13 @@
+(library
+ (public_name parser_haskell.ast_generic)
+ (name parser_haskell_ast_generic)
+ (wrapped false)
+ (libraries
+   str
+   commons
+   lib_parsing
+   lib_parsing_tree_sitter
+   ast_generic
+   tree-sitter-lang.haskell
+ )
+)
