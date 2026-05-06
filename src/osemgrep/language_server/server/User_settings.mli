@@ -16,6 +16,7 @@ type t = {
   ci : bool;
   do_hover : bool;
   pro_intrafile : bool;
+  taint_intrafile : bool;
 }
 
 val default : t

@@ -30,3 +30,12 @@ rules:
     metadata:
         interfile: true
     fix: $X == 5
+  - id: taint-cross-fn
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: "tainted data crosses function boundary"
+    pattern-sources:
+      - pattern: ls_taint_source()
+    pattern-sinks:
+      - pattern: ls_taint_sink(...)

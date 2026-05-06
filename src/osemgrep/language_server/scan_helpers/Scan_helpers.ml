@@ -85,17 +85,7 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
         let runner_conf = Session.runner_conf session in
         (* This is currently just ripped from Scan_subcommand. *)
         let core_run_func =
-          let pro_intrafile =
-            session.user_settings.pro_intrafile
-          in
-            if pro_intrafile then
-              Logs.warn (fun m ->
-                  m
-                    "Pro intrafile is enabled, but the pro engine is not \
-                      available, as the user is not logged in, or there is no \
-                      pro binary available. Running with the OSS engine \
-                      instead.");
-            Core_runner.mk_core_run_for_osemgrep (Core_scan.scan session.caps)
+          Core_runner.mk_core_run_for_osemgrep (Core_scan.scan session.caps)
         in
         Logs.debug (fun m ->
             m "Running Semgrep with %d rules" (List.length rules));

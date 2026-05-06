@@ -49,6 +49,7 @@ type t = {
   ci : bool; [@default true]
   do_hover : bool; [@default false]
   pro_intrafile : bool; [@default false]
+  taint_intrafile : bool; [@key "taintIntrafile"] [@default false]
 }
 [@@deriving yojson]
 
@@ -92,6 +93,6 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       matching_explanations = false;
       time_flag = false;
       inline_metavariables = false;
-      taint_intrafile = false;
+      taint_intrafile = settings.taint_intrafile || settings.pro_intrafile;
       engine_config = Engine_config.default;
     }
