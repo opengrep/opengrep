@@ -1087,6 +1087,14 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
     inherit [_] G.iter_no_id_info as super
     val current_class : G.name option ref = ref None
     val parent_path : IL.name option list ref = ref []
+    (* True while visiting inside any function definition. Used to skip
+       lambdas that are nested inside another function — for source/sink
+       containment we want the enclosing non-lambda fn, since closure-like
+       lambdas are handled by the IL-level inner extraction, not by treating
+       them as the source/sink-bearing function. Top-level lambdas (e.g. JS
+       [const f = () => …]) are not nested and are still registered as the
+       containing function. *)
+    val inside_function : bool ref = ref false
 
     (* Helper to convert G.name to IL.name *)
     method private g_name_to_il_name (g_name : G.name) : IL.name option =
@@ -1147,6 +1155,16 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       | G.FuncDef fdef | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
           (* Get the entire function definition range (including parameters) *)
           let func_range_opt = AST_generic_helpers.range_of_any_opt (G.Def def) in
+          (* A lambda nested inside another function is closure-like; we don't
+             want it to win as the source/sink-containing fn for ranges inside
+             its body. *)
+          let is_nested_lambda =
+            !inside_function
+            &&
+            (match fst fdef.fkind with
+             | G.LambdaKind | G.Arrow -> true
+             | _ -> false)
+          in
           (match func_range_opt with
           | Some (loc_start, loc_end) ->
               let range = Range.range_of_token_locations loc_start loc_end in
@@ -1155,27 +1173,28 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
               let func_size = func_end - func_start in
 
               (* For each range, check if it's inside this function *)
-              List.iter (fun (range : Range.t) ->
-                if func_start <= range.Range.start && range.Range.end_ <= func_end then (
-                  (* This function contains this range - add it to the list *)
-                  (* Use proper parent_path tracking for nested functions *)
-                  let class_il = Option.bind !current_class self#g_name_to_il_name in
-                  let visitor_parent_path =
-                    match !parent_path with
-                    | [] -> [class_il]
-                    | _ -> !parent_path
-                  in
-                  match fn_id_of_entity ~lang (Some ent) visitor_parent_path fdef with
-                  | Some fn_id ->
-                      let existing = Hashtbl.find range_to_funcs range in
-                      if not (List.exists (fun (fid, _) -> equal_fn_id fid fn_id) existing) then
-                        Hashtbl.replace range_to_funcs range ((fn_id, func_size) :: existing)
-                  | None -> ()
-                )
-              ) ranges;
+              if not is_nested_lambda then
+                List.iter (fun (range : Range.t) ->
+                  if func_start <= range.Range.start && range.Range.end_ <= func_end then (
+                    (* This function contains this range - add it to the list *)
+                    (* Use proper parent_path tracking for nested functions *)
+                    let class_il = Option.bind !current_class self#g_name_to_il_name in
+                    let visitor_parent_path =
+                      match !parent_path with
+                      | [] -> [class_il]
+                      | _ -> !parent_path
+                    in
+                    match fn_id_of_entity ~lang (Some ent) visitor_parent_path fdef with
+                    | Some fn_id ->
+                        let existing = Hashtbl.find range_to_funcs range in
+                        if not (List.exists (fun (fid, _) -> equal_fn_id fid fn_id) existing) then
+                          Hashtbl.replace range_to_funcs range ((fn_id, func_size) :: existing)
+                    | None -> ()
+                  )
+                ) ranges;
 
-              (* Push current function onto parent_path for nested functions *)
-              let old_path = !parent_path in
+              (* Push current function onto parent_path for nested functions,
+                 and mark that we are now inside a function. *)
               let class_il = Option.bind !current_class self#g_name_to_il_name in
               let func_il = self#entity_to_il_name ent in
               let current_fn_id =
@@ -1183,13 +1202,9 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
                 | [] -> [class_il; func_il]
                 | _ -> !parent_path @ [func_il]
               in
-              parent_path := current_fn_id;
-
-              (* Visit nested functions with updated parent_path *)
-              super#visit_definition env def;
-
-              (* Restore parent_path *)
-              parent_path := old_path
+              Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
+                Common.save_excursion_unsafe inside_function true (fun () ->
+                  super#visit_definition env def))
           | None -> super#visit_definition env def)
       | _ -> super#visit_definition env def
   end in
