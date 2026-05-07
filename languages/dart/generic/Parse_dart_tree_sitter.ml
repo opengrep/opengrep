@@ -1798,9 +1798,10 @@ and map_primary (env : env) (p : CST.primary) : expr =
         | `Lit x -> map_literal env x
         | `Func_exp (v1, v2) ->
             let _tparams, fparams = map_formal_parameter_part env v1 in
+            let lparen, _, _ = fparams in
             let fbody = map_function_expression_body env v2 in
             Lambda
-                { fkind = (LambdaKind, fake "lambda"); fparams; frettype = None; fbody }
+                { fkind = (LambdaKind, lparen); fparams; frettype = None; fbody }
             |> G.e
         | `Id tok ->
             N (Id ((* pattern [a-zA-Z_$][\w$]* *) str env tok, empty_id_info ()))

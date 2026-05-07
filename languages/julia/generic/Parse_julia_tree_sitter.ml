@@ -1303,11 +1303,11 @@ and map_operation (env : env) (x : CST.operation) =
             let exp, _tok, ty = map_typed_expression env x in
             fb [ OtherParam (("typed", fake "typed"), [ G.E exp; G.T ty ]) ]
       in
-      let _v2 = (* "->" *) token env v2 in
+      let v2_arrow = (* "->" *) token env v2 in
       let v3 = map_anon_choice_exp_b833738 env v3 in
       Lambda
         {
-          fkind = (LambdaKind, fake "lambda");
+          fkind = (LambdaKind, v2_arrow);
           fparams;
           frettype = None;
           fbody = FBExpr v3;

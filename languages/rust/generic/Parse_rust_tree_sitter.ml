@@ -1594,6 +1594,7 @@ and map_closure_expression (env : env)
       v2
   in
   let params = map_closure_parameters env v3 in
+  let lpipe, _, _ = params in
   let ret_type, body =
     match v4 with
     | `Opt_DASHGT_type_blk (v1, v2) ->
@@ -1616,7 +1617,7 @@ and map_closure_expression (env : env)
   in
   let func_def =
     {
-      G.fkind = (G.LambdaKind, G.fake "closure");
+      G.fkind = (G.LambdaKind, lpipe);
       G.fparams = params;
       G.frettype = ret_type;
       G.fbody = body;
