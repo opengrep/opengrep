@@ -3466,6 +3466,15 @@ and (fixpoint :
           let all_lambdas_list = collect_all_lambdas_innermost_first fun_cfg in
           List.fold_left
             (fun acc_db (lambda_name, lambda_cfg) ->
+              let fn_id = Function_id.of_il_name lambda_name in
+              if Shape_and_sig.FunctionMap.mem fn_id acc_db.Shape_and_sig.signatures then
+                (* An earlier extraction (e.g. [Match_tainting_mode]'s outer
+                   extraction for top-level lambdas) already added a sig at
+                   this key. Adding here would put a second sig in the same
+                   [SignatureSet], which [find_by_arity] cannot disambiguate
+                   when both share an arity. *)
+                acc_db
+              else
               try
                    Log.debug (fun m ->
                        m "Extracting signature for lambda %s"

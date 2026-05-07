@@ -360,38 +360,47 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           in
 
           let _collected_infos, info_map =
-            Visit_function_defs.fold_with_parent_path
+            Visit_function_defs.fold_with_parent_path ~lang
               (fun (infos, info_map) opt_ent parent_path fdef ->
                 match fst fdef.fkind with
                 | LambdaKind
-                | Arrow -> (
-                    match opt_ent with
-                    | None -> (infos, info_map)
-                    | Some ent ->
-                        match AST_to_IL.name_of_entity ent with
-                        | None -> (infos, info_map)
-                        | Some name ->
-                            let class_name_str =
-                              match parent_path with
-                              | Some class_il :: _ -> Some (fst class_il.IL.ident)
-                              | _ -> None
-                            in
-                            let fdef_il =
-                              AST_to_IL.function_definition taint_inst.lang
-                                fdef
-                            in
-                            let cfg = CFG_build.cfg_of_fdef fdef_il in
-                            let info =
-                              {
-                                name;
-                                class_name_str;
-                                method_properties = [];
-                                cfg;
-                                fdef;
-                                is_lambda_assignment = true;
-                              }
-                            in
-                            add_info info (infos, info_map))
+                | Arrow ->
+                    (* Nested lambdas (inside another function) are handled by
+                       the enclosing function's fixpoint via [fun_cfg.lambdas].
+                       Adding them here would put a second sig at the same
+                       Function_id key (now that [Graph_from_AST.fn_id_of_entity]
+                       uses the synthetic key uniformly) and confuse
+                       [find_by_arity] — even with the [skip-if-exists] guard
+                       in the inner extraction, the outer-side extraction's
+                       processing of nested lambdas is wasted work because the
+                       enclosing fixpoint's lambda fold will produce the
+                       authoritative sig. Top-level lambdas (parent_path
+                       length ≤ 1) still need outer extraction so their sigs
+                       land in the global DB for cross-function callers. *)
+                    if List.length parent_path > 1 then
+                      (infos, info_map)
+                    else
+                      let name = Visit_function_defs.synth_lambda_il_name fdef in
+                      let class_name_str =
+                        match parent_path with
+                        | Some class_il :: _ -> Some (fst class_il.IL.ident)
+                        | _ -> None
+                      in
+                      let fdef_il =
+                        AST_to_IL.function_definition taint_inst.lang fdef
+                      in
+                      let cfg = CFG_build.cfg_of_fdef fdef_il in
+                      let info =
+                        {
+                          name;
+                          class_name_str;
+                          method_properties = [];
+                          cfg;
+                          fdef;
+                          is_lambda_assignment = true;
+                        }
+                      in
+                      add_info info (infos, info_map)
                 | Function
                 | Method
                 | BlockCases -> (

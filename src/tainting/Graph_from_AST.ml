@@ -165,9 +165,25 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
     | [] -> [None]  (* Top-level: empty path becomes [None] *)
     | path -> path
   in
+  let is_lambda =
+    match fst fdef.fkind with
+    | G.LambdaKind | G.Arrow -> true
+    | _ -> false
+  in
   match opt_ent with
-  | Some ent -> (
-      match AST_to_IL.name_of_entity ent with
+  | _ when is_lambda ->
+      (* All lambdas (named [cb = lambda x: ...] or anonymous) share one
+         identity scheme: the lambda's own definition position. The binding
+         variable is treated as an alias, not a distinct callable. *)
+      Some (normalized_parent_path @ [Some (Visit_function_defs.synth_lambda_il_name fdef)])
+  | None ->
+      Log.warn (fun m ->
+          m "fn_id_of_entity: anonymous non-lambda function definition \
+             at %s; falling back to lambda-style identity"
+            (Tok.stringpos_of_tok (snd fdef.fkind)));
+      Some (normalized_parent_path @ [Some (Visit_function_defs.synth_lambda_il_name fdef)])
+  | Some ent ->
+      (match AST_to_IL.name_of_entity ent with
       | Some name ->
           (* For Go methods, extract receiver type as class name *)
           let go_receiver_il =
@@ -195,17 +211,6 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
           in
           Some (adjusted_parent_path @ [Some name])
       | None -> None)
-  | None ->
-      (* Anonymous function - use _tmp_lambda with fake token to match AST_to_IL behavior.
-         AST_to_IL.fresh_var creates fake tokens for lambda variables. *)
-      let tok = match fdef.fkind with (_, tok) -> tok in
-      let fake_tok = Tok.fake_tok tok "_tmp_lambda" in
-      let tmp_name = IL.{
-        ident = ("_tmp_lambda", fake_tok);
-        sid = G.SId.unsafe_default;
-        id_info = G.empty_id_info ();
-      } in
-      Some (normalized_parent_path @ [Some tmp_name])
 
 let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
   ids |>
@@ -635,15 +640,8 @@ let rec extract_callbacks_from_arg (arg_expr : G.expr) :
             },
             _ ) ->
           let callback_name = AST_to_IL.var_of_id_info id id_info in
-          (* Create _tmp_lambda IL.name using Tok.fake_tok like AST_to_IL.fresh_var does *)
-          let tmp_tok = Tok.fake_tok shortlambda_tok "_tmp_lambda" in
           let tmp_name =
-            IL.
-              {
-                ident = ("_tmp_lambda", tmp_tok);
-                sid = G.SId.unsafe_default;
-                id_info = G.empty_id_info ();
-              }
+            Visit_function_defs.synth_lambda_il_name_of_tok shortlambda_tok
           in
           [ (callback_name, snd id, Some tmp_name) ]
       | _ -> [])
@@ -870,7 +868,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
   Call_graph.G.add_vertex graph top_level_node;
 
   let funcs =
-    Visit_function_defs.fold_with_parent_path
+    Visit_function_defs.fold_with_parent_path ~lang
       (fun funcs opt_ent parent_path fdef ->
         match fn_id_of_entity ~lang opt_ent parent_path fdef with
         | Some fn_id ->
@@ -884,7 +882,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
       [] ast
   in
   (* Visit all calls in the AST, tracking the current function context *)
-  Visit_function_defs.visit_with_parent_path
+  Visit_function_defs.visit_with_parent_path ~lang
     (fun opt_ent parent_path fdef ->
       match fn_id_of_entity ~lang opt_ent parent_path fdef with
       | Some fn_id ->
