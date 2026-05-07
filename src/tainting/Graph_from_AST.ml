@@ -44,6 +44,35 @@ let equal_with_pos f1 f2 =
   in
   List.equal (Option.equal equal_il_name) f1 f2
 
+(* Match a [func_info] against [name_str] by either the fn_id's last ident
+   (regular functions/methods) or the entity's name (named lambdas, whose
+   fn_id is the synthetic [_tmp_lambda] but whose entity carries the binding). *)
+let func_info_name_matches (f : func_info) (name_str : string) : bool =
+  (match List_.init_and_last_opt f.fn_id with
+   | Some (_, Some name) when String.equal (fst name.IL.ident) name_str -> true
+   | _ -> false)
+  ||
+  (match f.entity with
+   | Some ent ->
+       (match AST_to_IL.name_of_entity ent with
+        | Some n -> String.equal (fst n.IL.ident) name_str
+        | None -> false)
+   | None -> false)
+
+(* Find a [func_info] in [all_funcs] whose name matches [name_str] (per
+   [func_info_name_matches]) and whose parent path equals [caller_parent_path]
+   (position-aware, distinguishing same-named functions in different scopes). *)
+let find_func_in_scope (all_funcs : func_info list)
+    (caller_parent_path : IL.name option list) (name_str : string)
+    : func_info option =
+  List.find_opt (fun f ->
+    if func_info_name_matches f name_str then
+      match List_.init_and_last_opt f.fn_id with
+      | Some (f_parent, _) -> equal_with_pos f_parent caller_parent_path
+      | _ -> false
+    else false
+  ) all_funcs
+
 (* Get arity of a function from its definition *)
 let get_func_arity (fdef : G.function_definition) : int =
   let params = fdef.fparams in
@@ -218,12 +247,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
         (* First check if it's a nested function in the same scope.
            Use position-aware match to distinguish same-named parent functions. *)
         let nested_match =
-          List.find_opt (fun f ->
-            match List_.init_and_last_opt f.fn_id with
-            | Some (f_parent, Some name) when String.equal (fst name.IL.ident) callee_name_str ->
-                equal_with_pos f_parent caller_parent_path
-            | _ -> false
-          ) all_funcs
+          find_func_in_scope all_funcs caller_parent_path callee_name_str
         in
         begin
           match nested_match with
@@ -239,7 +263,9 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                   (* Check if this method exists in the class - use string matching *)
                   let method_match = List.find_opt (fun f ->
                       match f.fn_id with
-                      | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callee_name_str -> true
+                      | [Some c; Some _] ->
+                          fst c.IL.ident = class_name_str
+                          && func_info_name_matches f callee_name_str
                       | _ -> false
                   ) all_funcs in
                   (* Debug: show all function names *)
@@ -256,7 +282,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                       (* It's a free function call, not a method - use string matching *)
                       let free_fn_match = List.find_opt (fun f ->
                           match f.fn_id with
-                          | [None; Some name] when fst name.IL.ident = callee_name_str -> true
+                          | [None; Some _] -> func_info_name_matches f callee_name_str
                           | _ -> false
                       ) all_funcs in
                       Option.map (fun f -> f.fn_id) free_fn_match)
@@ -265,7 +291,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                   let free_fn_match =
                     List.find_opt (fun f ->
                       match f.fn_id with
-                      | [None; Some name] when fst name.IL.ident = callee_name_str -> true
+                      | [None; Some _] -> func_info_name_matches f callee_name_str
                       | _ -> false
                     ) all_funcs in
                   (match Option.map (fun f -> f.fn_id) free_fn_match with
@@ -281,7 +307,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
             (* Use string matching to find the qualified function *)
             let qualified_match = List.find_opt (fun f ->
               match f.fn_id with
-              | [None; Some name] when fst name.IL.ident = callee_name_str -> true
+              | [None; Some _] -> func_info_name_matches f callee_name_str
               | _ -> false
             ) all_funcs in
             Option.map (fun f -> f.fn_id) qualified_match
@@ -298,7 +324,9 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                 (* Find all methods matching class and name *)
                 let method_matches = List.filter (fun f ->
                   match f.fn_id with
-                  | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
+                  | [Some c; Some _] ->
+                      fst c.IL.ident = class_name_str
+                      && func_info_name_matches f method_name_str
                   | _ -> false
                 ) all_funcs in
                 pick_by_arity call_arity method_matches
@@ -339,7 +367,9 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                 (* Find all methods matching class and name *)
                 let method_matches = List.filter (fun f ->
                   match f.fn_id with
-                  | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
+                  | [Some c; Some _] ->
+                      fst c.IL.ident = class_name_str
+                      && func_info_name_matches f method_name_str
                   | _ -> false
                 ) all_funcs in
                 pick_by_arity call_arity method_matches
@@ -374,9 +404,9 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
             | Some class_name ->
                 let method_matches = List.filter (fun f ->
                   match f.fn_id with
-                  | [Some c; Some m] ->
+                  | [Some c; Some _] ->
                       fst c.IL.ident = class_name
-                      && fst m.IL.ident = method_name
+                      && func_info_name_matches f method_name
                   | _ -> false
                 ) all_funcs in
                 pick_by_arity call_arity method_matches
@@ -453,13 +483,9 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(c
                 | G.DotAccess ({ e = G.N (G.Id ((var_name, _), _)); _ }, _,
                                G.FN (G.Id ((method_name, method_tok), _)))
                   when List.mem method_name invoke_methods ->
-                    let lambda_match = List.find_opt (fun (f : func_info) ->
-                      match List_.init_and_last_opt f.fn_id with
-                      | Some (f_parent, Some name)
-                        when String.equal (fst name.IL.ident) var_name ->
-                          equal_with_pos f_parent caller_parent_path
-                      | _ -> false
-                    ) all_funcs in
+                    let lambda_match =
+                      find_func_in_scope all_funcs caller_parent_path var_name
+                    in
                     (match lambda_match with
                     | Some f -> calls := (f.fn_id, method_tok) :: !calls
                     | None -> ())
@@ -660,15 +686,10 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
     | Some cls :: _ -> Some cls
     | _ -> None
   in
-
   (* First check if it's a nested function in the same scope - position-aware match *)
-  let nested_match = List.find_opt (fun f ->
-    match List_.init_and_last_opt f.fn_id with
-    | Some (f_parent, Some name) when String.equal (fst name.IL.ident) callback_name_str ->
-        (* Check if it's in the caller's scope *)
-        equal_with_pos f_parent caller_parent_path
-    | _ -> false
-  ) all_funcs in
+  let nested_match =
+    find_func_in_scope all_funcs caller_parent_path callback_name_str
+  in
 
   (match nested_match with
   | Some f ->
@@ -681,7 +702,9 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
             let class_name_str = fst cls.IL.ident in
             List.find_opt (fun f ->
               match f.fn_id with
-              | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callback_name_str -> true
+              | [Some c; Some _] ->
+                  fst c.IL.ident = class_name_str
+                  && func_info_name_matches f callback_name_str
               | _ -> false
             ) all_funcs
         | None -> None
@@ -695,7 +718,7 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
           (* Check for top-level function - match by string name *)
           let top_level_match = List.find_opt (fun f ->
             match f.fn_id with
-            | [None; Some name] when fst name.IL.ident = callback_name_str -> true
+            | [None; Some _] -> func_info_name_matches f callback_name_str
             | _ -> false
           ) all_funcs in
 
