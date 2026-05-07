@@ -72,7 +72,9 @@ let show ((id, _) : t) : string =
   id
 
 let show_debug (id, tok) : string =
-  Printf.sprintf "%s (%s)" id (Tok.stringpos_of_tok tok) 
+  let (kid, kfile, kline, kcol) = key (id, tok) in
+  Printf.sprintf "%s [key=(%s,%s,%d,%d)] (%s)"
+    id kid kfile kline kcol (Tok.stringpos_of_tok tok)
 
 let of_il_name (n : IL.name) : t =
   n.IL.ident
