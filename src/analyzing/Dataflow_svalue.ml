@@ -388,6 +388,9 @@ let rec transfer :
             (* var = exp *)
             let cexp = eval_or_sym_prop eval_env exp in
             update_env_with inp' var cexp
+        | AssignAnon ({ base = Var var; rev_offset = [] }, Lambda _) ->
+            (* var = <lambda>: propagate the lambda expr as var's svalue. *)
+            update_env_with inp' var (sym_prop instr.iorig)
         | Call (Some { base = Var var; rev_offset = [] }, func, args) -> (
             let args_val =
               List_.map
