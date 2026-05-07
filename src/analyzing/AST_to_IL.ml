@@ -1142,6 +1142,22 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                  |> G.e) ]
       in
       call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket arg_container)
+  (* Ruby [Proc.new { |x| body }] returns the block as a Proc. Lower
+     just the inner Lambda so [cb = Proc.new { ... }] takes the
+     [AssignAnon(_tmp_lambda, Lambda)] path and [cb] inherits the
+     lambda's [Fun] shape, which the HOF dispatch needs. The pattern
+     must come before the do-block flattening below since both match
+     [Call(Call(_, []), [Arg Lambda])]. *)
+  | G.Call
+      ( { e = G.Call
+              ( { e = G.DotAccess
+                      ( { e = G.N (G.Id (("Proc", _), _)); _ },
+                        _,
+                        G.FN (G.Id (("new", _), _)) ); _ },
+                (_, [], _) ); _ },
+        (_, [ G.Arg ({ G.e = G.Lambda _; _ } as lambda_e) ], _) )
+    when env.lang =*= Lang.Ruby ->
+      expr_aux env ~void lambda_e
   (* Ruby do-block flattening: `f(args) do |x| ... end` is parsed as
      Call(Call(f, args), [Lambda]) but the block is semantically an argument
      to f, not to its return value. Flatten into Call(f, args @ [Lambda]). *)
