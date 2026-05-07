@@ -200,6 +200,10 @@ let ident_of_entity_opt ent : (G.ident * G.id_info) option =
   (* TODO: use name_middle? name_top? *)
   | G.EN (G.IdQualified { name_last = i, _topt; name_info = pinfo; _ }) ->
       Some (i, pinfo)
+  (* Simple-binding pattern, e.g. Rust's `let foo = expr` parses as a
+     [VarDef] entity with [name = EPattern (PatId ...)]. Unwrap when the
+     pattern is a single named binding. *)
+  | G.EPattern (G.PatId (i, pinfo)) -> Some (i, pinfo)
   | G.EDynamic _ -> None
   (* TODO *)
   | G.EPattern _
