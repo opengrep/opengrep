@@ -596,7 +596,7 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs 
    Over-approximates on purpose: any function-ref nested anywhere in the
    argument is treated as a potential callback. Precision at per-offset
    granularity is handled later by Sig_inst's offset-walk. *)
-let rec extract_callbacks_from_arg (arg_expr : G.expr) :
+let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
     (IL.name * Tok.t * IL.name option) list =
   match arg_expr.G.e with
   (* Plain identifier: foo — may be a function name directly, OR a variable
@@ -609,7 +609,7 @@ let rec extract_callbacks_from_arg (arg_expr : G.expr) :
       in
       let via_svalue =
         match !(id_info.id_svalue) with
-        | Some (G.Sym inner) -> extract_callbacks_from_arg inner
+        | Some (G.Sym inner) -> extract_callbacks_from_arg ~lang inner
         | _ -> []
       in
       direct @ via_svalue
@@ -657,7 +657,7 @@ let rec extract_callbacks_from_arg (arg_expr : G.expr) :
                     (_, (G.VarDef { G.vinit = Some v; _ } | G.FieldDefColon { G.vinit = Some v; _ }));
                 _;
               } ->
-              extract_callbacks_from_arg v
+              extract_callbacks_from_arg ~lang v
           | _ -> [])
         fields
   (* Dict literal: entries are G.Container(G.Tuple, [key; val]); recurse val *)
@@ -666,12 +666,29 @@ let rec extract_callbacks_from_arg (arg_expr : G.expr) :
         (fun kv ->
           match kv.G.e with
           | G.Container (G.Tuple, (_, [ _key; v ], _)) ->
-              extract_callbacks_from_arg v
+              extract_callbacks_from_arg ~lang v
           | _ -> [])
         kvs
   (* List/Tuple/Array/Set literal: recurse into each element *)
   | G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)) ->
-      List.concat_map extract_callbacks_from_arg xs
+      List.concat_map (extract_callbacks_from_arg ~lang) xs
+  (* Ruby [method(:name)]: a callable reference to the named function.
+     Sym-prop carries the [Call(method, [Atom :name])] expression on
+     the callback variable's [id_svalue], so the recursion above
+     reaches us for an aliased binding [cb = method(:name); apply_cb(cb, ...)]. *)
+  | G.Call
+      ( { e = G.N (G.Id (("method", _), _)); _ },
+        (_, [ G.Arg { e = G.L (G.Atom (_, atom_ident)); _ } ], _) )
+    when lang =*= Lang.Ruby ->
+      let synthetic_name =
+        IL.
+          {
+            ident = atom_ident;
+            sid = G.SId.unsafe_default;
+            id_info = G.empty_id_info ();
+          }
+      in
+      [ (synthetic_name, snd atom_ident, None) ]
   | _ -> []
 
 
@@ -734,7 +751,7 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
    because an argument may carry multiple callbacks when it's a record/list
    containing several function references, or a variable whose [id_svalue]
    wraps such a container. See [extract_callbacks_from_arg]. *)
-let try_identify_callback_args ~all_funcs ~caller_parent_path (arg : G.argument) :
+let try_identify_callback_args ~lang ~all_funcs ~caller_parent_path (arg : G.argument) :
     (fn_id * Tok.t * IL.name option) list =
   let resolve_in_expr expr =
     (* Also handle this.foo pattern *)
@@ -747,7 +764,7 @@ let try_identify_callback_args ~all_funcs ~caller_parent_path (arg : G.argument)
           [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
       | _ -> []
     in
-    let candidates = direct_this @ extract_callbacks_from_arg expr in
+    let candidates = direct_this @ extract_callbacks_from_arg ~lang expr in
     List.filter_map
       (fun (callback_name, tok, tmp_opt) ->
         (* Use real token from the callback argument *)
@@ -765,11 +782,11 @@ let try_identify_callback_args ~all_funcs ~caller_parent_path (arg : G.argument)
 
 (* Extract HOF callbacks from a single call expression.
    Returns list of (fn_id, tok, tmp_opt) where tmp_opt is the _tmp node for ShortLambda. *)
-let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~all_funcs
+let extract_hof_callbacks_from_call ~lang ~method_hofs ~function_hofs ~all_funcs
     ~caller_parent_path (callee : G.expr) (args : G.arguments) :
     (fn_id * Tok.t * IL.name option) list =
   let try_arg arg =
-    try_identify_callback_args ~all_funcs ~caller_parent_path arg
+    try_identify_callback_args ~lang ~all_funcs ~caller_parent_path arg
   in
   let try_arg_at_index idx =
     match List.nth_opt (Tok.unbracket args) idx with
@@ -836,13 +853,13 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
             let merged_args = Tok.unsafe_fake_bracket
               (Tok.unbracket inner_args @ outer_arg) in
             let found = extract_hof_callbacks_from_call
-              ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
+              ~lang ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
               callee merged_args
             in
             callbacks := found @ !callbacks
         | G.Call (callee, args) ->
             let found = extract_hof_callbacks_from_call
-              ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
+              ~lang ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
               callee args
             in
             callbacks := found @ !callbacks
@@ -962,7 +979,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     in
     Visit_function_defs.fold_toplevel_calls (fun acc _call_e callee args ->
       let found = extract_hof_callbacks_from_call
-        ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
+        ~lang ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
         callee args
       in
       found @ acc

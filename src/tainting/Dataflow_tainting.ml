@@ -740,6 +740,56 @@ let try_builtin_fallback env func_name arity result =
           builtin_result
       | None -> None)
 
+(* Resolve a bare function name against the signature DB. Tries the
+ * call graph first (keyed on the current function), then falls back
+ * to a direct DB lookup; in the no-class-context case, also runs the
+ * builtin fallback on the bare name. Shared between the bare-name
+ * call branch and the Ruby [method(:name)] recogniser. *)
+let lookup_bare_function_name env db (name : IL.name) arity =
+  let call_tok = snd name.ident in
+  (* If [name]'s svalue is a [Sym (N other)] (e.g. [cb = handler; cb(...)]),
+   * redirect the callee key to [other]. *)
+  let name =
+    match !(name.id_info.id_svalue) with
+    | Some (G.Sym { e = G.N (G.Id (id, id_info)); _ }) ->
+        AST_to_IL.var_of_id_info id id_info
+    | _ -> name
+  in
+  match
+    Call_graph.lookup_callee_from_graph
+      env.call_graph
+      (Option.map Function_id.of_il_name env.func.name)
+      call_tok
+  with
+  | Some callee_node ->
+      Shape_and_sig.(lookup_signature db callee_node arity)
+  | None -> (
+      match env.class_name with
+      | Some _ ->
+          Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity
+      | None ->
+          let func_name = fst name.ident in
+          let result =
+            Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity
+          in
+          try_builtin_fallback env func_name arity result)
+
+(* Extract the [(str, tok)] of a bare atom argument from
+ * [Sym (Call ({e=N(Id ("method", _)); _}, [Arg (L (Atom (_, (str, tok))))]))].
+ * Used to recognise Ruby's [method(:name)] callback idiom: the assignment
+ * sym-props the call expression onto the lval's [id_svalue], and we read
+ * the atom back here to drive a normal bare-name signature lookup. *)
+let ruby_method_ref_atom (svalue : G.svalue option) =
+  match svalue with
+  | Some (G.Sym
+            { e = G.Call
+                ( { e = G.N (G.Id (("method", _), _)); _ },
+                  (_, [ G.Arg
+                          { e = G.L (G.Atom (_, atom_ident)); _ } ], _) );
+              _ }) ->
+      Some atom_ident
+  | _ -> None
+
 let lookup_signature_with_object_context env fun_exp arity =
   Log.debug (fun m ->
       m "TAINT_SIG_LOOKUP: Looking up %s with arity %d"
@@ -750,26 +800,25 @@ let lookup_signature_with_object_context env fun_exp arity =
       None
   | Some db -> (
       match fun_exp.e with
+      | Fetch { base = Var name; rev_offset = [] }
+        when env.taint_inst.lang =*= Lang.Ruby
+             && Option.is_some
+                  (ruby_method_ref_atom !(name.id_info.id_svalue)) ->
+          (* Ruby [cb = method(:f); cb.call(x)]: [cb]'s [id_svalue]
+           * carries the [Call] expression as a [Sym]. Resolve [:f]
+           * against the same path the bare-name branch uses, so the
+           * class context in [env.class_name] scopes it correctly. *)
+          let atom_ident =
+            Option.get (ruby_method_ref_atom !(name.id_info.id_svalue))
+          in
+          let synthetic_name : IL.name =
+            { ident = atom_ident;
+              sid = G.SId.unsafe_default;
+              id_info = G.empty_id_info () }
+          in
+          lookup_bare_function_name env db synthetic_name arity
       | Fetch { base = Var name; rev_offset = [] } ->
-          (* Simple function call — edge stored at function name token *)
-          let call_tok = snd name.ident in
-          (match
-            Call_graph.lookup_callee_from_graph
-              env.call_graph
-              (Option.map Function_id.of_il_name env.func.name)
-              call_tok
-           with
-          | Some callee_node ->
-              Shape_and_sig.(lookup_signature db callee_node arity)
-          | None ->
-              (* Graph lookup failed - try class context or direct lookup *)
-              match env.class_name with
-              | Some _ ->
-                  Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity
-              | None ->
-                  let func_name = fst name.ident in
-                  let result = Shape_and_sig.lookup_signature db (Function_id.of_il_name name) arity in
-                  try_builtin_fallback env func_name arity result)
+          lookup_bare_function_name env db name arity
       | Fetch
           {
             base = VarSpecial ((Self | This), _);
