@@ -28,6 +28,24 @@ let extract_lambda_assignment ?(lang : Lang.t option) (e : G.expr)
   | G.LetPattern (pat, { e = G.Lambda fdef; _ }) ->
       let ent = H.entity_of_pattern pat in
       Some (ent, fdef)
+  (* Ruby: [cb = Proc.new { |x| ... }] — mirror the AST_to_IL Proc.new
+     unwrapping (see [AST_to_IL.expr_aux]) so the call graph also treats
+     the binding as a named lambda. Without this the proc lambda is anonymous
+     in the call graph and reachability pruning drops it from the relevant
+     subgraph. *)
+  | G.Assign
+      ( { e = G.N (G.Id (id, id_info)); _ }, _,
+        { e = G.Call
+                ( { e = G.Call
+                        ( { e = G.DotAccess
+                                ( { e = G.N (G.Id (("Proc", _), _)); _ },
+                                  _,
+                                  G.FN (G.Id (("new", _), _)) ); _ },
+                          (_, [], _) ); _ },
+                  (_, [ G.Arg { e = G.Lambda fdef; _ } ], _) ); _ } )
+    when (match lang with Some l -> Lang.equal l Lang.Ruby | None -> false) ->
+      let ent = { G.name = G.EN (G.Id (id, id_info)); G.attrs = []; G.tparams = None } in
+      Some (ent, fdef)
   | _ -> None
 
 class ['self] visitor =
