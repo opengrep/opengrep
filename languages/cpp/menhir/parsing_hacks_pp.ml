@@ -329,6 +329,21 @@ let rec find_macro_paren xs =
       |> iter_token_paren (set_as_comment Token_cpp.CppAttr);
       set_as_comment Token_cpp.CppAttr id;
       find_macro_paren xs
+  (* glibext: g_autoptr(Type)/g_auto(Type) with paren — strip macro+paren,
+   * the type arg is lost but the declarator's explicit type covers it *)
+  | PToken ({ t = TIdent (s, _) } as id) :: Parenthised (xxs, info_parens) :: xs
+    when s = "g_autoptr" || s = "g_auto" ->
+      pr2_pp "MACRO: glib autoptr/auto detected ";
+      [ Parenthised (xxs, info_parens) ]
+      |> iter_token_paren (set_as_comment Token_cpp.CppAttr);
+      set_as_comment Token_cpp.CppAttr id;
+      find_macro_paren xs
+  (* glibext: g_autofree and similar no-arg GLib attribute macros *)
+  | PToken ({ t = TIdent (s, _) } as id) :: xs
+    when s = "g_autofree" ->
+      pr2_pp "MACRO: glib autofree detected ";
+      set_as_comment Token_cpp.CppAttr id;
+      find_macro_paren xs
   (* stringification
    *
    * the order of the matching clause is important
