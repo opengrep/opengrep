@@ -20,6 +20,7 @@
    timedesc
    cmdliner
    bos
+   rresult
    re
    pcre
    pcre2
