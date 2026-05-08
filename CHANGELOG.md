@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.21.0](https://github.com/opengrep/opengrep/releases/tag/v1.21.0) - 08-05-2026
+
+### Improvements
+
+* Fix directory pruning inefficiency by @corneliuhoffman in #682
+* Dockerfile: Correct handling of multiline strings by @maciejpirog in #692
+* Dockerfile: Legacy `env` and `label` syntax by @maciejpirog in #694
+* C: Support glib macros by @maciejpirog in #698
+* lsp: expose taint-intrafile by @dimitris-m in #696
+
+### Infrastructure
+
+* port SARIF e2e tests from Python wrapper to opengrep-cli by @dimitris-m in #683
+* restore build function of nix flake by @daniel-noland in #668
+* ci: match cygwin OSTYPE in build-wheels windows branch by @dimitris-m in #697
+
+### New Contributors
+
+* @daniel-noland made their first contribution in #668
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.20.0...v1.21.0
+
+
 ## [1.20.0](https://github.com/opengrep/opengrep/releases/tag/v1.20.0) - 21-04-2026
 
 ### Improvements
