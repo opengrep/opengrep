@@ -1,0 +1,6 @@
+module DataS where
+
+--ERROR:
+data Color = Red
+
+x = Red

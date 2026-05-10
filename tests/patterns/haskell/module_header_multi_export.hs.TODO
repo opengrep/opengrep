@@ -1,0 +1,5 @@
+--ERROR:
+module Exp (foo, bar) where
+
+foo = 1
+bar = 2

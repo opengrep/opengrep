@@ -1,0 +1,7 @@
+module MvEllipsisList where
+
+
+--ERROR:
+xs = [1, 2, 3, 4, 5]
+
+other = 0

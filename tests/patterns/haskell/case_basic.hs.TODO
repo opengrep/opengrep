@@ -1,0 +1,7 @@
+module CaseBasic where
+
+
+--ERROR:
+f x = case x of
+  0 -> "zero"
+  _ -> "other"

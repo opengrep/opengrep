@@ -335,6 +335,16 @@ not ambiguous is welcome here.
     ),
     Language(
         comment="",
+        id_="haskell",
+        name="Haskell",
+        keys=["haskell", "hs"],
+        exts=[".hs", ".lhs"],
+        example_ext=".hs",
+        maturity=Maturity.DEVELOP,
+        shebangs=["runhaskell", "runghc"]
+    ),
+    Language(
+        comment="",
         id_="html",
         name="HTML",
         keys=["html"],

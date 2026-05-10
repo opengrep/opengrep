@@ -1,0 +1,6 @@
+module SigFun2 where
+
+
+--ERROR:
+add :: Int -> Int -> Int
+add x y = x + y

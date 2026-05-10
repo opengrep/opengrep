@@ -1,0 +1,11 @@
+rules:
+  - id: test-simple
+    languages:
+      - haskell
+    message: tainted flow
+    mode: taint
+    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink $X
+    severity: WARNING

@@ -1,0 +1,11 @@
+rules:
+  - id: test-call-chain
+    languages:
+      - haskell
+    message: source flows through transform
+    mode: taint
+    pattern-sources:
+      - pattern: tainted
+    pattern-sinks:
+      - pattern: unsafeEval $X
+    severity: WARNING

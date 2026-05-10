@@ -317,6 +317,7 @@ let langs_with_error_tolerance =
     (* languages with only a tree-sitter parser *)
     (Lang.Apex, Strict);
     (Lang.Bash, Strict);
+    (Lang.Haskell, Strict);
     (Lang.Elixir, Strict);
     (Lang.Csharp, Strict);
     (Lang.Crystal, Strict);

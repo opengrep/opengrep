@@ -153,3 +153,8 @@ url = https://github.com/opengrep/semgrep-apex.git
 	path = languages/crystal/tree-sitter/opengrep-crystal
 	url = https://github.com/opengrep/opengrep-crystal
 	branch = main
+
+[submodule "languages/haskell/tree-sitter/semgrep-haskell"]
+	path = languages/haskell/tree-sitter/semgrep-haskell
+	url = https://github.com/SymbioticSec/opengrep-haskell.git
+	branch = dev

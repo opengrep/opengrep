@@ -1,0 +1,7 @@
+module CaseVar where
+
+
+--ERROR:
+f x = case x of
+  True -> 1
+  False -> 0

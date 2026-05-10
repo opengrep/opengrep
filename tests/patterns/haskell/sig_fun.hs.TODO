@@ -1,0 +1,6 @@
+module SigFun where
+
+
+--ERROR:
+inc :: Int -> Int
+inc n = n + 1

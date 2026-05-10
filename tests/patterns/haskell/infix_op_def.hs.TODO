@@ -1,0 +1,9 @@
+module InfixOpDef where
+
+--ERROR:
+x +++ y = x + y
+
+--ERROR:
+a +++ b = a * b + 1
+
+otherOp x y = x - y

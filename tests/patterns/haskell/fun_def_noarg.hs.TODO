@@ -1,0 +1,5 @@
+module FunNoArg where
+
+
+--ERROR:
+x = 42

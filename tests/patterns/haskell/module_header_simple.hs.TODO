@@ -1,0 +1,4 @@
+--ERROR:
+module MyModule where
+
+x = 1

@@ -16,6 +16,7 @@ type t =
 | Elixir
 | Go
 | Hack
+| Haskell
 | Html
 | Java
 | Js
