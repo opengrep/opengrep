@@ -269,34 +269,6 @@ let is_constructor env ret_ty id_info : bool =
   | _ -> false
 
 (*****************************************************************************)
-(* Pattern helpers *)
-(*****************************************************************************)
-
-(* Detect a list-shaped case pattern and return the arity check that should be
- * used as the Switch discriminator.
- *
- * A [PatList [p1; ...; pN]] with no trailing [&] matches iff the scrutinee is a
- * list of length exactly [N] — the condition is [length(scrutinee) = N].
- *
- * A [PatList [p1; ...; pK; PatConstructor("&", _)]] with a trailing variadic
- * slot matches iff the scrutinee has at least [K] elements — the condition is
- * [length(scrutinee) >= K].
- *
- * Any other shape (tuple, literal, constructor, value pattern) returns [None]
- * and the caller falls back to a [fixme] condition — which leaves dataflow to
- * conservatively take every branch, as today. *)
-let rec list_pat_arity (pat : G.pattern) : (G.operator * int) option =
-  match pat with
-  | G.PatWhen (inner, _guard) -> list_pat_arity inner
-  | G.PatList (_, slots, _) ->
-      let n = List.length slots in
-      (match List.rev slots with
-       | G.PatConstructor (G.Id (("&", _), _), _) :: _ ->
-           Some (G.GtE, n - 1)
-       | _ -> Some (G.Eq, n))
-  | _ -> None
-
-(*****************************************************************************)
 (* Implicit-return helper *)
 (*****************************************************************************)
 
@@ -689,6 +661,141 @@ and pattern_assign_statements env ?(eorig = NoOrig) exp pat : stmt list =
   with
   | Fixme (kind, any_generic) ->
       fixme_stmt kind any_generic
+
+(*****************************************************************************)
+(* Pattern-match cond extraction                                              *)
+(*                                                                            *)
+(* Boolean predicate over the scrutinee expressing whether the scrutinee      *)
+(* structurally matches a [G.pattern]. Bindings introduced by the pattern     *)
+(* are produced separately by [pattern_assign_statements] inside the          *)
+(* matched-case body, after the cond.                                         *)
+(*****************************************************************************)
+
+(* [And] conjunction via the engine's smart constructor: absorbs
+ * [Literal true], short-circuits on [Literal false], detects direct
+ * complements. Naive folding leaves [X && true] in the IL, which
+ * [Eval_il_partial.eval] does not fold for non-Python langs and
+ * makes otherwise-decidable conds opaque at call sites. *)
+and pm_conjoin _tok conds = IL_helpers.wrap_and conds
+
+(* [length(e) op n]. *)
+and pm_len_cond tok e op n =
+  let len = mk_e (Operator ((G.Length, tok), [ Unnamed e ])) NoOrig in
+  let n_lit = mk_e (Literal (G.Int (Parsed_int.of_int n))) NoOrig in
+  mk_e (Operator ((op, tok), [ Unnamed len; Unnamed n_lit ])) NoOrig
+
+(* Split a [PatList] body into [(fixed_pat, slot_index)] prefix and an
+ * optional rest-position. Mirrors the lang-specific split in [pattern]:
+ * Clojure [&], Elixir [|], JS [...]. *)
+and pm_split_rest env pats =
+  let rec go acc i = function
+    | [] -> (List.rev acc, None)
+    | [ G.PatConstructor (G.Id (("&", _), _), [ _rest ]) ]
+      when env.lang =*= Lang.Clojure ->
+        (List.rev acc, Some i)
+    | [ G.PatConstructor (G.Id (("|", _), _), [ last_fixed; _tail ]) ]
+      when env.lang =*= Lang.Elixir ->
+        (List.rev ((last_fixed, i) :: acc), Some (i + 1))
+    | [ G.PatConstructor (G.Id (("...", _), _), [ _rest ]) ]
+      when Lang.is_js env.lang ->
+        (List.rev acc, Some i)
+    | p :: rest -> go ((p, i) :: acc) (i + 1) rest
+  in
+  go [] 0 pats
+
+(* Per-slot access on a scrutinee. Returns [Some e] when the slot can
+ * be expressed without interposing a tmp -- a Fetch extended with an
+ * [Index] offset (keeps the base's param anchor), or the i-th element
+ * of a statically-shaped Composite. [None] otherwise; the caller emits
+ * [true] for the slot's cond, since indexing through a tmp would
+ * break the anchoring chain that guards rely on. *)
+and pm_slot_of scrutinee i =
+  match scrutinee.e with
+  | Fetch lval ->
+      let idx_kind = Literal (G.Int (Parsed_int.of_int i)) in
+      let off =
+        { o = Index { e = idx_kind; eorig = NoOrig }; oorig = NoOrig }
+      in
+      Some
+        (mk_e
+           (Fetch { lval with rev_offset = off :: lval.rev_offset })
+           NoOrig)
+  | Composite (_, (_, xs, _)) when i < List.length xs -> Some (List.nth xs i)
+  | _ -> None
+
+(* Cond for [PatList] / [PatTuple]: length check on [scrutinee] directly
+ * + per-slot recursion. No tmp is materialised between [scrutinee] and
+ * the cond: the engine's guard machinery requires the cond's Fetches
+ * to anchor in the enclosing function's params via [cond_param_refs]
+ * (sid-aware match), and a tmp would erase that anchor. *)
+and pm_lower_sequence env scrutinee ~allow_rest pats _tok =
+  let op_tok = Tok.unsafe_fake_tok "patmatch" in
+  let fixed, opt_rest =
+    if allow_rest then pm_split_rest env pats
+    else (List.mapi (fun i p -> (p, i)) pats, None)
+  in
+  let n = List.length fixed in
+  let length_op = if Option.is_some opt_rest then G.GtE else G.Eq in
+  let lc = pm_len_cond op_tok scrutinee length_op n in
+  let slot_setups, slot_conds =
+    fixed
+    |> List.map (fun (p, i) ->
+           match pm_slot_of scrutinee i with
+           | Some slot -> pattern_match_cond env slot p
+           | None ->
+               ( [],
+                 mk_e
+                   (Literal (G.Bool (true, op_tok)))
+                   (related_tok op_tok) ))
+    |> List.split
+  in
+  (List.concat slot_setups, pm_conjoin op_tok (lc :: slot_conds))
+
+(* Cond for [PatType] with a named type ([TyN]). *)
+and pm_lower_type scrutinee name =
+  let op_tok = Tok.unsafe_fake_tok "patmatch" in
+  let s =
+    match name with
+    | G.Id ((s, _), _) -> s
+    | G.IdQualified { name_last = (s, _), _; _ } -> s
+  in
+  let ty_lit =
+    mk_e
+      (Literal (G.String (op_tok, (s, op_tok), op_tok)))
+      NoOrig
+  in
+  mk_e
+    (Operator ((G.Is, op_tok), [ Unnamed scrutinee; Unnamed ty_lit ]))
+    NoOrig
+
+and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
+    stmts * IL.exp =
+  let op_tok = Tok.unsafe_fake_tok "patmatch" in
+  let true_at tok =
+    mk_e (Literal (G.Bool (true, tok))) (related_tok tok)
+  in
+  match pat with
+  | G.PatWildcard tok | G.PatEllipsis tok -> ([], true_at tok)
+  | G.PatId ((_, tok), _) -> ([], true_at tok)
+  | G.PatAs (inner, _) | G.PatTyped (inner, _) ->
+      pattern_match_cond env scrutinee inner
+  | G.PatWhen (inner, _guardTODO) ->
+      pattern_match_cond env scrutinee inner
+  | G.PatLiteral _ ->
+      let g_exp = AST_generic_helpers.pattern_to_expr pat in
+      let ss, lit_il = expr env g_exp in
+      ( ss,
+        mk_e
+          (Operator
+             ((G.Eq, op_tok), [ Unnamed scrutinee; Unnamed lit_il ]))
+          NoOrig )
+  | G.PatTuple (_, pats, t2) ->
+      pm_lower_sequence env scrutinee ~allow_rest:false pats t2
+  | G.PatList (_, pats, t2) ->
+      pm_lower_sequence env scrutinee ~allow_rest:true pats t2
+  | G.PatType { t = G.TyN name; _ } ->
+      ([], pm_lower_type scrutinee name)
+  | _ -> ([], fixme_exp ToDo (G.P pat) (related_tok op_tok))
 
 (*****************************************************************************)
 (* Exceptions *)
@@ -3799,34 +3906,13 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
                `Or`ed together cases. It's handled specially in cases_and_bodies_to_stmts
             *)
             impossible (G.Tk tok)
-        | G.Case (tok, pat) -> (
-            (* For list-shaped patterns we encode the arity check as a
-             * condition on the scrutinee's length. Clojure multi-arity
-             * functions lower as a Switch over a single list-valued implicit
-             * parameter; without a real condition here the effects of every
-             * leg would merge at the caller's signature instantiation. *)
-            match list_pat_arity pat with
-            | None -> (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es)
-            | Some (op, n) ->
-                let length_exp =
-                  {
-                    e = Operator ((G.Length, tok), [ Unnamed switch_expr ]);
-                    eorig = related_tok tok;
-                  }
-                in
-                let n_exp =
-                  {
-                    e = Literal (G.Int (Parsed_int.of_int n));
-                    eorig = related_tok tok;
-                  }
-                in
-                ( ss,
-                  {
-                    e =
-                      Operator ((op, tok), [ Unnamed length_exp; Unnamed n_exp ]);
-                    eorig = related_tok tok;
-                  }
-                  :: es ))
+        | G.Case (_tok, pat) ->
+            (* Generic structural cond via [pattern_match_cond]: covers
+             * [PatLiteral] (when nested), [PatList]/[PatTuple] (length +
+             * per-slot recursion), [PatType], and via [pattern_to_expr]
+             * any future patterns the helper grows to support. *)
+            let pm_ss, pm_cond = pattern_match_cond env switch_expr pat in
+            (ss @ pm_ss, pm_cond :: es)
         | G.OtherCase ((_todo_categ, tok), _any) ->
             (ss, fixme_exp ToDo (G.Tk tok) (related_tok tok) :: es))
       ([], []) cases

@@ -1,0 +1,13 @@
+rules:
+  - id: test-multi-clause-discrimination-elixir
+    message: Multi-clause discrimination via classify_guards at literal call site
+    languages:
+      - elixir
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
