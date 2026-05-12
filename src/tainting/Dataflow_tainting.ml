@@ -3098,11 +3098,9 @@ let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
  * [guard_of_cond]. [None] is returned when the leaf cannot be expressed
  * as a guard. *)
 
-let guard_of_cond (params : IL.param list) (cond : IL.exp) :
-    Effect_guard.t option =
-  match IL_helpers.cond_param_refs params cond with
-  | None -> None
-  | Some param_refs -> Some { Effect_guard.cond; param_refs }
+let guard_of_cond (params : IL.param list) (cond : IL.exp) : Effect_guard.t =
+  { Effect_guard.cond;
+    param_refs = IL_helpers.cond_partial_param_refs params cond }
 
 let rec recognise_true_cond (params : IL.param list) (cond : IL.exp) :
     Effect_guard.t list =
@@ -3111,7 +3109,7 @@ let rec recognise_true_cond (params : IL.param list) (cond : IL.exp) :
       recognise_true_cond params a @ recognise_true_cond params b
   | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
       recognise_false_cond params sub
-  | _ -> Option.to_list (guard_of_cond params cond)
+  | _ -> [ guard_of_cond params cond ]
 
 and recognise_false_cond (params : IL.param list) (cond : IL.exp) :
     Effect_guard.t list =
@@ -3120,7 +3118,7 @@ and recognise_false_cond (params : IL.param list) (cond : IL.exp) :
       recognise_false_cond params a @ recognise_false_cond params b
   | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
       recognise_true_cond params sub
-  | _ -> Option.to_list (guard_of_cond params (IL_helpers.wrap_not cond))
+  | _ -> [ guard_of_cond params (IL_helpers.wrap_not cond) ]
 
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
  fun enter_env ~fun_cfg
