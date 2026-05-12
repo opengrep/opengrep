@@ -781,7 +781,47 @@ let spaced_env_pair (env : env) ((v1, v2, v3) : CST.spaced_env_pair) : env_pair
     =
   let k = Ident (str env v1 (* pattern [a-zA-Z][a-zA-Z0-9_]*[a-zA-Z0-9] *)) in
   let blank = token env v2 (* pattern \s+ *) in
-  let v = string env v3 in
+  let value_element_fragments (xs : CST.env_value_element) =
+    List_.map
+      (fun x ->
+        match x with
+        | `Double_quoted_str x -> double_quoted_string env x
+        | `Single_quoted_str x -> single_quoted_string env x
+        | `Pat_9f6bbb9 tok -> Unquoted (str env tok)
+        | `BSLASHSPACE tok -> Unquoted (str env tok)
+        | `Expa x -> expansion env x)
+      xs
+  in
+  let v =
+    match v3 with
+    | `Double_quoted_str x ->
+        let frag = double_quoted_string env x in
+        (docker_string_fragment_loc frag, [ frag ])
+    | `Single_quoted_str x ->
+        let frag = single_quoted_string env x in
+        (docker_string_fragment_loc frag, [ frag ])
+    | `Unqu_str x -> unquoted_string env x
+    | `Opt_choice_double_quoted_str_rep1_requ_line_cont_opt_env_value_elem
+        (opt_first, continuations) ->
+        let first_fragments =
+          match opt_first with
+          | None -> []
+          | Some x -> snd (string env x)
+        in
+        let cont_fragments =
+          List.concat_map
+            (fun (_line_cont, opt_v) ->
+              match opt_v with
+              | None -> []
+              | Some xs -> value_element_fragments xs)
+            continuations
+        in
+        let fragments =
+          (first_fragments @ cont_fragments) |> collapse_unquoted_fragments
+        in
+        let loc = Tok_range.of_list docker_string_fragment_loc fragments in
+        (loc, fragments)
+  in
   let loc = ident_or_metavar_loc k in
   Env_pair (loc, k, blank, v)
 
