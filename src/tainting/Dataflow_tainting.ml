@@ -881,6 +881,7 @@ let self_sig_if_recursive env fun_exp =
           Some
             {
               Signature.params = env.func.sig_params;
+              params_il = env.func.il_params;
               effects = !(env.effects_acc);
             }
       | _ -> None)
@@ -3662,7 +3663,11 @@ and (fixpoint :
                        ?call_graph lambda_cfg
                    in
                    let signature =
-                     { Signature.params; effects = lambda_effects }
+                     {
+                       Signature.params;
+                       params_il = lambda_cfg.params;
+                       effects = lambda_effects;
+                     }
                    in
                    let arity =
                      Shape_and_sig.Arity_exact (List.length lambda_cfg.params)

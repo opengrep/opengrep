@@ -184,12 +184,31 @@ and unify_shape shape1 shape2 =
       (* 'Bot' acts like a do-not-care. *)
       shape
   | Obj obj1, Obj obj2 -> Obj (unify_obj obj1 obj2)
-  | ( Fun { params = params1; effects = effects1 },
-      Fun { params = params2; effects = effects2 } ) ->
-      if Signature.equal_params params1 params2 then
-        Fun { params = params1; effects = Effects.union effects1 effects2 }
+  | ( Fun { params = params1; params_il = params_il1; effects = effects1 },
+      Fun { params = params2; params_il = params_il2; effects = effects2 } )
+    ->
+      let equal_il_param p1 p2 =
+        match
+          (IL_helpers.pname_of_param p1, IL_helpers.pname_of_param p2)
+        with
+        | None, None -> true
+        | Some n1, Some n2 -> IL.equal_name n1 n2
+        | _ -> false
+      in
+      if Signature.equal_params params1 params2
+         && List.equal equal_il_param params_il1 params_il2
+      then
+        Fun {
+          params = params1;
+          params_il = params_il1;
+          effects = Effects.union effects1 effects2;
+        }
       else (
-        (* TODO: We could actually handle this. *)
+        (* Two Fun shapes from different lambdas. Their effects'
+         * guards anchor in distinct IL.names (sids differ), so we
+         * cannot pick a single [params_il] that lets the walker
+         * substitute both sides' captures. Keep shape1; drop shape2.
+         * Same precedent as below for non-equal simplified params. *)
         Log.warn (fun m ->
             m
               "Trying to unify two fun shapes with different parameters: %s ~ \

@@ -359,7 +359,13 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
            | Effect.ToSinkInCall _ -> Effects.add eff acc)
          Effects.empty
   in
-  let signature = { Signature.params; effects = effects_with_preconditions } in
+  let signature =
+    {
+      Signature.params;
+      params_il = func_cfg.params;
+      effects = effects_with_preconditions;
+    }
+  in
   Log.debug (fun m ->
       let func_name = Option.map IL.str_of_name name in
       m "SIG_EXTRACTED: Function %s signature: %s"

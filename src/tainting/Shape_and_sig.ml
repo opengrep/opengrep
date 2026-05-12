@@ -752,10 +752,29 @@ and Signature : sig
 
   type params = param list [@@deriving eq, ord]
 
-  type t = { params : params; effects : Effects.t } [@@deriving eq, ord]
+  type t = {
+    params : params;
+    params_il : IL.param list;
+        (** The IL.param list the signature was extracted from. Added
+            so that the call-site instantiator can rewrite [Fetch]es
+            to those parameters inside guards stored on the
+            signature's effects (see [Sig_inst.substitute_in_sig]).
+            Excluded from [equal] and [compare]: this is
+            instantiation metadata, not part of the signature's
+            identity.
+
+            TODO: [params] is fully derivable from [params_il] via
+            [of_IL_params]. It was already present when [params_il]
+            was added and is kept for now to avoid churning the
+            consumers that read it. Consider deriving [params] lazily
+            from [params_il] and dropping the field. *)
+    effects : Effects.t;
+  }
   (** * The 'params' act like an universal quantifier, we need them to later *
       instantiate the accompanying signature. *)
 
+  val equal : t -> t -> bool
+  val compare : t -> t -> int
   val of_IL_params : IL.param list -> params
   val show_params : params -> string
   val show : t -> string
@@ -798,19 +817,25 @@ end = struct
   (* Signatures *)
   (*************************************)
 
-  type t = { params : params; effects : Effects.t }
+  type t = {
+    params : params;
+    params_il : IL.param list;
+    effects : Effects.t;
+  }
 
-  let equal { params = params1; effects = effects1 }
-      { params = params2; effects = effects2 } =
+  (* [params_il] is instantiation metadata; identity is determined by
+     [params] and [effects] alone. *)
+  let equal { params = params1; params_il = _; effects = effects1 }
+      { params = params2; params_il = _; effects = effects2 } =
     equal_params params1 params2 && Effects.equal effects1 effects2
 
-  let compare { params = params1; effects = effects1 }
-      { params = params2; effects = effects2 } =
+  let compare { params = params1; params_il = _; effects = effects1 }
+      { params = params2; params_il = _; effects = effects2 } =
     match compare_params params1 params2 with
     | 0 -> Effects.compare effects1 effects2
     | other -> other
 
-  let show { params; effects } =
+  let show { params; params_il = _; effects } =
     spf "%s => {%s}" (show_params params) (Effects.show effects)
 end
 
