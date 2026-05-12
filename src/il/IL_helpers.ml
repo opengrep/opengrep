@@ -92,6 +92,52 @@ let cond_param_refs (params : IL.param list) (cond : IL.exp) :
   in
   of_exp cond
 
+let cond_partial_param_refs (params : IL.param list) (cond : IL.exp) :
+    (IL.name * int) list =
+  let merge refs1 refs2 =
+    List.fold_left
+      (fun acc ((n, _) as r) ->
+        if List.exists (fun (n', _) -> IL.equal_name n' n) acc then acc
+        else r :: acc)
+      refs1 refs2
+  in
+  (* Walks every [IL.exp] kind that can hold a nested Fetch
+     (Operator, Cast, Composite, RecordOrDict, and a [FixmeExp]'s
+     partial-translation slot). [substitute_free_fetches] must keep
+     the same reach: any Fetch we record here, the rewriter must be
+     able to find. *)
+  let rec of_exp (e : IL.exp) : (IL.name * int) list =
+    match e.e with
+    | IL.Literal _ -> []
+    | IL.Fetch lval -> (
+        match lval.base with
+        | IL.Var name -> (
+            match param_index params name with
+            | Some idx when List.for_all offset_is_resolvable lval.rev_offset
+              ->
+                [ (name, idx) ]
+            | _ -> [])
+        | IL.VarSpecial _ | IL.Mem _ -> [])
+    | IL.Operator (_, args) ->
+        List.fold_left
+          (fun acc a -> merge acc (of_exp (exp_of_arg a)))
+          [] args
+    | IL.Cast (_, e) -> of_exp e
+    | IL.Composite (_, (_, exps, _)) ->
+        List.fold_left (fun acc e -> merge acc (of_exp e)) [] exps
+    | IL.RecordOrDict entries ->
+        List.fold_left
+          (fun acc -> function
+            | IL.Field (_, e)
+            | IL.Spread e ->
+                merge acc (of_exp e)
+            | IL.Entry (k, v) -> merge (merge acc (of_exp k)) (of_exp v))
+          [] entries
+    | IL.FixmeExp (_, _, Some e) -> of_exp e
+    | IL.FixmeExp (_, _, None) -> []
+  in
+  of_exp cond
+
 let rexps_of_instr x =
   match x.i with
   | Assign (({ base = Var _; rev_offset = _ :: _ } as lval), exp) ->

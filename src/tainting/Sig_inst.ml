@@ -771,6 +771,11 @@ let substitute_free_fetches (param_refs : (IL.name * int) list)
                 }
             | _ -> original))
   in
+  (* Reach is paired with [IL_helpers.cond_partial_param_refs]: every
+     [Fetch] position that walker can list, this one must be able to
+     rewrite. Recurse through [Operator], [Cast], [Composite],
+     [RecordOrDict], and a [FixmeExp]'s partial-translation slot;
+     [Literal] is terminal. *)
   let rec walk (e : IL.exp) : IL.exp =
     match e.e with
     | IL.Fetch lval -> (
@@ -797,9 +802,22 @@ let substitute_free_fetches (param_refs : (IL.name * int) list)
         | IL.VarSpecial _ | IL.Mem _ -> e)
     | IL.Operator (wop, args) ->
         { e with IL.e = IL.Operator (wop, List.map walk_arg args) }
-    | IL.Literal _ | IL.Composite _ | IL.RecordOrDict _ | IL.Cast _
-    | IL.FixmeExp _ ->
-        e
+    | IL.Cast (ty, sub) -> { e with IL.e = IL.Cast (ty, walk sub) }
+    | IL.Composite (kind, (lb, exps, rb)) ->
+        { e with IL.e = IL.Composite (kind, (lb, List.map walk exps, rb)) }
+    | IL.RecordOrDict entries ->
+        let entries =
+          List.map
+            (function
+              | IL.Field (n, e') -> IL.Field (n, walk e')
+              | IL.Entry (k, v) -> IL.Entry (walk k, walk v)
+              | IL.Spread e' -> IL.Spread (walk e'))
+            entries
+        in
+        { e with IL.e = IL.RecordOrDict entries }
+    | IL.FixmeExp (k, any, Some sub) ->
+        { e with IL.e = IL.FixmeExp (k, any, Some (walk sub)) }
+    | IL.Literal _ | IL.FixmeExp (_, _, None) -> e
   and walk_arg = function
     | IL.Unnamed sub -> IL.Unnamed (walk sub)
     | IL.Named (id, sub) -> IL.Named (id, walk sub)

@@ -26,6 +26,29 @@ val cond_param_refs :
     modelled here (e.g. [Composite], [RecordOrDict], [Cast],
     [FixmeExp]). *)
 
+val cond_partial_param_refs :
+  IL.param list -> IL.exp -> (IL.name * int) list
+(** Find which free [Fetch]es in a boolean expression refer to a given
+    list of formal parameters.
+
+    [cond_partial_param_refs params cond] walks [cond] and returns one
+    [(IL.name, index)] pair per [Fetch] whose base matches one of
+    [params] (via [IL.equal_name]) with a statically-resolvable offset
+    path; [index] is the parameter's zero-based position in [params].
+
+    Unlike [cond_param_refs], the walk never aborts: a [Fetch] that
+    fails to anchor or has a non-resolvable offset is skipped instead
+    of rejecting the whole cond. The walker descends through every
+    [IL.exp] kind that can hold a nested expression ([Operator],
+    [Cast], [Composite], [RecordOrDict], and a [FixmeExp]'s
+    partial-translation slot); the only terminal kinds are [Literal]
+    and a [Fetch] whose base is [VarSpecial]/[Mem] (or [Var] but
+    unanchored).
+
+    The reach of this walker is paired with [substitute_free_fetches]:
+    any Fetch position reported here must be rewritable by that
+    function. *)
+
 (** Lvalue/Rvalue helpers working on the IL *)
 
 val lval_of_var : IL.name -> IL.lval
