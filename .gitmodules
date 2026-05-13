@@ -56,7 +56,7 @@ url = https://github.com/opengrep/semgrep-bash
 
 [submodule "OSS/libs/ocaml-tree-sitter-core"]
 path = libs/ocaml-tree-sitter-core
-url = https://github.com/returntocorp/ocaml-tree-sitter-core.git
+url = https://github.com/opengrep/ocaml-tree-sitter-core.git
 
 [submodule "OSS/languages/php/tree-sitter/semgrep-php"]
 path = languages/php/tree-sitter/semgrep-php
