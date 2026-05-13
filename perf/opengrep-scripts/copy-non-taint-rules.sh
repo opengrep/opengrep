@@ -2,6 +2,6 @@
 
 set -eu
 
-rg -lv 'mode: taint' opengrep-rules -g '**/*.yaml' \
+rg --files-without-match 'mode: taint' opengrep-rules -g '**/*.yaml' \
   | sed 's|^opengrep-rules/||' \
   | rsync -av --files-from=- opengrep-rules/ opengrep-rules-non-taint/
