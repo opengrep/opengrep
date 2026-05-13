@@ -1,0 +1,13 @@
+rules:
+  - id: test-parent-cell-leak-js
+    message: tainted via record-projection leak
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: getInput()
+    pattern-sinks:
+      - pattern: sink(...)

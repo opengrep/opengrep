@@ -1,0 +1,13 @@
+rules:
+  - id: test-hof-push-js
+    message: HOF dispatch carries receiver-element taint through callback push
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: getInput()
+    pattern-sinks:
+      - pattern: sink(...)
