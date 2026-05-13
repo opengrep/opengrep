@@ -669,20 +669,36 @@ let effects_of_tainted_return env taints shape return_tok : Effect.t list =
      * effect's own [guards] field, which [Sig_inst.classify_guards]
      * evaluates per effect at the caller. *)
     let data_returns =
-      Taints.elements taints
-      |> List_.map (fun (b : T.guarded_taint) ->
-             let t = { b.taint with T.tokens = List.rev b.taint.T.tokens } in
-             let single =
-               Taints.add (T.lift_taint t) Taints.empty
-             in
-             Effect.ToReturn
-               {
-                 data_taints = single;
-                 data_shape = shape;
-                 control_taints = Taints.empty;
-                 return_tok;
-                 guards = b.guard;
-               })
+      if Taints.is_empty taints && relevant_data then
+        (* Shape-only return: the value being returned carries no taints
+           but its shape is relevant (e.g. a [Fun] shape for a returned
+           function). Emit one [ToReturn] carrying the shape so callers
+           can attach it to the receiving lval. *)
+        [
+          Effect.ToReturn
+            {
+              data_taints = Taints.empty;
+              data_shape = shape;
+              control_taints = Taints.empty;
+              return_tok;
+              guards = Effect_guard.top;
+            };
+        ]
+      else
+        Taints.elements taints
+        |> List_.map (fun (b : T.guarded_taint) ->
+               let t = { b.taint with T.tokens = List.rev b.taint.T.tokens } in
+               let single =
+                 Taints.add (T.lift_taint t) Taints.empty
+               in
+               Effect.ToReturn
+                 {
+                   data_taints = single;
+                   data_shape = shape;
+                   control_taints = Taints.empty;
+                   return_tok;
+                   guards = b.guard;
+                 })
     in
     let ctrl_return =
       if has_ctrl then
