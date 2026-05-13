@@ -1746,7 +1746,7 @@ let check_tainted_var env (var : IL.name) : Taints.t * S.shape * Lval_env.t =
  * saved [callee] expression, and — on success — consumes the callback's
  * resolved effects (recording sinks, propagating return taints/shapes, and
  * applying lval updates) against the fold's running accumulator. On any
- * failure it re-records the preserved effect so a caller one frame up can
+ * failure it re-records the preserved effect so a caller one level up can
  * try again.
  *
  * Nested [ToSinkInCall] effects returned by the resolver are re-recorded
@@ -3035,11 +3035,12 @@ let mk_lambda_in_env env lcfg =
    *
    * so we can propagate taint from `obj` to `x`.
    *)
-  (* Clear [active_guards] at the lambda boundary: the enclosing frame's
-   * guards are parameter-indexed into the enclosing, and would be mis-
-   * interpreted if they rode along into the lambda's own frame. The
-   * enclosing's active guards are re-applied to the lambda's upflowed
-   * effects at [do_lambdas], where the frame of reference is correct. *)
+  (* Clear [active_guards] at the lambda boundary: the enclosing
+   * function's guards are parameter-indexed into the enclosing
+   * function, and would be mis-interpreted if they rode along into the
+   * lambda's own parameter scope. The enclosing function's active
+   * guards are re-applied to the lambda's upflowed effects at
+   * [do_lambdas], where the parameter anchoring is correct. *)
   let base_env = Lval_env.clear_active_guards env.lval_env in
   let lval_env =
     lcfg.params
@@ -3323,15 +3324,15 @@ and do_lambdas env (lambdas : IL.lambdas_cfgs) node =
     |> List_.split
   in
   let effects = Effects.union_list effects_lambdas in
-  (* Restamp the lambda's upflowed effects with the enclosing frame's
+  (* Restamp the lambda's upflowed effects with the enclosing function's
    * currently-active guards — the guards in scope at the node where the
    * lambda is being evaluated. Paired with [mk_lambda_in_env]'s
    * [clear_active_guards], this keeps the invariant that every effect in
-   * a function's signature references only that function's own-frame
-   * parameters: lambda-frame guards stay within the lambda (stamped on
-   * effects inside the lambda's own fixpoint), and enclosing-frame guards
-   * are applied here at the upflow boundary where the frame of reference
-   * is the enclosing's. *)
+   * a function's signature references only that function's own
+   * parameters: a lambda's own guards stay within the lambda (stamped on
+   * effects inside the lambda's own fixpoint), and the enclosing
+   * function's guards are applied here at the upflow boundary where the
+   * parameter anchoring is the enclosing function's. *)
   let effects =
     let active = Lval_env.active_guards env.lval_env in
     if Effect_guard.Set.is_empty active then effects

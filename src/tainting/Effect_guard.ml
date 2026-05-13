@@ -16,7 +16,7 @@
  * The effect is dropped iff [cond] folds to definitively-false. A
  * guard whose [cond] folds to definitively-true is replaced by [top]
  * and contributes no constraint; undecided conds are kept (possibly
- * rebound into the outer frame's parameters).
+ * rebound into the enclosing function's parameters).
  *
  * Representation. [cond] is the boolean condition as a single [IL.exp].
  * [param_refs] maps each free [Fetch] in [cond] whose base is a formal

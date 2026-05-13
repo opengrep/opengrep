@@ -145,11 +145,11 @@ val add_active_guard : Effect_guard.t -> env -> env
 val clear_active_guards : env -> env
 (** Empty the active-guards set while preserving the rest of the env. Used at
     lambda entry so the lambda's transfer does not inherit its enclosing
-    frame's guards — those guards are parameter-indexed relative to the
-    enclosing, and would be mis-interpreted if they rode along into the
-    lambda's own frame. The enclosing's active guards are re-applied to the
-    lambda's upflowed effects at [Dataflow_tainting.do_lambdas], where the
-    frame of reference is correct. *)
+    function's guards — those guards are parameter-indexed relative to the
+    enclosing function, and would be mis-interpreted if they rode along into
+    the lambda's own parameter scope. The enclosing function's active guards
+    are re-applied to the lambda's upflowed effects at
+    [Dataflow_tainting.do_lambdas], where the parameter anchoring is correct. *)
 
 val is_dead : env -> bool
 (** [true] iff the current program point is unreachable. *)

@@ -7,8 +7,9 @@
  *
  * The 'guards' field of 'ToSink'/'ToReturn' after instantiation contains only
  * guards rebound into the outer (caller's) parameter namespace — see
- * 'instantiate_function_signature'. Callee-frame guards are either consumed
- * (evaluated to a concrete bool at the call) or dropped on output. *)
+ * 'instantiate_function_signature'. Guards anchored in the callee's parameters
+ * are either consumed (evaluated to a concrete bool at the call) or dropped
+ * on output. *)
 type call_effect =
   | ToSink of Shape_and_sig.Effect.taints_to_sink
   | ToReturn of Shape_and_sig.Effect.taints_to_return
@@ -41,7 +42,8 @@ val instantiate_function_signature :
 (** Replaces taint, shape and guard variables in the callee's signature
     with the caller-side values, and constructs the call trace.
 
-    Each callee-frame guard is classified as follows at [inst_effect]:
+    Each guard anchored in the callee's parameters is classified as follows
+    at [inst_effect]:
     {ul
     {- its substituted [cond] reduces to [G.Lit (G.Bool true)]: guard
        dropped from the output, effect kept;}

@@ -1650,7 +1650,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           { T.base = T.BArg fun_arg; offset = fun_arg_offset }
         in
         (* If the callback lives at [fun_lval] but behind an outer parameter
-         * (reached via an [Arg] shape in the enclosing frame), record that
+         * (reached via an [Arg] shape in the enclosing function), record that
          * rebind target so the preserve-ToSinkInCall path below can carry the
          * precise (arg, offset) forward instead of guessing via parameter-taint
          * heuristics. *)
@@ -1671,7 +1671,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         (* If [exp] is a variable reference whose taints carry a [BArg]
          * origin, return that outer parameter. Used by the preserve paths
          * below to rebind the preserved effect's [arg] field so the caller
-         * sees it as referring to an enclosing-frame parameter. *)
+         * sees it as referring to an enclosing function's parameter. *)
         let enclosing_param_of_exp (exp : IL.exp) : Taint.arg option =
           match exp.IL.e with
           | Fetch { base = Var var; rev_offset = [] } -> (
@@ -2003,12 +2003,12 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   let call_effects = effects_list |> List.concat_map inst_effect in
   (* Post-instantiation invariant: every [Effect_guard.t] on an output
    * [ToSink]/[ToReturn] must refer to [outer_params]. Guards that were
-   * anchored in the callee's frame have been either evaluated to a
-   * concrete bool (and consumed), rebound to [outer_params]' frame, or
+   * anchored in the callee's parameters have been either evaluated to a
+   * concrete bool (and consumed), rebound to [outer_params], or
    * dropped. When [outer_params] is absent, no guards can be rebound
    * and the output must have an empty [guards] set.
    * Log visibly rather than silently on violation. *)
-  let guards_in_outer_frame (g : Effect_guard.t) : bool =
+  let guards_anchored_in_outer_params (g : Effect_guard.t) : bool =
     match outer_params with
     | None -> Effect_guard.is_top g
     | Some op ->
@@ -2018,14 +2018,14 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   in
   call_effects
   |> List.iter (function
-       | ToSink { guards; _ } when not (guards_in_outer_frame guards) ->
+       | ToSink { guards; _ } when not (guards_anchored_in_outer_params guards) ->
            Log.err (fun m ->
                m
                  "INVARIANT: post-instantiation ToSink carries guard %s \
                   not anchored in outer_params (callee=%s)"
                  (Effect_guard.show_in_brackets guards)
                  (Display_IL.string_of_exp callee))
-       | ToReturn { guards; _ } when not (guards_in_outer_frame guards) ->
+       | ToReturn { guards; _ } when not (guards_anchored_in_outer_params guards) ->
            Log.err (fun m ->
                m
                  "INVARIANT: post-instantiation ToReturn carries guard %s \
