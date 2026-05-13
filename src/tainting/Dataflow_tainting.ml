@@ -99,9 +99,12 @@ type func = {
           self-recursive calls (see [lookup_signature_with_object_context]). *)
   il_params : IL.param list;
       (** The same parameters in their [IL.param] form. Used by
-          [Sig_inst.instantiate_function_signature] to rebind
-          callee-frame guards into this function's frame when a called
-          callee's sig carries an unresolved guard. *)
+          [Sig_inst.instantiate_function_signature] to rebind a callee's
+          guards into this function's parameters when the called sig
+          carries an unresolved guard. *)
+  param_sids : G.SId.t list;
+      (** [sid]s of [il_params], precomputed for the call-effect
+          [ToLval] consumer's bound-vs-free check. *)
   best_matches : TM.Best_matches.t;
       (** Best matches for the taint sources/etc, see 'Taint_spec_match'. *)
   used_lambdas : IL.NameSet.t;
@@ -339,6 +342,18 @@ let record_effects env new_effects =
         List.map (Effect.add_guards g) new_effects)
     in
     env.effects_acc := Effects.add_list new_effects !(env.effects_acc)
+
+(* Own formal parameters are bound in the sig being computed; anything
+   else is free. [effects_from_arg_updates_at_exit] handles own params
+   on the [BArg] side. *)
+let is_own_param (env : env) (var : IL.name) : bool =
+  List.exists (G.SId.equal var.IL.sid) env.func.param_sids
+
+let mk_param_sids (params : IL.param list) : G.SId.t list =
+  List.filter_map
+    (fun p ->
+      Option.map (fun (n : IL.name) -> n.IL.sid) (IL_helpers.pname_of_param p))
+    params
 
 let unify_mvars_sets env mvars1 mvars2 =
   let xs =
@@ -1809,6 +1824,12 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                 Shape.unify_shape shape shape_acc,
                 Lval_env.add_control_taints lval_env control_taints )
           | ToLval (taints, var, offset) ->
+              if not (is_own_param env var) then
+                record_effects env
+                  [ Effect.ToLval
+                      { taints;
+                        lval = { base = Taint.BGlob var; offset };
+                        guards = Effect_guard.top } ];
               ( taints_acc,
                 shape_acc,
                 lval_env |> Lval_env.add var offset taints )
@@ -2033,6 +2054,12 @@ let check_function_call env fun_exp args
                      Shape.unify_shape shape shape_acc,
                      Lval_env.add_control_taints lval_env control_taints )
                | ToLval (taints, var, offset) ->
+                   if not (is_own_param env var) then
+                     record_effects env
+                       [ Effect.ToLval
+                           { taints;
+                             lval = { base = Taint.BGlob var; offset };
+                             guards = Effect_guard.top } ];
                    ( taints_acc,
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
@@ -3651,6 +3678,7 @@ and (fixpoint :
                        sig_params =
                          Signature.of_IL_params lambda_cfg.params;
                        il_params = lambda_cfg.params;
+                       param_sids = mk_param_sids lambda_cfg.params;
                        best_matches = lambda_best_matches;
                        used_lambdas = IL.NameSet.empty;
                      }
@@ -3722,6 +3750,7 @@ and (fixpoint :
       name;
       sig_params = Signature.of_IL_params fun_cfg.params;
       il_params = fun_cfg.params;
+      param_sids = mk_param_sids fun_cfg.params;
       best_matches;
       used_lambdas;
     }
