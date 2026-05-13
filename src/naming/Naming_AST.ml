@@ -1104,8 +1104,15 @@ class ['self] resolve_visitor env lang =
           self#visit_expr venv e2;
           recurse := false
       | ArrayAccess (e1, (_, e2, _)) ->
-          self#visit_expr venv e1;
+          (* The base of a subscript is read even when the whole subscript
+           * expression is the LHS of an assignment ([target[i] = v] reads
+           * [target] to find the object to mutate). For languages with
+           * implicit-declaration-on-assign (Python, Ruby, PHP, JS), this
+           * matters: visiting [e1] with [in_lvalue := true] would treat
+           * the base name as a write target and declare it locally,
+           * shadowing the enclosing-scope binding. *)
           Common.save_excursion_unsafe env.in_lvalue false (fun () ->
+              self#visit_expr venv e1;
               self#visit_expr venv e2);
           recurse := false
       (* specialized kname case when in expr context *)
@@ -1148,6 +1155,15 @@ class ['self] resolve_visitor env lang =
           | _ ->
               let s, tok = id in
               error tok (spf "could not find '%s' field in environment" s))
+      | DotAccess (e1, _, fname) ->
+          (* The receiver of a dot-access is read even when the whole
+           * expression is the LHS of an assignment ([obj.field = v]
+           * reads [obj] to find the object to mutate). Same reasoning
+           * as ArrayAccess above. *)
+          Common.save_excursion_unsafe env.in_lvalue false (fun () ->
+              self#visit_expr venv e1);
+          self#visit_field_name venv fname;
+          recurse := false
       | Comprehension (_op, (_l, (e, xs), _r)) ->
           (* Actually in Python2, no new scope was created, so iterator vars
            * could leak in the outer scope. This was fixed in Python3. *)
