@@ -1,0 +1,13 @@
+; TODO: uncomment once languages/zig/tree-sitter/semgrep-zig submodule exists
+; (library
+;  (public_name parser_zig.ast_generic)
+;  (name parser_zig_ast_generic)
+;  (wrapped false)
+;  (libraries
+;    commons
+;    lib_parsing lib_parsing_tree_sitter
+;    tree-sitter-lang.zig
+;    ast_generic
+;  )
+;  (preprocess (pps ppx_deriving.show))
+; )
