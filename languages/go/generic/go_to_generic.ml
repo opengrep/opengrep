@@ -233,9 +233,22 @@ let top_func () =
     | Constraints xs -> (
         match xs with
         | [] -> raise Impossible
-        | (_tilde_optTODO, ty) :: _xsTODO ->
-            let ty = type_ ty in
-            let st = G.OtherStmt (G.OS_Todo, [ G.T ty ]) |> G.s in
+        | first :: rest ->
+            let constraint_to_type (tilde_opt, ty) =
+              let inner_ty = type_ ty in
+              match tilde_opt with
+              | None -> inner_ty
+              | Some tok ->
+                  G.OtherType (("GoTilde", tok), [ G.T inner_ty ]) |> G.t
+            in
+            let union_ty =
+              List.fold_left
+                (fun acc c ->
+                  G.TyOr (acc, unsafe_fake "|", constraint_to_type c) |> G.t)
+                (constraint_to_type first)
+                rest
+            in
+            let st = G.OtherStmt (G.OS_Todo, [ G.T union_ty ]) |> G.s in
             G.F st)
   and expr_or_type v = either expr type_ v
   (* used for translating call make/call new *)
