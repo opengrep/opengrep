@@ -374,8 +374,7 @@ and constraint_term (env : env) ((v1, v2) : CST.constraint_term) : constraint_ =
     | Some tok -> Some ((* "~" *) token env tok)
     | None -> None
   in
-  let id = (* identifier *) identifier env v2 in
-  let ty = TName [ id ] in
+  let ty = simple_type env v2 in
   (tilde_opt, ty)
 
 and interface_type_name (env : env) (x : CST.interface_type_name) :
