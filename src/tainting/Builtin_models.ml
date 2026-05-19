@@ -271,7 +271,14 @@ let add_arg_taints_this_signatures db method_names arity ~taint_arg_index
   let to_lval = to_lval_this (arg_taint_set taint_arg_index) in
   let effects =
     if returns_this then
-      Effects.of_list [ to_lval; return_effect (this_taint_set ()) ]
+      (* The return value is 'this' after being tainted by the arg. We include
+       * both 'this' (for any pre-existing taint) and the arg (for the new taint)
+       * because both effects are instantiated from the pre-call env, before
+       * ToLval has a chance to update 'this'. *)
+      let ret_taints =
+        Taint.Taint_set.union (this_taint_set ()) (arg_taint_set taint_arg_index)
+      in
+      Effects.of_list [ to_lval; return_effect ret_taints ]
     else Effects.singleton to_lval
   in
   add_method_signatures db method_names arity effects

@@ -1,0 +1,13 @@
+rules:
+  - id: test-returns-this-java
+    message: Taint flows through the return value of a method with returns_this=true
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
