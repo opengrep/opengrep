@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.22.0](https://github.com/opengrep/opengrep/releases/tag/v1.22.0) - 19-05-2026
+
+### Improvements
+
+* Dockerfile: Support multiline ENV by @maciejpirog in #702
+* Go: Allow nontrivial types in interfaces by @maciejpirog in #710
+* Fix taint not flowing through return value of `returns_this` methods by @maciejpirog in #711
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.21.0...v1.22.0
+
+
 ## [1.21.0](https://github.com/opengrep/opengrep/releases/tag/v1.21.0) - 08-05-2026
 
 ### Improvements
