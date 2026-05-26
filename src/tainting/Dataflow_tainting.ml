@@ -2818,7 +2818,12 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
                                {
                                  taints = new_taints;
                                  lval;
-                                 guards = Effect_guard.top;
+                                 (* The write may have happened under a branch
+                                  * guard; recover it from the guards the
+                                  * written taints carry (tagged at the write
+                                  * site) so a caller can drop the effect when
+                                  * its argument makes the guard false. *)
+                                 guards = Taints.guards_disjunction new_taints;
                                })
                         else None)))
   |> Seq.concat |> List.of_seq
@@ -3197,6 +3202,18 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
               check_orig_if_sink env x.iorig taints lval_shape;
               lval_env'
           | None -> lval_env'
+        in
+        (* Tag the written taints with the guards active at this write, so a
+         * [ToLval] effect synthesised for this parameter at function exit can
+         * carry the condition under which the write happens (see
+         * [effects_from_arg_updates_at_exit]). Outside a guarded branch
+         * [live_guards] is empty and [conjoin_guard] of [top] is identity. *)
+        let taints =
+          let write_guard =
+            Effect_guard.conjoin
+              (Effect_guard.Set.elements (Lval_env.live_guards in'))
+          in
+          Taints.conjoin_guard write_guard taints
         in
         let out_lval_env =
           match opt_lval with

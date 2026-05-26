@@ -569,6 +569,19 @@ module Taint_set = struct
   let conjoin_guard (g : EG.t) (set : t) : t =
     set |> map (with_guard g)
 
+  (* The disjunction of the per-bundle guards: the condition under which at
+   * least one taint in the set is live. Used to derive the effect-level
+   * guard of a [ToLval] synthesised at function exit from the guards its
+   * written taints carry. [empty] yields [top] (no constraint); callers
+   * pass non-empty sets. *)
+  let guards_disjunction (set : t) : EG.t =
+    match elements set with
+    | [] -> EG.top
+    | b :: bs ->
+        List.fold_left
+          (fun acc (x : guarded_taint) -> EG.compose_or acc x.guard)
+          b.guard bs
+
   (* Convenience: add a bare taint (with [EG.top] guard) to a set. *)
   let add_taint (t : taint) (set : t) : t = add (lift_taint t) set
 

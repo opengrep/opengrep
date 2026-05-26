@@ -241,6 +241,10 @@ module Taint_set : sig
   val conjoin_guard : Effect_guard.t -> t -> t
   (** Conjoin [g] into every bundle's guard via [Effect_guard.compose_and]. *)
 
+  val guards_disjunction : t -> Effect_guard.t
+  (** The disjunction of every bundle's guard: the condition under which at
+      least one taint in the set is live. [empty] yields [Effect_guard.top]. *)
+
   val map_taint : (taint -> taint) -> t -> t
   (** Map the inner taint of every bundle, leaving guards untouched. *)
 end
