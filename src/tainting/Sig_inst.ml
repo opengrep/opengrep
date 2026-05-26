@@ -830,7 +830,18 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
    * filter on [Arg] and nested taint substitution via [walk_taints].
    * Recurses [substitute_in_sig] for nested [Fun] shapes (we are
    * substituting the same outer function's parameters at every depth in
-   * this pass). *)
+   * this pass).
+   *
+   * The [Fun] recursion descends a finite chain, not a cycle. A [Fun]
+   * shape only ever holds a signature obtained from [lookup_signature]
+   * (see [S.Fun fun_sig] in [Dataflow_tainting]), i.e. a finished, finite
+   * signature of an already-extracted function. A function is not in the
+   * database while its own signature is being extracted, so it cannot
+   * embed itself: e.g. [def f(): return f] yields an empty shape, not
+   * [Fun (sig of f)]. The exception is Clojure's self-signature fixpoint,
+   * where a function's own partial signature is visible during
+   * re-extraction; that is bounded by
+   * [Limits_semgrep.taint_MAX_SELF_SIG_PASSES]. *)
   let rec walk_shape (sh : shape) : shape =
     match sh with
     | Bot -> Bot
