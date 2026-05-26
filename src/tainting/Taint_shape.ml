@@ -419,8 +419,21 @@ and find_in_shape_w_carry ~taints offset shape =
           offset
       in
       if not offset_is_method then
-        (* Extend each alternative path with the additional [offset]. *)
-        let extended = List.map (fun base_off -> base_off @ offset) base_offsets in
+        (* Extend each alternative path with the additional [offset],
+         * truncated to [taint_MAX_POLY_OFFSET] segments. The poly-taints
+         * below are bounded by [fix_poly_taint_with_offset]; without the
+         * same bound here the Arg shape's offset grows with structure depth
+         * (e.g. a deep [x = x.f] forwarding chain). Since [Shape.equal] and
+         * [Shape.compare] traverse the whole offset list, an unbounded
+         * offset makes each shape comparison O(depth) and degrades
+         * performance on such chains. *)
+        let cap = Limits_semgrep.taint_MAX_POLY_OFFSET in
+        let extended =
+          base_offsets
+          |> List.map (fun base_off ->
+                 List.filteri (fun i _ -> i < cap) (base_off @ offset))
+          |> List.sort_uniq (List.compare T.compare_offset)
+        in
         let refined = Arg (arg, extended) in
         let taints = fix_poly_taint_with_offset offset taints in
         `Found (Cell (Xtaint.of_taints taints, refined))
