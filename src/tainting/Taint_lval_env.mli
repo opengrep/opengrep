@@ -138,6 +138,12 @@ val get_control_taints : env -> Taint.taints
 val active_guards : env -> Effect_guard.Set.t
 (** The set of guards that hold at the current program point. *)
 
+val live_guards : env -> Effect_guard.Set.t
+(** [active_guards] with any guard dropped whose condition reads a variable
+    that has been reassigned on the path (see [mark_reassigned]). Effect
+    stamping uses this so a guard is never evaluated against a value the
+    non-SSA IL has since overwritten. *)
+
 val add_active_guard : Effect_guard.t -> env -> env
 (** Add a guard to the active set at the current program point. Called at
     [TrueNode] of a recognised arity-check condition during the transfer. *)
@@ -150,6 +156,11 @@ val clear_active_guards : env -> env
     the lambda's own parameter scope. The enclosing function's active guards
     are re-applied to the lambda's upflowed effects at
     [Dataflow_tainting.do_lambdas], where the parameter anchoring is correct. *)
+
+val mark_reassigned : IL.name -> env -> env
+(** Record that [name] was written by an assignment on the path. Guards in
+    the active set whose condition reads [name] become unreliable and are
+    excluded by [live_guards]. *)
 
 val is_dead : env -> bool
 (** [true] iff the current program point is unreachable. *)

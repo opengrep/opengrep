@@ -329,8 +329,11 @@ let record_effects env new_effects =
     in
     (* Stamp each new effect with the guards active at the current program
      * point, so a caller can drop effects whose guard its argument shape
-     * cannot satisfy. When no guard is active, [add_guards] is a no-op. *)
-    let active = Lval_env.active_guards env.lval_env in
+     * cannot satisfy. When no guard is active, [add_guards] is a no-op.
+     * [live_guards] drops any guard whose variable has since been
+     * reassigned, since the non-SSA IL would otherwise evaluate it against
+     * a stale value at the caller. *)
+    let active = Lval_env.live_guards env.lval_env in
     let new_effects =
       if Effect_guard.Set.is_empty active then new_effects
       else (
@@ -3195,7 +3198,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
               lval_env'
           | None -> lval_env'
         in
-        begin
+        let out_lval_env =
           match opt_lval with
           | Some lval ->
               if Shape.taints_and_shape_are_relevant taints shape then
@@ -3223,7 +3226,15 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
           | None ->
               (* Instruction returns 'void' or its return value is ignored. *)
               lval_env'
-        end
+        in
+        (* Record the assigned variable as reassigned, so a guard that reads
+         * it is dropped at stamp time: the IL is non-SSA, so a later read of
+         * this name may observe a different value than a guard established
+         * earlier on the path assumed. *)
+        (match opt_lval with
+        | Some { IL.base = IL.Var name; _ } ->
+            Lval_env.mark_reassigned name out_lval_env
+        | _ -> out_lval_env)
     | NCond (_tok, e)
     | NThrow (_tok, e) ->
         let _taints, _shape, lval_env' = check_tainted_expr env e in

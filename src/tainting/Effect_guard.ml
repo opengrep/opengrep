@@ -70,6 +70,18 @@ let top : t =
 let is_top (g : t) : bool = IL_helpers.is_lit_bool true g.cond
 let is_bot (g : t) : bool = IL_helpers.is_lit_bool false g.cond
 
+(* Variables (base [Var] names) read by the guard's condition. A guard
+ * becomes unreliable once one of these is reassigned: the IL is non-SSA,
+ * so the recorded [cond] then refers to a value that may differ from the
+ * one tested at the branch where the guard was established. The engine
+ * drops such guards when stamping effects (see [Taint_lval_env]). *)
+let cond_vars (g : t) : IL.name list =
+  IL_helpers.lvals_of_exp g.cond
+  |> List.filter_map (fun (lv : IL.lval) ->
+         match lv.IL.base with
+         | IL.Var name -> Some name
+         | IL.VarSpecial _ | IL.Mem _ -> None)
+
 (* Bracketed rendering for signature dumps: empty when [is_top],
  * [<cond>] otherwise. *)
 let show_in_brackets (g : t) : string =

@@ -67,6 +67,14 @@ type t = {
           and exit-time emission are all suppressed; at a Join the live
           side wins (see [union]) — so [dead = false] in the result of
           any Join where at least one predecessor is live. *)
+  reassigned_vars : IL.NameSet.t;
+      (** Variables written by an assignment on the path to the current
+          program point. A guard in [active_guards] whose condition reads
+          one of these is unreliable: the IL is non-SSA, so the name now
+          denotes a value that may differ from the one tested at the
+          branch where the guard was established. Such guards are dropped
+          when stamping effects (see [live_guards]). Merged by UNION at a
+          Join — a variable reassigned on any incoming path counts. *)
 }
 
 type env = t
@@ -98,6 +106,7 @@ let empty =
     pending_propagation_dests = VarMap.empty;
     active_guards = Effect_guard.Set.empty;
     dead = false;
+    reassigned_vars = IL.NameSet.empty;
   }
 
 let empty_inout = { Dataflow_core.in_env = empty; out_env = empty }
@@ -134,6 +143,10 @@ let union le1 le2 =
            * no guard that was specific to a single branch. *)
           Effect_guard.Set.inter le1.active_guards le2.active_guards;
         dead = false;
+        reassigned_vars =
+          (* UNION: a variable reassigned on either incoming path may carry
+           * a value that invalidates a guard reaching this point. *)
+          IL.NameSet.union le1.reassigned_vars le2.reassigned_vars;
       }
 
 let union_list ?(default = empty) les = List.fold_left union default les
@@ -363,6 +376,24 @@ let add_active_guard g env =
 let clear_active_guards env =
   { env with active_guards = Effect_guard.Set.empty }
 
+let mark_reassigned name env =
+  { env with reassigned_vars = IL.NameSet.add name env.reassigned_vars }
+
+(* [active_guards] minus any guard whose condition reads a reassigned
+ * variable. Stamping uses this rather than [active_guards] directly, so a
+ * guard established before its variable was reassigned — or one re-anchored
+ * on a parameter that has since been reassigned — is not evaluated against
+ * a stale value at the caller. *)
+let live_guards env =
+  if IL.NameSet.is_empty env.reassigned_vars then env.active_guards
+  else
+    Effect_guard.Set.filter
+      (fun g ->
+        not
+          (Effect_guard.cond_vars g
+          |> List.exists (fun n -> IL.NameSet.mem n env.reassigned_vars)))
+      env.active_guards
+
 let is_dead env = env.dead
 let mark_dead env = { env with dead = true }
 
@@ -374,6 +405,7 @@ let equal
       pending_propagation_dests = _;
       active_guards = guards1;
       dead = dead1;
+      reassigned_vars = reassigned1;
     }
     {
       tainted = tainted2;
@@ -382,6 +414,7 @@ let equal
       pending_propagation_dests = _;
       active_guards = guards2;
       dead = dead2;
+      reassigned_vars = reassigned2;
     } =
   Bool.equal dead1 dead2
   && NameMap.equal equal_cell tainted1 tainted2
@@ -389,6 +422,7 @@ let equal
    * we just care how they affect 'tainted'. *)
   && Taints.equal control1 control2
   && Effect_guard.Set.equal guards1 guards2
+  && IL.NameSet.equal reassigned1 reassigned2
 
 let equal_by_lval { tainted = tainted1; _ } { tainted = tainted2; _ } lval =
   match normalize_lval lval with
