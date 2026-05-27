@@ -1369,6 +1369,44 @@ let instantiate_lval lval_env fparams fun_exp args_exps
           in
           Some (lval_taints, shape))
 
+(* The enclosing parameter that a [BArg]-origin taint forwards, if any.
+ * Shared by [enclosing_param_of_exp] and [outer_actuals_for_callback]. *)
+let arg_of_taints (taints : Taints.t) : T.arg option =
+  taints |> Taints.to_taint_list
+  |> List.find_map (fun (t : T.taint) ->
+         match t.T.orig with
+         | T.Var { base = T.BArg arg; offset = [] } -> Some arg
+         | _ -> None)
+
+(* [IL.exp] actuals for a callback's parameters, recovered from the
+ * callback-invocation args. Each such arg's taint carries a [BArg] origin
+ * naming the enclosing parameter it forwards; [resolve_arg] maps that
+ * enclosing parameter to the actual the enclosing call supplied — a
+ * concrete literal at a top-level call (so the guard can be evaluated),
+ * or a forwarded parameter further up a chain (so the guard rebinds).
+ * [None] when any arg does not forward an enclosing parameter, leaving the
+ * recursive HOF dispatch with the conservative no-actuals behaviour. This
+ * is what lets a guard on a callback parameter be decided at the
+ * top-level caller. *)
+let outer_actuals_for_callback (resolve_arg : T.arg -> IL.exp option)
+    (callback_args : (Taints.t * shape) IL.argument list) :
+    IL.exp IL.argument list option =
+  let mapped =
+    callback_args
+    |> List.map (fun (a : (Taints.t * shape) IL.argument) ->
+           let taints, _shape =
+             match a with IL.Unnamed v | IL.Named (_, v) -> v
+           in
+           match arg_of_taints taints with
+           | Some arg -> Option.map (fun e -> IL.Unnamed e) (resolve_arg arg)
+           | None -> None)
+  in
+  match mapped with
+  | [] -> None
+  | _ when List.for_all Option.is_some mapped ->
+      Some (List.map Option.get mapped)
+  | _ -> None
+
 (* This function is consuming the taint signature of a function to determine
    a few things:
    1) What is the status of taint in the current environment, after the function
@@ -1688,13 +1726,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           | Fetch { base = Var var; rev_offset = [] } -> (
               let lval = { T.base = BGlob var; offset = [] } in
               match lval_to_taints lval with
-              | Some (taints, _shape) ->
-                  taints
-                  |> Taints.to_taint_list
-                  |> List.find_map (fun (t : T.taint) ->
-                         match t.T.orig with
-                         | Var { base = BArg arg; offset = [] } -> Some arg
-                         | _ -> None)
+              | Some (taints, _shape) -> arg_of_taints taints
               | None -> None)
           | _ -> None
         in
@@ -1916,14 +1948,21 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                     "TOSINKINCALL: Recursively instantiating sig with \
                      args_taints=%s"
                     (Effect.show_args_taints args_taints));
-              (* The callback invocation's actual args are not available here
-               * (we only have the outer args of the enclosing call); pass None
-               * so that any guards in the callback's signature stay unknown
-               * rather than being evaluated against the wrong args. *)
+              (* Recursive HOF dispatch: supply [IL.exp] actuals for the
+               * callback's parameters by resolving the enclosing parameters
+               * its invocation args forward (see [outer_actuals_for_callback]).
+               * This lets a guard on a callback parameter be decided at the
+               * top-level caller — evaluated against a concrete literal, or
+               * rebound to a forwarded parameter. Falls back to no actuals
+               * when the forwarding cannot be recovered, leaving guards
+               * unknown rather than evaluated against the wrong args. *)
+              let callback_actual_args =
+                outer_actuals_for_callback resolve_arg fun_args_taints
+              in
               (match
                  instantiate_function_signature ~lang ?outer_params lval_env
-                   fun_sig ~callee:fun_exp ~args:None args_taints ?lookup_sig
-                   ~depth:(depth + 1) ()
+                   fun_sig ~callee:fun_exp ~args:callback_actual_args args_taints
+                   ?lookup_sig ~depth:(depth + 1) ()
                with
               | Some call_effects ->
                   Log.debug (fun m ->
