@@ -3122,11 +3122,11 @@ let mk_lambda_in_env env lcfg =
 
 (* At [TrueNode] / [FalseNode], if [cond] evaluates to a constant boolean
  * that contradicts the branch direction, the branch is unreachable. Mark
- * the env as dead via [Lval_env.mark_dead]; the dead-aware gates in the
- * source-match path, [record_effects], and exit-time emission then
- * suppress any observation made from the unreachable region. At the Join
- * with the live branch, [Lval_env.union] discards the dead side and
- * preserves the live env. *)
+ * the env as dead via [Lval_env.mark_dead]. The dead env is discarded at
+ * the Join with the live branch ([Lval_env.union] keeps the live side), so
+ * anything observed in the unreachable region does not survive past it;
+ * [record_effects] additionally short-circuits while the env is dead,
+ * suppressing findings and signature effects recorded inside the region. *)
 let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
     (branch_direction : bool) (in' : Lval_env.t) : Lval_env.t =
   let eval_env = Eval_il_partial.mk_env lang Var_env.VarMap.empty in
