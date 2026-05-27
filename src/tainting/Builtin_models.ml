@@ -39,9 +39,7 @@ let add_hof_returning_function_signatures db method_names ?(taint_arg_index = 0)
   let this_taint =
     Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] }
   in
-  let this_taint_set =
-    Taint.Taint_set.singleton this_taint
-  in
+  let this_taint_set = Taint.Taint_set.singleton this_taint in
   let args_taints = make_args_taints this_taint_set taint_arg_index in
 
   (* The effect when the returned function is called with a callback *)
@@ -195,9 +193,7 @@ let add_hof_signatures db method_names arity ?(callback_index = 0)
   let this_taint =
     Taint.{ orig = Var { base = BThis; offset = [] }; tokens = [] }
   in
-  let this_taint_set =
-    Taint.Taint_set.singleton this_taint
-  in
+  let this_taint_set = Taint.Taint_set.singleton this_taint in
   let args_taints = make_args_taints this_taint_set taint_arg_index in
 
   let hof_effect =

@@ -385,15 +385,15 @@ let flatten_same_op (op : G.operator) (es : IL.exp list) : IL.exp list =
  * lattice on guards reaches a fixed point on its own rather than
  * relying on [taint_MAX_VISITS_PER_NODE] to bail. *)
 let dedup_exps (es : IL.exp list) : IL.exp list =
-  let seen = Hashtbl.create 8 in
-  List.filter
-    (fun e ->
-      let key = IL_pp.pp_exp e in
-      if Hashtbl.mem seen key then false
-      else (
-        Hashtbl.add seen key ();
-        true))
-    es
+  let module Keys = Set.Make (String) in
+  es
+  |> List.fold_left
+       (fun (seen, acc) e ->
+         let key = IL_pp.pp_exp e in
+         if Keys.mem key seen then (seen, acc)
+         else (Keys.add key seen, e :: acc))
+       (Keys.empty, [])
+  |> snd |> List.rev
 
 (* Return true iff [es] contains a pair [(a, b)] with [is_complement a b]. *)
 let rec has_complement_pair (es : IL.exp list) : bool =
