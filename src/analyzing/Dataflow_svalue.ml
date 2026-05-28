@@ -344,6 +344,32 @@ let update_env_with env var sval =
   | G.NotCst -> VarMap.remove (IL.str_of_name var) env
   | __else__ -> VarMap.add (IL.str_of_name var) sval env
 
+(* [Sym (Container ...)] snapshots become stale once the underlying
+ * container is mutated. Passing a container as an argument to a call
+ * (helper, built-in, etc.) may mutate it in place via the callee's
+ * parameter; we cannot tell intraprocedurally whether the callee
+ * writes through the reference, so for each bare-var argument whose
+ * current value is a container [Sym], drop it before the call's own
+ * effect is applied. Without this, [prune_branch_if_unreachable]
+ * folds a downstream [len(arr) == N] against the stale snapshot and
+ * silently prunes a branch that is actually reachable. *)
+let is_container_sval = function
+  | G.Sym { e = G.Container _; _ } -> true
+  | _ -> false
+
+let invalidate_container_args (env : G.svalue Var_env.t)
+    (args : IL.exp IL.argument list) : G.svalue Var_env.t =
+  List.fold_left
+    (fun env arg ->
+      match IL_helpers.exp_of_arg arg with
+      | { e = Fetch { base = Var var; rev_offset = [] }; _ } -> (
+          let key = IL.str_of_name var in
+          match VarMap.find_opt key env with
+          | Some sval when is_container_sval sval -> VarMap.remove key env
+          | _ -> env)
+      | _ -> env)
+    env args
+
 (* Semgrep Pro *)
 let transfer_of_assume (assume : bool) (cond : IL.exp_kind)
     (inp : G.svalue Var_env.t) : G.svalue Var_env.t =
@@ -381,6 +407,20 @@ let rec transfer :
     | FalseNode cond -> transfer_of_assume false cond.e inp'
     | NInstr instr -> (
         let eval_env = Eval.mk_env lang inp' in
+
+        (* Pre-step: a [Call] / [CallSpecial] / [New] may mutate a
+         * container passed as an argument via the callee's parameter.
+         * Drop the symbolic value of any bare-var arg whose current
+         * state is a container [Sym]; see [invalidate_container_args]
+         * above for why. *)
+        let inp' =
+          match instr.i with
+          | Call (_, _, args)
+          | CallSpecial (_, _, args)
+          | New (_, _, _, args) ->
+              invalidate_container_args inp' args
+          | _ -> inp'
+        in
 
         (* TODO: For now we only handle the simplest cases. *)
         match instr.i with
