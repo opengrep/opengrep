@@ -447,11 +447,11 @@ and function_definition = {
 
 and parameter =
   | ParamClassic of parameter_classic
-  (* transpiled: when Ast_js_build.transpile_pattern
-   * TODO: can also have types and default, so factorize with
-   * parameter_classic?
-   *)
-  | ParamPattern of a_pattern
+  (* transpiled: when Ast_js_build.transpile_pattern. Carries the
+   * destructure pattern plus the optional type annotation and default
+   * value the way [parameter_classic] does for plain identifiers, so
+   * the parsers do not have to fake-wrap them in [Cast] / [Assign]. *)
+  | ParamPattern of param_pattern_extras
   (* sgrep-ext: *)
   | ParamEllipsis of tok
 
@@ -462,6 +462,12 @@ and parameter_classic = {
   p_type : type_ option;
   p_dots : tok option;
   p_attrs : attribute list;
+}
+
+and param_pattern_extras = {
+  pp_pattern : a_pattern;
+  pp_type : type_ option;
+  pp_default : expr option;
 }
 
 (* expr is usually simply an Id
@@ -704,7 +710,18 @@ let parameter_to_pattern tok (param : parameter) : a_pattern =
       (* TODO? *)
       ignore p_attrs;
       pat
-  | ParamPattern pat -> pat
+  | ParamPattern { pp_pattern; pp_type; pp_default } ->
+      let pat =
+        match pp_type with
+        | None -> pp_pattern
+        | Some type_ -> Cast (pp_pattern, Tok.fake_tok tok ":", type_)
+      in
+      let pat =
+        match pp_default with
+        | None -> pat
+        | Some expr -> Assign (pat, Tok.fake_tok tok "=", expr)
+      in
+      pat
   | ParamEllipsis tok -> Ellipsis tok
 
 let mk_const_var id e =

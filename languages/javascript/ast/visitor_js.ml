@@ -398,7 +398,10 @@ let (mk_visitor : visitor_in -> visitor_out) =
     | ParamClassic v1 ->
         let v1 = v_parameter v1 in
         ()
-    | ParamPattern v1 -> v_pattern v1
+    | ParamPattern { pp_pattern; pp_type; pp_default } ->
+        v_pattern pp_pattern;
+        Option.iter v_type_ pp_type;
+        Option.iter v_expr pp_default
     | ParamEllipsis v1 ->
         let v1 = v_tok v1 in
         ()

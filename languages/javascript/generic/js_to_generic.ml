@@ -579,10 +579,23 @@ and fun_ { f_kind; f_attrs = f_props; f_params; f_body; f_rettype } =
 
 and parameter_binding = function
   | ParamClassic x -> parameter x
-  | ParamPattern x ->
-      let pat = pattern x in
+  | ParamPattern { pp_pattern; pp_type; pp_default } ->
+      (* Type annotation stays inside the pattern via [PatTyped], the
+       * shape typed-metavariable resolution and the parameter matcher
+       * both expect. Default value moves to [parameter_classic.pdefault]
+       * -- the canonical slot used by [ParamClassic] -- where it is
+       * visible to matching; previously [Assign (...)] at the top of
+       * the destructure expression fell through [expr_to_pattern] to
+       * an opaque [OtherPat (ExprToPattern, ...)]. *)
+      let pat = pattern pp_pattern in
+      let pat =
+        match pp_type with
+        | None -> pat
+        | Some t -> G.PatTyped (pat, type_ t)
+      in
       let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
-      G.ParamPattern (pat, G.implicit_param_classic tk)
+      let pdefault = Option.map expr pp_default in
+      G.ParamPattern (pat, G.implicit_param_classic ?pdefault tk)
   | ParamEllipsis x -> G.ParamEllipsis x
 
 and pattern x =

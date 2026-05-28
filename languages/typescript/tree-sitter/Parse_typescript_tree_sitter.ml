@@ -2015,17 +2015,8 @@ and formal_parameter (env : env) (x : CST.formal_parameter) : parameter =
             p_attrs = attrs;
           }
     | Right pat ->
-        let pat =
-          match opt_type with
-          | None -> pat
-          | Some type_ -> Cast (pat, Tok.unsafe_fake_tok ":", type_)
-        in
-        let pat =
-          match opt_default with
-          | None -> pat
-          | Some expr -> Assign (pat, Tok.unsafe_fake_tok "=", expr)
-        in
-        ParamPattern pat
+        ParamPattern
+          { pp_pattern = pat; pp_type = opt_type; pp_default = opt_default }
   in
 
   match x with
