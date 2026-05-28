@@ -760,7 +760,10 @@ formal_parameter:
  | id initializeur   { ParamClassic { (mk_param $1) with p_default = Some (snd $2)} }
   (* until here this is mostly equivalent to the 'binding_element' rule *)
   | binding_pattern annotation? initializeur?
-    { ParamPattern (mk_pattern $1 $2 $3) }
+    { ParamPattern
+        { pp_pattern = $1;
+          pp_type    = $2;
+          pp_default = (Option.map snd $3) } }
 
  (* es6: spread *)
  | "..." id          { ParamClassic { (mk_param $2) with p_dots = Some $1; } }

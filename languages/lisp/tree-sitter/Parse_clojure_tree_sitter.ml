@@ -159,10 +159,17 @@ let encode_short_lambda (env : env) (tok (* # *) : Tok.t) (body_expr : G.expr) :
         let param_id = (param_name, tok) in
         match i + 1, has_shorthand with
         | 1, true ->
-          (* implicit param % == %1 *)
-          let id_info = G.empty_id_info () in
-          G.PatAs (* the alias ensures both % and %1 are resolved. *)
-            (G.PatId (param_id, id_info), (("%", tok), id_info))
+          (* implicit param % == %1: alias binding that declares both
+           * names. Use separate id_info records so Naming_AST assigns
+           * each its own sid; the AST_to_IL destructure prelude then
+           * emits independent assigns from tmp[0] to each lval. Sharing
+           * the id_info would cause the second declaration to overwrite
+           * the first's sid, leaving the body's reference resolved to a
+           * scope entry whose id_info points to a different sid than
+           * the prelude's assign. *)
+          G.PatAs
+            (G.PatId (param_id, G.empty_id_info ()),
+             (("%", tok), G.empty_id_info ()))
         | _ ->
           G.PatId (param_id, G.empty_id_info ()))
   in
@@ -185,7 +192,8 @@ let encode_short_lambda (env : env) (tok (* # *) : Tok.t) (body_expr : G.expr) :
       params
   in
   let final_param =
-    G.ParamPattern (G.PatList (Tok.unsafe_fake_bracket params_with_rest))
+    let pat = G.PatList (Tok.unsafe_fake_bracket params_with_rest) in
+    G.ParamPattern (pat, G.implicit_param_classic tok)
   in
   (* Structure that Naming_AST can recognize for scope handling *)
   G.OtherExpr (("ShortLambda", tok),
@@ -252,6 +260,40 @@ let qualified_name_regex_str = "^\\(.+\\)/\\(.+\\)$"
 
 let fake_variable_ident = "G__1111"
 let implicit_param_ident = G.implicit_param
+
+(* Extract the source Loc.t of a CST form's leading token. Used so
+ * synthetic symbols inserted into a user form (e.g. [G__1111] threaded
+ * into cond-> clause bodies) inherit that body's position instead of
+ * the outer macro token, which would inflate the G.expr range. Falls
+ * back to [default] for rarely-used form variants. *)
+let form_loc ~default (f : CST.form) : Tree_sitter_run.Loc.t =
+  match f with
+  | `Sym_lit (_, (l, _))
+  | `Num_lit (l, _)
+  | `Kwd_lit (l, _)
+  | `Str_lit (l, _)
+  | `Char_lit (l, _)
+  | `Nil_lit (l, _)
+  | `Bool_lit (l, _) -> l
+  | `List_lit (_, ((l, _), _, _))
+  | `Map_lit (_, ((l, _), _, _)) -> l
+  | `Vec_lit (_, ((l, _), _, _)) -> l
+  | `Set_lit (_, ((l, _), _, _, _)) -> l
+  | `Anon_fn_lit (_, (l, _), _) -> l
+  | `Regex_lit ((l, _), _) -> l
+  | `Semg_deep_exp ((l, _), _, _, _, _) -> l
+  | `Sym_val_lit ((l, _), _, _) -> l
+  | `Var_quot_lit (_, (l, _), _, _) -> l
+  | `Tagged_or_ctor_lit (_, (l, _), _, _, _, _)
+  | `Dere_lit (_, (l, _), _, _)
+  | `Quot_lit (_, (l, _), _, _)
+  | `Syn_quot_lit (_, (l, _), _, _)
+  | `Unqu_spli_lit (_, (l, _), _, _)
+  | `Unqu_lit (_, (l, _), _, _)
+  | `Spli_read_cond_lit (_, (l, _), _, _) -> l
+  | `Read_cond_lit _
+  | `Ns_map_lit _
+  | `Eval_lit _ -> default
 
 let todo (_env : env) _ = raise_parse_error "Not implemented."
 
@@ -1077,14 +1119,18 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
     let pats = List_.map
         (function
           | `Sym_lit ((_meta, (loc, s)) as x) ->
-            let key = map_sym_lit_pat_qualified env x in
+            let bound = map_sym_lit_pat_qualified env x in
             let atom_kind, tok_colon, atom_name =
-              map_kwd_expr_aux env (loc, ":" ^ s) 
+              map_kwd_expr_aux env (loc, ":" ^ s)
             in
-            let value =
+            let lookup_key =
               G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
             in
-            G.PatKeyVal (key, value)
+            (* Canonical [PatKeyVal(lookup_key, binding)]: first argument
+             * is the map lookup key (the atom/string that selects the
+             * field on the incoming value), second is the pattern that
+             * receives what was fetched. *)
+            G.PatKeyVal (lookup_key, bound)
           | `Kwd_lit ((_loc, s) as kwd)
             when String.starts_with ~prefix:"::" s ->
              let s, t = H.str env kwd in
@@ -1094,16 +1140,16 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
              let _tok_colon, tok_name =
                Tok.split_tok_at_bytepos 2 t
              in
-             let key =
+             let bound =
                G.PatId ((s_no_colon, tok_name), G.empty_id_info ())
              in
             let atom_kind, tok_colon, atom_name =
-              map_kwd_expr_aux env kwd 
+              map_kwd_expr_aux env kwd
             in
-            let value =
+            let lookup_key =
               G.OtherPat ((atom_kind, tok_colon), [G.Name atom_name])
             in
-            G.PatKeyVal (key, value)
+            G.PatKeyVal (lookup_key, bound)
           | _ -> raise_parse_error ~related_ast:(G.Tk (token env tk))
                    "Invalid associative binding form"
         )
@@ -1126,11 +1172,11 @@ and map_binding_form_map_lit (env : env) ((_meta, (lb, srcs, rb)) : CST.map_lit)
     in
     let rec keyval_and_rest acc = function
       | bind_form :: (`Kwd_lit _ | `Str_lit _ as kv) :: rest_forms ->
-        let key = map_binding_form env bind_form in
+        let bound = map_binding_form env bind_form in
         (* TODO: PatRecord of (dotted_ident * pattern) list bracket *)
-        let value = map_value_key_pattern kv in
+        let lookup_key = map_value_key_pattern kv in
         keyval_and_rest
-          (G.PatKeyVal (key, value) :: acc)
+          (G.PatKeyVal (lookup_key, bound) :: acc)
           rest_forms
       | (`Kwd_lit _or_as  :: _  as rest_forms)-> List.rev acc, rest_forms
       | [] -> List.rev acc, []
@@ -1913,11 +1959,11 @@ and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr 
     | `Sym_lit (_meta_thread,
                 ((loc, (("cond->" | "cond->>") as first_or_last)) as thread_tk))
       :: (v_expr :: clauses as rest_forms) ->
-
-      (* Note that we piggyback on the location of "cond->" for the new
-       * variable we are introducing. *)
       let fake_let_var_sym_lit = ([], ((loc, fake_variable_ident))) in
-      let fake_let_var_sym = `Sym_lit fake_let_var_sym_lit in
+      let sym_at body_form =
+        let l = form_loc ~default:loc body_form in
+        `Sym_lit ([], ((l, fake_variable_ident)))
+      in
       let pos =
         match first_or_last with
         | "cond->" -> Insert_first
@@ -1951,7 +1997,7 @@ and map_cond_thread_first_last_form (env : env) (forms: CST.form list) : G.expr 
                 (test_expr_form, body_expr_form)
               | _ ->
                 (test_expr_form,
-                 insert_threaded env pos fake_let_var_sym body_expr_form))
+                 insert_threaded env pos (sym_at body_expr_form) body_expr_form))
            test_expr_pairs
        in
        (* Now we have clauses (test, body') where body' is (-> g body),

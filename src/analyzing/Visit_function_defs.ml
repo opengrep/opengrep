@@ -18,7 +18,8 @@ module H = AST_generic_helpers
 
 (* Helper to extract Python-style lambda assignments: g = lambda x: ...
    Returns the synthetic entity and function definition if this is a lambda assignment. *)
-let extract_lambda_assignment (e : G.expr) : (G.entity * G.function_definition) option =
+let extract_lambda_assignment ?(lang : Lang.t option) (e : G.expr)
+    : (G.entity * G.function_definition) option =
   match e.G.e with
   | G.Assign ({ e = G.N (G.Id (id, id_info)); _ }, _, { e = G.Lambda fdef; _ }) ->
       let ent = { G.name = G.EN (G.Id (id, id_info)); G.attrs = []; G.tparams = None } in
@@ -26,6 +27,24 @@ let extract_lambda_assignment (e : G.expr) : (G.entity * G.function_definition) 
   (* This one was added for Clojure, but may apply to more translations. *)
   | G.LetPattern (pat, { e = G.Lambda fdef; _ }) ->
       let ent = H.entity_of_pattern pat in
+      Some (ent, fdef)
+  (* Ruby: [cb = Proc.new { |x| ... }] — mirror the AST_to_IL Proc.new
+     unwrapping (see [AST_to_IL.expr_aux]) so the call graph also treats
+     the binding as a named lambda. Without this the proc lambda is anonymous
+     in the call graph and reachability pruning drops it from the relevant
+     subgraph. *)
+  | G.Assign
+      ( { e = G.N (G.Id (id, id_info)); _ }, _,
+        { e = G.Call
+                ( { e = G.Call
+                        ( { e = G.DotAccess
+                                ( { e = G.N (G.Id (("Proc", _), _)); _ },
+                                  _,
+                                  G.FN (G.Id (("new", _), _)) ); _ },
+                          (_, [], _) ); _ },
+                  (_, [ G.Arg { e = G.Lambda fdef; _ } ], _) ); _ } )
+    when (match lang with Some l -> Lang.equal l Lang.Ruby | None -> false) ->
+      let ent = { G.name = G.EN (G.Id (id, id_info)); G.attrs = []; G.tparams = None } in
       Some (ent, fdef)
   | _ -> None
 
@@ -184,6 +203,30 @@ let entity_to_il_name (ent : G.entity) : IL.name option =
   | G.EN name -> g_name_to_il_name name
   | _ -> None
 
+(* Position-based IL.name for a lambda. All lambdas (named [cb = lambda x: ...]
+   or anonymous) share this identity scheme — the binding variable is an alias,
+   not a distinct callable. The fake token wraps the source position so the
+   resulting [Function_id] is position-distinct via [Function_id.key]. *)
+let synth_lambda_il_name_of_tok (tok : Tok.t) : IL.name =
+  let fake_tok = Tok.fake_tok tok "_tmp_lambda" in
+  IL.{
+    ident = ("_tmp_lambda", fake_tok);
+    sid = G.SId.unsafe_default;
+    id_info = G.empty_id_info ();
+  }
+
+let synth_lambda_il_name (fdef : G.function_definition) : IL.name =
+  synth_lambda_il_name_of_tok (snd fdef.fkind)
+
+(* Use the synthetic lambda IL.name when [fdef] is a lambda; otherwise use the
+   entity's name. Keeps the parent_path consistent with what
+   [Graph_from_AST.fn_id_of_entity] produces. *)
+let func_il_for_entity (ent : G.entity) (fdef : G.function_definition)
+    : IL.name option =
+  match fst fdef.fkind with
+  | G.LambdaKind | G.Arrow -> Some (synth_lambda_il_name fdef)
+  | _ -> entity_to_il_name ent
+
 let append_to_parrent_path parent_path class_il func_il =
   let visitor_parent_path =
     if parent_path = [] then [ class_il ] else parent_path
@@ -191,9 +234,10 @@ let append_to_parrent_path parent_path class_il func_il =
   let current_fn_id = visitor_parent_path @ [ func_il ] in
   (visitor_parent_path, current_fn_id)
 
-class ['self] visitor_with_parent_path =
+class ['self] visitor_with_parent_path ~(lang : Lang.t) =
   object (self : 'self)
     inherit [_] G.iter_no_id_info as super
+    val lang : Lang.t = lang
     val current_class : G.name option ref = ref None
     val parent_path : IL.name option list ref = ref []
 
@@ -225,7 +269,7 @@ class ['self] visitor_with_parent_path =
       | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
           (* Handle lambda assignments like: const f = () => {...} *)
           let class_il = Option.bind !current_class g_name_to_il_name in
-          let func_il = entity_to_il_name ent in
+          let func_il = func_il_for_entity ent fdef in
           let visitor_parent_path, current_fn_id =
             append_to_parrent_path !parent_path class_il func_il
           in
@@ -253,7 +297,7 @@ class ['self] visitor_with_parent_path =
               (ent, G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ }) ->
               (* Handle lambda assignments in class fields *)
               let class_il = Option.bind !current_class g_name_to_il_name in
-              let func_il = entity_to_il_name ent in
+              let func_il = func_il_for_entity ent fdef in
               let visitor_parent_path, current_fn_id =
                 append_to_parrent_path !parent_path class_il func_il
               in
@@ -275,10 +319,10 @@ class ['self] visitor_with_parent_path =
       super#visit_function_definition f fdef
 
     method! visit_expr f e =
-      match extract_lambda_assignment e with
+      match extract_lambda_assignment ~lang e with
       | Some (ent, fdef) ->
           let class_il = Option.bind !current_class g_name_to_il_name in
-          let func_il = entity_to_il_name ent in
+          let func_il = func_il_for_entity ent fdef in
           let visitor_parent_path, current_fn_id =
             append_to_parrent_path !parent_path class_il func_il
           in
@@ -290,15 +334,15 @@ class ['self] visitor_with_parent_path =
   end
 
 (* Visit all function definitions with parent path context. *)
-let visit_with_parent_path
+let visit_with_parent_path ~(lang : Lang.t)
     (f :
       G.entity option -> IL.name option list -> G.function_definition -> unit)
     (ast : G.program) : unit =
-  let v = new visitor_with_parent_path in
+  let v = new visitor_with_parent_path ~lang in
   v#visit_program f ast
 
 (* Fold over all function definitions with parent path context. *)
-let fold_with_parent_path
+let fold_with_parent_path ~(lang : Lang.t)
     (f :
       'acc ->
       G.entity option ->
@@ -306,7 +350,7 @@ let fold_with_parent_path
       G.function_definition ->
       'acc) (init_acc : 'acc) (ast : G.program) : 'acc =
   let acc_ref = ref init_acc in
-  let v = new visitor_with_parent_path in
+  let v = new visitor_with_parent_path ~lang in
   v#visit_program
     (fun opt_ent parent_path fdef ->
       acc_ref := f !acc_ref opt_ent parent_path fdef)

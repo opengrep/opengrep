@@ -130,6 +130,40 @@ val filter_tainted : (IL.name -> bool) -> env -> env
 val add_control_taints : env -> Taint.taints -> env
 val get_control_taints : env -> Taint.taints
 
+val active_guards : env -> Effect_guard.Set.t
+(** The set of guards that hold at the current program point. *)
+
+val live_guards : env -> Effect_guard.Set.t
+(** [active_guards] with any guard dropped whose condition reads a variable
+    that has been reassigned on the path (see [mark_reassigned]). Effect
+    stamping uses this so a guard is never evaluated against a value the
+    non-SSA IL has since overwritten. *)
+
+val add_active_guard : Effect_guard.t -> env -> env
+(** Add a guard to the active set at the current program point. Called at
+    [TrueNode] of a recognised arity-check condition during the transfer. *)
+
+val clear_active_guards : env -> env
+(** Empty the active-guards set while preserving the rest of the env. Used at
+    lambda entry so the lambda's transfer does not inherit its enclosing
+    function's guards — those guards are parameter-indexed relative to the
+    enclosing function, and would be mis-interpreted if they rode along into
+    the lambda's own parameter scope. The enclosing function's active guards
+    are re-applied to the lambda's upflowed effects at
+    [Dataflow_tainting.do_lambdas], where the parameter anchoring is correct. *)
+
+val mark_reassigned : IL.name -> env -> env
+(** Record that [name] was written by an assignment on the path. Guards in
+    the active set whose condition reads [name] become unreliable and are
+    excluded by [live_guards]. *)
+
+val is_dead : env -> bool
+(** [true] iff the current program point is unreachable. *)
+
+val mark_dead : env -> env
+(** Mark the env as unreachable. Set at a branch whose condition folds
+    to a constant that contradicts the branch direction. *)
+
 val union : env -> env -> env
 (** Compute the environment for the join of two branches.
 

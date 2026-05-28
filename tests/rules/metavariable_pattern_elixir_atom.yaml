@@ -1,0 +1,17 @@
+rules:
+  - id: elixir-key-id-pattern
+    message: |
+      A rule constrains [$K] (a metavariable in keyword-key position
+      of an Elixir map literal) via [metavariable-pattern] with an
+      identifier pattern. Keyword form [body:] is sugar for the atom
+      [:body]; the identifier pattern matches when the bare-name
+      strings are equal.
+    languages:
+      - elixir
+    severity: WARNING
+    patterns:
+      - pattern: |
+          %{$K: $V}
+      - metavariable-pattern:
+          metavariable: $K
+          pattern: body

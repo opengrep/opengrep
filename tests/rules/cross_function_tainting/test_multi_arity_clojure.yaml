@@ -1,0 +1,17 @@
+rules:
+  - id: test-multi-arity-clojure
+    message: |
+      Clojure multi-arity dispatch: a sink in a later leg must not
+      fire for call lengths that an earlier leg matches. The engine
+      stamps each leg's body with the conjunction of prior-leg
+      negations and this leg's own condition.
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)

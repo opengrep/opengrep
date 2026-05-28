@@ -44,6 +44,35 @@ let equal_with_pos f1 f2 =
   in
   List.equal (Option.equal equal_il_name) f1 f2
 
+(* Match a [func_info] against [name_str] by either the fn_id's last ident
+   (regular functions/methods) or the entity's name (named lambdas, whose
+   fn_id is the synthetic [_tmp_lambda] but whose entity carries the binding). *)
+let func_info_name_matches (f : func_info) (name_str : string) : bool =
+  (match List_.init_and_last_opt f.fn_id with
+   | Some (_, Some name) when String.equal (fst name.IL.ident) name_str -> true
+   | _ -> false)
+  ||
+  (match f.entity with
+   | Some ent ->
+       (match AST_to_IL.name_of_entity ent with
+        | Some n -> String.equal (fst n.IL.ident) name_str
+        | None -> false)
+   | None -> false)
+
+(* Find a [func_info] in [all_funcs] whose name matches [name_str] (per
+   [func_info_name_matches]) and whose parent path equals [caller_parent_path]
+   (position-aware, distinguishing same-named functions in different scopes). *)
+let find_func_in_scope (all_funcs : func_info list)
+    (caller_parent_path : IL.name option list) (name_str : string)
+    : func_info option =
+  List.find_opt (fun f ->
+    if func_info_name_matches f name_str then
+      match List_.init_and_last_opt f.fn_id with
+      | Some (f_parent, _) -> equal_with_pos f_parent caller_parent_path
+      | _ -> false
+    else false
+  ) all_funcs
+
 (* Get arity of a function from its definition *)
 let get_func_arity (fdef : G.function_definition) : int =
   let params = fdef.fparams in
@@ -136,9 +165,25 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
     | [] -> [None]  (* Top-level: empty path becomes [None] *)
     | path -> path
   in
+  let is_lambda =
+    match fst fdef.fkind with
+    | G.LambdaKind | G.Arrow -> true
+    | _ -> false
+  in
   match opt_ent with
-  | Some ent -> (
-      match AST_to_IL.name_of_entity ent with
+  | _ when is_lambda ->
+      (* All lambdas (named [cb = lambda x: ...] or anonymous) share one
+         identity scheme: the lambda's own definition position. The binding
+         variable is treated as an alias, not a distinct callable. *)
+      Some (normalized_parent_path @ [Some (Visit_function_defs.synth_lambda_il_name fdef)])
+  | None ->
+      Log.warn (fun m ->
+          m "fn_id_of_entity: anonymous non-lambda function definition \
+             at %s; falling back to lambda-style identity"
+            (Tok.stringpos_of_tok (snd fdef.fkind)));
+      Some (normalized_parent_path @ [Some (Visit_function_defs.synth_lambda_il_name fdef)])
+  | Some ent ->
+      (match AST_to_IL.name_of_entity ent with
       | Some name ->
           (* For Go methods, extract receiver type as class name *)
           let go_receiver_il =
@@ -166,17 +211,6 @@ let fn_id_of_entity ~(lang : Lang.t) (opt_ent : G.entity option)
           in
           Some (adjusted_parent_path @ [Some name])
       | None -> None)
-  | None ->
-      (* Anonymous function - use _tmp_lambda with fake token to match AST_to_IL behavior.
-         AST_to_IL.fresh_var creates fake tokens for lambda variables. *)
-      let tok = match fdef.fkind with (_, tok) -> tok in
-      let fake_tok = Tok.fake_tok tok "_tmp_lambda" in
-      let tmp_name = IL.{
-        ident = ("_tmp_lambda", fake_tok);
-        sid = G.SId.unsafe_default;
-        id_info = G.empty_id_info ();
-      } in
-      Some (normalized_parent_path @ [Some tmp_name])
 
 let dedup_fn_ids (ids : (fn_id * Tok.t) list) : (fn_id * Tok.t) list =
   ids |>
@@ -218,12 +252,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
         (* First check if it's a nested function in the same scope.
            Use position-aware match to distinguish same-named parent functions. *)
         let nested_match =
-          List.find_opt (fun f ->
-            match List_.init_and_last_opt f.fn_id with
-            | Some (f_parent, Some name) when String.equal (fst name.IL.ident) callee_name_str ->
-                equal_with_pos f_parent caller_parent_path
-            | _ -> false
-          ) all_funcs
+          find_func_in_scope all_funcs caller_parent_path callee_name_str
         in
         begin
           match nested_match with
@@ -239,7 +268,9 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                   (* Check if this method exists in the class - use string matching *)
                   let method_match = List.find_opt (fun f ->
                       match f.fn_id with
-                      | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callee_name_str -> true
+                      | [Some c; Some _] ->
+                          fst c.IL.ident = class_name_str
+                          && func_info_name_matches f callee_name_str
                       | _ -> false
                   ) all_funcs in
                   (* Debug: show all function names *)
@@ -256,7 +287,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                       (* It's a free function call, not a method - use string matching *)
                       let free_fn_match = List.find_opt (fun f ->
                           match f.fn_id with
-                          | [None; Some name] when fst name.IL.ident = callee_name_str -> true
+                          | [None; Some _] -> func_info_name_matches f callee_name_str
                           | _ -> false
                       ) all_funcs in
                       Option.map (fun f -> f.fn_id) free_fn_match)
@@ -265,7 +296,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                   let free_fn_match =
                     List.find_opt (fun f ->
                       match f.fn_id with
-                      | [None; Some name] when fst name.IL.ident = callee_name_str -> true
+                      | [None; Some _] -> func_info_name_matches f callee_name_str
                       | _ -> false
                     ) all_funcs in
                   (match Option.map (fun f -> f.fn_id) free_fn_match with
@@ -281,7 +312,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
             (* Use string matching to find the qualified function *)
             let qualified_match = List.find_opt (fun f ->
               match f.fn_id with
-              | [None; Some name] when fst name.IL.ident = callee_name_str -> true
+              | [None; Some _] -> func_info_name_matches f callee_name_str
               | _ -> false
             ) all_funcs in
             Option.map (fun f -> f.fn_id) qualified_match
@@ -298,7 +329,9 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                 (* Find all methods matching class and name *)
                 let method_matches = List.filter (fun f ->
                   match f.fn_id with
-                  | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
+                  | [Some c; Some _] ->
+                      fst c.IL.ident = class_name_str
+                      && func_info_name_matches f method_name_str
                   | _ -> false
                 ) all_funcs in
                 pick_by_arity call_arity method_matches
@@ -339,7 +372,9 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                 (* Find all methods matching class and name *)
                 let method_matches = List.filter (fun f ->
                   match f.fn_id with
-                  | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = method_name_str -> true
+                  | [Some c; Some _] ->
+                      fst c.IL.ident = class_name_str
+                      && func_info_name_matches f method_name_str
                   | _ -> false
                 ) all_funcs in
                 pick_by_arity call_arity method_matches
@@ -374,9 +409,9 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
             | Some class_name ->
                 let method_matches = List.filter (fun f ->
                   match f.fn_id with
-                  | [Some c; Some m] ->
+                  | [Some c; Some _] ->
                       fst c.IL.ident = class_name
-                      && fst m.IL.ident = method_name
+                      && func_info_name_matches f method_name
                   | _ -> false
                 ) all_funcs in
                 pick_by_arity call_arity method_matches
@@ -453,13 +488,9 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(c
                 | G.DotAccess ({ e = G.N (G.Id ((var_name, _), _)); _ }, _,
                                G.FN (G.Id ((method_name, method_tok), _)))
                   when List.mem method_name invoke_methods ->
-                    let lambda_match = List.find_opt (fun (f : func_info) ->
-                      match List_.init_and_last_opt f.fn_id with
-                      | Some (f_parent, Some name)
-                        when String.equal (fst name.IL.ident) var_name ->
-                          equal_with_pos f_parent caller_parent_path
-                      | _ -> false
-                    ) all_funcs in
+                    let lambda_match =
+                      find_func_in_scope all_funcs caller_parent_path var_name
+                    in
                     (match lambda_match with
                     | Some f -> calls := (f.fn_id, method_tok) :: !calls
                     | None -> ())
@@ -550,49 +581,116 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs 
   v#visit_program () ast;
   !calls |> dedup_fn_ids
 
-(* Helper to extract callback name from an argument expression.
-   Handles: foo, &foo, Module.foo, module.func (DotAccess), Elixir &func/n
-   Returns: (callback_name, tok, shortlambda_tmp_opt)
-   - shortlambda_tmp_opt is Some IL.name for the _tmp wrapper node when this is an Elixir ShortLambda *)
-let extract_callback_from_arg (arg_expr : G.expr) : (IL.name * Tok.t * IL.name option) option =
+(* Helper to extract all callback names referenced by an argument expression.
+   Handles:
+     - foo, &foo, Module.foo, module.func (DotAccess)
+     - Elixir &func/n (ShortLambda wrapping Call)
+     - Record { cb: handler, ... } and Dict { "cb": handler, ... } — recurse
+       into each entry's value
+     - List/Tuple/Array/Set [handler, ...] — recurse into each element
+     - Variable aliasing a record/container via [id_svalue]
+       (set by [Dataflow_svalue] during parsing) — recurse into the svalue
+   Returns a list of (callback_name, tok, shortlambda_tmp_opt).
+   - shortlambda_tmp_opt is Some IL.name for the _tmp wrapper node when this
+     is an Elixir ShortLambda.
+   Over-approximates on purpose: any function-ref nested anywhere in the
+   argument is treated as a potential callback. Precision at per-offset
+   granularity is handled later by Sig_inst's offset-walk. *)
+let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
+    (IL.name * Tok.t * IL.name option) list =
   match arg_expr.G.e with
-  (* Plain identifier: foo *)
+  (* Plain identifier: foo — may be a function name directly, OR a variable
+     whose id_svalue wraps a record/container we should walk through. We
+     always emit the direct interpretation (so [handler] still resolves
+     even when it has no svalue), plus any svalue-walk recursion. *)
   | G.N (G.Id (id, id_info)) ->
-      let callback_name = AST_to_IL.var_of_id_info id id_info in
-      Some (callback_name, snd id, None)
+      let direct =
+        [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
+      in
+      let via_svalue =
+        match !(id_info.id_svalue) with
+        | Some (G.Sym inner) -> extract_callbacks_from_arg ~lang inner
+        | _ -> []
+      in
+      direct @ via_svalue
   (* Address-of operator: &foo (C/C++ function pointers) *)
   | G.Ref (_, { e = G.N (G.Id (id, id_info)); _ }) ->
-      let callback_name = AST_to_IL.var_of_id_info id id_info in
-      Some (callback_name, snd id, None)
+      [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
   (* Qualified identifier: Module.foo *)
   | G.N (G.IdQualified { name_last = id, _; name_info; _ }) ->
-      let callback_name = AST_to_IL.var_of_id_info id name_info in
-      Some (callback_name, snd id, None)
+      [ (AST_to_IL.var_of_id_info id name_info, snd id, None) ]
   (* DotAccess: module.func or obj.method - common in Python/JS *)
   | G.DotAccess (_, _, G.FN (G.Id (id, id_info))) ->
-      let callback_name = AST_to_IL.var_of_id_info id id_info in
-      Some (callback_name, snd id, None)
+      [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
   (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
      named (local or remote) function. Structure:
      OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
      where func is either a plain Id or a DotAccess(..., FN(Id)).
      Create a _tmp node to match what AST_to_IL creates for the anonymous wrapper. *)
-  | G.OtherExpr (("ShortLambda", shortlambda_tok),
-                 [G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ }]) ->
-      (match inner_e.G.e with
-      | G.Call ({ e = G.N (G.Id (id, id_info))
-                    | G.DotAccess (_, _, G.FN (G.Id (id, id_info))); _ }, _) ->
+  | G.OtherExpr
+      ( ("ShortLambda", shortlambda_tok),
+        [ G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ } ] ) -> (
+      match inner_e.G.e with
+      | G.Call
+          ( {
+              e =
+                ( G.N (G.Id (id, id_info))
+                | G.DotAccess (_, _, G.FN (G.Id (id, id_info))) );
+              _;
+            },
+            _ ) ->
           let callback_name = AST_to_IL.var_of_id_info id id_info in
-          (* Create _tmp_lambda IL.name using Tok.fake_tok like AST_to_IL.fresh_var does *)
-          let tmp_tok = Tok.fake_tok shortlambda_tok "_tmp_lambda" in
-          let tmp_name = IL.{
-            ident = ("_tmp_lambda", tmp_tok);
+          let tmp_name =
+            Visit_function_defs.synth_lambda_il_name_of_tok shortlambda_tok
+          in
+          [ (callback_name, snd id, Some tmp_name) ]
+      | _ -> [])
+  (* Record literal: recurse into each field's value *)
+  | G.Record (_, fields, _) ->
+      List.concat_map
+        (fun f ->
+          match f with
+          | G.F
+              {
+                s =
+                  G.DefStmt
+                    (_, (G.VarDef { G.vinit = Some v; _ } | G.FieldDefColon { G.vinit = Some v; _ }));
+                _;
+              } ->
+              extract_callbacks_from_arg ~lang v
+          | _ -> [])
+        fields
+  (* Dict literal: entries are G.Container(G.Tuple, [key; val]); recurse val *)
+  | G.Container (G.Dict, (_, kvs, _)) ->
+      List.concat_map
+        (fun kv ->
+          match kv.G.e with
+          | G.Container (G.Tuple, (_, [ _key; v ], _)) ->
+              extract_callbacks_from_arg ~lang v
+          | _ -> [])
+        kvs
+  (* List/Tuple/Array/Set literal: recurse into each element *)
+  | G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)) ->
+      List.concat_map (extract_callbacks_from_arg ~lang) xs
+  (* Ruby [method(:name)]: a callable reference to the named function.
+     Sym-prop carries the [Call(method, [Atom :name])] expression on
+     the callback variable's [id_svalue], so the recursion above
+     reaches us for an aliased binding [cb = method(:name); apply_cb(cb, ...)]. *)
+  | G.Call
+      ( { e = G.N (G.Id (("method", _), _)); _ },
+        (_, [ G.Arg { e = G.L (G.Atom (_, atom_ident)); _ } ], _) )
+    when lang =*= Lang.Ruby ->
+      let synthetic_name =
+        IL.
+          {
+            ident = atom_ident;
             sid = G.SId.unsafe_default;
             id_info = G.empty_id_info ();
-          } in
-          Some (callback_name, snd id, Some tmp_name)
-      | _ -> None)
-  | _ -> None
+          }
+      in
+      [ (synthetic_name, snd atom_ident, None) ]
+  | _ -> []
+
 
 (* Helper to identify a callback fn_id, checking nested functions in same scope first *)
 let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
@@ -603,15 +701,10 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
     | Some cls :: _ -> Some cls
     | _ -> None
   in
-
   (* First check if it's a nested function in the same scope - position-aware match *)
-  let nested_match = List.find_opt (fun f ->
-    match List_.init_and_last_opt f.fn_id with
-    | Some (f_parent, Some name) when String.equal (fst name.IL.ident) callback_name_str ->
-        (* Check if it's in the caller's scope *)
-        equal_with_pos f_parent caller_parent_path
-    | _ -> false
-  ) all_funcs in
+  let nested_match =
+    find_func_in_scope all_funcs caller_parent_path callback_name_str
+  in
 
   (match nested_match with
   | Some f ->
@@ -624,7 +717,9 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
             let class_name_str = fst cls.IL.ident in
             List.find_opt (fun f ->
               match f.fn_id with
-              | [Some c; Some m] when fst c.IL.ident = class_name_str && fst m.IL.ident = callback_name_str -> true
+              | [Some c; Some _] ->
+                  fst c.IL.ident = class_name_str
+                  && func_info_name_matches f callback_name_str
               | _ -> false
             ) all_funcs
         | None -> None
@@ -638,7 +733,7 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
           (* Check for top-level function - match by string name *)
           let top_level_match = List.find_opt (fun f ->
             match f.fn_id with
-            | [None; Some name] when fst name.IL.ident = callback_name_str -> true
+            | [None; Some _] -> func_info_name_matches f callback_name_str
             | _ -> false
           ) all_funcs in
 
@@ -652,52 +747,76 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
 
 (* Try to identify a callback from a G.argument, returning fn_id, token, and optional _tmp node.
    The _tmp node is present for Elixir ShortLambda to create the intermediate wrapper node. *)
-let try_identify_callback_arg ~all_funcs ~caller_parent_path (arg : G.argument) : (fn_id * Tok.t * IL.name option) option =
+(* Identify callback candidates from a single call argument. Returns a list
+   because an argument may carry multiple callbacks when it's a record/list
+   containing several function references, or a variable whose [id_svalue]
+   wraps such a container. See [extract_callbacks_from_arg]. *)
+let try_identify_callback_args ~lang ~all_funcs ~caller_parent_path (arg : G.argument) :
+    (fn_id * Tok.t * IL.name option) list =
+  let resolve_in_expr expr =
+    (* Also handle this.foo pattern *)
+    let direct_this =
+      match expr.G.e with
+      | G.DotAccess
+          ( { e = G.IdSpecial ((G.This | G.Self), _); _ },
+            _,
+            G.FN (G.Id (id, id_info)) ) ->
+          [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
+      | _ -> []
+    in
+    let candidates = direct_this @ extract_callbacks_from_arg ~lang expr in
+    List.filter_map
+      (fun (callback_name, tok, tmp_opt) ->
+        (* Use real token from the callback argument *)
+        identify_callback ~all_funcs ~caller_parent_path callback_name
+        |> Option.map (fun fn_id -> (fn_id, tok, tmp_opt)))
+      candidates
+  in
   match arg with
-  | G.Arg expr ->
-      (* Also handle this.foo pattern *)
-      let callback_opt = match expr.G.e with
-        | G.DotAccess ({ e = G.IdSpecial ((G.This | G.Self), _); _ }, _, G.FN (G.Id (id, id_info))) ->
-            Some (AST_to_IL.var_of_id_info id id_info, snd id, None)
-        | _ -> extract_callback_from_arg expr
-      in
-      (match callback_opt with
-      | Some (callback_name, tok, tmp_opt) ->
-          (* Use real token from the callback argument *)
-          identify_callback ~all_funcs ~caller_parent_path callback_name
-          |> Option.map (fun fn_id -> (fn_id, tok, tmp_opt))
-      | None -> None)
-  | _ -> None
+  | G.Arg expr -> resolve_in_expr expr
+  (* Keyword args: Ruby [my_hof(cb: h, data: x)] and Python [f(cb=h, data=x)]
+     lower each key-value as an [ArgKwd]. The key is a tag name; recurse on
+     the value expression to extract any nested callback references. *)
+  | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) -> resolve_in_expr expr
+  | G.ArgType _ | G.OtherArg _ -> []
 
 (* Extract HOF callbacks from a single call expression.
    Returns list of (fn_id, tok, tmp_opt) where tmp_opt is the _tmp node for ShortLambda. *)
-let extract_hof_callbacks_from_call ~method_hofs ~function_hofs ~all_funcs
-    ~caller_parent_path (callee : G.expr) (args : G.arguments) : (fn_id * Tok.t * IL.name option) list =
-  let try_arg arg = try_identify_callback_arg ~all_funcs ~caller_parent_path arg in
+let extract_hof_callbacks_from_call ~lang ~method_hofs ~function_hofs ~all_funcs
+    ~caller_parent_path (callee : G.expr) (args : G.arguments) :
+    (fn_id * Tok.t * IL.name option) list =
+  let try_arg arg =
+    try_identify_callback_args ~lang ~all_funcs ~caller_parent_path arg
+  in
   let try_arg_at_index idx =
     match List.nth_opt (Tok.unbracket args) idx with
     | Some arg -> try_arg arg
-    | None -> None
+    | None -> []
   in
-  (* Check ALL arguments for function references - any function passed as arg is a callback *)
+  (* Check ALL arguments for function references - any function passed as
+     arg, nested inside a record/dict/list literal, or reachable via
+     [id_svalue] through such a container, is treated as a callback. *)
   let all_callback_args =
-    Tok.unbracket args
-    |> List.filter_map try_arg
+    Tok.unbracket args |> List.concat_map try_arg
   in
   (* Check for specific configured HOF patterns for additional context *)
-  let configured_callbacks = match callee.G.e with
-  (* Method HOF: arr.map(callback) - callback at index 0 *)
-  | G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _)))
-    when List.mem method_name method_hofs ->
-      try_arg_at_index 0 |> Option.to_list
-  (* Function HOF: map(callback, arr) *)
-  | G.N (G.Id (id, _id_info)) ->
-      let func_name = fst id in
-      (match List.find_opt (fun (names, _) -> List.mem func_name names) function_hofs with
-      | Some (_, callback_index) ->
-          try_arg_at_index callback_index |> Option.to_list
-      | None -> [])
-  | _ -> []
+  let configured_callbacks =
+    match callee.G.e with
+    (* Method HOF: arr.map(callback) - callback at index 0 *)
+    | G.DotAccess (_, _, G.FN (G.Id ((method_name, _), _)))
+      when List.mem method_name method_hofs ->
+        try_arg_at_index 0
+    (* Function HOF: map(callback, arr) *)
+    | G.N (G.Id (id, _id_info)) -> (
+        let func_name = fst id in
+        match
+          List.find_opt
+            (fun (names, _) -> List.mem func_name names)
+            function_hofs
+        with
+        | Some (_, callback_index) -> try_arg_at_index callback_index
+        | None -> [])
+    | _ -> []
   in
   all_callback_args @ configured_callbacks
 
@@ -734,13 +853,13 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
             let merged_args = Tok.unsafe_fake_bracket
               (Tok.unbracket inner_args @ outer_arg) in
             let found = extract_hof_callbacks_from_call
-              ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
+              ~lang ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
               callee merged_args
             in
             callbacks := found @ !callbacks
         | G.Call (callee, args) ->
             let found = extract_hof_callbacks_from_call
-              ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
+              ~lang ~method_hofs ~function_hofs ~all_funcs ~caller_parent_path
               callee args
             in
             callbacks := found @ !callbacks
@@ -766,7 +885,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
   Call_graph.G.add_vertex graph top_level_node;
 
   let funcs =
-    Visit_function_defs.fold_with_parent_path
+    Visit_function_defs.fold_with_parent_path ~lang
       (fun funcs opt_ent parent_path fdef ->
         match fn_id_of_entity ~lang opt_ent parent_path fdef with
         | Some fn_id ->
@@ -780,7 +899,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
       [] ast
   in
   (* Visit all calls in the AST, tracking the current function context *)
-  Visit_function_defs.visit_with_parent_path
+  Visit_function_defs.visit_with_parent_path ~lang
     (fun opt_ent parent_path fdef ->
       match fn_id_of_entity ~lang opt_ent parent_path fdef with
       | Some fn_id ->
@@ -860,7 +979,7 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
     in
     Visit_function_defs.fold_toplevel_calls (fun acc _call_e callee args ->
       let found = extract_hof_callbacks_from_call
-        ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
+        ~lang ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
         callee args
       in
       found @ acc
@@ -985,6 +1104,14 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
     inherit [_] G.iter_no_id_info as super
     val current_class : G.name option ref = ref None
     val parent_path : IL.name option list ref = ref []
+    (* True while visiting inside any function definition. Used to skip
+       lambdas that are nested inside another function — for source/sink
+       containment we want the enclosing non-lambda fn, since closure-like
+       lambdas are handled by the IL-level inner extraction, not by treating
+       them as the source/sink-bearing function. Top-level lambdas (e.g. JS
+       [const f = () => …]) are not nested and are still registered as the
+       containing function. *)
+    val inside_function : bool ref = ref false
 
     (* Helper to convert G.name to IL.name *)
     method private g_name_to_il_name (g_name : G.name) : IL.name option =
@@ -1045,6 +1172,16 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
       | G.FuncDef fdef | G.VarDef { vinit = Some { e = G.Lambda fdef; _ }; _ } ->
           (* Get the entire function definition range (including parameters) *)
           let func_range_opt = AST_generic_helpers.range_of_any_opt (G.Def def) in
+          (* A lambda nested inside another function is closure-like; we don't
+             want it to win as the source/sink-containing fn for ranges inside
+             its body. *)
+          let is_nested_lambda =
+            !inside_function
+            &&
+            (match fst fdef.fkind with
+             | G.LambdaKind | G.Arrow -> true
+             | _ -> false)
+          in
           (match func_range_opt with
           | Some (loc_start, loc_end) ->
               let range = Range.range_of_token_locations loc_start loc_end in
@@ -1053,27 +1190,28 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
               let func_size = func_end - func_start in
 
               (* For each range, check if it's inside this function *)
-              List.iter (fun (range : Range.t) ->
-                if func_start <= range.Range.start && range.Range.end_ <= func_end then (
-                  (* This function contains this range - add it to the list *)
-                  (* Use proper parent_path tracking for nested functions *)
-                  let class_il = Option.bind !current_class self#g_name_to_il_name in
-                  let visitor_parent_path =
-                    match !parent_path with
-                    | [] -> [class_il]
-                    | _ -> !parent_path
-                  in
-                  match fn_id_of_entity ~lang (Some ent) visitor_parent_path fdef with
-                  | Some fn_id ->
-                      let existing = Hashtbl.find range_to_funcs range in
-                      if not (List.exists (fun (fid, _) -> equal_fn_id fid fn_id) existing) then
-                        Hashtbl.replace range_to_funcs range ((fn_id, func_size) :: existing)
-                  | None -> ()
-                )
-              ) ranges;
+              if not is_nested_lambda then
+                List.iter (fun (range : Range.t) ->
+                  if func_start <= range.Range.start && range.Range.end_ <= func_end then (
+                    (* This function contains this range - add it to the list *)
+                    (* Use proper parent_path tracking for nested functions *)
+                    let class_il = Option.bind !current_class self#g_name_to_il_name in
+                    let visitor_parent_path =
+                      match !parent_path with
+                      | [] -> [class_il]
+                      | _ -> !parent_path
+                    in
+                    match fn_id_of_entity ~lang (Some ent) visitor_parent_path fdef with
+                    | Some fn_id ->
+                        let existing = Hashtbl.find range_to_funcs range in
+                        if not (List.exists (fun (fid, _) -> equal_fn_id fid fn_id) existing) then
+                          Hashtbl.replace range_to_funcs range ((fn_id, func_size) :: existing)
+                    | None -> ()
+                  )
+                ) ranges;
 
-              (* Push current function onto parent_path for nested functions *)
-              let old_path = !parent_path in
+              (* Push current function onto parent_path for nested functions,
+                 and mark that we are now inside a function. *)
               let class_il = Option.bind !current_class self#g_name_to_il_name in
               let func_il = self#entity_to_il_name ent in
               let current_fn_id =
@@ -1081,13 +1219,9 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
                 | [] -> [class_il; func_il]
                 | _ -> !parent_path @ [func_il]
               in
-              parent_path := current_fn_id;
-
-              (* Visit nested functions with updated parent_path *)
-              super#visit_definition env def;
-
-              (* Restore parent_path *)
-              parent_path := old_path
+              Common.save_excursion_unsafe parent_path current_fn_id (fun () ->
+                Common.save_excursion_unsafe inside_function true (fun () ->
+                  super#visit_definition env def))
           | None -> super#visit_definition env def)
       | _ -> super#visit_definition env def
   end in

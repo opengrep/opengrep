@@ -1,0 +1,13 @@
+rules:
+  - id: test-guards-hof-return
+    message: Guard on a callback's return decided through higher-order dispatch
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

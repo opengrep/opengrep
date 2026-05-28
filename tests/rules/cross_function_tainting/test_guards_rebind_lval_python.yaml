@@ -1,0 +1,13 @@
+rules:
+  - id: test-guards-rebind-lval
+    message: ToLval guard rebinding across a call chain
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

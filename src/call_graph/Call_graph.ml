@@ -97,7 +97,8 @@ let lookup_callee_from_graph (graph : G.t option)
   | Some g, Some caller ->
       if not (G.mem_vertex g caller) then (
         Log.debug (fun m ->
-            m "CALL_GRAPH: Caller %s not in graph" (show_node caller));
+            m "CALL_GRAPH: Caller %s not in graph"
+              (Function_id.show_debug caller));
         None
       ) else
         let call_pos = pos_of_tok call_tok in

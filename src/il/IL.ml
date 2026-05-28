@@ -186,7 +186,7 @@ type name_param = { pname : name; pdefault : G.expr option }
 type param =
   | Param of name_param
   | ParamRest of name_param
-  | ParamPattern of G.pattern
+  | ParamPattern of name_param * G.pattern
   | ParamFixme
 [@@deriving show { with_path = false }]
 
@@ -222,11 +222,10 @@ class virtual ['self] iter_parent =
     method visit_param env param =
       match param with
       | Param { pname; pdefault = _ }
-      | ParamRest { pname; pdefault = _ } ->
+      | ParamRest { pname; pdefault = _ }
+      | ParamPattern ({ pname; pdefault = _ }, _) ->
           self#visit_name env pname
-      | ParamPattern _
-      | ParamFixme ->
-          ()
+      | ParamFixme -> ()
 
     method visit_argument
         : 'a. ('env -> 'a -> unit) -> 'env -> 'a argument -> unit =
@@ -300,6 +299,14 @@ and offset_kind =
    *)
   | Dot of name
   | Index of exp
+  (* [Slice n] is a "view" of the base value from index [n] to the end —
+   * the trailing-rest of a list/tuple. Emitted for body-level rest
+   * destructure (Clojure [a & rest], Elixir [h | t], JS [a, ...r]).
+   * Composition with subsequent indexed reads is additive: reading
+   * element [k] of [Slice n] resolves to the base's index [n + k]. The
+   * engine collapses [Index k :: Slice n :: rest] to [Index (n+k) :: rest]
+   * and [Slice b :: Slice a :: rest] to [Slice (a+b) :: rest]. *)
+  | Slice of int
 
 (* transpile at some point? *)
 and var_special = This | Super | Self | Parent

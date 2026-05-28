@@ -896,7 +896,7 @@ and svalue =
   | Cst of const_type
   | Sym of expr
   (* !CAREFUL with Sym!
-   * Consider that the smbolic value may itself contain variables that also have
+   * Consider that the symbolic value may itself contain variables that also have
    * symbolic values, and so on. While we (should) prevent cycles, the AST "expanded"
    * with these symbolic values may be exponentially larger than the base AST. This
    * can happen with crypto code. Due to memory sharing this is not a problem for the
@@ -1794,8 +1794,15 @@ and parameters = parameter list bracket
 and parameter =
   (* sgrep-ext: note that pname can be a metavariable *)
   | Param of parameter_classic
-  (* in OCaml, but also now JS, Python2, Rust *)
-  | ParamPattern of pattern
+  (* Destructuring parameter: the [pattern] is the destructure shape as
+   * written (e.g. [PatTuple], [PatRecord], [PatList]); the second field
+   * is a synthetic [parameter_classic] whose [pname] is the implicit
+   * binder that Naming_AST resolves as the actual parameter and that
+   * AST_to_IL lowers via a [pattern_assign_statements] prelude at the
+   * start of the function body. Emitted by OCaml, JS/TS, Python (tuple
+   * params), Rust, Kotlin, Ruby, C#, Elixir (non-stab-clause),
+   * Clojure (shortlambda), Move, Julia. *)
+  | ParamPattern of pattern * parameter_classic
   (* Both those ParamXxx used to be handled as a ParamClassic with special
    * VariadicXxx attribute in p_attr, but they are used in so many
    * languages that it's better to move then in a separate type.
@@ -2376,7 +2383,49 @@ let param_of_type ?(pattrs = []) ?pdefault ?pname typ =
  * ignored, since they are not expected to be found in the source file. *)
 let implicit_param = "!!_implicit_param!"
 let implicit_param_id tk = (implicit_param, tk)
+(* Index-suffixed variant: [!!_implicit_param!_0], [!!_implicit_param!_1],
+ * … When a function has multiple destructuring parameters, each gets
+ * its own synthetic binder with a unique name so the taint signature
+ * layer keeps the corresponding [Taint.arg] entries distinguishable.
+ * The prefix is preserved, so [is_implicit_param] still recognises these. *)
+let implicit_param_id_indexed i tk =
+  (Printf.sprintf "!!_implicit_param!_%d" i, tk)
 let is_implicit_param s = String.starts_with ~prefix:"!!_implicit_param!" s
+
+(* Synthetic [parameter_classic] for a destructuring [ParamPattern].
+ * Pass [~index:i] when constructing a parameter list with multiple
+ * destructures so each gets a distinct [!!_implicit_param!_i] binder;
+ * omit [~index] for single-param sites where [!!_implicit_param!]
+ * alone is enough. Naming_AST resolves the binder as a regular
+ * Parameter with its own sid, and AST_to_IL can generate a
+ * [pattern_assign_statements] prelude that destructures this binder
+ * into the inner pattern's leaves.
+ *
+ * The pinfo sets [~hidden:true]. [!!_implicit_param!] is already in
+ * [Pattern.is_special_identifier]'s exclusion list, and the prefilter
+ * visitor also short-circuits on the hidden flag. Setting hidden here
+ * keeps the synthetic binder out of the prefilter under either check. *)
+let implicit_param_classic ?ptype ?pdefault ?(pattrs = []) ?index _tk =
+  (* The synthetic binder has no corresponding source-file position.
+   * Using a fake token keeps [any_of_lval]/[range_of_any_opt] from
+   * returning a range for the implicit_param lval; otherwise
+   * [Match_taint_spec.any_is_in_matches_OSS] would do range-inclusion
+   * sink matching against any enclosing [sink(...)] call when the
+   * [ParamPattern] is produced at a pattern-interior token nested
+   * inside a sink expression. *)
+  let tk = Tok.unsafe_fake_tok "" in
+  let pname =
+    match index with
+    | None -> implicit_param_id tk
+    | Some i -> implicit_param_id_indexed i tk
+  in
+  {
+    pname = Some pname;
+    ptype;
+    pdefault;
+    pattrs;
+    pinfo = basic_id_info ~hidden:true (Parameter, SId.unsafe_default);
+  }
 
 (* ------------------------------------------------------------------------- *)
 (* Types *)

@@ -1,0 +1,17 @@
+rules:
+  - id: test-destructure-depth3-clojure
+    message: |
+      Clojure depth-3 keyword destructure {body :body} of {middle :middle}
+      of {outer :outer}: the calling-convention encoding adds a synthetic
+      [Oint 0] arity-unwrap layer on top of the three Ofld segments. Path
+      length is 4. With taint_MAX_POLY_OFFSET = 4, a source bound at a
+      sibling field (e.g. :other) at depth 3 does not flow to :body.
+    languages: [clojure]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)

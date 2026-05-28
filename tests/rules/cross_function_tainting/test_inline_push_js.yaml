@@ -1,0 +1,15 @@
+rules:
+  - id: test-inline-push-js
+    message: parameter taint flows through inline forEach push into captured local
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - patterns:
+          - pattern-inside: function ...(...,$P,...) { ... }
+          - focus-metavariable: $P
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,17 @@
+rules:
+  - id: container-mutation-prune
+    message: |
+      A container variable was mutated through an alias (helper call,
+      method, indexed write); a downstream length-check guard must not
+      be folded against the variable's stale `Sym (Container ...)`
+      snapshot. Without invalidation the pruner drops the sink.
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

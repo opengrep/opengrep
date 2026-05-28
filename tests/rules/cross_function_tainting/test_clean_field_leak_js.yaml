@@ -1,0 +1,13 @@
+rules:
+  - id: test-clean-field-leak-js
+    message: parameter taint reaches sink via clean field
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: function ...(...,$P,...) { ... }
+          - focus-metavariable: $P
+    pattern-sinks:
+      - pattern: sink(...)

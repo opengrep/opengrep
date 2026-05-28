@@ -1,0 +1,13 @@
+rules:
+  - id: test-guards-rebind-hof-js
+    message: HOF guard rebinding across a call chain (JavaScript)
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

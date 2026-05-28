@@ -1,0 +1,18 @@
+rules:
+  - id: test-rest-js
+    message: |
+      JS/TS array destructure [a, b, ...rest] binds the rest to the
+      trailing slice of the incoming array. With the Slice IL primitive,
+      a sink reading the rest binding catches taint from any position
+      >= k (the rest start) and not from positions bound by fixed slots
+      before ...rest.
+    languages:
+      - js
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($V)

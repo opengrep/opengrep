@@ -1,0 +1,13 @@
+rules:
+  - id: test-maybe-doubleedge-js
+    message: HOF dispatch propagates captured-local mutation through return record
+    languages:
+      - javascript
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: getInput()
+    pattern-sinks:
+      - pattern: sink(...)

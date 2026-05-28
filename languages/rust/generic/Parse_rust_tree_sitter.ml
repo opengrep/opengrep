@@ -852,7 +852,8 @@ and map_anon_choice_param_2c23cdc (env : env) _outer_attrTODO
   | `Vari_param tok -> G.ParamEllipsis (token env tok) (* "..." *)
   | `X__ tok ->
       (* ellided parameter *)
-      G.ParamPattern (G.PatWildcard (token env tok))
+      let tk = token env tok in
+      G.ParamPattern (G.PatWildcard tk, G.implicit_param_classic tk)
   | `Type x -> (
       let ty = map_type_ env x in
       match ty.t with
@@ -889,7 +890,8 @@ and map_closure_parameter (env : env) (x : CST.anon_choice_pat_4717dcc) :
   match x with
   | `Pat x ->
       let pattern = map_pattern env x in
-      G.ParamPattern pattern
+      let tk = AST_generic_helpers.first_info_of_any (G.P pattern) in
+      G.ParamPattern (pattern, G.implicit_param_classic tk)
   | `Param x -> map_parameter env x
 
 and map_field_initializer (env : env)
@@ -1592,6 +1594,7 @@ and map_closure_expression (env : env)
       v2
   in
   let params = map_closure_parameters env v3 in
+  let lpipe, _, _ = params in
   let ret_type, body =
     match v4 with
     | `Opt_DASHGT_type_blk (v1, v2) ->
@@ -1614,7 +1617,7 @@ and map_closure_expression (env : env)
   in
   let func_def =
     {
-      G.fkind = (G.LambdaKind, G.fake "closure");
+      G.fkind = (G.LambdaKind, lpipe);
       G.fparams = params;
       G.frettype = ret_type;
       G.fbody = body;
@@ -2432,9 +2435,19 @@ and map_parameter (env : env) ((v1, v2, v3, v4) : CST.parameter) : G.parameter =
   let ty = map_type_ env v4 in
   match v2 with
   | `Pat x ->
+      (* Every typed Rust parameter -- whether a plain [x: T] or a
+       * genuine destructure like [(a, b): (i32, i32)] -- lowers as
+       * [ParamPattern (PatTyped (pat, ty), implicit_param_classic
+       * ~pattrs:attrs tk)]. The uniform shape keeps rule patterns
+       * (parsed the same way) symmetric with targets, and keeps the
+       * type next to the user's name where typed-metavariable
+       * resolution looks for it. The [mut] keyword, previously
+       * dropped in this branch, now rides on the synthetic
+       * [parameter_classic.pattrs]. *)
       let pattern = map_pattern env x in
       let pat = G.PatTyped (pattern, ty) in
-      G.ParamPattern pat
+      let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
+      G.ParamPattern (pat, G.implicit_param_classic ~pattrs:attrs tk)
   | `Self tok ->
       let ident = ident env tok in
       (* "self" *)

@@ -1,0 +1,13 @@
+rules:
+  - id: test-make-writer-py
+    message: f returns a lambda that captures one of f's params; refined at f's call site
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

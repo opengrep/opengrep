@@ -129,7 +129,16 @@ let result_of_function_call_constant lang f args =
  * to play it safe. Eventually we could consider lifting up these restrictions
  * and see what happens. The main problem with the current approach is that
  * every now and then somebody requests X to be supported by symbolic propagation.
- *)
+ *
+ * Coupling with branch pruning. The taint engine's
+ * [Dataflow_tainting.prune_branch_if_unreachable] uses
+ * [Eval_il_partial.eval] to fold a branch's condition; that evaluator
+ * consumes [G.Sym] values produced here. Adding or removing a kind in
+ * the match below silently widens or narrows the set of conditions the
+ * pruner can fold. The fixture
+ * [tests/tainting_rules/python/pruner_symbolic.{py,yaml}] pins the
+ * prunable surface for each kind currently propagated; a regression
+ * here will surface as a fixture failure. *)
 let rec is_symbolic_expr expr =
   match expr.G.e with
   | G.L _ -> true
@@ -145,6 +154,27 @@ let rec is_symbolic_expr expr =
       let args = Tok.unbracket args in
       List.for_all is_symbolic_arg args
   | G.Record (_, fields, _) -> List.for_all is_symbolic_field fields
+  (* Sequence containers: allow propagation of literal list/tuple/array/set
+   * expressions as symbolic values. Clojure's calling convention wraps every
+   * call's arguments into a single list (see AST_to_IL's Clojure case), so
+   * propagating these containers lets svalue recover the argument count at
+   * the callee's Switch conditions. Also contributes to sym-prop precision
+   * for unrelated cases (e.g. array-length reasoning in generic code).
+   *
+   * Dict containers: propagate literal dict/object-literal expressions so
+   * that HOF callback resolution at Sig_inst can walk a caller-side record
+   * alias ([opts = {cb: handler, data: x}; my_hof(opts)]) through the
+   * variable's [id_svalue] and recover the concrete callback at each
+   * field key. *)
+  | G.Container
+      ((G.List | G.Tuple | G.Array | G.Set | G.Dict), (_, exprs, _)) ->
+      List.for_all is_symbolic_expr exprs
+  (* Lambda literals: carry the function identity via sym-prop so that an
+   * assignment like [cb = (lambda x: ...)] leaves [cb.id_svalue] pointing at
+   * the lambda expression. Lets HOF callee-resolution recover the lambda's
+   * signature without relying on the [_tmp_lambda_N] naming convention that
+   * AST_to_IL inserts. *)
+  | G.Lambda _ -> true
   | __else__ -> false
 
 and is_symbolic_arg arg =
@@ -314,6 +344,32 @@ let update_env_with env var sval =
   | G.NotCst -> VarMap.remove (IL.str_of_name var) env
   | __else__ -> VarMap.add (IL.str_of_name var) sval env
 
+(* [Sym (Container ...)] snapshots become stale once the underlying
+ * container is mutated. Passing a container as an argument to a call
+ * (helper, built-in, etc.) may mutate it in place via the callee's
+ * parameter; we cannot tell intraprocedurally whether the callee
+ * writes through the reference, so for each bare-var argument whose
+ * current value is a container [Sym], drop it before the call's own
+ * effect is applied. Without this, [prune_branch_if_unreachable]
+ * folds a downstream [len(arr) == N] against the stale snapshot and
+ * silently prunes a branch that is actually reachable. *)
+let is_container_sval = function
+  | G.Sym { e = G.Container _; _ } -> true
+  | _ -> false
+
+let invalidate_container_args (env : G.svalue Var_env.t)
+    (args : IL.exp IL.argument list) : G.svalue Var_env.t =
+  List.fold_left
+    (fun env arg ->
+      match IL_helpers.exp_of_arg arg with
+      | { e = Fetch { base = Var var; rev_offset = [] }; _ } -> (
+          let key = IL.str_of_name var in
+          match VarMap.find_opt key env with
+          | Some sval when is_container_sval sval -> VarMap.remove key env
+          | _ -> env)
+      | _ -> env)
+    env args
+
 (* Semgrep Pro *)
 let transfer_of_assume (assume : bool) (cond : IL.exp_kind)
     (inp : G.svalue Var_env.t) : G.svalue Var_env.t =
@@ -352,12 +408,29 @@ let rec transfer :
     | NInstr instr -> (
         let eval_env = Eval.mk_env lang inp' in
 
+        (* Pre-step: a [Call] / [CallSpecial] / [New] may mutate a
+         * container passed as an argument via the callee's parameter.
+         * Drop the symbolic value of any bare-var arg whose current
+         * state is a container [Sym]; see [invalidate_container_args]
+         * above for why. *)
+        let inp' =
+          match instr.i with
+          | Call (_, _, args)
+          | CallSpecial (_, _, args)
+          | New (_, _, _, args) ->
+              invalidate_container_args inp' args
+          | _ -> inp'
+        in
+
         (* TODO: For now we only handle the simplest cases. *)
         match instr.i with
         | Assign ({ base = Var var; rev_offset = [] }, exp) ->
             (* var = exp *)
             let cexp = eval_or_sym_prop eval_env exp in
             update_env_with inp' var cexp
+        | AssignAnon ({ base = Var var; rev_offset = [] }, Lambda _) ->
+            (* var = <lambda>: propagate the lambda expr as var's svalue. *)
+            update_env_with inp' var (sym_prop instr.iorig)
         | Call (Some { base = Var var; rev_offset = [] }, func, args) -> (
             let args_val =
               List_.map

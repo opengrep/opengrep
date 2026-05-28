@@ -1,0 +1,13 @@
+rules:
+  - id: test-guard-reassign
+    message: Taint reaches the sink when the guard variable is reassigned
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
