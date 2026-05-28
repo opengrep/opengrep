@@ -2435,10 +2435,19 @@ and map_parameter (env : env) ((v1, v2, v3, v4) : CST.parameter) : G.parameter =
   let ty = map_type_ env v4 in
   match v2 with
   | `Pat x ->
+      (* Every typed Rust parameter -- whether a plain [x: T] or a
+       * genuine destructure like [(a, b): (i32, i32)] -- lowers as
+       * [ParamPattern (PatTyped (pat, ty), implicit_param_classic
+       * ~pattrs:attrs tk)]. The uniform shape keeps rule patterns
+       * (parsed the same way) symmetric with targets, and keeps the
+       * type next to the user's name where typed-metavariable
+       * resolution looks for it. The [mut] keyword, previously
+       * dropped in this branch, now rides on the synthetic
+       * [parameter_classic.pattrs]. *)
       let pattern = map_pattern env x in
       let pat = G.PatTyped (pattern, ty) in
       let tk = AST_generic_helpers.first_info_of_any (G.P pat) in
-      G.ParamPattern (pat, G.implicit_param_classic tk)
+      G.ParamPattern (pat, G.implicit_param_classic ~pattrs:attrs tk)
   | `Self tok ->
       let ident = ident env tok in
       (* "self" *)
