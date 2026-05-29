@@ -750,13 +750,172 @@ let sca_rules_filtering (target : Target.regular) (rules : Rule.t list) :
   (rules, dependency_match_table)
 
 (*****************************************************************************)
+(* Inter-file (cross-file) taint *)
+(*****************************************************************************)
+(* OSS inter-file taint reuses the regular (interprocedural) taint engine, but
+ * runs it over a single AST that is the concatenation of every file of a given
+ * language. Because the engine analyzes whatever AST it is handed (it is not
+ * file-scoped), cross-file source/sink/value/propagator/sanitizer flows resolve
+ * naturally. We run this once per (analyzer, rule-set), cache the findings, and
+ * distribute them to each target file by match location. *)
+
+let is_interfile_taint_rule ~force_interfile (rule : Rule.t) : bool =
+  match rule.mode with
+  | `Taint _ -> (
+      match rule.options with
+      | Some opts -> opts.interfile || force_interfile
+      | None -> force_interfile)
+  | _ -> false
+
+let supports_interfile_taint (xlang : Xlang.t) : bool =
+  match xlang with
+  | Xlang.L _ -> true
+  | _ -> false
+
+let interfile_rule_applies_to_analyzer (interfile_rules : Rule.t list)
+    (analyzer : Xlang.t) : bool =
+  interfile_rules
+  |> List.exists (fun (rule : Rule.t) ->
+         Xlang.is_compatible ~require:analyzer ~provide:rule.target_analyzer)
+
+(* Build, per language, the concatenation of all that language's files' ASTs
+ * (with their original per-file source positions preserved), so the taint
+ * engine sees the whole program at once. *)
+let build_interfile_asts_by_analyzer (caps : < Cap.fork >) (ncores : int)
+    (targets : Target.t list) (valid_rules : Rule.t list)
+    ~(force_interfile : bool) :
+    (Lang.t, AST_generic.program * Tok.location list) Hashtbl.t =
+  let asts_by_analyzer = Hashtbl.create 8 in
+  let interfile_rules =
+    List.filter (is_interfile_taint_rule ~force_interfile) valid_rules
+  in
+  if not (List_.null interfile_rules) then (
+    let parsed =
+      targets
+      |> Parallel_targets.map_targets caps ncores (function
+         | Target.Lockfile _ -> None
+         | Target.Regular target
+           when supports_interfile_taint target.analyzer
+                && interfile_rule_applies_to_analyzer interfile_rules
+                     target.analyzer -> (
+             try
+               let lang = Xlang.to_lang_exn target.analyzer in
+               let ast, skipped_tokens =
+                 parse_and_resolve_name lang target.path.internal_path_to_content
+               in
+               Some (lang, ast, skipped_tokens)
+             with
+             | exn ->
+                 Logs.debug (fun m ->
+                     m "Skipping interfile taint preparse for %s: %s"
+                       !!(target.path.internal_path_to_content)
+                       (Common.exn_to_s exn));
+                 None)
+         | Target.Regular _ -> None)
+    in
+    parsed |> List.iter (function
+         | Ok None -> ()
+         | Ok (Some (lang, ast, skipped_tokens)) ->
+             let asts, skipped =
+               match Hashtbl.find_opt asts_by_analyzer lang with
+               | None -> ([], [])
+               | Some (asts, skipped) -> (asts, skipped)
+             in
+             Hashtbl.replace asts_by_analyzer lang
+               (ast @ asts, skipped_tokens @ skipped)
+         | Error (_target, error) ->
+             Logs.debug (fun m ->
+                 m "Skipping interfile taint preparse target after error: %s"
+                   (Core_error.string_of_error error))));
+  asts_by_analyzer
+
+let interfile_ast_for_target asts_by_analyzer (target : Target.regular) :
+    (AST_generic.program * Tok.location list) option =
+  match Xlang.to_lang target.analyzer with
+  | Ok lang when supports_interfile_taint target.analyzer ->
+      Hashtbl.find_opt asts_by_analyzer lang
+  | Ok _
+  | Error _ ->
+      None
+
+(* Keep only the matches/errors located in [file]; used to distribute the
+ * whole-program interfile findings back to each target file. *)
+let keep_matches_in_file (file : Fpath.t)
+    (result : Core_result.matches_single_file) :
+    Core_result.matches_single_file =
+  let filtered_matches =
+    result.matches
+    |> List.filter (fun (pm : PM.t) ->
+           let start_loc, _end_loc = pm.range_loc in
+           Fpath.equal start_loc.pos.file file)
+  in
+  let filtered_errors =
+    result.errors
+    |> ESet.filter (fun (error : E.t) ->
+           match error.loc with
+           | Some loc -> Fpath.equal loc.pos.file file
+           | None -> true)
+  in
+  { result with matches = filtered_matches; errors = filtered_errors }
+
+let empty_matches_single_file : Core_result.matches_single_file =
+  { matches = []; errors = ESet.empty; profiling = None; explanations = [] }
+
+let combine_match_results (a : Core_result.matches_single_file)
+    (b : Core_result.matches_single_file) : Core_result.matches_single_file =
+  {
+    matches = a.matches @ b.matches;
+    errors = ESet.union a.errors b.errors;
+    explanations = a.explanations @ b.explanations;
+    profiling = None;
+  }
+
+(* Minimum per-rule timeout (in seconds) for inter-file taint. Each inter-file
+ * rule is analyzed once over the merged whole-repo AST, which is much heavier
+ * than a single file, so the regular per-rule timeout (5s by default) cuts
+ * heavy rules short and drops their cross-file findings. We floor the per-rule
+ * timeout at this value while still honoring an explicit larger [--timeout] and
+ * an explicit "no limit" ([--timeout 0]). 15s is a moderate raise. *)
+let interfile_min_rule_timeout = 15.0
+
+let raise_timeout_for_interfile (timeout : Match_rules.timeout_config option) :
+    Match_rules.timeout_config option =
+  Option.map
+    (fun (tc : Match_rules.timeout_config) ->
+      if tc.Match_rules.timeout <= 0. then tc
+      else
+        {
+          tc with
+          Match_rules.timeout =
+            Float.max tc.Match_rules.timeout interfile_min_rule_timeout;
+        })
+    timeout
+
+(*****************************************************************************)
 (* a "core" scan *)
 (*****************************************************************************)
 
 (* build the callback for iter_targets_and_get_matches_and_exn_to_errors *)
 let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
     (valid_rules : Rule.t list)
+    (interfile_asts_by_analyzer :
+      (Lang.t, AST_generic.program * Tok.location list) Hashtbl.t)
     (prefilter_cache_opt : Match_env.prefilter_config) : target_handler =
+  (* Cross-file taint findings for the whole merged (per-language) AST, computed
+   * once per (analyzer, rule-set) and then distributed to each target file. *)
+  let interfile_result_cache :
+      (string, Core_result.matches_single_file) Hashtbl.t =
+    Hashtbl.create 8
+  in
+  let interfile_result_cache_mutex = Mutex.create () in
+  let interfile_cache_key analyzer rules =
+    let rule_ids =
+      rules
+      |> List_.map (fun (rule : Rule.t) -> Rule_ID.to_string (fst rule.R.id))
+      |> List.sort String.compare |> String.concat "\000"
+    in
+    Xlang.to_string analyzer ^ "\000" ^ rule_ids
+  in
   function
   | Lockfile ({ path; kind } as lockfile) ->
       (* TODO: (sca) we always pass None as the manifest target here, but this
@@ -796,7 +955,12 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
       let match_hook _ = () in
       let xconf =
         {
-          Match_env.config = { Rule_options.default with taint_intrafile = config.taint_intrafile };
+          Match_env.config =
+            {
+              Rule_options.default with
+              taint_intrafile =
+                config.taint_intrafile || config.taint_interfile;
+            };
           equivs = parse_equivalences config.equivalences_file;
           nested_formula = false;
           matching_conf = config.matching_conf;
@@ -805,6 +969,18 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
         }
       in
       let rules, dependency_match_table = sca_rules_filtering target rules in
+      (* Split out the inter-file taint rules; they run over the merged
+       * whole-language AST instead of just this file. *)
+      let interfile_ast =
+        interfile_ast_for_target interfile_asts_by_analyzer target
+      in
+      let interfile_rules, regular_rules =
+        rules
+        |> List.partition (fun rule ->
+               is_interfile_taint_rule ~force_interfile:config.taint_interfile
+                 rule
+               && Option.is_some interfile_ast)
+      in
       let timeout =
         let caps = (caps :> < Cap.time_limit >) in
         Some
@@ -821,8 +997,57 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
       in
       let matches : Core_result.matches_single_file =
         (* !!Calling Match_rules!! Calling the matching engine!! *)
-        Match_rules.check ~match_hook ~timeout ~dependency_match_table xconf
-          rules xtarget
+        let regular_matches =
+          if List_.null regular_rules then empty_matches_single_file
+          else
+            Match_rules.check ~match_hook ~timeout ~dependency_match_table xconf
+              regular_rules xtarget
+        in
+        let interfile_matches =
+          match (interfile_rules, interfile_ast) with
+          | [], _
+          | _, None ->
+              empty_matches_single_file
+          | _ :: _, Some merged_ast ->
+              let cache_key = interfile_cache_key analyzer interfile_rules in
+              (* Prefiltering compares a rule's prefilter against a single
+               * file's content; on the merged AST it would wrongly skip rules,
+               * so disable it for the interfile pass. *)
+              let interfile_xconf =
+                { xconf with filter_irrelevant_rules = NoPrefiltering }
+              in
+              let all_interfile_matches =
+                Mutex.protect interfile_result_cache_mutex (fun () ->
+                    match
+                      Hashtbl.find_opt interfile_result_cache cache_key
+                    with
+                    | Some cached -> cached
+                    | None ->
+                        let interfile_xtarget =
+                          Xtarget.resolve_with_ast (lazy merged_ast) target
+                        in
+                        let cached =
+                          (* Run the interprocedural taint engine ONCE over the
+                           * merged whole-language AST and cache its findings; on
+                           * a crash on the combined AST cache a degraded empty
+                           * result so it is not re-run for every target. *)
+                          try
+                            Match_rules.check ~match_hook
+                              ~timeout:(raise_timeout_for_interfile timeout)
+                              ~dependency_match_table interfile_xconf
+                              interfile_rules interfile_xtarget
+                          with
+                          | Match_rules.File_timeout _ | Out_of_memory
+                          | Stack_overflow
+                          | Memory_limit.ExceededMemoryLimit _ ->
+                              empty_matches_single_file
+                        in
+                        Hashtbl.add interfile_result_cache cache_key cached;
+                        cached)
+              in
+              keep_matches_in_file file all_interfile_matches
+        in
+        combine_match_results regular_matches interfile_matches
       in
       (* Add file size when profiling is on. *)
       let matches =
@@ -866,6 +1091,14 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
 
   (* !!Let's go!! *)
   log_scan_inputs config ~targets ~skipped ~valid_rules ~invalid_rules;
+  (* For inter-file taint, pre-parse and merge each language's files into one
+   * AST so the taint engine can follow flows across files. *)
+  let interfile_asts_by_analyzer =
+    build_interfile_asts_by_analyzer
+      (caps :> < Cap.fork >)
+      config.ncores targets valid_rules
+      ~force_interfile:config.taint_interfile
+  in
   let prefilter_cache_opt =
     if config.filter_irrelevant_rules then
       (* NOTE: In the fork based Parmap model, this is not really shared between
@@ -889,7 +1122,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
          config
          (mk_target_handler
             (caps :> < Cap.time_limit >)
-            config valid_rules prefilter_cache_opt)
+            config valid_rules interfile_asts_by_analyzer prefilter_cache_opt)
   in
 
   (* TODO: Delete any lockfile-only findings whose rule produced a code+lockfile

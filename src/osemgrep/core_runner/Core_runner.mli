@@ -26,6 +26,7 @@ type conf = {
   matching_explanations : bool;
   dataflow_traces : bool;
   taint_intrafile : bool;
+  taint_interfile : bool;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
 }

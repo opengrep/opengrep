@@ -91,6 +91,9 @@ let equivalences_file = ref None
 (* intrafile tainting mode *)
 let taint_intrafile = ref Core_scan_config.default.taint_intrafile
 
+(* interfile (cross-file) tainting mode *)
+let taint_interfile = ref Core_scan_config.default.taint_interfile
+
 (* ------------------------------------------------------------------------- *)
 (* limits *)
 (* ------------------------------------------------------------------------- *)
@@ -346,6 +349,7 @@ let mk_config () : Core_scan_config.t =
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
     taint_intrafile = !taint_intrafile;
+    taint_interfile = !taint_interfile;
     engine_config = Engine_config.default;
   }
 
@@ -673,6 +677,9 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
     ( "-taint_intrafile",
       Arg.Set taint_intrafile,
       " activate intrafile tainting mode" );
+    ( "-taint_interfile",
+      Arg.Set taint_interfile,
+      " activate interfile (cross-file) tainting mode" );
   ]
   @ Flag_parsing_cpp.cmdline_flags_macrofile ()
   (* inlining of: Common2.cmdline_flags_devel () @ *)

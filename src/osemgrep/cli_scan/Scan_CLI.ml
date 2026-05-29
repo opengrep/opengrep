@@ -763,6 +763,20 @@ let o_taint_intrafile : bool Term.t =
   in
   Arg.value (Arg.flag info)
 
+let o_taint_interfile : bool Term.t =
+  let info =
+    Arg.info [ "taint-interfile" ]
+      ~doc:
+        ("Enable inter-file (cross-file) taint analysis for taint-mode rules. \
+          Taint rules are run over a merged per-language program so flows can \
+          cross file boundaries; the per-rule options.interfile: true setting \
+          is also honored. Because each rule is analyzed over the whole merged \
+          program, this raises the effective per-rule timeout floor to 15s \
+          (rules are still capped at --timeout when it is larger; --timeout 0 \
+          means no limit).")
+  in
+  Arg.value (Arg.flag info)
+
 (* TODO: Remove this, or adapt to Opengrep. *)
 (* ------------------------------------------------------------------ *)
 (* Configuration options ('scan' only, not reused in 'ci') *)
@@ -1376,6 +1390,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
       num_jobs no_secrets_validation nosem opengrep_ignore_pattern optimizations oss
       output output_enclosing_context pattern pro project_root taint_intrafile
+      taint_interfile
       pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions secrets semgrepignore_filename severity show_supported_languages
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
@@ -1482,6 +1497,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         inline_metavariables;
         matching_explanations;
         taint_intrafile;
+        taint_interfile;
         engine_config;
       }
     in
@@ -1613,8 +1629,9 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes
     $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations $ o_oss
-    $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root 
+    $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root
     $ o_taint_intrafile
+    $ o_taint_interfile
     $ o_pro_path_sensitive $ o_remote $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
     $ o_secrets $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages $ o_strict
