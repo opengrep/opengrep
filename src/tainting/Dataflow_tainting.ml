@@ -2134,7 +2134,20 @@ let check_function_call env fun_exp args
                       m "SIG_FROM_SHAPE: Found Fun shape for %s"
                         (Display_IL.string_of_exp fun_exp));
                   Some fun_sig
-              | _ ->
+              | _ -> (
+                  (* Cross-file (interfile): the callee is an imported object's
+                   * method, e.g. `api.getInput()` where `api` is imported. The
+                   * local lval_env has no entry, so resolve the exported
+                   * record's method cell via interfile global-cell navigation. *)
+                  match
+                    imported_global_cell_of_lval env env.lval_env lval_to_check
+                  with
+                  | Some (S.Cell (_, S.Fun fun_sig)) ->
+                      Log.debug (fun m ->
+                          m "SIG_FROM_IMPORT: cross-file Fun shape for %s"
+                            (Display_IL.string_of_exp fun_exp));
+                      Some fun_sig
+                  | _ ->
                   (* Sym-prop fallback: if the variable's [id_svalue] resolves
                    * to a bare function reference (e.g. [cb = handler]), look
                    * up the referenced function's signature in the DB. *)
@@ -2168,7 +2181,7 @@ let check_function_call env fun_exp args
                                 (IL.str_of_name il_name));
                           lookup_signature env aliased_exp arity
                       | _ -> None)
-                  | _ -> None))
+                  | _ -> None)))
           | _ -> None)
     else None
   in
