@@ -1277,6 +1277,9 @@ let file_path_parts_of_tok (tok : Tok.t) : string list option =
       (Tok.file_of_tok tok |> Fpath.rem_ext |> Fpath.to_string
      |> path_segments_of_string)
 
+let file_path_parts_of_il_name (name : IL.name) : string list option =
+  file_path_parts_of_tok (snd name.IL.ident)
+
 let il_name_file_matches_module_path (name : IL.name) module_path_parts =
   match file_path_parts_of_tok (snd name.IL.ident) with
   | Some file_path_parts -> (
@@ -1324,14 +1327,43 @@ let find_exported_global_cell lval_env ~module_path_parts ~export_name =
   | [ (_, cell) ] -> Some cell
   | _ -> None
 
+(* Fallback for references that naming resolved to a plain [Global] (e.g. JS
+ * resolves an imported binding used inside a function as Global, with no module
+ * path). Match an exported global cell by export name in a DIFFERENT file than
+ * the reference, accepting only if there is exactly one such cell (so a
+ * same-name collision across files stays safe -> no false positive). *)
+let find_unique_cross_file_exported_cell lval_env (ref_name : IL.name) =
+  let ref_file = file_path_parts_of_il_name ref_name in
+  let export_name = fst ref_name.IL.ident in
+  lval_env |> Lval_env.seq_of_tainted
+  |> Seq.fold_left
+       (fun acc (candidate, cell) ->
+         if
+           String.equal export_name (fst candidate.IL.ident)
+           &&
+           match (ref_file, file_path_parts_of_il_name candidate) with
+           | Some rf, Some cf -> not (List.equal String.equal rf cf)
+           | _ -> false
+         then (candidate, cell) :: acc
+         else acc)
+       []
+  |> function
+  | [ (_, cell) ] -> Some cell
+  | _ -> None
+
 let imported_entity_global_cell lval_env (name : IL.name) =
   match !(name.id_info.G.id_resolved) with
   | Some (G.ImportedEntity canonical, _)
-  | Some (G.GlobalName (canonical, _), _) ->
-      let* module_path_parts, export_name =
-        imported_entity_path_and_export canonical
-      in
-      find_exported_global_cell lval_env ~module_path_parts ~export_name
+  | Some (G.GlobalName (canonical, _), _) -> (
+      match imported_entity_path_and_export canonical with
+      | Some (module_path_parts, export_name) -> (
+          match
+            find_exported_global_cell lval_env ~module_path_parts ~export_name
+          with
+          | Some _ as cell -> cell
+          | None -> find_unique_cross_file_exported_cell lval_env name)
+      | None -> find_unique_cross_file_exported_cell lval_env name)
+  | Some (G.Global, _) -> find_unique_cross_file_exported_cell lval_env name
   | _ -> None
 
 let imported_module_member_global_cell env lval_env (module_name : IL.name)
