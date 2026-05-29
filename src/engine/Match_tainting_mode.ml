@@ -512,6 +512,13 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             Graph_reachability.compute_relevant_subgraph call_graph
               ~sources:source_functions ~sinks:sink_functions
           in
+          (* Always analyze the source/sink containing functions, even when no
+           * call-graph path connects them (e.g. cross-file taint that flows
+           * through a module-level/imported value rather than through a call).
+           * Without this, a sink function that reads a tainted imported value
+           * but is not itself called from a source would never be analyzed. *)
+          List.iter (Call_graph.G.add_vertex relevant_graph) source_functions;
+          List.iter (Call_graph.G.add_vertex relevant_graph) sink_functions;
 
           (* Write call graph to dot file for debugging *)
           (* let dot_file = open_out "call_graph.dot" in
