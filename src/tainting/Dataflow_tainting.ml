@@ -1221,6 +1221,138 @@ let find_lval_taint_sources env incoming_taints lval =
   in
   (taints_to_return, lval_env)
 
+(*****************************************************************************)
+(* Cross-file (interfile) imported value resolution                          *)
+(*****************************************************************************)
+(* When a tainted value is exported from one file (e.g. `export const data =
+ * source()`) and imported into another (`import { data }`; `sink(data)`), the
+ * use site's lval is not in the local env. [mk_file_env] records every
+ * exported global into the (merged) env keyed by an [IL.name] whose token
+ * carries the exporting file. We resolve an imported reference by suffix-
+ * matching the import's module path against those names' files. (Duplicated
+ * file-path primitives, kept local to avoid a module dependency on
+ * Graph_from_AST.) *)
+
+let path_segments_of_string (s : string) : string list =
+  s |> String.split_on_char '/'
+  |> List.map (String.split_on_char '\\')
+  |> List.flatten
+  |> List.filter (fun part -> part <> "" && part <> "." && part <> "..")
+
+let is_known_source_extension (ext : string) : bool =
+  match String.lowercase_ascii ext with
+  | "c" | "cc" | "cjs" | "clj" | "cljs" | "cljc" | "cpp" | "cs" | "css" | "cxx"
+  | "dart" | "erl" | "ex" | "exs" | "go" | "h" | "hh" | "hpp" | "hrl" | "hxx"
+  | "java" | "js" | "jsx" | "kt" | "kts" | "lua" | "mjs" | "ml" | "mli" | "php"
+  | "py" | "r" | "rb" | "rs" | "scala" | "sh" | "swift" | "ts" | "tsx" | "vue" ->
+      true
+  | _ -> false
+
+let remove_known_source_extension (segment : string) : string =
+  match String.rindex_opt segment '.' with
+  | Some idx when idx > 0 ->
+      let ext = String.sub segment (idx + 1) (String.length segment - idx - 1) in
+      if is_known_source_extension ext then String.sub segment 0 idx else segment
+  | _ -> segment
+
+let map_last f xs =
+  match List.rev xs with [] -> [] | last :: pre -> List.rev (f last :: pre)
+
+let import_path_parts_of_part (part : string) : string list =
+  part |> path_segments_of_string |> map_last remove_known_source_extension
+
+let import_path_parts_of_canonical (canonical : G.canonical_name) : string list =
+  canonical |> List.map import_path_parts_of_part |> List.flatten
+
+let file_path_parts_of_tok (tok : Tok.t) : string list option =
+  if Tok.is_fake tok then None
+  else
+    Some
+      (Tok.file_of_tok tok |> Fpath.rem_ext |> Fpath.to_string
+     |> path_segments_of_string)
+
+let il_name_file_matches_module_path (name : IL.name) module_path_parts =
+  match file_path_parts_of_tok (snd name.IL.ident) with
+  | Some file_path_parts -> (
+      match module_path_parts with
+      | [] -> false
+      | _ ->
+          let xs_len = List.length file_path_parts in
+          let sfx_len = List.length module_path_parts in
+          let rec drop n xs =
+            if n <= 0 then xs
+            else match xs with [] -> [] | _ :: r -> drop (n - 1) r
+          in
+          sfx_len <= xs_len
+          && List.equal String.equal
+               (drop (xs_len - sfx_len) file_path_parts)
+               module_path_parts)
+  | None -> false
+
+let imported_entity_path_and_export (canonical : G.canonical_name) :
+    (string list * string) option =
+  match List.rev canonical with
+  | export_name :: rev_module_path -> (
+      let module_path_parts =
+        import_path_parts_of_canonical (List.rev rev_module_path)
+      in
+      match module_path_parts with
+      | [] -> None
+      | _ -> Some (module_path_parts, export_name))
+  | _ -> None
+
+let exported_global_cells lval_env ~module_path_parts =
+  lval_env |> Lval_env.seq_of_tainted
+  |> Seq.fold_left
+       (fun matches (candidate, cell) ->
+         if il_name_file_matches_module_path candidate module_path_parts then
+           (candidate, cell) :: matches
+         else matches)
+       []
+
+let find_exported_global_cell lval_env ~module_path_parts ~export_name =
+  exported_global_cells lval_env ~module_path_parts
+  |> List.filter (fun (candidate, _) ->
+         String.equal export_name (fst candidate.IL.ident))
+  |> function
+  | [ (_, cell) ] -> Some cell
+  | _ -> None
+
+let imported_entity_global_cell lval_env (name : IL.name) =
+  match !(name.id_info.G.id_resolved) with
+  | Some (G.ImportedEntity canonical, _)
+  | Some (G.GlobalName (canonical, _), _) ->
+      let* module_path_parts, export_name =
+        imported_entity_path_and_export canonical
+      in
+      find_exported_global_cell lval_env ~module_path_parts ~export_name
+  | _ -> None
+
+let imported_module_member_global_cell env lval_env (module_name : IL.name)
+    (member : IL.name) =
+  match !(module_name.id_info.G.id_resolved) with
+  | Some (G.ImportedModule canonical, _) ->
+      let module_path_parts = import_path_parts_of_canonical canonical in
+      find_exported_global_cell lval_env ~module_path_parts
+        ~export_name:(fst member.IL.ident)
+  | _ when Lang.equal env.taint_inst.lang Lang.Python ->
+      (* Python's naming does not tag `import source; source.data` as
+         ImportedModule, so match the base name against the exporting file. *)
+      let module_path_parts =
+        import_path_parts_of_part (fst module_name.IL.ident)
+      in
+      find_exported_global_cell lval_env ~module_path_parts
+        ~export_name:(fst member.IL.ident)
+  | _ -> None
+
+let imported_global_cell_of_lval env lval_env (lval : IL.lval) =
+  match lval with
+  | { base = Var name; rev_offset = [] } ->
+      imported_entity_global_cell lval_env name
+  | { base = Var module_name; rev_offset = [ { o = Dot member; _ } ] } ->
+      imported_module_member_global_cell env lval_env module_name member
+  | _ -> None
+
 let rec check_tainted_lval env (lval : IL.lval) :
     Taints.t * S.shape * [ `Sub of Taints.t * S.shape ] * Lval_env.t =
   let new_taints, lval_in_env, lval_shape, sub, lval_env =
@@ -1390,8 +1522,13 @@ and check_tainted_lval_aux env (lval : IL.lval) :
               (* THINK: Should we just use 'Sig.find_in_shape' directly here ?
                        We have the 'sub_shape' available. *)
               match Lval_env.find_lval lval_env lval with
-              | None -> (`None, S.Bot)
               | Some (Cell (xtaint', shape)) -> (xtaint', shape)
+              | None -> (
+                  (* Cross-file: the lval may be a value imported from another
+                   * file; resolve it to that file's exported global cell. *)
+                  match imported_global_cell_of_lval env lval_env lval with
+                  | Some (S.Cell (xtaint', shape)) -> (xtaint', shape)
+                  | _ -> (`None, S.Bot))
             in
             let xtaint' =
               match xtaint' with
