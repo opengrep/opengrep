@@ -55,4 +55,19 @@ val fixpoint :
 (* TODO: Move to module 'Taint' maybe. *)
 val drop_taints_if_bool_or_number :
   Rule_options.t -> Taint.Taint_set.t -> 'a Type.t -> Taint.Taint_set.t
+
+(* Cross-file (interfile) imported-value resolution helpers. *)
+val import_path_parts_of_module_name : AST_generic.module_name -> string list
+
+val find_exported_global_cell :
+  Taint_lval_env.t ->
+  module_path_parts:string list ->
+  export_name:string ->
+  Shape_and_sig.Shape.cell option
+
+val exported_global_cells :
+  Taint_lval_env.t ->
+  module_path_parts:string list ->
+  (IL.name * Shape_and_sig.Shape.cell) list
+
 val reset_constructor: unit -> unit

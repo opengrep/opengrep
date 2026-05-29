@@ -1264,6 +1264,12 @@ let import_path_parts_of_part (part : string) : string list =
 let import_path_parts_of_canonical (canonical : G.canonical_name) : string list =
   canonical |> List.map import_path_parts_of_part |> List.flatten
 
+let import_path_parts_of_module_name (module_name : G.module_name) : string list
+    =
+  match module_name with
+  | G.DottedName xs -> xs |> List.map fst |> import_path_parts_of_canonical
+  | G.FileName (s, _) -> import_path_parts_of_part s
+
 let file_path_parts_of_tok (tok : Tok.t) : string list option =
   if Tok.is_fake tok then None
   else
