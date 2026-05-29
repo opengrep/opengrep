@@ -845,9 +845,26 @@ let keep_matches_in_file (file : Fpath.t)
     Core_result.matches_single_file =
   let filtered_matches =
     result.matches
-    |> List.filter (fun (pm : PM.t) ->
+    |> List_.filter_map (fun (pm : PM.t) ->
            let start_loc, _end_loc = pm.range_loc in
-           Fpath.equal start_loc.pos.file file)
+           if Fpath.equal start_loc.pos.file file then
+             (* The interfile matches were produced over the merged whole-repo
+              * AST, so a match's reported [path] is the precompute target's
+              * path (whichever target ran first), not the file the match
+              * actually lives in. Normalize it to the match's real location so
+              * downstream per-file processing (e.g. nosemgrep line reading)
+              * uses the correct file. *)
+             let match_file = start_loc.pos.file in
+             Some
+               {
+                 pm with
+                 PM.path =
+                   {
+                     Target.origin = Origin.File match_file;
+                     internal_path_to_content = match_file;
+                   };
+               }
+           else None)
   in
   let filtered_errors =
     result.errors
@@ -1012,9 +1029,19 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
               let cache_key = interfile_cache_key analyzer interfile_rules in
               (* Prefiltering compares a rule's prefilter against a single
                * file's content; on the merged AST it would wrongly skip rules,
-               * so disable it for the interfile pass. *)
+               * so disable it for the interfile pass. Also force the
+               * interprocedural engine on: these rules opted into interfile (via
+               * the rule's options.interfile or the --taint-interfile flag), and
+               * cross-file flow over the merged AST requires interprocedural
+               * (cross-function) taint regardless of the global --taint-intrafile
+               * flag. *)
               let interfile_xconf =
-                { xconf with filter_irrelevant_rules = NoPrefiltering }
+                {
+                  xconf with
+                  filter_irrelevant_rules = NoPrefiltering;
+                  config =
+                    { xconf.Match_env.config with taint_intrafile = true };
+                }
               in
               let all_interfile_matches =
                 Mutex.protect interfile_result_cache_mutex (fun () ->

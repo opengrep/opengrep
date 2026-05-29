@@ -238,6 +238,182 @@ let resolve_constructor_from_type ~(lang : Lang.t) ~all_funcs (ty : G.type_) : f
         | _ -> false
       ) all_funcs |> Option.map (fun f -> f.fn_id)
 
+(*****************************************************************************)
+(* Cross-file (interfile) import resolution                                  *)
+(*****************************************************************************)
+(* A definition's identity carries its source file via the token on its
+ * [IL.name]. An import reference carries a module-path string (from its
+ * [id_resolved] canonical name). We resolve an imported call to a definition
+ * by suffix-matching the import's path parts against the definition's file
+ * path parts. This is what lets cross-file calls resolve over the merged AST
+ * for languages that bind imports by module specifier (JS/TS/Python/...). *)
+
+let path_segments_of_string (s : string) : string list =
+  s |> String.split_on_char '/'
+  |> List.map (String.split_on_char '\\')
+  |> List.flatten
+  |> List.filter (fun part -> part <> "" && part <> "." && part <> "..")
+
+let path_segments_preserving_relative (s : string) : string list =
+  s |> String.split_on_char '/'
+  |> List.map (String.split_on_char '\\')
+  |> List.flatten
+  |> List.filter (fun part -> part <> "")
+
+let normalize_path_parts (parts : string list) : string list =
+  let rec aux acc = function
+    | [] -> List.rev acc
+    | "." :: rest -> aux acc rest
+    | ".." :: rest ->
+        let acc = match acc with [] -> [] | _ :: parent -> parent in
+        aux acc rest
+    | part :: rest -> aux (part :: acc) rest
+  in
+  aux [] parts
+
+let is_known_source_extension (ext : string) : bool =
+  match String.lowercase_ascii ext with
+  | "c" | "cc" | "cjs" | "clj" | "cljs" | "cljc" | "cpp" | "cs" | "css" | "cxx"
+  | "dart" | "erl" | "ex" | "exs" | "go" | "h" | "hh" | "hpp" | "hrl" | "hxx"
+  | "java" | "js" | "jsx" | "kt" | "kts" | "lua" | "mjs" | "ml" | "mli" | "php"
+  | "py" | "r" | "rb" | "rs" | "scala" | "sh" | "swift" | "ts" | "tsx" | "vue" ->
+      true
+  | _ -> false
+
+let remove_known_source_extension (segment : string) : string =
+  match String.rindex_opt segment '.' with
+  | Some idx when idx > 0 ->
+      let ext = String.sub segment (idx + 1) (String.length segment - idx - 1) in
+      if is_known_source_extension ext then String.sub segment 0 idx else segment
+  | _ -> segment
+
+let map_last f xs =
+  match List.rev xs with
+  | [] -> []
+  | last :: rev_prefix -> List.rev (f last :: rev_prefix)
+
+let import_path_parts_of_part (part : string) : string list =
+  part |> path_segments_of_string |> map_last remove_known_source_extension
+
+let import_path_parts_of_part_preserving_relative (part : string) : string list =
+  part |> path_segments_preserving_relative
+  |> map_last remove_known_source_extension
+
+let import_path_parts_of_canonical (canonical : G.canonical_name) : string list =
+  canonical |> List.map import_path_parts_of_part |> List.flatten
+
+let import_path_parts_of_canonical_preserving_relative
+    (canonical : G.canonical_name) : string list =
+  canonical
+  |> List.map import_path_parts_of_part_preserving_relative
+  |> List.flatten
+
+let drop_last xs =
+  match List.rev xs with [] -> [] | _ :: rest -> List.rev rest
+
+let file_path_parts_of_tok (tok : Tok.t) : string list option =
+  if Tok.is_fake tok then None
+  else
+    Some
+      (Tok.file_of_tok tok |> Fpath.rem_ext |> Fpath.to_string
+     |> path_segments_of_string)
+
+let file_path_parts_of_il_name (name : IL.name) : string list option =
+  file_path_parts_of_tok (snd name.IL.ident)
+
+let list_ends_with ~suffix xs =
+  let xs_len = List.length xs in
+  let suffix_len = List.length suffix in
+  let rec drop n xs =
+    if n <= 0 then xs
+    else match xs with [] -> [] | _ :: rest -> drop (n - 1) rest
+  in
+  suffix_len <= xs_len
+  && List.equal String.equal (drop (xs_len - suffix_len) xs) suffix
+
+let il_name_file_matches_module_path (name : IL.name) module_path_parts =
+  match file_path_parts_of_il_name name with
+  | Some file_path_parts -> (
+      match module_path_parts with
+      | [] -> false
+      | _ -> list_ends_with ~suffix:module_path_parts file_path_parts)
+  | _ -> false
+
+let caller_relative_module_path_parts call_tok module_canonical =
+  match file_path_parts_of_tok call_tok with
+  | None -> None
+  | Some caller_file_parts -> (
+      let module_path_parts =
+        import_path_parts_of_canonical_preserving_relative module_canonical
+      in
+      match module_path_parts with
+      | [] -> None
+      | _ ->
+          Some
+            (normalize_path_parts
+               (drop_last caller_file_parts @ module_path_parts)))
+
+let fn_id_matches_imported_entity (canonical : G.canonical_name) (fn_id : fn_id) :
+    bool =
+  match (List.rev canonical, get_fn_name fn_id) with
+  | imported_name :: rev_module_path, Some fn_name ->
+      String.equal imported_name (fst fn_name.IL.ident)
+      && il_name_file_matches_module_path fn_name
+           (import_path_parts_of_canonical (List.rev rev_module_path))
+  | _ -> false
+
+let fn_id_matches_imported_module_export (canonical : G.canonical_name)
+    (fn_id : fn_id) : bool =
+  match get_fn_name fn_id with
+  | Some fn_name ->
+      String.equal (fst fn_name.IL.ident) "module.exports"
+      && il_name_file_matches_module_path fn_name
+           (import_path_parts_of_canonical canonical)
+  | _ -> false
+
+(* Resolve a call whose callee [id_info] is an imported entity/module to the
+ * matching top-level definition in another file. Disambiguates by the caller's
+ * own directory (relative imports) then by arity; never guesses. *)
+let pick_imported_match (id_info : G.id_info) call_tok (call_arity : int option)
+    (all_funcs : func_info list) : fn_id option =
+  let pick_with_caller_relative_module module_canonical matches =
+    match caller_relative_module_path_parts call_tok module_canonical with
+    | Some caller_relative_path_parts -> (
+        let caller_relative_matches =
+          matches
+          |> List.filter (fun f ->
+                 match get_fn_name f.fn_id with
+                 | Some fn_name ->
+                     il_name_file_matches_module_path fn_name
+                       caller_relative_path_parts
+                 | None -> false)
+        in
+        match caller_relative_matches with
+        | _ :: _ -> pick_by_arity call_arity caller_relative_matches
+        | [] -> pick_by_arity call_arity matches)
+    | None -> pick_by_arity call_arity matches
+  in
+  match !(id_info.G.id_resolved) with
+  | Some (G.ImportedEntity canonical, _) ->
+      let module_canonical =
+        match List.rev canonical with
+        | _imported_name :: rev_module_path -> List.rev rev_module_path
+        | [] -> []
+      in
+      let matches =
+        all_funcs
+        |> List.filter (fun f -> fn_id_matches_imported_entity canonical f.fn_id)
+      in
+      pick_with_caller_relative_module module_canonical matches
+  | Some (G.ImportedModule canonical, _) ->
+      let matches =
+        all_funcs
+        |> List.filter (fun f ->
+               fn_id_matches_imported_module_export canonical f.fn_id)
+      in
+      pick_with_caller_relative_module canonical matches
+  | _ -> None
+
 let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
     ?(caller_parent_path = []) ?(call_arity : int option) (callee : G.expr) : fn_id option =
   (* Extract class from caller_parent_path if present *)
@@ -247,9 +423,14 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
   in
   match callee.G.e with
     (* Simple function call: foo() *)
-    | G.N (G.Id ((id, _), _id_info)) ->
+    | G.N (G.Id ((id, id_tok), id_info)) -> (
         let callee_name_str = id in
-        (* First check if it's a nested function in the same scope.
+        (* Cross-file first: if [foo] was imported from another module, resolve
+           it to that module's definition in the merged AST. *)
+        match pick_imported_match id_info id_tok call_arity all_funcs with
+        | Some _ as imported_match -> imported_match
+        | None ->
+        (* Then a nested function in the same scope.
            Use position-aware match to distinguish same-named parent functions. *)
         let nested_match =
           find_func_in_scope all_funcs caller_parent_path callee_name_str
@@ -305,7 +486,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                       (* Try as constructor: ClassName() → ClassName#__init__ etc. *)
                       let ty = G.{ t = TyN (G.Id ((callee_name_str, G.fake callee_name_str), G.empty_id_info ())); t_attrs = [] } in
                       resolve_constructor_from_type ~lang ~all_funcs ty)
-        end
+        end)
         (* Qualified call: Module.foo() *)
         | G.N (G.IdQualified { name_last = (id, _), _; _ }) ->
             let callee_name_str = id in
