@@ -1384,11 +1384,37 @@ let imported_module_member_global_cell env lval_env (module_name : IL.name)
   | _ -> None
 
 let imported_global_cell_of_lval env lval_env (lval : IL.lval) =
+  (* Navigate the lval's offsets into [base_cell] (the resolved imported base),
+   * so e.g. an imported object's method/field `api.getInput` resolves to the
+   * Fun/field cell inside `api`'s exported record shape. *)
+  let navigate_offsets base_cell =
+    match Lval_env.normalize_lval lval with
+    | Some (_, []) -> Some base_cell
+    | Some (_, offsets) -> (
+        match Shape.find_in_cell offsets base_cell with
+        | `Found cell -> Some cell
+        | `Clean
+        | `Not_found _ ->
+            None)
+    | None -> None
+  in
   match lval with
   | { base = Var name; rev_offset = [] } ->
       imported_entity_global_cell lval_env name
-  | { base = Var module_name; rev_offset = [ { o = Dot member; _ } ] } ->
-      imported_module_member_global_cell env lval_env module_name member
+  | { base = Var module_name; rev_offset = [ { o = Dot member; _ } ] } -> (
+      (* `import * as m; m.x` resolves the module member value directly. *)
+      match imported_module_member_global_cell env lval_env module_name member with
+      | Some _ as cell -> cell
+      | None -> (
+          (* Otherwise the base is an imported object/record (e.g. an exported
+           * object literal): resolve it and navigate the offset in its shape. *)
+          match imported_entity_global_cell lval_env module_name with
+          | Some base_cell -> navigate_offsets base_cell
+          | None -> None))
+  | { base = Var name; rev_offset = _ :: _ } -> (
+      match imported_entity_global_cell lval_env name with
+      | Some base_cell -> navigate_offsets base_cell
+      | None -> None)
   | _ -> None
 
 let rec check_tainted_lval env (lval : IL.lval) :
