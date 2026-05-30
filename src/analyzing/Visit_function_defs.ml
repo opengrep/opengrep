@@ -243,7 +243,12 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
 
     method! visit_definition f ((ent, def_kind) as def) =
       match def_kind with
-      | G.ClassDef _cdef ->
+      | G.ClassDef _
+      (* Module-based languages (Elixir, Erlang, OCaml, ...) access top-level
+       * functions as `Module.func(...)`. Treat a module as a class boundary so
+       * its functions are registered under the module name and resolve as
+       * `Module.func` cross-file calls, mirroring class methods. *)
+      | G.ModuleDef _ ->
           let newv =
             match ent.name with
             | EN name -> Some name
