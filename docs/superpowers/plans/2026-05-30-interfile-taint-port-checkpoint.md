@@ -89,6 +89,26 @@ the 3 spurious passes, and it needs two follow-ons before it is net-positive:
    `java_unqualified_field` (constructor-set field read through a method), which
    were only collision-passing.
 
+## Turn update: elixir fixed genuinely; byte-collision is multi-point; java pinned
+
+- **Elixir cross-file module calls now resolve genuinely** (commit after `32e6e5f`):
+  `Elixir_to_generic` emits `G.ModuleDef`, not `G.ClassDef`, so
+  `Visit_function_defs` never registered module functions under the module
+  name. Treating `ModuleDef` as a class boundary fixes `Module.func()` resolution
+  (elixir was previously only passing via the byte-collision). Also resolved
+  `move_on_aptos` in the matrix. No regression.
+- **The byte-collision is multi-point.** Beyond `any_is_in_matches_OSS`, the
+  relevant-graph builder `Graph_from_AST.find_functions_containing_ranges` is
+  also byte-only, so `duplicate_names`' two identical `main`s collapse to one
+  analyzed function. A complete fix must make **both** file-aware. Measured: the
+  file-aware spec-match alone is net −1 at the 81 base (fixes sanitizer; breaks
+  duplicate + java; elixir no longer regresses).
+- **java unqualified field pinned**: `value` resolves to `G.EnclosedVar` (Java
+  naming marks it a field). Modeling `EnclosedVar` as `this.field` in
+  `AST_to_IL.lval_of_id_info` fires but is **inert** — the remaining gap is
+  sid-consistent offset matching between the constructor's `this.value` and the
+  method's `this.value`, plus the constructor→instance field-shape flow. Deep.
+
 ## Next highest-leverage work
 
 1. The byte-collision file-aware fix above (correctness; fixes the 2
