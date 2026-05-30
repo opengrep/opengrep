@@ -190,7 +190,8 @@ let to_rule_id_options_map (ms : t list) =
 (* API *)
 (*****************************************************************************)
 
-type digest = Rule_ID.t * Target.path * int * int * Metavariable.bindings
+type digest =
+  Rule_ID.t * Target.path * Fpath.t * int * int * Metavariable.bindings
 [@@deriving ord]
 
 (* Deduplicate matches *)
@@ -198,6 +199,13 @@ let uniq (pms : t list) : t list =
   let digest (t : t) : digest =
     (t.rule_id.id,
      t.path,
+     (* Inter-file taint runs over a merged whole-language AST, so every
+      * match shares the precompute target's [path] while really living in
+      * different files; two sinks at the same byte offset within
+      * identically-structured files would otherwise dedup to one. The
+      * [range_loc] file is the authoritative location, and for ordinary
+      * single-file scans it equals [path], so adding it is a no-op there. *)
+     (fst t.range_loc).pos.file,
      (fst t.range_loc).pos.bytepos,
      (snd t.range_loc).pos.bytepos,
      t.env)
