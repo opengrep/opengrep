@@ -3,7 +3,11 @@
 Branch: `port/taint-interfile-on-main` (off `main`, the rewritten taint engine).
 Goal: Semgrep-Pro-parity interfile taint for every taint-capable language.
 
-## Status: 79 / 88 e2e interfile fixtures passing (was 5 at session start)
+## Status: 81 / 88 e2e interfile fixtures passing (was 5 at session start)
+
+(+2 since the 79 checkpoint: `map_service_container` via `new Map([[k,v]])`
+detection, and `provider_spec_registration_container` via object-form provider
+specs `register("k", { useValue: ... })`.)
 
 All progress is regression-free against intra-file taint, search, and the
 single-file cross-file probes (Go multi-hop, JS object methods, etc.).
