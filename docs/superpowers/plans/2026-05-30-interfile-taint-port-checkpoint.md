@@ -58,10 +58,40 @@ positions preserved), then findings are distributed back per file.
 - **DI edge cases** (`map_service` want 4 got 3; `provider_spec` want 6 got 3):
   specific provider-registration shapes still partial.
 
+## KEY ROOT CAUSE: merged-AST byte-range collisions in spec matching
+
+`Match_taint_spec.any_is_in_matches_OSS` decides if an IL node is a
+source/sanitizer/sink by **pure byte-range containment** (`Range.($<=$) r
+rwm.r`), with **no file check**. The merged component AST concatenates files
+that each keep their own 0-based byte offsets, so a node in file A can fall
+inside a spec match's range in file B. Consequences:
+
+- **False positives** (the sanitizer + `package_collision` failures): a
+  helper's body byte-aligns with an unrelated `sink(...)` in another file, so
+  its signature gets a spurious `ToSink`. Confirmed by padding one file (which
+  shifts offsets) — the false finding disappears.
+- **Spurious passes** (currently masking real gaps): `elixir`, `java_unqualified_field`,
+  and `python_duplicate_names` only pass because a `source()`/sink byte-aligns
+  across files. Their *real* cross-file flows do not actually produce the
+  finding.
+
+A file-aware guard (require `node_file = spec_file`, comparing the node's token
+file to `rwm.origin.range_loc` file) is the correct fix and removes the false
+positives — but it is **net −2 on the suite right now** because it also removes
+the 3 spurious passes, and it needs two follow-ons before it is net-positive:
+1. Make the source/sink **spec-match dedup file-aware** too (identical files
+   like `duplicate_names` collapse their two same-range sinks into one).
+2. Fix the **real** cross-file flows for `elixir` (module-qualified calls) and
+   `java_unqualified_field` (constructor-set field read through a method), which
+   were only collision-passing.
+
 ## Next highest-leverage work
 
-1. Cross-file sanitizers (2 fixtures) — make `extract_signature` retain an
-   explicit "returns untainted" `ToReturn` so an analyzed sanitizer does not
-   fall back to propagation; investigate the arity interaction.
-2. File-qualify global taint keying for merged ASTs (2–3 fixtures) — the deepest
-   item; risk of regressing the value tier that matches globals across files.
+1. The byte-collision file-aware fix above (correctness; fixes the 2
+   false-positive fixtures) plus its 2 follow-ons (recovers the 3 spurious
+   passes properly). This is the single most important correctness item.
+2. Cross-file sanitizers also relate to (1): once spec matching is file-aware,
+   `sanitize`'s spurious `ToSink` disappears (verified locally).
+3. Remaining per-feature/per-language gaps: commonjs `require`, the 5 matrix
+   languages, the direct+alias module-import naming conflation, and the two
+   partial DI registration shapes.
