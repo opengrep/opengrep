@@ -894,6 +894,14 @@ let lookup_signature_with_object_context env fun_exp arity =
               (* Try builtin fallback - first with qualified name, then with just method name *)
               let result = try_builtin_fallback env (fst qualified_name.ident) arity result in
               try_builtin_fallback env (fst method_name.ident) arity result)
+      | Fetch { rev_offset = { o = Dot method_name; _ } :: _ :: _; _ } ->
+          (* Nested instance-method call: this.field.method(), obj.a.b.method().
+           * The single-offset cases above don't match these. The call-graph
+           * edge built by extract_calls' instance-field handling is keyed at
+           * the method-name token, so resolve through it (object mappings let
+           * the graph bind the receiver field to its class). *)
+          get_signature_for_object env.call_graph env.func.name db
+            (Function_id.of_il_name method_name) arity
       | _ -> None)
 
 (* If [fun_exp] resolves through the call graph to the function currently
