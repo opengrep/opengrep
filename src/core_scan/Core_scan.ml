@@ -778,13 +778,148 @@ let interfile_rule_applies_to_analyzer (interfile_rules : Rule.t list)
   |> List.exists (fun (rule : Rule.t) ->
          Xlang.is_compatible ~require:analyzer ~provide:rule.target_analyzer)
 
-(* Build, per language, the concatenation of all that language's files' ASTs
- * (with their original per-file source positions preserved), so the taint
- * engine sees the whole program at once. *)
+(* One interfile analysis unit: the files of an import-connected component,
+ * their concatenated AST (original per-file positions preserved), and a
+ * stable identifier used to cache the component's whole-program scan. *)
+type interfile_component = {
+  files : Fpath.t list;
+  ast : AST_generic.program;
+  skipped : Tok.location list;
+  id : string;
+}
+
+(* Raw module strings imported by [ast], each tagged with whether it is a
+ * relative import (starts with '.'), so component grouping can resolve
+ * relative imports precisely against the importing file's directory. *)
+let import_module_strings (ast : AST_generic.program) : (string * bool) list =
+  let acc = ref [] in
+  let add_mn (mn : AST_generic.module_name) =
+    match mn with
+    | AST_generic.FileName (s, _) ->
+        let is_rel = String.length s > 0 && Char.equal s.[0] '.' in
+        acc := (s, is_rel) :: !acc
+    | AST_generic.DottedName ids ->
+        acc := (ids |> List_.map fst |> String.concat "/", false) :: !acc
+  in
+  let v =
+    object
+      inherit [_] AST_generic.iter_no_id_info as super
+
+      method! visit_directive env d =
+        (match d.AST_generic.d with
+        | AST_generic.ImportFrom (_, mn, _)
+        | AST_generic.ImportAs (_, mn, _)
+        | AST_generic.ImportAll (_, mn, _) ->
+            add_mn mn
+        | _ -> ());
+        super#visit_directive env d
+    end
+  in
+  v#visit_program () ast;
+  !acc
+
+(* The last path segment of a module string (e.g. "./a/source" -> "source"). *)
+let module_last_segment (raw : string) : string =
+  raw |> String.split_on_char '/'
+  |> List.filter (fun s -> (not (String.equal s "")) && not (String.equal s "."))
+  |> List.rev
+  |> function
+  | x :: _ -> x
+  | [] -> ""
+
+(* Resolve a relative module string against the importing file's directory,
+ * returning the extension-less normalized path it points to. *)
+let resolve_relative_import ~(importer : Fpath.t) (raw : string) : Fpath.t =
+  let base = Fpath.parent importer in
+  String.split_on_char '/' raw
+  |> List.fold_left
+       (fun acc seg ->
+         if String.equal seg "" || String.equal seg "." then acc
+         else if String.equal seg ".." then Fpath.parent acc
+         else Fpath.add_seg acc seg)
+       base
+  |> Fpath.normalize
+
+(* Partition files into import-connected components. Files in the same
+ * directory, or linked by an import (relative imports resolved by path, bare
+ * imports matched by basename), end up together; otherwise-independent
+ * modules — e.g. sibling fixture sub-directories that merely reuse the same
+ * token names — stay apart so the merged AST does not conflate them. *)
+let group_files_into_components
+    (files : (Fpath.t * AST_generic.program * Tok.location list) list) :
+    interfile_component list =
+  let arr = Array.of_list files in
+  let n = Array.length arr in
+  let parent = Array.init n (fun i -> i) in
+  let rec find i = if parent.(i) =|= i then i else (let r = find parent.(i) in parent.(i) <- r; r) in
+  let union i j = let ri = find i and rj = find j in if not (ri =|= rj) then parent.(ri) <- rj in
+  let path_of i = let p, _, _ = arr.(i) in p in
+  let dir_of i = Fpath.parent (path_of i) in
+  let noext i = Fpath.rem_ext (path_of i) |> Fpath.normalize in
+  let basename_noext i =
+    Fpath.rem_ext (path_of i) |> Fpath.basename
+  in
+  (* Same-directory edges. *)
+  for i = 0 to n - 1 do
+    for j = i + 1 to n - 1 do
+      if Fpath.equal (dir_of i) (dir_of j) then union i j
+    done
+  done;
+  (* Import edges. *)
+  for i = 0 to n - 1 do
+    let _, ast, _ = arr.(i) in
+    import_module_strings ast
+    |> List.iter (fun (raw, is_rel) ->
+           let last = module_last_segment raw in
+           let resolved =
+             if is_rel then Some (resolve_relative_import ~importer:(path_of i) raw)
+             else None
+           in
+           for j = 0 to n - 1 do
+             if not (i =|= j) then
+               let connects =
+                 match resolved with
+                 | Some cand -> Fpath.equal (noext j) cand
+                 | None ->
+                     (not (String.equal last ""))
+                     && String.equal (basename_noext j) last
+               in
+               if connects then union i j
+           done)
+  done;
+  let tbl = Hashtbl.create 16 in
+  for i = 0 to n - 1 do
+    let r = find i in
+    let cur = try Hashtbl.find tbl r with Not_found -> [] in
+    Hashtbl.replace tbl r (arr.(i) :: cur)
+  done;
+  Hashtbl.fold
+    (fun _ members acc ->
+      (* Concatenate in a stable path order so the merged AST (and thus
+       * order-sensitive passes like wildcard-import resolution) is
+       * deterministic regardless of parse/hashtable iteration order. *)
+      let members =
+        List.sort
+          (fun (p1, _, _) (p2, _, _) ->
+            String.compare (Fpath.to_string p1) (Fpath.to_string p2))
+          members
+      in
+      let paths = List_.map (fun (p, _, _) -> p) members in
+      let ast = List.concat_map (fun (_, a, _) -> a) members in
+      let skipped = List.concat_map (fun (_, _, s) -> s) members in
+      let id =
+        paths |> List_.map Fpath.to_string |> String.concat "|"
+      in
+      { files = paths; ast; skipped; id } :: acc)
+    tbl []
+
+(* Build, per language, the import-connected components of that language's
+ * files. Each component's files are concatenated (original per-file source
+ * positions preserved) so the taint engine sees a self-contained program. *)
 let build_interfile_asts_by_analyzer (caps : < Cap.fork >) (ncores : int)
     (targets : Target.t list) (valid_rules : Rule.t list)
     ~(force_interfile : bool) :
-    (Lang.t, AST_generic.program * Tok.location list) Hashtbl.t =
+    (Lang.t, interfile_component list) Hashtbl.t =
   let asts_by_analyzer = Hashtbl.create 8 in
   let interfile_rules =
     List.filter (is_interfile_taint_rule ~force_interfile) valid_rules
@@ -803,7 +938,8 @@ let build_interfile_asts_by_analyzer (caps : < Cap.fork >) (ncores : int)
                let ast, skipped_tokens =
                  parse_and_resolve_name lang target.path.internal_path_to_content
                in
-               Some (lang, ast, skipped_tokens)
+               Some
+                 (lang, target.path.internal_path_to_content, ast, skipped_tokens)
              with
              | exn ->
                  Logs.debug (fun m ->
@@ -813,27 +949,48 @@ let build_interfile_asts_by_analyzer (caps : < Cap.fork >) (ncores : int)
                  None)
          | Target.Regular _ -> None)
     in
+    (* Collect parsed files per language, then split each language into
+     * import-connected components. *)
+    let by_lang : (Lang.t, (Fpath.t * AST_generic.program * Tok.location list) list) Hashtbl.t =
+      Hashtbl.create 8
+    in
     parsed |> List.iter (function
          | Ok None -> ()
-         | Ok (Some (lang, ast, skipped_tokens)) ->
-             let asts, skipped =
-               match Hashtbl.find_opt asts_by_analyzer lang with
-               | None -> ([], [])
-               | Some (asts, skipped) -> (asts, skipped)
+         | Ok (Some (lang, path, ast, skipped_tokens)) ->
+             let cur =
+               match Hashtbl.find_opt by_lang lang with
+               | None -> []
+               | Some xs -> xs
              in
-             Hashtbl.replace asts_by_analyzer lang
-               (ast @ asts, skipped_tokens @ skipped)
+             Hashtbl.replace by_lang lang ((path, ast, skipped_tokens) :: cur)
          | Error (_target, error) ->
              Logs.debug (fun m ->
                  m "Skipping interfile taint preparse target after error: %s"
-                   (Core_error.string_of_error error))));
+                   (Core_error.string_of_error error)));
+    Hashtbl.iter
+      (fun lang files ->
+        Hashtbl.replace asts_by_analyzer lang
+          (group_files_into_components files))
+      by_lang);
   asts_by_analyzer
 
+(* The interfile component (merged AST, skipped tokens, cache id) that
+ * [target] belongs to, if any. *)
 let interfile_ast_for_target asts_by_analyzer (target : Target.regular) :
-    (AST_generic.program * Tok.location list) option =
+    ((AST_generic.program * Tok.location list) * string) option =
   match Xlang.to_lang target.analyzer with
   | Ok lang when supports_interfile_taint target.analyzer ->
+      let tpath = target.path.internal_path_to_content in
       Hashtbl.find_opt asts_by_analyzer lang
+      |> Option.map (fun comps -> comps)
+      |> (fun o ->
+           match o with
+           | None -> None
+           | Some comps ->
+               List.find_opt
+                 (fun c -> List.exists (Fpath.equal tpath) c.files)
+                 comps
+               |> Option.map (fun c -> ((c.ast, c.skipped), c.id)))
   | Ok _
   | Error _ ->
       None
@@ -915,8 +1072,7 @@ let raise_timeout_for_interfile (timeout : Match_rules.timeout_config option) :
 (* build the callback for iter_targets_and_get_matches_and_exn_to_errors *)
 let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
     (valid_rules : Rule.t list)
-    (interfile_asts_by_analyzer :
-      (Lang.t, AST_generic.program * Tok.location list) Hashtbl.t)
+    (interfile_asts_by_analyzer : (Lang.t, interfile_component list) Hashtbl.t)
     (prefilter_cache_opt : Match_env.prefilter_config) : target_handler =
   (* Cross-file taint findings for the whole merged (per-language) AST, computed
    * once per (analyzer, rule-set) and then distributed to each target file. *)
@@ -1025,8 +1181,10 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
           | [], _
           | _, None ->
               empty_matches_single_file
-          | _ :: _, Some merged_ast ->
-              let cache_key = interfile_cache_key analyzer interfile_rules in
+          | _ :: _, Some (merged_ast, component_id) ->
+              let cache_key =
+                interfile_cache_key analyzer interfile_rules ^ "#" ^ component_id
+              in
               (* Prefiltering compares a rule's prefilter against a single
                * file's content; on the merged AST it would wrongly skip rules,
                * so disable it for the interfile pass. Also force the
