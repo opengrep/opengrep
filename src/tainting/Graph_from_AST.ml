@@ -1079,10 +1079,24 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = [])
               match identify_callee ~lang ~object_mappings ~module_imports ~class_hierarchy
                   ~all_funcs ~caller_parent_path:[] callee with
               | Some fn_id ->
+                  (* For DotAccess calls, use the method name token so it
+                     matches the method_tok lookup in get_signature_for_object
+                     (same logic as extract_calls). Without this, top-level
+                     method calls like `obj.method()` keyed the edge at the
+                     receiver token and never resolved. *)
                   let tok =
-                    match AST_generic_helpers.ii_of_any (G.E e) with
-                    | tok :: _ -> tok
-                    | [] -> Tok.unsafe_fake_tok ""
+                    match callee.G.e with
+                    | G.DotAccess (_, _, G.FN (G.Id (("new", _), _)))
+                      when Lang.(lang =*= Ruby) ->
+                        (match AST_generic_helpers.ii_of_any (G.E e) with
+                        | tok :: _ -> tok
+                        | [] -> Tok.unsafe_fake_tok "")
+                    | G.DotAccess (_, _, G.FN (G.Id ((_, method_tok), _))) ->
+                        method_tok
+                    | _ ->
+                        (match AST_generic_helpers.ii_of_any (G.E e) with
+                        | tok :: _ -> tok
+                        | [] -> Tok.unsafe_fake_tok "")
                   in
                   Log.debug (fun m -> m "CALL_EXTRACT: Found top-level call to %s" (show_fn_id fn_id));
                   calls := (fn_id, tok) :: !calls
