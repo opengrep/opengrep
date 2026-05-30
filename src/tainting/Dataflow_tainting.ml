@@ -2204,6 +2204,28 @@ let check_function_call env fun_exp args
           lookup_signature env exp arity
         else None
       in
+      (* Python methods carry an explicit [self]/[cls] first parameter, but a
+       * call site `obj.m(a, b)` does not pass the receiver, so a left-to-right
+       * arg/param match would bind the first real argument to [self] and leave
+       * the actual parameter untainted. Prepend the receiver (mirroring the
+       * constructor handling) so positions line up. *)
+      let args, args_taints =
+        match (fun_sig.Signature.params, fun_exp.e) with
+        | ( (Signature.P self_name | Signature.PRest self_name) :: _,
+            Fetch
+              ({ rev_offset = { o = Dot _; _ } :: recv_rev; _ } as method_lval) )
+          when Lang.(env.taint_inst.lang =*= Python)
+               && (String.equal self_name "self" || String.equal self_name "cls")
+               && List.length args =|= List.length fun_sig.Signature.params - 1 ->
+            let recv_lval = { method_lval with IL.rev_offset = recv_rev } in
+            let recv_exp = IL.{ e = Fetch recv_lval; eorig = NoOrig } in
+            let recv_taints, recv_shape, _, _ =
+              check_tainted_lval env recv_lval
+            in
+            ( IL.Unnamed recv_exp :: args,
+              IL.Unnamed (recv_taints, recv_shape) :: args_taints )
+        | _ -> (args, args_taints)
+      in
       let* call_effects =
         Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
           ~outer_params:env.func.il_params env.lval_env fun_sig
