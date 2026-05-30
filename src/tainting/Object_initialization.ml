@@ -1634,6 +1634,28 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
            record_object_property_value_mapping obj_name [ field_name ]
              value_expr)
   in
+  (* `const services = new Map([["key", new Service()]])` — the Map constructor
+   * seeded with an array of [key, value] tuples. The structural analog of
+   * `services.set("key", new Service())`. *)
+  let record_object_property_map_constructor_mapping obj_name init_expr =
+    match init_expr.G.e with
+    | G.New
+        ( _,
+          _map_type,
+          _,
+          (_, [ G.Arg { e = G.Container (G.Array, (_, tuples, _)); _ } ], _) ) ->
+        tuples
+        |> List.iter (fun tuple ->
+               match tuple.G.e with
+               | G.Container (G.Array, (_, [ key_expr; value_expr ], _)) -> (
+                   match name_from_property_key_expr key_expr with
+                   | Some field_name ->
+                       record_object_property_value_mapping obj_name
+                         [ field_name ] value_expr
+                   | None -> ())
+               | _ -> ())
+    | _ -> ()
+  in
   let record_object_property_alias_mapping alias_name init_expr =
     match object_property_path_from_expr init_expr with
     | Some (obj_name, field_path) ->
@@ -2093,6 +2115,7 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
                     record_injected_property_mapping entity var_def.G.vtype;
                     record_object_property_mappings var_name init_expr;
                     record_object_property_set_chain_mapping var_name init_expr;
+                    record_object_property_map_constructor_mapping var_name init_expr;
                     record_object_property_provider_mapping init_expr;
                     record_object_property_registration_map_mapping init_expr;
                     record_object_property_alias_mapping var_name init_expr;
@@ -2214,6 +2237,7 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
             | G.EN var_name, Some init_expr -> (
                 record_object_property_mappings var_name init_expr;
                 record_object_property_set_chain_mapping var_name init_expr;
+                    record_object_property_map_constructor_mapping var_name init_expr;
                 record_object_property_alias_mapping var_name init_expr;
                 record_object_container_alias_mapping var_name init_expr;
                 record_destructured_object_property_mappings init_expr;
