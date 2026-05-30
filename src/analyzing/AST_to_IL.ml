@@ -152,7 +152,17 @@ let var_of_name name : name =
 
 let lval_of_id_info id id_info : lval =
   let var = var_of_id_info id id_info in
-  { base = Var var; rev_offset = [] }
+  match !(id_info.G.id_resolved) with
+  | Some (G.EnclosedVar, _) ->
+      (* Unqualified instance-field reference (e.g. Java/C# `value` inside a
+       * method == `this.value`). Model it as a this-field access so it unifies
+       * with explicit `this.value` lvalues (e.g. set in a constructor). *)
+      let this_tok = snd id in
+      {
+        base = VarSpecial (This, this_tok);
+        rev_offset = [ { o = Dot var; oorig = NoOrig } ];
+      }
+  | _ -> { base = Var var; rev_offset = [] }
 
 (* TODO: use also qualifiers? *)
 let lval_of_id_qualified
