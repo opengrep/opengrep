@@ -1169,6 +1169,30 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
           when is_object_property_provider_method_name provider_name ->
             class_name_from_provider_expr provider_method_name provider_expr
         | _ -> None)
+    | G.Record (_, fields, _) ->
+        (* Object-form provider spec without a `provide` key, e.g.
+         * `container.register("k", { useValue: new X() })` /
+         * `{ useClass: X }` / `{ useFactory: () => new X() }`. *)
+        fields
+        |> List.find_map (function
+             | G.F
+                 {
+                   G.s =
+                     G.DefStmt
+                       ( field_entity,
+                         G.FieldDefColon { G.vinit = Some field_value; _ } );
+                   _;
+                 } -> (
+                 match field_name_from_entity field_entity with
+                 | Some field_name
+                   when is_object_property_provider_method_name field_name -> (
+                     match method_name_string field_name with
+                     | Some provider_method_name ->
+                         class_name_from_provider_expr provider_method_name
+                           field_value
+                     | None -> None)
+                 | _ -> None)
+             | _ -> None)
     | _ -> None
   in
   let record_object_property_value_mapping obj_name field_path value_expr =
