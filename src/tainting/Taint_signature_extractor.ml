@@ -71,6 +71,16 @@ let extract_method_properties (fdef : G.function_definition) :
                     found_properties := expr :: !found_properties
                 | _ -> ())
             | _ -> ())
+        | G.N (G.Id (_, idinfo)) -> (
+            (* Unqualified instance-field reference (resolved by naming as
+             * EnclosedVar, e.g. Java/C# `value` == `this.value`). Capture it as
+             * a property so the method's input env is seeded with the this-field
+             * assumption; AST_to_IL lowers EnclosedVar to a this-field lval, so
+             * the seeded lval matches the body's read. *)
+            match !(idinfo.G.id_resolved) with
+            | Some (G.EnclosedVar, _) ->
+                found_properties := expr :: !found_properties
+            | _ -> ())
         | _ -> ());
         super#visit_expr () expr
     end
