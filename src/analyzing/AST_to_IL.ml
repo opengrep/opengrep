@@ -4078,14 +4078,19 @@ and python_with_stmt env manager opt_pat body : stmts =
 (*****************************************************************************)
 
 and function_body env fbody : stmts =
-  (* Expression-body functions (e.g. Kotlin/Scala/OCaml `fun f(x) = x`) carry
-   * an FBExpr whose value is the implicit return. [funcbody_to_stmt] wraps it
-   * in an ExprStmt — discarding the result — so the IL never sees a Return
-   * and the taint engine cannot capture a passthrough signature. Lower it as
-   * an explicit Return instead. *)
+  (* Expression-body functions (e.g. Kotlin/Scala/Dart `fun f(x) = x`, OCaml
+   * `let f x = x`) carry an FBExpr — or an FBStmt wrapping an
+   * [OtherStmt (OS_ExprStmt2, [E e])] — whose value is the implicit return.
+   * Both [funcbody_to_stmt] and a plain visit drop the value, so the IL never
+   * sees a Return and the taint engine cannot capture a passthrough signature.
+   * Lower both shapes as an explicit Return. *)
   let body_stmt =
     match fbody with
     | G.FBExpr e ->
+        let tok = G.fake "<expr-body>" in
+        G.Return (tok, Some e, G.sc) |> G.s
+    | G.FBStmt
+        { G.s = G.OtherStmt (G.OS_ExprStmt2, [ G.E e ]); _ } ->
         let tok = G.fake "<expr-body>" in
         G.Return (tok, Some e, G.sc) |> G.s
     | _ -> H.funcbody_to_stmt fbody
