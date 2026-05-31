@@ -1,0 +1,8 @@
+# Git URLs of publicly-accessible projects to be used for Crystal parsing stats,
+# one per line.
+
+https://github.com/crystal-lang/crystal
+https://github.com/crystal-ameba/ameba
+https://github.com/kemalcr/kemal
+https://github.com/luckyframework/lucky
+https://github.com/crystal-lang/shards

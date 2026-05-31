@@ -84,7 +84,7 @@ url = https://github.com/opengrep/semgrep-swift.git
 
 [submodule "OSS/cli/src/semgrep/semgrep_interfaces"]
 path = cli/src/semgrep/semgrep_interfaces
-url = https://github.com/opengrep/semgrep-interfaces.git
+url = https://github.com/buger/semgrep-interfaces.git
 
 [submodule "OSS/languages/julia/tree-sitter/semgrep-julia"]
 path = languages/julia/tree-sitter/semgrep-julia
@@ -153,3 +153,7 @@ url = https://github.com/opengrep/semgrep-circom.git
 [submodule "languages/apex/tree-sitter/semgrep-apex"]
 path = languages/apex/tree-sitter/semgrep-apex
 url = https://github.com/opengrep/semgrep-apex.git
+
+[submodule "OSS/languages/crystal/tree-sitter/semgrep-crystal"]
+path = languages/crystal/tree-sitter/semgrep-crystal
+url = https://github.com/buger/semgrep-crystal.git

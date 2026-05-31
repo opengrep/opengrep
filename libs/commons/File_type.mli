@@ -25,6 +25,7 @@ and pl_type =
   | Java
   | Kotlin
   | Csharp
+  | Crystal
   | Vb
   | ObjectiveC of string
   | Swift

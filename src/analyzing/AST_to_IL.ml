@@ -966,7 +966,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.Call
       ( { e = G.IdSpecial (G.Op ((G.And | G.Or) as op), tok); _ },
         (_, arg0 :: args, _) )
-    when not void || env.lang =*= Lang.Ruby ->
+    when not void || env.lang =*= Lang.Ruby || env.lang =*= Lang.Crystal ->
       expr_lazy_op env op tok arg0 args eorig
   | G.Call ({ e = G.IdSpecial (G.Op op, tok); _ }, args) -> (
       match op with
@@ -1249,7 +1249,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                  |> G.e) ]
       in
       call_generic env ~void tok eorig e (Tok.unsafe_fake_bracket arg_container)
-  (* Ruby [Proc.new { |x| body }] returns the block as a Proc. Lower
+  (* Ruby/Crystal [Proc.new { |x| body }] returns the block as a Proc. Lower
      just the inner Lambda so [cb = Proc.new { ... }] takes the
      [AssignAnon(_tmp_lambda, Lambda)] path and [cb] inherits the
      lambda's [Fun] shape, which the HOF dispatch needs. The pattern
@@ -1263,14 +1263,14 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
                         G.FN (G.Id (("new", _), _)) ); _ },
                 (_, [], _) ); _ },
         (_, [ G.Arg ({ G.e = G.Lambda _; _ } as lambda_e) ], _) )
-    when env.lang =*= Lang.Ruby ->
+    when env.lang =*= Lang.Ruby || env.lang =*= Lang.Crystal ->
       expr_aux env ~void lambda_e
-  (* Ruby do-block flattening: `f(args) do |x| ... end` is parsed as
+  (* Ruby/Crystal do-block flattening: `f(args) do |x| ... end` is parsed as
      Call(Call(f, args), [Lambda]) but the block is semantically an argument
      to f, not to its return value. Flatten into Call(f, args @ [Lambda]). *)
   | G.Call ({ e = G.Call (callee, inner_args); _ },
             (_, ([ G.Arg { G.e = G.Lambda _; _ } ] as outer_arg), _ ))
-    when env.lang =*= Lang.Ruby ->
+    when env.lang =*= Lang.Ruby || env.lang =*= Lang.Crystal ->
       let merged_args =
         Tok.unsafe_fake_bracket
           (Tok.unbracket inner_args @ outer_arg)
@@ -3396,6 +3396,7 @@ and type_opt env opt_ty : stmts * unit =
 and no_switch_fallthrough : Lang.t -> bool = function
   | Go
   | Ruby
+  | Crystal
   | Rust
   | Clojure
   | Elixir ->

@@ -786,6 +786,7 @@ let check_rules ~match_hook
          | Lang.C
          | Lang.Clojure
          | Lang.Cpp
+         | Lang.Crystal
          | Lang.Csharp
          | Lang.Elixir
          | Lang.Go
