@@ -145,6 +145,9 @@ let parse_pattern options lang str =
   | Lang.Cairo ->
       let res = Parse_cairo_tree_sitter.parse_pattern str in
       extract_pattern_from_tree_sitter_result res
+  | Lang.Crystal ->
+      let res = Parse_crystal_tree_sitter.parse_pattern str in
+      extract_pattern_from_tree_sitter_result res
   | Lang.Dart ->
       let res = Parse_dart_tree_sitter.parse_pattern str in
       extract_pattern_from_tree_sitter_result res

@@ -120,6 +120,8 @@ let ruby = {
   invoke_methods = ["call"];
 }
 
+let crystal = ruby
+
 let javascript = {
   hof_configs = [
     MethodHOF {
@@ -443,6 +445,7 @@ let get (lang : Lang.t) : t =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3 -> python
   | Lang.Ruby -> ruby
+  | Lang.Crystal -> crystal
   | Lang.Js -> javascript
   | Lang.Ts -> typescript
   | Lang.Java -> java

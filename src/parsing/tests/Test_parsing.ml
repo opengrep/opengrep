@@ -163,6 +163,10 @@ let dump_tree_sitter_cst (lang : Lang.t) (file : Fpath.t) : unit =
       Tree_sitter_c_sharp.Parse.file !!file
       |> dump_and_print_errors Tree_sitter_c_sharp.Boilerplate.dump_tree
            Tree_sitter_c_sharp.Boilerplate.dump_extras
+  | Lang.Crystal ->
+      Tree_sitter_crystal.Parse.file !!file
+      |> dump_and_print_errors Tree_sitter_crystal.Boilerplate.dump_tree
+           Tree_sitter_crystal.Boilerplate.dump_extras
   | Lang.Kotlin ->
       Tree_sitter_kotlin.Parse.file !!file
       |> dump_and_print_errors Tree_sitter_kotlin.Boilerplate.dump_tree
@@ -274,6 +278,8 @@ let test_parse_tree_sitter lang root_paths =
                  Tree_sitter_go.Parse.file file |> fail_on_error |> ignore
              | Lang.Csharp ->
                  Tree_sitter_c_sharp.Parse.file file |> fail_on_error |> ignore
+             | Lang.Crystal ->
+                 Tree_sitter_crystal.Parse.file file |> fail_on_error |> ignore
              | Lang.Kotlin ->
                  Tree_sitter_kotlin.Parse.file file |> fail_on_error |> ignore
              | Lang.Js ->

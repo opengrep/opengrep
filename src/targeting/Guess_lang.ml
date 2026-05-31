@@ -248,6 +248,7 @@ let inspect_file_p (lang : Lang.t) path =
     | Circom
     | Clojure
     | Cpp
+    | Crystal
     | Csharp
     | Dart
     | Elixir

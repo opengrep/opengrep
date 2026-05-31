@@ -118,7 +118,7 @@ let get_matcher (lang : Lang.t) : matcher option =
   | Lang.Java | Lang.Csharp | Lang.Vb -> Some match_new_basic
   | Lang.Php -> Some match_new_with_tyexpr
   | Lang.Python | Lang.Python2 | Lang.Python3 | Lang.Swift -> Some match_call_uppercase
-  | Lang.Ruby | Lang.Rust -> Some match_dot_new
+  | Lang.Crystal | Lang.Ruby | Lang.Rust -> Some match_dot_new
   | Lang.Go -> Some match_go_struct
   | Lang.Apex -> Some match_apex
   | Lang.Kotlin | Lang.Cpp -> Some (combine [match_new_basic; match_call_uppercase])
