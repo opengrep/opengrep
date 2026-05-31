@@ -1045,20 +1045,28 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = [])
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for top-level statements");
   let calls = ref [] in
 
-  (* Build a set of byte ranges covered by function bodies *)
+  (* Build a set of (file, byte-range) tuples covered by function bodies.
+   * The file is required because inter-file ASTs merge files that each keep
+   * their own 0-based byte offsets — without it, a top-level call in one file
+   * can byte-fall inside a function body in another and be skipped as "inside
+   * a function", losing its call-graph edge. *)
   let func_ranges = ref [] in
   List.iter (fun func ->
     let body_stmt = AST_generic_helpers.funcbody_to_stmt func.fdef.G.fbody in
     match AST_generic_helpers.range_of_any_opt (G.S body_stmt) with
     | Some (loc_start, loc_end) ->
         let range = Range.range_of_token_locations loc_start loc_end in
-        func_ranges := (range.start, range.end_) :: !func_ranges
+        let file = loc_start.Tok.pos.file in
+        func_ranges := (file, range.start, range.end_) :: !func_ranges
     | None -> ())
     all_funcs;
 
-  (* Check if a position is inside any function body *)
-  let is_inside_function pos =
-    List.exists (fun (start, stop) -> pos >= start && pos <= stop) !func_ranges
+  (* Check if a position in a specific file is inside any function body. *)
+  let is_inside_function file pos =
+    List.exists
+      (fun (f, start, stop) ->
+        Fpath.equal f file && pos >= start && pos <= stop)
+      !func_ranges
   in
 
   let v =
@@ -1068,13 +1076,17 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = [])
       method! visit_expr env e =
         match e.G.e with
         | G.Call (callee, args) ->
-            (* Check if this call is at top-level (not inside a function) *)
-            let call_pos =
+            (* Check if this call is at top-level (not inside a function in the
+             * same file — see [is_inside_function]). *)
+            let call_pos_file =
               match AST_generic_helpers.ii_of_any (G.E e) with
-              | tok :: _ when not (Tok.is_fake tok) -> Tok.bytepos_of_tok tok
-              | _ -> -1
+              | tok :: _ when not (Tok.is_fake tok) ->
+                  let loc = Tok.unsafe_loc_of_tok tok in
+                  Some (loc.Tok.pos.bytepos, loc.Tok.pos.file)
+              | _ -> None
             in
-            if call_pos >= 0 && not (is_inside_function call_pos) then (
+            (match call_pos_file with
+             | Some (call_pos, file) when not (is_inside_function file call_pos) -> (
               (* Top-level call - no class context *)
               match identify_callee ~lang ~object_mappings ~module_imports ~class_hierarchy
                   ~all_funcs ~caller_parent_path:[] callee with
@@ -1100,10 +1112,14 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = [])
                   in
                   Log.debug (fun m -> m "CALL_EXTRACT: Found top-level call to %s" (show_fn_id fn_id));
                   calls := (fn_id, tok) :: !calls
-              | None -> ()
-            );
-            (* Continue visiting arguments for nested calls *)
-            super#visit_arguments env args
+              | None -> ());
+              (* Continue visiting arguments for nested calls *)
+              super#visit_arguments env args
+             | _ ->
+                 (* Inside-function or fake-tok call: skip top-level extraction
+                  * but still recurse so nested top-level calls in args are
+                  * found. *)
+                 super#visit_arguments env args)
         | _ -> super#visit_expr env e
     end
   in
