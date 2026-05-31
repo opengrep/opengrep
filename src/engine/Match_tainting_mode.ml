@@ -469,13 +469,19 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
 
           (* Optimize: filter call graph to only functions relevant for this rule
              Use the already-computed source/sink ranges from spec_matches *)
+          let file_of_rwm (rwm : Range_with_metavars.t) =
+            let start_loc, _ = rwm.Range_with_metavars.origin.Core_match.range_loc in
+            start_loc.Tok.pos.file
+          in
           let source_ranges =
             spec_matches.sources
-            |> List.map (fun (rwm, _src) -> rwm.Range_with_metavars.r)
+            |> List.map (fun (rwm, _src) ->
+                   (rwm.Range_with_metavars.r, file_of_rwm rwm))
           in
           let sink_ranges =
             spec_matches.sinks
-            |> List.map (fun (rwm, _sink) -> rwm.Range_with_metavars.r)
+            |> List.map (fun (rwm, _sink) ->
+                   (rwm.Range_with_metavars.r, file_of_rwm rwm))
           in
           let source_functions =
             Graph_from_AST.find_functions_containing_ranges ~lang ast

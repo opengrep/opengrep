@@ -8,4 +8,5 @@ val build_call_graph :
   Call_graph.G.t
 
 val find_functions_containing_ranges :
-  lang : Lang.t -> AST_generic.program -> Range.t list -> Function_id.t list
+  lang : Lang.t -> AST_generic.program ->
+  (Range.t * Fpath.t) list -> Function_id.t list

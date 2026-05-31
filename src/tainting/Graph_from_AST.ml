@@ -1632,10 +1632,14 @@ let build_call_graph ~(lang : Lang.t) ?(object_mappings = []) (ast : G.program)
 
 (* Identify functions that contain byte ranges (from pattern matches) *)
 let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
-    (ranges : Range.t list) : Function_id.t list =
-  (* Hash table to track ALL functions containing each range, along with function size *)
-  let range_to_funcs : (Range.t, (fn_id * int) list) Hashtbl.t = Hashtbl.create 10 in
-  List.iter (fun range -> Hashtbl.add range_to_funcs range []) ranges;
+    (ranges : (Range.t * Fpath.t) list) : Function_id.t list =
+  (* Hash table to track ALL functions containing each range, along with function size.
+   * Each range is paired with the file it lives in; inter-file ASTs merge files that
+   * each keep their own 0-based offsets, so a range from one file can byte-fall inside
+   * a function in another. The containment check requires the range's file to match
+   * the enclosing function's file (no-op for single-file scans). *)
+  let range_to_funcs : (Range.t * Fpath.t, (fn_id * int) list) Hashtbl.t = Hashtbl.create 10 in
+  List.iter (fun rf -> Hashtbl.add range_to_funcs rf []) ranges;
 
   let visitor = object (self)
     inherit [_] G.iter_no_id_info as super
@@ -1682,10 +1686,12 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
               let class_start = range.start in
               let class_end = range.end_ in
               let class_size = class_end - class_start in
+              let class_file = loc_start.Tok.pos.file in
 
               (* For each range, check if it's inside this class *)
-              List.iter (fun (range : Range.t) ->
-                if class_start <= range.Range.start && range.Range.end_ <= class_end then (
+              List.iter (fun ((range : Range.t), rfile) ->
+                if Fpath.equal rfile class_file
+                   && class_start <= range.Range.start && range.Range.end_ <= class_end then (
                   (* This class contains this range - add it to the list *)
                   match !current_class with
                   | Some class_g_name ->
@@ -1696,9 +1702,9 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
                         Some IL.{ ident = ("Class:" ^ class_str, fake_tok); sid = G.SId.unsafe_default; id_info = AST_generic.empty_id_info () }
                       in
                       let class_fn_id = [None; class_node_name] in
-                      let existing = Hashtbl.find range_to_funcs range in
+                      let existing = Hashtbl.find range_to_funcs (range, rfile) in
                       if not (List.exists (fun (fid, _) -> equal_fn_id fid class_fn_id) existing) then
-                        Hashtbl.replace range_to_funcs range ((class_fn_id, class_size) :: existing)
+                        Hashtbl.replace range_to_funcs (range, rfile) ((class_fn_id, class_size) :: existing)
                   | None -> ()
                 )
               ) ranges;
@@ -1725,11 +1731,13 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
               let func_start = range.start in
               let func_end = range.end_ in
               let func_size = func_end - func_start in
+              let func_file = loc_start.Tok.pos.file in
 
               (* For each range, check if it's inside this function *)
               if not is_nested_lambda then
-                List.iter (fun (range : Range.t) ->
-                  if func_start <= range.Range.start && range.Range.end_ <= func_end then (
+                List.iter (fun ((range : Range.t), rfile) ->
+                  if Fpath.equal rfile func_file
+                     && func_start <= range.Range.start && range.Range.end_ <= func_end then (
                     (* This function contains this range - add it to the list *)
                     (* Use proper parent_path tracking for nested functions *)
                     let class_il = Option.bind !current_class self#g_name_to_il_name in
@@ -1740,9 +1748,9 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
                     in
                     match fn_id_of_entity ~lang (Some ent) visitor_parent_path fdef with
                     | Some fn_id ->
-                        let existing = Hashtbl.find range_to_funcs range in
+                        let existing = Hashtbl.find range_to_funcs (range, rfile) in
                         if not (List.exists (fun (fid, _) -> equal_fn_id fid fn_id) existing) then
-                          Hashtbl.replace range_to_funcs range ((fn_id, func_size) :: existing)
+                          Hashtbl.replace range_to_funcs (range, rfile) ((fn_id, func_size) :: existing)
                     | None -> ()
                   )
                 ) ranges;
@@ -1766,8 +1774,8 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
   visitor#visit_program () ast;
 
   (* Now select the innermost (smallest) function for each range *)
-  List.fold_left (fun matching_funcs range ->
-    let funcs_list = Hashtbl.find range_to_funcs range in
+  List.fold_left (fun matching_funcs (range, rfile) ->
+    let funcs_list = Hashtbl.find range_to_funcs (range, rfile) in
     if List.is_empty funcs_list then
       (* No function contains this range - it's at top level *)
       let top_level_name =
