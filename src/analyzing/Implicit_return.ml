@@ -81,7 +81,18 @@ let lang_supports_implicit_return (lang : Lang.t) =
   | Ruby
   | Rust
   | Scala
-  | Julia ->
+  | Julia
+  (* Other languages whose function bodies return their final expression
+   * implicitly: Cairo/Move (Rust-derived), Lisp/Scheme (last form of the
+   * body), and R (value of the last evaluated expression). Marking the
+   * trailing expression as a return lets the taint engine capture
+   * passthrough/return signatures for cross-function flow. *)
+  | Cairo
+  | Move_on_aptos
+  | Move_on_sui
+  | Lisp
+  | Scheme
+  | R ->
       true
   | _else_ -> false
 
