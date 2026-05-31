@@ -367,10 +367,24 @@ let overlap_with ~match_range r =
 
 let any_is_in_matches_OSS rule matches ~get_id any =
   let ( let* ) = option_bind_list in
-  let* r = range_of_any any in
+  (* Inter-file taint runs over a merged whole-component AST in which each file
+   * keeps its own 0-based byte offsets, so ranges from different files overlap.
+   * A spec (source/sink/sanitizer) only applies to a node in the SAME file as
+   * the matched spec; cross-file flow is carried by the dataflow, not by spec
+   * range matching. For single-file scans the files are equal (no-op). *)
+  let* r, any_file =
+    match AST_generic_helpers.range_of_any_opt any with
+    | None -> None
+    | Some (tok1, tok2) ->
+        Some (Range.range_of_token_locations tok1 tok2, tok1.Tok.pos.file)
+  in
   matches
   |> List_.filter_map (fun (rwm, spec) ->
-         if Range.( $<=$ ) r rwm.RM.r then
+         let rwm_file =
+           let start_loc, _ = rwm.RM.origin.Core_match.range_loc in
+           start_loc.Tok.pos.file
+         in
+         if Fpath.equal any_file rwm_file && Range.( $<=$ ) r rwm.RM.r then
            Some
              (let spec_pm = RM.range_to_pattern_match_adjusted rule rwm in
               let overlap = overlap_with ~match_range:rwm.RM.r r in
