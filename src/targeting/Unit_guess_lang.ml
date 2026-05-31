@@ -26,6 +26,7 @@ let name_tests : (string * Lang.t * Fpath.t * success) list =
     ("jsx", Js, "foo.jsx", OK);
     ("typescript", Ts, "foo.ts", OK);
     ("typescript .d.ts", Ts, "foo.d.ts", XFAIL);
+    ("crystal", Crystal, "foo.cr", OK);
     ("spaces", Ruby, " a b  c.rb", OK);
   ]
   |> List_.map (fun (name, (lang : Lang.t), path, expect) ->
@@ -63,6 +64,7 @@ let contents_tests : (string * Lang.t * string * string * exec * success) list =
       Nonexec,
       OK );
     ("php", Php, "foo.php", "", Nonexec, OK);
+    ("crystal exec", Crystal, "hello_cr", "#!/usr/bin/env crystal\n", Exec, OK);
   ]
 
 let mkdir path = if not (Sys.file_exists path) then Unix.mkdir path 0o777

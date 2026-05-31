@@ -986,14 +986,14 @@ and m_expr ?(is_root = false) ?(arguments_have_changed = true) a b =
   | G.N (G.Id _ as na), B.N (B.Id _ as nb) ->
       m_name na nb
       >||> m_with_symbolic_propagation ~is_root (fun b1 -> m_expr a b1) b
-  (* Ruby equivalence: bare identifier `foo` matches zero-arg call `foo()`.
+  (* Ruby/Crystal equivalence: bare identifier `foo` matches zero-arg call `foo()`.
      After disambiguation, target bare identifiers become Call(N(Id(x)), [])
      but patterns keep the bare N(Id(x)) form. Exclude metavars so they
      fall through to the general metavar case below. *)
   | G.N (G.Id ((str, _), _) as na), B.Call ({ e = B.N (B.Id _ as nb); _ }, (_, [], _))
     when not (Mvar.is_metavar_name str) ->
       with_lang (fun lang ->
-          if lang =*= Lang.Ruby then m_name na nb
+          if lang =*= Lang.Ruby || lang =*= Lang.Crystal then m_name na nb
           else fail ())
   (* Elixir/Ruby equivalence: identifier-pattern `body` matches atom literal
      `:body` (or keyword form `body:` which lowers to the same atom). The

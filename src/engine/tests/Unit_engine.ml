@@ -48,6 +48,7 @@ let full_lang_info =
     (Lang.Cairo, "cairo", ".cairo");
     (Lang.Clojure, "clojure", ".clj");
     (Lang.Cpp, "cpp", ".cpp");
+    (Lang.Crystal, "crystal", ".cr");
     (Lang.Csharp, "csharp", ".cs");
     (Lang.Dart, "dart", ".dart");
     (Lang.Dockerfile, "dockerfile", ".dockerfile");
@@ -306,6 +307,7 @@ let maturity_tests () =
       make_maturity_tests Lang.Bash "bash" ".bash" Experimental;
       make_maturity_tests Lang.C "c" ".c" Experimental;
       make_maturity_tests Lang.Cpp "cpp" ".cpp" Experimental;
+      make_maturity_tests Lang.Crystal "crystal" ".cr" Experimental;
       (* TODO
          make_maturity_tests Lang.Dockerfile "dockerfile" ".dockerfile" Experimental;
       *)

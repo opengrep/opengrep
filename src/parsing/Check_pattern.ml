@@ -38,6 +38,7 @@ let lang_has_no_dollar_ids =
     | Dockerfile
     | Hack
     | Js
+    | Crystal
     | Lisp
     | Move_on_sui
     | Php
