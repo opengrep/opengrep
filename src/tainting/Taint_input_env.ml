@@ -70,8 +70,17 @@ let add_to_env_aux (taint_inst : Taint_rule_inst.t) env id ii opt_expr =
     Dataflow_tainting.drop_taints_if_bool_or_number taint_inst.options taints
       var_type
   in
+  let lval = IL_helpers.lval_of_var var in
   let env =
-    env |> Taint_lval_env.add_lval (IL_helpers.lval_of_var var) taints
+    if T.Taint_set.is_empty taints then
+      (* A clean module-level global. Record it as an explicit Clean cell so
+       * cross-file resolution can see it as a candidate — this disambiguates
+       * same-named exports across packages (e.g. two [data] exports, one
+       * tainted, one clean): without the clean candidate, a name-only lookup
+       * would uniquely match the only recorded (tainted) one and over-taint
+       * the clean import. *)
+      Taint_lval_env.add_lval_clean_cell lval env
+    else env |> Taint_lval_env.add_lval lval taints
   in
   (env, expr_effects)
 

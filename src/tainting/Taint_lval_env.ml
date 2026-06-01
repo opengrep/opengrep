@@ -257,6 +257,30 @@ let add_lval_shape lval new_taints new_shape lval_env =
       lval_env
   | Some (var, offset) -> add_shape var offset new_taints new_shape lval_env
 
+(* Record [lval] as explicitly Clean (a [Cell (`Clean, Bot)]), creating the
+ * entry even when no taint is present. Unlike [add_lval]/[add_lval_shape] —
+ * which skip irrelevant (taint-free, shape-free) cells — this guarantees the
+ * variable appears in the [tainted] map. Used to register clean module-level
+ * exported globals so cross-file resolution can see them as candidates (e.g.
+ * two packages exporting the same name, one clean) instead of uniquely
+ * matching the only recorded (tainted) one. *)
+let add_lval_clean_cell lval lval_env =
+  match normalize_lval lval with
+  | None -> lval_env
+  | Some (var, offset) -> (
+      match check_tainted_lvals_limit lval_env.tainted var with
+      | None -> lval_env
+      | Some tainted ->
+          {
+            lval_env with
+            tainted =
+              NameMap.update var
+                (fun opt_var_ref ->
+                  let cell = opt_var_ref ||| Cell (`None, Bot) in
+                  Some (Shape.clean_cell offset cell))
+                tainted;
+          })
+
 let add var offset new_taints lval_env =
   add_shape var offset new_taints Bot lval_env
 

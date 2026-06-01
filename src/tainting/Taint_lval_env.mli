@@ -62,6 +62,11 @@ val add : IL.name -> Taint.offset list -> Taint.taints -> env -> env
 val add_lval : add_fn
 (** Assign a set of taints (but no specific shape) to an l-value. *)
 
+val add_lval_clean_cell : IL.lval -> env -> env
+(** Record [lval] as explicitly Clean, creating the entry even with no taint.
+    Used to register clean exported globals so cross-file resolution sees them
+    as candidates (disambiguating same-named exports across packages). *)
+
 (* THINK: Perhaps keep propagators outside of this environment? *)
 val propagate_to : Dataflow_var_env.var -> Taint.taints -> env -> env
 
