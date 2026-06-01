@@ -3266,6 +3266,70 @@ let parse ?dialect file =
       | Program p -> p
       | _ -> failwith "not a program")
 
+(* Vue Single-File Components embed their script in a [<script> ... </script>]
+ * block; the rest (template/style) is irrelevant to taint. The dedicated Vue
+ * tree-sitter grammar was removed from the engine upstream, so we recover a
+ * minimal, position-preserving Vue parser here: blank every character outside
+ * the [<script>] block (keeping newlines and byte count identical, so token
+ * line/col/offset are unchanged) and parse the result as TSX, labelled with
+ * the original [.vue] file path. *)
+(* Index of the first occurrence of [needle] in [hay] at or after [from]. *)
+let find_substring_from (hay : string) (needle : string) (from : int) :
+    int option =
+  let hlen = String.length hay and nlen = String.length needle in
+  if Int.equal nlen 0 then Some from
+  else
+    let last = hlen - nlen in
+    let rec loop i =
+      if i > last then None
+      else if String.equal (String.sub hay i nlen) needle then Some i
+      else loop (i + 1)
+    in
+    loop (max 0 from)
+
+let blank_non_script (contents : string) : string =
+  (* Find the content range between the first [<script ...>] and [</script>]. *)
+  let lower = String.lowercase_ascii contents in
+  let bytes = Bytes.make (String.length contents) ' ' in
+  (* Preserve newlines everywhere so line numbers are exact. *)
+  String.iteri
+    (fun i c -> if Char.equal c '\n' then Bytes.set bytes i '\n')
+    contents;
+  let copy_region start stop =
+    for i = start to stop - 1 do
+      Bytes.set bytes i contents.[i]
+    done
+  in
+  let rec scan from =
+    match find_substring_from lower "<script" from with
+    | None -> ()
+    | Some open_tag -> (
+        (* Skip to the end of the opening tag '>'. *)
+        match String.index_from_opt contents open_tag '>' with
+        | None -> ()
+        | Some gt -> (
+            let body_start = gt + 1 in
+            match find_substring_from lower "</script" body_start with
+            | None -> copy_region body_start (String.length contents)
+            | Some close_tag ->
+                copy_region body_start close_tag;
+                scan close_tag))
+  in
+  scan 0;
+  Bytes.to_string bytes
+
+let parse_vue file =
+  H.wrap_parser
+    (fun () ->
+      let contents = UFile.read_file file in
+      let script = blank_non_script contents in
+      (Tree_sitter_tsx.Parse.string ~src_file:!!file script :> cst_result))
+    (fun cst _extras ->
+      let env = { H.file; conv = H.line_col_to_pos file; extra = () } in
+      match program env cst with
+      | Program p -> p
+      | _ -> failwith "not a program")
+
 let parse_pattern str =
   H.wrap_parser
     (* TODO Should we use Tree_sitter_tsx so that we permit TSX constructs in

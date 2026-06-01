@@ -20,5 +20,12 @@ val parse :
   Fpath.t ->
   (Ast_js.a_program, unit) Tree_sitter_run.Parsing_result.t
 
+(* Parse a Vue Single-File Component by extracting its [<script>] block and
+   parsing it as TSX (positions preserved, labelled with the .vue path). The
+   dedicated Vue grammar was removed upstream; this recovers script-level
+   analysis (sufficient for taint). *)
+val parse_vue :
+  Fpath.t -> (Ast_js.a_program, unit) Tree_sitter_run.Parsing_result.t
+
 val parse_pattern :
   string -> (Ast_js.any, unit) Tree_sitter_run.Parsing_result.t

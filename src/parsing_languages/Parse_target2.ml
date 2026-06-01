@@ -162,7 +162,13 @@ let just_parse_with_lang lang file : Parsing_result2.t =
       run file
         [ TreeSitter (Parse_typescript_tree_sitter.parse ?dialect:None) ]
         Js_to_generic.program
-  | Lang.Vue -> failwith "Vue support has been removed in 1.93.0"
+  | Lang.Vue ->
+      (* The dedicated Vue grammar was removed upstream; recover script-level
+       * analysis by extracting the [<script>] block and parsing it as JS/TSX
+       * (positions preserved, labelled with the .vue path). *)
+      run file
+        [ TreeSitter Parse_typescript_tree_sitter.parse_vue ]
+        Js_to_generic.program
   (* there is no pfff parsers for C#/Kotlin/... so let's just use
    * tree-sitter, and there's no ast_xxx.ml either so we directly generate
    * a generic AST (no calls to an xxx_to_generic() below)
