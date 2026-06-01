@@ -129,6 +129,21 @@ let rec map_qualified_name (env : env) (x : CST.qualified_name) :
     name_info = G.empty_id_info ();
   }
 
+(* Build the [G.name] for a qualified-name expression. An UNqualified name
+ * (empty path, no type arguments) is emitted as a plain [G.Id] rather than
+ * [G.IdQualified], so the generic name resolver links it to a local
+ * binding/parameter (it resolves plain [Id]s to LocalVar but leaves
+ * [IdQualified] unresolved). Without this, a passthrough body like
+ * [fn f(value) -> T { value }] never connects the returned [value] to the
+ * parameter, and signature extraction yields an empty signature. *)
+and qualified_name_to_g_name (env : env) (x : CST.qualified_name) : G.name =
+  let qinfo = map_qualified_name env x in
+  match qinfo with
+  | { name_last = id, None; name_middle = Some (G.QDots []); name_top = None; _ }
+    ->
+      G.Id (id, G.empty_id_info ())
+  | _ -> G.IdQualified qinfo
+
 and map_type_arguments (env : env) (x : CST.type_argument_list) :
     G.type_arguments =
   let map_type_argument (x : CST.literal_expression) : G.type_argument =
@@ -238,7 +253,7 @@ and map_expression (env : env) (x : CST.expression) =
   | `Match_exp x -> map_match_expression env x
   | `Sele_exp x -> map_selector_expression env x
   | `Call_exp x -> map_call_expression env x
-  | `Qual_name x -> G.N (G.IdQualified (map_qualified_name env x)) |> G.e
+  | `Qual_name x -> G.N (qualified_name_to_g_name env x) |> G.e
   | `Choice_true x -> G.L (map_literal env x) |> G.e
   | `Ellips x -> G.Ellipsis (token env x) |> G.e
   | `Deep_ellips x -> map_deep_ellipsis env x |> G.e
@@ -253,7 +268,7 @@ and map_simple_expression (env : env) (x : CST.simple_expression) : G.expr =
   | `Match_exp x -> map_match_expression env x
   | `Sele_exp x -> map_selector_expression env x
   | `Call_exp x -> map_call_expression env x
-  | `Qual_name x -> G.N (G.IdQualified (map_qualified_name env x)) |> G.e
+  | `Qual_name x -> G.N (qualified_name_to_g_name env x) |> G.e
   | `Choice_true x -> G.L (map_literal env x) |> G.e
   | `Ellips x -> G.Ellipsis (token env x) |> G.e
   | `Deep_ellips x -> map_deep_ellipsis env x |> G.e
@@ -648,7 +663,25 @@ and map_function_declaration (env : env) (x : CST.function_declaration) :
     map_function_signature env signature
   in
 
-  let body = map_block env body in
+  (* Cairo (Rust-style) returns a block's final expression implicitly. Lower
+   * the trailing expression as an explicit [Return] so the taint engine sees
+   * a proper return value: a bare trailing variable read produces no
+   * instruction node for the CFG-based implicit-return marker to flag, so a
+   * passthrough [fn f(v) -> T { v }] would otherwise yield an empty
+   * signature. Non-trailing statements are kept verbatim. *)
+  let _lb, prevs, last, rb = body in
+  let rb = token env rb in
+  let statements = List_.map (map_statement env) prevs in
+  let body_stmts =
+    match last with
+    | Some expr ->
+        let e = map_expression env expr in
+        statements @ [ G.Return (tok, Some e, G.sc) |> G.s ]
+    | None -> statements
+  in
+  let body_block =
+    G.Block (Tok.unsafe_fake_tok "{", body_stmts, rb) |> G.s
+  in
 
   ( entity,
     G.FuncDef
@@ -656,7 +689,7 @@ and map_function_declaration (env : env) (x : CST.function_declaration) :
         fkind = (G.Function, tok);
         fparams = params;
         frettype = return_type;
-        fbody = G.FBStmt (G.exprstmt body);
+        fbody = G.FBStmt body_block;
       } )
 
 and map_import_declaration (env : env) (x : CST.import_declaration) :
