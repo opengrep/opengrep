@@ -283,6 +283,31 @@ let mk_file_env taint_inst ast =
          _;
         } ->
             env := add_to_env !env id id_info (Some expr)
+        (* Whole-module CommonJS export: [module.exports = <function>]. Register
+         * the function value under the synthetic [default_export_name], keyed to
+         * this file via the [exports] token, so a whole-module import
+         * [const x = require("./m")] resolves [x] to it. *)
+        | {
+         e =
+           DotAccess
+             ( { e = N (Id (("module", _), _)); _ },
+               _,
+               FN (Id (("exports", exports_tok), _)) );
+         _;
+        }
+          when (match expr.G.e with G.Lambda _ -> true | _ -> false) ->
+            let default_name : IL.name =
+              IL.
+                {
+                  ident = (Dataflow_tainting.default_export_name, exports_tok);
+                  sid = G.SId.unsafe_default;
+                  id_info = G.empty_id_info ();
+                }
+            in
+            env :=
+              (let e0, eff0 = !env in
+               ( add_function_value_shape taint_inst default_name (Some expr) e0,
+                 eff0 ))
         | {
          e =
            ( N (Id (id, id_info))

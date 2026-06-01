@@ -59,6 +59,12 @@ val drop_taints_if_bool_or_number :
 (* Cross-file (interfile) imported-value resolution helpers. *)
 val import_path_parts_of_module_name : AST_generic.module_name -> string list
 
+(* Synthetic export name under which a module's default/whole-module value is
+ * registered (e.g. CommonJS [module.exports = ...]). Producers in
+ * [Taint_input_env] register the cell under this name; whole-module imports
+ * resolve to it. *)
+val default_export_name : string
+
 val find_exported_global_cell :
   Taint_lval_env.t ->
   module_path_parts:string list ->

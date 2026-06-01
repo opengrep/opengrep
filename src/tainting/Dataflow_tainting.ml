@@ -1359,6 +1359,20 @@ let find_unique_cross_file_exported_cell lval_env (ref_name : IL.name) =
   | [ (_, cell) ] -> Some cell
   | _ -> None
 
+(* Synthetic export name under which a module's default/whole-module value is
+ * registered, e.g. CommonJS [module.exports = function () { ... }]. A
+ * whole-module import [const x = require("./m")] resolves [x] to the cell
+ * stored under this name in module "m"'s file. Kept in sync with the producer
+ * in [Taint_input_env.mk_file_env]. *)
+let default_export_name = "module.exports"
+
+(* Resolve a whole-module import (e.g. [const x = require("./m")], which naming
+ * tags as [ImportedModule ["./m"]]) to the module's default export value. *)
+let imported_module_default_cell lval_env (canonical : G.canonical_name) =
+  let module_path_parts = import_path_parts_of_canonical canonical in
+  find_exported_global_cell lval_env ~module_path_parts
+    ~export_name:default_export_name
+
 let imported_entity_global_cell lval_env (name : IL.name) =
   match !(name.id_info.G.id_resolved) with
   | Some (G.ImportedEntity canonical, _)
@@ -1371,6 +1385,10 @@ let imported_entity_global_cell lval_env (name : IL.name) =
           | Some _ as cell -> cell
           | None -> find_unique_cross_file_exported_cell lval_env name)
       | None -> find_unique_cross_file_exported_cell lval_env name)
+  | Some (G.ImportedModule canonical, _) ->
+      (* Whole-module binding, e.g. [const x = require("./m")]. Resolve to the
+       * module's default export ([module.exports = ...]). *)
+      imported_module_default_cell lval_env canonical
   | Some (G.Global, _) -> find_unique_cross_file_exported_cell lval_env name
   | _ -> None
 
