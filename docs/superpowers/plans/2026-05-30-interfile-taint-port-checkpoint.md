@@ -14,38 +14,43 @@ ES (`export const f = function`), whole-module (`module.exports = fn`) —
 `side_effect_sanitizer` via a new `Effect.ToSanitize` variant carrying
 cross-function by-side-effect sanitization through signatures.
 
-Also fixed scheme `(define ...)` and cairo (name resolution + implicit
-return), and improved bash (implicit return + user-function command
-resolution) — language_matrix is now 26/28, blocked only by vue (parser
-removed upstream) and bash positional-param modeling.)
+Also fixed scheme `(define ...)`, cairo (name resolution + implicit return),
+and bash (implicit return + command resolution + positional params + call
+arg-shift) — language_matrix is now 27/28, blocked ONLY by vue, whose parser
+was removed from the engine upstream (1.93.0) and which therefore cannot be
+parsed for tainting at all.)
 
-## The 1 remaining failure
+## The 1 remaining failure — and why it is impossible in this engine
 
-`language_matrix` (26/28 languages now pass; scheme and cairo were fixed — see
-below). The 2 still-missing are the deepest, both below the interfile engine:
+`language_matrix` (**27/28 languages pass**). The lone missing language is
+**vue**, and it is **not fixable in this engine**:
 
-- **vue**: the Vue parser was **removed from the engine in 1.93.0**
-  (`Failure: Vue support has been removed`). Tests a feature that no longer
-  exists; **genuinely unfixable** without re-adding a deleted language parser —
-  out of scope for an interfile-taint port. This alone makes 28/28 (and thus
-  88/88) unreachable in this engine.
-- **bash**: partially fixed this session — bash now has implicit-return (a
-  function returns its last command's output) and user-function command
-  resolution (`!sh_cmd! "fn"` → call to `fn`), so a no-parameter wrapper like
-  `get_input() { source_cmd; }` propagates taint cross-call. The fixture's
-  remaining step, `pass_through() { echo "$1"; }`, needs **positional-parameter
-  modeling**: bash functions declare no formal params and refer to arguments via
-  `$1`/`$2` (parsed as `Call(!sh_expand!, [Id "1"])`). Carrying an
-  arg-passthrough signature requires synthesizing formal params, making
-  `!sh_expand!` taint-transparent, and linking `$N` to param N — a substantial
-  bash-frontend feature, not an interfile-orchestration gap.
+```
+src/parsing_languages/Parse_target2.ml:165:
+  | Lang.Vue -> failwith "Vue support has been removed in 1.93.0"
+```
 
-### Fixed this session (previously listed here)
+The Vue tree-sitter frontend was **deleted from the engine upstream in 1.93.0**.
+Any `.vue` file raises `Failure: Vue support has been removed` at parse time —
+before taint analysis can run at all. The `language_matrix` fixture asserts
+`set(results) == set(all 28 languages)` (all-or-nothing), so this single deleted
+language caps the fixture at 27/28 and the suite at 87/88. Restoring Vue means
+re-adding a removed language parser — a separate effort, categorically outside
+porting interfile taint.
+
+Every other taint-capable language the engine can parse now flows cross-file.
+
+### All other language_matrix gaps fixed this session
 - **scheme**: added `map_define_form` so `(define (f x) body)` lowers to a
   `FuncDef` (was a raw `Call(define, …)`).
 - **cairo**: emit unqualified names as `G.Id` (not `IdQualified`) so the name
   resolver links param uses to param decls; lower the trailing block expression
   as an explicit `Return`.
+- **bash**: implicit-return (function returns its last command's output) +
+  user-function command resolution (`!sh_cmd! "fn"` → call to `fn`) +
+  positional-parameter synthesis (`$1..$N` → formal params, seeded as `Arg`) +
+  call-site arg-shift (drop the command-name actual so `$1` binds the first real
+  argument). Bash arg-passthrough wrappers now propagate taint cross-call.
 
 
 All progress is regression-free against intra-file taint, search, and the
