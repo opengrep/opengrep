@@ -930,6 +930,33 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = [])
           m "CALL_EXTRACT: Unmatched call pattern: %s" (G.show_expr callee));
       None
 
+(* Bash represents a bare command [foo arg...] as
+ * [Call (Id "!sh_cmd!", [String "foo"; arg...])], and command substitution
+ * [$(foo)] wraps that in [Call (Id "!sh_cmd_subst!", [<the !sh_cmd! call>])].
+ * A user-defined function call is therefore indistinguishable from an external
+ * command at parse time. For the call graph, if the command name matches a
+ * defined function, rewrite the callee to a plain [Id name] (carrying the
+ * string-literal's token) so the normal resolution path connects it. Returns
+ * [None] for non-bash, non-command, or unknown-command callees. *)
+let bash_command_callee ~(lang : Lang.t) (all_funcs : func_info list)
+    (callee : G.expr) (args : G.argument list) : G.expr option =
+  if not Lang.(lang =*= Bash) then None
+  else
+    let is_defined_function name =
+      List.exists
+        (fun f ->
+          match get_fn_name f.fn_id with
+          | Some fn_name -> String.equal (fst fn_name.IL.ident) name
+          | None -> false)
+        all_funcs
+    in
+    match (callee.G.e, args) with
+    | ( G.N (G.Id (("!sh_cmd!", _), _)),
+        G.Arg { e = G.L (G.String (_, (name, name_tok), _)); _ } :: _ )
+      when is_defined_function name ->
+        Some (G.N (G.Id ((name, name_tok), G.empty_id_info ())) |> G.e)
+    | _ -> None
+
 (* Extract all calls from a function body and resolve them to fn_ids *)
 let extract_calls ~(lang : Lang.t) ?(object_mappings = [])
     ?(module_imports = []) ?(class_hierarchy = []) ?(all_funcs = [])
@@ -968,6 +995,13 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = [])
         | G.Call (callee, args) ->
             let (_, args_list, _) = args in
             let call_arity = List.length args_list in
+            (* Bash: rewrite a [!sh_cmd! "fn"] command whose name is a defined
+             * function to a plain call to that function. *)
+            let callee =
+              match bash_command_callee ~lang all_funcs callee args_list with
+              | Some c -> c
+              | None -> callee
+            in
             (match identify_callee ~lang ~object_mappings ~module_imports ~class_hierarchy
                   ~all_funcs ~caller_parent_path ~call_arity callee with
             | Some fn_id ->
@@ -1084,6 +1118,12 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = [])
                   let loc = Tok.unsafe_loc_of_tok tok in
                   Some (loc.Tok.pos.bytepos, loc.Tok.pos.file)
               | _ -> None
+            in
+            let (_, args_list, _) = args in
+            let callee =
+              match bash_command_callee ~lang all_funcs callee args_list with
+              | Some c -> c
+              | None -> callee
             in
             (match call_pos_file with
              | Some (call_pos, file) when not (is_inside_function file call_pos) -> (

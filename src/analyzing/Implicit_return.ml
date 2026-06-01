@@ -92,7 +92,11 @@ let lang_supports_implicit_return (lang : Lang.t) =
   | Move_on_sui
   | Lisp
   | Scheme
-  | R ->
+  | R
+  (* Bash: a function "returns" the output of its last command, captured by
+   * command substitution [$(f)]. Treating the last command as the implicit
+   * return lets taint flow through a wrapper like [get_input() { source; }]. *)
+  | Bash ->
       true
   | _else_ -> false
 
