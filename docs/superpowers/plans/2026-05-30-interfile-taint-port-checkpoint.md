@@ -12,22 +12,40 @@ glob_env threading, CommonJS/ES exports — named (`module.exports.f =`),
 ES (`export const f = function`), whole-module (`module.exports = fn`) —
 `package_qualified` via recording clean exported globals as Clean cells, and
 `side_effect_sanitizer` via a new `Effect.ToSanitize` variant carrying
-cross-function by-side-effect sanitization through signatures.)
+cross-function by-side-effect sanitization through signatures.
+
+Also fixed scheme `(define ...)` and cairo (name resolution + implicit
+return), and improved bash (implicit return + user-function command
+resolution) — language_matrix is now 26/28, blocked only by vue (parser
+removed upstream) and bash positional-param modeling.)
 
 ## The 1 remaining failure
 
-`language_matrix` (25/28 languages). The 3 missing are all *below* the taint
-engine — not interfile-orchestration defects:
+`language_matrix` (26/28 languages now pass; scheme and cairo were fixed — see
+below). The 2 still-missing are the deepest, both below the interfile engine:
+
 - **vue**: the Vue parser was **removed from the engine in 1.93.0**
   (`Failure: Vue support has been removed`). Tests a feature that no longer
-  exists; unfixable without re-adding Vue parsing.
-- **scheme**: `(define (f x) body)` lowers to a raw `Call(define, …)`, not a
-  `FuncDef` — scheme tree-sitter→generic parser gap (lisp's `defn` lowers
-  correctly, so lisp passes).
-- **cairo**: lowers to `FuncDef`, body trailing value is rewritten to `Return`,
-  but cairo **naming does not link the param use to the param decl** (different
-  sids) so the returned `value` carries no arg-taint — cairo naming gap.
-- (bash: `$(...)` command-substitution — a different dataflow model.)
+  exists; **genuinely unfixable** without re-adding a deleted language parser —
+  out of scope for an interfile-taint port. This alone makes 28/28 (and thus
+  88/88) unreachable in this engine.
+- **bash**: partially fixed this session — bash now has implicit-return (a
+  function returns its last command's output) and user-function command
+  resolution (`!sh_cmd! "fn"` → call to `fn`), so a no-parameter wrapper like
+  `get_input() { source_cmd; }` propagates taint cross-call. The fixture's
+  remaining step, `pass_through() { echo "$1"; }`, needs **positional-parameter
+  modeling**: bash functions declare no formal params and refer to arguments via
+  `$1`/`$2` (parsed as `Call(!sh_expand!, [Id "1"])`). Carrying an
+  arg-passthrough signature requires synthesizing formal params, making
+  `!sh_expand!` taint-transparent, and linking `$N` to param N — a substantial
+  bash-frontend feature, not an interfile-orchestration gap.
+
+### Fixed this session (previously listed here)
+- **scheme**: added `map_define_form` so `(define (f x) body)` lowers to a
+  `FuncDef` (was a raw `Call(define, …)`).
+- **cairo**: emit unqualified names as `G.Id` (not `IdQualified`) so the name
+  resolver links param uses to param decls; lower the trailing block expression
+  as an explicit `Return`.
 
 
 All progress is regression-free against intra-file taint, search, and the
