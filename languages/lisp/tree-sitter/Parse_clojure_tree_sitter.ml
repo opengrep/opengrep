@@ -597,6 +597,7 @@ and map_list_form
   match discriminant with
     (* TODO: Check if in Quoted state! In that case just symbols list. *)
     | Some ("def" | "defonce") -> map_def_form env forms
+    | Some "define" -> map_define_form env forms
     | Some "fn" -> map_fn_form env forms
     | Some ("defn" | "defn-") -> map_defn_form env forms
     | Some "let" -> map_let_form env forms
@@ -1369,6 +1370,60 @@ and map_fn_form
  *  
  * TODO: Add doc-string to attributes so it can be matched?
  *)
+(* Scheme/Racket [define]:
+ *   - [(define (name params) body]   -> function definition
+ *   - [(define (name . rest) body]   -> variadic function definition
+ *   - [(define name value)]          -> variable definition (like Clojure def)
+ *
+ * Clojure does not have this form; it uses [defn]/[def]. But Scheme and Lisp
+ * share this tree-sitter grammar, and a function-[define] must lower to a
+ * [FuncDef] so the taint engine can extract its signature for cross-function
+ * (interfile) flow. *)
+and map_define_form (env : env) (forms : CST.form list) =
+  match forms with
+  (* Function form: first arg is a list whose head is the name. *)
+  | `Sym_lit (_meta, ((_loc, "define") as define_tk))
+    :: `List_lit (_lmeta, (_lp, sig_srcs, _rp)) :: body_forms -> (
+      let define_tok = token env define_tk in
+      match forms_in_source env sig_srcs with
+      | `Sym_lit name_sym :: param_forms ->
+          let name_of_define = map_name env name_sym in
+          (* Each remaining symbol in the signature list is a parameter. A
+           * trailing [. rest] variadic marker is represented by the grammar as
+           * additional symbols; we model each as a plain positional param,
+           * which is sufficient for taint (over-approximate, never wrong). *)
+          let params =
+            param_forms
+            |> List_.filter_map (function
+                 | `Sym_lit (_, ((_, pname) as ptok))
+                   when not (String.equal pname ".") ->
+                     Some
+                       (G.Param (G.param_of_id (pname, token env ptok)))
+                 | _ -> None)
+          in
+          let body_exprs = List_.map (map_form env) body_forms in
+          let body_stmt = G.exprstmt (exprblock body_exprs) in
+          let entity =
+            { G.name = EN name_of_define; G.attrs = []; G.tparams = None }
+          in
+          let def =
+            G.FuncDef
+              {
+                G.fparams = Tok.unsafe_fake_bracket params;
+                frettype = None;
+                fkind = (G.Function, define_tok);
+                fbody = G.FBStmt body_stmt;
+              }
+          in
+          G.StmtExpr (G.DefStmt (entity, def) |> G.s) |> G.e
+      | _ -> raise_parse_error "Invalid define form.")
+  (* Variable form: (define name value) — same shape as Clojure [def]. *)
+  | `Sym_lit (_meta, (loc, "define")) :: (`Sym_lit _ :: _ as rest) ->
+      (* Reuse the [def] machinery by swapping the keyword token's string. *)
+      map_def_form env
+        (`Sym_lit (_meta, (loc, "def")) :: rest)
+  | _ -> raise_parse_error "Invalid define form."
+
 and map_defn_form (env : env) (forms : CST.form list) =
   match forms with
   | `Sym_lit (_meta, ((_loc, ("defn" | "defn-" as sym)) as defn_tk))
