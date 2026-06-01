@@ -3,15 +3,19 @@
 Branch: `port/taint-interfile-on-main` (off `main`, the rewritten taint engine).
 Goal: Semgrep-Pro-parity interfile taint for every taint-capable language.
 
-## Status: 85 / 88 e2e interfile fixtures passing (was 5 at session start)
+## Status: 86 / 88 e2e interfile fixtures passing (was 5 at session start)
 
-(+4 since the 81 checkpoint: file-aware spec matching + relevant-graph
+(+5 since the 81 checkpoint: file-aware spec matching + relevant-graph
 (`elixir`/`java`/`duplicate_names`/`python_module_*` now genuine, not
 byte-collision), implicit-return langs (`ocaml`/`lisp`/`move`), R cross-file via
-glob_env threading, and CommonJS exports — named (`module.exports.f =`),
-ES (`export const f = function`), and whole-module (`module.exports = fn`).)
+glob_env threading, CommonJS/ES exports — named (`module.exports.f =`),
+ES (`export const f = function`), whole-module (`module.exports = fn`) — and
+`package_qualified` via recording clean exported globals as Clean cells.)
 
-## The 3 remaining failures (precise, by layer)
+## The 2 remaining failures (precise, by layer)
+
+(`package_qualified` is now fixed — see status above.)
+
 
 1. **`language_matrix`** (25/28) — blocked by 3 sub-languages, each *below* the
    taint engine:
@@ -27,10 +31,7 @@ ES (`export const f = function`), and whole-module (`module.exports = fn`).)
      `value` carries no arg-taint and the passthrough signature is empty. Cairo
      naming/resolution gap.
    - (bash: `$(...)` command-substitution dataflow — different model.)
-2. **`package_qualified`** (over-taint) — same-named module globals across
-   packages conflate in the naming phase (resolution is file-qualified, but the
-   value is already cross-tainted upstream).
-3. **`side_effect_sanitizer`** — a wrapper `def clean(v): sanitize(v)` where
+2. **`side_effect_sanitizer`** — a wrapper `def clean(v): sanitize(v)` where
    `sanitize` is `by-side-effect: true`. The engine **does** apply side-effect
    sanitization *within* a function (verified: `clean_and_sink(source())` with
    internal `sanitize`+`sink` → 0 findings), but a function's signature has no
