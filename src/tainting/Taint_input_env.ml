@@ -116,10 +116,28 @@ let add_object_method_shapes taint_inst object_name opt_expr env =
       List.fold_left add_record_method env fields
   | _ -> env
 
+(* When a global is bound directly to a function value — e.g. CommonJS
+ * [module.exports = function () { ... }] / [module.exports.f = () => ...], or
+ * an ES [export const f = function () { ... }] — register the function's
+ * signature as a [Fun] shape on the variable itself. The function value is
+ * lowered to a synthetic [_tmp_lambda] in the call graph, so a cross-file
+ * caller that resolves the imported binding [f] cannot reach it through the
+ * call graph; the [Fun] shape on [f]'s cell lets [check_function_call] apply
+ * the signature directly. Mirrors [add_object_method_shapes] but for a bare
+ * function value rather than an object literal's methods. *)
+let add_function_value_shape taint_inst var opt_expr env =
+  match opt_expr with
+  | Some { G.e = G.Lambda fdef; _ } ->
+      let fun_sig = signature_of_object_method taint_inst var fdef in
+      let lval : IL.lval = { base = Var var; rev_offset = [] } in
+      Taint_lval_env.add_lval_shape lval T.Taint_set.empty (S.Fun fun_sig) env
+  | _ -> env
+
 let add_to_env taint_inst (env, effects) id id_info opt_expr =
   let var = AST_to_IL.var_of_id_info id id_info in
   let env, new_effects = add_to_env_aux taint_inst env id id_info opt_expr in
   let env = add_object_method_shapes taint_inst var opt_expr env in
+  let env = add_function_value_shape taint_inst var opt_expr env in
   (env, Effects.union new_effects effects)
 
 let mk_fun_input_env taint_inst ?(glob_env = Taint_lval_env.empty)
