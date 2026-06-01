@@ -734,7 +734,13 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
             in
             let top_effects, _mapping =
-              Dataflow_tainting.fixpoint taint_inst ~name:top_level_name
+              (* Seed the top-level analysis with [glob_env] so module-scope
+               * bindings — in particular function-valued globals registered as
+               * [Fun] shapes (CommonJS/ES exports, R/scheme top-level
+               * functions) — are visible to top-level call sites like
+               * [sink(pass_through(get_input()))]. *)
+              Dataflow_tainting.fixpoint taint_inst ~in_env:glob_env
+                ~name:top_level_name
                 ?signature_db:final_signature_db ?builtin_signature_db
                 ?call_graph:relevant_graph
                 IL.{ params = []; cfg; lambdas }

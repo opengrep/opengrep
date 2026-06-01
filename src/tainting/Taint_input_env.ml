@@ -295,6 +295,20 @@ let mk_file_env taint_inst ast =
           when IdFlags.is_final !(id_info.id_flags)
                && is_global id_info =*= Some true ->
             env := add_to_env !env id id_info (Some expr)
+        (* [name = function ...] / [name <- function ...]: a top-level
+         * function-valued binding. Dynamically-typed languages (R, scheme,
+         * etc.) often do not mark such names as final/global in naming, so the
+         * gate above rejects them; but a name bound to a function is a
+         * module-scope callable that cross-file callers must resolve. Register
+         * its [Fun] signature shape regardless of the flags. (Only the
+         * function-value shape is added, so a same-named local binding simply
+         * carries a correct signature too — no taint is introduced.) *)
+        | { e = N (Id (id, id_info)); _ }
+          when (match expr.G.e with G.Lambda _ -> true | _ -> false) ->
+            let var = AST_to_IL.var_of_id_info id id_info in
+            env :=
+              (let e0, eff0 = !env in
+               (add_function_value_shape taint_inst var (Some expr) e0, eff0))
         | __else__ -> super#visit_Assign env lhs tok expr
     end
   in
