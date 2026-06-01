@@ -1,0 +1,9 @@
+module DotsString where
+
+--ERROR:
+x = putStrLn "hello world"
+
+--ERROR:
+y = putStrLn ""
+
+z = print 42

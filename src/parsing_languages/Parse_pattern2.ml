@@ -154,6 +154,9 @@ let parse_pattern options lang str =
   | Lang.Hack ->
       let res = Parse_hack_tree_sitter.parse_pattern str in
       extract_pattern_from_tree_sitter_result res
+  | Lang.Haskell ->
+      let res = Parse_haskell_tree_sitter.parse_pattern str in
+      extract_pattern_from_tree_sitter_result res
   | Lang.Html
   | Lang.Xml ->
       let res = Parse_html_tree_sitter.parse_pattern str in
@@ -231,4 +234,7 @@ let dump_tree_sitter_pattern_cst (lang : Lang.t) (path : Fpath.t) : unit =
   | Lang.Kotlin ->
       Tree_sitter_kotlin.Parse.file file
       |> dump_and_print_errors Tree_sitter_kotlin.Boilerplate.dump_tree
+  | Lang.Haskell ->
+      Tree_sitter_haskell.Parse.file file
+      |> dump_and_print_errors Tree_sitter_haskell.Boilerplate.dump_tree
   | __else__ -> ()

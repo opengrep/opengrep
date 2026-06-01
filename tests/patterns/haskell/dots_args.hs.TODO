@@ -1,0 +1,9 @@
+module DotsArgs where
+
+--ERROR:
+x = foo 1 2 5
+
+--ERROR:
+y = foo 5
+
+z = bar 1 2 3
