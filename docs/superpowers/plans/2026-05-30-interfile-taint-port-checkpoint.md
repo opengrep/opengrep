@@ -3,44 +3,32 @@
 Branch: `port/taint-interfile-on-main` (off `main`, the rewritten taint engine).
 Goal: Semgrep-Pro-parity interfile taint for every taint-capable language.
 
-## Status: 86 / 88 e2e interfile fixtures passing (was 5 at session start)
+## Status: 87 / 88 e2e interfile fixtures passing (was 5 at session start)
 
-(+5 since the 81 checkpoint: file-aware spec matching + relevant-graph
+(+6 since the 81 checkpoint: file-aware spec matching + relevant-graph
 (`elixir`/`java`/`duplicate_names`/`python_module_*` now genuine, not
 byte-collision), implicit-return langs (`ocaml`/`lisp`/`move`), R cross-file via
 glob_env threading, CommonJS/ES exports — named (`module.exports.f =`),
-ES (`export const f = function`), whole-module (`module.exports = fn`) — and
-`package_qualified` via recording clean exported globals as Clean cells.)
+ES (`export const f = function`), whole-module (`module.exports = fn`) —
+`package_qualified` via recording clean exported globals as Clean cells, and
+`side_effect_sanitizer` via a new `Effect.ToSanitize` variant carrying
+cross-function by-side-effect sanitization through signatures.)
 
-## The 2 remaining failures (precise, by layer)
+## The 1 remaining failure
 
-(`package_qualified` is now fixed — see status above.)
+`language_matrix` (25/28 languages). The 3 missing are all *below* the taint
+engine — not interfile-orchestration defects:
+- **vue**: the Vue parser was **removed from the engine in 1.93.0**
+  (`Failure: Vue support has been removed`). Tests a feature that no longer
+  exists; unfixable without re-adding Vue parsing.
+- **scheme**: `(define (f x) body)` lowers to a raw `Call(define, …)`, not a
+  `FuncDef` — scheme tree-sitter→generic parser gap (lisp's `defn` lowers
+  correctly, so lisp passes).
+- **cairo**: lowers to `FuncDef`, body trailing value is rewritten to `Return`,
+  but cairo **naming does not link the param use to the param decl** (different
+  sids) so the returned `value` carries no arg-taint — cairo naming gap.
+- (bash: `$(...)` command-substitution — a different dataflow model.)
 
-
-1. **`language_matrix`** (25/28) — blocked by 3 sub-languages, each *below* the
-   taint engine:
-   - **vue**: the Vue parser was **removed from the engine in 1.93.0**
-     (`Failure: Vue support has been removed`). The fixture tests a feature that
-     no longer exists; unfixable without re-adding Vue parsing.
-   - **scheme**: `(define (f x) body)` lowers to a raw `Call(define, …)`, **not**
-     a `FuncDef`, so the engine never sees a function. Scheme tree-sitter→generic
-     parser gap (lisp's `defn` *does* lower correctly, hence lisp passes).
-   - **cairo**: lowers to `FuncDef` correctly and the body's trailing value is
-     now rewritten to a `Return` (verified), but cairo **naming does not link the
-     param use to the param declaration** (different sids), so the returned
-     `value` carries no arg-taint and the passthrough signature is empty. Cairo
-     naming/resolution gap.
-   - (bash: `$(...)` command-substitution dataflow — different model.)
-2. **`side_effect_sanitizer`** — a wrapper `def clean(v): sanitize(v)` where
-   `sanitize` is `by-side-effect: true`. The engine **does** apply side-effect
-   sanitization *within* a function (verified: `clean_and_sink(source())` with
-   internal `sanitize`+`sink` → 0 findings), but a function's signature has no
-   effect variant representing "cleans arg N by side-effect", so a caller of the
-   wrapper doesn't learn the arg was sanitized. Closing this needs a new
-   `Effect.ToSanitize { arg }` variant threaded through `Shape_and_sig`,
-   `Sig_inst`, `Taint_signature_extractor`, and `check_function_call` (~200 match
-   sites across 7 files) — high regression risk to the whole engine for one
-   fixture; deferred as the single deepest item.
 
 All progress is regression-free against intra-file taint, search, and the
 single-file cross-file probes (Go multi-hop, JS object methods, etc.).
