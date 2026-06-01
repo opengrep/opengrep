@@ -2130,6 +2130,22 @@ let check_function_call env fun_exp args
     (args_taints : (Taints.t * S.shape) argument list)
     ?(_implicit_lambda : (IL.exp * IL.function_definition) option = None) () :
     (Taints.t * S.shape * Lval_env.t) option =
+  (* Bash: a user-function call is parsed as [!sh_cmd! "fn" arg1 arg2 ...],
+   * where the command name "fn" is the first ACTUAL argument. The call-graph
+   * edge resolves the callee to [fn]'s signature (whose formal params are the
+   * positional $1, $2, ...), so the actual args must be shifted left by one to
+   * drop the command-name string; otherwise $1 would bind to the name literal
+   * instead of the first real argument. *)
+  let fun_exp, args, args_taints =
+    match (env.taint_inst.lang, fun_exp.e, args, args_taints) with
+    | ( Lang.Bash,
+        IL.Fetch { base = IL.Var name; rev_offset = []; _ },
+        _ :: rest_args,
+        _ :: rest_args_taints )
+      when String.equal (fst name.IL.ident) "!sh_cmd!" ->
+        (fun_exp, rest_args, rest_args_taints)
+    | _ -> (fun_exp, args, args_taints)
+  in
   let arity = List.length args in
   Log.debug (fun m ->
       m "CHECK_FUNCTION_CALL: %s with arity %d, intrafile=%b"

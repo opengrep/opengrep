@@ -429,13 +429,47 @@ and command (env : env) (cmd : command) : stmt_or_expr =
         | Some function_tok -> function_tok
         | None -> fst (AST_bash_loc.variable_name_loc def.name)
       in
+      let body_stmt = command env def.body |> as_stmt in
+      (* Bash functions declare no formal parameters; arguments are referenced
+       * positionally as $1, $2, ... (each an [Id "1"], [Id "2"], ...). To let
+       * the taint engine treat a function as a callable with parameters — so
+       * an arg-passthrough wrapper like [f() { echo "$1"; }] carries a
+       * signature — synthesize formal params [1 .. N], where N is the highest
+       * positional reference in the body. Each synthesized param shares the
+       * name [Id "i"] used by [$i], so name resolution links body uses to the
+       * param and the signature extractor seeds them as [Arg (i-1)]. *)
+      let max_positional =
+        let max_n = ref 0 in
+        let v =
+          object
+            inherit [_] G.iter_no_id_info as super
+
+            method! visit_name _env name =
+              (match name with
+              | G.Id ((s, _), _) -> (
+                  match int_of_string_opt s with
+                  | Some n when n >= 1 && n <= 9 ->
+                      if n > !max_n then max_n := n
+                  | _ -> ())
+              | _ -> ());
+              super#visit_name _env name
+          end
+        in
+        v#visit_stmt () body_stmt;
+        !max_n
+      in
+      let fparams =
+        List.init max_positional (fun i ->
+            let pname = (string_of_int (i + 1), first_tok) in
+            G.Param (G.param_of_id pname))
+      in
       let def_kind =
         G.FuncDef
           {
             G.fkind = (G.Function, first_tok);
-            fparams = fb [];
+            fparams = fb fparams;
             frettype = None;
-            fbody = G.FBStmt (command env def.body |> as_stmt);
+            fbody = G.FBStmt body_stmt;
           }
       in
       (* Function names are in another namespace than ordinary variables.
