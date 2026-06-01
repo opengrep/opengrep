@@ -1076,16 +1076,44 @@ and type_spec (env : env) ((v1, v2, v3) : CST.type_spec) =
   let v3 = type_ env v3 in
   DTypeDef (v1, tparams_opt, v3)
 
+and type_parameter_declaration (env : env)
+    ((v1, v2, v3) : CST.type_parameter_declaration) : parameter_binding list =
+  let id1 = identifier env v1 in
+  let ids =
+    id1
+    :: List_.map
+         (fun (v1, v2) ->
+           let _v1 = (* "," *) token env v1 in
+           identifier env v2)
+         v2
+  in
+  let ty =
+    match v3 with
+    | `Choice_simple_type x -> type_ env x
+    | `Cons_elem (v1, v2) ->
+        let v1 = constraint_term env v1 in
+        let v2 =
+          List_.map
+            (fun (v1, v2) ->
+              let _v1 = (* "|" *) token env v1 in
+              constraint_term env v2)
+            v2
+        in
+        let xs = v1 :: v2 in
+        let ftok = Tok.unsafe_fake_tok "interface" in
+        TInterface (ftok, (ftok, [ Constraints xs ], ftok))
+  in
+  List_.map (fun id -> ParamClassic { pname = Some id; ptype = ty; pdots = None }) ids
+
 and type_parameter_list (env : env)
     ((v1, v2, v3, v4, v5) : CST.type_parameter_list) =
   let lbra = (* "[" *) token env v1 in
-  let params = parameter_declaration env v2 in
+  let params = type_parameter_declaration env v2 in
   let paramss =
     List.concat_map
       (fun (v1, v2) ->
         let _v1 = (* "," *) token env v1 in
-        let v2 = parameter_declaration env v2 in
-        v2)
+        type_parameter_declaration env v2)
       v3
   in
   let _v4 = trailing_comma env v4 in
