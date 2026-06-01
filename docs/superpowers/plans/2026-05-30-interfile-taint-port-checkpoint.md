@@ -3,7 +3,14 @@
 Branch: `port/taint-interfile-on-main` (off `main`, the rewritten taint engine).
 Goal: Semgrep-Pro-parity interfile taint for every taint-capable language.
 
-## Status: 87 / 88 e2e interfile fixtures passing (was 5 at session start)
+## Status: 88 / 88 e2e interfile fixtures passing — FULL PARITY (was 5 at session start)
+
+All interfile-taint fixtures pass; `language_matrix` is 28/28. Vue — previously
+thought unfixable because its grammar was removed upstream — was restored by
+extracting the `<script>` block (position-preserving) and parsing it as TSX, no
+deleted grammar required. See `parse_vue` in `Parse_typescript_tree_sitter.ml`.
+
+### Earlier checkpoint (kept for history):
 
 (+6 since the 81 checkpoint: file-aware spec matching + relevant-graph
 (`elixir`/`java`/`duplicate_names`/`python_module_*` now genuine, not
