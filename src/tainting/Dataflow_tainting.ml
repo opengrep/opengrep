@@ -2079,6 +2079,9 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
               ( taints_acc,
                 shape_acc,
                 lval_env |> Lval_env.add var offset taints )
+          | ToSanitize (var, _offset) ->
+              let il_lval : IL.lval = { base = Var var; rev_offset = [] } in
+              (taints_acc, shape_acc, Lval_env.clean lval_env il_lval)
           | ToSinkInCall
               {
                 callee;
@@ -2272,6 +2275,10 @@ let check_function_call env fun_exp args
                 m "INSTANTIATE_SIG: Effect[%d] ToLval with %d taints"
                   i
                   (Taint.Taint_set.cardinal taints))
+        | Sig_inst.ToSanitize (var, _) ->
+            Log.debug (fun m ->
+                m "INSTANTIATE_SIG: Effect[%d] ToSanitize %s" i
+                  (IL.str_of_name var))
         | Sig_inst.ToSinkInCall { args_taints; arg; arg_offset; _ } ->
             Log.debug (fun m ->
                 m "INSTANTIATE_SIG: Effect[%d] ToSinkInCall arg=%s offset=%s args=%s"
@@ -2344,6 +2351,20 @@ let check_function_call env fun_exp args
                    ( taints_acc,
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
+               | ToSanitize (var, offset) ->
+                   (* The callee sanitizes this argument by side-effect: clean
+                    * the corresponding actual l-value in the caller's env.
+                    * Sanitization through a wrapper applies to the whole
+                    * argument (e.g. [sanitize(value)] on a bare parameter), so
+                    * we clean the base variable; deeper offset paths are not
+                    * yet modeled (would under-clean, never over-clean). *)
+                   let il_lval : IL.lval =
+                     { base = Var var; rev_offset = [] }
+                   in
+                   ignore offset;
+                   ( taints_acc,
+                     shape_acc,
+                     Lval_env.clean lval_env il_lval )
                | ToSinkInCall
                    {
                      callee;
@@ -2484,6 +2505,11 @@ let call_with_intrafile lval_opt e env args instr =
                           | ToLval (taints, lval_name, offset) ->
                               let lval_env = Lval_env.add lval_name offset taints lval_env in
                               (taints_acc, shape_acc, lval_env)
+                          | ToSanitize (lval_name, _offset) ->
+                              let il_lval : IL.lval =
+                                { base = Var lval_name; rev_offset = [] }
+                              in
+                              (taints_acc, shape_acc, Lval_env.clean lval_env il_lval)
                           | ToSinkInCall
                               {
                                 callee;
@@ -3055,39 +3081,57 @@ let effects_from_arg_updates_at_exit enter_env exit_env : Effect.t list =
          | Some (Cell ((`Clean | `None), _)) -> Seq.empty
          | Some (Cell (`Tainted enter_taints, _)) -> (
              (* For each lval in the enter_env, we get its `T.lval`, and check
-              * if it got new taints at the exit_env. If so, we generate a 'ToLval'. *)
-             match
+              * if it got new taints at the exit_env. If so, we generate a 'ToLval'.
+              * If instead its argument taint was CLEANED by exit (sanitized by
+              * side-effect within the body, e.g. a wrapper calling a
+              * [by-side-effect] sanitizer on the parameter), we generate a
+              * 'ToSanitize' so callers clean the corresponding actual argument. *)
+             let arg_of_enter_taints () =
                enter_taints |> Taints.to_taint_list
                |> List_.filter_map (fun (taint : T.taint) ->
                       match taint.T.orig with
                       | T.Var lval -> Some lval
                       | _ -> None)
-             with
+             in
+             let exit_xtaint =
+               let (S.Cell (xtaint, _)) = exit_var_ref in
+               xtaint
+             in
+             match arg_of_enter_taints () with
              | []
              | _ :: _ :: _ ->
                  Seq.empty
-             | [ lval ] ->
-                 Shape.enum_in_cell exit_var_ref
-                 |> Seq.filter_map (fun (offset, exit_taints) ->
-                        let lval =
-                          { lval with offset = lval.offset @ offset }
-                        in
-                        let new_taints = Taints.diff exit_taints enter_taints in
-                        (* TODO: Also report if taints are _cleaned_. *)
-                        if not (Taints.is_empty new_taints) then
-                          Some
-                            (Effect.ToLval
-                               {
-                                 taints = new_taints;
-                                 lval;
-                                 (* The write may have happened under a branch
-                                  * guard; recover it from the guards the
-                                  * written taints carry (tagged at the write
-                                  * site) so a caller can drop the effect when
-                                  * its argument makes the guard false. *)
-                                 guards = Taints.guards_disjunction new_taints;
-                               })
-                        else None)))
+             | [ lval ] -> (
+                 match (lval.T.base, exit_xtaint) with
+                 | T.BArg arg, `Clean when lval.T.offset =*= [] ->
+                     (* The whole parameter was sanitized by side-effect. *)
+                     Seq.return
+                       (Effect.ToSanitize { arg; guards = Effect_guard.top })
+                 | _ ->
+                     Shape.enum_in_cell exit_var_ref
+                     |> Seq.filter_map (fun (offset, exit_taints) ->
+                            let lval =
+                              { lval with offset = lval.offset @ offset }
+                            in
+                            let new_taints =
+                              Taints.diff exit_taints enter_taints
+                            in
+                            if not (Taints.is_empty new_taints) then
+                              Some
+                                (Effect.ToLval
+                                   {
+                                     taints = new_taints;
+                                     lval;
+                                     (* The write may have happened under a
+                                      * branch guard; recover it from the guards
+                                      * the written taints carry (tagged at the
+                                      * write site) so a caller can drop the
+                                      * effect when its argument makes the guard
+                                      * false. *)
+                                     guards =
+                                       Taints.guards_disjunction new_taints;
+                                   })
+                            else None))))
   |> Seq.concat |> List.of_seq
 
 let check_tainted_control_at_exit node env =
@@ -3677,6 +3721,7 @@ and fixpoint_lambda taint_inst func needed_vars lambda_name lambda_cfg in_env
     |> Effects.filter (function
          | ToSink _
          | ToLval _
+         | ToSanitize _
          | ToSinkInCall _ ->
              true
          | ToReturn _ -> false)

@@ -177,6 +177,7 @@ let pms_of_effect ~match_on (effect_ : Effect.t) =
   match effect_ with
   | ToLval _
   | ToReturn _
+  | ToSanitize _
   | ToSinkInCall _ ->
       []
   | ToSink

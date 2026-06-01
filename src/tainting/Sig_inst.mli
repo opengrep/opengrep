@@ -14,6 +14,9 @@ type call_effect =
   | ToSink of Shape_and_sig.Effect.taints_to_sink
   | ToReturn of Shape_and_sig.Effect.taints_to_return
   | ToLval of Taint.taints * IL.name * Taint.offset list
+  | ToSanitize of IL.name * Taint.offset list
+      (** A call argument is sanitized by side-effect: the resolved actual
+          argument's l-value [(name, offset)] should be cleaned in the caller. *)
   | ToSinkInCall of {
       callee : IL.exp;
       arg : Taint.arg;

@@ -353,6 +353,12 @@ and Effect : sig
   (** The taints and shapes associated with the actual arguments in a * function
       call. *)
 
+  type taints_to_sanitize = { arg : Taint.arg; guards : Effect_guard.t }
+  (** A function argument sanitized by side-effect inside the body (e.g. a
+      wrapper [def clean(v): sanitize(v)] where [sanitize] is a
+      [by-side-effect: true] sanitizer). At a call site the corresponding
+      actual argument's l-value is cleaned. *)
+
   (** Function-level result. * * 'ToSink' results where a taint source reaches a
       sink are candidates for * actual Semgrep findings, although some may be
       dropped by deduplication. * * Results are computed for each
@@ -387,6 +393,8 @@ and Effect : sig
             example: * * x = ["ok"] * * def foo(): * global x * x[0] = "taint" *
             * We infer: * * ToLval {taints = ["taint"]; lval = "x[0]"; guards =
             []} * * TODO: Record taint shapes. *)
+    | ToSanitize of taints_to_sanitize
+        (** An argument is sanitized by side-effect within the body. *)
     | ToSinkInCall of {
         callee : IL.exp;
             (** The function expression being called, it is used for recording a
@@ -461,10 +469,13 @@ end = struct
 
   type args_taints = (Taints.t * Shape.shape) IL.argument list
 
+  type taints_to_sanitize = { arg : Taint.arg; guards : Effect_guard.t }
+
   type t =
     | ToSink of taints_to_sink
     | ToReturn of taints_to_return
     | ToLval of taints_to_lval
+    | ToSanitize of taints_to_sanitize
     | ToSinkInCall of {
         callee : IL.exp;
         arg : Taint.arg;
@@ -564,11 +575,18 @@ end = struct
     | Unnamed _, Named _ -> -1
     | Named _, Unnamed _ -> 1
 
+  let compare_taints_to_sanitize { arg = arg1; guards = guards1 }
+      { arg = arg2; guards = guards2 } =
+    match T.compare_arg arg1 arg2 with
+    | 0 -> Effect_guard.compare guards1 guards2
+    | other -> other
+
   let compare r1 r2 =
     match (r1, r2) with
     | ToSink tts1, ToSink tts2 -> compare_taints_to_sink tts1 tts2
     | ToReturn ttr1, ToReturn ttr2 -> compare_taints_to_return ttr1 ttr2
     | ToLval ttl1, ToLval ttl2 -> compare_taints_to_lval ttl1 ttl2
+    | ToSanitize tsa1, ToSanitize tsa2 -> compare_taints_to_sanitize tsa1 tsa2
     | ( ToSinkInCall
           {
             callee = fexp1;
@@ -600,12 +618,14 @@ end = struct
                 | other -> other)
             | other -> other)
         | other -> other)
-    | ToSink _, (ToReturn _ | ToLval _ | ToSinkInCall _) -> -1
-    | ToReturn _, (ToLval _ | ToSinkInCall _) -> -1
-    | ToLval _, ToSinkInCall _ -> -1
+    | ToSink _, (ToReturn _ | ToLval _ | ToSanitize _ | ToSinkInCall _) -> -1
+    | ToReturn _, (ToLval _ | ToSanitize _ | ToSinkInCall _) -> -1
+    | ToLval _, (ToSanitize _ | ToSinkInCall _) -> -1
+    | ToSanitize _, ToSinkInCall _ -> -1
     | ToReturn _, ToSink _ -> 1
     | ToLval _, (ToSink _ | ToReturn _) -> 1
-    | ToSinkInCall _, (ToSink _ | ToReturn _ | ToLval _) -> 1
+    | ToSanitize _, (ToSink _ | ToReturn _ | ToLval _) -> 1
+    | ToSinkInCall _, (ToSink _ | ToReturn _ | ToLval _ | ToSanitize _) -> 1
 
   (*************************************)
   (* Pretty-printing *)
@@ -664,6 +684,9 @@ end = struct
     | ToLval { taints; lval; guards; _ } ->
         Printf.sprintf "%s%s ----> %s" (T.show_taints taints)
           (Effect_guard.show_in_brackets guards) (T.show_lval lval)
+    | ToSanitize { arg; guards } ->
+        Printf.sprintf "sanitize(%s)%s" (T.show_arg arg)
+          (Effect_guard.show_in_brackets guards)
     | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
         Printf.sprintf "'call<%s>%s%s" (T.show_arg arg)
           (show_args_taints args_taints)
@@ -679,6 +702,8 @@ end = struct
           ToReturn { ttr with guards = Effect_guard.compose_and ttr.guards g }
       | ToLval ttl ->
           ToLval { ttl with guards = Effect_guard.compose_and ttl.guards g }
+      | ToSanitize tsa ->
+          ToSanitize { tsa with guards = Effect_guard.compose_and tsa.guards g }
       | ToSinkInCall r ->
           ToSinkInCall
             { r with guards = Effect_guard.compose_and r.guards g }
@@ -687,6 +712,7 @@ end = struct
     | ToSink { guards; _ } -> guards
     | ToReturn { guards; _ } -> guards
     | ToLval { guards; _ } -> guards
+    | ToSanitize { guards; _ } -> guards
     | ToSinkInCall { guards; _ } -> guards
 end
 

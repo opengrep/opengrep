@@ -38,6 +38,7 @@ type call_effect =
   | ToSink of Effect.taints_to_sink
   | ToReturn of Effect.taints_to_return
   | ToLval of Taint.taints * IL.name * Taint.offset list
+  | ToSanitize of IL.name * Taint.offset list
   | ToSinkInCall of {
       callee : IL.exp;
       arg : Taint.arg;
@@ -53,6 +54,9 @@ let show_call_effect = function
   | ToReturn ttr -> Effect.show_taints_to_return ttr
   | ToLval (taints, var, offset) ->
       Printf.sprintf "%s ----> %s%s" (T.show_taints taints) (IL.str_of_name var)
+        (T.show_offset_list offset)
+  | ToSanitize (var, offset) ->
+      Printf.sprintf "sanitize ----> %s%s" (IL.str_of_name var)
         (T.show_offset_list offset)
   | ToSinkInCall { callee; arg; _ } ->
       Printf.sprintf "ToSinkInCall(%s, %s)" (Display_IL.string_of_exp callee)
@@ -962,6 +966,8 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
                merged_env;
                guards = walk_guard guards;
              })
+    | Effect.ToSanitize { arg; guards } ->
+        Some (Effect.ToSanitize { arg; guards = walk_guard guards })
     | Effect.ToSinkInCall
         { callee; arg; arg_offset; args_taints; guards } ->
         let args_taints =
@@ -1683,6 +1689,22 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         in
         if Taints.is_empty taints then []
         else [ ToLval (taints, dst_var, dst_offset) ]
+    | Effect.ToSanitize { arg; guards = _ } -> (
+        (* The formal parameter [arg] is sanitized by side-effect inside the
+         * callee. Resolve it to the caller-side actual argument l-value and
+         * emit a [ToSanitize] so the caller cleans it. Only resolvable when we
+         * have concrete actual args. *)
+        match args with
+        | None -> []
+        | Some args -> (
+            let sig_lval : T.lval = { base = T.BArg arg; offset = [] } in
+            match
+              instantiate_lval_using_actual_exps callee taint_sig.params args
+                sig_lval
+            with
+            | Some (dst_var, dst_offset, _tok) ->
+                [ ToSanitize (dst_var, dst_offset) ]
+            | None -> []))
     | Effect.ToSinkInCall
         {
           callee = fun_exp;

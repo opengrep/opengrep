@@ -366,6 +366,10 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                in
                if has_relevant_taint then Effects.add eff acc
                else acc (* Skip only effects with no relevant taint *)
+           | Effect.ToSanitize _ ->
+               (* A by-side-effect sanitizer applied to a parameter: keep it so
+                * callers learn the corresponding argument is sanitized. *)
+               Effects.add eff acc
            | Effect.ToSinkInCall _ -> Effects.add eff acc)
          Effects.empty
   in
