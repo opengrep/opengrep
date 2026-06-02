@@ -73,6 +73,26 @@ let find_func_in_scope (all_funcs : func_info list)
     else false
   ) all_funcs
 
+let is_top_level_func_named (name_str : string) (f : func_info) : bool =
+  match f.fn_id with
+  | [ None; Some _ ] -> func_info_name_matches f name_str
+  | _ -> false
+
+let split_qualified_name (name : string) : (string * string) option =
+  match String.rindex_opt name '.' with
+  | Some idx when idx > 0 && idx + 1 < String.length name ->
+      Some
+        ( String.sub name 0 idx,
+          String.sub name (idx + 1) (String.length name - idx - 1) )
+  | _ -> None
+
+let is_capitalized_name name =
+  String.length name > 0
+  &&
+  let c = name.[0] in
+  Int.equal (Stdlib.compare (Stdlib.Char.uppercase_ascii c) c) 0
+  && not (Int.equal (Stdlib.compare (Stdlib.Char.lowercase_ascii c) c) 0)
+
 (* Get arity of a function from its definition *)
 let get_func_arity (fdef : G.function_definition) : int =
   let params = fdef.fparams in
@@ -648,16 +668,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = [])
       let fallback () =
         (* First check if it's a nested function in the same scope.
              Use position-aware match to distinguish same-named parent functions. *)
-        let nested_match =
-          List.find_opt
-            (fun f ->
-              match List_.init_and_last_opt f.fn_id with
-              | Some (f_parent, Some name)
-                when String.equal (fst name.IL.ident) callee_name_str ->
-                  equal_with_pos f_parent caller_parent_path
-              | _ -> false)
-            all_funcs
-        in
+        let nested_match = find_func_in_scope all_funcs caller_parent_path callee_name_str in
         match nested_match with
         | Some f ->
             Log.debug (fun m ->
@@ -693,12 +704,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = [])
                     (* It's a free function call, not a method - use string matching *)
                     let free_fn_matches =
                       List.filter
-                        (fun f ->
-                          match f.fn_id with
-                          | [ None; Some name ]
-                            when fst name.IL.ident = callee_name_str ->
-                              true
-                          | _ -> false)
+                        (is_top_level_func_named callee_name_str)
                         all_funcs
                     in
                     pick_by_file_then_arity call_tok call_arity free_fn_matches)
@@ -706,12 +712,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = [])
                 (* Top-level free function - use string matching *)
                 let free_fn_matches =
                   List.filter
-                    (fun f ->
-                      match f.fn_id with
-                      | [ None; Some name ]
-                        when fst name.IL.ident = callee_name_str ->
-                          true
-                      | _ -> false)
+                    (is_top_level_func_named callee_name_str)
                     all_funcs
                 in
                 match
@@ -1183,6 +1184,20 @@ let extract_toplevel_calls ~(lang : Lang.t) ?(object_mappings = [])
    granularity is handled later by Sig_inst's offset-walk. *)
 let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
     (IL.name * Tok.t * IL.name option) list =
+  let qualify_elixir_remote_callback receiver callback_name =
+    if not (Lang.equal lang Lang.Elixir) then callback_name
+    else
+      match receiver.G.e with
+      | G.N (G.Id ((module_name, _), _)) when is_capitalized_name module_name ->
+          IL.
+            {
+              callback_name with
+              ident =
+                ( module_name ^ "." ^ fst callback_name.ident,
+                  snd callback_name.ident );
+            }
+      | _ -> callback_name
+  in
   match arg_expr.G.e with
   (* Plain identifier: foo — may be a function name directly, OR a variable
      whose id_svalue wraps a record/container we should walk through. We
@@ -1205,8 +1220,12 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
   | G.N (G.IdQualified { name_last = id, _; name_info; _ }) ->
       [ (AST_to_IL.var_of_id_info id name_info, snd id, None) ]
   (* DotAccess: module.func or obj.method - common in Python/JS *)
-  | G.DotAccess (_, _, G.FN (G.Id (id, id_info))) ->
-      [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
+  | G.DotAccess (receiver, _, G.FN (G.Id (id, id_info))) ->
+      let callback_name =
+        AST_to_IL.var_of_id_info id id_info
+        |> qualify_elixir_remote_callback receiver
+      in
+      [ (callback_name, snd id, None) ]
   (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
      named (local or remote) function. Structure:
      OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
@@ -1216,15 +1235,19 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
       ( ("ShortLambda", shortlambda_tok),
         [ G.Params _; G.S { G.s = G.ExprStmt (inner_e, _); _ } ] ) -> (
       match inner_e.G.e with
-      | G.Call
-          ( {
-              e =
-                ( G.N (G.Id (id, id_info))
-                | G.DotAccess (_, _, G.FN (G.Id (id, id_info))) );
-              _;
-            },
-            _ ) ->
+      | G.Call ({ e = G.N (G.Id (id, id_info)); _ }, _) ->
           let callback_name = AST_to_IL.var_of_id_info id id_info in
+          let tmp_name =
+            Visit_function_defs.synth_lambda_il_name_of_tok shortlambda_tok
+          in
+          [ (callback_name, snd id, Some tmp_name) ]
+      | G.Call
+          ( { e = G.DotAccess (receiver, _, G.FN (G.Id (id, id_info))); _ },
+            _ ) ->
+          let callback_name =
+            AST_to_IL.var_of_id_info id id_info
+            |> qualify_elixir_remote_callback receiver
+          in
           let tmp_name =
             Visit_function_defs.synth_lambda_il_name_of_tok shortlambda_tok
           in
@@ -1281,6 +1304,19 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
 let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
     (callback_name : IL.name) : fn_id option =
   let callback_name_str = fst callback_name.IL.ident in
+  let qualified_match =
+    match split_qualified_name callback_name_str with
+    | Some (qualifier, method_name) ->
+        List.find_opt
+          (fun f ->
+            match f.fn_id with
+            | [ Some cls; Some _ ] ->
+                String.equal (fst cls.IL.ident) qualifier
+                && func_info_name_matches f method_name
+            | _ -> false)
+          all_funcs
+    | None -> None
+  in
   (* Extract class from caller_parent_path if present *)
   let current_class = match caller_parent_path with
     | Some cls :: _ -> Some cls
@@ -1291,44 +1327,64 @@ let identify_callback ?(all_funcs = []) ?(caller_parent_path = [])
     find_func_in_scope all_funcs caller_parent_path callback_name_str
   in
 
-  (match nested_match with
+  match qualified_match with
   | Some f ->
-      Log.debug (fun m -> m "HOF_EXTRACT: Found nested callback %s in same scope" callback_name_str);
+      Log.debug (fun m ->
+          m "HOF_EXTRACT: Found qualified callback %s" callback_name_str);
       Some f.fn_id
-  | None ->
-      (* Fall back to class methods or top-level functions - match by string name *)
-      let class_method_match = match current_class with
-        | Some cls ->
-            let class_name_str = fst cls.IL.ident in
-            List.find_opt (fun f ->
-              match f.fn_id with
-              | [Some c; Some _] ->
-                  fst c.IL.ident = class_name_str
-                  && func_info_name_matches f callback_name_str
-              | _ -> false
-            ) all_funcs
-        | None -> None
-      in
-
-      (match class_method_match with
+  | None -> (
+      match nested_match with
       | Some f ->
-          Log.debug (fun m -> m "HOF_EXTRACT: Found class method callback %s" callback_name_str);
+          Log.debug (fun m ->
+              m "HOF_EXTRACT: Found nested callback %s in same scope"
+                callback_name_str);
           Some f.fn_id
       | None ->
-          (* Check for top-level function - match by string name *)
-          let top_level_match = List.find_opt (fun f ->
-            match f.fn_id with
-            | [None; Some _] -> func_info_name_matches f callback_name_str
-            | _ -> false
-          ) all_funcs in
+          (* Fall back to class methods or top-level functions - match by string name *)
+          let class_method_match =
+            match current_class with
+            | Some cls ->
+                let class_name_str = fst cls.IL.ident in
+                List.find_opt
+                  (fun f ->
+                    match f.fn_id with
+                    | [ Some c; Some _ ] ->
+                        fst c.IL.ident = class_name_str
+                        && func_info_name_matches f callback_name_str
+                    | _ -> false)
+                  all_funcs
+            | None -> None
+          in
 
-          (match top_level_match with
+          (match class_method_match with
           | Some f ->
-              Log.debug (fun m -> m "HOF_EXTRACT: Found top-level callback %s" callback_name_str);
+              Log.debug (fun m ->
+                  m "HOF_EXTRACT: Found class method callback %s"
+                    callback_name_str);
               Some f.fn_id
           | None ->
-              Log.debug (fun m -> m "HOF_EXTRACT: Callback %s not found in functions list" callback_name_str);
-              None)))
+              (* Check for top-level function - match by string name *)
+              let top_level_match =
+                List.find_opt
+                  (fun f ->
+                    match f.fn_id with
+                    | [ None; Some _ ] ->
+                        func_info_name_matches f callback_name_str
+                    | _ -> false)
+                  all_funcs
+              in
+
+              (match top_level_match with
+              | Some f ->
+                  Log.debug (fun m ->
+                      m "HOF_EXTRACT: Found top-level callback %s"
+                        callback_name_str);
+                  Some f.fn_id
+              | None ->
+                  Log.debug (fun m ->
+                      m "HOF_EXTRACT: Callback %s not found in functions list"
+                        callback_name_str);
+                  None)))
 
 (* Try to identify a callback from a G.argument, returning fn_id, token, and optional _tmp node.
    The _tmp node is present for Elixir ShortLambda to create the intermediate wrapper node. *)

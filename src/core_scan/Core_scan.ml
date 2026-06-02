@@ -788,6 +788,11 @@ type interfile_component = {
   id : string;
 }
 
+type interfile_component_index = (string, interfile_component) Hashtbl.t
+
+let interfile_path_key (path : Fpath.t) : string =
+  path |> Fpath.normalize |> Fpath.to_string
+
 (* Raw module strings imported by [ast], each tagged with whether it is a
  * relative import (starts with '.'), so component grouping can resolve
  * relative imports precisely against the importing file's directory. *)
@@ -851,20 +856,49 @@ let group_files_into_components
   let arr = Array.of_list files in
   let n = Array.length arr in
   let parent = Array.init n (fun i -> i) in
-  let rec find i = if parent.(i) =|= i then i else (let r = find parent.(i) in parent.(i) <- r; r) in
-  let union i j = let ri = find i and rj = find j in if not (ri =|= rj) then parent.(ri) <- rj in
-  let path_of i = let p, _, _ = arr.(i) in p in
-  let dir_of i = Fpath.parent (path_of i) in
-  let noext i = Fpath.rem_ext (path_of i) |> Fpath.normalize in
+  let rec find i =
+    if parent.(i) =|= i then i
+    else
+      let r = find parent.(i) in
+      parent.(i) <- r;
+      r
+  in
+  let union i j =
+    let ri = find i and rj = find j in
+    if not (ri =|= rj) then parent.(ri) <- rj
+  in
+  let path_of i =
+    let p, _, _ = arr.(i) in
+    p
+  in
+  let dir_key i = Fpath.parent (path_of i) |> interfile_path_key in
+  let noext_key i = Fpath.rem_ext (path_of i) |> interfile_path_key in
   let basename_noext i =
     Fpath.rem_ext (path_of i) |> Fpath.basename
   in
-  (* Same-directory edges. *)
+  let add_index tbl key i =
+    let cur =
+      match Hashtbl.find_opt tbl key with
+      | None -> []
+      | Some xs -> xs
+    in
+    Hashtbl.replace tbl key (i :: cur)
+  in
+  let dir_representatives = Hashtbl.create n in
+  let noext_index = Hashtbl.create n in
+  let basename_index = Hashtbl.create n in
   for i = 0 to n - 1 do
-    for j = i + 1 to n - 1 do
-      if Fpath.equal (dir_of i) (dir_of j) then union i j
-    done
+    let dir = dir_key i in
+    (match Hashtbl.find_opt dir_representatives dir with
+    | Some representative -> union representative i
+    | None -> Hashtbl.add dir_representatives dir i);
+    add_index noext_index (noext_key i) i;
+    add_index basename_index (basename_noext i) i
   done;
+  (* Same-directory edges. *)
+  (* Done above by unioning each directory's files with its first
+   * representative; this preserves the previous complete-graph connectivity
+   * without the O(n^2) scan. *)
   (* Import edges. *)
   for i = 0 to n - 1 do
     let _, ast, _ = arr.(i) in
@@ -875,17 +909,17 @@ let group_files_into_components
              if is_rel then Some (resolve_relative_import ~importer:(path_of i) raw)
              else None
            in
-           for j = 0 to n - 1 do
-             if not (i =|= j) then
-               let connects =
-                 match resolved with
-                 | Some cand -> Fpath.equal (noext j) cand
-                 | None ->
-                     (not (String.equal last ""))
-                     && String.equal (basename_noext j) last
-               in
-               if connects then union i j
-           done)
+           let candidates =
+             match resolved with
+             | Some cand ->
+                 Hashtbl.find_opt noext_index (interfile_path_key cand)
+             | None ->
+                 if String.equal last "" then None
+                 else Hashtbl.find_opt basename_index last
+           in
+           candidates
+           |> Option.iter
+                (List.iter (fun j -> if not (i =|= j) then union i j)))
   done;
   let tbl = Hashtbl.create 16 in
   for i = 0 to n - 1 do
@@ -913,13 +947,23 @@ let group_files_into_components
       { files = paths; ast; skipped; id } :: acc)
     tbl []
 
+let index_interfile_components
+    (components : interfile_component list) : interfile_component_index =
+  let by_file = Hashtbl.create 16 in
+  components
+  |> List.iter (fun component ->
+         component.files
+         |> List.iter (fun file ->
+                Hashtbl.replace by_file (interfile_path_key file) component));
+  by_file
+
 (* Build, per language, the import-connected components of that language's
  * files. Each component's files are concatenated (original per-file source
  * positions preserved) so the taint engine sees a self-contained program. *)
 let build_interfile_asts_by_analyzer (caps : < Cap.fork >) (ncores : int)
     (targets : Target.t list) (valid_rules : Rule.t list)
     ~(force_interfile : bool) :
-    (Lang.t, interfile_component list) Hashtbl.t =
+    (Lang.t, interfile_component_index) Hashtbl.t =
   let asts_by_analyzer = Hashtbl.create 8 in
   let interfile_rules =
     List.filter (is_interfile_taint_rule ~force_interfile) valid_rules
@@ -970,7 +1014,7 @@ let build_interfile_asts_by_analyzer (caps : < Cap.fork >) (ncores : int)
     Hashtbl.iter
       (fun lang files ->
         Hashtbl.replace asts_by_analyzer lang
-          (group_files_into_components files))
+          (files |> group_files_into_components |> index_interfile_components))
       by_lang);
   asts_by_analyzer
 
@@ -981,16 +1025,9 @@ let interfile_ast_for_target asts_by_analyzer (target : Target.regular) :
   match Xlang.to_lang target.analyzer with
   | Ok lang when supports_interfile_taint target.analyzer ->
       let tpath = target.path.internal_path_to_content in
-      Hashtbl.find_opt asts_by_analyzer lang
-      |> Option.map (fun comps -> comps)
-      |> (fun o ->
-           match o with
-           | None -> None
-           | Some comps ->
-               List.find_opt
-                 (fun c -> List.exists (Fpath.equal tpath) c.files)
-                 comps
-               |> Option.map (fun c -> ((c.ast, c.skipped), c.id)))
+      Option.bind (Hashtbl.find_opt asts_by_analyzer lang)
+        (fun by_file -> Hashtbl.find_opt by_file (interfile_path_key tpath))
+      |> Option.map (fun c -> ((c.ast, c.skipped), c.id))
   | Ok _
   | Error _ ->
       None
@@ -1035,6 +1072,70 @@ let keep_matches_in_file (file : Fpath.t)
 let empty_matches_single_file : Core_result.matches_single_file =
   { matches = []; errors = ESet.empty; profiling = None; explanations = [] }
 
+type cached_interfile_result =
+  (Core_result.matches_single_file, exn) result
+
+type interfile_result_cache_entry = {
+  mutable result : cached_interfile_result option;
+  condition : Condition.t;
+}
+
+let get_or_compute_cached_interfile_result
+    (cache : (string, interfile_result_cache_entry) Hashtbl.t) mutex cache_key
+    compute =
+  let entry, should_compute =
+    Mutex.protect mutex (fun () ->
+        match Hashtbl.find_opt cache cache_key with
+        | Some entry -> (entry, false)
+        | None ->
+            let entry = { result = None; condition = Condition.create () } in
+            Hashtbl.add cache cache_key entry;
+            (entry, true))
+  in
+  if should_compute then
+    match compute () with
+    | computed ->
+        Mutex.protect mutex (fun () ->
+            entry.result <- Some (Ok computed);
+            Condition.broadcast entry.condition);
+        computed
+    | exception exn ->
+        Mutex.protect mutex (fun () ->
+            entry.result <- Some (Error exn);
+            Condition.broadcast entry.condition);
+        raise exn
+  else (
+    Mutex.lock mutex;
+    Common.protect
+      ~finally:(fun () -> Mutex.unlock mutex)
+      (fun () ->
+        let rec loop () =
+          match entry.result with
+          | Some (Ok cached) -> cached
+          | Some (Error exn) -> raise exn
+          | None ->
+              Condition.wait entry.condition mutex;
+              loop ()
+        in
+        loop ()))
+
+let errors_of_interfile_timeout_or_memory_exn (exn : exn) : ESet.t =
+  let msg =
+    "Interfile taint analysis failed while scanning a merged component"
+  in
+  match exn with
+  | Match_rules.File_timeout rule_ids ->
+      rule_ids
+      |> List_.map (fun error_rule_id ->
+             E.mk_error ~rule_id:error_rule_id ~msg Out.TimeoutDuringInterfile)
+      |> ESet.of_list
+  | Out_of_memory
+  | Memory_limit.ExceededMemoryLimit _ ->
+      ESet.singleton (E.mk_error ~msg Out.OutOfMemoryDuringInterfile)
+  | Stack_overflow ->
+      ESet.singleton (E.mk_error ~msg Out.StackOverflow)
+  | _ -> raise Impossible
+
 let combine_match_results (a : Core_result.matches_single_file)
     (b : Core_result.matches_single_file) : Core_result.matches_single_file =
   {
@@ -1072,12 +1173,13 @@ let raise_timeout_for_interfile (timeout : Match_rules.timeout_config option) :
 (* build the callback for iter_targets_and_get_matches_and_exn_to_errors *)
 let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
     (valid_rules : Rule.t list)
-    (interfile_asts_by_analyzer : (Lang.t, interfile_component list) Hashtbl.t)
+    (interfile_asts_by_analyzer :
+      (Lang.t, interfile_component_index) Hashtbl.t)
     (prefilter_cache_opt : Match_env.prefilter_config) : target_handler =
   (* Cross-file taint findings for the whole merged (per-language) AST, computed
    * once per (analyzer, rule-set) and then distributed to each target file. *)
   let interfile_result_cache :
-      (string, Core_result.matches_single_file) Hashtbl.t =
+      (string, interfile_result_cache_entry) Hashtbl.t =
     Hashtbl.create 8
   in
   let interfile_result_cache_mutex = Mutex.create () in
@@ -1202,33 +1304,29 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
                 }
               in
               let all_interfile_matches =
-                Mutex.protect interfile_result_cache_mutex (fun () ->
-                    match
-                      Hashtbl.find_opt interfile_result_cache cache_key
+                get_or_compute_cached_interfile_result interfile_result_cache
+                  interfile_result_cache_mutex cache_key (fun () ->
+                    let interfile_xtarget =
+                      Xtarget.resolve_with_ast (lazy merged_ast) target
+                    in
+                    (* Run the interprocedural taint engine ONCE over the
+                     * merged whole-language AST and cache its findings; on a
+                     * timeout or memory failure, cache a degraded result that
+                     * carries an interfile diagnostic instead of silently
+                     * looking like "no findings". *)
+                    try
+                      Match_rules.check ~match_hook
+                        ~timeout:(raise_timeout_for_interfile timeout)
+                        ~dependency_match_table interfile_xconf interfile_rules
+                        interfile_xtarget
                     with
-                    | Some cached -> cached
-                    | None ->
-                        let interfile_xtarget =
-                          Xtarget.resolve_with_ast (lazy merged_ast) target
-                        in
-                        let cached =
-                          (* Run the interprocedural taint engine ONCE over the
-                           * merged whole-language AST and cache its findings; on
-                           * a crash on the combined AST cache a degraded empty
-                           * result so it is not re-run for every target. *)
-                          try
-                            Match_rules.check ~match_hook
-                              ~timeout:(raise_timeout_for_interfile timeout)
-                              ~dependency_match_table interfile_xconf
-                              interfile_rules interfile_xtarget
-                          with
-                          | Match_rules.File_timeout _ | Out_of_memory
-                          | Stack_overflow
-                          | Memory_limit.ExceededMemoryLimit _ ->
-                              empty_matches_single_file
-                        in
-                        Hashtbl.add interfile_result_cache cache_key cached;
-                        cached)
+                    | Match_rules.File_timeout _ | Out_of_memory
+                    | Stack_overflow | Memory_limit.ExceededMemoryLimit _ as exn
+                      ->
+                        {
+                          empty_matches_single_file with
+                          errors = errors_of_interfile_timeout_or_memory_exn exn;
+                        })
               in
               keep_matches_in_file file all_interfile_matches
         in

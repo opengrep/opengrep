@@ -1518,8 +1518,7 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
                      | Some _ -> ()
                      | None -> ())))
       in
-      provider_exprs
-      |> List.iter (fun _ -> record_provider_array_exprs_once provider_exprs)
+      record_provider_array_exprs_once provider_exprs
     in
     match expr.G.e with
     | G.Container (G.Array, (_, provider_exprs, _)) ->
@@ -2117,7 +2116,6 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
       inherit [_] G.iter as super
 
       method! visit_expr () expr =
-        record_provider_metadata_mapping expr;
         (match expr.G.e with
         | G.New (_, class_type, _, args) -> (
             match class_type.G.t with
