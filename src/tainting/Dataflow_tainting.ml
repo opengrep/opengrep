@@ -1837,8 +1837,20 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                 data_taints = taints;
                 data_shape = shape;
                 control_taints;
+                guards = inner_guards;
                 _;
               } ->
+              (* Gate the returned taints by the guards, like the sibling
+                 [ToSink]/[ToSinkInCall] arms above: [rebound_guards] is the
+                 guard on the [ToSinkInCall] being resolved (it gates every
+                 effect from this resolution) and [inner_guards] is the guard
+                 on the resolved return. The main-handler [ToReturn] arm in
+                 [check_function_call] conjoins [inner_guards] the same way. *)
+              let taints =
+                Taints.conjoin_guard
+                  (Effect_guard.compose_and rebound_guards inner_guards)
+                  taints
+              in
               ( Taints.union taints taints_acc,
                 Shape.unify_shape shape shape_acc,
                 Lval_env.add_control_taints lval_env control_taints )
