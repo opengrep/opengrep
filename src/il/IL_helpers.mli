@@ -20,11 +20,12 @@ val cond_param_refs :
   IL.param list -> IL.exp -> (IL.name * int) list option
 (** Collect [(IL.name, index)] pairs for every free [Fetch] in [cond]
     whose base is a parameter in the given list (matched via
-    [IL.equal_name]) with a statically-resolvable offset path. Returns
-    [None] if any free [Fetch] fails to anchor, any offset step fails
-    [offset_is_resolvable], or the cond contains an [IL.exp] kind not
-    modelled here (e.g. [Composite], [RecordOrDict], [Cast],
-    [FixmeExp]). *)
+    [IL.equal_name]) with a statically-resolvable offset path. Descends
+    into every [IL.exp] kind that can hold a nested [Fetch] ([Operator],
+    [Cast], [Composite], [RecordOrDict], [FixmeExp]), so [Some]
+    guarantees [cond] is fully anchored. Returns [None] if any free
+    [Fetch] fails to anchor: a non-parameter base, a [VarSpecial]/[Mem]
+    base, or an offset step that fails [offset_is_resolvable]. *)
 
 val cond_partial_param_refs :
   IL.param list -> IL.exp -> (IL.name * int) list

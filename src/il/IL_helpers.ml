@@ -59,8 +59,23 @@ let param_index (params : IL.param list) (name : IL.name) : int option =
   in
   find 0 params
 
-let cond_param_refs (params : IL.param list) (cond : IL.exp) :
-    (IL.name * int) list option =
+(* Collect the [(IL.name, index)] pairs for the free [Fetch]es in [cond]
+   that anchor to one of [params] (matched via [IL.equal_name]) with a
+   statically-resolvable offset path.
+
+   Walks every [IL.exp] kind that can hold a nested Fetch (Operator,
+   Cast, Composite, RecordOrDict, and a [FixmeExp]'s partial-translation
+   slot). [substitute_free_fetches] must keep the same reach: any Fetch
+   we record here, the rewriter must be able to find.
+
+   [~partial:false] is all-or-nothing: a free [Fetch] that names no
+   parameter, has a non-resolvable offset, or whose base is a
+   [Mem]/[VarSpecial] aborts the whole walk with [None], so [Some refs]
+   guarantees [cond] is fully anchored. [~partial:true] never aborts:
+   such fetches are skipped and the anchorable ones still collected, so
+   the result is always [Some]. *)
+let param_refs_of_cond ~(partial : bool) (params : IL.param list)
+    (cond : IL.exp) : (IL.name * int) list option =
   let merge refs1 refs2 =
     List.fold_left
       (fun acc ((n, _) as r) ->
@@ -68,6 +83,9 @@ let cond_param_refs (params : IL.param list) (cond : IL.exp) :
         else r :: acc)
       refs1 refs2
   in
+  (* Result for a [Fetch] that does not anchor to a parameter: abort
+     ([None]) in strict mode, skip ([Some []]) in partial mode. *)
+  let unanchorable = if partial then Some [] else None in
   let rec of_exp (e : IL.exp) : (IL.name * int) list option =
     match e.e with
     | IL.Literal _ -> Some []
@@ -75,68 +93,48 @@ let cond_param_refs (params : IL.param list) (cond : IL.exp) :
         match lval.base with
         | IL.Var name -> (
             match param_index params name with
-            | None -> None
-            | Some idx ->
-                if List.for_all offset_is_resolvable lval.rev_offset then
-                  Some [ (name, idx) ]
-                else None)
-        | IL.VarSpecial _ | IL.Mem _ -> None)
-    | IL.Operator (_, args) -> of_args [] args
-    | IL.Composite _ | IL.RecordOrDict _ | IL.Cast _ | IL.FixmeExp _ -> None
-  and of_args acc = function
-    | [] -> Some acc
-    | a :: rest -> (
-        match of_exp (exp_of_arg a) with
+            | Some idx when List.for_all offset_is_resolvable lval.rev_offset ->
+                Some [ (name, idx) ]
+            | _ -> unanchorable)
+        | IL.VarSpecial _ | IL.Mem _ -> unanchorable)
+    | IL.Operator (_, args) -> of_exps (List.map exp_of_arg args)
+    | IL.Cast (_, e) -> of_exp e
+    | IL.Composite (_, (_, exps, _)) -> of_exps exps
+    | IL.RecordOrDict entries ->
+        of_exps
+          (List.concat_map
+             (function
+               | IL.Field (_, e)
+               | IL.Spread e ->
+                   [ e ]
+               | IL.Entry (k, v) -> [ k; v ])
+             entries)
+    | IL.FixmeExp (_, _, Some e) -> of_exp e
+    | IL.FixmeExp (_, _, None) -> Some []
+  and of_exps (es : IL.exp list) : (IL.name * int) list option =
+    List.fold_left
+      (fun acc e ->
+        match acc with
         | None -> None
-        | Some refs -> of_args (merge acc refs) rest)
+        | Some acc -> (
+            match of_exp e with
+            | None -> None
+            | Some refs -> Some (merge acc refs)))
+      (Some []) es
   in
   of_exp cond
 
+(* Strict anchoring: [None] unless every free [Fetch] in [cond] anchors
+   to a parameter. *)
+let cond_param_refs (params : IL.param list) (cond : IL.exp) :
+    (IL.name * int) list option =
+  param_refs_of_cond ~partial:false params cond
+
+(* Best-effort anchoring: collect the anchorable [Fetch]es and skip the
+   rest. The walk never aborts, so the [option] is always [Some]. *)
 let cond_partial_param_refs (params : IL.param list) (cond : IL.exp) :
     (IL.name * int) list =
-  let merge refs1 refs2 =
-    List.fold_left
-      (fun acc ((n, _) as r) ->
-        if List.exists (fun (n', _) -> IL.equal_name n' n) acc then acc
-        else r :: acc)
-      refs1 refs2
-  in
-  (* Walks every [IL.exp] kind that can hold a nested Fetch
-     (Operator, Cast, Composite, RecordOrDict, and a [FixmeExp]'s
-     partial-translation slot). [substitute_free_fetches] must keep
-     the same reach: any Fetch we record here, the rewriter must be
-     able to find. *)
-  let rec of_exp (e : IL.exp) : (IL.name * int) list =
-    match e.e with
-    | IL.Literal _ -> []
-    | IL.Fetch lval -> (
-        match lval.base with
-        | IL.Var name -> (
-            match param_index params name with
-            | Some idx when List.for_all offset_is_resolvable lval.rev_offset
-              ->
-                [ (name, idx) ]
-            | _ -> [])
-        | IL.VarSpecial _ | IL.Mem _ -> [])
-    | IL.Operator (_, args) ->
-        List.fold_left
-          (fun acc a -> merge acc (of_exp (exp_of_arg a)))
-          [] args
-    | IL.Cast (_, e) -> of_exp e
-    | IL.Composite (_, (_, exps, _)) ->
-        List.fold_left (fun acc e -> merge acc (of_exp e)) [] exps
-    | IL.RecordOrDict entries ->
-        List.fold_left
-          (fun acc -> function
-            | IL.Field (_, e)
-            | IL.Spread e ->
-                merge acc (of_exp e)
-            | IL.Entry (k, v) -> merge (merge acc (of_exp k)) (of_exp v))
-          [] entries
-    | IL.FixmeExp (_, _, Some e) -> of_exp e
-    | IL.FixmeExp (_, _, None) -> []
-  in
-  of_exp cond
+  Option.value ~default:[] (param_refs_of_cond ~partial:true params cond)
 
 let rexps_of_instr x =
   match x.i with
