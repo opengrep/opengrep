@@ -37,7 +37,12 @@ let bad_tag = Log_tainting.bad_tag
 type call_effect =
   | ToSink of Effect.taints_to_sink
   | ToReturn of Effect.taints_to_return
-  | ToLval of Taint.taints * IL.name * Taint.offset list
+  | ToLval of {
+      taints : Taint.taints;
+      var : IL.name;
+      offset : Taint.offset list;
+      guards : Effect_guard.t;
+    }
   | ToSinkInCall of {
       callee : IL.exp;
       arg : Taint.arg;
@@ -51,8 +56,9 @@ type call_effects = call_effect list
 let show_call_effect = function
   | ToSink tts -> Effect.show_taints_to_sink tts
   | ToReturn ttr -> Effect.show_taints_to_return ttr
-  | ToLval (taints, var, offset) ->
-      Printf.sprintf "%s ----> %s%s" (T.show_taints taints) (IL.str_of_name var)
+  | ToLval { taints; var; offset; guards } ->
+      Printf.sprintf "%s%s ----> %s%s" (T.show_taints taints)
+        (Effect_guard.show_in_brackets guards) (IL.str_of_name var)
         (T.show_offset_list offset)
   | ToSinkInCall { callee; arg; _ } ->
       Printf.sprintf "ToSinkInCall(%s, %s)" (Display_IL.string_of_exp callee)
@@ -1682,7 +1688,10 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                    add_lval_update_to_token_trace ~callee tainted_tok; }
         in
         if Taints.is_empty taints then []
-        else [ ToLval (taints, dst_var, dst_offset) ]
+        else
+          [ ToLval
+              { taints; var = dst_var; offset = dst_offset; guards = out_guards }
+          ]
     | Effect.ToSinkInCall
         {
           callee = fun_exp;

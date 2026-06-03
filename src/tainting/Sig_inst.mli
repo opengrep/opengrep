@@ -5,15 +5,24 @@
  * 'ToSinkInCall' effects are preserved when the callback cannot be resolved
  * (e.g., during signature extraction when the callback is a parameter).
  *
- * The 'guards' field of 'ToSink'/'ToReturn' after instantiation contains only
- * guards rebound into the outer (caller's) parameter namespace — see
+ * The 'guards' field of 'ToSink'/'ToReturn'/'ToLval' after instantiation
+ * contains only guards rebound into the outer (caller's) parameter namespace — see
  * 'instantiate_function_signature'. Guards anchored in the callee's parameters
  * are either consumed (evaluated to a concrete bool at the call) or dropped
  * on output. *)
 type call_effect =
   | ToSink of Shape_and_sig.Effect.taints_to_sink
   | ToReturn of Shape_and_sig.Effect.taints_to_return
-  | ToLval of Taint.taints * IL.name * Taint.offset list
+  | ToLval of {
+      taints : Taint.taints;
+      var : IL.name;
+      offset : Taint.offset list;
+      guards : Effect_guard.t;
+          (** Guard on the global/captured-local write, rebound into the
+              outer (caller's) parameter namespace. Carried so the caller
+              re-emits the effect under the same condition rather than
+              unconditionally. *)
+    }
   | ToSinkInCall of {
       callee : IL.exp;
       arg : Taint.arg;

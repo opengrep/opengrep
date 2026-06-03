@@ -1,0 +1,13 @@
+rules:
+  - id: test-guards-global-lval
+    message: Guard on a global-variable ToLval dispatched through a call chain
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
