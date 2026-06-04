@@ -1,6 +1,0 @@
-(executable
-  (package tree-sitter-lang)
-  (public_name parse-crystal)
-  (name Main)
-  (libraries tree-sitter-lang.crystal)
-)
