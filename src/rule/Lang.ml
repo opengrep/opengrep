@@ -43,6 +43,7 @@ module FT = File_type
 type t = Language.t =
   | Apex
   | Bash
+  | Brainfuck
   | C
   | Cairo
   | Circom
