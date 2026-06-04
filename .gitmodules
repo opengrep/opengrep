@@ -153,3 +153,9 @@ url = https://github.com/opengrep/semgrep-circom.git
 [submodule "languages/apex/tree-sitter/semgrep-apex"]
 path = languages/apex/tree-sitter/semgrep-apex
 url = https://github.com/opengrep/semgrep-apex.git
+
+; TODO: create opengrep/semgrep-zig fork of tree-sitter-zig with OCaml bindings (CST.ml, Parse.ml, Boilerplate.ml)
+; then register it here:
+; [submodule "languages/zig/tree-sitter/semgrep-zig"]
+; path = languages/zig/tree-sitter/semgrep-zig
+; url = https://github.com/opengrep/semgrep-zig.git

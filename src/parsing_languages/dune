@@ -56,5 +56,7 @@
    parser_circom.ast_generic
    parser_apex.ast_generic
    parser_vbnet
+   ; TODO: uncomment once languages/zig/tree-sitter/semgrep-zig submodule exists
+   ; parser_zig.ast_generic
  )
 )
