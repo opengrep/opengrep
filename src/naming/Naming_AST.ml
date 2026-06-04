@@ -607,7 +607,10 @@ let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
         vinit None
 
 let assign_implicitly_declares lang =
-  lang =*= Lang.Python || lang =*= Lang.Ruby || lang =*= Lang.Php
+  lang =*= Lang.Php
+  || lang =*= Lang.Python
+  || lang =*= Lang.Ruby
+  || lang =*= Lang.Crystal
   || Lang.is_js lang
 
 (*****************************************************************************)
