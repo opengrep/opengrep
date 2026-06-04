@@ -472,6 +472,9 @@ and map_expression_inner env x =
       in
       let rhs = Option.value ~default:(G.L (G.Unit op_tok) |> G.e) (Option.map (map_expression env) rhs) in
       G.opcall (op, op_tok) [ map_expression env lhs; rhs ]
+  | `Begi_range (`DOTDOTDOT tok, None, None) ->
+      (* bare "..." with no operands — always a semgrep ellipsis, never a real range *)
+      G.Ellipsis (token env tok) |> G.e
   | `Begi_range (op, _end_marker, rhs) ->
       let op, tok =
         match op with
