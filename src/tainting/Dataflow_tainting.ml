@@ -1837,18 +1837,30 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                 data_taints = taints;
                 data_shape = shape;
                 control_taints;
+                guards = inner_guards;
                 _;
               } ->
+              (* Gate the returned taints by the guards, like the sibling
+                 [ToSink]/[ToSinkInCall] arms above: [rebound_guards] is the
+                 guard on the [ToSinkInCall] being resolved (it gates every
+                 effect from this resolution) and [inner_guards] is the guard
+                 on the resolved return. The main-handler [ToReturn] arm in
+                 [check_function_call] conjoins [inner_guards] the same way. *)
+              let taints =
+                Taints.conjoin_guard
+                  (Effect_guard.compose_and rebound_guards inner_guards)
+                  taints
+              in
               ( Taints.union taints taints_acc,
                 Shape.unify_shape shape shape_acc,
                 Lval_env.add_control_taints lval_env control_taints )
-          | ToLval (taints, var, offset) ->
+          | ToLval { taints; var; offset; guards } ->
               if not (is_own_param env var) then
                 record_effects env
                   [ Effect.ToLval
                       { taints;
                         lval = { base = Taint.BGlob var; offset };
-                        guards = Effect_guard.top } ];
+                        guards } ];
               ( taints_acc,
                 shape_acc,
                 lval_env |> Lval_env.add var offset taints )
@@ -2005,7 +2017,7 @@ let check_function_call env fun_exp args
                 m "INSTANTIATE_SIG: Effect[%d] ToSink with %d taint items"
                   i
                   (List.length taints))
-        | Sig_inst.ToLval (taints, _, _) ->
+        | Sig_inst.ToLval { taints; _ } ->
             Log.debug (fun m ->
                 m "INSTANTIATE_SIG: Effect[%d] ToLval with %d taints"
                   i
@@ -2072,13 +2084,13 @@ let check_function_call env fun_exp args
                    ( Taints.union taints taints_acc,
                      Shape.unify_shape shape shape_acc,
                      Lval_env.add_control_taints lval_env control_taints )
-               | ToLval (taints, var, offset) ->
+               | ToLval { taints; var; offset; guards } ->
                    if not (is_own_param env var) then
                      record_effects env
                        [ Effect.ToLval
                            { taints;
                              lval = { base = Taint.BGlob var; offset };
-                             guards = Effect_guard.top } ];
+                             guards } ];
                    ( taints_acc,
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
@@ -2219,7 +2231,7 @@ let call_with_intrafile lval_opt e env args instr =
                               (Taints.union taints_acc data_taints,
                                data_shape,  (* Just use the latest shape *)
                                lval_env)
-                          | ToLval (taints, lval_name, offset) ->
+                          | ToLval { taints; var = lval_name; offset; _ } ->
                               let lval_env = Lval_env.add lval_name offset taints lval_env in
                               (taints_acc, shape_acc, lval_env)
                           | ToSinkInCall
