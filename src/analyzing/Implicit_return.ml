@@ -77,6 +77,7 @@ let rec mark_first_instr_ancestor (cfg : IL.cfg) i =
 let lang_supports_implicit_return (lang : Lang.t) =
   match lang with
   | Clojure
+  | Crystal
   | Elixir
   | Ruby
   | Rust

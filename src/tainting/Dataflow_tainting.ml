@@ -2286,12 +2286,12 @@ let call_with_intrafile lval_opt e env args instr =
              remapped as constructors. Their eorig may share a token with a
              constructor edge (e.g., in Passthrough(source()).get_data(), both
              the constructor and the method eorig start at "Passthrough").
-             Skip the constructor check for Dot accesses unless it's Ruby's
-             ClassName.new() pattern. *)
+             Skip the constructor check for Dot accesses unless it's Ruby's or
+             Crystal's ClassName.new() pattern. *)
           (match e.e with
           | Fetch { rev_offset = [{ o = Dot name; _ }]; _ }
             when fst name.IL.ident <> "new"
-                 || not Lang.(env.taint_inst.lang =*= Ruby) -> false
+                 || not Lang.(env.taint_inst.lang =*= Ruby || env.taint_inst.lang =*= Crystal) -> false
           | _ -> true) &&
           Option.is_some env.signature_db &&
           (* The constructor edge is stored at the class name token position

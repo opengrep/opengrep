@@ -228,6 +228,7 @@ let langs_with_error_tolerance =
     (Lang.Bash, Strict);
     (Lang.Elixir, Strict);
     (Lang.Csharp, Strict);
+    (Lang.Crystal, Strict);
     (Lang.Dockerfile, Strict);
     (Lang.Lua, Strict);
     (Lang.Lua, Todo);

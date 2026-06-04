@@ -48,6 +48,7 @@ type t = Language.t =
   | Circom
   | Clojure
   | Cpp
+  | Crystal
   | Csharp
   | Dart
   | Dockerfile
@@ -152,6 +153,7 @@ let langs_of_filename filename =
   | FT.PL (FT.C "c") -> [ C ]
   | FT.PL (FT.C "h") -> [ C; Cpp ]
   | FT.PL (FT.Cplusplus _) -> [ Cpp ]
+  | FT.PL FT.Crystal -> [ Crystal ]
   | FT.PL (FT.OCaml ("ml" | "mli")) -> [ Ocaml ]
   | FT.PL FT.Java -> [ Java ]
   | FT.PL FT.Go -> [ Go ]

@@ -57,6 +57,7 @@ and pl_type =
   | Java
   | Kotlin
   | Csharp
+  | Crystal
   | Vb
   | ObjectiveC of string
   | Swift
@@ -196,6 +197,7 @@ let file_type_of_file file =
   | "java" -> PL Java
   | "kt" -> PL Kotlin
   | "cs" -> PL Csharp
+  | "cr" -> PL Crystal
   | "p" -> PL Pascal
   | "thrift" -> PL (IDL Thrift)
   | "atd" -> PL (IDL ATD)

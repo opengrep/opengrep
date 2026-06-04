@@ -169,6 +169,8 @@ let just_parse_with_lang lang file : Parsing_result2.t =
    *)
   | Lang.Cairo ->
       run file [ TreeSitter Parse_cairo_tree_sitter.parse ] (fun x -> x)
+  | Lang.Crystal ->
+      run file [ TreeSitter Parse_crystal_tree_sitter.parse ] (fun x -> x)
   | Lang.Ruby ->
       run file
         [ TreeSitter Parse_ruby_tree_sitter.parse ]

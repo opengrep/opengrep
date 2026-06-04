@@ -104,9 +104,10 @@ let just_resolve_name lang ast =
    * module instance in AST_generic. *)
   (* AST_generic.SId.unsafe_reset_counter (); *)
   Naming_AST.resolve lang ast;
-  (* In Ruby, bare unresolved identifiers are method calls. *)
+  (* In Ruby and Crystal, bare unresolved identifiers are method calls. *)
   let ast =
-    if Lang.equal lang Lang.Ruby then Disambiguate_ruby_calls.disambiguate ast
+    if Lang.equal lang Lang.Ruby || Lang.equal lang Lang.Crystal then
+      Disambiguate_ruby_calls.disambiguate ast
     else ast
   in
   run_analyses_after_name_resolution lang ast;

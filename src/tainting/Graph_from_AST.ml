@@ -385,7 +385,7 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
         (* Chained call: Constructor(...).method() — receiver is a constructor.
            Python/Kotlin/Scala: ClassName(args).method()
            Java/JS/TS/C#:       new ClassName(args).method()
-           Ruby:                ClassName.new(args).method() *)
+           Ruby/Crystal:        ClassName.new(args).method() *)
         | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _))) ->
             let class_name_opt = match receiver.G.e with
               (* Python/Kotlin/Scala: ClassName(args) *)
@@ -398,11 +398,11 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                   | G.TyN (G.Id ((cn, _), _)) -> Some cn
                   | G.TyExpr { G.e = G.N (G.Id ((cn, _), _)); _ } -> Some cn
                   | _ -> None)
-              (* Ruby: ClassName.new(args) *)
+              (* Ruby/Crystal: ClassName.new(args) *)
               | G.Call ({ e = G.DotAccess (
                     { e = G.N (G.Id ((cn, _), _)); _ }, _,
                     G.FN (G.Id (("new", _), _))); _ }, _)
-                when Lang.(lang =*= Ruby) -> Some cn
+                when Lang.(lang =*= Ruby || lang =*= Crystal) -> Some cn
               | _ -> None
             in
             (match class_name_opt with
@@ -461,13 +461,13 @@ let extract_calls ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = []) ?(c
             | Some fn_id ->
                 (* For DotAccess calls, use the method name token so it
                    matches the method_tok lookup in get_signature_for_object.
-                   Exception: Ruby's ClassName.new() — use the class name
+                   Exception: Ruby/Crystal ClassName.new() — use the class name
                    token (top of expression) since the constructor machinery
                    uses tok_of_eorig which points to the class name. *)
                 let tok =
                   match callee.G.e with
                   | G.DotAccess (_, _, G.FN (G.Id (("new", _), _)))
-                    when Lang.(lang =*= Ruby) ->
+                    when Lang.(lang =*= Ruby || lang =*= Crystal) ->
                       (match AST_generic_helpers.ii_of_any (G.E e) with
                       | tok :: _ -> tok
                       | [] -> Tok.unsafe_fake_tok "")
@@ -845,11 +845,11 @@ let extract_hof_callbacks ?(_object_mappings = []) ?(all_funcs = [])
       inherit [_] G.iter as super
       method! visit_expr env e =
         (match e.G.e with
-        (* Ruby/Scala block pattern: f(args) { block } is Call(Call(callee, inner_args), [block]).
+        (* Ruby/Crystal/Scala block pattern: f(args) { block } is Call(Call(callee, inner_args), [block]).
            Merge inner_args and block args so the HOF detection sees all arguments together. *)
         | G.Call ({ e = G.Call (callee, inner_args); _ },
                   (_, ([ G.Arg { G.e = G.Lambda _; _ } ] as outer_arg), _))
-          when Lang.(lang =*= Ruby || lang =*= Scala) ->
+          when Lang.(lang =*= Ruby || lang =*= Crystal || lang =*= Scala) ->
             let merged_args = Tok.unsafe_fake_bracket
               (Tok.unbracket inner_args @ outer_arg) in
             let found = extract_hof_callbacks_from_call

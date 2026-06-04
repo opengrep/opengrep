@@ -1,0 +1,12 @@
+def run
+  # ERROR:
+  foo(1, 2)
+
+  # ERROR:
+  foo(
+    1,
+    2
+  )
+
+  foo(2, 1)
+end
