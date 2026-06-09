@@ -728,12 +728,40 @@ let substitute_free_fetches (param_refs : (IL.name * int) list)
                 }
             | _ -> original))
   in
-  (* Reach is paired with [IL_helpers.cond_partial_param_refs]: every
-     [Fetch] position that walker can list, this one must be able to
-     rewrite. Recurse through [Operator], [Cast], [Composite],
-     [RecordOrDict], and a [FixmeExp]'s partial-translation slot;
-     [Literal] is terminal. *)
+  (* Substituting one parameter that the [cond] reads N times produces N
+     copies of its actual, so a [cond] that reads a parameter occurring in
+     its own actual doubles per call along a forwarding chain. Two memos
+     keep the result a shared DAG instead of that tree:
+       - [node_memo] returns the same physical result for the same input
+         node, so a shared sub-[cond] is rewritten once;
+       - [arg_memo] returns one physical actual per parameter (offset-free
+         reads), so the N occurrences point at the same node.
+     Reach is paired with [IL_helpers.cond_partial_param_refs]: every
+     [Fetch] position that walker can list, this one must rewrite. Recurse
+     through [Operator], [Cast], [Composite], [RecordOrDict], and a
+     [FixmeExp]'s partial-translation slot; [Literal] is terminal. *)
+  let node_memo = IL_helpers.PhysExpTbl.create 64 in
+  let arg_memo : (int, IL.exp) Hashtbl.t = Hashtbl.create 8 in
+  let resolve_param (e : IL.exp) (name : IL.name) (idx : int) (lval : IL.lval) :
+      IL.exp =
+    let taint_arg = { Taint.name = fst name.ident; index = idx } in
+    match resolve_arg taint_arg with
+    | None -> e
+    | Some actual_exp -> (
+        match t_offset_of_il_rev_offset lval.rev_offset with
+        | None -> e
+        | Some t_off ->
+            let consumed, leftover = resolve_callee_expr actual_exp t_off in
+            ext consumed leftover e)
+  in
   let rec walk (e : IL.exp) : IL.exp =
+    match IL_helpers.PhysExpTbl.find_opt node_memo e with
+    | Some r -> r
+    | None ->
+        let r = walk_compute e in
+        IL_helpers.PhysExpTbl.add node_memo e r;
+        r
+  and walk_compute (e : IL.exp) : IL.exp =
     match e.e with
     | IL.Fetch lval -> (
         match lval.base with
@@ -743,19 +771,15 @@ let substitute_free_fetches (param_refs : (IL.name * int) list)
             with
             | None -> e
             | Some (_, idx) -> (
-                let taint_arg =
-                  { Taint.name = fst name.ident; index = idx }
-                in
-                match resolve_arg taint_arg with
-                | None -> e
-                | Some actual_exp -> (
-                    match t_offset_of_il_rev_offset lval.rev_offset with
-                    | None -> e
-                    | Some t_off ->
-                        let consumed, leftover =
-                          resolve_callee_expr actual_exp t_off
-                        in
-                        ext consumed leftover e)))
+                match lval.rev_offset with
+                | [] -> (
+                    match Hashtbl.find_opt arg_memo idx with
+                    | Some sub -> sub
+                    | None ->
+                        let sub = resolve_param e name idx lval in
+                        Hashtbl.add arg_memo idx sub;
+                        sub)
+                | _ -> resolve_param e name idx lval))
         | IL.VarSpecial _ | IL.Mem _ -> e)
     | IL.Operator (wop, args) ->
         { e with IL.e = IL.Operator (wop, List.map walk_arg args) }
@@ -912,7 +936,8 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
       let cond =
         substitute_free_fetches f_anchored inst_var.f_resolve_arg g.cond
       in
-      { Effect_guard.cond; param_refs = g.param_refs }
+      { Effect_guard.cond = Effect_guard.intern_cond cond;
+        param_refs = g.param_refs }
   in
   (* Walk a single effect. Returns [None] iff the effect should be
    * dropped (currently: [ToLval] whose lval cannot anchor to a
@@ -1101,7 +1126,8 @@ let classify_guards ~(lang : Lang.t)
             | None -> Keep_guards Effect_guard.top
             | Some param_refs ->
                 let rebound =
-                  { Effect_guard.cond = substituted; param_refs }
+                  { Effect_guard.cond = Effect_guard.intern_cond substituted;
+                    param_refs }
                 in
                 Log.debug (fun m ->
                     m "GUARD_REBIND: %s -> %s"

@@ -4,6 +4,26 @@ val is_pro_resolved_global : IL.name -> bool
 val is_class_name : IL.name -> bool
 val exp_of_arg : IL.exp IL.argument -> IL.exp
 
+module PhysExpTbl : Hashtbl.S with type key = IL.exp
+(** Hash table keyed by the physical identity of an [IL.exp], for memoising
+    traversals of the shared-DAG guard conds built in [Sig_inst]. *)
+
+val compare_exp : IL.exp -> IL.exp -> int
+(** Token-insensitive structural order on [IL.exp], short-circuiting on
+    physical identity (so shared sub-DAGs are ordered once). Names are ordered
+    by [str_of_name] (ident and sid). *)
+
+val equal_exp : IL.exp -> IL.exp -> bool
+(** [Int.equal (compare_exp a b) 0]. *)
+
+val hash_exp : IL.exp -> int
+(** Token-insensitive structural hash consistent with [equal_exp], bounded to a
+    few levels. For the guard-cond intern table in [Effect_guard]. *)
+
+val rebuild_children : (IL.exp -> IL.exp) -> IL.exp -> IL.exp
+(** [rebuild_children f e] applies [f] to each immediate child [exp] of [e] and
+    rebuilds it ([Fetch] is treated as a leaf). *)
+
 val pname_of_param : IL.param -> IL.name option
 (** [Some pname] for [Param]/[ParamRest]/[ParamPattern]; [None] for
     [ParamFixme]. *)

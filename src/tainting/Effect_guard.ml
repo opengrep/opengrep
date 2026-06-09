@@ -30,17 +30,94 @@ type t = {
   param_refs : (IL.name * int) list;
 }
 
-(* Compare conds via [IL_pp.pp_exp]. [IL.exp] has no [@@deriving ord],
- * and [Stdlib.compare] on [IL.exp] is unsafe because
- * [id_info.id_svalue] is a mutable [ref] with potential cycles.
- * [IL_pp.pp_exp] renders unary operators (e.g. [Not]) recursively into
- * the inner expression, so [Not(Eq 1)] and [Not(Eq 2)] compare
- * distinct; [Display_IL.string_of_exp] elides children of non-binary
- * operators ("<OP Not ...>"), causing distinct guards to collide.
- * [pp_name] includes the [sid], so conds differing only by a
- * [Fetch]'s [IL.name] sid compare as distinct. *)
-let compare_cond e1 e2 =
-  String.compare (IL_pp.pp_exp e1) (IL_pp.pp_exp e2)
+(* Hash-consing of guard conds. Cross-call substitution ([Sig_inst]) and the
+ * dataflow fixpoint rebuild structurally-equal conds as separate physical
+ * trees; interning them to one canonical node makes [compare_cond] short-
+ * circuit on [phys_equal] and lets the fixpoint stabilise without re-walking
+ * the shared DAG. The table is domain-local (one per domain, no cross-domain
+ * races) and strong: it must be cleared at each task boundary with
+ * [reset_intern], because rules run on a domain in sequence (see
+ * [Match_tainting_mode]) and a stale canonical from a previous rule's conds
+ * would persist otherwise. *)
+(* Per-node structural hash cached by physical identity. A parent's hash
+ * combines its children's cached hashes, so it is full (depth-distinguishing)
+ * and costs one cache lookup per immediate child — unlike the bounded
+ * [IL_helpers.hash_exp], which collides for the deep self-similar conds and
+ * would make interning quadratic in the bucket. Children are interned (and
+ * cached) before their parent, so [child_h] always hits. *)
+let node_hash_table : int IL_helpers.PhysExpTbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> IL_helpers.PhysExpTbl.create 1024)
+
+let hashcons_hash (e : IL.exp) : int =
+  let nh = Domain.DLS.get node_hash_table in
+  let child_h (c : IL.exp) : int =
+    match IL_helpers.PhysExpTbl.find_opt nh c with
+    | Some h -> h
+    | None -> IL_helpers.hash_exp c
+  in
+  match e.e with
+  | IL.Literal _
+  | IL.Fetch _ ->
+      IL_helpers.hash_exp e
+  | IL.Operator (_, args) ->
+      Stdlib.Hashtbl.hash
+        (1, List.map (fun a -> child_h (IL_helpers.exp_of_arg a)) args)
+  | IL.Cast (_, a) -> Stdlib.Hashtbl.hash (2, child_h a)
+  | IL.Composite (_, (_, xs, _)) -> Stdlib.Hashtbl.hash (3, List.map child_h xs)
+  | IL.RecordOrDict _ -> 4
+  | IL.FixmeExp (_, _, Some a) -> Stdlib.Hashtbl.hash (5, child_h a)
+  | IL.FixmeExp (_, _, None) -> 6
+
+module ICondTbl = Hashtbl.Make (struct
+  type t = IL.exp
+
+  let equal = IL_helpers.equal_exp
+  let hash = hashcons_hash
+end)
+
+let intern_table : IL.exp ICondTbl.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> ICondTbl.create 1024)
+
+let reset_intern () : unit =
+  ICondTbl.clear (Domain.DLS.get intern_table);
+  IL_helpers.PhysExpTbl.clear (Domain.DLS.get node_hash_table)
+
+(* Canonicalise [cond] bottom-up: children are interned first, so a node's table
+ * lookup compares already-shared children ([equal_exp] short-circuits on
+ * [phys_equal]) and hashes from their cached hashes — both linear only in the
+ * node's immediate children. The per-call [memo] keeps the walk linear in the
+ * cond's distinct nodes (the cond is itself a shared DAG from [Sig_inst]). *)
+let intern_cond (cond : IL.exp) : IL.exp =
+  let tbl = Domain.DLS.get intern_table in
+  let nh = Domain.DLS.get node_hash_table in
+  let memo = IL_helpers.PhysExpTbl.create 64 in
+  let rec go (e : IL.exp) : IL.exp =
+    match IL_helpers.PhysExpTbl.find_opt memo e with
+    | Some c -> c
+    | None ->
+        let e' = IL_helpers.rebuild_children go e in
+        let canon =
+          match ICondTbl.find_opt tbl e' with
+          | Some c -> c
+          | None ->
+              ICondTbl.replace tbl e' e';
+              IL_helpers.PhysExpTbl.add nh e' (hashcons_hash e');
+              e'
+        in
+        IL_helpers.PhysExpTbl.add memo e canon;
+        canon
+  in
+  go cond
+
+(* Compare conds structurally via [IL_helpers.compare_exp]. [IL.exp] has no
+ * [@@deriving ord] and [Stdlib.compare] on it is unsafe ([id_info.id_svalue]
+ * is a mutable [ref] with potential cycles), so this is a hand-written order.
+ * It short-circuits on physical identity, unlike [IL_pp.pp_exp], which renders
+ * the whole tree and so is exponential on the shared-DAG conds from
+ * [Sig_inst]. It is token-insensitive and orders names by [str_of_name]
+ * (ident and sid), so two same-named variables with distinct sids stay
+ * distinct, matching the previous [pp_exp] order up to token position. *)
+let compare_cond e1 e2 = IL_helpers.compare_exp e1 e2
 
 let compare_param_ref (n1, i1) (n2, i2) =
   let c = Int.compare i1 i2 in
@@ -56,10 +133,16 @@ let compare g1 g2 =
       (List.sort compare_param_ref g2.param_refs)
 
 let equal g1 g2 = compare g1 g2 = 0
-(* Use [IL_pp.pp_exp] for the same reason [compare_cond] does: it
- * renders unary children (e.g. [Not]) in full, whereas
- * [Display_IL.string_of_exp] elides them as "<OP Not ...>". *)
-let show g = IL_pp.pp_exp g.cond
+(* Render the cond. [~truncate_guards] (default [true]) renders at most
+ * [Limits_semgrep.taint_MAX_GUARD_LOG_CHARS] characters (first that many, then
+ * "..."), so debug logging of the shared-DAG guards from [Sig_inst] stays
+ * bounded instead of pp-ing 2^depth characters; the signature dump passes
+ * [~truncate_guards:false] for full output. [IL_pp] renders unary children (e.g.
+ * [Not]) in full, unlike [Display_IL.string_of_exp]. *)
+let show ?(truncate_guards = true) g =
+  if truncate_guards then
+    IL_pp.pp_exp_bounded ~max:Limits_semgrep.taint_MAX_GUARD_LOG_CHARS g.cond
+  else IL_pp.pp_exp g.cond
 
 (* Identity for [And]: a [cond] that is the literal [true], with no
  * param refs. [is_top g] is the "no constraint" predicate; the
@@ -84,8 +167,8 @@ let cond_vars (g : t) : IL.name list =
 
 (* Bracketed rendering for signature dumps: empty when [is_top],
  * [<cond>] otherwise. *)
-let show_in_brackets (g : t) : string =
-  if is_top g then "" else "[" ^ show g ^ "]"
+let show_in_brackets ?(truncate_guards = true) (g : t) : string =
+  if is_top g then "" else "[" ^ show ~truncate_guards g ^ "]"
 
 (* [Set] of atomic guards. Used by [Lval_env.active_guards] to track
  * which atoms are live at the current program point. The
@@ -99,10 +182,12 @@ module Set = Stdlib.Set.Make (struct
   let compare = compare
 end)
 
-let show_set gs =
+let show_set ?(truncate_guards = true) gs =
   if Set.is_empty gs then ""
   else
-    "[" ^ String.concat " && " (gs |> Set.elements |> List.map show) ^ "]"
+    "["
+    ^ String.concat " && " (gs |> Set.elements |> List.map (show ~truncate_guards))
+    ^ "]"
 
 let merge_param_refs (rs1 : (IL.name * int) list)
     (rs2 : (IL.name * int) list) : (IL.name * int) list =
@@ -119,7 +204,7 @@ let compose_and (g1 : t) (g2 : t) : t =
   else if is_top g2 then g1
   else
     {
-      cond = IL_helpers.wrap_and [ g1.cond; g2.cond ];
+      cond = intern_cond (IL_helpers.wrap_and [ g1.cond; g2.cond ]);
       param_refs = merge_param_refs g1.param_refs g2.param_refs;
     }
 
@@ -130,7 +215,7 @@ let compose_or (g1 : t) (g2 : t) : t =
   else if is_bot g2 then g1
   else
     {
-      cond = IL_helpers.wrap_or [ g1.cond; g2.cond ];
+      cond = intern_cond (IL_helpers.wrap_or [ g1.cond; g2.cond ]);
       param_refs = merge_param_refs g1.param_refs g2.param_refs;
     }
 

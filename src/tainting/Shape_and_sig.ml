@@ -410,7 +410,7 @@ and Effect : sig
             be trickier). *)
 
   val compare : t -> t -> int
-  val show : t -> string
+  val show : ?truncate_guards:bool -> t -> string
 
   val add_guards : Effect_guard.t -> t -> t
   (** [add_guards g eff] returns [eff] with [g] composed via [And] into its
@@ -423,9 +423,11 @@ and Effect : sig
 
   (* Mainly for debugging *)
   val show_sink : sink -> string
-  val show_args_taints : args_taints -> string
-  val show_taints_to_sink : taints_to_sink -> string
-  val show_taints_to_return : taints_to_return -> string
+  val show_args_taints : ?truncate_guards:bool -> args_taints -> string
+  val show_taints_to_sink : ?truncate_guards:bool -> taints_to_sink -> string
+
+  val show_taints_to_return :
+    ?truncate_guards:bool -> taints_to_return -> string
 end = struct
   module Taints = Taint.Taint_set
 
@@ -634,40 +636,41 @@ end = struct
   let show_taints_and_traces taints =
     Common2.string_of_list show_taint_to_sink_item taints
 
-  let show_taints_to_sink
+  let show_taints_to_sink ?(truncate_guards = true)
       { taints_with_precondition = taints, _; sink; guards; _ } =
     Common.spf "%s%s ~~~> %s" (show_taints_and_traces taints)
-      (Effect_guard.show_in_brackets guards)
+      (Effect_guard.show_in_brackets ~truncate_guards guards)
       (show_sink sink)
 
-  let show_taints_to_return { data_taints; data_shape; control_taints; guards; _ } =
+  let show_taints_to_return ?(truncate_guards = true)
+      { data_taints; data_shape; control_taints; guards; _ } =
     Printf.sprintf "return%s (%s & %s & CTRL:%s)"
-      (Effect_guard.show_in_brackets guards)
-      (T.show_taints data_taints)
+      (Effect_guard.show_in_brackets ~truncate_guards guards)
+      (T.show_taints ~truncate_guards data_taints)
       (Shape.show_shape data_shape)
-      (T.show_taints control_taints)
+      (T.show_taints ~truncate_guards control_taints)
 
-  let show_arg (arg : _ IL.argument) =
+  let show_arg ?(truncate_guards = true) (arg : _ IL.argument) =
     match arg with
     | Unnamed (taints, shape) ->
-        spf "%s & %s" (T.show_taints taints) (Shape.show_shape shape)
+        spf "%s & %s" (T.show_taints ~truncate_guards taints) (Shape.show_shape shape)
     | Named (ident, (taints, shape)) ->
-        spf "%s:(%s & %s)" (fst ident) (T.show_taints taints)
+        spf "%s:(%s & %s)" (fst ident) (T.show_taints ~truncate_guards taints)
           (Shape.show_shape shape)
 
-  let show_args_taints (args : _ IL.argument list) =
-    spf "(%s)" (List_.map show_arg args |> String.concat ", ")
+  let show_args_taints ?(truncate_guards = true) (args : _ IL.argument list) =
+    spf "(%s)" (List_.map (show_arg ~truncate_guards) args |> String.concat ", ")
 
-  let show = function
-    | ToSink tts -> show_taints_to_sink tts
-    | ToReturn ttr -> show_taints_to_return ttr
+  let show ?(truncate_guards = true) = function
+    | ToSink tts -> show_taints_to_sink ~truncate_guards tts
+    | ToReturn ttr -> show_taints_to_return ~truncate_guards ttr
     | ToLval { taints; lval; guards; _ } ->
-        Printf.sprintf "%s%s ----> %s" (T.show_taints taints)
-          (Effect_guard.show_in_brackets guards) (T.show_lval lval)
+        Printf.sprintf "%s%s ----> %s" (T.show_taints ~truncate_guards taints)
+          (Effect_guard.show_in_brackets ~truncate_guards guards) (T.show_lval lval)
     | ToSinkInCall { callee = _; arg; args_taints; guards; _ } ->
         Printf.sprintf "'call<%s>%s%s" (T.show_arg arg)
-          (show_args_taints args_taints)
-          (Effect_guard.show_in_brackets guards)
+          (show_args_taints ~truncate_guards args_taints)
+          (Effect_guard.show_in_brackets ~truncate_guards guards)
 
   let add_guards g eff =
     if Effect_guard.is_top g then eff
@@ -693,7 +696,7 @@ end
 and Effects : sig
   include Set.S with type elt = Effect.t
 
-  val show : t -> string
+  val show : ?truncate_guards:bool -> t -> string
   val add_list : Effect.t list -> t -> t
   val union_list : t list -> t
 end = struct
@@ -703,8 +706,10 @@ end = struct
     let compare effect1 effect2 = Effect.compare effect1 effect2
   end)
 
-  let show s =
-    s |> to_seq |> List.of_seq |> List_.map Effect.show |> String.concat "; "
+  let show ?(truncate_guards = true) s =
+    s |> to_seq |> List.of_seq
+    |> List_.map (Effect.show ~truncate_guards)
+    |> String.concat "; "
 
   let add_list elts t = List.fold_left (fun set e -> add e set) t elts
   let union_list ts = List.fold_left union empty ts
@@ -777,7 +782,7 @@ and Signature : sig
   val compare : t -> t -> int
   val of_IL_params : IL.param list -> params
   val show_params : params -> string
-  val show : t -> string
+  val show : ?truncate_guards:bool -> t -> string
 end = struct
   (*************************************)
   (* Param(eter)s *)
@@ -835,8 +840,9 @@ end = struct
     | 0 -> Effects.compare effects1 effects2
     | other -> other
 
-  let show { params; params_il = _; effects } =
-    spf "%s => {%s}" (show_params params) (Effects.show effects)
+  let show ?(truncate_guards = true) { params; params_il = _; effects } =
+    spf "%s => {%s}" (show_params params)
+      (Effects.show ~truncate_guards effects)
 end
 
 module Effects_tbl = Hashtbl.Make (struct
@@ -864,7 +870,9 @@ type sig_arity = Arity_exact of int | Arity_at_least of int
 
 type extended_sig = {
   sig_ : Signature.t;
-      [@printer fun fmt s -> Format.fprintf fmt "%s" (Signature.show s)]
+      [@printer
+        fun fmt s ->
+          Format.fprintf fmt "%s" (Signature.show ~truncate_guards:false s)]
   arity : sig_arity;
 }
 [@@deriving show]

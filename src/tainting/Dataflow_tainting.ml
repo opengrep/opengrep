@@ -3164,6 +3164,7 @@ let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
  * as a guard. *)
 
 let guard_of_cond (params : IL.param list) (cond : IL.exp) : Effect_guard.t =
+  let cond = Effect_guard.intern_cond cond in
   { Effect_guard.cond;
     param_refs = IL_helpers.cond_partial_param_refs params cond }
 

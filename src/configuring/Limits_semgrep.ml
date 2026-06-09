@@ -94,3 +94,10 @@ let taint_MAX_SHAPE_DEPTH = 50
  * or this cap is reached. Only Clojure multi-arity self-recursion
  * currently triggers the loop. *)
 let taint_MAX_SELF_SIG_PASSES = 5
+
+(** Maximum number of characters of a guard cond that [Effect_guard.show]
+ * renders into a log line; a longer cond is rendered as its first this-many
+ * characters followed by "...". Guard conds from deep cross-call forwarding are
+ * shared DAGs that unfold to 2^depth characters, so rendering one in full via
+ * [IL_pp.pp_exp] under debug logging is exponential. *)
+let taint_MAX_GUARD_LOG_CHARS = 200

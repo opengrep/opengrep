@@ -237,7 +237,20 @@ let eval_binop_string ?tok op s1 s2 =
 (* Entry point *)
 (*****************************************************************************)
 
-let rec eval (env : env) (exp : IL.exp) : G.svalue =
+(* [memo] keys on the physical identity of an [exp]. Guard conds built by
+ * cross-call substitution ([Sig_inst]) are shared DAGs whose tree expansion
+ * is exponential in the call depth; folding each distinct node once keeps
+ * evaluation linear in the DAG. The table is created per top-level [eval]
+ * (one domain) where [env] is fixed, so cached values stay valid. *)
+let rec eval_memo memo (env : env) (exp : IL.exp) : G.svalue =
+  match IL_helpers.PhysExpTbl.find_opt memo exp with
+  | Some v -> v
+  | None ->
+      let v = eval_node memo env exp in
+      IL_helpers.PhysExpTbl.add memo exp v;
+      v
+
+and eval_node memo (env : env) (exp : IL.exp) : G.svalue =
   match exp.e with
   | Fetch lval -> eval_lval env lval
   | Literal li -> G.Lit li
@@ -248,14 +261,14 @@ let rec eval (env : env) (exp : IL.exp) : G.svalue =
            Unnamed { e = Operator ((And, _), [ _cond; Unnamed a_then ]); _ };
            Unnamed a_else;
          ] as args) ) -> (
-      let c_then = eval env a_then in
-      let c_else = eval env a_else in
+      let c_then = eval_memo memo env a_then in
+      let c_else = eval_memo memo env a_else in
       match (c_then, c_else) with
       | G.Lit (G.String _), G.Lit (G.String _) -> G.Cst G.Cstr
       | G.Lit (G.Int _), G.Lit (G.Int _) -> G.Cst G.Cstr
       (* Fall-back to default evaluation strategy. *)
-      | __else__ -> eval_op env op args)
-  | Operator (op, args) -> eval_op env op args
+      | __else__ -> eval_op memo env op args)
+  | Operator (op, args) -> eval_op memo env op args
   | Composite _
   | RecordOrDict _
   | Cast _
@@ -276,15 +289,17 @@ and eval_lval env lval =
       | Some c1, Some c2 -> refine c1 c2)
   | ___else___ -> G.NotCst
 
-and eval_op env wop args =
+and eval_op memo (env : env) wop args =
   let op, tok = wop in
   (* Length is handled separately so we can fold it on a Composite argument.
    * Eval.eval on Composite returns NotCst, so routing through [cs] first
    * would discard the shape we need. *)
   match (op, args) with
-  | G.Length, [ Unnamed arg ] -> eval_length env arg
+  | G.Length, [ Unnamed arg ] -> eval_length memo env arg
   | _ ->
-  let cs = args |> List_.map IL_helpers.exp_of_arg |> List_.map (eval env) in
+  let cs =
+    args |> List_.map IL_helpers.exp_of_arg |> List_.map (eval_memo memo env)
+  in
   match (op, cs) with
   | G.Plus, [ c1 ] -> c1
   | op, [ G.Lit (G.Bool (b, _)) ] -> eval_unop_bool op b
@@ -334,7 +349,7 @@ and eval_op env wop args =
  *   - a variable whose svalue is a G.Sym of a Generic Container (same kinds);
  *   - a string literal.
  * Otherwise NotCst. *)
-and eval_length env arg =
+and eval_length memo (env : env) arg =
   match arg.e with
   | Composite ((CList | CTuple | CArray | CSet), (_, xs, _)) ->
       G.Lit (literal_of_int (Int64.of_int (List.length xs)))
@@ -347,7 +362,7 @@ and eval_length env arg =
        * [Spread] makes the count unknown, so we bail. *)
       G.Lit (literal_of_int (Int64.of_int (List.length fields)))
   | _ -> (
-      match eval env arg with
+      match eval_memo memo env arg with
       | G.Sym { G.e = G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)); _ } ->
           G.Lit (literal_of_int (Int64.of_int (List.length xs)))
       | G.Sym { G.e = G.Container (G.Dict, (_, xs, _)); _ } ->
@@ -358,6 +373,9 @@ and eval_length env arg =
       | G.Lit (G.String (_, (s, _), _)) ->
           G.Lit (literal_of_int (Int64.of_int (String.length s)))
       | _ -> G.NotCst)
+
+let eval (env : env) (exp : IL.exp) : G.svalue =
+  eval_memo (IL_helpers.PhysExpTbl.create 64) env exp
 
 let eval_concat (env : env) args =
   match List_.map (eval env) args with

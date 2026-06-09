@@ -1,0 +1,13 @@
+rules:
+  - id: test-guards-forwarding-chain
+    message: A guard forwarded through a deep chain must stay bounded and fold correctly
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

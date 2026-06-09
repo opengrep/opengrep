@@ -596,10 +596,10 @@ end
 
 type taints = Taint_set.t
 
-let show_taints taints =
+let show_taints ?(truncate_guards = true) taints =
   taints |> Taint_set.elements
   |> List_.map (fun (b : guarded_taint) ->
-         let guard_str = EG.show_in_brackets b.guard in
+         let guard_str = EG.show_in_brackets ~truncate_guards b.guard in
          show_taint b.taint ^ guard_str)
   |> String.concat ", "
   |> fun str -> "{ " ^ str ^ " }"

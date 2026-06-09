@@ -259,7 +259,7 @@ val taints_satisfy_requires : taint list -> Rule.precondition -> bool
 val taints_of_pms :
   incoming:taints -> (Core_match.t * Rule.taint_source) list -> taints
 
-val show_taints : taints -> string
+val show_taints : ?truncate_guards:bool -> taints -> string
 
 (*****************************************************************************)
 (* Taint-oriented comparison functions for non-taint types *)

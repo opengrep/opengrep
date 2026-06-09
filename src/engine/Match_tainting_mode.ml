@@ -770,6 +770,10 @@ let check_rules ~match_hook
     Core_profiling.rule_profiling Core_result.match_result list =
   (* Check for language support warnings when taint_intrafile is enabled *)
   (Dataflow_tainting.reset_constructor ();
+   (* Clear the per-domain guard-cond intern table: rules run on a domain in
+    * sequence, so a previous rule's canonical conds must not leak into this
+    * one. *)
+   Effect_guard.reset_intern ();
    match rules with
    | rule :: _ -> (
        (* Check if any rule has taint_intrafile enabled *)
