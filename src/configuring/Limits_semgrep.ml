@@ -101,3 +101,17 @@ let taint_MAX_SELF_SIG_PASSES = 5
  * shared DAGs that unfold to 2^depth characters, so rendering one in full via
  * [IL_pp.pp_exp] under debug logging is exponential. *)
 let taint_MAX_GUARD_LOG_CHARS = 200
+
+(** Maximum number of distinct nodes in a stored guard cond. A larger cond is
+ * widened at intern time ([Effect_guard.intern_cond]) to its And/Or skeleton
+ * over length-comparison atoms ([length(x) <cmp> n] — the shape Clojure
+ * multi-arity dispatch lowers to, and e.g. Python [len(x) == n] guards), with
+ * every other leaf replaced by [true]; a cond with no length atoms widens to
+ * literal [true]. The widened cond is implied by the original, so widening
+ * can add findings but never drop them, and arity dispatch survives widening.
+ * Bounds the disjunctive growth of path conditions fused at taint-set joins.
+ * An atom is 3-6 nodes, so this admits conds of roughly a hundred atoms —
+ * beyond what partial evaluation can refute at a call site. Lowering this cap
+ * trades guard precision for speed; near zero it degenerates to arity-only
+ * guards. *)
+let taint_MAX_GUARD_COND_NODES = 512

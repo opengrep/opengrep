@@ -25,6 +25,8 @@
  * and id_info). The evaluator uses the same [IL.equal_name] to look
  * up. *)
 
+module G = AST_generic
+
 (* Hash-consed guard cond. [node] is the canonical [IL.exp]: structurally-equal
  * conds interned in the same epoch share it physically, and its child [exp]s
  * are themselves canonical. [hash] is the full (depth-distinguishing)
@@ -104,10 +106,16 @@ let reset_intern () : unit = ICondTbl.clear (Domain.DLS.get intern_table)
  * lookup compares already-shared children ([equal_exp] short-circuits on
  * [phys_equal]) and hashes from their stored hashes — both linear only in the
  * node's immediate children. The per-call [memo] keeps the walk linear in the
- * cond's distinct nodes (the cond is itself a shared DAG from [Sig_inst]). *)
-let intern_cond (cond : IL.exp) : hcond =
+ * cond's distinct nodes (the cond is itself a shared DAG from [Sig_inst]).
+ * Also returns the number of distinct canonical nodes in the result ([seen]
+ * collects them across duplicate inputs), for the size cap in
+ * [intern_cond]. *)
+let intern_counted (cond : IL.exp) : hcond * int =
   let tbl = Domain.DLS.get intern_table in
   let memo : hcond IL_helpers.PhysExpTbl.t =
+    IL_helpers.PhysExpTbl.create 64
+  in
+  let seen : unit IL_helpers.PhysExpTbl.t =
     IL_helpers.PhysExpTbl.create 64
   in
   let rec go (e : IL.exp) : hcond =
@@ -130,10 +138,92 @@ let intern_cond (cond : IL.exp) : hcond =
               ICondTbl.replace tbl cand cand;
               cand
         in
+        if not (IL_helpers.PhysExpTbl.mem seen canon.node) then
+          IL_helpers.PhysExpTbl.add seen canon.node ();
         IL_helpers.PhysExpTbl.add memo e canon;
         canon
   in
+  let h = go cond in
+  (h, IL_helpers.PhysExpTbl.length seen)
+
+(* An atom of shape [length(e) <cmp> int-literal] (either operand order),
+ * possibly under a single [Not]. This is the shape Clojure multi-arity
+ * dispatch lowers to ([AST_to_IL.pm_len_cond] emits [Eq] and [GtE]) and the
+ * arity guards of [Builtin_models]; [len(x) == n] guards in other languages
+ * match too. *)
+let is_length_atom (e : IL.exp) : bool =
+  let is_cmp_of_length_and_int (e : IL.exp) : bool =
+    match e.e with
+    | IL.Operator
+        (((G.Eq | G.NotEq | G.Lt | G.LtE | G.Gt | G.GtE), _), [ a1; a2 ]) ->
+        let is_len (a : IL.exp IL.argument) : bool =
+          match (IL_helpers.exp_of_arg a).e with
+          | IL.Operator ((G.Length, _), [ _ ]) -> true
+          | _ -> false
+        in
+        let is_int (a : IL.exp IL.argument) : bool =
+          match (IL_helpers.exp_of_arg a).e with
+          | IL.Literal (G.Int _) -> true
+          | _ -> false
+        in
+        (is_len a1 && is_int a2) || (is_int a1 && is_len a2)
+    | _ -> false
+  in
+  match e.e with
+  | IL.Operator ((G.Not, _), [ IL.Unnamed inner ]) ->
+      is_cmp_of_length_and_int inner
+  | _ -> is_cmp_of_length_and_int e
+
+(* The And/Or skeleton of [cond] over its length atoms: length atoms are
+ * kept, every other leaf — including any non-atom [Not] subtree, since
+ * replacing under a negation would strengthen — becomes [true], and the
+ * [wrap_and]/[wrap_or] smart constructors fold the [true]s away. The result
+ * is implied by [cond] (subformulas in positive positions are only
+ * weakened). Keeping the skeleton rather than a conjunction of atoms
+ * preserves disjunctive arity dispatch: a guard fused across multi-arity
+ * legs, [or(and(len==1, P), and(len==2, Q))], widens to
+ * [or(len==1, len==2)], which a wrong-arity call still refutes. Memoised on
+ * physical identity so the walk is linear in the cond's distinct nodes. *)
+let widen_to_length_skeleton (cond : IL.exp) : IL.exp =
+  let memo : IL.exp IL_helpers.PhysExpTbl.t =
+    IL_helpers.PhysExpTbl.create 16
+  in
+  let rec go (e : IL.exp) : IL.exp =
+    match IL_helpers.PhysExpTbl.find_opt memo e with
+    | Some w -> w
+    | None ->
+        let w =
+          if is_length_atom e then e
+          else
+            match e.e with
+            | IL.Operator ((G.And, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
+                IL_helpers.wrap_and [ go a; go b ]
+            | IL.Operator ((G.Or, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
+                IL_helpers.wrap_or [ go a; go b ]
+            | _ -> IL_helpers.lit_bool ~eorig:e.eorig true
+        in
+        IL_helpers.PhysExpTbl.add memo e w;
+        w
+  in
   go cond
+
+(* Cap-and-widen. A cond with more than
+ * [Limits_semgrep.taint_MAX_GUARD_COND_NODES] distinct nodes is replaced by
+ * its length-atom skeleton — [true] when it has no length atoms, or if even
+ * the skeleton exceeds the cap. The widened cond is implied by the original,
+ * so the guarded effect applies at least as often: widening can add findings,
+ * never drop them. Length atoms are kept because they are what Clojure
+ * multi-arity dispatch compiles to; dropping one would apply a wrong-arity
+ * leg's effects unconditionally. *)
+let intern_cond (cond : IL.exp) : hcond =
+  let h, distinct_nodes = intern_counted cond in
+  if distinct_nodes <= Limits_semgrep.taint_MAX_GUARD_COND_NODES then h
+  else
+    let hw, widened_nodes =
+      intern_counted (widen_to_length_skeleton h.node)
+    in
+    if widened_nodes <= Limits_semgrep.taint_MAX_GUARD_COND_NODES then hw
+    else fst (intern_counted (IL_helpers.lit_bool ~eorig:IL.NoOrig true))
 
 (* Compare conds structurally via [IL_helpers.compare_exp]. [IL.exp] has no
  * [@@deriving ord] and [Stdlib.compare] on it is unsafe ([id_info.id_svalue]

@@ -1,0 +1,13 @@
+rules:
+  - id: test-guard-cap-widen
+    message: An over-cap guard cond is widened conservatively; small guards keep folding
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
