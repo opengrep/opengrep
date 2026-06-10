@@ -8,6 +8,10 @@ module PhysExpTbl : Hashtbl.S with type key = IL.exp
 (** Hash table keyed by the physical identity of an [IL.exp], for memoising
     traversals of the shared-DAG guard conds built in [Sig_inst]. *)
 
+val composite_kind_tag : IL.composite_kind -> int
+(** Per-constructor tag (a [Constructor]'s name is not included), for hashing
+    composites consistently with [equal_exp]. *)
+
 val compare_exp : IL.exp -> IL.exp -> int
 (** Token-insensitive structural order on [IL.exp], short-circuiting on
     physical identity (so shared sub-DAGs are ordered once). Names are ordered
@@ -112,7 +116,7 @@ val wrap_not : IL.exp -> IL.exp
 (** Wrap [cond] in [Operator(Not, [cond])]. *)
 
 val il_exp_equal : IL.exp -> IL.exp -> bool
-(** Compare two [IL.exp]s by their [IL_pp.pp_exp] form; matches
+(** Structural equality on [IL.exp] ([equal_exp]); matches
     [Effect_guard.compare_cond] so syntactic complement detection
     aligns with guard dedup. *)
 

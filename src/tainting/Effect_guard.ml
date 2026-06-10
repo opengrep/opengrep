@@ -59,12 +59,26 @@ let hashcons_hash (e : IL.exp) : int =
   | IL.Literal _
   | IL.Fetch _ ->
       IL_helpers.hash_exp e
-  | IL.Operator (_, args) ->
+  | IL.Operator ((op, _), args) ->
       Stdlib.Hashtbl.hash
-        (1, List.map (fun a -> child_h (IL_helpers.exp_of_arg a)) args)
+        ( 1,
+          AST_generic.hash_operator op,
+          List.map (fun a -> child_h (IL_helpers.exp_of_arg a)) args )
   | IL.Cast (_, a) -> Stdlib.Hashtbl.hash (2, child_h a)
-  | IL.Composite (_, (_, xs, _)) -> Stdlib.Hashtbl.hash (3, List.map child_h xs)
-  | IL.RecordOrDict _ -> 4
+  | IL.Composite (k, (_, xs, _)) ->
+      Stdlib.Hashtbl.hash
+        (3, IL_helpers.composite_kind_tag k, List.map child_h xs)
+  | IL.RecordOrDict fields ->
+      Stdlib.Hashtbl.hash
+        ( 4,
+          List.map
+            (fun (f : IL.field_or_entry) ->
+              match f with
+              | IL.Field (n, e) ->
+                  Stdlib.Hashtbl.hash (0, IL.str_of_name n, child_h e)
+              | IL.Entry (k, v) -> Stdlib.Hashtbl.hash (1, child_h k, child_h v)
+              | IL.Spread e -> Stdlib.Hashtbl.hash (2, child_h e))
+            fields )
   | IL.FixmeExp (_, _, Some a) -> Stdlib.Hashtbl.hash (5, child_h a)
   | IL.FixmeExp (_, _, None) -> 6
 
