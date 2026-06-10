@@ -900,13 +900,6 @@ end = struct
       (Effects.show ~truncate_guards effects)
 end
 
-module Effects_tbl = Hashtbl.Make (struct
-  type t = Effect.t
-
-  let equal r1 r2 = Effect.compare r1 r2 =|= 0
-  let hash r = Hashtbl.hash r
-end)
-
 (*****************************************************************************)
 (* Signature Database *)
 (*****************************************************************************)
