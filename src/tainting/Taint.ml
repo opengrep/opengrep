@@ -377,13 +377,6 @@ and show_taint taint =
 
 type guarded_taint = { taint : taint; guard : EG.t }
 
-let compare_guarded_taint (gt1 : guarded_taint) (gt2 : guarded_taint) =
-  (* Compare by taint identity only, so same-taint bundles with
-   * different guards collapse to one entry; [Taint_set.add] fuses
-   * their guards via [EG.compose_or] (different paths converging on
-   * the same taint contribute disjunctively). *)
-  compare_taint gt1.taint gt2.taint
-
 let lift_taint (t : taint) : guarded_taint = { taint = t; guard = EG.top }
 
 let with_guard (g : EG.t) (gt : guarded_taint) : guarded_taint =
@@ -400,25 +393,39 @@ module Taint_set = struct
    * key functions are 'add' and 'pick_best_taint'.
    *
    * Each element is a [guarded_taint] carrying the taint plus the
-   * [Effect_guard.t] under which that taint is live. Equality on the
-   * set element is by taint identity only ([compare_guarded_taint]),
-   * so when a bundle with the same taint identity but a different
-   * guard is added, [add] fuses guards via [EG.compose_or] and picks
-   * the best taint via [pick_best_taint]. *)
-  module Taints = Set.Make (struct
-    type t = guarded_taint
+   * [Effect_guard.t] under which that taint is live. Identity is the
+   * taint only ([compare_taint]), so when a bundle with the same taint
+   * identity but a different guard is added, [add] fuses guards via
+   * [EG.compose_or] and picks the best taint via [pick_best_taint].
+   *
+   * Represented as a [Map] from taint identity to bundle rather than a
+   * [Set] of bundles: the merge-on-collision access pattern is then one
+   * [Taints.update] descent (instead of find + remove + add), and
+   * [union] is the hedge [Map.union], which links non-overlapping
+   * subtrees wholesale instead of re-inserting every element — the
+   * dominant cost on big env joins and instantiation unions, where the
+   * two sides share most of their structure. The key is a
+   * representative taint of the equivalence class; merging may store a
+   * "better" taint in the bundle without rekeying (both compare equal
+   * by [compare_taint]). *)
+  module Taints = Map.Make (struct
+    type t = taint
 
-    let compare = compare_guarded_taint
+    let compare = compare_taint
   end)
 
-  type t = Taints.t
+  type t = guarded_taint Taints.t
 
   let empty = Taints.empty
   let is_empty set = Taints.is_empty set
   let cardinal set = Taints.cardinal set
-  let equal set1 set2 = Taints.equal set1 set2
-  let compare set1 set2 = Taints.compare set1 set2
-  let to_seq set = set |> Taints.to_seq
+
+  (* Equality/order on the taint identities (keys) only, matching the
+     previous [Set.Make] over taint-only bundle compare: guards and
+     trace details do not participate. *)
+  let equal set1 set2 = Taints.equal (fun _ _ -> true) set1 set2
+  let compare set1 set2 = Taints.compare (fun _ _ -> 0) set1 set2
+  let to_seq set = Taints.to_seq set |> Seq.map snd
   let elements set = set |> to_seq |> List.of_seq
 
   (* Like [equal] but also requires the guards of identity-equal taints
@@ -434,48 +441,57 @@ module Taint_set = struct
            EG.equal b1.guard b2.guard)
          (elements set1) (elements set2)
 
+  (* If two taints are "the same", we still want to pick "the best", e.g.
+   * the one with the shortest trace.
+   *
+   * This also helps avoiding infinite loops, which can happen when inferring
+   * taint signatures for functions like this:
+   *
+   *     f(tainted) {
+   *         while (true) {
+   *             x = g(tainted, f(tainted));
+   *             if (true) return x;
+   *         }
+   *     }
+   *
+   * Intuitively `f` propagates taint from its input to its output, and with every
+   * iteration we have a "new" taint source made by the tainted input passing N
+   * times through `f`, and so the fixpoint computation diverges. This is actually
+   * rather tricky and removing the `if (true)` or the `g` breaks the infinite loop,
+   * but this has not been investigated in detail. (TODO)
+   *
+   * THINK: We could do more clever things like checking whether a trace is an
+   *   extension of another trace and such. This could also be dealt with in the
+   *   taint-signatures themselves. But for now this solution is good.
+   *
+   * coupling: If this changes, make sure to update docs for the `Taint.signature` type.
+   *)
   let rec add alt_bundle set =
-    (* If two taints are "the same", we still want to pick "the best", e.g.
-     * the one with the shortest trace.
-     *
-     * This also helps avoiding infinite loops, which can happen when inferring
-     * taint signatures for functions like this:
-     *
-     *     f(tainted) {
-     *         while (true) {
-     *             x = g(tainted, f(tainted));
-     *             if (true) return x;
-     *         }
-     *     }
-     *
-     * Intuitively `f` propagates taint from its input to its output, and with every
-     * iteration we have a "new" taint source made by the tainted input passing N
-     * times through `f`, and so the fixpoint computation diverges. This is actually
-     * rather tricky and removing the `if (true)` or the `g` breaks the infinite loop,
-     * but this has not been investigated in detail. (TODO)
-     *
-     * THINK: We could do more clever things like checking whether a trace is an
-     *   extension of another trace and such. This could also be dealt with in the
-     *   taint-signatures themselves. But for now this solution is good.
-     *
-     * coupling: If this changes, make sure to update docs for the `Taint.signature` type.
-     *)
-    match Taints.find_opt alt_bundle set with
-    | None -> Taints.add alt_bundle set
-    | Some curr_bundle ->
-        let best_taint = pick_best_taint alt_bundle.taint curr_bundle.taint in
-        let merged_guard =
-          EG.compose_or alt_bundle.guard curr_bundle.guard
-        in
-        let merged = { taint = best_taint; guard = merged_guard } in
-        (* Optimization: Do not change the set if there is nothing to change. *)
-        if
-          Common.phys_equal best_taint curr_bundle.taint
-          && EG.equal merged_guard curr_bundle.guard
-        then set
-        else set |> Taints.remove curr_bundle |> Taints.add merged
+    Taints.update alt_bundle.taint
+      (function
+        | None -> Some alt_bundle
+        | Some curr_bundle -> Some (merge_bundles alt_bundle curr_bundle))
+      set
 
-  and union set1 set2 = Taints.fold add set1 set2
+  (* Merge two bundles with the same taint identity: best taint by the
+   * shortest-trace rule, guards fused disjunctively. Returns
+   * [curr_bundle] ITSELF when nothing changes — [Taints.update] and
+   * [Taints.union] propagate that physical equality and skip the tree
+   * rebuild. *)
+  and merge_bundles alt_bundle curr_bundle =
+    let best_taint = pick_best_taint alt_bundle.taint curr_bundle.taint in
+    let merged_guard = EG.compose_or alt_bundle.guard curr_bundle.guard in
+    if
+      Common.phys_equal best_taint curr_bundle.taint
+      && EG.equal merged_guard curr_bundle.guard
+    then curr_bundle
+    else { taint = best_taint; guard = merged_guard }
+
+  (* Hedge union: non-overlapping subtrees are linked without visiting
+   * their elements; colliding keys merge like [add] (set1 is the
+   * incoming side, matching the previous [fold add set1 set2]). *)
+  and union set1 set2 =
+    Taints.union (fun _taint b1 b2 -> Some (merge_bundles b1 b2)) set1 set2
 
   and of_list bundles =
     List.fold_left (fun set b -> add b set) Taints.empty bundles
@@ -516,7 +532,7 @@ module Taint_set = struct
                *)
               let ts1' = of_list (List_.map lift_taint ts1) in
               let ts2' = of_list (List_.map lift_taint ts2) in
-              if Taints.equal ts1' ts2' then
+              if equal ts1' ts2' then
                 (* Optimization: prefer sharing. *)
                 Some (ts1, p1)
               else
@@ -545,29 +561,54 @@ module Taint_set = struct
             m "Taint_set.pick_taint: Ooops, the impossible happened!");
         taint2
 
-  let diff set1 set2 = Taints.diff set1 set2
+  (* Linear merge keeping set1's bindings whose key is absent in set2. *)
+  let diff set1 set2 =
+    Taints.merge
+      (fun _ l r ->
+        match (l, r) with
+        | (Some _ as v), None -> v
+        | _, Some _
+        | None, None ->
+            None)
+      set1 set2
+
   let singleton (t : taint) : t = add (lift_taint t) empty
 
-  (* Because `Taint_set` is internally represented with a map, we cannot just
-     map the codomain taint, using the internal provided `map` function. We
-     want to map the keys too.
-     Unfortunately, the keys and values are different types, so it's not as
-     straightforward.
-     Fortunately, we can exploit a property of the map, which is that the
-     `orig` of the domain and codomain should be the same. So it should be fine
-     to simply map the codomain taint, and then take its `orig` as the key.
-  *)
-  let map f set = set |> Taints.to_seq |> Seq.map f |> Taints.of_seq
+  (* Map over the bundles. The fast path leaves keys untouched, which is
+     only sound while [f] preserves the taint identity ([orig]) of every
+     bundle — true for the hot mappers ([with_guard] and the token-only
+     [map_taint] uses). Some [map_taint] callers DO change identity
+     (offset rewriting in [Taint_shape], label propagation in
+     [Dataflow_tainting]); when we detect that, rebuild the map with
+     proper keys and merging instead of leaving stale keys behind.
+     Returns the input set itself when [f] changes nothing. *)
+  let map f set =
+    let changed = ref false in
+    let rekey = ref false in
+    let r =
+      Taints.map
+        (fun b ->
+          let b' = f b in
+          if not (Common.phys_equal b' b) then (
+            changed := true;
+            (* [b.taint] compares equal to its key by construction, so
+               comparing against it detects key staleness. *)
+            if compare_taint b'.taint b.taint <> 0 then rekey := true);
+          b')
+        set
+    in
+    if !rekey then Taints.fold (fun _ b acc -> add b acc) r Taints.empty
+    else if !changed then r
+    else set
 
-  let bind set f =
-    set
-    |> Taints.to_seq
-    |> Seq.flat_map (fun x -> Taints.to_seq (f x))
-    |> Taints.of_seq
-
-  let iter f set = Taints.iter f set
-  let fold f set acc = Taints.fold f set acc
-  let filter f set = Taints.filter f set
+  (* NOTE: the previous [Set]-based [bind] rebuilt via [Set.of_seq],
+     whose plain [Set.add] KEEPS the first bundle on collision — same-
+     taint bundles from different [f] results dropped their guards and
+     trace info arbitrarily. [union] applies the proper merge. *)
+  let bind set f = Taints.fold (fun _ b acc -> union (f b) acc) set empty
+  let iter f set = Taints.iter (fun _ b -> f b) set
+  let fold f set acc = Taints.fold (fun _ b acc -> f b acc) set acc
+  let filter f set = Taints.filter (fun _ b -> f b) set
 
   (* Strip per-taint guards: yields the bare taint identities. Used at
    * boundaries that don't (yet) consume guards. *)
