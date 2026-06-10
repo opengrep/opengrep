@@ -930,11 +930,12 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
   let walk_guard (g : Effect_guard.t) : Effect_guard.t =
     if Effect_guard.is_top g then g
     else
+      let g_cond = g.cond.Effect_guard.node in
       let f_anchored =
-        IL_helpers.cond_partial_param_refs inst_var.f_params_il g.cond
+        IL_helpers.cond_partial_param_refs inst_var.f_params_il g_cond
       in
       let cond =
-        substitute_free_fetches f_anchored inst_var.f_resolve_arg g.cond
+        substitute_free_fetches f_anchored inst_var.f_resolve_arg g_cond
       in
       { Effect_guard.cond = Effect_guard.intern_cond cond;
         param_refs = g.param_refs }
@@ -1106,7 +1107,7 @@ let classify_guards ~(lang : Lang.t)
       Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty
     in
     let substituted =
-      substitute_free_fetches g.param_refs resolve_arg g.cond
+      substitute_free_fetches g.param_refs resolve_arg g.cond.Effect_guard.node
     in
     let res = Eval_il_partial.eval eval_env substituted in
     Log.debug (fun m ->

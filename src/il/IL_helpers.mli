@@ -24,9 +24,11 @@ val hash_exp : IL.exp -> int
 (** Token-insensitive structural hash consistent with [equal_exp], bounded to a
     few levels. For the guard-cond intern table in [Effect_guard]. *)
 
-val rebuild_children : (IL.exp -> IL.exp) -> IL.exp -> IL.exp
-(** [rebuild_children f e] applies [f] to each immediate child [exp] of [e] and
-    rebuilds it ([Fetch] is treated as a leaf). *)
+val fold_map_children :
+  ('a -> IL.exp -> 'a * IL.exp) -> 'a -> IL.exp -> 'a * IL.exp
+(** [fold_map_children f acc e] threads [f] left-to-right through each
+    immediate child [exp] of [e] and rebuilds it ([Fetch] is treated as a
+    leaf). *)
 
 val pname_of_param : IL.param -> IL.name option
 (** [Some pname] for [Param]/[ParamRest]/[ParamPattern]; [None] for

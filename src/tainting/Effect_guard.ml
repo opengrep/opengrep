@@ -25,8 +25,22 @@
  * and id_info). The evaluator uses the same [IL.equal_name] to look
  * up. *)
 
+(* Hash-consed guard cond. [node] is the canonical [IL.exp]: structurally-equal
+ * conds interned in the same epoch share it physically, and its child [exp]s
+ * are themselves canonical. [hash] is the full (depth-distinguishing)
+ * structural hash, combined at intern time from the children's stored [hash] —
+ * unlike [Stdlib.Hashtbl.hash], whose bounded-prefix traversal collides for
+ * canonical nodes that share their top levels and differ only deeply, exactly
+ * the shape cross-call substitution produces; storing the hash in the wrapper
+ * makes retrieving a child's hash one field read instead of a side-table
+ * lookup that degrades with those collisions. *)
+type hcond = {
+  node : IL.exp;
+  hash : int;
+}
+
 type t = {
-  cond : IL.exp;
+  cond : hcond;
   param_refs : (IL.name * int) list;
 }
 
@@ -39,84 +53,82 @@ type t = {
  * [reset_intern], because rules run on a domain in sequence (see
  * [Match_tainting_mode]) and a stale canonical from a previous rule's conds
  * would persist otherwise. *)
-(* Per-node structural hash cached by physical identity. A parent's hash
- * combines its children's cached hashes, so it is full (depth-distinguishing)
- * and costs one cache lookup per immediate child — unlike the bounded
- * [IL_helpers.hash_exp], which collides for the deep self-similar conds and
- * would make interning quadratic in the bucket. Children are interned (and
- * cached) before their parent, so [child_h] always hits. *)
-let node_hash_table : int IL_helpers.PhysExpTbl.t Domain.DLS.key =
-  Domain.DLS.new_key (fun () -> IL_helpers.PhysExpTbl.create 1024)
-
-let hashcons_hash (e : IL.exp) : int =
-  let nh = Domain.DLS.get node_hash_table in
-  let child_h (c : IL.exp) : int =
-    match IL_helpers.PhysExpTbl.find_opt nh c with
-    | Some h -> h
-    | None -> IL_helpers.hash_exp c
-  in
-  match e.e with
+(* One-level structural hash: combines the node's own constructor (and leaf
+ * data) with the children's stored hashes. [node]'s children are the
+ * already-interned [kid_hashes]' nodes, in [fold_map_children] order
+ * ([Entry] contributes key then value). *)
+let node_hash (node : IL.exp) (kid_hashes : int list) : int =
+  match node.e with
   | IL.Literal _
   | IL.Fetch _ ->
-      IL_helpers.hash_exp e
-  | IL.Operator ((op, _), args) ->
-      Stdlib.Hashtbl.hash
-        ( 1,
-          AST_generic.hash_operator op,
-          List.map (fun a -> child_h (IL_helpers.exp_of_arg a)) args )
-  | IL.Cast (_, a) -> Stdlib.Hashtbl.hash (2, child_h a)
-  | IL.Composite (k, (_, xs, _)) ->
-      Stdlib.Hashtbl.hash
-        (3, IL_helpers.composite_kind_tag k, List.map child_h xs)
+      IL_helpers.hash_exp node
+  | IL.Operator ((op, _), _) ->
+      Stdlib.Hashtbl.hash (1, AST_generic.hash_operator op, kid_hashes)
+  | IL.Cast (_, _) -> Stdlib.Hashtbl.hash (2, kid_hashes)
+  | IL.Composite (k, _) ->
+      Stdlib.Hashtbl.hash (3, IL_helpers.composite_kind_tag k, kid_hashes)
   | IL.RecordOrDict fields ->
-      Stdlib.Hashtbl.hash
-        ( 4,
-          List.map
-            (fun (f : IL.field_or_entry) ->
-              match f with
-              | IL.Field (n, e) ->
-                  Stdlib.Hashtbl.hash (0, IL.str_of_name n, child_h e)
-              | IL.Entry (k, v) -> Stdlib.Hashtbl.hash (1, child_h k, child_h v)
-              | IL.Spread e -> Stdlib.Hashtbl.hash (2, child_h e))
-            fields )
-  | IL.FixmeExp (_, _, Some a) -> Stdlib.Hashtbl.hash (5, child_h a)
+      let field_keys =
+        List.map
+          (fun (f : IL.field_or_entry) ->
+            match f with
+            | IL.Field (n, _) -> (0, IL.str_of_name n)
+            | IL.Entry _ -> (1, "")
+            | IL.Spread _ -> (2, ""))
+          fields
+      in
+      Stdlib.Hashtbl.hash (4, field_keys, kid_hashes)
+  | IL.FixmeExp (_, _, Some _) -> Stdlib.Hashtbl.hash (5, kid_hashes)
   | IL.FixmeExp (_, _, None) -> 6
 
+(* The table key's [hash] is the precomputed [hcond.hash] (one field read).
+ * [equal] compares the underlying nodes structurally: both sides' children
+ * are canonical, so [equal_exp] short-circuits on [phys_equal] one level
+ * down and is linear in the immediate children, except on (rare, full-hash)
+ * collisions. *)
 module ICondTbl = Hashtbl.Make (struct
-  type t = IL.exp
+  type t = hcond
 
-  let equal = IL_helpers.equal_exp
-  let hash = hashcons_hash
+  let equal (a : hcond) (b : hcond) : bool =
+    IL_helpers.equal_exp a.node b.node
+
+  let hash (h : hcond) : int = h.hash
 end)
 
-let intern_table : IL.exp ICondTbl.t Domain.DLS.key =
+let intern_table : hcond ICondTbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> ICondTbl.create 1024)
 
-let reset_intern () : unit =
-  ICondTbl.clear (Domain.DLS.get intern_table);
-  IL_helpers.PhysExpTbl.clear (Domain.DLS.get node_hash_table)
+let reset_intern () : unit = ICondTbl.clear (Domain.DLS.get intern_table)
 
 (* Canonicalise [cond] bottom-up: children are interned first, so a node's table
  * lookup compares already-shared children ([equal_exp] short-circuits on
- * [phys_equal]) and hashes from their cached hashes — both linear only in the
+ * [phys_equal]) and hashes from their stored hashes — both linear only in the
  * node's immediate children. The per-call [memo] keeps the walk linear in the
  * cond's distinct nodes (the cond is itself a shared DAG from [Sig_inst]). *)
-let intern_cond (cond : IL.exp) : IL.exp =
+let intern_cond (cond : IL.exp) : hcond =
   let tbl = Domain.DLS.get intern_table in
-  let nh = Domain.DLS.get node_hash_table in
-  let memo = IL_helpers.PhysExpTbl.create 64 in
-  let rec go (e : IL.exp) : IL.exp =
+  let memo : hcond IL_helpers.PhysExpTbl.t =
+    IL_helpers.PhysExpTbl.create 64
+  in
+  let rec go (e : IL.exp) : hcond =
     match IL_helpers.PhysExpTbl.find_opt memo e with
-    | Some c -> c
+    | Some h -> h
     | None ->
-        let e' = IL_helpers.rebuild_children go e in
+        let rev_kids, node =
+          IL_helpers.fold_map_children
+            (fun acc c ->
+              let k = go c in
+              (k :: acc, k.node))
+            [] e
+        in
+        let hash = node_hash node (List.rev_map (fun k -> k.hash) rev_kids) in
+        let cand = { node; hash } in
         let canon =
-          match ICondTbl.find_opt tbl e' with
+          match ICondTbl.find_opt tbl cand with
           | Some c -> c
           | None ->
-              ICondTbl.replace tbl e' e';
-              IL_helpers.PhysExpTbl.add nh e' (hashcons_hash e');
-              e'
+              ICondTbl.replace tbl cand cand;
+              cand
         in
         IL_helpers.PhysExpTbl.add memo e canon;
         canon
@@ -131,7 +143,8 @@ let intern_cond (cond : IL.exp) : IL.exp =
  * [Sig_inst]. It is token-insensitive and orders names by [str_of_name]
  * (ident and sid), so two same-named variables with distinct sids stay
  * distinct, matching the previous [pp_exp] order up to token position. *)
-let compare_cond e1 e2 = IL_helpers.compare_exp e1 e2
+let compare_cond (h1 : hcond) (h2 : hcond) : int =
+  IL_helpers.compare_exp h1.node h2.node
 
 let compare_param_ref (n1, i1) (n2, i2) =
   let c = Int.compare i1 i2 in
@@ -155,17 +168,21 @@ let equal g1 g2 = compare g1 g2 = 0
  * [Not]) in full, unlike [Display_IL.string_of_exp]. *)
 let show ?(truncate_guards = true) g =
   if truncate_guards then
-    IL_pp.pp_exp_bounded ~max:Limits_semgrep.taint_MAX_GUARD_LOG_CHARS g.cond
-  else IL_pp.pp_exp g.cond
+    IL_pp.pp_exp_bounded ~max:Limits_semgrep.taint_MAX_GUARD_LOG_CHARS
+      g.cond.node
+  else IL_pp.pp_exp g.cond.node
 
 (* Identity for [And]: a [cond] that is the literal [true], with no
  * param refs. [is_top g] is the "no constraint" predicate; the
- * smart-constructor short-circuits use it to absorb identity guards. *)
+ * smart-constructor short-circuits use it to absorb identity guards.
+ * Built outside the intern table: it exists before any epoch and never
+ * enters a table, and [is_top]/[compare_cond] only read its [node]. *)
 let top : t =
-  { cond = IL_helpers.lit_bool ~eorig:IL.NoOrig true; param_refs = [] }
+  let node = IL_helpers.lit_bool ~eorig:IL.NoOrig true in
+  { cond = { node; hash = IL_helpers.hash_exp node }; param_refs = [] }
 
-let is_top (g : t) : bool = IL_helpers.is_lit_bool true g.cond
-let is_bot (g : t) : bool = IL_helpers.is_lit_bool false g.cond
+let is_top (g : t) : bool = IL_helpers.is_lit_bool true g.cond.node
+let is_bot (g : t) : bool = IL_helpers.is_lit_bool false g.cond.node
 
 (* Variables (base [Var] names) read by the guard's condition. A guard
  * becomes unreliable once one of these is reassigned: the IL is non-SSA,
@@ -173,7 +190,7 @@ let is_bot (g : t) : bool = IL_helpers.is_lit_bool false g.cond
  * one tested at the branch where the guard was established. The engine
  * drops such guards when stamping effects (see [Taint_lval_env]). *)
 let cond_vars (g : t) : IL.name list =
-  IL_helpers.lvals_of_exp g.cond
+  IL_helpers.lvals_of_exp g.cond.node
   |> List.filter_map (fun (lv : IL.lval) ->
          match lv.IL.base with
          | IL.Var name -> Some name
@@ -218,7 +235,7 @@ let compose_and (g1 : t) (g2 : t) : t =
   else if is_top g2 then g1
   else
     {
-      cond = intern_cond (IL_helpers.wrap_and [ g1.cond; g2.cond ]);
+      cond = intern_cond (IL_helpers.wrap_and [ g1.cond.node; g2.cond.node ]);
       param_refs = merge_param_refs g1.param_refs g2.param_refs;
     }
 
@@ -229,7 +246,7 @@ let compose_or (g1 : t) (g2 : t) : t =
   else if is_bot g2 then g1
   else
     {
-      cond = intern_cond (IL_helpers.wrap_or [ g1.cond; g2.cond ]);
+      cond = intern_cond (IL_helpers.wrap_or [ g1.cond.node; g2.cond.node ]);
       param_refs = merge_param_refs g1.param_refs g2.param_refs;
     }
 

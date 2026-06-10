@@ -202,32 +202,54 @@ and hash_offset (fuel : int) (o : offset) : int =
 
 let hash_exp (e : exp) : int = hash_exp_fuel 4 e
 
-(* Rebuild [e] with [f] applied to each immediate child [exp] (a [Fetch] is a
- * leaf here, matching [compare_exp] ordering the whole l-value as a unit). Used
- * by [Effect_guard]'s bottom-up intern. *)
-let rec rebuild_children (f : exp -> exp) (e : exp) : exp =
+(* Rebuild [e] with [f] threaded left-to-right through each immediate child
+ * [exp] (a [Fetch] is a leaf here, matching [compare_exp] ordering the whole
+ * l-value as a unit). Used by [Effect_guard]'s bottom-up intern, which needs
+ * both the rebuilt node and data accumulated over the children. *)
+let rec fold_map_children (f : 'a -> exp -> 'a * exp) (acc : 'a) (e : exp) :
+    'a * exp =
   match e.e with
   | Literal _
   | Fetch _
   | FixmeExp (_, _, None) ->
-      e
+      (acc, e)
   | Composite (k, (lb, xs, rb)) ->
-      { e with e = Composite (k, (lb, List.map f xs, rb)) }
+      let acc, xs = List.fold_left_map f acc xs in
+      (acc, { e with e = Composite (k, (lb, xs, rb)) })
   | RecordOrDict entries ->
-      { e with e = RecordOrDict (List.map (rebuild_field f) entries) }
-  | Cast (t, a) -> { e with e = Cast (t, f a) }
+      let acc, entries = List.fold_left_map (fold_map_field f) acc entries in
+      (acc, { e with e = RecordOrDict entries })
+  | Cast (t, a) ->
+      let acc, a = f acc a in
+      (acc, { e with e = Cast (t, a) })
   | Operator (op, args) ->
-      { e with e = Operator (op, List.map (rebuild_arg f) args) }
-  | FixmeExp (k, any, Some a) -> { e with e = FixmeExp (k, any, Some (f a)) }
+      let acc, args = List.fold_left_map (fold_map_arg f) acc args in
+      (acc, { e with e = Operator (op, args) })
+  | FixmeExp (k, any, Some a) ->
+      let acc, a = f acc a in
+      (acc, { e with e = FixmeExp (k, any, Some a) })
 
-and rebuild_arg (f : exp -> exp) = function
-  | Unnamed e -> Unnamed (f e)
-  | Named (id, e) -> Named (id, f e)
+and fold_map_arg (f : 'a -> exp -> 'a * exp) (acc : 'a) :
+    exp argument -> 'a * exp argument = function
+  | Unnamed e ->
+      let acc, e = f acc e in
+      (acc, Unnamed e)
+  | Named (id, e) ->
+      let acc, e = f acc e in
+      (acc, Named (id, e))
 
-and rebuild_field (f : exp -> exp) = function
-  | Field (n, e) -> Field (n, f e)
-  | Entry (k, v) -> Entry (f k, f v)
-  | Spread e -> Spread (f e)
+and fold_map_field (f : 'a -> exp -> 'a * exp) (acc : 'a) :
+    field_or_entry -> 'a * field_or_entry = function
+  | Field (n, e) ->
+      let acc, e = f acc e in
+      (acc, Field (n, e))
+  | Entry (k, v) ->
+      let acc, k = f acc k in
+      let acc, v = f acc v in
+      (acc, Entry (k, v))
+  | Spread e ->
+      let acc, e = f acc e in
+      (acc, Spread e)
 
 (***********************************************)
 (* Parameter / offset anchoring *)

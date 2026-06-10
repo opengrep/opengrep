@@ -3166,7 +3166,8 @@ let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
 let guard_of_cond (params : IL.param list) (cond : IL.exp) : Effect_guard.t =
   let cond = Effect_guard.intern_cond cond in
   { Effect_guard.cond;
-    param_refs = IL_helpers.cond_partial_param_refs params cond }
+    param_refs =
+      IL_helpers.cond_partial_param_refs params cond.Effect_guard.node }
 
 let rec recognise_true_cond (params : IL.param list) (cond : IL.exp) :
     Effect_guard.t list =
