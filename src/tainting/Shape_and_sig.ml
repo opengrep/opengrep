@@ -410,6 +410,15 @@ and Effect : sig
             be trickier). *)
 
   val compare : t -> t -> int
+  (** Guard-excluding: two effects equal up to their [guards] compare as 0,
+      so an [Effects] set holds one element per guard-less effect identity
+      and fuses guards on insertion (see [fuse_guards]). *)
+
+  val fuse_guards : t -> t -> t
+  (** [fuse_guards e1 e2], where [compare e1 e2 = 0], is [e1] with its guard
+      replaced by the disjunction of both effects' guards: the fused effect
+      applies iff either of the two would. *)
+
   val show : ?truncate_guards:bool -> t -> string
 
   val add_guards : Effect_guard.t -> t -> t
@@ -489,28 +498,28 @@ end = struct
       { taint = taint2; sink_trace = _ } =
     T.compare_taint taint1 taint2
 
+  (* The [compare_*] below ignore [guards]: an effect's identity is its
+   * guard-less content, and [Effects] fuses the guards of same-identity
+   * effects on insertion (see [fuse_guards]). *)
   let compare_taints_to_sink
       {
         taints_with_precondition = ttsis1, pre1;
         sink = sink1;
         merged_env = env1;
-        guards = guards1;
+        guards = _;
       }
       {
         taints_with_precondition = ttsis2, pre2;
         sink = sink2;
         merged_env = env2;
-        guards = guards2;
+        guards = _;
       } =
     match compare_sink sink1 sink2 with
     | 0 -> (
         match List.compare compare_taint_to_sink_item ttsis1 ttsis2 with
         | 0 -> (
             match R.compare_precondition pre1 pre2 with
-            | 0 -> (
-                match T.compare_metavar_env env1 env2 with
-                | 0 -> Effect_guard.compare guards1 guards2
-                | other -> other)
+            | 0 -> T.compare_metavar_env env1 env2
             | other -> other)
         | other -> other)
     | other -> other
@@ -521,33 +530,27 @@ end = struct
         data_shape = data_shape1;
         control_taints = control_taints1;
         return_tok = _;
-        guards = guards1;
+        guards = _;
       }
       {
         data_taints = data_taints2;
         data_shape = data_shape2;
         control_taints = control_taints2;
         return_tok = _;
-        guards = guards2;
+        guards = _;
       } =
     match Taints.compare data_taints1 data_taints2 with
     | 0 -> (
         match Shape.compare_shape data_shape1 data_shape2 with
-        | 0 -> (
-            match Taints.compare control_taints1 control_taints2 with
-            | 0 -> Effect_guard.compare guards1 guards2
-            | other -> other)
+        | 0 -> Taints.compare control_taints1 control_taints2
         | other -> other)
     | other -> other
 
   let compare_taints_to_lval
-      { taints = ts1; lval = lv1; guards = guards1 }
-      { taints = ts2; lval = lv2; guards = guards2 } =
+      { taints = ts1; lval = lv1; guards = _ }
+      { taints = ts2; lval = lv2; guards = _ } =
     match Taints.compare ts1 ts2 with
-    | 0 -> (
-        match T.compare_lval lv1 lv2 with
-        | 0 -> Effect_guard.compare guards1 guards2
-        | other -> other)
+    | 0 -> T.compare_lval lv1 lv2
     | other -> other
 
   let compare_arg (arg1 : _ IL.argument) (arg2 : _ IL.argument) =
@@ -577,7 +580,7 @@ end = struct
             arg = fvar1;
             arg_offset = foff1;
             args_taints = args_taints1;
-            guards = guards1;
+            guards = _;
           },
         ToSinkInCall
           {
@@ -585,7 +588,7 @@ end = struct
             arg = fvar2;
             arg_offset = foff2;
             args_taints = args_taints2;
-            guards = guards2;
+            guards = _;
           } ) -> (
         (* Comparing "fvar"s is cheap so better to do it first. *)
         match T.compare_arg fvar1 fvar2 with
@@ -593,12 +596,7 @@ end = struct
             match List.compare T.compare_offset foff1 foff2 with
             | 0 -> (
                 match IL.compare_orig fexp1.eorig fexp2.eorig with
-                | 0 -> (
-                    match
-                      List.compare compare_arg args_taints1 args_taints2
-                    with
-                    | 0 -> Effect_guard.compare guards1 guards2
-                    | other -> other)
+                | 0 -> List.compare compare_arg args_taints1 args_taints2
                 | other -> other)
             | other -> other)
         | other -> other)
@@ -691,6 +689,27 @@ end = struct
     | ToReturn { guards; _ } -> guards
     | ToLval { guards; _ } -> guards
     | ToSinkInCall { guards; _ } -> guards
+
+  (* Precondition: [compare e1 e2 = 0], so both are the same constructor.
+   * The fused effect applies iff either input would, hence the [Or]. *)
+  let fuse_guards e1 e2 =
+    match (e1, e2) with
+    | ToSink tts1, ToSink tts2 ->
+        ToSink
+          { tts1 with
+            guards = Effect_guard.compose_or tts1.guards tts2.guards }
+    | ToReturn ttr1, ToReturn ttr2 ->
+        ToReturn
+          { ttr1 with
+            guards = Effect_guard.compose_or ttr1.guards ttr2.guards }
+    | ToLval ttl1, ToLval ttl2 ->
+        ToLval
+          { ttl1 with
+            guards = Effect_guard.compose_or ttl1.guards ttl2.guards }
+    | ToSinkInCall c1, ToSinkInCall c2 ->
+        ToSinkInCall
+          { c1 with guards = Effect_guard.compose_or c1.guards c2.guards }
+    | _ -> e1 (* unreachable: differing constructors compare non-zero *)
 end
 
 and Effects : sig
@@ -705,6 +724,42 @@ end = struct
 
     let compare effect1 effect2 = Effect.compare effect1 effect2
   end)
+
+  (* [Effect.compare] ignores guards, so the set holds one element per
+   * guard-less effect identity. Every inserting operation below fuses the
+   * guards of colliding elements via [Effect.fuse_guards]. Letting [Set]
+   * keep one variant and discard the other's guard would be unsound: at
+   * instantiation an effect whose guard folds to false is dropped, so at a
+   * call site where the kept variant's guard folds to false the effect
+   * would be dropped even though the discarded variant's guard would have
+   * kept it. The [Effect_guard.equal] check makes re-adding an
+   * already-fused effect a no-op ([wrap_or] dedups the operands), so the
+   * dataflow fixpoint still reaches a fixed point. *)
+  let add eff set =
+    match find_opt eff set with
+    | None -> add eff set
+    | Some existing ->
+        let fused = Effect.fuse_guards existing eff in
+        if
+          Effect_guard.equal (Effect.guards_of fused)
+            (Effect.guards_of existing)
+        then set
+        else add fused (remove existing set)
+
+  let union s1 s2 =
+    (* Fold the smaller set into the larger one. *)
+    if cardinal s1 >= cardinal s2 then fold add s2 s1 else fold add s1 s2
+
+  let of_list elts = List.fold_left (fun set e -> add e set) empty elts
+  let map f s = fold (fun e acc -> add (f e) acc) s empty
+
+  let filter_map f s =
+    fold
+      (fun e acc ->
+        match f e with
+        | Some e' -> add e' acc
+        | None -> acc)
+      s empty
 
   let show ?(truncate_guards = true) s =
     s |> to_seq |> List.of_seq

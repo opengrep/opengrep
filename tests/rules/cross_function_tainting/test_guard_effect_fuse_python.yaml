@@ -1,0 +1,13 @@
+rules:
+  - id: test-guard-effect-fuse
+    message: Same-identity effects fuse their guards disjunctively
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
