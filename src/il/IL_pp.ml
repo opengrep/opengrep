@@ -204,16 +204,17 @@ and pp_operator_call op args =
       Printf.sprintf "__op_%s__(%s)" (pp_operator op) args_str
 
 (* [pp_exp] but emitting into a buffer with a hard [max]-character budget: the
- * traversal aborts as soon as the buffer reaches [max], so it is O(max) and
+ * traversal aborts as soon as the buffer exceeds [max], so it is O(max) and
  * never builds the full string (guard conds from [Sig_inst] unfold to 2^depth
- * characters). Mirrors [pp_exp]'s syntax. A cond that fits renders identically;
- * a longer one is the first [max] characters followed by "...". *)
+ * characters). Mirrors [pp_exp]'s syntax. A cond that fits in [max] characters
+ * renders identically; a longer one is the first [max] characters followed by
+ * "...". *)
 let pp_exp_bounded ~(max : int) (e : exp) : string =
   let buf = Buffer.create (max + 8) in
   let exception Stop in
   let emit (s : string) : unit =
     Buffer.add_string buf s;
-    if Buffer.length buf >= max then raise Stop
+    if Buffer.length buf > max then raise Stop
   in
   let sep i = if i > 0 then emit ", " in
   let rec go (e : exp) : unit = go_kind e.e
@@ -311,7 +312,7 @@ let pp_exp_bounded ~(max : int) (e : exp) : string =
         emit ")"
   in
   (try go e with Stop -> ());
-  if Buffer.length buf >= max then String.sub (Buffer.contents buf) 0 max ^ "..."
+  if Buffer.length buf > max then String.sub (Buffer.contents buf) 0 max ^ "..."
   else Buffer.contents buf
 
 (*****************************************************************************)
