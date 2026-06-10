@@ -3279,28 +3279,25 @@ and cond env cond_e : stmts * exp =
       expr env e
 
 and for_var_or_expr_list env xs : stmts =
-  let list_of_lists =
-    List.map
-      (fun x ->
-        match x with
-        | G.ForInitExpr e ->
-            let ss, _eIGNORE = expr env e in
-            ss
-        | G.ForInitVar (ent, vardef) -> (
-            (* copy paste of VarDef case in stmt *)
-            match vardef with
-            | { G.vinit = Some e; vtype = opt_ty; vtok = _ } ->
-                let ss1, e' = expr env e in
-                let ss2, () = type_opt env opt_ty in
-                let ss_lv, lv = lval_of_ent env ent in
-                ss1 @ ss2 @ ss_lv
-                  @ [
-                      mk_s (Instr (mk_i (Assign (lv, e')) (Related (G.En ent))));
-                    ]
-            | _ -> []))
-      xs
-  in
-  List.concat list_of_lists (*TODO this is not tail recursive!!!!*)
+  List.concat_map
+    (fun x ->
+      match x with
+      | G.ForInitExpr e ->
+          let ss, _eIGNORE = expr env e in
+          ss
+      | G.ForInitVar (ent, vardef) -> (
+          (* copy paste of VarDef case in stmt *)
+          match vardef with
+          | { G.vinit = Some e; vtype = opt_ty; vtok = _ } ->
+              let ss1, e' = expr env e in
+              let ss2, () = type_opt env opt_ty in
+              let ss_lv, lv = lval_of_ent env ent in
+              ss1 @ ss2 @ ss_lv
+                @ [
+                    mk_s (Instr (mk_i (Assign (lv, e')) (Related (G.En ent))));
+                  ]
+          | _ -> []))
+    xs
 
 (*****************************************************************************)
 (* Parameters *)
@@ -3332,13 +3329,19 @@ and parameters params : param list =
            let i = G.implicit_param_id_indexed idx tk in
            let pname = var_of_id_info i pinfo in
            ParamPattern ({ pname; pdefault }, pat)
-       | G.ParamReceiver _param ->
-           (* TODO: Treat receiver as this parameter *)
-           ParamFixme (* TODO *)
+       | G.ParamReceiver { pname = Some i; pinfo; pdefault; _ } ->
+           (* Go receiver: treat as a regular named parameter for now.
+            * TODO: Ideally it would map to VarSpecial(This), but that requires
+            * rewriting all uses of the receiver variable in the body. *)
+           Param { pname = var_of_id_info i pinfo; pdefault }
+       | G.ParamReceiver { pname = None; _ } -> ParamFixme
        (* Ruby/PHP block parameter: &callback -> OtherParam("Ref", [Pa(Param(...))]) *)
        | G.OtherParam (("Ref", _), [ G.Pa (G.Param { pname = Some i; pinfo; pdefault; _ }) ])
          ->
            Param { pname = var_of_id_info i pinfo; pdefault }
+       | G.ParamHashSplat (_, { pname = Some i; pinfo; pdefault; _ }) ->
+           (* **kwargs in Python / **opts in Ruby: treat as rest param *)
+           ParamRest { pname = var_of_id_info i pinfo; pdefault }
        | G.Param { pname = None; _ }
        | G.ParamRest (_, _)
        | G.ParamHashSplat (_, _)
