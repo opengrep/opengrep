@@ -185,9 +185,16 @@ let guard_folds_false ~lang (g : Effect_guard.t) : bool =
   (not (Effect_guard.is_top g))
   &&
   let eval_env = Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty in
-  match Eval_il_partial.eval eval_env g.cond.Effect_guard.node with
-  | AST_generic.Lit (AST_generic.Bool (false, _)) -> true
-  | _ -> false
+  let eval_atom atom =
+    match Eval_il_partial.eval eval_env atom with
+    | AST_generic.Lit (AST_generic.Bool (b, _)) -> Some b
+    | _ -> None
+  in
+  match Effect_guard.eval_with eval_atom g.cond with
+  | Some false -> true
+  | Some true
+  | None ->
+      false
 
 let pms_of_effect ~lang ~match_on (effect_ : Effect.t) =
   match effect_ with

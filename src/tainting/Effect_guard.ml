@@ -1,34 +1,52 @@
 (* Engine-emitted guard attached to taint effects.
  *
  * A guard represents a boolean condition that must hold at the caller
- * for an effect to apply. Each effect carries one [Effect_guard.t]; its
- * [cond] is built incrementally via [IL_helpers.wrap_and],
- * [IL_helpers.wrap_or] and [IL_helpers.wrap_not] from atomic branch
- * conditions accumulated as the dataflow walks the CFG and from
- * disjunctive provenance fused at joins. At signature instantiation,
- * [Sig_inst.classify_guards] substitutes the caller's actual arguments
- * into [cond] and partial-evaluates via [Eval_il_partial.eval]:
+ * for an effect to apply. Each effect carries one [Effect_guard.t]. At
+ * signature instantiation, [Sig_inst.classify_guards] substitutes the
+ * caller's actual arguments into the cond's atoms; dispatch (length)
+ * atoms are partially evaluated there, every other atom is carried and
+ * decided when the effect becomes a match
+ * ([Match_tainting_mode.pms_of_effect]):
  *
- *   - [G.Lit (G.Bool true)]  : definitively satisfied.
- *   - [G.Lit (G.Bool false)] : definitively violated.
- *   - any other [G.svalue]   : undecided at this call site.
+ *   - definitively true:  the guard contributes no constraint;
+ *   - definitively false: the effect (or sink item) is dropped;
+ *   - undecided:          kept, conservatively reported.
  *
- * The effect is dropped iff [cond] folds to definitively-false. A
- * guard whose [cond] folds to definitively-true is replaced by [top]
- * and contributes no constraint; undecided conds are kept (possibly
- * rebound into the enclosing function's parameters).
+ * Representation. [cond] is in disjunctive normal form: a list of
+ * clauses (disjunction), each clause a list of literals (conjunction),
+ * each literal an interned atomic [IL.exp] with a polarity. [[]] is
+ * false (no satisfiable clause); [[ [] ]] is true (one empty clause).
+ * Atoms are the only variable-bearing parts: substitution rewrites
+ * atoms and never the clause structure, so DNF is preserved across
+ * rebinding and normalisation happens only at construction.
  *
- * Representation. [cond] is the boolean condition as a single [IL.exp].
- * [param_refs] maps each free [Fetch] in [cond] whose base is a formal
- * parameter to the signature-param index of that parameter. The
- * mapping is built with [IL.equal_name] (which compares ident, sid,
- * and id_info). The evaluator uses the same [IL.equal_name] to look
+ * Normalisation invariants, maintained by the smart constructors:
+ *   - literals in a clause are sorted and deduped, and the clause is
+ *     consistent (no [A] with [!A]; no [x == c1] with [x == c2] for
+ *     distinct same-type constants) — inconsistent clauses are dropped;
+ *   - clauses are sorted and deduped; a true clause ([]) collapses the
+ *     cond to [top]; complementary singleton clauses ([A] and [!A])
+ *     collapse the cond to [top];
+ *   - an atom larger than [Limits_semgrep.taint_MAX_GUARD_COND_NODES]
+ *     distinct nodes is dropped from its clause (weakening: sound);
+ *   - more than [Limits_semgrep.taint_MAX_GUARD_CLAUSES] clauses widen
+ *     each clause to its length literals (arity dispatch survives),
+ *     then to [top].
+ *
+ * [param_refs] maps each free [Fetch] in the cond's atoms whose base is
+ * a formal parameter to the signature-param index of that parameter.
+ * The mapping is built with [IL.equal_name] (which compares ident, sid,
+ * and id_info). The substitution uses the same [IL.equal_name] to look
  * up. *)
 
 module G = AST_generic
 
-(* Hash-consed guard cond. [node] is the canonical [IL.exp]: structurally-equal
- * conds interned in the same epoch share it physically, and its child [exp]s
+(*****************************************************************************)
+(* Atoms *)
+(*****************************************************************************)
+
+(* Hash-consed atom. [node] is the canonical [IL.exp]: structurally-equal
+ * atoms interned in the same epoch share it physically, and its child [exp]s
  * are themselves canonical. [hash] is the full (depth-distinguishing)
  * structural hash, combined at intern time from the children's stored [hash] —
  * unlike [Stdlib.Hashtbl.hash], whose bounded-prefix traversal collides for
@@ -41,19 +59,27 @@ type hcond = {
   hash : int;
 }
 
+type literal = {
+  atom : hcond;
+  negated : bool;
+}
+
+type clause = literal list
+type cond = clause list
+
 type t = {
-  cond : hcond;
+  cond : cond;
   param_refs : (IL.name * int) list;
 }
 
-(* Hash-consing of guard conds. Cross-call substitution ([Sig_inst]) and the
- * dataflow fixpoint rebuild structurally-equal conds as separate physical
- * trees; interning them to one canonical node makes [compare_cond] short-
- * circuit on [phys_equal] and lets the fixpoint stabilise without re-walking
- * the shared DAG. The table is domain-local (one per domain, no cross-domain
+(* Hash-consing of atoms. Cross-call substitution ([Sig_inst]) and the
+ * dataflow fixpoint rebuild structurally-equal atoms as separate physical
+ * trees; interning them to one canonical node makes comparison short-circuit
+ * on [phys_equal] and lets the fixpoint stabilise without re-walking the
+ * shared DAG. The table is domain-local (one per domain, no cross-domain
  * races) and strong: it must be cleared at each task boundary with
  * [reset_intern], because rules run on a domain in sequence (see
- * [Match_tainting_mode]) and a stale canonical from a previous rule's conds
+ * [Match_tainting_mode]) and a stale canonical from a previous rule's atoms
  * would persist otherwise. *)
 (* One-level structural hash: combines the node's own constructor (and leaf
  * data) with the children's stored hashes. [node]'s children are the
@@ -102,15 +128,14 @@ let intern_table : hcond ICondTbl.t Domain.DLS.key =
 
 let reset_intern () : unit = ICondTbl.clear (Domain.DLS.get intern_table)
 
-(* Canonicalise [cond] bottom-up: children are interned first, so a node's table
+(* Canonicalise [e] bottom-up: children are interned first, so a node's table
  * lookup compares already-shared children ([equal_exp] short-circuits on
  * [phys_equal]) and hashes from their stored hashes — both linear only in the
  * node's immediate children. The per-call [memo] keeps the walk linear in the
- * cond's distinct nodes (the cond is itself a shared DAG from [Sig_inst]).
+ * atom's distinct nodes (the atom is itself a shared DAG from [Sig_inst]).
  * Also returns the number of distinct canonical nodes in the result ([seen]
- * collects them across duplicate inputs), for the size cap in
- * [intern_cond]. *)
-let intern_counted (cond : IL.exp) : hcond * int =
+ * collects them across duplicate inputs), for the atom-size cap. *)
+let intern_counted (e : IL.exp) : hcond * int =
   let tbl = Domain.DLS.get intern_table in
   let memo : hcond IL_helpers.PhysExpTbl.t =
     IL_helpers.PhysExpTbl.create 64
@@ -143,14 +168,15 @@ let intern_counted (cond : IL.exp) : hcond * int =
         IL_helpers.PhysExpTbl.add memo e canon;
         canon
   in
-  let h = go cond in
+  let h = go e in
   (h, IL_helpers.PhysExpTbl.length seen)
 
 (* An atom of shape [length(e) <cmp> int-literal] (either operand order),
- * possibly under a single [Not]. This is the shape Clojure multi-arity
- * dispatch lowers to ([AST_to_IL.pm_len_cond] emits [Eq] and [GtE]) and the
- * arity guards of [Builtin_models]; [len(x) == n] guards in other languages
- * match too. *)
+ * possibly under a single [Not] (atoms built before negation moved into
+ * [literal.negated] may still carry one). This is the shape Clojure
+ * multi-arity dispatch lowers to ([AST_to_IL.pm_len_cond] emits [Eq] and
+ * [GtE]) and the arity guards of [Builtin_models]; [len(x) == n] guards in
+ * other languages match too. *)
 let is_length_atom (e : IL.exp) : bool =
   let is_cmp_of_length_and_int (e : IL.exp) : bool =
     match e.e with
@@ -174,83 +200,283 @@ let is_length_atom (e : IL.exp) : bool =
       is_cmp_of_length_and_int inner
   | _ -> is_cmp_of_length_and_int e
 
-(* A cond that is nothing but length atoms under [And]/[Or] — the dispatch
- * class: Clojure multi-arity legs and HOF arity guards. [Sig_inst] evaluates
- * these eagerly at instantiation (dispatch must prune wrong-arity effects
- * before their taints enter the caller's state); every other guard is
- * carried unevaluated and decided once, when the effect becomes a match.
- * The walk bails at the first non-atom leaf; And/Or spines are built fresh
- * by the smart constructors, so the spine is a tree and the walk is linear
- * in it. *)
-let rec is_length_skeleton (e : IL.exp) : bool =
-  is_length_atom e
-  ||
-  match e.e with
-  | IL.Operator (((G.And | G.Or), _), [ IL.Unnamed a; IL.Unnamed b ]) ->
-      is_length_skeleton a && is_length_skeleton b
+(*****************************************************************************)
+(* Literals and clauses *)
+(*****************************************************************************)
+
+let compare_literal (l1 : literal) (l2 : literal) : int =
+  let c = IL_helpers.compare_exp l1.atom.node l2.atom.node in
+  if c <> 0 then c else Bool.compare l1.negated l2.negated
+
+let compare_clause (c1 : clause) (c2 : clause) : int =
+  List.compare compare_literal c1 c2
+
+let compare_cond (c1 : cond) (c2 : cond) : int =
+  List.compare compare_clause c1 c2
+
+(* [Some (e, lit)] when [atom] is [e == lit] with exactly one constant
+ * operand; used by the clause-consistency check. *)
+let eq_parts (atom : IL.exp) : (IL.exp * G.literal) option =
+  match atom.e with
+  | IL.Operator ((G.Eq, _), [ IL.Unnamed a; IL.Unnamed b ]) -> (
+      match (a.e, b.e) with
+      | IL.Literal _, IL.Literal _ -> None
+      | IL.Literal la, _ -> Some (b, la)
+      | _, IL.Literal lb -> Some (a, lb)
+      | _ -> None)
+  | _ -> None
+
+(* Distinct constants of the same type cannot both equal the same value;
+ * across types we make no judgement (e.g. [1 == 1.0] holds in Python). *)
+let distinct_same_type_constants (l1 : G.literal) (l2 : G.literal) : bool =
+  match (l1, l2) with
+  | G.Int (i1, _), G.Int (i2, _) -> not (Option.equal Int64.equal i1 i2)
+  | G.String (_, (s1, _), _), G.String (_, (s2, _), _) ->
+      not (String.equal s1 s2)
+  | G.Bool (b1, _), G.Bool (b2, _) -> not (Bool.equal b1 b2)
   | _ -> false
 
-(* The And/Or skeleton of [cond] over its length atoms: length atoms are
- * kept, every other leaf — including any non-atom [Not] subtree, since
- * replacing under a negation would strengthen — becomes [true], and the
- * [wrap_and]/[wrap_or] smart constructors fold the [true]s away. The result
- * is implied by [cond] (subformulas in positive positions are only
- * weakened). Keeping the skeleton rather than a conjunction of atoms
- * preserves disjunctive arity dispatch: a guard fused across multi-arity
- * legs, [or(and(len==1, P), and(len==2, Q))], widens to
- * [or(len==1, len==2)], which a wrong-arity call still refutes. Memoised on
- * physical identity so the walk is linear in the cond's distinct nodes. *)
-let widen_to_length_skeleton (cond : IL.exp) : IL.exp =
-  let memo : IL.exp IL_helpers.PhysExpTbl.t =
-    IL_helpers.PhysExpTbl.create 16
-  in
-  let rec go (e : IL.exp) : IL.exp =
-    match IL_helpers.PhysExpTbl.find_opt memo e with
-    | Some w -> w
-    | None ->
-        let w =
-          if is_length_atom e then e
-          else
-            match e.e with
-            | IL.Operator ((G.And, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
-                IL_helpers.wrap_and [ go a; go b ]
-            | IL.Operator ((G.Or, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
-                IL_helpers.wrap_or [ go a; go b ]
-            | _ -> IL_helpers.lit_bool ~eorig:e.eorig true
-        in
-        IL_helpers.PhysExpTbl.add memo e w;
-        w
-  in
-  go cond
-
-(* Cap-and-widen. A cond with more than
- * [Limits_semgrep.taint_MAX_GUARD_COND_NODES] distinct nodes is replaced by
- * its length-atom skeleton — [true] when it has no length atoms, or if even
- * the skeleton exceeds the cap. The widened cond is implied by the original,
- * so the guarded effect applies at least as often: widening can add findings,
- * never drop them. Length atoms are kept because they are what Clojure
- * multi-arity dispatch compiles to; dropping one would apply a wrong-arity
- * leg's effects unconditionally. *)
-let intern_cond (cond : IL.exp) : hcond =
-  let h, distinct_nodes = intern_counted cond in
-  if distinct_nodes <= Limits_semgrep.taint_MAX_GUARD_COND_NODES then h
-  else
-    let hw, widened_nodes =
-      intern_counted (widen_to_length_skeleton h.node)
+(* A clause is unsatisfiable when it contains the same atom positive and
+ * negated, or two positive equalities binding the same (canonical)
+ * expression to distinct same-type constants — e.g. [x == 1 && x == 2],
+ * or [length(v) == 1 && length(v) == 2] from cross-arity fusion. Atoms
+ * are canonical, so the pairwise checks compare mostly by physical
+ * identity; clauses are small. *)
+let clause_inconsistent (c : clause) : bool =
+  let complementary =
+    (* Sorted by atom then polarity: a complementary pair is adjacent. *)
+    let rec adjacent = function
+      | l1 :: (l2 :: _ as rest) ->
+          (IL_helpers.equal_exp l1.atom.node l2.atom.node
+          && not (Bool.equal l1.negated l2.negated))
+          || adjacent rest
+      | _ -> false
     in
-    if widened_nodes <= Limits_semgrep.taint_MAX_GUARD_COND_NODES then hw
-    else fst (intern_counted (IL_helpers.lit_bool ~eorig:IL.NoOrig true))
+    adjacent c
+  in
+  complementary
+  ||
+  let eqs =
+    c
+    |> List.filter_map (fun l ->
+           if l.negated then None else eq_parts l.atom.node)
+  in
+  let rec pairwise = function
+    | (e1, v1) :: rest ->
+        List.exists
+          (fun (e2, v2) ->
+            IL_helpers.equal_exp e1 e2 && distinct_same_type_constants v1 v2)
+          rest
+        || pairwise rest
+    | [] -> false
+  in
+  pairwise eqs
 
-(* Compare conds structurally via [IL_helpers.compare_exp]. [IL.exp] has no
- * [@@deriving ord] and [Stdlib.compare] on it is unsafe ([id_info.id_svalue]
- * is a mutable [ref] with potential cycles), so this is a hand-written order.
- * It short-circuits on physical identity, unlike [IL_pp.pp_exp], which renders
- * the whole tree and so is exponential on the shared-DAG conds from
- * [Sig_inst]. It is token-insensitive and orders names by [str_of_name]
- * (ident and sid), so two same-named variables with distinct sids stay
- * distinct, matching the previous [pp_exp] order up to token position. *)
-let compare_cond (h1 : hcond) (h2 : hcond) : int =
-  IL_helpers.compare_exp h1.node h2.node
+(* Sort, dedup, and consistency-check a conjunction of literals.
+ * [None] means the clause is unsatisfiable and must be dropped. *)
+let mk_clause (lits : literal list) : clause option =
+  let c = List.sort_uniq compare_literal lits in
+  if clause_inconsistent c then None else Some c
+
+(* Sort and dedup clauses; collapse to [top] when a clause is true ([])
+ * or two singleton clauses are complementary ([A] or [!A] is a
+ * tautology — this fold is what lets fan-in of complementary branch
+ * guards reach a fixed point instead of growing). *)
+let cond_true : cond = [ [] ]
+let cond_false : cond = []
+let cond_is_top (c : cond) : bool = List.exists List_.null c
+let cond_is_bot (c : cond) : bool = List_.null c
+
+let mk_cond (clauses : clause list) : cond =
+  let cs = List.sort_uniq compare_clause clauses in
+  if List.exists List_.null cs then cond_true
+  else
+    let complementary_singletons =
+      let singles = cs |> List.filter_map (function [ l ] -> Some l | _ -> None) in
+      let rec pairwise = function
+        | l1 :: rest ->
+            List.exists
+              (fun l2 ->
+                IL_helpers.equal_exp l1.atom.node l2.atom.node
+                && not (Bool.equal l1.negated l2.negated))
+              rest
+            || pairwise rest
+        | [] -> false
+      in
+      pairwise singles
+    in
+    if complementary_singletons then cond_true else cs
+
+(* Cap-and-widen on clause count. Each clause is widened to its length
+ * literals (arity dispatch survives: [or(and(len==1, P), and(len==2, Q))]
+ * widens to [or(len==1, len==2)], which a wrong-arity call still refutes);
+ * a clause with no length literals becomes true, collapsing the cond to
+ * [top]. The widened cond is implied by the original, so widening can add
+ * findings, never drop them. *)
+let cap_clauses (c : cond) : cond =
+  if List.length c <= Limits_semgrep.taint_MAX_GUARD_CLAUSES then c
+  else
+    let widened =
+      c
+      |> List.map (fun clause ->
+             clause |> List.filter (fun l -> is_length_atom l.atom.node))
+      |> mk_cond
+    in
+    if List.length widened <= Limits_semgrep.taint_MAX_GUARD_CLAUSES then
+      widened
+    else cond_true
+
+(*****************************************************************************)
+(* Cond algebra *)
+(*****************************************************************************)
+
+let or_cond (c1 : cond) (c2 : cond) : cond =
+  if cond_is_top c1 || cond_is_top c2 then cond_true
+  else cap_clauses (mk_cond (c1 @ c2))
+
+let and_cond (c1 : cond) (c2 : cond) : cond =
+  if cond_is_bot c1 || cond_is_bot c2 then cond_false
+  else if cond_is_top c1 then c2
+  else if cond_is_top c2 then c1
+  else
+    (* Distribution: the only place clause count multiplies; capped. *)
+    c1
+    |> List.concat_map (fun cl1 ->
+           c2
+           |> List.filter_map (fun cl2 -> mk_clause (cl1 @ cl2)))
+    |> mk_cond |> cap_clauses
+
+(* DNF of an [IL.exp] branch condition, with [negated] tracking polarity
+ * (negation-normal form on the fly: [!(a && b)] = [!a || !b]). N-ary
+ * [And]/[Or] operator calls are folded over all unnamed operands, so e.g.
+ * a Python [a or b or c] chain contributes one clause per disjunct
+ * instead of one opaque atom. Leaves: boolean literals fold; an atom
+ * larger than [taint_MAX_GUARD_COND_NODES] distinct nodes is dropped
+ * (true / not contributing a literal — a sound weakening of its clause);
+ * anything else becomes an interned literal. *)
+let rec dnf_of ~(negated : bool) (e : IL.exp) : cond =
+  let all_unnamed args =
+    if
+      List.for_all
+        (function
+          | IL.Unnamed _ -> true
+          | IL.Named _ -> false)
+        args
+    then Some (List.map IL_helpers.exp_of_arg args)
+    else None
+  in
+  match e.e with
+  | IL.Operator ((G.Not, _), [ IL.Unnamed inner ]) ->
+      dnf_of ~negated:(not negated) inner
+  | IL.Operator ((G.And, _), args) when Option.is_some (all_unnamed args) ->
+      let exps = Option.get (all_unnamed args) in
+      let combine = if negated then or_cond else and_cond in
+      let unit_ = if negated then cond_false else cond_true in
+      List.fold_left (fun acc a -> combine acc (dnf_of ~negated a)) unit_ exps
+  | IL.Operator ((G.Or, _), args) when Option.is_some (all_unnamed args) ->
+      let exps = Option.get (all_unnamed args) in
+      let combine = if negated then and_cond else or_cond in
+      let unit_ = if negated then cond_true else cond_false in
+      List.fold_left (fun acc a -> combine acc (dnf_of ~negated a)) unit_ exps
+  | _ ->
+      if IL_helpers.is_lit_bool (not negated) e then cond_true
+      else if IL_helpers.is_lit_bool negated e then cond_false
+      else
+        let atom, distinct_nodes = intern_counted e in
+        if distinct_nodes > Limits_semgrep.taint_MAX_GUARD_COND_NODES then
+          cond_true
+        else [ [ { atom; negated } ] ]
+
+let of_exp (e : IL.exp) : cond = dnf_of ~negated:false e
+
+(* The distinct atoms of a cond, for computing [param_refs] and for
+ * substitution call sites that need the variable-bearing parts. *)
+let atoms_of_cond (c : cond) : IL.exp list =
+  c
+  |> List.concat_map (fun clause -> clause |> List.map (fun l -> l.atom.node))
+  |> List.sort_uniq IL_helpers.compare_exp
+
+(* Rewrite every atom with [f] (substitution at a call site) and
+ * re-normalise: substituted atoms are re-interned, re-capped, and the
+ * consistency checks re-run — substitution can make atoms equal,
+ * complementary, or contradictory. The clause structure never changes
+ * under [f] (atoms are the only variable-bearing parts), so this is a
+ * map, not a re-conversion. *)
+let map_atoms (f : IL.exp -> IL.exp) (c : cond) : cond =
+  c
+  |> List.map (fun clause ->
+         clause
+         |> List.filter_map (fun l ->
+                let e = f l.atom.node in
+                if IL_helpers.is_lit_bool (not l.negated) e then
+                  (* literal true: contributes nothing to the clause *)
+                  None
+                else if IL_helpers.is_lit_bool l.negated e then
+                  (* literal false: kills the clause *)
+                  Some { atom = fst (intern_counted e); negated = l.negated }
+                else
+                  let atom, distinct_nodes = intern_counted e in
+                  if
+                    distinct_nodes
+                    > Limits_semgrep.taint_MAX_GUARD_COND_NODES
+                  then None
+                  else Some { atom; negated = l.negated }))
+  |> List.filter_map mk_clause
+  |> mk_cond |> cap_clauses
+
+(* Simplify with a partial atom evaluator: [eval_atom] returns
+ * [Some true]/[Some false] for atoms it can decide and [None] for the
+ * rest. A decided-true literal leaves its clause; a decided-false
+ * literal kills its clause. Used by [Sig_inst.classify_guards] to fold
+ * dispatch (length) atoms at instantiation while carrying the rest. *)
+let simplify_with (eval_atom : IL.exp -> bool option) (c : cond) : cond =
+  c
+  |> List.filter_map (fun clause ->
+         let exception Clause_false in
+         try
+           Some
+             (clause
+             |> List.filter (fun l ->
+                    match eval_atom l.atom.node with
+                    | Some b ->
+                        let lit_value = if l.negated then not b else b in
+                        if lit_value then false (* drop satisfied literal *)
+                        else raise Clause_false
+                    | None -> true))
+         with
+         | Clause_false -> None)
+  |> mk_cond
+
+(* Three-valued evaluation: [Some b] when decided, [None] when some atom
+ * is undecided in a way that leaves the verdict open. *)
+let eval_with (eval_atom : IL.exp -> bool option) (c : cond) : bool option =
+  let clause_value clause =
+    List.fold_left
+      (fun acc l ->
+        match acc with
+        | Some false -> Some false
+        | _ -> (
+            match eval_atom l.atom.node with
+            | Some b ->
+                let v = if l.negated then not b else b in
+                if v then acc else Some false
+            | None -> None))
+      (Some true) clause
+  in
+  List.fold_left
+    (fun acc clause ->
+      match acc with
+      | Some true -> Some true
+      | _ -> (
+          match clause_value clause with
+          | Some true -> Some true
+          | Some false -> acc
+          | None -> None))
+    (Some false) c
+
+(*****************************************************************************)
+(* Guards *)
+(*****************************************************************************)
 
 let compare_param_ref (n1, i1) (n2, i2) =
   let c = Int.compare i1 i2 in
@@ -266,37 +492,44 @@ let compare g1 g2 =
       (List.sort compare_param_ref g2.param_refs)
 
 let equal g1 g2 = compare g1 g2 = 0
-(* Render the cond. [~truncate_guards] (default [true]) renders at most
- * [Limits_semgrep.taint_MAX_GUARD_LOG_CHARS] characters (first that many, then
- * "..."), so debug logging of the shared-DAG guards from [Sig_inst] stays
- * bounded instead of pp-ing 2^depth characters; the signature dump passes
- * [~truncate_guards:false] for full output. [IL_pp] renders unary children (e.g.
- * [Not]) in full, unlike [Display_IL.string_of_exp]. *)
+let top : t = { cond = cond_true; param_refs = [] }
+let is_top (g : t) : bool = cond_is_top g.cond
+let is_bot (g : t) : bool = cond_is_bot g.cond
+
+(* Render the cond as [(l1 && l2) || (l3)]. [~truncate_guards] (default
+ * [true]) renders each atom into at most
+ * [Limits_semgrep.taint_MAX_GUARD_LOG_CHARS] characters and the whole
+ * cond into roughly that budget, so debug logging stays bounded (an
+ * atom is a shared DAG whose tree rendering can be exponential); the
+ * signature dump passes [~truncate_guards:false] for full output. *)
 let show ?(truncate_guards = true) g =
-  if truncate_guards then
-    IL_pp.pp_exp_bounded ~max:Limits_semgrep.taint_MAX_GUARD_LOG_CHARS
-      g.cond.node
-  else IL_pp.pp_exp g.cond.node
+  let max = Limits_semgrep.taint_MAX_GUARD_LOG_CHARS in
+  let pp_atom (e : IL.exp) =
+    if truncate_guards then IL_pp.pp_exp_bounded ~max e else IL_pp.pp_exp e
+  in
+  let pp_literal l =
+    if l.negated then "!(" ^ pp_atom l.atom.node ^ ")" else pp_atom l.atom.node
+  in
+  let pp_clause c =
+    match c with
+    | [ l ] -> pp_literal l
+    | _ -> "(" ^ String.concat " && " (List.map pp_literal c) ^ ")"
+  in
+  if cond_is_top g.cond then "true"
+  else if cond_is_bot g.cond then "false"
+  else
+    let s = String.concat " || " (List.map pp_clause g.cond) in
+    if truncate_guards && String.length s > max then String.sub s 0 max ^ "..."
+    else s
 
-(* Identity for [And]: a [cond] that is the literal [true], with no
- * param refs. [is_top g] is the "no constraint" predicate; the
- * smart-constructor short-circuits use it to absorb identity guards.
- * Built outside the intern table: it exists before any epoch and never
- * enters a table, and [is_top]/[compare_cond] only read its [node]. *)
-let top : t =
-  let node = IL_helpers.lit_bool ~eorig:IL.NoOrig true in
-  { cond = { node; hash = IL_helpers.hash_exp node }; param_refs = [] }
-
-let is_top (g : t) : bool = IL_helpers.is_lit_bool true g.cond.node
-let is_bot (g : t) : bool = IL_helpers.is_lit_bool false g.cond.node
-
-(* Variables (base [Var] names) read by the guard's condition. A guard
+(* Variables (base [Var] names) read by the guard's atoms. A guard
  * becomes unreliable once one of these is reassigned: the IL is non-SSA,
- * so the recorded [cond] then refers to a value that may differ from the
+ * so the recorded cond then refers to a value that may differ from the
  * one tested at the branch where the guard was established. The engine
  * drops such guards when stamping effects (see [Taint_lval_env]). *)
 let cond_vars (g : t) : IL.name list =
-  IL_helpers.lvals_of_exp g.cond.node
+  atoms_of_cond g.cond
+  |> List.concat_map IL_helpers.lvals_of_exp
   |> List.filter_map (fun (lv : IL.lval) ->
          match lv.IL.base with
          | IL.Var name -> Some name
@@ -311,8 +544,7 @@ let show_in_brackets ?(truncate_guards = true) (g : t) : string =
  * which atoms are live at the current program point. The
  * per-program-point intersection at joins (cf. [Set.inter]) is the
  * single operation that justifies a set-of-atoms shape here. Effects
- * stamped at emission compress this to a single [t] via
- * [conjoin_atoms]. *)
+ * stamped at emission compress this to a single [t] via [conjoin]. *)
 module Set = Stdlib.Set.Make (struct
   type nonrec t = t
 
@@ -341,7 +573,7 @@ let compose_and (g1 : t) (g2 : t) : t =
   else if is_top g2 then g1
   else
     {
-      cond = intern_cond (IL_helpers.wrap_and [ g1.cond.node; g2.cond.node ]);
+      cond = and_cond g1.cond g2.cond;
       param_refs = merge_param_refs g1.param_refs g2.param_refs;
     }
 
@@ -352,10 +584,31 @@ let compose_or (g1 : t) (g2 : t) : t =
   else if is_bot g2 then g1
   else
     {
-      cond = intern_cond (IL_helpers.wrap_or [ g1.cond.node; g2.cond.node ]);
+      cond = or_cond g1.cond g2.cond;
       param_refs = merge_param_refs g1.param_refs g2.param_refs;
     }
 
 (* Fold a list of guards into a single conjunction. Empty list yields
  * [top]. *)
 let conjoin (gs : t list) : t = List.fold_left compose_and top gs
+
+(* Guards for a branch condition at a [TrueNode] ([negated:false]) or
+ * [FalseNode] ([negated:true]). A single-clause cond is split into one
+ * guard per literal — the active-guard set tracks atoms individually so
+ * reassignment ([cond_vars]) drops exactly the affected atoms — while a
+ * disjunctive cond stays one guard. [param_refs] anchor each guard's
+ * atoms in [params]. *)
+let of_branch_cond ~(negated : bool) (params : IL.param list) (e : IL.exp) :
+    t list =
+  let refs_of_cond (c : cond) : (IL.name * int) list =
+    atoms_of_cond c
+    |> List.fold_left
+         (fun acc atom ->
+           merge_param_refs acc (IL_helpers.cond_partial_param_refs params atom))
+         []
+  in
+  let mk (c : cond) : t = { cond = c; param_refs = refs_of_cond c } in
+  match dnf_of ~negated e with
+  | [ clause ] when List.length clause > 1 ->
+      clause |> List.map (fun l -> mk [ [ l ] ])
+  | c -> if cond_is_top c then [] else [ mk c ]

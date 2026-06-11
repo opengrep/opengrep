@@ -937,19 +937,21 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
    * function's parameters. [g.param_refs] (the inner sig's own anchors)
    * is preserved unchanged: substitution touches only outer-anchored
    * Fetches; inner-anchored Fetches survive intact in the rewritten
-   * cond. *)
+   * atoms. Substitution rewrites atoms only, so the clause structure is
+   * preserved ([map_atoms] re-normalises). *)
   let walk_guard (g : Effect_guard.t) : Effect_guard.t =
     if Effect_guard.is_top g then g
     else
-      let g_cond = g.cond.Effect_guard.node in
-      let f_anchored =
-        IL_helpers.cond_partial_param_refs inst_var.f_params_il g_cond
-      in
       let cond =
-        substitute_free_fetches f_anchored inst_var.f_resolve_arg g_cond
+        Effect_guard.map_atoms
+          (fun atom ->
+            let f_anchored =
+              IL_helpers.cond_partial_param_refs inst_var.f_params_il atom
+            in
+            substitute_free_fetches f_anchored inst_var.f_resolve_arg atom)
+          g.cond
       in
-      { Effect_guard.cond = Effect_guard.intern_cond cond;
-        param_refs = g.param_refs }
+      { Effect_guard.cond; param_refs = g.param_refs }
   in
   (* Walk a single effect. Returns [None] iff the effect should be
    * dropped (currently: [ToLval] whose lval cannot anchor to a
@@ -1116,58 +1118,55 @@ let classify_guards ~(lang : Lang.t)
     (g : Effect_guard.t) : guard_decision =
   if Effect_guard.is_top g then Keep_guards Effect_guard.top
   else
+    (* Substitute the actuals into every atom ([map_atoms] re-normalises:
+     * substitution can make atoms equal, complementary, or contradictory,
+     * and clause consistency re-runs). *)
     let substituted =
-      substitute_free_fetches g.param_refs resolve_arg g.cond.Effect_guard.node
+      Effect_guard.map_atoms
+        (fun atom -> substitute_free_fetches g.param_refs resolve_arg atom)
+        g.cond
     in
-    if Effect_guard.is_length_skeleton substituted then (
-      (* Dispatch class: evaluate at the call site. Wrong-arity effects must
-       * be pruned before their taints enter the caller's state, or
-       * cross-arity taint inflates the fixpoint. *)
-      let eval_env =
-        Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty
-      in
-      let res = Eval_il_partial.eval eval_env substituted in
-      Log.debug (fun m ->
-          m "GUARD_EVAL: %s => %s" (Effect_guard.show g)
-            (match res with
-            | G.Lit (G.Bool (true, _)) -> "true"
-            | G.Lit (G.Bool (false, _)) -> "false"
-            | _ -> "unknown"));
-      match res with
-      | G.Lit (G.Bool (true, _)) -> Keep_guards Effect_guard.top
-      | G.Lit (G.Bool (false, _)) -> Drop_effect
-      | _ -> (
-          match outer_params with
-          | None -> Keep_guards Effect_guard.top
-          | Some op -> (
-              match IL_helpers.cond_param_refs op substituted with
-              | None -> Keep_guards Effect_guard.top
-              | Some param_refs ->
-                  let rebound =
-                    { Effect_guard.cond = Effect_guard.intern_cond substituted;
-                      param_refs }
-                  in
-                  Log.debug (fun m ->
-                      m "GUARD_REBIND: %s -> %s"
-                        (Effect_guard.show g)
-                        (Effect_guard.show rebound));
-                  Keep_guards rebound)))
+    (* Dispatch (length) atoms are evaluated at the call site: wrong-arity
+     * effects must be pruned before their taints enter the caller's state,
+     * or cross-arity taint inflates the fixpoint. Every other atom is
+     * carried unevaluated and decided once, in
+     * [Match_tainting_mode.pms_of_effect], when the effect becomes a match
+     * — before any match deduplication. *)
+    let eval_env =
+      Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty
+    in
+    let simplified =
+      Effect_guard.simplify_with
+        (fun atom ->
+          if Effect_guard.is_length_atom atom then
+            match Eval_il_partial.eval eval_env atom with
+            | G.Lit (G.Bool (b, _)) -> Some b
+            | _ -> None
+          else None)
+        substituted
+    in
+    if Effect_guard.cond_is_bot simplified then (
+      Log.debug (fun m -> m "GUARD_EVAL: %s => false" (Effect_guard.show g));
+      Drop_effect)
+    else if Effect_guard.cond_is_top simplified then (
+      Log.debug (fun m -> m "GUARD_EVAL: %s => true" (Effect_guard.show g));
+      Keep_guards Effect_guard.top)
     else
-      (* Every other guard is carried unevaluated and decided once, in
-       * [Match_tainting_mode.pms_of_effect], when the effect becomes a
-       * match — before any match deduplication. Partial param refs keep
-       * the anchorable Fetches substitutable at the next call up; the
-       * unanchorable rest stays in the cond, where the final evaluation
-       * may still fold around it. *)
+      (* Partial param refs keep the anchorable Fetches substitutable at the
+       * next call up; the unanchorable rest stays in the atoms, where the
+       * final evaluation may still fold around it. *)
       let param_refs =
         match outer_params with
-        | Some op -> IL_helpers.cond_partial_param_refs op substituted
+        | Some op ->
+            Effect_guard.atoms_of_cond simplified
+            |> List.fold_left
+                 (fun acc atom ->
+                   Effect_guard.merge_param_refs acc
+                     (IL_helpers.cond_partial_param_refs op atom))
+                 []
         | None -> []
       in
-      let carried =
-        { Effect_guard.cond = Effect_guard.intern_cond substituted;
-          param_refs }
-      in
+      let carried = { Effect_guard.cond = simplified; param_refs } in
       Log.debug (fun m ->
           m "GUARD_CARRY: %s -> %s" (Effect_guard.show g)
             (Effect_guard.show carried));

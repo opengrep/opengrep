@@ -3161,61 +3161,28 @@ let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
       Lval_env.mark_dead in'
   | _ -> in'
 
-(* Param-anchoring recogniser for branch conditions. Returns a list of
- * [Effect_guard.t] to be added to [active_guards] at the branch node;
- * every effect recorded while those guards are active gets stamped.
- *
- * Splitting is partial:
- *   - [recognise_true_cond]  at [TrueNode]:  [And] is flattened; [Or] is
- *     kept as a single compound; [Not] descends into
- *     [recognise_false_cond].
- *   - [recognise_false_cond] at [FalseNode]: [Or] via De Morgan is
- *     flattened (each disjunct wrapped in [Not]); [And] is kept compound;
- *     [Not] descends into [recognise_true_cond].
- *
- * A "leaf" cond — anything not an [And]/[Or]/[Not] — is passed through
- * [guard_of_cond]. [None] is returned when the leaf cannot be expressed
- * as a guard. *)
-
-let guard_of_cond (params : IL.param list) (cond : IL.exp) : Effect_guard.t =
-  let cond = Effect_guard.intern_cond cond in
-  { Effect_guard.cond;
-    param_refs =
-      IL_helpers.cond_partial_param_refs params cond.Effect_guard.node }
-
-let rec recognise_true_cond (params : IL.param list) (cond : IL.exp) :
-    Effect_guard.t list =
-  match cond.e with
-  | IL.Operator ((G.And, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
-      recognise_true_cond params a @ recognise_true_cond params b
-  | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
-      recognise_false_cond params sub
-  | _ -> [ guard_of_cond params cond ]
-
-and recognise_false_cond (params : IL.param list) (cond : IL.exp) :
-    Effect_guard.t list =
-  match cond.e with
-  | IL.Operator ((G.Or, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
-      recognise_false_cond params a @ recognise_false_cond params b
-  | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
-      recognise_true_cond params sub
-  | _ -> [ guard_of_cond params (IL_helpers.wrap_not cond) ]
-
-(* Guard-creation policy for the experimental [effect_guards] option: with
- * the option off, only Clojure keeps the [length(x) <cmp> n] atoms that
- * implement multi-arity dispatch, and no other guard is created — the
- * machinery downstream then never runs ([add_guards] no-ops on an empty
- * active set; composition and instantiation short-circuit on [top]). *)
+(* Guards for a branch condition ([Effect_guard.of_branch_cond] converts
+ * the cond to DNF and splits a single conjunction into one guard per
+ * literal, so the active-guard set tracks atoms individually and
+ * reassignment drops exactly the affected atoms), gated by the
+ * experimental [effect_guards] option: with the option off, only Clojure
+ * keeps guards whose every literal is a [length(x) <cmp> n] atom — the
+ * shape multi-arity dispatch compiles to — and no other guard is created.
+ * The machinery downstream then never runs ([add_guards] no-ops on an
+ * empty active set; composition and instantiation short-circuit on
+ * [top]). *)
 let recognised_guards (env : env) ~(negated : bool) (params : IL.param list)
     (cond : IL.exp) : Effect_guard.t list =
-  let recognise =
-    if negated then recognise_false_cond else recognise_true_cond
-  in
-  if env.taint_inst.options.effect_guards then recognise params cond
+  if env.taint_inst.options.effect_guards then
+    Effect_guard.of_branch_cond ~negated params cond
   else if Lang.equal env.taint_inst.lang Lang.Clojure then
-    recognise params cond
+    Effect_guard.of_branch_cond ~negated params cond
     |> List.filter (fun (g : Effect_guard.t) ->
-           Effect_guard.is_length_atom g.cond.node)
+           g.cond
+           |> List.for_all (fun clause ->
+                  clause
+                  |> List.for_all (fun (l : Effect_guard.literal) ->
+                         Effect_guard.is_length_atom l.atom.node)))
   else []
 
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =

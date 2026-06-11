@@ -1,0 +1,14 @@
+rules:
+  - id: test-guard-nary-or
+    message: Each disjunct of an n-ary or-chain folds independently
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+      effect_guards: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
