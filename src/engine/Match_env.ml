@@ -111,7 +111,8 @@ let adjust_xconfig_with_rule_options xconf options =
     | Some (rule_opts : Rule_options.t) ->
         (* Merge rule options with existing config, preserving command-line taint_intrafile setting *)
         { rule_opts with
-          taint_intrafile = xconf.config.taint_intrafile || rule_opts.taint_intrafile
+          taint_intrafile = xconf.config.taint_intrafile || rule_opts.taint_intrafile;
+          effect_guards = xconf.config.effect_guards || rule_opts.effect_guards
         }
   in
   { xconf with config }

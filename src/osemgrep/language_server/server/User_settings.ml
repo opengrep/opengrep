@@ -94,5 +94,6 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       time_flag = false;
       inline_metavariables = false;
       taint_intrafile = settings.taint_intrafile || settings.pro_intrafile;
+      effect_guards = false;
       engine_config = Engine_config.default;
     }

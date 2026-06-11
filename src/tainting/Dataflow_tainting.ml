@@ -3187,6 +3187,23 @@ and recognise_false_cond (params : IL.param list) (cond : IL.exp) :
       recognise_true_cond params sub
   | _ -> [ guard_of_cond params (IL_helpers.wrap_not cond) ]
 
+(* Guard-creation policy for the experimental [effect_guards] option: with
+ * the option off, only Clojure keeps the [length(x) <cmp> n] atoms that
+ * implement multi-arity dispatch, and no other guard is created — the
+ * machinery downstream then never runs ([add_guards] no-ops on an empty
+ * active set; composition and instantiation short-circuit on [top]). *)
+let recognised_guards (env : env) ~(negated : bool) (params : IL.param list)
+    (cond : IL.exp) : Effect_guard.t list =
+  let recognise =
+    if negated then recognise_false_cond else recognise_true_cond
+  in
+  if env.taint_inst.options.effect_guards then recognise params cond
+  else if Lang.equal env.taint_inst.lang Lang.Clojure then
+    recognise params cond
+    |> List.filter (fun (g : Effect_guard.t) ->
+           Effect_guard.is_length_atom g.cond.node)
+  else []
+
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
  fun enter_env ~fun_cfg
      (* the transfer function to update the mapping at node index ni *)
@@ -3280,7 +3297,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         let pruned =
           prune_branch_if_unreachable env.taint_inst.lang cond true in'
         in
-        recognise_true_cond fun_cfg.params cond
+        recognised_guards env ~negated:false fun_cfg.params cond
         |> List.fold_left
              (fun lval_env g ->
                Log.debug (fun m ->
@@ -3291,7 +3308,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         let pruned =
           prune_branch_if_unreachable env.taint_inst.lang cond false in'
         in
-        recognise_false_cond fun_cfg.params cond
+        recognised_guards env ~negated:true fun_cfg.params cond
         |> List.fold_left
              (fun lval_env g ->
                Log.debug (fun m ->

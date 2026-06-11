@@ -1,13 +1,12 @@
 rules:
-  - id: test-guard-reassign
-    message: Taint reaches the sink when the guard variable is reassigned
+  - id: test-effect-guards-off
+    message: Guards are inert without the effect_guards option
     languages:
       - python
     severity: WARNING
     mode: taint
     options:
       taint_intrafile: true
-      effect_guards: true
     pattern-sources:
       - pattern: source(...)
     pattern-sinks:

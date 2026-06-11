@@ -7,6 +7,7 @@ rules:
     mode: taint
     options:
       taint_intrafile: true
+      effect_guards: true
     pattern-sources:
       - pattern: source()
     pattern-sinks:
