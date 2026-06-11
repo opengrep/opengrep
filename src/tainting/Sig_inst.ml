@@ -103,6 +103,15 @@ type inst_var = {
           being applied) to its [IL.exp] actual at the current call
           site. Counterpart to [f_params_il]: together they let the
           walker substitute capture-Fetches in guards. *)
+  inst_guard : Effect_guard.t -> Effect_guard.t option;
+      (** Instantiate a per-taint guard ([Taint.guarded_taint]) at the
+          current call site, like [classify_guards] does for effect-level
+          guards: substitute the actuals into the cond and either fold it
+          ([None] when definitively false: the taint cannot exist at this
+          call site), or return the guard to carry — rebound, [top], or
+          deferred. Without this, a callee-frame cond would be conjoined
+          verbatim into the caller's taints, where its names can never be
+          resolved. *)
 }
 
 (* TODO: Right now this is only for source traces, not for sink traces...
@@ -315,9 +324,11 @@ let instantiate_taint inst_var inst_trace taint =
 
 let instantiate_taints inst_var inst_trace taints =
   Taints.bind taints (fun (b : T.guarded_taint) ->
-      let g = b.guard in
-      instantiate_taint inst_var inst_trace b.taint
-      |> Taints.conjoin_guard g)
+      match inst_var.inst_guard b.guard with
+      | None -> Taints.empty
+      | Some g ->
+          instantiate_taint inst_var inst_trace b.taint
+          |> Taints.conjoin_guard g)
 
 (* NOTE: 'a is either:
  * - IL.exp in instantiate_lval_using_actual_exps
@@ -979,12 +990,14 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
                    walk_taint
                      {
                        T.taint = item.taint;
-                       guard = Effect_guard.top;
+                       guard = item.guard;
                      }
                  in
-                 Taints.to_taint_list walked
-                 |> List_.map (fun (taint : T.taint) ->
-                        { Effect.taint; sink_trace = item.sink_trace }))
+                 Taints.elements walked
+                 |> List_.map (fun (b : T.guarded_taint) ->
+                        { Effect.taint = b.taint;
+                          sink_trace = item.sink_trace;
+                          guard = b.guard }))
         in
         Some
           (Effect.ToSink
@@ -1103,38 +1116,62 @@ let classify_guards ~(lang : Lang.t)
     (g : Effect_guard.t) : guard_decision =
   if Effect_guard.is_top g then Keep_guards Effect_guard.top
   else
-    let eval_env =
-      Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty
-    in
     let substituted =
       substitute_free_fetches g.param_refs resolve_arg g.cond.Effect_guard.node
     in
-    let res = Eval_il_partial.eval eval_env substituted in
-    Log.debug (fun m ->
-        m "GUARD_EVAL: %s => %s" (Effect_guard.show g)
-          (match res with
-          | G.Lit (G.Bool (true, _)) -> "true"
-          | G.Lit (G.Bool (false, _)) -> "false"
-          | _ -> "unknown"));
-    match res with
-    | G.Lit (G.Bool (true, _)) -> Keep_guards Effect_guard.top
-    | G.Lit (G.Bool (false, _)) -> Drop_effect
-    | _ -> (
+    if Effect_guard.is_length_skeleton substituted then (
+      (* Dispatch class: evaluate at the call site. Wrong-arity effects must
+       * be pruned before their taints enter the caller's state, or
+       * cross-arity taint inflates the fixpoint. *)
+      let eval_env =
+        Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty
+      in
+      let res = Eval_il_partial.eval eval_env substituted in
+      Log.debug (fun m ->
+          m "GUARD_EVAL: %s => %s" (Effect_guard.show g)
+            (match res with
+            | G.Lit (G.Bool (true, _)) -> "true"
+            | G.Lit (G.Bool (false, _)) -> "false"
+            | _ -> "unknown"));
+      match res with
+      | G.Lit (G.Bool (true, _)) -> Keep_guards Effect_guard.top
+      | G.Lit (G.Bool (false, _)) -> Drop_effect
+      | _ -> (
+          match outer_params with
+          | None -> Keep_guards Effect_guard.top
+          | Some op -> (
+              match IL_helpers.cond_param_refs op substituted with
+              | None -> Keep_guards Effect_guard.top
+              | Some param_refs ->
+                  let rebound =
+                    { Effect_guard.cond = Effect_guard.intern_cond substituted;
+                      param_refs }
+                  in
+                  Log.debug (fun m ->
+                      m "GUARD_REBIND: %s -> %s"
+                        (Effect_guard.show g)
+                        (Effect_guard.show rebound));
+                  Keep_guards rebound)))
+    else
+      (* Every other guard is carried unevaluated and decided once, in
+       * [Match_tainting_mode.pms_of_effect], when the effect becomes a
+       * match — before any match deduplication. Partial param refs keep
+       * the anchorable Fetches substitutable at the next call up; the
+       * unanchorable rest stays in the cond, where the final evaluation
+       * may still fold around it. *)
+      let param_refs =
         match outer_params with
-        | None -> Keep_guards Effect_guard.top
-        | Some op -> (
-            match IL_helpers.cond_param_refs op substituted with
-            | None -> Keep_guards Effect_guard.top
-            | Some param_refs ->
-                let rebound =
-                  { Effect_guard.cond = Effect_guard.intern_cond substituted;
-                    param_refs }
-                in
-                Log.debug (fun m ->
-                    m "GUARD_REBIND: %s -> %s"
-                      (Effect_guard.show g)
-                      (Effect_guard.show rebound));
-                Keep_guards rebound))
+        | Some op -> IL_helpers.cond_partial_param_refs op substituted
+        | None -> []
+      in
+      let carried =
+        { Effect_guard.cond = Effect_guard.intern_cond substituted;
+          param_refs }
+      in
+      Log.debug (fun m ->
+          m "GUARD_CARRY: %s -> %s" (Effect_guard.show g)
+            (Effect_guard.show carried));
+      Keep_guards carried
 
 (* Given a function/method call 'fun_exp'('args_exps'), and a taint variable 'tlval'
     from the taint signature of the called function/method 'fun_exp', we want to
@@ -1520,6 +1557,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | Some args ->
         instantiate_lval_using_actual_exps callee taint_sig.params args lval
   in
+  let inst_guard (g : Effect_guard.t) : Effect_guard.t option =
+    match classify_guards ~lang ?outer_params resolve_arg g with
+    | Drop_effect -> None
+    | Keep_guards g' -> Some g'
+  in
   let inst_var =
     {
       inst_lval = lval_to_taints;
@@ -1528,6 +1570,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
       f_params = taint_sig.params;
       f_params_il = taint_sig.params_il;
       f_resolve_arg = resolve_arg;
+      inst_guard;
     }
   in
   let inst_taint_var taint = instantiate_taint_var inst_var taint in
@@ -1595,7 +1638,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
               (List.length taints));
         let taints =
           taints
-          |> List.concat_map (fun { Effect.taint; sink_trace } ->
+          |> List.concat_map (fun { Effect.taint; sink_trace; guard } ->
                  Log.debug (fun m ->
                      m "INST_SINK: processing taint %s" (T.show_taint taint));
                  (* TODO: Use 'instantiate_taint' here too (note differences wrt the call trace). *)
@@ -1631,7 +1674,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                         going into `sink_of_a_and_b`, and we will fail to produce a finding.
                      *)
                      let+ taint = taint |> subst_in_precondition in
-                     [ { Effect.taint; sink_trace } ]
+                     [ { Effect.taint; sink_trace; guard } ]
                  | Var _
                  | Shape_var _
                  | Control ->
@@ -1657,8 +1700,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                      Log.debug (fun m ->
                          m "INST_SINK: after shape gather: %d taints"
                            (Taints.cardinal call_taints));
-                     Taints.to_taint_list call_taints
-                     |> List_.map (fun x -> { Effect.taint = x; sink_trace }))
+                     Taints.elements call_taints
+                     |> List_.map (fun (b : T.guarded_taint) ->
+                            { Effect.taint = b.taint;
+                              sink_trace;
+                              guard = b.guard }))
         in
         if List_.null taints then []
         else
@@ -1708,7 +1754,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                  inst_lval_to_name;
                  f_params = taint_sig.params;
                  f_params_il = taint_sig.params_il;
-                 f_resolve_arg = resolve_arg; }
+                 f_resolve_arg = resolve_arg;
+                 inst_guard; }
                { add_call_to_trace_for_src =
                    add_call_to_trace_if_callee_has_eorig ~callee;
                  fix_token_trace_for_var =
@@ -2006,7 +2053,23 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                         "TOSINKINCALL: Recursive instantiation returned %d \
                          effects"
                         (List.length call_effects));
+                  (* The callback invocation was itself guarded
+                   * ([out_guards], e.g. a branch cond around [cb(x)]): the
+                   * effects of resolving the callback apply only under it. *)
                   call_effects
+                  |> List_.map (fun (ce : call_effect) ->
+                         let conj g =
+                           Effect_guard.compose_and out_guards g
+                         in
+                         match ce with
+                         | ToSink tts ->
+                             ToSink { tts with guards = conj tts.guards }
+                         | ToReturn ttr ->
+                             ToReturn { ttr with guards = conj ttr.guards }
+                         | ToLval tl ->
+                             ToLval { tl with guards = conj tl.guards }
+                         | ToSinkInCall c ->
+                             ToSinkInCall { c with guards = conj c.guards })
              | None ->
                  (* Could not instantiate the callback signature, preserve ToSinkInCall *)
                  let callee_exp, updated_arg =

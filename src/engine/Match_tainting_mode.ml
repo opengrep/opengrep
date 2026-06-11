@@ -122,7 +122,8 @@ let sources_of_taints ?preferred_label taints =
    * they need to specify the parameters as taint sources. *)
   let taint_sources =
     taints
-    |> List_.filter_map (fun { Effect.taint = { orig; tokens }; sink_trace } ->
+    |> List_.filter_map
+         (fun { Effect.taint = { orig; tokens }; sink_trace; guard = _ } ->
            match orig with
            | Src src -> Some (src, tokens, sink_trace)
            (* even if there is any taint "variable", it's irrelevant for the
@@ -173,12 +174,28 @@ let trace_of_source source =
     sink_trace = convert_taint_call_trace sink_trace;
   }
 
-let pms_of_effect ~match_on (effect_ : Effect.t) =
+(* Carried guards ([Sig_inst.classify_guards] defers every non-dispatch
+ * guard) are decided here, when the effect becomes a match: the effect-level
+ * guard drops the whole effect if it folds to false, and each sink item's
+ * guard — the guard its taint carried when it reached the sink — drops that
+ * item. This runs before any match deduplication ([PM.uniq] and reporting's
+ * dedup_and_sort), so a finding survives iff some candidate's guard is not
+ * false. An undecided guard reports, as a guard-less effect would. *)
+let guard_folds_false ~lang (g : Effect_guard.t) : bool =
+  (not (Effect_guard.is_top g))
+  &&
+  let eval_env = Eval_il_partial.mk_env lang Dataflow_var_env.VarMap.empty in
+  match Eval_il_partial.eval eval_env g.cond.Effect_guard.node with
+  | AST_generic.Lit (AST_generic.Bool (false, _)) -> true
+  | _ -> false
+
+let pms_of_effect ~lang ~match_on (effect_ : Effect.t) =
   match effect_ with
   | ToLval _
   | ToReturn _
   | ToSinkInCall _ ->
       []
+  | _ when guard_folds_false ~lang (Effect.guards_of effect_) -> []
   | ToSink
       {
         taints_with_precondition = taints, requires;
@@ -186,8 +203,16 @@ let pms_of_effect ~match_on (effect_ : Effect.t) =
         merged_env;
         _;
       } -> (
+      let taints =
+        taints
+        |> List.filter (fun (i : Effect.taint_to_sink_item) ->
+               not (guard_folds_false ~lang i.guard))
+      in
       let actual_taints = List_.map (fun t -> t.Effect.taint) taints in
-      let satisfies = T.taints_satisfy_requires actual_taints requires in
+      let satisfies =
+        (not (List_.null taints))
+        && T.taints_satisfy_requires actual_taints requires
+      in
       if not satisfies then []
       else
         let preferred_label = preferred_label_of_sink sink in
@@ -300,12 +325,6 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         `Source
     | `Sink, `Sink -> `Sink
   in
-  let record_matches new_effects =
-    new_effects
-    |> Effects.iter (fun effect_ ->
-           let effect_pms = pms_of_effect ~match_on effect_ in
-           matches := List.rev_append effect_pms !matches)
-  in
   let {
     path = { internal_path_to_content = file; _ };
     xlang;
@@ -321,6 +340,12 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
     | LAliengrep
     | LRegex ->
         failwith "taint-mode and generic/regex matching are incompatible"
+  in
+  let record_matches new_effects =
+    new_effects
+    |> Effects.iter (fun effect_ ->
+           let effect_pms = pms_of_effect ~lang ~match_on effect_ in
+           matches := List.rev_append effect_pms !matches)
   in
   let (ast, skipped_tokens), parse_time =
     Common.with_time (fun () -> lazy_force lazy_ast_and_errors)

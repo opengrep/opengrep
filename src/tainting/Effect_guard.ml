@@ -174,6 +174,22 @@ let is_length_atom (e : IL.exp) : bool =
       is_cmp_of_length_and_int inner
   | _ -> is_cmp_of_length_and_int e
 
+(* A cond that is nothing but length atoms under [And]/[Or] — the dispatch
+ * class: Clojure multi-arity legs and HOF arity guards. [Sig_inst] evaluates
+ * these eagerly at instantiation (dispatch must prune wrong-arity effects
+ * before their taints enter the caller's state); every other guard is
+ * carried unevaluated and decided once, when the effect becomes a match.
+ * The walk bails at the first non-atom leaf; And/Or spines are built fresh
+ * by the smart constructors, so the spine is a tree and the walk is linear
+ * in it. *)
+let rec is_length_skeleton (e : IL.exp) : bool =
+  is_length_atom e
+  ||
+  match e.e with
+  | IL.Operator (((G.And | G.Or), _), [ IL.Unnamed a; IL.Unnamed b ]) ->
+      is_length_skeleton a && is_length_skeleton b
+  | _ -> false
+
 (* The And/Or skeleton of [cond] over its length atoms: length atoms are
  * kept, every other leaf — including any non-atom [Not] subtree, since
  * replacing under a negation would strengthen — becomes [true], and the

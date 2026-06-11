@@ -655,9 +655,11 @@ let effects_of_tainted_sinks env taints sinks : Effect.t list =
               but it starts out here as just a PM variant.
            *)
            let taints_with_traces =
-             taints |> Taints.to_taint_list
-             |> List_.map (fun (t : T.taint) ->
-                    { Effect.taint = t; sink_trace = T.PM (sink.Effect.pm, ()) })
+             taints |> Taints.elements
+             |> List_.map (fun (b : T.guarded_taint) ->
+                    { Effect.taint = b.taint;
+                      sink_trace = T.PM (sink.Effect.pm, ());
+                      guard = b.guard })
            in
            effects_of_tainted_sink env taints_with_traces sink)
 
@@ -1861,6 +1863,14 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                       { taints;
                         lval = { base = Taint.BGlob var; offset };
                         guards } ];
+              (* As in the main [ToLval] arm: the written taints carry the
+               * guard, conjoined with [rebound_guards] like the sibling
+               * arms of this resolution. *)
+              let taints =
+                Taints.conjoin_guard
+                  (Effect_guard.compose_and rebound_guards guards)
+                  taints
+              in
               ( taints_acc,
                 shape_acc,
                 lval_env |> Lval_env.add var offset taints )
@@ -2091,6 +2101,10 @@ let check_function_call env fun_exp args
                            { taints;
                              lval = { base = Taint.BGlob var; offset };
                              guards } ];
+                   (* The written taints carry the (possibly deferred) guard
+                    * into the environment, so a later sink sees it as the
+                    * item guard. *)
+                   let taints = Taints.conjoin_guard guards taints in
                    ( taints_acc,
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )

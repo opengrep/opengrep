@@ -312,6 +312,12 @@ and Effect : sig
             to the sink. It's a `unit` call_trace because we don't actually need
             the item at the end, and we need to be able to dispatch on the
             particular variant of taint (source or arg). *)
+    guard : Effect_guard.t;
+        (** The guard the taint carried when it reached the sink
+            ([Taint.guarded_taint]); evaluated, like the effect-level
+            [guards], when the effect becomes a match — an item whose guard
+            folds to false is not reported. Ignored by [compare]; fused
+            per-item by [fuse_guards]. *)
   }
 
   type taints_to_sink = {
@@ -441,7 +447,11 @@ end = struct
   module Taints = Taint.Taint_set
 
   type sink = { pm : Core_match.t; rule_sink : R.taint_sink }
-  type taint_to_sink_item = { taint : T.taint; sink_trace : unit T.call_trace }
+  type taint_to_sink_item = {
+    taint : T.taint;
+    sink_trace : unit T.call_trace;
+    guard : Effect_guard.t;
+  }
 
   type taints_to_sink = {
     (* These taints were incoming to the sink, under a certain
@@ -494,8 +504,8 @@ end = struct
     | 0 -> T.compare_matches pm1 pm2
     | other -> other
 
-  let compare_taint_to_sink_item { taint = taint1; sink_trace = _ }
-      { taint = taint2; sink_trace = _ } =
+  let compare_taint_to_sink_item { taint = taint1; sink_trace = _; guard = _ }
+      { taint = taint2; sink_trace = _; guard = _ } =
     T.compare_taint taint1 taint2
 
   (* The [compare_*] below ignore [guards]: an effect's identity is its
@@ -623,7 +633,7 @@ end = struct
     in
     spf "(%s at l.%d by %s)" matched_str matched_line rule_sink.R.sink_id
 
-  let show_taint_to_sink_item { taint; sink_trace } =
+  let show_taint_to_sink_item { taint; sink_trace; guard = _ } =
     let sink_trace_str =
       match sink_trace with
       | T.PM _ -> ""
@@ -695,8 +705,19 @@ end = struct
   let fuse_guards e1 e2 =
     match (e1, e2) with
     | ToSink tts1, ToSink tts2 ->
+        (* [compare e1 e2 = 0] gives pairwise identity-equal items in the same
+         * order, so the per-item guards fuse positionally. *)
+        let items1, pre = tts1.taints_with_precondition in
+        let items2, _ = tts2.taints_with_precondition in
+        let items =
+          List.map2
+            (fun (i1 : taint_to_sink_item) (i2 : taint_to_sink_item) ->
+              { i1 with guard = Effect_guard.compose_or i1.guard i2.guard })
+            items1 items2
+        in
         ToSink
           { tts1 with
+            taints_with_precondition = (items, pre);
             guards = Effect_guard.compose_or tts1.guards tts2.guards }
     | ToReturn ttr1, ToReturn ttr2 ->
         ToReturn
