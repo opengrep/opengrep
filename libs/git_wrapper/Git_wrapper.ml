@@ -304,11 +304,13 @@ let commit_blobs_by_date objects =
 type ls_files_kind =
   | Cached (* --cached, the default *)
   | Others (* --others, the complement of Cached but still excluding .git/ *)
+  | Ignored (* --ignored, show ignored files (use with --exclude-standard) *)
 
 let string_of_ls_files_kind (kind : ls_files_kind) =
   match kind with
   | Cached -> "--cached"
   | Others -> "--others"
+  | Ignored -> "--ignored"
 
 (* Parse the output of 'git ls-files -z' *)
 let parse_nul_separated_list_of_files str =
@@ -403,6 +405,62 @@ let ls_files_relative ?exclude_standard ?kinds ~(project_root : Rpath.t)
              (project_root // proj_rel_path))
   in
   rel_paths
+
+(*
+   Parse 'git ls-tree -r -l -z HEAD' to get committed file sizes in a single
+   git invocation.  Returns a hashtable from path (relative to project root,
+   e.g. "src/foo.ml") to size in bytes.
+
+   Returns an empty table on error (no HEAD, not a git repo, etc.).
+*)
+let ls_tree_sizes ?(cwd = Fpath.v ".") () : (string, int) Hashtbl.t =
+  let tbl = Hashtbl.create 1024 in
+  let cmd = (git, [ "-C"; !!cwd; "ls-tree"; "-r"; "-l"; "-z"; "HEAD" ]) in
+  (match UCmd.string_of_run ~trim:false cmd with
+   | Ok (data, (_, `Exited 0)) ->
+       (* Format per entry: "<mode> <type> <hash> <size>\t<path>\0"
+          Size is right-padded with spaces; submodules show "-" for size. *)
+       String.split_on_char '\000' data
+       |> List.iter (fun entry ->
+              if entry <> "" then
+                match String.index_opt entry '\t' with
+                | Some tab_pos ->
+                    let meta = String.sub entry 0 tab_pos in
+                    let path =
+                      String.sub entry (tab_pos + 1)
+                        (String.length entry - tab_pos - 1)
+                    in
+                    (* size is the last space-separated field in meta *)
+                    let size_str =
+                      match String.rindex_opt meta ' ' with
+                      | Some pos ->
+                          String.trim
+                            (String.sub meta (pos + 1)
+                               (String.length meta - pos - 1))
+                      | None -> String.trim meta
+                    in
+                    (match int_of_string_opt size_str with
+                     | Some size -> Hashtbl.replace tbl path size
+                     | None -> (* submodule or unexpected *) ())
+                | None -> ())
+   | _ -> (* no HEAD or not a git repo *) ());
+  tbl
+
+(*
+   Return the set of paths (relative to project root) whose working tree
+   content differs from HEAD.  This includes staged and unstaged changes
+   but not untracked files.
+
+   Returns an empty set on error.
+*)
+let diff_names ?(cwd = Fpath.v ".") () : string Set_.t =
+  let cmd = (git, [ "-C"; !!cwd; "diff"; "--name-only"; "-z"; "HEAD" ]) in
+  match UCmd.string_of_run ~trim:false cmd with
+  | Ok (data, (_, `Exited 0)) ->
+      String.split_on_char '\000' data
+      |> List.filter (( <> ) "")
+      |> Set_.of_list
+  | _ -> Set_.empty
 
 (* TODO: somehow avoid error message on stderr in case this is not a git repo *)
 let project_root_for_files_in_dir dir =
