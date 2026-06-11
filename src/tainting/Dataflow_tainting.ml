@@ -3525,8 +3525,11 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
           DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
             ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
         in
-        (* Cheap checks first; only compute the [Effects.equal] stabilisation
-         * test (a set comparison) when neither short-circuits. *)
+        (* Cheap checks first; only compute the stabilisation test (a set
+         * comparison) when neither short-circuits. [equal_with_guards], not
+         * [equal]: a pass that only fuses a new disjunct into an existing
+         * effect's guard must count as growth, or the loop would stop with
+         * the narrower guard and drop effects the refined guard keeps. *)
         if not !(env.did_self_recurse) then (end_mapping, status)
         else if passes >= Limits_semgrep.taint_MAX_SELF_SIG_PASSES then (
           (* Hit the pass cap while still self-recursing. If the effects also
@@ -3534,7 +3537,8 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
            * result under-approximates (possible false negatives), so surface
            * it rather than truncating silently — the inner fixpoint timeout
            * is reported the same way by [log_timeout_warning]. *)
-          if not (Effects.equal prev_effects !(env.effects_acc)) then
+          if not (Effects.equal_with_guards prev_effects !(env.effects_acc))
+          then
             (* nosemgrep: no-logs-in-library *)
             Logs.warn (fun m ->
                 m
@@ -3546,7 +3550,7 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
                   !!(taint_inst.file)
                   (Option.map IL.str_of_name env.func.name ||| "???"));
           (end_mapping, status))
-        else if Effects.equal prev_effects !(env.effects_acc) then
+        else if Effects.equal_with_guards prev_effects !(env.effects_acc) then
           (end_mapping, status)
         else run_to_sig_fixpoint (passes + 1)
       in

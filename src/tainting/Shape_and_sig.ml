@@ -715,6 +715,14 @@ end
 and Effects : sig
   include Set.S with type elt = Effect.t
 
+  val equal_with_guards : t -> t -> bool
+  (** Like [equal] but also requires the guards of identity-equal elements to
+      be equal ([Effect_guard.equal]). [Effect.compare] ignores guards, so
+      plain [equal] treats a pass that only refines an effect's guard (fusing
+      in a new disjunct) as unchanged; a fixpoint stability check using it
+      would stop with the narrower guard and drop effects the refined guard
+      keeps. Use this for stability checks. *)
+
   val show : ?truncate_guards:bool -> t -> string
   val add_list : Effect.t list -> t -> t
   val union_list : t list -> t
@@ -760,6 +768,16 @@ end = struct
         | Some e' -> add e' acc
         | None -> acc)
       s empty
+
+  (* [equal] gives identity-equal element pairs at the same position of both
+   * sorted element lists, so a parallel walk pairs each element with its
+   * counterpart. *)
+  let equal_with_guards s1 s2 =
+    equal s1 s2
+    && List.for_all2
+         (fun e1 e2 ->
+           Effect_guard.equal (Effect.guards_of e1) (Effect.guards_of e2))
+         (elements s1) (elements s2)
 
   let show ?(truncate_guards = true) s =
     s |> to_seq |> List.of_seq
