@@ -212,6 +212,13 @@ module Taint_set : sig
   val is_empty : t -> bool
   val cardinal : t -> int
   val equal : t -> t -> bool
+
+  val equal_with_guards : t -> t -> bool
+  (** Like [equal] but also requires the guards of identity-equal bundles to
+      be equal (bundle identity ignores guards, so plain [equal] treats a
+      guard-only refinement as unchanged). For stability and insertion no-op
+      checks over guard-bearing sets. *)
+
   val compare : t -> t -> int
   val singleton : taint -> t
   val add : guarded_taint -> t -> t

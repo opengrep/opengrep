@@ -421,9 +421,15 @@ and Effect : sig
       and fuses guards on insertion (see [fuse_guards]). *)
 
   val fuse_guards : t -> t -> t
-  (** [fuse_guards e1 e2], where [compare e1 e2 = 0], is [e1] with its guard
-      replaced by the disjunction of both effects' guards: the fused effect
-      applies iff either of the two would. *)
+  (** [fuse_guards e1 e2], where [compare e1 e2 = 0], is [e1] with every
+      guard-bearing payload fused disjunctively: the effect-level guard, the
+      per-item [ToSink] guards, and the bundle guards inside the [Taints.t]
+      payloads. The fused effect applies iff either of the two would. *)
+
+  val guards_equal : t -> t -> bool
+  (** Whether two identity-equal effects carry the same guards in every
+      guard-bearing payload. Insertion no-op checks and fixpoint stability
+      tests must use this; effect identity ([compare]) is guard-blind. *)
 
   val show : ?truncate_guards:bool -> t -> string
 
@@ -633,20 +639,24 @@ end = struct
     in
     spf "(%s at l.%d by %s)" matched_str matched_line rule_sink.R.sink_id
 
-  let show_taint_to_sink_item { taint; sink_trace; guard = _ } =
+  let show_taint_to_sink_item ?(truncate_guards = true)
+      { taint; sink_trace; guard } =
     let sink_trace_str =
       match sink_trace with
       | T.PM _ -> ""
       | T.Call _ -> spf "@{%s}" (Taint.show_call_trace [%show: unit] sink_trace)
     in
-    Printf.sprintf "%s%s" (T.show_taint taint) sink_trace_str
+    Printf.sprintf "%s%s%s" (T.show_taint taint)
+      (Effect_guard.show_in_brackets ~truncate_guards guard)
+      sink_trace_str
 
-  let show_taints_and_traces taints =
-    Common2.string_of_list show_taint_to_sink_item taints
+  let show_taints_and_traces ?(truncate_guards = true) taints =
+    Common2.string_of_list (show_taint_to_sink_item ~truncate_guards) taints
 
   let show_taints_to_sink ?(truncate_guards = true)
       { taints_with_precondition = taints, _; sink; guards; _ } =
-    Common.spf "%s%s ~~~> %s" (show_taints_and_traces taints)
+    Common.spf "%s%s ~~~> %s"
+      (show_taints_and_traces ~truncate_guards taints)
       (Effect_guard.show_in_brackets ~truncate_guards guards)
       (show_sink sink)
 
@@ -720,17 +730,75 @@ end = struct
             taints_with_precondition = (items, pre);
             guards = Effect_guard.compose_or tts1.guards tts2.guards }
     | ToReturn ttr1, ToReturn ttr2 ->
+        (* [Taints.union] fuses identity-equal bundles' guards via
+         * [compose_or]; on identity-equal sets that is exactly per-bundle
+         * guard fusion. *)
         ToReturn
           { ttr1 with
+            data_taints = Taints.union ttr1.data_taints ttr2.data_taints;
+            control_taints =
+              Taints.union ttr1.control_taints ttr2.control_taints;
             guards = Effect_guard.compose_or ttr1.guards ttr2.guards }
     | ToLval ttl1, ToLval ttl2 ->
         ToLval
           { ttl1 with
+            taints = Taints.union ttl1.taints ttl2.taints;
             guards = Effect_guard.compose_or ttl1.guards ttl2.guards }
     | ToSinkInCall c1, ToSinkInCall c2 ->
+        let fuse_arg (a1 : (Taints.t * Shape.shape) IL.argument)
+            (a2 : (Taints.t * Shape.shape) IL.argument) :
+            (Taints.t * Shape.shape) IL.argument =
+          (* Shapes compare guard-blind, so [a1]'s shape is kept; guard
+           * refinement inside [Fun] shapes is a known gap of the
+           * guard-blind [Signature] equality. *)
+          match (a1, a2) with
+          | IL.Unnamed (t1, s1), IL.Unnamed (t2, _) ->
+              IL.Unnamed (Taints.union t1 t2, s1)
+          | IL.Named (id1, (t1, s1)), IL.Named (_, (t2, _)) ->
+              IL.Named (id1, (Taints.union t1 t2, s1))
+          | (IL.Unnamed _ | IL.Named _), _ ->
+              a1 (* unreachable: identity-equal args have equal shape *)
+        in
         ToSinkInCall
-          { c1 with guards = Effect_guard.compose_or c1.guards c2.guards }
+          { c1 with
+            args_taints = List.map2 fuse_arg c1.args_taints c2.args_taints;
+            guards = Effect_guard.compose_or c1.guards c2.guards }
     | _ -> e1 (* unreachable: differing constructors compare non-zero *)
+
+  (* Whether two identity-equal effects ([compare] = 0) carry the same
+   * guards, including every guard-bearing payload: [ToSink] item guards
+   * and the bundle guards inside the [Taints.t] payloads (effect
+   * identity compares those guard-blind). The [Effects] insertion no-op
+   * check and the fixpoint stability tests must use this: comparing
+   * [guards_of] alone misses payload-guard refinement, so a fused
+   * [A or B] guard would be discarded for the narrower [A] — a lost
+   * finding at any call site that refutes [A] but satisfies [B]. *)
+  let guards_equal (e1 : t) (e2 : t) : bool =
+    Effect_guard.equal (guards_of e1) (guards_of e2)
+    &&
+    match (e1, e2) with
+    | ToSink tts1, ToSink tts2 ->
+        List.for_all2
+          (fun (i1 : taint_to_sink_item) (i2 : taint_to_sink_item) ->
+            Effect_guard.equal i1.guard i2.guard)
+          (fst tts1.taints_with_precondition)
+          (fst tts2.taints_with_precondition)
+    | ToReturn ttr1, ToReturn ttr2 ->
+        Taints.equal_with_guards ttr1.data_taints ttr2.data_taints
+        && Taints.equal_with_guards ttr1.control_taints ttr2.control_taints
+    | ToLval ttl1, ToLval ttl2 ->
+        Taints.equal_with_guards ttl1.taints ttl2.taints
+    | ToSinkInCall c1, ToSinkInCall c2 ->
+        List.for_all2
+          (fun (a1 : (Taints.t * Shape.shape) IL.argument)
+               (a2 : (Taints.t * Shape.shape) IL.argument) ->
+            match (a1, a2) with
+            | IL.Unnamed (t1, _), IL.Unnamed (t2, _)
+            | IL.Named (_, (t1, _)), IL.Named (_, (t2, _)) ->
+                Taints.equal_with_guards t1 t2
+            | (IL.Unnamed _ | IL.Named _), _ -> true)
+          c1.args_taints c2.args_taints
+    | _ -> true
 end
 
 and Effects : sig
@@ -761,18 +829,18 @@ end = struct
    * instantiation an effect whose guard folds to false is dropped, so at a
    * call site where the kept variant's guard folds to false the effect
    * would be dropped even though the discarded variant's guard would have
-   * kept it. The [Effect_guard.equal] check makes re-adding an
-   * already-fused effect a no-op ([wrap_or] dedups the operands), so the
-   * dataflow fixpoint still reaches a fixed point. *)
+   * kept it. The [Effect.guards_equal] check makes re-adding an
+   * already-fused effect a no-op (disjunction is idempotent under the
+   * clause-set dedup), so the dataflow fixpoint still reaches a fixed
+   * point; it compares every guard-bearing payload, not just the
+   * effect-level guard — an item- or bundle-guard-only refinement must
+   * not be discarded. *)
   let add eff set =
     match find_opt eff set with
     | None -> add eff set
     | Some existing ->
         let fused = Effect.fuse_guards existing eff in
-        if
-          Effect_guard.equal (Effect.guards_of fused)
-            (Effect.guards_of existing)
-        then set
+        if Effect.guards_equal fused existing then set
         else add fused (remove existing set)
 
   let union s1 s2 =
@@ -792,13 +860,11 @@ end = struct
 
   (* [equal] gives identity-equal element pairs at the same position of both
    * sorted element lists, so a parallel walk pairs each element with its
-   * counterpart. *)
+   * counterpart. [Effect.guards_equal] covers every guard-bearing payload,
+   * not just the effect-level guard. *)
   let equal_with_guards s1 s2 =
     equal s1 s2
-    && List.for_all2
-         (fun e1 e2 ->
-           Effect_guard.equal (Effect.guards_of e1) (Effect.guards_of e2))
-         (elements s1) (elements s2)
+    && List.for_all2 Effect.guards_equal (elements s1) (elements s2)
 
   let show ?(truncate_guards = true) s =
     s |> to_seq |> List.of_seq

@@ -421,6 +421,19 @@ module Taint_set = struct
   let to_seq set = set |> Taints.to_seq
   let elements set = set |> to_seq |> List.of_seq
 
+  (* Like [equal] but also requires the guards of identity-equal bundles
+   * to be equal ([compare_guarded_taint] ignores guards, so plain
+   * [equal] treats a guard-only refinement of a bundle as unchanged).
+   * Stability and insertion no-op checks over guard-bearing sets must
+   * use this, or a fused wider guard is discarded for the narrower
+   * one. *)
+  let equal_with_guards set1 set2 =
+    equal set1 set2
+    && List.for_all2
+         (fun (b1 : guarded_taint) (b2 : guarded_taint) ->
+           EG.equal b1.guard b2.guard)
+         (elements set1) (elements set2)
+
   let rec add alt_bundle set =
     (* If two taints are "the same", we still want to pick "the best", e.g.
      * the one with the shortest trace.

@@ -835,7 +835,29 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
     | Some (Signature.P n | Signature.PRest n) -> String.equal n arg.name
     | Some Signature.Other -> String.equal arg.name ""
   in
-  (* Walk a guarded taint. Branches:
+  (* Walk a guard's cond, substituting Fetches that name the outer
+   * function's parameters. [g.param_refs] (the inner sig's own anchors)
+   * is preserved unchanged: substitution touches only outer-anchored
+   * Fetches; inner-anchored Fetches survive intact in the rewritten
+   * atoms. Substitution rewrites atoms only, so the clause structure is
+   * preserved ([map_atoms] re-normalises). *)
+  let walk_guard (g : Effect_guard.t) : Effect_guard.t =
+    if Effect_guard.is_top g then g
+    else
+      let cond =
+        Effect_guard.map_atoms
+          (fun atom ->
+            let f_anchored =
+              IL_helpers.cond_partial_param_refs inst_var.f_params_il atom
+            in
+            substitute_free_fetches f_anchored inst_var.f_resolve_arg atom)
+          g.cond
+      in
+      { Effect_guard.cond; param_refs = g.param_refs }
+  in
+  (* Walk a guarded taint. The bundle guard gets the same outer-anchored
+   * substitution as effect-level guards ([walk_guard]) — conjoined raw it
+   * would stay in the inner frame's terms forever. Branches:
    *   - Var/Shape_var on a bound [BArg]: keep verbatim.
    *   - Var/Shape_var on a free [BArg]: substitute via [instantiate_taint]
    *     if [inst_var.inst_lval] returns a match; else keep verbatim.
@@ -845,9 +867,9 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
   let walk_taint (b : T.guarded_taint) : T.taints =
     let delegate () =
       instantiate_taint inst_var inst_trace b.taint
-      |> Taints.conjoin_guard b.guard
+      |> Taints.conjoin_guard (walk_guard b.guard)
     in
-    let keep () = Taints.of_list [ b ] in
+    let keep () = Taints.of_list [ { b with guard = walk_guard b.guard } ] in
     match b.taint.orig with
     | T.Var lval
     | T.Shape_var lval -> (
@@ -932,26 +954,6 @@ let rec substitute_in_sig (inst_var : inst_var) (inst_trace : inst_trace)
         match inst_var.inst_lval_to_name lval with
         | Some (var, offset, _tok) -> Some { T.base = T.BGlob var; offset }
         | None -> None)
-  in
-  (* Walk a guard's cond, substituting Fetches that name the outer
-   * function's parameters. [g.param_refs] (the inner sig's own anchors)
-   * is preserved unchanged: substitution touches only outer-anchored
-   * Fetches; inner-anchored Fetches survive intact in the rewritten
-   * atoms. Substitution rewrites atoms only, so the clause structure is
-   * preserved ([map_atoms] re-normalises). *)
-  let walk_guard (g : Effect_guard.t) : Effect_guard.t =
-    if Effect_guard.is_top g then g
-    else
-      let cond =
-        Effect_guard.map_atoms
-          (fun atom ->
-            let f_anchored =
-              IL_helpers.cond_partial_param_refs inst_var.f_params_il atom
-            in
-            substitute_free_fetches f_anchored inst_var.f_resolve_arg atom)
-          g.cond
-      in
-      { Effect_guard.cond; param_refs = g.param_refs }
   in
   (* Walk a single effect. Returns [None] iff the effect should be
    * dropped (currently: [ToLval] whose lval cannot anchor to a
@@ -1657,6 +1659,15 @@ let rec instantiate_function_signature ~(lang : Lang.t)
           |> List.concat_map (fun { Effect.taint; sink_trace; guard } ->
                  Log.debug (fun m ->
                      m "INST_SINK: processing taint %s" (T.show_taint taint));
+                 (* The item guard is instantiated like effect guards
+                  * ([inst_guard] substitutes the call site's actuals and
+                  * folds dispatch atoms): a callee-terms cond carried
+                  * verbatim could never fold at match time. [None] means
+                  * the guard folded to false — the taint cannot exist at
+                  * this call site, so the item contributes nothing. *)
+                 match inst_guard guard with
+                 | None -> []
+                 | Some item_guard -> (
                  (* TODO: Use 'instantiate_taint' here too (note differences wrt the call trace). *)
                  match taint.T.orig with
                  | T.Src _ ->
@@ -1690,7 +1701,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                         going into `sink_of_a_and_b`, and we will fail to produce a finding.
                      *)
                      let+ taint = taint |> subst_in_precondition in
-                     [ { Effect.taint; sink_trace; guard } ]
+                     [ { Effect.taint; sink_trace; guard = item_guard } ]
                  | Var _
                  | Shape_var _
                  | Control ->
@@ -1718,9 +1729,13 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                            (Taints.cardinal call_taints));
                      Taints.elements call_taints
                      |> List_.map (fun (b : T.guarded_taint) ->
+                            (* The instantiated callee-side guard composes
+                             * with the caller taint's own guard, instead of
+                             * being discarded. *)
                             { Effect.taint = b.taint;
                               sink_trace;
-                              guard = b.guard }))
+                              guard =
+                                Effect_guard.compose_and item_guard b.guard })))
         in
         if List_.null taints then []
         else
