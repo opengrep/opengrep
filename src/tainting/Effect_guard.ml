@@ -227,12 +227,19 @@ let eq_parts (atom : IL.exp) : (IL.exp * G.literal) option =
   | _ -> None
 
 (* Distinct constants of the same type cannot both equal the same value;
- * across types we make no judgement (e.g. [1 == 1.0] holds in Python). *)
+ * across types we make no judgement (e.g. [1 == 1.0] holds in Python).
+ * String contents are compared as lexed, which under-determines the
+ * runtime value when escapes are involved ('\n' vs a literal newline can
+ * be the same string), so a backslash-bearing string yields no
+ * judgement; escape-free contents denote their runtime value in every
+ * supported language. *)
 let distinct_same_type_constants (l1 : G.literal) (l2 : G.literal) : bool =
   match (l1, l2) with
   | G.Int (i1, _), G.Int (i2, _) -> not (Option.equal Int64.equal i1 i2)
   | G.String (_, (s1, _), _), G.String (_, (s2, _), _) ->
-      not (String.equal s1 s2)
+      (not (String.contains s1 '\\'))
+      && (not (String.contains s2 '\\'))
+      && not (String.equal s1 s2)
   | G.Bool (b1, _), G.Bool (b2, _) -> not (Bool.equal b1 b2)
   | _ -> false
 

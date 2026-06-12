@@ -314,16 +314,34 @@ and eval_op memo (env : env) wop args =
    * two [Lit] operands — Bool, Int, String, etc. — produce a [Lit Bool].
    * [PhysEq]/[NotPhysEq] are JS [===]/[!==] and OCaml [==]/[!=]; folding
    * them on literals gives the same result as value equality since
-   * literals have no object identity distinct from their value. *)
+   * literals have no object identity distinct from their value.
+   *
+   * String contents are compared as lexed, which under-determines the
+   * runtime value when escapes are involved ('\n' vs a literal newline
+   * can denote the same string), so inequality of backslash-bearing
+   * strings is not a runtime verdict and stays undecided — folding it
+   * to false would prune a live branch or drop a live guard (missed
+   * findings). Equality of identical contents is always sound: one
+   * language, one lexing. *)
   | ( (G.Eq | G.NotEq | G.PhysEq | G.NotPhysEq),
-      [ (G.Lit _ as c1); (G.Lit _ as c2) ] ) ->
+      [ (G.Lit l1 as c1); (G.Lit l2 as c2) ] ) ->
       let equal = eq c1 c2 in
-      let r =
-        match op with
-        | G.Eq | G.PhysEq -> equal
-        | _ -> not equal
+      let lexed_inequality_unsound =
+        (not equal)
+        &&
+        match (l1, l2) with
+        | G.String (_, (s1, _), _), G.String (_, (s2, _), _) ->
+            String.contains s1 '\\' || String.contains s2 '\\'
+        | _ -> false
       in
-      G.Lit (literal_of_bool r)
+      if lexed_inequality_unsound then G.Cst G.Cbool
+      else
+        let r =
+          match op with
+          | G.Eq | G.PhysEq -> equal
+          | _ -> not equal
+        in
+        G.Lit (literal_of_bool r)
   | op, [ G.Lit (G.Bool (b1, _)); G.Lit (G.Bool (b2, _)) ] ->
       eval_binop_bool op b1 b2
   | op, [ G.Lit (G.Int _ as li1); G.Lit (G.Int _ as li2) ] ->

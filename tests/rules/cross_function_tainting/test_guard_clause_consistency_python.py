@@ -40,7 +40,37 @@ def f_live(a, x):
             sink(x)
 
 
+# Escape-free distinct strings denote distinct runtime values: refute.
+def f_dead_str(a, x):
+    if a == "get":
+        if a == "post":
+            # ok: test-guard-clause-consistency
+            sink(x)
+
+
+# The Python parser unescapes string contents, so ["\n"] reaches the
+# guard as a literal newline -- a runtime value with no backslash. The
+# backslash abstention (insurance for parsers that store raw lexed
+# contents) does not fire, and the refutation is value-correct.
+def f_escape_refutes(a, x):
+    if a == "\n":
+        if a == "x":
+            # ok: test-guard-clause-consistency
+            sink(x)
+
+
+# Same at evaluation: the substituted ["zzz" == "a\nb"] compares two
+# runtime values and folds false, dropping the effect.
+def g_escape_eval(s, x):
+    if s == "a\nb":
+        # ok: test-guard-clause-consistency
+        sink(x)
+
+
 def calls():
     f_dead(unknown(), source())
     f_dead_len(unknown(), source())
     f_live(unknown(), source())
+    f_dead_str(unknown(), source())
+    f_escape_refutes(unknown(), source())
+    g_escape_eval("zzz", source())
