@@ -280,10 +280,28 @@ let clause_inconsistent (c : clause) : bool =
   pairwise eqs
 
 (* Sort, dedup, and consistency-check a conjunction of literals.
- * [None] means the clause is unsatisfiable and must be dropped. *)
+ * [None] means the clause is unsatisfiable and must be dropped.
+ * Constant boolean atoms decide their literal outright — substitution
+ * ([map_atoms]) can ground an atom to a boolean literal: a satisfied
+ * literal leaves the conjunction, a falsified one kills the clause, so a
+ * dead clause is folded here instead of surviving normalisation (where
+ * it would consume clause budget and bypass the [cond_is_bot] →
+ * [Drop_effect] fast path until match time). *)
 let mk_clause (lits : literal list) : clause option =
-  let c = List.sort_uniq compare_literal lits in
-  if clause_inconsistent c then None else Some c
+  let falsified (l : literal) : bool =
+    IL_helpers.is_lit_bool l.negated l.atom.node
+  in
+  let satisfied (l : literal) : bool =
+    IL_helpers.is_lit_bool (not l.negated) l.atom.node
+  in
+  if List.exists falsified lits then None
+  else
+    let c =
+      lits
+      |> List.filter (fun l -> not (satisfied l))
+      |> List.sort_uniq compare_literal
+    in
+    if clause_inconsistent c then None else Some c
 
 (* Sort and dedup clauses; collapse to [top] when a clause is true ([])
  * or two singleton clauses are complementary ([A] or [!A] is a
@@ -511,19 +529,32 @@ let map_atoms (f : IL.exp -> IL.exp) (c : cond) : cond =
 let simplify_with (eval_atom : IL.exp -> bool option) (c : cond) : cond =
   c
   |> List.filter_map (fun clause ->
-         let exception Clause_false in
-         try
+         let with_verdicts =
+           clause
+           |> List.map (fun l ->
+                  let verdict =
+                    eval_atom l.atom.node
+                    |> Option.map (fun b -> if l.negated then not b else b)
+                  in
+                  (l, verdict))
+         in
+         let falsified (_, verdict) =
+           match verdict with
+           | Some false -> true
+           | Some true
+           | None ->
+               false
+         in
+         if List.exists falsified with_verdicts then None
+         else
            Some
-             (clause
-             |> List.filter (fun l ->
-                    match eval_atom l.atom.node with
-                    | Some b ->
-                        let lit_value = if l.negated then not b else b in
-                        if lit_value then false (* drop satisfied literal *)
-                        else raise Clause_false
-                    | None -> true))
-         with
-         | Clause_false -> None)
+             (with_verdicts
+             |> List.filter_map (fun (l, verdict) ->
+                    match verdict with
+                    | Some true -> None (* satisfied: contributes nothing *)
+                    | Some false
+                    | None ->
+                        Some l)))
   |> mk_cond
 
 (* Three-valued evaluation: [Some b] when decided, [None] when some atom
