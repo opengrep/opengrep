@@ -1,6 +1,6 @@
 rules:
   - id: test-effect-guards-off
-    message: Guards are inert without the effect_guards option
+    message: Guards are inert without the guarded_taint_signatures option
     languages:
       - python
     severity: WARNING

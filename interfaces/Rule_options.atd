@@ -55,8 +55,10 @@ type t = {
   ~taint_intrafile <ocaml default="false"> : bool;
   (* attach branch-condition guards to taint effects and evaluate them at
    * call sites (experimental). When off, only Clojure keeps the
-   * [length(x) == n] arity guards that implement multi-arity dispatch. *)
-  ~effect_guards <ocaml default="false"> : bool;
+   * [length(x) == n] arity guards that implement multi-arity dispatch.
+   * The user-visible rule option is [guarded_taint_signatures]; the
+   * internal field name stays [effect_guards]. *)
+  ~effect_guards <json name="guarded_taint_signatures"> <ocaml default="false"> : bool;
 
   (* 'ac' stands for associative-commutative matching *)
   ~ac_matching <ocaml default="true"> : bool;

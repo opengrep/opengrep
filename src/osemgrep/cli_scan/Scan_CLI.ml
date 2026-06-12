@@ -755,7 +755,7 @@ let o_pro : bool Term.t =
 
 let o_effect_guards : bool Term.t =
   let info =
-    Arg.info [ "effect-guards" ]
+    Arg.info [ "guarded-taint-signatures" ]
       ~doc:
         ("Attach branch-condition guards to taint effects and evaluate them \
           at call sites, dropping effects whose guard is false. Without this \

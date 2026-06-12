@@ -13,7 +13,7 @@ rules:
     mode: taint
     options:
       taint_intrafile: true
-      effect_guards: true
+      guarded_taint_signatures: true
     pattern-sources:
       - pattern: source()
     pattern-sinks:
