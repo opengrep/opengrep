@@ -285,6 +285,10 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
       | _ ->
         List.iter
           (fun rule ->
+            (* This loop calls [check_rule] directly, bypassing the
+             * [reset_intern] in [check_rules]: clear the guard-atom intern
+             * table per rule so canonical atoms never leak across rules. *)
+            Effect_guard.reset_intern ();
             let xconf = Match_env.default_xconfig in
             let xconf = { xconf with config = { xconf.config with taint_intrafile = true; effect_guards = true } } in
             let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.Rule.options in

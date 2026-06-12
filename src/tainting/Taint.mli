@@ -214,8 +214,8 @@ module Taint_set : sig
   val equal : t -> t -> bool
 
   val equal_with_guards : t -> t -> bool
-  (** Like [equal] but also requires the guards of identity-equal bundles to
-      be equal (bundle identity ignores guards, so plain [equal] treats a
+  (** Like [equal] but also requires the guards of identity-equal taints to
+      be equal (taint identity ignores guards, so plain [equal] treats a
       guard-only refinement as unchanged). For stability and insertion no-op
       checks over guard-bearing sets. *)
 

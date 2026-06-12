@@ -37,7 +37,29 @@
  * a formal parameter to the signature-param index of that parameter.
  * The mapping is built with [IL.equal_name] (which compares ident, sid,
  * and id_info). The substitution uses the same [IL.equal_name] to look
- * up. *)
+ * up.
+ *
+ * Guard-blindness inventory. Equalities and comparisons over guarded
+ * values fall in three classes; new code must pick deliberately:
+ *
+ *   - Guard-blind by design — identity and fusion keying: a set holds one
+ *     element per guard-less identity and fuses guards on insertion.
+ *     [Shape_and_sig.Effect.compare] (and [Effects]'s element order),
+ *     [Taint.compare_guarded_taint] (and [Taint_set]'s element order),
+ *     [Shape_and_sig.Effect.compare_arg] inside effect identity.
+ *
+ *   - Guard-blind, accepted — [Shape_and_sig.SignatureSet]'s compare:
+ *     storage dedup only; each function and arity is extracted once, in
+ *     topological order, so a guard-only re-extraction never collides.
+ *
+ *   - Guard-aware — every insertion no-op check and every fixpoint
+ *     stability test, or a fused wider guard is silently discarded for
+ *     the narrower one (lost findings): [Effect.guards_equal],
+ *     [Effects.equal_with_guards], [Taint_set.equal_with_guards],
+ *     [Xtaint.equal_with_guards], [Shape.equal_cell_with_guards],
+ *     [Signature.equal_with_guards], and [Taint_lval_env.equal] (the
+ *     dataflow fixpoint's [eq_env]). A new stability test must use this
+ *     family. *)
 
 module G = AST_generic
 
@@ -126,6 +148,11 @@ end)
 let intern_table : hcond ICondTbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> ICondTbl.create 1024)
 
+(* The table grows monotonically until the per-target [reset_intern] in
+ * [Match_tainting_mode.check_rules]: the atom-size cap bounds each
+ * entry, not the entry count, which is bounded only by the distinct
+ * atoms the target's analysis creates. Accepted: atoms are small and
+ * a target's atom population is proportional to its conds. *)
 let reset_intern () : unit = ICondTbl.clear (Domain.DLS.get intern_table)
 
 (* Canonicalise [e] bottom-up: children are interned first, so a node's table

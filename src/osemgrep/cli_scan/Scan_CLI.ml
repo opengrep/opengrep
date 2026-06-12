@@ -757,7 +757,10 @@ let o_effect_guards : bool Term.t =
   let info =
     Arg.info [ "effect-guards" ]
       ~doc:
-        ("Attach branch-condition guards to taint effects and evaluate them           at call sites, dropping effects whose guard is false. Without this           flag only Clojure keeps the arity guards that implement           multi-arity dispatch. REQUIRES --experimental")
+        ("Attach branch-condition guards to taint effects and evaluate them \
+          at call sites, dropping effects whose guard is false. Without this \
+          flag only Clojure keeps the arity guards that implement \
+          multi-arity dispatch. REQUIRES --experimental")
   in
   Arg.value (Arg.flag info)
 

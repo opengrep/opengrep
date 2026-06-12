@@ -393,7 +393,9 @@ and eval_length memo (env : env) arg =
       | _ -> G.NotCst)
 
 let eval (env : env) (exp : IL.exp) : G.svalue =
-  eval_memo (IL_helpers.PhysExpTbl.create 64) env exp
+  (* [eval] is hot and most inputs are a handful of nodes; the table grows
+   * itself on the rare shared-DAG cond. *)
+  eval_memo (IL_helpers.PhysExpTbl.create 8) env exp
 
 let eval_concat (env : env) args =
   match List_.map (eval env) args with
