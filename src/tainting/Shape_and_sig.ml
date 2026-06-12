@@ -170,6 +170,13 @@ module rec Shape : sig
       *)
 
   val equal_cell : cell -> cell -> bool
+
+  val equal_cell_with_guards : cell -> cell -> bool
+  (** Like [equal_cell] but a difference only in a taint's guard counts as
+      a difference, recursively ([Fun] shapes compare via
+      [Signature.equal_with_guards]). For the dataflow fixpoint's stability
+      test; identity and fusion keying keep using [equal_cell]. *)
+
   val compare_shape : shape -> shape -> int
   val show_cell : cell -> string
   val show_shape : shape -> string
@@ -223,6 +230,42 @@ end = struct
 
   (* Public API uses depth 0 *)
   let equal_cell cell1 cell2 = equal_cell_depth 0 cell1 cell2
+
+  (* Guard-aware twin of the chain above; structure identical, but cell
+   * taints compare via [Xtaint.equal_with_guards] and [Fun] shapes via
+   * [Signature.equal_with_guards]. *)
+  let rec equal_cell_with_guards_depth depth cell1 cell2 =
+    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
+    else
+      let (Cell (taints1, shape1)) = cell1 in
+      let (Cell (taints2, shape2)) = cell2 in
+      Xtaint.equal_with_guards taints1 taints2
+      && equal_shape_with_guards_depth depth shape1 shape2
+
+  and equal_shape_with_guards_depth depth shape1 shape2 =
+    if depth > Limits_semgrep.taint_MAX_SHAPE_DEPTH then true
+    else
+      match (shape1, shape2) with
+      | Bot, Bot -> true
+      | Obj obj1, Obj obj2 -> equal_obj_with_guards_depth (depth + 1) obj1 obj2
+      | Arg (arg1, offsets1), Arg (arg2, offsets2) ->
+          T.equal_arg arg1 arg2
+          && Int.equal
+               (List.compare (List.compare T.compare_offset)
+                  offsets1 offsets2)
+               0
+      | Fun sig1, Fun sig2 -> Signature.equal_with_guards sig1 sig2
+      | Bot, _
+      | Obj _, _
+      | Arg _, _
+      | Fun _, _ ->
+          false
+
+  and equal_obj_with_guards_depth depth obj1 obj2 =
+    Fields.equal (equal_cell_with_guards_depth depth) obj1 obj2
+
+  let equal_cell_with_guards cell1 cell2 =
+    equal_cell_with_guards_depth 0 cell1 cell2
 
   (*************************************)
   (* Comparison *)
@@ -939,6 +982,12 @@ and Signature : sig
       instantiate the accompanying signature. *)
 
   val equal : t -> t -> bool
+
+  val equal_with_guards : t -> t -> bool
+  (** Like [equal] but a difference only in a guard counts as a difference
+      ([Effects.equal_with_guards]). For the dataflow fixpoint's stability
+      test, via [Shape.equal_cell_with_guards] on [Fun] shapes. *)
+
   val compare : t -> t -> int
   val of_IL_params : IL.param list -> params
   val show_params : params -> string
@@ -993,6 +1042,11 @@ end = struct
   let equal { params = params1; params_il = _; effects = effects1 }
       { params = params2; params_il = _; effects = effects2 } =
     equal_params params1 params2 && Effects.equal effects1 effects2
+
+  let equal_with_guards { params = params1; params_il = _; effects = effects1 }
+      { params = params2; params_il = _; effects = effects2 } =
+    equal_params params1 params2
+    && Effects.equal_with_guards effects1 effects2
 
   let compare { params = params1; params_il = _; effects = effects1 }
       { params = params2; params_il = _; effects = effects2 } =
