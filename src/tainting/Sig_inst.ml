@@ -1113,7 +1113,7 @@ type guard_decision =
           the constraint, may produce a finding the rebound guard
           would have suppressed). *)
 
-let classify_guards ~(lang : Lang.t)
+let classify_guards ~(lang : Lang.t) ?(can_freeze = false)
     ?(outer_params : IL.param list option) resolve_arg
     (g : Effect_guard.t) : guard_decision =
   if Effect_guard.is_top g then Keep_guards Effect_guard.top
@@ -1144,6 +1144,19 @@ let classify_guards ~(lang : Lang.t)
             | _ -> None
           else None)
         substituted
+    in
+    (* Frozen literals are dropped only when this classification is the
+     * final anchoring chance ([can_freeze]): the caller had concrete
+     * actuals. The recursive-HOF instantiation (no [IL.exp] args) and
+     * preserved [ToSinkInCall] effects re-classify the same guard later
+     * in the right frame, where a literal that looks frozen here may
+     * still anchor. *)
+    let simplified =
+      if can_freeze then
+        Effect_guard.drop_frozen_literals
+          (Option.value outer_params ~default:[])
+          simplified
+      else simplified
     in
     if Effect_guard.cond_is_bot simplified then (
       Log.debug (fun m -> m "GUARD_EVAL: %s => false" (Effect_guard.show g));
@@ -1556,8 +1569,11 @@ let rec instantiate_function_signature ~(lang : Lang.t)
     | Some args ->
         instantiate_lval_using_actual_exps callee taint_sig.params args lval
   in
+  (* Freezing is allowed only with concrete actuals: the recursive-HOF
+   * path ([args = None]) re-classifies in the right frame later. *)
+  let can_freeze = Option.is_some args in
   let inst_guard (g : Effect_guard.t) : Effect_guard.t option =
-    match classify_guards ~lang ?outer_params resolve_arg g with
+    match classify_guards ~lang ~can_freeze ?outer_params resolve_arg g with
     | Drop_effect -> None
     | Keep_guards g' -> Some g'
   in
@@ -1593,7 +1609,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
   let inst_effect : Effect.t -> call_effect list =
    fun eff ->
     match
-      classify_guards ~lang ?outer_params resolve_arg (Effect.guards_of eff)
+      classify_guards ~lang ~can_freeze ?outer_params resolve_arg
+        (Effect.guards_of eff)
     with
     | Drop_effect -> []
     | Keep_guards out_guards ->

@@ -389,6 +389,78 @@ let rec dnf_of ~(negated : bool) (e : IL.exp) : cond =
 
 let of_exp (e : IL.exp) : cond = dnf_of ~negated:false e
 
+(* A literal freezes when it crosses a call boundary if its atom can
+ * neither be substituted further up nor folded at match time. An atom is
+ * decidable through exactly two mechanisms: substitution grounds a Fetch
+ * anchored in the enclosing function's params (resolvable offsets
+ * included — a caller may pass a literal struct), and the final
+ * evaluation folds literals and offset-free local variables via their
+ * [id_svalue]. A Fetch with offsets on a non-param base, or a
+ * [Mem]/[VarSpecial] base, is [NotCst] forever once its frame is gone —
+ * e.g. Go's [_tmp != 0] temporaries and local field reads, which
+ * dominate carried guards on real code and are pure carry/compare cost.
+ * Dropping the literal weakens its clause (the guarded effect applies at
+ * least as often), the same sound direction as the caps. Length atoms
+ * are exempt (dispatch). *)
+(* The walk is memoised on physical identity: substituted atoms are shared
+ * DAGs whose tree unfolding is exponential ([lvals_of_exp] is a plain tree
+ * walk and must not be used here). A [Fetch] freezes the atom when it is
+ * an offsetted read that does not anchor in [params]; offset [Index]
+ * expressions and [Mem] bases are descended into. *)
+let atom_has_frozen_fetch (params : IL.param list) (atom : IL.exp) : bool =
+  let memo : bool IL_helpers.PhysExpTbl.t = IL_helpers.PhysExpTbl.create 16 in
+  let rec go (e : IL.exp) : bool =
+    match IL_helpers.PhysExpTbl.find_opt memo e with
+    | Some r -> r
+    | None ->
+        let r =
+          match e.e with
+          | IL.Fetch lv -> go_lval lv
+          | _ ->
+              let found, _ =
+                IL_helpers.fold_map_children
+                  (fun acc c -> (acc || go c, c))
+                  false e
+              in
+              found
+        in
+        IL_helpers.PhysExpTbl.add memo e r;
+        r
+  and go_lval (lv : IL.lval) : bool =
+    let offset_exps_frozen =
+      lv.IL.rev_offset
+      |> List.exists (fun (o : IL.offset) ->
+             match o.IL.o with
+             | IL.Index e -> go e
+             | IL.Dot _
+             | IL.Slice _ ->
+                 false)
+    in
+    offset_exps_frozen
+    ||
+    match lv.IL.base with
+    | IL.Var name -> (
+        match lv.IL.rev_offset with
+        | [] -> false (* offset-free local: svalue-foldable *)
+        | offsets ->
+            not
+              (List.for_all IL_helpers.offset_is_resolvable offsets
+              && Option.is_some (IL_helpers.param_index params name)))
+    | IL.VarSpecial _ -> true
+    | IL.Mem _ -> true
+  in
+  go atom
+
+let literal_is_frozen (params : IL.param list) (l : literal) : bool =
+  (not (is_length_atom l.atom.node))
+  && atom_has_frozen_fetch params l.atom.node
+
+let drop_frozen_literals (params : IL.param list) (c : cond) : cond =
+  c
+  |> List.map (fun clause ->
+         clause |> List.filter (fun l -> not (literal_is_frozen params l)))
+  |> mk_cond
+
 (* The distinct atoms of a cond, for computing [param_refs] and for
  * substitution call sites that need the variable-bearing parts. *)
 let atoms_of_cond (c : cond) : IL.exp list =
