@@ -1,6 +1,6 @@
 rules:
-  - id: test-guard-reassign
-    message: Taint reaches the sink when the guard variable is reassigned
+  - id: test-guard-cap-widen
+    message: An over-cap guard cond is widened conservatively; small guards keep folding
     languages:
       - python
     severity: WARNING

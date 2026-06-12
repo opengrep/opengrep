@@ -1,6 +1,6 @@
 rules:
-  - id: test-guard-reassign
-    message: Taint reaches the sink when the guard variable is reassigned
+  - id: test-guard-clause-consistency
+    message: An unsatisfiable guard clause drops its effect
     languages:
       - python
     severity: WARNING

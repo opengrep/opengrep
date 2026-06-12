@@ -203,6 +203,118 @@ and pp_operator_call op args =
       in
       Printf.sprintf "__op_%s__(%s)" (pp_operator op) args_str
 
+(* [pp_exp] but emitting into a buffer with a hard [max]-character budget: the
+ * traversal aborts as soon as the buffer exceeds [max], so it is O(max) and
+ * never builds the full string (guard conds from [Sig_inst] unfold to 2^depth
+ * characters). Mirrors [pp_exp]'s syntax. A cond that fits in [max] characters
+ * renders identically; a longer one is the first [max] characters followed by
+ * "...". *)
+let pp_exp_bounded ~(max : int) (e : exp) : string =
+  let buf = Buffer.create (max + 8) in
+  let exception Stop in
+  let emit (s : string) : unit =
+    Buffer.add_string buf s;
+    if Buffer.length buf > max then raise Stop
+  in
+  let sep i = if i > 0 then emit ", " in
+  let rec go (e : exp) : unit = go_kind e.e
+  and go_kind ek =
+    match ek with
+    | Fetch lv -> go_lval lv
+    | Literal lit -> emit (pp_literal lit)
+    | Composite (ck, (_, exps, _)) -> go_composite ck exps
+    | RecordOrDict fields -> go_record_or_dict fields
+    | Cast (ty, e) ->
+        emit (Printf.sprintf "(%s)" (pp_type_ ty));
+        go e
+    | Operator ((op, _), args) -> go_operator_call op args
+    | FixmeExp (_, _, Some e) ->
+        emit "<fixme>(";
+        go e;
+        emit ")"
+    | FixmeExp _ -> emit "<fixme>"
+  and go_lval { base; rev_offset } =
+    (match base with
+    | Var name -> emit (pp_name name)
+    | VarSpecial (vs, _) -> emit (pp_var_special vs)
+    | Mem e ->
+        emit "*(";
+        go e;
+        emit ")");
+    List.iter
+      (fun off ->
+        match off.o with
+        | Dot name -> emit ("." ^ pp_name name)
+        | Index e ->
+            emit "[";
+            go e;
+            emit "]"
+        | Slice lo -> emit (Printf.sprintf "[%d..]" lo))
+      (List.rev rev_offset)
+  and go_composite ck exps =
+    let lb, rb =
+      match ck with
+      | CTuple -> ("(", ")")
+      | CArray
+      | CList ->
+          ("[", "]")
+      | CSet -> ("{", "}")
+      | Constructor name -> (pp_name name ^ "(", ")")
+      | Regexp -> ("/", "/")
+    in
+    emit lb;
+    List.iteri
+      (fun i e ->
+        sep i;
+        go e)
+      exps;
+    emit rb
+  and go_record_or_dict fields =
+    emit "{";
+    List.iteri
+      (fun i f ->
+        sep i;
+        match f with
+        | Field (name, e) ->
+            emit (pp_name name ^ ": ");
+            go e
+        | Entry (k, v) ->
+            go k;
+            emit ": ";
+            go v
+        | Spread e ->
+            emit "...";
+            go e)
+      fields;
+    emit "}"
+  and go_operator_call op args =
+    match args with
+    | [ Unnamed e ] ->
+        emit (pp_operator op);
+        go e
+    | [ Unnamed e1; Unnamed e2 ] ->
+        emit "(";
+        go e1;
+        emit (Printf.sprintf " %s " (pp_operator op));
+        go e2;
+        emit ")"
+    | _ ->
+        emit (Printf.sprintf "__op_%s__(" (pp_operator op));
+        List.iteri
+          (fun i a ->
+            sep i;
+            match a with
+            | Unnamed e -> go e
+            | Named ((s, _), e) ->
+                emit (s ^ ": ");
+                go e)
+          args;
+        emit ")"
+  in
+  (try go e with Stop -> ());
+  if Buffer.length buf > max then String.sub (Buffer.contents buf) 0 max ^ "..."
+  else Buffer.contents buf
+
 (*****************************************************************************)
 (* Call special *)
 (*****************************************************************************)

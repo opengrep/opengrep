@@ -1,6 +1,6 @@
 rules:
-  - id: test-guard-reassign
-    message: Taint reaches the sink when the guard variable is reassigned
+  - id: test-guards-forwarding-chain
+    message: A guard forwarded through a deep chain must stay bounded and fold correctly
     languages:
       - python
     severity: WARNING

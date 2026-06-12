@@ -17,6 +17,11 @@ type t_or_sanitized = [ t | `Sanitized ]
  * matching a sanitizer. See NOTE [lval/sanitized] in 'Dataflow_tainting'. *)
 
 val equal : t -> t -> bool
+
+val equal_with_guards : t -> t -> bool
+(** Like [equal] but a difference only in a taint's guard counts as a
+    difference. For the dataflow fixpoint's stability test. *)
+
 val compare : t -> t -> int
 val show : t -> string
 

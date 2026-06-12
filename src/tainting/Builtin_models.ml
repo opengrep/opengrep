@@ -317,7 +317,8 @@ let clojure_hof_effects ~arity ~callback_index ~data_index ~taint_arg_index =
         eorig = IL.NoOrig;
       }
     in
-    { Effect_guard.cond; param_refs = [ (impl_il_name, 0) ] }
+    { Effect_guard.cond = Effect_guard.of_exp cond;
+      param_refs = [ (impl_il_name, 0) ] }
   in
   let hof_effect =
     Effect.ToSinkInCall

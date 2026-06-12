@@ -29,6 +29,228 @@ let exp_of_arg arg =
   | Unnamed exp -> exp
   | Named (_, exp) -> exp
 
+(* Hash table keyed by the physical identity of an [exp]. Cross-call
+ * substitution in [Sig_inst] shares one physical sub-[exp] across many
+ * parents, so the number of distinct nodes stays linear in the call depth
+ * while the tree it unfolds to is exponential in it. Memoising a traversal
+ * on physical identity visits each distinct node once. [Hashtbl.hash] reads
+ * a bounded prefix, so keying does not unfold the sharing; [phys_equal]
+ * resolves collisions. Tables are per call, one domain (no [Domain.DLS]). *)
+module PhysExpTbl = Hashtbl.Make (struct
+  type t = exp
+
+  let equal = phys_equal
+  let hash = Stdlib.Hashtbl.hash
+end)
+
+module G = AST_generic
+
+(* Token-insensitive structural order on [exp]. [Effect_guard.compare_cond]
+ * and [dedup_exps] previously ordered conds by their [IL_pp.pp_exp] string,
+ * which renders the whole tree and so is exponential on the shared-DAG guard
+ * conds from [Sig_inst]. This recursion short-circuits on physical identity,
+ * so a shared sub-DAG is ordered once. Leaves defer to the [AST_generic]
+ * derived orders (token-insensitive via [Tok.t_always_equal]); names use
+ * [str_of_name], which carries the [sid] as [pp_exp] did. *)
+let compare_name (n1 : name) (n2 : name) : int =
+  String.compare (str_of_name n1) (str_of_name n2)
+
+let var_special_tag = function
+  | This -> 0
+  | Super -> 1
+  | Self -> 2
+  | Parent -> 3
+
+let composite_kind_tag = function
+  | CTuple -> 0
+  | CArray -> 1
+  | CList -> 2
+  | CSet -> 3
+  | Constructor _ -> 4
+  | Regexp -> 5
+
+let compare_composite_kind (k1 : composite_kind) (k2 : composite_kind) : int =
+  match (k1, k2) with
+  | Constructor n1, Constructor n2 -> compare_name n1 n2
+  | _ -> Int.compare (composite_kind_tag k1) (composite_kind_tag k2)
+
+let exp_kind_tag = function
+  | Fetch _ -> 0
+  | Literal _ -> 1
+  | Composite _ -> 2
+  | RecordOrDict _ -> 3
+  | Cast _ -> 4
+  | Operator _ -> 5
+  | FixmeExp _ -> 6
+
+let rec compare_exp (e1 : exp) (e2 : exp) : int =
+  if phys_equal e1 e2 then 0
+  else
+    let c = Int.compare (exp_kind_tag e1.e) (exp_kind_tag e2.e) in
+    if c <> 0 then c
+    else
+      match (e1.e, e2.e) with
+      | Fetch l1, Fetch l2 -> compare_lval l1 l2
+      | Literal a, Literal b -> G.compare_literal a b
+      | Composite (k1, (_, xs1, _)), Composite (k2, (_, xs2, _)) ->
+          let c = compare_composite_kind k1 k2 in
+          if c <> 0 then c else List.compare compare_exp xs1 xs2
+      | RecordOrDict f1, RecordOrDict f2 -> List.compare compare_field f1 f2
+      | Cast (t1, a), Cast (t2, b) ->
+          let c = G.compare_type_ t1 t2 in
+          if c <> 0 then c else compare_exp a b
+      | Operator ((op1, _), a1), Operator ((op2, _), a2) ->
+          let c = G.compare_operator op1 op2 in
+          if c <> 0 then c else List.compare compare_arg a1 a2
+      | FixmeExp (k1, _, o1), FixmeExp (k2, _, o2) ->
+          let c = Stdlib.compare k1 k2 in
+          if c <> 0 then c else Option.compare compare_exp o1 o2
+      | _ -> 0 (* unreachable: differing tags handled above *)
+
+and compare_lval (l1 : lval) (l2 : lval) : int =
+  let c = compare_base l1.base l2.base in
+  if c <> 0 then c
+  else List.compare compare_offset l1.rev_offset l2.rev_offset
+
+and compare_base (b1 : base) (b2 : base) : int =
+  match (b1, b2) with
+  | Var n1, Var n2 -> compare_name n1 n2
+  | VarSpecial (s1, _), VarSpecial (s2, _) ->
+      Int.compare (var_special_tag s1) (var_special_tag s2)
+  | Mem e1, Mem e2 -> compare_exp e1 e2
+  | Var _, _ -> -1
+  | _, Var _ -> 1
+  | VarSpecial _, _ -> -1
+  | _, VarSpecial _ -> 1
+
+and compare_offset (o1 : offset) (o2 : offset) : int =
+  match (o1.o, o2.o) with
+  | Dot n1, Dot n2 -> compare_name n1 n2
+  | Index e1, Index e2 -> compare_exp e1 e2
+  | Slice i1, Slice i2 -> Int.compare i1 i2
+  | Dot _, _ -> -1
+  | _, Dot _ -> 1
+  | Index _, _ -> -1
+  | _, Index _ -> 1
+
+and compare_arg (a1 : exp argument) (a2 : exp argument) : int =
+  match (a1, a2) with
+  | Unnamed e1, Unnamed e2 -> compare_exp e1 e2
+  | Named (id1, e1), Named (id2, e2) ->
+      let c = String.compare (fst id1) (fst id2) in
+      if c <> 0 then c else compare_exp e1 e2
+  | Unnamed _, Named _ -> -1
+  | Named _, Unnamed _ -> 1
+
+and compare_field (f1 : field_or_entry) (f2 : field_or_entry) : int =
+  match (f1, f2) with
+  | Field (n1, e1), Field (n2, e2) ->
+      let c = compare_name n1 n2 in
+      if c <> 0 then c else compare_exp e1 e2
+  | Entry (k1, v1), Entry (k2, v2) ->
+      let c = compare_exp k1 k2 in
+      if c <> 0 then c else compare_exp v1 v2
+  | Spread e1, Spread e2 -> compare_exp e1 e2
+  | Field _, _ -> -1
+  | _, Field _ -> 1
+  | Entry _, _ -> -1
+  | _, Entry _ -> 1
+
+let equal_exp (e1 : exp) (e2 : exp) : bool = Int.equal (compare_exp e1 e2) 0
+
+(* Token-insensitive structural hash, consistent with [equal_exp] (equal conds
+ * have identical structure, hence equal hash) and bounded to a few levels so it
+ * stays O(1); distinct conds that collide are separated by [equal_exp]. Leaves
+ * defer to the [AST_generic] derived hashes (token-insensitive); names hash by
+ * [str_of_name]. Used by the guard-cond intern table in [Effect_guard]. *)
+let hash_name (n : name) : int = Stdlib.Hashtbl.hash (str_of_name n)
+
+let rec hash_exp_fuel (fuel : int) (e : exp) : int =
+  if fuel <= 0 then 0
+  else
+    let f = fuel - 1 in
+    match e.e with
+    | Fetch lval -> Stdlib.Hashtbl.hash (0, hash_lval f lval)
+    | Literal l -> Stdlib.Hashtbl.hash (1, G.hash_literal l)
+    | Composite (k, (_, xs, _)) ->
+        Stdlib.Hashtbl.hash
+          (2, composite_kind_tag k, List.map (hash_exp_fuel f) xs)
+    | RecordOrDict _ -> 3
+    | Cast (_, a) -> Stdlib.Hashtbl.hash (4, hash_exp_fuel f a)
+    | Operator ((op, _), args) ->
+        Stdlib.Hashtbl.hash
+          ( 5,
+            G.hash_operator op,
+            List.map (fun a -> hash_exp_fuel f (exp_of_arg a)) args )
+    | FixmeExp _ -> 6
+
+and hash_lval (fuel : int) (lval : lval) : int =
+  Stdlib.Hashtbl.hash
+    (hash_base fuel lval.base, List.map (hash_offset fuel) lval.rev_offset)
+
+and hash_base (fuel : int) (b : base) : int =
+  match b with
+  | Var n -> Stdlib.Hashtbl.hash (0, hash_name n)
+  | VarSpecial (s, _) -> Stdlib.Hashtbl.hash (1, var_special_tag s)
+  | Mem e -> Stdlib.Hashtbl.hash (2, hash_exp_fuel (fuel - 1) e)
+
+and hash_offset (fuel : int) (o : offset) : int =
+  match o.o with
+  | Dot n -> Stdlib.Hashtbl.hash (0, hash_name n)
+  | Index e -> Stdlib.Hashtbl.hash (1, hash_exp_fuel (fuel - 1) e)
+  | Slice i -> Stdlib.Hashtbl.hash (2, i)
+
+let hash_exp (e : exp) : int = hash_exp_fuel 4 e
+
+(* Rebuild [e] with [f] threaded left-to-right through each immediate child
+ * [exp] (a [Fetch] is a leaf here, matching [compare_exp] ordering the whole
+ * l-value as a unit). Used by [Effect_guard]'s bottom-up intern, which needs
+ * both the rebuilt node and data accumulated over the children. *)
+let rec fold_map_children (f : 'a -> exp -> 'a * exp) (acc : 'a) (e : exp) :
+    'a * exp =
+  match e.e with
+  | Literal _
+  | Fetch _
+  | FixmeExp (_, _, None) ->
+      (acc, e)
+  | Composite (k, (lb, xs, rb)) ->
+      let acc, xs = List.fold_left_map f acc xs in
+      (acc, { e with e = Composite (k, (lb, xs, rb)) })
+  | RecordOrDict entries ->
+      let acc, entries = List.fold_left_map (fold_map_field f) acc entries in
+      (acc, { e with e = RecordOrDict entries })
+  | Cast (t, a) ->
+      let acc, a = f acc a in
+      (acc, { e with e = Cast (t, a) })
+  | Operator (op, args) ->
+      let acc, args = List.fold_left_map (fold_map_arg f) acc args in
+      (acc, { e with e = Operator (op, args) })
+  | FixmeExp (k, any, Some a) ->
+      let acc, a = f acc a in
+      (acc, { e with e = FixmeExp (k, any, Some a) })
+
+and fold_map_arg (f : 'a -> exp -> 'a * exp) (acc : 'a) :
+    exp argument -> 'a * exp argument = function
+  | Unnamed e ->
+      let acc, e = f acc e in
+      (acc, Unnamed e)
+  | Named (id, e) ->
+      let acc, e = f acc e in
+      (acc, Named (id, e))
+
+and fold_map_field (f : 'a -> exp -> 'a * exp) (acc : 'a) :
+    field_or_entry -> 'a * field_or_entry = function
+  | Field (n, e) ->
+      let acc, e = f acc e in
+      (acc, Field (n, e))
+  | Entry (k, v) ->
+      let acc, k = f acc k in
+      let acc, v = f acc v in
+      (acc, Entry (k, v))
+  | Spread e ->
+      let acc, e = f acc e in
+      (acc, Spread e)
+
 (***********************************************)
 (* Parameter / offset anchoring *)
 (***********************************************)
@@ -86,7 +308,15 @@ let param_refs_of_cond ~(partial : bool) (params : IL.param list)
   (* Result for a [Fetch] that does not anchor to a parameter: abort
      ([None]) in strict mode, skip ([Some []]) in partial mode. *)
   let unanchorable = if partial then Some [] else None in
+  let memo = PhysExpTbl.create 16 in
   let rec of_exp (e : IL.exp) : (IL.name * int) list option =
+    match PhysExpTbl.find_opt memo e with
+    | Some refs -> refs
+    | None ->
+        let refs = of_exp_compute e in
+        PhysExpTbl.add memo e refs;
+        refs
+  and of_exp_compute (e : IL.exp) : (IL.name * int) list option =
     match e.e with
     | IL.Literal _ -> Some []
     | IL.Fetch lval -> (
@@ -342,11 +572,10 @@ let wrap_not (cond : IL.exp) : IL.exp =
     eorig = cond.eorig;
   }
 
-(* Compare two [IL.exp]s by their pretty-printed form; matches
- * [Effect_guard.compare_cond] so syntactic complement detection is
- * consistent with guard set dedup semantics. *)
-let il_exp_equal (a : IL.exp) (b : IL.exp) : bool =
-  String.equal (IL_pp.pp_exp a) (IL_pp.pp_exp b)
+(* Structural equality on [IL.exp] ([compare_exp], token-insensitive); shares
+ * the order with [Effect_guard.compare_cond] so syntactic complement
+ * detection is consistent with guard set dedup semantics. *)
+let il_exp_equal (a : IL.exp) (b : IL.exp) : bool = equal_exp a b
 
 (* Direct syntactic complement: [a] vs [Not a].
  *
@@ -377,21 +606,17 @@ let flatten_same_op (op : G.operator) (es : IL.exp list) : IL.exp list =
       | _ -> [ e ])
     es
 
-(* Order-preserving dedup by [IL_pp.pp_exp] equality. Used to keep
- * [wrap_and]/[wrap_or] from growing their operand list with duplicates
- * across fixpoint iterations: [wrap_or [X; X]] becomes [X], so the
- * lattice on guards reaches a fixed point on its own rather than
- * relying on [taint_MAX_VISITS_PER_NODE] to bail. *)
+(* Order-preserving dedup by [equal_exp]. Used to keep [wrap_and]/[wrap_or]
+ * from growing their operand list with duplicates across fixpoint iterations:
+ * [wrap_or [X; X]] becomes [X], so the lattice on guards reaches a fixed point
+ * on its own rather than relying on [taint_MAX_VISITS_PER_NODE] to bail.
+ * [equal_exp] short-circuits on physical identity, so deduping the shared-DAG
+ * conds from [Sig_inst] does not unfold them. *)
 let dedup_exps (es : IL.exp list) : IL.exp list =
-  let module Keys = Set.Make (String) in
-  es
-  |> List.fold_left
-       (fun (seen, acc) e ->
-         let key = IL_pp.pp_exp e in
-         if Keys.mem key seen then (seen, acc)
-         else (Keys.add key seen, e :: acc))
-       (Keys.empty, [])
-  |> snd |> List.rev
+  List.fold_left
+    (fun acc e -> if List.exists (equal_exp e) acc then acc else e :: acc)
+    [] es
+  |> List.rev
 
 (* Return true iff [es] contains a pair [(a, b)] with [is_complement a b]. *)
 let rec has_complement_pair (es : IL.exp list) : bool =

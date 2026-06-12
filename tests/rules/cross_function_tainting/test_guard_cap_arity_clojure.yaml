@@ -1,0 +1,13 @@
+rules:
+  - id: test-guard-cap-arity
+    message: Arity dispatch must survive guard-cond widening
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)

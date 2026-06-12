@@ -1,6 +1,6 @@
 rules:
-  - id: test-guard-reassign
-    message: Taint reaches the sink when the guard variable is reassigned
+  - id: test-guard-effect-fuse
+    message: Same-identity effects fuse their guards disjunctively
     languages:
       - python
     severity: WARNING

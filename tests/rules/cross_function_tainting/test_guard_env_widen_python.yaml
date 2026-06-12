@@ -1,6 +1,6 @@
 rules:
-  - id: test-guard-reassign
-    message: Taint reaches the sink when the guard variable is reassigned
+  - id: test-guard-env-widen
+    message: Fixpoint stability must see guard widening
     languages:
       - python
     severity: WARNING
