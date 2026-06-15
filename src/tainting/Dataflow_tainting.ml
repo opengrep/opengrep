@@ -655,9 +655,11 @@ let effects_of_tainted_sinks env taints sinks : Effect.t list =
               but it starts out here as just a PM variant.
            *)
            let taints_with_traces =
-             taints |> Taints.to_taint_list
-             |> List_.map (fun (t : T.taint) ->
-                    { Effect.taint = t; sink_trace = T.PM (sink.Effect.pm, ()) })
+             taints |> Taints.elements
+             |> List_.map (fun (b : T.guarded_taint) ->
+                    { Effect.taint = b.taint;
+                      sink_trace = T.PM (sink.Effect.pm, ());
+                      guard = b.guard })
            in
            effects_of_tainted_sink env taints_with_traces sink)
 
@@ -1861,6 +1863,14 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                       { taints;
                         lval = { base = Taint.BGlob var; offset };
                         guards } ];
+              (* As in the main [ToLval] arm: the written taints carry the
+               * guard, conjoined with [rebound_guards] like the sibling
+               * arms of this resolution. *)
+              let taints =
+                Taints.conjoin_guard
+                  (Effect_guard.compose_and rebound_guards guards)
+                  taints
+              in
               ( taints_acc,
                 shape_acc,
                 lval_env |> Lval_env.add var offset taints )
@@ -2091,6 +2101,10 @@ let check_function_call env fun_exp args
                            { taints;
                              lval = { base = Taint.BGlob var; offset };
                              guards } ];
+                   (* The written taints carry the (possibly deferred) guard
+                    * into the environment, so a later sink sees it as the
+                    * item guard. *)
+                   let taints = Taints.conjoin_guard guards taints in
                    ( taints_acc,
                      shape_acc,
                      lval_env |> Lval_env.add var offset taints )
@@ -3147,43 +3161,29 @@ let prune_branch_if_unreachable (lang : Lang.t) (cond : IL.exp)
       Lval_env.mark_dead in'
   | _ -> in'
 
-(* Param-anchoring recogniser for branch conditions. Returns a list of
- * [Effect_guard.t] to be added to [active_guards] at the branch node;
- * every effect recorded while those guards are active gets stamped.
- *
- * Splitting is partial:
- *   - [recognise_true_cond]  at [TrueNode]:  [And] is flattened; [Or] is
- *     kept as a single compound; [Not] descends into
- *     [recognise_false_cond].
- *   - [recognise_false_cond] at [FalseNode]: [Or] via De Morgan is
- *     flattened (each disjunct wrapped in [Not]); [And] is kept compound;
- *     [Not] descends into [recognise_true_cond].
- *
- * A "leaf" cond — anything not an [And]/[Or]/[Not] — is passed through
- * [guard_of_cond]. [None] is returned when the leaf cannot be expressed
- * as a guard. *)
-
-let guard_of_cond (params : IL.param list) (cond : IL.exp) : Effect_guard.t =
-  { Effect_guard.cond;
-    param_refs = IL_helpers.cond_partial_param_refs params cond }
-
-let rec recognise_true_cond (params : IL.param list) (cond : IL.exp) :
-    Effect_guard.t list =
-  match cond.e with
-  | IL.Operator ((G.And, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
-      recognise_true_cond params a @ recognise_true_cond params b
-  | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
-      recognise_false_cond params sub
-  | _ -> [ guard_of_cond params cond ]
-
-and recognise_false_cond (params : IL.param list) (cond : IL.exp) :
-    Effect_guard.t list =
-  match cond.e with
-  | IL.Operator ((G.Or, _), [ IL.Unnamed a; IL.Unnamed b ]) ->
-      recognise_false_cond params a @ recognise_false_cond params b
-  | IL.Operator ((G.Not, _), [ IL.Unnamed sub ]) ->
-      recognise_true_cond params sub
-  | _ -> [ guard_of_cond params (IL_helpers.wrap_not cond) ]
+(* Guards for a branch condition ([Effect_guard.of_branch_cond] converts
+ * the cond to DNF and splits a single conjunction into one guard per
+ * literal, so the active-guard set tracks atoms individually and
+ * reassignment drops exactly the affected atoms), gated by the
+ * experimental [effect_guards] option: with the option off, only Clojure
+ * keeps guards whose every literal is a [length(x) <cmp> n] atom — the
+ * shape multi-arity dispatch compiles to — and no other guard is created.
+ * The machinery downstream then never runs ([add_guards] no-ops on an
+ * empty active set; composition and instantiation short-circuit on
+ * [top]). *)
+let recognised_guards (env : env) ~(negated : bool) (params : IL.param list)
+    (cond : IL.exp) : Effect_guard.t list =
+  if env.taint_inst.options.effect_guards then
+    Effect_guard.of_branch_cond ~negated params cond
+  else if Lang.equal env.taint_inst.lang Lang.Clojure then
+    Effect_guard.of_branch_cond ~negated params cond
+    |> List.filter (fun (g : Effect_guard.t) ->
+           g.cond
+           |> List.for_all (fun clause ->
+                  clause
+                  |> List.for_all (fun (l : Effect_guard.literal) ->
+                         Effect_guard.is_length_atom l.atom.node)))
+  else []
 
 let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
  fun enter_env ~fun_cfg
@@ -3278,7 +3278,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         let pruned =
           prune_branch_if_unreachable env.taint_inst.lang cond true in'
         in
-        recognise_true_cond fun_cfg.params cond
+        recognised_guards env ~negated:false fun_cfg.params cond
         |> List.fold_left
              (fun lval_env g ->
                Log.debug (fun m ->
@@ -3289,7 +3289,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
         let pruned =
           prune_branch_if_unreachable env.taint_inst.lang cond false in'
         in
-        recognise_false_cond fun_cfg.params cond
+        recognised_guards env ~negated:true fun_cfg.params cond
         |> List.fold_left
              (fun lval_env g ->
                Log.debug (fun m ->
@@ -3523,8 +3523,11 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
           DataflowX.fixpoint ~timeout ~eq_env:Lval_env.equal ~init:init_mapping
             ~trans:(transfer env ~fun_cfg) ~forward:true ~flow
         in
-        (* Cheap checks first; only compute the [Effects.equal] stabilisation
-         * test (a set comparison) when neither short-circuits. *)
+        (* Cheap checks first; only compute the stabilisation test (a set
+         * comparison) when neither short-circuits. [equal_with_guards], not
+         * [equal]: a pass that only fuses a new disjunct into an existing
+         * effect's guard must count as growth, or the loop would stop with
+         * the narrower guard and drop effects the refined guard keeps. *)
         if not !(env.did_self_recurse) then (end_mapping, status)
         else if passes >= Limits_semgrep.taint_MAX_SELF_SIG_PASSES then (
           (* Hit the pass cap while still self-recursing. If the effects also
@@ -3532,7 +3535,8 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
            * result under-approximates (possible false negatives), so surface
            * it rather than truncating silently — the inner fixpoint timeout
            * is reported the same way by [log_timeout_warning]. *)
-          if not (Effects.equal prev_effects !(env.effects_acc)) then
+          if not (Effects.equal_with_guards prev_effects !(env.effects_acc))
+          then
             (* nosemgrep: no-logs-in-library *)
             Logs.warn (fun m ->
                 m
@@ -3544,7 +3548,7 @@ and fixpoint_aux taint_inst func ?(needed_vars = IL.NameSet.empty)
                   !!(taint_inst.file)
                   (Option.map IL.str_of_name env.func.name ||| "???"));
           (end_mapping, status))
-        else if Effects.equal prev_effects !(env.effects_acc) then
+        else if Effects.equal_with_guards prev_effects !(env.effects_acc) then
           (end_mapping, status)
         else run_to_sig_fixpoint (passes + 1)
       in

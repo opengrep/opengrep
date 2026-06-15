@@ -1,0 +1,13 @@
+rules:
+  - id: test-guard-selfsig-refine
+    message: Self-sig passes must continue while guards refine
+    languages:
+      - clojure
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $V)

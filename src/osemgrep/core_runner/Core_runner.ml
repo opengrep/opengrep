@@ -50,6 +50,7 @@ type conf = {
    *)
   dataflow_traces : bool;
   taint_intrafile : bool;
+  effect_guards : bool;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
 }
@@ -128,6 +129,7 @@ let default_conf : conf =
     time_flag = false;
     inline_metavariables = false;
     taint_intrafile = false;
+    effect_guards = false;
     nosem = true;
     strict = false;
     engine_config = Engine_config.default;
@@ -370,6 +372,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    optimizations;
    matching_explanations;
    taint_intrafile;
+   effect_guards;
    nosem = _TODO;
    strict;
    time_flag;
@@ -395,6 +398,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         filter_irrelevant_rules;
         matching_explanations;
         taint_intrafile;
+        effect_guards;
         strict;
         report_time = time_flag;
         (* set later in mk_core_run_for_osemgrep *)

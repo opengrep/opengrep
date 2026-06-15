@@ -212,6 +212,13 @@ module Taint_set : sig
   val is_empty : t -> bool
   val cardinal : t -> int
   val equal : t -> t -> bool
+
+  val equal_with_guards : t -> t -> bool
+  (** Like [equal] but also requires the guards of identity-equal taints to
+      be equal (taint identity ignores guards, so plain [equal] treats a
+      guard-only refinement as unchanged). For stability and insertion no-op
+      checks over guard-bearing sets. *)
+
   val compare : t -> t -> int
   val singleton : taint -> t
   val add : guarded_taint -> t -> t
@@ -259,7 +266,7 @@ val taints_satisfy_requires : taint list -> Rule.precondition -> bool
 val taints_of_pms :
   incoming:taints -> (Core_match.t * Rule.taint_source) list -> taints
 
-val show_taints : taints -> string
+val show_taints : ?truncate_guards:bool -> taints -> string
 
 (*****************************************************************************)
 (* Taint-oriented comparison functions for non-taint types *)

@@ -94,3 +94,28 @@ let taint_MAX_SHAPE_DEPTH = 50
  * or this cap is reached. Only Clojure multi-arity self-recursion
  * currently triggers the loop. *)
 let taint_MAX_SELF_SIG_PASSES = 5
+
+(** Maximum number of characters of a guard cond that [Effect_guard.show]
+ * renders into a log line; a longer cond is rendered as its first this-many
+ * characters followed by "...". Guard conds from deep cross-call forwarding are
+ * shared DAGs that unfold to 2^depth characters, so rendering one in full via
+ * [IL_pp.pp_exp] under debug logging is exponential. *)
+let taint_MAX_GUARD_LOG_CHARS = 200
+
+(** Maximum number of distinct nodes in a guard-cond atom. An atom growing
+ * past this (via cross-call substitution of computed actuals) is dropped
+ * from its clause — a sound weakening: the clause's guard applies more
+ * often, so widening can add findings but never drop them. Length atoms
+ * ([length(x) <cmp> n], the shape arity dispatch compiles to) are a few
+ * nodes and never approach this. *)
+let taint_MAX_GUARD_COND_NODES = 512
+
+(** Maximum number of clauses in a guard cond (the cond is in disjunctive
+ * normal form; clause count grows by clause-set union at taint-set joins
+ * and multiplies when two disjunctive guards are conjoined). Past the cap,
+ * each clause is widened to its length literals — arity dispatch survives:
+ * [or(and(len==1, P), and(len==2, Q))] widens to [or(len==1, len==2)] — and
+ * a cond still over the cap widens to [true]. Sound in the same direction
+ * as the atom cap. Lowering this trades guard precision for speed; near
+ * zero it degenerates to arity-only guards. *)
+let taint_MAX_GUARD_CLAUSES = 64

@@ -1,6 +1,6 @@
 rules:
-  - id: test-guard-reassign
-    message: Taint reaches the sink when the guard variable is reassigned
+  - id: test-guard-nary-or
+    message: Each disjunct of an n-ary or-chain folds independently
     languages:
       - python
     severity: WARNING

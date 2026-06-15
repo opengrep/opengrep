@@ -753,6 +753,17 @@ let o_pro : bool Term.t =
   in
   Arg.value (Arg.flag info)
 
+let o_effect_guards : bool Term.t =
+  let info =
+    Arg.info [ "guarded-taint-signatures" ]
+      ~doc:
+        ("Attach branch-condition guards to taint effects and evaluate them \
+          at call sites, dropping effects whose guard is false. Without this \
+          flag only Clojure keeps the arity guards that implement \
+          multi-arity dispatch. REQUIRES --experimental")
+  in
+  Arg.value (Arg.flag info)
+
 let o_taint_intrafile : bool Term.t =
   let info =
     Arg.info [ "taint-intrafile" ]
@@ -1376,7 +1387,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
       num_jobs no_secrets_validation nosem opengrep_ignore_pattern optimizations oss
       output output_enclosing_context pattern pro project_root taint_intrafile
-      pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
+      effect_guards pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions secrets semgrepignore_filename severity show_supported_languages
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
       _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
@@ -1482,6 +1493,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         inline_metavariables;
         matching_explanations;
         taint_intrafile;
+        effect_guards;
         engine_config;
       }
     in
@@ -1615,6 +1627,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations $ o_oss
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root 
     $ o_taint_intrafile
+    $ o_effect_guards
     $ o_pro_path_sensitive $ o_remote $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
     $ o_secrets $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages $ o_strict

@@ -346,6 +346,7 @@ let mk_config () : Core_scan_config.t =
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
     taint_intrafile = !taint_intrafile;
+    effect_guards = false;
     engine_config = Engine_config.default;
   }
 

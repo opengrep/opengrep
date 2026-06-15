@@ -1,6 +1,6 @@
 rules:
-  - id: test-guard-reassign
-    message: Taint reaches the sink when the guard variable is reassigned
+  - id: test-guard-item-fuse
+    message: Item-guard refinement must survive effect insertion
     languages:
       - python
     severity: WARNING

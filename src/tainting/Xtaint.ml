@@ -29,6 +29,23 @@ let equal xt1 xt2 =
   | `Clean, _ ->
       false
 
+(* Like [equal] but a difference only in a taint's guard counts as a
+ * difference ([Taints.equal] compares taints by identity, ignoring
+ * guards). For the dataflow fixpoint's stability test: stopping while a
+ * guard is still widening would let the narrower guard reach the sink
+ * recording. *)
+let equal_with_guards xt1 xt2 =
+  match (xt1, xt2) with
+  | `Tainted taints1, `Tainted taints2 ->
+      Taints.equal_with_guards taints1 taints2
+  | `None, `None
+  | `Clean, `Clean ->
+      true
+  | `Tainted _, _
+  | `None, _
+  | `Clean, _ ->
+      false
+
 let compare xt1 xt2 =
   match (xt1, xt2) with
   | `Tainted taints1, `Tainted taints2 -> Taints.compare taints1 taints2

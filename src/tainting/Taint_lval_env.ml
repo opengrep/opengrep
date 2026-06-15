@@ -406,10 +406,15 @@ let equal
       reassigned_vars = reassigned2;
     } =
   Bool.equal dead1 dead2
-  && NameMap.equal equal_cell tainted1 tainted2
+  (* Guard-aware equality: this function is the fixpoint's [eq_env], and a
+   * difference only in a taint's guard must count as a change — declaring
+   * the env stable while a guard is still widening lets the narrower
+   * guard reach the sink recording (a lost finding at any call site the
+   * wider guard would have kept). *)
+  && NameMap.equal equal_cell_with_guards tainted1 tainted2
   (* NOTE: We ignore 'taints_to_propagate' and 'pending_propagation_dests',
    * we just care how they affect 'tainted'. *)
-  && Taints.equal control1 control2
+  && Taints.equal_with_guards control1 control2
   && Effect_guard.Set.equal guards1 guards2
   && IL.NameSet.equal reassigned1 reassigned2
 
