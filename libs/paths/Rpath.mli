@@ -68,6 +68,14 @@ val to_string : t -> string
 (* <=> to_fpath (of_fpath s) *)
 val canonical_exn : Fpath.t -> Fpath.t
 
+(* On case-insensitive filesystems (Windows), resolve [p] to its physical real
+   path so its spelling (case and 8.3 short names) agrees with the canonical
+   paths the OS and git report. On case-sensitive filesystems the command-line
+   path is already canonical and is returned unchanged. If [p] can't be
+   resolved, it is returned unchanged, matching the behaviour before
+   canonicalisation. *)
+val canonical_if_win : Fpath.t -> Fpath.t
+
 (*
    Get the current working directory from the system.
    It raises an exception with a slightly better error message than

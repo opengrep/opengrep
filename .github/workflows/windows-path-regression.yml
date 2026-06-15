@@ -1,0 +1,70 @@
+# Windows-only end-to-end regression for the path '..' walk-up in osemgrep
+# target discovery (Find_targets / Git_wrapper). On case-insensitive and 8.3
+# short-name filesystems the typed scanning root and cwd can diverge from
+# git's canonical paths; we canonicalise them (Rpath.canonical_if_win) before
+# relativizing, so reported paths keep the typed prefix and have no '..'.
+#
+# The bug only reproduces on Windows, so this workflow is the regression guard
+# (there is no cheap cross-platform unit test). It runs only on demand.
+name: windows-path-regression
+
+on:
+  workflow_dispatch:
+
+jobs:
+  # Reuse the existing Windows build (it already declares workflow_call) so we
+  # don't duplicate the opam/cygwin/dune setup. It uploads
+  # 'opengrep-core-and-dependent-libs-w64-artifact' (opengrep-core.exe + DLLs).
+  build:
+    uses: ./.github/workflows/build-test-windows-x86.yml
+
+  regression:
+    needs: build
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
+        with:
+          name: opengrep-core-and-dependent-libs-w64-artifact
+      - name: unpack binary + dlls
+        run: tar xvfz artifacts.tgz
+      - name: case-insensitive path regression (native osemgrep)
+        run: |
+          set -eu
+          # 'scan' is dispatched by argv[0]: copy opengrep-core.exe to
+          # opengrep-cli.exe (same bytes, DLLs alongside) so it runs the osemgrep
+          # CLI, and pass --experimental to force native osemgrep (Find_targets)
+          # instead of delegating to pyopengrep -- otherwise the buggy discovery
+          # code never runs.
+          cp artifacts/opengrep-core.exe artifacts/opengrep-cli.exe
+          CLI="$PWD/artifacts/opengrep-cli.exe"
+          base="$(mktemp -d)"
+          mkdir -p "$base/MixedRepo/sub"
+          ( cd "$base/MixedRepo" \
+              && git init -q \
+              && git config user.email a@b.c \
+              && git config user.name ci \
+              && printf 'print("foo")\n' > sub/test.py \
+              && git add -A )
+          printf 'rules:\n  - id: t\n    pattern: print(...)\n    message: t\n    severity: ERROR\n    languages: [python]\n' > "$base/rules.yml"
+          winbase="$(cygpath -w "$base")"
+          winrules="$(cygpath -w "$base/rules.yml")"
+          # Scan via the lower-cased spelling of MixedRepo so the typed scanning
+          # root diverges from git's canonical casing -- the bug's trigger.
+          winlower="${winbase}\\mixedrepo"
+          echo "root: $winlower"
+          PYTHONIOENCODING=utf-8 "$CLI" scan --experimental --json -f "$winrules" "$winlower" > out.json 2>err.txt || true
+          echo "--- stderr (first 400 chars) ---"; head -c 400 err.txt; echo
+          echo "--- result paths ---"
+          paths="$(grep -o '"path":[[:space:]]*"[^"]*"' out.json || true)"
+          printf '%s\n' "$paths"
+          # Any '..' segment in a result path is the walk-up (the '...' ellipsis
+          # lives in the rule pattern, never in a path value).
+          if printf '%s\n' "$paths" | grep -qE '\.\.[\\/]'; then
+            echo "REGRESSION: '..' walk-up in result path:"
+            printf '%s\n' "$paths" | grep -E '\.\.[\\/]'
+            exit 1
+          fi
+          echo "OK: no walk-up"
