@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.23.0](https://github.com/opengrep/opengrep/releases/tag/v1.23.0) - 18-06-2026
+
+### Improvements 
+
+* Crystal language support by @buger in #715
+* Taint: guarded signatures by @dimitris-m in #684 and #724
+* Go: Allow tilde and union in function arguments by @maciejpirog in #716
+* Ast-to-IL: Translate more types of function parameters by @maciejpirog in #725
+* install.sh: add `OPENGREP_SKIP_BINARY_TEST` env var to bypass smoke test by @bchandler-12 in #728
+
+### Bug fixes
+
+* Fix Windows '..' walk-up in reported file paths by @corneliuhoffman in #729
+* Clamp out-of-range line reads so a truncated file can't abort the scan by @dimitris-m in #730
+
+### New Contributors
+
+* @buger made their first contribution in #715
+* @bchandler-12 made their first contribution in #728
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.22.0...v1.23.0
+
+
 ## [1.22.0](https://github.com/opengrep/opengrep/releases/tag/v1.22.0) - 19-05-2026
 
 ### Improvements
