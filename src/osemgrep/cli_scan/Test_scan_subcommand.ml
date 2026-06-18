@@ -119,6 +119,25 @@ def foo(a, b):
     return a + b == a + b
 |}
 
+let terraform_aws_lb_yaml_content =
+  {|
+rules:
+  - id: aws-lb-block
+    pattern: |
+      resource "aws_lb" $NAME {
+        ...
+      }
+    message: "aws_lb block"
+    languages: [terraform]
+    severity: WARNING
+|}
+
+(* A 'resource' block that is never closed: the file ends mid-block. *)
+let truncated_terraform_content =
+  {|resource "aws_lb" "x" {
+  internal = false
+|}
+
 let dummy_app_token = "FAKETESTINGAUTHTOKEN"
 
 (* coupling: subset of cli/tests/conftest.py ALWAYS_MASK *)
@@ -318,6 +337,29 @@ let test_basic_verbose_output (caps : Scan_subcommand.caps) () =
           in
           Exit_code.Check.ok exit_code))
 
+(* A truncated Terraform file whose 'resource' block is never closed. The
+   parser's error recovery inserts a synthetic '}' at EOF, so a rule matching
+   the block gets an end position one line past the file's content. Reading the
+   lines around the match (for nosemgrep suppression and for the output) must
+   not raise and abort the whole scan. *)
+let test_truncated_terraform_block (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", terraform_aws_lb_yaml_content);
+          F.File ("main.tf", truncated_terraform_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -351,4 +393,6 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_basic_output_max_match caps);
       t "basic output with max-match-per-file rule option" ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_basic_output_max_match_in_rule caps);
+      t "truncated terraform block does not abort scan"
+        (test_truncated_terraform_block caps);
     ]
