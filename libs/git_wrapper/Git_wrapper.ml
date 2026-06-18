@@ -360,7 +360,12 @@ let relativize_if_possible ~abs_cwd abs_path =
          "Git_wrapper.relativize_if_possible: abs_path must be an absolute \
           path but we received %s"
          !!abs_path);
-  match Fpath.relativize ~root:(append_slash_to_dir_path abs_cwd) abs_path with
+  (* Callers pass an 'abs_cwd' that is canonicalised on Windows (see
+     ls_files_relative), so a plain relativize against it no longer emits a
+     '..' walk-up on case-insensitive filesystems. *)
+  match
+    Fpath.relativize ~root:(append_slash_to_dir_path abs_cwd) abs_path
+  with
   | Some rel_path -> rel_path
   | None -> abs_path
 
@@ -376,7 +381,10 @@ let ls_files_relative ?exclude_standard ?kinds ~(project_root : Rpath.t)
     root_paths =
   (* Both project_root and sys_cwd are absolute, physical paths *)
   let project_root = Rpath.to_fpath project_root in
-  let sys_cwd = Sys.getcwd () |> Fpath.v in
+  (* Canonicalise cwd on Windows so it agrees with git's canonical paths;
+     otherwise relativizing git's output against it can emit a '..' walk-up.
+     No-op on case-sensitive filesystems. *)
+  let sys_cwd = Rpath.canonical_if_win (Sys.getcwd () |> Fpath.v) in
   let abs_root_paths =
     root_paths
     |> List_.map (fun path ->
@@ -484,7 +492,10 @@ let merge_base (commit : string) : string =
   | _ -> raise (Error "Could not get merge base from git merge-base")
 
 let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
-  let cwd = getcwd () |> Fpath.to_dir_path in
+  (* Canonicalise cwd on Windows so it agrees with git's canonical project
+     root; otherwise relativizing against it can emit a '..' walk-up. No-op on
+     case-sensitive filesystems. *)
+  let cwd = Rpath.canonical_if_win (getcwd ()) |> Fpath.to_dir_path in
   let git_root =
     match project_root_for_files_in_dir cwd with
     | None ->

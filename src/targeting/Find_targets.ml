@@ -493,33 +493,50 @@ let git_list_files ~exclude_standard
    *)
   match project.kind with
   | Git_project ->
-      let cwd = Fpath.v (Sys.getcwd ()) in
+      (* Canonicalise cwd on Windows so its spelling (case, 8.3 short names)
+         agrees with git's canonical paths; otherwise relativizing against it
+         can emit a '..' walk-up. No-op on case-sensitive filesystems. *)
+      let cwd = Rpath.canonical_if_win (Fpath.v (Sys.getcwd ())) in
       Some
         (project_roots.scanning_roots
         |> List.concat_map (fun (sc_root : Fppath.t) ->
                if UFile.is_reg ~follow_symlinks:true sc_root.fpath then
+                 (* A single-file scanning root is returned as-is: it has no
+                    descendants to relativize, so it never produced the '..'
+                    walk-up. Canonicalising it here would only desync its fpath
+                    from its ppath and double-report the file. *)
                  [ sc_root ]
                else if UFile.is_dir ~follow_symlinks:true sc_root.fpath then (
                  Log.info (fun m ->
                      m "List git files for scanning root %s"
                        (Fppath.show sc_root));
                  let project_root = Rfpath.to_rpath project.root in
-                 (* The path prefix we want for all the target file paths
-                    that we return *)
+                 (* The path prefix we want for all the target file paths that
+                    we return: the scanning root exactly as the user typed it,
+                    like pyopengrep. *)
                  let orig_scanning_root_path = sc_root.fpath in
+                 (* On Windows the typed root can differ from git's canonical
+                    paths in case or via 8.3 short names; relativizing it
+                    against git's canonical targets would emit a '..' walk-up.
+                    Canonicalise a copy for the relativize and the git lookup
+                    below so they stay clean, while still prefixing the typed
+                    root onto the result. No-op on case-sensitive filesystems. *)
+                 let canon_scanning_root_path =
+                   Rpath.canonical_if_win sc_root.fpath
+                 in
                  (* Best effort to get a relative scanning root path
                     (will fail in file systems with multiple roots) *)
                  let rel_scanning_root_path_or_absolute =
-                   if Fpath.is_rel orig_scanning_root_path then
-                     orig_scanning_root_path
+                   if Fpath.is_rel canon_scanning_root_path then
+                     canon_scanning_root_path
                    else
                      match
-                       Fpath.relativize ~root:cwd orig_scanning_root_path
+                       Fpath.relativize ~root:cwd canon_scanning_root_path
                      with
                      | Some rel_scanning_root -> rel_scanning_root
                      | None ->
                          (* absolute, on another volume than cwd *)
-                         orig_scanning_root_path
+                         canon_scanning_root_path
                  in
                  (* We can't just cd into the scanning root to obtain paths
                     relative to it because the scanning root may be a regular
@@ -529,7 +546,7 @@ let git_list_files ~exclude_standard
                     the resulting paths to be relative to the scanning root. *)
                  Git_wrapper.ls_files_relative ~exclude_standard
                    ~kinds:file_kinds ~project_root
-                   [ orig_scanning_root_path ]
+                   [ canon_scanning_root_path ]
                  |> List_.map (fun target_relative_to_cwd_or_absolute ->
                         (* Invariant: the target path is a descendant of the
                            scanning root path *)
@@ -544,7 +561,11 @@ let git_list_files ~exclude_standard
                         *)
                         let target_fpath =
                           match
-                            (* 'root' must be a folder *)
+                            (* 'root' must be a folder. We relativize against
+                               the canonicalised root and cwd, so on Windows
+                               this no longer emits a '..' walk-up; the clean
+                               remainder is then prefixed with the typed root
+                               below. *)
                             Fpath.relativize
                               ~root:rel_scanning_root_path_or_absolute
                               target_relative_to_cwd_or_absolute

@@ -85,6 +85,20 @@ let of_fpath_exn fpath = of_string_exn (Fpath.to_string fpath)
 let to_fpath (Rpath x) = x
 let canonical_exn s = to_fpath (of_fpath_exn s)
 
+(* On case-insensitive filesystems (Windows), resolve [p] to its physical real
+   path so its spelling (case and 8.3 short names) agrees with the canonical
+   paths the OS and git report. On case-sensitive filesystems the command-line
+   path is already canonical, so [p] is returned unchanged. If [p] can't be
+   resolved (e.g. removed since it was last checked, or a parent directory is
+   not traversable), it is returned unchanged too, matching the behaviour
+   before canonicalisation. *)
+let canonical_if_win p =
+  if Sys.win32 then
+    match of_fpath p with
+    | Ok rp -> to_fpath rp
+    | Error _ -> p
+  else p
+
 (* deprecated *)
 let to_string (Rpath x) = Fpath.to_string x
 
