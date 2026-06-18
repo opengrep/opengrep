@@ -10,7 +10,7 @@
 
 - Added native support for **Windows**.
 
-- Added support for languages that are not available in Semgrep CE or Semgrep PRO: **Visual Basic**.
+- Added support for languages that are not available in Semgrep CE or Semgrep PRO: **Crystal**, **Visual Basic**.
 
 - Added support for languages that are not available in Semgrep CE: **Apex** and **Elixir**.
 
