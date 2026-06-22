@@ -34,49 +34,120 @@ module G = AST_generic
  *)
 type placeholder_case = Lower | Upper
 
+(* Preprocess `$VAR` and `$...VAR` metavariables outside of string
+ * literals. We deliberately skip the contents of double-quoted strings
+ * so that patterns like [foo "$VAR"] keep their literal `$VAR` inside
+ * the string for the matcher to recognize as a string metavariable
+ * (this matches Python's behavior). *)
 let preprocess_metavariables_with_case (case : placeholder_case)
     (pattern : string) : string * (string, string) Hashtbl.t =
-  let re =
-    Str.regexp "\\$\\.\\.\\([A-Z_][A-Z0-9_]*\\)\\|\\$[A-Z_][A-Z0-9_]*"
-  in
-  let buffer = Buffer.create (String.length pattern) in
+  let n = String.length pattern in
+  let buffer = Buffer.create n in
   let mapping = Hashtbl.create 16 in
-  let rec aux idx =
-    if idx >= String.length pattern then ()
-    else
-      match
-        (try Some (Str.search_forward re pattern idx) with Not_found -> None)
-      with
-      | None ->
-          Buffer.add_substring buffer pattern idx (String.length pattern - idx)
-      | Some pos ->
-          Buffer.add_substring buffer pattern idx (pos - idx);
-          let matched = Str.matched_string pattern in
-          let placeholder, original =
-            if String.length matched >= 4
-               && String.sub matched 0 4 = "$..."
-            then
-              let name = Str.matched_group 1 pattern in
-              let ph = match case with
-                | Lower -> "__semgrep_ellipsis_" ^ name
-                | Upper -> "SemgrepEllipsis" ^ name
-              in
-              (ph, matched)
-            else
-              let name =
-                String.sub matched 1 (String.length matched - 1)
-              in
-              let ph = match case with
-                | Lower -> "__semgrep_metavar_" ^ name
-                | Upper -> "SemgrepMv" ^ name
-              in
-              (ph, matched)
-          in
-          Hashtbl.replace mapping placeholder original;
-          Buffer.add_string buffer placeholder;
-          aux (pos + String.length matched)
+  let is_meta_start_char c =
+    (c >= 'A' && c <= 'Z') || c = '_'
   in
-  aux 0;
+  let is_meta_body_char c =
+    (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_'
+  in
+  let i = ref 0 in
+  while !i < n do
+    let c = pattern.[!i] in
+    if c = '"' then begin
+      (* Copy a string literal verbatim, including the surrounding
+       * quotes, handling backslash escapes. *)
+      Buffer.add_char buffer '"';
+      incr i;
+      let in_string = ref true in
+      while !in_string && !i < n do
+        let ch = pattern.[!i] in
+        if ch = '\\' && !i + 1 < n then begin
+          Buffer.add_char buffer ch;
+          Buffer.add_char buffer pattern.[!i + 1];
+          i := !i + 2
+        end else if ch = '"' then begin
+          Buffer.add_char buffer '"';
+          incr i;
+          in_string := false
+        end else begin
+          Buffer.add_char buffer ch;
+          incr i
+        end
+      done
+    end else if c = '<' && !i + 3 < n
+                && pattern.[!i + 1] = '.' && pattern.[!i + 2] = '.'
+                && pattern.[!i + 3] = '.' then begin
+      (* Deep-ellipsis open `<...`: rewrite to a marker application whose
+       * single argument is the deep-matched expression. The matching
+       * `...>` becomes the closing parens. *)
+      Buffer.add_string buffer "(__semgrep_deep__ (";
+      Hashtbl.replace mapping "__semgrep_deep__" "<...>";
+      i := !i + 4
+    end else if c = '.' && !i + 3 < n
+                && pattern.[!i + 1] = '.' && pattern.[!i + 2] = '.'
+                && pattern.[!i + 3] = '>' then begin
+      (* Deep-ellipsis close `...>`. *)
+      Buffer.add_string buffer "))";
+      i := !i + 4
+    end else if c = '.' && !i + 2 < n
+                && pattern.[!i + 1] = '.' && pattern.[!i + 2] = '.'
+                && (!i + 3 >= n || pattern.[!i + 3] <> '.') then begin
+      (* A bare `...` ellipsis is not valid Haskell syntax, so tree-sitter
+       * cannot parse it. Rewrite it to a placeholder identifier (like the
+       * metavariable rewrites) that the walker turns back into
+       * G.Ellipsis. Exactly three dots, so `..` ranges and `{..}` record
+       * wildcards are left untouched. *)
+      let ph = "__semgrep_dots__" in
+      Hashtbl.replace mapping ph "...";
+      Buffer.add_string buffer ph;
+      i := !i + 3
+    end else if c = '$' && !i + 1 < n then begin
+      (* Try to match $...NAME or $NAME *)
+      let after_dollar = !i + 1 in
+      if after_dollar + 2 < n
+         && pattern.[after_dollar] = '.'
+         && pattern.[after_dollar + 1] = '.'
+         && pattern.[after_dollar + 2] = '.'
+         && after_dollar + 3 < n
+         && is_meta_start_char pattern.[after_dollar + 3]
+      then begin
+        let name_start = after_dollar + 3 in
+        let name_end = ref name_start in
+        while !name_end < n && is_meta_body_char pattern.[!name_end] do
+          incr name_end
+        done;
+        let name = String.sub pattern name_start (!name_end - name_start) in
+        let ph = match case with
+          | Lower -> "__semgrep_ellipsis_" ^ name
+          | Upper -> "SemgrepEllipsis" ^ name
+        in
+        let original = String.sub pattern !i (!name_end - !i) in
+        Hashtbl.replace mapping ph original;
+        Buffer.add_string buffer ph;
+        i := !name_end
+      end else if is_meta_start_char pattern.[after_dollar] then begin
+        let name_end = ref (after_dollar + 1) in
+        while !name_end < n && is_meta_body_char pattern.[!name_end] do
+          incr name_end
+        done;
+        let name = String.sub pattern after_dollar (!name_end - after_dollar) in
+        let ph = match case with
+          | Lower -> "__semgrep_metavar_" ^ name
+          | Upper -> "SemgrepMv" ^ name
+        in
+        let original = String.sub pattern !i (!name_end - !i) in
+        Hashtbl.replace mapping ph original;
+        Buffer.add_string buffer ph;
+        i := !name_end
+      end else begin
+        Buffer.add_char buffer c;
+        incr i
+      end
+    end else begin
+      Buffer.add_char buffer c;
+      incr i
+    end
+  done;
   (Buffer.contents buffer, mapping)
 
 (*****************************************************************************)
@@ -124,11 +195,17 @@ let try_parse_as_program ~preprocessed ~metavar_map ~candidate :
          with _ -> None)
 
 (* Extract the RHS of `x = <pattern>` from a wrapped program. The typed
- * walker nests the binding inside ModuleDef(ModuleStruct(...)). *)
+ * walker nests the binding inside ModuleDef(ModuleStruct(...)) and now
+ * emits zero-param value bindings as VarDef instead of FuncDef (so the
+ * matcher's constant propagation kicks in), so we accept either shape. *)
 let rec extract_wrapped_rhs (program : G.program) : G.expr option =
   List.find_map (fun stmt ->
     match stmt.G.s with
     | G.DefStmt (ent, G.FuncDef { G.fbody = G.FBExpr expr; _ }) ->
+        (match ent.G.name with
+         | G.EN (G.Id (("x", _), _)) -> Some expr
+         | _ -> None)
+    | G.DefStmt (ent, G.VarDef { G.vinit = Some expr; _ }) ->
         (match ent.G.name with
          | G.EN (G.Id (("x", _), _)) -> Some expr
          | _ -> None)
@@ -203,6 +280,7 @@ let parse_pattern (str_input : string) :
     starts "module" || starts "import" || starts "class" || starts "instance"
     || starts "data" || starts "newtype" || starts "type" || starts "foreign"
     || starts "infixl" || starts "infixr" || starts "infix"
+    || starts "default" || starts "deriving" || starts "pattern"
     || has_toplevel_eq_binding
   in
 
@@ -229,26 +307,62 @@ let parse_pattern (str_input : string) :
     go steps
   in
 
+  (* Patterns starting with a Haskell keyword [module / class / instance
+   * / data / newtype / type / foreign / infix] need uppercase
+   * preprocessing because the ident slot in those decls only accepts
+   * Module-style or Type-style identifiers. Other top-decl patterns
+   * like [$F $X = $E] are function definitions whose first ident must
+   * be lowercase, so bare-lower wins. *)
+  let trimmed_starts =
+    let s = str_input in
+    let i = ref 0 in
+    while !i < String.length s && (s.[!i] = ' ' || s.[!i] = '\n' || s.[!i] = '\t')
+    do incr i done;
+    fun kw ->
+      let l = String.length kw in
+      String.length s - !i >= l
+      && String.sub s !i l = kw
+      && (String.length s - !i = l
+          || let c = s.[!i + l] in c = ' ' || c = '\n' || c = '\t')
+  in
+  let needs_upper_first =
+    trimmed_starts "module" || trimmed_starts "import"
+    || trimmed_starts "class" || trimmed_starts "instance"
+    || trimmed_starts "data" || trimmed_starts "newtype"
+    || trimmed_starts "type" || trimmed_starts "foreign"
+    || trimmed_starts "infixl" || trimmed_starts "infixr"
+    || trimmed_starts "infix"
+    || trimmed_starts "default" || trimmed_starts "deriving"
+    || trimmed_starts "pattern"
+  in
+
   let outcome =
     if looks_like_stmt str_input then
+      let bare_upper_step () =
+        match try_bare_upper () with
+        | Some (program, errs) when program <> [] ->
+            Some (G.Ss program, errs)
+        | _ -> None
+      in
+      let bare_lower_step () =
+        match try_bare_lower () with
+        | Some (program, errs) when program <> [] ->
+            Some (G.Ss program, errs)
+        | _ -> None
+      in
+      let wrapped_step () =
+        match try_wrapped () with
+        | Some (program, errs) ->
+            (match extract_wrapped_rhs program with
+             | Some e -> Some (G.E e, errs)
+             | None -> Some (G.Ss program, errs))
+        | None -> None
+      in
       cascade
-        [ (fun () ->
-            match try_bare_upper () with
-            | Some (program, errs) when program <> [] ->
-                Some (G.Ss program, errs)
-            | _ -> None);
-          (fun () ->
-            match try_bare_lower () with
-            | Some (program, errs) when program <> [] ->
-                Some (G.Ss program, errs)
-            | _ -> None);
-          (fun () ->
-            match try_wrapped () with
-            | Some (program, errs) ->
-                (match extract_wrapped_rhs program with
-                 | Some e -> Some (G.E e, errs)
-                 | None -> Some (G.Ss program, errs))
-            | None -> None); ]
+        (if needs_upper_first then
+           [ bare_upper_step; bare_lower_step; wrapped_step ]
+         else
+           [ bare_lower_step; bare_upper_step; wrapped_step ])
     else
       cascade
         [ (fun () ->
