@@ -36,9 +36,9 @@ jobs:
           submodules: true
       - run: |
           yum update -y
-          yum install -y zip python3-pip python3.9
-          alternatives --remove-all python3
-          alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+          yum install -y zip
+          alternatives --remove-all python3 || true
+          alternatives --install /usr/bin/python3 python3 /opt/python/cp310-cp310/bin/python3 1
           alternatives --auto python3
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
@@ -63,14 +63,14 @@ jobs:
           name: manylinux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}-wheel
       - run: unzip dist.zip
       - name: install package
-        run: /opt/python/cp39-cp39/bin/pip install dist/*.whl
+        run: /opt/python/cp310-cp310/bin/pip install dist/*.whl
       - name: test package
         run: |
-          export PATH=/opt/python/cp39-cp39/bin:$PATH
+          export PATH=/opt/python/cp310-cp310/bin:$PATH
           opengrep --version
       - name: e2e opengrep-core test
         run: |
-          export PATH=/opt/python/cp39-cp39/bin:$PATH
+          export PATH=/opt/python/cp310-cp310/bin:$PATH
           echo '1 == 1' | opengrep -l python -e '$X == $X' -
 
   test-wheels-venv:
@@ -85,7 +85,7 @@ jobs:
           name: manylinux-x86-wheel
       - run: unzip dist.zip
       - name: create venv
-        run: /opt/python/cp39-cp39/bin/python3 -m venv env
+        run: /opt/python/cp310-cp310/bin/python3 -m venv env
       - name: install package
         run: env/bin/pip install dist/*.whl
       - name: test package
@@ -106,6 +106,8 @@ jobs:
           name: manylinux-x86-wheel
       - run: unzip dist.zip
       - uses: Vampire/setup-wsl@3b46b44374d5d0ae94654c45d114a3ed7a0e07a8 # ratchet:Vampire/setup-wsl@v5.0.1
+        with:
+          distribution: Ubuntu-22.04
       - name: Install Python
         run: |
           sudo sed -i '/bullseye-backports/d' /etc/apt/sources.list
