@@ -155,6 +155,6 @@ setuptools.setup(
         "Topic :: Security",
         "Topic :: Software Development :: Quality Assurance",
     ],
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     zip_safe=False,
 )
