@@ -1,0 +1,14 @@
+rules:
+  - id: test-guards-relational-pattern-csharp
+    message: Relational/combinator pattern branch guard at signature instantiation
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+      guarded_taint_signatures: true
+    pattern-sources:
+      - pattern: Source(...)
+    pattern-sinks:
+      - pattern: Sink(...)

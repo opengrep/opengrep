@@ -795,6 +795,35 @@ and pattern_match_cond env (scrutinee : IL.exp) (pat : G.pattern) :
       pm_lower_sequence env scrutinee ~allow_rest:true pats t2
   | G.PatType { t = G.TyN name; _ } ->
       ([], pm_lower_type scrutinee name)
+  (* C# relational patterns (`< 5`, `>= 0`, …). The frontend records only the
+   * operator and the rhs; the subject is implicit. We reconstruct the real
+   * comparison [scrutinee <op> rhs] here, against the single (already
+   * materialised) scrutinee, so it is evaluated once and stays anchored on
+   * the scrutinee for cond evaluation. *)
+  | G.OtherPat ((("<" | "<=" | ">" | ">=") as op_str, tok), [ G.E rhs ]) ->
+      let op =
+        match op_str with
+        | "<" -> G.Lt
+        | "<=" -> G.LtE
+        | ">" -> G.Gt
+        | _ -> G.GtE
+      in
+      let ss, rhs_il = expr env rhs in
+      ( ss,
+        mk_e
+          (Operator ((op, tok), [ Unnamed scrutinee; Unnamed rhs_il ]))
+          NoOrig )
+  | G.PatDisj (a, b) ->
+      let sa, ca = pattern_match_cond env scrutinee a in
+      let sb, cb = pattern_match_cond env scrutinee b in
+      (sa @ sb, IL_helpers.wrap_or [ ca; cb ])
+  | G.OtherPat (("AndPattern", _), [ G.P a; G.P b ]) ->
+      let sa, ca = pattern_match_cond env scrutinee a in
+      let sb, cb = pattern_match_cond env scrutinee b in
+      (sa @ sb, IL_helpers.wrap_and [ ca; cb ])
+  | G.OtherPat (("NotPattern", _), [ G.P a ]) ->
+      let sa, ca = pattern_match_cond env scrutinee a in
+      (sa, IL_helpers.wrap_not ca)
   | _ -> ([], fixme_exp ToDo (G.P pat) (related_tok op_tok))
 
 (*****************************************************************************)
@@ -3895,6 +3924,16 @@ and switch_expr_and_cases_to_exp tok switch_expr_orig switch_expr env cases : st
                 eorig = related_tok tok;
               }
               :: es )
+        | G.Case
+            (_tok, (G.OtherPat ((("<" | "<=" | ">" | ">="), _), [ E _ ]) as pat))
+          ->
+            (* Relational pattern (`case < 0:`): a structural cond, not an
+             * equality. Route it through [pattern_match_cond], which rebuilds
+             * [switch_expr <op> rhs]. Must come before the generic
+             * [OtherPat (_, [E c])] equality shortcut below, which would
+             * otherwise turn it into [rhs == switch_expr]. *)
+            let pm_ss, pm_cond = pattern_match_cond env switch_expr pat in
+            (ss @ pm_ss, pm_cond :: es)
         | G.Case (tok, G.OtherPat (_, [ E c ]))
         | G.CaseEqualExpr (tok, c) ->
             (* TODO: PatWhen should use something along these lines... *)

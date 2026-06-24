@@ -1,0 +1,11 @@
+rules:
+  - id: csharp-record-taint
+    message: taint flows through a method defined in a record body
+    languages:
+      - csharp
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: Source(...)
+    pattern-sinks:
+      - pattern: Sink(...)
