@@ -25,6 +25,7 @@ import semgrep.run_scan
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.config_resolver import Config
 from semgrep.config_resolver import resolve_config
+from semgrep.constants import IS_WINDOWS
 from semgrep.error import ERROR_MAP
 from semgrep.error import FATAL_EXIT_CODE
 from semgrep.error import SemgrepError
@@ -477,7 +478,7 @@ def run_join_rule(
         return [], [e]
 
     # Run Semgrep
-    with tempfile.NamedTemporaryFile() as rule_path:
+    with tempfile.NamedTemporaryFile(mode='w+', suffix=".yaml", delete=(not IS_WINDOWS)) as rule_path:
         # Combine inline rules and refs
         raw_rules = [rule.raw for rule in inline_rules]
         raw_rules.extend([rule.raw for rule in config_map.values()])
