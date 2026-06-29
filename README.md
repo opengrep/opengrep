@@ -15,7 +15,7 @@
 
 Let's make secure software development a shared standard. Opengrep provides every developer and organisation with open and advanced static code analysis.
 
-Opengrep is backed by a consortium of 10+ AppSec organisations, including: [Aikido](https://www.aikido.dev/), [Arnica](https://www.arnica.io), [Amplify](https://amplify.security/), [Endor Labs](https://www.endorlabs.com/), [Jit](https://www.jit.io/), [Kodem](https://www.kodemsecurity.com/), [Legit](https://www.legitsecurity.com/), [Mobb](https://www.mobb.ai/), [Orca Security](https://orca.security/), and [Phoenix Security](https://phoenix.security/). To learn more, read the manifesto at [opengrep.dev](https://opengrep.dev/).
+Opengrep is backed by a consortium of AppSec organisations, including: [Aikido](https://www.aikido.dev/), [Amplify](https://amplify.security/), [Endor Labs](https://www.endorlabs.com/), [Kodem](https://www.kodemsecurity.com/), and [Orca Security](https://orca.security/). To learn more, read the manifesto at [opengrep.dev](https://opengrep.dev/).
 
 ## Why Opengrep?
 
