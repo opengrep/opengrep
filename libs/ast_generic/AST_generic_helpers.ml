@@ -291,6 +291,8 @@ let rec pattern_to_expr p =
       Container (List, (t1, xs |> List_.map pattern_to_expr, t2))
   | PatConstructor (n, ps) ->
       Constructor (n, Tok.unsafe_fake_bracket (ps |> List_.map pattern_to_expr))
+  | PatEllipsis t -> Ellipsis t
+  | PatTyped (p, ty) -> Cast (ty, fake "", pattern_to_expr p)
   | OtherPat (("ExprToPattern", _), [ E e ]) -> e.e
   | OtherPat (tag, [ P p ]) -> OtherExpr (tag, [ E (pattern_to_expr p) ])
   | _ -> raise NotAnExpr)
