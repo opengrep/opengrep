@@ -279,26 +279,11 @@ and expr e =
   | ClassLiteral (v1, v2) ->
       let v1 = typ v1 in
       G.OtherExpr (("ClassLiteral", v2), [ G.T v1 ])
-  | NewClass (v0, v1, (lp, v2, rp), v3) -> (
+  | NewClass (v0, v1, (lp, v2, rp), v3) ->
       let v1 = typ v1
       and v2 = list argument v2
       and v3 = option (bracket decls) v3 in
-      match v3 with
-      | None -> G.New (v0, v1, G.empty_id_info (), (lp, v2, rp))
-      | Some decls ->
-          let anonclass =
-            G.AnonClass
-              {
-                G.ckind = (G.Class, v0);
-                cextends = [ (v1, None) ];
-                cimplements = [];
-                cmixins = [];
-                cparams = fb [];
-                cbody = decls |> bracket (List_.map (fun x -> G.F x));
-              }
-            |> G.e
-          in
-          G.Call (anonclass, (lp, v2, rp)))
+      new_class_or_anon v0 v1 (lp, v2, rp) v3
   | NewArray (v0, v1, v2, v3, v4) -> (
       let v1 = typ v1
       and v2 = list argument v2
@@ -314,26 +299,26 @@ and expr e =
       match v4 with
       | None -> G.New (v0, t, G.empty_id_info (), fb v2)
       | Some e -> G.New (v0, t, G.empty_id_info (), fb (G.Arg e :: v2)))
-  (* x.new Y(...) {...} *)
+  (* x.new Y(...) {...}; we keep the qualifier and a real 'new' subexpression
+   * so the construction itself stays structured and analyzable. *)
   | NewQualifiedClass (v0, _tok1, tok2, v2, v3, v4) ->
       let v0 = expr v0
       and v2 = typ v2
       and v3 = arguments v3
       and v4 = option (bracket decls) v4 in
-      let anys =
-        [ G.E v0; G.T v2 ]
-        @ (v3 |> Tok.unbracket |> List_.map (fun arg -> G.Ar arg))
-        @ (Option.to_list v4 |> List_.map Tok.unbracket |> List_.flatten
-          |> List_.map (fun st -> G.S st))
-      in
-      G.OtherExpr (("NewQualifiedClass", tok2), anys)
+      let inner = new_class_or_anon tok2 v2 v3 v4 |> G.e in
+      G.OtherExpr (("NewQualifiedClass", tok2), [ G.E v0; G.E inner ])
   | MethodRef (v1, v2, v3, v4) ->
       let v1 = expr_or_type v1 in
       let v2 = tok v2 in
-      let _v3TODO = option type_arguments v3 in
+      let v3 =
+        match option type_arguments v3 with
+        | None -> []
+        | Some (_, targs, _) -> List_.map (fun ta -> G.Ta ta) targs
+      in
       let v4 = ident v4 in
       (* TODO? use G.GetRef? *)
-      G.OtherExpr (("MethodRef", v2), [ v1; G.I v4 ])
+      G.OtherExpr (("MethodRef", v2), (v1 :: v3) @ [ G.I v4 ])
   | Call (v1, v2) ->
       let v1 = expr v1 and v2 = arguments v2 in
       G.Call (v1, v2)
@@ -414,6 +399,28 @@ and expr e =
       x.G.e)
   |> G.e
   |> adjust_range_of_parenthesized_expr e
+
+(* shared by NewClass and NewQualifiedClass: 'new Y(args)' (possibly with an
+ * anonymous class body) as a New, or a Call on an AnonClass when there is a
+ * body. *)
+and new_class_or_anon tnew typ (gargs : G.argument list G.bracket) body_opt :
+    G.expr_kind =
+  match body_opt with
+  | None -> G.New (tnew, typ, G.empty_id_info (), gargs)
+  | Some decls ->
+      let anonclass =
+        G.AnonClass
+          {
+            G.ckind = (G.Class, tnew);
+            cextends = [ (typ, None) ];
+            cimplements = [];
+            cmixins = [];
+            cparams = fb [];
+            cbody = decls |> bracket (List_.map (fun x -> G.F x));
+          }
+        |> G.e
+      in
+      G.Call (anonclass, gargs)
 
 and class_parent v : G.class_parent =
   let v = ref_type v in
