@@ -468,6 +468,8 @@ def generate_test_results(
     optimizations: str = "none",
     jobs: int,
     taint_intrafile: bool = False,
+    timeout: int = 0,
+    timeout_threshold: int = 0,
 ) -> None:
     config_filenames = get_config_filenames(config)
     config_test_filenames = get_config_test_filenames(config, config_filenames, target)
@@ -502,6 +504,8 @@ def generate_test_results(
         strict=strict,
         optimizations=optimizations,
         taint_intrafile=taint_intrafile,
+        timeout=timeout,
+        timeout_threshold=timeout_threshold,
     )
     # XXX: Maybe no need for the pool if jobs = 1.
     cpu_count = multiprocessing.cpu_count()
@@ -598,6 +602,8 @@ def generate_test_results(
         strict=strict,
         optimizations=optimizations,
         taint_intrafile=taint_intrafile,
+        timeout=timeout,
+        timeout_threshold=timeout_threshold,
         # only option that differs from the earlier call to semgrep-core:
         autofix=True,
     )
@@ -723,6 +729,8 @@ def test_main(
     engine_type: EngineType,
     jobs: int,
     taint_intrafile: bool,
+    timeout: int = 0,
+    timeout_threshold: int = 0,
 ) -> None:
     if len(target) != 1:
         raise Exception("only one target directory allowed for tests")
@@ -745,5 +753,7 @@ def test_main(
         engine_type=engine_type,
         optimizations=optimizations,
         jobs=jobs,
-        taint_intrafile=taint_intrafile
+        taint_intrafile=taint_intrafile,
+        timeout=timeout,
+        timeout_threshold=timeout_threshold,
     )

@@ -749,6 +749,24 @@ def scan(
     if test:
         if len(outputs) > 0:
             abort("The --test option doesn't support additional outputs to files.")
+        # The test path defaults to no timeout (0), unlike a real scan:
+        # a slow rule under CI load must not spuriously drop findings and fail a
+        # test. We only honour --timeout / --timeout-threshold here if the user
+        # set them explicitly. coupling: scan's own --timeout default
+        # (DEFAULT_TIMEOUT) is intentionally left unchanged.
+        click_ctx = click.get_current_context()
+        test_timeout = (
+            timeout
+            if click_ctx.get_parameter_source("timeout")
+            != click.core.ParameterSource.DEFAULT
+            else 0
+        )
+        test_timeout_threshold = (
+            timeout_threshold
+            if click_ctx.get_parameter_source("timeout_threshold")
+            != click.core.ParameterSource.DEFAULT
+            else 0
+        )
         # the test code (which isn't a "test" per se but is actually
         # machinery to evaluate semgrep performance) uses
         # managed_output internally
@@ -762,6 +780,8 @@ def scan(
             engine_type=engine_type,
             jobs=jobs,
             taint_intrafile=taint_intrafile,
+            timeout=test_timeout,
+            timeout_threshold=test_timeout_threshold,
         )
 
     filtered_matches_by_rule: RuleMatchMap = {}
