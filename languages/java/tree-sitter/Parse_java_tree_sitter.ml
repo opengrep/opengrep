@@ -1601,23 +1601,30 @@ and annotation_type_body (env : env) ((v1, v2, v3) : CST.annotation_type_body) =
 and annotation_type_element_declaration (env : env)
     ((v1, v2, v3, v4, v5, v6, v7, v8) : CST.annotation_type_element_declaration)
     =
-  let _v1 = modifiers_opt env v1 in
-  let _v2 = unannotated_type env v2 in
-  let v3 = token env v3 (* pattern [a-zA-Z_]\w* *) in
+  let v1 = modifiers_opt env v1 in
+  let v2 = unannotated_type env v2 in
+  let v3 = str env v3 (* pattern [a-zA-Z_]\w* *) in
   let _v4 = token env v4 (* "(" *) in
   let _v5 = token env v5 (* ")" *) in
-  let _v6 =
+  let v6 =
     match v6 with
     | Some x -> dimensions env x
     | None -> []
   in
-  let _v7 =
+  (* legacy C-style trailing dimensions, e.g. 'int value()[]' *)
+  let typ =
+    List.fold_left (fun t (lb, (), rb) -> TArray (lb, t, rb)) v2 v6
+  in
+  let v7 =
     match v7 with
-    | Some x -> Some (default_value env x)
+    | Some x ->
+        let (_, tdef), ev = default_value env x in
+        Some (tdef, ev)
     | None -> None
   in
   let _v8 = token env v8 (* ";" *) in
-  AnnotationTypeElementTodo v3
+  let md = AST.method_header v1 typ (IdentDecl v3, []) [] in
+  AnnotationTypeElement (md, v7)
 
 and default_value (env : env) ((v1, v2) : CST.default_value) =
   let v1 = token env v1 (* "default" *) in

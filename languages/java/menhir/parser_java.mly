@@ -1437,14 +1437,15 @@ annotation_type_element_declaration: annotation_type_element_rest { $1 }
 
 annotation_type_element_rest:
  | modifiers_opt type_ identifier annotation_method_or_constant_rest ";"
-   { AnnotationTypeElementTodo (snd $3) }
+   { let md = method_header $1 $2 (IdentDecl $3, []) [] in
+     AnnotationTypeElement (md, $4) }
  | class_and_co_declaration    { $1 }
  (* sgrep-ext: allows ... inside @interface body *)
  | "..." { DeclEllipsis $1 }
 
 annotation_method_or_constant_rest:
  | "(" ")"                       { None }
- | "(" ")" DEFAULT element_value { Some ($3) }
+ | "(" ")" DEFAULT element_value { Some ($3, $4) }
 
 (*************************************************************************)
 (* xxx_list, xxx_opt *)

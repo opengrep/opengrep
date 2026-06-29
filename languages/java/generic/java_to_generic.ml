@@ -745,7 +745,20 @@ and decl ?cl_kind decl : G.stmt =
   | DeclMetavarEllipsis v1 ->
       G.ExprStmt (G.N (Id (v1, G.empty_id_info ())) |> G.e, G.sc) |> G.s
   | EmptyDecl t -> G.Block (t, [], t) |> G.s
-  | AnnotationTypeElementTodo t -> G.OtherStmt (G.OS_Todo, [ G.Tk t ]) |> G.s
+  | AnnotationTypeElement (md, default) ->
+      let ent, def = method_decl md in
+      (* attach the optional 'default <value>' as an attribute on the method *)
+      let ent =
+        match default with
+        | None -> ent
+        | Some (tdef, ev) ->
+            let e = element_value ev in
+            let attr =
+              G.OtherAttribute (("AnnotationDefault", tdef), [ G.E e ])
+            in
+            { ent with G.attrs = ent.G.attrs @ [ attr ] }
+      in
+      G.DefStmt (ent, G.FuncDef def) |> G.s
 
 and decls ?cl_kind v : G.stmt list = list (decl ?cl_kind) v
 

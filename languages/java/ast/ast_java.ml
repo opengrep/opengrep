@@ -431,8 +431,9 @@ and decl =
   | Method of method_decl
   | Field of field
   | Init of Tok.t option (* static *) * stmt
-  (* java-ext: tree-sitter-only: only in AtInterface class_decl  *)
-  | AnnotationTypeElementTodo of Tok.t
+  (* java-ext: only in AtInterface class_decl; an annotation element is an
+   * abstract method, optionally with a 'default <value>'. *)
+  | AnnotationTypeElement of method_decl * (Tok.t (* default *) * element_value) option
   | EmptyDecl of Tok.t (* ; *)
   (* sgrep-ext: allows ... inside interface, class declarations *)
   | DeclEllipsis of Tok.t
