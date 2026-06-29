@@ -280,7 +280,7 @@ let rec expression (env : env) (x : CST.expression) =
       | Left (), t -> Assign (v1, t, v3)
       | Right op, t -> AssignOp (v1, (op, t), v3))
   | `Bin_exp x -> binary_expression env x
-  | `Inst_exp (v1, v2, v3, v4, _v5) ->
+  | `Inst_exp (v1, v2, v3, v4, v5) ->
       let v1 = expression env v1 in
       let _v2 = token env v2 (* "instanceof" *) in
       (* TODO: use attrs *)
@@ -290,8 +290,9 @@ let rec expression (env : env) (x : CST.expression) =
         | None -> None
       in
       let v4 = type_ env v4 in
-      (* TODO make identifier available to the AST*)
-      InstanceOf (v1, v4)
+      (* javaext: 16, the optional binding variable in 'o instanceof String s' *)
+      let v5 = Option.map (id_extra env) v5 in
+      InstanceOf (v1, v4, v5)
   | `Lambda_exp (v1, v2, v3) ->
       let v1 =
         match v1 with

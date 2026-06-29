@@ -363,11 +363,19 @@ and expr e =
         Common2.foldl1 (fun acc e -> G.TyAnd (acc, fake l "&", e) |> G.t) v1
       in
       G.Cast (t, l, v2)
-  | InstanceOf (v1, v2) ->
+  | InstanceOf (v1, v2, v3) -> (
       let v1 = expr v1 and v2 = ref_type v2 in
-      G.Call
-        ( G.IdSpecial (G.Instanceof, unsafe_fake "instanceof") |> G.e,
-          fb [ G.Arg v1; G.ArgType v2 ] )
+      match v3 with
+      | None ->
+          G.Call
+            ( G.IdSpecial (G.Instanceof, unsafe_fake "instanceof") |> G.e,
+              fb [ G.Arg v1; G.ArgType v2 ] )
+      | Some id ->
+          (* javaext: 16, 'o instanceof String s' binds 's'. We model it like
+           * a typed pattern binding, as is done for C#'s 'o is String s'. *)
+          let id = ident id in
+          let pat = G.PatTyped (G.PatId (id, G.empty_id_info ()), v2) in
+          G.LetPattern (pat, v1))
   | Conditional (v1, v2, v3) ->
       let v1 = expr v1 and v2 = expr v2 and v3 = expr v3 in
       G.Conditional (v1, v2, v3)

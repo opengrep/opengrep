@@ -228,7 +228,9 @@ and expr =
   | SwitchE of Tok.t * expr * (cases * stmts) list (* TODO bracket *)
   (* usually just a single typ, but can also have intersection type t1 & t2 *)
   | Cast of typ list1 bracket * expr
-  | InstanceOf of expr * ref_type
+  (* javaext: 16, pattern matching for instanceof: the optional ident is the
+   * binding variable, e.g. 's' in 'o instanceof String s' *)
+  | InstanceOf of expr * ref_type * ident option
   | Conditional of expr * expr * expr
   (* ugly java, like in C assignement is an expression not a statement :( *)
   | Assign of expr * Tok.t * expr
