@@ -457,7 +457,37 @@ and directive =
   | Package of Tok.t * qualified_ident * Tok.t (* ; *)
   (* The Tok.t is for static import (javaext:) *)
   | Import of Tok.t option (* static *) * import
-  | ModuleTodo of Tok.t
+  (* javaext: 9, module declaration (module-info.java) *)
+  | ModuleDecl of module_decl
+
+(* javaext: 9 *)
+and module_decl = {
+  mod_open : Tok.t option; (* 'open' modifier on the module *)
+  mod_tok : Tok.t; (* 'module' *)
+  mod_name : qualified_ident;
+  mod_directives : module_directive list;
+}
+
+and module_directive =
+  | ModRequires of
+      Tok.t (* 'requires' *) * requires_modifier list * qualified_ident
+  | ModExports of
+      Tok.t (* 'exports' *)
+      * qualified_ident
+      * qualified_ident list (* 'to' M1, M2, ... *)
+  | ModOpens of
+      Tok.t (* 'opens' *)
+      * qualified_ident
+      * qualified_ident list (* 'to' M1, M2, ... *)
+  | ModUses of Tok.t (* 'uses' *) * qualified_ident
+  | ModProvides of
+      Tok.t (* 'provides' *)
+      * qualified_ident (* service *)
+      * qualified_ident list (* 'with' Impl1, Impl2, ... *)
+
+and requires_modifier =
+  | ReqTransitive of Tok.t
+  | ReqStatic of Tok.t
 [@@deriving show { with_path = false }]
 
 (*****************************************************************************)

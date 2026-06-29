@@ -766,7 +766,41 @@ and directive = function
   | Package (t, qu, _t2) ->
       let qu = qualified_ident qu in
       G.DirectiveStmt (G.Package (t, qu) |> G.d) |> G.s
-  | ModuleTodo t -> G.OtherStmt (G.OS_Todo, [ G.Tk t ]) |> G.s
+  | ModuleDecl { mod_open; mod_tok = _; mod_name; mod_directives } ->
+      (* javaext: 9, modeled as a module with the directives as its items, as
+       * AST_generic has no dedicated Java-module-directive nodes. *)
+      let mname = qualified_ident mod_name in
+      let attrs =
+        match mod_open with
+        | None -> []
+        | Some t -> [ G.unhandled_keywordattr ("open", t) ]
+      in
+      let ent =
+        { G.name = G.EN (H.name_of_ids mname); attrs; tparams = None }
+      in
+      let items = list module_directive mod_directives in
+      G.DefStmt (ent, G.ModuleDef { G.mbody = G.ModuleStruct (Some mname, items) })
+      |> G.s
+
+(* Each module directive is modeled as an OtherDirective carrying the involved
+ * qualified names as [G.Di] so they remain visible to name resolution. *)
+and module_directive d : G.stmt =
+  let other name tk names attrs =
+    let anys = List_.map (fun n -> G.Di (qualified_ident n)) names in
+    G.DirectiveStmt { G.d = G.OtherDirective ((name, tk), anys); d_attrs = attrs }
+    |> G.s
+  in
+  match d with
+  | ModRequires (tk, mods, m) ->
+      other "Requires" tk [ m ] (List_.map requires_modifier mods)
+  | ModExports (tk, p, tos) -> other "Exports" tk (p :: tos) []
+  | ModOpens (tk, p, tos) -> other "Opens" tk (p :: tos) []
+  | ModUses (tk, s) -> other "Uses" tk [ s ] []
+  | ModProvides (tk, s, impls) -> other "Provides" tk (s :: impls) []
+
+and requires_modifier = function
+  | ReqTransitive t -> G.unhandled_keywordattr ("transitive", t)
+  | ReqStatic t -> G.attr G.Static t
 
 let program v = stmts v
 

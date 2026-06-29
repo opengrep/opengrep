@@ -76,12 +76,11 @@ let integral_type (env : env) (x : CST.integral_type) =
 
 (* "char" *)
 
-let requires_modifier (env : env) (x : CST.requires_modifier) =
+let requires_modifier (env : env) (x : CST.requires_modifier) :
+    AST.requires_modifier =
   match x with
-  | `Tran tok -> token env tok (* "transitive" *)
-  | `Static tok -> token env tok
-
-(* "static" *)
+  | `Tran tok -> ReqTransitive (token env tok) (* "transitive" *)
+  | `Static tok -> ReqStatic (token env tok) (* "static" *)
 
 let choice_open env f = function
   | `Open tok -> f env tok (* "open" *)
@@ -192,62 +191,76 @@ let literal (env : env) (x : CST.literal) =
   | `Null_lit tok -> Null (token env tok)
 (* "null" *)
 
-(* TODO: add in AST *)
-let module_directive (env : env) (v : CST.module_directive) : unit =
+(* the optional 'to M1, M2, ...' clause of exports/opens *)
+let module_to_clause (env : env)
+    ((v1, v2, v3) : CST.anon_to_name_rep_COMMA_name_2956291) :
+    AST.qualified_ident list =
+  let _v1 = token env v1 (* "to" *) in
+  let v2 = qualifier_extra env v2 in
+  let v3 =
+    List_.map
+      (fun (v1, v2) ->
+        let _v1 = token env v1 (* "," *) in
+        qualifier_extra env v2)
+      v3
+  in
+  v2 :: v3
+
+let module_directive (env : env) (v : CST.module_directive) :
+    AST.module_directive =
   match v with
   | `Requis_module_dire (v1, v2, v3, v4) ->
-      let _v1 = token env v1 (* "requires" *) in
-      let _v2 = List_.map (requires_modifier env) v2 in
-      let _v3 = qualifier_extra env v3 in
+      let v1 = token env v1 (* "requires" *) in
+      let v2 = List_.map (requires_modifier env) v2 in
+      let v3 = qualifier_extra env v3 in
       let _v4 = token env v4 (* ";" *) in
-      ()
+      ModRequires (v1, v2, v3)
   | `Exports_module_dire (v1, v2, v3, v4) ->
-      let _v1 = token env v1 (* "exports" *) in
-      let _v2 = qualifier_extra env v2 in
-      let _v3 =
+      let v1 = token env v1 (* "exports" *) in
+      let v2 = qualifier_extra env v2 in
+      let v3 =
         match v3 with
-        | Some _TODO -> Some () (* "to" *)
-        | None -> None
+        | Some x -> module_to_clause env x
+        | None -> []
       in
       let _v4 = token env v4 (* ";" *) in
-      ()
+      ModExports (v1, v2, v3)
   | `Opens_module_dire (v1, v2, v3, v4) ->
-      let _v1 = token env v1 (* "opens" *) in
-      let _v2 = qualifier_extra env v2 in
-      let _v3 =
+      let v1 = token env v1 (* "opens" *) in
+      let v2 = qualifier_extra env v2 in
+      let v3 =
         match v3 with
-        | Some _ -> Some () (* "to" *)
-        | None -> None
+        | Some x -> module_to_clause env x
+        | None -> []
       in
       let _v4 = token env v4 (* ";" *) in
-      ()
+      ModOpens (v1, v2, v3)
   | `Uses_module_dire (v1, v2, v3) ->
-      let _v1 = token env v1 (* "uses" *) in
-      let _v2 = qualifier_extra env v2 in
+      let v1 = token env v1 (* "uses" *) in
+      let v2 = qualifier_extra env v2 in
       let _v3 = token env v3 (* ";" *) in
-      ()
+      ModUses (v1, v2)
   | `Provis_module_dire (v1, v2, v3, v4, v5, v6) ->
-      let _v1 = token env v1 (* "provides" *) in
-      let _v2 = qualifier_extra env v2 in
+      let v1 = token env v1 (* "provides" *) in
+      let v2 = qualifier_extra env v2 in
       let _v3 = token env v3 (* "with" *) in
-      let _v4 = qualifier_extra env v4 in
-      let _v5 =
+      let v4 = qualifier_extra env v4 in
+      let v5 =
         List_.map
           (fun (v1, v2) ->
             let _v1 = token env v1 (* "," *) in
-            let v2 = qualifier_extra env v2 in
-            v2)
+            qualifier_extra env v2)
           v5
       in
       let _v6 = token env v6 (* ";" *) in
-      ()
+      ModProvides (v1, v2, v4 :: v5)
 
-(* TODO: add in AST *)
-let module_body (env : env) ((v1, v2, v3) : CST.module_body) : unit =
+let module_body (env : env) ((v1, v2, v3) : CST.module_body) :
+    AST.module_directive list =
   let _v1 = token env v1 (* "{" *) in
-  let _v2 = List_.map (module_directive env) v2 in
+  let v2 = List_.map (module_directive env) v2 in
   let _v3 = token env v3 (* "}" *) in
-  ()
+  v2
 
 let rec expression (env : env) (x : CST.expression) =
   match x with
@@ -1168,16 +1181,19 @@ and element_value (env : env) (x : CST.element_value) =
 and declaration (env : env) (x : CST.declaration) : AST.stmt =
   match x with
   | `Module_decl (v1, v2, v3, v4, v5) ->
+      (* note: annotations on a module declaration are dropped for now *)
       let _v1 = List_.map (annotation env) v1 in
-      let _v2 =
+      let v2 =
         match v2 with
         | Some tok -> Some (token env tok) (* "open" *)
         | None -> None
       in
       let v3 = token env v3 (* "module" *) in
-      let _v4 = qualifier_extra env v4 in
-      let _v5 = module_body env v5 in
-      DirectiveStmt (ModuleTodo v3)
+      let v4 = qualifier_extra env v4 in
+      let v5 = module_body env v5 in
+      DirectiveStmt
+        (ModuleDecl
+           { mod_open = v2; mod_tok = v3; mod_name = v4; mod_directives = v5 })
   | `Pack_decl (v1, v2, v3, v4) ->
       let _v1 = List_.map (annotation env) v1 in
       let v2 = token env v2 (* "package" *) in
