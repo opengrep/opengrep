@@ -422,6 +422,9 @@ and definition_kind =
   | FuncDef of function_definition
   | VarDef of variable_definition
   | ClassDef of class_definition
+  (* TS 'namespace Foo { ... }' / 'module Foo { ... }'; the stmt is the body
+   * block (None for an ambient declaration without a body) *)
+  | ModuleDef of stmt option
   | DefTodo of a_todo_category * any list
 
 and variable_definition = {

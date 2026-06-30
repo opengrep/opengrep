@@ -2125,9 +2125,17 @@ and statement (env : env) (x : CST.statement) : stmt list =
       let v1 = identifier env v1 (* "debugger" *) in
       let v2 = semicolon env v2 in
       [ ExprStmt (idexp v1, v2) ]
-  | `Exp_stmt x ->
-      let e, t = expression_statement env x in
-      [ ExprStmt (e, t) ]
+  | `Exp_stmt x -> (
+      (* tree-sitter parses a top-level 'namespace Foo { ... }' as an
+       * expression-statement; intercept it so it becomes a proper module
+       * definition instead of an IIFE. *)
+      match x with
+      | `Exp (`Inte_module im), _semi ->
+          let id, opt_body = internal_module env im in
+          [ DefStmt (basic_entity id, ModuleDef opt_body) ]
+      | _ ->
+          let e, t = expression_statement env x in
+          [ ExprStmt (e, t) ])
   | `Decl x ->
       let vars = declaration env x in
       vars |> List_.map (fun x -> DefStmt x)
@@ -3079,16 +3087,14 @@ and declaration (env : env) (x : CST.declaration) : definition list =
       in
       [ (basic_entity v4, ClassDef c) ]
   | `Module (v1, v2) ->
-      (* does this exist only in .d.ts files? *)
+      (* 'module Foo { ... }' (ambient module, often in .d.ts) *)
       let _v1 = token env v1 (* "module" *) in
-      let _id, _opt_body = module__ env v2 in
-      []
-      (* TODO *)
+      let id, opt_body = module__ env v2 in
+      [ (basic_entity id, ModuleDef opt_body) ]
   | `Inte_module x ->
-      (* namespace *)
-      let _x = internal_module env x in
-      []
-      (* TODO *)
+      (* 'namespace Foo { ... }' *)
+      let id, opt_body = internal_module env x in
+      [ (basic_entity id, ModuleDef opt_body) ]
   | `Type_alias_decl (v1, v2, v3, v4, v5, v6) ->
       let typekwd = token env v1 (* "type" *) in
       let id = str env v2 (* identifier *) in

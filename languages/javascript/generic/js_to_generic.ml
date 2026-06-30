@@ -545,6 +545,20 @@ and definition (ent, def) =
   | ClassDef def ->
       let def, more_attrs = class_ def in
       ({ ent with G.attrs = ent.G.attrs @ more_attrs }, G.ClassDef def)
+  | ModuleDef body ->
+      (* the namespace name is carried by [ent]; leaving the ModuleStruct name
+       * as None avoids binding a metavariable name twice (which would make a
+       * pattern like 'namespace $X { ... }' fail the consistency check) *)
+      let items =
+        match body with
+        | None -> []
+        | Some st -> (
+            let s = stmt st in
+            match s.G.s with
+            | G.Block (_, xs, _) -> xs
+            | _ -> [ s ])
+      in
+      (ent, G.ModuleDef { G.mbody = G.ModuleStruct (None, items) })
   | DefTodo (v1, v2) ->
       let v2 = list any v2 in
       (ent, G.OtherDef (v1, v2))
