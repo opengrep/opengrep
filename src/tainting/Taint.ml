@@ -429,11 +429,11 @@ module Taint_set = struct
   let elements set = set |> to_seq |> List.of_seq
 
   (* Like [equal] but also requires the guards of identity-equal taints
-   * to be equal ([compare_guarded_taint] ignores guards, so plain
-   * [equal] treats a guard-only refinement of a taint as unchanged).
-   * Stability and insertion no-op checks over guard-bearing sets must
-   * use this, or a fused wider guard is discarded for the narrower
-   * one. *)
+   * to be equal (the map keys are taint identities only ([compare_taint]),
+   * so plain [equal] treats a guard-only refinement of a taint as
+   * unchanged). Stability and insertion no-op checks over guard-bearing
+   * sets must use this, or a fused wider guard is discarded for the
+   * narrower one. *)
   let equal_with_guards set1 set2 =
     equal set1 set2
     && List.for_all2
@@ -475,9 +475,11 @@ module Taint_set = struct
 
   (* Merge two bundles with the same taint identity: best taint by the
    * shortest-trace rule, guards fused disjunctively. Returns
-   * [curr_bundle] ITSELF when nothing changes — [Taints.update] and
-   * [Taints.union] propagate that physical equality and skip the tree
-   * rebuild. *)
+   * [curr_bundle] physically when nothing changes, so [Taints.update]
+   * returns the map unchanged. (For [Src] taints [pick_best_taint]
+   * rebuilds the source to merge preconditions, so [best_taint] is never
+   * physically [curr_bundle.taint] and this shortcut only fires for
+   * [Var]/[Shape_var]/[Control].) *)
   and merge_bundles alt_bundle curr_bundle =
     let best_taint = pick_best_taint alt_bundle.taint curr_bundle.taint in
     let merged_guard = EG.compose_or alt_bundle.guard curr_bundle.guard in
@@ -561,16 +563,11 @@ module Taint_set = struct
             m "Taint_set.pick_taint: Ooops, the impossible happened!");
         taint2
 
-  (* Linear merge keeping set1's bindings whose key is absent in set2. *)
+  (* Keep set1's bindings whose key is absent in set2. [Taints.filter]
+     shares the subtrees it retains, where [Taints.merge] rebuilds the
+     whole result. *)
   let diff set1 set2 =
-    Taints.merge
-      (fun _ l r ->
-        match (l, r) with
-        | (Some _ as v), None -> v
-        | _, Some _
-        | None, None ->
-            None)
-      set1 set2
+    Taints.filter (fun taint _ -> not (Taints.mem taint set2)) set1
 
   let singleton (t : taint) : t = add (lift_taint t) empty
 
@@ -592,8 +589,13 @@ module Taint_set = struct
           if not (Common.phys_equal b' b) then (
             changed := true;
             (* [b.taint] compares equal to its key by construction, so
-               comparing against it detects key staleness. *)
-            if compare_taint b'.taint b.taint <> 0 then rekey := true);
+               comparing against it detects key staleness; the physical
+               check skips the structural compare when [f] kept the taint
+               (e.g. [with_guard], which only changes the guard). *)
+            if
+              (not (Common.phys_equal b'.taint b.taint))
+              && compare_taint b'.taint b.taint <> 0
+            then rekey := true);
           b')
         set
     in
@@ -601,10 +603,9 @@ module Taint_set = struct
     else if !changed then r
     else set
 
-  (* NOTE: the previous [Set]-based [bind] rebuilt via [Set.of_seq],
-     whose plain [Set.add] KEEPS the first bundle on collision — same-
-     taint bundles from different [f] results dropped their guards and
-     trace info arbitrarily. [union] applies the proper merge. *)
+  (* Union the per-element results: identity-equal taints from different
+     [f] outputs fuse guards ([compose_or]) and keep the best taint
+     ([pick_best_taint]), as in [add]/[union]. *)
   let bind set f = Taints.fold (fun _ b acc -> union (f b) acc) set empty
   let iter f set = Taints.iter (fun _ b -> f b) set
   let fold f set acc = Taints.fold (fun _ b acc -> f b acc) set acc
