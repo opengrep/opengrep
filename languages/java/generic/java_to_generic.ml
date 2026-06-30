@@ -279,26 +279,11 @@ and expr e =
   | ClassLiteral (v1, v2) ->
       let v1 = typ v1 in
       G.OtherExpr (("ClassLiteral", v2), [ G.T v1 ])
-  | NewClass (v0, v1, (lp, v2, rp), v3) -> (
+  | NewClass (v0, v1, (lp, v2, rp), v3) ->
       let v1 = typ v1
       and v2 = list argument v2
       and v3 = option (bracket decls) v3 in
-      match v3 with
-      | None -> G.New (v0, v1, G.empty_id_info (), (lp, v2, rp))
-      | Some decls ->
-          let anonclass =
-            G.AnonClass
-              {
-                G.ckind = (G.Class, v0);
-                cextends = [ (v1, None) ];
-                cimplements = [];
-                cmixins = [];
-                cparams = fb [];
-                cbody = decls |> bracket (List_.map (fun x -> G.F x));
-              }
-            |> G.e
-          in
-          G.Call (anonclass, (lp, v2, rp)))
+      new_class_or_anon v0 v1 (lp, v2, rp) v3
   | NewArray (v0, v1, v2, v3, v4) -> (
       let v1 = typ v1
       and v2 = list argument v2
@@ -314,26 +299,26 @@ and expr e =
       match v4 with
       | None -> G.New (v0, t, G.empty_id_info (), fb v2)
       | Some e -> G.New (v0, t, G.empty_id_info (), fb (G.Arg e :: v2)))
-  (* x.new Y(...) {...} *)
+  (* x.new Y(...) {...}; we keep the qualifier and a real 'new' subexpression
+   * so the construction itself stays structured and analyzable. *)
   | NewQualifiedClass (v0, _tok1, tok2, v2, v3, v4) ->
       let v0 = expr v0
       and v2 = typ v2
       and v3 = arguments v3
       and v4 = option (bracket decls) v4 in
-      let anys =
-        [ G.E v0; G.T v2 ]
-        @ (v3 |> Tok.unbracket |> List_.map (fun arg -> G.Ar arg))
-        @ (Option.to_list v4 |> List_.map Tok.unbracket |> List_.flatten
-          |> List_.map (fun st -> G.S st))
-      in
-      G.OtherExpr (("NewQualifiedClass", tok2), anys)
+      let inner = new_class_or_anon tok2 v2 v3 v4 |> G.e in
+      G.OtherExpr (("NewQualifiedClass", tok2), [ G.E v0; G.E inner ])
   | MethodRef (v1, v2, v3, v4) ->
       let v1 = expr_or_type v1 in
       let v2 = tok v2 in
-      let _v3TODO = option type_arguments v3 in
+      let v3 =
+        match option type_arguments v3 with
+        | None -> []
+        | Some (_, targs, _) -> List_.map (fun ta -> G.Ta ta) targs
+      in
       let v4 = ident v4 in
       (* TODO? use G.GetRef? *)
-      G.OtherExpr (("MethodRef", v2), [ v1; G.I v4 ])
+      G.OtherExpr (("MethodRef", v2), (v1 :: v3) @ [ G.I v4 ])
   | Call (v1, v2) ->
       let v1 = expr v1 and v2 = arguments v2 in
       G.Call (v1, v2)
@@ -363,11 +348,19 @@ and expr e =
         Common2.foldl1 (fun acc e -> G.TyAnd (acc, fake l "&", e) |> G.t) v1
       in
       G.Cast (t, l, v2)
-  | InstanceOf (v1, v2) ->
+  | InstanceOf (v1, v2, v3) -> (
       let v1 = expr v1 and v2 = ref_type v2 in
-      G.Call
-        ( G.IdSpecial (G.Instanceof, unsafe_fake "instanceof") |> G.e,
-          fb [ G.Arg v1; G.ArgType v2 ] )
+      match v3 with
+      | None ->
+          G.Call
+            ( G.IdSpecial (G.Instanceof, unsafe_fake "instanceof") |> G.e,
+              fb [ G.Arg v1; G.ArgType v2 ] )
+      | Some id ->
+          (* javaext: 16, 'o instanceof String s' binds 's'. We model it like
+           * a typed pattern binding, as is done for C#'s 'o is String s'. *)
+          let id = ident id in
+          let pat = G.PatTyped (G.PatId (id, G.empty_id_info ()), v2) in
+          G.LetPattern (pat, v1))
   | Conditional (v1, v2, v3) ->
       let v1 = expr v1 and v2 = expr v2 and v3 = expr v3 in
       G.Conditional (v1, v2, v3)
@@ -406,6 +399,28 @@ and expr e =
       x.G.e)
   |> G.e
   |> adjust_range_of_parenthesized_expr e
+
+(* shared by NewClass and NewQualifiedClass: 'new Y(args)' (possibly with an
+ * anonymous class body) as a New, or a Call on an AnonClass when there is a
+ * body. *)
+and new_class_or_anon tnew typ (gargs : G.argument list G.bracket) body_opt :
+    G.expr_kind =
+  match body_opt with
+  | None -> G.New (tnew, typ, G.empty_id_info (), gargs)
+  | Some decls ->
+      let anonclass =
+        G.AnonClass
+          {
+            G.ckind = (G.Class, tnew);
+            cextends = [ (typ, None) ];
+            cimplements = [];
+            cmixins = [];
+            cparams = fb [];
+            cbody = decls |> bracket (List_.map (fun x -> G.F x));
+          }
+        |> G.e
+      in
+      G.Call (anonclass, gargs)
 
 and class_parent v : G.class_parent =
   let v = ref_type v in
@@ -737,7 +752,20 @@ and decl ?cl_kind decl : G.stmt =
   | DeclMetavarEllipsis v1 ->
       G.ExprStmt (G.N (Id (v1, G.empty_id_info ())) |> G.e, G.sc) |> G.s
   | EmptyDecl t -> G.Block (t, [], t) |> G.s
-  | AnnotationTypeElementTodo t -> G.OtherStmt (G.OS_Todo, [ G.Tk t ]) |> G.s
+  | AnnotationTypeElement (md, default) ->
+      let ent, def = method_decl md in
+      (* attach the optional 'default <value>' as an attribute on the method *)
+      let ent =
+        match default with
+        | None -> ent
+        | Some (tdef, ev) ->
+            let e = element_value ev in
+            let attr =
+              G.OtherAttribute (("AnnotationDefault", tdef), [ G.E e ])
+            in
+            { ent with G.attrs = ent.G.attrs @ [ attr ] }
+      in
+      G.DefStmt (ent, G.FuncDef def) |> G.s
 
 and decls ?cl_kind v : G.stmt list = list (decl ?cl_kind) v
 
@@ -758,7 +786,41 @@ and directive = function
   | Package (t, qu, _t2) ->
       let qu = qualified_ident qu in
       G.DirectiveStmt (G.Package (t, qu) |> G.d) |> G.s
-  | ModuleTodo t -> G.OtherStmt (G.OS_Todo, [ G.Tk t ]) |> G.s
+  | ModuleDecl { mod_open; mod_tok = _; mod_name; mod_directives } ->
+      (* javaext: 9, modeled as a module with the directives as its items, as
+       * AST_generic has no dedicated Java-module-directive nodes. *)
+      let mname = qualified_ident mod_name in
+      let attrs =
+        match mod_open with
+        | None -> []
+        | Some t -> [ G.unhandled_keywordattr ("open", t) ]
+      in
+      let ent =
+        { G.name = G.EN (H.name_of_ids mname); attrs; tparams = None }
+      in
+      let items = list module_directive mod_directives in
+      G.DefStmt (ent, G.ModuleDef { G.mbody = G.ModuleStruct (Some mname, items) })
+      |> G.s
+
+(* Each module directive is modeled as an OtherDirective carrying the involved
+ * qualified names as [G.Di] so they remain visible to name resolution. *)
+and module_directive d : G.stmt =
+  let other name tk names attrs =
+    let anys = List_.map (fun n -> G.Di (qualified_ident n)) names in
+    G.DirectiveStmt { G.d = G.OtherDirective ((name, tk), anys); d_attrs = attrs }
+    |> G.s
+  in
+  match d with
+  | ModRequires (tk, mods, m) ->
+      other "Requires" tk [ m ] (List_.map requires_modifier mods)
+  | ModExports (tk, p, tos) -> other "Exports" tk (p :: tos) []
+  | ModOpens (tk, p, tos) -> other "Opens" tk (p :: tos) []
+  | ModUses (tk, s) -> other "Uses" tk [ s ] []
+  | ModProvides (tk, s, impls) -> other "Provides" tk (s :: impls) []
+
+and requires_modifier = function
+  | ReqTransitive t -> G.unhandled_keywordattr ("transitive", t)
+  | ReqStatic t -> G.attr G.Static t
 
 let program v = stmts v
 

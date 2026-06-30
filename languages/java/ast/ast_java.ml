@@ -228,7 +228,9 @@ and expr =
   | SwitchE of Tok.t * expr * (cases * stmts) list (* TODO bracket *)
   (* usually just a single typ, but can also have intersection type t1 & t2 *)
   | Cast of typ list1 bracket * expr
-  | InstanceOf of expr * ref_type
+  (* javaext: 16, pattern matching for instanceof: the optional ident is the
+   * binding variable, e.g. 's' in 'o instanceof String s' *)
+  | InstanceOf of expr * ref_type * ident option
   | Conditional of expr * expr * expr
   (* ugly java, like in C assignement is an expression not a statement :( *)
   | Assign of expr * Tok.t * expr
@@ -429,8 +431,9 @@ and decl =
   | Method of method_decl
   | Field of field
   | Init of Tok.t option (* static *) * stmt
-  (* java-ext: tree-sitter-only: only in AtInterface class_decl  *)
-  | AnnotationTypeElementTodo of Tok.t
+  (* java-ext: only in AtInterface class_decl; an annotation element is an
+   * abstract method, optionally with a 'default <value>'. *)
+  | AnnotationTypeElement of method_decl * (Tok.t (* default *) * element_value) option
   | EmptyDecl of Tok.t (* ; *)
   (* sgrep-ext: allows ... inside interface, class declarations *)
   | DeclEllipsis of Tok.t
@@ -455,7 +458,37 @@ and directive =
   | Package of Tok.t * qualified_ident * Tok.t (* ; *)
   (* The Tok.t is for static import (javaext:) *)
   | Import of Tok.t option (* static *) * import
-  | ModuleTodo of Tok.t
+  (* javaext: 9, module declaration (module-info.java) *)
+  | ModuleDecl of module_decl
+
+(* javaext: 9 *)
+and module_decl = {
+  mod_open : Tok.t option; (* 'open' modifier on the module *)
+  mod_tok : Tok.t; (* 'module' *)
+  mod_name : qualified_ident;
+  mod_directives : module_directive list;
+}
+
+and module_directive =
+  | ModRequires of
+      Tok.t (* 'requires' *) * requires_modifier list * qualified_ident
+  | ModExports of
+      Tok.t (* 'exports' *)
+      * qualified_ident
+      * qualified_ident list (* 'to' M1, M2, ... *)
+  | ModOpens of
+      Tok.t (* 'opens' *)
+      * qualified_ident
+      * qualified_ident list (* 'to' M1, M2, ... *)
+  | ModUses of Tok.t (* 'uses' *) * qualified_ident
+  | ModProvides of
+      Tok.t (* 'provides' *)
+      * qualified_ident (* service *)
+      * qualified_ident list (* 'with' Impl1, Impl2, ... *)
+
+and requires_modifier =
+  | ReqTransitive of Tok.t
+  | ReqStatic of Tok.t
 [@@deriving show { with_path = false }]
 
 (*****************************************************************************)
