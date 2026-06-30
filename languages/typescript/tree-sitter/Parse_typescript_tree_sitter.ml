@@ -2331,6 +2331,32 @@ and array_ (env : env) ((v1, v2, v3) : CST.array_) =
   let v3 = token env v3 (* "]" *) in
   Arr (v1, v2, v3)
 
+(* 'export { a, b as c } from "mod"': desugar each specifier into an import of
+ * the name from 'mod', a local const, and an export of it. *)
+and reexport_specifiers export_tok (tok2, path) names =
+  names
+  |> List.concat_map (fun (n1, n2opt) ->
+         let tmpname = ("!tmp_" ^ fst n1, snd n1) in
+         let import = Import (tok2, [ (n1, Some tmpname) ], path) in
+         let e = idexp tmpname in
+         match n2opt with
+         | None ->
+             let v = Ast_js.mk_const_var n1 e in
+             [ M import; DefStmt v; M (Export (export_tok, n1)) ]
+         | Some n2 ->
+             let v = Ast_js.mk_const_var n2 e in
+             [ M import; DefStmt v; M (Export (export_tok, n2)) ])
+
+(* 'export { a, b as c }': export the local names (aliasing via a const). *)
+and export_specifiers_local export_tok names =
+  names
+  |> List.concat_map (fun (n1, n2opt) ->
+         match n2opt with
+         | None -> [ M (Export (export_tok, n1)) ]
+         | Some n2 ->
+             let v = Ast_js.mk_const_var n2 (idexp n1) in
+             [ DefStmt v; M (Export (export_tok, n2)) ])
+
 and export_statement (env : env) (x : CST.export_statement) : stmt list =
   match x with
   | `Choice_export_choice_STAR_from_clause_choice_auto_semi x -> (
@@ -2357,33 +2383,14 @@ and export_statement (env : env) (x : CST.export_statement) : stmt list =
             | `Export_clause_from_clause_choice_auto_semi (v1, v2, v3) ->
                 (* export { name1, name2, nameN } from 'foo'; *)
                 let v1 = export_clause env v1 in
-                let tok2, path = from_clause env v2 in
+                let from = from_clause env v2 in
                 let _v3 = semicolon env v3 in
-                v1
-                |> List.concat_map (fun (n1, n2opt) ->
-                       let tmpname = ("!tmp_" ^ fst n1, snd n1) in
-                       let import =
-                         Import (tok2, [ (n1, Some tmpname) ], path)
-                       in
-                       let e = idexp tmpname in
-                       match n2opt with
-                       | None ->
-                           let v = Ast_js.mk_const_var n1 e in
-                           [ M import; DefStmt v; M (Export (export_tok, n1)) ]
-                       | Some n2 ->
-                           let v = Ast_js.mk_const_var n2 e in
-                           [ M import; DefStmt v; M (Export (export_tok, n2)) ])
+                reexport_specifiers export_tok from v1
             | `Export_clause_choice_auto_semi (v1, v2) ->
                 (* export { import1 as name1, import2 as name2, nameN } from 'foo'; *)
                 let v1 = export_clause env v1 in
                 let _v2 = semicolon env v2 in
-                v1
-                |> List.concat_map (fun (n1, n2opt) ->
-                       match n2opt with
-                       | None -> [ M (Export (export_tok, n1)) ]
-                       | Some n2 ->
-                           let v = Ast_js.mk_const_var n2 (idexp n1) in
-                           [ DefStmt v; M (Export (export_tok, n2)) ])
+                export_specifiers_local export_tok v1
           in
           v2
       | `Rep_deco_export_choice_decl (v1, v2, v3) ->
@@ -2441,29 +2448,34 @@ and export_statement (env : env) (x : CST.export_statement) : stmt list =
           in
           v3)
   | `Export_type_export_clause_opt_from_clause_choice_auto_semi
-      (v1, v2, v3, _v4, v5) ->
-      let _export = token env v1 (* "export" *) in
+      (v1, v2, v3, v4, v5) ->
+      (* export type { foo, type bar } [from 'mod']; we model type re-exports
+       * like value re-exports (the type-only distinction is dropped). *)
+      let export_tok = token env v1 (* "export" *) in
       let _type = token env v2 (* "type" *) in
-      let _exported_types = export_clause env v3 in
-      (* TODO v4 from_clause *)
+      let names = export_clause env v3 in
       let _sc = semicolon env v5 in
-      (* TODO: 'export type { foo, type bar, typeof thing };' *)
-      []
+      (match v4 with
+      | Some from_cl -> reexport_specifiers export_tok (from_clause env from_cl) names
+      | None -> export_specifiers_local export_tok names)
   | `Export_EQ_exp_choice_auto_semi (v1, v2, v3, v4) ->
-      let _v1 = token env v1 (* "export" *) in
-      let _v2 = token env v2 (* "=" *) in
-      let _v3 = expression env v3 in
+      (* export = ZipCodeValidator; (TS/CommonJS export assignment), modeled
+       * like a default export of the expression. *)
+      let export_tok = token env v1 (* "export" *) in
+      let teq = token env v2 (* "=" *) in
+      let e = expression env v3 in
       let _v4 = semicolon env v4 in
-      (* TODO 'export = ZipCodeValidator;' *)
-      []
+      let def, n = Ast_js.mk_default_entity_def teq e in
+      [ DefStmt def; M (Export (export_tok, n)) ]
   | `Export_as_name_id_choice_auto_semi (v1, v2, v3, v4, v5) ->
-      let _v1 = token env v1 (* "export" *) in
+      (* export as namespace mathLib; (UMD global). We record the exported
+       * global name. *)
+      let export_tok = token env v1 (* "export" *) in
       let _v2 = token env v2 (* "as" *) in
       let _v3 = token env v3 (* "namespace" *) in
-      let _v4 = token env v4 (* identifier *) in
+      let id = identifier env v4 (* identifier *) in
       let _v5 = semicolon env v5 in
-      (* TODO 'export as namespace mathLib;' *)
-      []
+      [ M (Export (export_tok, id)) ]
 
 and type_annotation (env : env) ((v1, v2) : CST.type_annotation) =
   let v1 = token env v1 (* ":" *) in
