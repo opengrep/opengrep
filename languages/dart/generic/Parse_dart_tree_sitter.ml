@@ -3582,14 +3582,18 @@ let map_declaration_as_stmt (env : env) (x : CST.declaration_) : stmt =
 let map_class_member_definition ~attrs (env : env)
     (x : CST.class_member_definition) : field =
   match x with
-  | `Decl__semi (v1, v2) ->
-      let v1 = map_declaration_as_stmt env v1 in
-      let _sc = map_semicolon env v2 in
-      G.F v1
-  | `Meth_sign_func_body (v1, v2) ->
-      let v1 = map_method_signature env v1 in
-      let fattrs, v2 = map_function_body env v2 in
-      G.F (v1 (attrs @ fattrs, v2))
+  | `Choice_decl__semi x -> (
+      match x with
+      | `Decl__semi (v1, v2) ->
+          let v1 = map_declaration_as_stmt env v1 in
+          let _sc = map_semicolon env v2 in
+          G.F v1
+      | `Meth_sign_func_body (v1, v2) ->
+          let v1 = map_method_signature env v1 in
+          let fattrs, v2 = map_function_body env v2 in
+          G.F (v1 (attrs @ fattrs, v2)))
+  (* sgrep-ext: '...' as a class member, e.g. 'class C { ... }' *)
+  | `Semg_ellips tok -> G.field_ellipsis ((* "..." *) token env tok)
 
 let map_extension_body (env : env) ((v1, v2, v3) : CST.extension_body) :
     stmt list =
