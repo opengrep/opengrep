@@ -741,47 +741,88 @@ and map_block (env : env) ((v1, v2, v3) : CST.block) : stmt list bracket =
   let v3 = (* "}" *) token env v3 in
   (v1, v2, v3)
 
+(* A cascade 'e..s1..s2' applies each section to the same receiver 'e' and
+ * evaluates to 'e'. We desugar each section into the equivalent operation on
+ * the receiver (e.foo(), e.bar = x, e[i], ...) so the operations are visible
+ * to matching/analysis. See map_expression for how they are recombined. *)
 and map_cascade_assignment_section (env : env)
     ((v1, v2) : CST.cascade_assignment_section) =
   let v1 = map_assignment_operator env v1 in
   let v2 = map_expression_without_cascade env v2 in
-  todo env (v1, v2)
+  (v1, v2)
 
 and map_cascade_section (env : env) ((v1, v2, v3, v4, v5) : CST.cascade_section)
-    =
-  let v1 =
+    : expr -> expr =
+ fun receiver ->
+  let dotdot =
     match v1 with
     | `DOTDOT tok -> (* ".." *) token env tok
     | `QMARKDOTDOT tok -> (* "?.." *) token env tok
   in
-  let v2 = map_cascade_selector env v2 in
-  let v3 = List_.map (map_argument_part env) v3 in
-  let v4 = List_.map (map_cascade_subsection env) v4 in
-  let v5 =
-    match v5 with
-    | Some x -> Some (map_cascade_assignment_section env x)
-    | None -> None
+  let base = map_cascade_selector env ~dotdot v2 receiver in
+  let base =
+    List.fold_left
+      (fun acc argpart ->
+        let _tyargs_TODO, args = map_argument_part env argpart in
+        Call (acc, args) |> G.e)
+      base v3
   in
-  todo env (v1, v2, v3, v4, v5)
+  let base =
+    List.fold_left (fun acc sub -> map_cascade_subsection env sub acc) base v4
+  in
+  match v5 with
+  | None -> base
+  | Some x -> (
+      let opwrap, value = map_cascade_assignment_section env x in
+      match opwrap with
+      | Eq, tk -> Assign (base, tk, value) |> G.e
+      | op -> AssignOp (base, op, value) |> G.e)
 
-and map_cascade_selector (env : env) (x : CST.cascade_selector) =
+and map_cascade_selector (env : env) ~dotdot (x : CST.cascade_selector) :
+    expr -> expr =
+ fun receiver ->
   match x with
   | `Opt_null_type_LBRACK_exp_RBRACK (v1, v2, v3, v4) ->
-      let v1 =
+      let _v1 =
         match v1 with
         | Some tok -> Some ((* "?" *) token env tok)
         | None -> None
       in
       let v2 = (* "[" *) token env v2 in
-      let v3 = map_argument env v3 in
+      let v3 = map_expression env v3 in
       let v4 = (* "]" *) token env v4 in
-      todo env (v1, v2, v3, v4)
-  | `Id tok -> todo env ((* pattern [a-zA-Z_$][\w$]* *) token env tok)
+      ArrayAccess (receiver, (v2, v3, v4)) |> G.e
+  | `Id tok ->
+      let id = (* pattern [a-zA-Z_$][\w$]* *) str env tok in
+      DotAccess (receiver, dotdot, FN (Id (id, empty_id_info ()))) |> G.e
 
-and map_cascade_subsection (env : env) ((v1, v2) : CST.cascade_subsection) =
-  let v1 = map_assignable_selector env v1 in
-  let v2 = List_.map (map_argument_part env) v2 in
-  todo env (v1, v2)
+and map_cascade_subsection (env : env) ((v1, v2) : CST.cascade_subsection) :
+    expr -> expr =
+ fun receiver ->
+  let receiver = map_assignable_selector env v1 receiver in
+  List.fold_left
+    (fun acc argpart ->
+      let _tyargs_TODO, args = map_argument_part env argpart in
+      Call (acc, args) |> G.e)
+    receiver v2
+
+(* 'recv..s1..s2': the value is 'recv', and each section is desugared into an
+ * operation on a fresh copy of 'recv' (re-mapped to avoid sharing mutable AST
+ * nodes). The whole cascade is kept as an OtherExpr so the sections stay
+ * reachable for matching. *)
+and map_cascade_expr (env : env) (recv : CST.real_expression)
+    (sections : CST.cascade_section list) : expr =
+  match sections with
+  | [] -> map_real_expression env recv
+  | _ ->
+      let sections =
+        List_.map
+          (fun s -> G.E (map_cascade_section env s (map_real_expression env recv)))
+          sections
+      in
+      OtherExpr
+        (("Cascade", G.fake "Cascade"), G.E (map_real_expression env recv) :: sections)
+      |> G.e
 
 and map_constructor_invocation (env : env)
     ((v1, v2, v3, v4, v5) : CST.constructor_invocation) : expr =
@@ -978,10 +1019,7 @@ and map_expression (env : env) (x : CST.expression) : G.expr =
       match x with
       | `Assign_exp x -> map_assignment_expression env x
       | `Throw_exp x -> map_throw_expression env x
-      | `Real_exp_rep_casc_sect (v1, v2) ->
-          let v1 = map_real_expression env v1 in
-          let _v2 = R.List (List_.map (map_cascade_section env) v2) in
-          v1)
+      | `Real_exp_rep_casc_sect (v1, v2) -> map_cascade_expr env v1 v2)
   | `Semg_ellips tok -> Ellipsis ((* "..." *) token env tok) |> G.e
   | `Semg_named_ellips tok ->
       N
@@ -2927,8 +2965,7 @@ let map_initializer_list_entry (env : env) (x : CST.initializer_list_entry) :
         | None -> G.N offset |> G.e
       in
       let v3 = (* "=" *) token env v3 in
-      let v4 = map_real_expression env v4 in
-      let _v5_TODO = R.List (List_.map (map_cascade_section env) v5) in
+      let v4 = map_cascade_expr env v4 v5 in
       Assign (lhs, v3, v4) |> G.e
   | `Asse x ->
       let assert_tok, args = map_assertion env x in
