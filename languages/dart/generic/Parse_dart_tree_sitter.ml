@@ -35,7 +35,6 @@ open AST_generic
 type context = Program | Pattern
 type env = context H.env
 
-let todo (_env : env) _ = failwith "not implemented"
 let str = H.str
 let token = H.token
 let fb = Tok.unsafe_fake_bracket
@@ -185,7 +184,7 @@ let map_assignment_operator (env : env) (x : CST.assignment_operator) =
   | `AMPEQ tok -> (BitAnd, (* "&=" *) token env tok)
   | `HATEQ tok -> (BitXor, (* "^=" *) token env tok)
   | `BAREQ tok -> (BitOr, (* "|=" *) token env tok)
-  | `QMARKQMARKEQ tok -> todo env ((), (* "??=" *) token env tok)
+  | `QMARKQMARKEQ tok -> (Nullish, (* "??=" *) token env tok)
 
 let _map_decimal_integer_literal (env : env) (tok : CST.decimal_integer_literal)
     =
@@ -1589,7 +1588,8 @@ and map_native (env : env) ((v1, v2) : CST.native) =
     | Some x -> Some (map_uri env x)
     | None -> None
   in
-  todo env (v1, v2)
+  (* the result is currently discarded by all callers *)
+  (v1, v2)
 
 and map_normal_formal_parameters (env : env)
     ((v1, v2) : CST.normal_formal_parameters) : parameter list =
@@ -2618,8 +2618,8 @@ and map_var_or_type (env : env) (x : CST.var_or_type) : type_ =
       let v1 = TyAny ((* "var" *) token env v1) |> G.t in
       let v2 =
         match v2 with
-        (* I don't know why you should be able to have both var and a type *)
-        | Some x -> todo env (Some (map_type_ env x))
+        (* both 'var' and an explicit type: keep the more precise explicit type *)
+        | Some x -> map_type_ env x
         | None -> v1
       in
       v2
@@ -2880,7 +2880,8 @@ let map_uri_test (env : env) ((v1, v2) : CST.uri_test) =
            (v1, v2))
     | None -> None
   in
-  todo env (v1, v2)
+  (* the result is currently discarded by the caller *)
+  (v1, v2)
 
 let map_interfaces (env : env) ((v1, v2) : CST.interfaces) =
   let _v1 = (* "implements" *) token env v1 in
