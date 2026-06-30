@@ -45,7 +45,7 @@
  *   - Guard-blind by design — identity and fusion keying: a set holds one
  *     element per guard-less identity and fuses guards on insertion.
  *     [Shape_and_sig.Effect.compare] (and [Effects]'s element order),
- *     [Taint.compare_guarded_taint] (and [Taint_set]'s element order),
+ *     [Taint.compare_taint] (the key of [Taint_set]'s map),
  *     [Shape_and_sig.Effect.compare_arg] inside effect identity.
  *
  *   - Guard-blind, accepted — [Shape_and_sig.SignatureSet]'s compare:
