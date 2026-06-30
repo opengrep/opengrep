@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.24.0](https://github.com/opengrep/opengrep/releases/tag/v1.24.0) - 30-06-2026
+
+### Language support
+
+* C#: Translation fixes by @maciejpirog in #734
+* Java: Fixes in Java -> AST by @maciejpirog in #741
+
+### Improvements
+
+* test(pyopengrep): default --test to no timeout by @dimitris-m in #739
+
+### Engine
+
+* Extend `pattern_to_expr`: ellipsis and pat-typed by @maciejpirog in #738
+* Represent Taint_set as a Map keyed by taint identity by @corneliuhoffman in #726
+
+### Security
+
+* Fix Aikido security findings: bump setuptools/urllib3, pin cosign, bump semgrep-interfaces by @dimitris-m in #733
+
+### Documentation
+
+* Crystal: Update README after releasing the support for Crystal by @maciejpirog in #732
+* Update sponsors by @dimitris-m in #740
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.23.0...v1.24.0
+
+
 ## [1.23.0](https://github.com/opengrep/opengrep/releases/tag/v1.23.0) - 18-06-2026
 
 ### Improvements 
