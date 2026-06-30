@@ -1958,33 +1958,39 @@ and map_relational_expression (env : env) (x : CST.relational_expression) =
 and map_selector (env : env) (x : CST.selector) : expr -> expr =
  fun expr ->
   match x with
-  (* Seems to be a null-assert pattern.
-     https://dart.dev/language/pattern-types#null-assert
-  *)
-  | `Excl_op tok -> Ref ((* "!" *) token env tok, expr) |> G.e
-  | `Assi_sele x -> map_assignable_selector env x expr
-  | `Arg_part x ->
-      let tyargs, args = map_argument_part env x in
-      (* Just by looking at the syntax, we cannot know when a(...) is
-       * a function call or a "new" expression, because the "new" keyword
-       * is optional. However, there is almost universal convention in
-       * Dart that types begin with an uppercase, while everything else
-       * with a lowercase character. We use this convention as a heuristic:
-       * if an identifier starts with an uppercase char, we convert it to
-       * G.New; othwerwise, it is a call. *)
-      match expr.e with
-      | N (Id ((s, _), id_info) as n)
-        when String.length s > 0 && s.[0] >= 'A' && s.[0] <= 'Z' ->
-          (* keep the type arguments on a generic constructor, e.g. the
-           * '<String, int>' in 'Bar<String, int>(y)' *)
-          let ty =
-            match tyargs with
-            | _, [], _ -> TyN n |> t
-            | _ -> TyApply (TyN n |> t, tyargs) |> t
-          in
-          G.New (fake "new", ty, id_info, args) |> G.e
-      | _ ->
-          G.Call (expr, args) |> G.e
+  (* sgrep-ext: member-access ellipsis 'expr. ... .foo' *)
+  | `Semg_dot_ellips (v1, v2) ->
+      let _dot = (* "." *) token env v1 in
+      let dots = (* "..." *) token env v2 in
+      DotAccessEllipsis (expr, dots) |> G.e
+  | `Choice_excl_op x -> (
+      match x with
+      (* Seems to be a null-assert pattern.
+         https://dart.dev/language/pattern-types#null-assert
+      *)
+      | `Excl_op tok -> Ref ((* "!" *) token env tok, expr) |> G.e
+      | `Assi_sele x -> map_assignable_selector env x expr
+      | `Arg_part x -> (
+          let tyargs, args = map_argument_part env x in
+          (* Just by looking at the syntax, we cannot know when a(...) is
+           * a function call or a "new" expression, because the "new" keyword
+           * is optional. However, there is almost universal convention in
+           * Dart that types begin with an uppercase, while everything else
+           * with a lowercase character. We use this convention as a heuristic:
+           * if an identifier starts with an uppercase char, we convert it to
+           * G.New; othwerwise, it is a call. *)
+          match expr.e with
+          | N (Id ((s, _), id_info) as n)
+            when String.length s > 0 && s.[0] >= 'A' && s.[0] <= 'Z' ->
+              (* keep the type arguments on a generic constructor, e.g. the
+               * '<String, int>' in 'Bar<String, int>(y)' *)
+              let ty =
+                match tyargs with
+                | _, [], _ -> TyN n |> t
+                | _ -> TyApply (TyN n |> t, tyargs) |> t
+              in
+              G.New (fake "new", ty, id_info, args) |> G.e
+          | _ -> G.Call (expr, args) |> G.e))
 
 and map_selectors (env : env) (x : CST.selector list) : expr -> expr =
   x
