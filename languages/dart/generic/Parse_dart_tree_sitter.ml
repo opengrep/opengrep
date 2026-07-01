@@ -510,46 +510,23 @@ and map_anon_elem_rep_COMMA_elem_opt_COMMA_4ec364f (env : env)
 
 and map_argument (env : env) (x : CST.argument) = G.Arg (map_expression env x)
 
-and map_argument_list (env : env) (x : CST.argument_list) : G.argument list =
-  match x with
-  | `Named_arg_rep_COMMA_named_arg (v1, v2) ->
-      let v1 = map_named_argument env v1 in
-      let v2 =
-        List_.map
-          (fun (v1, v2) ->
-            let _v1 = (* "," *) token env v1 in
-            let v2 = map_named_argument env v2 in
-            v2)
-          v2
-      in
-      v1 :: v2
-  | `Arg_rep_COMMA_arg_rep_COMMA_named_arg_rep_COMMA_named_arg (v1, v2, v3) ->
-      let v1 = map_argument env v1 in
-      let v2 =
-        List_.map
-          (fun (v1, v2) ->
-            let _v1 = (* "," *) token env v1 in
-            let v2 = map_argument env v2 in
-            v2)
-          v2
-      in
-      let v3 =
-        List.concat_map
-          (fun (v1, v2, v3) ->
-            let _v1 = (* "," *) token env v1 in
-            let v2 = map_named_argument env v2 in
-            let v3 =
-              List_.map
-                (fun (v1, v2) ->
-                  let _v1 = (* "," *) token env v1 in
-                  let v2 = map_named_argument env v2 in
-                  v2)
-                v3
-            in
-            v2 :: v3)
-          v3
-      in
-      (v1 :: v2) @ v3
+and map_argument_list (env : env) ((v1, v2) : CST.argument_list) :
+    G.argument list =
+  (* the overlay grammar allows positional/named args (and semgrep ellipses) to
+   * interleave freely, so this is a flat comma-separated list. *)
+  let item = function
+    | `Arg x -> map_argument env x
+    | `Named_arg x -> map_named_argument env x
+  in
+  let v1 = item v1 in
+  let v2 =
+    List_.map
+      (fun (v1, v2) ->
+        let _v1 = (* "," *) token env v1 in
+        item v2)
+      v2
+  in
+  v1 :: v2
 
 and map_argument_part (env : env) ((v1, v2) : CST.argument_part) :
     type_arguments * arguments =
