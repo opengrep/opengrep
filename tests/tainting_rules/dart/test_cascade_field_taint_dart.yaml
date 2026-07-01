@@ -1,0 +1,10 @@
+rules:
+  - id: cascade-field-taint
+    message: Taint through a Dart cascade field assignment
+    languages: [dart]
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
