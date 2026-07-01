@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.25.0](https://github.com/opengrep/opengrep/releases/tag/v1.25.0) - 01-07-2026
+
+### Improvements
+
+* Dart: Multiple translation fixes by @maciejpirog in #744
+* Dart: Support for dot-access-ellipsis by @maciejpirog in #746
+* Dart: Ellipsis as a valid class member in patterns by @maciejpirog in #747
+* Dart: Translate cascade expression to dot-accesses by @maciejpirog in #748
+* Dart: Fix argument patterns by @maciejpirog in #750
+* PHP: Lex non-ASCII bytes in identifiers by @dimitris-m in #749
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.24.0...v1.25.0
+
+
 ## [1.24.0](https://github.com/opengrep/opengrep/releases/tag/v1.24.0) - 30-06-2026
 
 ### Language support
