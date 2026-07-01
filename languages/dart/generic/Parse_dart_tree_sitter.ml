@@ -805,23 +805,47 @@ and map_cascade_subsection (env : env) ((v1, v2) : CST.cascade_subsection) :
       Call (acc, args) |> G.e)
     receiver v2
 
-(* 'recv..s1..s2': the value is 'recv', and each section is desugared into an
- * operation on a fresh copy of 'recv' (re-mapped to avoid sharing mutable AST
- * nodes). The whole cascade is kept as an OtherExpr so the sections stay
- * reachable for matching. *)
+(* Desugar 'e..s1..s2' into a block that binds a hidden local to the receiver,
+ * applies each section to it, and yields it:
+ *   { !cascade = e; !cascade.s1; !cascade.s2; !cascade }
+ * The binder is hidden (like Clojure's implicit vars) so it doesn't show up in
+ * results, and Naming scopes it per block so it stays unique. This needs no
+ * special handling in AST_to_IL. *)
 and map_cascade_expr (env : env) (recv : CST.real_expression)
     (sections : CST.cascade_section list) : expr =
   match sections with
   | [] -> map_real_expression env recv
   | _ ->
-      let sections =
+      (* Desugar 'e..s1..s2' into a block that applies each section to the
+       * receiver and yields it. If the receiver is a simple lvalue we embed it
+       * directly (re-mapped per use), so field taint through 'v..x = src()'
+       * reaches 'v.x' (the engine is copy-based, so a '!tmp = v' binder would
+       * break it) and '$X.m(...)' binds the real receiver. Otherwise (a
+       * constructor/call/...) we must NOT duplicate it, so we evaluate it once
+       * into a hidden binder; there is no field-taint-back concern since such a
+       * receiver is anonymous. No AST_to_IL code needed. *)
+      let recv_e = map_real_expression env recv in
+      let mk_recv, prelude =
+        match recv_e.G.e with
+        | N _ | DotAccess _ | ArrayAccess _ | IdSpecial (This, _) ->
+            ((fun () -> map_real_expression env recv), [])
+        | _ ->
+            let id_info = empty_id_info ~hidden:true () in
+            (* real token so a metavar binding this hidden var still has a range *)
+            let name = ("!cascade", H2.first_info_of_any (G.E recv_e)) in
+            let bind =
+              ExprStmt (LetPattern (PatId (name, id_info), recv_e) |> G.e, G.sc)
+              |> G.s
+            in
+            ((fun () -> N (Id (name, id_info)) |> G.e), [ bind ])
+      in
+      let ops =
         List_.map
-          (fun s -> G.E (map_cascade_section env s (map_real_expression env recv)))
+          (fun s -> ExprStmt (map_cascade_section env s (mk_recv ()), G.sc) |> G.s)
           sections
       in
-      OtherExpr
-        (("Cascade", G.fake "Cascade"), G.E (map_real_expression env recv) :: sections)
-      |> G.e
+      let value = ExprStmt (mk_recv (), G.sc) |> G.s in
+      StmtExpr (Block (fb (prelude @ ops @ [ value ])) |> G.s) |> G.e
 
 and map_constructor_invocation (env : env)
     ((v1, v2, v3, v4, v5) : CST.constructor_invocation) : expr =
