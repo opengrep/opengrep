@@ -380,9 +380,9 @@ let BINNUM =	"0b"['0'-'1']+
  */
  *)
 let DOUBLE_QUOTES_LITERAL_DOLLAR =
-  ("$"+([^'a'-'z''A'-'Z''_''$''"''\\' '{']|('\\' ANY_CHAR)))
+  ("$"+([^'a'-'z''A'-'Z''_''\128'-'\255''$''"''\\' '{']|('\\' ANY_CHAR)))
 let BACKQUOTE_LITERAL_DOLLAR =
-  ("$"+([^'a'-'z''A'-'Z''_''$''`''\\' '{']|('\\' ANY_CHAR)))
+  ("$"+([^'a'-'z''A'-'Z''_''\128'-'\255''$''`''\\' '{']|('\\' ANY_CHAR)))
 (*/*
  * CHARS matches everything up to a variable or "{$"
  * {'s are matched as long as they aren't followed by a $
