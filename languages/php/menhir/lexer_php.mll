@@ -360,7 +360,10 @@ let WHITESPACE = [' ' '\n' '\r' '\t']+
 let TABS_AND_SPACES = [' ''\t']*
 let NEWLINE = ("\r"|"\n"|"\r\n")
 let WHITESPACEOPT = [' ' '\n' '\r' '\t']*
-let LABEL =	['a'-'z''A'-'Z''_']['a'-'z''A'-'Z''0'-'9''_']*
+(* PHP identifiers are byte-based: any byte in 0x80-0xff is a valid identifier
+ * character, which is how PHP supports non-ASCII (e.g. UTF-8) identifiers.
+ * This mirrors the LABEL definition in Zend's zend_language_scanner.l. *)
+let LABEL =	['a'-'z''A'-'Z''_''\128'-'\255']['a'-'z''A'-'Z''0'-'9''_''\128'-'\255']*
 let BOOL = (['T''t']['R''r']['U''u']['E''e']) | (['F''f']['A''a']['L''l']['S''s']['E''e'])
 let LNUM =	['0'-'9']+
 let DNUM =	(['0'-'9']*['.']['0'-'9']+) | (['0'-'9']+['.']['0'-'9']* )
@@ -377,9 +380,9 @@ let BINNUM =	"0b"['0'-'1']+
  */
  *)
 let DOUBLE_QUOTES_LITERAL_DOLLAR =
-  ("$"+([^'a'-'z''A'-'Z''_''$''"''\\' '{']|('\\' ANY_CHAR)))
+  ("$"+([^'a'-'z''A'-'Z''_''\128'-'\255''$''"''\\' '{']|('\\' ANY_CHAR)))
 let BACKQUOTE_LITERAL_DOLLAR =
-  ("$"+([^'a'-'z''A'-'Z''_''$''`''\\' '{']|('\\' ANY_CHAR)))
+  ("$"+([^'a'-'z''A'-'Z''_''\128'-'\255''$''`''\\' '{']|('\\' ANY_CHAR)))
 (*/*
  * CHARS matches everything up to a variable or "{$"
  * {'s are matched as long as they aren't followed by a $
