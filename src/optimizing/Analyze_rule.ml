@@ -661,6 +661,36 @@ let regexp_prefilter_of_taint_rule ~xlang (_rule_id, rule_tok) taint_spec =
   in
   regexp_prefilter_of_formula ~xlang f
 
+(* Interfile taint analysis seeds its call-graph subgraph from files
+   containing a source OR a sink — unlike intrafile matching, the two
+   need not co-occur in one file, so [regexp_prefilter_of_taint_rule]'s
+   AND would wrongly drop source-only and sink-only files. *)
+let regexp_prefilter_of_interfile_taint_rule (r : R.rule) : prefilter option =
+  match r.R.mode with
+  | `Taint taint_spec -> (
+      let rule_id, rule_tok = r.R.id in
+      let sources =
+        taint_spec.R.sources |> snd
+        |> List_.map (fun (src : R.taint_source) -> src.source_formula)
+      in
+      let sinks =
+        taint_spec.R.sinks |> snd
+        |> List_.map (fun (sink : R.taint_sink) -> sink.sink_formula)
+      in
+      let f = R.f (R.Or (rule_tok, sources @ sinks)) in
+      try regexp_prefilter_of_formula ~xlang:r.target_analyzer f with
+      | CNF_exploded ->
+          Log.warn (fun m ->
+              m "CNF size exploded on interfile prefilter for rule id %s"
+                (Rule_ID.to_string rule_id));
+          None
+      | Stack_overflow ->
+          Log.err (fun m ->
+              m "Stack overflow on interfile prefilter for rule id %s"
+                (Rule_ID.to_string rule_id));
+          None)
+  | _ -> None
+
 let regexp_prefilter_of_rule ~cache (r : R.rule) =
   let rule_id, _t = r.R.id in
   (* rule_id is supposed to be unique so it should work as a key for hmemo.
