@@ -27,6 +27,8 @@ type conf = {
   dataflow_traces : bool;
   taint_intrafile : bool;
   effect_guards : bool;
+  taint_interfile : bool;
+  taint_interfile_depth : int;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
 }
@@ -56,7 +58,7 @@ type func = {
     Find_targets.conf ->
     Match_patterns.matching_conf ->
     Rule_error.rules_and_invalid ->
-    Fpath.t list ->
+    Target_and_root.t list ->
     Core_result.result_or_exn;
 }
 
@@ -86,4 +88,4 @@ val targets_and_rules_for_files :
 
 (* the targets of each language of the rules *)
 val split_jobs_by_language :
-  Find_targets.conf -> Rule.t list -> Fpath.t list -> Lang_job.t list
+  Find_targets.conf -> Rule.t list -> Target_and_root.t list -> Lang_job.t list

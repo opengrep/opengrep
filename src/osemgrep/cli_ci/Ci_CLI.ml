@@ -89,9 +89,10 @@ let cmdline_term : conf Term.t =
       max_lines_per_finding max_log_list_entries max_match_per_file
       max_memory_mb max_target_bytes nosem num_jobs opengrep_ignore_pattern
       optimizations output rewrite_rule_ids sarif sarif_outputs
-      scan_unknown_extensions subdir suppress_errors taint_intrafile text
-      text_outputs time_flag timeout _timeout_interfileTODO timeout_threshold
-      use_git _version_check vim vim_outputs =
+      scan_unknown_extensions subdir suppress_errors taint_interfile
+      taint_interfile_depth taint_intrafile text text_outputs time_flag timeout
+      _timeout_interfileTODO timeout_threshold use_git _version_check vim
+      vim_outputs =
     let output_format : Output_format.t =
       SC.output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
         ~gitlab_sast ~gitlab_secrets ~junit_xml
@@ -131,7 +132,6 @@ let cmdline_term : conf Term.t =
       {
         (* --opengrep-ignore-pattern is accepted but ignored by ci *)
         Engine_config.custom_ignore_pattern = None;
-        taint_intrafile = Some taint_intrafile;
       }
     in
     let core_runner_conf : Core_runner.conf =
@@ -158,8 +158,10 @@ let cmdline_term : conf Term.t =
         (* --inline-metavariables is accepted but ignored by ci *)
         inline_metavariables = false;
         matching_explanations;
-        taint_intrafile;
+        taint_intrafile = taint_intrafile || taint_interfile;
         effect_guards = false;
+        taint_interfile;
+        taint_interfile_depth;
         engine_config;
       }
     in
@@ -183,6 +185,7 @@ let cmdline_term : conf Term.t =
         explicit_targets = Find_targets.Explicit_targets.empty;
         respect_gitignore = use_git;
         respect_semgrepignore_files = true;
+        default_semgrepignore_patterns = Semgrepignore.Semgrep_scan_legacy;
         semgrepignore_filename = None;
         exclude_minified_files = false;
       }
@@ -262,7 +265,8 @@ let cmdline_term : conf Term.t =
     $ SC.o_nosem $ SC.o_num_jobs $ CLI_common.o_opengrep_ignore_pattern
     $ SC.o_optimizations $ SC.o_output $ SC.o_rewrite_rule_ids $ SC.o_sarif
     $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ o_subdir
-    $ o_suppress_errors $ SC.o_taint_intrafile $ SC.o_text $ SC.o_text_outputs
+    $ o_suppress_errors $ SC.o_taint_interfile $ SC.o_taint_interfile_depth
+    $ SC.o_taint_intrafile $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile
     $ SC.o_timeout_threshold $ SC.o_use_git $ SC.o_version_check $ SC.o_vim
     $ SC.o_vim_outputs)

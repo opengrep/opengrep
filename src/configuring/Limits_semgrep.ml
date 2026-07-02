@@ -119,3 +119,14 @@ let taint_MAX_GUARD_COND_NODES = 512
  * as the atom cap. Lowering this trades guard precision for speed; near
  * zero it degenerates to arity-only guards. *)
 let taint_MAX_GUARD_CLAUSES = 64
+
+(*****************************************************************************)
+(* Project index (interfile call graph) *)
+(*****************************************************************************)
+
+(* Iteration caps on the projidx type-augmentation fixpoints; the passes are
+ * monotone, the caps only bound how deep return-type / field-type chains
+ * propagate. See 'tools/project_index/Main.ml'. *)
+let projidx_RETURN_TYPES_MAX_ITERS = 4
+let projidx_OBJECT_MAPPINGS_MAX_ITERS = 5
+let projidx_CALL_GRAPH_MAX_PASSES = 5

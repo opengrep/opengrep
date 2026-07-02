@@ -680,6 +680,26 @@ let o_taint_intrafile : bool Term.t =
   in
   Arg.value (Arg.flag info)
 
+let o_taint_interfile : bool Term.t =
+  let info =
+    Arg.info [ "taint-interfile" ]
+      ~doc:
+        ("Enable cross-file taint analysis. \
+          When a file has sources but no sinks (or vice versa), companion \
+          files are discovered from the project-wide interfile call graph, \
+          parsed, and analysed together. Implies --taint-intrafile behaviour.")
+  in
+  Arg.value (Arg.flag info)
+
+let o_taint_interfile_depth : int Term.t =
+  let info =
+    Arg.info [ "taint-interfile-depth" ]
+      ~doc:
+        ("Maximum call chain depth for companion file discovery in \
+          cross-file taint analysis. Default is 3.")
+  in
+  Arg.value (Arg.opt Arg.int 3 info)
+
 (* TODO: Remove this, or adapt to Opengrep. *)
 (* ------------------------------------------------------------------ *)
 (* Configuration options ('scan' only, not reused in 'ci') *)
@@ -1234,7 +1254,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
       num_jobs nosem opengrep_ignore_pattern optimizations
-      output output_enclosing_context pattern project_root taint_intrafile
+      output output_enclosing_context pattern project_root taint_interfile
+      taint_interfile_depth taint_intrafile
       effect_guards replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions semgrepignore_filename severity show_supported_languages
       skip_invalid_configs
@@ -1251,10 +1272,12 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
              options are not part of the opengrep API. They will change or will \
              be removed without notice !!! ");
 
+    (* Interfile taint runs on top of the intrafile engine, so enabling
+       taint_interfile implies taint_intrafile. *)
+    let effective_taint_intrafile = taint_intrafile || taint_interfile in
     (* Create engine configuration *)
     let engine_config = {
       Engine_config.custom_ignore_pattern = opengrep_ignore_pattern;
-      taint_intrafile = Some taint_intrafile;
     } in
 
     if output_enclosing_context && not json then
@@ -1338,8 +1361,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         time_flag;
         inline_metavariables;
         matching_explanations;
-        taint_intrafile;
+        taint_intrafile = effective_taint_intrafile;
         effect_guards;
+        taint_interfile;
+        taint_interfile_depth;
         engine_config;
       }
     in
@@ -1367,6 +1392,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         explicit_targets;
         respect_gitignore;
         respect_semgrepignore_files = not x_ignore_semgrepignore_files;
+        default_semgrepignore_patterns = Semgrepignore.Semgrep_scan_legacy;
         semgrepignore_filename;
         exclude_minified_files;
       }
@@ -1469,7 +1495,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_num_jobs $ o_nosem $ CLI_common.o_opengrep_ignore_pattern
     $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root
-    $ o_taint_intrafile
+    $ o_taint_interfile $ o_taint_interfile_depth $ o_taint_intrafile
     $ o_effect_guards
     $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
