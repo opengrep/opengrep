@@ -130,20 +130,28 @@ let is_relevant_rule_for_xtarget r xconf xtarget =
   in
   let xconf = Match_env.adjust_xconfig_with_rule_options xconf r.R.options in
   let is_relevant =
-    match xconf.filter_irrelevant_rules with
-    | NoPrefiltering -> true
-    | PrefilterWithCache cache -> (
-        match Analyze_rule.regexp_prefilter_of_rule ~cache:(Some cache) r with
-        | None -> true
-        | Some (prefilter_formula, func) ->
-          (* NOTE: If [lazy_content] is shared in > 1 thread, then this is not
-           * thread-safe. However, each [Xtarget.t] is only accessed in 1 worker
-           * task, so there should be no race. *)
-          let content = Lazy.force lazy_content in
-          Log.info (fun m ->
-              let s = Semgrep_prefilter_j.string_of_formula prefilter_formula in
-              m "looking for %s in %s" s !!internal_path_to_content);
-          func content)
+    (* Under taint_interfile a file may hold only sources or only sinks, so
+       taint rules are always relevant (companion files supply the rest). *)
+    let interfile_taint =
+      xconf.config.taint_interfile
+      && (match r.R.mode with `Taint _ -> true | _ -> false)
+    in
+    if interfile_taint then true
+    else
+      match xconf.filter_irrelevant_rules with
+      | NoPrefiltering -> true
+      | PrefilterWithCache cache -> (
+          match Analyze_rule.regexp_prefilter_of_rule ~cache:(Some cache) r with
+          | None -> true
+          | Some (prefilter_formula, func) ->
+            (* NOTE: If [lazy_content] is shared in > 1 thread, then this is not
+             * thread-safe. However, each [Xtarget.t] is only accessed in 1 worker
+             * task, so there should be no race. *)
+            let content = Lazy.force lazy_content in
+            Log.info (fun m ->
+                let s = Semgrep_prefilter_j.string_of_formula prefilter_formula in
+                m "looking for %s in %s" s !!internal_path_to_content);
+            func content)
   in
   if not is_relevant then
     Log.info (fun m ->

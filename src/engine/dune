@@ -15,6 +15,7 @@
    spacegrep
    aliengrep
 
+   parallelism
    semgrep_core
    semgrep_data
    semgrep_fixing
@@ -28,6 +29,7 @@
    ; TODO: we should get rid of this dependency
    semgrep_targeting
    semgrep_reporting; for Test_engine.ml, we should split in tests/ separate dir
+   opengrep_project_index ; in-process call-graph builder
  )
  (inline_tests)
  (preprocess (pps ppx_deriving.show ppx_profiling ppx_inline_test))
