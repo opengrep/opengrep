@@ -228,6 +228,7 @@ let spec_matches_of_taint_rule ~per_file_formula_cache xconf file ast_and_errors
       xlang = rule.target_analyzer;
       lazy_content = lazy (UFile.read_file file);
       lazy_ast_and_errors;
+      project_root = None;
     }
   in
   let (sources_ranges : (RM.t * R.taint_source) list), expls_sources =
@@ -433,12 +434,15 @@ let mk_taint_spec_match_preds rule matches =
 let default_effect_handler _fun_name new_effects = new_effects
 
 let taint_config_of_rule ~per_file_formula_cache
-    ?(handle_effects = default_effect_handler) xconf lang file ast_and_errors
+    ?(handle_effects = default_effect_handler) ?(allow_partial = false)
+    ?(require_sinks = false)
+    xconf lang file ast_and_errors
     ({ mode = `Taint spec; _ } as rule : R.taint_rule) =
   match spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
       ast_and_errors rule with
-  | { sinks = []; _ }, _
-  | { sources = []; _ }, _ -> None
+  | { sinks = []; sources = []; sanitizers = []; propagators = [] }, _ -> None
+  | { sinks = []; _ }, _ when require_sinks -> None
+  | ({ sinks = []; _ } | { sources = []; _ }), _ when not allow_partial -> None
   | spec_matches, expls ->
       let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
       let options = xconf.config in
@@ -447,6 +451,7 @@ let taint_config_of_rule ~per_file_formula_cache
             {
                 lang;
                 file;
+                project_root = None;
                 rule_id = fst rule.R.id;
                 options;
                 track_control =

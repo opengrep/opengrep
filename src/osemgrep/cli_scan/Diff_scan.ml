@@ -36,7 +36,7 @@ module SS = Set.Make (String)
 (*****************************************************************************)
 type diff_scan_func =
   ?explicit_targets:Find_targets.Explicit_targets.t ->
-  Fpath.t list ->
+  Target_and_root.t list ->
   Rule.rules ->
   Core_result.result_or_exn
 
@@ -180,7 +180,21 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                        !!(from_cwd pm.path.internal_path_to_content))
                 |> prepare_targets
               in
-              core ~explicit_targets:baseline_explicit_targets paths_in_match
+              (* Baseline targets carry [project_root = None]: interfile
+                 dispatch falls back to [cwd], which is the baseline worktree
+                 checkout root, so projidx still builds a whole-project graph
+                 and the reproduced interfile findings are removed by the
+                 signature-based diff.  Multi-root scans where the intended
+                 root differs from [cwd] would use the wrong baseline root. *)
+              let wrap_as_targets (fpaths : Fpath.t list)
+                  : Target_and_root.t list =
+                List_.map
+                  (fun (fpath : Fpath.t) : Target_and_root.t ->
+                    { target_fpath = fpath; project_root = None })
+                  fpaths
+              in
+              core ~explicit_targets:baseline_explicit_targets
+                (wrap_as_targets paths_in_match)
                 baseline_rules))
     in
     match baseline_result with
@@ -196,7 +210,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 (*****************************************************************************)
 
 let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
-    (baseline : Find_targets.baseline_ref) (targets : Fpath.t list)
+    (baseline : Find_targets.baseline_ref) (targets : Target_and_root.t list)
     (rules : Rule.rules)
     ~(explicit_targets : Find_targets.Explicit_targets.t)
     (diff_scan_func : diff_scan_func) : Core_result.result_or_exn =
@@ -262,8 +276,8 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
     in
     let added_or_modified_set = Fpath.Set.of_list added_or_modified in
     List.filter
-      (fun (p : Fpath.t) ->
-        Fpath.Set.mem (relative_to_cwd p) added_or_modified_set)
+      (fun ({ Target_and_root.target_fpath; _ }) ->
+        Fpath.Set.mem (relative_to_cwd target_fpath) added_or_modified_set)
       targets
   in
   let (head_scan_result : Core_result.result_or_exn) =

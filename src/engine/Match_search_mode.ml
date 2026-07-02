@@ -268,6 +268,7 @@ let matches_of_patterns ~has_as_metavariable ?mvar_context ?range_filter rule
     xlang;
     lazy_ast_and_errors;
     lazy_content = _;
+    project_root = _;
   } : Xtarget.t =
     xtarget
   in

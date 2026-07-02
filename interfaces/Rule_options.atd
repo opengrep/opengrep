@@ -59,6 +59,10 @@ type t = {
    * The user-visible rule option is [guarded_taint_signatures]; the
    * internal field name stays [effect_guards]. *)
   ~effect_guards <json name="guarded_taint_signatures"> <ocaml default="false"> : bool;
+  (* enable cross-file taint analysis via the in-process project call graph *)
+  ~taint_interfile <ocaml default="false"> : bool;
+  (* maximum call chain depth for companion file discovery *)
+  ~taint_interfile_depth <ocaml default="3"> : int;
 
   (* 'ac' stands for associative-commutative matching *)
   ~ac_matching <ocaml default="true"> : bool;

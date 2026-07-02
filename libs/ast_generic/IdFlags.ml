@@ -18,6 +18,10 @@ let bitmask_CASE_INSENSITIVE = 0x02
 let bitmask_FINAL = 0x04
 let bitmask_STATIC = 0x08
 
+(* Marks a function/method *definition* name, so the matcher can unify two
+   same-named definitions (now distinct positional sids) under one metavar. *)
+let bitmask_FUNCTION_DEF = 0x10
+
 type t = int [@@deriving show, eq, ord, hash]
 
 let empty = 0
@@ -31,6 +35,7 @@ let is_case_insensitive, set_case_insensitive =
 
 let is_final, set_final = make_flag bitmask_FINAL
 let is_static, set_static = make_flag bitmask_STATIC
+let is_function_def, set_function_def = make_flag bitmask_FUNCTION_DEF
 let union x y = Int.logor x y
 let to_int x = x
 

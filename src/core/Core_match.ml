@@ -164,11 +164,15 @@ and rule_id = {
 and rule_id_options  = {
   max_match_per_file : int option;
   (* maximum number of matches per file. *)
+  taint_interfile : bool;
+  (* whether the rule opts into interfile taint via its own options; used
+     at dedup time to decide if the source belongs in the unique key. *)
 }
 [@@deriving show, eq]
 
 let rule_id_options_of_rule_options (opts : Rule_options.t) =
-  { max_match_per_file = opts.max_match_per_file }
+  { max_match_per_file = opts.max_match_per_file;
+    taint_interfile = opts.taint_interfile }
 
 let rule_id_options_of_rule_options_opt (opts : Rule_options.t option) =
   Option.map rule_id_options_of_rule_options opts
