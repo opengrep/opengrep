@@ -207,6 +207,7 @@ type conf = {
   max_target_bytes : int;
   respect_gitignore : bool;
   respect_semgrepignore_files : bool;
+  default_semgrepignore_patterns : Semgrepignore.default_semgrepignore_patterns;
   semgrepignore_filename : string option;
   always_select_explicit_targets : bool;
   explicit_targets : Explicit_targets.t;
@@ -238,6 +239,7 @@ let default_conf : conf =
     max_target_bytes = 1000000;
     respect_gitignore = true;
     respect_semgrepignore_files = true;
+    default_semgrepignore_patterns = Semgrepignore.Semgrep_scan_legacy;
     semgrepignore_filename = None;
     always_select_explicit_targets = false;
     explicit_targets = Explicit_targets.empty;
@@ -330,7 +332,7 @@ let is_always_skipped (ppath : Ppath.t) : bool =
 let filter_path ?(kind : Unix.file_kind option) (ign : Gitignore.filter)
     (include_filter : Include_filter.t option) (fppath : Fppath.t) :
     filter_result =
-  let { fpath; ppath } : Fppath.t = fppath in
+  let { fpath; ppath; _ } : Fppath.t = fppath in
   if is_always_skipped ppath then Ignore_silently
   else
   let status, selection_events = Gitignore_filter.select ign ppath in
@@ -597,7 +599,7 @@ let walk_skip_and_collect (ign : Gitignore.filter)
                  else Fpath.add_seg dir.fpath name
                in
                let ppath = Ppath.add_seg dir.ppath name in
-               let fppath : Fppath.t = { fpath; ppath } in
+               let fppath : Fppath.t = { fpath; ppath; project_root = dir.project_root } in
                match filter_path ign include_filter fppath with
                | Keep -> (
                    match Skip_target.filter_file_access_permissions fpath with
@@ -714,6 +716,8 @@ let git_list_files ~exclude_standard
                                ppath =
                                  Ppath.append_fpath sc_root.ppath
                                    target_relative_to_scan_root;
+                               project_root =
+                                 Some (Rpath.to_fpath project_root);
                              }
                               : Fppath.t)
                         | None ->
@@ -786,7 +790,9 @@ let scanning_root_by_project ~(force_root : Project.t option)
   in
   let project : Project.t = { kind; root = scanning_root_info.project_root } in
   let path : Fppath.t =
-    { fpath = scanning_root_fpath; ppath = scanning_root_info.inproject_path }
+    { fpath = scanning_root_fpath;
+      ppath = scanning_root_info.inproject_path;
+      project_root = Some (Rpath.to_fpath (Rfpath.to_rpath scanning_root_info.project_root)) }
   in
   (project, path)
 
@@ -901,7 +907,7 @@ let setup_path_filters conf (project_roots : Project.roots) :
   let semgrepignore_filter =
     Semgrepignore.create ~cli_patterns:conf.exclude ?working_directory
       ?semgrepignore_filename:conf.semgrepignore_filename
-      ~default_semgrepignore_patterns:Semgrep_scan_legacy
+      ~default_semgrepignore_patterns:conf.default_semgrepignore_patterns
       ~exclusion_mechanism
       ~project_root:(Rfpath.to_fpath project_root)
       ()
@@ -1146,3 +1152,16 @@ let get_targets conf scanning_roots : Fppath.t targets =
 let get_target_fpaths conf scanning_roots =
   let v = get_targets conf scanning_roots in
   { v with selected = List_.map (fun { Fppath.fpath; _ } -> fpath) v.selected }
+
+(* FIXME: Adapt as above. *)
+let get_target_fpaths_with_project_roots (conf : conf)
+    (scanning_roots : Scanning_root.t list) :
+    Target_and_root.t targets =
+  let v = get_targets conf scanning_roots in
+  let enriched =
+    List_.map
+      (fun ({ Fppath.fpath; project_root; _ } : Fppath.t) ->
+        ({ target_fpath = fpath; project_root } : Target_and_root.t))
+      v.selected
+  in
+  { selected = enriched; skipped = v.skipped; git_repo = v.git_repo }

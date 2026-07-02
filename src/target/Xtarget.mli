@@ -10,6 +10,9 @@ type t = {
   lazy_content : string lazy_t;
   lazy_ast_and_errors : (AST_generic.program * Tok.location list) lazy_t;
       (** This is valid only for xlang = Xlang.L ..., not for LRegex|LGeneric *)
+  project_root : Fpath.t option;
+      (** Absolute filesystem path to the project root, threaded from
+          [Find_targets].  Used by the interfile taint engine. *)
 }
 
 val resolve :

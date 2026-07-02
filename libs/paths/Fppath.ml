@@ -11,6 +11,12 @@
  * keep both the fpath and ppath for each target file as we walked
  * down the filesystem hierarchy.
  *)
-type t = { fpath : Fpath.t; ppath : Ppath.t } [@@deriving show]
+type t = {
+  fpath : Fpath.t;
+  ppath : Ppath.t;
+  (* Absolute project root; absent only for targets built outside
+     Find_targets (e.g. in tests). *)
+  project_root : Fpath.t option;
+} [@@deriving show]
 
 let compare a b = Fpath.compare a.fpath b.fpath

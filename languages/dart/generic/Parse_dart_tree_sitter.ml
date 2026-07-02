@@ -853,8 +853,7 @@ and map_constructor_param (env : env)
     | Some x -> map_final_const_var_or_type env x
     | None -> ([], None)
   in
-  (* Choosing to ignore the `this` for the more useful name of the variable. *)
-  let _v2 = (* "this" *) token env v2 in
+  let v2 = (* "this" *) token env v2 in
   let _v3 = (* "." *) token env v3 in
   let v4 = (* pattern [a-zA-Z_$][\w$]* *) str env v4 in
   let _typarams_TODO, _params_TODO =
@@ -862,7 +861,10 @@ and map_constructor_param (env : env)
     | Some x -> map_formal_parameter_part env x
     | None -> (None, fb [])
   in
-  Param (param_of_id ~pattrs ?ptype v4)
+  (* Mark as a Dart "initializing formal": the constructor body later injects
+     [this.X = X] so field-tracking sees the implicit field write. *)
+  let init_formal_marker = unhandled_keywordattr ("InitFormal", v2) in
+  Param (param_of_id ~pattrs:(init_formal_marker :: pattrs) ?ptype v4)
 
 and map_declared_identifier (env : env)
     ((v1, v2, v3, v4) : CST.declared_identifier) :
@@ -3076,6 +3078,29 @@ let map_mixin_application_class ~attrs ~class_tok (env : env)
   let _sc = map_semicolon env v5 in
   DefStmt (basic_entity id ~attrs ?tparams, cdef) |> G.s
 
+(* Materialise [this.X = X] for Dart initializing formals (Params marked
+   "InitFormal" by [map_constructor_param]). *)
+let is_init_formal_attr (attr : G.attribute) : bool =
+  match attr with
+  | NamedAttr (_, Id (("InitFormal", _), _), _) -> true
+  | _ -> false
+
+let init_formal_assignments (fparams : parameter list) : expr list =
+  List.filter_map
+    (fun (p : parameter) ->
+      match p with
+      | Param { pname = Some (n, ntok); pattrs; _ }
+        when List.exists is_init_formal_attr pattrs ->
+          let this = IdSpecial (This, ntok) |> G.e in
+          let lhs =
+            DotAccess (this, fake ".", FN (Id ((n, ntok), empty_id_info ())))
+            |> G.e
+          in
+          let rhs = N (Id ((n, ntok), empty_id_info ())) |> G.e in
+          Some (Assign (lhs, ntok, rhs) |> G.e)
+      | _ -> None)
+    fparams
+
 (* For use to augment the body of a function with "initializers", which are
    code that runs prior to the body of the constructor, on invocation.
    https://dart.dev/language/constructors#initializer-list
@@ -3105,7 +3130,10 @@ let map_method_signature (env : env) (x : CST.method_signature) (attrs, body) =
         | None -> []
       in
       let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
-      let fbody = augment_body v2 body in
+      let fbody =
+        augment_body
+          (init_formal_assignments (Tok.unbracket fparams) @ v2) body
+      in
       DefStmt
         ( ent,
           FuncDef
@@ -3261,7 +3289,11 @@ let map_declaration_ ?(attrs = []) (env : env) (x : CST.declaration_) :
         | None -> []
       in
       let ent = { name = EN (H2.name_of_ids dotted); attrs; tparams = None } in
-      let fbody = augment_body initializers FBNothing in
+      let fbody =
+        augment_body
+          (init_formal_assignments (Tok.unbracket fparams) @ initializers)
+          FBNothing
+      in
       [
         DefStmt
           ( ent,

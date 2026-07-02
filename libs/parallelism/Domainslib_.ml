@@ -59,7 +59,23 @@ let parmap _caps ?(chunksize=1) ~num_domains ~exception_handler f xs =
              * even with [chunk_size] equal to 1. Because it may be the same
              * thread that runs > 1 task, in sequence since [chunk_size = 1],
              * as they are fed into each domain. *)
-            ~chunk_size:chunksize 
+            ~chunk_size:chunksize
+            ~body:(fun i -> res_array.(i) <- Some (f' xs_array.(i)))));
+  Array.map Option.get res_array |> Array.to_list
+
+(* Like [parmap] but does NOT enforce [chunksize=1]; only safe for workers that
+   avoid Memprof_limits / TLS.  Body duplicated on purpose: sharing a helper cost
+   ~2x throughput in benchmarking. *)
+let parmap_no_memprof _caps ?(chunksize=1) ~num_domains ~exception_handler f xs =
+  let num_domains = min num_domains (get_cpu_count ()) in
+  let pool = T.setup_pool ~num_domains:(num_domains - 1) () in
+  let xs_array = Array.of_list xs in
+  let res_array = Array.make (Array.length xs_array) None in
+  let f' x = wrap_result f ~exception_handler x in
+  Common.protect ~finally:(fun () -> T.teardown_pool pool) (fun () ->
+      T.run pool (fun () ->
+          T.parallel_for pool ~start:0 ~finish:(Array.length xs_array - 1)
+            ~chunk_size:chunksize
             ~body:(fun i -> res_array.(i) <- Some (f' xs_array.(i)))));
   Array.map Option.get res_array |> Array.to_list
 
