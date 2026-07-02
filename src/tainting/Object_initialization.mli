@@ -16,8 +16,16 @@ type object_mapping = AST_generic.name * AST_generic.name
 (* Main API *)
 (*****************************************************************************)
 
-(* Detect object initialization patterns in an AST for the given language *)
-val detect_object_initialization : AST_generic.program -> Lang.t -> object_mapping list
+(* [extra_class_names] supplies project-wide/interfile classes, deduped.
+   Pure: the result is published onto the AST via [stamp_id_types]. *)
+val detect_object_initialization :
+  ?extra_class_names:AST_generic.name list ->
+  AST_generic.program -> Lang.t -> object_mapping list
+
+(* Stamp each mapping's class onto every occurrence's [id_type]
+   (fill-on-None; a [TyFun] [id_type] is overwritten — C++'s most
+   vexing parse). First mapping per leaf wins. *)
+val stamp_id_types : object_mapping list -> AST_generic.program -> unit
 
 (* Collect all class names from an AST *)
 val collect_class_names : AST_generic.program -> AST_generic.name list

@@ -259,15 +259,20 @@ type env = {
   in_lvalue : bool ref;
   in_type : bool ref;
   lang : Lang.t;
+  (* The real file being resolved.  A resolved name's sid is its definition
+     token's place within this file (see [AST_generic.SId]); naming processes
+     a single file, so the token's file and this one coincide. *)
+  file : string;
 }
 
-let default_env lang =
+let default_env lang file =
   {
     ctx = ref [ AtToplevel ];
     names = default_scopes ();
     in_lvalue = ref false;
     in_type = ref false;
     lang;
+    file;
   }
 
 (*****************************************************************************)
@@ -484,7 +489,7 @@ let params_of_parameters env params : scope =
   params |> Tok.unbracket
   |> List_.filter_map (function
        | Param { pname = Some id; pinfo = id_info; ptype = typ; _ } ->
-           let sid = SId.mk () in
+           let sid = SId.of_tok ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -496,7 +501,7 @@ let params_of_parameters env params : scope =
         * [visit_function_definition] iterates [x.fparams] inside the
         * function scope and visits each pattern. *)
        | ParamPattern (_pat, { pname = Some id; pinfo = id_info; ptype = typ; _ }) ->
-           let sid = SId.mk () in
+           let sid = SId.of_tok ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -514,7 +519,7 @@ let params_of_parameters env params : scope =
          when (match env.lang with
                | Lang.Ruby | Lang.Php -> true
                | _ -> false) ->
-           let sid = SId.mk () in
+           let sid = SId.of_tok ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -545,7 +550,7 @@ let js_get_angular_constructor_args env attrs defs =
 
 let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
     ~explicit vinit vtype =
-  let sid = SId.mk () in
+  let sid = SId.of_tok ~file:env.file (snd id) in
   (* for the type, we use the (optional) type in vtype, or, if we can infer
    * the type of the expression vinit (literal or id), we use that as a type
    * useful when the type is not given, e.g. in Go: `var x = 2` *)
@@ -668,7 +673,7 @@ class ['self] resolve_visitor env lang =
               _;
             } )
         when lang =*= Lang.Js || lang =*= Lang.Ts ->
-          let sid = SId.mk () in
+          let sid = SId.of_tok ~file:env.file (snd id) in
           let canonical = dotted_to_canonical [ file ] in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
@@ -722,7 +727,7 @@ class ['self] resolve_visitor env lang =
                             } );
                     _;
                   } ->
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~file:env.file (snd local_id) in
                   let canonical = dotted_to_canonical [ file; imported_id ] in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -769,40 +774,40 @@ class ['self] resolve_visitor env lang =
           self#visit_pattern venv pat
       | { name = EN (Id (id, id_info)); _ }, FuncDef _
         when is_resolvable_name_ctx env lang ->
-          (match lang with
-          (* We restrict function-name resolution to JS/TS.
+          (* A function definition resolves to a positional sid via [of_tok] —
+           * its identity is then [(name, file, line, col)], the same key
+           * [Function_id] uses, so a call resolving to this name carries the
+           * def's identity (interprocedural analysis).
            *
-           * Note that this causes problems with Python rule/test:
+           * Scope: JS/TS resolve function names in any context (the
+           * interprocedural feature those users requested, semgrep#2787).
+           * Other languages resolve only *top-level* function defs.  Resolving
+           * class methods / nested functions regressed interprocedural taint —
+           * a helper method sanitizing its argument stopped being recognized
+           * (the Java XXE rules, which have a duplicated [setFeatures] helper).
+           * Top-level functions are what name-based rules need (e.g. flask
+           * same-handler-name).
            *
-           *     semgrep-rules/python/flask/correctness/same-handler-name.yaml
-           *
-           * This rule tries to match two different functions using the same
-           * meta-variable. This works when the function names are not resolved,
-           * but breaks when each function gets a unique sid.
-           *
-           * Function-name resolution is useful for interprocedural analysis,
-           * feature that was requested by JS/TS users, see:
-           *
-           *     https://github.com/semgrep/semgrep/issues/2787.
-           *)
-          | Lang.Js
-          | Lang.Ts ->
-              let sid = SId.mk () in
-              let resolved = untyped_ent (resolved_name_kind env lang, sid) in
-              (* Previously we tried using add_ident_current_scope, but this
-               * shadowed imported function names which are added to the
-               * "imported" scope (globals/block scope is looked up first)
-               * even when the import statement comes after...
-               * This broke the following test:
-               *
-               *     semgrep-rules/python/django/security/audit/raw-query.py
-               *
-               * For now we add function names also to the "imported" scope...
-               * but do we need a special scope for imported functions?
-               *)
-              add_ident_imported_scope id resolved env.names;
-              set_resolved env id_info resolved
-          | ___else___ -> ());
+           * We add the name to the "imported" scope (not current scope):
+           * current scope shadowed imported function names even when the
+           * import came later, breaking
+           *   semgrep-rules/python/django/security/audit/raw-query.py. *)
+          let resolve =
+            match lang with
+            | Lang.Js
+            | Lang.Ts ->
+                true
+            | _ -> ( match top_context env with AtToplevel -> true | _ -> false)
+          in
+          if resolve then (
+            let sid = SId.of_tok ~file:env.file (snd id) in
+            let resolved = untyped_ent (resolved_name_kind env lang, sid) in
+            add_ident_imported_scope id resolved env.names;
+            set_resolved env id_info resolved;
+            (* Mark the name as a function definition so the matcher can still
+               unify two same-named defs — which now resolve to distinct
+               positional sids — under a single metavar. *)
+            id_info.id_flags := IdFlags.set_function_def !(id_info.id_flags));
           super#visit_definition venv x
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           let s = Tok.content_of_tok tok in
@@ -827,7 +832,7 @@ class ['self] resolve_visitor env lang =
       | ( { name = EN (Id (id, id_info)); _ },
           ModuleDef { mbody = ModuleAlias xs } ) ->
           (* similar to the ImportAs case *)
-          let sid = SId.mk () in
+          let sid = SId.of_tok ~file:env.file (snd id) in
           let canonical = dotted_to_canonical xs in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
@@ -850,7 +855,7 @@ class ['self] resolve_visitor env lang =
             (function
               | id, Some (alias, id_info) ->
                   (* for python *)
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~file:env.file (snd alias) in
                   let canonical = dotted_to_canonical (xs @ [ id ]) in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -859,7 +864,7 @@ class ['self] resolve_visitor env lang =
                   add_ident_imported_scope alias resolved env.names
               | id, None ->
                   (* for python *)
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~file:env.file (snd id) in
                   let canonical = dotted_to_canonical (xs @ [ id ]) in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -875,7 +880,7 @@ class ['self] resolve_visitor env lang =
                    * Note that we guard this code with is_js lang, because Python
                    * uses also Filename in 'from ...conf import x'.
                    *)
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~file:env.file (snd id) in
                   let _, b, _ = Filename_.dbe_of_filename_noext_ok s in
                   let base = (b, tok) in
                   let canonical = dotted_to_canonical [ base; id ] in
@@ -886,7 +891,7 @@ class ['self] resolve_visitor env lang =
               | id, Some (alias, id_info)
                 when Lang.is_js lang && fst id <> Ast_js.default_entity ->
                   (* for JS *)
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~file:env.file (snd alias) in
                   let _, b, _ = Filename_.dbe_of_filename_noext_ok s in
                   let base = (b, tok) in
                   let canonical = dotted_to_canonical [ base; id ] in
@@ -899,14 +904,14 @@ class ['self] resolve_visitor env lang =
             imported_names
       | ImportAs (_, DottedName xs, Some (alias, id_info)) ->
           (* for python *)
-          let sid = SId.mk () in
+          let sid = SId.of_tok ~file:env.file (snd alias) in
           let canonical = dotted_to_canonical xs in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
           add_ident_imported_scope alias resolved env.names
       | ImportAs (_, FileName (s, tok), Some (alias, id_info)) ->
           (* for Go *)
-          let sid = SId.mk () in
+          let sid = SId.of_tok ~file:env.file (snd alias) in
           let pkgname = go_package_alias s in
           let base = (pkgname, tok) in
           let canonical = dotted_to_canonical [ base ] in
@@ -1028,8 +1033,9 @@ class ['self] resolve_visitor env lang =
                  because that is the only one that could be
                  imported *)
               | Some { entname = ImportedEntity xs, _sidm; _ } ->
-                  (* The entity is fully qualified, no need for sid *)
-                  let sid = SId.unsafe_default in
+                  (* Fully qualified — identity is the canonical name, not the
+                     sid; still anchor the sid at the name's real place. *)
+                  let sid = SId.of_tok ~file:env.file (snd id) in
                   let rest_of_middle = List_.map fst rest_of_middle in
                   let canonical =
                     xs @ dotted_to_canonical (rest_of_middle @ [ id ])
@@ -1252,7 +1258,14 @@ class ['self] resolve_visitor env lang =
   end
   
 let resolve lang prog =
-  let env = default_env lang in
+  (* The real file of the program, read off its first real token; used to
+     stamp every resolved-name sid with its genuine source path. *)
+  let file =
+    match AST_generic_helpers.range_of_any_opt (Pr prog) with
+    | Some (loc, _) -> Fpath.to_string (Fpath.normalize loc.Tok.pos.file)
+    | None -> ""
+  in
+  let env = default_env lang file in
 
   (* coupling: we do similar things in Constant_propagation.ml so if you
    * add a feature here, you might want to add a similar thing over there too.

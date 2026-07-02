@@ -461,6 +461,7 @@ let pp_param p =
   match p with
   | Param { pname; _ } -> pp_name pname
   | ParamRest { pname; _ } -> "..." ^ pp_name pname
+  | ParamReceiver { pname; _ } -> "self:" ^ pp_name pname
   | ParamPattern ({ pname; _ }, _) -> "<pattern>" ^ pp_name pname
   | ParamFixme -> "<fixme>"
 

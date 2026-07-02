@@ -1,6 +1,6 @@
 (** Function identifiers  **)
 
-(* This module defines a type used to identify functions globally. 
+(* This module defines a type used to identify functions globally.
    It is used as the type of nodes in the call graph and as keys in
    the signature database. It is abstract and can be constructed from
    an IL.name that is used in _function definition_, but not a name
@@ -8,26 +8,24 @@
    graph to translate the call-site identifier to the proper id of the
    function that it referes to. *)
 
-(* TODO: Keep the file paths always normalized, which should
-   speed up comparison. *)
+(* Comparison key precomputed so hash/compare/equal stay Fpath-free in hot loops. *)
+type t = {
+  ident : IL.ident;
+  key : string * string * int * int;
+}
 
-type t = IL.ident
- 
 (* Helper to extract normalized key for node comparison.
    Resolves file paths to canonical form to handle different representations
    of the same file (e.g., /foo/bar vs /foo/baz/../bar). *)
 let normalize_file (file : Fpath.t) : string =
   Fpath.to_string (Fpath.normalize file)
 
-let key ((id, tok) : t) =
-  (* For lambda names (starting with "_tmp_lambda"), extract position even from
-   * fake tokens that have position info. This is important for distinguishing
-   * different lambdas that would otherwise all collide on the same name.
-   * For regular functions with fake tokens, use empty key
-   * to preserve the original matching behavior. *)
+let compute_key ((id, tok) : IL.ident) : string * string * int * int =
+  (* Lambdas/[<top_level>] bake the file into the key so vertices don't collide on name; other fake tokens keep the empty key. *)
   let is_lambda_name = String.starts_with ~prefix:"_tmp_lambda" id in
+  let is_top_level = String.equal id "<top_level>" in
   if Tok.is_fake tok then
-    if is_lambda_name then
+    if is_lambda_name || is_top_level then
       match Tok.loc_of_tok tok with
       | Ok loc ->
           (id, normalize_file loc.Tok.pos.file, loc.Tok.pos.line, loc.Tok.pos.column)
@@ -41,50 +39,94 @@ let key ((id, tok) : t) =
     let col = Tok.col_of_tok tok in
     (id, normalize_file file, line, col)
 
-let hash (v : t) = Hashtbl.hash (key v)
+let hash (v : t) : int = Hashtbl.hash v.key
 
-(* TODO: mind the followinf definition from Sig_and_shape *)
-(* Compare IL.name by string name and position to differentiate functions with
-   the same name in different modules/classes. This matches FuncVertex
-   in Function_call_graph.ml. *)
-(*
-let compare_func_key n1 n2 =
-  let open Tok in
-  let st = String.compare (fst n1.IL.ident) (fst n2.IL.ident) in
+let compare_key ((n1, f1, l1, c1) : string * string * int * int)
+    ((n2, f2, l2, c2) : string * string * int * int) : int =
+  let st = String.compare n1 n2 in
   if st <> 0 then st
   else
-    match (snd n1.IL.ident, snd n2.IL.ident) with
-    | FakeTok _, FakeTok _ -> 0
-    | FakeTok _, _ -> -1
-    | _, FakeTok _ -> 1
-    | _ -> Tok.compare_pos (snd n1.IL.ident) (snd n2.IL.ident)
-*)
+    let sf = String.compare f1 f2 in
+    if sf <> 0 then sf
+    else
+      let sl = Int.compare l1 l2 in
+      if sl <> 0 then sl
+      else Int.compare c1 c2
 
 let compare (n1 : t) (n2 : t) : int =
-  compare (key n1) (key n2)
+  compare_key n1.key n2.key
 
 let equal (n1 : t) (n2 : t) : bool =
-  key n1 = key n2
+  Int.equal (compare_key n1.key n2.key) 0
 
-let tok ((_, tok) : t) : Tok.t = tok
+let tok ({ident = (_, tok); _} : t) : Tok.t = tok
 
-let show ((id, _) : t) : string =
-  id
+let show (v : t) : string =
+  fst v.ident
 
-let show_debug (id, tok) : string =
-  let (kid, kfile, kline, kcol) = key (id, tok) in
+let show_debug (v : t) : string =
+  let (kid, kfile, kline, kcol) = v.key in
   Printf.sprintf "%s [key=(%s,%s,%d,%d)] (%s)"
-    id kid kfile kline kcol (Tok.stringpos_of_tok tok)
+    (fst v.ident) kid kfile kline kcol
+    (Tok.stringpos_of_tok (snd v.ident))
 
 let of_il_name (n : IL.name) : t =
-  n.IL.ident
+  let ident = n.IL.ident in
+  { ident; key = compute_key ident }
 
-(* Unlike [key], we don't gate on is_lambda_name here: this is only used for
-   display/serialization, not identity, so extracting position from any fake
-   token that has it is strictly better than returning "unknown". *)
-let to_file_line_col ((_, tok) : t) : string * int * int =
+let of_string_and_tok (name : string) (tok : Tok.t) : t =
+  let ident = (name, tok) in
+  { ident; key = compute_key ident }
+
+(* Key rebuilt from the sid so it compares equal to [of_il_name] of the same def. *)
+let of_sid (sid : AST_generic.sid) : t =
+  let (name, file, line, col) = AST_generic.SId.to_loc sid in
+  let key =
+    if String.equal file "" then (name, "", line, col)
+    else (name, normalize_file (Fpath.v file), line, col)
+  in
+  { ident = (name, Tok.unsafe_fake_tok name); key }
+
+let key (v : t) = v.key
+
+let to_file_line_col (v : t) : string * int * int =
+  let (_name, file_str, line, col) = v.key in
+  if String.equal file_str "" then ("unknown", 0, 0)
+  else (file_str, line, col)
+
+let file_of (v : t) : Fpath.t option =
+  let (_name, file_str, _line, _col) = v.key in
+  if String.equal file_str "" then None
+  else Some (Fpath.v file_str)
+
+let make_absolute (project_root : Fpath.t) (v : t) : t =
+  let (name, tok) = v.ident in
+  let absolutize file =
+    if Fpath.is_abs file then None
+    else Some (Fpath.(project_root // file) |> Fpath.normalize)
+  in
+  let with_abs_loc loc abs_file =
+    let new_loc = { loc with Tok.pos = { loc.Tok.pos with Pos.file = abs_file } } in
+    (* [Tok.fix_location] leaves located fakes UNCHANGED; rebuild via [fake_tok_loc] so the new location reaches [compute_key]. *)
+    let new_tok =
+      if Tok.is_fake tok then Tok.fake_tok_loc new_loc name
+      else Tok.fix_location (fun _ -> new_loc) tok
+    in
+    let new_ident = (name, new_tok) in
+    { ident = new_ident; key = compute_key new_ident }
+  in
   if Tok.is_fake tok then
+    (* Located fakes bake file into key; absolutize them. *)
     match Tok.loc_of_tok tok with
-    | Ok loc -> (normalize_file loc.Tok.pos.file, loc.Tok.pos.line, loc.Tok.pos.column)
-    | _ -> ("unknown", 0, 0)
-  else (normalize_file (Tok.file_of_tok tok), Tok.line_of_tok tok, Tok.col_of_tok tok)
+    | Ok loc ->
+      (match absolutize loc.Tok.pos.file with
+       | None -> v
+       | Some abs_file -> with_abs_loc loc abs_file)
+    | _ -> v
+  else
+    match Tok.loc_of_tok tok with
+    | Ok loc ->
+      (match absolutize loc.Tok.pos.file with
+       | None -> v
+       | Some abs_file -> with_abs_loc loc abs_file)
+    | _ -> v
