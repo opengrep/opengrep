@@ -1,0 +1,37 @@
+; Library form — exposes [Main.collect] so the engine can build the
+; project call graph inline (no subprocess).
+(library
+ (name opengrep_project_index)
+ (public_name semgrep.opengrep_project_index)
+ (modules Main Index_lang_rules Fixpoint Edge_emitter Discover Types Pipeline Nonfatal Go_inheritance Go_modules Mro Ts_class_aliases Structural_dispatch Reexports Func_index Cjs_exports Visibility Log_projidx)
+ (libraries
+   cmdliner
+   commons
+   fpath
+   logs
+   otoml
+   ast_generic
+   semgrep_configuring
+   semgrep_core
+   semgrep.il
+   pfff-lang_GENERIC-analyze
+   semgrep.parsing_languages
+   semgrep.targeting
+   semgrep.tainting
+   call_graph
+   parallelism
+   process_limits
+   TCB
+ ))
+
+; Thin executable: just runs the library's [cmd].
+(executable
+ (name Cli)
+ (modules Cli)
+ (libraries opengrep_project_index cmdliner)
+ (modes native))
+
+(install
+ (package semgrep)
+ (section bin)
+ (files (Cli.exe as opengrep-project-index)))

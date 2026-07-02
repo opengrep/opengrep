@@ -207,3 +207,9 @@ result
 
 # User to hold Windows artifacts such as DLLs
 artifacts/
+/.urme
+/.claude
+
+# project_index benchmark intermediates (committed baselines live under
+# tests/project_index/baseline/).
+/tests/project_index/candidate/
