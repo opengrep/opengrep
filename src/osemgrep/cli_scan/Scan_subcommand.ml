@@ -171,6 +171,7 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
       (* TODO: Print errors like in src/core_cli/Core_CLI.ml *)
       |> fst
       |> Core_json_output.dedup_and_sort
+           ~taint_interfile:conf.core_runner_conf.taint_interfile
            Core_match.(to_rule_id_options_map pms)
     in
     let hrules = Rule.hrules_of_rules rules in
@@ -455,7 +456,7 @@ let check_targets_with_rules
       ; Cap.memory_limit
       ; .. >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
     (rules_and_origins : Rule_fetching.rules_and_origin list)
-    (targets_and_skipped : Fpath.t Find_targets.targets) :
+    (targets_and_skipped : Target_and_root.t Find_targets.targets) :
     (Rule.rule list * Core_runner.result * Out.cli_output, Exit_code.t) result =
   (* step 1: last touch on rules *)
   let rules, invalid_rules =
@@ -519,9 +520,13 @@ let check_targets_with_rules
       (* step 2: printing the skipped targets *)
       let selected = targets_and_skipped.Find_targets.selected
       and skipped = targets_and_skipped.Find_targets.skipped in
+      let target_fpaths =
+        List_.map
+          (fun ({ Target_and_root.target_fpath; _ }) -> target_fpath) selected
+      in
       Log_targeting.Log.debug (fun m ->
           m "%a" Targets_report.pp_targets_debug
-            (conf.target_roots, skipped, selected));
+            (conf.target_roots, skipped, target_fpaths));
       Log_targeting.Log.debug (fun m ->
           skipped
           |> List.iter (fun (x : Semgrep_output_v1_t.skipped_target) ->
@@ -721,7 +726,8 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
       (* step2: getting the targets *)
       Logs.info (fun m -> m "Computing the targets");
       let targets_and_skipped =
-        Find_targets.get_target_fpaths conf.targeting_conf conf.target_roots
+        Find_targets.get_target_fpaths_with_project_roots
+          conf.targeting_conf conf.target_roots
       in
 
       (* step3: let's go *)
@@ -850,7 +856,7 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
         (Common2.some conf.validate)
   | _ when conf.show <> None ->
       Show_subcommand.run_conf
-        (caps :> < Cap.stdout ; Cap.network ; Cap.tmp >)
+        (caps :> < Cap.stdout ; Cap.network ; Cap.tmp ; Cap.fork >)
         (Common2.some conf.show)
   | _ when conf.ls ->
       Ls_subcommand.run ~target_roots:conf.target_roots

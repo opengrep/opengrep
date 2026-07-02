@@ -94,7 +94,11 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
             core_run_func.run runner_conf
               (* TODO: when running with LSP, could the config of matching be needed? *)
               Find_targets.default_conf Match_patterns.default_matching_conf
-              (rules, []) targets)
+              (rules, [])
+              (List_.map
+                (fun (fpath : Fpath.t) : Target_and_root.t ->
+                  { target_fpath = fpath; project_root = None })
+                targets))
           |> Profiler.record profiler ~name:"core_run"
         in
         match res_or_exn with

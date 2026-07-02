@@ -12,6 +12,7 @@ val match_to_match :
 (* now used also in osemgrep *)
 val error_to_error : Core_error.t -> Out.core_error
 val dedup_and_sort :
+  ?taint_interfile:bool ->
   Core_match.rule_id_options Rule_ID.Map.t -> Out.core_match list -> Out.core_match list
 
 (* For unit testing *)

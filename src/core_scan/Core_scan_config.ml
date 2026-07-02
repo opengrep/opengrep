@@ -57,6 +57,8 @@ type t = {
   matching_explanations : bool;
   taint_intrafile : bool;
   effect_guards : bool;
+  taint_interfile : bool;
+  taint_interfile_depth : int;
   strict : bool;
   matching_conf : Match_patterns.matching_conf;
   (* respect or not the paths: directive in a rule. Useful to set to false
@@ -84,6 +86,10 @@ type t = {
   filter_irrelevant_rules : bool;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
+  (* The targeting conf used to discover targets, passed verbatim to
+     [Opengrep_project_index] so its file universe matches Semgrep's target
+     selection.  osemgrep's [Core_runner] overrides the default at scan time. *)
+  targeting_conf : Find_targets.conf;
 }
 [@@deriving show]
 
@@ -111,6 +117,8 @@ let default =
     matching_explanations = false;
     taint_intrafile = false;
     effect_guards = false;
+    taint_interfile = false;
+    taint_interfile_depth = 3;
     strict = false;
     matching_conf = Match_patterns.default_matching_conf;
     respect_rule_paths = true;
@@ -131,4 +139,5 @@ let default =
     filter_irrelevant_rules = true;
     (* Engine configuration *)
     engine_config = Engine_config.default;
+    targeting_conf = Find_targets.default_conf;
   }

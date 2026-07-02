@@ -95,5 +95,7 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       inline_metavariables = false;
       taint_intrafile = settings.taint_intrafile || settings.pro_intrafile;
       effect_guards = false;
+      taint_interfile = false;
+      taint_interfile_depth = 3;
       engine_config = Engine_config.default;
     }

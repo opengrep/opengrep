@@ -38,12 +38,27 @@ val taint_config_of_rule :
         old: In the past one had to use 'handle_effects' to record taint effects
           by side-effect (no pun intended), however this is not needed now because
           'Dataflow_tainting.fixpoint' already returns the set of taint effects. *) ->
+  ?allow_partial:bool
+    (** [true] returns [Some] with only sources or only sinks (both empty
+        still [None]).  Default [false]. *) ->
+  ?require_sinks:bool
+    (** [true] requires a sink even under [allow_partial]; interfile anchors
+        findings at the sink.  Default [false]. *) ->
   Match_env.xconfig ->
   Lang.t ->
   Fpath.t ->
   AST_generic.program * Tok.location list ->
   Rule.taint_rule ->
   (Taint_rule_inst.t * spec_matches * Matching_explanation.t list) option
+
+(* Like [taint_config_of_rule] but keeps source-only/sink-only matches. *)
+val spec_matches_of_taint_rule :
+  per_file_formula_cache:Formula_cache.t ->
+  Match_env.xconfig ->
+  string ->
+  AST_generic.program * Tok.location list ->
+  Rule.taint_rule ->
+  spec_matches * Matching_explanation.t list
 
 (* Exposed for Pro *)
 

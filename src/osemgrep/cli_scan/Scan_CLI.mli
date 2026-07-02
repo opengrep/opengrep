@@ -141,6 +141,7 @@ val o_vim_outputs : string list Cmdliner.Term.t
 val engine_type_conf :
   oss:bool ->
   taint_intrafile:bool ->
+  taint_interfile:bool ->
   pro:bool ->
   secrets:bool ->
   no_secrets_validation:bool ->

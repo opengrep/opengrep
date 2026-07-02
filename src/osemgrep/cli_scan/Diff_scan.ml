@@ -36,7 +36,7 @@ module SS = Set.Make (String)
 (*****************************************************************************)
 type diff_scan_func =
   ?diff_config:Differential_scan_config.t ->
-  Fpath.t list ->
+  Target_and_root.t list ->
   Rule.rules ->
   Core_result.result_or_exn
 
@@ -117,7 +117,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
     (commit : string) (status : Git_wrapper.status)
     (core :
       ?diff_config:Differential_scan_config.t ->
-      Fpath.t list ->
+      Target_and_root.t list ->
       Rule.rules ->
       Core_result.result_or_exn) : Core_result.result_or_exn =
   let/ r = result_or_exn in
@@ -170,6 +170,19 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                        p |> Target.internal_path |> Fpath.to_string)
                 |> prepare_targets
               in
+              (* Baseline targets carry [project_root = None]: interfile
+                 dispatch falls back to [cwd], which is the baseline worktree
+                 checkout root, so projidx still builds a whole-project graph
+                 and the reproduced interfile findings are removed by the
+                 signature-based diff.  Multi-root scans where the intended
+                 root differs from [cwd] would use the wrong baseline root. *)
+              let wrap_as_targets (fpaths : Fpath.t list)
+                  : Target_and_root.t list =
+                List_.map
+                  (fun (fpath : Fpath.t) : Target_and_root.t ->
+                    { target_fpath = fpath; project_root = None })
+                  fpaths
+              in
               let baseline_targets, baseline_diff_targets =
                 match conf.engine_type with
                 | PRO Engine_type.{ analysis = Interprocedural; _ } ->
@@ -185,8 +198,8 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                        only by the file displaying matches but also by its
                        dependencies. Hence, merely rescanning files with
                        matches is insufficient. *)
-                    (all_in_baseline, paths_in_scanned)
-                | _ -> (paths_in_match, [])
+                    (wrap_as_targets all_in_baseline, paths_in_scanned)
+                | _ -> (wrap_as_targets paths_in_match, [])
               in
               core
                 ~diff_config:
@@ -204,7 +217,8 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 (*****************************************************************************)
 
 let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) (baseline_commit : string) (targets : Fpath.t list)
+    (profiler : Profiler.t) (baseline_commit : string)
+    (targets : Target_and_root.t list)
     (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
     Core_result.result_or_exn =
   Logs.info (fun m ->
@@ -222,7 +236,8 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
       let targets_modified_or_added =
         let added_or_modified_set = Fpath.Set.of_list added_or_modified in
         List.filter
-          (fun p -> Fpath.Set.mem p added_or_modified_set)
+          (fun ({ Target_and_root.target_fpath; _ }) ->
+            Fpath.Set.mem target_fpath added_or_modified_set)
           targets
       in
       (targets_modified_or_added, [])
