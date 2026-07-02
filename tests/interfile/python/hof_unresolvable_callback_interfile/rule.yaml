@@ -1,0 +1,34 @@
+rules:
+  - id: hof-unresolvable-callback-interfile
+    languages: [python]
+    severity: ERROR
+    message: >
+      Regression for Sig_inst.preserve_effect (§ 6 A1) in the interfile
+      setting.  hof.py defines `apply(cb, x): return cb(x)`, whose
+      signature carries a ToSinkInCall obligation { callee=cb (arg 0),
+      arg=1 (= x) }.  main.py's `wrapper(callback, data)` calls
+      apply(unknown_sanitizer, data) where `unknown_sanitizer` is
+      undefined — fun_sig_opt = None and the obligation's callee does
+      NOT bind to any BArg of `wrapper`.
+
+      The fix returns []; the buggy old behaviour preserved the
+      effect with the inner function's arg index (= 0), which when
+      re-keyed against `wrapper`'s params aliased to `callback`
+      (param 0).  At the outer site `wrapper(propagates, source())`,
+      this phantom alias makes the engine believe `callback(source())`
+      reaches the sink, producing a false positive on the
+      `# ok:` line below.
+
+      The intrafile variant of this test (apply defined in same file)
+      is in tests/rules/cross_function_tainting/.  This is the
+      interfile variant: apply's signature is extracted from hof.py
+      and instantiated when wrapper is analysed in main.py — a
+      different code path through Match_taint_spec / Sig_inst that
+      could regress independently.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

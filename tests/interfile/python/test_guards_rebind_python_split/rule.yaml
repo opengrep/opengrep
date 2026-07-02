@@ -1,0 +1,15 @@
+rules:
+  - id: test-guards-rebind
+    message: Guard rebinding across a call chain at signature instantiation
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+      taint_intrafile: true
+      guarded_taint_signatures: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,19 @@
+rules:
+  - id: sql-injection-via-interface-dispatch
+    languages: [go]
+    severity: ERROR
+    message: >
+      User-controlled input from a URL query parameter flows into a SQL
+      query via an interface method dispatch.  The taint path crosses
+      three files: handler/handler.go (source) -> iface/store.go
+      (interface dispatch) -> impl/real.go (sink).
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.URL.Query().Get($PARAM)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.Query($CTX, $QUERY)
+          - focus-metavariable: $QUERY

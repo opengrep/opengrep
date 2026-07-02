@@ -1,0 +1,1 @@
+fun sink(x: String) {}

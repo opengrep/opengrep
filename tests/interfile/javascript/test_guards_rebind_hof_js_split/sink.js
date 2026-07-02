@@ -1,0 +1,2 @@
+function sink(_x) {
+}

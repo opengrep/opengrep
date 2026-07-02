@@ -1,0 +1,27 @@
+rules:
+  - id: relative-import-non-init
+    languages: [python]
+    severity: ERROR
+    message: >
+      Regression for [from . import x] inside a non-package module
+      (i.e. a regular .py file whose containing dir has an
+      __init__.py).  In [pkg/main.py], [from . import helpers]
+      should resolve [helpers] to the qn [pkg.helpers] — but
+      [module_name_string] used to compute drops relative to the
+      module's own path including the file's leaf segment, so the
+      qn came out as [pkg.main.helpers], which doesn't match any
+      file in [funcs_by_module_qn].  The bug silently dropped the
+      call edge from [main.py] to [helpers.py:get_tainted], so
+      interfile taint never followed the cross-file flow from
+      [input()] (in helpers.py) to [sink(...)] (in main.py).
+
+      Distinct from [init_reexport_passthrough]: that test exercises
+      a re-export through [__init__.py]; this one exercises a
+      relative import that bypasses [__init__.py] entirely.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: input()
+    pattern-sinks:
+      - pattern: sink(...)

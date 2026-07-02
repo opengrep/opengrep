@@ -1,0 +1,22 @@
+rules:
+  - id: interface-embedding-dispatch
+    languages: [go]
+    severity: ERROR
+    message: >
+      User input flows through a Client interface whose Authenticate
+      method is inherited via interface embedding (Client embeds
+      auth.Authenticator).  Embedded methods are parsed as Spread
+      expressions in the interface body, not as FuncDefs, so without
+      explicit embedding inheritance Client.Authenticate would be
+      absent from Type_state.methods[Client] and the dispatch edge
+      would not exist.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.URL.Query().Get($PARAM)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.Query($QUERY)
+          - focus-metavariable: $QUERY

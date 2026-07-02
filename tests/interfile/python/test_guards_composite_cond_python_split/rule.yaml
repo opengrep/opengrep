@@ -1,0 +1,15 @@
+rules:
+  - id: test-guards-composite-cond
+    message: Guard whose condition embeds a composite must survive rebinding
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+      taint_intrafile: true
+      guarded_taint_signatures: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

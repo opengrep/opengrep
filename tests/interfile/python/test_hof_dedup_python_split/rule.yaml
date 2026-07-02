@@ -1,0 +1,16 @@
+rules:
+  - id: test-hof-dedup
+    message: Exercise dedup_sig_effects + recursive_cache in Sig_inst
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-sanitizers:
+      - pattern: sanitize(...)

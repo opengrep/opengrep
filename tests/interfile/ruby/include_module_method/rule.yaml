@@ -1,0 +1,21 @@
+rules:
+  - id: include-module-method
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      User input flows from app.rb through `App#process`, where
+      `process` is NOT defined directly on App — it is brought in
+      via `include Helpers` from helpers.rb.  Ruby's parser emits
+      `include Helpers` as a regular method call inside the class
+      body, NOT as a parent edge in the class entity.  projidx's
+      `class_body_extra_parents` hook detects the `include` call
+      and appends `Helpers` to App's MRO so that method lookup of
+      `process` on an App instance resolves to Helpers#process.
+      Without that hook the dispatch edge is missing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink(...)
