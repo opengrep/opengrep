@@ -152,6 +152,7 @@ let fix_poly_taint_with_offset offset taints =
             (* Not a method call (to the best of our knowledge) or
              * an unresolved Java `getX` method. *)
              taints
+             (* [f] rewrites the taint identity (Map key), so must re-key. *)
              |> Taints.map_taint (fun (taint : T.taint) ->
                     match taint.orig with
                     | Var lval ->
@@ -660,11 +661,15 @@ let update_offset_and_unify new_taints new_shape offset opt_cell =
             || Taints.cardinal taints < !Flag_semgrep.max_taint_set_size
           then (Xtaint.union new_xtaint xtaint, shape)
           else (
+            (* nosemgrep: no-logs-in-library *)
             Log.warn (fun m ->
                 m
-                  "Already tracking too many taint sources for %s, will not \
-                   track more"
-                  (offset |> List_.map T.show_offset |> String.concat ""));
+                  "TAINT_SET_SATURATED: offset=%s cardinal=%d dropping=%d"
+                  (offset |> List_.map T.show_offset |> String.concat "")
+                  (Taints.cardinal taints)
+                  (match new_xtaint with
+                   | `Tainted new_ts -> Taints.cardinal new_ts
+                   | _ -> 0));
             (xtaint, shape))
     in
     update_offset_in_cell ~f:add_new_taints offset cell

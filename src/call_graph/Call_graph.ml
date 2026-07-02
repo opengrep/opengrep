@@ -11,9 +11,15 @@ let equal_node = Function_id.equal
 
 let show_node = Function_id.show
 
+type edge_kind =
+  | Call
+  | Dispatch  (** implementation <-> interface *)
+[@@deriving show, eq, ord]
+
  (** Call graph edge - represents a call from one function to another *)
 type edge = {
   call_site : Pos.t;
+  kind : edge_kind;
 }
 [@@deriving show, eq, ord]
 
@@ -21,6 +27,7 @@ type edge = {
    Never actually used since we always call G.add_edge_e with explicit labels. *)
 let default_edge = {
   call_site = { Pos.bytepos = 0; line = 0; column = 0; file = Fpath.v "." };
+  kind = Call;
 }
 
 (** The call graph module - bidirectional labeled graph *)
@@ -72,17 +79,17 @@ let pos_of_tok (tok : Tok.t) : Pos.t =
     let loc = Tok.unsafe_loc_of_tok tok in
     { Pos.bytepos = loc.pos.bytepos; line = loc.pos.line; column = loc.pos.column; file = loc.pos.file }
 
-(* Helper to create an edge label from callee node and call site token *)
-let mk_edge_label (call_tok : Tok.t) : edge =
-  { call_site = pos_of_tok call_tok }
+(* Helper to create an edge label from call site token and optional kind *)
+let mk_edge_label ?(kind : edge_kind = Call) (call_tok : Tok.t) : edge =
+  { call_site = pos_of_tok call_tok; kind }
 
 (* Helper to add an edge to the graph: src -> dst with call site info *)
-let add_edge (graph : G.t) ~(src : node) ~(dst : node) ~(call_tok : Tok.t) =
-  let edge_label = mk_edge_label call_tok in
+let add_edge ?(kind : edge_kind = Call) (graph : G.t) ~(src : node) ~(dst : node) ~(call_tok : Tok.t) =
+  let edge_label = mk_edge_label ~kind call_tok in
   G.add_edge_e graph (G.E.create src edge_label dst)
 
 (* Query call graph to find callee node based on call site token.
-   Note: edges go callee -> caller, so we use pred_e to get edges into caller *)
+   Note: edges go callee -> caller, so we use pred_e to get edges into caller. *)
 let lookup_callee_from_graph (graph : G.t option)
     (caller_node : node option) (call_tok : Tok.t) : node option =
   match graph, caller_node with
@@ -102,8 +109,14 @@ let lookup_callee_from_graph (graph : G.t option)
         None
       ) else
         let call_pos = pos_of_tok call_tok in
-        (* Get edges coming INTO the caller (callee -> caller) *)
         let incoming_edges = G.pred_e g caller in
+
+        Log.debug (fun m ->
+            m "CALL_GRAPH LOOKUP: caller=%s call_pos=(%s:%d:%d bytepos=%d) incoming_edges=%d"
+              (show_node caller)
+              (Fpath.to_string call_pos.Pos.file)
+              call_pos.Pos.line call_pos.Pos.column call_pos.Pos.bytepos
+              (List.length incoming_edges));
 
         (* Find edge with matching call_site position *)
         let exact_match =
@@ -112,11 +125,68 @@ let lookup_callee_from_graph (graph : G.t option)
               let label = G.E.label edge in
               Pos.equal label.call_site call_pos)
         in
-        match exact_match with
+        (match exact_match with
         | Some edge ->
             Some (G.E.src edge)
         | None ->
-            (* No fallback - return None so external calls use direct signature lookup.
-               Previously there was a line 0 fallback that matched implicit/HOF edges,
-               but this caused wrong signature lookups for external method calls. *)
-            None
+            (* Match by line/column/file: dispatch edges have bytepos=0, so Pos.equal against real-byte-offset AST tokens always fails. *)
+            List.iter (fun edge ->
+              let (site : Pos.t) = (G.E.label edge).call_site in
+              let callee = G.E.src edge in
+              if Int.equal site.line call_pos.Pos.line then
+                Log.debug (fun m ->
+                    m "CALL_GRAPH LOOKUP: same-line edge callee=%s site=(%s:%d:%d bytepos=%d)"
+                      (show_node callee)
+                      (Fpath.to_string site.file)
+                      site.line site.column site.bytepos)
+            ) incoming_edges;
+            let lc_match =
+              incoming_edges
+              |> List.find_opt (fun edge ->
+                  let (site : Pos.t) = (G.E.label edge).call_site in
+                  Int.equal site.line call_pos.Pos.line
+                  && Int.equal site.column call_pos.Pos.column
+                  && Fpath_.equal site.file call_pos.Pos.file)
+            in
+            match lc_match with
+            | Some edge ->
+                Some (G.E.src edge)
+            | None -> None)
+
+(* Implementations of an interface node (incoming Dispatch edges). *)
+let dispatch_predecessors (graph : G.t) (node : node) : node list =
+  if not (G.mem_vertex graph node) then []
+  else
+    G.pred_e graph node
+    |> List.filter_map (fun edge ->
+      let label = G.E.label edge in
+      match label.kind with
+      | Dispatch -> Some (G.E.src edge)
+      | Call -> None)
+    (* Sort: OCamlGraph's pred_e is Hashtbl-backed, so raw order is random. *)
+    |> List.sort Function_id.compare
+
+(* New graph with all paths absolute (relative resolved against [project_root]; already-absolute and fake-token vertices unchanged). *)
+let make_paths_absolute (project_root : Fpath.t) (graph : G.t) : G.t =
+  let abs_pos (pos : Pos.t) : Pos.t =
+    if Fpath.is_abs pos.Pos.file then pos
+    else
+      let abs_file = Fpath.(project_root // pos.Pos.file) |> Fpath.normalize in
+      { pos with Pos.file = abs_file }
+  in
+  let new_graph = G.create () in
+  G.iter_edges_e
+    (fun edge ->
+      let src = Function_id.make_absolute project_root (G.E.src edge) in
+      let dst = Function_id.make_absolute project_root (G.E.dst edge) in
+      let label = G.E.label edge in
+      let label = { label with call_site = abs_pos label.call_site } in
+      G.add_edge_e new_graph (G.E.create src label dst))
+    graph;
+  (* Preserve isolated vertices (no edges). *)
+  G.iter_vertex
+    (fun v ->
+      let v' = Function_id.make_absolute project_root v in
+      if not (G.mem_vertex new_graph v') then G.add_vertex new_graph v')
+    graph;
+  new_graph
