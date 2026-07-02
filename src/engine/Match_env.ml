@@ -53,7 +53,6 @@ type xconfig = {
    *)
   matching_explanations : bool;
   filter_irrelevant_rules : prefilter_config;
-
 }
 
 type env = {
@@ -109,10 +108,12 @@ let adjust_xconfig_with_rule_options xconf options =
     match options with
     | None -> xconf.config
     | Some (rule_opts : Rule_options.t) ->
-        (* Merge rule options with existing config, preserving command-line taint_intrafile setting *)
+        (* Merge rule options with existing config, preserving command-line taint settings *)
         { rule_opts with
           taint_intrafile = xconf.config.taint_intrafile || rule_opts.taint_intrafile;
-          effect_guards = xconf.config.effect_guards || rule_opts.effect_guards
+          effect_guards = xconf.config.effect_guards || rule_opts.effect_guards;
+          taint_interfile = xconf.config.taint_interfile || rule_opts.taint_interfile;
+          taint_interfile_depth = max xconf.config.taint_interfile_depth rule_opts.taint_interfile_depth;
         }
   in
   { xconf with config }
