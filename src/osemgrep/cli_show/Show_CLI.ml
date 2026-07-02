@@ -55,6 +55,8 @@ and show_kind =
   | DumpIntrafileGraph of Fpath.t * Lang.t
   (* 'semgrep show dump-taint-signatures' *)
   | DumpTaintSignatures of Fpath.t * Fpath.t (* rule_file * target_file *)
+  (* 'semgrep show dump-interfile-graph' *)
+  | DumpInterfileGraph of Fpath.t * Lang.t (* project root *)
 [@@deriving show]
 
 (*************************************************************************)
@@ -140,6 +142,9 @@ let cmdline_term : conf Term.t =
           DumpIntrafileGraph (Fpath.v file, lang)
       | [ "dump-taint-signatures"; rule_file; target_file ] ->
           DumpTaintSignatures (Fpath.v rule_file, Fpath.v target_file)
+      | [ "dump-interfile-graph"; lang_str; file ] ->
+          let lang = Lang.of_string lang_str in
+          DumpInterfileGraph (Fpath.v file, lang)
       | [ "supported-languages" ] -> SupportedLanguages
       | [] ->
           Error.abort
@@ -189,6 +194,8 @@ let man : Cmdliner.Manpage.block list =
     `P "Dump the abstract syntax tree of the pattern string";
     `Pre "opengrep show dump-intrafile-graph [<LANG>] <FILE>";
     `P "Dump the intrafile call graph in DOT format";
+    `Pre "opengrep show dump-interfile-graph <LANG> <PROJECT_ROOT>";
+    `P "Dump the interfile call graph built from the project root";
     `Pre "opengrep show dump-taint-signatures <RULE_FILE> <TARGET_FILE>";
     `P "Dump taint signatures for all functions in target file using the taint rule";
   ]
