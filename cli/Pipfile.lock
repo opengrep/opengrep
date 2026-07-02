@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "fda99263664d6c8f2ed80b1bb94aa2737bd7d78fd8ba73da99c754ee6674726c"
+            "sha256": "400c06d975e7ec0b68eaec0fa7dae7647d8864bc52e5eb93fdde20543353b687"
         },
         "pipfile-spec": 6,
         "requires": {},
@@ -491,7 +491,7 @@
             "markers": "python_version < '3.13' and platform_python_implementation == 'CPython'",
             "version": "==0.2.12"
         },
-        "semgrep": {
+        "opengrep": {
             "editable": true,
             "markers": "python_version >= '3.8'",
             "path": "."
