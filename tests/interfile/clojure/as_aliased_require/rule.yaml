@@ -1,0 +1,17 @@
+rules:
+  - id: test-as-aliased-require
+    languages: [clojure]
+    message: |
+      Idiomatic cross-namespace call via [:as] alias.  main.clj does
+      [(:require [app.handlers :as h])] and invokes [(h/handle ...)];
+      the actual sink lives in handlers.clj.  Exercises both the
+      [(ns ...)] declaration as the file's module key and the
+      [:as]-aliased qualified call resolution across files.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $X)

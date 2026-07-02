@@ -1,0 +1,21 @@
+rules:
+  - id: cross-package-homonym
+    languages: [go]
+    severity: ERROR
+    message: >
+      User-controlled input flows from main.go into pkga.Service.Get,
+      which executes a SQL query.  Two packages (pkga, pkgb) both
+      declare type Service with a Get method of the same arity.  The
+      caller must disambiguate to pkga.Service.Get; if it falls
+      through to pick_by_arity, both candidates collide and the edge
+      is silently dropped.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.URL.Query().Get($PARAM)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.Query($QUERY)
+          - focus-metavariable: $QUERY

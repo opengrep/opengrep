@@ -1,0 +1,12 @@
+rules:
+  - id: test-constructor-taint
+    languages: [ruby]
+    message: Tainted data flows through constructor to method
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink(...)

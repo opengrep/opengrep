@@ -1,0 +1,1 @@
+def source(): return "taint"

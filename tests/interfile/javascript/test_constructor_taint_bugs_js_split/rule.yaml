@@ -1,0 +1,12 @@
+rules:
+  - id: constructor-taint-bugs
+    options:
+      taint_interfile: true
+    message: Taint through constructor
+    languages: [javascript]
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

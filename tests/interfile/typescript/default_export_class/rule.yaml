@@ -1,0 +1,24 @@
+rules:
+  - id: default-export-class
+    languages: [ts]
+    severity: ERROR
+    message: >
+      User input flows from app.ts into a default-exported class
+      Handler defined in handler.ts.  The import shape is
+      `import Handler from "./handler"` — a default import, NOT a
+      named one — so resolution depends on projidx maintaining the
+      `default_export_class` index keyed by module path.  Without
+      it, `new Handler()` in app.ts cannot bind to handler.ts's
+      class, the constructor call edge is missing, and the
+      cross-file taint chain through `h.process(userInput)` is
+      broken.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY

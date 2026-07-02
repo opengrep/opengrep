@@ -1,0 +1,13 @@
+rules:
+  - id: test-scip-misresolution
+    mode: taint
+    languages:
+      - ruby
+    message: "Taint through private method with permit should not be killed by wrong SCIP resolution"
+    severity: ERROR
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: params
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,16 @@
+rules:
+  # A bare foo() in a new-language (JS) is never a constructor, so the type
+  # inferencer must NOT fabricate a type named after the callee.  Here
+  # `widget()` is a plain function; if its result were typed as class
+  # `widget`, `x.render(...)` would wrongly resolve to widget.render (the
+  # sink) and report a finding.  Expect NO findings.
+  - id: newlang-no-ctor-fabrication
+    languages: [js]
+    severity: ERROR
+    message: spurious constructor-type fabrication in a new-language
+    mode: taint
+    options: {taint_interfile: true}
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

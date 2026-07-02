@@ -1,0 +1,12 @@
+rules:
+  - id: test-inheritance-basic
+    languages: [cpp]
+    message: Tainted data reaches an inherited sink method
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

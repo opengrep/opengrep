@@ -1,0 +1,14 @@
+rules:
+  - id: test-sanitiser
+    languages: [lua]
+    message: Tainted data reaches a sink after a cross-file sanitizer
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)
+    pattern-sanitizers:
+      - pattern: sanitize($X)
