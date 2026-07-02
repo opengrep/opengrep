@@ -848,7 +848,7 @@ and map_anon_choice_param_2c23cdc (env : env) _outer_attrTODO
           pinfo = G.empty_id_info ();
         }
       in
-      G.Param param
+      G.ParamReceiver param
   | `Vari_param tok -> G.ParamEllipsis (token env tok) (* "..." *)
   | `X__ tok ->
       (* ellided parameter *)
@@ -2461,7 +2461,7 @@ and map_parameter (env : env) ((v1, v2, v3, v4) : CST.parameter) : G.parameter =
           G.pinfo = G.empty_id_info ();
         }
       in
-      G.Param param
+      G.ParamReceiver param
 
 and map_parameters (env : env) ((v1, v2, v3, v4) : CST.parameters) :
     G.parameters =

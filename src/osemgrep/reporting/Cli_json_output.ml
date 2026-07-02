@@ -364,30 +364,55 @@ let index_match_based_ids (matches : Out.cli_match list) : Out.cli_match list =
   (* XXX: can we do with grouping by fingerprint only? *)
   |> Assoc.group_by (fun (_, (x : Out.cli_match)) ->
          (x.path, x.check_id, x.extra.fingerprint))
-  (* Sort by start line *)
-  |> List_.map (fun (path_and_rule_id, matches) ->
-         ( path_and_rule_id,
+  (* Sort by start offset, then by trace: the trace tiebreaker gives
+     same-sink findings with different sources stable indices across runs. *)
+  |> List_.map (fun (key, matches) ->
+         ( key,
            List.sort
              (fun (_, (a : Out.cli_match)) (_, (b : Out.cli_match)) ->
-               compare a.start.offset b.start.offset)
+               let c = Int.compare a.start.offset b.start.offset in
+               if c <> 0 then c
+               else
+                 Option.compare
+                   Semgrep_output_v1_j.compare_match_dataflow_trace
+                   a.extra.dataflow_trace b.extra.dataflow_trace)
              matches ))
-  (* Index per file *)
-  |> List_.map (fun (path_and_rule_id, matches) ->
-         let matches =
-           List_.mapi
-             (fun i (i', (x : Out.cli_match)) ->
-               ( i',
-                 {
-                   x with
-                   extra =
-                     {
-                       x.extra with
-                       fingerprint = spf "%s_%d" x.extra.fingerprint i;
-                     };
-                 } ))
-             matches
+  (* Primary matches (one per offset) get indices first, keeping the indices
+     they'd have without source-variant expansion; extra matches (extra
+     sources for the same sink) get higher indices after them. *)
+  |> List_.map (fun (key, matches) ->
+         let assign_fingerprint (idx : int) (i' : int) (x : Out.cli_match)
+             : int * Out.cli_match =
+           ( i',
+             { x with
+               extra =
+                 { x.extra with
+                   fingerprint = spf "%s_%d" x.extra.fingerprint idx } } )
          in
-         (path_and_rule_id, matches))
+         let rec split_primaries (prev_offset : int)
+             (matches : (int * Out.cli_match) list)
+             : (int * Out.cli_match) list * (int * Out.cli_match) list =
+           match matches with
+           | [] -> ([], [])
+           | (i', m) :: rest ->
+               let offset = m.start.offset in
+               let primaries, extras = split_primaries offset rest in
+               if offset <> prev_offset then
+                 ((i', m) :: primaries, extras)
+               else
+                 (primaries, (i', m) :: extras)
+         in
+         let primaries, extras = split_primaries (-1) matches in
+         let n_primaries = List.length primaries in
+         let indexed_primaries =
+           List_.mapi (fun i (i', x) -> assign_fingerprint i i' x) primaries
+         in
+         let indexed_extras =
+           List_.mapi
+             (fun i (i', x) -> assign_fingerprint (n_primaries + i) i' x)
+             extras
+         in
+         (key, indexed_primaries @ indexed_extras))
   (* Flatten *)
   |> List.concat_map snd
   |> List.sort (fun (a, _) (b, _) -> a - b)

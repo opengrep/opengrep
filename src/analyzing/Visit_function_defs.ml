@@ -189,13 +189,19 @@ let fold_with_class_context
 
 (* Convert G.name to IL.name for fn_id path construction.
    Uses unsafe_default sid and clears id_resolved to ensure consistent
-   comparison in FunctionMap (which compares by string name + position). *)
+   comparison in FunctionMap (which compares by string name + position).
+   For [G.IdQualified] (e.g. Ruby [Module::Klass], Python [pkg.Cls]) we
+   take the [name_last] segment so that qualified class definitions
+   still produce a meaningful class id and downstream method lookups
+   match against the simple class name. *)
 let g_name_to_il_name (g_name : G.name) : IL.name option =
   match g_name with
   | G.Id ((str, tok), id_info) ->
       let id_info = { id_info with G.id_resolved = ref None } in
       Some IL.{ ident = (str, tok); sid = G.SId.unsafe_default; id_info }
-  | _ -> None
+  | G.IdQualified { G.name_last = ((str, tok), _); name_info; _ } ->
+      let id_info = { name_info with G.id_resolved = ref None } in
+      Some IL.{ ident = (str, tok); sid = G.SId.unsafe_default; id_info }
 
 (* Convert G.entity to IL.name for fn_id path construction. *)
 let entity_to_il_name (ent : G.entity) : IL.name option =
@@ -243,7 +249,13 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
 
     method! visit_definition f ((ent, def_kind) as def) =
       match def_kind with
-      | G.ClassDef _cdef ->
+      | G.ClassDef _
+      (* Ruby's [module Foo; ... end] parses as [ModuleDef] with
+         [mbody = ModuleStruct].  Treat it as a class scope so methods
+         defined inside ([def foo]) get attributed to the module — same
+         semantics as Ruby's mixin model where module methods become
+         instance/class methods on including classes. *)
+      | G.ModuleDef { G.mbody = G.ModuleStruct _; _ } ->
           let newv =
             match ent.name with
             | EN name -> Some name
@@ -251,6 +263,18 @@ class ['self] visitor_with_parent_path ~(lang : Lang.t) =
           in
           Common.save_excursion_unsafe current_class newv (fun () ->
               super#visit_definition f def)
+      (* Go [type T interface {...}] is a TypeDef, not a ClassDef; walk its
+         fields as a class scope so method decls reach the class-methods index
+         (else they get fn_id [None; Some m] and find_methods misses them). *)
+      | G.TypeDef { G.tbody = G.NewType
+          { G.t = G.TyRecordAnon ((G.Interface, _), (_, fields, _)); _ } } ->
+          let newv =
+            match ent.name with
+            | EN name -> Some name
+            | _ -> None
+          in
+          Common.save_excursion_unsafe current_class newv (fun () ->
+              List.iter (self#visit_field f) fields)
       | G.FuncDef fdef ->
           (* Build fn_id path: [class_option; ...parent_path...; current_func] *)
           let class_il = Option.bind !current_class g_name_to_il_name in

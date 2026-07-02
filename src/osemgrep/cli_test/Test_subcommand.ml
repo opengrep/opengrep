@@ -449,7 +449,9 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
      *)
     respect_rule_paths = false;
     taint_intrafile = conf.taint_intrafile;
-    effect_guards = false
+    effect_guards = false;
+    taint_interfile = false;
+    taint_interfile_depth = 3;
   }
 
 let run_rules_against_targets_for_engine caps (env : env) (rules : Rule.t list)
