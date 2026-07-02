@@ -1,0 +1,14 @@
+rules:
+  - id: test-interprocedural-taint
+    options:
+      taint_interfile: true
+    mode: taint
+    languages:
+      - python
+    message: |
+      Interprocedural taint flow detected from source to sink
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

@@ -1,0 +1,30 @@
+rules:
+  - id: dispatch-closure-pulls-impls
+    languages: [go]
+    severity: ERROR
+    message: >
+      User-controlled input flows from main.go (`handle`) through
+      `iface.Processor.Process` — a bodiless interface declaration —
+      into `impl.ProcessorImpl.Process`, where the sink lives.  The
+      caller's static type at the call site is the interface, so the
+      project-wide Call edge is `iface.Processor.Process -> handle`;
+      no Call edge directly connects `handle` (or anything reachable
+      from sink-side BFS) to the concrete impl.  The relevant
+      subgraph BFS reaches the impl only through Dispatch edges,
+      which the per-rule reverse-BFS step (pulling callee subtrees)
+      does NOT follow.  Compute_relevant_subgraph's "dispatch
+      closure" loop is what brings the impl in: for every interface
+      vertex in the set, add its Dispatch predecessors (concrete
+      implementations).  Without it, the FBDecl reached during topo
+      fold has no implementation signatures to merge, yields an empty
+      signature, and the sink is missed.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.URL.Query().Get($PARAM)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.Query($QUERY)
+          - focus-metavariable: $QUERY

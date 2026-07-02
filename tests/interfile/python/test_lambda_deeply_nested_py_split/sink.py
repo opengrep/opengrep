@@ -1,0 +1,2 @@
+def sink(x):
+    pass

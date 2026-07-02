@@ -1,0 +1,1 @@
+function sink(x) {}

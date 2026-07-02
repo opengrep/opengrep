@@ -1,0 +1,3 @@
+char* source() {
+    return "tainted";
+}
