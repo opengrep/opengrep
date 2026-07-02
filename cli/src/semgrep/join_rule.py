@@ -25,7 +25,6 @@ import semgrep.run_scan
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.config_resolver import Config
 from semgrep.config_resolver import resolve_config
-from semgrep.constants import IS_WINDOWS
 from semgrep.error import ERROR_MAP
 from semgrep.error import FATAL_EXIT_CODE
 from semgrep.error import SemgrepError
@@ -478,19 +477,19 @@ def run_join_rule(
         return [], [e]
 
     # Run Semgrep
-    with tempfile.NamedTemporaryFile(mode='w+', suffix=".yaml", delete=(not IS_WINDOWS)) as rule_path:
+    with tempfile.TemporaryDirectory() as rule_dir:
         # Combine inline rules and refs
         raw_rules = [rule.raw for rule in inline_rules]
         raw_rules.extend([rule.raw for rule in config_map.values()])
-        yaml.dump({"rules": raw_rules}, rule_path)
-        rule_path.flush()
-        rule_path.seek(0)
+        rule_path = Path(rule_dir) / "rules.yaml"
+        with rule_path.open("w") as rule_file:
+            yaml.dump({"rules": raw_rules}, rule_file)
 
         logger.debug(
             f"Running join mode rule {join_rule.get('id')} on {len(targets)} files."
         )
         output = semgrep.run_scan.run_scan_and_return_json(
-            config=Path(rule_path.name),
+            config=rule_path,
             targets=targets,
             no_rewrite_rule_ids=True,
             optimizations="all",
