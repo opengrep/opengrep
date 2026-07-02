@@ -137,7 +137,8 @@ let vof_dotted_ident = vof_dotted_name
 
 let rec vof_resolved_name (v1, v2) =
   let v1 = vof_resolved_name_kind v1 in
-  let v2 = OCaml.vof_int (SId.to_int v2) in
+  (* Dump the positional identity, not the opaque [to_int] hash. *)
+  let v2 = OCaml.vof_string (SId.to_string v2) in
   OCaml.VTuple [ v1; v2 ]
 
 and vof_canonical_name v1 = OCaml.vof_list OCaml.vof_string v1

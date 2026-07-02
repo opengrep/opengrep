@@ -23,6 +23,13 @@ type call_effect =
               re-emits the effect under the same condition rather than
               unconditionally. *)
     }
+  | ToLvalThis of {
+      taints : Taint.taints;
+      offset : Taint.offset list;
+      guards : Effect_guard.t;
+          (** Field write on enclosing receiver; kept [BThis] so it composes
+              into the caller's own sig, not resolved to the receiver temp. *)
+    }
   | ToSinkInCall of {
       callee : IL.exp;
       arg : Taint.arg;
@@ -36,6 +43,17 @@ type call_effect =
 
 type call_effects = call_effect list
 
+type sig_inst_cache
+
+val merge_dispatch_signatures :
+  Shape_and_sig.Signature.t list ->
+  Shape_and_sig.Signature.t ->
+  Shape_and_sig.Signature.t
+(** Merge dispatch impl signatures: normalise BArg to the first impl's param
+ * names, union effects, drop BGlob-dependent ones. Second arg is the
+ * interface sig (returned as-is when impls empty); falls back to the first
+ * sig on incompatible param structures. *)
+
 val instantiate_function_signature :
   lang:Lang.t ->
   ?outer_params:IL.param list ->
@@ -46,6 +64,7 @@ val instantiate_function_signature :
   (Taint.Taint_set.t * Shape_and_sig.Shape.shape) IL.argument list ->
   ?lookup_sig:(IL.exp -> int -> Shape_and_sig.Signature.t option) ->
   ?depth:int ->
+  ?recursive_cache:sig_inst_cache ->
   unit ->
   call_effects option
 (** Replaces taint, shape and guard variables in the callee's signature
