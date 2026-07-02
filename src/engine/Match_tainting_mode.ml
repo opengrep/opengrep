@@ -373,7 +373,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
         if taint_inst.options.taint_intrafile then (
           (* Detect object initialization mappings for this file *)
           let object_mappings =
-            Taint_signature_extractor.detect_object_initialization ast
+            Object_initialization.detect_object_initialization ast
               taint_inst.lang
           in
           (* Build user signature database *)
@@ -485,9 +485,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           in
           (* Use object mappings from Object_initialization.ml *)
           let all_object_mappings = object_mappings in
-          let initial_signature_db =
-            Shape_and_sig.add_object_mappings base_db all_object_mappings
-          in
+          Object_initialization.stamp_id_types all_object_mappings ast;
+          let initial_signature_db = base_db in
 
           (* Use shared call graph if provided, otherwise compute it *)
           let call_graph =
@@ -495,8 +494,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             | Some (graph, _shared_mappings) -> graph
             | None ->
                 (* Compute call graph as before *)
-                Graph_from_AST.build_call_graph ~lang
-                  ~object_mappings:all_object_mappings ast
+                Graph_from_AST.build_call_graph ~lang ast
           in
 
           (* Optimize: filter call graph to only functions relevant for this rule
@@ -886,10 +884,11 @@ let check_rules ~match_hook
       (fun lang acc ->
         let ast, _skipped_tokens = lazy_force xtarget.lazy_ast_and_errors in
         let object_mappings =
-          Taint_signature_extractor.detect_object_initialization ast lang
+          Object_initialization.detect_object_initialization ast lang
         in
+        Object_initialization.stamp_id_types object_mappings ast;
         let call_graph =
-          Graph_from_AST.build_call_graph ~lang ~object_mappings ast
+          Graph_from_AST.build_call_graph ~lang ast
         in
         LangMap.add lang (call_graph, object_mappings) acc)
       langs_needing_call_graph LangMap.empty
