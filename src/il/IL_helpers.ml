@@ -258,6 +258,7 @@ and fold_map_field (f : 'a -> exp -> 'a * exp) (acc : 'a) :
 let pname_of_param (p : IL.param) : IL.name option =
   match p with
   | IL.Param { pname; _ } -> Some pname
+  | IL.ParamReceiver { pname; _ } -> Some pname
   | IL.ParamRest { pname; _ } -> Some pname
   | IL.ParamPattern ({ pname; _ }, _) -> Some pname
   | IL.ParamFixme -> None

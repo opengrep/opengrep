@@ -77,6 +77,8 @@ depends: [
   "thread-local-storage"
   "domainslib"
   "saturn" {>= "1.0.0"}
+  "kcas_data"
+  "otoml"
   "odoc" {with-doc}
 ]
 build: [

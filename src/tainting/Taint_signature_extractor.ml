@@ -82,10 +82,6 @@ let extract_method_properties (fdef : G.function_definition) :
   !found_properties
   |> List.sort_uniq (fun e1 e2 -> String.compare (G.show_expr e1) (G.show_expr e2))
 
-(* Object initialization detection for different languages *)
-let detect_object_initialization =
-  Object_initialization.detect_object_initialization
-
 (* Convert AST method properties to taint assumptions using AST_to_IL *)
 let mk_method_property_assumptions (properties : G.expr list)
     (lang : Lang.t) : Taint_lval_env.t =
@@ -245,6 +241,22 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                  | _ -> new_env
                in
                (i + 1, new_env)
+           | IL.ParamReceiver { pname; _ } ->
+               (* Map receiver to BThis so receiver.field yields BThis.field effects. *)
+               let il_lval : IL.lval = { base = Var pname; rev_offset = [] } in
+               let taint_lval : Taint.lval =
+                 { base = BThis; offset = [] }
+               in
+               let generic_taint =
+                 Taint.{ orig = Var taint_lval; tokens = [] }
+               in
+               let taint_set = Taint.Taint_set.singleton generic_taint in
+               let new_env =
+                 Taint_lval_env.add_lval taint_inst.TRI.lang il_lval taint_set
+                   env
+               in
+               (* Don't increment i — receiver is not a call-site argument *)
+               (i, new_env)
            | IL.ParamFixme -> (i + 1, env))
          (0, Taint_lval_env.empty)
   in
@@ -264,7 +276,8 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
   in
   let fixpoint_effects, mapping =
     Dataflow_tainting.fixpoint taint_inst ~in_env:combined_env ?name
-      ?signature_db ?builtin_signature_db ?call_graph func_cfg
+      ?signature_db ?builtin_signature_db ?call_graph
+      func_cfg
   in
   Log.debug (fun m ->
       let fn = Option.fold ~none:"<anon>" ~some:IL.str_of_name name in
@@ -281,9 +294,10 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
            match eff with
            | Effect.ToSink sink_info ->
                let param_labels = extract_param_labels_from_sink sink_info in
-               if param_labels <> [] then
+               if not (List_.null param_labels) then
                  let filtered_labels =
-                   List.filter (fun label -> label <> "__SOURCE__") param_labels
+                   List.filter (fun label ->
+                     not (String.equal label "__SOURCE__")) param_labels
                  in
                  let unique_labels =
                    List.sort_uniq String.compare filtered_labels
@@ -314,7 +328,20 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
                    }
                  in
                  Effects.add (Effect.ToSink updated_sink_info) acc
-               else Effects.add eff acc
+               else
+                 (* All-resolved-source findings are already reported here;
+                    propagating them into the signature only duplicates at callers. *)
+                 let taints_items, _ = sink_info.taints_with_precondition in
+                 let all_resolved =
+                   List.for_all
+                     (fun (item : Effect.taint_to_sink_item) ->
+                       match item.taint.Taint.orig with
+                       | Taint.Src _ -> true
+                       | _ -> false)
+                     taints_items
+                 in
+                 if all_resolved then acc
+                 else Effects.add eff acc
           | Effect.ToReturn return_info ->
               (* Retain return effects that carry any meaningful taint information.
                *

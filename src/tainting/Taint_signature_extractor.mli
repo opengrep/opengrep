@@ -62,7 +62,3 @@ val show_signature_extraction :
 val extract_method_properties :
   AST_generic.function_definition -> AST_generic.expr list
 (** Extract this.x and self.x property accesses from a function definition *)
-
-
-val detect_object_initialization : AST_generic.program -> Lang.t -> (AST_generic.name * AST_generic.name) list
-(** Detect object initialization patterns in the AST for the given language *)

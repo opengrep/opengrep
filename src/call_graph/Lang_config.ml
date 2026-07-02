@@ -1,13 +1,4 @@
-(* Unified Language Configuration
- *
- * Consolidates language-specific settings for taint analysis and call graphs:
- * - HOF (Higher-Order Function) configurations
- * - Constructor patterns
- *)
-
-(* ========================================================================== *)
-(* HOF Configuration Types *)
-(* ========================================================================== *)
+(* Per-language taint/call-graph settings (HOF configs, constructor patterns). *)
 
 type hof_kind =
   | MethodHOF of {
@@ -26,10 +17,6 @@ type hof_kind =
       methods : string list;
     }
 
-(* ========================================================================== *)
-(* Collection Model Types *)
-(* ========================================================================== *)
-
 type collection_model_kind =
   | ArgTaintsThis of {
       methods : string list;
@@ -42,24 +29,18 @@ type collection_model_kind =
       arity : int;
     }
 
-(* ========================================================================== *)
-(* Unified Language Configuration *)
-(* ========================================================================== *)
-
 type t = {
   hof_configs : hof_kind list;
   collection_configs : collection_model_kind list;
   constructor_names : string list;
   uses_new_keyword : bool;
-  (* Methods that invoke `self` as a function.  E.g. Runnable.run() in Java,
-     Proc#call in Ruby.  When a variable with Fun shape is the receiver of one
-     of these methods, the call is treated as a direct lambda invocation. *)
+  (* Methods invoking `self` as a function (Runnable.run, Proc#call): a Fun-shaped receiver call becomes a direct lambda invocation. *)
   invoke_methods : string list;
+  (* Callee leaf names short-circuited to [None] in [identify_callee]. *)
+  skip_callee_names : string list;
+  (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
+  skip_nested_in_extract_calls : bool;
 }
-
-(* ========================================================================== *)
-(* Language Configurations *)
-(* ========================================================================== *)
 
 let empty = {
   hof_configs = [];
@@ -67,6 +48,8 @@ let empty = {
   constructor_names = [];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let python = {
@@ -74,22 +57,19 @@ let python = {
     FunctionHOF { functions = ["map"; "filter"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
   ];
   collection_configs = [
-    (* list.append(item), set.add(item) - item taints this *)
     ArgTaintsThis { methods = ["append"; "add"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    (* list.insert(index, item) - item taints this *)
     ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* list.extend(iterable), dict.update - iterable taints this *)
     ArgTaintsThis { methods = ["extend"; "update"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    (* list.pop(), dict.get(key), dict.pop(key) - this taints return *)
     ThisTaintsReturn { methods = ["pop"]; arity = 0 };
     ThisTaintsReturn { methods = ["get"; "pop"; "setdefault"]; arity = 1 };
     ThisTaintsReturn { methods = ["get"; "pop"; "setdefault"]; arity = 2 };
-    (* Iteration helpers *)
     ThisTaintsReturn { methods = ["copy"; "keys"; "values"; "items"]; arity = 0 };
   ];
   constructor_names = ["__init__"];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let ruby = {
@@ -104,11 +84,8 @@ let ruby = {
     };
   ];
   collection_configs = [
-    (* Array.push, Array.<<, Array.append - item taints this *)
     ArgTaintsThis { methods = ["push"; "append"; "unshift"; "prepend"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    (* Hash merge!, update taints this *)
     ArgTaintsThis { methods = ["merge!"; "update"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    (* Array.pop, Array.shift, Hash.fetch - this taints return *)
     ThisTaintsReturn { methods = ["pop"; "shift"; "first"; "last"]; arity = 0 };
     ThisTaintsReturn { methods = ["fetch"; "dig"; "slice"]; arity = 1 };
     ThisTaintsReturn { methods = ["fetch"; "dig"]; arity = 2 };
@@ -118,6 +95,9 @@ let ruby = {
   constructor_names = ["initialize"];
   uses_new_keyword = false;
   invoke_methods = ["call"];
+  skip_callee_names = [];
+  (* Safe: RSpec specs are anonymous-lambda nests with no [self.X] inheritance. *)
+  skip_nested_in_extract_calls = true;
 }
 
 let crystal = ruby
@@ -132,56 +112,46 @@ let javascript = {
     MethodHOF { methods = ["reduce"; "reduceRight"]; arity = 2; taint_arg_index = 1 };
   ];
   collection_configs = [
-    (* Map.set(key, value) - value taints this, returns this (fluent) *)
     ArgTaintsThis { methods = ["set"]; arity = 2; taint_arg_index = 1; returns_this = true };
-    (* Array.push(item) - item taints this, returns new length *)
     ArgTaintsThis { methods = ["push"; "unshift"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    (* Set.add(item) - item taints this, returns this (fluent) *)
     ArgTaintsThis { methods = ["add"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    (* Map.get(key), Array.pop(), Array.shift() - this taints return *)
     ThisTaintsReturn { methods = ["get"]; arity = 1 };
     ThisTaintsReturn { methods = ["pop"; "shift"]; arity = 0 };
     ThisTaintsReturn { methods = ["at"]; arity = 1 };
-    (* String methods that return modified strings *)
     ThisTaintsReturn { methods = ["toString"; "valueOf"; "join"]; arity = 0 };
     ThisTaintsReturn { methods = ["join"]; arity = 1 };
   ];
   constructor_names = ["constructor"];
   uses_new_keyword = true;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let typescript = {
   javascript with
   hof_configs = javascript.hof_configs;
 }
-(* TypeScript inherits collection_configs from javascript *)
 
 let java = {
   hof_configs = [
     MethodHOF { methods = ["map"; "filter"; "forEach"; "flatMap"]; arity = 1; taint_arg_index = 0 };
   ];
   collection_configs = [
-    (* HashMap/Map: put(key, value) - value (arg 1) taints this, returns previous value (not this) *)
     ArgTaintsThis { methods = ["put"; "putIfAbsent"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* List: add(item) - item (arg 0) taints this, returns boolean *)
     ArgTaintsThis { methods = ["add"; "addFirst"; "addLast"; "push"; "offer"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    (* List: add(index, item) - item (arg 1) taints this, returns void *)
     ArgTaintsThis { methods = ["add"; "set"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* StringBuilder: append(str) - str (arg 0) taints this, RETURNS THIS for fluent chaining *)
     ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    (* StringBuilder: insert(offset, str) - str (arg 1) taints this, RETURNS THIS *)
     ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = true };
-    (* Collection accessors: get(key/index) - this taints return *)
     ThisTaintsReturn { methods = ["get"; "getFirst"; "getLast"; "peek"; "poll"; "pop"; "remove"]; arity = 1 };
-    (* No-arg accessors *)
     ThisTaintsReturn { methods = ["toString"; "getFirst"; "getLast"; "peek"; "poll"; "pop"]; arity = 0 };
-    (* Iterator: next() - this taints return *)
     ThisTaintsReturn { methods = ["next"]; arity = 0 };
   ];
   constructor_names = ["<init>"];
   uses_new_keyword = true;
   invoke_methods = ["run"; "call"; "apply"; "accept"; "invoke"];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let kotlin = {
@@ -198,13 +168,9 @@ let kotlin = {
     };
   ];
   collection_configs = [
-    (* MutableList.add, MutableSet.add - item taints this *)
     ArgTaintsThis { methods = ["add"; "addFirst"; "addLast"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    (* MutableMap.put(key, value) - value taints this *)
     ArgTaintsThis { methods = ["put"; "putIfAbsent"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* StringBuilder.append - returns this *)
     ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    (* get, removeAt, removeLast - this taints return *)
     ThisTaintsReturn { methods = ["get"; "getOrNull"]; arity = 1 };
     ThisTaintsReturn { methods = ["getOrDefault"]; arity = 2 };
     ThisTaintsReturn { methods = ["first"; "last"; "removeFirst"; "removeLast"]; arity = 0 };
@@ -213,6 +179,8 @@ let kotlin = {
   constructor_names = ["<init>"; "init"; "constructor"];
   uses_new_keyword = false;
   invoke_methods = ["invoke"];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let scala = {
@@ -224,11 +192,8 @@ let scala = {
     };
   ];
   collection_configs = [
-    (* mutable collections: += or add *)
     ArgTaintsThis { methods = ["append"; "prepend"; "addOne"; "add"]; arity = 1; taint_arg_index = 0; returns_this = true };
-    (* mutable Map: put(key, value) or update(key, value) *)
     ArgTaintsThis { methods = ["put"; "update"; "addOne"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* accessors *)
     ThisTaintsReturn { methods = ["head"; "last"]; arity = 0 };
     ThisTaintsReturn { methods = ["apply"; "get"; "getOrElse"]; arity = 1 };
     ThisTaintsReturn { methods = ["mkString"; "toString"]; arity = 0 };
@@ -236,6 +201,8 @@ let scala = {
   constructor_names = ["<init>"];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let csharp = {
@@ -247,13 +214,9 @@ let csharp = {
     };
   ];
   collection_configs = [
-    (* List.Add, HashSet.Add - item taints this *)
     ArgTaintsThis { methods = ["Add"; "Push"; "Enqueue"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    (* List.Insert(index, item) - item taints this *)
     ArgTaintsThis { methods = ["Insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* Dictionary.Add(key, value) - value taints this *)
     ArgTaintsThis { methods = ["Add"; "TryAdd"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* List[i], Dictionary[key], Queue.Dequeue, Stack.Pop - this taints return *)
     ThisTaintsReturn { methods = ["Pop"; "Dequeue"; "Peek"]; arity = 0 };
     ThisTaintsReturn { methods = ["ElementAt"; "GetValueOrDefault"]; arity = 1 };
     ThisTaintsReturn { methods = ["ToString"]; arity = 0 };
@@ -261,18 +224,22 @@ let csharp = {
   constructor_names = [".ctor"];
   uses_new_keyword = true;
   invoke_methods = ["Invoke"];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let go = {
+  (* No leaf-name HOF configs: bare leaf names would match unrelated calls corpus-wide; auto-detection handles function-ref args. *)
   hof_configs = [];
   collection_configs = [
-    (* Go uses map indexing m[k]=v, not methods, but for sync.Map *)
     ArgTaintsThis { methods = ["Store"]; arity = 2; taint_arg_index = 1; returns_this = false };
     ThisTaintsReturn { methods = ["Load"]; arity = 1 };
   ];
   constructor_names = [];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let rust = {
@@ -284,11 +251,8 @@ let rust = {
     };
   ];
   collection_configs = [
-    (* Vec.push - item taints this *)
     ArgTaintsThis { methods = ["push"; "push_front"; "push_back"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    (* HashMap.insert(key, value) - value taints this *)
     ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 1; returns_this = false };
-    (* Vec.pop, HashMap.get, HashMap.remove - this taints return *)
     ThisTaintsReturn { methods = ["pop"; "pop_front"; "pop_back"]; arity = 0 };
     ThisTaintsReturn { methods = ["get"; "get_mut"; "remove"]; arity = 1 };
     ThisTaintsReturn { methods = ["into_iter"; "iter"; "iter_mut"]; arity = 0 };
@@ -296,6 +260,8 @@ let rust = {
   constructor_names = ["new"];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let swift = {
@@ -307,19 +273,17 @@ let swift = {
     };
   ];
   collection_configs = [
-    (* Array.append - item taints this *)
     ArgTaintsThis { methods = ["append"]; arity = 1; taint_arg_index = 0; returns_this = false };
-    (* Array.insert(element, at:) - element taints this *)
     ArgTaintsThis { methods = ["insert"]; arity = 2; taint_arg_index = 0; returns_this = false };
-    (* Dictionary updateValue(value, forKey:) - value taints this *)
     ArgTaintsThis { methods = ["updateValue"]; arity = 2; taint_arg_index = 0; returns_this = false };
-    (* Array subscript, popLast, removeFirst - this taints return *)
     ThisTaintsReturn { methods = ["popLast"; "removeFirst"; "removeLast"; "first"; "last"]; arity = 0 };
     ThisTaintsReturn { methods = ["remove"]; arity = 1 };
   ];
   constructor_names = ["init"];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let php = {
@@ -327,10 +291,12 @@ let php = {
     FunctionHOF { functions = ["array_map"]; arity = 2; callback_index = 0; data_index = 1; taint_arg_index = 0 };
     FunctionHOF { functions = ["array_filter"; "array_walk"]; arity = 2; callback_index = 1; data_index = 0; taint_arg_index = 0 };
   ];
-  collection_configs = [];  (* PHP collections are mostly handled via builtin functions *)
+  collection_configs = [];
   constructor_names = ["__construct"];
   uses_new_keyword = true;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let cpp = {
@@ -342,6 +308,8 @@ let cpp = {
   constructor_names = [];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let c = {
@@ -355,6 +323,8 @@ let ocaml_lang = {
   constructor_names = [];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let lua = {
@@ -363,6 +333,8 @@ let lua = {
   constructor_names = [];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let dart = {
@@ -394,6 +366,8 @@ let dart = {
   uses_new_keyword = false;
   (* Function objects: f.call(args) invokes the closure f *)
   invoke_methods = ["call"];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let elixir = {
@@ -410,6 +384,8 @@ let elixir = {
   constructor_names = [];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let julia = {
@@ -420,6 +396,8 @@ let julia = {
   constructor_names = [];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let clojure = {
@@ -442,6 +420,8 @@ let clojure = {
   constructor_names = [];
   uses_new_keyword = false;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let apex = {
@@ -450,6 +430,8 @@ let apex = {
   constructor_names = ["<init>"];
   uses_new_keyword = true;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
 
 let vb = {
@@ -458,11 +440,9 @@ let vb = {
   constructor_names = ["New"];
   uses_new_keyword = true;
   invoke_methods = [];
+  skip_callee_names = [];
+  skip_nested_in_extract_calls = false;
 }
-
-(* ========================================================================== *)
-(* Lookup Function *)
-(* ========================================================================== *)
 
 let get (lang : Lang.t) : t =
   match lang with
@@ -490,3 +470,15 @@ let get (lang : Lang.t) : t =
   | Lang.Apex -> apex
   | Lang.Vb -> vb
   | _ -> empty
+
+let hof_method_names (lang : Lang.t) : string list =
+  (get lang).hof_configs |> List.concat_map (function
+    | MethodHOF { methods; _ }
+    | ReturningFunctionHOF { methods; _ } -> methods
+    | FunctionHOF _ -> [])
+
+let hof_function_specs (lang : Lang.t) : (string list * int) list =
+  (get lang).hof_configs |> List.filter_map (function
+    | FunctionHOF { functions; callback_index; _ } ->
+      Some (functions, callback_index)
+    | MethodHOF _ | ReturningFunctionHOF _ -> None)
