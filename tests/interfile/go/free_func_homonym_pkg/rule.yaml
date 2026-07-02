@@ -1,0 +1,15 @@
+rules:
+  - id: free-func-homonym-pkg
+    languages: [go]
+    severity: ERROR
+    message: user input reaches store.Save -> db.Query across packages
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.URL.Query().Get($PARAM)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.Query($QUERY)
+          - focus-metavariable: $QUERY

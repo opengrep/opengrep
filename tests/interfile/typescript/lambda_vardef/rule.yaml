@@ -1,0 +1,21 @@
+rules:
+  - id: lambda-vardef-resolution
+    languages: [ts]
+    severity: ERROR
+    message: >
+      User input flows into an exported lambda VarDef
+      (const handler = (x) => sink(x)) defined in handlers.ts.
+      Lambda VarDefs must appear in the call-graph vertex set AND in
+      the per-file visibility names index so call sites in any file
+      can resolve them.  Without that visibility coverage, the
+      cross-file call edge to the lambda is missing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY
