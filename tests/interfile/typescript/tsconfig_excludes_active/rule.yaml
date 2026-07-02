@@ -1,0 +1,40 @@
+rules:
+  - id: tsconfig-excludes-active
+    languages: [ts]
+    severity: ERROR
+    message: >
+      Adversarial setup against § 4 TS's claim that projidx prefers
+      `tsconfig.build.json` over `tsconfig.json`.
+
+      Two tsconfig files live at the project root:
+        - tsconfig.json         excludes nothing.
+        - tsconfig.build.json   excludes "legacy/**".
+
+      legacy/source.ts contains the SOURCE and imports `helper` from
+      helper.ts.  helper.ts contains the SINK.  The only path from
+      source to sink runs through legacy/source.ts → helper.ts.
+
+      If projidx honours tsconfig.build.json: legacy/ is discovered
+      excluded, the call-graph edge from legacy/source.ts to
+      helper.ts is missing, and the sink does NOT fire (this `ok:`).
+      If projidx falls back to tsconfig.json (or misses the
+      preference): legacy/ is included, the edge is built, and the
+      sink fires — false positive given the user's intent.
+
+      A separate non-excluded file (mainline.ts) also imports
+      helper, but with a CONSTANT — not a source — to keep helper.ts
+      on the rule's interfile subgraph without introducing a real
+      taint chain.  Without mainline.ts the rule might
+      short-circuit because helper.ts wouldn't be reachable from
+      any non-excluded caller and the test would trivially pass for
+      the wrong reason.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY
