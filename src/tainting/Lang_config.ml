@@ -366,11 +366,34 @@ let lua = {
 }
 
 let dart = {
-  hof_configs = [];
-  collection_configs = [];
-  constructor_names = ["constructor"];
+  hof_configs = [
+    MethodHOF {
+      methods = ["map"; "where"; "forEach"; "expand"; "firstWhere";
+                 "lastWhere"; "any"; "every"; "removeWhere"; "retainWhere"];
+      arity = 1;
+      taint_arg_index = 0;
+    };
+    (* reduce(combine) - combine(value, element), the element (arg 1) comes
+       from the collection *)
+    MethodHOF { methods = ["reduce"]; arity = 1; taint_arg_index = 1 };
+  ];
+  collection_configs = [
+    (* List.add, Set.add, List.addAll, Map.addEntries - item taints this *)
+    ArgTaintsThis { methods = ["add"; "addAll"; "addEntries"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    (* List.insert(index, item) - item taints this *)
+    ArgTaintsThis { methods = ["insert"; "insertAll"]; arity = 2; taint_arg_index = 1; returns_this = false };
+    (* StringBuffer.write/writeln/writeAll - str taints this *)
+    ArgTaintsThis { methods = ["write"; "writeln"; "writeAll"]; arity = 1; taint_arg_index = 0; returns_this = false };
+    (* accessors - this taints return *)
+    ThisTaintsReturn { methods = ["removeLast"; "toString"; "join"; "toList"; "toSet"]; arity = 0 };
+    ThisTaintsReturn { methods = ["removeAt"; "elementAt"; "remove"; "join"]; arity = 1 };
+  ];
+  (* Dart constructors are class-named (User.User), which is_constructor
+     covers via the class-name equality check *)
+  constructor_names = [];
   uses_new_keyword = false;
-  invoke_methods = [];
+  (* Function objects: f.call(args) invokes the closure f *)
+  invoke_methods = ["call"];
 }
 
 let elixir = {

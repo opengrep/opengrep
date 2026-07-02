@@ -1,0 +1,11 @@
+rules:
+  - id: test-collection-models-dart
+    message: Taint flows through built-in collection methods
+    languages:
+      - dart
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
