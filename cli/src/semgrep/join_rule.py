@@ -477,19 +477,19 @@ def run_join_rule(
         return [], [e]
 
     # Run Semgrep
-    with tempfile.NamedTemporaryFile() as rule_path:
+    with tempfile.TemporaryDirectory() as rule_dir:
         # Combine inline rules and refs
         raw_rules = [rule.raw for rule in inline_rules]
         raw_rules.extend([rule.raw for rule in config_map.values()])
-        yaml.dump({"rules": raw_rules}, rule_path)
-        rule_path.flush()
-        rule_path.seek(0)
+        rule_path = Path(rule_dir) / "rules.yaml"
+        with rule_path.open("w") as rule_file:
+            yaml.dump({"rules": raw_rules}, rule_file)
 
         logger.debug(
             f"Running join mode rule {join_rule.get('id')} on {len(targets)} files."
         )
         output = semgrep.run_scan.run_scan_and_return_json(
-            config=Path(rule_path.name),
+            config=rule_path,
             targets=targets,
             no_rewrite_rule_ids=True,
             optimizations="all",
