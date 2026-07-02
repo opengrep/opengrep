@@ -178,6 +178,7 @@ val is_origintok : t -> bool
 exception NoTokenLocation of string
 
 val fake_tok : t -> string -> t
+val fake_tok_loc : location -> string -> t
 val unsafe_fake_tok : string -> t
 
 (* sc stands for semicolon. Semicolons are often fake tokens because of
@@ -272,3 +273,5 @@ val abstract_tok : t
 
 (* comparison (TODO? should use deriving ord?) *)
 val compare_pos : t -> t -> int
+
+val abs_tok : Fpath.t option -> t -> t

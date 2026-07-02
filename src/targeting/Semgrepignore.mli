@@ -15,6 +15,7 @@
    The 'Empty' case is useful for testing.
 *)
 type default_semgrepignore_patterns = Empty | Semgrep_scan_legacy
+[@@deriving show]
 
 val default_semgrepignore_filename : string
 

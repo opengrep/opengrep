@@ -89,6 +89,9 @@ type java_props_cache = (string * AST_generic.SId.t, IL.name) Hashtbl.t
 type t = {
   lang : Lang.t;
   file : Fpath.t;  (** File under analysis, for Deep Semgrep. *)
+  project_root : Fpath.t option;
+      (** Prepended to relative AST token paths so they compare
+          absolute-vs-absolute against call-graph edges (always absolute). *)
   rule_id : Rule_ID.t;  (** Taint rule id, for Deep Semgrep. *)
   options : Rule_options.t;
   track_control : bool;
