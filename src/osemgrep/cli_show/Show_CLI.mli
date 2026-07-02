@@ -33,6 +33,7 @@ and show_kind =
   | DumpCommandForCore
   | DumpIntrafileGraph of Fpath.t * Lang.t
   | DumpTaintSignatures of Fpath.t * Fpath.t
+  | DumpInterfileGraph of Fpath.t * Lang.t
 [@@deriving show]
 
 (*
