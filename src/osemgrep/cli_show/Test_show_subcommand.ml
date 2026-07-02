@@ -26,7 +26,7 @@ let t = Testo.create
 (* Helpers *)
 (*****************************************************************************)
 (* alt: define Show_subcommand.caps *)
-type caps = < Cap.stdout ; Cap.network ; Cap.tmp >
+type caps = < Cap.stdout ; Cap.network ; Cap.tmp ; Cap.fork >
 
 (* for dump-config test *)
 let eqeq_basic_content =
