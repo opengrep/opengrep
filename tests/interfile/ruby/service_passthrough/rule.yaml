@@ -1,0 +1,13 @@
+rules:
+  - id: test-service-passthrough
+    mode: taint
+    languages:
+      - ruby
+    message: "Tainted data flows through chained constructor to sink"
+    severity: ERROR
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

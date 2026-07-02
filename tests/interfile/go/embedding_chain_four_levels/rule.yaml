@@ -1,0 +1,32 @@
+rules:
+  - id: embedding-chain-four-levels
+    languages: [go]
+    severity: ERROR
+    message: >
+      Linear embedding chain: `Top` embeds `L3`, `L3` embeds `L2`,
+      `L2` embeds `L1`, `L1` embeds `Base`.  Method `M` is declared
+      only on `Base`.  `Top`'s sole implementation has `M`, with the
+      sink in its body.
+
+      § 4 Go is explicit: projidx "BFS-**transitively** gathers
+      every inherited func_info and re-emits it under the embedder's
+      class name".  At each level the BFS must add `M` to
+      Type_state.methods[L1], [L2], [L3], [Top].  If the BFS is
+      bounded or truncated at a shallow depth, the deepest embedder
+      (`Top`) misses `M`, the dispatch edge to `Impl.M` is never
+      built, and the sink does not fire.
+
+      Symmetric to dispatch_closure_chain in shape — a property
+      claimed transitive in the docs, stressed at depth.  Compared
+      to the diamond test (two paths to same node, depth 2), this
+      pushes purely on depth.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.URL.Query().Get($PARAM)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.Query($QUERY)
+          - focus-metavariable: $QUERY

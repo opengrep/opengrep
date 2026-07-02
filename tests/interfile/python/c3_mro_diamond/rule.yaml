@@ -1,0 +1,9 @@
+rules:
+  - id: c3-mro-override
+    languages: [python]
+    severity: ERROR
+    message: taint reaches the C3-correct method override
+    mode: taint
+    options: {taint_interfile: true}
+    pattern-sources: [{pattern: "source()"}]
+    pattern-sinks: [{pattern: "sink(...)"}]
