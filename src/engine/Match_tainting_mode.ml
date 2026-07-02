@@ -824,6 +824,7 @@ let check_rules ~match_hook
          | Lang.Cpp
          | Lang.Crystal
          | Lang.Csharp
+         | Lang.Dart
          | Lang.Elixir
          | Lang.Go
          | Lang.Java

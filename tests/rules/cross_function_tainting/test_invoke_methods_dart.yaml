@@ -1,0 +1,11 @@
+rules:
+  - id: test-invoke-methods-dart
+    message: Taint flows through a closure invoked via .call()
+    languages:
+      - dart
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

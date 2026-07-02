@@ -391,9 +391,12 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
               (* Python/Kotlin/Scala: ClassName(args) *)
               | G.Call ({ e = G.N (G.Id ((cn, _), _)); _ }, _)
                 when Lang.(lang =*= Python || lang =*= Kotlin || lang =*= Scala) -> Some cn
-              (* Java/JS/TS/C#: new ClassName(args) *)
+              (* Java/JS/TS/C#: new ClassName(args)
+                 Dart: ClassName(args) — the parser produces G.New even
+                 without the (optional) `new` keyword *)
               | G.New (_, ty, _, _)
-                when Lang.(lang =*= Java || lang =*= Js || lang =*= Ts || lang =*= Csharp) ->
+                when Lang.(lang =*= Java || lang =*= Js || lang =*= Ts || lang =*= Csharp
+                           || lang =*= Dart) ->
                   (match ty.G.t with
                   | G.TyN (G.Id ((cn, _), _)) -> Some cn
                   | G.TyExpr { G.e = G.N (G.Id ((cn, _), _)); _ } -> Some cn

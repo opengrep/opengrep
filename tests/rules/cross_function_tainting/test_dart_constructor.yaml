@@ -1,0 +1,11 @@
+rules:
+  - id: dart_constructor_taint
+    message: Tainted data flows through a constructor to a sink
+    languages:
+      - dart
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
