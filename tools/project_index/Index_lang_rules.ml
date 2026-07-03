@@ -583,34 +583,20 @@ let rust : t = { default with
   class_def_reshape = rust_class_def_reshape;
 }
 
-let java : t = { default with
+(* Package-scoped languages: a type/class lives in a package, resolved by
+   the package declaration rather than the file path. *)
+let package_scoped : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
   unqualified_scope = `Per_package;
   module_path_from_ast = extract_package_decl;
 }
 
-let kotlin : t = { default with
-  walks_inheritance = true;
-  include_anonymous_funcs = false;
-  unqualified_scope = `Per_package;
-  module_path_from_ast = extract_package_decl;
-}
-
-let csharp : t = { default with
-  walks_inheritance = true;
-  include_anonymous_funcs = false;
-  unqualified_scope = `Per_package;
-  module_path_from_ast = extract_package_decl;
-}
-
-let cpp : t = { default with
-  walks_inheritance = true;
-  include_anonymous_funcs = false;
-  unqualified_scope = `Per_package;
-  module_path_from_ast = extract_package_decl;
-  normalize_import_specifier = strip_c_header_ext;
-}
+let java : t = package_scoped
+let kotlin : t = package_scoped
+let csharp : t = package_scoped
+let cpp : t =
+  { package_scoped with normalize_import_specifier = strip_c_header_ext }
 
 let c : t = { default with
   unqualified_scope = `Per_directory;

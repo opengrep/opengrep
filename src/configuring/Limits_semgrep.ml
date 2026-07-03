@@ -71,15 +71,18 @@ let taint_MAX_TAINT_SET_SIZE = 25
 
 (** Bounds the length of the offsets we can track per arg/poly-taint.
  *
- * Previously [1] as a perf guard against long dotted chains (see
- * [fix_poly_taint_with_offset] comment). Bumped to [2] so destructures
- * that go through a Switch case — e.g. Clojure's arity-dispatched
- * [PatList([PatConstructor(:keys, [PatKeyVal …])])] — can still
- * address [arg[0].:field] at full length without truncating to
- * [arg[0]] (which conflates all fields and breaks field-sensitivity).
- * Direct [ParamPattern] destructures (Elixir, JS, Rust, …) only need
- * length 1 and are unaffected. *)
+ * [4] keeps field-sensitivity for nested destructuring / callback /
+ * library-access patterns (Clojure, Elixir, Python, Ruby all have
+ * cross-function tests that need it).
+ *
+ * Poly-taint set WIDTH grows combinatorially with this bound, though
+ * (each extra level multiplies reachable fields × indexes), so on a
+ * language with deep struct nesting over a large codebase it makes the
+ * interfile fixpoint explode — grafana Go crawled for minutes at [4].
+ * [Taint_shape.max_poly_offset] lowers such languages to
+ * [taint_MAX_POLY_OFFSET_FLAT] (Go has no test needing more). *)
 let taint_MAX_POLY_OFFSET = 4
+let taint_MAX_POLY_OFFSET_FLAT = 1
 
 (** Maximum depth for shape equality comparison to prevent infinite recursion
  * in pathological patterns like obj[key] = [obj[key], item] that create

@@ -99,34 +99,28 @@ let file_of (v : t) : Fpath.t option =
   if String.equal file_str "" then None
   else Some (Fpath.v file_str)
 
+(* Key-based: absolutifies any id whose key carries a relative file —
+   real tokens, located fakes, and key-only ids rebuilt by [of_sid]
+   (whose placeless token has no location to fix). The token is
+   re-located too when it has a position, so token-derived lookups
+   agree with the key. *)
 let make_absolute (project_root : Fpath.t) (v : t) : t =
   let (name, tok) = v.ident in
-  let absolutize file =
-    if Fpath.is_abs file then None
-    else Some (Fpath.(project_root // file) |> Fpath.normalize)
-  in
-  let with_abs_loc loc abs_file =
-    let new_loc = { loc with Tok.pos = { loc.Tok.pos with Pos.file = abs_file } } in
-    (* [Tok.fix_location] leaves located fakes UNCHANGED; rebuild via [fake_tok_loc] so the new location reaches [compute_key]. *)
-    let new_tok =
-      if Tok.is_fake tok then Tok.fake_tok_loc new_loc name
-      else Tok.fix_location (fun _ -> new_loc) tok
-    in
-    let new_ident = (name, new_tok) in
-    { ident = new_ident; key = compute_key new_ident }
-  in
-  if Tok.is_fake tok then
-    (* Located fakes bake file into key; absolutize them. *)
-    match Tok.loc_of_tok tok with
-    | Ok loc ->
-      (match absolutize loc.Tok.pos.file with
-       | None -> v
-       | Some abs_file -> with_abs_loc loc abs_file)
-    | _ -> v
+  let (kname, kfile, kline, kcol) = v.key in
+  if String.equal kfile "" || Fpath.is_abs (Fpath.v kfile) then v
   else
-    match Tok.loc_of_tok tok with
-    | Ok loc ->
-      (match absolutize loc.Tok.pos.file with
-       | None -> v
-       | Some abs_file -> with_abs_loc loc abs_file)
-    | _ -> v
+    let abs_file = Fpath.(project_root // Fpath.v kfile) |> Fpath.normalize in
+    let new_tok =
+      match Tok.loc_of_tok tok with
+      | Ok loc ->
+        let new_loc =
+          { loc with Tok.pos = { loc.Tok.pos with Pos.file = abs_file } }
+        in
+        (* [Tok.fix_location] leaves located fakes UNCHANGED; rebuild via
+           [fake_tok_loc] so the new location survives. *)
+        if Tok.is_fake tok then Tok.fake_tok_loc new_loc name
+        else Tok.fix_location (fun _ -> new_loc) tok
+      | Error _ -> tok
+    in
+    { ident = (name, new_tok);
+      key = (kname, normalize_file abs_file, kline, kcol) }
