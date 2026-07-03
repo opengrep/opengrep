@@ -136,7 +136,10 @@ type env = {
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
       (** Builtin signature database for standard library functions *)
   call_graph : Call_graph.G.t option;
-      (** Call graph for edge-based signature lookup *)
+      (** Local (intrafile) call graph for edge-based signature lookup.
+          Interfile resolution keys the signature DB by [id_resolved]
+          def-site sid first; this graph is the fallback for callees
+          without a stamp (the intrafile path's main channel). *)
   call_graph_caller : IL.name option;
       (** Caller for call-graph lookups; enclosing function's name inside a lambda (lambdas aren't call-graph nodes). *)
   class_name : string option;
@@ -753,11 +756,12 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
-(* Fast path via [id_resolved] sid (= sig DB key), skipping the edge scan;
-   [None] falls back to the graph and finds the same signature.
-   [?require_leaf] gates on the resolved def's name matching the call leaf
-   (Ruby [new]->[initialize] must fall through). *)
-let signature_via_id_resolved ?require_leaf db (id_info : G.id_info) arity =
+(* Fast path via [id_resolved] sid (= sig DB key), skipping the edge scan.
+   [?require_leaf] gates on the resolved def's name matching the call leaf,
+   guarding against wrong-scope stamps; constructor defs are the sanctioned
+   mismatch (Ruby [Cls.new]->[initialize], Python [Cls()]->[__init__]). *)
+let signature_via_id_resolved ?require_leaf ~lang ~project_root db
+    (id_info : G.id_info) arity =
   match !(id_info.G.id_resolved) with
   | Some (_, sid) when not (G.SId.is_unsafe_default sid) ->
     let leaf_ok =
@@ -766,19 +770,30 @@ let signature_via_id_resolved ?require_leaf db (id_info : G.id_info) arity =
       | Some leaf ->
         let (rname, _, _, _) = G.SId.to_loc sid in
         String.equal rname leaf
+        || Object_initialization.is_constructor lang rname None
     in
     if leaf_ok then
-      Shape_and_sig.lookup_signature db (Function_id.of_sid sid) arity
+      (* A project scan keys the sig DB by absolutified fids, while sids
+         carry the as-parsed (possibly relative) file. *)
+      let fid =
+        let fid = Function_id.of_sid sid in
+        match project_root with
+        | Some root -> Function_id.make_absolute root fid
+        | None -> fid
+      in
+      Shape_and_sig.lookup_signature db fid arity
     else None
   | _ -> None
 
-let get_signature_for_object ?(callee_id_info : G.id_info option) ~project_root
-    graph caller_node db method_name arity =
-  (* obj.method(): prefer [id_resolved] else call-graph edge. *)
+let get_signature_for_object ?(callee_id_info : G.id_info option) ~lang
+    ~project_root graph caller_node db method_name arity =
+  (* obj.method(): prefer the callee leaf's [id_resolved] def-site sid,
+     else the local call-graph edge, else the method-name fid. *)
   let fast =
     Option.bind callee_id_info (fun ii ->
         signature_via_id_resolved
-          ~require_leaf:(Function_id.show method_name) db ii arity)
+          ~require_leaf:(Function_id.show method_name) ~lang ~project_root
+          db ii arity)
   in
   match fast with
   | Some _ as r -> r
@@ -811,7 +826,10 @@ let try_builtin_fallback env func_name arity result =
  * builtin fallback on the bare name. Shared between the bare-name
  * call branch and the Ruby [method(:name)] recogniser. *)
 let lookup_bare_function_name env db (name : IL.name) arity =
-  match signature_via_id_resolved db name.IL.id_info arity with
+  match
+    signature_via_id_resolved ~lang:env.taint_inst.lang
+      ~project_root:env.taint_inst.project_root db name.IL.id_info arity
+  with
   | Some _ as r -> r
   | None ->
   (* Absolutize the call token to match the absolute paths on call-graph edges. *)
@@ -829,7 +847,7 @@ let lookup_bare_function_name env db (name : IL.name) arity =
   match
     Call_graph.lookup_callee_from_graph
       env.call_graph
-      (Option.map Function_id.of_il_name env.func.name)
+      (Option.map Function_id.of_il_name env.call_graph_caller)
       call_tok
   with
   | Some callee_node ->
@@ -896,7 +914,11 @@ let lookup_signature_with_object_context env fun_exp arity =
             rev_offset = [ { o = Dot method_name; _ } ];
           }
         when Option.is_some env.class_name -> (
-          match signature_via_id_resolved db method_name.id_info arity with
+          match
+            signature_via_id_resolved ~lang:env.taint_inst.lang
+              ~project_root:env.taint_inst.project_root db
+              method_name.id_info arity
+          with
           | Some _ as r -> r
           | None ->
           let call_tok =
@@ -915,6 +937,7 @@ let lookup_signature_with_object_context env fun_exp arity =
           match
             get_signature_for_object
               ~callee_id_info:method_name.id_info
+              ~lang:env.taint_inst.lang
               ~project_root:env.taint_inst.project_root
               env.call_graph
               env.call_graph_caller
@@ -937,6 +960,17 @@ let lookup_signature_with_object_context env fun_exp arity =
               let result = try_builtin_fallback env (fst qualified_name.ident) arity result in
               try_builtin_fallback env (fst method_name.ident) arity result)
       | Fetch { base = Var _obj; rev_offset = { o = Dot method_name; _ } :: _ } -> (
+          (* Chained call (e.g. [i.Next.G(s)]): the leaf method's stamp is
+             the resolution channel, same as the single-offset branch. *)
+          match
+            signature_via_id_resolved
+              ~require_leaf:(fst method_name.ident)
+              ~lang:env.taint_inst.lang
+              ~project_root:env.taint_inst.project_root db
+              method_name.id_info arity
+          with
+          | Some _ as r -> r
+          | None ->
           let call_tok = Tok.abs_tok env.taint_inst.project_root (snd method_name.ident) in
           match
             Call_graph.lookup_callee_from_graph env.call_graph
@@ -953,21 +987,20 @@ let lookup_signature_with_object_context env fun_exp arity =
               try_builtin_fallback env (fst method_name.ident) arity result)
       | _ -> None)
 
-(* If [fun_exp] resolves through the call graph to the function currently
+(* If [fun_exp]'s [id_resolved] def-site sid is the function currently
  * under analysis, return a synthesised signature built from the effects
  * accumulated so far. The surrounding dataflow fixpoint iterates, so each
  * pass picks up effects recorded by the previous one — converging to a
- * least-fixed-point over direct self-recursion. *)
+ * least-fixed-point over direct self-recursion. Both sids derive from the
+ * same AST's def token, so the comparison is path-representation-free. *)
 let self_sig_if_recursive env fun_exp =
   match (fun_exp.e, env.func.name) with
   | Fetch { base = Var callee; rev_offset = [] }, Some self_name -> (
-      let self_id = Function_id.of_il_name self_name in
-      let call_tok = snd callee.ident in
-      match
-        Call_graph.lookup_callee_from_graph env.call_graph (Some self_id)
-          call_tok
-      with
-      | Some callee_node when Function_id.equal callee_node self_id ->
+      match !(callee.id_info.G.id_resolved) with
+      | Some (_, sid)
+        when (not (G.SId.is_unsafe_default sid))
+             && Function_id.equal (Function_id.of_sid sid)
+                  (Function_id.of_il_name self_name) ->
           env.did_self_recurse := true;
           Some
             {
@@ -980,12 +1013,8 @@ let self_sig_if_recursive env fun_exp =
 
 let lookup_signature env fun_exp arity =
   Log.debug (fun m ->
-      m "LOOKUP_SIG_ENTRY: Looking up %s from caller %s with arity %d"
-        (Display_IL.string_of_exp fun_exp)
-        (Option.fold ~none:"<none>"
-           ~some:Call_graph.show_node
-           (Option.map Function_id.of_il_name env.call_graph_caller))
-        arity);
+      m "LOOKUP_SIG_ENTRY: Looking up %s with arity %d"
+        (Display_IL.string_of_exp fun_exp) arity);
   match lookup_signature_with_object_context env fun_exp arity with
   | Some _ as r -> r
   | None -> self_sig_if_recursive env fun_exp
@@ -1083,7 +1112,7 @@ let fix_poly_taint_with_field lang lval xtaint =
       match lval.rev_offset with
       | o :: _ ->
           let o = T.offset_of_IL lang o in
-          let taints = Shape.fix_poly_taint_with_offset [ o ] taints in
+          let taints = Shape.fix_poly_taint_with_offset ~lang [ o ] taints in
           `Tainted taints
       | [] -> xtaint)
 
@@ -2226,11 +2255,47 @@ let call_with_intrafile lval_opt e env args instr =
   check_orig_if_sink { env with lval_env } instr.iorig all_args_taints Bot
     ~filter_sinks:(fun m -> not (m.spec.sink_exact && m.spec.sink_has_focus));
   let call_taints, shape, lval_env =
+    (* Constructor call handling for ClassName() and ClassName.new():
+       the callee leaf's [id_resolved] sid points at the resolved def
+       (stamped by extraction), and a construction resolves to the ctor
+       def (e.g. [__init__]/[initialize]), so the sid's leaf name decides.
+       A construction must not be mistaken for an implicit block/HOF call,
+       and its callee is remapped below so Sig_inst maps BThis onto the
+       assignment target. *)
+    let resolves_to_constructor =
+      (* Method calls on objects (e.g., _tmp.get_data()) should not be
+         remapped as constructors. Their eorig may share a token with a
+         constructor edge (e.g., in Passthrough(source()).get_data(), both
+         the constructor and the method eorig start at "Passthrough").
+         Skip the constructor check for Dot accesses unless it's Ruby's or
+         Crystal's ClassName.new() pattern. *)
+      (match e.e with
+      | Fetch { rev_offset = [{ o = Dot name; _ }]; _ }
+        when fst name.IL.ident <> "new"
+             || not Lang.(env.taint_inst.lang =*= Ruby || env.taint_inst.lang =*= Crystal) -> false
+      | _ -> true) &&
+      Option.is_some env.signature_db &&
+      let resolved_sid = match e.e with
+        | Fetch { base = Var name; rev_offset = [] } ->
+            !(name.id_info.G.id_resolved)
+        | Fetch { base = Var _; rev_offset = [ { o = Dot m; _ } ] } ->
+            !(m.id_info.G.id_resolved)
+        | _ -> None
+      in
+      (match resolved_sid with
+       | Some (_, sid) when not (G.SId.is_unsafe_default sid) ->
+           let (rname, _, _, _) = G.SId.to_loc sid in
+           Object_initialization.is_constructor env.taint_inst.lang
+             rname None
+       | _ -> false)
+    in
     (* Detect Ruby/Scala/Kotlin implicit block pattern:
      * When a call has a single lambda argument (as a Fetch of a lambda lval),
      * and the callee is a Call expression, treat it as calling the inner method
      * with the lambda as an implicit block *)
     let implicit_lambda_call =
+      if resolves_to_constructor then None
+      else
       (match args with
       | [ arg ] ->
           (match arg with
@@ -2354,55 +2419,24 @@ let call_with_intrafile lval_opt e env args instr =
             | None ->
                 (all_args_taints, S.Bot, lval_env)))
     | None ->
-        (* Constructor call handling for ClassName() and ClassName.new().
-         *
-         * When taint flows through a constructor (e.g., `obj = Foo(tainted)`),
+        (* When taint flows through a constructor (e.g., `obj = Foo(tainted)`),
          * the constructor signature may contain ToLval(BThis.field, taint)
-         * effects that assign taint to fields of the new object. For Sig_inst
-         * to correctly map BThis onto the target variable `obj`, we need the
-         * callee expression to be `obj.Constructor` rather than just
-         * `Constructor`. We check the call graph to determine if this call
-         * resolves to a constructor, and if so, remap the callee accordingly. *)
-        let resolves_to_constructor =
-          (* Method calls on objects (e.g., _tmp.get_data()) should not be
-             remapped as constructors. Their eorig may share a token with a
-             constructor edge (e.g., in Passthrough(source()).get_data(), both
-             the constructor and the method eorig start at "Passthrough").
-             Skip the constructor check for Dot accesses unless it's Ruby's or
-             Crystal's ClassName.new() pattern. *)
-          (match e.e with
-          | Fetch { rev_offset = [{ o = Dot name; _ }]; _ }
-            when fst name.IL.ident <> "new"
-                 || not Lang.(env.taint_inst.lang =*= Ruby || env.taint_inst.lang =*= Crystal) -> false
-          | _ -> true) &&
-          Option.is_some env.signature_db &&
-          (* The constructor edge is stored at the class name token position
-             (first token of the call expression). Extract it from the callee. *)
-          let call_tok = match e.e with
-            | Fetch { base = Var name; _ } ->
-                Tok.abs_tok env.taint_inst.project_root (snd name.ident)
-            | _ -> Tok.unsafe_fake_tok ""
-          in
-          not (Tok.is_fake call_tok) &&
-          (match Call_graph.lookup_callee_from_graph
-                  env.call_graph
-                  (Option.map Function_id.of_il_name env.func.name)
-                  call_tok with
-           | Some callee_node ->
-               Object_initialization.is_constructor env.taint_inst.lang
-                 (Function_id.show callee_node) None
-           | None -> false)
-        in
-        (* Remap: ClassName() → obj.ClassName(), ClassName.new() → obj.ClassName()
+         * effects that assign taint to fields of the new object.
+         * Remap: ClassName() → obj.ClassName(), ClassName.new() → obj.ClassName()
          * This makes the callee a method-call shape so that Sig_inst maps
          * BThis to obj (the assignment target) when instantiating the
          * constructor's ToLval effects. *)
         let e =
           if resolves_to_constructor then
             match (lval_opt, e.e) with
-            | Some lval, Fetch { base = Var name; rev_offset = ([] | [{ o = Dot _; _ }]) } ->
+            | Some lval, Fetch { base = Var name; rev_offset = [] } ->
                 IL.{ e = Fetch { base = lval.base;
                                  rev_offset = [{ o = Dot name; oorig = NoOrig }] };
+                     eorig = e.eorig }
+            (* [ClassName.new()]: keep the [new] offset — it carries the
+               ctor def's [id_resolved] stamp; the class-name base does not. *)
+            | Some lval, Fetch { base = Var _; rev_offset = [ ({ o = Dot _; _ } as off) ] } ->
+                IL.{ e = Fetch { base = lval.base; rev_offset = [ off ] };
                      eorig = e.eorig }
             | _ -> e
           else e

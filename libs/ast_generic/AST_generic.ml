@@ -287,7 +287,10 @@ type module_name =
 module SId : sig
   type t [@@deriving show, eq, ord, hash, sexp]
 
-  val of_tok : file:string -> Tok.t -> t
+  (* [?name] overrides the token text: synthetic names (e.g. lambda
+     [_tmp_lambda]) key [Function_id] on the ident string, not the text
+     of the located-fake token they carry. *)
+  val of_tok : ?name:string -> file:string -> Tok.t -> t
   val of_index : file:string -> int -> t
   val to_int : t -> int
 
@@ -305,11 +308,11 @@ end = struct
 
   (* Caller supplies the real [file] (single-file lowered program); a placeless
      [Error] token still gets the real file with zeroed position. *)
-  let of_tok ~file tok =
+  let of_tok ?name ~file tok =
     match Tok.loc_of_tok tok with
     | Ok loc ->
         {
-          name = loc.Tok.str;
+          name = (match name with Some n -> n | None -> loc.Tok.str);
           file;
           line = loc.Tok.pos.line;
           col = loc.Tok.pos.column;
@@ -350,7 +353,6 @@ end
  * You need to call Naming_AST.resolve (or one of the lang-specific
  * Resolve_xxx.resolve) on the generic AST to set it correctly.
  *)
-(* a single unique gensym'ed number. *)
 type sid = SId.t
 and resolved_name = resolved_name_kind * sid
 

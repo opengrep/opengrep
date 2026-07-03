@@ -30,7 +30,8 @@ val fn_id_of_entity :
 
 val fn_id_to_node : fn_id -> Function_id.t option
 
-val resolved_name_of_fn_id : fn_id -> AST_generic.resolved_name option
+val resolved_name_of_fn_id :
+  ?allow_located_fake:bool -> fn_id -> AST_generic.resolved_name option
 
 type fdef_edges = {
   calls : (fn_id * Tok.t) list;

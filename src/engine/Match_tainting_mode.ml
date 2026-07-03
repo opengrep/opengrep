@@ -47,6 +47,7 @@ type fun_info = {
   method_properties : AST_generic.expr list;
   cfg : IL.fun_cfg;
   fdef : G.function_definition;
+  is_static : bool;  (* [@staticmethod] and the like: no implicit receiver *)
   is_lambda_assignment : bool;
   file_ast : G.program option;  (* [Some] cross-file, [None] current file *)
   taint_inst : Taint_rule_inst.t option;  (* [Some] cross-file preds, else current-file *)
@@ -276,21 +277,7 @@ let pms_of_effects ~lang ~match_on (effects : Effects.t) : PM.t list =
 (* Main entry points *)
 (*****************************************************************************)
 
-let check_fundef (taint_inst : Taint_rule_inst.t) (name : IL.name) ?glob_env ?class_name
-    ?signature_db ?builtin_signature_db ?call_graph fdef =
-  let fdef = AST_to_IL.function_definition taint_inst.lang fdef in
-  let fcfg = CFG_build.cfg_of_fdef fdef in
-  let in_env, env_effects =
-    Taint_input_env.mk_fun_input_env taint_inst ?glob_env fdef.fparams
-  in
-  let effects, mapping =
-    Dataflow_tainting.fixpoint taint_inst ~in_env ~name ?class_name
-      ?signature_db ?builtin_signature_db ?call_graph fcfg
-  in
-  let effects = Effects.union env_effects effects in
-  (fcfg, effects, mapping)
-
-(* Like [check_fundef] but reuses a pre-built [IL.fun_cfg]. *)
+(* Analyse a function from a pre-built [IL.fun_cfg]. *)
 let check_fundef_with_cfg (taint_inst : Taint_rule_inst.t) (name : IL.name)
     ?glob_env ?class_name ?signature_db ?builtin_signature_db ?call_graph
     (fcfg : IL.fun_cfg) =
@@ -304,47 +291,58 @@ let check_fundef_with_cfg (taint_inst : Taint_rule_inst.t) (name : IL.name)
   let effects = Effects.union env_effects effects in
   (fcfg, effects, mapping)
 
-(* Implicit receiver (Go/Rust ParamReceiver, Python self/cls); reached as [BThis] not [BArg], so stripping keeps [BArg] indices aligned. *)
-let is_implicit_receiver (lang : Lang.t)
-    (class_name_str : string option) (gparam : G.parameter) : bool =
+(* [check_fundef_with_cfg] on a freshly-lowered [fdef]. *)
+let check_fundef (taint_inst : Taint_rule_inst.t) (name : IL.name) ?glob_env
+    ?class_name ?signature_db ?builtin_signature_db ?call_graph fdef =
+  let fdef = AST_to_IL.function_definition taint_inst.lang fdef in
+  check_fundef_with_cfg taint_inst name ?glob_env ?class_name ?signature_db
+    ?builtin_signature_db ?call_graph (CFG_build.cfg_of_fdef fdef)
+
+(* Implicit receiver (Go/Rust ParamReceiver, Python first method param);
+   reached as [BThis] not [BArg], so stripping keeps [BArg] indices aligned. *)
+let is_implicit_receiver (lang : Lang.t) ~(is_first : bool)
+    ~(is_static : bool) (class_name_str : string option)
+    (gparam : G.parameter) : bool =
   match lang, gparam with
   | Lang.Go, G.ParamReceiver _ -> true
   | Lang.Rust, G.ParamReceiver _ -> true
   | _ -> (
       match class_name_str with
       | None -> false
-      | Some _ -> (
-          match lang, gparam with
-          | Lang.Python, G.Param { pname = Some (("self" | "cls"), _); _ } ->
-              true
-          | _ -> false))
+      | Some _ ->
+          (* Python's receiver is the first parameter of an instance/class
+             method whatever it is named ([self], [cls], or otherwise); a
+             [@staticmethod] has no receiver. *)
+          (match lang with
+           | Lang.Python -> is_first && not is_static
+           | _ -> false))
 
 let get_arity params info lang =
-  let filtered_params =
-    List.filter
-      (fun (gp : G.parameter) ->
-         not (is_implicit_receiver lang info.class_name_str gp))
-      params
-  in
-  List.length filtered_params
+  List.length
+    (List.filteri
+       (fun i (gp : G.parameter) ->
+          not (is_implicit_receiver lang ~is_first:(i =*= 0)
+                 ~is_static:info.is_static info.class_name_str gp))
+       params)
 
 (* Drop implicit-receiver IL params; G and IL param lists share length/order. *)
-let filter_implicit_receiver_params (lang : Lang.t)
+let filter_implicit_receiver_params (lang : Lang.t) ~(is_static : bool)
     (class_name_str : string option)
     (g_params : G.parameter list) (il_params : IL.param list)
     : IL.param list =
   match class_name_str with
   | None -> il_params
   | Some _ ->
-    List.filter_map
-      (fun ((gp, ip) : G.parameter * IL.param) ->
-         match ip with
-         (* Keep IL.ParamReceiver — extractor maps it to BThis without consuming an arg index. *)
-         | IL.ParamReceiver _ -> Some ip
-         | _ ->
-           if is_implicit_receiver lang class_name_str gp then None
-           else Some ip)
-      (List.combine g_params il_params)
+    List.combine g_params il_params
+    |> List.filteri
+         (fun i ((gp, ip) : G.parameter * IL.param) ->
+            match ip with
+            (* Keep IL.ParamReceiver — extractor maps it to BThis without consuming an arg index. *)
+            | IL.ParamReceiver _ -> true
+            | _ ->
+              not (is_implicit_receiver lang ~is_first:(i =*= 0) ~is_static
+                     class_name_str gp))
+    |> List.map snd
 
 (* [fid_filter] skips IL/CFG build for out-of-subgraph fns.  Records get [file_ast]/[taint_inst] = [None]; callers set them when needed. *)
 let build_info_map
@@ -358,18 +356,18 @@ let build_info_map
     else Shape_and_sig.FunctionMap.add fid info info_map
   in
   let build_fun_info (name : IL.name) ~(class_name_str : string option)
-      ~(method_properties : G.expr list)
+      ~(method_properties : G.expr list) ~(is_static : bool)
       ~(is_lambda_assignment : bool)
       (fdef : G.function_definition) : fun_info =
     let fdef_il = AST_to_IL.function_definition lang fdef in
     let cfg = CFG_build.cfg_of_fdef fdef_il in
-    { name; class_name_str; method_properties;
+    { name; class_name_str; method_properties; is_static;
       cfg; fdef; is_lambda_assignment;
       file_ast = None; taint_inst = None }
   in
-  let _infos, info_map =
+  let info_map =
     Visit_function_defs.fold_with_parent_path ~lang
-      (fun (infos, info_map) opt_ent parent_path fdef ->
+      (fun info_map opt_ent parent_path fdef ->
         match fst fdef.fkind with
         | LambdaKind
         | Arrow ->
@@ -377,7 +375,7 @@ let build_info_map
             let name = Visit_function_defs.synth_lambda_il_name fdef in
             let fid = Function_id.of_il_name name in
             (match fid_filter with
-             | Some f when not (f fid) -> (infos, info_map)
+             | Some f when not (f fid) -> info_map
              | _ ->
                let class_name_str =
                  match parent_path with
@@ -386,18 +384,19 @@ let build_info_map
                in
                let info =
                  build_fun_info name ~class_name_str
-                   ~method_properties:[] ~is_lambda_assignment:true fdef
+                   ~method_properties:[] ~is_static:false
+                   ~is_lambda_assignment:true fdef
                in
-               (info :: infos, add_info fid info info_map))
+               add_info fid info info_map)
         | Function
         | Method
         | BlockCases -> (
             match Option.bind opt_ent AST_to_IL.name_of_entity with
-            | None -> (infos, info_map)
+            | None -> info_map
             | Some name ->
                 let fid = Function_id.of_il_name name in
                 (match fid_filter with
-                 | Some f when not (f fid) -> (infos, info_map)
+                 | Some f when not (f fid) -> info_map
                  | _ ->
                    let go_receiver_name =
                      match lang with
@@ -428,12 +427,22 @@ let build_info_map
                          Taint_signature_extractor.extract_method_properties fdef
                      | Function | LambdaKind | Arrow | BlockCases -> []
                    in
+                   let is_static =
+                     match opt_ent with
+                     | Some { G.attrs; _ } ->
+                         List.exists
+                           (function
+                             | G.KeywordAttr (G.Static, _) -> true
+                             | _ -> false)
+                           attrs
+                     | None -> false
+                   in
                    let info =
                      build_fun_info name ~class_name_str ~method_properties
-                       ~is_lambda_assignment:false fdef
+                       ~is_static ~is_lambda_assignment:false fdef
                    in
-                   (info :: infos, add_info fid info info_map))))
-      ([], Shape_and_sig.FunctionMap.empty)
+                   add_info fid info info_map)))
+      Shape_and_sig.FunctionMap.empty
       ast
   in
   info_map
@@ -455,8 +464,8 @@ let extract_and_check
     let arity = get_arity params info lang in
     let sig_cfg =
       let filtered_params =
-        filter_implicit_receiver_params lang info.class_name_str
-          params info.cfg.IL.params
+        filter_implicit_receiver_params lang ~is_static:info.is_static
+          info.class_name_str params info.cfg.IL.params
       in
       { info.cfg with IL.params = filtered_params }
     in
@@ -493,7 +502,7 @@ let extract_and_check
   let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
     match eff with
     | Effect.ToSink si ->
-        let items, _precond = si.taints_with_precondition in
+        let items, precond = si.taints_with_precondition in
         let src_items =
           List.filter
             (fun (i : Effect.taint_to_sink_item) ->
@@ -508,8 +517,12 @@ let extract_and_check
             (Effect.ToSink
                {
                  si with
-                 (* [PBool true]: original precond references vars absent from this Src-only slice. *)
-                 taints_with_precondition = (src_items, Rule.PBool true);
+                 (* [precond] is a formula over labels; evaluated against
+                    the surviving Src items' labels it keeps a multi-label
+                    [requires] enforced. A requirement satisfied only by a
+                    BArg-carried label absent from this slice is checked
+                    when the signature is instantiated. *)
+                 taints_with_precondition = (src_items, precond);
                })
     | _ -> None
   in

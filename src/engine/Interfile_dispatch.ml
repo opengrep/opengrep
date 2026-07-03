@@ -12,6 +12,7 @@ module FunctionMap = Shape_and_sig.FunctionMap
 module Lval_env = Taint_lval_env
 
 module FpathMap = Map.Make (Fpath)
+module FpathSet = Set.Make (Fpath)
 module FidSet = Set.Make (Function_id)
 
 let parse_file (lang : Lang.t) (file : Fpath.t) : G.program =
@@ -169,6 +170,8 @@ type rule_specs = {
 let extract_specs_for_rule
     ~(lang : Lang.t)
     ~(xconf : Match_env.xconfig)
+    ~prefilter
+    ~(contents : (Fpath.t, string) Hashtbl.t)
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
     ~(matching_targets : interfile_target list)
     (rule : R.taint_rule)
@@ -178,21 +181,18 @@ let extract_specs_for_rule
   let xconf =
     Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
   in
-  (* Source-OR-sink prefilter (not the stock same-file AND), so a
-     source-only file still seeds the subgraph. *)
-  let prefilter =
-    Analyze_rule.regexp_prefilter_of_interfile_taint_rule (rule :> R.rule)
-  in
+  (* [prefilter] is the rule's source-OR-sink prefilter (not the stock
+     same-file AND), so a source-only file still seeds the subgraph;
+     compiled once per rule and [contents] read once per file, both
+     shared across every (rule, chunk) item. A file with no cached
+     content is kept (conservative). *)
   let file_is_relevant (path : Fpath.t) : bool =
     match prefilter with
     | None -> true
     | Some (_formula, func) -> (
-        match UFile.read_file path with
-        | content -> func content
-        | exception ((Out_of_memory | Stack_overflow | Time_limit.Timeout _)
-                     as exn) ->
-            Exception.catch_and_reraise exn
-        | exception _ -> true)
+        match Hashtbl.find_opt contents path with
+        | Some content -> func content
+        | None -> true)
   in
   let sources, sinks =
     List.fold_left
@@ -208,9 +208,18 @@ let extract_specs_for_rule
             Formula_cache.mk_specialized_formula_cache [rule]
           in
           let spec_matches, _expls =
-            Match_taint_spec.spec_matches_of_taint_rule
-              ~per_file_formula_cache:formula_cache
-              xconf (Fpath.to_string target.abs_path) (ast, []) rule
+            try
+              Match_taint_spec.spec_matches_of_taint_rule
+                ~per_file_formula_cache:formula_cache
+                xconf (Fpath.to_string target.abs_path) (ast, []) rule
+            with
+            | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn
+              ->
+              Log.warn (fun m ->
+                  m "interfile spec_extract: fatal %s on %s"
+                    (Printexc.to_string exn)
+                    (Fpath.to_string target.abs_path));
+              Exception.catch_and_reraise exn
           in
           let resolve_ranges (ranges : Range.t list)
               : Function_id.t list =
@@ -343,9 +352,6 @@ let init_file
         FunctionMap.add abs_fid info map_acc)
       enriched_map FunctionMap.empty
   in
-  (* Publish inferred classes onto this AST's [id_type] fields. *)
-  Object_initialization.(
-    stamp_id_types (detect_object_initialization ast lang) ast);
   { fi_info_map =
       FunctionMap.union
         (fun _k existing _new -> Some existing)
@@ -480,8 +486,9 @@ let compute_rule_subgraph
       |> List.sort_uniq Fpath.compare
     in
     let files =
+      let subgraph_file_set = FpathSet.of_list subgraph_files in
       let extra =
-        List.filter (fun fp -> not (List.mem fp subgraph_files))
+        List.filter (fun fp -> not (FpathSet.mem fp subgraph_file_set))
           source_sink_files
       in
       if extra <> [] then
@@ -523,7 +530,7 @@ let init_rule_state
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
     ~(target_root_map : Fpath.t option FpathMap.t)
     (rsg : rule_subgraph)
-    : rule_state option =
+    : rule_state =
   let lang = rsg.rsg_lang_context.lc_lang in
   let rule = rsg.rsg_specs.rs_rule in
   let init_acc =
@@ -536,6 +543,12 @@ let init_rule_state
              ~ast_table ~file_path acc
          with
          | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
+           let bt = Printexc.get_backtrace () in
+           Log.warn (fun m ->
+               m "interfile dispatch: fatal %s in init_file %s for rule %s\n%s"
+                 (Printexc.to_string exn)
+                 (Fpath.to_string file_path)
+                 (Rule_ID.to_string (fst rule.R.id)) bt);
            Exception.catch_and_reraise exn
          | exn ->
            Log.warn (fun m ->
@@ -548,7 +561,7 @@ let init_rule_state
         fi_file_envs = FpathMap.empty; }
       rsg.rsg_files
   in
-  Some {
+  {
     rule;
     lang;
     relevant_graph = rsg.rsg_relevant_graph;
@@ -612,9 +625,11 @@ let extract_and_check_function
   | Some (fn_taint_inst, fun_ast) ->
     let glob_env = glob_env_of_fid rs fid in
     let updated_db, findings =
+      (* No [~call_graph]: interfile callee resolution is sid-only (the
+         [id_resolved] def-site sids stamped by projidx). The local
+         call-graph fallback is for the intrafile path. *)
       Match_tainting_mode.extract_and_check
         ?builtin_signature_db:rs.builtin_signature_db
-        ~call_graph:rs.relevant_graph
         ~glob_env
         ~lang:rs.lang ~db ~match_on:rs.match_on
         ~taint_inst:fn_taint_inst ~ast:fun_ast
@@ -759,6 +774,10 @@ let extract_signatures (rs : rule_state)
   final_db
 
 let run_rule (rs : rule_state) : PM.t list =
+  (* The constructor-instance-vars table is domain-local and keyed only by
+     [file:class]; without this reset it would carry a prior rule's
+     constructor taint into this rule when both run on the same domain. *)
+  Dataflow_tainting.reset_constructor ();
   let effects_to_matches =
     Match_tainting_mode.pms_of_effects ~lang:rs.lang ~match_on:rs.match_on
   in
@@ -807,7 +826,6 @@ let run_rule (rs : rule_state) : PM.t list =
                class_init_cfgs
                ~signature_db:final_db
                ?builtin_signature_db:rs.builtin_signature_db
-               ~call_graph:rs.relevant_graph
                ()
            in
            let top_effects =
@@ -815,7 +833,6 @@ let run_rule (rs : rule_state) : PM.t list =
                top_cfg
                ~signature_db:final_db
                ?builtin_signature_db:rs.builtin_signature_db
-               ~call_graph:rs.relevant_graph
                ()
            in
            List.rev_append (effects_to_matches class_init_effects)
@@ -1165,6 +1182,28 @@ let build_rule_states
       target_batches
   in
   let target_ast_lookup = build_ast_lookup target_results in
+  (* Spec extraction matches on FRESH Naming-only parses: matching is
+     positional (ranges and fids are identical for the same bytes), and
+     the projidx-published [id_type]/svalue payloads inside [id_info]
+     make every generic AST traversal ~2 orders of magnitude slower —
+     on grafana, 188s vs 1s of formula matching for one rule.  The
+     stamped ASTs stay in [target_ast_lookup] for dispatch, whose sid
+     resolution needs them. *)
+  let extraction_results :
+      (Lang.t * (Fpath.t, G.program) Hashtbl.t) list =
+    run_parmap caps ~ncores
+      ~on_exn:(fun ((lang, _batch) : Lang.t * Fpath.t list)
+                   (exn : Exception.t) ->
+        let msg = Printexc.to_string (Exception.get_exn exn) in
+        Log.warn (fun m ->
+            m "interfile extraction parse: %s batch failed: %s"
+              (Lang.to_string lang) msg);
+        msg)
+      (fun ((lang, batch) : Lang.t * Fpath.t list) ->
+        (lang, parse_file_batch lang batch))
+      target_batches
+  in
+  let extraction_ast_lookup = build_ast_lookup extraction_results in
   (* (rule, chunk) pairs in one parmap so an expensive-to-match rule
      spreads across domains. *)
   let spec_pairs : (lang_context * R.taint_rule) array =
@@ -1180,12 +1219,34 @@ let build_rule_states
          |> List_.map (fun chunk -> (i, chunk)))
     |> List.concat
   in
+  (* Compiled once per rule; contents read once per file — both shared
+     read-only across every (rule, chunk) item. *)
+  let rule_prefilters =
+    Array.map (fun ((_lc : lang_context), (rule : R.taint_rule)) ->
+        Analyze_rule.regexp_prefilter_of_interfile_taint_rule
+          (rule :> R.rule))
+      spec_pairs
+  in
+  let target_contents : (Fpath.t, string) Hashtbl.t =
+    Hashtbl.create 4096
+  in
+  if Array.exists Option.is_some rule_prefilters then
+    List.iter (fun (lc : lang_context) ->
+        List.iter (fun (t : interfile_target) ->
+            if not (Hashtbl.mem target_contents t.abs_path) then
+              match UFile.read_file t.abs_path with
+              | content -> Hashtbl.replace target_contents t.abs_path content
+              | exception ((Out_of_memory | Time_limit.Timeout _) as exn) ->
+                  Exception.catch_and_reraise exn
+              | exception _ -> ())
+          lc.lc_matching_targets)
+      lang_contexts;
   let spec_partials : (int * rule_specs) list =
     run_parmap caps ~ncores
       ~on_exn:(fun ((i, _chunk) : int * interfile_target list)
                  (exn : Exception.t) ->
         let _lc, rule = spec_pairs.(i) in
-        let msg = Printexc.to_string (Exception.get_exn exn) in
+        let msg = Exception.to_string exn in
         Log.warn (fun m ->
             m "interfile spec_extract: rule %s failed: %s"
               (Rule_ID.to_string (fst rule.R.id)) msg);
@@ -1194,7 +1255,9 @@ let build_rule_states
         let lc, rule = spec_pairs.(i) in
         let specs =
           extract_specs_for_rule ~lang:lc.lc_lang ~xconf
-            ~ast_table:(ast_table_for_lang target_ast_lookup lc.lc_lang)
+            ~prefilter:rule_prefilters.(i)
+            ~contents:target_contents
+            ~ast_table:(ast_table_for_lang extraction_ast_lookup lc.lc_lang)
             ~matching_targets:chunk rule
         in
         (i, specs))
@@ -1234,10 +1297,36 @@ let build_rule_states
   let full_ast_lookup =
     build_ast_lookup (List.rev_append companion_results target_results)
   in
+  (* Publish inferred classes onto [id_type] for FRESH-parsed files only:
+     projidx already stamped the ASTs it returned (with project-wide type
+     facts), and those are reused verbatim here — re-stamping them is a
+     redundant whole-AST walk. Only files absent from [projidx_asts] were
+     fresh-parsed and still need it. Once per file (the mapping depends
+     only on [(ast, lang)]). *)
+  Hashtbl.iter (fun (lang : Lang.t)
+                 (tbl : (Fpath.t, G.program) Hashtbl.t) ->
+      Hashtbl.iter (fun (file : Fpath.t) (ast : G.program) ->
+          let key = Fpath.to_string (Fpath.normalize file) in
+          if not (Hashtbl.mem projidx_asts key) then
+            try
+              Object_initialization.(
+                stamp_id_types (detect_object_initialization ast lang) ast)
+            with
+            | (Out_of_memory | Time_limit.Timeout _) as exn ->
+                Exception.catch_and_reraise exn
+            | exn ->
+                Log.warn (fun m ->
+                    m "interfile dispatch: id_type stamping failed for %s: %s"
+                      (Fpath.to_string file) (Printexc.to_string exn)))
+        tbl)
+    full_ast_lookup;
+  (* Failed-init rules fall back to per-target intrafile (below). *)
+  let failed_rsgs : rule_subgraph list ref = ref [] in
   let rule_states : rule_state list =
     run_parmap caps ~ncores
       ~on_exn:(fun (rsg : rule_subgraph) (exn : Exception.t) ->
-        let msg = Printexc.to_string (Exception.get_exn exn) in
+        failed_rsgs := rsg :: !failed_rsgs;
+        let msg = Exception.to_string exn in
         Log.warn (fun m ->
             m "interfile init_rule: rule %s failed: %s"
               (Rule_ID.to_string (fst rsg.rsg_specs.rs_rule.R.id)) msg);
@@ -1248,7 +1337,6 @@ let build_rule_states
                         rsg.rsg_lang_context.lc_lang)
           ~target_root_map rsg)
       rule_subgraphs
-    |> List_.filter_map Fun.id
   in
   let langs =
     List.map (fun (lc : lang_context) ->
@@ -1282,4 +1370,11 @@ let build_rule_states
         | _ -> None)
         valid_rules
   in
-  (rule_states, langs, fallback_rule_target_paths)
+  let failed_fallback =
+    List.map (fun (rsg : rule_subgraph) ->
+      (fst rsg.rsg_specs.rs_rule.R.id,
+       List_.map (fun (t : interfile_target) -> t.abs_path)
+         rsg.rsg_lang_context.lc_matching_targets))
+      !failed_rsgs
+  in
+  (rule_states, langs, fallback_rule_target_paths @ failed_fallback)

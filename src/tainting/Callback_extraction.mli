@@ -6,11 +6,16 @@
 (* Resolved name a [fn_id] writes back onto the AST, when it carries a real
    (non-fake) token. *)
 val resolved_name_of_fn_id :
-  Callee_resolution.fn_id -> AST_generic.resolved_name option
+  ?allow_located_fake:bool ->
+  Callee_resolution.fn_id ->
+  AST_generic.resolved_name option
 
 (* Sets [ii.id_resolved]; mutating the ref mutates the shared AST. *)
 val set_id_resolved_to_def :
-  AST_generic.id_info -> Callee_resolution.fn_id -> unit
+  ?allow_located_fake:bool ->
+  AST_generic.id_info ->
+  Callee_resolution.fn_id ->
+  unit
 
 (* Identify callback candidates from a single call argument. Returns a list
    because an argument may carry several function references (record/list

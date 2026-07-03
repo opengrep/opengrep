@@ -373,6 +373,18 @@ let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
               | _ -> Some ty)
             cands)
   in
+  (* A stamped [id_type] carries the class name — strings and location
+     tokens — but NOT live [id_info]s: a name stamped with its AST
+     [id_info] embeds that node's own (possibly later-stamped) refs,
+     growing payloads into cross-file webs (cyclic ones on
+     self-referential classes) that every structural traversal then
+     crawls or overflows on. *)
+  let detacher =
+    object
+      inherit [_] G.map
+      method! visit_id_info _env _ii = G.empty_id_info ()
+    end
+  in
   let stamper =
     object
       inherit [_] G.iter_no_id_info as super
@@ -384,7 +396,10 @@ let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
                | None | Some { G.t = G.TyFun _; _ } -> true
                | Some _ -> false) -> (
             match class_of_occurrence n with
-            | Some ty -> info.G.id_type := Some { G.t = G.TyN ty; G.t_attrs = [] }
+            | Some ty ->
+                info.G.id_type :=
+                  Some { G.t = G.TyN (detacher#visit_name () ty);
+                         G.t_attrs = [] }
             | None -> ())
         | _ -> ());
         super#visit_expr () e

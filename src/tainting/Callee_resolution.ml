@@ -207,13 +207,6 @@ let rec identify_callee ~(lang : Lang.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
     ?(type_state : Type_state.t = Type_state.empty)
     ?(caller_parent_path = []) ?(call_arity : int option) (callee : G.expr) : fn_id option =
-  let skip_names = (Lang_config.get lang).Lang_config.skip_callee_names in
-  if skip_names <> []
-     && (match leaf_of_callee callee with
-         | Some s -> List.mem s skip_names
-         | None -> false)
-  then None
-  else
   let is_locally_imported (name : string) : bool =
     Func_lookup.is_locally_imported func_lookup name
   in
