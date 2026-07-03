@@ -4,6 +4,7 @@ type fun_info = {
   method_properties : AST_generic.expr list;
   cfg : IL.fun_cfg;
   fdef : AST_generic.function_definition;
+  is_static : bool;
   is_lambda_assignment : bool;
   file_ast : AST_generic.program option;
   taint_inst : Taint_rule_inst.t option;

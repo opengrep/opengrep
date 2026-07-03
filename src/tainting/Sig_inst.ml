@@ -1253,8 +1253,23 @@ let classify_guards ~(lang : Lang.t) ?(can_freeze = false)
     TODO(shapes): This is needed for stuff that is not yet fully adapted to shapes,
              in theory we should only need 'instantiate_lval_using_shape'.
 *)
+<<<<<<< HEAD
 let instantiate_lval_using_actual_exps ~(lang : Lang.t) (fun_exp : IL.exp)
     fparams args_exps
+=======
+(* Composed offsets are capped like [fix_poly_taint_with_offset]'s: on
+   cyclic field types (a struct whose field chain returns to itself) the
+   extraction/instantiation rounds of the topo fixpoint otherwise extend
+   [this.db.engine.engine...] without bound. Truncation keeps the prefix
+   — a coarser lval, so taint reach can only widen, never shrink. *)
+let cap_offset ~(lang : Lang.t) (offset : T.offset list) : T.offset list =
+  let max = Shape.max_poly_offset lang in
+  if List.compare_length_with offset max <= 0 then offset
+  else List.filteri (fun i _ -> i < max) offset
+
+let instantiate_lval_using_actual_exps ~(lang : Lang.t)
+    (fun_exp : IL.exp) fparams args_exps
+>>>>>>> 906dc3757 (interfile: grafana perf regressions + review fixes)
     (tlval : T.lval) : (IL.name * T.offset list * T.tainted_token) option =
   (* Error handling  *)
   let log_error () =
@@ -1291,8 +1306,13 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) (fun_exp : IL.exp)
       in
       match (arg_exp.e, tlval.offset) with
       | Fetch ({ base = Var obj; _ } as arg_lval), _ ->
+<<<<<<< HEAD
           let* var, offset = Lval_env.normalize_lval lang arg_lval in
           Some (var, offset @ tlval.offset, snd obj.ident)
+=======
+          let* var, offset = Lval_env.normalize_lval arg_lval in
+          Some (var, cap_offset ~lang (offset @ tlval.offset), snd obj.ident)
+>>>>>>> 906dc3757 (interfile: grafana perf regressions + review fixes)
       | __else__ -> None)
   | BThis -> (
       (*
@@ -1328,17 +1348,22 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t) (fun_exp : IL.exp)
           | Var obj, [], _offset ->
               (* fun_exp = `obj.method(...)`, given lval = `this.x`
                  the instantiated l-value is `obj.x` *)
-              Some (obj, tlval.offset, snd obj.ident)
+              Some (obj, cap_offset ~lang tlval.offset, snd obj.ident)
           | VarSpecial (This, _), [], Ofld var :: offset ->
               (* fun_exp = `this.method(...)`, given lval = `this.x.y.z`
                  the instantiated l-value is `x.y.z`. *)
-              Some (var, offset, snd method_.ident)
+              Some (var, cap_offset ~lang offset, snd method_.ident)
           | __else__ ->
               (* fun_exp = `this.obj.method(...)` (e.g.), given lval = `this.x.y`
                  the instantiated l-value is `obj.x.y`. *)
               let lval = IL.{ base; rev_offset = rev_offset' } in
+<<<<<<< HEAD
               let* var, offset = Lval_env.normalize_lval lang lval in
               Some (var, offset @ tlval.offset, snd method_.ident))
+=======
+              let* var, offset = Lval_env.normalize_lval lval in
+              Some (var, cap_offset ~lang (offset @ tlval.offset), snd method_.ident))
+>>>>>>> 906dc3757 (interfile: grafana perf regressions + review fixes)
       | __else__ ->
           log_error ();
           None)
@@ -1424,7 +1449,8 @@ let combine_rest_args_taint (ts : (Taints.t * shape) list) : Taints.t * shape =
   in
   (taints, shape) 
 
-let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
+let instantiate_lval_using_shape ~(lang : Lang.t) lval_env fparams
+    (fun_exp : IL.exp) args_taints
     lval : (Taints.t * shape) option =
   let { T.base; offset } = lval in
   let* base, offset =
@@ -1465,7 +1491,7 @@ let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
       m "INST_LVAL_SHAPE: base_taints=%d base_shape=%s offset=%s"
         (Taints.cardinal base_taints) (show_shape base_shape)
         (T.show_offset_list offset));
-  Shape.find_in_shape_poly ~taints:base_taints offset base_shape
+  Shape.find_in_shape_poly ~lang ~taints:base_taints offset base_shape
 
 (* What is the taint denoted by 'sig_lval' ? *)
 let instantiate_lval ~(lang : Lang.t) lval_env fparams fun_exp args_exps
@@ -1475,7 +1501,8 @@ let instantiate_lval ~(lang : Lang.t) lval_env fparams fun_exp args_exps
         (T.show_lval sig_lval) (List.length args_taints)
         (fparams |> List.map Signature.show_param |> String.concat ","));
   match
-    instantiate_lval_using_shape lval_env fparams fun_exp args_taints sig_lval
+    instantiate_lval_using_shape ~lang lval_env fparams fun_exp args_taints
+      sig_lval
   with
   | Some (taints, shape) -> Some (taints, shape)
   | None -> (
@@ -1497,7 +1524,7 @@ let instantiate_lval ~(lang : Lang.t) lval_env fparams fun_exp args_exps
               sig_lval
           in
           let lval_taints, shape =
-            match Lval_env.find_poly lval_env var offset with
+            match Lval_env.find_poly ~lang lval_env var offset with
             | None -> (Taints.empty, Bot)
             | Some (taints, shape) -> (taints, shape)
           in
@@ -1634,8 +1661,12 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         | T.BGlob gvar -> Some (gvar, lval.offset, snd gvar.ident)
         | T.BArg _ | T.BThis -> None)
     | Some args ->
+<<<<<<< HEAD
         instantiate_lval_using_actual_exps ~lang callee taint_sig.params args
           lval
+=======
+        instantiate_lval_using_actual_exps ~lang callee taint_sig.params args lval
+>>>>>>> 906dc3757 (interfile: grafana perf regressions + review fixes)
   in
   (* Freezing is allowed only with concrete actuals: the recursive-HOF
    * path ([args = None]) re-classifies in the right frame later. *)
@@ -1860,8 +1891,13 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                           (T.show_lval dst_sig_lval));
                     None)
             | Some args ->
+<<<<<<< HEAD
                 instantiate_lval_using_actual_exps ~lang callee taint_sig.params
                   args dst_sig_lval
+=======
+                instantiate_lval_using_actual_exps ~lang callee taint_sig.params args
+                  dst_sig_lval
+>>>>>>> 906dc3757 (interfile: grafana perf regressions + review fixes)
           in
           let taints = inst_taints tainted_tok in
           if Taints.is_empty taints then []
