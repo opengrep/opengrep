@@ -224,21 +224,29 @@ let identify_callback ?(all_funcs = [])
                  Log.debug (fun m -> m "HOF_EXTRACT: Callback %s not found in functions list" callback_name_str);
                  None))))
 
-let resolved_name_of_fn_id (fn_id : fn_id) : G.resolved_name option =
+(* [?allow_located_fake]: synthetic lambda names are located fakes — they
+   carry the lambda's def position and key [Function_id] like a real token.
+   Direct-call write-back stamps them; callback-argument stamping does not
+   (a stamped callback *reference* perturbs the HOF shape-propagation flow).
+   The sid name is the ident string, matching [Function_id.compute_key], so
+   [Function_id.of_sid] rebuilds the exact vertex/DB key. *)
+let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
+    : G.resolved_name option =
   match List.rev fn_id with
   | Some (n : IL.name) :: _ ->
     let tok = snd n.IL.ident in
-    if Tok.is_fake tok then None
+    if Tok.is_fake tok && not allow_located_fake then None
     else (
       try
         let file = Fpath.to_string (Tok.file_of_tok tok) in
-        Some (G.Global, G.SId.of_tok ~file tok)
+        Some (G.Global, G.SId.of_tok ~name:(fst n.IL.ident) ~file tok)
       with Tok.NoTokenLocation _ -> None)
   | _ -> None
 
 (* Sets [ii.id_resolved]; mutating the ref mutates the shared AST. *)
-let set_id_resolved_to_def (ii : G.id_info) (fn_id : fn_id) : unit =
-  match resolved_name_of_fn_id fn_id with
+let set_id_resolved_to_def ?allow_located_fake (ii : G.id_info)
+    (fn_id : fn_id) : unit =
+  match resolved_name_of_fn_id ?allow_located_fake fn_id with
   | Some rn -> ii.G.id_resolved := Some rn
   | None -> ()
 
@@ -268,7 +276,8 @@ let try_identify_callback_args ~lang ~all_funcs
       (fun (callback_name, tok, tmp_opt) ->
         identify_callback ~all_funcs ~func_lookup ~caller_parent_path callback_name
         |> Option.map (fun fn_id ->
-            set_id_resolved_to_def callback_name.IL.id_info fn_id;
+            set_id_resolved_to_def ~allow_located_fake:true
+              callback_name.IL.id_info fn_id;
             (fn_id, tok, tmp_opt)))
       candidates
   in
