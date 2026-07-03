@@ -40,31 +40,75 @@ let bfs_vertices ?(g_global : graph option)
       vertex -> unit)
     (neighbour_of : G.E.t -> vertex)
     (g : graph) (starts : vertex list) (max_depth : int) : VSet.t =
+  (* [Dispatch] edges cost 0 and [Call] edges cost 1 — a 0-1 shortest-path
+     problem.  Expand each depth level's full 0-cost [Dispatch] closure
+     before charging a [Call] step, so every vertex is first reached (and
+     marked visited) at its minimal depth.  A plain FIFO BFS would instead
+     finalize a vertex via a 1-cost path popped before a cheaper 0-cost one,
+     then prune its onward [Call] expansion at the budget. *)
   let visited = ref VSet.empty in
-  let queue = Queue.create () in
-  List.iter (fun (s : vertex) ->
-    if mem_vertex_either g ?g_global s
-       && not (VSet.mem s !visited) then begin
-      visited := VSet.add s !visited;
-      Queue.push (s, 0) queue
-    end) starts;
-  while not (Queue.is_empty queue) do
-    let v, d = Queue.pop queue in
-    iter_edges (fun (e : G.E.t) ->
-      let w = neighbour_of e in
-      if not (VSet.mem w !visited) then begin
+  (* Grow [seed] by all reachable 0-cost [Dispatch] edges, marking every
+     newly-reached vertex visited; return the whole newly-added set. *)
+  let dispatch_closure (seed : vertex list) : VSet.t =
+    let q = Queue.create () in
+    let added = ref VSet.empty in
+    let push v =
+      if not (VSet.mem v !visited) then begin
+        visited := VSet.add v !visited;
+        added := VSet.add v !added;
+        Queue.push v q
+      end
+    in
+    List.iter push seed;
+    while not (Queue.is_empty q) do
+      iter_edges (fun (e : G.E.t) ->
         match (G.E.label e).Call_graph.kind with
-        | Call_graph.Dispatch ->
-          visited := VSet.add w !visited;
-          Queue.push (w, d) queue
+        | Call_graph.Dispatch -> push (neighbour_of e)
+        | Call_graph.Call -> ())
+        g ?g_global (Queue.pop q)
+    done;
+    !added
+  in
+  (* [Call] successors of [level] not yet visited — the seeds for depth+1. *)
+  let call_successors (level : VSet.t) : vertex list =
+    VSet.fold (fun v acc ->
+      let acc = ref acc in
+      iter_edges (fun (e : G.E.t) ->
+        match (G.E.label e).Call_graph.kind with
         | Call_graph.Call ->
-          if max_depth < 0 || d < max_depth then begin
-            visited := VSet.add w !visited;
-            Queue.push (w, d + 1) queue
-          end
-      end) g ?g_global v
+          let w = neighbour_of e in
+          if not (VSet.mem w !visited) then acc := w :: !acc
+        | Call_graph.Dispatch -> ())
+        g ?g_global v;
+      !acc) level []
+  in
+  let seeds = List.filter (mem_vertex_either g ?g_global) starts in
+  let level = ref (dispatch_closure seeds) in
+  let depth = ref 0 in
+  while not (VSet.is_empty !level) && (max_depth < 0 || !depth < max_depth) do
+    level := dispatch_closure (call_successors !level);
+    incr depth
   done;
   !visited
+
+let%test "bfs_vertices: reaches a vertex via a cheaper 0-cost dispatch path" =
+  (* Edges (kind): S -Call-> W, S -Dispatch-> A, A -Dispatch-> W, W -Call-> X.
+     Only [Call] edges charge the budget, so the true cost of X is
+     0 (S->A) + 0 (A->W) + 1 (W->X) = 1 <= budget 1, and X MUST be reached.
+     A plain FIFO BFS finalizes W at the inflated depth 1 (via the direct
+     [Call] edge S->W, popped before the cheaper S->A->W path) and then
+     prunes W->X at the budget, wrongly dropping X. *)
+  let g = G.create () in
+  let tok = Tok.unsafe_fake_tok "" in
+  let mk name = Function_id.of_string_and_tok name tok in
+  let s = mk "S" and w = mk "W" and a = mk "A" and x = mk "X" in
+  List.iter (G.add_vertex g) [ s; w; a; x ];
+  Call_graph.add_edge g ~kind:Call_graph.Call ~src:s ~dst:w ~call_tok:tok;
+  Call_graph.add_edge g ~kind:Call_graph.Dispatch ~src:s ~dst:a ~call_tok:tok;
+  Call_graph.add_edge g ~kind:Call_graph.Dispatch ~src:a ~dst:w ~call_tok:tok;
+  Call_graph.add_edge g ~kind:Call_graph.Call ~src:w ~dst:x ~call_tok:tok;
+  let reached = bfs_vertices iter_succ_e_either G.E.dst g [ s ] 1 in
+  VSet.mem x reached
 
 let induced_subgraph ?(g_global : graph option) (g : graph)
     (vertices : VSet.t) : graph =

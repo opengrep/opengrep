@@ -6,8 +6,13 @@ val taints_and_shape_are_relevant : Taint.taints -> shape -> bool
 (** [true] iff the union of [taints] and [gather_all_taints_in_shape shape]
  * is non-empty, or if [shape] contains a cleaned offset. *)
 
+val max_poly_offset : Lang.t -> int
+(** Poly-taint offset length bound; longer only where a language's
+    destructuring needs it to stay field-sensitive (see
+    [Limits_semgrep.taint_MAX_POLY_OFFSET]). *)
+
 val fix_poly_taint_with_offset :
-  Taint.offset list -> Taint.taints -> Taint.taints
+  lang:Lang.t -> Taint.offset list -> Taint.taints -> Taint.taints
 (** Fix taints with an offset. It just attaches the offset to each polymorphic
     taint variable (see 'Taint.Var') in the set.
 
@@ -41,6 +46,7 @@ val gather_all_taints_in_shape : shape -> Taint.taints
 (** Gather and union all taints reachable through a shape. *)
 
 val find_in_cell :
+  lang:Lang.t ->
   Taint.offset list ->
   cell ->
   [ `Found of cell
@@ -76,7 +82,7 @@ val find_in_cell :
   *)
 
 val find_in_cell_poly :
-  Taint.offset list -> cell -> (Taint.taints * shape) option
+  lang:Lang.t -> Taint.offset list -> cell -> (Taint.taints * shape) option
 (** Find an offset in a cell, BUT if the full offset cannot be found, then
     it returns the taints of the offset prefix that was found; and if those
     taints are polymorphic, then it adds to them the remaining offset.
@@ -90,6 +96,7 @@ val find_in_cell_poly :
     FEATURE(field-sensitivity) *)
 
 val find_in_shape_poly :
+  lang:Lang.t ->
   taints:Taint.taints ->
   Taint.offset list ->
   shape ->

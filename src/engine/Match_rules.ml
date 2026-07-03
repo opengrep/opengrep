@@ -129,21 +129,27 @@ let is_relevant_rule_for_xtarget r xconf xtarget =
     xtarget
   in
   let xconf = Match_env.adjust_xconfig_with_rule_options xconf r.R.options in
+  let interfile_taint =
+    xconf.config.taint_interfile
+    && (match r.R.mode with `Taint _ -> true | _ -> false)
+  in
   let is_relevant =
-    (* Under taint_interfile a file may hold only sources or only sinks, so
-       taint rules are always relevant (companion files supply the rest). *)
-    let interfile_taint =
-      xconf.config.taint_interfile
-      && (match r.R.mode with `Taint _ -> true | _ -> false)
-    in
-    if interfile_taint then true
-    else
-      match xconf.filter_irrelevant_rules with
-      | NoPrefiltering -> true
-      | PrefilterWithCache cache -> (
-          match Analyze_rule.regexp_prefilter_of_rule ~cache:(Some cache) r with
-          | None -> true
-          | Some (prefilter_formula, func) ->
+    match xconf.filter_irrelevant_rules with
+    | NoPrefiltering -> true
+    | PrefilterWithCache cache -> (
+        (* Under taint_interfile a file may hold only a source OR only a
+           sink (companion files supply the rest), so the stock same-file
+           AND prefilter would wrongly drop it. The OR prefilter keeps
+           source-only / sink-only files but still drops files with
+           neither — a file that can't seed or match any spec. *)
+        let prefilter =
+          if interfile_taint then
+            Analyze_rule.regexp_prefilter_of_interfile_taint_rule r
+          else Analyze_rule.regexp_prefilter_of_rule ~cache:(Some cache) r
+        in
+        match prefilter with
+        | None -> true
+        | Some (prefilter_formula, func) ->
             (* NOTE: If [lazy_content] is shared in > 1 thread, then this is not
              * thread-safe. However, each [Xtarget.t] is only accessed in 1 worker
              * task, so there should be no race. *)

@@ -93,7 +93,15 @@ let taints_and_shape_are_relevant taints shape =
   (not (Taints.is_empty taints)) || shape_has_relevant_content shape
 
 (* TODO: This should fix shapes too. *)
-let fix_poly_taint_with_offset offset taints =
+(* Deep-struct languages over large codebases explode poly-taint width
+   at the default bound; lower them (none has a test needing more). See
+   [taint_MAX_POLY_OFFSET]. *)
+let max_poly_offset (lang : Lang.t) : int =
+  match lang with
+  | Lang.Go -> Limits_semgrep.taint_MAX_POLY_OFFSET_FLAT
+  | _ -> Limits_semgrep.taint_MAX_POLY_OFFSET
+
+let fix_poly_taint_with_offset ~(lang : Lang.t) offset taints =
   let type_of_offset o =
     match o with
     | T.Ofld n -> !(n.id_info.id_type)
@@ -124,10 +132,12 @@ let fix_poly_taint_with_offset offset taints =
           * TODO: This is way less likely to happen if we had better
           *   type info and we used it to remove taint, e.g. if Boolean
           *   and integer expressions didn't propagate taint. *)
-      List.length offset < Limits_semgrep.taint_MAX_POLY_OFFSET
+      List.length offset < max_poly_offset lang
     then extended_lval
     else (
-      Log.warn (fun m ->
+      (* Debug, not warn: fires per capped lval in the fixpoint's hottest
+         loop — tens of millions of times on offset-heavy scans. *)
+      Log.debug (fun m ->
           m "Taint_lval_env.fix_poly_taint_with_offset: %s is too long"
             (T.show_lval extended_lval));
       orig_lval)
@@ -382,7 +392,7 @@ let gather_all_taints_in_shape = gather_all_taints_in_shape_acc Taints.empty
 (* Find an offset *)
 (*********************************************************)
 
-let rec find_in_cell_w_carry ~taints offset cell =
+let rec find_in_cell_w_carry ~lang ~taints offset cell =
   let (Cell (xtaint, shape)) = cell in
   match offset with
   | [] -> `Found cell
@@ -393,15 +403,15 @@ let rec find_in_cell_w_carry ~taints offset cell =
             Log.err (fun m ->
                 m "BUG: Taint_shape.find_in_cell: INVARIANT(cell).2 is broken");
           `Clean
-      | `None -> find_in_shape_w_carry ~taints offset shape
-      | `Tainted taints -> find_in_shape_w_carry ~taints offset shape)
+      | `None -> find_in_shape_w_carry ~lang ~taints offset shape
+      | `Tainted taints -> find_in_shape_w_carry ~lang ~taints offset shape)
 
-and find_in_shape_w_carry ~taints offset shape =
+and find_in_shape_w_carry ~lang ~taints offset shape =
   let not_found = `Not_found (taints, shape, offset) in
   match shape with
   (* offset <> [] *)
   | Bot -> not_found
-  | Obj obj -> find_in_obj_w_carry ~taints offset obj
+  | Obj obj -> find_in_obj_w_carry ~lang ~taints offset obj
   | Arg (arg, base_offsets) ->
       (* Mirror the method-vs-field discriminator from
        * [fix_poly_taint_with_offset]: when any offset segment has a
@@ -428,7 +438,7 @@ and find_in_shape_w_carry ~taints offset shape =
          * [Shape.compare] traverse the whole offset list, an unbounded
          * offset makes each shape comparison O(depth) and degrades
          * performance on such chains. *)
-        let cap = Limits_semgrep.taint_MAX_POLY_OFFSET in
+        let cap = max_poly_offset lang in
         let extended =
           base_offsets
           |> List.map (fun base_off ->
@@ -436,7 +446,7 @@ and find_in_shape_w_carry ~taints offset shape =
           |> List.sort_uniq (List.compare T.compare_offset)
         in
         let refined = Arg (arg, extended) in
-        let taints = fix_poly_taint_with_offset offset taints in
+        let taints = fix_poly_taint_with_offset ~lang offset taints in
         `Found (Cell (Xtaint.of_taints taints, refined))
       else (
         Log.debug (fun m ->
@@ -450,7 +460,7 @@ and find_in_shape_w_carry ~taints offset shape =
             (debug_offset offset) (show_shape shape));
       not_found
 
-and find_in_obj_w_carry ~taints (offset : T.offset list) obj =
+and find_in_obj_w_carry ~lang ~taints (offset : T.offset list) obj =
   let not_found = `Not_found (taints, Obj obj, offset) in
   (* offset <> [] *)
   match offset with
@@ -464,7 +474,7 @@ and find_in_obj_w_carry ~taints (offset : T.offset list) obj =
           match
             Fields.fold
               (fun _ cell acc ->
-                match (acc, find_in_cell_w_carry ~taints offset cell) with
+                match (acc, find_in_cell_w_carry ~lang ~taints offset cell) with
                 | None, (`Not_found _ | `Clean) -> None
                 | Some cell, (`Not_found _ | `Clean)
                 | None, `Found cell ->
@@ -501,7 +511,7 @@ and find_in_obj_w_carry ~taints (offset : T.offset list) obj =
                 | None -> acc
                 | Some recur_offset -> (
                     match
-                      (acc, find_in_cell_w_carry ~taints recur_offset cell)
+                      (acc, find_in_cell_w_carry ~lang ~taints recur_offset cell)
                     with
                     | None, (`Not_found _ | `Clean) -> None
                     | Some cell, (`Not_found _ | `Clean)
@@ -516,7 +526,7 @@ and find_in_obj_w_carry ~taints (offset : T.offset list) obj =
       | Oint _
       | Ostr _ -> (
           match Fields.find_opt o obj with
-          | Some o_cell -> find_in_cell_w_carry ~taints offset o_cell
+          | Some o_cell -> find_in_cell_w_carry ~lang ~taints offset o_cell
           | None -> (
               (* Per INVARIANT(obj) in [Shape_and_sig], an [Oany] entry
                * carries the taint and shape of any field that is not
@@ -528,28 +538,30 @@ and find_in_obj_w_carry ~taints (offset : T.offset list) obj =
                * are already up to date. *)
               match Fields.find_opt T.Oany obj with
               | None -> not_found
-              | Some any_cell -> find_in_cell_w_carry ~taints offset any_cell)))
+              | Some any_cell ->
+                  find_in_cell_w_carry ~lang ~taints offset any_cell)))
 
-let find_in_cell offset cell =
-  find_in_cell_w_carry ~taints:Taints.empty offset cell
+let find_in_cell ~lang offset cell =
+  find_in_cell_w_carry ~lang ~taints:Taints.empty offset cell
 
-let option_of_find_result res =
+let option_of_find_result ~lang res =
   match res with
   | `Clean -> None
   | `Not_found (taints, _shape, offset) ->
       (* TODO: Fix _shape too. *)
-      let taints = fix_poly_taint_with_offset offset taints in
+      let taints = fix_poly_taint_with_offset ~lang offset taints in
       Some (taints, Bot)
   | `Found (Cell (xtaint, shape)) -> Some (Xtaint.to_taints xtaint, shape)
 
-let find_in_cell_poly offset cell =
-  find_in_cell offset cell |> option_of_find_result
+let find_in_cell_poly ~lang offset cell =
+  find_in_cell ~lang offset cell |> option_of_find_result ~lang
 
-let find_in_shape_poly ~taints offset shape =
+let find_in_shape_poly ~lang ~taints offset shape =
   match offset with
   | [] -> Some (taints, shape)
   | _ :: _ ->
-      find_in_shape_w_carry ~taints offset shape |> option_of_find_result
+      find_in_shape_w_carry ~lang ~taints offset shape
+      |> option_of_find_result ~lang
 
 (*********************************************************)
 (* Update the xtaint and shape of an offset *)
