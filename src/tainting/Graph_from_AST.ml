@@ -144,11 +144,17 @@ let callee_leaf_id_info (callee : G.expr) : G.id_info option =
   match callee.G.e with
   | G.N (G.Id (_, ii)) -> Some ii
   | G.DotAccess (_, _, G.FN (G.Id (_, ii))) -> Some ii
+  (* Generic/qualified callees ([customMap<T>(...)], [pkg::f(...)]):
+     the qualified name's own [id_info] is what AST_to_IL threads onto
+     the IL callee. *)
+  | G.N (G.IdQualified { name_info = ii; _ }) -> Some ii
+  | G.DotAccess (_, _, G.FN (G.IdQualified { name_info = ii; _ })) ->
+      Some ii
   | _ -> None
 
 let write_back_callee_resolved (callee : G.expr) (fn_id : fn_id) : unit =
   match callee_leaf_id_info callee with
-  | Some ii -> set_id_resolved_to_def ii fn_id
+  | Some ii -> set_id_resolved_to_def ~allow_located_fake:true ii fn_id
   | None -> ()
 
 (* Non-memoisable callee shapes bypass the cache; sole AST write-back chokepoint. *)
@@ -313,11 +319,15 @@ let extract_calls ~(lang : Lang.t)
           in
           let calls = List.fold_left unresolved_arg_call calls call_args_list in
           (calls, callbacks)
-        | G.New (_tok, ty, _id_info, (_, args_list, _)) ->
+        | G.New (_tok, ty, id_info, (_, args_list, _)) ->
           (* Use the class-name token to match class_construction's eorig. *)
           let calls =
             match resolve_constructor_from_type ~lang ~all_funcs ty with
             | Some fn_id ->
+              (* [AST_to_IL.mk_class_constructor_name] threads this exact
+                 [id_info] onto the IL ctor callee, so the stamp is what
+                 the engine's signature lookup reads for [new Cls(...)]. *)
+              set_id_resolved_to_def ~allow_located_fake:true id_info fn_id;
               let tok =
                 match AST_generic_helpers.ii_of_any (G.T ty) with
                 | tok :: _ -> tok
@@ -760,20 +770,7 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
   List.fold_left (fun matching_funcs range ->
     let _, funcs_list = Hashtbl.find range_table range in
     if List.is_empty funcs_list then
-      let top_level_name =
-        (* Anchor [<top_level>] at the first real token so its file path is carried (else top-level source/sink fids get dropped from targets). *)
-        let fake_tok =
-          try
-            Tok.fake_tok
-              (AST_generic_helpers.first_info_of_any (G.Pr ast))
-              "<top_level>"
-          with Tok.NoTokenLocation _ -> Tok.unsafe_fake_tok "<top_level>"
-        in
-        Some IL.{ ident = ("<top_level>", fake_tok);
-                  sid = G.SId.unsafe_default;
-                  id_info = AST_generic.empty_id_info () }
-      in
-      let top_level_fn_id = [None; top_level_name] in
+      let top_level_fn_id = [ None; Some (top_level_name_of_ast ast) ] in
       if List.exists (Func_info.equal_fn_id top_level_fn_id) matching_funcs
       then matching_funcs
       else top_level_fn_id :: matching_funcs

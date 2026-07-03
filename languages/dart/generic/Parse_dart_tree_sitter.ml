@@ -3091,13 +3091,20 @@ let init_formal_assignments (fparams : parameter list) : expr list =
       match p with
       | Param { pname = Some (n, ntok); pattrs; _ }
         when List.exists is_init_formal_attr pattrs ->
-          let this = IdSpecial (This, ntok) |> G.e in
+          (* Fake tokens throughout: [this.x = x] is synthesised for taint
+             field-tracking (driven by the field NAME [n]), but it has no
+             source syntax — with the real param token [ntok] a search rule
+             like [this.$F = $V] would report a phantom match at the
+             parameter. A fake-only node has no computable range and is
+             dropped from matches, while taint still sees the field write. *)
+          let ftok = Tok.fake_tok ntok "" in
+          let this = IdSpecial (This, ftok) |> G.e in
           let lhs =
-            DotAccess (this, fake ".", FN (Id ((n, ntok), empty_id_info ())))
+            DotAccess (this, fake ".", FN (Id ((n, ftok), empty_id_info ())))
             |> G.e
           in
-          let rhs = N (Id ((n, ntok), empty_id_info ())) |> G.e in
-          Some (Assign (lhs, ntok, rhs) |> G.e)
+          let rhs = N (Id ((n, ftok), empty_id_info ())) |> G.e in
+          Some (Assign (lhs, ftok, rhs) |> G.e)
       | _ -> None)
     fparams
 
