@@ -1046,29 +1046,32 @@ and class_body (env : env) ((v1, v2, v3) : CST.class_body) :
             in
             add_decorators (List.rev acc_decorators) v1 :: aux [] xs
         | `Meth_sign_choice_func_sign_auto_semi (v1, v2) ->
-            let _v1 = method_signature env v1 in
+            let v1 = method_signature env v1 in
             let _v2 =
               match v2 with
               | `Func_sign_auto_semi tok ->
                   (* function_signature_automatic_semicolon *) token env tok
               | `COMMA tok -> (* "," *) token env tok
             in
-            (* TODO: types *)
-            aux [] xs
+            add_decorators (List.rev acc_decorators) (Field v1) :: aux [] xs
         | `Choice_abst_meth_sign_choice_choice_auto_semi (v1, v2) -> (
             let v1 =
               match v1 with
               | `Abst_meth_sign x ->
-                  (* TODO: types *)
                   let v = abstract_method_signature env x in
                   Some (Field v)
               | `Index_sign x ->
-                  let _t = index_signature env x in
-                  None
-              | `Meth_sign x ->
-                  (* TODO: types *)
-                  let _v = method_signature env x in
-                  None
+                  let ty = index_signature env x in
+                  let _, lb, _, _, _ = x in
+                  Some
+                    (Field
+                       {
+                         fld_name = PN ("[]", token env lb);
+                         fld_attrs = [];
+                         fld_type = Some ty;
+                         fld_body = None;
+                       })
+              | `Meth_sign x -> Some (Field (method_signature env x))
               | `Public_field_defi x -> Some (public_field_definition env x)
             in
             let _v2 =
@@ -3142,8 +3145,7 @@ and declaration (env : env) (x : CST.declaration) : definition list =
       let xs =
         xs
         |> List_.filter_map (function
-             (* TODO *)
-             | Left _fld -> None
+             | Left fld -> Some fld
              | Right _sts -> None)
       in
       let c =

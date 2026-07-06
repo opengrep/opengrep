@@ -895,10 +895,10 @@ method_get_set_star:
 
 interface_decl: T_INTERFACE binding_id generics? optl(interface_extends)
   object_type
-   { let (t1, _xsTODO, t2) = $5 in
+   { let (t1, xs, t2) = $5 in
       Some $2, ClassDef { c_kind = G.Interface, $1;
       c_extends = $4; c_implements = []; c_attrs = [];
-      c_body = (t1, [], t2) } }
+      c_body = (t1, List_.map (fun x -> Field x) xs, t2) } }
 
 interface_extends: T_EXTENDS listc(type_reference)
   { $2 |> List.map (fun t -> Right t) }
@@ -1041,13 +1041,21 @@ type_member:
  | property_name_typescript "?" complex_annotation sc_or_comma
     { { fld_name = $1; fld_attrs = [attr (Optional, $2)]; fld_type = Some $3;
         fld_body = None } }
+ (* index signature; mirror the tree-sitter shape so patterns match targets:
+  * an "[]" field whose type is TypeTodo("Indexsig", [key; value]) *)
  | "[" T_ID ":" T_STRING_TYPE "]" complex_annotation sc_or_comma
-    { let fld_name = PN ("IndexMethod??TODO?", $1) in
-      { fld_name; fld_attrs = []; fld_type = Some $6; fld_body = None}
+    { let key = TypeTodo (("IndexKey", $3),
+                  [Type (TyName [$2]); Type (TyName [("string", $4)])]) in
+      let ty = TypeTodo (("Indexsig", $1), [Type key; Type $6]) in
+      { fld_name = PN ("[]", $1); fld_attrs = []; fld_type = Some ty;
+        fld_body = None }
     }
  | "[" T_ID ":" T_NUMBER_TYPE "]" complex_annotation sc_or_comma
-    { let fld_name = PN ("IndexMethod??TODO?", $1) in
-      { fld_name; fld_attrs = []; fld_type = Some $6; fld_body = None}
+    { let key = TypeTodo (("IndexKey", $3),
+                  [Type (TyName [$2]); Type (TyName [("number", $4)])]) in
+      let ty = TypeTodo (("Indexsig", $1), [Type key; Type $6]) in
+      { fld_name = PN ("[]", $1); fld_attrs = []; fld_type = Some ty;
+        fld_body = None }
     }
 
 (* no [xxx] here *)

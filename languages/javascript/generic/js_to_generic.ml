@@ -700,7 +700,12 @@ and field_classic
   let vt = option type_ vt in
   let ent =
     match v1 with
-    | Left n -> G.basic_entity n ~attrs:v2
+    | Left n ->
+        (* "()" / "[]" are synthetic names for the (anonymous) call/index
+         * signatures; mark them hidden so they don't pollute the prefilter
+         * (they never appear as literal text in the source). *)
+        let hidden = match fst n with "()" | "[]" -> true | _ -> false in
+        G.basic_entity n ~attrs:v2 ~hidden
     | Right e -> { G.name = G.EDynamic e; attrs = v2; tparams = None }
   in
   match v3 with
