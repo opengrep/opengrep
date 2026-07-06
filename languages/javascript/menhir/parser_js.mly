@@ -950,7 +950,7 @@ annotation: ":" type_ { $2 }
 complex_annotation:
  | annotation { $1 }
  | generics? "(" optl(param_type_list) ")" ":" type_
-     { $6 (* TODO *) }
+     { TyFun ($3, Some $6) }
 
 (*----------------------------*)
 (* Types *)
@@ -964,7 +964,7 @@ type_:
  | primary_or_union_type { $1 }
  | "?" type_             { TyQuestion ($1, $2) }
  | T_LPAREN_ARROW optl(param_type_list) ")" "->" type_
-   { $5 (* TODO *) }
+   { TyFun ($2, Some $5) }
 
 primary_or_union_type:
  | primary_or_intersect_type { $1 }
@@ -1072,16 +1072,22 @@ param_type_list:
  | optional_param_type_list           { $1 }
 
 (* partial type annotations are not supported *)
-param_type: id complex_annotation { () (* TODO *) }
+param_type: id complex_annotation
+  { ParamClassic { p_name = $1; p_default = None; p_type = Some $2;
+                   p_dots = None; p_attrs = [] } }
 
-optional_param_type: id "?" complex_annotation { () }
+optional_param_type: id "?" complex_annotation
+  { ParamClassic { p_name = $1; p_default = None; p_type = Some $3;
+                   p_dots = None; p_attrs = [] } }
 
 optional_param_type_list:
  | optional_param_type "," optional_param_type_list { $1::$3 }
  | optional_param_type       { [$1] }
  | rest_param_type           { [$1] }
 
-rest_param_type: "..." id complex_annotation { () (* TODO *) }
+rest_param_type: "..." id complex_annotation
+  { ParamClassic { p_name = $2; p_default = None; p_type = Some $3;
+                   p_dots = Some $1; p_attrs = [] } }
 
 (*----------------------------*)
 (* Type parameters (type variables) *)
