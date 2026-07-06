@@ -2550,7 +2550,10 @@ and anon_choice_export_stmt_f90d83f (env : env)
   | `Call_sign_ x ->
       let _tparams, x = call_signature env x in
       let ty = mk_functype x in
-      let name = PN ("CTOR??TODO", fake) in
+      (* an (anonymous) call signature '(args): T'; name it after the call
+       * operator, like C++ names 'operator()' *)
+      let lp, _, _ = fst x in
+      let name = PN ("()", lp) in
       let fld =
         { fld_name = name; fld_attrs = []; fld_type = Some ty; fld_body = None }
       in
@@ -2576,7 +2579,10 @@ and anon_choice_export_stmt_f90d83f (env : env)
       Left (Field fld)
   | `Index_sign x ->
       let ty = index_signature env x in
-      let name = PN ("IndexMethod??TODO?", fake) in
+      (* an (anonymous) index signature '[k: K]: V'; name it after the index
+       * operator *)
+      let _, lb, _, _, _ = x in
+      let name = PN ("[]", token env lb) in
       let fld =
         { fld_name = name; fld_attrs = []; fld_type = Some ty; fld_body = None }
       in
