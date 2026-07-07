@@ -92,34 +92,45 @@ let callee_on_enclosing_this (callee : IL.exp) : bool =
       | SameAs { e = G.DotAccess (recv, _, _); _ } -> recv_is_enclosing_this recv
       | _ -> false)
 
-(* Instantiation-result cache keyed by callee; [?recursive_cache] scope lives
-   within one instantiation tree — a deterministic memo, never module state,
-   so instantiation stays observationally pure. *)
+(* Instantiation-result cache keyed by the callee's structural identity, not a
+   display rendering: buckets by [IL_helpers.hash_exp] and resolves collisions
+   with [IL_helpers.equal_exp] (both include sids), so two distinct callbacks
+   that print the same do not collide. [?recursive_cache] scope lives within
+   one instantiation tree — a deterministic memo, never module state, so
+   instantiation stays observationally pure. *)
 type sig_inst_cache =
-  (string, (Effect.args_taints * call_effects) list) Hashtbl.t
+  (int, (IL.exp * T.offset list * Effect.args_taints * call_effects) list)
+  Hashtbl.t
 
 let mk_sig_inst_cache ~size () : sig_inst_cache = Hashtbl.create size
 
-let sig_cache_lookup (cache : sig_inst_cache) (callee_str : string)
-    (args_key : Effect.args_taints) : call_effects option =
-  match Hashtbl.find_opt cache callee_str with
+let sig_cache_lookup (cache : sig_inst_cache) (callee : IL.exp)
+    (offset : T.offset list) (args_key : Effect.args_taints)
+    : call_effects option =
+  match Hashtbl.find_opt cache (IL_helpers.hash_exp callee) with
   | None -> None
   | Some entries ->
-      List.find_map (fun ((cached_key : Effect.args_taints),
+      List.find_map (fun ((cached_callee : IL.exp),
+                          (cached_offset : T.offset list),
+                          (cached_key : Effect.args_taints),
                           (cached_effects : call_effects)) ->
-        if Effect.equal_args_taints args_key cached_key
+        if IL_helpers.equal_exp callee cached_callee
+           && List.equal T.equal_offset offset cached_offset
+           && Effect.equal_args_taints args_key cached_key
         then Some cached_effects
         else None
       ) entries
 
-let sig_cache_store (cache : sig_inst_cache) (callee_str : string)
-    (args_key : Effect.args_taints) (result : call_effects) : unit =
+let sig_cache_store (cache : sig_inst_cache) (callee : IL.exp)
+    (offset : T.offset list) (args_key : Effect.args_taints)
+    (result : call_effects) : unit =
+  let key = IL_helpers.hash_exp callee in
   let entries =
-    match Hashtbl.find_opt cache callee_str with
+    match Hashtbl.find_opt cache key with
     | None -> []
     | Some entries -> entries
   in
-  Hashtbl.replace cache callee_str ((args_key, result) :: entries)
+  Hashtbl.replace cache key ((callee, offset, args_key, result) :: entries)
 
 (*****************************************************************************)
 (* Instantiation "config" *)
@@ -2136,17 +2147,12 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                | IL.Named (ident, (taints, shape)) ->
                    IL.Named (ident, inst_taints_and_shape (taints, shape)))
         in
-        (* Memoize per-callback ToSinkInCall keyed on [(callee_str, args_taints)].
-           The display string drops sids/positions, so two syntactically
-           identical callbacks collide within one instantiation tree; the
-           [args_taints] equality check makes that benign in practice — a
-           stable identity key (callee sid) is the proper fix. *)
-        let callee_str =
-          Display_IL.string_of_exp fun_exp
-          ^ "::" ^ T.show_offset_list fun_arg_offset
-        in
+        (* Memoize per-callback ToSinkInCall keyed on the callee's structural
+           identity ([fun_exp], [fun_arg_offset]) and [args_taints], so two
+           syntactically identical but distinct callbacks (different sids) do
+           not share a cache entry within one instantiation tree. *)
         (match
-           sig_cache_lookup recursive_cache callee_str args_taints
+           sig_cache_lookup recursive_cache fun_exp fun_arg_offset args_taints
          with
         | Some cached -> cached
         | None ->
@@ -2309,7 +2315,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                        args_taints;
                        guards = out_guards; } ]))
         in
-        sig_cache_store recursive_cache callee_str args_taints result;
+        sig_cache_store recursive_cache fun_exp fun_arg_offset args_taints
+          result;
         result))
   in
   let effects_list = taint_sig.effects |> Effects.elements in
