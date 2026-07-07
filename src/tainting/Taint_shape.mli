@@ -11,6 +11,13 @@ val max_poly_offset : Lang.t -> int
     destructuring needs it to stay field-sensitive (see
     [Limits_semgrep.taint_MAX_POLY_OFFSET]). *)
 
+val compose_offset :
+  lang:Lang.t -> Taint.offset list -> Taint.offset list -> Taint.offset list
+(** [compose_offset ~lang base offset] appends [offset]'s segments to [base]
+    one at a time, stopping at the first segment already present (cycle
+    guard) or at [max_poly_offset lang] segments total.  [base] is kept
+    as-is; only extensions are guarded. *)
+
 val fix_poly_taint_with_offset :
   lang:Lang.t -> Taint.offset list -> Taint.taints -> Taint.taints
 (** Fix taints with an offset. It just attaches the offset to each polymorphic
@@ -82,7 +89,10 @@ val find_in_cell :
   *)
 
 val find_in_cell_poly :
-  lang:Lang.t -> Taint.offset list -> cell -> (Taint.taints * shape) option
+  lang:Lang.t ->
+  Taint.offset list ->
+  cell ->
+  (Taint.taints * shape) option
 (** Find an offset in a cell, BUT if the full offset cannot be found, then
     it returns the taints of the offset prefix that was found; and if those
     taints are polymorphic, then it adds to them the remaining offset.

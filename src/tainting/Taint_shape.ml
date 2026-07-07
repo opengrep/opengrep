@@ -101,6 +101,24 @@ let max_poly_offset (lang : Lang.t) : int =
   | Lang.Go -> Limits_semgrep.taint_MAX_POLY_OFFSET_FLAT
   | _ -> Limits_semgrep.taint_MAX_POLY_OFFSET
 
+(* Append [offset]'s segments to [base] one at a time, under the same two
+   bounds as [add_offset_to_lval] below: stop at the first segment already
+   present (the cycle guard, cf. [x = x.getX ()]) and at [max_poly_offset]
+   segments total.  [base] is respected as-is; only extensions are
+   guarded. *)
+let compose_offset ~(lang : Lang.t) (base : T.offset list)
+    (offset : T.offset list) : T.offset list =
+  let cap = max_poly_offset lang in
+  let rec go (rev_acc : T.offset list) (n : int) (os : T.offset list) =
+    match os with
+    | [] -> List.rev rev_acc
+    | o :: rest ->
+        if n >= cap || List.exists (T.equal_offset o) rev_acc
+        then List.rev rev_acc
+        else go (o :: rev_acc) (n + 1) rest
+  in
+  go (List.rev base) (List.length base) offset
+
 let fix_poly_taint_with_offset ~(lang : Lang.t) offset taints =
   let type_of_offset o =
     match o with
@@ -119,20 +137,21 @@ let fix_poly_taint_with_offset ~(lang : Lang.t) offset taints =
            if `x` started with an `Arg` taint:
            while (true) { x = x.getX(); }
       *)
-      (not (List.mem o offset))
-      && (* For perf reasons we don't allow offsets to get too long.
-          * Otherwise in a long chain of function calls where each
-          * function adds some offset, we could end up a very large
-          * amount of polymorphic taint.
-          * This actually happened with rule
-          * semgrep.perf.rules.express-fs-filename from the Pro
-          * benchmarks, and file
-          * WebGoat/src/main/resources/webgoat/static/js/libs/ace.js.
-          *
-          * TODO: This is way less likely to happen if we had better
-          *   type info and we used it to remove taint, e.g. if Boolean
-          *   and integer expressions didn't propagate taint. *)
-      List.length offset < max_poly_offset lang
+      (* For perf reasons we don't allow offsets to get too long.
+       * Otherwise in a long chain of function calls where each
+       * function adds some offset, we could end up a very large
+       * amount of polymorphic taint.
+       * This actually happened with rule
+       * semgrep.perf.rules.express-fs-filename from the Pro
+       * benchmarks, and file
+       * WebGoat/src/main/resources/webgoat/static/js/libs/ace.js.
+       *
+       * TODO: This is way less likely to happen if we had better
+       *   type info and we used it to remove taint, e.g. if Boolean
+       *   and integer expressions didn't propagate taint. *)
+      (* Both bounds live in [compose_offset]; extension happened iff the
+         composed offset is longer. *)
+      List.compare_lengths (compose_offset ~lang offset [ o ]) offset > 0
     then extended_lval
     else (
       (* Debug, not warn: fires per capped lval in the fixpoint's hottest
@@ -404,7 +423,8 @@ let rec find_in_cell_w_carry ~lang ~taints offset cell =
                 m "BUG: Taint_shape.find_in_cell: INVARIANT(cell).2 is broken");
           `Clean
       | `None -> find_in_shape_w_carry ~lang ~taints offset shape
-      | `Tainted taints -> find_in_shape_w_carry ~lang ~taints offset shape)
+      | `Tainted taints ->
+          find_in_shape_w_carry ~lang ~taints offset shape)
 
 and find_in_shape_w_carry ~lang ~taints offset shape =
   let not_found = `Not_found (taints, shape, offset) in
@@ -431,22 +451,24 @@ and find_in_shape_w_carry ~lang ~taints offset shape =
       in
       if not offset_is_method then
         (* Extend each alternative path with the additional [offset],
-         * truncated to [taint_MAX_POLY_OFFSET] segments. The poly-taints
+         * via [compose_offset] (cycle guard + [taint_MAX_POLY_OFFSET]
+         * cap). The poly-taints
          * below are bounded by [fix_poly_taint_with_offset]; without the
          * same bound here the Arg shape's offset grows with structure depth
          * (e.g. a deep [x = x.f] forwarding chain). Since [Shape.equal] and
          * [Shape.compare] traverse the whole offset list, an unbounded
          * offset makes each shape comparison O(depth) and degrades
          * performance on such chains. *)
-        let cap = max_poly_offset lang in
         let extended =
           base_offsets
           |> List.map (fun base_off ->
-                 List.filteri (fun i _ -> i < cap) (base_off @ offset))
+                 compose_offset ~lang base_off offset)
           |> List.sort_uniq (List.compare T.compare_offset)
         in
         let refined = Arg (arg, extended) in
-        let taints = fix_poly_taint_with_offset ~lang offset taints in
+        let taints =
+          fix_poly_taint_with_offset ~lang offset taints
+        in
         `Found (Cell (Xtaint.of_taints taints, refined))
       else (
         Log.debug (fun m ->
@@ -554,7 +576,8 @@ let option_of_find_result ~lang res =
   | `Found (Cell (xtaint, shape)) -> Some (Xtaint.to_taints xtaint, shape)
 
 let find_in_cell_poly ~lang offset cell =
-  find_in_cell ~lang offset cell |> option_of_find_result ~lang
+  find_in_cell ~lang offset cell
+  |> option_of_find_result ~lang
 
 let find_in_shape_poly ~lang ~taints offset shape =
   match offset with
