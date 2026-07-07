@@ -1364,20 +1364,56 @@ let stamp_var_types_from_bodies
   in
   loop 0
 
+(* Maximum number of files processed per parallel work unit.  Batching
+   amortises Domainslib dispatch overhead over many small per-file tasks
+   while keeping [chunksize = 1] — one task per thread — so the
+   [Memprof_limits]-based memory limit and timeout stay sound (see the
+   warning on [Domainslib_.parmap]). *)
+let per_file_batch_size = 500
+
+(* Split a list into chunks of at most [n] elements. *)
+let rec chunks (n : int) (xs : 'a list) : 'a list list =
+  match xs with
+  | [] -> []
+  | _ ->
+    let len = List.length xs in
+    let take = min n len in
+    let batch = List_.take_safe take xs in
+    let rest = List_.drop take xs in
+    batch :: chunks n rest
+
+(* Run [fn] on each item, in parallel when [ncores > 1] and there is
+   more than one batch, sequentially otherwise.  Each parallel work
+   unit is a whole batch; inside a batch, a per-item failure becomes
+   an [Error] for the caller to log and skip, while the fatal trio is
+   re-raised. *)
 let run_per_file (caps : < Cap.fork >) ~(ncores : int)
     (fn : 'a -> 'b) (items : 'a list)
     : ('b, string) Result.t list =
-  if ncores <= 1 then List.map (fun x -> Ok (fn x)) items
+  (* [fn] fixes the type: one [Ok]/[Error] per item. *)
+  let run_one x =
+    try Ok (fn x)
+    with
+    | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
+      Exception.catch_and_reraise exn
+    | exn -> Error (Printexc.to_string exn)
+  in
+  let batches = chunks per_file_batch_size items in
+  let n = List.length batches in
+  if ncores <= 1 || n <= 1 then List_.map run_one items
   else
-    let chunksize = if List.length items > 10_000 then 16 else 1 in
-    Domainslib_.parmap_no_memprof caps
-      ~num_domains:ncores ~chunksize
+    Domainslib_.parmap caps
+      ~num_domains:(min ncores n) ~chunksize:1
       ~exception_handler:(fun _ e ->
         match Exception.get_exn e with
         | Out_of_memory | Stack_overflow | Time_limit.Timeout _ ->
           Exception.reraise e
         | exn -> Printexc.to_string exn)
-      fn items
+      (fun batch -> List_.map run_one batch)
+      batches
+    |> List.concat_map (function
+        | Ok batch_results -> batch_results
+        | Error msg -> [ Error msg ])
 
 let build_project_call_graph (caps : < Cap.fork >)
     ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
@@ -1920,10 +1956,11 @@ let resolve_ast_for_file (caps : < Cap.fork >)
     (if Fpath.is_abs target then target else Fpath.(project_root_abs // target))
     |> Fpath.normalize |> Fpath.to_string
   in
-  Hashtbl.find_opt
-    (snd (collect_resolved caps ~targeting_conf ~lang ~project_root ~ncores
-            ~includes:[] ~excludes:[] ()))
-    target_key
+  let _graph, asts =
+    collect_resolved caps ~targeting_conf ~lang ~project_root ~ncores
+      ~includes:[] ~excludes:[] ()
+  in
+  Hashtbl.find_opt asts target_key
 
 let count_by_kind (entries : entry list) : int * int * int =
   List.fold_left (fun (f, m, c) e ->
