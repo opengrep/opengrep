@@ -160,8 +160,11 @@ the fixpoint would converge prematurely on a stale type.
 
 ### Phase 2: Per-file edges (the parallel phase)
 
-Phase 2 is one task per file, run in parallel across `ncores`
-Domains via `Domainslib_.parmap_no_memprof`.  Each task calls
+Phase 2 runs in parallel across `ncores` Domains via
+`Domainslib_.parmap` with `chunksize = 1`; each work unit is a batch
+of at most 500 files, which amortises Domainslib dispatch overhead
+while keeping one task per thread (so the `Memprof_limits`-based
+memory limit and timeout stay sound).  For each file the task calls
 `Pipeline.edges_for_file ctx fi` which:
 
 1. **Augments per-file object mappings** — turns `x = SomeClass()`
