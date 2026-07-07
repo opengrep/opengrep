@@ -80,7 +80,7 @@ let taint_MAX_TAINT_SET_SIZE = 25
  * language with deep struct nesting over a large codebase it makes the
  * interfile fixpoint explode — grafana Go crawled for minutes at [4].
  * [Taint_shape.max_poly_offset] lowers such languages to
- * [taint_MAX_POLY_OFFSET_FLAT] (Go has no test needing more). *)
+ * [taint_MAX_POLY_OFFSET_FLAT]. *)
 let taint_MAX_POLY_OFFSET = 4
 let taint_MAX_POLY_OFFSET_FLAT = 1
 
