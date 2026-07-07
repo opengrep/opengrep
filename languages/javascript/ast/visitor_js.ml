@@ -363,6 +363,7 @@ let (mk_visitor : visitor_in -> visitor_out) =
     | FuncDef def -> v_function_definition def
     | ClassDef def -> v_class_definition def
     | VarDef def -> v_variable_definition def
+    | ModuleDef body -> v_option v_stmt body
     | DefTodo (v1, v2) ->
         v_todo_category v1;
         v_list v_any v2

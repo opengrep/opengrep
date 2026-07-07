@@ -895,10 +895,10 @@ method_get_set_star:
 
 interface_decl: T_INTERFACE binding_id generics? optl(interface_extends)
   object_type
-   { let (t1, _xsTODO, t2) = $5 in
+   { let (t1, xs, t2) = $5 in
       Some $2, ClassDef { c_kind = G.Interface, $1;
       c_extends = $4; c_implements = []; c_attrs = [];
-      c_body = (t1, [], t2) } }
+      c_body = (t1, List_.map (fun x -> Field x) xs, t2) } }
 
 interface_extends: T_EXTENDS listc(type_reference)
   { $2 |> List.map (fun t -> Right t) }
@@ -950,7 +950,7 @@ annotation: ":" type_ { $2 }
 complex_annotation:
  | annotation { $1 }
  | generics? "(" optl(param_type_list) ")" ":" type_
-     { $6 (* TODO *) }
+     { TyFun ($3, Some $6) }
 
 (*----------------------------*)
 (* Types *)
@@ -964,7 +964,7 @@ type_:
  | primary_or_union_type { $1 }
  | "?" type_             { TyQuestion ($1, $2) }
  | T_LPAREN_ARROW optl(param_type_list) ")" "->" type_
-   { $5 (* TODO *) }
+   { TyFun ($2, Some $5) }
 
 primary_or_union_type:
  | primary_or_intersect_type { $1 }
@@ -1041,13 +1041,21 @@ type_member:
  | property_name_typescript "?" complex_annotation sc_or_comma
     { { fld_name = $1; fld_attrs = [attr (Optional, $2)]; fld_type = Some $3;
         fld_body = None } }
+ (* index signature; mirror the tree-sitter shape so patterns match targets:
+  * an "[]" field whose type is TypeTodo("Indexsig", [key; value]) *)
  | "[" T_ID ":" T_STRING_TYPE "]" complex_annotation sc_or_comma
-    { let fld_name = PN ("IndexMethod??TODO?", $1) in
-      { fld_name; fld_attrs = []; fld_type = Some $6; fld_body = None}
+    { let key = TypeTodo (("IndexKey", $3),
+                  [Type (TyName [$2]); Type (TyName [("string", $4)])]) in
+      let ty = TypeTodo (("Indexsig", $1), [Type key; Type $6]) in
+      { fld_name = PN ("[]", $1); fld_attrs = []; fld_type = Some ty;
+        fld_body = None }
     }
  | "[" T_ID ":" T_NUMBER_TYPE "]" complex_annotation sc_or_comma
-    { let fld_name = PN ("IndexMethod??TODO?", $1) in
-      { fld_name; fld_attrs = []; fld_type = Some $6; fld_body = None}
+    { let key = TypeTodo (("IndexKey", $3),
+                  [Type (TyName [$2]); Type (TyName [("number", $4)])]) in
+      let ty = TypeTodo (("Indexsig", $1), [Type key; Type $6]) in
+      { fld_name = PN ("[]", $1); fld_attrs = []; fld_type = Some ty;
+        fld_body = None }
     }
 
 (* no [xxx] here *)
@@ -1064,16 +1072,22 @@ param_type_list:
  | optional_param_type_list           { $1 }
 
 (* partial type annotations are not supported *)
-param_type: id complex_annotation { () (* TODO *) }
+param_type: id complex_annotation
+  { ParamClassic { p_name = $1; p_default = None; p_type = Some $2;
+                   p_dots = None; p_attrs = [] } }
 
-optional_param_type: id "?" complex_annotation { () }
+optional_param_type: id "?" complex_annotation
+  { ParamClassic { p_name = $1; p_default = None; p_type = Some $3;
+                   p_dots = None; p_attrs = [] } }
 
 optional_param_type_list:
  | optional_param_type "," optional_param_type_list { $1::$3 }
  | optional_param_type       { [$1] }
  | rest_param_type           { [$1] }
 
-rest_param_type: "..." id complex_annotation { () (* TODO *) }
+rest_param_type: "..." id complex_annotation
+  { ParamClassic { p_name = $2; p_default = None; p_type = Some $3;
+                   p_dots = Some $1; p_attrs = [] } }
 
 (*----------------------------*)
 (* Type parameters (type variables) *)

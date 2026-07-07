@@ -1046,29 +1046,32 @@ and class_body (env : env) ((v1, v2, v3) : CST.class_body) :
             in
             add_decorators (List.rev acc_decorators) v1 :: aux [] xs
         | `Meth_sign_choice_func_sign_auto_semi (v1, v2) ->
-            let _v1 = method_signature env v1 in
+            let v1 = method_signature env v1 in
             let _v2 =
               match v2 with
               | `Func_sign_auto_semi tok ->
                   (* function_signature_automatic_semicolon *) token env tok
               | `COMMA tok -> (* "," *) token env tok
             in
-            (* TODO: types *)
-            aux [] xs
+            add_decorators (List.rev acc_decorators) (Field v1) :: aux [] xs
         | `Choice_abst_meth_sign_choice_choice_auto_semi (v1, v2) -> (
             let v1 =
               match v1 with
               | `Abst_meth_sign x ->
-                  (* TODO: types *)
                   let v = abstract_method_signature env x in
                   Some (Field v)
               | `Index_sign x ->
-                  let _t = index_signature env x in
-                  None
-              | `Meth_sign x ->
-                  (* TODO: types *)
-                  let _v = method_signature env x in
-                  None
+                  let ty = index_signature env x in
+                  let _, lb, _, _, _ = x in
+                  Some
+                    (Field
+                       {
+                         fld_name = PN ("[]", token env lb);
+                         fld_attrs = [];
+                         fld_type = Some ty;
+                         fld_body = None;
+                       })
+              | `Meth_sign x -> Some (Field (method_signature env x))
               | `Public_field_defi x -> Some (public_field_definition env x)
             in
             let _v2 =
@@ -2125,9 +2128,17 @@ and statement (env : env) (x : CST.statement) : stmt list =
       let v1 = identifier env v1 (* "debugger" *) in
       let v2 = semicolon env v2 in
       [ ExprStmt (idexp v1, v2) ]
-  | `Exp_stmt x ->
-      let e, t = expression_statement env x in
-      [ ExprStmt (e, t) ]
+  | `Exp_stmt x -> (
+      (* tree-sitter parses a top-level 'namespace Foo { ... }' as an
+       * expression-statement; intercept it so it becomes a proper module
+       * definition instead of an IIFE. *)
+      match x with
+      | `Exp (`Inte_module im), _semi ->
+          let id, opt_body = internal_module env im in
+          [ DefStmt (basic_entity id, ModuleDef opt_body) ]
+      | _ ->
+          let e, t = expression_statement env x in
+          [ ExprStmt (e, t) ])
   | `Decl x ->
       let vars = declaration env x in
       vars |> List_.map (fun x -> DefStmt x)
@@ -2331,6 +2342,32 @@ and array_ (env : env) ((v1, v2, v3) : CST.array_) =
   let v3 = token env v3 (* "]" *) in
   Arr (v1, v2, v3)
 
+(* 'export { a, b as c } from "mod"': desugar each specifier into an import of
+ * the name from 'mod', a local const, and an export of it. *)
+and reexport_specifiers export_tok (tok2, path) names =
+  names
+  |> List.concat_map (fun (n1, n2opt) ->
+         let tmpname = ("!tmp_" ^ fst n1, snd n1) in
+         let import = Import (tok2, [ (n1, Some tmpname) ], path) in
+         let e = idexp tmpname in
+         match n2opt with
+         | None ->
+             let v = Ast_js.mk_const_var n1 e in
+             [ M import; DefStmt v; M (Export (export_tok, n1)) ]
+         | Some n2 ->
+             let v = Ast_js.mk_const_var n2 e in
+             [ M import; DefStmt v; M (Export (export_tok, n2)) ])
+
+(* 'export { a, b as c }': export the local names (aliasing via a const). *)
+and export_specifiers_local export_tok names =
+  names
+  |> List.concat_map (fun (n1, n2opt) ->
+         match n2opt with
+         | None -> [ M (Export (export_tok, n1)) ]
+         | Some n2 ->
+             let v = Ast_js.mk_const_var n2 (idexp n1) in
+             [ DefStmt v; M (Export (export_tok, n2)) ])
+
 and export_statement (env : env) (x : CST.export_statement) : stmt list =
   match x with
   | `Choice_export_choice_STAR_from_clause_choice_auto_semi x -> (
@@ -2357,33 +2394,14 @@ and export_statement (env : env) (x : CST.export_statement) : stmt list =
             | `Export_clause_from_clause_choice_auto_semi (v1, v2, v3) ->
                 (* export { name1, name2, nameN } from 'foo'; *)
                 let v1 = export_clause env v1 in
-                let tok2, path = from_clause env v2 in
+                let from = from_clause env v2 in
                 let _v3 = semicolon env v3 in
-                v1
-                |> List.concat_map (fun (n1, n2opt) ->
-                       let tmpname = ("!tmp_" ^ fst n1, snd n1) in
-                       let import =
-                         Import (tok2, [ (n1, Some tmpname) ], path)
-                       in
-                       let e = idexp tmpname in
-                       match n2opt with
-                       | None ->
-                           let v = Ast_js.mk_const_var n1 e in
-                           [ M import; DefStmt v; M (Export (export_tok, n1)) ]
-                       | Some n2 ->
-                           let v = Ast_js.mk_const_var n2 e in
-                           [ M import; DefStmt v; M (Export (export_tok, n2)) ])
+                reexport_specifiers export_tok from v1
             | `Export_clause_choice_auto_semi (v1, v2) ->
                 (* export { import1 as name1, import2 as name2, nameN } from 'foo'; *)
                 let v1 = export_clause env v1 in
                 let _v2 = semicolon env v2 in
-                v1
-                |> List.concat_map (fun (n1, n2opt) ->
-                       match n2opt with
-                       | None -> [ M (Export (export_tok, n1)) ]
-                       | Some n2 ->
-                           let v = Ast_js.mk_const_var n2 (idexp n1) in
-                           [ DefStmt v; M (Export (export_tok, n2)) ])
+                export_specifiers_local export_tok v1
           in
           v2
       | `Rep_deco_export_choice_decl (v1, v2, v3) ->
@@ -2441,29 +2459,34 @@ and export_statement (env : env) (x : CST.export_statement) : stmt list =
           in
           v3)
   | `Export_type_export_clause_opt_from_clause_choice_auto_semi
-      (v1, v2, v3, _v4, v5) ->
-      let _export = token env v1 (* "export" *) in
+      (v1, v2, v3, v4, v5) ->
+      (* export type { foo, type bar } [from 'mod']; we model type re-exports
+       * like value re-exports (the type-only distinction is dropped). *)
+      let export_tok = token env v1 (* "export" *) in
       let _type = token env v2 (* "type" *) in
-      let _exported_types = export_clause env v3 in
-      (* TODO v4 from_clause *)
+      let names = export_clause env v3 in
       let _sc = semicolon env v5 in
-      (* TODO: 'export type { foo, type bar, typeof thing };' *)
-      []
+      (match v4 with
+      | Some from_cl -> reexport_specifiers export_tok (from_clause env from_cl) names
+      | None -> export_specifiers_local export_tok names)
   | `Export_EQ_exp_choice_auto_semi (v1, v2, v3, v4) ->
-      let _v1 = token env v1 (* "export" *) in
-      let _v2 = token env v2 (* "=" *) in
-      let _v3 = expression env v3 in
+      (* export = ZipCodeValidator; (TS/CommonJS export assignment), modeled
+       * like a default export of the expression. *)
+      let export_tok = token env v1 (* "export" *) in
+      let teq = token env v2 (* "=" *) in
+      let e = expression env v3 in
       let _v4 = semicolon env v4 in
-      (* TODO 'export = ZipCodeValidator;' *)
-      []
+      let def, n = Ast_js.mk_default_entity_def teq e in
+      [ DefStmt def; M (Export (export_tok, n)) ]
   | `Export_as_name_id_choice_auto_semi (v1, v2, v3, v4, v5) ->
-      let _v1 = token env v1 (* "export" *) in
+      (* export as namespace mathLib; (UMD global). We record the exported
+       * global name. *)
+      let export_tok = token env v1 (* "export" *) in
       let _v2 = token env v2 (* "as" *) in
       let _v3 = token env v3 (* "namespace" *) in
-      let _v4 = token env v4 (* identifier *) in
+      let id = identifier env v4 (* identifier *) in
       let _v5 = semicolon env v5 in
-      (* TODO 'export as namespace mathLib;' *)
-      []
+      [ M (Export (export_tok, id)) ]
 
 and type_annotation (env : env) ((v1, v2) : CST.type_annotation) =
   let v1 = token env v1 (* ":" *) in
@@ -2530,7 +2553,10 @@ and anon_choice_export_stmt_f90d83f (env : env)
   | `Call_sign_ x ->
       let _tparams, x = call_signature env x in
       let ty = mk_functype x in
-      let name = PN ("CTOR??TODO", fake) in
+      (* an (anonymous) call signature '(args): T'; name it after the call
+       * operator, like C++ names 'operator()' *)
+      let lp, _, _ = fst x in
+      let name = PN ("()", lp) in
       let fld =
         { fld_name = name; fld_attrs = []; fld_type = Some ty; fld_body = None }
       in
@@ -2556,7 +2582,10 @@ and anon_choice_export_stmt_f90d83f (env : env)
       Left (Field fld)
   | `Index_sign x ->
       let ty = index_signature env x in
-      let name = PN ("IndexMethod??TODO?", fake) in
+      (* an (anonymous) index signature '[k: K]: V'; name it after the index
+       * operator *)
+      let _, lb, _, _, _ = x in
+      let name = PN ("[]", token env lb) in
       let fld =
         { fld_name = name; fld_attrs = []; fld_type = Some ty; fld_body = None }
       in
@@ -3067,16 +3096,14 @@ and declaration (env : env) (x : CST.declaration) : definition list =
       in
       [ (basic_entity v4, ClassDef c) ]
   | `Module (v1, v2) ->
-      (* does this exist only in .d.ts files? *)
+      (* 'module Foo { ... }' (ambient module, often in .d.ts) *)
       let _v1 = token env v1 (* "module" *) in
-      let _id, _opt_body = module__ env v2 in
-      []
-      (* TODO *)
+      let id, opt_body = module__ env v2 in
+      [ (basic_entity id, ModuleDef opt_body) ]
   | `Inte_module x ->
-      (* namespace *)
-      let _x = internal_module env x in
-      []
-      (* TODO *)
+      (* 'namespace Foo { ... }' *)
+      let id, opt_body = internal_module env x in
+      [ (basic_entity id, ModuleDef opt_body) ]
   | `Type_alias_decl (v1, v2, v3, v4, v5, v6) ->
       let typekwd = token env v1 (* "type" *) in
       let id = str env v2 (* identifier *) in
@@ -3118,8 +3145,7 @@ and declaration (env : env) (x : CST.declaration) : definition list =
       let xs =
         xs
         |> List_.filter_map (function
-             (* TODO *)
-             | Left _fld -> None
+             | Left fld -> Some fld
              | Right _sts -> None)
       in
       let c =

@@ -545,6 +545,20 @@ and definition (ent, def) =
   | ClassDef def ->
       let def, more_attrs = class_ def in
       ({ ent with G.attrs = ent.G.attrs @ more_attrs }, G.ClassDef def)
+  | ModuleDef body ->
+      (* the namespace name is carried by [ent]; leaving the ModuleStruct name
+       * as None avoids binding a metavariable name twice (which would make a
+       * pattern like 'namespace $X { ... }' fail the consistency check) *)
+      let items =
+        match body with
+        | None -> []
+        | Some st -> (
+            let s = stmt st in
+            match s.G.s with
+            | G.Block (_, xs, _) -> xs
+            | _ -> [ s ])
+      in
+      (ent, G.ModuleDef { G.mbody = G.ModuleStruct (None, items) })
   | DefTodo (v1, v2) ->
       let v2 = list any v2 in
       (ent, G.OtherDef (v1, v2))
@@ -686,7 +700,12 @@ and field_classic
   let vt = option type_ vt in
   let ent =
     match v1 with
-    | Left n -> G.basic_entity n ~attrs:v2
+    | Left n ->
+        (* "()" / "[]" are synthetic names for the (anonymous) call/index
+         * signatures; mark them hidden so they don't pollute the prefilter
+         * (they never appear as literal text in the source). *)
+        let hidden = match fst n with "()" | "[]" -> true | _ -> false in
+        G.basic_entity n ~attrs:v2 ~hidden
     | Right e -> { G.name = G.EDynamic e; attrs = v2; tparams = None }
   in
   match v3 with
