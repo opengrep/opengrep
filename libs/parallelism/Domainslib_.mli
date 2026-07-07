@@ -23,17 +23,5 @@ val parmap :
     [e] is the caught exception.
 *)
 
-val parmap_no_memprof :
-  < Cap.fork > ->
-  ?chunksize:int ->
-  num_domains:int ->
-  exception_handler:('b -> Exception.t -> 'c) ->
-  ('b -> 'd) ->
-  'b list ->
-  ('d, 'c) result list
-(** Like [parmap], but does NOT enforce [chunksize=1]; only safe when the worker
-    avoids Memprof_limits / TLS (which misbehave when tasks share a thread).
-    Larger chunks cut Domainslib's dispatch overhead for many small items. *)
-
 val get_cpu_count : unit -> int
 (** Return the number of domains, kept original name for compatibility. *)
