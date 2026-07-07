@@ -310,6 +310,16 @@ let is_map_pair_pattern (p : G.pattern) : bool =
       true
   | _ -> false
 
+(* An Elixir `cond` branch condition is an expression, not a pattern:
+ * [expr_to_pattern] tags it [OtherPat("ExprToPattern", …)] (possibly wrapped
+ * in a singleton [PatTuple] by [pat_of_args_and_when]). Real `case` patterns
+ * never take this shape, so it reliably marks a `cond` condition. *)
+let rec is_expr_to_pattern (p : G.pattern) : bool =
+  match p with
+  | G.OtherPat (("ExprToPattern", _), _) -> true
+  | G.PatTuple (_, [ p ], _) -> is_expr_to_pattern p
+  | _ -> false
+
 let unwrap_map_pair_pattern (p : G.pattern) : G.pattern =
   match p with
   | G.OtherPat
@@ -4039,9 +4049,23 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
         | _ -> []
       in
 
+      (* In Elixir's `cond`, a branch condition is an expression (tagged
+       * [ExprToPattern]), evaluated in sequence — its side effects (e.g.
+       * `y = source()`) precede and are visible to later branches. *)
+      let hoist_cond_side_effects =
+        env.lang =*= Lang.Elixir
+        &&
+        match cases with
+        | [ G.Case (_, pat) ] -> is_expr_to_pattern pat
+        | _ -> false
+      in
+      let pre_jump_ss, body_pat_stmts =
+        if hoist_cond_side_effects then (pat_stmts, []) else ([], pat_stmts)
+      in
+
       let new_stmts = lower_body body in
 
-      let body = [ mk_s (Label label) ] @ pat_stmts @ new_stmts in
+      let body = [ mk_s (Label label) ] @ body_pat_stmts @ new_stmts in
       (* Maybe lang has no_fallthrough in general but here we have PatWhen
        * with guard. Not sure any of that makes a true difference though! *)
       let is_guarded_pat =
@@ -4056,7 +4080,7 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
           [ mk_s (Goto (tok, break_label)) ]
         else []
       in
-      (case_ss @ [ jump ], body @ break_if_no_fallthrough @ bodies)
+      (pre_jump_ss @ case_ss @ [ jump ], body @ break_if_no_fallthrough @ bodies)
 
 and stmt env st : stmt list =
   try stmt_aux env st with
