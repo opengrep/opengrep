@@ -1,0 +1,12 @@
+rules:
+  - id: this-field-write-via-self-call
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A field tainted by a self-call is read and reaches a sink later in the
+      same method (local read-after-write through a ToLvalThis effect).
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
