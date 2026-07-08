@@ -5,7 +5,7 @@ synopsis: "Call graph infrastructure for opengrep"
 description:
   "Call graph construction, serialization, and analysis utilities."
 maintainer: ["Opengrep authors"]
-authors: ["Semgrep authors, Opengrep authors"]
+authors: ["Opengrep authors"]
 homepage: "https://opengrep.dev"
 bug-reports: "https://github.com/opengrep/opengrep/issues"
 depends: [
