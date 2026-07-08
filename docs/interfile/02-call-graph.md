@@ -2,7 +2,7 @@
 
 `projidx` (formal name: `opengrep_project_index`, binary name:
 `opengrep-project-index`) is opengrep's in-process call-graph
-builder.  It lives in `tools/project_index/`.
+builder.  It lives in `src/project_index/`.
 
 For interfile taint analysis it is invoked **as a library**, never as
 a subprocess — see `src/engine/Interfile_graph.ml`.  The standalone
@@ -34,7 +34,7 @@ A `Call_graph.G.t` — a bidirectional labelled directed graph from
 ## The four-phase build
 
 projidx's main entry point is `Opengrep_project_index.Main.collect`
-(see `tools/project_index/Main.ml`).  It runs four phases in order:
+(see `src/project_index/Main.ml`).  It runs four phases in order:
 
 ### Phase 0: Discover
 
@@ -85,7 +85,7 @@ Phase 1 visits every AST and records two things:
    `Module_qn.t`) over private strings.
 
 `Type_state.t` lives in `src/tainting/Type_state.ml` (not in
-`tools/project_index/`!) because both `Graph_from_AST`'s callee
+`src/project_index/`!) because both `Graph_from_AST`'s callee
 resolver and the taint engine consume it.  Its shape:
 
 ```ocaml
@@ -283,7 +283,7 @@ The key entries:
 ## The standalone binary
 
 The same `Main.collect` is exposed through
-`tools/project_index/Cli.ml` as `opengrep-project-index`.  Typical
+`src/project_index/Cli.ml` as `opengrep-project-index`.  Typical
 invocation:
 
 ```

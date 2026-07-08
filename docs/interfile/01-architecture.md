@@ -27,7 +27,7 @@ No `--scip-index-dir`.
 |---|---|---|
 | CLI parse, decide `taint_interfile = true` | `src/osemgrep/cli_scan/Scan_CLI.ml` | `Core_scan_config.taint_interfile : bool` (per-rule: `Rule_options.taint_interfile`) |
 | Group rules by language and targets by `project_root` | `src/engine/Interfile_dispatch.ml` `build_rule_states` | `lang_context` list (one per `(lang, root)` group) |
-| Build the project-wide call graph | `src/engine/Interfile_graph.ml` → `tools/project_index/` (projidx) | `Call_graph.G.t` |
+| Build the project-wide call graph | `src/engine/Interfile_graph.ml` → `src/project_index/` (projidx) | `Call_graph.G.t` |
 | Filter targets to those present in the graph | `Interfile_dispatch.targets_in_interfile_graph` | `interfile_target list` |
 | Parse target files + companion files | `Interfile_dispatch.parse_companion_files` | `(Lang, AST table)` |
 | Extract sources/sinks per rule | `Match_taint_spec.taint_config_of_rule` | `taint_inst` per rule, per file |
