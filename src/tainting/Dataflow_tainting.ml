@@ -349,14 +349,21 @@ let record_effects env new_effects =
     env.effects_acc := Effects.add_list new_effects !(env.effects_acc)
 
 (* Field write on the enclosing receiver: record [BThis] so it composes
-   into this function's signature. Known limitation: unlike the sibling
-   ToLval arm, this does not add the taint to the local [lval_env], so a
-   read of the same field later in THIS function does not see it (only
-   callers composing the signature do). *)
+   into this function's signature. *)
 let record_this_field_write env taints offset guards =
   record_effects env
     [ Effect.ToLval
         { taints; lval = { base = Taint.BThis; offset }; guards } ]
+
+(* Also reflect a this-field write in the local [lval_env], mirroring the
+   sibling [ToLval] arm, so a later read of the same field in THIS function
+   sees it. [this.x…] normalizes to the field [x] as a var (see
+   [normalize_lval]); not representable when the offset does not start with a
+   field (an index/slice base), in which case the env is unchanged. *)
+let add_this_field_to_lval_env lval_env offset taints =
+  match offset with
+  | T.Ofld field :: rest -> Lval_env.add field rest taints lval_env
+  | _ -> lval_env
 
 (* Own formal parameters are bound in the sig being computed; anything
    else is free. [effects_from_arg_updates_at_exit] handles own params
@@ -1971,9 +1978,14 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                 shape_acc,
                 lval_env |> Lval_env.add var offset taints )
           | ToLvalThis { taints; offset; guards } ->
-              record_this_field_write env taints offset
-                (Effect_guard.compose_and rebound_guards guards);
-              (taints_acc, shape_acc, lval_env)
+              let guards = Effect_guard.compose_and rebound_guards guards in
+              record_this_field_write env taints offset guards;
+              (* Mirror the sibling [ToLval] arm: conjoin the guard, then also
+                 reflect the write in the local [lval_env]. *)
+              let taints = Taints.conjoin_guard guards taints in
+              ( taints_acc,
+                shape_acc,
+                add_this_field_to_lval_env lval_env offset taints )
           | ToSinkInCall
               {
                 callee;
@@ -2214,7 +2226,11 @@ let check_function_call env fun_exp args
                      lval_env |> Lval_env.add var offset taints )
                | ToLvalThis { taints; offset; guards } ->
                    record_this_field_write env taints offset guards;
-                   (taints_acc, shape_acc, lval_env)
+                   (* Mirror the sibling [ToLval] arm's local write. *)
+                   let taints = Taints.conjoin_guard guards taints in
+                   ( taints_acc,
+                     shape_acc,
+                     add_this_field_to_lval_env lval_env offset taints )
                | ToSinkInCall
                    {
                      callee;
@@ -2399,7 +2415,12 @@ let call_with_intrafile lval_opt e env args instr =
                               (taints_acc, shape_acc, lval_env)
                           | ToLvalThis { taints; offset; guards } ->
                               record_this_field_write env taints offset guards;
-                              (taints_acc, shape_acc, lval_env)
+                              (* Mirror the sibling [ToLval] arm's local write
+                                 (no guard conjoin here, as in the sibling). *)
+                              ( taints_acc,
+                                shape_acc,
+                                add_this_field_to_lval_env lval_env offset
+                                  taints )
                           | ToSinkInCall
                               {
                                 callee;
