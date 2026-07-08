@@ -2,13 +2,13 @@
 
 Every language has its own definition of "what's a class", "what's a
 method", "what's in scope", "what gets called when".  projidx
-encapsulates these as fields on `Lang_config.t`
-(`tools/project_index/Lang_config.mli`).  This document walks through
+encapsulates these as fields on `Index_lang_rules.t`
+(`src/project_index/Index_lang_rules.mli`).  This document walks through
 the differences between languages as they show up in the code — not
 as a man-page, but as a tour of what makes each language hard and how
 the hooks address it.
 
-## The Lang_config.t fields
+## The Index_lang_rules.t fields
 
 | Field | What it does |
 |---|---|
@@ -243,7 +243,7 @@ spec edges projidx is intentionally not emitting.
 ### `tsconfig.json` excludes
 
 `tsconfig*.json` files declare `exclude` arrays.
-`Lang_config.discover_excludes` walks for these files starting at
+`Index_lang_rules.discover_excludes` walks for these files starting at
 the project root and accumulates their `exclude` patterns
 (prefers `tsconfig.build.json` over `tsconfig.json` to match
 `scip-typescript`).  Patterns are glob-expanded via `Re.Glob`.

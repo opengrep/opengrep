@@ -1,7 +1,7 @@
 (* AST traversal helpers — a fold over expressions in a stmt, plus the
    observation-driven file walker that projidx uses to amortise its
    per-file passes.  Sits alongside [Visit_function_defs] so callers
-   in [src/tainting/] and [tools/project_index/] can both reach it. *)
+   in [src/tainting/] and [src/project_index/] can both reach it. *)
 
 module G = AST_generic
 
