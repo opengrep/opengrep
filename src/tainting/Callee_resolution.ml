@@ -189,14 +189,15 @@ let identify_callee ~(lang : Lang.t) ?(object_mappings = []) ?(all_funcs = [])
                           && func_info_name_matches f callee_name_str
                       | _ -> false
                   ) all_funcs in
-                  (* Debug: show all function names *)
-                  let all_names =
-                      all_funcs
-                      |> List.map (fun f -> show_fn_id f.fn_id)
-                      |> String.concat ", "
-                  in
-                  Log.debug (fun m -> m "CALL_EXTRACT: In class %s, call to %s, checking %d funcs, method_exists=%b, ALL: [%s]"
-                      class_name_str callee_name_str (List.length all_funcs) (Option.is_some method_match) all_names);
+                  Log.debug (fun m ->
+                      (* Debug: show all function names *)
+                      let all_names =
+                        all_funcs
+                        |> List.map (fun f -> show_fn_id f.fn_id)
+                        |> String.concat ", "
+                      in
+                      m "CALL_EXTRACT: In class %s, call to %s, checking %d funcs, method_exists=%b, ALL: [%s]"
+                        class_name_str callee_name_str (List.length all_funcs) (Option.is_some method_match) all_names);
                   (match method_match with
                   | Some f -> Some f.fn_id
                   | None ->
