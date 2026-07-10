@@ -1,6 +1,7 @@
 (* Diagnostic tool for inspecting interfile taint analysis graph structure. *)
 
 module G = Call_graph.G
+module PI = Opengrep_project_index
 
 let load_graph (project_root : string) (lang : Lang.t) : Call_graph.G.t =
   let root = Fpath.v project_root in
@@ -30,6 +31,26 @@ let load_rules (rules_file : string) : Rule.t list =
     Printf.eprintf "Warning: %d invalid rules skipped\n" (List.length invalid);
   rules
 
+(* One TSV edge format for every dump:
+   src_loc \t dst_loc \t call_site_loc \t kind. *)
+let dump_edges_tsv (out : out_channel) (graph : Call_graph.G.t) : unit =
+  G.iter_edges_e (fun (edge : G.E.t) ->
+    let src = G.E.src edge in
+    let dst = G.E.dst edge in
+    let label = G.E.label edge in
+    let s_f, s_l, s_c = Function_id.to_file_line_col src in
+    let d_f, d_l, d_c = Function_id.to_file_line_col dst in
+    let call_site = label.Call_graph.call_site in
+    let kind = match label.Call_graph.kind with
+      | Call_graph.Call -> "call"
+      | Call_graph.Dispatch -> "dispatch"
+    in
+    Printf.fprintf out "%s:%d:%d\t%s:%d:%d\t%s:%d:%d\t%s\n"
+      s_f s_l s_c d_f d_l d_c
+      (Fpath.to_string call_site.Pos.file) call_site.Pos.line call_site.Pos.column
+      kind
+  ) graph
+
 let cmd_full_graph (project_root : string) (lang_str : string)
     (verbose : bool) : int =
   let lang = Lang.of_string lang_str in
@@ -57,19 +78,95 @@ let cmd_full_graph (project_root : string) (lang_str : string)
     List.iter (fun (file, count) ->
       Printf.printf "    %4d  %s\n" count file
     ) sorted_files;
-    G.iter_edges_e (fun edge ->
-      let src = G.E.src edge in
-      let dst = G.E.dst edge in
-      let label = G.E.label edge in
-      let s_f, s_l, s_c = Function_id.to_file_line_col src in
-      let d_f, d_l, d_c = Function_id.to_file_line_col dst in
-      let call_site = label.Call_graph.call_site in
-      Printf.eprintf "%s:%d:%d\t%s:%d:%d\t%s:%d:%d\n"
-        s_f s_l s_c d_f d_l d_c
-        (Fpath.to_string call_site.Pos.file) call_site.Pos.line call_site.Pos.column
-    ) graph
+    dump_edges_tsv stderr graph
   end;
   0
+
+(* The [index] command: the raw projidx view.  [PI.Main.collect] output as
+   built (paths may be relative, permissive targeting), BEFORE the engine
+   absolutifies it — [full-graph] shows the same graph as the engine
+   consumes it. *)
+
+module Log = PI.Log_projidx.Log
+
+let count_by_kind (entries : PI.Types.entry list) : int * int * int =
+  List.fold_left (fun (funcs, methods, classes) (entry : PI.Types.entry) ->
+    match entry.PI.Types.kind with
+    | PI.Types.K_function -> (funcs + 1, methods, classes)
+    | PI.Types.K_method -> (funcs, methods + 1, classes)
+    | PI.Types.K_class -> (funcs, methods, classes + 1)
+  ) (0, 0, 0) entries
+
+let kind_str (kind : PI.Types.def_kind) : string =
+  match kind with
+  | PI.Types.K_function -> "function"
+  | PI.Types.K_method -> "method"
+  | PI.Types.K_class -> "class"
+
+let cmd_index (project_root_str : string) (lang_str : string)
+    (sample : int) (dump_all : bool) (ncores : int)
+    (includes : string list) (excludes : string list)
+    (pyrefly_toml : string option) (list_files_only : bool)
+    (dump_edges : bool) : int =
+  let lang = Lang.of_string lang_str in
+  let project_root = Fpath.v project_root_str |> Fpath.normalize in
+  let toml_inc, toml_exc = match pyrefly_toml with
+    | None -> ([], [])
+    | Some path -> PI.Discover.read_pyrefly_includes_excludes path
+  in
+  let includes = includes @ toml_inc in
+  let excludes = excludes @ toml_exc in
+  if includes <> [] || excludes <> [] then
+    Log.info (fun m -> m "Filter: %d include(s), %d exclude(s)"
+      (List.length includes) (List.length excludes));
+  Log.info (fun m -> m "Walking %s for %s files..."
+    (Fpath.to_string project_root) (Lang.to_string lang));
+  if list_files_only then begin
+    let files = PI.Discover.discover_files
+      ~targeting_conf:PI.Discover.projidx_default_targeting_conf
+      ~lang ~project_root ~includes ~excludes in
+    List.iter (fun (file : Fpath.t) -> print_endline (Fpath.to_string file))
+      files;
+    0
+  end
+  else begin
+    let t0 = Unix.gettimeofday () in
+    (* CLI entry point: this process owns its capabilities. *)
+    let caps = Cap.fork_and_limits_caps_UNSAFE () in
+    let (entries, graph, scanned, skipped) =
+      PI.Main.collect (caps :> < Cap.fork >)
+        ~lang ~project_root ~ncores ~includes ~excludes ()
+    in
+    let t1 = Unix.gettimeofday () in
+    let (funcs, methods, classes) = count_by_kind entries in
+    let summary_chan = if dump_all || dump_edges then stderr else stdout in
+    Printf.fprintf summary_chan "Files scanned:  %d\n" scanned;
+    Printf.fprintf summary_chan "Files skipped:  %d\n" skipped;
+    Printf.fprintf summary_chan "Total entries:  %d\n" (List.length entries);
+    Printf.fprintf summary_chan "  functions:    %d\n" funcs;
+    Printf.fprintf summary_chan "  methods:      %d\n" methods;
+    Printf.fprintf summary_chan "  classes:      %d\n" classes;
+    Printf.fprintf summary_chan "Elapsed:        %.2fs\n" (t1 -. t0);
+    let entry_loc (entry : PI.Types.entry) =
+      let file, line, col = Function_id.to_file_line_col entry.PI.Types.id in
+      Printf.sprintf "%s:%d:%d" file line col
+    in
+    if dump_edges then
+      dump_edges_tsv stdout graph
+    else if dump_all then
+      List.iter (fun (entry : PI.Types.entry) ->
+        Printf.printf "%s\t%s\t%s\n"
+          (kind_str entry.PI.Types.kind) entry.PI.Types.name (entry_loc entry)
+      ) entries
+    else if sample > 0 then begin
+      Printf.printf "\nSample (%d):\n" sample;
+      List.iter (fun (entry : PI.Types.entry) ->
+        Printf.printf "  [%s] %s  (%s)\n"
+          (kind_str entry.PI.Types.kind) entry.PI.Types.name (entry_loc entry)
+      ) (List_.take_safe sample entries)
+    end;
+    0
+  end
 
 let cmd_lookup (project_root : string) (lang_str : string)
     (pattern : string) (verbose : bool) : int =
@@ -392,6 +489,65 @@ let edges_cmd : int Cmd.t =
   in
   Cmd.v (Cmd.info "edges" ~doc) term
 
+let o_sample : int Term.t =
+  let info =
+    Arg.info [ "sample" ] ~docv:"N"
+      ~doc:"Print this many sample entries (0 = none)"
+  in
+  Arg.value (Arg.opt Arg.int 10 info)
+
+let o_dump_all : bool Term.t =
+  let info =
+    Arg.info [ "dump-all" ]
+      ~doc:"Dump every entry as tab-separated kind, qualified name, location"
+  in
+  Arg.value (Arg.flag info)
+
+let o_dump_edges : bool Term.t =
+  let info =
+    Arg.info [ "dump-edges" ]
+      ~doc:"Dump call graph edges as tab-separated source, destination, \
+            call site, kind"
+  in
+  Arg.value (Arg.flag info)
+
+let o_include : string list Term.t =
+  let info =
+    Arg.info [ "include" ] ~docv:"PATH"
+      ~doc:"Only index files under this path (repeatable)"
+  in
+  Arg.value (Arg.opt_all Arg.string [] info)
+
+let o_exclude : string list Term.t =
+  let info =
+    Arg.info [ "exclude" ] ~docv:"PATH"
+      ~doc:"Skip files under this path (repeatable)"
+  in
+  Arg.value (Arg.opt_all Arg.string [] info)
+
+let o_pyrefly_toml : string option Term.t =
+  let info =
+    Arg.info [ "pyrefly-toml" ] ~docv:"FILE"
+      ~doc:"Read project-includes/project-excludes from this pyrefly.toml"
+  in
+  Arg.value (Arg.opt (Arg.some Arg.string) None info)
+
+let o_list_files : bool Term.t =
+  let info =
+    Arg.info [ "list-files" ]
+      ~doc:"Print the list of files that would be indexed, then exit"
+  in
+  Arg.value (Arg.flag info)
+
+let index_cmd : int Cmd.t =
+  let doc = "Build the raw project index and dump entries/edges/stats" in
+  let term =
+    Term.(const cmd_index $ o_project_root $ o_lang $ o_sample $ o_dump_all
+          $ o_ncores $ o_include $ o_exclude $ o_pyrefly_toml
+          $ o_list_files $ o_dump_edges)
+  in
+  Cmd.v (Cmd.info "index" ~doc) term
+
 let relevant_graph_cmd : int Cmd.t =
   let doc = "Compute the relevant subgraph per (rule, target) pair" in
   let term =
@@ -431,7 +587,7 @@ let main_cmd : int Cmd.t =
         look up functions, and trace edges.";
   ] in
   Cmd.group (Cmd.info "opengrep-interfile-graph" ~version:"0.1.0" ~doc ~man)
-    [ full_graph_cmd; lookup_cmd; edges_cmd;
+    [ index_cmd; full_graph_cmd; lookup_cmd; edges_cmd;
       relevant_graph_cmd; topo_order_cmd ]
 
 let () =

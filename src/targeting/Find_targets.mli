@@ -57,8 +57,8 @@ type conf = {
   respect_semgrepignore_files : bool;
   (* Built-in semgrepignore patterns applied on top of project '.semgrepignore'
      files.  [Semgrep_scan_legacy] (the default) excludes common test-paths,
-     package-manager folders, etc.; [Empty] opts out (e.g. for
-     opengrep-project-index, which wants raw targeting). *)
+     package-manager folders, etc.; [Empty] opts out (e.g. for the projidx
+     file discovery, which wants raw targeting). *)
   default_semgrepignore_patterns : Semgrepignore.default_semgrepignore_patterns;
   (* Custom semgrepignore filename to use instead of '.semgrepignore' *)
   semgrepignore_filename : string option;

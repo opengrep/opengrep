@@ -4,6 +4,9 @@
    cmdliner
    commons
    call_graph
+   opengrep_project_index
+   parallelism
+   TCB
    semgrep.core_scan
    semgrep.targeting
    semgrep.core_runner
