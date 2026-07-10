@@ -16,111 +16,6 @@ let module_path ~(cfg : Index_lang_rules.t) ~(project_root : Fpath.t)
     let path_str = cfg.Index_lang_rules.rewrite_module_path path_str in
     Names.Module_qn.of_string
       (String.map (fun ch -> if Char.equal ch '/' then '.' else ch) path_str)
-
-
-let build_reexport_map ~(cfg : Index_lang_rules.t) (file_infos : file_info list)
-  : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t =
-  let reexport_map = Hashtbl.create 4096 in
-  if not cfg.Index_lang_rules.has_reexports then reexport_map
-  else begin
-    List.iter (fun fi ->
-      if cfg.Index_lang_rules.is_init_file fi.fi_file then
-        let pkg = fi.fi_module_path in
-        List.iter (fun (local, target) ->
-          let bound =
-            if Names.Module_qn.is_empty pkg
-            then Names.Module_qn.of_string local
-            else Names.Module_qn.concat pkg local
-          in
-          if not (Names.Module_qn.equal bound target) then
-            Hashtbl.replace reexport_map bound target
-        ) fi.fi_imports
-    ) file_infos;
-    reexport_map
-  end
-
-let mro_inherited_entries
-    ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
-    ~(scope_resolution : bool)
-    (entries : entry list) (class_infos : class_info list) : entry list =
-  let by_qn : (Names.Class_qn.t, class_info) Hashtbl.t = Hashtbl.create 8192 in
-  List.iter (fun ci -> Hashtbl.replace by_qn ci.ci_qn ci) class_infos;
-  let known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t =
-    Hashtbl.create 8192
-  in
-  List.iter (fun ci -> Hashtbl.replace known_class_qns ci.ci_qn ())
-    class_infos;
-  let qns_by_leaf : (Names.Class_name.t, Names.Class_qn.t list) Hashtbl.t =
-    Hashtbl.create 8192
-  in
-  if scope_resolution then
-    List.iter (fun ci ->
-      let leaf = Names.Class_qn.leaf ci.ci_qn in
-      if leaf <> "" then begin
-        let leaf_key = Names.Class_name.of_string leaf in
-        let cur = Option.value (Hashtbl.find_opt qns_by_leaf leaf_key) ~default:[] in
-        Hashtbl.replace qns_by_leaf leaf_key (ci.ci_qn :: cur)
-      end
-    ) class_infos;
-  let ensure_set = Symbols.methods_by_class entries in
-  List.fold_left (fun all_new ci ->
-    let own = ensure_set ci.ci_id in
-    let visited : (Function_id.t, unit) Hashtbl.t = Hashtbl.create 8 in
-    let rec walk acc pci =
-      if Hashtbl.mem visited pci.ci_id then acc
-      else begin
-        Hashtbl.replace visited pci.ci_id ();
-        let acc =
-          Hashtbl.fold (fun mname () acc ->
-            if Hashtbl.mem own mname then acc
-            else begin
-              Hashtbl.replace own mname ();
-              let m_id = Symbols.synth_function_id ci.ci_id mname in
-              { id = m_id; name = mname; kind = K_method;
-                file = ci.ci_file; range = ci.ci_range;
-                defining_class_id = Some ci.ci_id }
-              :: acc
-            end
-          ) (ensure_set pci.ci_id) acc
-        in
-        List.fold_left (fun acc gp_path ->
-          match
-            (match Mro.resolve_parent_qn ~imports:pci.ci_imports
-                     ~reexport_map ~known_class_qns gp_path with
-             | Some _ as resolved -> resolved
-             | None when scope_resolution ->
-               Mro.resolve_parent_by_scope ~by_qn ~qns_by_leaf pci gp_path
-             | None -> None)
-          with
-          | None -> acc
-          | Some gp_qn ->
-            (match Hashtbl.find_opt by_qn
-                     (Names.Class_qn.of_string
-                        (Names.Module_qn.to_string gp_qn)) with
-             | Some gpci -> walk acc gpci
-             | None -> acc)
-        ) acc pci.ci_parent_paths
-      end
-    in
-    List.fold_left (fun acc p_path ->
-      match
-        (match Mro.resolve_parent_qn ~imports:ci.ci_imports
-                 ~reexport_map ~known_class_qns p_path with
-         | Some _ as resolved -> resolved
-         | None when scope_resolution ->
-           Mro.resolve_parent_by_scope ~by_qn ~qns_by_leaf ci p_path
-         | None -> None)
-      with
-      | None -> acc
-      | Some pq ->
-        (match Hashtbl.find_opt by_qn
-                 (Names.Class_qn.of_string
-                    (Names.Module_qn.to_string pq)) with
-         | Some pci -> walk acc pci
-         | None -> acc)
-    ) all_new ci.ci_parent_paths
-  ) [] class_infos
-
 module FA = Graph_from_AST
 
 
@@ -637,7 +532,7 @@ let run_pipeline (caps : < Cap.fork >)
         (sc, sk + 1, es, cs, fis, n_logged + 1)
     ) (0, 0, [], [], [], 0) results
   in
-  let reexport_map = build_reexport_map ~cfg all_files in
+  let reexport_map = Reexports.build_reexport_map ~cfg all_files in
   Log.debug (fun m -> m "Re-export map: %d entries (lang has_reexports=%b)"
     (Hashtbl.length reexport_map) cfg.Index_lang_rules.has_reexports);
   let wrappers : (string, dataclass_wrapper) Hashtbl.t =
@@ -656,7 +551,7 @@ let run_pipeline (caps : < Cap.fork >)
   let entries_pre_mro = all_entries @ synth_from_wrappers in
   let inherited =
     if cfg.Index_lang_rules.walks_inheritance then
-      mro_inherited_entries ~reexport_map
+      Mro.inherited_entries ~reexport_map
         ~scope_resolution:cfg.Index_lang_rules.mro_uses_scope_resolution
         entries_pre_mro all_classes
     else []

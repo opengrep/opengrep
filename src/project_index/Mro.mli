@@ -17,3 +17,13 @@ val inherit_into_type_state :
   class_infos:class_info list ->
   func_def_file:(Graph_from_AST.func_info -> string option) ->
   Type_state.t -> Type_state.t
+
+(* Transitive-parents walk (NOT C3; may disagree with
+   [inherit_into_type_state] on diamond ordering) emitting synthetic
+   inherited-method entries.  Feeds only the diagnostic entry list returned
+   by [Project_index.collect]; callee resolution uses
+   [inherit_into_type_state]. *)
+val inherited_entries :
+  reexport_map:(Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t ->
+  scope_resolution:bool ->
+  entry list -> class_info list -> entry list
