@@ -2,6 +2,30 @@ module G = AST_generic
 module FA = Graph_from_AST
 module Log = Log_projidx.Log
 
+(* [bound -> target] for every name an [__init__]-style package file
+   re-exports: importing [pkg.local] resolves to the defining module. *)
+let build_reexport_map ~(cfg : Index_lang_rules.t)
+    (file_infos : Types.file_info list)
+  : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t =
+  let reexport_map = Hashtbl.create 4096 in
+  if not cfg.Index_lang_rules.has_reexports then reexport_map
+  else begin
+    List.iter (fun (fi : Types.file_info) ->
+      if cfg.Index_lang_rules.is_init_file fi.fi_file then
+        let pkg = fi.fi_module_path in
+        List.iter (fun (local, target) ->
+          let bound =
+            if Names.Module_qn.is_empty pkg
+            then Names.Module_qn.of_string local
+            else Names.Module_qn.concat pkg local
+          in
+          if not (Names.Module_qn.equal bound target) then
+            Hashtbl.replace reexport_map bound target
+        ) fi.fi_imports
+    ) file_infos;
+    reexport_map
+  end
+
 (* Dedup so wildcard re-export doesn't double-add a func an explicit import brought in. *)
 let merge_dedup ~cur ~newcomers =
   let key (func : FA.func_info) =
