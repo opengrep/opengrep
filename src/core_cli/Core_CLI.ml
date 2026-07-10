@@ -74,10 +74,6 @@ let target_file : Fpath.t option ref = ref None
  *)
 let lang = ref None
 
-(* Optional project root for [-dump_graph_ast]: when set, callee resolution
- * runs the project-wide projidx pipeline (cross-file) instead of single-file. *)
-let dump_graph_ast_root = ref None
-
 (* this is used not only by pysemgrep but also by a few actions *)
 let output_format = ref Core_scan_config.default.output_format
 let strict = ref Core_scan_config.default.strict
@@ -230,44 +226,6 @@ let dump_ast ?(naming = false) (caps : < Cap.stdout ; Cap.exit >)
       if Parsing_result2.has_error res then (
         log_parsing_errors file res;
         Core_exit_code.(exit_semgrep caps#exit False)))
-[@@action]
-
-(* Like [-dump_named_ast] but runs call-graph callee resolution first, so
-   the dump shows method / qualified / cross-file callees resolved into each
-   callee's [id_resolved].  With [root] ([-dump_graph_ast_root]) it uses the
-   projidx pipeline for cross-file resolution; without, single-file only. *)
-let dump_graph_ast ?(root : Fpath.t option)
-    (caps : < Cap.stdout ; Cap.exit ; Cap.fork >)
-    (lang : Language.t) (file : Fpath.t) =
-  Core_actions.try_with_log_exn_and_reraise file (fun () ->
-      let ast =
-        match root with
-        | Some project_root -> (
-            match
-              Opengrep_project_index.Project_index.resolve_ast_for_file
-                (caps :> < Cap.fork >) ~lang
-                ~project_root ~ncores:1 ~target:file ()
-            with
-            | Some ast -> ast
-            | None ->
-                failwith
-                  (spf
-                     "-dump_graph_ast: %s was not discovered/parsed under \
-                      project root %s"
-                     (Fpath.to_string file)
-                     (Fpath.to_string project_root)))
-        | None ->
-            let res = Parse_target.parse_and_resolve_name lang file in
-            ignore (Graph_from_AST.build_call_graph ~lang res.ast);
-            if Parsing_result2.has_error res then (
-              log_parsing_errors file res;
-              Core_exit_code.(exit_semgrep caps#exit False));
-            res.ast
-      in
-      let v = Meta_AST.vof_any (AST_generic.Pr ast) in
-      Format.set_margin 120;
-      let s = dump_v_to_format v in
-      CapConsole.print caps#stdout s)
 [@@action]
 
 (*****************************************************************************)
@@ -490,14 +448,6 @@ let all_actions (caps : Cap.all_caps) () =
              (caps :> < Cap.stdout ; Cap.exit >)
              (Xlang.lang_of_opt_xlang_exn !lang))
           file );
-    ( "-dump_graph_ast",
-      " <file>",
-      fun file ->
-        Arg_.mk_action_1_conv Fpath.v
-          (dump_graph_ast ?root:!dump_graph_ast_root
-             (caps :> < Cap.stdout ; Cap.exit ; Cap.fork >)
-             (Xlang.lang_of_opt_xlang_exn !lang))
-          file );
     ( "-dump_il_all",
       " <file>",
       Arg_.mk_action_1_conv Fpath.v
@@ -622,10 +572,6 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
     ( "-l",
       Arg.String (fun s -> lang := Some (Xlang.of_string s)),
       spf " <str> shortcut for -lang" );
-    ( "-dump_graph_ast_root",
-      Arg.String (fun s -> dump_graph_ast_root := Some (Fpath.v s)),
-      " <dir> project root for -dump_graph_ast (enables cross-file callee \
-       resolution via projidx)" );
     ( "-equivalences",
       Arg.String (fun s -> equivalences_file := Some (Fpath.v s)),
       " <file> obtain list of code equivalences from YAML file" );

@@ -168,6 +168,45 @@ let cmd_index (project_root_str : string) (lang_str : string)
     0
   end
 
+(* Dump a file's generic AST after call-graph callee resolution, so method /
+   qualified / cross-file callees show up in each callee's [id_resolved].
+   With a project root the projidx pipeline resolves across files; without,
+   resolution is single-file. *)
+let cmd_dump_interfile_ast (project_root_opt : string option) (lang_str : string)
+    (file_str : string) : int =
+  let lang = Lang.of_string lang_str in
+  let file = Fpath.v file_str in
+  let ast_opt =
+    match project_root_opt with
+    | Some root ->
+      let caps = (Cap.fork_and_limits_caps_UNSAFE () :> < Cap.fork >) in
+      (match
+         PI.Project_index.resolve_ast_for_file caps ~lang
+           ~project_root:(Fpath.v root) ~ncores:1 ~target:file ()
+       with
+       | Some ast -> Some ast
+       | None ->
+         Printf.eprintf
+           "dump-interfile-ast: %s was not discovered/parsed under project root %s\n"
+           file_str root;
+         None)
+    | None ->
+      let res = Parse_target.parse_and_resolve_name lang file in
+      ignore (Graph_from_AST.build_call_graph ~lang res.ast);
+      if Parsing_result2.has_error res then begin
+        Printf.eprintf "dump-interfile-ast: failed to fully parse %s\n" file_str;
+        None
+      end
+      else Some res.ast
+  in
+  match ast_opt with
+  | None -> 1
+  | Some ast ->
+    let v = Meta_AST.vof_any (AST_generic.Pr ast) in
+    Format.set_margin 120;
+    print_endline (OCaml.string_of_v v);
+    0
+
 let cmd_lookup (project_root : string) (lang_str : string)
     (pattern : string) (verbose : bool) : int =
   let lang = Lang.of_string lang_str in
@@ -548,6 +587,26 @@ let index_cmd : int Cmd.t =
   in
   Cmd.v (Cmd.info "index" ~doc) term
 
+let o_project_root_opt : string option Term.t =
+  let info =
+    Arg.info [ "project-root"; "r" ] ~docv:"DIR"
+      ~doc:"Project root for cross-file callee resolution (single-file \
+            resolution when absent)"
+  in
+  Arg.value (Arg.opt (Arg.some Arg.string) None info)
+
+let o_target_file : string Term.t =
+  let info = Arg.info [] ~docv:"FILE" ~doc:"File whose AST to dump" in
+  Arg.required (Arg.pos 0 (Arg.some Arg.string) None info)
+
+let dump_interfile_ast_cmd : int Cmd.t =
+  let doc = "Dump a file's AST after call-graph callee resolution" in
+  let term =
+    Term.(const cmd_dump_interfile_ast $ o_project_root_opt $ o_lang
+          $ o_target_file)
+  in
+  Cmd.v (Cmd.info "dump-interfile-ast" ~doc) term
+
 let relevant_graph_cmd : int Cmd.t =
   let doc = "Compute the relevant subgraph per (rule, target) pair" in
   let term =
@@ -587,8 +646,8 @@ let main_cmd : int Cmd.t =
         look up functions, and trace edges.";
   ] in
   Cmd.group (Cmd.info "opengrep-interfile-graph" ~version:"0.1.0" ~doc ~man)
-    [ index_cmd; full_graph_cmd; lookup_cmd; edges_cmd;
-      relevant_graph_cmd; topo_order_cmd ]
+    [ index_cmd; full_graph_cmd; dump_interfile_ast_cmd; lookup_cmd;
+      edges_cmd; relevant_graph_cmd; topo_order_cmd ]
 
 let () =
   Parsing_init.init ();
