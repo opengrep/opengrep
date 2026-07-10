@@ -45,21 +45,21 @@ let lift_embedded_interfaces
       let visited = Hashtbl.create 8 in
       let rec bfs acc = function
         | [] -> acc
-        | n :: rest when Hashtbl.mem visited n -> bfs acc rest
-        | n :: rest ->
-          Hashtbl.add visited n ();
+        | iface_name :: rest when Hashtbl.mem visited iface_name -> bfs acc rest
+        | iface_name :: rest ->
+          Hashtbl.add visited iface_name ();
           let acc =
             (* Read the pre-lift [type_state], not the accumulating [state]:
                the bfs itself walks [embeds] transitively, so lifted copies
                are never needed and the result is independent of the order
                the embedders are processed in. *)
             match Type_state.get_methods type_state
-                    (Names.Class_name.of_string n) with
+                    (Names.Class_name.of_string iface_name) with
             | Some ms -> List.rev_append ms acc
             | None -> acc
           in
           let neighbours =
-            Option.value (Hashtbl.find_opt embeds n) ~default:[]
+            Option.value (Hashtbl.find_opt embeds iface_name) ~default:[]
           in
           bfs acc (neighbours @ rest)
       in
@@ -67,8 +67,8 @@ let lift_embedded_interfaces
         bfs []
           (Option.value (Hashtbl.find_opt embeds embedder) ~default:[])
       in
-      List.fold_left (fun s (m : FA.func_info) ->
-        match Func_info.as_method m.FA.fn_id with
+      List.fold_left (fun acc (func : FA.func_info) ->
+        match Func_info.as_method func.FA.fn_id with
         | Some (_, m_il) ->
           let embedder_tok = Tok.unsafe_fake_tok embedder in
           let embedder_il = IL.{
@@ -79,10 +79,10 @@ let lift_embedded_interfaces
           let rewritten_fn_id =
             Func_info.method_id ~cls:embedder_il ~meth:m_il
           in
-          let m' = { m with FA.fn_id = rewritten_fn_id } in
-          Type_state.add_method s
-            (Names.Class_name.of_string embedder) m'
-        | None -> s
+          let rewritten_func = { func with FA.fn_id = rewritten_fn_id } in
+          Type_state.add_method acc
+            (Names.Class_name.of_string embedder) rewritten_func
+        | None -> acc
       ) state methods
     in
     (* Sorted so the lifted-method list order is deterministic. *)
