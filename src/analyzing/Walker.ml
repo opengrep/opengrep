@@ -44,7 +44,7 @@ end
 
 let walk_class_like_defs (ast : G.program) : Observation.t list =
   let acc = ref [] in
-  let v = object
+  let visitor = object
     inherit [_] G.iter_no_id_info as super
     method! visit_definition () ((ent, def_kind) as def) =
       (match def_kind with
@@ -59,7 +59,7 @@ let walk_class_like_defs (ast : G.program) : Observation.t list =
        | _ -> ());
       super#visit_definition () def
   end in
-  v#visit_program () ast;
+  visitor#visit_program () ast;
   List.rev !acc
 
 (* [iter_no_id_info] (rather than plain [iter]) skips [id_svalue]'s
@@ -72,8 +72,8 @@ let make_collecting_visitor
     () =
   object
     inherit [_] G.iter_no_id_info as super
-    method! visit_expr () e = on_expr e; super#visit_expr () e
-    method! visit_stmt () s = on_stmt s; super#visit_stmt () s
+    method! visit_expr () expr = on_expr expr; super#visit_expr () expr
+    method! visit_stmt () stmt = on_stmt stmt; super#visit_stmt () stmt
     method! visit_function_definition () fdef =
       if skip_nested_fdefs then ()
       else super#visit_function_definition () fdef
@@ -83,24 +83,24 @@ let make_collecting_visitor
    bodies — for analyses that must attribute exprs to the enclosing
    fdef only. *)
 let fold_exprs_in_stmt ?(skip_nested_fdefs = false)
-    (f : 'acc -> G.expr -> 'acc) (init : 'acc) (s : G.stmt) : 'acc =
+    (f : 'acc -> G.expr -> 'acc) (init : 'acc) (stmt : G.stmt) : 'acc =
   let acc = ref init in
-  let v =
+  let visitor =
     make_collecting_visitor ~skip_nested_fdefs
-      ~on_expr:(fun e -> acc := f !acc e) ()
+      ~on_expr:(fun expr -> acc := f !acc expr) ()
   in
-  v#visit_stmt () s;
+  visitor#visit_stmt () stmt;
   !acc
 
 (* Like [fold_exprs_in_stmt] but folds over sub-statements. *)
 let fold_stmts_in_stmt ?(skip_nested_fdefs = false)
-    (f : 'acc -> G.stmt -> 'acc) (init : 'acc) (s : G.stmt) : 'acc =
+    (f : 'acc -> G.stmt -> 'acc) (init : 'acc) (stmt : G.stmt) : 'acc =
   let acc = ref init in
-  let v =
+  let visitor =
     make_collecting_visitor ~skip_nested_fdefs
-      ~on_stmt:(fun s' -> acc := f !acc s') ()
+      ~on_stmt:(fun sub_stmt -> acc := f !acc sub_stmt) ()
   in
-  v#visit_stmt () s;
+  visitor#visit_stmt () stmt;
   !acc
 
 let fold_stmts_in_program ?skip_nested_fdefs
@@ -120,16 +120,16 @@ let fold_exprs_in_fdef ?(skip_nested_fdefs = false)
     (f : 'acc -> G.expr -> 'acc) (init : 'acc)
     (fdef : G.function_definition) : 'acc =
   let acc = ref init in
-  let v =
+  let visitor =
     make_collecting_visitor ~skip_nested_fdefs
-      ~on_expr:(fun e -> acc := f !acc e) ()
+      ~on_expr:(fun expr -> acc := f !acc expr) ()
   in
-  v#visit_parameters () fdef.G.fparams;
-  Option.iter (v#visit_type_ ()) fdef.G.frettype;
+  visitor#visit_parameters () fdef.G.fparams;
+  Option.iter (visitor#visit_type_ ()) fdef.G.frettype;
   let body_stmt =
     AST_generic_helpers.funcbody_to_stmt fdef.G.fbody
   in
-  v#visit_stmt () body_stmt;
+  visitor#visit_stmt () body_stmt;
   !acc
 
 (* Full observation list in forward (visitor-traversal) order:

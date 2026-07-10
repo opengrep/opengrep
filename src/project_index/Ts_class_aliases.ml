@@ -11,17 +11,17 @@ let add_class_body_aliases
     (type_state : Type_state.t) : Type_state.t =
   if not (lang_applies lang) then type_state
   else
-    let leaf_of_init_expr (e : G.expr) : string option =
-      match e.G.e with
-      | G.N (G.Id ((s, _), _)) -> Some s
+    let leaf_of_init_expr (expr : G.expr) : string option =
+      match expr.G.e with
+      | G.N (G.Id ((name, _), _)) -> Some name
       | _ -> None
     in
     let find_target_fn (name : string) : FA.func_info option =
       match Hashtbl.find_opt project_funcs_by_name name with
       | None -> None
       | Some fs ->
-        List.find_opt (fun (f : FA.func_info) ->
-          Option.is_some (Func_info.as_free f.FA.fn_id))
+        List.find_opt (fun (func : FA.func_info) ->
+          Option.is_some (Func_info.as_free func.FA.fn_id))
           fs
     in
     let class_aliases_in_fields cls_name fields =
@@ -34,17 +34,17 @@ let add_class_body_aliases
              Option.bind (find_target_fn target_name) (fun target ->
                let target_fn_name =
                  match target.FA.fn_id with
-                 | [_; Some n] -> Some n
+                 | [_; Some method_name] -> Some method_name
                  | _ -> None
                in
-               Option.map (fun n ->
+               Option.map (fun method_name ->
                  let cls_il = IL.{
                    ident = (cls_name, Tok.unsafe_fake_tok cls_name);
                    sid = G.SId.unsafe_default;
                    id_info = G.empty_id_info ();
                  } in
                  let method_il =
-                   IL.{ n with ident = (alias_name, snd n.IL.ident); }
+                   IL.{ method_name with ident = (alias_name, snd method_name.IL.ident); }
                  in
                  let synthetic : FA.func_info = {
                    fn_id = Func_info.method_id ~cls:cls_il ~meth:method_il;
@@ -71,6 +71,6 @@ let add_class_body_aliases
         ) fi.Types.fi_observations
       ) file_infos
     in
-    List.fold_left (fun s (cls, synth) ->
-      Type_state.add_method s (Names.Class_name.of_string cls) synth
+    List.fold_left (fun state (cls, synth) ->
+      Type_state.add_method state (Names.Class_name.of_string cls) synth
     ) type_state collected

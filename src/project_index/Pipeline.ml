@@ -64,7 +64,7 @@ let stamp_base_var_types
           | I_default -> Hashtbl.find_opt default_export_class path
           | I_named name ->
             (match Hashtbl.find_opt named_export_classes (path, name) with
-             | Some _ as r -> r
+             | Some _ as found -> found
              | None -> Hashtbl.find_opt default_export_class path)
           | I_namespace ->
             Hashtbl.find_opt default_export_class path
@@ -81,7 +81,7 @@ let stamp_base_var_types
   let facts = import_facts @ ctor_facts in
   List.iter (fun (_var, class_name) ->
     match class_name with
-    | G.Id ((s, _), _) -> Hashtbl.replace visible s ()
+    | G.Id ((name_str, _), _) -> Hashtbl.replace visible name_str ()
     | _ -> ()
   ) facts;
   Object_initialization.stamp_id_types facts fi.fi_ast
@@ -91,24 +91,24 @@ let build_alias_to_module_qn
   : (string, Names.Module_qn.t) Hashtbl.t option =
   match cfg.Index_lang_rules.unqualified_scope with
   | `Per_file | `Per_directory ->
-    let h : (string, Names.Module_qn.t) Hashtbl.t = Hashtbl.create 16 in
+    let tbl : (string, Names.Module_qn.t) Hashtbl.t = Hashtbl.create 16 in
     List.iter (fun (local, target_qn) ->
       if String.length local > 0
          && not (Names.Module_qn.is_empty target_qn) then begin
         let first_seg =
           match Names.Module_qn.parts target_qn with
           | [] -> Names.Module_qn.to_string target_qn
-          | x :: _ -> x
+          | first_part :: _ -> first_part
         in
         let bound_qn =
           if String.equal local first_seg
           then Names.Module_qn.of_string local
           else target_qn
         in
-        Hashtbl.replace h local bound_qn
+        Hashtbl.replace tbl local bound_qn
       end
     ) fi.fi_imports;
-    if Int.equal (Hashtbl.length h) 0 then None else Some h
+    if Int.equal (Hashtbl.length tbl) 0 then None else Some tbl
   | _ -> None
 
 let build_file_funcs_by_package
@@ -135,9 +135,9 @@ let build_file_funcs_by_package
     ) fi.fi_imports in
     if alias_extra = [] then Some project_funcs_by_package
     else begin
-      let h = Hashtbl.copy project_funcs_by_package in
-      List.iter (fun (k, v) -> Hashtbl.replace h k v) alias_extra;
-      Some h
+      let tbl = Hashtbl.copy project_funcs_by_package in
+      List.iter (fun (key, funcs) -> Hashtbl.replace tbl key funcs) alias_extra;
+      Some tbl
     end
   end
   else begin
@@ -146,8 +146,8 @@ let build_file_funcs_by_package
         resolve_ts_specifier ~path_suffix_index ~current_file:fi.fi_file specifier
       in
       let funcs =
-        List.concat_map (fun p ->
-          Option.value (Hashtbl.find_opt file_funcs_index p) ~default:[]
+        List.concat_map (fun path ->
+          Option.value (Hashtbl.find_opt file_funcs_index path) ~default:[]
         ) candidates
       in
       if funcs = [] then None else Some (local, funcs)
@@ -160,9 +160,9 @@ let build_file_funcs_by_package
     let alias_extra = alias_extra_ts @ alias_extra_py in
     if alias_extra = [] then Some project_funcs_by_package
     else begin
-      let h = Hashtbl.copy project_funcs_by_package in
-      List.iter (fun (k, v) -> Hashtbl.replace h k v) alias_extra;
-      Some h
+      let tbl = Hashtbl.copy project_funcs_by_package in
+      List.iter (fun (key, funcs) -> Hashtbl.replace tbl key funcs) alias_extra;
+      Some tbl
     end
   end
 
@@ -173,42 +173,42 @@ let build_import_target_files
         current_file:Fpath.t -> string -> string list)
     (fi : file_info)
   : (string, (string, unit) Hashtbl.t) Hashtbl.t =
-  let h = Hashtbl.create 64 in
+  let target_files = Hashtbl.create 64 in
   List.iter (fun (local, specifier, _kind) ->
     let candidates =
       resolve_ts_specifier ~path_suffix_index ~current_file:fi.fi_file specifier
     in
     if candidates <> [] then begin
       let set =
-        match Hashtbl.find_opt h local with
-        | Some s -> s
+        match Hashtbl.find_opt target_files local with
+        | Some file_set -> file_set
         | None ->
-          let s = Hashtbl.create 4 in
-          Hashtbl.replace h local s; s
+          let file_set = Hashtbl.create 4 in
+          Hashtbl.replace target_files local file_set; file_set
       in
-      List.iter (fun p -> Hashtbl.replace set p ()) candidates
+      List.iter (fun path -> Hashtbl.replace set path ()) candidates
     end
   ) fi.fi_import_specifiers;
-  h
+  target_files
 
 let build_same_file_funcs_by_name
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     ~(fi_file_str : string)
   : (string, Func_info.t list) Hashtbl.t =
-  let h = Hashtbl.create 64 in
+  let tbl = Hashtbl.create 64 in
   let same_file_list =
     Option.value (Hashtbl.find_opt file_funcs_index fi_file_str)
       ~default:[]
   in
-  List.iter (fun (f : Func_info.t) ->
-    match List_.init_and_last_opt f.Func_info.fn_id with
+  List.iter (fun (func : Func_info.t) ->
+    match List_.init_and_last_opt func.Func_info.fn_id with
     | Some (_, Some leaf) ->
       let name = fst leaf.IL.ident in
-      let cur = Option.value (Hashtbl.find_opt h name) ~default:[] in
-      Hashtbl.replace h name (f :: cur)
+      let cur = Option.value (Hashtbl.find_opt tbl name) ~default:[] in
+      Hashtbl.replace tbl name (func :: cur)
     | _ -> ()
   ) same_file_list;
-  h
+  tbl
 
 let build_funcs_by_name
     ~(visible : (string, unit) Hashtbl.t)
@@ -224,31 +224,31 @@ let build_funcs_by_name
     ~(func_in_caller_file : Func_info.t -> bool)
     (fi : file_info)
   : (string, Func_info.t list) Hashtbl.t option =
-  let h = Hashtbl.create (Hashtbl.length visible) in
+  let tbl = Hashtbl.create (Hashtbl.length visible) in
   Hashtbl.iter (fun name () ->
     match Hashtbl.find_opt project_funcs_by_name name with
     | None -> ()
     | Some fs ->
-      let kept = List.filter (fun (f : Func_info.t) ->
-        match Func_info.as_method f.Func_info.fn_id with
-        | Some (c, _) -> Hashtbl.mem visible (fst c.IL.ident)
+      let kept = List.filter (fun (func : Func_info.t) ->
+        match Func_info.as_method func.Func_info.fn_id with
+        | Some (cls, _) -> Hashtbl.mem visible (fst cls.IL.ident)
         | None -> true
       ) fs in
       let kept =
         match Hashtbl.find_opt import_target_files name with
         | None -> kept
         | Some target_set ->
-          let matches = List.filter (fun f ->
-            func_in_caller_file f
-            || (match func_file_opt f with
-                | Some s -> Hashtbl.mem target_set s
+          let matches = List.filter (fun func ->
+            func_in_caller_file func
+            || (match func_file_opt func with
+                | Some file_str -> Hashtbl.mem target_set file_str
                 | None -> false)
           ) kept in
           if matches <> [] then matches else kept
       in
       let same, other = List.partition func_in_caller_file kept in
       let kept = same @ other in
-      if kept <> [] then Hashtbl.replace h name kept
+      if kept <> [] then Hashtbl.replace tbl name kept
   ) visible;
   List.iter (fun (local, specifier, kind) ->
     match kind with
@@ -271,12 +271,12 @@ let build_funcs_by_name
             entity = target.Func_info.entity;
             fdef = target.Func_info.fdef;
           } in
-          let cur = Option.value (Hashtbl.find_opt h local) ~default:[] in
-          Hashtbl.replace h local (synth :: cur)
+          let cur = Option.value (Hashtbl.find_opt tbl local) ~default:[] in
+          Hashtbl.replace tbl local (synth :: cur)
       ) candidates
     | _ -> ()
   ) fi.fi_import_specifiers;
-  Some h
+  Some tbl
 
 (* Imported module singletons: stamp [local]'s occurrences with the
    singleton's class. *)
@@ -317,12 +317,12 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let visible = visible_names_for_file fi in
     let fi_file_str = Fpath.to_string fi.fi_file in
     let top_level_node = top_level_node_for fi.fi_file in
-    let func_file_opt (f : FA.func_info) : string option =
-      Option.map Fpath.to_string (Func_info.def_file_opt f)
+    let func_file_opt (func : FA.func_info) : string option =
+      Option.map Fpath.to_string (Func_info.def_file_opt func)
     in
-    let func_in_caller_file (f : FA.func_info) : bool =
-      match func_file_opt f with
-      | Some s -> s = fi_file_str
+    let func_in_caller_file (func : FA.func_info) : bool =
+      match func_file_opt func with
+      | Some file_str -> file_str = fi_file_str
       | None -> false
     in
     (* Must run before [build_funcs_by_name]: augments [visible] with cross-file class targets it filters on. *)
@@ -415,8 +415,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           let fdef_facts =
             let param_facts =
               Tok.unbracket fdef.G.fparams
-              |> List.filter_map (fun p ->
-                match p with
+              |> List.filter_map (fun param ->
+                match param with
                 | G.ParamReceiver { G.pname = Some pn; ptype = Some pty; _ }
                 | G.Param { G.pname = Some pn; ptype = Some pty; _ } ->
                   (match Ty_leaf.inner_class_name_of_ty pty with
@@ -430,8 +430,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
               | None, (Some (cls : IL.name)) :: _
                 when Type_state.has_class file_type_state (fst cls.IL.ident) ->
                 let cls_id = G.Id (cls.IL.ident, G.empty_id_info ()) in
-                let mk s =
-                  G.Id ((s, Tok.unsafe_fake_tok s), G.empty_id_info ())
+                let mk str =
+                  G.Id ((str, Tok.unsafe_fake_tok str), G.empty_id_info ())
                 in
                 [ (mk "self", cls_id); (mk "cls", cls_id) ]
               | _ -> []
@@ -444,8 +444,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                    || Lang.equal lang Lang.Python3) then []
               else
                 Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true
-                  (fun acc e ->
-                    match e.G.e with
+                  (fun acc expr ->
+                    match expr.G.e with
                     | G.Call ({ e = G.N (G.Id (("isinstance", _), _)); _ },
                               (_, [G.Arg var_e; G.Arg ty_e], _)) ->
                       (match var_e.G.e, ty_e.G.e with
@@ -453,8 +453,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                        | G.N (G.Id _ as var_n), G.N (G.IdQualified _ as ty_n) ->
                          let ty_leaf = match ty_n with
                            | G.Id _ -> ty_n
-                           | G.IdQualified { name_last = ((s, t), _); _ } ->
-                             G.Id ((s, t), G.empty_id_info ())
+                           | G.IdQualified { name_last = ((str, tok), _); _ } ->
+                             G.Id ((str, tok), G.empty_id_info ())
                          in
                          (var_n, ty_leaf) :: acc
                        | _ -> acc)
@@ -512,12 +512,12 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         match funcs_by_name with
         | None -> project_funcs_by_name
         | Some pf ->
-          let h = Hashtbl.copy project_funcs_by_name in
+          let merged = Hashtbl.copy project_funcs_by_name in
           Hashtbl.iter (fun name fs ->
-            let cur = Option.value (Hashtbl.find_opt h name) ~default:[] in
-            Hashtbl.replace h name (fs @ cur)
+            let cur = Option.value (Hashtbl.find_opt merged name) ~default:[] in
+            Hashtbl.replace merged name (fs @ cur)
           ) pf;
-          h
+          merged
       in
       let toplevel_func_lookup =
         Func_lookup.create

@@ -4,23 +4,23 @@ module Log = Log_projidx.Log
 
 (* Dedup so wildcard re-export doesn't double-add a func an explicit import brought in. *)
 let merge_dedup ~cur ~newcomers =
-  let key (f : FA.func_info) =
-    match Func_info.as_free f.FA.fn_id with
-    | Some n ->
+  let key (func : FA.func_info) =
+    match Func_info.as_free func.FA.fn_id with
+    | Some name ->
       let file =
-        match Func_info.def_file_opt f with
+        match Func_info.def_file_opt func with
         | Some file -> Fpath.to_string file
         | None -> ""
       in
-      Some (fst n.IL.ident, file)
+      Some (fst name.IL.ident, file)
     | None -> None
   in
   let seen : (string * string, unit) Hashtbl.t = Hashtbl.create 32 in
-  List.iter (fun f ->
-    match key f with Some k -> Hashtbl.replace seen k () | None -> ())
+  List.iter (fun func ->
+    match key func with Some k -> Hashtbl.replace seen k () | None -> ())
     cur;
-  let added = List.filter (fun f ->
-    match key f with
+  let added = List.filter (fun func ->
+    match key func with
     | None -> true
     | Some k ->
       if Hashtbl.mem seen k then false
@@ -52,11 +52,11 @@ let resolve_into_module_index
                         (local, target_qn) ->
         if String.equal local "*" then
           (* [*] doesn't import names starting with [_] (Python). *)
-          let public = List.filter (fun (f : FA.func_info) ->
-            match Func_info.as_free f.FA.fn_id with
-            | Some n ->
-              let s = fst n.IL.ident in
-              String.length s > 0 && Char.equal s.[0] '_' = false
+          let public = List.filter (fun (func : FA.func_info) ->
+            match Func_info.as_free func.FA.fn_id with
+            | Some name ->
+              let name_str = fst name.IL.ident in
+              String.length name_str > 0 && Char.equal name_str.[0] '_' = false
             | None -> false
           ) (lookup overlay target_qn) in
           if public = [] then acc
@@ -70,9 +70,9 @@ let resolve_into_module_index
         | Some (target_mod, target_name)
           when not (Names.Module_qn.is_empty target_mod)
                && String.equal local target_name ->
-          let matches = List.filter (fun (f : FA.func_info) ->
-            match Func_info.as_free f.FA.fn_id with
-            | Some n -> String.equal (fst n.IL.ident) target_name
+          let matches = List.filter (fun (func : FA.func_info) ->
+            match Func_info.as_free func.FA.fn_id with
+            | Some name -> String.equal (fst name.IL.ident) target_name
             | None -> false
           ) (lookup overlay target_mod) in
           if matches = [] then acc

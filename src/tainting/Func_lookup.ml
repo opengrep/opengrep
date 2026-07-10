@@ -6,11 +6,11 @@ type alias_index = (string, Names.Module_qn.t) Hashtbl.t
 type file_module_index = (string, Names.Module_qn.t) Hashtbl.t
 type name_set = (string, unit) Hashtbl.t
 
-let leaf_index_of_hashtbl h = h
-let module_index_of_hashtbl h = h
-let alias_index_of_hashtbl h = h
-let file_module_index_of_hashtbl h = h
-let name_set_of_hashtbl h = h
+let leaf_index_of_hashtbl tbl = tbl
+let module_index_of_hashtbl tbl = tbl
+let alias_index_of_hashtbl tbl = tbl
+let file_module_index_of_hashtbl tbl = tbl
+let name_set_of_hashtbl tbl = tbl
 
 type t = {
   funcs_by_name : leaf_index option;
@@ -61,9 +61,9 @@ let funcs_with_leaf t ~all_funcs leaf =
   match t.project_funcs_by_name with
   | Some idx -> (Option.value (Hashtbl.find_opt idx leaf) ~default:[])
   | None ->
-    List.filter (fun (f : Func_info.t) ->
-      match List_.init_and_last_opt f.fn_id with
-      | Some (_, Some n) -> String.equal (fst n.IL.ident) leaf
+    List.filter (fun (func : Func_info.t) ->
+      match List_.init_and_last_opt func.fn_id with
+      | Some (_, Some name) -> String.equal (fst name.IL.ident) leaf
       | _ -> false
     ) all_funcs
 

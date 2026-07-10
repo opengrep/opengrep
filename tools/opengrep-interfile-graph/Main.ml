@@ -12,7 +12,7 @@ let load_graph (project_root : string) (lang : Lang.t) : Call_graph.G.t =
   match
     Interfile_graph.load_interfile_graph caps ~targeting_conf lang root
   with
-  | Some g -> g
+  | Some graph -> graph
   | None ->
     Printf.eprintf "Error: failed to build interfile graph for %s in %s\n"
       (Lang.to_string lang) project_root;
@@ -33,13 +33,13 @@ let load_rules (rules_file : string) : Rule.t list =
 let cmd_full_graph (project_root : string) (lang_str : string)
     (verbose : bool) : int =
   let lang = Lang.of_string lang_str in
-  let g = load_graph project_root lang in
+  let graph = load_graph project_root lang in
   Printf.printf "Interfile call graph for %s\n" (Lang.to_string lang);
-  Printf.printf "  Vertices: %d\n" (G.nb_vertex g);
-  Printf.printf "  Edges: %d\n" (G.nb_edges g);
+  Printf.printf "  Vertices: %d\n" (G.nb_vertex graph);
+  Printf.printf "  Edges: %d\n" (G.nb_edges graph);
   let file_counts : (string, int) Hashtbl.t = Hashtbl.create 64 in
-  G.iter_vertex (fun (v : Function_id.t) ->
-    let file = match Function_id.file_of v with
+  G.iter_vertex (fun (vertex : Function_id.t) ->
+    let file = match Function_id.file_of vertex with
       | Some fp -> Fpath.to_string fp
       | None -> "<unknown>"
     in
@@ -47,9 +47,9 @@ let cmd_full_graph (project_root : string) (lang_str : string)
       | Some n -> n | None -> 0
     in
     Hashtbl.replace file_counts file (n + 1)
-  ) g;
+  ) graph;
   let sorted_files =
-    Hashtbl.fold (fun f n acc -> (f, n) :: acc) file_counts []
+    Hashtbl.fold (fun file n acc -> (file, n) :: acc) file_counts []
     |> List.sort (fun (_, a) (_, b) -> Int.compare b a)
   in
   Printf.printf "  Files: %d\n" (List.length sorted_files);
@@ -63,24 +63,24 @@ let cmd_full_graph (project_root : string) (lang_str : string)
       let label = G.E.label edge in
       let s_f, s_l, s_c = Function_id.to_file_line_col src in
       let d_f, d_l, d_c = Function_id.to_file_line_col dst in
-      let p = label.Call_graph.call_site in
+      let call_site = label.Call_graph.call_site in
       Printf.eprintf "%s:%d:%d\t%s:%d:%d\t%s:%d:%d\n"
         s_f s_l s_c d_f d_l d_c
-        (Fpath.to_string p.Pos.file) p.Pos.line p.Pos.column
-    ) g
+        (Fpath.to_string call_site.Pos.file) call_site.Pos.line call_site.Pos.column
+    ) graph
   end;
   0
 
 let cmd_lookup (project_root : string) (lang_str : string)
     (pattern : string) (verbose : bool) : int =
   let lang = Lang.of_string lang_str in
-  let g = load_graph project_root lang in
+  let graph = load_graph project_root lang in
   let matches = ref [] in
-  G.iter_vertex (fun (v : Function_id.t) ->
-    let name = Function_id.show v in
+  G.iter_vertex (fun (vertex : Function_id.t) ->
+    let name = Function_id.show vertex in
     if Pcre2_.pmatch_noerr ~rex:(Pcre2_.regexp pattern) name then
-      matches := v :: !matches
-  ) g;
+      matches := vertex :: !matches
+  ) graph;
   let sorted =
     !matches
     |> List.sort (fun (a : Function_id.t) (b : Function_id.t) ->
@@ -88,11 +88,11 @@ let cmd_lookup (project_root : string) (lang_str : string)
   in
   Printf.printf "Found %d functions matching \"%s\":\n"
     (List.length sorted) pattern;
-  List.iter (fun (v : Function_id.t) ->
-    Printf.printf "  %s\n" (Function_id.show_debug v);
+  List.iter (fun (vertex : Function_id.t) ->
+    Printf.printf "  %s\n" (Function_id.show_debug vertex);
     if verbose then begin
-      let callers = G.succ g v in
-      let callees = G.pred g v in
+      let callers = G.succ graph vertex in
+      let callees = G.pred graph vertex in
       Printf.printf "    callers (%d): %s\n"
         (List.length callers)
         (String.concat ", " (List.map Function_id.show callers));
@@ -122,44 +122,44 @@ let show_edge_kind (kind : Call_graph.edge_kind) : string =
 let cmd_edges (project_root : string) (lang_str : string)
     (pattern : string) (kind_filter : string option) : int =
   let lang = Lang.of_string lang_str in
-  let g = load_graph project_root lang in
+  let graph = load_graph project_root lang in
   let rex = Pcre2_.regexp pattern in
-  G.iter_vertex (fun (v : Function_id.t) ->
-    let name = Function_id.show v in
+  G.iter_vertex (fun (vertex : Function_id.t) ->
+    let name = Function_id.show vertex in
     if Pcre2_.pmatch_noerr ~rex name then begin
       (* Edge direction: callee -> caller.  G.succ_e = caller edges, G.pred_e = callee edges *)
       let caller_edges =
-        G.succ_e g v
-        |> List.filter (fun (e : G.E.t) ->
-            edge_kind_matches kind_filter (G.E.label e).Call_graph.kind)
+        G.succ_e graph vertex
+        |> List.filter (fun (edge : G.E.t) ->
+            edge_kind_matches kind_filter (G.E.label edge).Call_graph.kind)
       in
       let callee_edges =
-        G.pred_e g v
-        |> List.filter (fun (e : G.E.t) ->
-            edge_kind_matches kind_filter (G.E.label e).Call_graph.kind)
+        G.pred_e graph vertex
+        |> List.filter (fun (edge : G.E.t) ->
+            edge_kind_matches kind_filter (G.E.label edge).Call_graph.kind)
       in
       if Option.is_none kind_filter
          || List.length caller_edges > 0
          || List.length callee_edges > 0
       then begin
-        Printf.printf "%s\n" (Function_id.show_debug v);
+        Printf.printf "%s\n" (Function_id.show_debug vertex);
         Printf.printf "  Callers (%d):\n" (List.length caller_edges);
-        List.iter (fun (e : G.E.t) ->
-          let label = G.E.label e in
+        List.iter (fun (edge : G.E.t) ->
+          let label = G.E.label edge in
           Printf.printf "    <- [%s] %s\n"
             (show_edge_kind label.Call_graph.kind)
-            (Function_id.show_debug (G.E.dst e))
+            (Function_id.show_debug (G.E.dst edge))
         ) caller_edges;
         Printf.printf "  Callees (%d):\n" (List.length callee_edges);
-        List.iter (fun (e : G.E.t) ->
-          let label = G.E.label e in
+        List.iter (fun (edge : G.E.t) ->
+          let label = G.E.label edge in
           Printf.printf "    -> [%s] %s\n"
             (show_edge_kind label.Call_graph.kind)
-            (Function_id.show_debug (G.E.src e))
+            (Function_id.show_debug (G.E.src edge))
         ) callee_edges
       end
     end
-  ) g;
+  ) graph;
   0
 
 let build_rule_states_from_args ~(rules_file : Fpath.t)
