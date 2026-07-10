@@ -952,11 +952,6 @@ let get_targets conf scanning_roots : Fppath.t targets =
   { selected; skipped; git_repo = raw.git_repo }
 [@@profiling]
 
-let get_target_fpaths conf scanning_roots =
-  let v = get_targets conf scanning_roots in
-  { v with selected = List_.map (fun { Fppath.fpath; _ } -> fpath) v.selected }
-
-(* FIXME: Adapt as above. *)
 let get_target_fpaths_with_project_roots (conf : conf)
     (scanning_roots : Scanning_root.t list) :
     Target_and_root.t targets =
@@ -967,4 +962,12 @@ let get_target_fpaths_with_project_roots (conf : conf)
         ({ target_fpath = fpath; project_root } : Target_and_root.t))
       v.selected
   in
-  { selected = enriched; skipped = v.skipped; git_repo = v.git_repo }
+  { v with selected = enriched }
+
+let get_target_fpaths conf scanning_roots =
+  let v = get_target_fpaths_with_project_roots conf scanning_roots in
+  { v with
+    selected =
+      List_.map
+        (fun ({ target_fpath; _ } : Target_and_root.t) -> target_fpath)
+        v.selected }
