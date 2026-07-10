@@ -6,18 +6,6 @@ open Types
 
 module Log = Log_projidx.Log
 
-let run_visit ?context ~(on : Fpath.t) (visit : unit -> unit) : unit =
-  try visit () with
-  | Out_of_memory | Stack_overflow | Time_limit.Timeout _ as exn ->
-    raise exn
-  | exn ->
-    let where = match context with
-      | None -> Fpath.to_string on
-      | Some ctx -> Fpath.to_string on ^ ":" ^ ctx
-    in
-    Log.warn (fun m -> m "[skip] %s: visit failed: %s"
-      where (Printexc.to_string exn))
-
 let module_path ~(cfg : Index_lang_rules.t) ~(project_root : Fpath.t)
     ?(ast : G.program option) (file : Fpath.t) : Names.Module_qn.t =
   match Option.bind ast cfg.Index_lang_rules.module_path_from_ast with
@@ -1082,7 +1070,8 @@ let build_caller_arg_types
          | _ -> ());
         super#visit_expr () expr
     end in
-    run_visit ~on:fi.fi_file (fun () -> visitor#visit_program () fi.fi_ast)
+    Nonfatal.catch ~on:fi.fi_file ~default:()
+      (fun () -> visitor#visit_program () fi.fi_ast)
   ) file_infos;
   arg_types
 
