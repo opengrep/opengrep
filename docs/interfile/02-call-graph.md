@@ -32,8 +32,8 @@ A `Call_graph.G.t` — a bidirectional labelled directed graph from
 
 ## The four-phase build
 
-projidx's main entry point is `Opengrep_project_index.Main.collect`
-(see `src/project_index/Main.ml`).  It runs four phases in order:
+projidx's main entry point is `Opengrep_project_index.Project_index.collect`
+(see `src/project_index/Project_index.ml`).  It runs four phases in order:
 
 ### Phase 0: Discover
 
@@ -114,7 +114,7 @@ Population happens via two mechanisms:
   `Walker.walk_file` (for class defs, type defs, var defs, other
   defs).  Each observation is funnelled into the right `Type_state`
   setter.
-- **Augmentation:** After the initial collection, `Main.ml` runs
+- **Augmentation:** After the initial collection, `Project_index.ml` runs
   augmentation passes that extend the lattice with derived
   information.  Examples: walk class hierarchies for Python and
   attach inherited methods; build Go embedded-interface inheritance;
@@ -281,7 +281,7 @@ The key entries:
 
 ## The standalone view
 
-The same `Main.collect` is exposed through the `index` subcommand of
+The same `Project_index.collect` is exposed through the `index` subcommand of
 `tools/opengrep-interfile-graph`.  Typical invocation:
 
 ```
