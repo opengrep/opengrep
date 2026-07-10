@@ -65,9 +65,9 @@ let file_of_fid (fid : Function_id.t) : Fpath.t option =
 (* Must match [Core_scan]'s per-target path normalization exactly. *)
 (* Normalized absolute path + the root it was anchored to (None if the
    input was already absolute). *)
-let absolutify ~(cwd : Fpath.t) (p : Fpath.t) : Fpath.t * Fpath.t option =
-  if Fpath.is_abs p then (Fpath.normalize p, None)
-  else (Fpath.(cwd // p) |> Fpath.normalize, Some cwd)
+let absolutify ~(cwd : Fpath.t) (path : Fpath.t) : Fpath.t * Fpath.t option =
+  if Fpath.is_abs path then (Fpath.normalize path, None)
+  else (Fpath.(cwd // path) |> Fpath.normalize, Some cwd)
 
 let target_abs_path ~(cwd : Fpath.t) (target : Target.t) : Fpath.t option =
   match target with
@@ -97,7 +97,7 @@ let interfile_taint_rules_by_lang
         List.iter (fun (lang : Lang.t) ->
           let existing =
             match Hashtbl.find_opt tbl lang with
-            | Some l -> l | None -> []
+            | Some prev -> prev | None -> []
           in
           Hashtbl.replace tbl lang (taint_rule :: existing))
           (Xlang.to_langs rule.R.target_analyzer)
@@ -122,8 +122,8 @@ let interfile_taint_rule_ids
 
 let interfile_file_set (graph : Call_graph.G.t) : (Fpath.t, bool) Hashtbl.t =
   let tbl = Hashtbl.create 256 in
-  Call_graph.G.iter_vertex (fun (v : Function_id.t) ->
-    match Function_id.file_of v with
+  Call_graph.G.iter_vertex (fun (vertex : Function_id.t) ->
+    match Function_id.file_of vertex with
     | Some fp -> Hashtbl.replace tbl fp true
     | None -> ()
   ) graph;
@@ -360,8 +360,8 @@ let init_file
       FpathMap.add abs_file file_env acc.fi_file_envs;
   }
 
-let fid_set_of_graph (g : Call_graph.G.t) : FidSet.t =
-  Call_graph.G.fold_vertex FidSet.add g FidSet.empty
+let fid_set_of_graph (graph : Call_graph.G.t) : FidSet.t =
+  Call_graph.G.fold_vertex FidSet.add graph FidSet.empty
 
 (* Base path for absolutifying a target's token paths: cwd if its internal
    path is relative, None if already absolute. *)
@@ -404,7 +404,7 @@ type rule_subgraph = {
 (* Break direct impl→interface cycles so impls precede interfaces in the
    topo fold.  Only direct cycles; general case needs SCC processing
    (github.com/opengrep/opengrep-incubator/issues/27). *)
-let prune_impl_interface_cycles (g : Call_graph.G.t) : int =
+let prune_impl_interface_cycles (graph : Call_graph.G.t) : int =
   let to_remove =
     Call_graph.G.fold_edges_e
       (fun (dispatch_e : Call_graph.G.E.t) (acc : Call_graph.G.E.t list) ->
@@ -422,11 +422,11 @@ let prune_impl_interface_cycles (g : Call_graph.G.t) : int =
                      && Function_id.equal (Call_graph.G.E.dst call_e) impl
                   then call_e :: inner_acc
                   else inner_acc)
-               g iface acc
+               graph iface acc
          | Call_graph.Call -> acc)
-      g []
+      graph []
   in
-  List.iter (Call_graph.G.remove_edge_e g) to_remove;
+  List.iter (Call_graph.G.remove_edge_e graph) to_remove;
   List.length to_remove
 
 (* None when sources/sinks or the resulting subgraph are empty. *)
@@ -845,9 +845,9 @@ let run_rule (rs : rule_state) : PM.t list =
   |> PM.no_submatches
 
 let collect_ok (results : ('a, 'err) result list) : 'a list =
-  List_.filter_map (fun (r : ('a, 'err) result) ->
-    match r with
-    | Ok v -> Some v
+  List_.filter_map (fun (res : ('a, 'err) result) ->
+    match res with
+    | Ok value -> Some value
     | Error _ -> None
   ) results
 
@@ -881,10 +881,10 @@ let chunks (n : int) (xs : 'a list) : 'a list list =
   let rec loop done_chunks cur cur_len = function
     | [] when cur_len = 0 -> List.rev done_chunks
     | [] -> List.rev (List.rev cur :: done_chunks)
-    | x :: rest when cur_len < n ->
-      loop done_chunks (x :: cur) (cur_len + 1) rest
-    | x :: rest ->
-      loop (List.rev cur :: done_chunks) [x] 1 rest
+    | item :: rest when cur_len < n ->
+      loop done_chunks (item :: cur) (cur_len + 1) rest
+    | item :: rest ->
+      loop (List.rev cur :: done_chunks) [item] 1 rest
   in
   loop [] [] 0 xs
 
@@ -1042,7 +1042,7 @@ let build_rule_states
      missing root falls back to cwd. *)
   let project_root_of_target (target : Target.t) : Fpath.t =
     match target with
-    | Regular { project_root = Some r; _ } -> Fpath.normalize r
+    | Regular { project_root = Some root; _ } -> Fpath.normalize root
     | Regular _ | Lockfile _ -> cwd
   in
   let targets_by_root : (string, Fpath.t * Target.t list) Hashtbl.t =
@@ -1093,7 +1093,7 @@ let build_rule_states
               ~ncores ~targeting_conf lang project_root
           in
           (match build_opt with
-           | Some (_, m) -> Hashtbl.iter (Hashtbl.replace projidx_asts) m
+           | Some (_, asts) -> Hashtbl.iter (Hashtbl.replace projidx_asts) asts
            | None -> ());
           match build_opt with
           | None ->
@@ -1115,10 +1115,10 @@ let build_rule_states
               Hashtbl.replace matched_paths (Fpath.normalize it.abs_path) ())
               matching_targets;
             let unmatched =
-              List.filter (fun t ->
-                match target_abs_path ~cwd t with
+              List.filter (fun target ->
+                match target_abs_path ~cwd target with
                 | None -> false
-                | Some p -> not (Hashtbl.mem matched_paths p))
+                | Some path -> not (Hashtbl.mem matched_paths path))
                 root_targets
             in
             (match matching_targets with
@@ -1154,7 +1154,7 @@ let build_rule_states
   let target_batches : (Lang.t * Fpath.t list) list =
     List.concat_map (fun (lc : lang_context) ->
       let files =
-        List_.map (fun (t : interfile_target) -> t.abs_path)
+        List_.map (fun (target : interfile_target) -> target.abs_path)
           lc.lc_matching_targets
       in
       chunks parse_batch_size files
@@ -1232,10 +1232,10 @@ let build_rule_states
   in
   if Array.exists Option.is_some rule_prefilters then
     List.iter (fun (lc : lang_context) ->
-        List.iter (fun (t : interfile_target) ->
-            if not (Hashtbl.mem target_contents t.abs_path) then
-              match UFile.read_file t.abs_path with
-              | content -> Hashtbl.replace target_contents t.abs_path content
+        List.iter (fun (target : interfile_target) ->
+            if not (Hashtbl.mem target_contents target.abs_path) then
+              match UFile.read_file target.abs_path with
+              | content -> Hashtbl.replace target_contents target.abs_path content
               | exception ((Out_of_memory | Time_limit.Timeout _) as exn) ->
                   Exception.catch_and_reraise exn
               | exception _ -> ())
@@ -1359,8 +1359,8 @@ let build_rule_states
               |> List.map Lang.to_lowercase_alnum
             in
             let paths =
-              Hashtbl.fold (fun (k, _root_str) ps acc ->
-                if List.mem k lang_keys then List.rev_append ps acc
+              Hashtbl.fold (fun (lang_key, _root_str) ps acc ->
+                if List.mem lang_key lang_keys then List.rev_append ps acc
                 else acc)
                 fallback_target_paths_by_lang_root []
             in
@@ -1373,7 +1373,7 @@ let build_rule_states
   let failed_fallback =
     List.map (fun (rsg : rule_subgraph) ->
       (fst rsg.rsg_specs.rs_rule.R.id,
-       List_.map (fun (t : interfile_target) -> t.abs_path)
+       List_.map (fun (target : interfile_target) -> target.abs_path)
          rsg.rsg_lang_context.lc_matching_targets))
       !failed_rsgs
   in

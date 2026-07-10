@@ -8,20 +8,22 @@ let build_by_package
   let h : (string, FA.func_info list) Hashtbl.t = Hashtbl.create 1024 in
   if cfg.Index_lang_rules.unqualified_scope <> `Per_directory then h
   else begin
-    List.iter (fun (f : FA.func_info) ->
-      if Option.is_some (Func_info.as_free f.FA.fn_id) then
-        match Func_info.def_file_opt f with
+    List.iter (fun (func : FA.func_info) ->
+      if Option.is_some (Func_info.as_free func.FA.fn_id) then
+        match Func_info.def_file_opt func with
         | Some file ->
           (* Key is directory basename, deliberately non-unique; [identify_callee]
              narrows by same-file/dir. Widen to full package path if that goes. *)
+          (* TODO: the "/" below is a hardcoded POSIX separator/sentinel and is not
+             portable to Windows; use a platform-aware path separator. *)
           let pkg =
             Fpath.parent file |> Fpath.basename
-            |> fun s -> if s = "" then "/" else s
+            |> fun basename -> if basename = "" then "/" else basename
           in
           let cur =
             Option.value (Hashtbl.find_opt h pkg) ~default:[]
           in
-          Hashtbl.replace h pkg (f :: cur)
+          Hashtbl.replace h pkg (func :: cur)
         | None -> ()
     ) all_funcs;
     h
@@ -44,9 +46,9 @@ let build_by_module
       Hashtbl.replace file_to_module
         (Fpath.to_string fi.fi_file) fi.fi_module_path
     ) file_infos;
-    List.iter (fun (f : FA.func_info) ->
-      if Option.is_some (Func_info.as_free f.FA.fn_id) then
-        match Option.map Fpath.to_string (Func_info.def_file_opt f) with
+    List.iter (fun (func : FA.func_info) ->
+      if Option.is_some (Func_info.as_free func.FA.fn_id) then
+        match Option.map Fpath.to_string (Func_info.def_file_opt func) with
         | Some file ->
           (match Hashtbl.find_opt file_to_module file with
            | None -> ()
@@ -54,7 +56,7 @@ let build_by_module
              let cur =
                Option.value (Hashtbl.find_opt h mp) ~default:[]
              in
-             Hashtbl.replace h mp (f :: cur))
+             Hashtbl.replace h mp (func :: cur))
         | None -> ()
     ) all_funcs;
     h

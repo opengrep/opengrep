@@ -8,9 +8,9 @@ let chase_reexport
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
     ~(known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t)
     (qn : Names.Module_qn.t) : Names.Module_qn.t option =
-  let mem_as_class (m : Names.Module_qn.t) =
+  let mem_as_class (mod_qn : Names.Module_qn.t) =
     Hashtbl.mem known_class_qns
-      (Names.Class_qn.of_string (Names.Module_qn.to_string m))
+      (Names.Class_qn.of_string (Names.Module_qn.to_string mod_qn))
   in
   let visited : (Names.Module_qn.t, unit) Hashtbl.t = Hashtbl.create 8 in
   let rec walk current =
@@ -74,9 +74,10 @@ let resolve_parent_by_scope
         let ci_parts = Names.Class_qn.parts ci.ci_qn in
         let score qn =
           let parts = Names.Class_qn.parts qn in
-          let rec common a b =
-            match a, b with
-            | x :: ax, y :: bx when String.equal x y -> 1 + common ax bx
+          let rec common left right =
+            match left, right with
+            | left_head :: ax, right_head :: bx when String.equal left_head right_head ->
+              1 + common ax bx
             | _ -> 0
           in
           let shared = common ci_parts parts in
@@ -86,8 +87,8 @@ let resolve_parent_by_scope
         let best =
           List.fold_left (fun acc qn ->
             match score qn, acc with
-            | Some s, None -> Some (qn, s)
-            | Some s, Some (_, sb) when s > sb -> Some (qn, s)
+            | Some qn_score, None -> Some (qn, qn_score)
+            | Some qn_score, Some (_, sb) when qn_score > sb -> Some (qn, qn_score)
             | _ -> acc
           ) None qns
         in
@@ -129,7 +130,7 @@ let inherit_into_type_state
   let resolve_parent ci p_path =
     match resolve_parent_qn ~imports:ci.ci_imports
             ~reexport_map ~known_class_qns p_path with
-    | Some _ as r -> r
+    | Some _ as resolved -> resolved
     | None -> resolve_parent_by_scope ~by_qn ~qns_by_leaf ci p_path
   in
   let synth_inherited (child_cls_il : IL.name) (parent_method : FA.func_info)
@@ -149,36 +150,36 @@ let inherit_into_type_state
       ci.ci_parent_paths
   in
   (* C3 linearization; on cycles / inconsistent hierarchies, force the next head so the merge terminates. *)
-  let ci_eq (a : class_info) (b : class_info) =
-    Function_id.equal a.ci_id b.ci_id
+  let ci_eq (left : class_info) (right : class_info) =
+    Function_id.equal left.ci_id right.ci_id
   in
-  let remove_head (h : class_info) (seqs : class_info list list) =
-    List.filter_map (fun s ->
-      match s with
-      | x :: tl when ci_eq x h -> if tl = [] then None else Some tl
-      | _ -> Some s)
+  let remove_head (head : class_info) (seqs : class_info list list) =
+    List.filter_map (fun seq ->
+      match seq with
+      | seq_head :: tl when ci_eq seq_head head -> if tl = [] then None else Some tl
+      | _ -> Some seq)
       seqs
   in
   let rec c3_merge (seqs : class_info list list) : class_info list =
-    match List.filter (fun s -> s <> []) seqs with
+    match List.filter (fun seq -> seq <> []) seqs with
     | [] -> []
     | seqs ->
-      let in_tail (c : class_info) =
-        List.exists (fun s ->
-          match s with _ :: tl -> List.exists (ci_eq c) tl | [] -> false)
+      let in_tail (candidate : class_info) =
+        List.exists (fun seq ->
+          match seq with _ :: tl -> List.exists (ci_eq candidate) tl | [] -> false)
           seqs
       in
       let head =
-        List.find_map (fun s ->
-          match s with h :: _ when not (in_tail h) -> Some h | _ -> None)
+        List.find_map (fun seq ->
+          match seq with seq_head :: _ when not (in_tail seq_head) -> Some seq_head | _ -> None)
           seqs
       in
-      let h =
+      let chosen_head =
         match head with
-        | Some h -> h
-        | None -> (match seqs with (h :: _) :: _ -> h | _ -> assert false)
+        | Some chosen_head -> chosen_head
+        | None -> (match seqs with (chosen_head :: _) :: _ -> chosen_head | _ -> assert false)
       in
-      h :: c3_merge (remove_head h seqs)
+      chosen_head :: c3_merge (remove_head chosen_head seqs)
   in
   let lin_cache : (Function_id.t, class_info list) Hashtbl.t =
     Hashtbl.create 256
@@ -186,7 +187,7 @@ let inherit_into_type_state
   let rec linearize (active : Function_id.t list) (ci : class_info)
     : class_info list =
     match Hashtbl.find_opt lin_cache ci.ci_id with
-    | Some l -> l
+    | Some cached_lin -> cached_lin
     | None ->
       if List.exists (Function_id.equal ci.ci_id) active then [ci]
       else begin
@@ -209,9 +210,9 @@ let inherit_into_type_state
     in
     let child_cls_il =
       match own with
-      | f :: _ ->
-        (match f.FA.fn_id with
-         | Some c :: _ -> Some c
+      | func :: _ ->
+        (match func.FA.fn_id with
+         | Some cls :: _ -> Some cls
          | _ -> None)
       | [] ->
         (* Empty subclass has no own method to borrow the class IL.name from; synthesise one or it inherits nothing. *)
@@ -223,9 +224,9 @@ let inherit_into_type_state
     | None -> state
     | Some child_cls_il ->
       let initial_names =
-        List.filter_map (fun (f : FA.func_info) ->
-          Option.map (fun (_, m) -> fst m.IL.ident)
-            (Func_info.as_method f.FA.fn_id)
+        List.filter_map (fun (func : FA.func_info) ->
+          Option.map (fun (_, meth) -> fst meth.IL.ident)
+            (Func_info.as_method func.FA.fn_id)
         ) own |> List.sort_uniq String.compare
       in
       let collect_from (names, added) (pci : class_info) =
@@ -238,22 +239,22 @@ let inherit_into_type_state
         in
         (* Restrict to methods defined in THIS parent class + file, not homonym classes elsewhere. *)
         let pci_file_str = Fpath.to_string pci.ci_file in
-        let same_file (f : FA.func_info) : bool =
-          match func_def_file f with
-          | Some f -> String.equal f pci_file_str
+        let same_file (func : FA.func_info) : bool =
+          match func_def_file func with
+          | Some def_file -> String.equal def_file pci_file_str
           | None -> false
         in
-        let pmethods = List.filter (fun (f : FA.func_info) ->
-          match Func_info.as_method f.FA.fn_id with
-          | Some (c, _) ->
-            String.equal (fst c.IL.ident) parent_simple
-            && same_file f
+        let pmethods = List.filter (fun (func : FA.func_info) ->
+          match Func_info.as_method func.FA.fn_id with
+          | Some (cls, _) ->
+            String.equal (fst cls.IL.ident) parent_simple
+            && same_file func
           | None -> false
         ) pmethods in
         List.fold_left (fun (names, added) pm ->
           match Func_info.as_method pm.FA.fn_id with
-          | Some (_, m) ->
-            let mname = fst m.IL.ident in
+          | Some (_, meth) ->
+            let mname = fst meth.IL.ident in
             if List.mem mname names then (names, added)
             else
               (match synth_inherited child_cls_il pm with

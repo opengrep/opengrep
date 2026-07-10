@@ -17,8 +17,8 @@ type matcher =
   | Prefix of string
   | Glob of Re.re
 
-let has_glob_meta (s : string) : bool =
-  String.contains s '*' || String.contains s '?' || String.contains s '['
+let has_glob_meta (pat : string) : bool =
+  String.contains pat '*' || String.contains pat '?' || String.contains pat '['
 
 let compile_pattern (pat : string) : matcher =
   if has_glob_meta pat then
@@ -27,9 +27,11 @@ let compile_pattern (pat : string) : matcher =
     Prefix pat
 
 let path_matches_any (matchers : matcher list) (rel_path : string) : bool =
-  List.exists (fun m ->
-    match m with
+  List.exists (fun matcher ->
+    match matcher with
     | Prefix pat ->
+      (* TODO: the "/" in the prefix check below is a hardcoded POSIX separator
+         and is not portable to Windows; use a platform-aware path separator. *)
       String.equal pat rel_path
       || (String.length rel_path > String.length pat
           && String.sub rel_path 0 (String.length pat + 1) = pat ^ "/")
@@ -58,7 +60,7 @@ let apply_include_exclude ~(project_root : Fpath.t)
 let scanning_roots_from_includes ~(project_root : Fpath.t)
     (includes : string list) : Scanning_root.t list * string list =
   let simple, glob =
-    List.partition (fun p -> not (has_glob_meta p)) includes in
+    List.partition (fun pat -> not (has_glob_meta pat)) includes in
   match simple, glob with
   | [], _ -> ([Scanning_root.of_fpath project_root], glob)
   | _, [] ->

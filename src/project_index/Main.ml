@@ -13,7 +13,7 @@ let run_visit ?context ~(on : Fpath.t) (visit : unit -> unit) : unit =
   | exn ->
     let where = match context with
       | None -> Fpath.to_string on
-      | Some c -> Fpath.to_string on ^ ":" ^ c
+      | Some ctx -> Fpath.to_string on ^ ":" ^ ctx
     in
     Log.warn (fun m -> m "[skip] %s: visit failed: %s"
       where (Printexc.to_string exn))
@@ -21,13 +21,13 @@ let run_visit ?context ~(on : Fpath.t) (visit : unit -> unit) : unit =
 let module_path ~(cfg : Index_lang_rules.t) ~(project_root : Fpath.t)
     ?(ast : G.program option) (file : Fpath.t) : Names.Module_qn.t =
   match Option.bind ast cfg.Index_lang_rules.module_path_from_ast with
-  | Some s -> Names.Module_qn.of_string s
+  | Some mod_str -> Names.Module_qn.of_string mod_str
   | None ->
     let rel = Discover.relative_to ~project_root file in
-    let s = Fpath.rem_ext rel |> Fpath.normalize |> Fpath.to_string in
-    let s = cfg.Index_lang_rules.rewrite_module_path s in
+    let path_str = Fpath.rem_ext rel |> Fpath.normalize |> Fpath.to_string in
+    let path_str = cfg.Index_lang_rules.rewrite_module_path path_str in
     Names.Module_qn.of_string
-      (String.map (fun c -> if Char.equal c '/' then '.' else c) s)
+      (String.map (fun ch -> if Char.equal ch '/' then '.' else ch) path_str)
 
 let decorator_simple_name = Index_lang_rules.decorator_simple_name
 let entity_simple_name = Index_lang_rules.entity_simple_name
@@ -39,7 +39,7 @@ let entity_range (ent : G.entity) : Range.t option =
   match ent.G.name with
   | G.EN gname ->
     (match AST_generic_helpers.range_of_any_opt (G.E (G.N gname |> G.e)) with
-     | Some (a, b) -> Some (Range.range_of_token_locations a b)
+     | Some (start_tok, end_tok) -> Some (Range.range_of_token_locations start_tok end_tok)
      | None -> None)
   | _ -> None
 
@@ -58,13 +58,13 @@ let module_name_string ~(cfg : Index_lang_rules.t)
     ~(is_init_file : bool)
     (mn : G.module_name) : Names.Module_qn.t =
   match mn with
-  | G.FileName (s, _) ->
-    Names.Module_qn.of_string (cfg.Index_lang_rules.normalize_import_specifier s)
+  | G.FileName (spec, _) ->
+    Names.Module_qn.of_string (cfg.Index_lang_rules.normalize_import_specifier spec)
   | G.DottedName parts ->
     let prefix_segs, real_parts =
       let rec split acc = function
-        | ((s, _) as seg) :: rest
-          when String.equal s "." || String.equal s ".." ->
+        | ((part_str, _) as seg) :: rest
+          when String.equal part_str "." || String.equal part_str ".." ->
           split (seg :: acc) rest
         | rest -> (List.rev acc, rest)
       in
@@ -77,8 +77,8 @@ let module_name_string ~(cfg : Index_lang_rules.t)
          each extra [.] walks one level up. *)
       let init_offset = if is_init_file then 0 else 1 in
       let extra_dotdots =
-        List.fold_left (fun acc (s, _) ->
-          if String.equal s ".." then acc + 1 else acc
+        List.fold_left (fun acc (part_str, _) ->
+          if String.equal part_str ".." then acc + 1 else acc
         ) 0 prefix_segs
       in
       let drops = init_offset + extra_dotdots in
@@ -99,18 +99,18 @@ let collect_clojure_ns_form
     (expr_arg : G.any)
   : (string * Names.Module_qn.t) list
     * (string * string * import_kind) list =
-  let id_name (e : G.expr) : string option =
-    match e.G.e with G.N n -> Ty_leaf.leaf_of_name n | _ -> None
+  let id_name (expr : G.expr) : string option =
+    match expr.G.e with G.N name -> Ty_leaf.leaf_of_name name | _ -> None
   in
-  let kwd_name (e : G.expr) : string option =
-    match e.G.e with
-    | G.OtherExpr (("Atom", _), [G.Name n]) ->
-      (match List.rev (Index_lang_rules.name_to_path n) with
+  let kwd_name (expr : G.expr) : string option =
+    match expr.G.e with
+    | G.OtherExpr (("Atom", _), [G.Name name]) ->
+      (match List.rev (Index_lang_rules.name_to_path name) with
        | last :: _ -> Some last
        | [] -> None)
     | _ -> None
   in
-  let is_kwd name e = match kwd_name e with Some s -> String.equal s name | None -> false in
+  let is_kwd name expr = match kwd_name expr with Some str -> String.equal str name | None -> false in
   let add ((acc, specs) :
            (string * Names.Module_qn.t) list
            * (string * string * import_kind) list)
@@ -136,9 +136,9 @@ let collect_clojure_ns_form
              scan st tail
            | kw :: { G.e = G.Container (G.Array, (_, refs, _)); _ } :: tail
              when is_kwd ":refer" kw ->
-             let st = List.fold_left (fun st r ->
-               match id_name r with
-               | Some n -> add st n (Names.Module_qn.concat ns_qn n)
+             let st = List.fold_left (fun st ref_expr ->
+               match id_name ref_expr with
+               | Some name -> add st name (Names.Module_qn.concat ns_qn name)
                | None -> st) st refs
              in
              scan st tail
@@ -164,13 +164,13 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     (string * Names.Module_qn.t) list
     * (string * string * import_kind) list =
   let raw_specifier = function
-    | G.FileName (s, _) -> s
+    | G.FileName (spec, _) -> spec
     | G.DottedName _ -> ""
   in
   let add_spec (acc, specs) local mn kind =
-    let s = raw_specifier mn in
-    if String.length s > 0
-    then (acc, (local, s, kind) :: specs)
+    let spec = raw_specifier mn in
+    if String.length spec > 0
+    then (acc, (local, spec, kind) :: specs)
     else (acc, specs)
   in
   let add (acc, specs) local target = ((local, target) :: acc, specs) in
@@ -180,20 +180,20 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       let qn = module_name_string ~cfg ~current_module_path ~is_init_file mn in
       let local =
         match alias_opt with
-        | Some ((s, _), _) -> s
+        | Some ((alias, _), _) -> alias
         | None ->
           (match mn with
-           | G.DottedName ((s, _) :: _) -> s
+           | G.DottedName ((seg, _) :: _) -> seg
            | G.DottedName [] -> ""
            (* Unaliased path import: dir-scoped langs (Go) use the path's last
               segment as local; other langs keep the raw specifier. *)
-           | G.FileName (s, _) ->
+           | G.FileName (spec, _) ->
              (match cfg.Index_lang_rules.unqualified_scope with
               | `Per_directory ->
-                (match Fpath.of_string s with
-                 | Ok p -> Fpath.basename p
-                 | Error _ -> s)
-              | _ -> s))
+                (match Fpath.of_string spec with
+                 | Ok path -> Fpath.basename path
+                 | Error _ -> spec)
+              | _ -> spec))
       in
       if String.length local > 0 && not (Names.Module_qn.is_empty qn) then
         (* TS/JS default and namespace imports are indistinguishable here;
@@ -207,7 +207,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         List.fold_left (fun st ((name, _), alias_opt) ->
           let local =
             match alias_opt with
-            | Some ((s, _), _) -> s
+            | Some ((alias, _), _) -> alias
             | None -> name
           in
           let target = Names.Module_qn.concat qn name in
@@ -226,20 +226,20 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       List.fold_left collect_clojure_ns_form st exprs
     | _ -> st
   in
-  let extract_require_spec (e : G.expr) : string option =
-    match e.G.e with
+  let extract_require_spec (expr : G.expr) : string option =
+    match expr.G.e with
     | G.Call ({ G.e = G.IdSpecial (G.Require, _); _ }, args) ->
       (match Tok.unbracket args with
-       | [G.Arg { G.e = G.L (G.String (_, (s, _), _)); _ }] -> Some s
+       | [G.Arg { G.e = G.L (G.String (_, (spec, _), _)); _ }] -> Some spec
        | _ -> None)
     | _ -> None
   in
-  let mk_filename_mn (s : string) : G.module_name =
-    G.FileName (s, Tok.unsafe_fake_tok s)
+  let mk_filename_mn (spec : string) : G.module_name =
+    G.FileName (spec, Tok.unsafe_fake_tok spec)
   in
-  let qn_of_specifier s : Names.Module_qn.t =
+  let qn_of_specifier spec : Names.Module_qn.t =
     (* No relative-path rewriting; [resolve_ts_specifier] uses the raw form. *)
-    Names.Module_qn.of_string s
+    Names.Module_qn.of_string spec
   in
   let on_defstmt st (ent : G.entity) (vd : G.variable_definition) =
     match vd.G.vinit with
@@ -256,19 +256,19 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         List.fold_left (fun st (pat_field : G.dotted_ident * G.pattern) ->
           let dotted_name, value_pat = pat_field in
           let key_name = match dotted_name with
-            | (s, _) :: _ -> Some s
+            | (seg, _) :: _ -> Some seg
             | [] -> None
           in
           let local_name = match value_pat with
-            | G.PatId ((s, _), _) -> Some s
+            | G.PatId ((id_str, _), _) -> Some id_str
             | _ -> key_name
           in
           match key_name, local_name with
-          | Some k, Some l ->
+          | Some key, Some local ->
             let target =
-              Names.Module_qn.concat (Names.Module_qn.of_string spec) k
+              Names.Module_qn.concat (Names.Module_qn.of_string spec) key
             in
-            add_spec (add st l target) l (mk_filename_mn spec) (I_named k)
+            add_spec (add st local target) local (mk_filename_mn spec) (I_named key)
           | _ -> st
         ) st fields
       | _ -> st
@@ -284,18 +284,18 @@ let collect_imports ~(cfg : Index_lang_rules.t)
 
 let build_path_suffix_index (file_paths : string list)
   : (string, string list) Hashtbl.t =
-  let h : (string, string list) Hashtbl.t = Hashtbl.create 16384 in
-  let strip_ext p =
-    if Filename.check_suffix p ".tsx" then Filename.chop_suffix p ".tsx"
-    else if Filename.check_suffix p ".ts" then Filename.chop_suffix p ".ts"
-    else if Filename.check_suffix p ".jsx" then Filename.chop_suffix p ".jsx"
-    else if Filename.check_suffix p ".js" then Filename.chop_suffix p ".js"
-    else p
+  let index : (string, string list) Hashtbl.t = Hashtbl.create 16384 in
+  let strip_ext path =
+    if Filename.check_suffix path ".tsx" then Filename.chop_suffix path ".tsx"
+    else if Filename.check_suffix path ".ts" then Filename.chop_suffix path ".ts"
+    else if Filename.check_suffix path ".jsx" then Filename.chop_suffix path ".jsx"
+    else if Filename.check_suffix path ".js" then Filename.chop_suffix path ".js"
+    else path
   in
-  let strip_index p =
-    if Filename.check_suffix p "/index" then
-      Filename.chop_suffix p "/index"
-    else p
+  let strip_index path =
+    if Filename.check_suffix path "/index" then
+      Filename.chop_suffix path "/index"
+    else path
   in
   List.iter (fun path ->
     let stripped = path |> strip_ext |> strip_index in
@@ -305,11 +305,11 @@ let build_path_suffix_index (file_paths : string list)
     for i = 0 to n - 1 do
       let suffix = String.concat "/"
         (Array.to_list (Array.sub arr i (n - i))) in
-      let cur = Option.value (Hashtbl.find_opt h suffix) ~default:[] in
-      Hashtbl.replace h suffix (path :: cur)
+      let cur = Option.value (Hashtbl.find_opt index suffix) ~default:[] in
+      Hashtbl.replace index suffix (path :: cur)
     done
   ) file_paths;
-  h
+  index
 
 let resolve_ts_specifier
     ?(path_suffix_index : (string, string list) Hashtbl.t option = None)
@@ -332,17 +332,17 @@ let resolve_ts_specifier
 
 let name_to_path = Index_lang_rules.name_to_path
 
-let rec expr_to_path (e : G.expr) : string list =
-  match e.G.e with
-  | G.N n -> name_to_path n
-  | G.DotAccess (lhs, _, G.FN n) ->
-    expr_to_path lhs @ name_to_path n
+let rec expr_to_path (expr : G.expr) : string list =
+  match expr.G.e with
+  | G.N name -> name_to_path name
+  | G.DotAccess (lhs, _, G.FN name) ->
+    expr_to_path lhs @ name_to_path name
   | _ -> []
 
 let parent_path (parent_ty : G.type_) : string list =
   match parent_ty.G.t with
-  | G.TyN n -> name_to_path n
-  | G.TyExpr e -> expr_to_path e
+  | G.TyN name -> name_to_path name
+  | G.TyExpr expr -> expr_to_path expr
   | _ -> []
 
 type scope_kind =
@@ -354,13 +354,13 @@ let qualified_name_of ~(module_path : Names.Module_qn.t)
   let buf = Buffer.create 64 in
   Buffer.add_string buf (Names.Module_qn.to_string module_path);
   let prev_was_fn =
-    List.fold_left (fun prev_was_fn s ->
+    List.fold_left (fun prev_was_fn scope ->
       Buffer.add_char buf '.';
       if prev_was_fn then Buffer.add_string buf "<locals>.";
-      (match s with
+      (match scope with
        | Sc_class { name; _ } -> Buffer.add_string buf name
-       | Sc_function n -> Buffer.add_string buf n);
-      (match s with Sc_function _ -> true | _ -> false)
+       | Sc_function fn_name -> Buffer.add_string buf fn_name);
+      (match scope with Sc_function _ -> true | _ -> false)
     ) false outer_to_inner
   in
   Buffer.add_char buf '.';
@@ -431,8 +431,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             ) (cfg.Index_lang_rules.class_body_synth_methods cdef);
             List.iter (fun (parent_ty, _args) ->
               match parent_ty.G.t with
-              | G.TyExpr e ->
-                (match cfg.Index_lang_rules.inner_class_from_call e with
+              | G.TyExpr expr ->
+                (match cfg.Index_lang_rules.inner_class_from_call expr with
                  | None -> ()
                  | Some (inner_name, dunders) ->
                    let inner_id = synth_function_id class_id inner_name in
@@ -441,9 +441,9 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                                  ~range:class_range
                                  ~defining_class_id:parent_class_id
                               :: !entries;
-                   List.iter (fun d ->
-                     let m_id = synth_function_id inner_id d in
-                     entries := mk_entry ~id:m_id ~name:d ~kind:K_method
+                   List.iter (fun dunder ->
+                     let m_id = synth_function_id inner_id dunder in
+                     entries := mk_entry ~id:m_id ~name:dunder ~kind:K_method
                                    ~range:class_range
                                    ~defining_class_id:(Some inner_id)
                                 :: !entries
@@ -453,7 +453,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             let parent_paths =
               let from_extends =
                 List.filter_map (fun (ty, _) ->
-                  match parent_path ty with [] -> None | p -> Some p
+                  match parent_path ty with [] -> None | path -> Some path
                 ) cdef.G.cextends
               in
               from_extends @ cfg.Index_lang_rules.class_body_extra_parents cdef
@@ -473,7 +473,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
       | G.FuncDef _
       | G.VarDef { G.vinit = Some { G.e = G.Lambda _; _ }; _ } -> begin
           (match cfg.Index_lang_rules.extract_wrapper ent with
-           | Some w -> dc_wrappers := w :: !dc_wrappers
+           | Some wrapper -> dc_wrappers := wrapper :: !dc_wrappers
            | None -> ());
           (* Lambda defs: use the synth lambda name to match
              [Graph_from_AST.fn_id_of_entity]'s key, else it can't resolve. *)
@@ -529,8 +529,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
              | G.N gname ->
                (match Ty_leaf.leaf_of_name gname with
                 | None -> None
-                | Some n ->
-                  Some (n, Function_id.of_il_name
+                | Some name ->
+                  Some (name, Function_id.of_il_name
                               (AST_to_IL.var_of_name gname)))
              | _ -> None
            in
@@ -538,7 +538,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
            | Some dunders, Some (lhs_name, class_id) ->
              let range =
                match AST_generic_helpers.range_of_any_opt (G.E lhs) with
-               | Some (a, b) -> Some (Range.range_of_token_locations a b)
+               | Some (start_tok, end_tok) -> Some (Range.range_of_token_locations start_tok end_tok)
                | None -> None
              in
              let parent_class_id = immediate_enclosing_class_id scope in
@@ -569,14 +569,14 @@ let methods_by_class (entries : entry list)
   in
   let ensure_set id =
     match Hashtbl.find_opt tbl id with
-    | Some s -> s
+    | Some set -> set
     | None ->
-      let s = Hashtbl.create 16 in Hashtbl.replace tbl id s; s
+      let set = Hashtbl.create 16 in Hashtbl.replace tbl id set; set
   in
-  List.iter (fun e ->
-    if e.kind = K_method then
-      match e.defining_class_id with
-      | Some cls_id -> Hashtbl.replace (ensure_set cls_id) e.name ()
+  List.iter (fun entry ->
+    if entry.kind = K_method then
+      match entry.defining_class_id with
+      | Some cls_id -> Hashtbl.replace (ensure_set cls_id) entry.name ()
       | None -> ()
   ) entries;
   ensure_set
@@ -589,25 +589,25 @@ let dataclass_wrapper_synth_entries ~(cfg : Index_lang_rules.t)
     match List.find_map (fun dec -> Hashtbl.find_opt wrappers dec)
             ci.ci_decorator_names with
     | None -> acc
-    | Some w ->
+    | Some wrapper ->
       let owned = ensure_set ci.ci_id in
-      List.fold_left (fun acc d ->
-        if Hashtbl.mem owned d then acc
+      List.fold_left (fun acc dunder ->
+        if Hashtbl.mem owned dunder then acc
         else begin
-          Hashtbl.replace owned d ();
-          let m_id = synth_function_id ci.ci_id d in
-          { id = m_id; name = d; kind = K_method;
+          Hashtbl.replace owned dunder ();
+          let m_id = synth_function_id ci.ci_id dunder in
+          { id = m_id; name = dunder; kind = K_method;
             file = ci.ci_file; range = ci.ci_range;
             defining_class_id = Some ci.ci_id }
           :: acc
         end
-      ) acc (cfg.Index_lang_rules.wrapper_dunders w)
+      ) acc (cfg.Index_lang_rules.wrapper_dunders wrapper)
   ) [] class_infos
 
 let build_reexport_map ~(cfg : Index_lang_rules.t) (file_infos : file_info list)
   : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t =
-  let m = Hashtbl.create 4096 in
-  if not cfg.Index_lang_rules.has_reexports then m
+  let reexport_map = Hashtbl.create 4096 in
+  if not cfg.Index_lang_rules.has_reexports then reexport_map
   else begin
     List.iter (fun fi ->
       if cfg.Index_lang_rules.is_init_file fi.fi_file then
@@ -619,10 +619,10 @@ let build_reexport_map ~(cfg : Index_lang_rules.t) (file_infos : file_info list)
             else Names.Module_qn.concat pkg local
           in
           if not (Names.Module_qn.equal bound target) then
-            Hashtbl.replace m bound target
+            Hashtbl.replace reexport_map bound target
         ) fi.fi_imports
     ) file_infos;
-    m
+    reexport_map
   end
 
 let mro_inherited_entries
@@ -673,7 +673,7 @@ let mro_inherited_entries
           match
             (match Mro.resolve_parent_qn ~imports:pci.ci_imports
                      ~reexport_map ~known_class_qns gp_path with
-             | Some _ as r -> r
+             | Some _ as resolved -> resolved
              | None when scope_resolution ->
                Mro.resolve_parent_by_scope ~by_qn ~qns_by_leaf pci gp_path
              | None -> None)
@@ -692,7 +692,7 @@ let mro_inherited_entries
       match
         (match Mro.resolve_parent_qn ~imports:ci.ci_imports
                  ~reexport_map ~known_class_qns p_path with
-         | Some _ as r -> r
+         | Some _ as resolved -> resolved
          | None when scope_resolution ->
            Mro.resolve_parent_by_scope ~by_qn ~qns_by_leaf ci p_path
          | None -> None)
@@ -711,21 +711,21 @@ module FA = Graph_from_AST
 
 (* Prefers the entity token: reshaped defs (Rust impl) carry a fake [fkind]
    but a real entity name token. *)
-let func_def_file (f : FA.func_info) : string option =
-  let try_tok t =
-    try Some (Fpath.to_string (Tok.file_of_tok t))
+let func_def_file (func : FA.func_info) : string option =
+  let try_tok tok =
+    try Some (Fpath.to_string (Tok.file_of_tok tok))
     with Tok.NoTokenLocation _ -> None
   in
   let entity_file =
-    match f.FA.entity with
-    | Some { G.name = G.EN (G.Id ((_, t), _)); _ }
-    | Some { G.name = G.EN (G.IdQualified { name_last = ((_, t), _); _ }); _ }
-      -> try_tok t
+    match func.FA.entity with
+    | Some { G.name = G.EN (G.Id ((_, tok), _)); _ }
+    | Some { G.name = G.EN (G.IdQualified { name_last = ((_, tok), _); _ }); _ }
+      -> try_tok tok
     | _ -> None
   in
   match entity_file with
-  | Some _ as r -> r
-  | None -> Option.map Fpath.to_string (Func_info.def_file_opt f)
+  | Some _ as resolved -> resolved
+  | None -> Option.map Fpath.to_string (Func_info.def_file_opt func)
 
 (* Declared return types, in one pass over [all_funcs]:
    - free-function return (leaf key, [class_name_of_ty]);
@@ -735,39 +735,39 @@ let func_def_file (f : FA.func_info) : string option =
      [(a, T)]/[(b, error)] — keyed by leaf and, for methods, by [(class, method)]. *)
 let populate_returns_from_decls
     (state : Type_state.t) (all_funcs : FA.func_info list) : Type_state.t =
-  let leaf_is_this_or_self n =
-    match Ty_leaf.leaf_of_name n with
+  let leaf_is_this_or_self name =
+    match Ty_leaf.leaf_of_name name with
     | Some ("this" | "Self" | "self") -> true
     | _ -> false
   in
-  List.fold_left (fun state (f : FA.func_info) ->
-    let leaf = Func_info.leaf_name f.FA.fn_id in
-    let method_ = Func_info.as_method f.FA.fn_id in
-    let frettype = f.FA.fdef.G.frettype in
+  List.fold_left (fun state (func : FA.func_info) ->
+    let leaf = Func_info.leaf_name func.FA.fn_id in
+    let method_ = Func_info.as_method func.FA.fn_id in
+    let frettype = func.FA.fdef.G.frettype in
     let state =
       match leaf, Option.bind frettype Ty_leaf.class_name_of_ty with
-      | Some n, Some r ->
+      | Some name, Some ret_type ->
         Type_state.set_function_return state
-          (Names.Method_name.of_string (fst n.IL.ident)) r
+          (Names.Method_name.of_string (fst name.IL.ident)) ret_type
       | _ -> state
     in
     let state =
       match method_ with
-      | Some (c, m) ->
+      | Some (cls, meth) ->
         let ret =
           match frettype with
-          | Some t ->
-            (match Ty_leaf.inner_class_name_of_ty t with
-             | Some n when leaf_is_this_or_self n ->
-               Some (G.Id (c.IL.ident, G.empty_id_info ()))
+          | Some ty ->
+            (match Ty_leaf.inner_class_name_of_ty ty with
+             | Some name when leaf_is_this_or_self name ->
+               Some (G.Id (cls.IL.ident, G.empty_id_info ()))
              | other -> other)
           | None -> None
         in
         (match ret with
-         | Some r ->
+         | Some ret_type ->
            Type_state.set_method_return state
-             (Names.Class_name.of_string (fst c.IL.ident))
-             (Names.Method_name.of_string (fst m.IL.ident)) r
+             (Names.Class_name.of_string (fst cls.IL.ident))
+             (Names.Method_name.of_string (fst meth.IL.ident)) ret_type
          | None -> state)
       | None -> state
     in
@@ -776,16 +776,16 @@ let populate_returns_from_decls
       let elems = List.map Ty_leaf.class_name_of_ty ts in
       let state =
         match leaf with
-        | Some n ->
+        | Some name ->
           Type_state.set_function_return_tuple state
-            (Names.Method_name.of_string (fst n.IL.ident)) elems
+            (Names.Method_name.of_string (fst name.IL.ident)) elems
         | None -> state
       in
       (match method_ with
-       | Some (c, m) ->
+       | Some (cls, meth) ->
          Type_state.set_method_return_tuple state
-           (Names.Class_name.of_string (fst c.IL.ident))
-           (Names.Method_name.of_string (fst m.IL.ident)) elems
+           (Names.Class_name.of_string (fst cls.IL.ident))
+           (Names.Method_name.of_string (fst meth.IL.ident)) elems
        | None -> state)
     | _ -> state
   ) state all_funcs
@@ -801,11 +801,11 @@ let build_fields_by_class_index
   let helems = Hashtbl.create 1024 in
   let add_field ~def_file cls field_name vtype =
     (match Ty_leaf.qualified_class_name_of_ty vtype with
-     | Some n ->
-       collected := (cls, field_name, def_file, n) :: !collected
+     | Some name ->
+       collected := (cls, field_name, def_file, name) :: !collected
      | None -> ());
     (match Type_infer.slice_element_of_ty vtype with
-     | Some n -> Hashtbl.replace helems (cls, field_name) n
+     | Some name -> Hashtbl.replace helems (cls, field_name) name
      | None -> ())
   in
   let harvest_ctor_synth_fields ~def_file cls (fdef : G.function_definition) =
@@ -815,11 +815,11 @@ let build_fields_by_class_index
   let process_field_list ~def_file cls fields =
     List.iter (fun (G.F stmt) ->
       match stmt.G.s with
-      | G.DefStmt (ent, G.VarDef { G.vtype = Some t; _ }) ->
+      | G.DefStmt (ent, G.VarDef { G.vtype = Some ty; _ }) ->
         (match entity_simple_name ent with
          | Some fname ->
            add_field ~def_file cls
-             (cfg.Index_lang_rules.strip_field_sigil fname) t
+             (cfg.Index_lang_rules.strip_field_sigil fname) ty
          | None -> ())
       | G.DefStmt (ent, G.FuncDef fdef)
         when (match entity_simple_name ent with
@@ -859,8 +859,8 @@ let build_fields_by_class_index
     ) fi.fi_observations
   ) file_infos;
   let state =
-    List.fold_left (fun s (cls, field, def_file, ty) ->
-      Type_state.set_field s
+    List.fold_left (fun state (cls, field, def_file, ty) ->
+      Type_state.set_field state
         (Names.Class_name.of_string cls)
         (Names.Field_name.of_string field)
         def_file
@@ -888,7 +888,7 @@ let build_export_class_indexes ~(lang : Lang.t)
           (match dir.G.d with
            | G.OtherDirective ((kind, _), anys) when String.equal kind "Export" ->
              List.iter (function
-               | G.I (s, _) -> Hashtbl.replace exported s ()
+               | G.I (name, _) -> Hashtbl.replace exported name ()
                | _ -> ()
              ) anys
            | _ -> ());
@@ -903,14 +903,14 @@ let build_export_class_indexes ~(lang : Lang.t)
         let lookup_local name =
           List.find_map (fun (var, cls) ->
             match var with
-            | G.Id ((s, _), _) when String.equal s name -> Some cls
+            | G.Id ((id_str, _), _) when String.equal id_str name -> Some cls
             | _ -> None
           ) mappings
         in
-        let class_of_init (e : G.expr) : G.name option =
-          match e.G.e with
+        let class_of_init (expr : G.expr) : G.name option =
+          match expr.G.e with
           | G.New (_, ty, _, _) -> Ty_leaf.class_name_of_ty ty
-          | G.N (G.Id ((s, _), _)) -> lookup_local s
+          | G.N (G.Id ((id_str, _), _)) -> lookup_local id_str
           | G.Call ({ e = G.N (G.Id ((fname, _), _)); _ }, _) ->
             Type_state.get_function_return type_state
               (Names.Method_name.of_string fname)
@@ -935,7 +935,7 @@ let build_export_class_indexes ~(lang : Lang.t)
             process_named_export ent (class_of_init init)
           | Walker.Observation.Class_def { ent; _ } ->
             let cls_opt = match ent.G.name with
-              | G.EN n -> Some n
+              | G.EN name -> Some name
               | _ -> None
             in
             process_named_export ent cls_opt
@@ -948,21 +948,21 @@ let build_export_class_indexes ~(lang : Lang.t)
 
 let build_file_funcs_index (all_funcs : FA.func_info list)
   : (string, FA.func_info list) Hashtbl.t =
-  let h = Hashtbl.create 4096 in
-  List.iter (fun (f : FA.func_info) ->
+  let index = Hashtbl.create 4096 in
+  List.iter (fun (func : FA.func_info) ->
     let is_recognised =
-      Option.is_some (Func_info.as_method f.FA.fn_id)
-      || Option.is_some (Func_info.as_free f.FA.fn_id)
+      Option.is_some (Func_info.as_method func.FA.fn_id)
+      || Option.is_some (Func_info.as_free func.FA.fn_id)
     in
     if is_recognised then
-      match Func_info.def_file_opt f with
+      match Func_info.def_file_opt func with
       | Some file ->
         let file = Fpath.to_string file in
-        let cur = Option.value (Hashtbl.find_opt h file) ~default:[] in
-        Hashtbl.replace h file (f :: cur)
+        let cur = Option.value (Hashtbl.find_opt index file) ~default:[] in
+        Hashtbl.replace index file (func :: cur)
       | None -> ()
   ) all_funcs;
-  h
+  index
 
 
 (* Infer return types from [return EXPR] bodies when no declared type exists;
@@ -971,63 +971,63 @@ let augment_return_types_from_bodies
     ~(uses_new_keyword : bool)
     ~(type_state : Type_state.t)
     (all_funcs : FA.func_info list) : Type_state.t =
-  let collect_return_exprs (f : FA.func_info) : G.expr list =
+  let collect_return_exprs (func : FA.func_info) : G.expr list =
     Nonfatal.catch ~default:[] (fun () ->
-      let body_stmt = AST_generic_helpers.funcbody_to_stmt f.FA.fdef.G.fbody in
-      Walker.fold_stmts_in_stmt ~skip_nested_fdefs:true (fun acc s ->
-        match s.G.s with
-        | G.Return (_, Some e, _) -> e :: acc
+      let body_stmt = AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody in
+      Walker.fold_stmts_in_stmt ~skip_nested_fdefs:true (fun acc stmt ->
+        match stmt.G.s with
+        | G.Return (_, Some expr, _) -> expr :: acc
         | _ -> acc) [] body_stmt)
   in
-  let leaf_fn_name (f : FA.func_info) =
-    Option.map (fun n -> fst n.IL.ident) (Func_info.leaf_name f.FA.fn_id)
+  let leaf_fn_name (func : FA.func_info) =
+    Option.map (fun name -> fst name.IL.ident) (Func_info.leaf_name func.FA.fn_id)
   in
-  let class_method_of (f : FA.func_info) =
-    Option.map (fun (c, m) -> (fst c.IL.ident, fst m.IL.ident))
-      (Func_info.as_method f.FA.fn_id)
+  let class_method_of (func : FA.func_info) =
+    Option.map (fun (cls, meth) -> (fst cls.IL.ident, fst meth.IL.ident))
+      (Func_info.as_method func.FA.fn_id)
   in
   let step (state : Type_state.t) : Type_state.t =
-    List.fold_left (fun state (f : FA.func_info) ->
+    List.fold_left (fun state (func : FA.func_info) ->
       let already_known =
-        match class_method_of f with
-        | Some (c, m) ->
+        match class_method_of func with
+        | Some (cls, meth) ->
           Type_state.get_method_return state
-            (Names.Class_name.of_string c)
-            (Names.Method_name.of_string m)
+            (Names.Class_name.of_string cls)
+            (Names.Method_name.of_string meth)
           |> Option.is_some
         | None ->
-          (match leaf_fn_name f with
-           | Some n ->
+          (match leaf_fn_name func with
+           | Some name ->
              Type_state.get_function_return state
-               (Names.Method_name.of_string n)
+               (Names.Method_name.of_string name)
              |> Option.is_some
            | None -> true)
       in
       let has_decl =
-        match f.FA.fdef.G.frettype with Some _ -> true | None -> false
+        match func.FA.fdef.G.frettype with Some _ -> true | None -> false
       in
       if has_decl || already_known then state
       else
-        let rets = collect_return_exprs f in
+        let rets = collect_return_exprs func in
         let inferred =
-          List.filter_map (fun e ->
+          List.filter_map (fun expr ->
             Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword
-              ~type_state:state e
+              ~type_state:state expr
           ) rets
         in
         match inferred with
         | [] -> state
-        | t :: _ ->
-          (match class_method_of f with
-           | Some (c, m) ->
+        | ty :: _ ->
+          (match class_method_of func with
+           | Some (cls, meth) ->
              Type_state.set_method_return state
-               (Names.Class_name.of_string c)
-               (Names.Method_name.of_string m) t
+               (Names.Class_name.of_string cls)
+               (Names.Method_name.of_string meth) ty
            | None ->
-             (match leaf_fn_name f with
-              | Some n ->
+             (match leaf_fn_name func with
+              | Some name ->
                 Type_state.set_function_return state
-                  (Names.Method_name.of_string n) t
+                  (Names.Method_name.of_string name) ty
               | None -> state))
     ) state all_funcs
   in
@@ -1044,23 +1044,23 @@ let build_caller_arg_types
     ~(type_state : Type_state.t)
     (file_infos : file_info list)
   : (string * string * int, G.name) Hashtbl.t =
-  let h = Hashtbl.create 8192 in
-  let infer e =
-    Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword ~type_state e
+  let arg_types = Hashtbl.create 8192 in
+  let infer expr =
+    Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword ~type_state expr
   in
   List.iter (fun fi ->
     let visitor = object
       inherit [_] G.iter_no_id_info as super
-      method! visit_expr () e =
-        (match e.G.e with
+      method! visit_expr () expr =
+        (match expr.G.e with
          | G.Call (callee, args) ->
            let callee_resolved : (string * string) option =
              match callee.G.e with
              | G.DotAccess _ ->
                Option.bind
                  (Type_infer.method_call_target ~type_recv:infer callee)
-                 (fun (recv, m) ->
-                    Option.map (fun c -> (c, m)) (Ty_leaf.leaf_of_name recv))
+                 (fun (recv, meth) ->
+                    Option.map (fun cls -> (cls, meth)) (Ty_leaf.leaf_of_name recv))
              (* Bare-name call [Cls(args)]: treat as ctor [(Cls, "__init__")]. *)
              | G.N (G.Id ((cls, _), _)) ->
                Some (cls, "__init__")
@@ -1073,18 +1073,18 @@ let build_caller_arg_types
                 | G.Arg expr | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) ->
                   (match infer expr with
                    | Some ty ->
-                     if not (Hashtbl.mem h (cls, meth, i)) then
-                       Hashtbl.replace h (cls, meth, i) ty
+                     if not (Hashtbl.mem arg_types (cls, meth, i)) then
+                       Hashtbl.replace arg_types (cls, meth, i) ty
                    | None -> ())
                 | _ -> ()
               ) (Tok.unbracket args)
             | None -> ())
          | _ -> ());
-        super#visit_expr () e
+        super#visit_expr () expr
     end in
     run_visit ~on:fi.fi_file (fun () -> visitor#visit_program () fi.fi_ast)
   ) file_infos;
-  h
+  arg_types
 
 (* Module-level singleton bindings keyed by full qn (module_qn + var_name):
    [x = SomeClass()] at module scope lets importers' [x.method()] resolve.
@@ -1143,38 +1143,38 @@ let augment_fields_from_self_assignments
      |> Option.is_some)
   in
   let collected =
-    List.fold_left (fun outer_acc (f : FA.func_info) ->
-    match Func_info.as_method f.FA.fn_id with
-    | Some (c, m) ->
-      let cls = fst c.IL.ident in
-      let meth = fst m.IL.ident in
+    List.fold_left (fun outer_acc (func : FA.func_info) ->
+    match Func_info.as_method func.FA.fn_id with
+    | Some (cls_il, meth_il) ->
+      let cls = fst cls_il.IL.ident in
+      let meth = fst meth_il.IL.ident in
       let def_file =
-        Option.value (Func_info.def_file_opt f) ~default:(Fpath.v "<fake>")
+        Option.value (Func_info.def_file_opt func) ~default:(Fpath.v "<fake>")
       in
       let param_types : (string, G.name) Hashtbl.t = Hashtbl.create 4 in
-      List.iteri (fun i p ->
-        match p with
+      List.iteri (fun i param ->
+        match param with
         | G.Param { pname = Some (pn, _); ptype = Some pty; _ }
         | G.ParamReceiver { pname = Some (pn, _); ptype = Some pty; _ } ->
           (match Ty_leaf.class_name_of_ty pty with
-           | Some n -> Hashtbl.replace param_types pn n
+           | Some name -> Hashtbl.replace param_types pn name
            | None ->
              (match Hashtbl.find_opt caller_arg_types (cls, meth, i) with
-              | Some n -> Hashtbl.replace param_types pn n
+              | Some name -> Hashtbl.replace param_types pn name
               | None -> ()))
         | G.Param { pname = Some (pn, _); ptype = None; _ } ->
           (match Hashtbl.find_opt caller_arg_types (cls, meth, i) with
-           | Some n -> Hashtbl.replace param_types pn n
+           | Some name -> Hashtbl.replace param_types pn name
            | None -> ())
         | _ -> ()
-      ) (Tok.unbracket f.FA.fdef.G.fparams);
+      ) (Tok.unbracket func.FA.fdef.G.fparams);
       (* PHP 8 ctor property promotion: the parser drops the visibility
          modifier, so every typed ctor param is a candidate field. *)
       let outer_acc =
         if cfg.Index_lang_rules.ctor_param_promotion
            && Object_initialization.is_constructor lang meth (Some cls) then
-          List.fold_left (fun acc p ->
-            match p with
+          List.fold_left (fun acc param ->
+            match param with
             | G.Param { G.pname = Some (pn, _); ptype = Some pty; _ }
             | G.ParamReceiver { G.pname = Some (pn, _); ptype = Some pty; _ } ->
               (match Ty_leaf.class_name_of_ty pty with
@@ -1187,12 +1187,12 @@ let augment_fields_from_self_assignments
                  end
                | None -> acc)
             | _ -> acc
-          ) outer_acc (Tok.unbracket f.FA.fdef.G.fparams)
+          ) outer_acc (Tok.unbracket func.FA.fdef.G.fparams)
         else outer_acc
       in
       let body =
         Nonfatal.catch ~default:None (fun () ->
-          Some (AST_generic_helpers.funcbody_to_stmt f.FA.fdef.G.fbody))
+          Some (AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody))
       in
       (match body with
        | None -> outer_acc
@@ -1207,8 +1207,8 @@ let augment_fields_from_self_assignments
          in
          Object_initialization.stamp_id_types param_facts [body_stmt];
          Nonfatal.catch ~default:outer_acc (fun () ->
-           Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true (fun acc e ->
-             match e.G.e with
+           Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true (fun acc expr ->
+             match expr.G.e with
              | G.Assign (
                  { G.e = G.DotAccess (
                      { G.e = G.IdSpecial ((G.This | G.Self), _); _ }, _,
@@ -1220,7 +1220,7 @@ let augment_fields_from_self_assignments
                  match rhs.G.e with
                  | G.N (G.Id ((vn, _), _)) ->
                    (match Hashtbl.find_opt param_types vn with
-                    | Some _ as r -> r
+                    | Some _ as resolved -> resolved
                     | None ->
                       Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword
                         ~type_state rhs)
@@ -1237,8 +1237,8 @@ let augment_fields_from_self_assignments
     | None -> outer_acc
   ) [] all_funcs
   in
-  List.fold_left (fun s (cls, field, def_file, ty) ->
-    Type_state.set_field s
+  List.fold_left (fun state (cls, field, def_file, ty) ->
+    Type_state.set_field state
       (Names.Class_name.of_string cls)
       (Names.Field_name.of_string field)
       def_file
@@ -1254,7 +1254,7 @@ let stamp_var_types_from_bodies
     ~(slice_element_of_field : (string * string, G.name) Hashtbl.t)
     (ast : G.program) : unit =
   let pass () : (G.name * G.name) list =
-    let known (n : G.name) = Type_infer.declared_class_of_name n <> None in
+    let known (name : G.name) = Type_infer.declared_class_of_name name <> None in
     let fact lhs rhs acc =
       if known lhs then acc
       else
@@ -1291,13 +1291,13 @@ let stamp_var_types_from_bodies
             | Some elem_types -> tuple_facts lhs_names elem_types acc))
       | _ -> acc
     in
-    let extract_tuple_names (e : G.expr) : G.name list option =
-      match e.G.e with
+    let extract_tuple_names (expr : G.expr) : G.name list option =
+      match expr.G.e with
       | G.Container (G.Tuple, (_, items, _)) ->
         let names =
           List.filter_map (fun (it : G.expr) ->
             match it.G.e with
-            | G.N n -> Some n
+            | G.N name -> Some name
             | _ -> None) items
         in
         if names = [] then None else Some names
@@ -1343,7 +1343,7 @@ let stamp_var_types_from_bodies
          | None -> acc)
       | G.DefStmt (ent, G.VarDef { G.vinit = Some rhs; _ }) ->
         (match ent.G.name with
-         | G.EN n -> fact n rhs acc
+         | G.EN name -> fact name rhs acc
          (* Rust [let x = ...] parses as [EPattern(PatId)], not [EN(Id)]. *)
          | G.EPattern (G.PatId (id, info)) ->
            fact (G.Id (id, info)) rhs acc
@@ -1391,8 +1391,8 @@ let run_per_file (caps : < Cap.fork >) ~(ncores : int)
     (fn : 'a -> 'b) (items : 'a list)
     : ('b, string) Result.t list =
   (* [fn] fixes the type: one [Ok]/[Error] per item. *)
-  let run_one x =
-    try Ok (fn x)
+  let run_one item =
+    try Ok (fn item)
     with
     | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
       Exception.catch_and_reraise exn
@@ -1404,10 +1404,10 @@ let run_per_file (caps : < Cap.fork >) ~(ncores : int)
   else
     Domainslib_.parmap caps
       ~num_domains:(min ncores n) ~chunksize:1
-      ~exception_handler:(fun _ e ->
-        match Exception.get_exn e with
+      ~exception_handler:(fun _ exn ->
+        match Exception.get_exn exn with
         | Out_of_memory | Stack_overflow | Time_limit.Timeout _ ->
-          Exception.reraise e
+          Exception.reraise exn
         | exn -> Printexc.to_string exn)
       (fun batch -> List_.map run_one batch)
       batches
@@ -1427,7 +1427,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   (* [child_simple_name -> parent_simple_name] resolves [super().X()] to the
      parent's method (single-inheritance approximation: first parent's leaf). *)
   let type_state =
-    List.fold_left (fun s ci ->
+    List.fold_left (fun state ci ->
       let child =
         match Names.Class_qn.leaf ci.ci_qn with
         | "" -> None
@@ -1442,11 +1442,11 @@ let build_project_call_graph (caps : < Cap.fork >)
         | [] -> None
       in
       match child, parent with
-      | Some c, Some p ->
-        Type_state.set_parent s
-          (Names.Class_name.of_string c)
-          (Names.Class_name.of_string p)
-      | _ -> s
+      | Some child_name, Some parent_name ->
+        Type_state.set_parent state
+          (Names.Class_name.of_string child_name)
+          (Names.Class_name.of_string parent_name)
+      | _ -> state
     ) Type_state.empty class_infos
   in
   let graph = Call_graph.G.create () in
@@ -1540,8 +1540,8 @@ let build_project_call_graph (caps : < Cap.fork >)
         Log.warn (fun m -> m "[skip] phase 1 worker failed: %s" msg);
         []) per_file_funcs
   in
-  List.iter (fun (f : FA.func_info) ->
-    match FA.fn_id_to_node f.FA.fn_id with
+  List.iter (fun (func : FA.func_info) ->
+    match FA.fn_id_to_node func.FA.fn_id with
     | Some node -> Call_graph.G.add_vertex graph node
     | None -> ()
   ) all_funcs;
@@ -1549,11 +1549,11 @@ let build_project_call_graph (caps : < Cap.fork >)
   let project_class_names : G.name list =
     let seen : (string, unit) Hashtbl.t = Hashtbl.create 8192 in
     List.fold_left (fun acc fi ->
-      List.fold_left (fun acc n ->
-        match n with
-        | G.Id ((s, _), _) when not (Hashtbl.mem seen s) ->
-          Hashtbl.replace seen s ();
-          n :: acc
+      List.fold_left (fun acc name ->
+        match name with
+        | G.Id ((name_str, _), _) when not (Hashtbl.mem seen name_str) ->
+          Hashtbl.replace seen name_str ();
+          name :: acc
         | _ -> acc
       ) acc (Object_initialization.collect_class_names fi.fi_ast)
     ) [] file_infos
@@ -1564,20 +1564,20 @@ let build_project_call_graph (caps : < Cap.fork >)
   let funcs_by_name : (string, FA.func_info list) Hashtbl.t =
     Hashtbl.create (List.length all_funcs * 2)
   in
-  List.iter (fun (f : FA.func_info) ->
+  List.iter (fun (func : FA.func_info) ->
     let add_name name =
       let cur = Option.value (Hashtbl.find_opt funcs_by_name name) ~default:[] in
-      Hashtbl.replace funcs_by_name name (f :: cur)
+      Hashtbl.replace funcs_by_name name (func :: cur)
     in
-    let leaf = Option.map (fun n -> fst n.IL.ident) (Func_info.leaf_name f.FA.fn_id) in
+    let leaf = Option.map (fun name -> fst name.IL.ident) (Func_info.leaf_name func.FA.fn_id) in
     Option.iter add_name leaf;
     (* Named lambdas have a synthetic [_tmp_lambda] leaf; also index under the
        binding var name so [handler(...)] resolves. *)
-    (match f.FA.entity with
+    (match func.FA.entity with
      | Some ent ->
        (match entity_simple_name ent with
         | Some entity_name when (match leaf with
-                                 | Some l -> not (String.equal l entity_name)
+                                 | Some leaf_name -> not (String.equal leaf_name entity_name)
                                  | None -> true) ->
             add_name entity_name
         | _ -> ())
@@ -1588,11 +1588,11 @@ let build_project_call_graph (caps : < Cap.fork >)
   (* Class -> methods index, so a file that knows a class can resolve [d.speak]
      even if "speak" never appears in it. *)
   let type_state =
-    List.fold_left (fun state (f : FA.func_info) ->
-      match Func_info.as_method f.FA.fn_id with
-      | Some (c, _) ->
+    List.fold_left (fun state (func : FA.func_info) ->
+      match Func_info.as_method func.FA.fn_id with
+      | Some (cls, _) ->
         Type_state.add_method state
-          (Names.Class_name.of_string (fst c.IL.ident)) f
+          (Names.Class_name.of_string (fst cls.IL.ident)) func
       | None -> state
     ) type_state all_funcs
   in
@@ -1664,7 +1664,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     (Hashtbl.length default_export_class)
     (Hashtbl.length named_export_classes)
     (Hashtbl.length file_funcs_index)
-    (match path_suffix_index with Some h -> Hashtbl.length h | None -> 0));
+    (match path_suffix_index with Some index -> Hashtbl.length index | None -> 0));
 
   (* Project-wide free-function indexes.  See [Func_index]. *)
   let project_funcs_by_package = Func_index.build_by_package ~cfg all_funcs in
@@ -1686,11 +1686,11 @@ let build_project_call_graph (caps : < Cap.fork >)
   (* Defining-file -> package module qn; disambiguates same-basename packages
      for method-homonym resolution. *)
   let file_module_qn : (string, Names.Module_qn.t) Hashtbl.t =
-    let h = Hashtbl.create (List.length file_infos) in
+    let index = Hashtbl.create (List.length file_infos) in
     List.iter (fun (fi : file_info) ->
-      Hashtbl.replace h (Fpath.to_string fi.fi_file) fi.fi_module_path
+      Hashtbl.replace index (Fpath.to_string fi.fi_file) fi.fi_module_path
     ) file_infos;
-    h
+    index
   in
 
   (* Directory and per-file visible-names sets.  See [Visibility]. *)
@@ -1736,11 +1736,11 @@ let build_project_call_graph (caps : < Cap.fork >)
   List.iter (fun (fi : file_info) ->
     let key = Fpath.to_string fi.fi_file in
     if not (Hashtbl.mem top_level_nodes key) then begin
-      let n =
+      let node =
         Function_id.of_il_name (FA.top_level_name_of_ast fi.fi_ast)
       in
-      Hashtbl.replace top_level_nodes key n;
-      Call_graph.G.add_vertex graph n
+      Hashtbl.replace top_level_nodes key node;
+      Call_graph.G.add_vertex graph node
     end
   ) file_infos;
   (* Largest-first so megafiles don't stall the tail on one worker; stat once
@@ -1837,29 +1837,29 @@ let run_pipeline (caps : < Cap.fork >)
     let ast = reshape_class_defs ast in
     let mp =
       match Go_modules.import_path_of_dir go_modules (Fpath.parent file) with
-      | Some p -> Names.Module_qn.of_string p
+      | Some path -> Names.Module_qn.of_string path
       | None -> module_path ~cfg ~project_root ~ast file
     in
     collect_in_ast ~cfg ~lang ~module_path:mp ~file ast
   in
   let results =
     if ncores <= 1 then
-      List.map (fun f ->
-        try Ok (process f)
+      List.map (fun file ->
+        try Ok (process file)
         with
         | Out_of_memory | Stack_overflow | Time_limit.Timeout _ as exn ->
           raise exn
-        | e -> Error (f, Printexc.to_string e)
+        | exn -> Error (file, Printexc.to_string exn)
       ) files
     else
       Domainslib_.parmap caps
         ~num_domains:ncores
         ~chunksize:1
-        ~exception_handler:(fun f e ->
-          (match Exception.get_exn e with
+        ~exception_handler:(fun file exc ->
+          (match Exception.get_exn exc with
            | Out_of_memory | Stack_overflow | Time_limit.Timeout _ ->
-             Exception.reraise e
-           | exn -> (f, Printexc.to_string exn)))
+             Exception.reraise exc
+           | exn -> (file, Printexc.to_string exn)))
         process
         files
   in
@@ -1871,9 +1871,9 @@ let run_pipeline (caps : < Cap.fork >)
          List.rev_append class_infos cs,
          fi :: fis,
          n_logged)
-      | Error (f, msg) ->
+      | Error (file, msg) ->
         if n_logged < 5 then
-          Log.warn (fun m -> m "[skip] %s: %s" (Fpath.to_string f) msg);
+          Log.warn (fun m -> m "[skip] %s: %s" (Fpath.to_string file) msg);
         (sc, sk + 1, es, cs, fis, n_logged + 1)
     ) (0, 0, [], [], [], 0) results
   in
@@ -1883,8 +1883,8 @@ let run_pipeline (caps : < Cap.fork >)
   let wrappers : (string, dataclass_wrapper) Hashtbl.t =
     Hashtbl.create 64 in
   List.iter (fun fi ->
-    List.iter (fun (w : Index_lang_rules.wrapper) ->
-      Hashtbl.replace wrappers w.w_simple_name w
+    List.iter (fun (wrapper : Index_lang_rules.wrapper) ->
+      Hashtbl.replace wrappers wrapper.w_simple_name wrapper
     ) fi.fi_dataclass_wrappers
   ) all_files;
   Log.debug (fun m -> m "Wrappers: %d" (Hashtbl.length wrappers));
@@ -1931,8 +1931,8 @@ let collect_resolved (caps : < Cap.fork >)
     ~(includes : string list) ~(excludes : string list) ()
   : Call_graph.G.t * (string, G.program) Hashtbl.t =
   let project_root_abs = project_root_abs_of project_root in
-  let absnorm (f : Fpath.t) : string =
-    (if Fpath.is_abs f then f else Fpath.(project_root_abs // f))
+  let absnorm (file : Fpath.t) : string =
+    (if Fpath.is_abs file then file else Fpath.(project_root_abs // file))
     |> Fpath.normalize |> Fpath.to_string
   in
   let (_entries, graph, _scanned, _skipped, all_files) =
@@ -1963,11 +1963,11 @@ let resolve_ast_for_file (caps : < Cap.fork >)
   Hashtbl.find_opt asts target_key
 
 let count_by_kind (entries : entry list) : int * int * int =
-  List.fold_left (fun (f, m, c) e ->
-    match e.kind with
-    | K_function -> (f + 1, m, c)
-    | K_method -> (f, m + 1, c)
-    | K_class -> (f, m, c + 1)
+  List.fold_left (fun (funcs, methods, classes) entry ->
+    match entry.kind with
+    | K_function -> (funcs + 1, methods, classes)
+    | K_method -> (funcs, methods + 1, classes)
+    | K_class -> (funcs, methods, classes + 1)
   ) (0, 0, 0) entries
 
 let kind_str = function
@@ -2000,7 +2000,7 @@ let run ~(lang_str : string) ~(project_root_str : string) ~(sample : int)
     let files = Discover.discover_files
       ~targeting_conf:Discover.projidx_default_targeting_conf
       ~lang ~project_root ~includes ~excludes in
-    List.iter (fun f -> print_endline (Fpath.to_string f)) files;
+    List.iter (fun file -> print_endline (Fpath.to_string file)) files;
     exit 0
   end;
   let t0 = Unix.gettimeofday () in
@@ -2011,18 +2011,18 @@ let run ~(lang_str : string) ~(project_root_str : string) ~(sample : int)
       ~lang ~project_root ~ncores ~includes ~excludes ()
   in
   let t1 = Unix.gettimeofday () in
-  let (f, m, c) = count_by_kind entries in
+  let (funcs, methods, classes) = count_by_kind entries in
   let summary_chan = if dump_all || dump_edges then stderr else stdout in
   Printf.fprintf summary_chan "Files scanned:  %d\n" scanned;
   Printf.fprintf summary_chan "Files skipped:  %d\n" skipped;
   Printf.fprintf summary_chan "Total entries:  %d\n" (List.length entries);
-  Printf.fprintf summary_chan "  functions:    %d\n" f;
-  Printf.fprintf summary_chan "  methods:      %d\n" m;
-  Printf.fprintf summary_chan "  classes:      %d\n" c;
+  Printf.fprintf summary_chan "  functions:    %d\n" funcs;
+  Printf.fprintf summary_chan "  methods:      %d\n" methods;
+  Printf.fprintf summary_chan "  classes:      %d\n" classes;
   Printf.fprintf summary_chan "Elapsed:        %.2fs\n" (t1 -. t0);
-  let entry_loc e =
-    let f, l, c = Function_id.to_file_line_col e.id in
-    Printf.sprintf "%s:%d:%d" f l c
+  let entry_loc entry =
+    let file, line, col = Function_id.to_file_line_col entry.id in
+    Printf.sprintf "%s:%d:%d" file line col
   in
   if dump_edges then begin
     Call_graph.G.iter_edges_e (fun edge ->
@@ -2031,26 +2031,26 @@ let run ~(lang_str : string) ~(project_root_str : string) ~(sample : int)
       let label = Call_graph.G.E.label edge in
       let s_f, s_l, s_c = Function_id.to_file_line_col src in
       let d_f, d_l, d_c = Function_id.to_file_line_col dst in
-      let p = label.Call_graph.call_site in
+      let call_site = label.Call_graph.call_site in
       let kind = match label.Call_graph.kind with
         | Call_graph.Call -> "call"
         | Call_graph.Dispatch -> "dispatch"
       in
       Printf.printf "%s:%d:%d\t%s:%d:%d\t%s:%d:%d\t%s\n"
         s_f s_l s_c d_f d_l d_c
-        (Fpath.to_string p.Pos.file) p.Pos.line p.Pos.column
+        (Fpath.to_string call_site.Pos.file) call_site.Pos.line call_site.Pos.column
         kind
     ) graph
   end
   else if dump_all then
-    List.iter (fun e ->
-      Printf.printf "%s\t%s\t%s\n" (kind_str e.kind) e.name (entry_loc e)
+    List.iter (fun entry ->
+      Printf.printf "%s\t%s\t%s\n" (kind_str entry.kind) entry.name (entry_loc entry)
     ) entries
   else if sample > 0 then begin
     Printf.printf "\nSample (%d):\n" sample;
-    List.iter (fun e ->
+    List.iter (fun entry ->
       Printf.printf "  [%s] %s  (%s)\n"
-        (kind_str e.kind) e.name (entry_loc e)
+        (kind_str entry.kind) entry.name (entry_loc entry)
     ) (List_.take_safe sample entries)
   end
 

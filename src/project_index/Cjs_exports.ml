@@ -5,8 +5,8 @@ let build_default_export_fn
     ~(lang : Lang.t)
     (file_infos : Types.file_info list)
   : (string, FA.func_info) Hashtbl.t =
-  let h : (string, FA.func_info) Hashtbl.t = Hashtbl.create 1024 in
-  if not (Lang.equal lang Lang.Ts || Lang.equal lang Lang.Js) then h
+  let default_exports : (string, FA.func_info) Hashtbl.t = Hashtbl.create 1024 in
+  if not (Lang.equal lang Lang.Ts || Lang.equal lang Lang.Js) then default_exports
   else begin
     List.iter (fun (fi : Types.file_info) ->
       let file_str = Fpath.to_string fi.fi_file in
@@ -26,12 +26,12 @@ let build_default_export_fn
             sid = G.SId.unsafe_default;
             id_info = G.empty_id_info ();
           } in
-          let f : FA.func_info = {
+          let func : FA.func_info = {
             fn_id = Func_info.free_id synth_name;
             entity = None;
             fdef;
           } in
-          Hashtbl.replace h file_str f
+          Hashtbl.replace default_exports file_str func
         | _ -> ()
       in
       let visitor = object
@@ -46,5 +46,5 @@ let build_default_export_fn
       end in
       visitor#visit_program () fi.fi_ast
     ) file_infos;
-    h
+    default_exports
   end

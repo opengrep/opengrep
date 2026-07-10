@@ -21,18 +21,18 @@ let as_free : fn_id -> IL.name option = function
 let is_method_of ~(class_name : string) ~(method_name : string)
     (fn_id : fn_id) : bool =
   match as_method fn_id with
-  | Some (c, m) ->
-    String.equal (fst c.IL.ident) class_name
-    && String.equal (fst m.IL.ident) method_name
+  | Some (cls, meth) ->
+    String.equal (fst cls.IL.ident) class_name
+    && String.equal (fst meth.IL.ident) method_name
   | None -> false
 
 let leaf_name : fn_id -> IL.name option = fun fn_id ->
   match List.rev fn_id with
-  | Some n :: _ -> Some n
+  | Some name :: _ -> Some name
   | _ -> None
 
 let enclosing_class : fn_id -> IL.name option = function
-  | Some c :: _ -> Some c
+  | Some cls :: _ -> Some cls
   | _ -> None
 
 let method_id ~(cls : IL.name) ~(meth : IL.name) : fn_id =
@@ -40,8 +40,8 @@ let method_id ~(cls : IL.name) ~(meth : IL.name) : fn_id =
 
 (* File of the def's [fkind] token; anchored fake tokens still carry their
    file, [None] only for location-less tokens. *)
-let def_file_opt (f : t) : Fpath.t option =
-  try Some (Tok.file_of_tok (snd f.fdef.G.fkind))
+let def_file_opt (func_info : t) : Fpath.t option =
+  try Some (Tok.file_of_tok (snd func_info.fdef.G.fkind))
   with Tok.NoTokenLocation _ -> None
 
 let free_id (leaf : IL.name) : fn_id = [None; Some leaf]

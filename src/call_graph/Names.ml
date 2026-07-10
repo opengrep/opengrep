@@ -25,7 +25,7 @@ module Make_dotted () : DOTTED = struct
   let parts = String.split_on_char '.'
   let leaf t =
     match List.rev (parts t) with
-    | x :: _ -> x
+    | last :: _ -> last
     | [] -> ""
   let is_empty t = String.length t = 0
   let split_last t =
@@ -37,10 +37,10 @@ module Make_dotted () : DOTTED = struct
         let parent = String.sub t 0 i in
         let leaf = String.sub t (i + 1) (String.length t - i - 1) in
         Some (parent, leaf)
-  let concat t s =
-    if String.length t = 0 then s
-    else if String.length s = 0 then t
-    else t ^ "." ^ s
+  let concat t part =
+    if String.length t = 0 then part
+    else if String.length part = 0 then t
+    else t ^ "." ^ part
   let equal = String.equal
   let compare = String.compare
 end

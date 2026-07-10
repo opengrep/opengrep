@@ -94,11 +94,11 @@ let get_field t cls field =
 let set_methods t cls ms =
   { t with methods = Class_name_map.add cls ms t.methods }
 
-let add_method t cls m =
+let add_method t cls method_info =
   let cur =
     Option.value (Class_name_map.find_opt cls t.methods) ~default:[]
   in
-  { t with methods = Class_name_map.add cls (m :: cur) t.methods }
+  { t with methods = Class_name_map.add cls (method_info :: cur) t.methods }
 
 let get_methods t cls = Class_name_map.find_opt cls t.methods
 
@@ -124,13 +124,13 @@ let get_method_return_tuple t cls meth =
   Method_map.find_opt (cls, meth) t.method_return_tuples
 
 let method_leaf_names (fs : Func_info.t list) : (string, unit) Hashtbl.t =
-  let h = Hashtbl.create (List.length fs) in
-  List.iter (fun (f : Func_info.t) ->
-    match Func_info.as_method f.fn_id with
-    | Some (_, m) -> Hashtbl.replace h (fst m.IL.ident) ()
+  let tbl = Hashtbl.create (List.length fs) in
+  List.iter (fun (func : Func_info.t) ->
+    match Func_info.as_method func.fn_id with
+    | Some (_, meth) -> Hashtbl.replace tbl (fst meth.IL.ident) ()
     | None -> ()
   ) fs;
-  h
+  tbl
 
 let add_inherited t cls (newcomers : Func_info.t list) =
   if newcomers = [] then t
@@ -141,12 +141,12 @@ let add_inherited t cls (newcomers : Func_info.t list) =
     in
     let seen = method_leaf_names existing in
     let added =
-      List.filter (fun (f : Func_info.t) ->
-        match Func_info.as_method f.fn_id with
-        | Some (_, m) ->
-          let n = fst m.IL.ident in
-          if Hashtbl.mem seen n then false
-          else (Hashtbl.replace seen n (); true)
+      List.filter (fun (func : Func_info.t) ->
+        match Func_info.as_method func.fn_id with
+        | Some (_, meth) ->
+          let name = fst meth.IL.ident in
+          if Hashtbl.mem seen name then false
+          else (Hashtbl.replace seen name (); true)
         | None -> false
       ) newcomers
     in
@@ -160,8 +160,8 @@ let get_inherited t cls =
     ~default:[]
 
 (* Full qualified path: leaf-only misses [pkg_a.Store]→[pkg_b.Store] flips. *)
-let g_name_key (n : AST_generic.name) : string list =
-  AST_generic_helpers.dotted_ident_of_name n |> List.map fst
+let g_name_key (name : AST_generic.name) : string list =
+  AST_generic_helpers.dotted_ident_of_name name |> List.map fst
 let g_name_equal a b = List.equal String.equal (g_name_key a) (g_name_key b)
 let g_name_opt_equal = Option.equal g_name_equal
 (* id-only equality misses body-driven [fdef] changes → never converges. *)
@@ -206,8 +206,8 @@ let find_methods t ~fallback ~class_name ~method_name =
       Option.value (get_methods t cn) ~default:[] @ get_inherited t cn
     else fallback
   in
-  List.filter (fun (f : Func_info.t) ->
-    Func_info.is_method_of ~class_name ~method_name f.fn_id
+  List.filter (fun (func : Func_info.t) ->
+    Func_info.is_method_of ~class_name ~method_name func.fn_id
   ) pool
 
 let parent t cls =
