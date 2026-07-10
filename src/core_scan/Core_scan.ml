@@ -1166,8 +1166,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
    * on our testsuite, weird. We need to add more tests. Maybe because
    * both pysemgrep and osemgrep do their own skip targets management.
    *)
-  { res with processed_matches; errors; skipped_targets;
-             taint_interfile = config.taint_interfile }
+  { res with processed_matches; errors; skipped_targets }
 
 (*****************************************************************************)
 (* Entry point *)
