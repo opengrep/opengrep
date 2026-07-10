@@ -421,10 +421,14 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
  * LATER: we want to avoid this intermediate data structure but
  * for now that's what pysemgrep used to get so simpler to return it.
  *)
-let mk_result ?(inline = false) (all_rules : Rule.rule list) (res : Core_result.t) : result =
+let mk_result ?(inline = false) ?(taint_interfile = false)
+    (all_rules : Rule.rule list) (res : Core_result.t) : result =
   (* similar to Core_command.output_core_results code *)
   let scanned = res.scanned |> List_.map Target.internal_path |> Set_.of_list in
-  let match_results = Core_json_output.core_output_of_matches_and_errors ~inline res in
+  let match_results =
+    Core_json_output.core_output_of_matches_and_errors ~inline
+      ~taint_interfile res
+  in
   (* TOPORT? or move in semgrep-core so get info ASAP
      if match_results.skipped_targets:
          for skip in match_results.skipped_targets:
