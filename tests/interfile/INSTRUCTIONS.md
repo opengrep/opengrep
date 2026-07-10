@@ -2,7 +2,7 @@
 
 Regression tests for interfile taint analysis.  Each test case is a
 self-contained directory with source files and a taint rule.  The call
-graph is built in-process by `opengrep-project-index` (projidx) — no
+graph is built in-process by `opengrep_project_index` (projidx) — no
 external indexer is needed.
 
 ## Running tests

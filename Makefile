@@ -116,10 +116,6 @@ minimal-build:
 opengrep-interfile-graph:
 	dune build $(BUILD)/install/default/bin/opengrep-interfile-graph
 
-.PHONY: opengrep-project-index
-opengrep-project-index:
-	dune build $(BUILD)/install/default/bin/opengrep-project-index
-
 .PHONY: opengrep-diff
 opengrep-diff:
 	dune build $(BUILD)/install/default/bin/opengrep-diff
