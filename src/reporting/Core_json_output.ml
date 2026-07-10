@@ -605,7 +605,11 @@ let profiling_to_profiling (profiling_data : Core_profiling.t) : Out.profile =
 (* Final semgrep-core output *)
 (*****************************************************************************)
 
-let core_output_of_matches_and_errors ?(inline = false) (res : Core_result.t) : Out.core_output =
+(* [taint_interfile]: whether interfile taint was enabled via the CLI flag;
+   consulted at dedup time to decide if the taint source belongs in the
+   unique key. *)
+let core_output_of_matches_and_errors ?(inline = false)
+    ?(taint_interfile = false) (res : Core_result.t) : Out.core_output =
   let matches, new_errs =
     Result_.partition (match_to_match ~inline) res.processed_matches
   in
@@ -613,7 +617,7 @@ let core_output_of_matches_and_errors ?(inline = false) (res : Core_result.t) : 
   {
     results = matches
               |> dedup_and_sort
-                ~taint_interfile:res.taint_interfile
+                ~taint_interfile
                 (Core_match.to_rule_id_options_map
                    List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches));
     errors = errs |> List_.map error_to_error;

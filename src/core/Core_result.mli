@@ -35,7 +35,6 @@ type t = {
   explanations : Matching_explanation.t list option;
   rules_by_engine : (Rule_ID.t * Engine_kind.t) list;
   interfile_languages_used : Xlang.t list;
-  taint_interfile : bool;
 }
 [@@deriving show]
 

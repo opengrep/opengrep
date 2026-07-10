@@ -1,7 +1,10 @@
 module Out = Semgrep_output_v1_j
 
-(* entry point *)
-val core_output_of_matches_and_errors : ?inline:bool -> Core_result.t -> Out.core_output
+(* entry point.  [taint_interfile]: whether interfile taint was enabled via
+   the CLI flag; consulted at dedup time to decide if the taint source
+   belongs in the unique key. *)
+val core_output_of_matches_and_errors :
+  ?inline:bool -> ?taint_interfile:bool -> Core_result.t -> Out.core_output
 
 (* Can return an Error when we get a NoTokenLocation exn when
  * trying to get the range of a match or metavar.

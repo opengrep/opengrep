@@ -115,9 +115,6 @@ type t = {
   explanations : Matching_explanation.t list option;
   rules_by_engine : (Rule_ID.t * Engine_kind.t) list;
   interfile_languages_used : Xlang.t list;
-  (* whether interfile taint was enabled via the CLI flag; consulted at
-     dedup time to decide if the taint source belongs in the unique key. *)
-  taint_interfile : bool;
 }
 [@@deriving show]
 
@@ -151,7 +148,6 @@ let mk_result_with_just_errors (errors : Core_error.t list) : t =
     explanations = None;
     rules_by_engine = [];
     interfile_languages_used = [];
-    taint_interfile = false;
   }
 
 (* Create a match result *)
@@ -326,5 +322,4 @@ let mk_result (results : Core_profiling.file_profiling match_result list)
     rules_by_engine =
       rules_with_engine |> List_.map (fun (r, ek) -> (fst r.Rule.id, ek));
     interfile_languages_used;
-    taint_interfile = false;
   }

@@ -260,7 +260,9 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
       in
       let res =
         Logs_.with_debug_trace ~__FUNCTION__ (fun () ->
-            Core_json_output.core_output_of_matches_and_errors ~inline:config.inline_metavariables res)
+            Core_json_output.core_output_of_matches_and_errors
+              ~inline:config.inline_metavariables
+              ~taint_interfile:config.taint_interfile res)
       in
       (*
         Not pretty-printing the json output (Yojson.Safe.prettify)
@@ -296,7 +298,7 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
           in
           let matches =
             Core_json_output.dedup_and_sort
-              ~taint_interfile:res.taint_interfile
+              ~taint_interfile:config.taint_interfile
               (Core_match.to_rule_id_options_map
                  List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches))
               matches

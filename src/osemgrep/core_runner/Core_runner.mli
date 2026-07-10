@@ -65,7 +65,8 @@ type func = {
 val default_conf : conf
 
 (* builder *)
-val mk_result : ?inline:bool -> Rule.rule list -> Core_result.t -> result
+val mk_result :
+  ?inline:bool -> ?taint_interfile:bool -> Rule.rule list -> Core_result.t -> result
 
 (* Core_scan.func adapter to be used in osemgrep.
 
