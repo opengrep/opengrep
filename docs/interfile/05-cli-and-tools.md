@@ -17,7 +17,7 @@ targets by the `project_root` carried on each target (set during
 target discovery; targets without a discovered root fall back to
 `cwd`), builds one interfile call graph per `(language,
 project_root)` group in-process via projidx, and runs the analysis.
-The standalone `opengrep-project-index` CLI takes `--project-root
+The standalone `opengrep-interfile-graph` tool takes `--project-root
 DIR` explicitly.
 
 The flag also accepts per-rule control via `options.taint_interfile:
@@ -65,37 +65,11 @@ alone for single-file interprocedural taint.
 ## The interfile call graph as a standalone product
 
 The same call graph that the taint engine consumes is available
-through two standalone binaries.
-
-### `opengrep-project-index` (projidx)
-
-Builds the call graph for one language and dumps various
-representations to stdout/files.
+through one diagnostic tool, `opengrep-interfile-graph`, with
+subcommands covering both the raw index and the engine's view of it:
 
 ```
-$ bin/opengrep-project-index --lang go \
-    --project-root /path/to/repo \
-    --dump-edges > edges.tsv
-```
-
-Outputs:
-
-- `--dump-edges` — TSV of every edge in the call graph.
-- `--dump-all` — TSV of every entry (function/method/class).
-- `--sample N` — print the first N vertices and their immediate
-  successors/predecessors for quick inspection (default 10).
-- `--list-files` — print the files that would be indexed, then exit.
-- `--include <glob>` / `--exclude <glob>` — filter the file set (repeatable).
-
-This is the canonical way to inspect the graph that interfile is
-using.
-
-### `opengrep-interfile-graph`
-
-Higher-level diagnostic tool.  Loads a project's interfile graph via
-projidx and provides subcommands for inspecting it:
-
-```
+$ bin/opengrep-interfile-graph index      -r /path/to/repo -l go --dump-edges > edges.tsv
 $ bin/opengrep-interfile-graph full-graph -r /path/to/repo -l go
 $ bin/opengrep-interfile-graph lookup -r /path/to/repo -l go -p "Authenticate"
 $ bin/opengrep-interfile-graph edges  -r /path/to/repo -l go -p "Service.Get"
@@ -103,8 +77,22 @@ $ bin/opengrep-interfile-graph relevant-graph --rules my-rule.yaml /path/to/code
 $ bin/opengrep-interfile-graph topo-order   --rules my-rule.yaml /path/to/code --signatures
 ```
 
+- `index` — build the raw project index for one language and dump
+  it.  This shows the graph *as projidx builds it* (paths may be
+  relative to the project root), before the engine absolutifies it.
+  Options:
+  - `--dump-edges` — TSV of every edge in the call graph
+    (source, destination, call site, kind).
+  - `--dump-all` — TSV of every entry (function/method/class).
+  - `--sample N` — print the first N entries for quick inspection
+    (default 10).
+  - `--list-files` — print the files that would be indexed, then exit.
+  - `--include <glob>` / `--exclude <glob>` — filter the file set
+    (repeatable).
 - `full-graph` — vertex/edge/file counts and (with `-v`) a
-  file-by-file breakdown plus a TSV edge dump to stderr.
+  file-by-file breakdown plus a TSV edge dump to stderr, in the same
+  format as `index --dump-edges`.  This shows the graph *as the
+  engine consumes it* (absolute paths).
 - `lookup -p PATTERN` — find vertices whose name matches the regex,
   optionally with their callers/callees (`-v`).
 - `edges -p PATTERN [--kind call|dispatch]` — show callers and
@@ -133,17 +121,17 @@ $ opengrep show dump-interfile-graph go /path/to/repo
 
 ## Configuration knobs you don't usually need
 
-These exist for testing and rare production tuning:
+These exist for testing and rare production tuning (all on
+`opengrep-interfile-graph index`):
 
-- `opengrep-project-index --jobs N` (also `-j N`) — cap projidx
-  parallelism.  Defaults to the CPU count.
-- `opengrep-project-index --include <glob>` / `--exclude <glob>` —
-  filter the file set.  `--exclude` is what overrides the
-  per-language defaults for things like `vendor/` or `node_modules/`.
-- `opengrep-project-index --pyrefly-toml <pyrefly.toml>` — read
-  `project-includes` / `project-excludes` arrays from a pyrefly
-  config file.  Useful when a project already maintains those for
-  another tool.
+- `--ncores N` (also `-j N`) — cap projidx parallelism.  Defaults to
+  the CPU count.
+- `--include <glob>` / `--exclude <glob>` — filter the file set.
+  `--exclude` is what overrides the per-language defaults for things
+  like `vendor/` or `node_modules/`.
+- `--pyrefly-toml <pyrefly.toml>` — read `project-includes` /
+  `project-excludes` arrays from a pyrefly config file.  Useful when
+  a project already maintains those for another tool.
 
 [Next: § 6, the subtle correctness and performance situations the
 code handles.](06-subtleties.md)
