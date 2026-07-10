@@ -5,7 +5,7 @@
 (library
  (name opengrep_project_index)
  (public_name semgrep.opengrep_project_index)
- (modules Project_index Index_lang_rules Fixpoint Edge_emitter Discover Types Pipeline Nonfatal Go_inheritance Go_modules Mro Ts_class_aliases Structural_dispatch Reexports Func_index Cjs_exports Visibility Log_projidx)
+ (modules Project_index Ts_modules Index_lang_rules Fixpoint Edge_emitter Discover Types Pipeline Nonfatal Go_inheritance Go_modules Mro Ts_class_aliases Structural_dispatch Reexports Func_index Cjs_exports Visibility Log_projidx)
  (libraries
    commons
    fpath
