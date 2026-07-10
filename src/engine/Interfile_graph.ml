@@ -27,7 +27,7 @@ let load_interfile_build (caps : < Cap.fork >)
   let excludes = cfg.discover_excludes ~project_root:project_root_abs in
   try
     let (graph, asts) =
-      Opengrep_project_index.Main.collect_resolved caps
+      Opengrep_project_index.Project_index.collect_resolved caps
         ~targeting_conf
         ~lang ~project_root:project_root_abs ~ncores
         ~includes:[] ~excludes ()

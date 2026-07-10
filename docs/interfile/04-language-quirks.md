@@ -300,7 +300,7 @@ DefStmt(ent, OtherDef("Impl", [T(Foo); Ss(stmts)]))
 `Visit_function_defs` only matches on `ClassDef`, so without
 intervention the methods inside the `impl` block don't get
 `current_class = Some Foo`.  A Rust-only AST pre-pass in
-`Main.collect` rewrites every `OtherDef("Impl", ...)` into
+`Project_index.collect` rewrites every `OtherDef("Impl", ...)` into
 
 ```
 DefStmt({name=Foo}, ClassDef{cbody=stmts; ...})
