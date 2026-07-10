@@ -1,4 +1,4 @@
-(* Shared projidx types, lifted out of [Main.ml] to avoid a circular dep. *)
+(* Shared projidx types, lifted out of [Project_index.ml] to avoid a circular dep. *)
 
 module G = AST_generic
 

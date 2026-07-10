@@ -82,7 +82,7 @@ let cmd_full_graph (project_root : string) (lang_str : string)
   end;
   0
 
-(* The [index] command: the raw projidx view.  [PI.Main.collect] output as
+(* The [index] command: the raw projidx view.  [PI.Project_index.collect] output as
    built (paths may be relative, permissive targeting), BEFORE the engine
    absolutifies it — [full-graph] shows the same graph as the engine
    consumes it. *)
@@ -134,7 +134,7 @@ let cmd_index (project_root_str : string) (lang_str : string)
     (* CLI entry point: this process owns its capabilities. *)
     let caps = Cap.fork_and_limits_caps_UNSAFE () in
     let (entries, graph, scanned, skipped) =
-      PI.Main.collect (caps :> < Cap.fork >)
+      PI.Project_index.collect (caps :> < Cap.fork >)
         ~lang ~project_root ~ncores ~includes ~excludes ()
     in
     let t1 = Unix.gettimeofday () in

@@ -244,7 +244,7 @@ let dump_graph_ast ?(root : Fpath.t option)
         match root with
         | Some project_root -> (
             match
-              Opengrep_project_index.Main.resolve_ast_for_file
+              Opengrep_project_index.Project_index.resolve_ast_for_file
                 (caps :> < Cap.fork >) ~lang
                 ~project_root ~ncores:1 ~target:file ()
             with
