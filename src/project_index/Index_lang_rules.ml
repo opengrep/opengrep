@@ -1,5 +1,4 @@
 module G = AST_generic
-module Log = Log_projidx.Log
 
 type wrapper = {
   w_simple_name : string;
@@ -198,135 +197,6 @@ let python_extract_wrapper (ent : G.entity) : wrapper option =
 let python_wrapper_dunders (wrapper : wrapper) : string list =
   let dunders = ["__init__"; "__replace__"] in
   if wrapper.w_frozen_default then dunders @ ["__hash__"] else dunders
-
-let strip_jsonc (str : string) : string =
-  let n = String.length str in
-  let buf = Buffer.create n in
-  let rec loop i state =
-    if i >= n then ()
-    else
-      let ch = str.[i] in
-      match state with
-      | `Line_cmt ->
-        if ch = '\n' then Buffer.add_char buf ch;
-        loop (i + 1) (if ch = '\n' then `Normal else `Line_cmt)
-      | `Block_cmt ->
-        if ch = '*' && i + 1 < n && str.[i + 1] = '/' then loop (i + 2) `Normal
-        else begin
-          if ch = '\n' then Buffer.add_char buf ch;
-          loop (i + 1) `Block_cmt
-        end
-      | `In_string escaping ->
-        Buffer.add_char buf ch;
-        let next_state =
-          if escaping then `In_string false
-          else if ch = '\\' then `In_string true
-          else if ch = '"' then `Normal
-          else `In_string false
-        in
-        loop (i + 1) next_state
-      | `Normal ->
-        if ch = '"' then begin
-          Buffer.add_char buf ch; loop (i + 1) (`In_string false)
-        end else if ch = '/' && i + 1 < n then begin
-          let next = str.[i + 1] in
-          if next = '/' then loop (i + 2) `Line_cmt
-          else if next = '*' then loop (i + 2) `Block_cmt
-          else begin Buffer.add_char buf ch; loop (i + 1) `Normal end
-        end else begin
-          Buffer.add_char buf ch; loop (i + 1) `Normal
-        end
-  in
-  loop 0 `Normal;
-  Buffer.contents buf
-
-let strip_trailing_commas (str : string) : string =
-  let re = Re.compile
-    (Re.seq [Re.char ','; Re.rep (Re.set " \t\n\r"); Re.set "]}"]) in
-  Re.replace re ~f:(fun group ->
-    let matched = Re.Group.get group 0 in
-    String.sub matched 1 (String.length matched - 1)) str
-
-let read_tsconfig_excludes (path : Fpath.t) : string list =
-  match
-    Nonfatal.catch ~default:None (fun () ->
-      Some (UFile.read_file path))
-  with
-  | None ->
-    Log.debug (fun m ->
-      m "tsconfig: failed to read %s; no excludes applied"
-        (Fpath.to_string path));
-    []
-  | Some raw ->
-  Nonfatal.catch ~default:[] (fun () ->
-    let cleaned = raw |> strip_jsonc |> strip_trailing_commas in
-    let json = Yojson.Basic.from_string cleaned in
-    match json with
-    | `Assoc fields ->
-      (match List.assoc_opt "exclude" fields with
-       | Some (`List items) ->
-         List.filter_map (function `String str -> Some str | _ -> None) items
-       | _ -> [])
-    | _ -> [])
-
-(* Prefer tsconfig.build.json over tsconfig.json to match scip-typescript. *)
-let find_tsconfigs (project_root : Fpath.t) : Fpath.t list =
-  let root_str = Fpath.to_string project_root in
-  let skip_dir name =
-    name = "node_modules" || name = ".git" || name = ".yarn"
-    || name = "dist" || name = "build" || name = ".cache"
-  in
-  (* Depth cap guards against cyclic directory symlinks. *)
-  let max_depth = 64 in
-  let rec walk (depth : int) (dir : string) (acc : Fpath.t list) : Fpath.t list =
-    if depth > max_depth then acc
-    else
-    let entries =
-      Nonfatal.catch ~default:[] (fun () ->
-        Sys.readdir dir |> Array.to_list)
-    in
-    let build_path = Filename.concat dir "tsconfig.build.json" in
-    let plain_path = Filename.concat dir "tsconfig.json" in
-    let acc =
-      if Sys.file_exists build_path then Fpath.v build_path :: acc
-      else if Sys.file_exists plain_path then Fpath.v plain_path :: acc
-      else acc
-    in
-    List.fold_left (fun acc entry ->
-      let full = Filename.concat dir entry in
-      let is_dir = Nonfatal.catch ~default:false (fun () -> Sys.is_directory full) in
-      if is_dir && not (skip_dir entry) then walk (depth + 1) full acc
-      else acc
-    ) acc entries
-  in
-  walk 0 root_str []
-
-let normalize_pattern ~(project_root : Fpath.t) ~(config_dir : Fpath.t)
-    (pat : string) : string =
-  if String.length pat > 0 && pat.[0] = '/' then pat
-  else
-    let cfg_rel =
-      Nonfatal.catch ~default:"" (fun () ->
-        let pr = Fpath.to_string project_root in
-        let cd = Fpath.to_string config_dir in
-        if String.length cd >= String.length pr
-           && String.sub cd 0 (String.length pr) = pr
-        then
-          let rel = String.sub cd (String.length pr) (String.length cd - String.length pr) in
-          if String.length rel > 0 && rel.[0] = '/' then String.sub rel 1 (String.length rel - 1)
-          else rel
-        else "")
-    in
-    if cfg_rel = "" then pat
-    else cfg_rel ^ "/" ^ pat
-
-let typescript_discover_excludes ~(project_root : Fpath.t) : string list =
-  let configs = find_tsconfigs project_root in
-  List.concat_map (fun cfg ->
-    let dir = Fpath.parent cfg in
-    let raw = read_tsconfig_excludes cfg in
-    List.map (normalize_pattern ~project_root ~config_dir:dir) raw)
-    configs
 
 let default : t = {
   is_init_file = (fun _ -> false);
@@ -537,7 +407,7 @@ let typescript_class_constructor_synth_fields
 
 let typescript : t = { default with
   include_anonymous_funcs = false;
-  discover_excludes = typescript_discover_excludes;
+  discover_excludes = Ts_modules.discover_excludes;
   class_constructor_synth_fields = typescript_class_constructor_synth_fields;
 }
 
