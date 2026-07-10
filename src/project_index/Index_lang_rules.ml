@@ -128,8 +128,8 @@ let dataclass_kwarg_is (b : bool) (a : G.attribute) (kw : string) : bool =
   match a with
   | G.NamedAttr (_, _, (_, args, _)) ->
     List.exists (function
-      | G.ArgKwd ((s, _), { G.e = G.L (G.Bool (v, _)); _ }) ->
-        s = kw && Bool.equal v b
+      | G.ArgKwd ((key, _), { G.e = G.L (G.Bool (value, _)); _ }) ->
+        let open Common in key = kw && Bool.equal value expected
       | _ -> false) args
   | _ -> false
 
