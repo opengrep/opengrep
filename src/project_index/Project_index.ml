@@ -226,7 +226,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     G.FileName (spec, Tok.unsafe_fake_tok spec)
   in
   let qn_of_specifier spec : Names.Module_qn.t =
-    (* No relative-path rewriting; [resolve_ts_specifier] uses the raw form. *)
+    (* No relative-path rewriting; [Ts_modules.resolve_specifier] uses the raw form. *)
     Names.Module_qn.of_string spec
   in
   let on_defstmt st (ent : G.entity) (vd : G.variable_definition) =
@@ -269,54 +269,6 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       | _ -> st) ([], []) ast
   in
   (List.rev acc, List.rev specs)
-
-let build_path_suffix_index (file_paths : string list)
-  : (string, string list) Hashtbl.t =
-  let index : (string, string list) Hashtbl.t = Hashtbl.create 16384 in
-  let strip_ext path =
-    if Filename.check_suffix path ".tsx" then Filename.chop_suffix path ".tsx"
-    else if Filename.check_suffix path ".ts" then Filename.chop_suffix path ".ts"
-    else if Filename.check_suffix path ".jsx" then Filename.chop_suffix path ".jsx"
-    else if Filename.check_suffix path ".js" then Filename.chop_suffix path ".js"
-    else path
-  in
-  let strip_index path =
-    if Filename.check_suffix path "/index" then
-      Filename.chop_suffix path "/index"
-    else path
-  in
-  List.iter (fun path ->
-    let stripped = path |> strip_ext |> strip_index in
-    let parts = String.split_on_char '/' stripped in
-    let n = List.length parts in
-    let arr = Array.of_list parts in
-    for i = 0 to n - 1 do
-      let suffix = String.concat "/"
-        (Array.to_list (Array.sub arr i (n - i))) in
-      let cur = Option.value (Hashtbl.find_opt index suffix) ~default:[] in
-      Hashtbl.replace index suffix (path :: cur)
-    done
-  ) file_paths;
-  index
-
-let resolve_ts_specifier
-    ?(path_suffix_index : (string, string list) Hashtbl.t option = None)
-    ~(current_file : Fpath.t) (specifier : string) : string list =
-  if String.length specifier = 0 then []
-  else if specifier.[0] = '.' then begin
-    let base =
-      Fpath.append (Fpath.parent current_file) (Fpath.v specifier)
-      |> Fpath.normalize |> Fpath.rem_empty_seg |> Fpath.to_string
-    in
-    [ base ^ ".ts"; base ^ ".tsx"; base ^ ".js"; base ^ ".jsx";
-      base ^ "/index.ts"; base ^ "/index.tsx";
-      base ^ "/index.js"; base ^ "/index.jsx" ]
-  end
-  else
-    match path_suffix_index with
-    | None -> []
-    | Some idx ->
-      (Option.value (Hashtbl.find_opt idx specifier) ~default:[])
 
 let name_to_path = Index_lang_rules.name_to_path
 
@@ -1645,7 +1597,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   let file_funcs_index = build_file_funcs_index all_funcs in
   let path_suffix_index : (string, string list) Hashtbl.t option =
     if Lang.equal lang Lang.Ts || Lang.equal lang Lang.Js then
-      Some (build_path_suffix_index
+      Some (Ts_modules.build_path_suffix_index
               (List.map (fun fi -> Fpath.to_string fi.fi_file) file_infos))
     else None
   in
@@ -1716,7 +1668,7 @@ let build_project_call_graph (caps : < Cap.fork >)
             ~type_state ~slice_element_of_field ast);
       resolve_ts_specifier =
         (fun ~path_suffix_index ~current_file specifier ->
-          resolve_ts_specifier ~path_suffix_index ~current_file specifier);
+          Ts_modules.resolve_specifier ~path_suffix_index ~current_file specifier);
     }
   in
   let edges_for_file fi = Pipeline.edges_for_file pipeline_ctx fi in
