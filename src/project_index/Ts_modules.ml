@@ -44,12 +44,57 @@ let strip_jsonc (str : string) : string =
   loop 0 `Normal;
   Buffer.contents buf
 
+(* String-aware: a "," inside a string literal is never a trailing comma. *)
 let strip_trailing_commas (str : string) : string =
-  let re = Re.compile
-    (Re.seq [Re.char ','; Re.rep (Re.set " \t\n\r"); Re.set "]}"]) in
-  Re.replace re ~f:(fun group ->
-    let matched = Re.Group.get group 0 in
-    String.sub matched 1 (String.length matched - 1)) str
+  let n = String.length str in
+  let buf = Buffer.create n in
+  let is_ws ch =
+    Char.equal ch ' ' || Char.equal ch '\t'
+    || Char.equal ch '\n' || Char.equal ch '\r'
+  in
+  let rec next_significant i =
+    if i >= n then None
+    else if is_ws str.[i] then next_significant (i + 1)
+    else Some str.[i]
+  in
+  let rec loop i state =
+    if i >= n then ()
+    else
+      let ch = str.[i] in
+      match state with
+      | `In_string escaping ->
+        Buffer.add_char buf ch;
+        let next_state =
+          if escaping then `In_string false
+          else if ch = '\\' then `In_string true
+          else if ch = '"' then `Normal
+          else `In_string false
+        in
+        loop (i + 1) next_state
+      | `Normal ->
+        if ch = '"' then begin
+          Buffer.add_char buf ch; loop (i + 1) (`In_string false)
+        end
+        else if ch = ','
+                && (match next_significant (i + 1) with
+                    | Some (']' | '}') -> true
+                    | Some _ | None -> false)
+        then loop (i + 1) `Normal
+        else begin
+          Buffer.add_char buf ch; loop (i + 1) `Normal
+        end
+  in
+  loop 0 `Normal;
+  Buffer.contents buf
+
+(* Yojson rejects a UTF-8 byte-order mark. *)
+let strip_bom (str : string) : string =
+  if String.length str >= 3
+     && Char.equal str.[0] '\xef'
+     && Char.equal str.[1] '\xbb'
+     && Char.equal str.[2] '\xbf'
+  then String.sub str 3 (String.length str - 3)
+  else str
 
 let read_tsconfig_excludes (path : Fpath.t) : string list =
   match
@@ -63,7 +108,7 @@ let read_tsconfig_excludes (path : Fpath.t) : string list =
     []
   | Some raw ->
   Nonfatal.catch ~default:[] (fun () ->
-    let cleaned = raw |> strip_jsonc |> strip_trailing_commas in
+    let cleaned = raw |> strip_bom |> strip_jsonc |> strip_trailing_commas in
     let json = Yojson.Basic.from_string cleaned in
     match json with
     | `Assoc fields ->
