@@ -40,26 +40,26 @@ type t = {
   interface_dispatch_uses_export_visibility : bool;
 }
 
-let decorator_simple_name (a : G.attribute) : string option =
-  match a with
+let decorator_simple_name (attr : G.attribute) : string option =
+  match attr with
   | G.NamedAttr (_, name, _) -> Ty_leaf.leaf_of_name name
   | _ -> None
 
 let entity_simple_name (ent : G.entity) : string option =
   match ent.G.name with
-  | G.EN n -> Ty_leaf.leaf_of_name n
+  | G.EN name -> Ty_leaf.leaf_of_name name
   | _ -> None
 
-let name_to_path (n : G.name) : string list =
-  match n with
-  | G.Id ((s, _), _) -> [s]
-  | G.IdQualified { G.name_last = ((s, _), _); name_middle; _ } ->
+let name_to_path (name : G.name) : string list =
+  match name with
+  | G.Id ((str, _), _) -> [str]
+  | G.IdQualified { G.name_last = ((last_str, _), _); name_middle; _ } ->
     let mids =
       match name_middle with
-      | Some (G.QDots dots) -> List.map (fun ((s, _), _) -> s) dots
+      | Some (G.QDots dots) -> List.map (fun ((mid_str, _), _) -> mid_str) dots
       | _ -> []
     in
-    mids @ [s]
+    mids @ [last_str]
 
 let callee_simple_name (callee : G.expr) : string option =
   match callee.G.e with
@@ -69,7 +69,7 @@ let callee_simple_name (callee : G.expr) : string option =
 
 let first_arg_string (args : G.argument list) : string option =
   match args with
-  | G.Arg { G.e = G.L (G.String (_, (s, _), _)); _ } :: _ -> Some s
+  | G.Arg { G.e = G.L (G.String (_, (str, _), _)); _ } :: _ -> Some str
   | _ -> None
 
 let is_call_to (target : string) (e : G.expr) : bool =
@@ -86,20 +86,20 @@ let extract_package_decl (ast : G.program) : string option =
   List.find_map (fun stmt ->
     match stmt.G.s with
     | G.DirectiveStmt { G.d = G.Package (_, parts); _ } ->
-      let s = List.map fst parts |> String.concat "." in
-      if String.length s > 0 then Some s else None
+      let pkg = List.map fst parts |> String.concat "." in
+      if String.length pkg > 0 then Some pkg else None
     | _ -> None
   ) ast
 
 let extract_clojure_ns_decl (ast : G.program) : string option =
-  let name_of_expr (e : G.expr) : string option =
-    match e.G.e with
-    | G.N n -> Option.map (String.concat ".") (Some (name_to_path n))
+  let name_of_expr (expr : G.expr) : string option =
+    match expr.G.e with
+    | G.N name -> Option.map (String.concat ".") (Some (name_to_path name))
     | _ -> None
   in
-  let path_of_expr e =
-    Option.bind (name_of_expr e) (fun s ->
-      if String.length s > 0 then Some s else None)
+  let path_of_expr expr =
+    Option.bind (name_of_expr expr) (fun str ->
+      if String.length str > 0 then Some str else None)
   in
   List.find_map (fun stmt ->
     match stmt.G.s with
@@ -109,23 +109,23 @@ let extract_clojure_ns_decl (ast : G.program) : string option =
     | _ -> None
   ) ast
 
-let strip_c_header_ext (s : string) : string =
+let strip_c_header_ext (fname : string) : string =
   let exts = [".hpp"; ".hxx"; ".hh"; ".h"] in
-  match List.find_opt (fun e -> Filename.check_suffix s e) exts with
-  | Some e -> Filename.chop_suffix s e
-  | None -> s
+  match List.find_opt (fun ext -> Filename.check_suffix fname ext) exts with
+  | Some ext -> Filename.chop_suffix fname ext
+  | None -> fname
 
 let python_is_init_file (file : Fpath.t) : bool =
   Filename.basename (Fpath.to_string file) = "__init__.py"
 
-let python_rewrite_module_path (s : string) : string =
-  if Filename.basename s = "__init__" then Filename.dirname s else s
+let python_rewrite_module_path (path : string) : string =
+  if Filename.basename path = "__init__" then Filename.dirname path else path
 
-let is_dataclass_decorator (a : G.attribute) : bool =
-  match decorator_simple_name a with Some "dataclass" -> true | _ -> false
+let is_dataclass_decorator (attr : G.attribute) : bool =
+  match decorator_simple_name attr with Some "dataclass" -> true | _ -> false
 
-let dataclass_kwarg_is (b : bool) (a : G.attribute) (kw : string) : bool =
-  match a with
+let dataclass_kwarg_is (expected : bool) (attr : G.attribute) (kw : string) : bool =
+  match attr with
   | G.NamedAttr (_, _, (_, args, _)) ->
     List.exists (function
       | G.ArgKwd ((key, _), { G.e = G.L (G.Bool (value, _)); _ }) ->
@@ -147,9 +147,9 @@ let dataclass_transform_frozen_default (a : G.attribute) : bool option =
 let python_dataclass_dunders (attrs : G.attribute list) : string list =
   match List.find_opt is_dataclass_decorator attrs with
   | None -> []
-  | Some a ->
-    let init = not (dataclass_kwarg_is false a "init") in
-    let frozen = dataclass_kwarg_is true a "frozen" in
+  | Some attr ->
+    let init = not (dataclass_kwarg_is false attr "init") in
+    let frozen = dataclass_kwarg_is true attr "frozen" in
     let acc = if init then ["__init__"] else [] in
     let acc = "__replace__" :: acc in
     if frozen then "__hash__" :: acc else acc
@@ -160,29 +160,29 @@ let python_namedtuple_dunders =
 let is_namedtuple_subclass (cdef : G.class_definition) : bool =
   List.exists (fun (ty, _) ->
     match ty.G.t with
-    | G.TyN n -> Ty_leaf.leaf_of_name n = Some "NamedTuple"
+    | G.TyN name -> Ty_leaf.leaf_of_name name = Some "NamedTuple"
     | _ -> false
   ) cdef.G.cextends
 
 let python_class_dunders_from_extends cdef =
   if is_namedtuple_subclass cdef then python_namedtuple_dunders else []
 
-let newtype_call e = is_call_to "NewType" e
-let namedtuple_call e = is_call_to "namedtuple" e
-let enum_call e = is_call_to "Enum" e
+let newtype_call expr = is_call_to "NewType" expr
+let namedtuple_call expr = is_call_to "namedtuple" expr
+let enum_call expr = is_call_to "Enum" expr
 
-let python_synth_call_dunders (e : G.expr) : string list option =
-  if namedtuple_call e then Some python_namedtuple_dunders
-  else if newtype_call e || enum_call e then Some []
+let python_synth_call_dunders (expr : G.expr) : string list option =
+  if namedtuple_call expr then Some python_namedtuple_dunders
+  else if newtype_call expr || enum_call expr then Some []
   else None
 
-let python_inner_class_from_call (e : G.expr)
+let python_inner_class_from_call (expr : G.expr)
   : (string * string list) option =
-  match call_first_string_arg e with
+  match call_first_string_arg expr with
   | None -> None
-  | Some n ->
-    if namedtuple_call e then Some (n, python_namedtuple_dunders)
-    else if newtype_call e || enum_call e then Some (n, [])
+  | Some name ->
+    if namedtuple_call expr then Some (name, python_namedtuple_dunders)
+    else if newtype_call expr || enum_call expr then Some (name, [])
     else None
 
 let python_extract_wrapper (ent : G.entity) : wrapper option =
@@ -192,60 +192,60 @@ let python_extract_wrapper (ent : G.entity) : wrapper option =
   match frozens, entity_simple_name ent with
   | [], _ | _, None -> None
   | _, Some name ->
-    let frozen_default = List.exists (fun f -> f) frozens in
+    let frozen_default = List.exists (fun frozen -> frozen) frozens in
     Some { w_simple_name = name; w_frozen_default = frozen_default }
 
-let python_wrapper_dunders (w : wrapper) : string list =
+let python_wrapper_dunders (wrapper : wrapper) : string list =
   let dunders = ["__init__"; "__replace__"] in
-  if w.w_frozen_default then dunders @ ["__hash__"] else dunders
+  if wrapper.w_frozen_default then dunders @ ["__hash__"] else dunders
 
-let strip_jsonc (s : string) : string =
-  let n = String.length s in
+let strip_jsonc (str : string) : string =
+  let n = String.length str in
   let buf = Buffer.create n in
   let rec loop i state =
     if i >= n then ()
     else
-      let c = s.[i] in
+      let ch = str.[i] in
       match state with
       | `Line_cmt ->
-        if c = '\n' then Buffer.add_char buf c;
-        loop (i + 1) (if c = '\n' then `Normal else `Line_cmt)
+        if ch = '\n' then Buffer.add_char buf ch;
+        loop (i + 1) (if ch = '\n' then `Normal else `Line_cmt)
       | `Block_cmt ->
-        if c = '*' && i + 1 < n && s.[i + 1] = '/' then loop (i + 2) `Normal
+        if ch = '*' && i + 1 < n && str.[i + 1] = '/' then loop (i + 2) `Normal
         else begin
-          if c = '\n' then Buffer.add_char buf c;
+          if ch = '\n' then Buffer.add_char buf ch;
           loop (i + 1) `Block_cmt
         end
       | `In_string escaping ->
-        Buffer.add_char buf c;
+        Buffer.add_char buf ch;
         let next_state =
           if escaping then `In_string false
-          else if c = '\\' then `In_string true
-          else if c = '"' then `Normal
+          else if ch = '\\' then `In_string true
+          else if ch = '"' then `Normal
           else `In_string false
         in
         loop (i + 1) next_state
       | `Normal ->
-        if c = '"' then begin
-          Buffer.add_char buf c; loop (i + 1) (`In_string false)
-        end else if c = '/' && i + 1 < n then begin
-          let next = s.[i + 1] in
+        if ch = '"' then begin
+          Buffer.add_char buf ch; loop (i + 1) (`In_string false)
+        end else if ch = '/' && i + 1 < n then begin
+          let next = str.[i + 1] in
           if next = '/' then loop (i + 2) `Line_cmt
           else if next = '*' then loop (i + 2) `Block_cmt
-          else begin Buffer.add_char buf c; loop (i + 1) `Normal end
+          else begin Buffer.add_char buf ch; loop (i + 1) `Normal end
         end else begin
-          Buffer.add_char buf c; loop (i + 1) `Normal
+          Buffer.add_char buf ch; loop (i + 1) `Normal
         end
   in
   loop 0 `Normal;
   Buffer.contents buf
 
-let strip_trailing_commas (s : string) : string =
+let strip_trailing_commas (str : string) : string =
   let re = Re.compile
     (Re.seq [Re.char ','; Re.rep (Re.set " \t\n\r"); Re.set "]}"]) in
-  Re.replace re ~f:(fun g ->
-    let m = Re.Group.get g 0 in
-    String.sub m 1 (String.length m - 1)) s
+  Re.replace re ~f:(fun group ->
+    let matched = Re.Group.get group 0 in
+    String.sub matched 1 (String.length matched - 1)) str
 
 let read_tsconfig_excludes (path : Fpath.t) : string list =
   match
@@ -265,7 +265,7 @@ let read_tsconfig_excludes (path : Fpath.t) : string list =
     | `Assoc fields ->
       (match List.assoc_opt "exclude" fields with
        | Some (`List items) ->
-         List.filter_map (function `String s -> Some s | _ -> None) items
+         List.filter_map (function `String str -> Some str | _ -> None) items
        | _ -> [])
     | _ -> [])
 
@@ -292,10 +292,10 @@ let find_tsconfigs (project_root : Fpath.t) : Fpath.t list =
       else if Sys.file_exists plain_path then Fpath.v plain_path :: acc
       else acc
     in
-    List.fold_left (fun acc e ->
-      let full = Filename.concat dir e in
+    List.fold_left (fun acc entry ->
+      let full = Filename.concat dir entry in
       let is_dir = Nonfatal.catch ~default:false (fun () -> Sys.is_directory full) in
-      if is_dir && not (skip_dir e) then walk (depth + 1) full acc
+      if is_dir && not (skip_dir entry) then walk (depth + 1) full acc
       else acc
     ) acc entries
   in
@@ -356,11 +356,11 @@ let default : t = {
   interface_dispatch_uses_export_visibility = false;
 }
 
-let string_contains (s : string) (sub : string) : bool =
-  let n = String.length s and m = String.length sub in
+let string_contains (str : string) (sub : string) : bool =
+  let n = String.length str and m = String.length sub in
   let rec loop i =
     if i + m > n then false
-    else if String.equal (String.sub s i m) sub then true
+    else if String.equal (String.sub str i m) sub then true
     else loop (i + 1)
   in
   m > 0 && loop 0
@@ -379,23 +379,23 @@ let rust_narrow_methods_by_imports
   ) fi_imports;
   if Hashtbl.length import_hint = 0 then ts
   else
-    Hashtbl.fold (fun cls hint s ->
+    Hashtbl.fold (fun cls hint state ->
       let cls_name = Names.Class_name.of_string cls in
-      match Type_state.get_methods s cls_name with
-      | None -> s
+      match Type_state.get_methods state cls_name with
+      | None -> state
       | Some methods ->
         let hint_dash =
-          String.map (fun c -> if c = '_' then '-' else c) hint
+          String.map (fun ch -> if ch = '_' then '-' else ch) hint
         in
-        let filtered = List.filter (fun (f : Func_info.t) ->
-          match file_of_func f with
+        let filtered = List.filter (fun (func : Func_info.t) ->
+          match file_of_func func with
           | None -> false
           | Some file ->
             string_contains file hint || string_contains file hint_dash
         ) methods in
         if filtered <> [] && List.length filtered <> List.length methods
-        then Type_state.set_methods s cls_name filtered
-        else s
+        then Type_state.set_methods state cls_name filtered
+        else state
     ) import_hint ts
 
 let python : t = { default with
@@ -428,8 +428,8 @@ let scan_class_body (of_call : G.expr -> 'a list)
 (* Token points at the symbol literal so def-site location matches scip-ruby. *)
 let ruby_class_body_synth_methods (cdef : G.class_definition)
   : (string * Tok.t) list =
-  let names_from_call (e : G.expr) : (string * Tok.t) list =
-    match e.G.e with
+  let names_from_call (expr : G.expr) : (string * Tok.t) list =
+    match expr.G.e with
     | G.Call ({ e = G.N (G.Id ((macro, _), _)); _ }, (_, args, _))
       when macro = "attr_reader"
            || macro = "attr_writer"
@@ -457,16 +457,16 @@ let ruby_class_body_extra_parents (cdef : G.class_definition)
   : string list list =
   let arg_to_path (arg : G.argument) : string list option =
     match arg with
-    | G.Arg { e = G.N n; _ } -> Some (name_to_path n)
+    | G.Arg { e = G.N name; _ } -> Some (name_to_path name)
     | _ -> None
   in
-  let paths_from_call (e : G.expr) : string list list =
-    match e.G.e with
+  let paths_from_call (expr : G.expr) : string list list =
+    match expr.G.e with
     | G.Call ({ e = G.N (G.Id ((macro, _), _)); _ }, (_, args, _))
       when macro = "include" || macro = "extend" || macro = "prepend" ->
       List.filter_map (fun arg ->
         match arg_to_path arg with
-        | Some p when p <> [] -> Some p
+        | Some path when path <> [] -> Some path
         | _ -> None
       ) args
     | _ -> []
@@ -482,7 +482,7 @@ let ruby_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
       G.ckind = (G.Class, fk);
       cextends = []; cimplements = []; cmixins = [];
       cparams = (fk, [], fk);
-      cbody = (fk, List.map (fun s -> G.F s) items, fk);
+      cbody = (fk, List.map (fun stmt -> G.F stmt) items, fk);
     } in
     Some (ent, cdef)
   | _ -> None
@@ -541,10 +541,10 @@ let typescript : t = { default with
   class_constructor_synth_fields = typescript_class_constructor_synth_fields;
 }
 
-let php_strip_field_sigil (s : string) : string =
-  if String.length s > 0 && s.[0] = '$'
-  then String.sub s 1 (String.length s - 1)
-  else s
+let php_strip_field_sigil (field : string) : string =
+  if String.length field > 0 && field.[0] = '$'
+  then String.sub field 1 (String.length field - 1)
+  else field
 
 let php : t = { default with
   walks_inheritance = true;
@@ -558,21 +558,21 @@ let rust_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
   match def_kind with
   | G.OtherDef ((kind, _), anys) when String.equal kind "Impl" ->
     let ty_opt =
-      List.find_map (function G.T t -> Some t | _ -> None) anys
+      List.find_map (function G.T ty -> Some ty | _ -> None) anys
     in
     let stmts =
-      List.concat_map (function G.Ss s -> s | _ -> []) anys
+      List.concat_map (function G.Ss body -> body | _ -> []) anys
     in
     (match ty_opt with
-     | Some { G.t = G.TyN (G.Id _ as n); _ }
-     | Some { G.t = G.TyExpr { G.e = G.N (G.Id _ as n); _ }; _ } ->
-       let new_ent = { ent with G.name = G.EN n } in
+     | Some { G.t = G.TyN (G.Id _ as name); _ }
+     | Some { G.t = G.TyExpr { G.e = G.N (G.Id _ as name); _ }; _ } ->
+       let new_ent = { ent with G.name = G.EN name } in
        let fk = Tok.unsafe_fake_tok "impl" in
        let cdef = G.ClassDef {
          G.ckind = (G.Class, fk);
          cextends = []; cimplements = []; cmixins = [];
          cparams = (fk, [], fk);
-         cbody = (fk, List.map (fun s -> G.F s) stmts, fk);
+         cbody = (fk, List.map (fun stmt -> G.F stmt) stmts, fk);
        } in
        Some (new_ent, cdef)
      | _ -> None)
