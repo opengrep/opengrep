@@ -1,10 +1,10 @@
-(* [edges_for_file] is stateless, so [Main] runs it across files in parallel. *)
+(* [edges_for_file] is stateless, so [Project_index] runs it across files in parallel. *)
 
 module G = AST_generic
 open Types
 
 (* Infers var classes from assignments like [x = f()] and stamps them onto
-   [id_type]; defined in [Main.ml]. *)
+   [id_type]; defined in [Project_index.ml]. *)
 type stamp_var_types =
   type_state:Type_state.t ->
   slice_element_of_field:(string * string, G.name) Hashtbl.t ->
