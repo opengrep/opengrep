@@ -93,6 +93,11 @@ $ bin/opengrep-interfile-graph topo-order   --rules my-rule.yaml /path/to/code -
   file-by-file breakdown plus a TSV edge dump to stderr, in the same
   format as `index --dump-edges`.  This shows the graph *as the
   engine consumes it* (absolute paths).
+- `dump-interfile-ast -l LANG FILE [-r DIR]` — dump a file's generic
+  AST after call-graph callee resolution, so each callee's
+  `id_resolved` shows the resolved definition.  With `-r` the projidx
+  pipeline resolves callees across files; without it resolution is
+  single-file.
 - `lookup -p PATTERN` — find vertices whose name matches the regex,
   optionally with their callers/callees (`-v`).
 - `edges -p PATTERN [--kind call|dispatch]` — show callers and
