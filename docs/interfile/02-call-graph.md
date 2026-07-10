@@ -1,13 +1,12 @@
 # 2. The call graph: projidx
 
-`projidx` (formal name: `opengrep_project_index`, binary name:
-`opengrep-project-index`) is opengrep's in-process call-graph
-builder.  It lives in `src/project_index/`.
+`projidx` (formal name: `opengrep_project_index`) is opengrep's
+in-process call-graph builder.  It lives in `src/project_index/`.
 
 For interfile taint analysis it is invoked **as a library**, never as
-a subprocess — see `src/engine/Interfile_graph.ml`.  The standalone
-binary exists for debugging and offline graph inspection
-([§ 5](05-cli-and-tools.md)).
+a subprocess — see `src/engine/Interfile_graph.ml`.  For debugging
+and offline graph inspection, `opengrep-interfile-graph index`
+exposes the raw index ([§ 5](05-cli-and-tools.md)).
 
 ## What the call graph is
 
@@ -46,8 +45,8 @@ Always delegates to `Find_targets.get_target_fpaths` — the same
 discovery Semgrep itself uses — so projidx's file universe matches
 the scan's target selection (gitignore, semgrepignore, size/minified
 filtering, CLI `--include`/`--exclude`).  The interfile engine
-passes the scan's actual `Find_targets.conf`; the standalone
-`opengrep-project-index` CLI uses
+passes the scan's actual `Find_targets.conf`; the
+`opengrep-interfile-graph` tool uses
 `Discover.projidx_default_targeting_conf`, a permissive variant that
 disables size caps and `.semgrepignore` so large source files (e.g.
 pytorch's 1.3 MB `common_methods_invocations.py`) still get indexed.
@@ -280,14 +279,13 @@ The key entries:
   `.h`/`.hpp`/`.hh`/`.hxx` from `#include "handler.h"` so it
   matches the `handler` module key derived from `handler.h`.
 
-## The standalone binary
+## The standalone view
 
-The same `Main.collect` is exposed through
-`src/project_index/Cli.ml` as `opengrep-project-index`.  Typical
-invocation:
+The same `Main.collect` is exposed through the `index` subcommand of
+`tools/opengrep-interfile-graph`.  Typical invocation:
 
 ```
-$ bin/opengrep-project-index --lang go \
+$ bin/opengrep-interfile-graph index --lang go \
     --project-root /path/to/repo \
     --dump-edges > edges.tsv
 ```
