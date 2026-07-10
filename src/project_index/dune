@@ -1,11 +1,12 @@
-; Library form — exposes [Main.collect] so the engine can build the
-; project call graph inline (no subprocess).
+; projidx: builds a project-wide call graph and type index.  Consumed
+; in-process by the engine via [Main.collect_resolved]
+; (src/engine/Interfile_graph.ml).  The diagnostic CLI lives in
+; tools/opengrep-interfile-graph ([index] subcommand).
 (library
  (name opengrep_project_index)
  (public_name semgrep.opengrep_project_index)
  (modules Main Index_lang_rules Fixpoint Edge_emitter Discover Types Pipeline Nonfatal Go_inheritance Go_modules Mro Ts_class_aliases Structural_dispatch Reexports Func_index Cjs_exports Visibility Log_projidx)
  (libraries
-   cmdliner
    commons
    fpath
    logs
@@ -23,15 +24,3 @@
    process_limits
    TCB
  ))
-
-; Thin executable: just runs the library's [cmd].
-(executable
- (name Cli)
- (modules Cli)
- (libraries opengrep_project_index cmdliner)
- (modes native))
-
-(install
- (package semgrep)
- (section bin)
- (files (Cli.exe as opengrep-project-index)))
