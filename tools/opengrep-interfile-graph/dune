@@ -1,6 +1,8 @@
 (executables
  (names Main)
  (libraries
+   ast_generic
+   semgrep.parsing
    cmdliner
    commons
    call_graph

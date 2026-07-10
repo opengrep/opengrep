@@ -19,8 +19,6 @@
 
     ; internal deps in src/
     semgrep.core
-    semgrep.tainting ; Graph_from_AST.build_call_graph (-dump_graph_ast)
-    semgrep.opengrep_project_index ; resolve_ast_for_file (-dump_graph_ast_root)
     semgrep.core_scan
     semgrep.metachecking
     semgrep.parsing.tests ; Test_parsing.parsing_stats
