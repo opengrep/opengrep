@@ -22,10 +22,10 @@ let find_sub (hay : string) (needle : string) : int option =
     in
     go 0
 
-let strip_version (s : string) : string =
-  match String.split_on_char ' ' (String.trim s) with
+let strip_version (str : string) : string =
+  match String.split_on_char ' ' (String.trim str) with
   | path :: _ -> path
-  | [] -> s
+  | [] -> str
 
 let parse_replace (line : string) : (string * string) option =
   match find_sub line "=>" with
@@ -51,7 +51,7 @@ let parse_go_mod (content : string) : string option * (string * string) list =
       if String.equal line ")" then (module_path, replaces, false)
       else
         (match parse_replace line with
-         | Some r -> (module_path, r :: replaces, true)
+         | Some replace_pair -> (module_path, replace_pair :: replaces, true)
          | None -> (module_path, replaces, true))
     else if String.length line >= 7
             && String.equal (String.sub line 0 7) "module " then
@@ -61,7 +61,7 @@ let parse_go_mod (content : string) : string option * (string * string) list =
     else if String.length line >= 8
             && String.equal (String.sub line 0 8) "replace " then
       (match parse_replace (String.sub line 8 (String.length line - 8)) with
-       | Some r -> (module_path, r :: replaces, false)
+       | Some replace_pair -> (module_path, replace_pair :: replaces, false)
        | None -> (module_path, replaces, false))
     else (module_path, replaces, false)
   in
@@ -93,7 +93,7 @@ let go_mod_dirs ~(project_root : Fpath.t) (go_files : Fpath.t list)
       else (seen, dirs)
   in
   let _seen, dirs =
-    List.fold_left (fun st f -> walk st (Fpath.parent f))
+    List.fold_left (fun st file -> walk st (Fpath.parent file))
       (SSet.empty, []) go_files
   in
   dirs
@@ -116,30 +116,35 @@ let discover ~(project_root : Fpath.t) (go_files : Fpath.t list) : t =
       ([], []) (go_mod_dirs ~project_root go_files)
   in
   let modules =
-    List.sort (fun a b ->
-      compare (String.length (Fpath.to_string b.root))
-        (String.length (Fpath.to_string a.root))) modules
+    List.sort (fun left right ->
+      compare (String.length (Fpath.to_string right.root))
+        (String.length (Fpath.to_string left.root))) modules
   in
   { modules; replaces }
 
 let import_path_of_dir (t : t) (dir : Fpath.t) : string option =
   let dir = Fpath.normalize dir in
-  List.find_opt (fun m -> Fpath.is_prefix m.root dir) t.modules
-  |> Option.map (fun m ->
-    match Fpath.relativize ~root:m.root dir with
-    | None -> m.path
+  List.find_opt (fun module_ -> Fpath.is_prefix module_.root dir) t.modules
+  |> Option.map (fun module_ ->
+    match Fpath.relativize ~root:module_.root dir with
+    | None -> module_.path
     | Some rel ->
       let segs =
         Fpath.segs (Fpath.normalize rel)
-        |> List.filter (fun s -> s <> "" && s <> ".")
+        |> List.filter (fun seg -> seg <> "" && seg <> ".")
       in
-      if segs = [] then m.path else m.path ^ "/" ^ String.concat "/" segs)
+      (* "/" here is the Go import-path separator (always forward slash,
+         OS-independent), not an OS file-path separator; deliberately kept as
+         "/" regardless of platform. *)
+      if segs = [] then module_.path
+      else module_.path ^ "/" ^ String.concat "/" segs)
 
 let resolve_import (t : t) (import_path : string) : string =
   let rec apply = function
     | [] -> import_path
     | (old_, new_) :: rest ->
       if String.equal import_path old_ then new_
+      (* "/" is the Go import-path separator, not an OS file-path separator. *)
       else if String.length import_path > String.length old_
            && String.equal (String.sub import_path 0 (String.length old_ + 1))
                 (old_ ^ "/")
