@@ -73,7 +73,8 @@ val hook_mk_pro_core_run_for_osemgrep : (pro_conf -> func) option ref
 val hook_pro_git_remote_scan_setup : (func -> func) option ref
 
 (* builder *)
-val mk_result : ?inline:bool -> Rule.rule list -> Core_result.t -> result
+val mk_result :
+  ?inline:bool -> ?taint_interfile:bool -> Rule.rule list -> Core_result.t -> result
 
 (* Core_scan.func adapter to be used in osemgrep.
 

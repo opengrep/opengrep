@@ -586,6 +586,7 @@ let check_targets_with_rules
           let (res : Core_runner.result) =
             Core_runner.mk_result
               ~inline:conf.core_runner_conf.inline_metavariables
+              ~taint_interfile:conf.core_runner_conf.taint_interfile
               rules
               result
           in
