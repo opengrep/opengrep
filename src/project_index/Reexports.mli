@@ -1,3 +1,10 @@
+(* [bound -> target] for every name an [__init__]-style package file
+   re-exports; empty unless [cfg.has_reexports]. *)
+val build_reexport_map :
+  cfg:Index_lang_rules.t ->
+  Types.file_info list ->
+  (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t
+
 (* [`Per_file]-only: [from .X import name] adds [name] to the importer's
    module. Pure: reads [project_funcs_by_module], returns the updated
    per-module func lists for the caller to apply. *)
