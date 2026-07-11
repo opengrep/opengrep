@@ -1106,7 +1106,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
            target; never runs in per-target. *)
         false
       | Some fallback_set ->
-        (match Interfile_dispatch.target_abs_path ~cwd target with
+        (match Target.abs_path ~cwd target with
          | None -> true  (* Lockfile / no abs_path: be conservative *)
          | Some p ->
            Hashtbl.mem fallback_set (Fpath.to_string p))
