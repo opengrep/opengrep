@@ -17,9 +17,6 @@ val extract_signatures : rule_state -> Shape_and_sig.signature_database
 
 val run_rule : rule_state -> Core_match.t list
 
-val target_abs_path : cwd:Fpath.t -> Target.t -> Fpath.t option
-(** Normalized absolute path; [None] for [Lockfile]. *)
-
 val interfile_taint_rule_ids :
   taint_interfile:bool ->
   Rule.t list ->

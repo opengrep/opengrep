@@ -53,19 +53,6 @@ type lang_context = {
 let file_of_fid (fid : Function_id.t) : Fpath.t option =
   Option.map Fpath.normalize (Function_id.file_of fid)
 
-(* Must match [Core_scan]'s per-target path normalization exactly. *)
-(* Normalized absolute path + the root it was anchored to (None if the
-   input was already absolute). *)
-let absolutify ~(cwd : Fpath.t) (path : Fpath.t) : Fpath.t * Fpath.t option =
-  if Fpath.is_abs path then (Fpath.normalize path, None)
-  else (Fpath.(cwd // path) |> Fpath.normalize, Some cwd)
-
-let target_abs_path ~(cwd : Fpath.t) (target : Target.t) : Fpath.t option =
-  match target with
-  | Target.Regular { path = { internal_path_to_content; _ }; _ } ->
-    Some (fst (absolutify ~cwd internal_path_to_content))
-  | Lockfile _ -> None
-
 (* Interfile via the global flag or the rule's own option. *)
 let rule_is_interfile ~(taint_interfile : bool) (rule : R.rule) : bool =
   taint_interfile ||
@@ -133,7 +120,7 @@ let targets_in_interfile_graph
       (match Xlang.to_lang analyzer with
        | Ok target_lang when Lang.equal target_lang lang ->
          let abs_path, path_root =
-           absolutify ~cwd internal_path_to_content
+           Fpath_.absolutify ~cwd internal_path_to_content
          in
          if Hashtbl.mem interfile_files abs_path then
            Some { abs_path; path_root }
@@ -362,7 +349,7 @@ let build_target_root_map ~(cwd : Fpath.t) (targets : Target.t list)
       match target with
       | Regular ({ path = { internal_path_to_content; _ }; _ }) ->
         let abs_path, path_root =
-          absolutify ~cwd internal_path_to_content
+          Fpath_.absolutify ~cwd internal_path_to_content
         in
         FpathMap.add abs_path path_root acc
       | Lockfile _ -> acc)
@@ -1065,7 +1052,7 @@ let build_rule_states
       (Lang.to_lowercase_alnum lang,
        Fpath.to_string (Fpath.normalize project_root))
     in
-    let new_paths = List.filter_map (target_abs_path ~cwd) targets in
+    let new_paths = List.filter_map (Target.abs_path ~cwd) targets in
     let existing =
       Option.value ~default:[]
         (Hashtbl.find_opt fallback_target_paths_by_lang_root key)
@@ -1107,7 +1094,7 @@ let build_rule_states
               matching_targets;
             let unmatched =
               List.filter (fun target ->
-                match target_abs_path ~cwd target with
+                match Target.abs_path ~cwd target with
                 | None -> false
                 | Some path -> not (Hashtbl.mem matched_paths path))
                 root_targets

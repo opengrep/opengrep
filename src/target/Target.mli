@@ -107,6 +107,12 @@ val internal_path : t -> Fpath.t
 (** [internal_path target] is the path to a file containing the
     contents of [target]. *)
 
+val abs_path : cwd:Fpath.t -> t -> Fpath.t option
+(** Normalised absolute content path of a regular target (None for
+    lockfiles).  Relative target paths are relative to [cwd] (they extend
+    the scanning roots as typed on the command line), not to the project
+    root. *)
+
 val origin : t -> Origin.t
 (** [origin target] is the user-reportable origin of [target]. *)
 
