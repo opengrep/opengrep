@@ -1182,6 +1182,15 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
 (* NOTE: Where new and old cli meet, to invoke scan. *)
 let scan (caps : < caps ; .. >) (config : Core_scan_config.t) :
     Core_result.result_or_exn =
+  (* taint_interfile implies taint_intrafile: interfile builds on the
+     intrafile per-function dataflow, and signature-db lookups gate on
+     taint_intrafile — without this, interfile dispatch would run but
+     instantiate nothing.  Enforced here so no caller can construct a scan
+     with interfile enabled and intrafile off. *)
+  let config =
+    { config with
+      taint_intrafile = config.taint_intrafile || config.taint_interfile }
+  in
   try
     let timed_rules =
       Common.with_time (fun () ->
