@@ -352,10 +352,8 @@ let mk_config () : Core_scan_config.t =
     max_match_per_file = !max_match_per_file;
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
-    (* -taint_interfile implies -taint_intrafile (mirrors Scan_CLI):
-       signature-db lookups gate on taint_intrafile, so without this the
-       core binary runs interfile dispatch but instantiates nothing. *)
-    taint_intrafile = !taint_intrafile || !taint_interfile;
+    (* taint_interfile implies taint_intrafile; enforced in Core_scan.scan. *)
+    taint_intrafile = !taint_intrafile;
     effect_guards = false;
     taint_interfile = !taint_interfile;
     taint_interfile_depth = !taint_interfile_depth;
