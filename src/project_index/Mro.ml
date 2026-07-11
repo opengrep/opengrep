@@ -106,7 +106,7 @@ let inherit_into_type_state
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
     ~(class_infos : class_info list)
     ~(func_def_file : FA.func_info -> string option)
-    (ts : Type_state.t) : Type_state.t =
+    (ts : Type_state.t) : Type_state.t * class_fun_info list =
   let by_qn : (Names.Class_qn.t, class_info) Hashtbl.t = Hashtbl.create 8192 in
   List.iter (fun ci -> Hashtbl.replace by_qn ci.ci_qn ci) class_infos;
   let known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t =
@@ -202,7 +202,8 @@ let inherit_into_type_state
   let mro_ancestors (ci : class_info) : class_info list =
     match linearize [] ci with _ :: rest -> rest | [] -> []
   in
-  List.fold_left (fun (state : Type_state.t) ci ->
+  List.fold_left (fun ((state : Type_state.t),
+                       (inherited_acc : class_fun_info list)) ci ->
     let child_simple = Names.Class_qn.leaf ci.ci_qn in
     let child_name = Names.Class_name.of_string child_simple in
     let own =
@@ -221,7 +222,7 @@ let inherit_into_type_state
                   id_info = G.empty_id_info () }
     in
     match child_cls_il with
-    | None -> state
+    | None -> (state, inherited_acc)
     | Some child_cls_il ->
       let initial_names =
         List.filter_map (fun (func : FA.func_info) ->
@@ -267,94 +268,8 @@ let inherit_into_type_state
         List.fold_left collect_from (initial_names, []) (mro_ancestors ci)
       in
       if added <> [] then
-        Type_state.add_inherited state
-          (Names.Class_name.of_string child_simple) added
-      else state
-  ) ts class_infos
-
-(* Transitive-parents walk (NOT C3; may disagree with
-   [inherit_into_type_state] on diamond ordering) emitting synthetic
-   inherited-method entries.  Feeds only the diagnostic entry list
-   returned by [Project_index.collect]; callee resolution uses
-   [inherit_into_type_state]. *)
-let inherited_entries
-    ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
-    ~(scope_resolution : bool)
-    (entries : entry list) (class_infos : class_info list) : entry list =
-  let by_qn : (Names.Class_qn.t, class_info) Hashtbl.t = Hashtbl.create 8192 in
-  List.iter (fun ci -> Hashtbl.replace by_qn ci.ci_qn ci) class_infos;
-  let known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t =
-    Hashtbl.create 8192
-  in
-  List.iter (fun ci -> Hashtbl.replace known_class_qns ci.ci_qn ())
-    class_infos;
-  let qns_by_leaf : (Names.Class_name.t, Names.Class_qn.t list) Hashtbl.t =
-    Hashtbl.create 8192
-  in
-  if scope_resolution then
-    List.iter (fun ci ->
-      let leaf = Names.Class_qn.leaf ci.ci_qn in
-      if leaf <> "" then begin
-        let leaf_key = Names.Class_name.of_string leaf in
-        let cur = Option.value (Hashtbl.find_opt qns_by_leaf leaf_key) ~default:[] in
-        Hashtbl.replace qns_by_leaf leaf_key (ci.ci_qn :: cur)
-      end
-    ) class_infos;
-  let ensure_set = Symbols.methods_by_class entries in
-  List.fold_left (fun all_new ci ->
-    let own = ensure_set ci.ci_id in
-    let visited : (Function_id.t, unit) Hashtbl.t = Hashtbl.create 8 in
-    let rec walk acc pci =
-      if Hashtbl.mem visited pci.ci_id then acc
-      else begin
-        Hashtbl.replace visited pci.ci_id ();
-        let acc =
-          Hashtbl.fold (fun mname () acc ->
-            if Hashtbl.mem own mname then acc
-            else begin
-              Hashtbl.replace own mname ();
-              let m_id = Symbols.synth_function_id ci.ci_id mname in
-              { id = m_id; name = mname; kind = K_method;
-                file = ci.ci_file; range = ci.ci_range;
-                defining_class_id = Some ci.ci_id }
-              :: acc
-            end
-          ) (ensure_set pci.ci_id) acc
-        in
-        List.fold_left (fun acc gp_path ->
-          match
-            (match resolve_parent_qn ~imports:pci.ci_imports
-                     ~reexport_map ~known_class_qns gp_path with
-             | Some _ as resolved -> resolved
-             | None when scope_resolution ->
-               resolve_parent_by_scope ~by_qn ~qns_by_leaf pci gp_path
-             | None -> None)
-          with
-          | None -> acc
-          | Some gp_qn ->
-            (match Hashtbl.find_opt by_qn
-                     (Names.Class_qn.of_string
-                        (Names.Module_qn.to_string gp_qn)) with
-             | Some gpci -> walk acc gpci
-             | None -> acc)
-        ) acc pci.ci_parent_paths
-      end
-    in
-    List.fold_left (fun acc p_path ->
-      match
-        (match resolve_parent_qn ~imports:ci.ci_imports
-                 ~reexport_map ~known_class_qns p_path with
-         | Some _ as resolved -> resolved
-         | None when scope_resolution ->
-           resolve_parent_by_scope ~by_qn ~qns_by_leaf ci p_path
-         | None -> None)
-      with
-      | None -> acc
-      | Some pq ->
-        (match Hashtbl.find_opt by_qn
-                 (Names.Class_qn.of_string
-                    (Names.Module_qn.to_string pq)) with
-         | Some pci -> walk acc pci
-         | None -> acc)
-    ) all_new ci.ci_parent_paths
-  ) [] class_infos
+        (Type_state.add_inherited state
+           (Names.Class_name.of_string child_simple) added,
+         (ci, added) :: inherited_acc)
+      else (state, inherited_acc)
+  ) (ts, []) class_infos
