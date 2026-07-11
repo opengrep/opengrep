@@ -130,6 +130,15 @@ let internal_path (target : t) : Fpath.t =
       internal_path_to_content
   | Lockfile { path; _ } -> path
 
+(* Normalised absolute content path of a regular target (None for
+   lockfiles).  Relative paths are relative to [cwd], not the project
+   root. *)
+let abs_path ~(cwd : Fpath.t) (target : t) : Fpath.t option =
+  match target with
+  | Regular { path = { internal_path_to_content; _ }; _ } ->
+      Some (fst (Fpath_.absolutify ~cwd internal_path_to_content))
+  | Lockfile _ -> None
+
 let origin (target : t) : Origin.t =
   match target with
   | Regular { path = { origin; _ }; _ } -> origin
