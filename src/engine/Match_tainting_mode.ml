@@ -193,6 +193,15 @@ let guard_folds_false ~lang (g : Effect_guard.t) : bool =
   | None ->
       false
 
+let match_on_of_xconf (xconf : Match_env.xconfig) : [ `Sink | `Source ] =
+  (* TEMPORARY HACK to support both taint_match_on (DEPRECATED) and
+   * taint_focus_on (preferred name by SR). *)
+  match (xconf.config.taint_focus_on, xconf.config.taint_match_on) with
+  | `Source, _
+  | _, `Source ->
+      `Source
+  | `Sink, `Sink -> `Sink
+
 let pms_of_effect ~lang ~match_on (effect_ : Effect.t) =
   match effect_ with
   | ToLval _
@@ -643,15 +652,7 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
          Running rule %s\n\
          ===================="
         (Rule_ID.to_string (fst rule.R.id)));
-  let match_on =
-    (* TEMPORARY HACK to support both taint_match_on (DEPRECATED) and
-     * taint_focus_on (preferred name by SR). *)
-    match (xconf.config.taint_focus_on, xconf.config.taint_match_on) with
-    | `Source, _
-    | _, `Source ->
-        `Source
-    | `Sink, `Sink -> `Sink
-  in
+  let match_on = match_on_of_xconf xconf in
   let {
     path = { internal_path_to_content = file; _ };
     xlang;

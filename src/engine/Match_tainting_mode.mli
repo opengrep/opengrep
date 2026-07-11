@@ -16,6 +16,10 @@ val build_info_map :
   AST_generic.program ->
   fun_info Shape_and_sig.FunctionMap.t
 
+(* Whether findings anchor on the taint source or the sink, from the
+   [taint_focus_on] / [taint_match_on] rule options. *)
+val match_on_of_xconf : Match_env.xconfig -> [ `Sink | `Source ]
+
 val pms_of_effect :
   lang:Lang.t ->
   match_on:[ `Sink | `Source ] ->
