@@ -22,6 +22,10 @@ type class_info = {
   ci_decorator_names : string list;
 }
 
+(* A class paired with functions attributed to it, e.g. the methods it
+   inherits via the C3 linearisation. *)
+type class_fun_info = class_info * Func_info.t list
+
 type dataclass_wrapper = Index_lang_rules.wrapper
 
 type import_kind =
