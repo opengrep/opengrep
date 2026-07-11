@@ -51,6 +51,12 @@ let rec strip_leading_dot_and_trailing_slash (path : Fpath.t) : Fpath.t =
       strip_leading_dot_and_trailing_slash (of_relative_segments segs)
   | _ -> path
 
+(* Normalised absolute form of a path, plus the anchor it was resolved
+   against (None if the path was already absolute). *)
+let absolutify ~(cwd : Fpath.t) (path : Fpath.t) : Fpath.t * Fpath.t option =
+  if Fpath.is_abs path then (Fpath.normalize path, None)
+  else (Fpath.(cwd // path) |> Fpath.normalize, Some cwd)
+
 module Operators = struct
   let ( / ) = Fpath.( / )
   let ( // ) = Fpath.( // )
