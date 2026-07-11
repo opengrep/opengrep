@@ -75,7 +75,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     ~(ncores : int)
     ?(class_infos = [])
     ?(reexport_map = Hashtbl.create 0)
-    (file_infos : file_info list) : Call_graph.G.t =
+    (file_infos : file_info list) : Call_graph.G.t * class_fun_info list =
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
   in
@@ -254,11 +254,11 @@ let build_project_call_graph (caps : < Cap.fork >)
   let type_state =
     Go_inheritance.lift_embedded_interfaces ~lang file_infos type_state
   in
-  let type_state =
+  let type_state, inherited_by_class =
     if cfg.Index_lang_rules.walks_inheritance then
       Mro.inherit_into_type_state ~reexport_map ~class_infos
         ~func_def_file:Type_augment.func_def_file type_state
-    else type_state
+    else (type_state, [])
   in
 
   (* TS/JS class-body aliases [class C { static foo = importedFn }]. *)
@@ -427,7 +427,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   if n_dispatch > 0 then
     Log.debug (fun m -> m "Interface dispatch: emitted %d Dispatch edges"
       n_dispatch);
-  graph
+  (graph, inherited_by_class)
 
 let project_root_abs_of (project_root : Fpath.t) : Fpath.t =
   if Fpath.is_abs project_root then project_root
@@ -549,20 +549,31 @@ let run_pipeline (caps : < Cap.fork >)
   Log.debug (fun m -> m "Wrapper synthesis: %d dunders emitted"
     (List.length synth_from_wrappers));
   let entries_pre_mro = all_entries @ synth_from_wrappers in
-  let inherited =
-    if cfg.Index_lang_rules.walks_inheritance then
-      Mro.inherited_entries ~reexport_map
-        ~scope_resolution:cfg.Index_lang_rules.mro_uses_scope_resolution
-        entries_pre_mro all_classes
-    else []
-  in
-  Log.debug (fun m -> m "Inheritance walk: attached %d inherited methods (lang walks_inheritance=%b)"
-    (List.length inherited) cfg.Index_lang_rules.walks_inheritance);
-  let final_entries = entries_pre_mro @ inherited in
-  let graph =
+  let graph, inherited_by_class =
     build_project_call_graph caps ~cfg ~lang ~ncores
       ~class_infos:all_classes ~reexport_map all_files
   in
+  (* Inherited-method entry rows, derived from the same C3 linearisation
+     callee resolution reads, so the diagnostic dump matches what resolution
+     sees.  Only [collect] consumers use these rows; [collect_resolved]
+     discards them.  The derivation is one pass over the C3 output; consider
+     gating it to the [collect] path if it ever shows up in profiles. *)
+  let inherited =
+    List.concat_map (fun ((ci : class_info), funcs) ->
+      List.filter_map (fun (func : Func_info.t) ->
+        Option.map (fun (meth : IL.name) ->
+          let method_name = fst meth.IL.ident in
+          { id = Symbols.synth_function_id ci.ci_id method_name;
+            name = method_name; kind = K_method;
+            file = ci.ci_file; range = ci.ci_range;
+            defining_class_id = Some ci.ci_id })
+          (Func_info.leaf_name func.Func_info.fn_id))
+        funcs)
+      inherited_by_class
+  in
+  Log.debug (fun m -> m "Inheritance: %d inherited method entries (lang walks_inheritance=%b)"
+    (List.length inherited) cfg.Index_lang_rules.walks_inheritance);
+  let final_entries = entries_pre_mro @ inherited in
   Log.info (fun m -> m "Call graph: %d vertices, %d edges"
     (Call_graph.G.nb_vertex graph) (Call_graph.G.nb_edges graph));
   (final_entries, graph, scanned, skipped, all_files)

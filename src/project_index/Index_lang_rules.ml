@@ -30,7 +30,6 @@ type t = {
     file_of_func:(Func_info.t -> string option) ->
     Type_state.t ->
     Type_state.t;
-  mro_uses_scope_resolution : bool;
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;
@@ -222,7 +221,6 @@ let default : t = {
   strip_field_sigil = (fun s -> s);
   class_constructor_synth_fields = (fun _ -> []);
   ctor_param_promotion = false;
-  mro_uses_scope_resolution = false;
   interface_dispatch_uses_export_visibility = false;
 }
 
@@ -363,7 +361,6 @@ let ruby : t = { default with
   class_body_synth_methods = ruby_class_body_synth_methods;
   class_body_extra_parents = ruby_class_body_extra_parents;
   class_def_reshape = ruby_class_def_reshape;
-  mro_uses_scope_resolution = true;
 }
 
 let go_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
