@@ -50,15 +50,6 @@ type lang_context = {
   lc_matching_targets : interfile_target list;
 }
 
-(* Keep in sync with check_rule's match_on logic. *)
-let match_on_of_xconf (xconf : Match_env.xconfig) : [ `Sink | `Source ] =
-  match (xconf.Match_env.config.taint_focus_on,
-         xconf.Match_env.config.taint_match_on) with
-  | `Source, _
-  | _, `Source ->
-    `Source
-  | `Sink, `Sink -> `Sink
-
 let file_of_fid (fid : Function_id.t) : Fpath.t option =
   Option.map Fpath.normalize (Function_id.file_of fid)
 
@@ -570,7 +561,7 @@ let init_rule_state
     file_envs = init_acc.fi_file_envs;
     builtin_signature_db =
       Some (Builtin_models.create_all_builtin_models lang);
-    match_on = match_on_of_xconf rsg.rsg_xconf;
+    match_on = Match_tainting_mode.match_on_of_xconf rsg.rsg_xconf;
     target_root_map;
   }
 
