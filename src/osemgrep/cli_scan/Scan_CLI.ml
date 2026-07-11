@@ -1461,9 +1461,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
              options are not part of the opengrep API. They will change or will \
              be removed without notice !!! ");
 
-    (* Interfile taint runs on top of the intrafile engine, so enabling
-       taint_interfile implies taint_intrafile. *)
-    let effective_taint_intrafile = taint_intrafile || taint_interfile in
     (* Create engine configuration *)
     let engine_config = {
       Engine_config.custom_ignore_pattern = opengrep_ignore_pattern;
@@ -1553,7 +1550,9 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         time_flag;
         inline_metavariables;
         matching_explanations;
-        taint_intrafile = effective_taint_intrafile;
+        (* taint_interfile implies taint_intrafile; enforced in
+           Core_scan.scan. *)
+        taint_intrafile;
         effect_guards;
         taint_interfile;
         taint_interfile_depth;
