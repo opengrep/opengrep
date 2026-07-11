@@ -35,8 +35,6 @@ type t = {
     Type_state.t ->
     Type_state.t;
 
-  (* MRO walk reads unqualified parents as scope-resolution paths ([Foo::Bar], Ruby). *)
-  mro_uses_scope_resolution : bool;
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;
