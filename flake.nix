@@ -286,10 +286,10 @@
         };
         opamQuery = devOpamPackagesQuery // {
           ## You can force versions of certain packages here
-          # Force the OCaml compiler to match the lower bound declared by our
-          # opam packages (process_limits and the memprof-limits fork require
-          # >= 5.3.0; opengrep.opam requires >= 5.2.1).
-          ocaml-base-compiler = "5.3.0";
+          # Pin the OCaml compiler to the version we build with. Our opam
+          # packages only declare floors (process_limits and the memprof-limits
+          # fork require >= 5.3.0; opengrep.opam requires >= 5.2.1).
+          ocaml-base-compiler = "5.5.0";
           #TODO: needed for semgrep pro, should be in ../flake.nix instead
           #coupling: if you add one thing here, need to update also the
           # buildInputs overlay below

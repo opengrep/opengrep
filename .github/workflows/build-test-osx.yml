@@ -36,7 +36,7 @@ jobs:
   build-core:
     strategy:
       matrix:
-        ocaml_version: ["5.3.0"]
+        ocaml_version: ["5.5.0"]
     runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
     steps:
       - uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4

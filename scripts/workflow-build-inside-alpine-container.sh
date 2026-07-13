@@ -8,7 +8,7 @@ export OPAMCONFIRMLEVEL=unsafe-yes
 export OPAMCOLOR=always
 
 OPAM_VERSION=${OPAM_VERSION:-"2.5.1"}
-OCAML_VERSION=${OCAML_VERSION:-"5.3.0"}
+OCAML_VERSION=${OCAML_VERSION:-"5.5.0"}
 SHOULD_INIT_OPAM=${SHOULD_INIT_OPAM:-true}
 
 # Install build dependencies. Note: opam is fetched separately below from the
