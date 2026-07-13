@@ -312,6 +312,10 @@ let span (p : 'a -> bool) xs =
   let acc_left, right = span [] xs in
   (List.rev acc_left, right)
 
+let rec suffixes = function
+  | [] -> [ [] ]
+  | _ :: tl as xs -> xs :: suffixes tl
+
 let rec take_safe n xs =
   match (n, xs) with
   | 0, _ -> []

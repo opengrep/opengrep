@@ -627,6 +627,7 @@ let lang_tainting_tests () =
       (Lang.Go, "go", ".go");
       (Lang.Java, "java", ".java");
       (Lang.Js, "js", ".js");
+      (Lang.Kotlin, "kotlin", ".kt");
       (Lang.Php, "php", ".php");
       (Lang.Python, "python", ".py");
       (Lang.Ruby, "ruby", ".rb");

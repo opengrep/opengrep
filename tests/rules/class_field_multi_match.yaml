@@ -1,0 +1,11 @@
+rules:
+  - id: class_field_multi_match
+    message: "class member $VAL is initialized to [] and appended to"
+    languages: [python]
+    severity: WARNING
+    patterns:
+      - focus-metavariable: $VAL
+      - pattern-inside: |
+          $VAL = []
+          ...
+          $VAL.append($P)

@@ -147,6 +147,10 @@ val drop : int -> 'a list -> 'a list
    predicate. *)
 val span : ('a -> bool) -> 'a list -> 'a list * 'a list
 
+(* All suffixes of a list, longest first, including the empty list:
+   suffixes [1;2;3] = [[1;2;3]; [2;3]; [3]; []]. *)
+val suffixes : 'a list -> 'a list list
+
 (* zip a list with an increasing list of numbers.
  * e.g., index_list ["a"; "b"] -> ["a", 0; "b", 1].
  * An alternative is to use functions like List.iteri.
