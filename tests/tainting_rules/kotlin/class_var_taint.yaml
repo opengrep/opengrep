@@ -1,0 +1,19 @@
+rules:
+  - id: taint
+    languages: [kotlin]
+    message: "tainted data reached sink"
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - focus-metavariable: $VAL
+          - pattern-inside: |
+              private val $VAL = $ANY
+              ...
+              fun $M(..., $P: $T, ...) {
+                  ...
+                  $VAL.add($P)
+                  ...
+              }
+    pattern-sinks:
+      - pattern: sink(...)
