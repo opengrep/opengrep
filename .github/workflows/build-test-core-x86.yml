@@ -24,15 +24,8 @@ jobs:
     strategy:
       matrix:
         ocaml_version: ["5.3.0"]
-    container:
-      image: ocamlpro/ocaml:${{ matrix.ocaml_version }}
-      # NOTE: Can also match the UID between Alpine and Ubuntu users, removing `--user root`.
-      # See: https://github.com/actions/checkout/issues/956.
-      # But this suggest to run as root: https://docs.github.com/en/enterprise-server@3.12/actions/sharing-automations/creating-actions/dockerfile-support-for-github-actions#user
-      options: --user root
     runs-on: ubuntu-latest
-    # env:
-    #   HOME: /home/ocaml # NOTE: Pointless?
+
     steps:
       - name: Make checkout speedy
         run: git config --global fetch.parallel 50
@@ -44,60 +37,37 @@ jobs:
       - name: Configure git safedir properly
         run: git config --global --add safe.directory $(pwd)
 
-      - name: Add system packages
-        run: |
-          # gnu tar and zstd needed for cache, see:
-          # https://github.com/actions/cache/issues/580
-          apk add --no-cache build-base zip bash libffi-dev \
-            libpsl-static zstd-static libidn2-static \
-            libunistring-static tar zstd
-
       - name: Compute OPAM cache fingerprint
         run: ./scripts/opam-cache-fingerprint.sh
 
       - name: Set GHA cache for OPAM
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # ratchet:actions/cache@v4
         with:
-          key: ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-${{ hashFiles('.ci-cache/opam-fingerprint.txt') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-v2-opam-${{ matrix.ocaml_version }}-${{ hashFiles('.ci-cache/opam-fingerprint.txt') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-v1-opam-${{ matrix.ocaml_version }}-
+            ${{ runner.os }}-${{ runner.arch }}-v2-opam-${{ matrix.ocaml_version }}-
           path: _opam
 
-      - name: Create switch
+      - name: Set SHOULD_INIT_OPAM based on Cache
         run: |
-          if [ ! -d "_opam" ]; then
-            opam switch --no-install create . ocaml-system
-          else
-            echo "OPAM switch already exists, skipping creation."
+          if [ -d _opam ]; then
+            echo "SHOULD_INIT_OPAM=false" >> $GITHUB_ENV
           fi
-          
-          eval $(opam env)
-          opam exec -- ocaml -version
 
-      # TODO: Remove `opam update` to make it faster, it's not needed
-      # for these images since they are frequently updated.
-      - name: Install dependencies
+      - name: Run build inside container
         run: |
-          eval $(opam env)
-          # TODO: Try without the scripts/build-static-libcurl.sh part,
-          # in which case we can embed the new apk deps into the previous
-          # step and just execute the second command.
-          make install-deps-ALPINE-for-semgrep-core
-          make install-deps-for-semgrep-core
-
-      - name: Build opengrep-core
-        run: |
-          opam exec -- make core
-  
-      - name: Test opengrep-core
-        run: |
-          opam exec -- make core-test
-
-      - name: Make artifact for bin/opengrep-core
-        run: |
-          mkdir artifacts
-          cp bin/opengrep-core artifacts/
-          tar czf artifacts.tgz artifacts
+          docker run --rm \
+            --volume ${{ github.workspace }}:/workspace \
+            --env SHOULD_INIT_OPAM=${{ env.SHOULD_INIT_OPAM }} \
+            --env OCAML_VERSION=${{ matrix.ocaml_version }} \
+            --workdir /workspace \
+            alpine:3.22 \
+            sh -c \
+            "set -e;
+             mkdir -p _opam;
+             chown -R root:root /workspace/_opam;
+             ./scripts/workflow-build-inside-alpine-container.sh;
+             chown -R $(id -u):$(id -g) /workspace/_opam"
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
