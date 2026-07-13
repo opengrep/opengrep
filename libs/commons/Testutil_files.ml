@@ -117,8 +117,13 @@ let get_dir_entries path =
 
 let remove path =
   let rec remove path =
-    match (UUnix.lstat !!path).st_kind with
-    | S_DIR ->
+    match UUnix.lstat !!path with
+    (* The entry can vanish between reading its parent directory and this
+       lstat when another process mutates the tree concurrently — e.g. git's
+       background maintenance removing a lock file under .git. An
+       already-absent entry is nothing to remove. *)
+    | exception UUnix.Unix_error (Unix.ENOENT, _, _) -> ()
+    | { st_kind = S_DIR; _ } ->
         let names = get_dir_entries path in
         List.iter (fun name -> remove (path / name)) names;
         UUnix.rmdir !!path

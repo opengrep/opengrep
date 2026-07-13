@@ -113,7 +113,7 @@ a few other projects developed at r2c.
     ; we're currently "vendoring" pcre2 in libs/pcre2
     ; so no need to get opam to install it
     ;(pcre2 (>= "7.5.3" ))
-    (ppxlib (= "0.35.0"))
+    (ppxlib (= "0.38.0"))
     (ppx_deriving (>= "5.2.1"))
     (ppx_hash (>= "v0.14.0" ))
     (digestif (>= "1.0.0"))
@@ -487,14 +487,14 @@ For more information see https://opengrep.dev.
     ; CLI
     cmdliner
     ; PPX
-    (ppxlib (= 0.35.0)) ; because 0.36.0 moved to AST 5.2, breaking ppx_profiling.
+    (ppxlib (= 0.38.0))
     (ppx_deriving (>= 6.0.3))
     ppx_deriving_yojson
     ppx_hash
     ppx_inline_test
     (ppx_sexp_conv (>= v0.16.0))
     ppx_expect
-    (visitors (= 20250212))
+    (visitors (= 20260520))
     ; regexps
     re
     pcre

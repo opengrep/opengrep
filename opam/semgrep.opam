@@ -45,14 +45,14 @@ depends: [
   "xmlm"
   "sarif" {>= "0.3.0"}
   "cmdliner"
-  "ppxlib" {= "0.35.0"}
+  "ppxlib" {= "0.38.0"}
   "ppx_deriving" {>= "6.0.3"}
   "ppx_deriving_yojson"
   "ppx_hash"
   "ppx_inline_test"
   "ppx_sexp_conv" {>= "v0.16.0"}
   "ppx_expect"
-  "visitors" {= "20250212"}
+  "visitors" {= "20260520"}
   "re"
   "pcre"
   "ocamlgraph"

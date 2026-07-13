@@ -87,12 +87,21 @@ open Ast_helper
 (*****************************************************************************)
 let rec parameters body =
   match body with
-  | { pexp_desc = Pexp_fun (Nolabel, _, _, body); _ } ->
-      Nolabel :: parameters body
-  | { pexp_desc = Pexp_fun (Labelled name, _, _, body); _ } ->
-      Labelled name :: parameters body
-  | { pexp_desc = Pexp_fun (Optional name, _, _, body); _ } ->
-      Optional name :: parameters body
+  | { pexp_desc = Pexp_function (params, _, fbody); _ } ->
+      let labels =
+        List_.filter_map
+          (fun (p : function_param) ->
+            match p.pparam_desc with
+            | Pparam_val (label, _, _) -> Some label
+            | Pparam_newtype _ -> None)
+          params
+      in
+      let rest =
+        match fbody with
+        | Pfunction_body e -> parameters e
+        | Pfunction_cases _ -> []
+      in
+      labels @ rest
   | _else_ -> []
 
 let name_of_lbl_opt n lbl_opt =
@@ -105,12 +114,18 @@ let name_of_lbl_opt n lbl_opt =
 let mk_params loc params e =
   let rec aux xs n =
     match xs with
-    | [] -> e
+    | [] -> []
     | x :: xs ->
         let param = name_of_lbl_opt n x in
-        Exp.fun_ x None (Pat.var { txt = param; loc }) (aux xs (n + 1))
+        {
+          pparam_loc = loc;
+          pparam_desc = Pparam_val (x, None, Pat.var { txt = param; loc });
+        }
+        :: aux xs (n + 1)
   in
-  aux params 0
+  match aux params 0 with
+  | [] -> e
+  | fparams -> Ast_builder.Default.pexp_function ~loc fparams None (Pfunction_body e)
 
 let mk_args loc params =
   let rec aux xs n =
@@ -214,10 +229,19 @@ let impl xs =
                                Exp.constant
                                  (Pconst_string (action_name, loc, None)) );
                              ( Nolabel,
-                               Exp.fun_ Nolabel None (Pat.any ())
-                                 (Exp.apply
-                                    (Exp.ident { txt = Lident fname; loc })
-                                    (mk_args loc params)) );
+                               Ast_builder.Default.pexp_function ~loc
+                                 [
+                                   {
+                                     pparam_loc = loc;
+                                     pparam_desc =
+                                       Pparam_val (Nolabel, None, Pat.any ());
+                                   };
+                                 ]
+                                 None
+                                 (Pfunction_body
+                                    (Exp.apply
+                                       (Exp.ident { txt = Lident fname; loc })
+                                       (mk_args loc params))) );
                            ]));
                  ]
              in
