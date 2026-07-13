@@ -60,10 +60,13 @@ echo "Building in $(pwd)"
 if [ "$SHOULD_INIT_OPAM" = true ]; then
   opam init --yes --disable-sandboxing --root=$OPAMROOT --compiler=$OCAML_VERSION
   opam install dune
-  make install-opam-deps
 else
   echo "OPAM switch already exists, skipping creation: SHOULD_INIT_OPAM=$SHOULD_INIT_OPAM"
 fi
+
+# Reconcile the switch with the pinned deps even on a cache-restore, otherwise a
+# restore-keys fallback can leave stale package versions in place.
+make install-opam-deps
 
 eval $(opam env)
 
