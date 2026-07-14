@@ -26,16 +26,17 @@ let compile_pattern (pat : string) : matcher =
   else
     Prefix pat
 
-let path_matches_any (matchers : matcher list) (rel_path : string) : bool =
+(* Patterns are '/'-separated on every platform (glob convention); [Ppath]
+   guarantees the same for the matched path. *)
+let path_matches_any (matchers : matcher list) (rel_path : Ppath.t) : bool =
+  let rel_str = String.concat "/" (Ppath.relative_segments rel_path) in
   List.exists (fun matcher ->
     match matcher with
     | Prefix pat ->
-      (* TODO: the "/" in the prefix check below is a hardcoded POSIX separator
-         and is not portable to Windows; use a platform-aware path separator. *)
-      String.equal pat rel_path
-      || (String.length rel_path > String.length pat
-          && String.sub rel_path 0 (String.length pat + 1) = pat ^ "/")
-    | Glob re -> Re.execp re rel_path
+      String.equal pat rel_str
+      || (String.length rel_str > String.length pat
+          && String.sub rel_str 0 (String.length pat + 1) = pat ^ "/")
+    | Glob re -> Re.execp re rel_str
   ) matchers
 
 let relative_to ~(project_root : Fpath.t) (file : Fpath.t) : Fpath.t =
@@ -48,13 +49,25 @@ let apply_include_exclude ~(project_root : Fpath.t)
     (files : Fpath.t list) : Fpath.t list =
   let inc = List.map compile_pattern includes in
   let exc = List.map compile_pattern excludes in
+  (* [None] when the file has no project-relative form (not under
+     [project_root]); the project-relative patterns cannot classify it. *)
+  let project_ppath (file : Fpath.t) : Ppath.t option =
+    let rel = relative_to ~project_root file in
+    if Fpath.is_abs rel then None
+    else
+      match Ppath.of_relative_fpath rel with
+      | ppath -> Some ppath
+      | exception Invalid_argument _ -> None
+  in
   List.filter (fun file ->
-    let rel = relative_to ~project_root file |> Fpath.to_string in
-    let included = match includes with
-      | [] -> true
-      | _ -> path_matches_any inc rel
-    in
-    included && not (path_matches_any exc rel)
+    match project_ppath file with
+    | None -> (match includes with [] -> true | _ -> false)
+    | Some rel ->
+      let included = match includes with
+        | [] -> true
+        | _ -> path_matches_any inc rel
+      in
+      included && not (path_matches_any exc rel)
   ) files
 
 let scanning_roots_from_includes ~(project_root : Fpath.t)

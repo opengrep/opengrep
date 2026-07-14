@@ -14,12 +14,10 @@ let build_by_package
         | Some file ->
           (* Key is directory basename, deliberately non-unique; [identify_callee]
              narrows by same-file/dir. Widen to full package path if that goes. *)
-          (* TODO: the "/" below is a hardcoded POSIX separator/sentinel and is not
-             portable to Windows; use a platform-aware path separator. *)
-          let pkg =
-            Fpath.parent file |> Fpath.basename
-            |> fun basename -> if basename = "" then "/" else basename
-          in
+          (* [Fpath.basename] is "" only for a file directly under the
+             filesystem root; lookups use source package names, so that
+             bucket is unreachable and needs no sentinel. *)
+          let pkg = Fpath.parent file |> Fpath.basename in
           let cur =
             Option.value (Hashtbl.find_opt h pkg) ~default:[]
           in
