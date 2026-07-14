@@ -602,10 +602,13 @@ let rec identify_callee ~(lang : Lang.t)
             (match current_class with
             | Some class_name ->
                 let class_name_str = fst class_name.IL.ident in
-                let method_matches = List.filter (fun f ->
-                  Func_info.is_method_of ~class_name:class_name_str
-                    ~method_name:method_name_str f.fn_id
-                ) all_funcs in
+                (* [find_methods] unions the class's own methods with the
+                   MRO-inherited ones, so [self.m()] resolves to a method
+                   defined on an ancestor (incl. inherited staticmethods). *)
+                let method_matches =
+                  Type_state.find_methods type_state ~fallback:all_funcs
+                    ~class_name:class_name_str ~method_name:method_name_str
+                in
                 pick_by_arity call_arity method_matches
             | None -> None)
         (* No ctor/fuzzy fallback here (FP-prone on namespaced libs). *)
