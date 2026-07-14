@@ -150,24 +150,22 @@ let find_tsconfigs (project_root : Fpath.t) : Fpath.t list =
   in
   walk 0 root_str []
 
+(* Glob patterns are '/'-separated on every platform; the prefix derived
+   from [config_dir] is emitted in that form. *)
 let normalize_pattern ~(project_root : Fpath.t) ~(config_dir : Fpath.t)
     (pat : string) : string =
   if String.length pat > 0 && pat.[0] = '/' then pat
   else
-    let cfg_rel =
-      Nonfatal.catch ~default:"" (fun () ->
-        let pr = Fpath.to_string project_root in
-        let cd = Fpath.to_string config_dir in
-        if String.length cd >= String.length pr
-           && String.sub cd 0 (String.length pr) = pr
-        then
-          let rel = String.sub cd (String.length pr) (String.length cd - String.length pr) in
-          if String.length rel > 0 && rel.[0] = '/' then String.sub rel 1 (String.length rel - 1)
-          else rel
-        else "")
-    in
-    if cfg_rel = "" then pat
-    else cfg_rel ^ "/" ^ pat
+    match
+      Fpath.relativize ~root:(Fpath.normalize project_root)
+        (Fpath.normalize config_dir)
+    with
+    | None -> pat
+    | Some rel ->
+      let rel = Fpath.rem_empty_seg rel in
+      (match Fpath.segs rel with
+       | ["."] | ".." :: _ -> pat  (* config at or outside the root *)
+       | segs -> String.concat "/" segs ^ "/" ^ pat)
 
 let discover_excludes ~(project_root : Fpath.t) : string list =
   let configs = find_tsconfigs project_root in
@@ -180,21 +178,23 @@ let discover_excludes ~(project_root : Fpath.t) : string list =
 let build_path_suffix_index (file_paths : string list)
   : (string, string list) Hashtbl.t =
   let index : (string, string list) Hashtbl.t = Hashtbl.create 16384 in
-  let strip_ext path =
-    if Filename.check_suffix path ".tsx" then Filename.chop_suffix path ".tsx"
-    else if Filename.check_suffix path ".ts" then Filename.chop_suffix path ".ts"
-    else if Filename.check_suffix path ".jsx" then Filename.chop_suffix path ".jsx"
-    else if Filename.check_suffix path ".js" then Filename.chop_suffix path ".js"
+  let strip_ext (path : Fpath.t) : Fpath.t =
+    if Fpath.mem_ext [ ".tsx"; ".ts"; ".jsx"; ".js" ] path
+    then Fpath.rem_ext path
     else path
   in
-  let strip_index path =
-    if Filename.check_suffix path "/index" then
-      Filename.chop_suffix path "/index"
+  let strip_index (path : Fpath.t) : Fpath.t =
+    let parent = Fpath.parent path |> Fpath.rem_empty_seg in
+    if String.equal (Fpath.basename path) "index"
+       && not (Fpath.is_current_dir parent)
+    then parent
     else path
   in
   List.iter (fun path ->
-    let stripped = path |> strip_ext |> strip_index in
-    let parts = String.split_on_char '/' stripped in
+    let stripped = Fpath.v path |> strip_ext |> strip_index in
+    (* Suffix keys are joined with '/' to match raw import specifiers,
+       which use '/' on every platform. *)
+    let parts = Fpath.segs stripped in
     let n = List.length parts in
     let arr = Array.of_list parts in
     for i = 0 to n - 1 do
@@ -211,13 +211,15 @@ let resolve_specifier
     ~(current_file : Fpath.t) (specifier : string) : string list =
   if String.length specifier = 0 then []
   else if specifier.[0] = '.' then begin
-    let base =
+    let base_path =
       Fpath.append (Fpath.parent current_file) (Fpath.v specifier)
-      |> Fpath.normalize |> Fpath.rem_empty_seg |> Fpath.to_string
+      |> Fpath.normalize |> Fpath.rem_empty_seg
     in
+    let base = Fpath.to_string base_path in
+    let index_under name = Fpath.(base_path // v name) |> Fpath.to_string in
     [ base ^ ".ts"; base ^ ".tsx"; base ^ ".js"; base ^ ".jsx";
-      base ^ "/index.ts"; base ^ "/index.tsx";
-      base ^ "/index.js"; base ^ "/index.jsx" ]
+      index_under "index.ts"; index_under "index.tsx";
+      index_under "index.js"; index_under "index.jsx" ]
   end
   else
     match path_suffix_index with
