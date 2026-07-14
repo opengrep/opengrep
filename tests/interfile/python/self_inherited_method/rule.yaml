@@ -1,0 +1,10 @@
+rules:
+  - id: self-inherited-method
+    languages: [python]
+    severity: ERROR
+    message: taint reaches a method invoked as self.<method> and inherited from an ancestor class
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
