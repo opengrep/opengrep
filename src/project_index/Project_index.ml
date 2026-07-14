@@ -15,7 +15,7 @@ let module_path ~(cfg : Index_lang_rules.t) ~(project_root : Fpath.t)
     let path_str = Fpath.rem_ext rel |> Fpath.normalize |> Fpath.to_string in
     let path_str = cfg.Index_lang_rules.rewrite_module_path path_str in
     Names.Module_qn.of_string
-      (String.map (fun ch -> if Char.equal ch '/' then '.' else ch) path_str)
+      (String.concat "." (Fpath.segs (Fpath.v path_str)))
 module FA = Graph_from_AST
 
 
