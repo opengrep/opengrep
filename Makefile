@@ -5,7 +5,7 @@
 # Many targets in this Makefile assume some commands have been run before to
 # setup the correct build environment supporting the different languages
 # used for Opengrep development:
-#  - for OCaml: 'ocamlc' and 'ocamlopt' (currently 5.3.0), 'dune', 'opam'
+#  - for OCaml: 'ocamlc' and 'ocamlopt' (currently 5.5.0), 'dune', 'opam'
 #  - for C: 'gcc', 'ld', 'pkgconfig', but also some C libs like PCRE, gmp
 #  - for Python: 'python3', 'pip', 'pipenv'
 #
