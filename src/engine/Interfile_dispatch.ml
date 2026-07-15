@@ -822,21 +822,11 @@ let run_rule (rs : rule_state) : PM.t list =
   |> PM.uniq
   |> PM.no_submatches
 
-let collect_ok (results : ('a, 'err) result list) : 'a list =
-  List_.filter_map (fun (res : ('a, 'err) result) ->
-    match res with
-    | Ok value -> Some value
-    | Error _ -> None
-  ) results
-
-(* Parallel when ncores>1 and >1 item, else serial; failures go to [on_exn]. *)
-let run_parmap
-    (caps : < Cap.fork >)
-    ~(ncores : int)
-    ~(on_exn : 'a -> Exception.t -> string)
-    (f : 'a -> 'b)
-    (items : 'a list)
-    : 'b list =
+(* Parallel when ncores>1 and >1 item, else serial; failures go to [on_exn],
+   which runs inside the worker domain, so it must not touch shared state.
+   Workers' results come back as one list per outcome: successes, and the
+   values [on_exn] returned for the failed items. *)
+let run_parmap (caps : < Cap.fork >) ~(ncores : int) ~on_exn f items =
   let n = List.length items in
   let results =
     if ncores <= 1 || n <= 1 then
@@ -849,7 +839,11 @@ let run_parmap
         ~chunksize:1 ~exception_handler:on_exn
         f items
   in
-  collect_ok results
+  List.partition_map
+    (function
+      | Ok value -> Either.Left value
+      | Error failure -> Either.Right failure)
+    results
 
 let parse_batch_size = 500
 
@@ -975,23 +969,26 @@ let parse_companion_files
           |> List_.map (fun (batch : Fpath.t list) -> (lang, batch)))
         lang_contexts
     in
-    run_parmap caps ~ncores
-      ~on_exn:(fun ((lang, _batch) : Lang.t * Fpath.t list)
-                   (exn : Exception.t) ->
-        let msg = Printexc.to_string (Exception.get_exn exn) in
-        Log.warn (fun m ->
-            m "interfile parse: %s companion batch failed: %s"
-              (Lang.to_string lang) msg);
-        msg)
-      (fun ((lang, batch) : Lang.t * Fpath.t list) ->
-        let tbl = parse_file_batch ~resolved lang batch in
-        Log.info (fun m ->
-            m "interfile parse: %s: parsed %d/%d companion files"
-              (Lang.to_string lang)
-              (Hashtbl.length tbl)
-              (List.length batch));
-        (lang, tbl))
-      companion_batches
+    let parsed, _failed_batches =
+      run_parmap caps ~ncores
+        ~on_exn:(fun ((lang, _batch) : Lang.t * Fpath.t list)
+                     (exn : Exception.t) ->
+          let msg = Printexc.to_string (Exception.get_exn exn) in
+          Log.warn (fun m ->
+              m "interfile parse: %s companion batch failed: %s"
+                (Lang.to_string lang) msg);
+          msg)
+        (fun ((lang, batch) : Lang.t * Fpath.t list) ->
+          let tbl = parse_file_batch ~resolved lang batch in
+          Log.info (fun m ->
+              m "interfile parse: %s: parsed %d/%d companion files"
+                (Lang.to_string lang)
+                (Hashtbl.length tbl)
+                (List.length batch));
+          (lang, tbl))
+        companion_batches
+    in
+    parsed
   end
 
 (* Returns rule_states, interfile langs, and per-rule fallback target paths. *)
@@ -1139,8 +1136,9 @@ let build_rule_states
       |> List_.map (fun (batch : Fpath.t list) -> (lc.lc_lang, batch)))
       lang_contexts
   in
-  let target_results :
-      (Lang.t * (Fpath.t, G.program) Hashtbl.t) list =
+  let (target_results :
+         (Lang.t * (Fpath.t, G.program) Hashtbl.t) list),
+      _failed_target_batches =
     run_parmap caps ~ncores
       ~on_exn:(fun ((lang, _batch) : Lang.t * Fpath.t list)
                    (exn : Exception.t) ->
@@ -1167,8 +1165,9 @@ let build_rule_states
      on grafana, 188s vs 1s of formula matching for one rule.  The
      stamped ASTs stay in [target_ast_lookup] for dispatch, whose sid
      resolution needs them. *)
-  let extraction_results :
-      (Lang.t * (Fpath.t, G.program) Hashtbl.t) list =
+  let (extraction_results :
+         (Lang.t * (Fpath.t, G.program) Hashtbl.t) list),
+      _failed_extraction_batches =
     run_parmap caps ~ncores
       ~on_exn:(fun ((lang, _batch) : Lang.t * Fpath.t list)
                    (exn : Exception.t) ->
@@ -1219,7 +1218,7 @@ let build_rule_states
               | exception _ -> ())
           lc.lc_matching_targets)
       lang_contexts;
-  let spec_partials : (int * rule_specs) list =
+  let (spec_partials : (int * rule_specs) list), _failed_spec_chunks =
     run_parmap caps ~ncores
       ~on_exn:(fun ((i, _chunk) : int * interfile_target list)
                  (exn : Exception.t) ->
@@ -1299,16 +1298,15 @@ let build_rule_states
         tbl)
     full_ast_lookup;
   (* Failed-init rules fall back to per-target intrafile (below). *)
-  let failed_rsgs : rule_subgraph list ref = ref [] in
-  let rule_states : rule_state list =
+  let (rule_states : rule_state list),
+      (failed_rsgs : rule_subgraph list) =
     run_parmap caps ~ncores
       ~on_exn:(fun (rsg : rule_subgraph) (exn : Exception.t) ->
-        failed_rsgs := rsg :: !failed_rsgs;
-        let msg = Exception.to_string exn in
         Log.warn (fun m ->
             m "interfile init_rule: rule %s failed: %s"
-              (Rule_ID.to_string (fst rsg.rsg_specs.rs_rule.R.id)) msg);
-        msg)
+              (Rule_ID.to_string (fst rsg.rsg_specs.rs_rule.R.id))
+              (Exception.to_string exn));
+        rsg)
       (fun (rsg : rule_subgraph) ->
         init_rule_state
           ~ast_table:(ast_table_for_lang full_ast_lookup
@@ -1353,6 +1351,6 @@ let build_rule_states
       (fst rsg.rsg_specs.rs_rule.R.id,
        List_.map (fun (target : interfile_target) -> target.abs_path)
          rsg.rsg_lang_context.lc_matching_targets))
-      !failed_rsgs
+      failed_rsgs
   in
   (rule_states, langs, fallback_rule_target_paths @ failed_fallback)
