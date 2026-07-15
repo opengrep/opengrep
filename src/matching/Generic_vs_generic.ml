@@ -395,6 +395,33 @@ let m_regexp_options a_opt b_opt =
   | Some a, Some b -> m_ellipsis_or_metavar_or_string a b
   | Some _, None -> fail ()
 
+(* dots: metavars: $...FLDS in record patterns (e.g., JS objects).
+ * A `$...FLDS` field parses either as an expression-statement field or,
+ * in JS/TS objects, as a shorthand property (a DefStmt whose name and
+ * value are both the `$...FLDS` identifier).
+ *)
+let m_field_metavar_ellipsis (fld : G.field) :
+    (G.ident * (G.field list -> MV.mvalue)) option =
+  let bind_fields (fields : G.field list) =
+    MV.Ss (fields |> List_.map (fun (G.F st) -> st))
+  in
+  match fld with
+  | G.F { s = G.ExprStmt ({ e = G.N (G.Id ((s, tok), _)); _ }, _); _ }
+    when Mvar.is_metavar_ellipsis s ->
+      Some ((s, tok), bind_fields)
+  | G.F
+      {
+        s =
+          G.DefStmt
+            ( { G.name = G.EN (G.Id ((s, tok), _)); _ },
+              G.FieldDefColon
+                { vinit = Some { e = G.N (G.Id ((s2, _), _)); _ }; _ } );
+        _;
+      }
+    when s = s2 && Mvar.is_metavar_ellipsis s ->
+      Some ((s, tok), bind_fields)
+  | _ -> None
+
 (* start of recursive need *)
 (* TODO: factorize with metavariable and aliasing logic in m_expr
  * TODO: remove MV.Id and use always MV.N?
@@ -3459,21 +3486,26 @@ and m_variable_definition a b =
  * a lot the engine. Simpler to just filter them.
  *)
 and m_fields (xsa : G.field list) (xsb : G.field list) =
-  let has_ellipsis = ref false in
-  (* let's filter the '...' *)
-  let xsa =
-    (* TODO: Similar to has_ellipsis_and_filter_ellipsis, refactor? *)
-    xsa
-    |> List_.exclude (function
-         | G.F { s = G.ExprStmt ({ e = G.Ellipsis _; _ }, _); _ } ->
-             has_ellipsis := true;
-             true
-         | _ -> false)
+  let is_dots = function
+    | G.F { s = G.ExprStmt ({ e = G.Ellipsis _; _ }, _); _ } -> true
+    | _ -> false
   in
-  if_config
-    (fun x -> x.implicit_ellipsis)
-    ~then_:(m_list__m_field ~less_is_ok:true xsa xsb)
-    ~else_:(m_list__m_field ~less_is_ok:!has_ellipsis xsa xsb)
+  (* dots: metavars: $...FLDS
+   * Fields are normally matched in any order (see m_list__m_field), but
+   * ellipsis metavariables only have well-defined bindings positionally
+   * (e.g., $...HEAD vs $...TAIL), so when the pattern contains one we
+   * switch to an ordered matching, as for arguments and parameters.
+   *)
+  if List.exists (fun x -> m_field_metavar_ellipsis x <> None) xsa then
+    m_list_with_dots_and_metavar_ellipsis ~less_is_ok:false ~f:m_field ~is_dots
+      ~is_metavar_ellipsis:m_field_metavar_ellipsis xsa xsb
+  else
+    (* let's filter the '...' *)
+    let dots, xsa = List.partition is_dots xsa in
+    if_config
+      (fun x -> x.implicit_ellipsis)
+      ~then_:(m_list__m_field ~less_is_ok:true xsa xsb)
+      ~else_:(m_list__m_field ~less_is_ok:(not (List_.null dots)) xsa xsb)
 
 (* less: mix of m_list_and_dots and m_list_unordered_keys, hard to factorize *)
 and m_list__m_field ~less_is_ok (xsa : G.field list) (xsb : G.field list) =
