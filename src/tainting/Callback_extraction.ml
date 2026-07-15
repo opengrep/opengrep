@@ -23,11 +23,24 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
   match arg_expr.G.e with
   (* Plain identifier: foo — may be a function name directly, OR a variable
      whose id_svalue wraps a record/container we should walk through. We
-     always emit the direct interpretation (so [handler] still resolves
-     even when it has no svalue), plus any svalue-walk recursion. *)
+     emit the direct interpretation (so [handler] still resolves even when
+     it has no svalue), plus any svalue-walk recursion — EXCEPT when naming
+     resolved the id to a bound value (local/param/enclosed var): then the
+     direct emission could only name-match unrelated project functions
+     (spurious cross-file edges). What such a binding holds is reached via
+     the svalue recursion, and parameter-forwarded callbacks are handled by
+     the taint layer's [BArg]/[ToSinkInCall] signatures. [Global] and
+     [Imported*] resolutions keep emitting: a bare project-function name is
+     the genuine callback case. *)
   | G.N (G.Id (id, id_info)) ->
+      let is_bound_value =
+        match !(id_info.id_resolved) with
+        | Some ((G.LocalVar | G.Parameter | G.EnclosedVar), _) -> true
+        | _ -> false
+      in
       let direct =
-        [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
+        if is_bound_value then []
+        else [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
       in
       let via_svalue =
         match !(id_info.id_svalue) with
