@@ -398,6 +398,14 @@ let rec lval env eorig : stmts * lval =
       let ss_e2, e2 = expr env e2orig in
       let offset' = { o = Index e2; oorig = SameAs eorig } in
       (ss_lv @ ss_e2, { lv1 with rev_offset = offset' :: lv1.rev_offset })
+  (* PHP's array-append shorthand '$x[] = e', treated as an assignment to an
+   * unknown index of $x so that dataflow reaches $x itself. *)
+  | G.OtherExpr (("ArrayAppend", tok), [ G.E e1orig ])
+    when env.lang =*= Lang.Php ->
+      let ss_lv, lv1 = nested_lval env tok e1orig in
+      let idx = mk_e (Fetch (fresh_lval tok)) NoOrig in
+      let offset' = { o = Index idx; oorig = SameAs eorig } in
+      (ss_lv, { lv1 with rev_offset = offset' :: lv1.rev_offset })
   | G.DeRef (_, e1orig) ->
       let ss, e1 = expr env e1orig in
       (ss, lval_of_base (Mem e1))
@@ -872,6 +880,7 @@ and assign env ~g_expr lhs tok rhs_exp : stmts * exp =
   | G.N _
   | G.DotAccess _
   | G.ArrayAccess _
+  | G.OtherExpr (("ArrayAppend", _), [ G.E _ ])
   | G.DeRef _ -> (
       try
         let ss_lv, lval = lval env lhs in
