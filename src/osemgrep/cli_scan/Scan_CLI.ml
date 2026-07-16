@@ -178,11 +178,11 @@ command line. By default, these options are only applied to files found in the d
 
 let o_inline_metavariables : bool Term.t =
   let info =
-    Arg.info ["inline-metavariables"]
+    Arg.info [ "inline-metavariables" ]
       ~doc:
         {|Inlines metavariable references in metadata strings the same way it is done in the message.
 This can be costly so use with care especially if the metadata is very deep.|}
-  in  
+  in
   Arg.value (Arg.flag info)
 
 let o_include : string list Term.t =
@@ -386,7 +386,8 @@ seconds. If set to 0 will not have time limit. Defaults to %.1f s.
 
 let o_allow_rule_timeout_control : bool Term.t =
   let info =
-    Arg.info ["allow-rule-timeout-control"]
+    Arg.info
+      [ "allow-rule-timeout-control" ]
       ~doc:
         {|Allow rule options that control timeout behaviour to be used in the engine.
 An example is:
@@ -401,7 +402,7 @@ which will have no effect unless if this flag is passed.|}
 let o_dynamic_timeout : bool Term.t =
   let default = default.core_runner_conf.dynamic_timeout in
   let info =
-    Arg.info ["dynamic-timeout"]
+    Arg.info [ "dynamic-timeout" ]
       ~doc:
         (spf
            {|Enable dynamic timeouts, based on the size of target files in kb. Defaults to %b.|}
@@ -412,7 +413,8 @@ let o_dynamic_timeout : bool Term.t =
 let o_dynamic_timeout_unit_kb : int Term.t =
   let default = default.core_runner_conf.dynamic_timeout_unit_kb in
   let info =
-    Arg.info [ "dynamic-timeout-unit-kb" ]
+    Arg.info
+      [ "dynamic-timeout-unit-kb" ]
       ~doc:
         (spf
            {|Set the size in kb to consider for the calculation of dynamic timeouts. For example,
@@ -426,7 +428,8 @@ cli. Defaults to %d.
 let o_dynamic_timeout_max_multiplier : int Term.t =
   let default = default.core_runner_conf.dynamic_timeout_max_multiplier in
   let info =
-    Arg.info [ "dynamic-timeout-max-multiplier" ]
+    Arg.info
+      [ "dynamic-timeout-max-multiplier" ]
       ~doc:
         (spf
            {|Set the maximum multiplier for dynamic timeouts. For example, if set to 10, the
@@ -554,7 +557,8 @@ let o_nosem : bool Term.t =
 
 let o_opengrep_ignore_pattern : string option Term.t =
   let info =
-    Arg.info [ "opengrep-ignore-pattern" ]
+    Arg.info
+      [ "opengrep-ignore-pattern" ]
       ~doc:
         {|Set a custom pattern to replace the default 'nosem' and 'nosemgrep' prefixes for comments to be ignored by opengrep.
           For example, use '--opengrep-ignore-pattern=noopengrep' to make opengrep only recognize lines with 'noopengrep' comments instead of 'nosem' or 'nosemgrep'.|}
@@ -592,8 +596,10 @@ let o_incremental_output : bool Term.t =
 
 let o_incremental_output_postprocess : bool Term.t =
   let info =
-    Arg.info [ "incremental-output-postprocess" ]
-      ~doc:{|Apply post-processing in incremental outputs. REQUIRES --incremental-output|}
+    Arg.info
+      [ "incremental-output-postprocess" ]
+      ~doc:
+        {|Apply post-processing in incremental outputs. REQUIRES --incremental-output|}
   in
   Arg.value (Arg.flag info)
 
@@ -677,7 +683,9 @@ let o_gitlab_secrets_outputs =
 let o_junit_xml_outputs = make_o_format_outputs ~fancy:"JUnit XML" "junit-xml"
 
 let o_output_enclosing_context : bool Term.t =
-  H.negatable_flag [ "output-enclosing-context" ] ~neg_options:[ "no-output-enclosing-context" ]
+  H.negatable_flag
+    [ "output-enclosing-context" ]
+    ~neg_options:[ "no-output-enclosing-context" ]
     ~default:Match_patterns.default_matching_conf.track_enclosing_context
     ~doc:
       {|Include information about the syntactic context of the matched fragments of code, such as the function or the class in which the match is defined.|}
@@ -735,8 +743,6 @@ This may still run Pro rules, but only using the OSS features.
   in
   Arg.value (Arg.flag info)
 
-
-
 let o_pro_path_sensitive : bool Term.t =
   let info =
     Arg.info [ "pro-path-sensitive" ]
@@ -755,12 +761,13 @@ let o_pro : bool Term.t =
 
 let o_effect_guards : bool Term.t =
   let info =
-    Arg.info [ "guarded-taint-signatures" ]
+    Arg.info
+      [ "guarded-taint-signatures" ]
       ~doc:
-        ("Attach branch-condition guards to taint effects and evaluate them \
-          at call sites, dropping effects whose guard is false. Without this \
-          flag only Clojure keeps the arity guards that implement \
-          multi-arity dispatch. REQUIRES --experimental")
+        "Attach branch-condition guards to taint effects and evaluate them at \
+         call sites, dropping effects whose guard is false. Without this flag \
+         only Clojure keeps the arity guards that implement multi-arity \
+         dispatch. REQUIRES --experimental"
   in
   Arg.value (Arg.flag info)
 
@@ -768,9 +775,11 @@ let o_taint_intrafile : bool Term.t =
   let info =
     Arg.info [ "taint-intrafile" ]
       ~doc:
-        ("Enable intra-file inter-procedural taint analysis. \
-          Supported languages: Apex, C, Clojure, C#, C++, Dart, Elixir, Go, Java, JavaScript, Julia, Kotlin, Lua, Python, Ruby, Rust, Scala, Swift, TypeScript, Visual Basic. \
-          Other languages will fall back to intraprocedural analysis only.")
+        "Enable intra-file inter-procedural taint analysis. Supported \
+         languages: Apex, C, Clojure, C#, C++, Dart, Elixir, Go, Java, \
+         JavaScript, Julia, Kotlin, Lua, Python, Ruby, Rust, Scala, Swift, \
+         TypeScript, Visual Basic. Other languages will fall back to \
+         intraprocedural analysis only."
   in
   Arg.value (Arg.flag info)
 
@@ -1231,18 +1240,13 @@ let outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
        Map_.empty
 
 (* reused in Ci_CLI.ml *)
-let engine_type_conf ~oss ~taint_intrafile ~pro ~secrets
-    ~no_secrets_validation ~allow_untrusted_validators ~pro_path_sensitive :
-    Engine_type.t =
+let engine_type_conf ~oss ~taint_intrafile ~pro ~secrets ~no_secrets_validation
+    ~allow_untrusted_validators ~pro_path_sensitive : Engine_type.t =
   (* This first bit just rules out mutually exclusive options. *)
   if oss && secrets then
     Error.abort "Cannot run secrets scan with OSS engine (--oss specified).";
-  if
-    [ oss; taint_intrafile; pro ]
-    |> List.filter Fun.id |> List.length > 1
-  then
-    Error.abort
-      "Mutually exclusive options --oss/--taint-intrafile/--pro";
+  if [ oss; taint_intrafile; pro ] |> List.filter Fun.id |> List.length > 1 then
+    Error.abort "Mutually exclusive options --oss/--taint-intrafile/--pro";
   (* Now select the engine type *)
   if oss then Engine_type.OSS
   else
@@ -1259,14 +1263,13 @@ let engine_type_conf ~oss ~taint_intrafile ~pro ~secrets
         Some Engine_type.{ allow_all_origins = allow_untrusted_validators }
       else None
     in
-    let code_config =
-      if pro then Some () else None
-    in
+    let code_config = if pro then Some () else None in
     (* Currently we don't run SCA in osemgrep *)
     let supply_chain_config = None in
     match (extra_languages, analysis, secrets_config) with
     | false, Intraprocedural, None -> OSS
-    | false, Interprocedural, None when taint_intrafile -> OSS  (* Allow taint_intrafile in OSS *)
+    | false, Interprocedural, None when taint_intrafile ->
+        OSS (* Allow taint_intrafile in OSS *)
     | _ ->
         PRO
           {
@@ -1295,7 +1298,8 @@ let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
             {
               Show.show_kind = Show.DumpPattern (str, Lang.of_string lang_str);
               json;
-              html = false; (* TODO: Update to work with opengrep --dump-ast as well? *)
+              html = false;
+              (* TODO: Update to work with opengrep --dump-ast as well? *)
               common;
             }
       | None, Some lang_str, [ file ] ->
@@ -1320,11 +1324,14 @@ let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
       | Some _, _, _ :: _ ->
           Error.abort "Can't specify both -e and a target for --dump-ast")
   | _ when dump_engine_path ->
-      Some { Show.show_kind = Show.DumpEnginePath pro; json; html = false; common }
+      Some
+        { Show.show_kind = Show.DumpEnginePath pro; json; html = false; common }
   | _ when dump_command_for_core ->
-      Some { Show.show_kind = Show.DumpCommandForCore; json; html = false; common }
+      Some
+        { Show.show_kind = Show.DumpCommandForCore; json; html = false; common }
   | _ when show_supported_languages ->
-      Some { Show.show_kind = Show.SupportedLanguages; json; html = false; common }
+      Some
+        { Show.show_kind = Show.SupportedLanguages; json; html = false; common }
   | _else_ -> None
 
 let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common ~pro :
@@ -1342,7 +1349,8 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common ~pro :
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-    ~test_ignore_todo ~strict ~taint_intrafile ~pro ~common : Test_CLI.conf option =
+    ~test_ignore_todo ~strict ~taint_intrafile ~pro ~common :
+    Test_CLI.conf option =
   if test then
     let target =
       Test_CLI.target_kind_of_roots_and_config
@@ -1375,43 +1383,48 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
      of the corresponding '$ o_xx $' further below!
   *)
-  let combine
-      allow_local_builds allow_rule_timeout_control allow_untrusted_validators
-      apply_includes_excludes_to_files inline_metavariables autofix baseline_commit common config
-      dataflow_traces diff_depth dryrun dump_ast dump_command_for_core dump_engine_path
-      dynamic_timeout dynamic_timeout_max_multiplier dynamic_timeout_unit_kb 
-      emacs emacs_outputs error exclude_ exclude_minified_files exclude_rule_ids files_with_matches
-      force_color gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
-      _historical_secrets include_ incremental_output incremental_output_postprocess
-      json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
-      max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
-      num_jobs no_secrets_validation nosem opengrep_ignore_pattern optimizations oss
-      output output_enclosing_context pattern pro project_root taint_intrafile
-      effect_guards pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
-      scan_unknown_extensions secrets semgrepignore_filename severity show_supported_languages
-      strict target_roots test test_ignore_todo text text_outputs time_flag timeout
-      _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
-      validate version version_check vim vim_outputs
-      x_ignore_semgrepignore_files x_ls x_ls_long =
+  let combine allow_local_builds allow_rule_timeout_control
+      allow_untrusted_validators apply_includes_excludes_to_files
+      inline_metavariables autofix baseline_commit common config dataflow_traces
+      diff_depth dryrun dump_ast dump_command_for_core dump_engine_path
+      dynamic_timeout dynamic_timeout_max_multiplier dynamic_timeout_unit_kb
+      emacs emacs_outputs error exclude_ exclude_minified_files exclude_rule_ids
+      files_with_matches force_color gitlab_sast gitlab_sast_outputs
+      gitlab_secrets gitlab_secrets_outputs _historical_secrets include_
+      incremental_output incremental_output_postprocess json json_outputs
+      junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
+      max_lines_per_finding max_log_list_entries max_match_per_file
+      max_memory_mb max_target_bytes num_jobs no_secrets_validation nosem
+      opengrep_ignore_pattern optimizations oss output output_enclosing_context
+      pattern pro project_root taint_intrafile effect_guards pro_path_sensitive
+      remote replacement rewrite_rule_ids sarif sarif_outputs
+      scan_unknown_extensions secrets semgrepignore_filename severity
+      show_supported_languages strict target_roots test test_ignore_todo text
+      text_outputs time_flag timeout _timeout_interfileTODO timeout_threshold
+      (*  trace trace_endpoint *) use_git validate version version_check vim
+      vim_outputs x_ignore_semgrepignore_files x_ls x_ls_long =
     (* Print a warning if any of the internal or experimental options.
        We don't want users to start relying on these. *)
     if x_ignore_semgrepignore_files || x_ls || x_ls_long then
       Logs.warn (fun m ->
           m
             "!!! You're using one or more options starting with '--x-'. These \
-             options are not part of the opengrep API. They will change or will \
-             be removed without notice !!! ");
+             options are not part of the opengrep API. They will change or \
+             will be removed without notice !!! ");
 
     (* Create engine configuration *)
-    let engine_config = {
-      Engine_config.custom_ignore_pattern = opengrep_ignore_pattern;
-      taint_intrafile = Some taint_intrafile;
-    } in
+    let engine_config =
+      {
+        Engine_config.custom_ignore_pattern = opengrep_ignore_pattern;
+        taint_intrafile = Some taint_intrafile;
+      }
+    in
 
     if output_enclosing_context && not json then
       Logs.warn (fun m ->
           m
-            "The --output-enclosing-context option has no effect without --json.");
+            "The --output-enclosing-context option has no effect without \
+             --json.");
     let target_roots, imply_always_select_explicit_targets =
       replace_target_roots_by_regular_files_where_needed caps
         ~experimental:(common.CLI_common.maturity =*= Maturity.Experimental)
@@ -1510,7 +1523,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         force_novcs_project;
         exclude = exclude_;
         include_;
-        apply_includes_excludes_to_file_targets = apply_includes_excludes_to_files;
+        apply_includes_excludes_to_file_targets =
+          apply_includes_excludes_to_files;
         baseline_commit;
         diff_depth;
         max_target_bytes;
@@ -1575,7 +1589,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       else if x_ls then (true, Ls_subcommand.default_format)
       else (false, Ls_subcommand.default_format)
     in
-    let matching_conf = {Match_patterns.track_enclosing_context = output_enclosing_context}
+    let matching_conf =
+      { Match_patterns.track_enclosing_context = output_enclosing_context }
     in
     {
       rules_source;
@@ -1610,31 +1625,33 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   Term.(
     (* !the o_xxx must be in alphabetic orders to match the parameters of
      * combine above! *)
-    const combine $ o_allow_local_builds $ o_allow_rule_timeout_control $ o_allow_untrusted_validators
-    $ o_apply_includes_excludes_to_files $ o_inline_metavariables
-    $ o_autofix $ o_baseline_commit $ CLI_common.o_common $ o_config
-    $ o_dataflow_traces $ o_diff_depth $ o_dryrun $ o_dump_ast
-    $ o_dump_command_for_core $ o_dump_engine_path
-    $ o_dynamic_timeout $ o_dynamic_timeout_max_multiplier $ o_dynamic_timeout_unit_kb
-    $ o_emacs $ o_emacs_outputs
-    $ o_error $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
+    const combine $ o_allow_local_builds $ o_allow_rule_timeout_control
+    $ o_allow_untrusted_validators $ o_apply_includes_excludes_to_files
+    $ o_inline_metavariables $ o_autofix $ o_baseline_commit
+    $ CLI_common.o_common $ o_config $ o_dataflow_traces $ o_diff_depth
+    $ o_dryrun $ o_dump_ast $ o_dump_command_for_core $ o_dump_engine_path
+    $ o_dynamic_timeout $ o_dynamic_timeout_max_multiplier
+    $ o_dynamic_timeout_unit_kb $ o_emacs $ o_emacs_outputs $ o_error
+    $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
     $ o_files_with_matches $ o_force_color $ o_gitlab_sast
     $ o_gitlab_sast_outputs $ o_gitlab_secrets $ o_gitlab_secrets_outputs
-    $ o_historical_secrets $ o_include $ o_incremental_output $ o_incremental_output_postprocess
-    $ o_json $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
-    $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
-    $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes
-    $ o_num_jobs $ o_no_secrets_validation $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations $ o_oss
-    $ o_output $ o_output_enclosing_context $ o_pattern $ o_pro $ o_project_root 
-    $ o_taint_intrafile
-    $ o_effect_guards
-    $ o_pro_path_sensitive $ o_remote $ o_replacement
-    $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
-    $ o_secrets $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages $ o_strict
-    $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
+    $ o_historical_secrets $ o_include $ o_incremental_output
+    $ o_incremental_output_postprocess $ o_json $ o_json_outputs $ o_junit_xml
+    $ o_junit_xml_outputs $ o_lang $ o_matching_explanations
+    $ o_max_chars_per_line $ o_max_lines_per_finding $ o_max_log_list_entries
+    $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes $ o_num_jobs
+    $ o_no_secrets_validation $ o_nosem $ o_opengrep_ignore_pattern
+    $ o_optimizations $ o_oss $ o_output $ o_output_enclosing_context
+    $ o_pattern $ o_pro $ o_project_root $ o_taint_intrafile $ o_effect_guards
+    $ o_pro_path_sensitive $ o_remote $ o_replacement $ o_rewrite_rule_ids
+    $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions $ o_secrets
+    $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages
+    $ o_strict $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
-    $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate
-    $ o_version $ o_version_check $ o_vim $ o_vim_outputs
+    $ o_timeout_threshold
+    $
+    (* o_trace $ o_trace_endpoint $ *)
+    o_use_git $ o_validate $ o_version $ o_version_check $ o_vim $ o_vim_outputs
     $ o_ignore_semgrepignore_files $ o_ls $ o_ls_long)
 
 let doc = "run opengrep rules on files"

@@ -37,11 +37,7 @@ val too_much_data : string
  * to log in and try Pro.
  *)
 val output_result :
-  < Cap.stdout > ->
-  conf ->
-  Profiler.t ->
-  Core_runner.result ->
-  Out.cli_output
+  < Cap.stdout > -> conf -> Profiler.t -> Core_runner.result -> Out.cli_output
 
 (* helper used in output_result() and other callsites.
  * This handles nosemgrep, interpolating messages, and more.
@@ -50,5 +46,4 @@ val preprocess_result : fixed_lines:bool -> Core_runner.result -> Out.cli_output
 
 (* used by RPC_return.ml for Vim/Emacs/Junit_xml/Gitlab_xxx for now *)
 val format :
-  ?profiler : Profiler.t ->
-  Output_format.t -> Out.cli_output -> string list
+  ?profiler:Profiler.t -> Output_format.t -> Out.cli_output -> string list
