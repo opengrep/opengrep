@@ -259,7 +259,11 @@ module Taint_set : sig
       least one taint in the set is live. [empty] yields [Effect_guard.top]. *)
 
   val map_taint : (taint -> taint) -> t -> t
-  (** Map the inner taint of every bundle, leaving guards untouched. *)
+  (** Map the inner taint of every bundle, leaving guards untouched.
+      [f] MAY change taint identity: the set detects it and rebuilds
+      itself with correct keys, fusing guards of identity-colliding
+      results as [add]/[union] would. Identity-preserving [f] (e.g.
+      token-trace updates) keeps the cheap in-place path. *)
 end
 
 type taints = Taint_set.t
