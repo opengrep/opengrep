@@ -120,8 +120,16 @@ let compose_offset ~(lang : Lang.t) (base : T.offset list)
     match os with
     | [] -> List.rev rev_acc
     | o :: rest ->
-        if n >= cap || List.exists (T.equal_offset o) rev_acc
-        then List.rev rev_acc
+        if n >= cap then (
+          (* Dropping segments loses field-sensitivity past the cap: the
+             truncated taint over-approximates every sibling under the
+             kept prefix (pinned by test_poly_offset_cap_python). Debug,
+             not warn: this composes in the fixpoint's hottest loops. *)
+          Log.debug (fun m ->
+              m "compose_offset: dropping %d segment(s) past poly-offset cap %d: base=%s offset=%s"
+                (List.length os) cap (debug_offset base) (debug_offset offset));
+          List.rev rev_acc)
+        else if List.exists (T.equal_offset o) rev_acc then List.rev rev_acc
         else go (o :: rev_acc) (n + 1) rest
   in
   go (List.rev base) (List.length base) offset

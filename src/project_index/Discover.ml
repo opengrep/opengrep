@@ -13,6 +13,10 @@ let lang_matches (lang : Lang.t) (file : Fpath.t) : bool =
   Nonfatal.catch ~default:false (fun () ->
     List.exists (Lang.equal lang) (Lang.langs_of_filename file))
 
+(* Matching a compiled [Re.re] mutates its lazily-built DFA cache, so a
+   shared pattern must not be matched from parallel domains. Safe here:
+   matchers stay local to [apply_include_exclude], and discovery runs
+   serially on the coordinator before [run_pipeline] spawns workers. *)
 type matcher =
   | Prefix of string
   | Glob of Re.re
