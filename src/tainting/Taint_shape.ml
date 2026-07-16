@@ -98,6 +98,13 @@ let taints_and_shape_are_relevant taints shape =
    [taint_MAX_POLY_OFFSET]. *)
 let max_poly_offset (lang : Lang.t) : int =
   match lang with
+  (* Cap 2 measured on grafana (2026-07, 13 go rules): converges at ~4x
+     the cap-1 scan time (488s vs ~120s) and removes 22 of 806 findings
+     by source/sink identity — all field-confusion FPs (at cap 1 every
+     field of a depth-1-truncated struct aliases, so e.g. an int
+     threshold "flows" into a filepath.Join sink). No sink location
+     gains or loses coverage. Raising the cap is a 4x-cost /
+     trace-precision tradeoff; cap 4 explodes (composition width). *)
   | Lang.Go -> Limits_semgrep.taint_MAX_POLY_OFFSET_FLAT
   | _ -> Limits_semgrep.taint_MAX_POLY_OFFSET
 
