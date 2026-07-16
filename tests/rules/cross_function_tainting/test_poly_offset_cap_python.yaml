@@ -1,0 +1,11 @@
+rules:
+  - id: poly-offset-cap
+    mode: taint
+    message: taint reached a sink through a capped poly-offset chain
+    severity: ERROR
+    languages:
+      - python
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)
