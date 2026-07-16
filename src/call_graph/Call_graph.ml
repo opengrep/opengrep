@@ -130,16 +130,23 @@ let lookup_callee_from_graph (graph : G.t option)
             Some (G.E.src edge)
         | None ->
             (* Match by line/column/file: dispatch edges have bytepos=0, so Pos.equal against real-byte-offset AST tokens always fails. *)
-            List.iter (fun edge ->
-              let (site : Pos.t) = (G.E.label edge).call_site in
-              let callee = G.E.src edge in
-              if Int.equal site.line call_pos.Pos.line then
-                Log.debug (fun m ->
-                    m "CALL_GRAPH LOOKUP: same-line edge callee=%s site=(%s:%d:%d bytepos=%d)"
-                      (show_node callee)
-                      (Fpath.to_string site.file)
-                      site.line site.column site.bytepos)
-            ) incoming_edges;
+            (* The whole iteration lives inside the Log.debug callback so
+               the per-call-site hot path does no work when debug is off. *)
+            Log.debug (fun m ->
+                let same_line_edges =
+                  incoming_edges
+                  |> List.filter_map (fun edge ->
+                         let (site : Pos.t) = (G.E.label edge).call_site in
+                         if Int.equal site.line call_pos.Pos.line then
+                           Some
+                             (Printf.sprintf "callee=%s site=(%s:%d:%d bytepos=%d)"
+                                (show_node (G.E.src edge))
+                                (Fpath.to_string site.file)
+                                site.line site.column site.bytepos)
+                         else None)
+                in
+                m "CALL_GRAPH LOOKUP: same-line edges: %s"
+                  (String.concat "; " same_line_edges));
             let lc_match =
               incoming_edges
               |> List.find_opt (fun edge ->
