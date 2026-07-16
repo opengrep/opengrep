@@ -337,6 +337,57 @@ let lookup_scope_opt ?(class_attr = false) (s, _) env =
   in
   lookup ~class_attr s actual_scopes
 
+(* Decides whether an implicit assignment [x = e] rebinds an existing
+ * variable (Some _) or declares a new one (None).
+ *
+ * Python: assignment makes a name function-local unless a [global] /
+ * [nonlocal] directive binds it — and directives plant their resolution
+ * in the current block scope (see the UseOuterDecl case) — so only the
+ * current block scope (parameters, prior locals, directive entries)
+ * suppresses the implicit declaration. A name that merely resolves in an
+ * enclosing / global / imported scope is shadowed by the assignment
+ * (e.g. a function-local [query = ...] under a module-level [def query]).
+ * Exception: the rules ecosystem relies on flow-insensitive naming for
+ * imports ([import pdb as db] then [db = "a string"] with later [db.Pdb]
+ * uses still expected to match, cf. python/lang/correctness/pdb.yaml in
+ * semgrep-rules), so an Imported* resolution anywhere on the chain still
+ * suppresses the declaration.
+ *
+ * PHP: a function body sees nothing from enclosing scopes except what a
+ * [global $x;] directive binds (planted in the current block scope by
+ * the UseOuterDecl case) or a closure [use] captures, so only the
+ * current block scope suppresses the declaration. Variables carry their
+ * [$] sigil so they can never collide with function/import names; no
+ * import exception is needed.
+ *
+ * Ruby / Crystal: blocks and procs close over enclosing locals, so an
+ * assignment anywhere on the block chain rebinds them; top-level locals
+ * live in the global scope and stay visible (script-style code). What
+ * assignment does shadow is a same-named top-level [def]: defs live in
+ * the imported scope, which is excluded here.
+ *
+ * Other implicit-declaration languages keep the full-chain lookup: a JS
+ * bare assignment genuinely mutates the outer binding.
+ *)
+let lookup_for_implicit_assign_opt id env =
+  let s, _ = id in
+  match (env.lang, !(env.names.blocks)) with
+  | Lang.Python, current_block :: _ -> (
+      match lookup s [ current_block ] with
+      | Some _ as resolved -> resolved
+      | None -> (
+          match lookup_scope_opt id env with
+          | Some { entname = (ImportedEntity _ | ImportedModule _), _; _ } as
+            resolved ->
+              resolved
+          | Some _
+          | None ->
+              None))
+  | Lang.Php, current_block :: _ -> lookup s [ current_block ]
+  | (Lang.Ruby | Lang.Crystal), (_ :: _ as blocks) ->
+      lookup s (blocks @ [ !(env.names.global) ])
+  | _ -> lookup_scope_opt id env
+
 (*****************************************************************************)
 (* Error management *)
 (*****************************************************************************)
@@ -1096,7 +1147,7 @@ class ['self] resolve_visitor env lang =
           declare_var env lang id id_info ~explicit:true (Some e2) None;
           recurse := false
       | Assign ({ e = N (Id (id, id_info)); _ }, _, e2)
-        when Option.is_none (lookup_scope_opt id env)
+        when Option.is_none (lookup_for_implicit_assign_opt id env)
              && assign_implicitly_declares lang
              && is_resolvable_name_ctx env lang ->
           (* Need to visit the RHS first so that type is populated *)

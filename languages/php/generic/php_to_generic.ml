@@ -206,6 +206,13 @@ let rec stmt_aux = function
              | Id [ id ] ->
                  let ent = G.basic_entity ~case_insensitive:false id in
                  G.DefStmt (ent, G.UseOuterDecl t) |> G.s
+             (* [global $x;] — the tree-sitter converter emits UseOuterDecl
+              * for this too; naming plants the outer binding in the
+              * function scope so later [$x = ...] rebinds the global. *)
+             | Var v ->
+                 let id = var v in
+                 let ent = G.basic_entity ~case_insensitive:false id in
+                 G.DefStmt (ent, G.UseOuterDecl t) |> G.s
              | _ ->
                  let e = expr e in
                  G.OtherStmt (G.OS_GlobalComplex, [ G.E e ]) |> G.s)
