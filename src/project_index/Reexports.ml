@@ -7,7 +7,8 @@ module Log = Log_projidx.Log
 let build_reexport_map ~(cfg : Index_lang_rules.t)
     (file_infos : Types.file_info list)
   : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t =
-  let reexport_map = Hashtbl.create 4096 in
+  (* Re-exports only come from package files: bounded by the file count. *)
+  let reexport_map = Hashtbl.create (List.length file_infos) in
   if not cfg.Index_lang_rules.has_reexports then reexport_map
   else begin
     List.iter (fun (fi : Types.file_info) ->
