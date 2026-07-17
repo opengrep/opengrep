@@ -107,15 +107,18 @@ let inherit_into_type_state
     ~(class_infos : class_info list)
     ~(func_def_file : FA.func_info -> string option)
     (ts : Type_state.t) : Type_state.t * class_fun_info list =
-  let by_qn : (Names.Class_qn.t, class_info) Hashtbl.t = Hashtbl.create 8192 in
+  (* Each table holds at most one entry per class. *)
+  let n_classes = List.length class_infos in
+  let by_qn : (Names.Class_qn.t, class_info) Hashtbl.t =
+    Hashtbl.create n_classes in
   List.iter (fun ci -> Hashtbl.replace by_qn ci.ci_qn ci) class_infos;
   let known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t =
-    Hashtbl.create 8192
+    Hashtbl.create n_classes
   in
   List.iter (fun ci -> Hashtbl.replace known_class_qns ci.ci_qn ())
     class_infos;
   let qns_by_leaf : (Names.Class_name.t, Names.Class_qn.t list) Hashtbl.t =
-    Hashtbl.create 8192
+    Hashtbl.create n_classes
   in
   List.iter (fun ci ->
     let leaf = Names.Class_qn.leaf ci.ci_qn in
