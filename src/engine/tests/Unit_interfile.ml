@@ -74,6 +74,23 @@ let run_test ?(taint_interfile = true) ?(taint_interfile_depth = 3)
             | _ -> false)
           all_fpaths
       in
+      (* Every case must state its intent: without at least one
+         annotation, a case that produces no findings passes even when
+         the engine is broken. *)
+      let annotation_regexp =
+        Str.regexp ".*\\b\\(ruleid\\|ok\\|todook\\|todoruleid\\):"
+      in
+      let has_annotation (file : Fpath.t) =
+        UFile.cat file
+        |> List.exists (fun line ->
+               Str.string_match annotation_regexp line 0)
+      in
+      if not (List.exists has_annotation pl_files) then
+        failwith
+          (spf
+             "interfile case %s has no ruleid:/ok: annotations; add a \
+              positive control or an explicit negative marker"
+             !!test_dir);
       let regexp = ".*\\b\\(ruleid\\|todook\\):.*" in
       let expected =
         TCM.expected_error_lines_of_files ~regexp pl_files
