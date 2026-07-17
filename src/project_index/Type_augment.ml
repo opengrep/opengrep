@@ -346,6 +346,21 @@ let build_caller_arg_types
     (file_infos : file_info list)
   : (string * string * int, G.name) Hashtbl.t =
   let arg_types = Hashtbl.create 8192 in
+  (* Only types naming a class the index knows are stored: the table
+     feeds [augment_fields_from_self_assignments] -> [Type_state.set_field],
+     whose stored type is read back solely to resolve [self.field.m()] to
+     a project class's methods — any other type is dead weight (measured:
+     ALL entries on lemur and gitlab; 72 and 4,802 keys respectively).
+     A key whose callers disagree on the class is dropped below: any
+     single winner would be wrong at the other call sites, and which one
+     won used to depend on the path-sorted file order (same
+     missed-over-wrong bias as [Graph_from_AST.try_unique_by_distinct_key]).
+     The precise semantics — the field's type is per construction site —
+     needs per-call-site instantiation, not this global table; see the
+     ctor-arg-conflict notes in the interfile task list. *)
+  let candidate_leaves : (string * string * int, string list) Hashtbl.t =
+    Hashtbl.create 8192
+  in
   let infer expr =
     Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword ~type_state expr
   in
@@ -374,8 +389,18 @@ let build_caller_arg_types
                 | G.Arg expr | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) ->
                   (match infer expr with
                    | Some ty ->
-                     if not (Hashtbl.mem arg_types (cls, meth, i)) then
-                       Hashtbl.replace arg_types (cls, meth, i) ty
+                     (match Ty_leaf.leaf_of_name ty with
+                      | Some leaf when Type_state.has_class type_state leaf ->
+                        let prev =
+                          Option.value ~default:[]
+                            (Hashtbl.find_opt candidate_leaves (cls, meth, i))
+                        in
+                        if not (List.mem leaf prev) then
+                          Hashtbl.replace candidate_leaves (cls, meth, i)
+                            (leaf :: prev);
+                        if not (Hashtbl.mem arg_types (cls, meth, i)) then
+                          Hashtbl.replace arg_types (cls, meth, i) ty
+                      | _ -> ())
                    | None -> ())
                 | _ -> ()
               ) (Tok.unbracket args)
@@ -386,6 +411,20 @@ let build_caller_arg_types
     Nonfatal.catch ~on:fi.fi_file ~default:()
       (fun () -> visitor#visit_program () fi.fi_ast)
   ) file_infos;
+  let conflicted_keys =
+    Hashtbl.fold
+      (fun key leaves acc ->
+        if List.length leaves > 1 then key :: acc else acc)
+      candidate_leaves []
+  in
+  List.iter (Hashtbl.remove arg_types) conflicted_keys;
+  if not (List_.null conflicted_keys) then
+    Log_projidx.Log.debug (fun m ->
+        m
+          "build_caller_arg_types: dropped %d arg keys with conflicting \
+           caller classes (%d kept)"
+          (List.length conflicted_keys)
+          (Hashtbl.length arg_types));
   arg_types
 
 (* Module-level singleton bindings keyed by full qn (module_qn + var_name):
@@ -454,6 +493,20 @@ let augment_fields_from_self_assignments
         Option.value (Func_info.def_file_opt func) ~default:(Fpath.v "<fake>")
       in
       let param_types : (string, G.name) Hashtbl.t = Hashtbl.create 4 in
+      let params = Tok.unbracket func.FA.fdef.G.fparams in
+      (* [caller_arg_types] is keyed by CALL-argument index, which does
+         not count the receiver; an explicit receiver param ([self]/[cls]
+         in Python, [ParamReceiver] in Go) shifts every later param by
+         one. *)
+      let receiver_offset =
+        match params with
+        | G.ParamReceiver _ :: _ -> 1
+        | G.Param { pname = Some (("self" | "cls"), _); _ } :: _ -> 1
+        | _ -> 0
+      in
+      let caller_arg_type i =
+        Hashtbl.find_opt caller_arg_types (cls, meth, i - receiver_offset)
+      in
       List.iteri (fun i param ->
         match param with
         | G.Param { pname = Some (pn, _); ptype = Some pty; _ }
@@ -461,15 +514,15 @@ let augment_fields_from_self_assignments
           (match Ty_leaf.class_name_of_ty pty with
            | Some name -> Hashtbl.replace param_types pn name
            | None ->
-             (match Hashtbl.find_opt caller_arg_types (cls, meth, i) with
+             (match caller_arg_type i with
               | Some name -> Hashtbl.replace param_types pn name
               | None -> ()))
         | G.Param { pname = Some (pn, _); ptype = None; _ } ->
-          (match Hashtbl.find_opt caller_arg_types (cls, meth, i) with
+          (match caller_arg_type i with
            | Some name -> Hashtbl.replace param_types pn name
            | None -> ())
         | _ -> ()
-      ) (Tok.unbracket func.FA.fdef.G.fparams);
+      ) params;
       (* PHP 8 ctor property promotion: the parser drops the visibility
          modifier, so every typed ctor param is a candidate field. *)
       let outer_acc =
