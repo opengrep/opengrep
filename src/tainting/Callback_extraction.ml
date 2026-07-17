@@ -252,7 +252,24 @@ let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
     else (
       try
         let file = Fpath.to_string (Tok.file_of_tok tok) in
-        Some (G.Global, G.SId.of_tok ~name:(fst n.IL.ident) ~file tok)
+        let sid =
+          (* Alias-synthetic leaf (cf. Ts_class_aliases and
+             fn_id_to_node): the exposed ident sits at the TARGET's
+             position while the leaf's own [id_resolved] carries the
+             target's sid under a different name. Propagate the
+             target's identity — that is where the def and its
+             signature live. Real defs resolve to their own name, so
+             this is a no-op for them. *)
+          match !(n.IL.id_info.G.id_resolved) with
+          | Some (_, rsid) when not (G.SId.is_unsafe_default rsid) ->
+            let rname, _, _, _ = G.SId.to_loc rsid in
+            if (not (String.equal rname (fst n.IL.ident)))
+               && G.SId.equal rsid (G.SId.of_tok ~name:rname ~file tok)
+            then rsid
+            else G.SId.of_tok ~name:(fst n.IL.ident) ~file tok
+          | _ -> G.SId.of_tok ~name:(fst n.IL.ident) ~file tok
+        in
+        Some (G.Global, sid)
       with Tok.NoTokenLocation _ -> None)
   | _ -> None
 
