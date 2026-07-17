@@ -1,0 +1,17 @@
+rules:
+  - id: class-alias-via-imports
+    languages: [ts]
+    severity: ERROR
+    message: >
+      Taint reaches a sink through a class-body field alias.  Pins
+      Ts_class_aliases target resolution: the referenced identifier
+      resolves through the file's imports (including import aliases),
+      never by a project-wide first-match on the bare name — an
+      unimported homonym elsewhere in the project must not bind.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)
