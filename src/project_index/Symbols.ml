@@ -264,8 +264,10 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
    returned function materialises (and caches) a class's set. *)
 let methods_by_class (entries : entry list)
     : Function_id.t -> (string, unit) Hashtbl.t =
+  (* One set per class, populated lazily; the class count is not known
+     here and [entries] would overshoot (it includes every function). *)
   let tbl : (Function_id.t, (string, unit) Hashtbl.t) Hashtbl.t =
-    Hashtbl.create 8192
+    Hashtbl.create 1024
   in
   let ensure_set id =
     match Hashtbl.find_opt tbl id with
