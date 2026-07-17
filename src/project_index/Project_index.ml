@@ -258,8 +258,13 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let type_state, inherited_by_class =
     if cfg.Index_lang_rules.walks_inheritance then
-      Mro.inherit_into_type_state ~reexport_map ~class_infos
-        ~func_def_file:Type_augment.func_def_file type_state
+      let cross_module_parents =
+        match cfg.Index_lang_rules.unqualified_scope with
+        | `Per_file -> false
+        | `Per_directory | `Per_package -> true
+      in
+      Mro.inherit_into_type_state ~cross_module_parents ~reexport_map
+        ~class_infos ~func_def_file:Type_augment.func_def_file type_state
     else (type_state, [])
   in
 
