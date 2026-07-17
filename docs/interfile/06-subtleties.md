@@ -218,20 +218,18 @@ bare-name fallback would let `Class::staticMethod(...)` aliases to
 methods on completely unrelated classes that happen to share the
 leaf name, which is precision-destroying in practice.
 
-### B5. Top-level HOF callbacks: per-file `func_ranges`
+### B5. Top-level HOF callbacks are collected structurally
 
-`extract_toplevel_hof_callbacks` needs to know whether a call site
-sits inside a function body or at module scope (the latter feeds
-the file's `top_level` vertex).  It does this by checking the call
-site's byte range against the byte ranges of function defs in this
-file.
-
-The byte ranges must be **per-file**, not project-wide.  Byte
-positions are only meaningful within their owning file; a
-project-wide range list could falsely classify a same-file
-top-level call as "inside a function" when an unrelated other-file
-range happens to span the same byte position.  The AST visitor
-collects ranges from this file's function defs only.
+`extract_toplevel_hof_callbacks` must classify a call site as
+module scope (feeding the file's `top_level` vertex) rather than
+inside a function body.  The classification is structural: it walks
+the program with `Walker.fold_exprs_in_program
+~skip_nested_fdefs:true`, so expressions inside function
+definitions are never visited and every call it reaches is module
+scope by construction — no position arithmetic is involved.
+Operator pseudo-calls (`IdSpecial (Op _)` callees, e.g. PEP 604
+`int | None` unions) are filtered out; they would otherwise emit
+spurious callback edges.
 
 Result: patterns like Go's `wire.NewSet(handler1, handler2)` at
 module scope emit as top-level edges to each handler.
