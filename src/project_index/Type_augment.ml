@@ -249,7 +249,8 @@ let build_export_class_indexes ~(lang : Lang.t)
 
 let build_file_funcs_index (all_funcs : FA.func_info list)
   : (string, FA.func_info list) Hashtbl.t =
-  let index = Hashtbl.create 4096 in
+  (* Keyed by def file: bounded by the function count. *)
+  let index = Hashtbl.create (List.length all_funcs) in
   List.iter (fun (func : FA.func_info) ->
     let is_recognised =
       Option.is_some (Func_info.as_method func.FA.fn_id)
@@ -345,7 +346,10 @@ let build_caller_arg_types
     ~(type_state : Type_state.t)
     (file_infos : file_info list)
   : (string * string * int, G.name) Hashtbl.t =
-  let arg_types = Hashtbl.create 8192 in
+  (* Small: only known-class candidate types are stored (zero entries on
+     the reference corpora); the table grows if a project really passes
+     class instances to constructors. *)
+  let arg_types = Hashtbl.create 64 in
   (* Only types naming a class the index knows are stored: the table
      feeds [augment_fields_from_self_assignments] -> [Type_state.set_field],
      whose stored type is read back solely to resolve [self.field.m()] to
@@ -359,7 +363,7 @@ let build_caller_arg_types
      needs per-call-site instantiation, not this global table; see the
      ctor-arg-conflict notes in the interfile task list. *)
   let candidate_leaves : (string * string * int, string list) Hashtbl.t =
-    Hashtbl.create 8192
+    Hashtbl.create 64
   in
   let infer expr =
     Type_infer.infer_expr_type ~max_depth:6 ~uses_new_keyword ~type_state expr
