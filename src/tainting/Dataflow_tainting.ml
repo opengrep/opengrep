@@ -786,17 +786,22 @@ let signature_via_id_resolved ?require_leaf ~lang ~project_root db
         String.equal rname leaf
         || Object_initialization.is_constructor lang rname None
     in
-    if leaf_ok then
-      (* A project scan keys the sig DB by absolutified fids, while sids
-         carry the as-parsed (possibly relative) file. *)
-      let fid =
-        let fid = Function_id.of_sid sid in
-        match project_root with
-        | Some root -> Function_id.make_absolute root fid
-        | None -> fid
-      in
+    (* A project scan keys the sig DB by absolutified fids, while sids
+       carry the as-parsed (possibly relative) file. *)
+    let fid =
+      let fid = Function_id.of_sid sid in
+      match project_root with
+      | Some root -> Function_id.make_absolute root fid
+      | None -> fid
+    in
+    if leaf_ok then Shape_and_sig.lookup_signature db fid arity
+    else
+      (* Leaf-name mismatch: either a stale stamp or a deliberate alias
+         (a class-body field alias exposes name X for a target named Y;
+         projidx's write-back stamps the target's sid). Trust it only
+         when the stamp resolves to an actual stored signature of the
+         right arity. *)
       Shape_and_sig.lookup_signature db fid arity
-    else None
   | _ -> None
 
 let get_signature_for_object ?(callee_id_info : G.id_info option) ~lang
