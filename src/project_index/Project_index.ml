@@ -107,7 +107,8 @@ let build_project_call_graph (caps : < Cap.fork >)
   let graph = Call_graph.G.create () in
   (* Per-file synthetic [<top_level>] node for module-scope calls, so the dump
      keeps the caller's file/line. *)
-  let top_level_nodes : (string, Function_id.t) Hashtbl.t = Hashtbl.create 4096 in
+  let top_level_nodes : (string, Function_id.t) Hashtbl.t =
+    Hashtbl.create (List.length file_infos) in
   let top_level_node_for (file : Fpath.t) : Function_id.t =
     Hashtbl.find top_level_nodes (Fpath.to_string file)
   in
@@ -202,7 +203,8 @@ let build_project_call_graph (caps : < Cap.fork >)
   ) all_funcs;
 
   let project_class_names : G.name list =
-    let seen : (string, unit) Hashtbl.t = Hashtbl.create 8192 in
+    let seen : (string, unit) Hashtbl.t =
+      Hashtbl.create (List.length class_infos) in
     List.fold_left (fun acc fi ->
       List.fold_left (fun acc name ->
         match name with

@@ -5,7 +5,9 @@ let build_default_export_fn
     ~(lang : Lang.t)
     (file_infos : Types.file_info list)
   : (string, FA.func_info) Hashtbl.t =
-  let default_exports : (string, FA.func_info) Hashtbl.t = Hashtbl.create 1024 in
+  (* At most one default export per file. *)
+  let default_exports : (string, FA.func_info) Hashtbl.t =
+    Hashtbl.create (List.length file_infos) in
   if not (Lang.equal lang Lang.Ts || Lang.equal lang Lang.Js) then default_exports
   else begin
     List.iter (fun (fi : Types.file_info) ->
