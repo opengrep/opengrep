@@ -5,7 +5,9 @@ let build_by_package
     ~(cfg : Index_lang_rules.t)
     (all_funcs : FA.func_info list)
   : (string, FA.func_info list) Hashtbl.t =
-  let h : (string, FA.func_info list) Hashtbl.t = Hashtbl.create 1024 in
+  (* Keyed by directory basename: bounded by the function count. *)
+  let h : (string, FA.func_info list) Hashtbl.t =
+    Hashtbl.create (List.length all_funcs) in
   if cfg.Index_lang_rules.unqualified_scope <> `Per_directory then h
   else begin
     List.iter (fun (func : FA.func_info) ->
@@ -32,8 +34,9 @@ let build_by_module
     ~(file_infos : Types.file_info list)
     (all_funcs : FA.func_info list)
   : (Names.Module_qn.t, FA.func_info list) Hashtbl.t =
+  (* One module per file. *)
   let h : (Names.Module_qn.t, FA.func_info list) Hashtbl.t =
-    Hashtbl.create 1024
+    Hashtbl.create (List.length file_infos)
   in
   match cfg.Index_lang_rules.unqualified_scope with
   | `Per_file | `Per_directory -> begin
