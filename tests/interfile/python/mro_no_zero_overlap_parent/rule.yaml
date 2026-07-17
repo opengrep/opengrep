@@ -1,0 +1,17 @@
+rules:
+  - id: mro-no-zero-overlap-parent
+    languages: [python]
+    severity: ERROR
+    message: >
+      Taint reaches a sink through an inherited method.  Pins
+      resolve_parent_by_scope: a syntactic parent name that resolves
+      nowhere via imports must NOT bind to a same-named class from an
+      unrelated module (zero shared qn prefix), so Worker does not
+      inherit vendor_base.Base's sinking method.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)

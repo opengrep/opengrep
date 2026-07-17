@@ -45,6 +45,7 @@ let resolve_parent_qn ~(imports : (string * Names.Module_qn.t) list)
        chase_reexport ~reexport_map ~known_class_qns candidate)
 
 let resolve_parent_by_scope
+    ~(cross_module_parents : bool)
     ~(by_qn : (Names.Class_qn.t, class_info) Hashtbl.t)
     ~(qns_by_leaf : (Names.Class_name.t, Names.Class_qn.t list) Hashtbl.t)
     (ci : class_info) (path : string list) : Names.Module_qn.t option =
@@ -97,12 +98,21 @@ let resolve_parent_by_scope
           Some (Names.Module_qn.of_string (Names.Class_qn.to_string qn))
         | _ -> None
       in
+      (* Module-scoped languages (unqualified_scope = Per_file) need an
+         import for a cross-file name, so a candidate sharing NO leading
+         qn part with the child is an unrelated module's homonym —
+         binding to it inherits a stranger's methods (wrong [self.m()]
+         bodies, spurious taint; pinned by mro_no_zero_overlap_parent).
+         Namespace/package-scoped languages (C++/C#/Java/Go) legitimately
+         see cross-file parents without imports, so zero overlap is
+         allowed there ([cross_module_parents]). *)
       match tier1 with
-      | _ :: _ -> pick_best ~require_shared:false tier1
+      | _ :: _ -> pick_best ~require_shared:(not cross_module_parents) tier1
       | [] -> pick_best ~require_shared:true candidates
     end
 
 let inherit_into_type_state
+    ~(cross_module_parents : bool)
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
     ~(class_infos : class_info list)
     ~(func_def_file : FA.func_info -> string option)
@@ -134,7 +144,9 @@ let inherit_into_type_state
     match resolve_parent_qn ~imports:ci.ci_imports
             ~reexport_map ~known_class_qns p_path with
     | Some _ as resolved -> resolved
-    | None -> resolve_parent_by_scope ~by_qn ~qns_by_leaf ci p_path
+    | None ->
+      resolve_parent_by_scope ~cross_module_parents ~by_qn ~qns_by_leaf ci
+        p_path
   in
   let synth_inherited (child_cls_il : IL.name) (parent_method : FA.func_info)
     : FA.func_info option =
