@@ -999,6 +999,38 @@ let lookup_signature_with_object_context env fun_exp arity =
                   (Function_id.of_il_name method_name) arity
               in
               try_builtin_fallback env (fst method_name.ident) arity result)
+      | Fetch
+          {
+            base = VarSpecial ((Self | This), _);
+            rev_offset = { o = Dot method_name; _ } :: _ :: _;
+          } -> (
+          (* Call through a self-field (e.g. [self.worker.work(x)], the
+             field typed from its initializer or from callers): the leaf
+             method's stamp, then the graph edge anchored at the method
+             token — the same channels as the chained-var branch above.
+             No name-keyed DB fallback: a bare method-name lookup would
+             match any same-named method regardless of class. *)
+          match
+            signature_via_id_resolved
+              ~require_leaf:(fst method_name.ident)
+              ~lang:env.taint_inst.lang
+              ~project_root:env.taint_inst.project_root db
+              method_name.id_info arity
+          with
+          | Some _ as r -> r
+          | None -> (
+              let call_tok =
+                Tok.abs_tok env.taint_inst.project_root
+                  (snd method_name.ident)
+              in
+              match
+                Call_graph.lookup_callee_from_graph env.call_graph
+                  (Option.map Function_id.of_il_name env.call_graph_caller)
+                  call_tok
+              with
+              | Some callee_node ->
+                  Shape_and_sig.lookup_signature db callee_node arity
+              | None -> None))
       | _ -> None)
 
 (* If [fun_exp]'s [id_resolved] def-site sid is the function currently
