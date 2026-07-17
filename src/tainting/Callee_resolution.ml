@@ -169,7 +169,28 @@ type node = Call_graph.node
 (* Extract graph node from fn_id - takes the last element *)
 let fn_id_to_node (fn_id : fn_id) : node option =
   match List.rev fn_id with
-  | Some name :: _ -> Some (Function_id.of_il_name name)
+  | Some name :: _ ->
+    let ident_node = Function_id.of_il_name name in
+    (* Alias-synthetic leaf (cf. Ts_class_aliases): the exposed ident
+       sits at the TARGET's position while the resolved sid carries the
+       target's own name — same position, different name is that
+       deliberate signature, and the node must be the target's identity
+       (that's where the def and its signature live). Real defs resolve
+       to their own name, so this is a no-op for them. *)
+    (match !(name.IL.id_info.G.id_resolved) with
+     | Some (_, sid) when not (G.SId.is_unsafe_default sid) ->
+       let sid_node = Function_id.of_sid sid in
+       let sid_name, _, _, _ = G.SId.to_loc sid in
+       let same_position =
+         let f1, l1, c1 = Function_id.to_file_line_col ident_node in
+         let f2, l2, c2 = Function_id.to_file_line_col sid_node in
+         String.equal f1 f2 && Int.equal l1 l2 && Int.equal c1 c2
+       in
+       if same_position
+          && not (String.equal sid_name (fst name.IL.ident))
+       then Some sid_node
+       else Some ident_node
+     | _ -> Some ident_node)
   | _ -> None
 
 
