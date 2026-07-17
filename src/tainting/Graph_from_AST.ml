@@ -245,11 +245,11 @@ let extract_calls ~(lang : Lang.t)
   (* Ruby: [foo(bar)] with method [bar] means [foo(bar())]; treat an unresolved Id arg as a call. *)
   let unresolved_arg_call acc arg =
     match arg with
-    | G.Arg { G.e = G.N (G.Id ((_, tok), id_info)); _ }
+    | G.Arg ({ G.e = G.N (G.Id ((_, tok), id_info)); _ } as arg_expr)
       when Option.is_none !(id_info.G.id_resolved) ->
       (match identify_callee ~lang
                ~all_funcs ~func_lookup ~type_state ~caller_parent_path
-               (match arg with G.Arg e -> e | _ -> assert false) with
+               arg_expr with
        | Some fn_id ->
          Log.debug (fun m ->
            m "CALL_EXTRACT: Found unresolved Id that is a function, adding as implicit call");
