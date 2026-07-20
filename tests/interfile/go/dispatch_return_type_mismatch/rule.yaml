@@ -1,0 +1,17 @@
+rules:
+  - id: dispatch-return-type-mismatch
+    languages: [go]
+    severity: ERROR
+    message: >
+      Taint reaches a sink through a method dispatched on an interface.
+      Structural dispatch must match implementations by return type, not
+      just method name+arity: Cache.Fetch shares Store.Fetch's name and
+      arity but returns int, so it does not implement Store and its sink
+      must not fire from a Store.Fetch call.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
