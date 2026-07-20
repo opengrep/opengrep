@@ -95,7 +95,11 @@ let resolve_into_module_index
     | None ->
       Option.value (Hashtbl.find_opt project_funcs_by_module qn) ~default:[]
   in
-  let overlay, n_added, n_wildcard =
+  (* One left-to-right pass over every re-export. Both branches dedup by
+     (name, file) so re-injecting an already-present func adds nothing —
+     which makes the pass idempotent and lets the fixpoint below detect
+     convergence. *)
+  let one_pass overlay =
     List.fold_left (fun acc (fi : Types.file_info) ->
       List.fold_left (fun ((overlay, n_added, n_wildcard) as acc)
                         (local, target_qn) ->
@@ -113,7 +117,7 @@ let resolve_into_module_index
             let cur = lookup overlay fi.fi_module_path in
             let merged, n = merge_dedup ~cur ~newcomers:public in
             (MQMap.add fi.fi_module_path merged overlay,
-             n_added, n_wildcard + n)
+             n_added + n, n_wildcard + n)
         else
         match Names.Module_qn.split_last target_qn with
         | Some (target_mod, target_name)
@@ -132,12 +136,26 @@ let resolve_into_module_index
               else List.map (expose_free_as ~alias:local) matches
             in
             let cur = lookup overlay fi.fi_module_path in
-            (MQMap.add fi.fi_module_path (exposed @ cur) overlay,
-             n_added + List.length exposed, n_wildcard)
+            let merged, n = merge_dedup ~cur ~newcomers:exposed in
+            (MQMap.add fi.fi_module_path merged overlay,
+             n_added + n, n_wildcard)
         | _ -> acc
       ) acc fi.fi_imports
-    ) (MQMap.empty, 0, 0) file_infos
+    ) (overlay, 0, 0) file_infos
   in
+  (* Iterate to a fixpoint so a chained re-export resolves regardless of
+     the order [file_infos] presents the modules in ([b] re-exporting
+     from [a] re-exporting from [c] needs [c]'s funcs to reach [a]'s
+     overlay before [b] reads it; a single pass only converges if the
+     files happen to arrive in dependency order). Bounded by the chain
+     depth: each pass either adds a genuinely new binding or stops. *)
+  let rec fixpoint overlay total_added total_wildcard =
+    let overlay', added, wildcard = one_pass overlay in
+    let total_wildcard = total_wildcard + wildcard in
+    if added = 0 then (overlay', total_added, total_wildcard)
+    else fixpoint overlay' (total_added + added) total_wildcard
+  in
+  let overlay, n_added, n_wildcard = fixpoint MQMap.empty 0 0 in
   Log.info (fun m ->
     m "Re-exports: %d funcs added to module index (+%d via wildcard)"
       n_added n_wildcard);
