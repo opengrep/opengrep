@@ -77,6 +77,42 @@ let emit_dispatch_edges
     | Some name -> Some (name, method_arity func)
     | None -> None
   in
+  (* Single return type leaf, or [None] when there is no return or it
+     isn't a simple named type (Go multi-returns, func types, etc.).
+
+     We compare RETURN types, not parameters: tree-sitter-go misparses an
+     unnamed-param interface decl ([Group(string, func(RouteRegister),
+     ...)]) by shifting the [name type] pairing — it reads [string] as
+     the parameter NAME and the following token as its type — so a
+     genuine implementation's params disagree with its own interface's
+     garbled params. A return position is always a bare type (no
+     [name type] ambiguity), so its leaf is trustworthy on both the decl
+     and the impl. *)
+  let rettype_leaf (func : FA.func_info) : string option =
+    match func.FA.fdef.G.frettype with
+    | Some ty -> Option.bind (Ty_leaf.class_name_of_ty ty) Ty_leaf.leaf_of_name
+    | None -> None
+  in
+  (* Only a definite return-type mismatch (both sides a simple named type,
+     different leaves) rejects; either side unknown stays compatible, so
+     the match degrades to name+arity where returns are absent/complex —
+     never losing an edge the old code emitted. Leaf comparison ignores
+     qualification ([pkg.Err] vs imported [Err]). *)
+  let types_compatible (a : string option) (b : string option) : bool =
+    match a, b with
+    | Some x, Some y -> String.equal x y
+    | _ -> true
+  in
+  (* [iface_m] is satisfied by [concrete_m]: same name, same arity, and no
+     definite return-type mismatch. *)
+  let method_satisfies (iface_m : FA.func_info) (concrete_m : FA.func_info)
+    : bool =
+    match method_name iface_m, method_name concrete_m with
+    | Some i_name, Some c_name when String.equal i_name c_name ->
+      Int.equal (method_arity iface_m) (method_arity concrete_m)
+      && types_compatible (rettype_leaf iface_m) (rettype_leaf concrete_m)
+    | _ -> false
+  in
   let interfaces, concretes =
     List.partition (fun (ci : Types.class_info) ->
       match ci.ci_class_kind with G.Interface -> true | _ -> false)
@@ -118,13 +154,8 @@ let emit_dispatch_edges
     : int =
     match method_name i_m with
     | None -> 0
-    | Some name ->
-      match
-        List.find_opt (fun (c_m : FA.func_info) ->
-          match method_name c_m with
-          | Some concrete_name -> String.equal concrete_name name
-          | None -> false) c_methods
-      with
+    | Some _ ->
+      match List.find_opt (method_satisfies i_m) c_methods with
       | None -> 0
       | Some c_m ->
         (match FA.fn_id_to_node c_m.FA.fn_id,
@@ -172,6 +203,15 @@ let emit_dispatch_edges
         in
         List.fold_left (fun n (_c_ci, c_methods, c_methods_na, c_pkg) ->
           if same_package_required && not (String.equal c_pkg i_pkg) then n
+          (* Class-membership gate stays name+arity: a genuine multi-method
+             interface must keep qualifying even if type extraction is
+             imperfect on one method (an all-or-nothing type gate here
+             drops the whole interface, losing valid edges). The parameter-
+             type precision is applied per-edge in [emit_dispatch_edge], so
+             a concrete that only accidentally shares a method name+arity
+             (e.g. an unrelated [Validate(ctx, runtime.Object)] against
+             [Validator.Validate(ctx, *plugins.Plugin)]) passes this gate
+             but emits no edge. *)
           else if not
             (List.for_all (fun na -> List.mem na c_methods_na) i_methods_na)
           then n
