@@ -1,0 +1,15 @@
+rules:
+  - id: reexport-chain-three-levels
+    languages: [python]
+    severity: ERROR
+    message: >
+      Three-level package re-export chain; the fixpoint in
+      resolve_into_module_index must flatten foo.process to
+      foo.bar.baz.impl.process regardless of file discovery order.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
