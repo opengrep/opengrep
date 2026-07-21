@@ -3491,34 +3491,44 @@ and m_fields (xsa : G.field list) (xsb : G.field list) =
     | _ -> false
   in
   (* dots: metavars: $...FLDS
-   * Fields are normally matched in any order (see m_list__m_field), but
-   * ellipsis metavariables only have well-defined bindings positionally
-   * (e.g., $...HEAD vs $...TAIL), so when the pattern contains one we
-   * switch to an ordered matching, as for arguments and parameters.
+   * A '$...FLDS' behaves like a '...': fields are matched in any order, so
+   * it stands for the fields not matched by the rest of the pattern, whatever
+   * their position. It is bound to those leftover fields by m_list__m_field.
    *)
-  if List.exists (fun x -> m_field_metavar_ellipsis x <> None) xsa then
-    m_list_with_dots_and_metavar_ellipsis ~less_is_ok:false ~f:m_field ~is_dots
-      ~is_metavar_ellipsis:m_field_metavar_ellipsis xsa xsb
-  else
-    (* let's filter the '...' *)
-    let dots, xsa = List.partition is_dots xsa in
-    if_config
-      (fun x -> x.implicit_ellipsis)
-      ~then_:(m_list__m_field ~less_is_ok:true xsa xsb)
-      ~else_:(m_list__m_field ~less_is_ok:(not (List_.null dots)) xsa xsb)
+  let mvar_ellipsis = xsa |> List_.filter_map m_field_metavar_ellipsis in
+  (* let's filter the '...' and the '$...FLDS' *)
+  let dots, xsa = List.partition is_dots xsa in
+  let xsa =
+    xsa
+    |> List_.exclude (fun x -> Option.is_some (m_field_metavar_ellipsis x))
+  in
+  let less_is_ok = not (List_.null dots && List_.null mvar_ellipsis) in
+  if_config
+    (fun x -> x.implicit_ellipsis)
+    ~then_:(m_list__m_field ~mvar_ellipsis ~less_is_ok:true xsa xsb)
+    ~else_:(m_list__m_field ~mvar_ellipsis ~less_is_ok xsa xsb)
 
 (* less: mix of m_list_and_dots and m_list_unordered_keys, hard to factorize *)
-and m_list__m_field ~less_is_ok (xsa : G.field list) (xsb : G.field list) =
+and m_list__m_field ?(mvar_ellipsis = []) ~less_is_ok (xsa : G.field list)
+    (xsb : G.field list) =
   Log.debug (fun m ->
       m "%s"
         (spf "m_list__m_field:%d vs %d" (List.length xsa) (List.length xsb)));
+  (* dots: metavars: $...FLDS is bound to the fields left unmatched *)
+  let bind_leftovers rest =
+    mvar_ellipsis
+    |> List.fold_left
+         (fun acc ((s, tok), metavar_build) ->
+           acc >>= fun () -> envf (s, tok) (metavar_build rest))
+         (return ())
+  in
   match (xsa, xsb) with
-  | [], [] -> return ()
+  | [], [] -> bind_leftovers []
   (* less-is-ok:
    * it's ok to have fields after in the concrete code as long as we
    * matched all the fields in the pattern.
    *)
-  | [], _ :: _ -> if less_is_ok then return () else fail ()
+  | [], (_ :: _ as rest) -> if less_is_ok then bind_leftovers rest else fail ()
   | G.F { s = G.ExprStmt ({ e = G.Ellipsis _; _ }, _); _ } :: _, _ ->
       raise Impossible
   (* Note that we restrict the match-a-field-at-any-position only for
@@ -3558,7 +3568,7 @@ and m_list__m_field ~less_is_ok (xsa : G.field list) (xsb : G.field list) =
         match there with
         | G.F { s = G.DefStmt bdef; _ } ->
             m_definition adef bdef >>= fun () ->
-            m_list__m_field ~less_is_ok xsa (before @ after)
+            m_list__m_field ~mvar_ellipsis ~less_is_ok xsa (before @ after)
         | _ -> raise Impossible
       with
       | Not_found -> fail ())
@@ -3575,7 +3585,8 @@ and m_list__m_field ~less_is_ok (xsa : G.field list) (xsb : G.field list) =
         | (b, xsb) :: xs ->
             m_field a b
             >>= (fun () ->
-                  m_list__m_field ~less_is_ok xsa (lazy_rest_of_list xsb))
+                  m_list__m_field ~mvar_ellipsis ~less_is_ok xsa
+                    (lazy_rest_of_list xsb))
             >||> aux xs
       in
       aux candidates

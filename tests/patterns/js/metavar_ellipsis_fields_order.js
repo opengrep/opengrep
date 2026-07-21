@@ -1,12 +1,12 @@
-// With an ellipsis metavariable, fields are matched in order, so only
-// the object where key2 comes first matches. Compare with
-// unordered_fields3.js: the same objects with a plain pattern match
-// regardless of key order.
+// An ellipsis metavariable behaves like `...`: fields are matched in any
+// order, and $...REST is bound to the fields the rest of the pattern did
+// not match, wherever those sit. Both objects below match.
 //ERROR: match
 var a = {
     key2: value2,
     key1: value1,
 };
+//ERROR: match
 var b = {
     key1: value1,
     key2: value2,
