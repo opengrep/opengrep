@@ -93,9 +93,9 @@ let emit_dispatch_edges
     | Some ty -> Option.bind (Ty_leaf.class_name_of_ty ty) Ty_leaf.leaf_of_name
     | None -> None
   in
-  (* Only a definite return-type mismatch (both sides a simple named type,
+  (* Only a definite type mismatch (both sides a simple named type,
      different leaves) rejects; either side unknown stays compatible, so
-     the match degrades to name+arity where returns are absent/complex —
+     the match degrades to name+arity where types are absent/complex —
      never losing an edge the old code emitted. Leaf comparison ignores
      qualification ([pkg.Err] vs imported [Err]). *)
   let types_compatible (a : string option) (b : string option) : bool =
@@ -103,14 +103,78 @@ let emit_dispatch_edges
     | Some x, Some y -> String.equal x y
     | _ -> true
   in
-  (* [iface_m] is satisfied by [concrete_m]: same name, same arity, and no
-     definite return-type mismatch. *)
+  (* tree-sitter-go misparses an UNNAMED-param interface decl when a
+     composite-type keyword ([func]/[map]/[chan]) follows a bare type
+     ([Group(string, func(I), ...)]): it reads the preceding token as the
+     param NAME and shifts the type, so the garbled decl's param types
+     disagree with a genuine impl's. Verified: bare, capitalized,
+     qualified ([io.Writer]), slice, struct{} and fully-unnamed params
+     all parse correctly ([pname = None]); only the composite-keyword
+     case garbles.
+
+     Crucially, when it garbles the trigger keyword itself lands as a
+     [pname] ([func]/[map]/[chan]) — a Go RESERVED WORD, which can never
+     be a legal identifier, so its presence as a param name is a definite
+     garble marker. Any method with such a param has its param parse
+     treated as untrustworthy and param comparison skipped (return type
+     and name+arity still apply), so a real impl of an unnamed-param
+     interface is never dropped on garbled data. The predeclared type
+     names below ([string]/[int]/...) are defensive: they CAN legally be
+     param names, but flagging one only forces the same conservative skip
+     (keep the edge), never a wrong rejection. *)
+  let untrustworthy_pname (name : string) : bool =
+    match name with
+    (* Reserved words — impossible as identifiers; the garble triggers. *)
+    | "func" | "map" | "chan" | "interface" | "struct" | "type" | "range"
+    (* Predeclared type names — defensive; a conservative skip at worst. *)
+    | "string" | "bool" | "byte" | "rune" | "error" | "any" | "uintptr"
+    | "int" | "int8" | "int16" | "int32" | "int64"
+    | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
+    | "float32" | "float64" | "complex64" | "complex128" -> true
+    | _ -> false
+  in
+  let params_of (func : FA.func_info) : G.parameter list =
+    let _, params, _ = func.FA.fdef.G.fparams in
+    match params with G.ParamReceiver _ :: rest -> rest | _ -> params
+  in
+  let params_trustworthy (func : FA.func_info) : bool =
+    List.for_all (fun p ->
+      match p with
+      | G.Param { G.pname = Some (n, _); _ } -> not (untrustworthy_pname n)
+      | _ -> true
+    ) (params_of func)
+  in
+  (* Positional param-type leaves, [None] where a param has no simple
+     named type. *)
+  let param_type_leaves (func : FA.func_info) : string option list =
+    List.map (fun p ->
+      match p with
+      | G.Param { G.ptype = Some ty; _ } ->
+        Option.bind (Ty_leaf.class_name_of_ty ty) Ty_leaf.leaf_of_name
+      | _ -> None
+    ) (params_of func)
+  in
+  let params_compatible (iface_m : FA.func_info) (concrete_m : FA.func_info)
+    : bool =
+    (* Skip when either side's param parse is untrustworthy (unnamed-param
+       decl garble): fall back to name+arity+return only. *)
+    if not (params_trustworthy iface_m && params_trustworthy concrete_m)
+    then true
+    else
+      let i = param_type_leaves iface_m in
+      let c = param_type_leaves concrete_m in
+      Int.equal (List.length i) (List.length c)
+      && List.for_all2 types_compatible i c
+  in
+  (* [iface_m] is satisfied by [concrete_m]: same name, same arity, no
+     definite return-type mismatch, and no definite param-type mismatch. *)
   let method_satisfies (iface_m : FA.func_info) (concrete_m : FA.func_info)
     : bool =
     match method_name iface_m, method_name concrete_m with
     | Some i_name, Some c_name when String.equal i_name c_name ->
       Int.equal (method_arity iface_m) (method_arity concrete_m)
       && types_compatible (rettype_leaf iface_m) (rettype_leaf concrete_m)
+      && params_compatible iface_m concrete_m
     | _ -> false
   in
   let interfaces, concretes =
