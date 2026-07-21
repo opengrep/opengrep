@@ -82,11 +82,56 @@ module MQMap = Map.Make (struct
   let compare = Names.Module_qn.compare
 end)
 
+(* The explicit export list of a module-level [__all__ = ["a", "_b"]]
+   (Python), as a name-set, or [None] when the module has no [__all__].
+   Only top-level assignments count; a list/tuple of string literals is
+   the only recognised form (a computed [__all__] yields [None], i.e.
+   fall back to the [_]-prefix rule). *)
+let dunder_all_of_ast (ast : G.program) : (string, unit) Hashtbl.t option =
+  let names_of_rhs (rhs : G.expr) : string list option =
+    match rhs.G.e with
+    | G.Container ((G.List | G.Tuple), (_, elts, _)) ->
+      Some (List.filter_map (fun (e : G.expr) ->
+        match e.G.e with
+        | G.L (G.String (_, (s, _), _)) -> Some s
+        | _ -> None) elts)
+    | _ -> None
+  in
+  let from_stmt (stmt : G.stmt) : string list option =
+    match stmt.G.s with
+    | G.ExprStmt
+        ({ G.e = G.Assign
+             ({ G.e = G.N (G.Id (("__all__", _), _)); _ }, _, rhs); _ }, _) ->
+      names_of_rhs rhs
+    | G.DefStmt
+        ({ G.name = G.EN (G.Id (("__all__", _), _)); _ },
+         G.VarDef { G.vinit = Some rhs; _ }) ->
+      names_of_rhs rhs
+    | _ -> None
+  in
+  match List.find_map from_stmt ast with
+  | None -> None
+  | Some names ->
+    let tbl = Hashtbl.create (List.length names) in
+    List.iter (fun n -> Hashtbl.replace tbl n ()) names;
+    Some tbl
+
 let resolve_into_module_index
     ~(project_funcs_by_module
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t)
     (file_infos : Types.file_info list)
     : (Names.Module_qn.t * FA.func_info list) list =
+  (* [__all__] name-set per module that declares one; consulted by the
+     wildcard branch. *)
+  let dunder_all_by_module : (Names.Module_qn.t, (string, unit) Hashtbl.t)
+      Hashtbl.t =
+    Hashtbl.create (List.length file_infos)
+  in
+  List.iter (fun (fi : Types.file_info) ->
+    match dunder_all_of_ast fi.Types.fi_ast with
+    | Some names -> Hashtbl.replace dunder_all_by_module fi.fi_module_path names
+    | None -> ()
+  ) file_infos;
   (* Additions as a Map overlay so chained re-exports see prior additions;
      the base table is only read. *)
   let lookup overlay qn =
@@ -104,12 +149,23 @@ let resolve_into_module_index
       List.fold_left (fun ((overlay, n_added, n_wildcard) as acc)
                         (local, target_qn) ->
         if String.equal local "*" then
-          (* [*] doesn't import names starting with [_] (Python). *)
+          (* [from M import *] brings in exactly [M.__all__] when M
+             declares one (INCLUDING [_]-prefixed names it lists, and
+             EXCLUDING public names it omits); otherwise it falls back to
+             "every name not starting with [_]" (Python's default). *)
+          let exported =
+            match Hashtbl.find_opt dunder_all_by_module target_qn with
+            | Some names ->
+              (fun name_str ->
+                 Hashtbl.mem names name_str)
+            | None ->
+              (fun name_str ->
+                 String.length name_str > 0
+                 && Char.equal name_str.[0] '_' = false)
+          in
           let public = List.filter (fun (func : FA.func_info) ->
             match Func_info.as_free func.FA.fn_id with
-            | Some name ->
-              let name_str = fst name.IL.ident in
-              String.length name_str > 0 && Char.equal name_str.[0] '_' = false
+            | Some name -> exported (fst name.IL.ident)
             | None -> false
           ) (lookup overlay target_qn) in
           if public = [] then acc

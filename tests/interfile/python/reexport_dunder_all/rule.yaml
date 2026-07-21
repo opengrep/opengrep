@@ -1,0 +1,15 @@
+rules:
+  - id: reexport-dunder-all
+    languages: [python]
+    severity: ERROR
+    message: >
+      A wildcard re-export must honor an explicit __all__: it brings in
+      exactly the listed names (including _-prefixed ones) and excludes
+      public names not listed, rather than using the _-prefix default.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
