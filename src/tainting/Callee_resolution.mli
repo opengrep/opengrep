@@ -36,5 +36,6 @@ val identify_callee :
   ?type_state:Type_state.t ->
   ?caller_parent_path:IL.name option list ->
   ?call_arity:int ->
+  ?allow_constructor:bool ->
   AST_generic.expr ->
   fn_id option
