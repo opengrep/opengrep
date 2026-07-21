@@ -6,10 +6,9 @@ type module_ = {
 type t = {
   (* Sorted by root depth descending, so the first matching module is the nearest. *)
   modules : module_ list;
-  replaces : (string * string) list;
 }
 
-let empty = { modules = []; replaces = [] }
+let empty = { modules = [] }
 
 let find_sub (hay : string) (needle : string) : int option =
   let nl = String.length needle and hl = String.length hay in
@@ -22,54 +21,24 @@ let find_sub (hay : string) (needle : string) : int option =
     in
     go 0
 
-let strip_version (str : string) : string =
-  match String.split_on_char ' ' (String.trim str) with
-  | path :: _ -> path
-  | [] -> str
-
-let parse_replace (line : string) : (string * string) option =
-  match find_sub line "=>" with
-  | None -> None
-  | Some i ->
-    let lhs = strip_version (String.sub line 0 i) in
-    let rhs =
-      strip_version (String.sub line (i + 2) (String.length line - i - 2))
-    in
-    (* Skip local-directory targets ([./x]); only module-path rewrites apply. *)
-    if lhs = "" || rhs = "" || String.length rhs > 0 && rhs.[0] = '.'
-    then None
-    else Some (lhs, rhs)
-
-let parse_go_mod (content : string) : string option * (string * string) list =
-  let step (module_path, replaces, in_block) raw =
+(* Module path from the [module X] line (comments stripped). [replace]
+   directives are intentionally not modelled: they redirect dependency
+   module paths, but projidx resolves cross-file references by file
+   location, not by fetched dependency, so a rewrite would not change any
+   in-tree package's own identity. (Go also honours [replace] only in the
+   main module, which projidx cannot single out without a go.work.) *)
+let parse_go_mod (content : string) : string option =
+  String.split_on_char '\n' content
+  |> List.find_map (fun raw ->
     let line =
       match find_sub raw "//" with
       | Some i -> String.trim (String.sub raw 0 i)
       | None -> String.trim raw
     in
-    if in_block then
-      if String.equal line ")" then (module_path, replaces, false)
-      else
-        (match parse_replace line with
-         | Some replace_pair -> (module_path, replace_pair :: replaces, true)
-         | None -> (module_path, replaces, true))
-    else if String.length line >= 7
-            && String.equal (String.sub line 0 7) "module " then
-      (Some (String.trim (String.sub line 7 (String.length line - 7))),
-       replaces, false)
-    else if String.equal line "replace (" then (module_path, replaces, true)
-    else if String.length line >= 8
-            && String.equal (String.sub line 0 8) "replace " then
-      (match parse_replace (String.sub line 8 (String.length line - 8)) with
-       | Some replace_pair -> (module_path, replace_pair :: replaces, false)
-       | None -> (module_path, replaces, false))
-    else (module_path, replaces, false)
-  in
-  let module_path, replaces, _in_block =
-    List.fold_left step (None, [], false)
-      (String.split_on_char '\n' content)
-  in
-  (module_path, List.rev replaces)
+    if String.length line >= 7
+       && String.equal (String.sub line 0 7) "module " then
+      Some (String.trim (String.sub line 7 (String.length line - 7)))
+    else None)
 
 module SSet = Set.Make (String)
 
@@ -99,28 +68,23 @@ let go_mod_dirs ~(project_root : Fpath.t) (go_files : Fpath.t list)
   dirs
 
 let discover ~(project_root : Fpath.t) (go_files : Fpath.t list) : t =
-  let modules, replaces =
-    List.fold_left (fun (modules, replaces) dir ->
+  let modules =
+    List.fold_left (fun modules dir ->
       let go_mod = Fpath.add_seg dir "go.mod" in
       match Nonfatal.catch ~default:None
               (fun () -> Some (UFile.read_file go_mod)) with
-      | None -> (modules, replaces)
+      | None -> modules
       | Some content ->
-        let mpath, reps = parse_go_mod content in
-        let modules =
-          match mpath with
-          | Some path -> { root = Fpath.normalize dir; path } :: modules
-          | None -> modules
-        in
-        (modules, reps @ replaces))
-      ([], []) (go_mod_dirs ~project_root go_files)
+        (match parse_go_mod content with
+         | Some path -> { root = Fpath.normalize dir; path } :: modules
+         | None -> modules))
+      [] (go_mod_dirs ~project_root go_files)
   in
-  let modules =
-    List.sort (fun left right ->
-      compare (String.length (Fpath.to_string right.root))
-        (String.length (Fpath.to_string left.root))) modules
-  in
-  { modules; replaces }
+  (* Nearest module first: the deeper root (more path segments) wins.
+     Segment count, not string length — a longer module directory name at
+     a shallower depth must not outrank a genuinely deeper nested module. *)
+  let depth (m : module_) = List.length (Fpath.segs m.root) in
+  { modules = List.sort (fun l r -> compare (depth r) (depth l)) modules }
 
 let import_path_of_dir (t : t) (dir : Fpath.t) : string option =
   let dir = Fpath.normalize dir in
@@ -138,18 +102,3 @@ let import_path_of_dir (t : t) (dir : Fpath.t) : string option =
          "/" regardless of platform. *)
       if segs = [] then module_.path
       else module_.path ^ "/" ^ String.concat "/" segs)
-
-let resolve_import (t : t) (import_path : string) : string =
-  let rec apply = function
-    | [] -> import_path
-    | (old_, new_) :: rest ->
-      if String.equal import_path old_ then new_
-      (* "/" is the Go import-path separator, not an OS file-path separator. *)
-      else if String.length import_path > String.length old_
-           && String.equal (String.sub import_path 0 (String.length old_ + 1))
-                (old_ ^ "/")
-      then new_ ^ String.sub import_path (String.length old_)
-             (String.length import_path - String.length old_)
-      else apply rest
-  in
-  apply t.replaces

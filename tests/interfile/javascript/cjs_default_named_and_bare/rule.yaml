@@ -1,0 +1,14 @@
+rules:
+  - id: cjs-default-named-and-bare
+    languages: [js]
+    severity: ERROR
+    message: >
+      module.exports = namedFn sets the default export to that function;
+      a bare exports = fn does not.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

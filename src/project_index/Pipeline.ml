@@ -260,19 +260,35 @@ let build_funcs_by_name
         match Hashtbl.find_opt default_export_fn path with
         | None -> ()
         | Some target ->
-          let tok = snd target.Func_info.fdef.G.fkind in
-          let il_name = IL.{
-            ident = (local, tok);
-            sid = G.SId.unsafe_default;
-            id_info = G.empty_id_info ();
-          } in
-          let synth : Func_info.t = {
-            fn_id = [None; Some il_name];
-            entity = target.Func_info.entity;
-            fdef = target.Func_info.fdef;
-          } in
-          let cur = Option.value (Hashtbl.find_opt tbl local) ~default:[] in
-          Hashtbl.replace tbl local (synth :: cur)
+          (* Expose the target under the importer's local name at the
+             TARGET's identity: the synth leaf carries [local] at the
+             target's position/sid, so name lookup finds [local] while
+             fn_id_to_node / resolved_name_of_fn_id resolve to the
+             target's real vertex (where its body and signature live) —
+             the same same-position/different-name convention as
+             Ts_class_aliases and Reexports.expose_free_as. A lambda
+             default export (synthetic [_module_exports_default], no real
+             vertex) stays unresolved, as before. *)
+          (match Func_info.leaf_name target.Func_info.fn_id with
+           | None -> ()
+           | Some (tname : IL.name) ->
+             let alias_ii = G.empty_id_info () in
+             alias_ii.G.id_resolved :=
+               (match !(tname.IL.id_info.G.id_resolved) with
+                | Some _ as r -> r
+                | None -> Some (G.Global, tname.IL.sid));
+             let il_name = IL.{
+               ident = (local, snd tname.IL.ident);
+               sid = tname.IL.sid;
+               id_info = alias_ii;
+             } in
+             let synth : Func_info.t = {
+               fn_id = [None; Some il_name];
+               entity = target.Func_info.entity;
+               fdef = target.Func_info.fdef;
+             } in
+             let cur = Option.value (Hashtbl.find_opt tbl local) ~default:[] in
+             Hashtbl.replace tbl local (synth :: cur))
       ) candidates
     | _ -> ()
   ) fi.fi_import_specifiers;
