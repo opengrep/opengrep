@@ -227,7 +227,8 @@ let rec identify_callee ~(lang : Lang.t)
     ?(all_funcs = [])
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
     ?(type_state : Type_state.t = Type_state.empty)
-    ?(caller_parent_path = []) ?(call_arity : int option) (callee : G.expr) : fn_id option =
+    ?(caller_parent_path = []) ?(call_arity : int option)
+    ?(allow_constructor = true) (callee : G.expr) : fn_id option =
   let is_locally_imported (name : string) : bool =
     Func_lookup.is_locally_imported func_lookup name
   in
@@ -515,7 +516,25 @@ let rec identify_callee ~(lang : Lang.t)
                       in
                       (match Option.map (fun f -> f.fn_id) free_fn_match with
                        | Some _ as r -> r
-                       | None -> try_nested_callee ~callee_name:callee_name_str))
+                       | None ->
+                         (match try_nested_callee ~callee_name:callee_name_str with
+                          | Some _ as r -> r
+                          | None ->
+                            (* [Cls(...)] inside a method is a constructor too
+                               (no [new] keyword in Python/Ruby, so it parses
+                               as a plain call, not [G.New]). The module-level
+                               arm below already does this; without it here a
+                               constructor call written in a method resolved to
+                               nothing. Gated by [allow_constructor] so an
+                               argument being probed as a possible call
+                               ([unresolved_arg_call]) is not mistaken for a
+                               construction — passing a class is not
+                               constructing it. *)
+                            if allow_constructor then
+                              resolve_constructor ~lang
+                                ~all_funcs:(ctor_candidate_funcs ())
+                                callee_name_str
+                            else None)))
               | None when is_locally_imported callee_name_str ->
                   try_imported_callee ~callee_name:callee_name_str
               | None ->
@@ -530,10 +549,14 @@ let rec identify_callee ~(lang : Lang.t)
                     match try_nested_callee ~callee_name:callee_name_str with
                     | Some _ as r -> r
                     | None ->
-                      (* Try as constructor: ClassName() → ClassName#__init__ etc. *)
-                      (match resolve_constructor ~lang
-                               ~all_funcs:(ctor_candidate_funcs ())
-                               callee_name_str with
+                      (* Try as constructor: ClassName() → ClassName#__init__ etc.
+                         [allow_constructor] false when probing a bare-identifier
+                         ARGUMENT as a possible call (see method arm above). *)
+                      (match (if allow_constructor then
+                                resolve_constructor ~lang
+                                  ~all_funcs:(ctor_candidate_funcs ())
+                                  callee_name_str
+                              else None) with
                        | Some _ as r -> r
                        | None ->
                          if not (Func_lookup.imports_indexed func_lookup) then
