@@ -483,7 +483,8 @@ let run_pipeline (caps : < Cap.fork >)
     if Fpath.is_abs file then file
     else Fpath.(project_root_abs // file) |> Fpath.normalize
   in
-  (* Go package identity from [go.mod]/[go.work]; empty for non-Go, so [mp]
+  (* Go package identity from [go.mod] (go.work workspaces are not
+     parsed); empty for non-Go, so [mp]
      falls back to the path-derived default. *)
   let go_modules =
     if Lang.equal lang Lang.Go

@@ -53,16 +53,13 @@ let build_reexport_map ~(cfg : Index_lang_rules.t)
 
 (* Dedup so wildcard re-export doesn't double-add a func an explicit import brought in. *)
 let merge_dedup ~cur ~newcomers =
+  (* [None] (never deduped) for a func with no def file: two distinct
+     fileless synthetics with the same name must not collapse onto one
+     ([name, ""]) key and lose one. *)
   let key (func : FA.func_info) =
-    match Func_info.as_free func.FA.fn_id with
-    | Some name ->
-      let file =
-        match Func_info.def_file_opt func with
-        | Some file -> Fpath.to_string file
-        | None -> ""
-      in
-      Some (fst name.IL.ident, file)
-    | None -> None
+    match Func_info.as_free func.FA.fn_id, Func_info.def_file_opt func with
+    | Some name, Some file -> Some (fst name.IL.ident, Fpath.to_string file)
+    | _ -> None
   in
   let seen : (string * string, unit) Hashtbl.t = Hashtbl.create 32 in
   List.iter (fun func ->
