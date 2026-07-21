@@ -1,0 +1,15 @@
+rules:
+  - id: ctor-call-in-method
+    languages: [python]
+    severity: ERROR
+    message: >
+      A constructor call Cls(...) written inside a method must resolve to
+      Cls.__init__ across files (Python has no `new` keyword). A class name
+      passed as an argument must not be treated as a construction.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
