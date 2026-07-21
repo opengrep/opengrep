@@ -4,7 +4,8 @@ val build_by_package :
   Graph_from_AST.func_info list ->
   (string, Graph_from_AST.func_info list) Hashtbl.t
 
-(* Bucket free funcs by file [Module_qn]; empty unless [`Per_file]. *)
+(* Bucket free funcs by file [Module_qn]; empty unless the scope is
+   [`Per_file] or [`Per_directory]. *)
 val build_by_module :
   cfg:Index_lang_rules.t ->
   file_infos:Types.file_info list ->
