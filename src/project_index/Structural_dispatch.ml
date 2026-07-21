@@ -52,7 +52,15 @@ let emit_dispatch_edges
     | Some { G.name = G.EN (G.Id (_, ii)); _ } -> Some ii
     | _ -> None
   in
-  (* Mutates the shared AST: records [impl] on [i_m]'s [id_resolved_alternatives], deduped by sid. *)
+  (* Mutates the shared AST: records [impl] on [i_m]'s
+     [id_resolved_alternatives] (which lives in the INTERFACE's file AST,
+     a different file than [impl]'s), deduped by sid. This is a non-atomic
+     ref read-modify-write, safe ONLY because [emit_dispatch_edges] runs
+     serially on the coordinator after the parallel per-file phase
+     (Project_index.build_project_call_graph). If this fold is ever
+     parallelised, this write, the shared [graph]'s [add_edge], and
+     [methods_in_file_cache] all race — collect per-interface results and
+     merge serially instead. *)
   let record_impl_alternative (i_m : FA.func_info) (impl : FA.func_info) : unit =
     match def_id_info i_m, FA.resolved_name_of_fn_id impl.FA.fn_id with
     | Some ii, Some ((_, sid) as rn) ->
