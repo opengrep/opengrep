@@ -247,8 +247,14 @@ let extract_calls ~(lang : Lang.t)
     match arg with
     | G.Arg ({ G.e = G.N (G.Id ((_, tok), id_info)); _ } as arg_expr)
       when Option.is_none !(id_info.G.id_resolved) ->
+      (* [allow_constructor:false]: this treats a bare-identifier argument
+         as a possible call (Ruby [foo(bar)] ≡ [foo(bar())]), but a class
+         name passed as an argument ([api.url_for(Google)]) is not a
+         construction, and [super(Cls, self)] must not give [Cls.__init__]
+         a self-loop. *)
       (match identify_callee ~lang
                ~all_funcs ~func_lookup ~type_state ~caller_parent_path
+               ~allow_constructor:false
                arg_expr with
        | Some fn_id ->
          Log.debug (fun m ->
