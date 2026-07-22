@@ -42,6 +42,10 @@ ref_version=$(jq -r '.reference_version // "unknown"' "$metadata_file")
 cmp_binary=$(jq -r '.binary // "unknown"' "$metadata_file")
 cmp_version=$(jq -r '.binary_version // "unknown"' "$metadata_file")
 cmp_variant=$(jq -r '.binary_variant // "unknown"' "$metadata_file")
+ref_label=$(jq -r '.reference_label // ""' "$metadata_file")
+cmp_label=$(jq -r '.binary_label // ""' "$metadata_file")
+git_branch=$(jq -r '.git_branch // ""' "$metadata_file")
+git_commit=$(jq -r '.git_commit // ""' "$metadata_file")
 rules_dir=$(jq -r '.rules_dir // "unknown"' "$metadata_file")
 num_cpus=$(jq -r '.num_cpus // "unknown"' "$metadata_file")
 max_time=$(jq -r '.max_time_minutes // "unknown"' "$metadata_file")
@@ -61,8 +65,22 @@ echo "Directory:  $OUTPUT_DIR"
 echo "Timestamp:  $timestamp"
 echo "Mode:       $mode"
 echo ""
-echo "Reference:  $ref_binary ($ref_version)"
-echo "Comparison: $cmp_binary ($cmp_version) [variant: $cmp_variant]"
+# Versions alone are ambiguous during development (main usually reports the
+# last released version), so show the tag/sha label whenever it is recorded.
+ref_id="$ref_version"
+if [[ -n "$ref_label" ]]; then
+    ref_id="$ref_version @ $ref_label"
+fi
+cmp_id="$cmp_version"
+if [[ -n "$cmp_label" ]]; then
+    cmp_id="$cmp_version @ $cmp_label"
+fi
+
+echo "Reference:  $ref_binary ($ref_id)"
+echo "Comparison: $cmp_binary ($cmp_id) [variant: $cmp_variant]"
+if [[ -n "$git_branch$git_commit" ]]; then
+    echo "Run from:   ${git_branch:-unknown} @ ${git_commit:-unknown}"
+fi
 echo ""
 echo "Rules:      $rules_dir"
 echo "CPUs:       $num_cpus"
