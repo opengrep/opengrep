@@ -1,0 +1,17 @@
+rules:
+  - id: lexical-parent-binding
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      `Svc::Box < Base` must bind to `Svc::Base` (its lexical scope), whose
+      `handle` sinks — not the homonym `Other::Base` at a shorter file path.
+      Ruby class identity is its constant path; with filename-prefixed qns the
+      shorter path wins by length and the taint is lost.  The benign
+      `Other::Base#handle` must NOT be flagged.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink(...)

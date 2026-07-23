@@ -1,0 +1,18 @@
+rules:
+  - id: module-namespace-class
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      Regression guard for retiring the Ruby module->class reshape.
+      `Svc::Base` is declared in nested `module Svc; class Base` form in
+      lib.rb.  `Client < Svc::Base` in app.rb inherits `handle` only if
+      the nested class still carries the qn `Svc.Base` — the same qn the
+      compact `class Svc::Base` form produces.  If the namespace scope is
+      dropped, `Base` looks top-level and the parent edge is lost.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink(...)
