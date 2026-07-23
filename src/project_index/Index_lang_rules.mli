@@ -24,6 +24,12 @@ type t = {
   has_reexports : bool;
   include_anonymous_funcs : bool;
   unqualified_scope : [ `Per_file | `Per_directory | `Per_package ];
+  (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace
+     blocks / package clauses), not the file's module identity (contrast Go). *)
+  package_directive_is_namespace : bool;
+  (* Class identity is its constant path, file-independent (Ruby reopening):
+     drops the file-path prefix from class qns. *)
+  class_identity_is_constant_path : bool;
   discover_excludes : project_root:Fpath.t -> string list;
   class_def_reshape :
     G.entity -> G.definition_kind -> (G.entity * G.definition_kind) option;

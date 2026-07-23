@@ -1,0 +1,17 @@
+rules:
+  - id: multi-namespace-class
+    languages: [csharp]
+    severity: ERROR
+    message: >
+      Tainted data flows from App.cs into `Client.handle`, inherited from
+      `B.Base`.  `Base` is declared in the second of two namespaces in Lib.cs.
+      The cross-file parent edge resolves only if the `namespace` scope is
+      recorded, giving `Base` the qn `B.Base`; dropping the scope collapses it
+      to a bare `Base` and the sink is unreachable.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
