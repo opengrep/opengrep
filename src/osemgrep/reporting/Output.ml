@@ -78,8 +78,7 @@ let string_of_severity (severity : Out.match_severity) : string =
   Out.string_of_match_severity severity
   |> JSON.remove_enclosing_quotes_of_jstring
 
-let start_time_from_profiler_opt (profiler : Profiler.t) :
-    Timedesc.Timestamp.t option =
+let start_time_from_profiler_opt (profiler : Profiler.t) : Timedesc.Timestamp.t option =
   match Hashtbl.find_opt profiler "total_time" with
   | Some (Profiler.Start t) -> Some (Timedesc.Timestamp.of_float_s t)
   | _ -> None
@@ -91,7 +90,8 @@ let start_time_from_profiler_opt (profiler : Profiler.t) :
 (* called also from RPC_return.ml *)
 let format
     (* XXX: This is only passed in --experimental mode. *)
-    ?(profiler : Profiler.t option) (kind : Output_format.t)
+    ?(profiler : Profiler.t option)
+    (kind : Output_format.t)
     (cli_output : Out.cli_output) : string list =
   match kind with
   | Text
@@ -99,20 +99,15 @@ let format
   | Files_with_matches
   | Incremental ->
       failwith (spf "format not supported here: %s" (Output_format.show kind))
-  | Json -> [ Out.string_of_cli_output cli_output ]
+  | Json ->
+      [ Out.string_of_cli_output cli_output ]
   | Junit_xml -> [ Junit_xml_output.junit_xml_output cli_output ]
   | Gitlab_sast ->
-      let start_time =
-        Option.map start_time_from_profiler_opt profiler |> Option.join
-      in
-      let gitlab_sast_json =
-        Gitlab_output.sast_output ?start_time cli_output.results
-      in
+      let start_time = Option.map start_time_from_profiler_opt profiler |> Option.join in
+      let gitlab_sast_json = Gitlab_output.sast_output ?start_time cli_output.results in
       [ Yojson.Basic.to_string gitlab_sast_json ]
   | Gitlab_secrets ->
-      let start_time =
-        Option.map start_time_from_profiler_opt profiler |> Option.join
-      in
+      let start_time = Option.map start_time_from_profiler_opt profiler |> Option.join in
       let gitlab_secrets_json =
         Gitlab_output.secrets_output ?start_time cli_output.results
       in
@@ -205,12 +200,12 @@ let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
       let engine_label =
         match cli_output.engine_requested with
         | Some `OSS
-        | None ->
-            "OSS"
+        | None -> "OSS"
         (* FIXME: Remove. *)
         | Some `PRO -> "PRO"
       in
-      let hide_nudge = true in
+      let hide_nudge = true
+      in
       let sarif_json =
         Sarif_output.sarif_output hrules cli_output hide_nudge engine_label
           conf.show_dataflow_traces
@@ -310,7 +305,8 @@ let preprocess_result ~fixed_lines (res : Core_runner.result) : Out.cli_output =
 (* python: mix of output.OutputSettings(), output.OutputHandler(), and
  * output.output() all at once.
  *)
-let output_result (caps : < Cap.stdout >) (conf : conf) (profiler : Profiler.t)
+let output_result (caps : < Cap.stdout >) (conf : conf)
+    (profiler : Profiler.t)
     (res : Core_runner.result) : Out.cli_output =
   (* In theory, we should build the JSON CLI output only for the
    * Json conf.output_format, but cli_output contains lots of data-structures
