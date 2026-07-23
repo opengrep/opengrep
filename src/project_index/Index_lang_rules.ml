@@ -22,6 +22,19 @@ type t = {
   has_reexports : bool;
   include_anonymous_funcs : bool;
   unqualified_scope : [ `Per_file | `Per_directory | `Per_package ];
+  (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
+     C++/PHP, [package] clauses in Java/Kotlin/Scala) are qn scopes: a class is
+     qualified by the region open at its definition, so several or nested
+     namespaces per file are attributed correctly.  False where a [package]
+     directive names the file's module identity instead (Go, via go.mod). *)
+  package_directive_is_namespace : bool;
+  (* A class's identity is its constant path, independent of the file it is
+     (re)opened in (Ruby: [::Base], [Svc::Base]).  Drops the file-path prefix
+     from class qns so a class reopened across files shares one qn and parent
+     resolution scores on the lexical constant path, not the filename.  The
+     file's [module_path] is still tracked (for require-relative / indexing) —
+     only the class qn drops it. *)
+  class_identity_is_constant_path : bool;
   discover_excludes : project_root:Fpath.t -> string list;
   class_def_reshape :
     G.entity -> G.definition_kind -> (G.entity * G.definition_kind) option;
@@ -214,6 +227,8 @@ let default : t = {
   class_body_synth_methods = (fun _ -> []);
   class_body_extra_parents = (fun _ -> []);
   unqualified_scope = `Per_file;
+  package_directive_is_namespace = false;
+  class_identity_is_constant_path = false;
   discover_excludes = (fun ~project_root:_ -> []);
   class_def_reshape = (fun _ _ -> None);
   narrow_methods_by_imports =
@@ -341,26 +356,13 @@ let ruby_class_body_extra_parents (cdef : G.class_definition)
   in
   scan_class_body paths_from_call cdef
 
-let ruby_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
-  : (G.entity * G.definition_kind) option =
-  match def_kind with
-  | G.ModuleDef { G.mbody = G.ModuleStruct (_, items); _ } ->
-    let fk = Tok.unsafe_fake_tok "module" in
-    let cdef = G.ClassDef {
-      G.ckind = (G.Class, fk);
-      cextends = []; cimplements = []; cmixins = [];
-      cparams = (fk, [], fk);
-      cbody = (fk, List.map (fun stmt -> G.F stmt) items, fk);
-    } in
-    Some (ent, cdef)
-  | _ -> None
-
 let ruby : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
   class_body_synth_methods = ruby_class_body_synth_methods;
   class_body_extra_parents = ruby_class_body_extra_parents;
-  class_def_reshape = ruby_class_def_reshape;
+  (* A Ruby class IS its constant path; files are irrelevant (reopening). *)
+  class_identity_is_constant_path = true;
 }
 
 let go_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
@@ -418,6 +420,16 @@ let php : t = { default with
   include_anonymous_funcs = false;
   strip_field_sigil = php_strip_field_sigil;
   ctor_param_promotion = true;
+  (* PHP [namespace App\Svc;] parses to [Package]/[PackageEnd]. *)
+  package_directive_is_namespace = true;
+}
+
+(* Scala [package a.b] (and nested [package a { package b {..} }]) parse to
+   [Package]/[PackageEnd].  [object] is a [ClassDef] (kind [Object]), not a
+   [ModuleDef], so [walks_inheritance] only affects classes with [extends]. *)
+let scala : t = { default with
+  package_directive_is_namespace = true;
+  walks_inheritance = true;
 }
 
 let rust_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
@@ -456,6 +468,7 @@ let package_scoped : t = { default with
   walks_inheritance = true;
   include_anonymous_funcs = false;
   unqualified_scope = `Per_package;
+  package_directive_is_namespace = true;
   module_path_from_ast = extract_package_decl;
 }
 
@@ -488,4 +501,5 @@ let for_lang (lang : Lang.t) : t =
   | Lang.Cpp -> cpp
   | Lang.C -> c
   | Lang.Clojure -> clojure
+  | Lang.Scala -> scala
   | _ -> default

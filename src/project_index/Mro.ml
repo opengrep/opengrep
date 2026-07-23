@@ -111,6 +111,32 @@ let resolve_parent_by_scope
       | [] -> pick_best ~require_shared:true candidates
     end
 
+(* Lexical constant resolution: a bare parent reference [path] seen from [ci]'s
+   body resolves against [ci]'s enclosing namespaces innermost-first, then
+   top-level — [Svc::Box < Base] tries [Svc::Base] then [::Base]; a top-level
+   [Sub < Base] tries [Base] directly.  An EXACT qn match wins, so a homonym
+   requiring a different qualifier ([Other::Base], [Dec::Base]) is never
+   chosen.  Only meaningful once class qns are the constant path (Ruby); with a
+   file-path prefix the candidates don't match cross-file, so it no-ops. *)
+let resolve_parent_lexical
+    ~(by_qn : (Names.Class_qn.t, class_info) Hashtbl.t)
+    (ci : class_info) (path : string list) : Names.Module_qn.t option =
+  match path with
+  | [] -> None
+  | _ ->
+    let drop_last (xs : string list) : string list =
+      match List.rev xs with _ :: rest -> List.rev rest | [] -> []
+    in
+    let enclosing = drop_last (Names.Class_qn.parts ci.ci_qn) in
+    let rec try_scopes (enc : string list) : Names.Class_qn.t option =
+      let candidate = Names.Class_qn.of_parts (enc @ path) in
+      if Hashtbl.mem by_qn candidate then Some candidate
+      else match enc with [] -> None | _ -> try_scopes (drop_last enc)
+    in
+    Option.map
+      (fun qn -> Names.Module_qn.of_string (Names.Class_qn.to_string qn))
+      (try_scopes enclosing)
+
 let inherit_into_type_state
     ~(cross_module_parents : bool)
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
@@ -140,13 +166,24 @@ let inherit_into_type_state
       Hashtbl.replace qns_by_leaf leaf_key (ci.ci_qn :: cur)
     end
   ) class_infos;
+  (* All class ids sharing a qn — a class reopened across files (Ruby) has one
+     qn but several ids.  Used to UNION a reopened parent's methods. *)
+  let ci_ids_by_qn : (Names.Class_qn.t, Function_id.t list) Hashtbl.t =
+    Hashtbl.create n_classes in
+  List.iter (fun ci ->
+    let cur = Option.value (Hashtbl.find_opt ci_ids_by_qn ci.ci_qn) ~default:[] in
+    Hashtbl.replace ci_ids_by_qn ci.ci_qn (ci.ci_id :: cur)
+  ) class_infos;
   let resolve_parent ci p_path =
     match resolve_parent_qn ~imports:ci.ci_imports
             ~reexport_map ~known_class_qns p_path with
     | Some _ as resolved -> resolved
     | None ->
-      resolve_parent_by_scope ~cross_module_parents ~by_qn ~qns_by_leaf ci
-        p_path
+      match resolve_parent_lexical ~by_qn ci p_path with
+      | Some _ as resolved -> resolved
+      | None ->
+        resolve_parent_by_scope ~cross_module_parents ~by_qn ~qns_by_leaf ci
+          p_path
   in
   let synth_inherited (child_cls_il : IL.name) (parent_method : FA.func_info)
     : FA.func_info option =
@@ -253,20 +290,44 @@ let inherit_into_type_state
                (Names.Class_name.of_string parent_simple))
             ~default:[]
         in
-        (* Restrict to methods defined in THIS parent class + file, not homonym classes elsewhere. *)
-        let pci_file_str = Fpath.to_string pci.ci_file in
-        let same_file (func : FA.func_info) : bool =
-          match func_def_file func with
-          | Some def_file -> String.equal def_file pci_file_str
-          | None -> false
-        in
-        let pmethods = List.filter (fun (func : FA.func_info) ->
+        (* Candidate parent methods: same leaf name, ANY file (a class reopened
+           across files contributes from each). *)
+        let by_leaf = List.filter (fun (func : FA.func_info) ->
           match Func_info.as_method func.FA.fn_id with
-          | Some (cls, _) ->
-            String.equal (fst cls.IL.ident) parent_simple
-            && same_file func
+          | Some (cls, _) -> String.equal (fst cls.IL.ident) parent_simple
           | None -> false
         ) pmethods in
+        (* Pin to the parent CLASS's identity, not just its leaf: two same-leaf
+           classes ([namespace A { class Base }] / [namespace B { class Base }])
+           are otherwise indistinguishable, so a subclass of [B::Base] would
+           wrongly inherit [A::Base]'s methods.  Pin to the SET of ids sharing
+           the parent's qn so a class reopened across files ([class Base] in
+           a.rb and b.rb) contributes the UNION of its methods.  Fall back to
+           the parent's own file when no method carries a matching class id
+           (keeps the prior homonym-in-another-file protection intact). *)
+        let pinned_ids =
+          Option.value (Hashtbl.find_opt ci_ids_by_qn pci.ci_qn)
+            ~default:[pci.ci_id]
+        in
+        let pmethods =
+          match
+            List.filter (fun (func : FA.func_info) ->
+              match Func_info.as_method func.FA.fn_id with
+              | Some (cls, _) ->
+                let cls_id = Function_id.of_il_name cls in
+                List.exists (Function_id.equal cls_id) pinned_ids
+              | None -> false
+            ) by_leaf
+          with
+          | [] ->
+            let pci_file_str = Fpath.to_string pci.ci_file in
+            List.filter (fun (func : FA.func_info) ->
+              match func_def_file func with
+              | Some def_file -> String.equal def_file pci_file_str
+              | None -> false
+            ) by_leaf
+          | pinned -> pinned
+        in
         List.fold_left (fun (names, added) pm ->
           match Func_info.as_method pm.FA.fn_id with
           | Some (_, meth) ->
