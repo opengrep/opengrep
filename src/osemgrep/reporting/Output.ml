@@ -272,7 +272,8 @@ let dispatch_output_format (caps : < Cap.stdout >) (profiler : Profiler.t)
       | Some str ->
           let file = Fpath.v dest in
           UFile.make_directories (Fpath.parent file);
-          (* like CapConsole.print and pysemgrep, end the file with a newline *)
+          (* like CapConsole.print, end the file with a newline.
+           * Note that this deviates from the behaviour in pysemgrep. *)
           UFile.write_file ~file (str ^ "\n")
       | None -> ()
   in
