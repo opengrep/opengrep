@@ -27,6 +27,12 @@ type conf = {
   (* Display options *)
   (* mix of --json, --emacs, --vim, etc. *)
   output_format : Output_format.t;
+  (* destination of the primary output_format: file or URL set with
+   * -o/--output (None means stdout), like output_destination in output.py *)
+  output : string option;
+  (* extra outputs set with --<format>-output=<destination>, like
+   * outputs in output.py. The None key means stdout. *)
+  outputs : (string option, Output_format.t) Map_.t;
   (* alt: maybe we should define an Output_option.t, or add a record to
    * Output_format.Text as those fields are only valid for Text output *)
   max_chars_per_line : int;
@@ -48,6 +54,8 @@ type conf = {
 let default : conf =
   {
     output_format = Output_format.Text;
+    output = None;
+    outputs = Map_.empty;
     force_color = false;
     max_chars_per_line = 160;
     max_lines_per_finding = 10;
@@ -169,32 +177,25 @@ let format
                  in
                  String.concat ":" parts)
 
-let dispatch_output_format
-    (caps : < Cap.stdout >)
-    (profiler : Profiler.t)
-    (conf : conf)
-    (cli_output : Out.cli_output)
-    (hrules : Rule.hrules) : unit =
-  let print = CapConsole.print caps#stdout in
-  match conf.output_format with
-  (* matches have already been displayed in a file_match_results_hook *)
-  | Incremental -> ()
-  | Vim -> format Vim cli_output |> List.iter print
-  | Emacs -> format Emacs cli_output |> List.iter print
-  | Junit_xml -> format Junit_xml cli_output |> List.iter print
-  | Gitlab_sast -> format ~profiler Gitlab_sast cli_output |> List.iter print
-  | Gitlab_secrets -> format ~profiler Gitlab_secrets cli_output |> List.iter print
-  | Json -> format Json cli_output |> List.iter print
+(* Render any output format to a string (without trailing newline).
+ * Used for the file destinations of -o/--output and --<format>-output;
+ * unlike on stdout, Text is rendered without colors.
+ * Returns None when there is nothing to output (e.g., Incremental, whose
+ * matches have already been displayed in a file_match_results_hook).
+ *)
+let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
+    (kind : Output_format.t) (cli_output : Out.cli_output) : string option =
+  match kind with
+  | Incremental -> None
   | Text ->
-      (* TODO: we should switch to Fmt_.with_buffer_to_string +
-       * some CapConsole.print_no_nl, but then is_atty fail on
-       * a string buffer and we lose the colors
-       *)
-      Matches_report.pp_cli_output ~max_chars_per_line:conf.max_chars_per_line
-        ~max_lines_per_finding:conf.max_lines_per_finding
-          (* nosemgrep: forbid-console *)
-        ~color_output:conf.force_color ~show_dataflow_traces:conf.show_dataflow_traces
-        Format.std_formatter cli_output
+      Some
+        (Format.asprintf "%a"
+           (Matches_report.pp_cli_output
+              ~max_chars_per_line:conf.max_chars_per_line
+              ~max_lines_per_finding:conf.max_lines_per_finding
+              ~color_output:false
+              ~show_dataflow_traces:conf.show_dataflow_traces)
+           cli_output)
   | Sarif ->
       let engine_label =
         match cli_output.engine_requested with
@@ -209,12 +210,78 @@ let dispatch_output_format
         Sarif_output.sarif_output hrules cli_output hide_nudge engine_label
           conf.show_dataflow_traces
       in
-      print (Sarif.Sarif_v_2_1_0_j.string_of_sarif_json_schema sarif_json)
+      Some (Sarif.Sarif_v_2_1_0_j.string_of_sarif_json_schema sarif_json)
   | Files_with_matches ->
-      cli_output.results
-      |> List_.map (fun (x : Out.cli_match) -> !!(x.path))
-      |> Set_.of_list |> Set_.elements |> List_.sort |> String.concat "\n"
-      |> print
+      Some
+        (cli_output.results
+        |> List_.map (fun (x : Out.cli_match) -> !!(x.path))
+        |> Set_.of_list |> Set_.elements |> List_.sort |> String.concat "\n")
+  | (Json | Junit_xml | Gitlab_sast | Gitlab_secrets | Vim | Emacs) as kind -> (
+      match format ~profiler kind cli_output with
+      | [] -> None
+      | xs -> Some (String.concat "\n" xs))
+
+(* All the (destination, format) pairs to produce: the extra outputs
+ * requested with --<format>-output, plus the primary output_format going
+ * to the -o destination (or stdout when there is no -o).
+ * Aborts like pysemgrep (output.py normalize()) if the -o destination is
+ * already used by a --<format>-output flag.
+ *)
+let effective_outputs (conf : conf) : (string option, Output_format.t) Map_.t =
+  match conf.output with
+  | Some dest when Map_.mem conf.output conf.outputs ->
+      Error.abort
+        (spf
+           "Invalid output configuration: same output destination (%s) with \
+            multiple formats."
+           dest)
+  | _else_ -> Map_.add conf.output conf.output_format conf.outputs
+
+let dispatch_output_format (caps : < Cap.stdout >) (profiler : Profiler.t)
+    (conf : conf) (cli_output : Out.cli_output) (hrules : Rule.hrules) : unit =
+  let print = CapConsole.print caps#stdout in
+  let print_stdout (kind : Output_format.t) : unit =
+    match kind with
+    | Text ->
+        (* TODO: we should switch to Fmt_.with_buffer_to_string +
+         * some CapConsole.print_no_nl, but then is_atty fail on
+         * a string buffer and we lose the colors
+         *)
+        Matches_report.pp_cli_output ~max_chars_per_line:conf.max_chars_per_line
+          ~max_lines_per_finding:conf.max_lines_per_finding
+            (* nosemgrep: forbid-console *)
+          ~color_output:conf.force_color
+          ~show_dataflow_traces:conf.show_dataflow_traces Format.std_formatter
+          cli_output
+    | kind -> (
+        match render conf profiler ~hrules kind cli_output with
+        | Some str -> print str
+        | None -> ())
+  in
+  let write_to_file (dest : string) (kind : Output_format.t) : unit =
+    if
+      String.starts_with ~prefix:"http://" dest
+      || String.starts_with ~prefix:"https://" dest
+    then
+      (* pysemgrep POSTs the output to the URL *)
+      Error.abort
+        (spf "Sending output to a URL (%s) is not supported yet by opengrep"
+           dest)
+    else
+      match render conf profiler ~hrules kind cli_output with
+      | Some str ->
+          let file = Fpath.v dest in
+          UFile.make_directories (Fpath.parent file);
+          (* like CapConsole.print, end the file with a newline.
+           * Note that this deviates from the behaviour in pysemgrep. *)
+          UFile.write_file ~file (str ^ "\n")
+      | None -> ()
+  in
+  effective_outputs conf
+  |> Map_.iter (fun dest kind ->
+         match dest with
+         | None -> print_stdout kind
+         | Some dest -> write_to_file dest kind)
 
 (*****************************************************************************)
 (* Entry points *)

@@ -22,8 +22,7 @@ type conf = {
   autofix : bool;
   (* Performance options *)
   core_runner_conf : Core_runner.conf;
-  (* file or URL (None means output to stdout) *)
-  output : string option;
+  (* -o/--output and --<format>-output are in output_conf *)
   output_conf : Output.conf;
   (* osemgrep-only: *)
   incremental_output : bool;
@@ -160,12 +159,12 @@ val output_format_conf :
   Output_format.t
 
 val outputs_conf :
-  text_outputs:'a list ->
-  json_outputs:'a list ->
-  emacs_outputs:'a list ->
-  vim_outputs:'a list ->
-  sarif_outputs:'a list ->
-  gitlab_sast_outputs:'a list ->
-  gitlab_secrets_outputs:'a list ->
-  junit_xml_outputs:'a list ->
-  ('a option, Output_format.t) Map_.t
+  text_outputs:string list ->
+  json_outputs:string list ->
+  emacs_outputs:string list ->
+  vim_outputs:string list ->
+  sarif_outputs:string list ->
+  gitlab_sast_outputs:string list ->
+  gitlab_secrets_outputs:string list ->
+  junit_xml_outputs:string list ->
+  (string option, Output_format.t) Map_.t
