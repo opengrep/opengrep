@@ -8,6 +8,8 @@ set -eu
 # Default configuration
 reference_binary=""
 binary=""
+reference_label=""
+binary_label=""
 binary_variant="opengrep"
 explicit_binary_variant=""
 output_base="bench_results"
@@ -43,6 +45,14 @@ while [ $# -gt 0 ]; do
       ;;
     --binary)
       binary="$2"
+      shift 2
+      ;;
+    --reference-label)
+      reference_label="$2"
+      shift 2
+      ;;
+    --binary-label)
+      binary_label="$2"
       shift 2
       ;;
     --binary-variant)
@@ -97,6 +107,9 @@ while [ $# -gt 0 ]; do
       echo "Options:"
       echo "  --reference-binary PATH  Path to reference opengrep binary (required)"
       echo "  --binary PATH            Path to binary to compare (required)"
+      echo "  --reference-label LABEL  Extra identifier for the reference binary (e.g. tag/sha),"
+      echo "                           appended to its version in reports"
+      echo "  --binary-label LABEL     Extra identifier for --binary (e.g. tag/sha)"
       echo "  --binary-variant TYPE    Type of --binary: opengrep or semgrep (auto-detected from path)"
       echo "  --output-base DIR        Base directory for results (default: bench_results)"
       echo "  --output-dir DIR         Exact output directory (overrides --output-base and --name)"
@@ -271,6 +284,26 @@ else
   binary_version=$("$binary" --version | head -n1 | awk '{print $NF}')
 fi
 
+# Display names. During development both binaries usually report the same
+# version, so the label (tag/sha) is what actually tells the results apart.
+reference_name="opengrep-$reference_version"
+if [ -n "$reference_label" ]; then
+  reference_name="$reference_name@$reference_label"
+fi
+binary_name="$binary_variant-$binary_version"
+if [ -n "$binary_label" ]; then
+  binary_name="$binary_name@$binary_label"
+fi
+
+if [ "$reference_name" = "$binary_name" ]; then
+  echo "Warning: reference and comparison are both named '$binary_name';" >&2
+  echo "  pass --reference-label/--binary-label to tell them apart in reports" >&2
+fi
+
+printf "  %-16s %s\n" "reference id:" "$reference_name"
+printf "  %-16s %s\n" "binary id:" "$binary_name"
+echo ""
+
 # Write metadata
 if [ -z "$dry_run" ]; then
   git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
@@ -283,8 +316,12 @@ if [ -z "$dry_run" ]; then
   "git_commit": "$git_commit",
   "reference_binary": "$reference_binary",
   "reference_version": "$reference_version",
+  "reference_label": "$reference_label",
+  "reference_name": "$reference_name",
   "binary": "$binary",
   "binary_version": "$binary_version",
+  "binary_label": "$binary_label",
+  "binary_name": "$binary_name",
   "binary_variant": "$binary_variant",
   "rules_dir": "$rules_dir",
   "num_cpus": "$num_cpus",
@@ -380,8 +417,8 @@ for repo_config in "${repos[@]}"; do
     echo "  --export-markdown $output_dir/results_${repo}${suffix}.md \\"
     echo "  --reference \\"
     echo "  '$reference_cmd' \\"
-    echo "  --reference-name opengrep-$reference_version \\"
-    echo "  --command-name $binary_variant-$binary_version \\"
+    echo "  --reference-name $reference_name \\"
+    echo "  --command-name $binary_name \\"
     echo "  '$binary_cmd'"
   else
     hyperfine \
@@ -392,8 +429,8 @@ for repo_config in "${repos[@]}"; do
       --export-markdown "$output_dir/results_${repo}${suffix}.md" \
       --reference \
       "$reference_cmd" \
-      --reference-name "opengrep-$reference_version" \
-      --command-name "$binary_variant-$binary_version" \
+      --reference-name "$reference_name" \
+      --command-name "$binary_name" \
       "$binary_cmd"
 
     # Format output JSON files
