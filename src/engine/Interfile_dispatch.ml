@@ -694,21 +694,74 @@ let fid_arity_of (rs : rule_state) (info : Match_tainting_mode.fun_info)
     (Tok.unbracket info.Match_tainting_mode.fdef.AST_generic.fparams)
     info rs.lang
 
+(* SCC-aware signature fixpoint over the relevant call graph.  A plain
+   topological fold ([Call_graph.Topo]) visits the members of a cycle in
+   arbitrary order, so a caller inside a cycle can be summarised before its
+   mutual callee and produce an incomplete signature (mutual recursion, and
+   indirect impl<->interface dispatch cycles — github issue #27).  Iterate each
+   cyclic SCC to a fixpoint; singleton SCCs without a self-loop run once, as the
+   old single pass did. *)
+module Sig_lattice = struct
+  type t = Shape_and_sig.SignatureSet.t
+  let equal = Shape_and_sig.SignatureSet.equal
+end
+
+module Sig_store = struct
+  type t = Shape_and_sig.signature_database
+  type node = Function_id.t
+  type lattice = Shape_and_sig.SignatureSet.t
+  let get (n : Function_id.t) (db : Shape_and_sig.signature_database) : lattice =
+    match FunctionMap.find_opt n db.Shape_and_sig.signatures with
+    | Some s -> s
+    | None -> Shape_and_sig.SignatureSet.empty
+  let set (n : Function_id.t) (s : lattice)
+      (db : Shape_and_sig.signature_database) : t =
+    { Shape_and_sig.signatures =
+        FunctionMap.add n s db.Shape_and_sig.signatures }
+end
+
+module Sig_engine =
+  Graph_fixpoint.Make (Call_graph.G) (Sig_lattice) (Sig_store)
+
 let topo_fold ~(detect_findings : bool) (rs : rule_state)
     : Shape_and_sig.signature_database * PM.t list =
   let initial_db = initial_sig_db rs in
-  let step
-      ((db : Shape_and_sig.signature_database),
-       (matches_acc : PM.t list))
-      (fid : Function_id.t) =
-      match FunctionMap.find_opt fid rs.info_map with
-      | None -> (db, matches_acc)
-      | Some info ->
+  (* Extract a function's own signature(s) and REPLACE its db entry with just
+     those, so repeated fixpoint iterations don't accumulate several same-arity
+     sigs (which makes [find_by_arity] give up). *)
+  let extract_replace (fid : Function_id.t)
+      (info : Match_tainting_mode.fun_info)
+      (db : Shape_and_sig.signature_database)
+      : Shape_and_sig.signature_database =
+    match taint_inst_of_info fid info with
+    | None -> db
+    | Some (fn_taint_inst, fun_ast) ->
+      let db', fresh =
+        Match_tainting_mode.extract_signatures
+          ?builtin_signature_db:rs.builtin_signature_db
+          ~lang:rs.lang ~db ~taint_inst:fn_taint_inst ~ast:fun_ast info
+      in
+      let fresh_set =
+        List.fold_left
+          (fun acc s -> Shape_and_sig.SignatureSet.add s acc)
+          Shape_and_sig.SignatureSet.empty fresh
+      in
+      Sig_store.set fid fresh_set db'
+  in
+  (* Phase 1: SCC signature fixpoint, no finding emission. *)
+  let analyze (fid : Function_id.t)
+      (db : Shape_and_sig.signature_database)
+      : Shape_and_sig.signature_database =
+    match FunctionMap.find_opt fid rs.info_map with
+    | None -> db
+    | Some info -> (
         match info.Match_tainting_mode.fdef.G.fbody with
         | G.FBDecl _ ->
           (* Interface/abstract: signature comes from merging concrete impls.
              Don't store an empty sig when no impls exist — unsound (callers
-             would see "no effects" instead of conservative propagation). *)
+             would see "no effects" instead of conservative propagation).
+             [dispatch_merge_fbdecl] replaces the interface entry, so it does
+             not accumulate across iterations. *)
           let fid_arity = fid_arity_of rs info in
           let dpreds = dispatch_impls rs fid in
           let has_impls =
@@ -717,27 +770,51 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
                    Option.is_some
                      (Shape_and_sig.lookup_signature db pred fid_arity))
           in
-          if not has_impls then
-            (db, matches_acc)
-          else
-            let db, _findings =
-              extract_and_check_function rs fid info
-                ~detect_findings:false db
-            in
-            let db = dispatch_merge_fbdecl rs fid fid_arity db in
-            (db, matches_acc)
-        | _ ->
-          let do_detect = detect_findings && (match file_of_fid fid with
-            | Some fp -> is_target_file rs.target_root_map fp
-            | None -> false)
-          in
-          let new_db, findings =
-            extract_and_check_function rs fid info
-              ~detect_findings:do_detect db
-          in
-          (new_db, List.rev_append findings matches_acc)
+          if not has_impls then db
+          else dispatch_merge_fbdecl rs fid fid_arity (extract_replace fid info db)
+        | _ -> extract_replace fid info db)
   in
-  List.fold_left step (initial_db, []) rs.topo_order
+  (* [SCC.scc_list] returns components in an order where callers precede
+     callees for our callee->caller edges; reverse for callees-first. *)
+  let sccs_callees_first =
+    List.rev (Call_graph.SCC.scc_list rs.relevant_graph)
+  in
+  let converged_db =
+    Sig_engine.run ~max_iter:20
+      ~on_max_iter:(fun (members : Function_id.t list) ->
+        Log.warn (fun m ->
+            m "interfile: rule %s: signature SCC of size %d hit max_iter, \
+               using current DB"
+              (Rule_ID.to_string (fst rs.rule.R.id))
+              (List.length members)))
+      ~sccs:sccs_callees_first ~graph:rs.relevant_graph ~analyze initial_db
+  in
+  (* Phase 2: single match-emission pass over the converged DB.  Every
+     function's callees already have their final signatures, so order is
+     irrelevant and the DB is not threaded. *)
+  let emit (matches_acc : PM.t list) (fid : Function_id.t) : PM.t list =
+    match FunctionMap.find_opt fid rs.info_map with
+    | None -> matches_acc
+    | Some info -> (
+        match info.Match_tainting_mode.fdef.G.fbody with
+        | G.FBDecl _ -> matches_acc
+        | _ ->
+          let do_detect =
+            detect_findings
+            && (match file_of_fid fid with
+                | Some fp -> is_target_file rs.target_root_map fp
+                | None -> false)
+          in
+          if not do_detect then matches_acc
+          else
+            let _db, findings =
+              extract_and_check_function rs fid info ~detect_findings:true
+                converged_db
+            in
+            List.rev_append findings matches_acc)
+  in
+  let matches = List.fold_left emit [] rs.topo_order in
+  (converged_db, matches)
 
 (* Consumed by tools/opengrep-interfile-graph (not built by [make core]). *)
 let extract_signatures (rs : rule_state)

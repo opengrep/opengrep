@@ -11,9 +11,11 @@ pipeline laid out here.
 3. **Interfile_dispatch** takes that graph and, for each rule,
    carves out a "relevant subgraph" containing only the functions
    that sit between the rule's sources and its sinks.
-4. The relevant subgraph is processed in **topological order** —
-   callees first, callers last — building up a **signature database**
-   that records how taint flows through each function.
+4. The relevant subgraph is condensed into **strongly-connected
+   components** and processed **callees first, callers last** — cyclic
+   components (mutual recursion, dispatch loops) are iterated to a
+   fixpoint — building up a **signature database** that records how
+   taint flows through each function.
 5. Findings emit at the **sink target**: when a sink in a target file
    inherits taint via the signature database from a source in any
    file, we record the trace.
@@ -32,7 +34,7 @@ No `--scip-index-dir`.
 | Parse target files + companion files | `Interfile_dispatch.parse_companion_files` | `(Lang, AST table)` |
 | Extract sources/sinks per rule | `Match_taint_spec.taint_config_of_rule` | `taint_inst` per rule, per file |
 | Compute relevant subgraph | `Graph_reachability.compute_relevant_subgraph` | `Call_graph.G.t` |
-| Topological fold | `Interfile_dispatch.topo_fold` | `Shape_and_sig.signature_database` + findings |
+| Signature fixpoint + finding emission | `Interfile_dispatch.topo_fold` | `Shape_and_sig.signature_database` + findings |
 | Run per-rule tasks | `Interfile_dispatch.run_rule`, scheduled by `Core_scan` | `Core_match.t list` |
 
 ## What "interfile" buys you over intrafile
@@ -118,7 +120,7 @@ the scan that built it:
   projidx output for a different commit is different.
 - **Signatures, info maps, glob envs** are built per-rule per-file
   during `build_rule_states` and held immutable on the `rule_state`
-  record.  The topological fold threads the signature database
+  record.  The signature fixpoint threads the signature database
   *functionally*; no mutation, no locks.
 - **Per-file epilogue CFGs** (top-level + class-init) are built
   inline per rule for the files whose epilogue actually runs — the
@@ -130,11 +132,12 @@ the scan that built it:
 - Each interfile rule = one independent task.  Rules share read-only
   state (the graph, the rule list, the AST table) but each rule has
   its own signature database that nobody else reads.
-- Inside a rule, the topological fold is serial: callees must finish
-  before callers.
+- Inside a rule, the signature fixpoint is serial: callees must finish
+  before callers, and a cyclic SCC iterates until its signatures
+  stabilise.
 - Per-file work (parsing, building `taint_inst`, building IL+CFG) is
   done **once per rule** during `build_rule_states` and reused across
-  the topological fold.  Companion files (files in the subgraph but
+  the signature fixpoint.  Companion files (files in the subgraph but
   not in the target list) are batch-parsed in parallel before
   per-rule init.
 

@@ -3,12 +3,12 @@
 This document catalogues situations the code handles that are not
 obvious from a casual read.  Read [§ 1–4](README.md) first — the
 vocabulary here assumes you know what `FBDecl`, the relevant
-subgraph, `Type_state.t`, and the topological fold are.
+subgraph, `Type_state.t`, and the signature fixpoint are.
 
 The subtleties group into four buckets:
 
 - **A. Signature instantiation.**  Cases in `Sig_inst` and the
-  topological fold where the naive thing is wrong.
+  signature fixpoint where the naive thing is wrong.
 - **B. Callee resolution.**  Cases in projidx's `identify_callee`
   and friends where bare name matching gives the wrong answer.
 - **C. Subgraph construction.**  Why the relevant subgraph is
@@ -63,23 +63,24 @@ callbacks at the seams between files.
 **Where:** `src/engine/Interfile_dispatch.ml`,
 `dispatch_merge_fbdecl`.
 
-When the topological fold reaches a bodiless interface method
+When the signature fixpoint reaches a bodiless interface method
 (`FBDecl`), it does **not** extract a signature from the empty
 body.  An empty signature stored in `db` makes the function look
 like a no-op effects-wise; callers would see "no taint propagation"
 instead of falling back to conservative propagation.  That is
 unsound.
 
-Instead, the fold:
+Instead, Phase 1:
 
 1. Looks up the function's `Dispatch` predecessors (implementations)
    in `rs.relevant_graph`.  Filters out self-edges — the interface
    declaration carries a Dispatch edge to itself; including its own
    empty body as an implementation would pollute the merge.
-2. If none of the implementations have signatures in `db` yet, the
-   fold skips this vertex entirely.  `db` stays unchanged.
-   Callers fall back to conservative propagation (A1) when they
-   hit a call to this vertex.
+2. If none of the implementations have signatures in `db` yet, this
+   vertex is skipped for now.  `db` stays unchanged.  Callers fall
+   back to conservative propagation (A1) when they hit a call to this
+   vertex — and if the interface and its impls sit in the same cyclic
+   SCC, a later fixpoint lap revisits it once the impls are ready.
 3. If some implementations are available, `Sig_inst.merge_dispatch_signatures`
    merges them into a single signature, keyed at the interface's
    `Function_id.t`, and the result replaces the empty skeleton.
@@ -97,10 +98,12 @@ The merge itself:
 - Unions all the effect sets.
 
 The reason for **pre-merge** (vs an on-the-fly lookup at every call
-site) is that the topological fold guarantees the implementations'
-signatures are already in `db` when the interface is reached.  One
-merge per interface beats one merge per call site, and composes
-cleanly with the conservative-propagation fallback.
+site) is that the signature fixpoint makes the implementations'
+signatures available in `db` before callers of the interface are
+summarised (for an acyclic dispatch, on the callees-first pass; for a
+cyclic one, once the SCC converges).  One merge per interface beats
+one merge per call site, and composes cleanly with the
+conservative-propagation fallback.
 
 ### A3. Recursive instantiation cache
 
@@ -418,8 +421,9 @@ init) all run as parmaps.  The unit of parallelism is one file in
 Phase 2 and one rule in `build_rule_states`; both grain sizes give
 good throughput on multi-core boxes.
 
-The topological fold inside `run_rule` is the one explicitly serial
-phase — the signature database must accumulate in topo order.
+The signature fixpoint inside `run_rule` is the one explicitly serial
+phase — the signature database must converge callees-first (with cyclic
+SCCs iterating internally).
 Parallelism across rules within `run_rule` execution is provided by
 the outer parmap scheduling each `rule_state` as its own task
 alongside per-target tasks.
@@ -432,7 +436,7 @@ If you got here looking for a specific subtlety and need broader
 context first, the bullets above reference these concepts; they're
 defined in:
 
-- `FBDecl`, dispatch merge, topological fold → [§ 3](03-dispatch.md).
+- `FBDecl`, dispatch merge, signature fixpoint → [§ 3](03-dispatch.md).
 - `Type_state.t`, `Func_lookup.t`, projidx phases → [§ 2](02-call-graph.md).
 - Per-language reshapes (Go interfaces, Ruby `attr_reader`, Rust
   `impl`) → [§ 4](04-language-quirks.md).
