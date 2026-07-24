@@ -191,6 +191,33 @@ let build_import_target_files
   ) fi.fi_import_specifiers;
   target_files
 
+(* Restrict each imported class's methods to the file(s) it was imported from
+   (keyed by the import's local name) or the caller's own file.  Two same-named
+   classes in different files otherwise both land under the bare class name at
+   method dispatch and the call is dropped on the collision.  A class is left
+   untouched when the filter would empty it, so a path-shape mismatch degrades to
+   the un-narrowed set rather than erasing the class. *)
+let narrow_methods_by_import_files
+    ~(import_target_files : (string, (string, unit) Hashtbl.t) Hashtbl.t)
+    ~(file_of_func : Func_info.t -> string option)
+    ~(caller_file : string)
+    (ts : Type_state.t) : Type_state.t =
+  Hashtbl.fold (fun cls target_set state ->
+    let cls_name = Names.Class_name.of_string cls in
+    match Type_state.get_methods state cls_name with
+    | None -> state
+    | Some methods ->
+      let filtered = List.filter (fun (func : Func_info.t) ->
+        match file_of_func func with
+        | None -> false
+        | Some file ->
+          Hashtbl.mem target_set file || String.equal file caller_file
+      ) methods in
+      if filtered <> [] && List.length filtered <> List.length methods
+      then Type_state.set_methods state cls_name filtered
+      else state
+  ) import_target_files ts
+
 let build_same_file_funcs_by_name
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     ~(fi_file_str : string)
@@ -357,12 +384,18 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~project_funcs_by_module ~file_funcs_index
         ~path_suffix_index ~resolve_ts_specifier fi
     in
-    let file_type_state =
-      cfg.Index_lang_rules.narrow_methods_by_imports
-        ~fi_imports:fi.fi_imports ~file_of_func:func_file_opt type_state
-    in
     let import_target_files =
       build_import_target_files ~path_suffix_index ~resolve_ts_specifier fi
+    in
+    let file_type_state =
+      let base =
+        cfg.Index_lang_rules.narrow_methods_by_imports
+          ~fi_imports:fi.fi_imports ~file_of_func:func_file_opt type_state
+      in
+      if cfg.Index_lang_rules.narrow_methods_by_import_files then
+        narrow_methods_by_import_files ~import_target_files
+          ~file_of_func:func_file_opt ~caller_file:fi_file_str base
+      else base
     in
     let same_file_funcs_by_name =
       build_same_file_funcs_by_name ~file_funcs_index ~fi_file_str

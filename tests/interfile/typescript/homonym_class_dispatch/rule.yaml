@@ -1,0 +1,22 @@
+rules:
+  - id: homonym-class-dispatch
+    languages: [ts]
+    severity: ERROR
+    message: >
+      User input flows from app.ts into a.ts's Handler.process -> db.query.
+      app.ts imports Handler unambiguously (relative "./a"), so the finding
+      should fire.  It is lost because b.ts also defines `class Handler
+      { process }`: method dispatch indexes methods by bare class name, so
+      h.process() collects both implementations and pick_by_arity drops the call
+      on the identical (class, method, arity) collision.  A false negative caused
+      by an unrelated homonym class the caller never imports.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY
