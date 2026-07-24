@@ -39,9 +39,20 @@ let method_id ~(cls : IL.name) ~(meth : IL.name) : fn_id =
   [Some cls; Some meth]
 
 (* File of the def's [fkind] token; anchored fake tokens still carry their
-   file, [None] only for location-less tokens. *)
+   file.  Indexed methods can have a location-less reconstructed [fkind], so
+   fall back to the def's own name tokens (leaf first), which carry the source
+   file.  [None] only when no token has a location. *)
 let def_file_opt (func_info : t) : Fpath.t option =
-  try Some (Tok.file_of_tok (snd func_info.fdef.G.fkind))
-  with Tok.NoTokenLocation _ -> None
+  let from_tok tok =
+    try Some (Tok.file_of_tok tok) with Tok.NoTokenLocation _ -> None
+  in
+  match from_tok (snd func_info.fdef.G.fkind) with
+  | Some _ as f -> f
+  | None ->
+    List.find_map
+      (function
+        | Some (name : IL.name) -> from_tok (snd name.IL.ident)
+        | None -> None)
+      (List.rev func_info.fn_id)
 
 let free_id (leaf : IL.name) : fn_id = [None; Some leaf]
