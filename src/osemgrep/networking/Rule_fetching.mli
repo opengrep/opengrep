@@ -60,6 +60,7 @@ val langs_of_pattern : string * Xlang.t option -> Xlang.t list
  * Note that this also handles the experiment rules in jsonnet!
  *)
 val rules_from_rules_source :
+  ?skip_invalid_configs:bool ->
   rewrite_rule_ids:bool ->
   strict:bool ->
   < Cap.network ; Cap.tmp > ->
@@ -68,6 +69,7 @@ val rules_from_rules_source :
 
 (* TODO: make cap network an option (with token) *)
 val rules_from_rules_source_async :
+  ?skip_invalid_configs:bool ->
   rewrite_rule_ids:bool ->
   strict:bool ->
   < Cap.network ; Cap.tmp > ->
@@ -77,6 +79,7 @@ val rules_from_rules_source_async :
 (* internals *)
 
 val rules_from_dashdash_config_async :
+  ?skip_invalid_configs:bool ->
   rewrite_rule_ids:bool ->
   < Cap.network ; Cap.tmp ; .. > ->
   Rules_config.t ->
@@ -87,6 +90,7 @@ val rules_from_dashdash_config_async :
  * rules_and_origin per files in this folder.
  *)
 val rules_from_dashdash_config :
+  ?skip_invalid_configs:bool ->
   rewrite_rule_ids:bool ->
   < Cap.network ; Cap.tmp ; .. > ->
   Rules_config.t ->

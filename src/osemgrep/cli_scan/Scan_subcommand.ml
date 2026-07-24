@@ -361,8 +361,8 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >)
   in
   core_run_for_osemgrep
 
-let rules_from_rules_source ~rewrite_rule_ids ~strict caps
-    rules_source =
+let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
+    ~strict caps rules_source =
   (* Create the wait hook for our progress indicator *)
   let spinner_ls =
     if Console_Spinner.should_show_spinner () then
@@ -371,8 +371,8 @@ let rules_from_rules_source ~rewrite_rule_ids ~strict caps
   in
   (* Fetch the rules *)
   let rules_and_origins =
-    Rule_fetching.rules_from_rules_source_async ~rewrite_rule_ids
-      ~strict
+    Rule_fetching.rules_from_rules_source_async ~skip_invalid_configs
+      ~rewrite_rule_ids ~strict
       (caps :> < Cap.network ; Cap.tmp >)
       rules_source
   in
@@ -683,6 +683,7 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   let rules_and_origins, fatal_errors =
     rules_from_rules_source
       (caps :> < Cap.network ; Cap.tmp >)
+      ~skip_invalid_configs:conf.skip_invalid_configs
       ~rewrite_rule_ids:conf.rewrite_rule_ids
       ~strict:conf.core_runner_conf.strict conf.rules_source
   in
