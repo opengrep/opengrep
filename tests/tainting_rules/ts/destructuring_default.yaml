@@ -1,0 +1,15 @@
+rules:
+  - id: destructuring-default-taint-loss
+    languages: [typescript]
+    severity: ERROR
+    message: taint reached sink
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              function $_(..., $INPUT, ...) {
+                ...
+              }
+          - focus-metavariable: $INPUT
+    pattern-sinks:
+      - pattern: sink(...)
