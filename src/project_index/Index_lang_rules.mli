@@ -41,6 +41,11 @@ type t = {
     Type_state.t ->
     Type_state.t;
 
+  (* When true, restrict each imported class's methods to the file(s) it was
+     imported from, disambiguating same-named classes across files at dispatch
+     (TS/JS default imports where two files each [export default class Handler]). *)
+  narrow_methods_by_import_files : bool;
+
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;

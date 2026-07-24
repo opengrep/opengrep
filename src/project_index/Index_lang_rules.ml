@@ -43,6 +43,11 @@ type t = {
     file_of_func:(Func_info.t -> string option) ->
     Type_state.t ->
     Type_state.t;
+  (* When true, restrict each imported class's methods to the file(s) it was
+     actually imported from (resolved via the path-suffix index).  Disambiguates
+     same-named classes across files at method dispatch — e.g. TS/JS default
+     imports where two files each `export default class Handler`. *)
+  narrow_methods_by_import_files : bool;
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;
@@ -233,6 +238,7 @@ let default : t = {
   class_def_reshape = (fun _ _ -> None);
   narrow_methods_by_imports =
     (fun ~fi_imports:_ ~file_of_func:_ ts -> ts);
+  narrow_methods_by_import_files = false;
   strip_field_sigil = (fun s -> s);
   class_constructor_synth_fields = (fun _ -> []);
   ctor_param_promotion = false;
@@ -408,6 +414,7 @@ let typescript : t = { default with
   include_anonymous_funcs = false;
   discover_excludes = Ts_modules.discover_excludes;
   class_constructor_synth_fields = typescript_class_constructor_synth_fields;
+  narrow_methods_by_import_files = true;
 }
 
 let php_strip_field_sigil (field : string) : string =
