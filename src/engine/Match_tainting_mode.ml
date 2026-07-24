@@ -462,6 +462,56 @@ let build_info_map
   in
   info_map
 
+(* Extract a function's taint signature(s) into [db], RETURNING the freshly
+   extracted signatures (not just the updated db).  The SCC signature fixpoint
+   in [Interfile_dispatch] needs the fresh sigs to REPLACE a function's entry
+   each iteration: accumulating them across iterations leaves several
+   same-arity sigs in the per-function set, which makes [find_by_arity] give up
+   (returning [None]) so callers lose the signature entirely. *)
+let extract_signatures
+    ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
+    ?(call_graph : Call_graph.G.t option)
+    ~(lang : Lang.t)
+    ~(db : Shape_and_sig.signature_database)
+    ~(taint_inst : Taint_rule_inst.t)
+    ~(ast : G.program)
+    (info : fun_info)
+    : Shape_and_sig.signature_database * Shape_and_sig.extended_sig list =
+  let to_ext (sig_, arity) : Shape_and_sig.extended_sig =
+    { Shape_and_sig.sig_; arity }
+  in
+  let params = Tok.unbracket info.fdef.G.fparams in
+  let arity = get_arity params info lang in
+  let sig_cfg =
+    let filtered_params =
+      filter_implicit_receiver_params lang ~is_static:info.is_static
+        info.class_name_str params info.cfg.IL.params
+    in
+    { info.cfg with IL.params = filtered_params }
+  in
+  let arity_t = Shape_and_sig.Arity_exact arity in
+  let db', sig_ =
+    Taint_signature_extractor.extract_signature_with_file_context
+      ~arity:arity_t ~db ?builtin_signature_db taint_inst ~name:info.name
+      ~method_properties:info.method_properties ~call_graph:call_graph
+      sig_cfg ast
+  in
+  let fresh = [ to_ext (sig_, arity_t) ] in
+  (* Kotlin trailing-lambda syntax f(a){b}: also extract at arity-1. *)
+  if Lang.equal lang Lang.Kotlin && arity >= 1 then
+    match List.rev params with
+    | G.Param { G.ptype = Some { t = G.TyFun _; _ }; _ } :: _ ->
+        let arity_t' = Shape_and_sig.Arity_exact (arity - 1) in
+        let db'', sig_' =
+          Taint_signature_extractor.extract_signature_with_file_context
+            ~arity:arity_t' ~db:db' ?builtin_signature_db taint_inst
+            ~name:info.name ~method_properties:info.method_properties
+            ~call_graph:call_graph sig_cfg ast
+        in
+        (db'', fresh @ [ to_ext (sig_', arity_t') ])
+    | _ -> (db', fresh)
+  else (db', fresh)
+
 let extract_and_check
     ?(builtin_signature_db : Shape_and_sig.builtin_signature_database option)
     ?(call_graph : Call_graph.G.t option)
@@ -474,44 +524,9 @@ let extract_and_check
     ~(detect_findings : bool)
     (info : fun_info)
     : Shape_and_sig.signature_database * PM.t list =
-  let updated_db =
-    let params = Tok.unbracket info.fdef.G.fparams in
-    let arity = get_arity params info lang in
-    let sig_cfg =
-      let filtered_params =
-        filter_implicit_receiver_params lang ~is_static:info.is_static
-          info.class_name_str params info.cfg.IL.params
-      in
-      { info.cfg with IL.params = filtered_params }
-    in
-    let updated_db, _signature =
-      Taint_signature_extractor.extract_signature_with_file_context
-        ~arity:(Shape_and_sig.Arity_exact arity) ~db ?builtin_signature_db
-        taint_inst ~name:info.name
-        ~method_properties:info.method_properties
-        ~call_graph:call_graph
-        sig_cfg ast
-    in
-    (* Kotlin trailing-lambda syntax f(a){b}: also extract at arity-1. *)
-    if Lang.equal lang Lang.Kotlin && arity >= 1 then
-      let last_param_is_lambda =
-        match List.rev params with
-        | G.Param { G.ptype = Some { t = G.TyFun _; _ }; _ } :: _ ->
-            true
-        | _ -> false
-      in
-      if last_param_is_lambda then
-        let db', _ =
-          Taint_signature_extractor.extract_signature_with_file_context
-            ~arity:(Shape_and_sig.Arity_exact (arity - 1)) ~db:updated_db ?builtin_signature_db
-            taint_inst ~name:info.name
-            ~method_properties:info.method_properties
-            ~call_graph:call_graph
-            sig_cfg ast
-        in
-        db'
-      else updated_db
-    else updated_db
+  let updated_db, _fresh_sigs =
+    extract_signatures ?builtin_signature_db ?call_graph ~lang ~db
+      ~taint_inst ~ast info
   in
   (* For lambda assignments, keep only ToSink effects with a concrete Src match; parameterized (BArg) taint rides the signature instead. *)
   let keep_src_toSink_only (eff : Effect.t) : Effect.t option =
@@ -764,58 +779,90 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               relevant_graph []
             |> List.rev
           in
-          Log.debug (fun m ->
-              m "TAINT_TOPO: Analysis order has %d functions"
-                (List.length analysis_order));
-          List.iteri
-            (fun i node ->
-              Log.debug (fun m ->
-                  m "TAINT_TOPO: [%d] %s" i (Function_id.show node)))
-            analysis_order;
-
-          let process_fun_info info (db, ms) =
-            let updated_db, findings =
-              extract_and_check
-                ?builtin_signature_db
-                ~call_graph:relevant_graph
-                ~glob_env
-                ~lang ~db ~match_on ~taint_inst
-                ~ast ~detect_findings:true
-                info
-            in
-            if not (List_.null findings) then
-              Log.debug (fun m ->
-                  m "FINDING: rule=%s target=%s fn=%s"
-                    (Rule_ID.to_string (fst rule.R.id))
-                    (Fpath.to_string file)
-                    (IL.show_name info.name));
-            (updated_db, List.rev_append findings ms)
+          (* SCC-aware signature fixpoint.  A plain topological pass visits the
+             members of a cycle in arbitrary order, so a mutually-recursive
+             caller can be summarised before its callee and produce an
+             incomplete signature.  Iterate each cyclic SCC to a fixpoint;
+             singleton SCCs without a self-loop run once (the old behaviour). *)
+          let module Sig_lattice = struct
+            type t = Shape_and_sig.SignatureSet.t
+            let equal = Shape_and_sig.SignatureSet.equal
+          end in
+          let module Sig_store = struct
+            type t = Shape_and_sig.signature_database
+            type node = Function_id.t
+            type lattice = Shape_and_sig.SignatureSet.t
+            let get (n : Function_id.t) (db : Shape_and_sig.signature_database)
+                : lattice =
+              match
+                Shape_and_sig.FunctionMap.find_opt n db.Shape_and_sig.signatures
+              with
+              | Some s -> s
+              | None -> Shape_and_sig.SignatureSet.empty
+            let set (n : Function_id.t) (s : lattice)
+                (db : Shape_and_sig.signature_database) : t =
+              { Shape_and_sig.signatures =
+                  Shape_and_sig.FunctionMap.add n s db.Shape_and_sig.signatures }
+          end in
+          let module Engine =
+            Graph_fixpoint.Make (Call_graph.G) (Sig_lattice) (Sig_store)
           in
-
-          let signature_db_after_order, topo_matches =
+          (* Extract a function's own signature(s) and REPLACE its entry with
+             just those, so fixpoint iterations don't accumulate same-arity
+             sigs ([find_by_arity] gives up on several, losing the sig). *)
+          let analyze (node : Function_id.t)
+              (db : Shape_and_sig.signature_database)
+              : Shape_and_sig.signature_database =
+            match Shape_and_sig.FunctionMap.find_opt node info_map with
+            | None -> db
+            | Some info ->
+              let db', fresh =
+                extract_signatures ?builtin_signature_db
+                  ~call_graph:relevant_graph ~lang ~db ~taint_inst ~ast info
+              in
+              let fresh_set =
+                List.fold_left
+                  (fun acc s -> Shape_and_sig.SignatureSet.add s acc)
+                  Shape_and_sig.SignatureSet.empty fresh
+              in
+              Sig_store.set node fresh_set db'
+          in
+          let sccs_callees_first =
+            List.rev (Call_graph.SCC.scc_list relevant_graph)
+          in
+          let signature_db_after_order =
+            Engine.run ~max_iter:20
+              ~on_max_iter:(fun (members : Function_id.t list) ->
+                Log.warn (fun m ->
+                    m "TAINT_FP: rule %s: signature SCC of size %d hit \
+                       max_iter, using current DB"
+                      (Rule_ID.to_string (fst rule.R.id))
+                      (List.length members)))
+              ~sccs:sccs_callees_first ~graph:relevant_graph ~analyze
+              initial_signature_db
+          in
+          (* Single match-emission pass over the converged DB. *)
+          let topo_matches =
             List.fold_left
-              (fun acc node ->
-                Log.debug (fun m ->
-                    m "TAINT_SIGBUILD: Processing %s" (Function_id.show_debug node));
+              (fun (ms : Core_match.t list) (node : Function_id.t) ->
                 match Shape_and_sig.FunctionMap.find_opt node info_map with
-                | None ->
-                    Log.debug (fun m ->
-                        m "TAINT_SIGBUILD: fn_id NOT FOUND in info_map!");
-                    acc
+                | None -> ms
                 | Some info ->
-                    let (new_db, _) as acc = process_fun_info info acc in
+                  let _db, findings =
+                    extract_and_check ?builtin_signature_db
+                      ~call_graph:relevant_graph ~glob_env ~lang
+                      ~db:signature_db_after_order ~match_on ~taint_inst ~ast
+                      ~detect_findings:true info
+                  in
+                  if not (List_.null findings) then
                     Log.debug (fun m ->
-                        m
-                          "TAINT_SIGBUILD: After processing, db.signatures \
-                           size=%d"
-                          (Shape_and_sig.FunctionMap.cardinal
-                             new_db.Shape_and_sig.signatures));
-                    acc)
-              (initial_signature_db, []) analysis_order
+                        m "FINDING: rule=%s target=%s fn=%s"
+                          (Rule_ID.to_string (fst rule.R.id))
+                          (Fpath.to_string file)
+                          (IL.show_name info.name));
+                  List.rev_append findings ms)
+              [] analysis_order
           in
-
-          (* Skip the "remaining functions" phase entirely - if a function isn't
-             in the relevant subgraph, we don't need to analyze it *)
           (Some signature_db_after_order, Some relevant_graph, topo_matches))
         else (
           (* Cross-function taint analysis disabled: use main branch behavior *)
