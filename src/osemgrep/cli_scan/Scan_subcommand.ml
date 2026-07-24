@@ -297,22 +297,34 @@ let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) 
 let display_rule_source ~(rule_source : Rules_source.t) : unit =
   let msg =
     match rule_source with
-    | Configs xs
-      when List.exists
-             (function
-               | C.A _
-               | R _ ->
-                   true
-               | _ -> false)
-             (List_.map
-                (fun str ->
-                  Rules_config.parse_config_string ~in_docker:false str)
-                xs) ->
-        Ocolor_format.asprintf {|@{<bold>  %s@}|}
-          "Loading rules from registry..."
-    | Configs _ ->
-        Ocolor_format.asprintf {|@{<bold>  %s@}|}
-          "Loading rules from local config..."
+    | Configs xs -> (
+        let kinds =
+          List_.map
+            (fun str -> Rules_config.parse_config_string ~in_docker:false str)
+            xs
+        in
+        let has = function
+          | `Registry ->
+              List.exists
+                (function
+                  | C.A _
+                  | C.R _ ->
+                      true
+                  | _ -> false)
+                kinds
+          | `Git ->
+              List.exists (function C.Git _ -> true | _ -> false) kinds
+        in
+        match () with
+        | _ when has `Registry ->
+            Ocolor_format.asprintf {|@{<bold>  %s@}|}
+              "Loading rules from registry..."
+        | _ when has `Git ->
+            Ocolor_format.asprintf {|@{<bold>  %s@}|}
+              "Loading rules from git repository..."
+        | _ ->
+            Ocolor_format.asprintf {|@{<bold>  %s@}|}
+              "Loading rules from local config...")
     | Pattern _ -> Ocolor_format.asprintf {|@{  %s@}|} "Using custom pattern."
   in
   Logs.app (fun m -> m "%s" msg);
