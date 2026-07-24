@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.26.0](https://github.com/opengrep/opengrep/releases/tag/v1.26.0) - 24-07-2026
+
+### Infrastructure
+
+* Fix Pipfile package name and skip deleting the join_rule temp file on Windows by @mitchellspangler in #737
+* Upgrade ppxlib to 0.38 and cmdliner to 2.x by @dimitris-m in #757
+* Bump OCaml to 5.5.0 by @dimitris-m in #758
+
+### Improvements
+
+* Dart: Add support for `taint-intrafile` by @maciejpirog in #752
+* JS/TS: Various fixes in translation to AST by @maciejpirog in #742 and #767
+* Elixir: Make conditions' side effects visible in other branches of `cond` expressions by @maciejpirog in #754
+* PHP: shorthand for array_push now propagates taint by @corneliuhoffman in #759
+* JS/TS: Fix the matching on ellipsis metavariable by @corneliuhoffman in #760
+* Matching: Match statement-sequence patterns against every class member by @maciejpirog in #756
+
+### New Contributors
+
+* @mitchellspangler made their first contribution in #737
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.25.0...v1.26.0
+
+
 ## [1.25.0](https://github.com/opengrep/opengrep/releases/tag/v1.25.0) - 01-07-2026
 
 ### Improvements
