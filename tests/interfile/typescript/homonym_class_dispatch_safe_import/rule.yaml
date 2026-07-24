@@ -1,0 +1,21 @@
+rules:
+  - id: homonym-class-dispatch-safe-import
+    languages: [ts]
+    severity: ERROR
+    message: >
+      Precision guard for homonym method dispatch.  app.ts imports the SAFE
+      Handler (safe.ts); danger.ts defines a same-named Handler that sinks but is
+      never imported.  Dispatch must resolve h.process() to the imported module
+      (safe.ts) and produce NO finding.  A fix that misroutes to danger.ts, or
+      unions same-named candidates, would fire db.query on danger.ts's `ok:`
+      line and fail this test.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY
