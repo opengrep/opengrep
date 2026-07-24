@@ -1,0 +1,24 @@
+rules:
+  - id: bare-specifier-import
+    languages: [ts]
+    severity: ERROR
+    message: >
+      User input flows from app.ts into a default-exported class Handler
+      defined in lib/handler.ts, imported with a BARE specifier
+      `import Handler from "lib/handler"`.  A bare specifier is not a relative
+      path, so projidx resolves it through the path-suffix index — matching the
+      trailing "lib/handler" segments against project files.  The suffix index
+      only indexes suffixes up to the length of the longest bare specifier in
+      the project (here 2 segments); if that cap failed to index the
+      "lib/handler" suffix, `new Handler()` could not bind to lib/handler.ts and
+      the cross-file taint chain through `h.process(userInput)` would break.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY

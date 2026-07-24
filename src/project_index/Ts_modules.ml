@@ -175,7 +175,14 @@ let discover_excludes ~(project_root : Fpath.t) : string list =
     List.map (normalize_pattern ~project_root ~config_dir:dir) raw)
     configs
 
-let build_path_suffix_index (file_paths : string list)
+(* [max_suffix_segs] is the greatest number of '/'-separated segments in any
+   bare import specifier the project actually imports.  A specifier is looked up
+   verbatim as a suffix key ([resolve_specifier]), so a suffix with more segments
+   than the longest specifier can never match and need not be indexed.  Bounding
+   the suffix length this way keeps the index size proportional to the number of
+   files times [max_suffix_segs] (specifiers are short) rather than times
+   file-path depth. *)
+let build_path_suffix_index ~(max_suffix_segs : int) (file_paths : string list)
   : (string, string list) Hashtbl.t =
   let index : (string, string list) Hashtbl.t = Hashtbl.create 16384 in
   let strip_ext (path : Fpath.t) : Fpath.t =
@@ -190,20 +197,31 @@ let build_path_suffix_index (file_paths : string list)
     then parent
     else path
   in
-  List.iter (fun path ->
-    let stripped = Fpath.v path |> strip_ext |> strip_index in
-    (* Suffix keys are joined with '/' to match raw import specifiers,
-       which use '/' on every platform. *)
-    let parts = Fpath.segs stripped in
-    let n = List.length parts in
-    let arr = Array.of_list parts in
-    for i = 0 to n - 1 do
-      let suffix = String.concat "/"
-        (Array.to_list (Array.sub arr i (n - i))) in
-      let cur = Option.value (Hashtbl.find_opt index suffix) ~default:[] in
-      Hashtbl.replace index suffix (path :: cur)
-    done
-  ) file_paths;
+  (* Count how many suffix slots a full (uncapped) index would insert, so the
+     debug log can show the reduction the cap buys. *)
+  let uncapped_slots, capped_slots =
+    List.fold_left (fun (uncapped, capped) path ->
+      let stripped = Fpath.v path |> strip_ext |> strip_index in
+      (* Suffix keys are joined with '/' to match raw import specifiers,
+         which use '/' on every platform. *)
+      let parts = Fpath.segs stripped in
+      let n = List.length parts in
+      let arr = Array.of_list parts in
+      (* Suffix starting at [i] has [n - i] segments; keep only those with at
+         most [max_suffix_segs]. *)
+      let lo = if n > max_suffix_segs then n - max_suffix_segs else 0 in
+      for i = lo to n - 1 do
+        let suffix = String.concat "/"
+          (Array.to_list (Array.sub arr i (n - i))) in
+        let cur = Option.value (Hashtbl.find_opt index suffix) ~default:[] in
+        Hashtbl.replace index suffix (path :: cur)
+      done;
+      (uncapped + n, capped + (n - lo))
+    ) (0, 0) file_paths
+  in
+  Log.debug (fun m -> m
+    "path suffix index: %d keys, %d slots (cap %d segs; uncapped would be %d slots)"
+    (Hashtbl.length index) capped_slots max_suffix_segs uncapped_slots);
   index
 
 let resolve_specifier
