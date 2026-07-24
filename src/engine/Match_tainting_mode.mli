@@ -39,6 +39,20 @@ val get_arity :
   int
 (** Effective arity, filtering language-specific implicit parameters. *)
 
+val extract_signatures :
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?call_graph:Call_graph.G.t ->
+  lang:Lang.t ->
+  db:Shape_and_sig.signature_database ->
+  taint_inst:Taint_rule_inst.t ->
+  ast:AST_generic.program ->
+  fun_info ->
+  Shape_and_sig.signature_database * Shape_and_sig.extended_sig list
+(** Extract a function's taint signature(s) into the db, returning the freshly
+    extracted signatures.  The SCC signature fixpoint replaces a function's
+    entry with these each iteration (accumulating them breaks [find_by_arity]).
+    No finding detection. *)
+
 val extract_and_check :
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
   ?call_graph:Call_graph.G.t ->

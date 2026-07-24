@@ -5,7 +5,7 @@ This document is about `src/engine/Interfile_dispatch.ml`.  Read
 
 `Interfile_dispatch` is the layer between projidx and the taint
 engine.  It takes the project-wide call graph, builds per-rule state,
-runs the per-rule topological fold, and emits findings.
+runs the per-rule signature fixpoint, and emits findings.
 
 ## The two entry points
 
@@ -14,7 +14,7 @@ runs the per-rule topological fold, and emits findings.
   builds per-rule subgraphs, and returns a `rule_state list`.  Each
   `rule_state` is a fully-prepared work item.
 - `run_rule rs` is the task body.  Given a `rule_state`, it runs the
-  topological fold and returns a `Core_match.t list` of findings.
+  signature fixpoint and returns a `Core_match.t list` of findings.
 
 `Core_scan` calls `build_rule_states` once and then schedules each
 returned `rule_state` as a separate parmap task.
@@ -49,7 +49,10 @@ parmap rather than lazily inside `run_rule`.
 `topo_order` is the list of `Function_id`s in topological order:
 leaves (deepest callees) first, roots (callers with no incoming
 calls) last.  Produced by `Call_graph.Topo.fold` on
-`relevant_graph`.  Each vertex is visited exactly once.
+`relevant_graph`.  It drives the Phase 2 emission pass (order there is
+immaterial anyway); Phase 1 instead walks the SCC condensation of
+`relevant_graph` so cycles are handled as a unit (see "The signature
+fixpoint" below).
 
 ## How a rule_state is built
 
@@ -158,11 +161,30 @@ Function ids are absolutified at this boundary so they compare equal
 to the absolute-path ids in the graph (see [§ 2](02-call-graph.md)
 "Output").
 
-## The topological fold
+## The signature fixpoint
 
-`run_rule rs` ultimately calls `topo_fold ~detect_findings:true rs`.
-The fold walks `rs.topo_order` and at each step decides what to do
-based on the function's body shape:
+`run_rule rs` ultimately calls `topo_fold ~detect_findings:true rs`,
+which runs in two phases:
+
+- **Phase 1 — converge signatures.**  The relevant subgraph is
+  condensed into strongly-connected components (`Call_graph.SCC`) and
+  the SCCs are processed callees-first.  Acyclic functions are
+  singleton SCCs and get summarised exactly once; a cyclic SCC (mutual
+  recursion, or an indirect impl↔interface dispatch loop) is *iterated*
+  to a fixpoint — its members are re-summarised until every member's
+  `SignatureSet` stops changing.  A plain topological walk has no valid
+  order *inside* a cycle, so a member can be summarised before its
+  cyclic callee and emit an incomplete, order-dependent signature; the
+  fixpoint removes that dependence (github issue #27).  The generic
+  driver is `Graph_fixpoint.Make(Call_graph.G)(Sig_lattice)(Sig_store)`
+  (`run`, bounded by `max_iter` with an `on_max_iter` escape that keeps
+  the current database rather than looping on a pathological rule).
+- **Phase 2 — emit findings.**  A single pass over `rs.topo_order`
+  against the converged database.  Every function's callees already
+  carry their final signatures, so order no longer matters and the
+  database is not threaded through this pass.
+
+Within Phase 1, each function is summarised by its body shape:
 
 ### Case 1: `FBDecl` (interface / abstract declaration)
 
@@ -203,50 +225,65 @@ Instead:
 
 ### Case 2: normal function body
 
-Call `extract_and_check_function`:
+Call `extract_signatures` (factored out of `extract_and_check`):
 
 - Extract a taint signature from the function body, replaying any
   callee signatures from `db` (intrafile cross-function machinery,
   see [`docs/INTRA_FUNCTION_IMPLEMENTATION.md`](../INTRA_FUNCTION_IMPLEMENTATION.md)).
-- Store the resulting signature in `db`.
-- If `detect_findings` is true *and* this function is in a target
-  file, also run finding detection: convert any sink-reaching
-  effects into `Core_match.t` results.
+- **Replace** this function's entry in `db` with just the freshly
+  extracted signature(s) — replace, not accumulate.  A cyclic SCC
+  re-summarises the same function on every fixpoint lap; accumulating
+  would pile up several same-arity signatures for one function and
+  make `find_by_arity` give up.
 
-`detect_findings` is gated by `is_target_file rs.target_root_map`:
-findings emit at sinks in target files, not in companion files.
-This avoids reporting the same finding twice when both the source
-file and the sink file are scan targets — the sink target sees the
-flow via the signature database.
+Finding detection does *not* happen here — it is Phase 2's job, run
+once over the converged database.
+
+`detect_findings` in Phase 2 is gated by `is_target_file
+rs.target_root_map`: findings emit at sinks in target files, not in
+companion files.  This avoids reporting the same finding twice when
+both the source file and the sink file are scan targets — the sink
+target sees the flow via the signature database.
 
 ## What runs in parallel and what doesn't
 
 - **Across rules:** parallel.  `Core_scan` schedules each
   `rule_state` as a separate task.  Rules don't share mutable state.
-- **Within a rule, topo fold:** serial.  The signature database
-  must accumulate in topo order; you can't extract a caller's
-  signature before its callees'.
+- **Within a rule, Phase 1 (signature fixpoint):** serial.  The
+  database must converge callees-first; a cyclic SCC iterates
+  internally until stable.  You can't extract a caller's signature
+  before its (acyclic) callees'.
+- **Within a rule, Phase 2 (finding emission):** order-independent —
+  every callee already carries its final signature — but run serially
+  as a plain fold for simplicity.
 - **Within `build_rule_states`:** the *setup* phases (target parse,
   spec extract, companion parse, rule-state init) are each one
   parmap.  Setup is more parallel than the fold because it has no
   topological dependency.
 
-## Why we don't just walk `Call_graph.Topo.fold` directly
+## Why SCCs, not a plain `Call_graph.Topo.fold`
 
-`ocamlgraph`'s `Topological.Make` exposes both `fold` and `iter`.
-We use `fold` because the threaded signature database is the fold
-accumulator: at every step the input is `(db, matches_acc)` and the
-output is the same pair updated.  An `iter` over a mutable database
-would work, but the functional fold is what lets us share the rule's
-state across rules without locks ([§ 1](01-architecture.md)
-"Caching").
+A topological order is only well defined on a DAG.  `ocamlgraph`'s
+`Topological.Make` still *produces* an order for a cyclic graph, but
+the members of a cycle come out in an arbitrary order fixed by graph
+construction — and since the project index is built in parallel, that
+order is not even stable between runs.  Summarising a cyclic caller
+before its mutual callee yields an incomplete, nondeterministic
+signature (issue #27).
+
+Condensing to SCCs sidesteps this: the SCC condensation *is* a DAG, so
+processing SCCs callees-first is always well ordered, and each cyclic
+SCC is iterated to a fixpoint so its result no longer depends on the
+within-cycle order.  `Graph_fixpoint` threads the signature database as
+its fold accumulator (input `db`, output the updated `db`), so the pass
+stays functional and lets us share the rule's state across rules
+without locks ([§ 1](01-architecture.md) "Caching").
 
 ## A note on bodiless / fallback signatures
 
-When the topological fold reaches a function whose body is not
-analysable (FBDecl with no implementations, or a function the
-engine cannot extract a useful signature for), `db` simply does
-not gain an entry for it.  Callers that subsequently hit a call to
+When Phase 1 reaches a function whose body is not analysable (FBDecl
+with no implementations, or a function the engine cannot extract a
+useful signature for), `db` simply does not gain an entry for it.  Callers that subsequently hit a call to
 that function fall back to **conservative propagation** in
 `Sig_inst.instantiate_function_signature`: if the actual argument expression
 maps to one of the caller's own parameters (a `BArg`), the
