@@ -84,16 +84,23 @@ computed), we use a **call graph** to determine the analysis order:
    - Each node is identified by `(class_name option, function_name)`
    - Handle method calls, direct function calls, and constructor invocations
 
-2. **Compute topological order** (`topological_sort`):
-   - Perform topological sorting on the call graph to get a bottom-up analysis order
-   - Functions that don't call others (leaf functions) are analyzed first
-   - Functions that call others are analyzed after their callees
-   - For cyclic dependencies, we use arbitrary ordering (mutual recursion not fully supported)
+2. **Condense into SCCs and order callees-first**:
+   - Condense the call graph into its strongly-connected components and
+     process them bottom-up (leaf callees first, callers last)
+   - Acyclic functions form singleton SCCs analyzed exactly once
+   - A cyclic SCC (mutual / indirect recursion) has no valid internal
+     callees-first order, so it is *iterated* to a fixpoint: its members
+     are re-analyzed until every member's signature stops changing.  This
+     removes the order-dependence that a plain topological walk would have
+     inside a cycle (github issue #27), and is driven by the same generic
+     `Graph_fixpoint` engine as the interfile loop
 
-3. **Analyze in sorted order**:
-   - Process functions in topological order, extracting signatures
-   - When analyzing function `f`, all functions it calls have their signatures ready
-   - This allows signature instantiation to work correctly during the dataflow analysis
+3. **Analyze in that order**:
+   - Extract each function's signature, replacing (not accumulating) its
+     entry so repeated fixpoint laps don't pile up several same-arity sigs
+   - By the time a function is analyzed its callees carry final signatures
+     (for a cycle, after the SCC converges), so signature instantiation
+     resolves correctly during the dataflow analysis
 
 The call graph building happens in `Match_tainting_mode.check_rule` before the
 signature extraction loop:
@@ -197,9 +204,10 @@ Visit_function_defs.fold_with_class_context
 The key insight is that signature extraction and taint analysis are now
 **two separate passes**:
 
-1. **First pass (signature extraction):** Analyze all functions in topological
-   order to build their signatures. At this point, when analyzing function `f`,
-   the signatures of all functions that `f` calls are already available.
+1. **First pass (signature extraction):** Analyze all functions in SCC
+   callees-first order — cyclic SCCs iterated to a fixpoint — to build their
+   signatures. By the time function `f` is analyzed the signatures of all
+   functions `f` calls are available (for a cycle, once the SCC converges).
 
 2. **Second pass (taint analysis):** Run the full taint analysis with all
    signatures available. Now `check_fundef` can use the complete `signature_db`
@@ -219,12 +227,14 @@ The `--taint-intrafile` implementation consists of several cooperating phases:
 2. **Call graph construction** builds a directed graph of function calls to
    determine dependencies between functions.
 
-3. **Topological sorting** orders functions such that callees are analyzed
-   before their callers, ensuring signatures are available when needed.
+3. **SCC ordering** condenses the call graph into strongly-connected
+   components and orders them callees-first, so signatures are available when
+   needed; cyclic SCCs are iterated to a fixpoint rather than ordered
+   arbitrarily.
 
 4. **Signature extraction** (first pass) performs a dedicated fixed-point per
-   function in topological order to learn how taint moves through arguments,
-   returns, globals, and fields. This includes checking if function parameters
+   function in that order to learn how taint moves through arguments, returns,
+   globals, and fields. This includes checking if function parameters
    themselves match source patterns.
 
 5. **Taint analysis** (second pass) runs the full taint analysis with the
