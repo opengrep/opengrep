@@ -318,7 +318,18 @@ let build_project_call_graph (caps : < Cap.fork >)
   let file_funcs_index = Type_augment.build_file_funcs_index all_funcs in
   let path_suffix_index : (string, string list) Hashtbl.t option =
     if Lang.equal lang Lang.Ts || Lang.equal lang Lang.Js then
-      Some (Ts_modules.build_path_suffix_index
+      (* Only suffixes as long as the longest bare (non-relative) import
+         specifier can ever be queried; pass that as the index's suffix cap. *)
+      let max_suffix_segs =
+        List.fold_left (fun acc (fi : file_info) ->
+          List.fold_left (fun acc (_local, specifier, _kind) ->
+            if String.length specifier > 0 && not (Char.equal specifier.[0] '.')
+            then max acc (List.length (String.split_on_char '/' specifier))
+            else acc)
+            acc fi.fi_import_specifiers)
+          0 file_infos
+      in
+      Some (Ts_modules.build_path_suffix_index ~max_suffix_segs
               (List.map (fun fi -> Fpath.to_string fi.fi_file) file_infos))
     else None
   in
