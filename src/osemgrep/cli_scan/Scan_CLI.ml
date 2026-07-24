@@ -784,7 +784,14 @@ let o_config : string list Term.t =
       ~env:(Cmd.Env.info "SEMGREP_RULES")
       ~doc:
         {|YAML configuration file, directory of YAML files ending in
-.yml|.yaml, URL of a configuration file, or Semgrep registry entry name.
+.yml|.yaml, URL of a configuration file, remote git repository of rules, or
+Semgrep registry entry name.
+
+A remote git repository of rules is given as `git+<url>`; it is cloned and
+scanned as a directory of rules. Append `#<branch-or-tag>` to pin a ref, e.g.
+`--config git+https://github.com/org/rules#v1.2.0`. Cloning uses git's own
+credentials (ssh-agent, credential helpers, ...) and runs non-interactively.
+REQUIRES --experimental
 
 Use --config auto to automatically obtain rules tailored to this project;
 your project URL will be used to log in to the Semgrep registry.

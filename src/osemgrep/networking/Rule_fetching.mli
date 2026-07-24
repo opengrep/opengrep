@@ -38,6 +38,7 @@ and origin =
    * additional flags to opt-in, due to security considerations.
    *)
   | Untrusted_remote of Uri.t
+  | Git_repo of Uri.t
 [@@deriving show]
 
 val partition_rules_and_invalid :

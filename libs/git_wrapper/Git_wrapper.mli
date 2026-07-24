@@ -147,6 +147,13 @@ val sparse_shallow_filtered_checkout : Uri.t -> Fpath.t -> (unit, string) result
 val sparse_checkout_add : ?cwd:Fpath.t -> Fpath.t list -> (unit, string) result
 (** Add the given files to the sparse-checkout config *)
 
+val shallow_clone :
+  ?ref_:string -> Uri.t -> Fpath.t -> (unit, string) result
+(** [shallow_clone ?ref_ url dst] does a depth-1 clone of [url] into [dst],
+    checking out the whole tree. If [ref_] is given, that branch or tag is
+    checked out. Runs non-interactively (fails fast rather than prompting for
+    credentials); auth is left entirely to git's own mechanisms. *)
+
 (* precondition: cwd must be a directory *)
 val dirty_lines_of_file :
   ?cwd:Fpath.t -> ?git_ref:string -> Fpath.t -> (int * int) array option

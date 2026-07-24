@@ -149,7 +149,8 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
            | CLI_argument
            | Registry
            | App
-           | Untrusted_remote _ ->
+           | Untrusted_remote _
+           | Git_repo _ ->
                (* TODO: stricter: warn if we didn't validate since it
                 * wasn't in a local file already (e.g., registry or other
                 * remote URI)

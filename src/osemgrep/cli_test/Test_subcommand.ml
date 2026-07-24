@@ -181,6 +181,7 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
       | File rule_file -> [ (rule_file, targets) ]
       | Dir _
       | URL _
+      | Git _
       | R _
       | A _ ->
           (* stricter: *)
@@ -209,6 +210,7 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
                    Some (rule_file, targets)))
       | File _
       | URL _
+      | Git _
       | R _
       | A _ ->
           (* stricter: *)

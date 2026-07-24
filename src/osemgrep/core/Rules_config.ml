@@ -29,8 +29,19 @@ type t =
   | Dir of Fpath.t
   (* ex: 'https://raw.githubusercontent.com/r2c/semgrep-rules/template.yaml' *)
   | URL of Uri.t
+  (* ex: 'git+https://github.com/org/rules', 'git+ssh://git@host/org/rules#v1'
+   * A whole remote git repository of rules, cloned locally and then loaded
+   * like a Dir. *)
+  | Git of git_config
   | R of registry_config_kind
   | A of app_config_kind
+
+(* the config string after the 'git+' prefix, split into the clone URL and
+ * an optional branch/tag given as a '#'-fragment (e.g. '...#v1.2.0'). *)
+and git_config = {
+  url : Uri.t;
+  ref_ : string option;
+}
 
 (* Not a great name but at least when one sees 'registry_config_kind',
  * it is a bit less ambiguous than 'registry_config' which could be some
@@ -64,6 +75,20 @@ let parse_config_string ~in_docker (config_str : config_string) : t =
   | s when s =~ "^r/\\(.*\\)" -> R (Registry (Common.matched1 s))
   | s when s =~ "^p/\\(.*\\)" -> R (Pack (Common.matched1 s))
   | s when s =~ "^s/\\(.*\\)" -> R (Snippet (Common.matched1 s))
+  (* A remote git repo of rules: 'git+<url>' with an optional '#<ref>'
+   * fragment selecting a branch or tag. We use a '#'-fragment (rather than a
+   * pip-style '@ref') because '#' cannot appear in a git URL, so this stays
+   * unambiguous even for scp-like ('git@host:org/repo') and ssh URLs. *)
+  | s when s =~ "^git[+]\\(.*\\)" ->
+      let rest = Common.matched1 s in
+      let url_str, ref_ =
+        match String.index_opt rest '#' with
+        | Some i ->
+            ( String.sub rest 0 i,
+              Some (String.sub rest (i + 1) (String.length rest - i - 1)) )
+        | None -> (rest, None)
+      in
+      Git { url = Uri.of_string url_str; ref_ }
   (* TODO? could not find a Uri.is_url helper function *)
   | s when s =~ "^http[s]?://" -> URL (Uri.of_string s)
   (* TOPORT? handle inline rules "rules:..." see python: utils.is_rules() *)
