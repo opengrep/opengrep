@@ -978,6 +978,33 @@ and assign_to_record env (tok1, fields, tok2) rhs_exp lhs_orig : stmts * exp =
         let offset = { o = Dot fldi; oorig = NoOrig } in
         let ss, fields = do_fields (offset :: acc_rev_offsets) fields in
         (ss, Field (fldi, mk_e (RecordOrDict fields) (related_tok tok)))
+    | G.F
+        {
+          s =
+            G.ExprStmt
+              ({ e = G.LetPattern (G.PatId (id, ii), _default); _ }, _);
+          _;
+        } ->
+        (* JS/TS object-shorthand destructure with a default value:
+         * `{ fld = default }`. The binding name and the field name are the
+         * same identifier `fld`; lower as [fld := tmp. ... .fld], exactly
+         * like the no-default `{ fld }` case above. The default is a fallback
+         * taken only when the field is absent, so for taint (a may-analysis)
+         * the field-present value dominates; ignoring it here matches the
+         * lowering of the renamed form `{ fld: v = default }`. *)
+        let tok = snd id in
+        let fldi = var_of_id_info id ii in
+        let offset = { o = Dot fldi; oorig = NoOrig } in
+        let vari_lval = lval_of_id_info id ii in
+        let ei =
+          mk_e
+            (Fetch { base = Var tmp; rev_offset = offset :: acc_rev_offsets })
+            (related_tok tok)
+        in
+        let instr =
+          mk_s (Instr (mk_i (Assign (vari_lval, ei)) (related_tok tok)))
+        in
+        ([ instr ], Field (fldi, mk_e (Fetch vari_lval) (related_tok tok)))
     | field ->
         (* TODO: What other patterns could be nested ? *)
         (* __FIXME_AST_to_IL__: FixmeExp ToDo *)

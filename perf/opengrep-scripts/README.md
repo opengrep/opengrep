@@ -45,6 +45,14 @@ Binaries are cached in `binaries/<label>/venv/bin/opengrep`.
 
 Unstaged changes are allowed when the reference is cached (no checkout required).
 
+Both sides usually report the same opengrep version during development (main is
+typically still at the last release), so each side is identified by its commit as
+well: `<tag>-<short-sha>` when the commit is tagged, otherwise the short SHA
+(plus `-dirty` for a HEAD with uncommitted changes). These identifiers are passed
+to `bench.sh` as `--reference-label`/`--binary-label` and show up in the hyperfine
+result tables, `metadata.json`, and the report header, e.g.
+`opengrep-1.15.0@v1.15.0-a1b2c3d` vs `opengrep-1.15.0@d77978d-dirty`.
+
 ### `bench.sh`
 
 Core benchmarking script using [hyperfine](https://github.com/sharkdp/hyperfine). Compares two binaries (reference vs comparison).
@@ -57,6 +65,8 @@ Options:
 - `--reference-binary PATH` - Reference opengrep binary (required; `~/.local/bin/opengrep` is a common location)
 - `--binary PATH` - Binary to compare (required)
 - `--binary-variant TYPE` - Type of binary: `opengrep` or `semgrep` (auto-detected if binary is `semgrep` or ends with `/semgrep`)
+- `--reference-label LABEL` - Extra identifier (tag/sha) for the reference binary, shown as `opengrep-<version>@<label>` in results and metadata
+- `--binary-label LABEL` - Extra identifier (tag/sha) for the comparison binary
 - `--repo NAME[:RUNS]` - Benchmark specific repo (can be repeated)
 - `--taint-rules-only` - Use only taint rules
 - `--no-taint-rules` - Use only non-taint (search) rules

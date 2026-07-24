@@ -28,9 +28,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-log_info() { echo -e "${GREEN}==>${NC} $1"; }
-log_warn() { echo -e "${YELLOW}Warning:${NC} $1"; }
-log_error() { echo -e "${RED}Error:${NC} $1" >&2; }
+# printf, not `echo -e`: when the script is run as `sh bench-against-sha.sh`,
+# echo is POSIX and prints the -e literally.
+log_info() { printf '%b==>%b %s\n' "$GREEN" "$NC" "$1"; }
+log_warn() { printf '%bWarning:%b %s\n' "$YELLOW" "$NC" "$1"; }
+log_error() { printf '%bError:%b %s\n' "$RED" "$NC" "$1" >&2; }
 
 usage() {
   echo "Usage: $0 <reference-sha> [bench.sh options]"
@@ -73,6 +75,21 @@ get_commit_label() {
   fi
 }
 
+# Get an unambiguous identifier for a commit: "<tag>-<short-sha>" when the
+# commit is tagged, otherwise just the short SHA. Versions on main are usually
+# identical to the last release, so this is what distinguishes the results.
+get_commit_id() {
+  local sha_full="$1"
+  local tag short_sha
+  tag=$(git tag --points-at "$sha_full" 2>/dev/null | head -n1)
+  short_sha=$(git rev-parse --short "$sha_full")
+  if [[ -n "$tag" ]]; then
+    echo "$tag-$short_sha"
+  else
+    echo "$short_sha"
+  fi
+}
+
 # Parse arguments
 if [[ $# -lt 1 ]]; then
   usage
@@ -99,9 +116,14 @@ REF_SHA_FULL=$(git rev-parse "$REF_SHA")
 REF_LABEL=$(get_commit_label "$REF_SHA_FULL")
 HEAD_SHA_FULL=$(git rev-parse HEAD)
 HEAD_LABEL=$(get_commit_label "$HEAD_SHA_FULL")
+REF_ID=$(get_commit_id "$REF_SHA_FULL")
+HEAD_ID=$(get_commit_id "$HEAD_SHA_FULL")
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  HEAD_ID="$HEAD_ID-dirty"
+fi
 
-echo "  Reference: $REF_SHA -> $REF_LABEL ($REF_SHA_FULL)"
-echo "  HEAD:      $HEAD_LABEL ($HEAD_SHA_FULL)"
+echo "  Reference: $REF_SHA -> $REF_ID ($REF_SHA_FULL)"
+echo "  HEAD:      $HEAD_ID ($HEAD_SHA_FULL)"
 
 if [[ "$REF_SHA_FULL" == "$HEAD_SHA_FULL" ]]; then
   log_error "HEAD is the same as reference: $REF_SHA_FULL"
@@ -130,14 +152,16 @@ if [[ -n "$dry_run" ]]; then
   echo "  $HEAD_LABEL: build in place (always rebuilt)"
   echo ""
   echo "Would run:"
-  echo "  ./bench.sh --reference-binary $REF_BINARY --binary $HEAD_BINARY ${BENCH_ARGS[*]}"
+  echo "  ./bench.sh --reference-binary $REF_BINARY --reference-label $REF_ID --binary $HEAD_BINARY --binary-label $HEAD_ID ${BENCH_ARGS[*]-}"
   echo ""
 
   cd "$SCRIPT_DIR"
   exec ./bench.sh \
     --reference-binary "$REF_BINARY" \
+    --reference-label "$REF_ID" \
     --binary "$HEAD_BINARY" \
-    "${BENCH_ARGS[@]}"
+    --binary-label "$HEAD_ID" \
+    ${BENCH_ARGS[@]+"${BENCH_ARGS[@]}"}
 fi
 
 # Function to build at current HEAD
@@ -217,12 +241,14 @@ echo ""
 
 # Run benchmarks
 log_info "Running benchmarks..."
-echo "  Reference: $REF_BINARY"
-echo "  HEAD:      $HEAD_BINARY"
+echo "  Reference: $REF_BINARY ($REF_ID)"
+echo "  HEAD:      $HEAD_BINARY ($HEAD_ID)"
 echo ""
 
 cd "$SCRIPT_DIR"
 exec ./bench.sh \
   --reference-binary "$REF_BINARY" \
+  --reference-label "$REF_ID" \
   --binary "$HEAD_BINARY" \
-  "${BENCH_ARGS[@]}"
+  --binary-label "$HEAD_ID" \
+  ${BENCH_ARGS[@]+"${BENCH_ARGS[@]}"}
