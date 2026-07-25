@@ -255,6 +255,7 @@ let langs_with_error_tolerance =
     (Lang.Go, Strict);
     (Lang.Ruby, Strict);
     (Lang.Js, Strict);
+    (Lang.Ts, Strict);
     (Lang.Ts, Partial_parsing);
     (Lang.Python, Strict);
     (Lang.C, Strict);
