@@ -26,6 +26,10 @@ let name_tests : (string * Lang.t * Fpath.t * success) list =
     ("jsx", Js, "foo.jsx", OK);
     ("typescript", Ts, "foo.ts", OK);
     ("typescript .d.ts", Ts, "foo.d.ts", XFAIL);
+    ("typescript mts", Ts, "foo.mts", OK);
+    ("typescript cts", Ts, "foo.cts", OK);
+    ("typescript .d.mts", Ts, "foo.d.mts", XFAIL);
+    ("typescript .d.cts", Ts, "foo.d.cts", XFAIL);
     ("crystal", Crystal, "foo.cr", OK);
     ("spaces", Ruby, " a b  c.rb", OK);
   ]
