@@ -1005,6 +1005,32 @@ and assign_to_record env (tok1, fields, tok2) rhs_exp lhs_orig : stmts * exp =
           mk_s (Instr (mk_i (Assign (vari_lval, ei)) (related_tok tok)))
         in
         ([ instr ], Field (fldi, mk_e (Fetch vari_lval) (related_tok tok)))
+    | G.F
+        {
+          s =
+            G.ExprStmt
+              ( {
+                  e =
+                    G.Call
+                      ( { e = G.IdSpecial (G.Spread, _); _ },
+                        (_, [ G.Arg { e = G.N (G.Id (id, ii)); _ } ], _) );
+                  _;
+                },
+                _ );
+          _;
+        } ->
+        let tok = snd id in
+        let vari = var_of_id_info id ii in
+        let vari_lval = lval_of_base (Var vari) in
+        let ei =
+          mk_e
+            (Fetch { base = Var tmp; rev_offset = acc_rev_offsets })
+            (related_tok tok)
+        in
+        let instr =
+          mk_s (Instr (mk_i (Assign (vari_lval, ei)) (related_tok tok)))
+        in
+        ([ instr ], Spread (mk_e (Fetch vari_lval) (related_tok tok)))
     | field ->
         (* TODO: What other patterns could be nested ? *)
         (* __FIXME_AST_to_IL__: FixmeExp ToDo *)
