@@ -62,6 +62,24 @@ type env = {
   rec_point_label : label option;
   rec_point_lvals : rec_point_lvals option;
   inside_function : bool;
+  (* Whether the pattern currently being lowered by [pattern] is a
+   * destructuring *assignment target* (`(a, b.f) = e`) rather than a
+   * pattern being matched against a value (a `case` label, a `catch`
+   * clause, a function parameter).
+   *
+   * It only affects [OtherPat("ExprToPattern", …)] leaves, which is
+   * where an assignment target that is not a plain name shows up: with
+   * the flag set they bind to the real lval, otherwise the expression is
+   * merely evaluated into a throwaway tmp. Binding unconditionally would
+   * be wrong for `switch (x) { case Colors.RED: }`, whose case label also
+   * reaches [pattern] as an [ExprToPattern] and would then be *assigned*
+   * the scrutinee.
+   *
+   * Set by the two destructuring-assignment entry points ([assign] on a
+   * container LHS and the [VarDef]-with-[EPattern] case of [stmt_aux]),
+   * and cleared on every statement boundary by [stmt] so it cannot leak
+   * into a nested function body. *)
+  pattern_binds_lvals : bool;
 }
 
 let empty_env (lang : Lang.t) : env =
@@ -70,7 +88,12 @@ let empty_env (lang : Lang.t) : env =
     rec_point_label = None;
     rec_point_lvals = None;
     inside_function = false;
+    pattern_binds_lvals = false;
     lang }
+
+(* Enter a destructuring-assignment context; see [pattern_binds_lvals]. *)
+let assign_pattern_env (env : env) : env =
+  { env with pattern_binds_lvals = true }
 
 (*****************************************************************************)
 (* Error management *)
@@ -308,6 +331,37 @@ let is_map_pair_pattern (p : G.pattern) : bool =
       ( (("MapPairKeyword" | "MapPairArrow"), _),
         [ G.P (G.PatKeyVal (_, _)) ] ) ->
       true
+  | _ -> false
+
+(* A compound pattern binding one or more variables out of a value, as in a
+ * destructuring declaration: Solidity's `(uint256 a, uint256 b) = f()`,
+ * Rust's `let (a, b) = f()` / `let P { x, y } = f()` / `let Some(x) = f()`,
+ * Scala's `val (a, b) = f()`, Kotlin's `val (a, b) = f()`, or a C++
+ * structured binding `auto [a, b] = f()`.
+ *
+ * coupling: the C++ structured binding arrives wrapped in a [PatTyped],
+ * see cpp_to_generic.ml and its [EPattern] entity.
+ *
+ * [lval_of_ent] can only turn a [PatId] into an lval, so these have to be
+ * lowered via [pattern_assign_statements] instead. A plain [PatId] (possibly
+ * typed) is a single binding and keeps its existing lowering.
+ *
+ * coupling: every constructor listed here must be handled by [pattern],
+ * which is what [pattern_assign_statements] dispatches to. *)
+let rec is_destructuring_pattern (p : G.pattern) : bool =
+  match p with
+  | G.PatTuple _
+  | G.PatList _
+  | G.PatRecord _
+  (* [pattern] rewrites a constructor pattern into a tuple (or a map
+   * destructure for the Clojure [:keys] shape), so `let Some(x) = f()`
+   * binds `x` just like `let (x) = f()` would. *)
+  | G.PatConstructor _ ->
+      true
+  | G.PatTyped (p1, _) -> is_destructuring_pattern p1
+  (* `let x @ (a, b) = f()`: [pattern] binds both the alias and the inner
+   * pattern's variables. *)
+  | G.PatAs (p1, _) -> is_destructuring_pattern p1
   | _ -> false
 
 (* An Elixir `cond` branch condition is an expression, not a pattern:
@@ -636,13 +690,46 @@ and pattern env pat : stmts * lval * stmts =
   | G.OtherPat ((("MapPairArrow" | "MapPairKeyword"), _), [ G.P inner ])
     when env.lang =*= Lang.Elixir ->
     pattern env inner
-  | G.OtherPat (("ExprToPattern", tok), [ G.E e ]) ->
+  | G.OtherPat (("ExprToPattern", tok), [ G.E e ]) -> (
     (* expr_to_pattern fallback: the expression couldn't be statically
-     * converted to a known pattern. Evaluate the expression so that
-     * side-effects and taint flow are captured, then bind a fresh tmp. *)
-    let pre_ss, _e' = expr env e in
-    let tmp = fresh_lval tok in
-    (pre_ss, tmp, [])
+     * converted to a known pattern. This is how an assignment target that
+     * is not a plain name reaches here, e.g. the `arr[0]` in Solidity's
+     * `(arr[0], arr[1]) = f()` or Python's `o.a, o.b = f()`.
+     *
+     * In a destructuring-assignment context ([env.pattern_binds_lvals])
+     * and when the expression is a valid assignment target, bind to that
+     * lval so the destructured value actually reaches it. Otherwise — in
+     * particular for a `case` label such as `case Colors.RED:`, which is a
+     * value to compare against and not a binding target — evaluate the
+     * expression so side-effects and taint flow are still captured, and
+     * bind a fresh tmp.
+     *
+     * The forms listed below are those of [lval] that can be a destructuring
+     * target, which is not quite all of [lval]:
+     *   - [IdSpecial (This, _)] is omitted deliberately: no language lets
+     *     you assign to a bare `this`.
+     *   - PHP's [OtherExpr("ArrayAppend", …)] (`$a[]`) cannot reach here at
+     *     all: [H.expr_to_pattern] maps [OtherExpr (tag, [E e])] to
+     *     [OtherPat (tag, …)], so `$a[]` arrives tagged "ArrayAppend", not
+     *     "ExprToPattern". *)
+    let eval_into_tmp () =
+      let pre_ss, _e' = expr env e in
+      let tmp = fresh_lval tok in
+      (pre_ss, tmp, [])
+    in
+    match e.G.e with
+    | (G.N _ | G.DotAccess _ | G.ArrayAccess _ | G.DeRef _)
+      when env.pattern_binds_lvals -> (
+        try
+          let ss_lv, lval = lval env e in
+          (ss_lv, lval, [])
+        with
+        (* [lval] could not translate the target; keep the gap visible in
+         * the logs the way [assign] does, then degrade to a tmp. *)
+        | Fixme (kind, any_generic) ->
+            log_fixme kind any_generic;
+            eval_into_tmp ())
+    | _ -> eval_into_tmp ())
   | G.PatEllipsis _ -> sgrep_construct (G.P pat)
   | _ -> todo (G.P pat)
 
@@ -899,7 +986,7 @@ and assign env ~g_expr lhs tok rhs_exp : stmts * exp =
        * (gated by [Lang.is_js]) lives in [split_trailing_rest]. *)
       try
         let pat = H.expr_to_pattern lhs in
-        let pre_ss, tmp_lval, post_ss = pattern env pat in
+        let pre_ss, tmp_lval, post_ss = pattern (assign_pattern_env env) pat in
         let assign_stmt =
           mk_s (Instr (mk_i (Assign (tmp_lval, rhs_exp)) eorig))
         in
@@ -3704,6 +3791,20 @@ and stmt_aux env st : stmts =
         class_construction env obj' new_exp ty cons_id_info args
       in
       new_stmts
+  (* Destructuring declaration, e.g. `(uint256 a, uint256 b) = f();`. Without
+   * this case [lval_of_ent] hands back a throwaway [fresh_lval], so none of
+   * the variables the pattern binds are ever assigned in the IL and no
+   * dataflow can reach them. Lower them through [pattern_assign_statements],
+   * the same path used for `for`-loop and match-case destructuring. *)
+  | G.DefStmt
+      ( { name = G.EPattern pat; _ },
+        G.VarDef { G.vinit = Some e; vtype = opt_ty; vtok = _ } )
+    when is_destructuring_pattern pat ->
+      let ss1, e' = expr env e in
+      let ss2, () = type_opt env opt_ty in
+      ss1 @ ss2
+      @ pattern_assign_statements (assign_pattern_env env) e'
+          ~eorig:(Related (G.S st)) pat
   | G.DefStmt (ent, G.VarDef { G.vinit = Some e; vtype = opt_ty; vtok = _ }) ->
       let ss1, e' = expr env e in
       let ss_lv, lv = lval_of_ent env ent in
@@ -4182,6 +4283,11 @@ and cases_and_bodies_to_stmts env switch_expr_opt tok break_label translate_case
       (pre_jump_ss @ case_ss @ [ jump ], body @ break_if_no_fallthrough @ bodies)
 
 and stmt env st : stmt list =
+  (* A destructuring-assignment context never spans a statement boundary;
+   * clearing here keeps [pattern_binds_lvals] from leaking into a nested
+   * function body reached from inside a pattern (e.g. a lambda in a
+   * [PatWhen] guard). *)
+  let env = { env with pattern_binds_lvals = false } in
   try stmt_aux env st with
   | Fixme (kind, any_generic) -> fixme_stmt kind any_generic
 

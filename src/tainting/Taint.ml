@@ -182,6 +182,28 @@ match o.o with
     match Parsed_int.to_int_opt pi with
     | Some i -> Oint i
     | None -> Oany)
+(* Several frontends emit an integral index as a Float rather than an Int:
+ * JS/TS have no integer literals at all, and Solidity, Lua and R map every
+ * decimal numeric literal to a Float. Such an index would degrade to the
+ * Oany wildcard, which makes every constant index alias every other one.
+ * Accept a float that denotes a representable integer.
+ *
+ * The bound is strict: [Float.of_int Int.max_int] rounds *up* to 2^62,
+ * which is one past [max_int], so [<=] would admit 2^62 and
+ * [int_of_float] would wrap it to a negative offset.
+ *
+ * NOTE: an integral index and its string spelling are distinct offsets
+ * ([Oint 0] vs [Ostr "0"]). That is right for Python, where `d[0]` and
+ * `d["0"]` are different dict keys, but wrong for JS, where they are the
+ * same property. That equivalence has never been implemented -- before
+ * this case existed a constant JS index was [Oany], so it matched any key
+ * rather than the matching one -- and implementing it needs a [lang] here,
+ * which would mean threading one through [Taint_lval_env.normalize_lval]
+ * and its whole public API; see the `todo:` case in
+ * tests/rules/taint_js_array_index.js. *)
+| IL.Index { e = IL.Literal (Float (Some f, _)); _ }
+  when Float.is_integer f && Float.abs f < Float.of_int Int.max_int ->
+    Oint (int_of_float f)
 | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
 | IL.Index { e = IL.Literal (Atom (_, (s, _))); _ } -> Ostr s
 | IL.Index _ -> Oany

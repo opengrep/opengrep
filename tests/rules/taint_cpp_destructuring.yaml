@@ -1,0 +1,12 @@
+rules:
+- id: taint-cpp-destructuring
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  message: Tainted value reaches sink through a structured binding
+  severity: WARNING
+  languages: [cpp]

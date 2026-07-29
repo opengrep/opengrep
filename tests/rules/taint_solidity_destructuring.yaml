@@ -1,0 +1,12 @@
+rules:
+- id: taint-solidity-destructuring
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  message: Tainted value reaches sink through a destructuring assignment
+  severity: WARNING
+  languages: [solidity]

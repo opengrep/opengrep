@@ -63,6 +63,7 @@ and pl_type =
   | Swift
   | Apex
   | Dart
+  | Solidity
   (* advanced script *)
   | Julia
   | Perl
@@ -409,6 +410,7 @@ let file_type_of_file file =
   | "ex" | "exs" -> PL Elixir
   | "cls" | "trigger" -> PL Apex
   | "dart" -> PL Dart
+  | "sol" -> PL Solidity
   | "vb" -> PL Vb
   | _ when UFile.is_executable file -> Binary e
   | _ when b = "Makefile" || b = "mkfile" || b = "Imakefile" -> Config Makefile

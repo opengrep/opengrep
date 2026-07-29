@@ -31,6 +31,7 @@ and pl_type =
   | Swift
   | Apex
   | Dart
+  | Solidity
   | Julia
   | Perl
   | Python
