@@ -71,12 +71,29 @@ function renamedAndShorthandMixed(params) {
 
 function withRest(params) {
   const { a = 0, ...rest } = params;
-  // the default binding is tainted even when a rest element follows
   // ruleid: destructuring-default-taint-loss
   sink(a);
-  // object-rest bindings drop taint via a separate code path (FieldSpread);
-  // that is a distinct pre-existing gap, tracked here as a known TODO.
-  // todoruleid: destructuring-default-taint-loss
+  // ruleid: destructuring-default-taint-loss
+  sink(rest);
+}
+
+function restOnly(params) {
+  const { ...rest } = params;
+  // ruleid: destructuring-default-taint-loss
+  sink(rest);
+}
+
+function restAfterPlain(params) {
+  const { a, b, ...rest } = params;
+  // ruleid: destructuring-default-taint-loss
+  sink(a);
+  // ruleid: destructuring-default-taint-loss
+  sink(rest);
+}
+
+function nestedRest(params) {
+  const { outer: { ...rest } } = params;
+  // ruleid: destructuring-default-taint-loss
   sink(rest);
 }
 
@@ -92,4 +109,10 @@ function noTaintMulti() {
   sink(a);
   // ok: destructuring-default-taint-loss
   sink(b);
+}
+
+function noTaintRest() {
+  const { a, ...rest } = {}; // RHS is not a parameter: must stay untainted
+  // ok: destructuring-default-taint-loss
+  sink(rest);
 }

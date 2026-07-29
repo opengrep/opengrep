@@ -934,12 +934,31 @@ and assign_to_record env (tok1, fields, tok2) rhs_exp lhs_orig : stmts * exp =
    *     vN = tmp.xN
    *)
   let aux_ss, tmp, _tmp_lval = aux_var env tok1 rhs_exp in
+  (* The property name captured by a non-rest field binding, i.e. the key that
+   * a sibling `...rest` in the same object pattern excludes. [None] for a rest
+   * binding or any shape we do not lower into a keyed field. *)
+  let field_key_name (f : G.field) : name option =
+    match f with
+    | G.F
+        {
+          s = G.DefStmt ({ name = EN (G.Id (id1, ii1)); _ }, G.FieldDefColon _);
+          _;
+        } ->
+        Some (var_of_id_info id1 ii1)
+    | G.F { s = G.ExprStmt ({ e = G.LetPattern (G.PatId (id, ii), _); _ }, _); _ }
+      ->
+        Some (var_of_id_info id ii)
+    | _ -> None
+  in
   let rec do_fields acc_rev_offsets fs =
-    let results = List.map (fun x -> do_field acc_rev_offsets x) fs in
+    let sibling_keys = List.filter_map field_key_name fs in
+    let results =
+      List.map (fun x -> do_field acc_rev_offsets sibling_keys x) fs
+    in
     let ss = List.concat_map fst results in
     let fields = List.map snd results in
     (ss, fields)
-  and do_field acc_rev_offsets f =
+  and do_field acc_rev_offsets sibling_keys f =
     match f with
     | G.F
         {
@@ -1005,6 +1024,50 @@ and assign_to_record env (tok1, fields, tok2) rhs_exp lhs_orig : stmts * exp =
           mk_s (Instr (mk_i (Assign (vari_lval, ei)) (related_tok tok)))
         in
         ([ instr ], Field (fldi, mk_e (Fetch vari_lval) (related_tok tok)))
+    | G.F
+        {
+          s =
+            G.ExprStmt
+              ( {
+                  e =
+                    G.Call
+                      ( { e = G.IdSpecial (G.Spread, _); _ },
+                        (_, [ G.Arg { e = G.N (G.Id (id, ii)); _ } ], _) );
+                  _;
+                },
+                _ );
+          _;
+        } ->
+        let tok = snd id in
+        let vari = var_of_id_info id ii in
+        let vari_lval = lval_of_base (Var vari) in
+        let ei =
+          mk_e
+            (Fetch { base = Var tmp; rev_offset = acc_rev_offsets })
+            (related_tok tok)
+        in
+        let instr =
+          mk_s (Instr (mk_i (Assign (vari_lval, ei)) (related_tok tok)))
+        in
+        (* `rest` excludes the sibling keys destructured at this level. After
+         * copying the whole (sub-)scrutinee, strong-update each such key on
+         * `rest` to a clean value, so field-specific taint on a taken key does
+         * not leak into `rest`. Whole-object (root) taint survives, as it
+         * covers `rest`'s other/unknown fields. *)
+        let clear_instrs =
+          List.map
+            (fun key ->
+              let clear_lval =
+                { base = Var vari; rev_offset = [ { o = Dot key; oorig = NoOrig } ] }
+              in
+              let clean_exp =
+                mk_e (Literal (G.Null (Tok.unsafe_fake_tok "_"))) NoOrig
+              in
+              mk_s
+                (Instr (mk_i (Assign (clear_lval, clean_exp)) (related_tok tok))))
+            sibling_keys
+        in
+        (instr :: clear_instrs, Spread (mk_e (Fetch vari_lval) (related_tok tok)))
     | field ->
         (* TODO: What other patterns could be nested ? *)
         (* __FIXME_AST_to_IL__: FixmeExp ToDo *)

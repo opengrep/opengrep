@@ -1,0 +1,10 @@
+rules:
+  - id: rest-field-sensitive
+    languages: [javascript]
+    severity: ERROR
+    message: taint reached sink
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
