@@ -44,14 +44,15 @@ let rec chunks (n : int) (xs : 'a list) : 'a list list =
    re-raised. *)
 let run_per_file (caps : < Cap.fork >) ~(ncores : int)
     (fn : 'a -> 'b) (items : 'a list)
-    : ('b, string) Result.t list =
-  (* [fn] fixes the type: one [Ok]/[Error] per item. *)
+    : ('b, 'a * string) Result.t list =
+  (* [fn] fixes the type: one [Ok]/[Error] per item; an [Error] carries the
+     item so the caller can attribute (and surface) the failure. *)
   let run_one item =
     try Ok (fn item)
     with
     | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
       Exception.catch_and_reraise exn
-    | exn -> Error (Printexc.to_string exn)
+    | exn -> Error (item, Printexc.to_string exn)
   in
   let batches = chunks per_file_batch_size items in
   let n = List.length batches in
@@ -66,16 +67,21 @@ let run_per_file (caps : < Cap.fork >) ~(ncores : int)
         | exn -> Printexc.to_string exn)
       (fun batch -> List_.map run_one batch)
       batches
-    |> List.concat_map (function
+    |> List.map2 (fun batch -> function
         | Ok batch_results -> batch_results
-        | Error msg -> [ Error msg ])
+        (* A batch-level failure (thrown outside [run_one]) loses the
+           per-item results; attribute its message to every item. *)
+        | Error msg -> List_.map (fun item -> Error (item, msg)) batch)
+        batches
+    |> List.concat
 
 let build_project_call_graph (caps : < Cap.fork >)
     ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     ~(ncores : int)
     ?(class_infos = [])
     ?(reexport_map = Hashtbl.create 0)
-    (file_infos : file_info list) : Call_graph.G.t * class_fun_info list =
+    (file_infos : file_info list)
+    : Call_graph.G.t * class_fun_info list * (Fpath.t * string) list =
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
   in
@@ -190,11 +196,19 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let per_file_funcs = run_per_file caps ~ncores phase1_per_file file_infos in
   let all_funcs =
-    List.concat_map (function
-      | Ok fs -> fs
-      | Error msg ->
-        Log.warn (fun m -> m "[skip] phase 1 worker failed: %s" msg);
-        []) per_file_funcs
+    List.concat_map (function Ok fs -> fs | Error _ -> []) per_file_funcs
+  in
+  (* Returned to the caller: a failed file's functions are MISSING from the
+     graph, which silently loses every finding through them unless the
+     failure is surfaced as a scan error. *)
+  let phase1_failures =
+    List.filter_map (function
+      | Ok _ -> None
+      | Error ((fi : file_info), msg) ->
+        Log.warn (fun m -> m "[skip] projidx phase 1 failed on %s: %s"
+                    (Fpath.to_string fi.fi_file) msg);
+        Some (fi.fi_file, Printf.sprintf "projidx phase 1 (functions): %s" msg))
+      per_file_funcs
   in
   List.iter (fun (func : FA.func_info) ->
     match FA.fn_id_to_node func.FA.fn_id with
@@ -305,6 +319,12 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   Log.debug (fun m -> m "Body-inferred type fixpoint: %d outer passes, %d caller-arg-types"
     outer_iters (Hashtbl.length caller_arg_types));
+  (* [Fixpoint.run] returns [i = max_iterations] only on the cap branch. *)
+  if outer_iters >= Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES then
+    Log.warn (fun m ->
+        m "Body-inferred type fixpoint hit the %d-pass cap without \
+           converging; inferred types may be incomplete"
+          Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES);
   let type_state =
     Type_augment.build_module_singleton_types ~uses_new_keyword type_state file_infos
   in
@@ -429,14 +449,21 @@ let build_project_call_graph (caps : < Cap.fork >)
     |> List_.map snd
   in
   let per_file_edges = run_per_file caps ~ncores edges_for_file file_infos in
-  List.iter (function
-    | Ok edges ->
-      List.iter (fun (src, dst, call_tok) ->
-        Call_graph.add_edge graph ~src ~dst ~call_tok)
-        edges
-    | Error msg ->
-      Log.warn (fun m -> m "[skip] phase 2 worker failed: %s" msg))
-    per_file_edges;
+  (* A failed file's outgoing call edges are MISSING from the graph; the
+     failure list is returned so the engine can surface it as a scan error. *)
+  let phase2_failures =
+    List.filter_map (function
+      | Ok edges ->
+        List.iter (fun (src, dst, call_tok) ->
+          Call_graph.add_edge graph ~src ~dst ~call_tok)
+          edges;
+        None
+      | Error ((fi : file_info), msg) ->
+        Log.warn (fun m -> m "[skip] projidx phase 2 failed on %s: %s"
+                    (Fpath.to_string fi.fi_file) msg);
+        Some (fi.fi_file, Printf.sprintf "projidx phase 2 (call edges): %s" msg))
+      per_file_edges
+  in
   (* Interface dispatch edges.  See [Structural_dispatch]. *)
   let n_dispatch =
     Structural_dispatch.emit_dispatch_edges
@@ -445,7 +472,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   if n_dispatch > 0 then
     Log.debug (fun m -> m "Interface dispatch: emitted %d Dispatch edges"
       n_dispatch);
-  (graph, inherited_by_class)
+  (graph, inherited_by_class, phase1_failures @ phase2_failures)
 
 let project_root_abs_of (project_root : Fpath.t) : Fpath.t =
   if Fpath.is_abs project_root then project_root
@@ -456,7 +483,8 @@ let run_pipeline (caps : < Cap.fork >)
                 Discover.projidx_default_targeting_conf)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
-  : entry list * Call_graph.G.t * int * int * file_info list =
+  : entry list * Call_graph.G.t * int * int * file_info list
+    * (Fpath.t * string) list =
   let cfg = Index_lang_rules.for_lang lang in
   (* [discover_excludes] so the CLI and embedded engine index the same files. *)
   let excludes =
@@ -537,20 +565,23 @@ let run_pipeline (caps : < Cap.fork >)
         process
         files
   in
-  let scanned, skipped, all_entries, all_classes, all_files, _ =
-    List.fold_left (fun (sc, sk, es, cs, fis, n_logged) -> function
+  let scanned, skipped, all_entries, all_classes, all_files, parse_failures =
+    List.fold_left (fun (sc, sk, es, cs, fis, fails) -> function
       | Ok (entries, class_infos, fi) ->
         (sc + 1, sk,
          List.rev_append entries es,
          List.rev_append class_infos cs,
          fi :: fis,
-         n_logged)
+         fails)
       | Error (file, msg) ->
-        if n_logged < 5 then
+        (* [sk] counts failures so far; log the first five only. *)
+        if sk < 5 then
           Log.warn (fun m -> m "[skip] %s: %s" (Fpath.to_string file) msg);
-        (sc, sk + 1, es, cs, fis, n_logged + 1)
-    ) (0, 0, [], [], [], 0) results
+        (sc, sk + 1, es, cs, fis,
+         (file, Printf.sprintf "projidx parse/collect: %s" msg) :: fails)
+    ) (0, 0, [], [], [], []) results
   in
+  let parse_failures = List.rev parse_failures in
   let reexport_map = Reexports.build_reexport_map ~cfg all_files in
   Log.debug (fun m -> m "Re-export map: %d entries (lang has_reexports=%b)"
     (Hashtbl.length reexport_map) cfg.Index_lang_rules.has_reexports);
@@ -568,7 +599,7 @@ let run_pipeline (caps : < Cap.fork >)
   Log.debug (fun m -> m "Wrapper synthesis: %d dunders emitted"
     (List.length synth_from_wrappers));
   let entries_pre_mro = all_entries @ synth_from_wrappers in
-  let graph, inherited_by_class =
+  let graph, inherited_by_class, worker_failures =
     build_project_call_graph caps ~cfg ~lang ~ncores
       ~class_infos:all_classes ~reexport_map all_files
   in
@@ -595,7 +626,8 @@ let run_pipeline (caps : < Cap.fork >)
   let final_entries = entries_pre_mro @ inherited in
   Log.info (fun m -> m "Call graph: %d vertices, %d edges"
     (Call_graph.G.nb_vertex graph) (Call_graph.G.nb_edges graph));
-  (final_entries, graph, scanned, skipped, all_files)
+  (final_entries, graph, scanned, skipped, all_files,
+   parse_failures @ worker_failures)
 
 let collect (caps : < Cap.fork >)
     ?(targeting_conf : Find_targets.conf =
@@ -603,7 +635,7 @@ let collect (caps : < Cap.fork >)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
   : entry list * Call_graph.G.t * int * int =
-  let (entries, graph, scanned, skipped, _all_files) =
+  let (entries, graph, scanned, skipped, _all_files, _failures) =
     run_pipeline caps ~targeting_conf ~lang ~project_root ~ncores
       ~includes ~excludes ()
   in
@@ -614,13 +646,14 @@ let collect_resolved (caps : < Cap.fork >)
                 Discover.projidx_default_targeting_conf)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
-  : Call_graph.G.t * (string, G.program) Hashtbl.t =
+  : Call_graph.G.t * (string, G.program) Hashtbl.t
+    * (Fpath.t * string) list =
   let project_root_abs = project_root_abs_of project_root in
   let absnorm (file : Fpath.t) : string =
     (if Fpath.is_abs file then file else Fpath.(project_root_abs // file))
     |> Fpath.normalize |> Fpath.to_string
   in
-  let (_entries, graph, _scanned, _skipped, all_files) =
+  let (_entries, graph, _scanned, _skipped, all_files, failures) =
     run_pipeline caps ~targeting_conf ~lang ~project_root:project_root_abs
       ~ncores ~includes ~excludes ()
   in
@@ -628,7 +661,7 @@ let collect_resolved (caps : < Cap.fork >)
   List.iter (fun (fi : file_info) ->
     Hashtbl.replace tbl (absnorm fi.fi_file) fi.fi_ast)
     all_files;
-  (graph, tbl)
+  (graph, tbl, failures)
 
 let resolve_ast_for_file (caps : < Cap.fork >)
     ?(targeting_conf : Find_targets.conf =
@@ -641,7 +674,7 @@ let resolve_ast_for_file (caps : < Cap.fork >)
     (if Fpath.is_abs target then target else Fpath.(project_root_abs // target))
     |> Fpath.normalize |> Fpath.to_string
   in
-  let _graph, asts =
+  let _graph, asts, _failures =
     collect_resolved caps ~targeting_conf ~lang ~project_root ~ncores
       ~includes:[] ~excludes:[] ()
   in
