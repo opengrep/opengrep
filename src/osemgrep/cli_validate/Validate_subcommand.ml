@@ -46,6 +46,15 @@ module Out = Semgrep_output_v1_t
  *  (4) TODO Other errors that can't be detected easily using Semgrep rules. We
  *    detect those thanks to Check_rule.ml.
  *
+ * IMPORTANT: 'validate' is meant to validate *local* rules (a file or a
+ * directory of rules). The metachecks in (3) run on the rule files on disk,
+ * so only rules that come from a local config are fully validated. Rules
+ * fetched from a non-local config (registry 'p/...'/'r/...', a URL, or a
+ * 'git+<url>' repo) are still parsed, so (1) and (2) apply, but they provide
+ * no persistent file to metacheck and are therefore skipped in (3). When no
+ * config is local we emit a warning (see find_targets_rules) so this is not
+ * silent.
+ *
  * For more info see
  * https://semgrep.dev/docs/writing-rules/testing-rules#validating-rules
  *
@@ -151,12 +160,22 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
            | App
            | Untrusted_remote _
            | Git_repo _ ->
-               (* TODO: stricter: warn if we didn't validate since it
-                * wasn't in a local file already (e.g., registry or other
-                * remote URI)
-                *)
+               (* These origins don't provide a local rule file to run the
+                * metachecks against (registry/URL/git+ rules are fetched into
+                * transient files that are already gone). They are still parsed
+                * above, but not metachecked. See the warning below. *)
                None)
   in
+  (* Metachecks run on the rule *files*, which only local configs provide. If
+   * no config resolved to a local file, no rule is metachecked at all. The
+   * rules were still parsed (a first form of validation), but warn so this
+   * weaker gate is not silent. *)
+  if List_.null targets && not (List_.null rules) then
+    Logs.warn (fun m ->
+        m
+          "no rules were metachecked: none of the given configs is a local \
+           file or directory (registry, URL and git+ configs are parsed but \
+           not metachecked)");
   ( targets,
     List.length rules,
     List.length fatal_errors,
