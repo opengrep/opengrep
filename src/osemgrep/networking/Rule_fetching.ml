@@ -52,6 +52,10 @@ and origin =
   | Registry
   | App
   | Untrusted_remote of Uri.t
+  (* For rules cloned from a remote git repository passed as 'git+<url>'.
+   * Like Untrusted_remote, these are third-party rules and do not get the
+   * trust granted to registry/app rules. *)
+  | Git_repo of Uri.t
 [@@deriving show]
 
 (*****************************************************************************)
@@ -110,6 +114,24 @@ let partition_rules_and_invalid (xs : rules_and_origin list) :
     xs |> List.concat_map (fun x -> x.invalid_rules)
   in
   (rules, invalid_rules)
+
+(* When [skip_invalid_configs] is set (via --skip-invalid-configs), files that
+ * fail to parse as a rule config (such as unrelated YAML files found in a
+ * directory or a cloned git repo, e.g. GitHub workflows) are dropped with a
+ * warning instead of aborting the whole scan. Only used for the discovery-
+ * based sources (Dir, Git); explicitly-named configs still fail loudly. *)
+let partition_or_skip ~skip_invalid_configs
+    (results : (rules_and_origin, Rule_error.t) result list) :
+    rules_and_origin list * Rule_error.t list =
+  let oks, errs = Result_.partition Fun.id results in
+  if skip_invalid_configs then (
+    errs
+    |> List.iter (fun (e : Rule_error.t) ->
+           Logs.warn (fun m ->
+               m "skipping invalid rule config %s: %s" !!(e.file)
+                 (Rule_error.string_of_error e)));
+    (oks, []))
+  else (oks, errs)
 
 let fetch_content_from_url_async caps (url : Uri.t) : string Lwt.t =
   (* TOPORT? _nice_semgrep_url() *)
@@ -178,7 +200,8 @@ let mk_import_callback (caps : < Cap.network ; Cap.tmp ; .. >) base str =
            * factorize with rules_from_dashdash_config?
            *)
           | C.Dir _
-          | C.File _ ->
+          | C.File _
+          | C.Git _ ->
               None
         with
         | E.Semgrep_error _ -> None
@@ -224,7 +247,8 @@ let modify_registry_provided_metadata (origin : origin) (rule : Rule.t) =
       rule
   | CLI_argument
   | Local_file _
-  | Untrusted_remote _ ->
+  | Untrusted_remote _
+  | Git_repo _ ->
       let replace obj key v =
         match (obj : JSON.t) with
         | Object members ->
@@ -343,7 +367,8 @@ let load_rules_from_url ~origin ?(ext = "yaml") caps url :
 [@@profiling]
 
 (* TODO: merge caps and token_opt and caps_opt? *)
-let rules_from_dashdash_config_async ~rewrite_rule_ids caps kind :
+let rules_from_dashdash_config_async ?(skip_invalid_configs = false)
+    ~rewrite_rule_ids caps kind :
     (* alt: (rules_and_origin list, Rule.Error.t list) result
        here and below:
        we could do this, but it lacks flexibility compared with this output type
@@ -374,7 +399,7 @@ let rules_from_dashdash_config_async ~rewrite_rule_ids caps kind :
       |> List_.map (fun file ->
              load_rules_from_file ~rewrite_rule_ids ~origin:(Local_file file)
                caps file)
-      |> Result_.partition Fun.id |> Lwt.return
+      |> partition_or_skip ~skip_invalid_configs |> Lwt.return
   | C.URL url ->
       (* TODO: Re-enable passing in our token to trusted remote urls.
          * This is currently disabled because we don't want to pass our token
@@ -385,6 +410,27 @@ let rules_from_dashdash_config_async ~rewrite_rule_ids caps kind :
         load_rules_from_url_async ~origin:(Untrusted_remote url) caps url
       in
       [ rules ] |> Result_.partition Fun.id |> Lwt.return
+  | C.Git { url; ref_ } ->
+      (* Clone the repo into a fresh temp dir, then load every rule file in it
+       * like a Dir. The temp dir (including the .git it contains) is removed
+       * as soon as the rules are parsed into memory, thanks to with_temp_dir.
+       * Auth is entirely git's business (see Git_wrapper); we run
+       * non-interactively and fail fast rather than prompt. *)
+      CapTmp.with_temp_dir ~prefix:"opengrep-git-" caps#tmp (fun checkout_dir ->
+          (match Git_wrapper.shallow_clone ?ref_ url checkout_dir with
+          | Ok () -> ()
+          | Error msg -> Error.abort msg);
+          (* We stamp the origin as [Git_repo url] rather than [Local_file
+           * <tmp>] so that rule-ids are not prefixed with the temp path and
+           * the true (untrusted) origin is tracked. *)
+          List_files.list checkout_dir
+          |> List.filter Rule_file.is_valid_rule_filename
+          |> List_.map (fun file ->
+                 load_rules_from_file ~rewrite_rule_ids ~origin:(Git_repo url)
+                   caps file
+                 |> Result.map (fun r -> { r with origin = Git_repo url }))
+          |> partition_or_skip ~skip_invalid_configs)
+      |> Lwt.return
   | C.R rkind ->
       let url = Semgrep_Registry.url_of_registry_config_kind rkind in
       let%lwt contents =
@@ -401,10 +447,11 @@ let rules_from_dashdash_config_async ~rewrite_rule_ids caps kind :
   | C.A SupplyChain ->
       failwith "TODO: SupplyChain not handled yet"
 
-let rules_from_dashdash_config ~rewrite_rule_ids caps kind :
-    rules_and_origin list * Rule_error.t list =
+let rules_from_dashdash_config ?(skip_invalid_configs = false) ~rewrite_rule_ids
+    caps kind : rules_and_origin list * Rule_error.t list =
   Lwt_platform.run
-    (rules_from_dashdash_config_async ~rewrite_rule_ids caps kind)
+    (rules_from_dashdash_config_async ~skip_invalid_configs ~rewrite_rule_ids
+       caps kind)
 [@@profiling]
 
 (*****************************************************************************)
@@ -455,8 +502,9 @@ let rules_and_origin_of_rule rule =
   { rules = [ rule ]; invalid_rules = []; origin = CLI_argument }
 
 (* python: mix of resolver_config.get_config() and get_rules() *)
-let rules_from_rules_source_async ~rewrite_rule_ids ~strict:_ caps
-    (src : Rules_source.t) : (rules_and_origin list * Rule_error.t list) Lwt.t =
+let rules_from_rules_source_async ?(skip_invalid_configs = false)
+    ~rewrite_rule_ids ~strict:_ caps (src : Rules_source.t) :
+    (rules_and_origin list * Rule_error.t list) Lwt.t =
   let%lwt rules_and_origins, errors =
     match src with
     | Configs xs ->
@@ -465,8 +513,8 @@ let rules_from_rules_source_async ~rewrite_rule_ids ~strict:_ caps
           |> Lwt_list.map_p (fun str ->
                  let in_docker = !Semgrep_envvars.v.in_docker in
                  let config = Rules_config.parse_config_string ~in_docker str in
-                 rules_from_dashdash_config_async ~rewrite_rule_ids
-                   caps config)
+                 rules_from_dashdash_config_async ~skip_invalid_configs
+                   ~rewrite_rule_ids caps config)
         in
         let rules_and_origins_nested, errors_nested =
           Common2.unzip pairs_list
@@ -529,8 +577,10 @@ let rules_from_rules_source_async ~rewrite_rule_ids ~strict:_ caps
  * to use the _async variant above mixed with a spinner as in
  * Scan_subcommand.rules_from_rules_source()
  *)
-let rules_from_rules_source ~rewrite_rule_ids ~strict caps
-    (src : Rules_source.t) : rules_and_origin list * Rule_error.t list =
+let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
+    ~strict caps (src : Rules_source.t) :
+    rules_and_origin list * Rule_error.t list =
   Lwt_platform.run
-    (rules_from_rules_source_async ~rewrite_rule_ids ~strict caps src)
+    (rules_from_rules_source_async ~skip_invalid_configs ~rewrite_rule_ids
+       ~strict caps src)
 [@@profiling]

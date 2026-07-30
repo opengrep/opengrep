@@ -51,6 +51,26 @@ val with_temp_file :
   (Fpath.t -> 'a) ->
   'a
 
+(* Directory equivalent of [with_temp_file]: create a fresh temporary
+   directory, invoke the passed function on it, and remove it recursively once
+   done (unless [persist] or the global save-temp-files flag is set).
+
+   Options:
+   - persist: keep the directory instead of deleting it when done. Useful for
+              debugging.
+   - prefix: a prefix for the directory name. Default: derived from argv[0].
+   - suffix: an optional suffix for the directory name. Default: empty.
+   - temp_dir: folder containing the temporary directory. Defaults to the
+               system-defined temporary folder e.g. '/tmp'.
+*)
+val with_temp_dir :
+  ?persist:bool ->
+  ?prefix:string ->
+  ?suffix:string ->
+  ?temp_dir:Fpath.t ->
+  (Fpath.t -> 'a) ->
+  'a
+
 (* The hooks below are run just before a tmp file created by with_temp_file()
  * is deleted. Multiple hooks can be added, but the order in which they are
  * called is unspecified.

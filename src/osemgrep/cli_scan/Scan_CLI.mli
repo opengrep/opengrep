@@ -17,6 +17,9 @@ type conf = {
   (* Other configuration options *)
   error_on_findings : bool;
   rewrite_rule_ids : bool;
+  (* skip rule files that fail to parse (e.g. non-rule YAML found in a
+   * directory or cloned git repo) instead of aborting the scan *)
+  skip_invalid_configs : bool;
   matching_conf : Match_patterns.matching_conf;
   engine_type : Engine_type.t;
   autofix : bool;

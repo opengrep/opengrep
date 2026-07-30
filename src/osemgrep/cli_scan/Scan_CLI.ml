@@ -41,6 +41,9 @@ type conf = {
   (* Other configuration options *)
   error_on_findings : bool;
   rewrite_rule_ids : bool;
+  (* skip rule files that fail to parse (e.g. non-rule YAML found in a
+   * directory or cloned git repo) instead of aborting the scan *)
+  skip_invalid_configs : bool;
   matching_conf : Match_patterns.matching_conf;
   (* Engine selection *)
   engine_type : Engine_type.t;
@@ -103,6 +106,7 @@ let default : conf =
     incremental_output = false;
     incremental_output_postprocess = false;
     rewrite_rule_ids = true;
+    skip_invalid_configs = false;
     matching_conf = Match_patterns.default_matching_conf;
     (* will send metrics only if the user uses the registry or the app *)
     version_check = true;
@@ -784,7 +788,14 @@ let o_config : string list Term.t =
       ~env:(Cmd.Env.info "SEMGREP_RULES")
       ~doc:
         {|YAML configuration file, directory of YAML files ending in
-.yml|.yaml, URL of a configuration file, or Semgrep registry entry name.
+.yml|.yaml, URL of a configuration file, remote git repository of rules, or
+Semgrep registry entry name.
+
+A remote git repository of rules is given as `git+<url>`; it is cloned and
+scanned as a directory of rules. Append `#<branch-or-tag>` to pin a ref, e.g.
+`--config git+https://github.com/org/rules#v1.2.0`. Cloning uses git's own
+credentials (ssh-agent, credential helpers, ...) and runs non-interactively.
+REQUIRES --experimental
 
 Use --config auto to automatically obtain rules tailored to this project;
 your project URL will be used to log in to the Semgrep registry.
@@ -1015,6 +1026,18 @@ let o_project_root : string option Term.t =
           is not the current folder '.'. REQUIRES --experimental|}
   in
   Arg.value (Arg.opt Arg.(some string) None info)
+
+let o_skip_invalid_configs : bool Term.t =
+  let info =
+    Arg.info [ "skip-invalid-configs" ]
+      ~doc:
+        {|When loading rules from a directory or a remote git repository
+        (git+<url>), skip files that fail to parse as a rule config, such as
+        unrelated YAML files (e.g. GitHub workflows), emitting a warning for
+        each instead of aborting the scan. Explicitly named config files still
+        cause an error if invalid. REQUIRES --experimental|}
+  in
+  Arg.value (Arg.flag info)
 
 let o_remote : string option Term.t =
   let info =
@@ -1389,6 +1412,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       output output_enclosing_context pattern pro project_root taint_intrafile
       effect_guards pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions secrets semgrepignore_filename severity show_supported_languages
+      skip_invalid_configs
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
       _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
       validate version version_check vim vim_outputs
@@ -1592,6 +1616,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       incremental_output_postprocess;
       engine_type;
       rewrite_rule_ids;
+      skip_invalid_configs;
       matching_conf;
       common;
       (* ugly: *)
@@ -1630,7 +1655,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_effect_guards
     $ o_pro_path_sensitive $ o_remote $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
-    $ o_secrets $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages $ o_strict
+    $ o_secrets $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages
+    $ o_skip_invalid_configs $ o_strict
     $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
     $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate

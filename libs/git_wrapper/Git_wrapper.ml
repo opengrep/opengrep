@@ -484,6 +484,48 @@ let sparse_checkout_add ?cwd folders =
   | Ok (`Exited 0) -> Ok ()
   | _ -> Error "Could not add sparse checkout"
 
+(* Plain shallow clone that actually materializes the whole tree (unlike
+ * [sparse_shallow_filtered_checkout] which deliberately avoids checking out
+ * files). Used to fetch a remote repository of rules for --config.
+ *
+ * Opengrep is non-interactive by design: we never want a clone to block a
+ * scan on a credential / passphrase / host-key prompt. We set
+ * GIT_TERMINAL_PROMPT=0 (and, unless the user already customized it,
+ * GIT_SSH_COMMAND with ssh BatchMode) so that git fails fast instead of
+ * hanging when auth cannot be resolved non-interactively. Credentials
+ * themselves are entirely git's business (ssh-agent, credential helpers,
+ * .netrc, ...); we neither read nor forward any secret.
+ *)
+let shallow_clone ?ref_ (url : Uri.t) (dst : Fpath.t) : (unit, string) result =
+  UUnix.putenv "GIT_TERMINAL_PROMPT" "0";
+  (match USys.getenv_opt "GIT_SSH_COMMAND" with
+  | Some _ -> ()
+  | None -> UUnix.putenv "GIT_SSH_COMMAND" "ssh -oBatchMode=yes");
+  let branch_args =
+    match ref_ with
+    (* use the '--opt=value' form so a ref starting with '-' cannot be
+     * mistaken for another option *)
+    | Some r -> [ "--branch=" ^ r ]
+    | None -> []
+  in
+  let cmd =
+    ( git,
+      [ "clone"; "--depth=1" ]
+      @ branch_args
+      (* '--' terminates option parsing: without it a URL such as '--help' or
+       * '--upload-pack=...' would be interpreted by git as an option rather
+       * than the repository to clone *)
+      @ [ "--"; Uri.to_string url; Fpath.to_string dst ] )
+  in
+  match UCmd.status_of_run ~quiet:true cmd with
+  | Ok (`Exited 0) -> Ok ()
+  | _ ->
+      Error
+        (spf
+           "Could not clone git repo %s (ensure it is accessible \
+            non-interactively: ssh-agent / credential helper)"
+           (Uri.to_string url))
+
 (* TODO: use better types? sha1? *)
 let merge_base (commit : string) : string =
   let cmd = (git, [ "merge-base"; commit; "HEAD" ]) in

@@ -297,22 +297,34 @@ let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) 
 let display_rule_source ~(rule_source : Rules_source.t) : unit =
   let msg =
     match rule_source with
-    | Configs xs
-      when List.exists
-             (function
-               | C.A _
-               | R _ ->
-                   true
-               | _ -> false)
-             (List_.map
-                (fun str ->
-                  Rules_config.parse_config_string ~in_docker:false str)
-                xs) ->
-        Ocolor_format.asprintf {|@{<bold>  %s@}|}
-          "Loading rules from registry..."
-    | Configs _ ->
-        Ocolor_format.asprintf {|@{<bold>  %s@}|}
-          "Loading rules from local config..."
+    | Configs xs -> (
+        let kinds =
+          List_.map
+            (fun str -> Rules_config.parse_config_string ~in_docker:false str)
+            xs
+        in
+        let has = function
+          | `Registry ->
+              List.exists
+                (function
+                  | C.A _
+                  | C.R _ ->
+                      true
+                  | _ -> false)
+                kinds
+          | `Git ->
+              List.exists (function C.Git _ -> true | _ -> false) kinds
+        in
+        match () with
+        | _ when has `Registry ->
+            Ocolor_format.asprintf {|@{<bold>  %s@}|}
+              "Loading rules from registry..."
+        | _ when has `Git ->
+            Ocolor_format.asprintf {|@{<bold>  %s@}|}
+              "Loading rules from git repository..."
+        | _ ->
+            Ocolor_format.asprintf {|@{<bold>  %s@}|}
+              "Loading rules from local config...")
     | Pattern _ -> Ocolor_format.asprintf {|@{  %s@}|} "Using custom pattern."
   in
   Logs.app (fun m -> m "%s" msg);
@@ -361,8 +373,8 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >)
   in
   core_run_for_osemgrep
 
-let rules_from_rules_source ~rewrite_rule_ids ~strict caps
-    rules_source =
+let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
+    ~strict caps rules_source =
   (* Create the wait hook for our progress indicator *)
   let spinner_ls =
     if Console_Spinner.should_show_spinner () then
@@ -371,8 +383,8 @@ let rules_from_rules_source ~rewrite_rule_ids ~strict caps
   in
   (* Fetch the rules *)
   let rules_and_origins =
-    Rule_fetching.rules_from_rules_source_async ~rewrite_rule_ids
-      ~strict
+    Rule_fetching.rules_from_rules_source_async ~skip_invalid_configs
+      ~rewrite_rule_ids ~strict
       (caps :> < Cap.network ; Cap.tmp >)
       rules_source
   in
@@ -683,6 +695,7 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   let rules_and_origins, fatal_errors =
     rules_from_rules_source
       (caps :> < Cap.network ; Cap.tmp >)
+      ~skip_invalid_configs:conf.skip_invalid_configs
       ~rewrite_rule_ids:conf.rewrite_rule_ids
       ~strict:conf.core_runner_conf.strict conf.rules_source
   in
