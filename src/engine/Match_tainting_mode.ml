@@ -848,6 +848,13 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                 match Shape_and_sig.FunctionMap.find_opt node info_map with
                 | None -> ms
                 | Some info ->
+                  (* The re-extraction against the converged db is NOT
+                     redundant: [check_fundef_with_cfg] depends on the
+                     immediately preceding extraction against a db that
+                     already holds this function's own converged signature.
+                     Skipping it collapses some sink ranges onto the taint
+                     origin (observed on gitlab); see the matching comment in
+                     [Interfile_dispatch.topo_fold]. *)
                   let _db, findings =
                     extract_and_check ?builtin_signature_db
                       ~call_graph:relevant_graph ~glob_env ~lang
