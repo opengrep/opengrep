@@ -64,8 +64,7 @@ type env = {
   inside_function : bool;
   (* Whether the pattern currently being lowered by [pattern] is a
    * destructuring *assignment target* (`(a, b.f) = e`) rather than a
-   * pattern being matched against a value (a `case` label, a `catch`
-   * clause, a function parameter).
+   * pattern being matched against a value (e.g. a `case` label).
    *
    * It only affects [OtherPat("ExprToPattern", …)] leaves, which is
    * where an assignment target that is not a plain name shows up: with
@@ -75,10 +74,15 @@ type env = {
    * reaches [pattern] as an [ExprToPattern] and would then be *assigned*
    * the scrutinee.
    *
-   * Set by the two destructuring-assignment entry points ([assign] on a
-   * container LHS and the [VarDef]-with-[EPattern] case of [stmt_aux]),
-   * and cleared on every statement boundary by [stmt] so it cannot leak
-   * into a nested function body. *)
+   * Only [assign] on a container LHS and the [VarDef]-with-[EPattern]
+   * case of [stmt_aux] set it. The other entry points that reach
+   * [pattern] — [LetPattern], `for`-loop headers, `match`/`case` and
+   * `with … as` patterns — leave it unset, so a member/index target in
+   * those binding contexts (e.g. Python's `for o.a, o.b in xs` or
+   * `with f() as o.d`) evaluates into a throwaway tmp instead of
+   * binding. That is a known gap, not a guarantee. Cleared on every
+   * statement boundary by [stmt] so it cannot leak into a nested
+   * function body. *)
   pattern_binds_lvals : bool;
 }
 
@@ -342,9 +346,13 @@ let is_map_pair_pattern (p : G.pattern) : bool =
  * coupling: the C++ structured binding arrives wrapped in a [PatTyped],
  * see cpp_to_generic.ml and its [EPattern] entity.
  *
- * [lval_of_ent] can only turn a [PatId] into an lval, so these have to be
- * lowered via [pattern_assign_statements] instead. A plain [PatId] (possibly
- * typed) is a single binding and keeps its existing lowering.
+ * [lval_of_ent] can only turn a bare [PatId] into an lval, so these have to
+ * be lowered via [pattern_assign_statements] instead. A plain [PatId] is a
+ * single binding and keeps its existing lowering. (A top-level
+ * [PatTyped (PatId …)] entity would fall through to [lval_of_ent]'s
+ * throwaway tmp, but no frontend emits one: single typed bindings arrive
+ * as [EN] entities, and the frontends that use [EPattern] always wrap a
+ * tuple.)
  *
  * coupling: every constructor listed here must be handled by [pattern],
  * which is what [pattern_assign_statements] dispatches to. *)
@@ -359,9 +367,10 @@ let rec is_destructuring_pattern (p : G.pattern) : bool =
   | G.PatConstructor _ ->
       true
   | G.PatTyped (p1, _) -> is_destructuring_pattern p1
-  (* `let x @ (a, b) = f()`: [pattern] binds both the alias and the inner
-   * pattern's variables. *)
-  | G.PatAs (p1, _) -> is_destructuring_pattern p1
+  (* `let x @ p = f()`: [pattern] binds both the alias and the inner
+   * pattern's variables, whatever shape [p] has — even a plain
+   * `let a @ b` binds two variables, which [lval_of_ent] cannot do. *)
+  | G.PatAs _ -> true
   | _ -> false
 
 (* An Elixir `cond` branch condition is an expression, not a pattern:
@@ -561,7 +570,7 @@ and pattern env pat : stmts * lval * stmts =
               ~eorig rest_pat
           in
           let rec split_trailing_rest acc i = function
-            | [] -> (List.rev acc, None)
+            | [] -> (List.rev acc, None, [])
             (* Clojure variadic rest: [a b & r] →
              *   PatList [a; b; PatConstructor("&", [r])]
              * The "&" wrapper has a single argument (the rest binding);
@@ -569,7 +578,7 @@ and pattern env pat : stmts * lval * stmts =
              * Clojure assigns this meaning to "&" inside a PatList. *)
             | [ G.PatConstructor (G.Id (("&", _), _), [ rest_pat ]) ]
               when env.lang =*= Lang.Clojure ->
-                (List.rev acc, Some (rest_pat, i))
+                (List.rev acc, Some (rest_pat, i), [])
             (* Elixir cons pattern: [a, b | t] →
              *   PatList [a; PatConstructor("|", [b; t])]
              *  and [h | t] →
@@ -583,15 +592,24 @@ and pattern env pat : stmts * lval * stmts =
                (G.Id (("|", _), _), [ last_fixed; tail_pat ]);
             ]
               when env.lang =*= Lang.Elixir ->
-                (List.rev ((last_fixed, i) :: acc), Some (tail_pat, i + 1))
+                (List.rev ((last_fixed, i) :: acc), Some (tail_pat, i + 1), [])
             (* JS/TS rest binding: [a, b, ...rest] → trailing
              * PatConstructor("...", [rest_pat]); rest covers [i..]. *)
             | [ G.PatConstructor (G.Id (("...", _), _), [ rest_pat ]) ]
               when Lang.is_js env.lang ->
-                (List.rev acc, Some (rest_pat, i))
+                (List.rev acc, Some (rest_pat, i), [])
+            (* Rust rest marker: [a, .., z] / (a, .., z) / P(m, ..). It
+             * skips any number of elements and binds nothing itself.
+             * Slots before it are exact. Slots after it are end-relative,
+             * which this front-indexed lowering cannot express — they are
+             * returned as unbindable and become fixmes rather than being
+             * bound to wrong slots. *)
+            | G.OtherPat (("..", _), []) :: unbindable
+              when env.lang =*= Lang.Rust ->
+                (List.rev acc, None, unbindable)
             | p :: rest -> split_trailing_rest ((p, i) :: acc) (i + 1) rest
           in
-          let fixed, opt_rest = split_trailing_rest [] 0 pats in
+          let fixed, opt_rest, unbindable = split_trailing_rest [] 0 pats in
           let fixed_ss =
             List.concat_map (fun (p, i) -> lower_slot p i) fixed
           in
@@ -600,7 +618,10 @@ and pattern env pat : stmts * lval * stmts =
             | None -> []
             | Some (rest_pat, lo) -> lower_rest rest_pat lo
           in
-          fixed_ss @ rest_ss
+          let unbindable_ss =
+            List.concat_map (fun p -> fixme_stmt ToDo (G.P p)) unbindable
+          in
+          fixed_ss @ rest_ss @ unbindable_ss
       in
       ([], tmp_lval, ss)
   | G.PatTyped (pat1, ty) ->
@@ -666,13 +687,18 @@ and pattern env pat : stmts * lval * stmts =
     let ss =
       List.concat_map
         (fun (dot_ident, pat_i) ->
-          let eorig = Related (G.P pat_i) in
-          let field_name = synth_name (last_ident_of dot_ident) in
-          let offset_i = { o = Dot field_name; oorig = NoOrig } in
-          let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
-          pattern_assign_statements env
-            (mk_e (Fetch lval_i) eorig)
-            ~eorig pat_i)
+          match pat_i with
+          (* Rest-field marker, e.g. Rust `Q { f, .. }`: skips the
+           * remaining fields and binds nothing. *)
+          | G.OtherPat (("..", _), []) -> []
+          | _ ->
+              let eorig = Related (G.P pat_i) in
+              let field_name = synth_name (last_ident_of dot_ident) in
+              let offset_i = { o = Dot field_name; oorig = NoOrig } in
+              let lval_i = { base = Var tmp; rev_offset = [ offset_i ] } in
+              pattern_assign_statements env
+                (mk_e (Fetch lval_i) eorig)
+                ~eorig pat_i)
         fields
     in
     ([], tmp_lval, ss)
@@ -711,7 +737,9 @@ and pattern env pat : stmts * lval * stmts =
      *   - PHP's [OtherExpr("ArrayAppend", …)] (`$a[]`) cannot reach here at
      *     all: [H.expr_to_pattern] maps [OtherExpr (tag, [E e])] to
      *     [OtherPat (tag, …)], so `$a[]` arrives tagged "ArrayAppend", not
-     *     "ExprToPattern". *)
+     *     "ExprToPattern". [pattern] has no "ArrayAppend" case either, so
+     *     `list($a[], $b) = f()` lands in the catch-all [todo] arm and the
+     *     `$a[]` binding is dropped as a [fixme_stmt]. *)
     let eval_into_tmp () =
       let pre_ss, _e' = expr env e in
       let tmp = fresh_lval tok in
@@ -766,6 +794,16 @@ and pattern_assign_statements env ?(eorig = NoOrig) exp pat : stmt list =
   with
   | Fixme (kind, any_generic) ->
       fixme_stmt kind any_generic
+
+(* Lower `pat = e`: evaluate [e], then bind the pattern's variables. The
+ * single lowering behind both [G.LetPattern] and the destructuring
+ * [VarDef] case of [stmt_aux]. The caller chooses [env]: pass
+ * [assign_pattern_env env] to also bind lvalue targets (member/index
+ * forms) inside the pattern, see [pattern_binds_lvals]. The flag only
+ * scopes over the pattern, not the right-hand side. *)
+and let_pattern_stmts env ~eorig pat e : stmt list =
+  let ss_e, exp = expr { env with pattern_binds_lvals = false } e in
+  ss_e @ pattern_assign_statements env ~eorig exp pat
 
 (*****************************************************************************)
 (* Pattern-match cond extraction                                              *)
@@ -2101,9 +2139,7 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
       let instr = mk_s (Instr (mk_i (Assign (lval, opexp)) eorig)) in
       (ss_e2 @ ss_lv @ [instr], lvalexp)
   | G.LetPattern (pat, e) ->
-      let ss_e, exp = expr env e in
-      let new_stmts = pattern_assign_statements env ~eorig exp pat in
-      (ss_e @ new_stmts, mk_unit (G.fake "()") NoOrig)
+      (let_pattern_stmts env ~eorig pat e, mk_unit (G.fake "()") NoOrig)
   (* TODO: Use instead of ExprBlock? But we also have scope for block. *)
   | G.Seq xs -> (
       match List.rev xs with
@@ -3794,17 +3830,16 @@ and stmt_aux env st : stmts =
   (* Destructuring declaration, e.g. `(uint256 a, uint256 b) = f();`. Without
    * this case [lval_of_ent] hands back a throwaway [fresh_lval], so none of
    * the variables the pattern binds are ever assigned in the IL and no
-   * dataflow can reach them. Lower them through [pattern_assign_statements],
-   * the same path used for `for`-loop and match-case destructuring. *)
+   * dataflow can reach them. Lower through [let_pattern_stmts], the same
+   * lowering [G.LetPattern] uses; only the type has no slot there. *)
   | G.DefStmt
       ( { name = G.EPattern pat; _ },
         G.VarDef { G.vinit = Some e; vtype = opt_ty; vtok = _ } )
     when is_destructuring_pattern pat ->
-      let ss1, e' = expr env e in
-      let ss2, () = type_opt env opt_ty in
-      ss1 @ ss2
-      @ pattern_assign_statements (assign_pattern_env env) e'
-          ~eorig:(Related (G.S st)) pat
+      let ss_ty, () = type_opt env opt_ty in
+      ss_ty
+      @ let_pattern_stmts (assign_pattern_env env) ~eorig:(Related (G.S st))
+          pat e
   | G.DefStmt (ent, G.VarDef { G.vinit = Some e; vtype = opt_ty; vtok = _ }) ->
       let ss1, e' = expr env e in
       let ss_lv, lv = lval_of_ent env ent in
