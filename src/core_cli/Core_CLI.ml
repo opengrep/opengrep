@@ -800,7 +800,8 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
   let argv =
     Array.to_list argv
     @
-    match Sys.getenv_opt env_extra with
+    (* honors OPENGREP_CORE_EXTRA, falling back to the legacy SEMGREP_CORE_EXTRA *)
+    match Opengrep_env.getenv_opt env_extra with
     | Some s -> String_.split ~sep:"[ \t]+" s
     | None -> []
   in

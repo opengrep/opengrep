@@ -43,11 +43,12 @@ let%test_unit "Semgrep_envvars.(/)" =
    Since OCaml doesn't provide an 'unsetenv' function (which exists in libc),
    tests that that set environment variable temporarily can't unset them,
    leaving them with the empty value instead.
+
+   For every legacy SEMGREP_* variable this also honors its OPENGREP_* alias,
+   which wins when both are set (see Opengrep_env). Non-SEMGREP variables
+   (e.g., HOME, NO_COLOR) have no alias and are looked up as-is.
 *)
-let env_opt var =
-  match Sys.getenv_opt var with
-  | Some "" -> None
-  | x -> x
+let env_opt var = Opengrep_env.getenv_opt var
 
 (*****************************************************************************)
 (* Don't use Sys.getenv* or Unix.getenv* starting from here!  *)
@@ -145,7 +146,7 @@ let of_current_sys_env () : t =
     user_home_dir;
     user_dot_semgrep_dir;
     user_log_file =
-      env_or Fpath.v "OPENGREEP_LOG_FILE" (user_dot_semgrep_dir / "semgrep.log");
+      env_or Fpath.v "SEMGREP_LOG_FILE" (user_dot_semgrep_dir / "semgrep.log");
     no_color = env_truthy "NO_COLOR" || env_truthy "SEMGREP_COLOR_NO_COLOR";
     is_ci = in_env "CI";
     in_docker = in_env "SEMGREP_IN_DOCKER";
