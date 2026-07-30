@@ -503,14 +503,19 @@ let shallow_clone ?ref_ (url : Uri.t) (dst : Fpath.t) : (unit, string) result =
   | None -> UUnix.putenv "GIT_SSH_COMMAND" "ssh -oBatchMode=yes");
   let branch_args =
     match ref_ with
-    | Some r -> [ "--branch"; r ]
+    (* use the '--opt=value' form so a ref starting with '-' cannot be
+     * mistaken for another option *)
+    | Some r -> [ "--branch=" ^ r ]
     | None -> []
   in
   let cmd =
     ( git,
       [ "clone"; "--depth=1" ]
       @ branch_args
-      @ [ Uri.to_string url; Fpath.to_string dst ] )
+      (* '--' terminates option parsing: without it a URL such as '--help' or
+       * '--upload-pack=...' would be interpreted by git as an option rather
+       * than the repository to clone *)
+      @ [ "--"; Uri.to_string url; Fpath.to_string dst ] )
   in
   match UCmd.status_of_run ~quiet:true cmd with
   | Ok (`Exited 0) -> Ok ()

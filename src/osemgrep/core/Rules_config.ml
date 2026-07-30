@@ -88,6 +88,19 @@ let parse_config_string ~in_docker (config_str : config_string) : t =
               Some (String.sub rest (i + 1) (String.length rest - i - 1)) )
         | None -> (rest, None)
       in
+      (* Reject empty or option-looking components early with a clear config
+       * error, rather than handing something like '--upload-pack=...' to git.
+       * (git clone is also called with a '--' separator as defense in depth.) *)
+      let reject what =
+        raise
+          (E.Semgrep_error
+             ( spf "invalid `git+` config %s in `%s`" what s,
+               Some (Exit_code.missing_config ~__LOC__) ))
+      in
+      if url_str = "" || Char.equal url_str.[0] '-' then reject "url";
+      (match ref_ with
+      | Some r when r = "" || Char.equal r.[0] '-' -> reject "ref"
+      | _ -> ());
       Git { url = Uri.of_string url_str; ref_ }
   (* TODO? could not find a Uri.is_url helper function *)
   | s when s =~ "^http[s]?://" -> URL (Uri.of_string s)
