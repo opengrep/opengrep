@@ -64,4 +64,49 @@ contract C {
     // ok: taint-solidity-destructuring
     sink(f);
   }
+
+  // An omitted component is a hole: it occupies its slot but binds
+  // nothing, so a variable after a hole reads its own slot rather than
+  // shifting down one.
+  function hole_then_tainted() public {
+    (, uint256 i) = (1, taint_source());
+
+    // ruleid: taint-solidity-destructuring
+    sink(i);
+  }
+
+  function hole_over_tainted_slot() public {
+    (, uint256 j) = (taint_source(), 1);
+
+    // ok: taint-solidity-destructuring
+    sink(j);
+  }
+
+  function middle_hole_clean() public {
+    (uint256 k, , uint256 l) = (1, taint_source(), 2);
+
+    // ok: taint-solidity-destructuring
+    sink(k);
+
+    // ok: taint-solidity-destructuring
+    sink(l);
+  }
+
+  function middle_hole_last_tainted() public {
+    (uint256 m, , uint256 n) = (1, 2, taint_source());
+
+    // ok: taint-solidity-destructuring
+    sink(m);
+
+    // ruleid: taint-solidity-destructuring
+    sink(n);
+  }
+
+  // The standard getReserves idiom: leading hole and trailing-comma hole.
+  function reserves_idiom() public {
+    (, uint256 reserve1, ) = (1, taint_source(), 2);
+
+    // ruleid: taint-solidity-destructuring
+    sink(reserve1);
+  }
 }

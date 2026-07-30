@@ -1884,21 +1884,35 @@ let map_variable_declaration_tuple (env : env)
       let xs =
         match v2 with
         | Some (v1, v2, v3) ->
-            let v1 = Option.map (map_variable_declaration env) v1 in
-            let v2 =
+            let pat_of_decl (ty, _attrsTODO, id) =
+              PatTyped (PatId (id, G.empty_id_info ()) |> G.p, ty) |> G.p
+            in
+            (* An omitted component, e.g. `(, uint b) = f()`, is a hole: it
+             * occupies its slot of the RHS tuple but binds nothing, like
+             * the `var (x,,y)` form below. Dropping holes would shift
+             * every later variable onto the wrong slot. *)
+            let hole_or_pat tok = function
+              | Some decl -> pat_of_decl decl
+              | None -> tuple_hole_pat env tok
+            in
+            let first =
+              hole_or_pat lp (Option.map (map_variable_declaration env) v1)
+            in
+            let rest =
               List_.map
                 (fun (v1, v2) ->
-                  let _v1 = (* "," *) token env v1 in
-                  let v2 = Option.map (map_variable_declaration env) v2 in
-                  v2)
+                  let tcomma = (* "," *) token env v1 in
+                  hole_or_pat tcomma
+                    (Option.map (map_variable_declaration env) v2))
                 v2
             in
-            let _v3 = map_trailing_comma env v3 in
-            v1 :: v2
-            (* TODO: should generate hole pattern when using (x,,y) *)
-            |> List_.filter_map (fun x -> x)
-            |> List_.map (fun (ty, _attrsTODO, id) ->
-                   PatTyped (PatId (id, G.empty_id_info ()) |> G.p, ty) |> G.p)
+            (* A trailing comma is one more empty component. *)
+            let trailing =
+              match v3 with
+              | Some tok -> [ tuple_hole_pat env ((* "," *) token env tok) ]
+              | None -> []
+            in
+            (first :: rest) @ trailing
         | None -> []
       in
       let rp = (* ")" *) token env v3 in
