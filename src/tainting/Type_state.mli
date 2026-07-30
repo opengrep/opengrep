@@ -36,6 +36,9 @@ val add_method : t -> Names.Class_name.t -> Func_info.t -> t
 
 val get_methods : t -> Names.Class_name.t -> Func_info.t list option
 
+val fold_methods :
+  (Names.Class_name.t -> Func_info.t list -> 'a -> 'a) -> t -> 'a -> 'a
+
 val set_function_return :
   t -> Names.Method_name.t -> AST_generic.name -> t
 
