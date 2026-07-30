@@ -46,6 +46,10 @@ type t = {
      (TS/JS default imports where two files each [export default class Handler]). *)
   narrow_methods_by_import_files : bool;
 
+  (* When true, restrict same-named colliding methods to the files the caller
+     itself requires (Ruby [require_relative], PHP [require]/[include]). *)
+  narrow_methods_by_required_files : bool;
+
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;

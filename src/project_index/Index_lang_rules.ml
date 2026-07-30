@@ -48,6 +48,12 @@ type t = {
      same-named classes across files at method dispatch — e.g. TS/JS default
      imports where two files each `export default class Handler`. *)
   narrow_methods_by_import_files : bool;
+  (* When true, restrict same-named colliding methods to the files the caller
+     itself requires (whole-file "*" import specifiers — Ruby
+     [require_relative], PHP [require]/[include]).  These languages bind no
+     local name per import, so the narrowing keys on the caller's required
+     files rather than on an imported class name. *)
+  narrow_methods_by_required_files : bool;
   strip_field_sigil : string -> string;
   class_constructor_synth_fields :
     G.function_definition -> (string * G.type_) list;
@@ -239,6 +245,7 @@ let default : t = {
   narrow_methods_by_imports =
     (fun ~fi_imports:_ ~file_of_func:_ ts -> ts);
   narrow_methods_by_import_files = false;
+  narrow_methods_by_required_files = false;
   strip_field_sigil = (fun s -> s);
   class_constructor_synth_fields = (fun _ -> []);
   ctor_param_promotion = false;
@@ -369,6 +376,7 @@ let ruby : t = { default with
   class_body_extra_parents = ruby_class_body_extra_parents;
   (* A Ruby class IS its constant path; files are irrelevant (reopening). *)
   class_identity_is_constant_path = true;
+  narrow_methods_by_required_files = true;
 }
 
 let go_class_def_reshape (ent : G.entity) (def_kind : G.definition_kind)
@@ -429,6 +437,7 @@ let php : t = { default with
   ctor_param_promotion = true;
   (* PHP [namespace App\Svc;] parses to [Package]/[PackageEnd]. *)
   package_directive_is_namespace = true;
+  narrow_methods_by_required_files = true;
 }
 
 (* Scala [package a.b] (and nested [package a { package b {..} }]) parse to

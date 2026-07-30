@@ -191,19 +191,48 @@ let build_import_target_files
   ) fi.fi_import_specifiers;
   target_files
 
-(* Restrict an imported class's methods to the file(s) it was imported from
-   (keyed by the import's local name) or the caller's own file.  Two same-named
-   classes in different files otherwise both land under the bare class name at
-   method dispatch and the call is dropped on the collision.
+(* Narrow one class's method list per method-name group.  Two same-named
+   classes in different files land under one bare class name at method
+   dispatch, and [pick_by_arity] drops the call on the (class, method, arity)
+   collision — a silent cross-file false negative caused by an unrelated
+   homonym.  Only a group holding several entries is that collision, so
+   narrowing applies per method name, not per class: a uniquely named method
+   is kept whatever its file (a TS class-body alias carries the aliased
+   function's file, not the class's, and would otherwise be dropped whenever
+   the class also declares an ordinary method).  A group [keep] would empty is
+   left untouched, so a path-shape mismatch degrades to the un-narrowed set
+   rather than erasing the method.  [None] = nothing changed. *)
+let narrow_method_groups ~(keep : Func_info.t -> bool)
+    (methods : Func_info.t list) : Func_info.t list option =
+  let leaf (func : Func_info.t) : string =
+    match Func_info.leaf_name func.Func_info.fn_id with
+    | Some (name : IL.name) -> fst name.IL.ident
+    | None -> ""
+  in
+  let named = List.map (fun func -> (leaf func, func)) methods in
+  (* Method names whose group spans several entries and keeps at least one
+     survivor; every other name is left alone. *)
+  let narrowed_names =
+    List.sort_uniq String.compare (List.map fst named)
+    |> List.filter (fun name ->
+         let group =
+           List.filter (fun (n, _) -> String.equal n name) named
+         in
+         List.length group > 1
+         && List.exists (fun (_, func) -> keep func) group)
+  in
+  let filtered =
+    List.filter_map (fun (name, func) ->
+      if List.exists (String.equal name) narrowed_names && not (keep func)
+      then None
+      else Some func)
+      named
+  in
+  if List.length filtered <> List.length methods then Some filtered else None
 
-   Only a (class, method name) group holding entries from several files is that
-   collision, so narrowing applies per method name, not per class: a uniquely
-   named method is kept whatever its file.  A class-body alias
-   ([class C { handler = importedFn }]) carries the aliased function's file, not
-   the class's, and would otherwise be filtered out whenever the class also
-   declares an ordinary method.  A group is left untouched when the filter would
-   empty it, so a path-shape mismatch degrades to the un-narrowed set rather
-   than erasing the method. *)
+(* Restrict an imported class's colliding methods to the file(s) it was
+   imported from (keyed by the import's local name) or the caller's own
+   file. *)
 let narrow_methods_by_import_files
     ~(import_target_files : (string, (string, unit) Hashtbl.t) Hashtbl.t)
     ~(file_of_func : Func_info.t -> string option)
@@ -214,41 +243,75 @@ let narrow_methods_by_import_files
     match Type_state.get_methods state cls_name with
     | None -> state
     | Some methods ->
-      let from_import_target (func : Func_info.t) : bool =
+      let keep (func : Func_info.t) : bool =
         match file_of_func func with
         | None -> false
         | Some file ->
           Hashtbl.mem target_set file || String.equal file caller_file
       in
-      let leaf (func : Func_info.t) : string =
-        match Func_info.leaf_name func.Func_info.fn_id with
-        | Some (name : IL.name) -> fst name.IL.ident
-        | None -> ""
-      in
-      let named = List.map (fun func -> (leaf func, func)) methods in
-      (* Method names whose group spans several entries and keeps at least one
-         survivor; every other name is left alone. *)
-      let narrowed_names =
-        List.sort_uniq String.compare (List.map fst named)
-        |> List.filter (fun name ->
-             let group =
-               List.filter (fun (n, _) -> String.equal n name) named
-             in
-             List.length group > 1
-             && List.exists (fun (_, func) -> from_import_target func) group)
-      in
-      let filtered =
-        List.filter_map (fun (name, func) ->
-          if List.exists (String.equal name) narrowed_names
-             && not (from_import_target func)
-          then None
-          else Some func)
-          named
-      in
-      if List.length filtered <> List.length methods
-      then Type_state.set_methods state cls_name filtered
-      else state
+      (match narrow_method_groups ~keep methods with
+       | Some filtered -> Type_state.set_methods state cls_name filtered
+       | None -> state)
   ) import_target_files ts
+
+(* Restrict colliding methods to files the caller itself requires (whole-file
+   "*" import specifiers — Ruby [require_relative], PHP [require]/[include])
+   or the caller's own file.  These languages bind no local name per import,
+   so the required-file set applies to every class rather than to one imported
+   name.  A spec matches a def file by trailing path segments, extensions
+   stripped on the final segment of both sides ("widget_b" and "widget_b.php"
+   both match ".../widget_b.rb|php"); leading "."/".." segments of a relative
+   spec are dropped rather than resolved.  Callers with no whole-file requires
+   (e.g. autoloaded Rails/PSR-4 code) leave every group untouched. *)
+let narrow_methods_by_required_files
+    ~(required_specs : string list)
+    ~(file_of_func : Func_info.t -> string option)
+    ~(caller_file : string)
+    (ts : Type_state.t) : Type_state.t =
+  let strip_ext_last (segs : string list) : string list =
+    match List.rev segs with
+    | last :: rev_init -> List.rev (Filename.remove_extension last :: rev_init)
+    | [] -> []
+  in
+  let spec_suffixes =
+    List.filter_map (fun spec ->
+      let segs =
+        String.split_on_char '/' spec
+        |> List.filter (fun seg ->
+             not (String.equal seg "") && not (String.equal seg ".")
+             && not (String.equal seg ".."))
+      in
+      match strip_ext_last segs with
+      | [] -> None
+      | segs -> Some (List.rev segs))
+      required_specs
+  in
+  if spec_suffixes = [] then ts
+  else
+    let keep (func : Func_info.t) : bool =
+      match file_of_func func with
+      | None -> false
+      | Some file ->
+        String.equal file caller_file
+        || (let rev_file_segs =
+              match Fpath.of_string file with
+              | Ok path -> List.rev (strip_ext_last (Fpath.segs path))
+              | Error _ -> []
+            in
+            let rec prefix_of pre l =
+              match pre, l with
+              | [], _ -> true
+              | p :: ps, x :: xs -> String.equal p x && prefix_of ps xs
+              | _ :: _, [] -> false
+            in
+            List.exists (fun rev_spec -> prefix_of rev_spec rev_file_segs)
+              spec_suffixes)
+    in
+    Type_state.fold_methods (fun cls_name methods state ->
+      match narrow_method_groups ~keep methods with
+      | Some filtered -> Type_state.set_methods state cls_name filtered
+      | None -> state)
+      ts ts
 
 let build_same_file_funcs_by_name
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -426,6 +489,14 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       in
       if cfg.Index_lang_rules.narrow_methods_by_import_files then
         narrow_methods_by_import_files ~import_target_files
+          ~file_of_func:func_file_opt ~caller_file:fi_file_str base
+      else if cfg.Index_lang_rules.narrow_methods_by_required_files then
+        let required_specs =
+          List.filter_map (fun (local, spec, _kind) ->
+            if String.equal local "*" then Some spec else None)
+            fi.fi_import_specifiers
+        in
+        narrow_methods_by_required_files ~required_specs
           ~file_of_func:func_file_opt ~caller_file:fi_file_str base
       else base
     in
