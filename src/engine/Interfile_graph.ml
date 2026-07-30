@@ -10,12 +10,14 @@ type resolved_asts = (string, AST_generic.program) Hashtbl.t
 
 (* [None] on failure.  Called once per (lang, project_root) per scan —
    [Interfile_dispatch] groups all of a language's rules onto one build —
-   so there is nothing to cache. *)
+   so there is nothing to cache.  The third component lists per-file build
+   failures: those files' functions and edges are MISSING from the graph, so
+   the caller surfaces them as scan errors rather than dropping them. *)
 let load_interfile_build (caps : < Cap.fork >)
     ?(ncores : int = 0)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
-    : (interfile_graph * resolved_asts) option =
+    : (interfile_graph * resolved_asts * (Fpath.t * string) list) option =
   let project_root_abs =
     if Fpath.is_abs project_root then Fpath.normalize project_root
     else Fpath.(v (Sys.getcwd ()) // project_root) |> Fpath.normalize
@@ -26,14 +28,15 @@ let load_interfile_build (caps : < Cap.fork >)
   let cfg = Opengrep_project_index.Index_lang_rules.for_lang lang in
   let excludes = cfg.discover_excludes ~project_root:project_root_abs in
   try
-    let (graph, asts) =
+    let (graph, asts, failures) =
       Opengrep_project_index.Project_index.collect_resolved caps
         ~targeting_conf
         ~lang ~project_root:project_root_abs ~ncores
         ~includes:[] ~excludes ()
     in
     (* [Interfile_dispatch] looks up vertices by absolute path. *)
-    Some (Call_graph.make_paths_absolute project_root_abs graph, asts)
+    Some (Call_graph.make_paths_absolute project_root_abs graph, asts,
+          failures)
   with
   | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
     Exception.catch_and_reraise exn
@@ -50,7 +53,7 @@ let load_interfile_graph (caps : < Cap.fork >)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
     : interfile_graph option =
-  Option.map fst
+  Option.map (fun (graph, _asts, _failures) -> graph)
     (load_interfile_build caps ~ncores ~targeting_conf lang project_root)
 
 (* Graph uses absolute paths, so ids touching it must be absolute too. *)

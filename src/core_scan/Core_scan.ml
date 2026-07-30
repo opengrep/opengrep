@@ -1049,7 +1049,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   in
   let equivs = parse_equivalences config.equivalences_file in
   let interfile_rule_states, interfile_languages_used,
-      interfile_fallback_rule_target_paths =
+      interfile_fallback_rule_target_paths, interfile_index_failures =
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork >)
       ~ncores:config.ncores
@@ -1057,6 +1057,19 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       ~valid_rules ~targets
       ~targeting_conf:config.targeting_conf
       ~xconf:(interfile_xconfig config ~equivs)
+  in
+  (* A file the index build failed on has no functions or call edges in the
+     interfile graph — findings through it are silently missing — so each
+     failure is surfaced as a (warning-severity) scan error, like a partial
+     parse, rather than left as a debug log line. *)
+  let interfile_index_errors : E.t list =
+    List_.map (fun ((file : Fpath.t), (msg : string)) ->
+        E.mk_error
+          ~msg:(spf "interfile index build failed for this file \
+                     (cross-file findings through it may be missing): %s" msg)
+          ~loc:(Tok.first_loc_of_file file)
+          Out.SemgrepWarning)
+      interfile_index_failures
   in
   let interfile_rule_ids =
     Interfile_dispatch.interfile_taint_rule_ids
@@ -1145,7 +1158,8 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       config.max_match_per_file all_processed_matches
   in
   (* concatenate all errors *)
-  let errors = rule_errors @ new_errors @ res.errors in
+  let errors =
+    interfile_index_errors @ rule_errors @ new_errors @ res.errors in
   (* Concatenate all the skipped targets *)
   let skipped_targets = skipped @ new_skipped @ res.skipped_targets in
 
