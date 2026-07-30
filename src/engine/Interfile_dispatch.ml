@@ -807,6 +807,15 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
           in
           if not do_detect then matches_acc
           else
+            (* The re-extraction against [converged_db] is NOT redundant:
+               [check_fundef_with_cfg] depends on the immediately preceding
+               extraction against a db that already holds this function's own
+               converged signature (and its lambda/nested sub-signatures).
+               Checking against [converged_db] without re-extracting collapses
+               some sink ranges onto the taint origin, and skipping the
+               phase-1 summary for no-successor nodes loses source-variant
+               findings.  Both were observed on gitlab; don't optimise this
+               away without an A/B on a large corpus. *)
             let _db, findings =
               extract_and_check_function rs fid info ~detect_findings:true
                 converged_db
@@ -1077,13 +1086,14 @@ let build_rule_states
     ~(targets : Target.t list)
     ~(targeting_conf : Find_targets.conf)
     ~(xconf : Match_env.xconfig)
-    : rule_state list * Xlang.t list * (Rule_ID.t * Fpath.t list) list =
+    : rule_state list * Xlang.t list * (Rule_ID.t * Fpath.t list) list
+      * (Fpath.t * string) list =
   (* A rule-local option counts, not just the global flag. *)
   let lang_rules =
     interfile_taint_rules_by_lang ~taint_interfile valid_rules
   in
   match lang_rules with
-  | [] -> ([], [], [])
+  | [] -> ([], [], [], [])
   | _ ->
   Log.info (fun m ->
       m "interfile preprocess: %d languages with interfile taint rules"
@@ -1136,17 +1146,31 @@ let build_rule_states
   in
   (* Abs-path keys are globally unique, so merging across roots is safe. *)
   let projidx_asts : (string, G.program) Hashtbl.t = Hashtbl.create 1024 in
-  let lang_contexts : lang_context list =
+  (* Per language: the context (when the build is usable) and the build's
+     per-file failures — files whose functions/edges are missing from the
+     graph.  The failures become scan errors so the recall loss is visible. *)
+  let per_lang :
+      (lang_context option * (Fpath.t * string) list) list =
     Hashtbl.fold (fun _ (project_root, root_targets) acc ->
-      List_.filter_map
+      List_.map
         (fun ((lang : Lang.t), (rules : R.taint_rule list)) ->
           let build_opt =
             Interfile_graph.load_interfile_build caps
               ~ncores ~targeting_conf lang project_root
           in
           (match build_opt with
-           | Some (_, asts) -> Hashtbl.iter (Hashtbl.replace projidx_asts) asts
+           | Some (_, asts, _) ->
+             Hashtbl.iter (Hashtbl.replace projidx_asts) asts
            | None -> ());
+          let file_failures =
+            match build_opt with
+            | None -> []
+            | Some (_, _, failures) ->
+              List_.map (fun (file, msg) ->
+                (file, Printf.sprintf "%s: %s" (Lang.to_string lang) msg))
+                failures
+          in
+          let lc_opt =
           match build_opt with
           | None ->
             Log.warn (fun m ->
@@ -1156,7 +1180,7 @@ let build_rule_states
                   (Lang.to_string lang) (Fpath.to_string project_root));
             record_fallback ~lang ~project_root root_targets;
             None
-          | Some (interfile_graph, _) ->
+          | Some (interfile_graph, _, _) ->
             let interfile_files = interfile_file_set interfile_graph in
             let matching_targets =
               targets_in_interfile_graph ~lang ~cwd
@@ -1198,10 +1222,18 @@ let build_rule_states
                Some { lc_lang = lang;
                       lc_rules = rules;
                       lc_interfile_graph = interfile_graph;
-                      lc_matching_targets = matching_targets }))
+                      lc_matching_targets = matching_targets })
+          in
+          (lc_opt, file_failures))
         lang_rules
       @ acc)
       targets_by_root []
+  in
+  let lang_contexts : lang_context list =
+    List.filter_map (fun (lc_opt, _) -> lc_opt) per_lang
+  in
+  let index_build_failures : (Fpath.t * string) list =
+    List.concat_map (fun (_, failures) -> failures) per_lang
   in
   let target_batches : (Lang.t * Fpath.t list) list =
     List.concat_map (fun (lc : lang_context) ->
@@ -1430,4 +1462,5 @@ let build_rule_states
          rsg.rsg_lang_context.lc_matching_targets))
       failed_rsgs
   in
-  (rule_states, langs, fallback_rule_target_paths @ failed_fallback)
+  (rule_states, langs, fallback_rule_target_paths @ failed_fallback,
+   index_build_failures)

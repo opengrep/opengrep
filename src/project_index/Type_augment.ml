@@ -5,6 +5,7 @@
    [Project_index.build_project_call_graph]. *)
 
 module G = AST_generic
+module Log = Log_projidx.Log
 
 open Types
 
@@ -333,10 +334,16 @@ let augment_return_types_from_bodies
               | None -> state))
     ) state all_funcs
   in
-  let final, _iters =
+  let final, iters =
     Fixpoint.run ~equal:Type_state.equal ~step
       ~max_iterations:Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS type_state
   in
+  (* [Fixpoint.run] returns [i = max_iterations] only on the cap branch. *)
+  if iters >= Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS then
+    Log.warn (fun m ->
+        m "Return-type fixpoint hit the %d-iteration cap without \
+           converging; inferred return types may be incomplete"
+          Limits_semgrep.projidx_RETURN_TYPES_MAX_ITERS);
   final
 
 (* [(callee_class, callee_method, arg_idx) -> type] of caller-supplied arg types,
