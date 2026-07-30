@@ -1,0 +1,18 @@
+rules:
+  - id: class-alias-with-method
+    languages: [ts]
+    severity: ERROR
+    message: >
+      Taint reaches a sink through a class-body field alias on a class that
+      also declares an ordinary method.  Pins import-file method narrowing:
+      it disambiguates same-named methods across files, so it must key on the
+      method name, not the class.  Narrowing a whole class instead drops
+      `handler` (whose def file is the aliased function's lib.ts) as soon as
+      any sibling method survives the filter, losing the cross-file finding.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)
