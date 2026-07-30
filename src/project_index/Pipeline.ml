@@ -191,12 +191,19 @@ let build_import_target_files
   ) fi.fi_import_specifiers;
   target_files
 
-(* Restrict each imported class's methods to the file(s) it was imported from
+(* Restrict an imported class's methods to the file(s) it was imported from
    (keyed by the import's local name) or the caller's own file.  Two same-named
    classes in different files otherwise both land under the bare class name at
-   method dispatch and the call is dropped on the collision.  A class is left
-   untouched when the filter would empty it, so a path-shape mismatch degrades to
-   the un-narrowed set rather than erasing the class. *)
+   method dispatch and the call is dropped on the collision.
+
+   Only a (class, method name) group holding entries from several files is that
+   collision, so narrowing applies per method name, not per class: a uniquely
+   named method is kept whatever its file.  A class-body alias
+   ([class C { handler = importedFn }]) carries the aliased function's file, not
+   the class's, and would otherwise be filtered out whenever the class also
+   declares an ordinary method.  A group is left untouched when the filter would
+   empty it, so a path-shape mismatch degrades to the un-narrowed set rather
+   than erasing the method. *)
 let narrow_methods_by_import_files
     ~(import_target_files : (string, (string, unit) Hashtbl.t) Hashtbl.t)
     ~(file_of_func : Func_info.t -> string option)
@@ -207,13 +214,38 @@ let narrow_methods_by_import_files
     match Type_state.get_methods state cls_name with
     | None -> state
     | Some methods ->
-      let filtered = List.filter (fun (func : Func_info.t) ->
+      let from_import_target (func : Func_info.t) : bool =
         match file_of_func func with
         | None -> false
         | Some file ->
           Hashtbl.mem target_set file || String.equal file caller_file
-      ) methods in
-      if filtered <> [] && List.length filtered <> List.length methods
+      in
+      let leaf (func : Func_info.t) : string =
+        match Func_info.leaf_name func.Func_info.fn_id with
+        | Some (name : IL.name) -> fst name.IL.ident
+        | None -> ""
+      in
+      let named = List.map (fun func -> (leaf func, func)) methods in
+      (* Method names whose group spans several entries and keeps at least one
+         survivor; every other name is left alone. *)
+      let narrowed_names =
+        List.sort_uniq String.compare (List.map fst named)
+        |> List.filter (fun name ->
+             let group =
+               List.filter (fun (n, _) -> String.equal n name) named
+             in
+             List.length group > 1
+             && List.exists (fun (_, func) -> from_import_target func) group)
+      in
+      let filtered =
+        List.filter_map (fun (name, func) ->
+          if List.exists (String.equal name) narrowed_names
+             && not (from_import_target func)
+          then None
+          else Some func)
+          named
+      in
+      if List.length filtered <> List.length methods
       then Type_state.set_methods state cls_name filtered
       else state
   ) import_target_files ts
