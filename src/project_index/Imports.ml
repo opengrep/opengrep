@@ -169,11 +169,15 @@ let collect_imports ~(cfg : Index_lang_rules.t)
           in
           add_spec (add st local target) local mn kind
         ) st names
-    (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs. *)
+    (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs.
+       The raw specifier is kept under the same "*" sentinel so file-target
+       narrowing can resolve a whole-file import (Ruby [require_relative]) to
+       the file(s) it names ([add_spec] drops [DottedName] imports, whose
+       specifier is empty). *)
     | G.ImportAll (_, mn, _) ->
       let qn = module_name_string ~cfg ~current_module_path ~is_init_file mn in
       if Names.Module_qn.is_empty qn then st
-      else add st "*" qn
+      else add_spec (add st "*" qn) "*" mn I_namespace
     | G.OtherDirective (("NsDirective", _), exprs) ->
       List.fold_left collect_clojure_ns_form st exprs
     | _ -> st
@@ -225,11 +229,34 @@ let collect_imports ~(cfg : Index_lang_rules.t)
         ) st fields
       | _ -> st
   in
+  (* PHP [require]/[include] parse as calls to [__builtin__require*], not
+     import directives; capture them as whole-file "*" imports like Ruby's
+     [require_relative] so file-target narrowing sees them. *)
+  let php_require_spec (expr : G.expr) : string option =
+    match expr.G.e with
+    | G.Call ({ G.e = G.N (G.Id ((callee_name, _), _)); _ }, args)
+      when List.mem callee_name
+             [ "__builtin__require"; "__builtin__require_once";
+               "__builtin__include"; "__builtin__include_once" ] ->
+      (match Tok.unbracket args with
+       | [G.Arg { G.e = G.L (G.String (_, (spec, _), _)); _ }] -> Some spec
+       | _ -> None)
+    | _ -> None
+  in
+  let on_exprstmt st (expr : G.expr) =
+    match php_require_spec expr with
+    (* Spec only — no [("*", qn)] binding, which would opt the file into the
+       re-export bulk-copy pass. *)
+    | Some spec when String.length spec > 0 ->
+      add_spec st "*" (mk_filename_mn spec) I_namespace
+    | _ -> st
+  in
   let acc, specs =
     Walker.fold_stmts_in_program (fun st stmt ->
       match stmt.G.s with
       | G.DirectiveStmt dir -> on_directive st dir
       | G.DefStmt (ent, G.VarDef vd) -> on_defstmt st ent vd
+      | G.ExprStmt (expr, _) -> on_exprstmt st expr
       | _ -> st) ([], []) ast
   in
   (List.rev acc, List.rev specs)
