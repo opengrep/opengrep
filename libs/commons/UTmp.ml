@@ -105,6 +105,35 @@ let erase_this_temp_file f =
     Log.info (fun m -> m "deleting: %s" !!f);
     USys.remove !!f)
 
+(* ex: new_temp_dir ~prefix:"opengrep-git-" ()
+   will create a fresh empty directory and return its path. *)
+let new_temp_dir ?(prefix = default_temp_file_prefix) ?(suffix = "") ?temp_dir ()
+    =
+  let dir =
+    UFilename.temp_dir
+      ?temp_dir:(Option.map Fpath.to_string temp_dir)
+      prefix suffix
+    |> Fpath.v
+  in
+  Log.debug (fun m -> m "creating temp dir %s" !!dir);
+  dir
+
+(* Symlink-aware recursive removal: we [lstat] each entry so that a symlink is
+ * unlinked rather than followed (we must never delete outside [path]). *)
+let rec remove_dir_recursive (path : Fpath.t) : unit =
+  match (UUnix.lstat !!path).st_kind with
+  | UUnix.S_DIR ->
+      USys.readdir !!path
+      |> Array.iter (fun entry -> remove_dir_recursive Fpath.(path / entry));
+      UUnix.rmdir !!path
+  | _ -> USys.remove !!path
+  | exception UUnix.Unix_error (UUnix.ENOENT, _, _) -> ()
+
+let erase_this_temp_dir (dir : Fpath.t) =
+  if not !save_temp_files then (
+    Log.info (fun m -> m "deleting dir: %s" !!dir);
+    remove_dir_recursive dir)
+
 let with_temp_file ?(contents = "") ?(persist = false) ?prefix ?suffix ?temp_dir
     (f : Fpath.t -> 'a) : 'a =
   let temp_file_path = new_temp_file ?prefix ?suffix ?temp_dir () in
@@ -121,6 +150,16 @@ let with_temp_file ?(contents = "") ?(persist = false) ?prefix ?suffix ?temp_dir
         !temp_file_cleanup_hooks
         |> List.iter (fun cleanup -> cleanup temp_file_path);
         erase_this_temp_file temp_file_path))
+
+(* Directory equivalent of [with_temp_file]: create a fresh temporary
+ * directory, invoke [f] on it, and remove it recursively once done (unless
+ * [persist] or the global save-temp-files flag is set). *)
+let with_temp_dir ?(persist = false) ?prefix ?suffix ?temp_dir
+    (f : Fpath.t -> 'a) : 'a =
+  let temp_dir_path = new_temp_dir ?prefix ?suffix ?temp_dir () in
+  Common.finalize
+    (fun () -> f temp_dir_path)
+    (fun () -> if not persist then erase_this_temp_dir temp_dir_path)
 
 (* TODO[Issue #129] Is [Filename.open_temp_file] thread-safe? See comments
  * on [new_temp_file] above. Note that the function does not seem used,

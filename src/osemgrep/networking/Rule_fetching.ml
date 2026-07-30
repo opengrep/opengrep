@@ -412,23 +412,25 @@ let rules_from_dashdash_config_async ?(skip_invalid_configs = false)
       [ rules ] |> Result_.partition Fun.id |> Lwt.return
   | C.Git { url; ref_ } ->
       (* Clone the repo into a fresh temp dir, then load every rule file in it
-       * like a Dir. Auth is entirely git's business (see Git_wrapper); we run
+       * like a Dir. The temp dir (including the .git it contains) is removed
+       * as soon as the rules are parsed into memory, thanks to with_temp_dir.
+       * Auth is entirely git's business (see Git_wrapper); we run
        * non-interactively and fail fast rather than prompt. *)
-      let reserved = CapTmp.new_temp_file ~prefix:"opengrep-git-" caps#tmp in
-      let checkout_dir = Fpath.v (!!reserved ^ "-checkout") in
-      (match Git_wrapper.shallow_clone ?ref_ url checkout_dir with
-      | Ok () -> ()
-      | Error msg -> Error.abort msg);
-      (* We stamp the origin as [Git_repo url] rather than [Local_file <tmp>]
-       * so that rule-ids are not prefixed with the temp path and the true
-       * (untrusted) origin is tracked. *)
-      List_files.list checkout_dir
-      |> List.filter Rule_file.is_valid_rule_filename
-      |> List_.map (fun file ->
-             load_rules_from_file ~rewrite_rule_ids ~origin:(Git_repo url) caps
-               file
-             |> Result.map (fun r -> { r with origin = Git_repo url }))
-      |> partition_or_skip ~skip_invalid_configs |> Lwt.return
+      CapTmp.with_temp_dir ~prefix:"opengrep-git-" caps#tmp (fun checkout_dir ->
+          (match Git_wrapper.shallow_clone ?ref_ url checkout_dir with
+          | Ok () -> ()
+          | Error msg -> Error.abort msg);
+          (* We stamp the origin as [Git_repo url] rather than [Local_file
+           * <tmp>] so that rule-ids are not prefixed with the temp path and
+           * the true (untrusted) origin is tracked. *)
+          List_files.list checkout_dir
+          |> List.filter Rule_file.is_valid_rule_filename
+          |> List_.map (fun file ->
+                 load_rules_from_file ~rewrite_rule_ids ~origin:(Git_repo url)
+                   caps file
+                 |> Result.map (fun r -> { r with origin = Git_repo url }))
+          |> partition_or_skip ~skip_invalid_configs)
+      |> Lwt.return
   | C.R rkind ->
       let url = Semgrep_Registry.url_of_registry_config_kind rkind in
       let%lwt contents =
