@@ -88,9 +88,9 @@ fn rest_pattern_trailing() {
   sink(h2);
 }
 
-// Elements after a mid-pattern `..` are end-relative, which the positional
-// lowering cannot express. They are left unbound (a fixme) rather than bound
-// to the wrong slot, so the taint in slot 2 must not leak to either binding.
+// With a literal scrutinee the arity is known, so the rest marker expands
+// into exact wildcard slots and a binding after `..` reads its true index:
+// w2 is slot 3, not the tainted slot 2.
 fn rest_pattern_middle() {
   let [w1, .., w2] = [1, 2, tainted, 3];
 
@@ -101,13 +101,32 @@ fn rest_pattern_middle() {
   sink(w2);
 }
 
-// Known limitation of the unbound tail: taint genuinely reaching a binding
-// after `..` goes undetected.
-fn rest_pattern_middle_fn() {
+fn rest_pattern_middle_exact() {
   let [.., z1] = [1, tainted];
 
-  // todoruleid: tainted-pattern-lval
+  // ruleid: tainted-pattern-lval
   sink(z1);
+}
+
+// With an RHS of unknown arity, an element after `..` binds to the Slice
+// view of the tail: its taint is the union of every slot it could be — a
+// may-over-approximation rather than a wrong slot or a silent drop.
+fn rest_pattern_tail_view() {
+  let ys = [1, tainted];
+  let [.., v1] = ys;
+
+  // ruleid: tainted-pattern-lval
+  sink(v1);
+}
+
+fn rest_pattern_tail_view_over_approx() {
+  let xs = [tainted, 1];
+  let [.., v2] = xs;
+
+  // v2 is really slot 1 (clean), but the tail view [0..] includes the
+  // tainted slot 0, so this over-approximates and fires.
+  // todook: tainted-pattern-lval
+  sink(v2);
 }
 
 // `..` in a tuple-struct pattern: the leading arguments still bind.

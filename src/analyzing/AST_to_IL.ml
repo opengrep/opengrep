@@ -601,12 +601,14 @@ and pattern env pat : stmts * lval * stmts =
             (* Rust rest marker: [a, .., z] / (a, .., z) / P(m, ..). It
              * skips any number of elements and binds nothing itself.
              * Slots before it are exact. Slots after it are end-relative,
-             * which this front-indexed lowering cannot express — they are
-             * returned as unbindable and become fixmes rather than being
-             * bound to wrong slots. *)
-            | G.OtherPat (("..", _), []) :: unbindable
+             * which this front-indexed lowering cannot express — each is
+             * returned with the tail's start index and bound as a view of
+             * [tmp[i..]] below: a may-over-approximation (the union of
+             * every slot the element could be), not a wrong slot and not
+             * a silent drop. *)
+            | G.OtherPat (("..", _), []) :: tail_pats
               when env.lang =*= Lang.Rust ->
-                (List.rev acc, None, unbindable)
+                (List.rev acc, None, List_.map (fun p -> (p, i)) tail_pats)
             | p :: rest -> split_trailing_rest ((p, i) :: acc) (i + 1) rest
           in
           let fixed, opt_rest, unbindable = split_trailing_rest [] 0 pats in
@@ -619,7 +621,17 @@ and pattern env pat : stmts * lval * stmts =
             | Some (rest_pat, lo) -> lower_rest rest_pat lo
           in
           let unbindable_ss =
-            List.concat_map (fun p -> fixme_stmt ToDo (G.P p)) unbindable
+            (* An element after a mid-pattern rest marker sits at some
+             * index >= lo; bind it to the [Slice lo] view of the
+             * scrutinee, whose taint read is the union of those slots.
+             * Exact binding ("k-th from the end") would need an
+             * end-relative offset kind in [IL.offset]/[Taint.offset],
+             * plus arity tracking in [Obj] shapes to resolve it soundly
+             * — sparse shapes built by writes do not know their length.
+             * When the scrutinee is a syntactic literal the marker never
+             * reaches here: [expand_rest_marker_by_arity] has already
+             * rewritten it into exact wildcard slots. *)
+            List.concat_map (fun (p, lo) -> lower_rest p lo) unbindable
           in
           fixed_ss @ rest_ss @ unbindable_ss
       in
@@ -787,8 +799,45 @@ and _catch_exn env exn : stmts * lval * stmts =
       ([], lval, [])
   | _ -> todo (G.Ce exn)
 
+(* Rust `let [a, .., z] = <literal>`: when the scrutinee is a literal
+ * container its arity is known here, so the rest marker expands into the
+ * exact number of wildcard slots and every binding after it gets its true
+ * index. With an RHS of unknown arity (a call, a variable) the marker
+ * keeps the [Slice] tail-view lowering in [pattern], whose taint read
+ * over-approximates to the union of the slots the element could be. *)
+and expand_rest_marker_by_arity env (exp : exp) (pat : G.pattern) : G.pattern =
+  let is_rest_marker = function
+    | G.OtherPat (("..", _), []) -> true
+    | _ -> false
+  in
+  let expand mk pats tok_l tok_r =
+    match (List.partition is_rest_marker pats, exp.e) with
+    | ([ G.OtherPat ((_, marker_tok), _) ], _), Composite (_, (_, es, _)) ->
+        let fixed = List.length pats - 1 in
+        let arity = List.length es in
+        if arity >= fixed then
+          let pats =
+            pats
+            |> List.concat_map (fun p ->
+                   if is_rest_marker p then
+                     List.init (arity - fixed) (fun _ ->
+                         G.PatWildcard marker_tok |> G.p)
+                   else [ p ])
+          in
+          mk (tok_l, pats, tok_r) |> G.p
+        else pat
+    | __else__ -> pat
+  in
+  if not (env.lang =*= Lang.Rust) then pat
+  else
+    match pat with
+    | G.PatTuple (l, pats, r) -> expand (fun x -> G.PatTuple x) pats l r
+    | G.PatList (l, pats, r) -> expand (fun x -> G.PatList x) pats l r
+    | __else__ -> pat
+
 and pattern_assign_statements env ?(eorig = NoOrig) exp pat : stmt list =
   try
+    let pat = expand_rest_marker_by_arity env exp pat in
     let pre_ss, lval, post_ss = pattern env pat in
     pre_ss @ [ mk_s (Instr (mk_i (Assign (lval, exp)) eorig)) ] @ post_ss
   with
