@@ -175,7 +175,7 @@ let show_offset_list offset =
 
 let show_lval { base; offset } = show_base base ^ show_offset_list offset
 
-let offset_of_IL (o : IL.offset) =
+let offset_of_IL lang (o : IL.offset) =
 match o.o with
 | IL.Dot n -> Ofld n
 | IL.Index { e = IL.Literal (Int pi); _ } -> (
@@ -190,26 +190,33 @@ match o.o with
  *
  * The bound is strict: [Float.of_int Int.max_int] rounds *up* to 2^62,
  * which is one past [max_int], so [<=] would admit 2^62 and
- * [int_of_float] would wrap it to a negative offset.
- *
- * NOTE: an integral index and its string spelling are distinct offsets
- * ([Oint 0] vs [Ostr "0"]). That is right for Python, where `d[0]` and
- * `d["0"]` are different dict keys, but wrong for JS, where they are the
- * same property. That equivalence has never been implemented -- before
- * this case existed a constant JS index was [Oany], so it matched any key
- * rather than the matching one -- and implementing it needs a [lang] here,
- * which would mean threading one through [Taint_lval_env.normalize_lval]
- * and its whole public API; see the `todo:` case in
- * tests/rules/taint_js_array_index.js. *)
+ * [int_of_float] would wrap it to a negative offset. *)
 | IL.Index { e = IL.Literal (Float (Some f, _)); _ }
   when Float.is_integer f && Float.abs f < Float.of_int Int.max_int ->
     Oint (int_of_float f)
+(* In JS/TS `o[0]` and `o["0"]` are the same property: an integer key is
+ * canonicalized to its decimal string spelling. Map a string index that
+ * is such a canonical spelling to the [Oint] the numeric form takes, so
+ * both sides unify. Non-canonical spellings (`"00"`, `"-0"`, `"0x10"`)
+ * name distinct properties in JS too and stay [Ostr]. Restricted to
+ * integers that survive the float round-trip: past 2^53 the numeric key
+ * collapses to a neighbouring integer while the string spelling remains
+ * its own property. Every other language keeps the distinction — in
+ * Python `d[0]` and `d["0"]` really are different dict keys. *)
+| IL.Index { e = IL.Literal (String (_, (s, _), _)); _ }
+  when Lang.is_js lang -> (
+    match int_of_string_opt s with
+    | Some i when string_of_int i = s && int_of_float (float_of_int i) =|= i
+      ->
+        Oint i
+    | _ -> Ostr s)
 | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ } -> Ostr s
 | IL.Index { e = IL.Literal (Atom (_, (s, _))); _ } -> Ostr s
 | IL.Index _ -> Oany
 | IL.Slice n -> Oslice n
 
-let offset_of_rev_IL_offset ~rev_offset = List.rev_map offset_of_IL rev_offset
+let offset_of_rev_IL_offset lang ~rev_offset =
+  List.rev_map (offset_of_IL lang) rev_offset
 
 let rev_IL_offset_of_offset offset =
   let os =

@@ -1015,7 +1015,7 @@ let check_orig_if_sink env ?filter_sinks orig taints shape =
   let effects = effects_of_tainted_sinks env taints sinks in
   record_effects env effects
 
-let fix_poly_taint_with_field lval xtaint =
+let fix_poly_taint_with_field lang lval xtaint =
   match xtaint with
   | `Sanitized
   | `Clean
@@ -1024,7 +1024,7 @@ let fix_poly_taint_with_field lval xtaint =
   | `Tainted taints -> (
       match lval.rev_offset with
       | o :: _ ->
-          let o = T.offset_of_IL o in
+          let o = T.offset_of_IL lang o in
           let taints = Shape.fix_poly_taint_with_offset [ o ] taints in
           `Tainted taints
       | [] -> xtaint)
@@ -1033,7 +1033,7 @@ let fix_poly_taint_with_field lval xtaint =
 (* Tainted *)
 (*****************************************************************************)
 
-let sanitize_lval_by_side_effect lval_env sanitizer_pms lval =
+let sanitize_lval_by_side_effect lang lval_env sanitizer_pms lval =
   let lval_is_now_safe =
     (* If the l-value is an exact match (overlap > 0.99) for a sanitizer
      * annotation, then we infer that the l-value itself has been updated
@@ -1044,7 +1044,7 @@ let sanitize_lval_by_side_effect lval_env sanitizer_pms lval =
         m.spec.sanitizer_by_side_effect && TM.is_exact m)
       sanitizer_pms
   in
-  if lval_is_now_safe then Lval_env.clean lval_env lval else lval_env
+  if lval_is_now_safe then Lval_env.clean lang lval_env lval else lval_env
 
 (* Check if an expression is sanitized, if so returns `Some' and otherise `None'.
    If the expression is of the form `x.a.b.c` then we try to sanitize it by
@@ -1056,7 +1056,9 @@ let exp_is_sanitized env exp =
   | sanitizer_pms -> (
       match exp.e with
       | Fetch lval ->
-          Some (sanitize_lval_by_side_effect env.lval_env sanitizer_pms lval)
+          Some
+            (sanitize_lval_by_side_effect env.taint_inst.lang env.lval_env
+               sanitizer_pms lval)
       | __else__ -> Some env.lval_env)
 
 (* Checks if `thing' is a propagator `from' and if so propagates `taints' through it.
@@ -1145,7 +1147,8 @@ let handle_taint_propagators env thing taints shape =
                        prop.spec.prop.propagator_replace_labels label)
                     taints
             in
-            Lval_env.propagate_to prop.spec.var new_taints lval_env
+            Lval_env.propagate_to env.taint_inst.lang prop.spec.var new_taints
+              lval_env
         | Some false
         | None ->
             lval_env)
@@ -1173,7 +1176,9 @@ let handle_taint_propagators env thing taints shape =
              * subsequent uses of `y` are tainted if `x` was previously tainted. *)
             | `Lval lval ->
                 if Option.is_some opt_propagated then
-                  lval_env |> Lval_env.add_lval lval taints_from_prop
+                  lval_env
+                  |> Lval_env.add_lval env.taint_inst.lang lval
+                       taints_from_prop
                 else
                   (* If we did not find any taint to be propagated, it could
                    * be because we have not encountered the 'from' yet, so we
@@ -1217,7 +1222,9 @@ let find_lval_taint_sources env incoming_taints lval =
   let taints_to_add_to_env =
     by_side_effect_only_taints |> Taints.union by_side_effect_yes_taints
   in
-  let lval_env = lval_env |> Lval_env.add_lval lval taints_to_add_to_env in
+  let lval_env =
+    lval_env |> Lval_env.add_lval env.taint_inst.lang lval taints_to_add_to_env
+  in
   let taints_to_return =
     Taints.union by_side_effect_no_taints by_side_effect_yes_taints
   in
@@ -1313,7 +1320,8 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
                 ( Taints.empty,
                     Bot,
                     env.lval_env
-                    |> Lval_env.add_lval (mk_prop_lval ()) all_args_taints )
+                    |> Lval_env.add_lval env.taint_inst.lang (mk_prop_lval ())
+                         all_args_taints )
             else Some (Taints.empty, Bot, env.lval_env)
         | __else__ -> None
       end
@@ -1347,7 +1355,8 @@ and check_tainted_lval_aux env (lval : IL.lval) :
        *  from lval_env by sanitize_lval, but that is not guaranteed.
        *)
       let lval_env =
-        sanitize_lval_by_side_effect env.lval_env sanitizer_pms lval
+        sanitize_lval_by_side_effect env.taint_inst.lang env.lval_env
+          sanitizer_pms lval
       in
       (Taints.empty, `Sanitized, Bot, `Sub (Taints.empty, Bot), lval_env)
   | [] ->
@@ -1391,7 +1400,7 @@ and check_tainted_lval_aux env (lval : IL.lval) :
             let xtaint', shape =
               (* THINK: Should we just use 'Sig.find_in_shape' directly here ?
                        We have the 'sub_shape' available. *)
-              match Lval_env.find_lval lval_env lval with
+              match Lval_env.find_lval env.taint_inst.lang lval_env lval with
               | None -> (`None, S.Bot)
               | Some (Cell (xtaint', shape)) -> (xtaint', shape)
             in
@@ -1410,7 +1419,7 @@ and check_tainted_lval_aux env (lval : IL.lval) :
                    * where `obj.y` is tainted but `obj.x` is not tainted, we will not
                    * produce a finding.
                    *)
-                  fix_poly_taint_with_field lval sub_xtaint
+                  fix_poly_taint_with_field env.taint_inst.lang lval sub_xtaint
             in
             (xtaint', shape)
       in
@@ -1949,7 +1958,10 @@ let check_function_call env fun_exp args
                     { lval with rev_offset = [] }
                 | _ -> lval
               in
-              (match Lval_env.find_lval env.lval_env lval_to_check with
+              (match
+                 Lval_env.find_lval env.taint_inst.lang env.lval_env
+                   lval_to_check
+               with
               | Some (S.Cell (_, S.Fun fun_sig)) ->
                   Log.debug (fun m ->
                       m "SIG_FROM_SHAPE: Found Fun shape for %s"
@@ -2176,7 +2188,9 @@ let call_with_intrafile lval_opt e env args instr =
           (match arg with
           | IL.Unnamed ({ e = Fetch lval; _ } as lambda_exp) ->
               (* Single Fetch argument - check if it's a lambda by looking at its shape *)
-              (match Lval_env.find_lval env.lval_env lval with
+              (match
+                 Lval_env.find_lval env.taint_inst.lang env.lval_env lval
+               with
               | Some (S.Cell (_, shape)) ->
                   (match shape with
                   | S.Fun _fun_sig ->
@@ -2199,7 +2213,9 @@ let call_with_intrafile lval_opt e env args instr =
         (match inner_e.e with
         | Fetch lval ->
             (* Check the shape of this lval to see if it has a Fun signature *)
-            (match Lval_env.find_lval env.lval_env lval with
+            (match
+               Lval_env.find_lval env.taint_inst.lang env.lval_env lval
+             with
             | Some (S.Cell (var_taints, S.Fun fun_sig)) ->
                 (* The variable has a Fun shape. Instantiate it directly instead of
                  * doing signature database lookup. *)
@@ -2211,7 +2227,10 @@ let call_with_intrafile lval_opt e env args instr =
                 let lambda_shape =
                   (match lambda_exp.e with
                   | Fetch lval ->
-                      (match Lval_env.find_lval env.lval_env lval with
+                      (match
+                         Lval_env.find_lval env.taint_inst.lang env.lval_env
+                           lval
+                       with
                       | Some (S.Cell (_, shape)) -> shape
                       | None -> S.Bot)
                   | _ -> S.Bot)
@@ -2375,7 +2394,9 @@ let call_with_intrafile lval_opt e env args instr =
               if resolves_to_constructor then
                 match lval_opt with
                 | Some lval -> (
-                    match Lval_env.find_lval lval_env lval with
+                    match
+                      Lval_env.find_lval env.taint_inst.lang lval_env lval
+                    with
                     | Some (S.Cell (_, s)) when
                       (match s with
                       | S.Bot -> false
@@ -2510,7 +2531,9 @@ let call_with_intrafile lval_opt e env args instr =
   (* Handle result variable assignment for Call instruction *)
   let lval_env =
     match lval_opt with
-    | Some result_lval -> Lval_env.add_lval result_lval all_call_taints lval_env
+    | Some result_lval ->
+        Lval_env.add_lval env.taint_inst.lang result_lval all_call_taints
+          lval_env
     | None -> lval_env
   in
   (all_call_taints, shape, lval_env)
@@ -2562,7 +2585,8 @@ let check_tainted_instr env instr : Taints.t * S.shape * Lval_env.t =
            | VarSpecial (This, _)
              when not (Taints.is_empty taints) ->
                let offset =
-                 T.offset_of_rev_IL_offset ~rev_offset:lval.rev_offset
+                 T.offset_of_rev_IL_offset env.taint_inst.lang
+                   ~rev_offset:lval.rev_offset
                in
                let taint_lval = { T.base = T.BThis; offset } in
                let effects =
@@ -3084,13 +3108,16 @@ let mk_lambda_in_env env lcfg =
            (* This is a *new* variable, so we clean any taint that we may
             * have attached to it previously. This can happen when a
             * lambda is called inside a loop. *)
-           let lval_env = Lval_env.clean lval_env (LV.lval_of_var var) in
+           let lval_env =
+             Lval_env.clean env.taint_inst.lang lval_env (LV.lval_of_var var)
+           in
            (* Now check if the parameter is itself a taint source. *)
            let taints, shape, lval_env =
              check_tainted_var { env with lval_env } var
            in
            lval_env
-           |> Lval_env.add_lval_shape (LV.lval_of_var var) taints shape)
+           |> Lval_env.add_lval_shape env.taint_inst.lang (LV.lval_of_var var)
+                taints shape)
          base_env
   in
   (* Destructuring ParamPatterns: the top-level pass above seeded only
@@ -3119,7 +3146,9 @@ let mk_lambda_in_env env lcfg =
                         let leaf_lval : IL.lval =
                           { base = Var leaf_name; rev_offset = [] }
                         in
-                        let lval_env = Lval_env.clean lval_env leaf_lval in
+                        let lval_env =
+                          Lval_env.clean env.taint_inst.lang lval_env leaf_lval
+                        in
                         let source_taints, _shape, lval_env =
                           check_tainted_var { env with lval_env } leaf_name
                         in
@@ -3133,8 +3162,8 @@ let mk_lambda_in_env env lcfg =
                         let leaf_taints =
                           T.Taint_set.add_taint leaf_taint source_taints
                         in
-                        Lval_env.add_lval_shape leaf_lval leaf_taints
-                          leaf_shape lval_env)
+                        Lval_env.add_lval_shape env.taint_inst.lang leaf_lval
+                          leaf_taints leaf_shape lval_env)
                       lval_env
                in
                (i + 1, lval_env)
@@ -3233,14 +3262,18 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
               if Shape.taints_and_shape_are_relevant taints shape then
                 (* Instruction returns tainted data, add taints to lval.
                  * See [Taint_lval_env] for details. *)
-                lval_env' |> Lval_env.add_lval_shape lval taints shape
+                lval_env'
+                |> Lval_env.add_lval_shape env.taint_inst.lang lval taints
+                     shape
               else
                 (* The RHS returns no taint, but taint could propagate by
                  * side-effect too. So, we check whether the taint assigned
                  * to 'lval' has changed to determine whether we need to
                  * clean 'lval' or not. *)
                 let lval_taints_changed =
-                  not (Lval_env.equal_by_lval in' lval_env' lval)
+                  not
+                    (Lval_env.equal_by_lval env.taint_inst.lang in' lval_env'
+                       lval)
                 in
                 if lval_taints_changed then
                   (* The taint of 'lval' has changed, so there was a source or
@@ -3251,7 +3284,7 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
                   (* No side-effects on 'lval', and the instruction returns safe data,
                    * so we assume that the assigment acts as a sanitizer and therefore
                    * remove taints from lval. See [Taint_lval_env] for details. *)
-                  Lval_env.clean lval_env' lval
+                  Lval_env.clean env.taint_inst.lang lval_env' lval
           | None ->
               (* Instruction returns 'void' or its return value is ignored. *)
               lval_env'
@@ -3666,8 +3699,8 @@ and (fixpoint :
                                   (* Give the parameter an Arg shape so it can be used in HOF *)
                                   let param_shape = S.Arg (taint_arg, [ [] ]) in
                                   let env =
-                                    Lval_env.add_lval_shape il_lval taint_set
-                                      param_shape env
+                                    Lval_env.add_lval_shape taint_inst.lang
+                                      il_lval taint_set param_shape env
                                   in
                                   (* Destructuring ParamPattern: also seed
                                    * each leaf with both a
@@ -3710,8 +3743,8 @@ and (fixpoint :
                                                    leaf_taint
                                                in
                                                Lval_env.add_lval_shape
-                                                 leaf_lval leaf_taints
-                                                 leaf_shape env)
+                                                 taint_inst.lang leaf_lval
+                                                 leaf_taints leaf_shape env)
                                              env
                                     | _ -> env
                                   in

@@ -30,11 +30,11 @@ val extract_signature :
 (** Extract both signature and taint mapping from a function *)
 
 val mk_global_assumptions_with_sids :
-  (string * AST_generic.SId.t) list -> Taint_lval_env.t
+  Lang.t -> (string * AST_generic.SId.t) list -> Taint_lval_env.t
 (** Create global variable taint assumptions with specific SIDs *)
 
 val mk_global_tracking_without_taint :
-  (string * AST_generic.SId.t) list -> Taint_lval_env.t
+  Lang.t -> (string * AST_generic.SId.t) list -> Taint_lval_env.t
 (** Register global variables for tracking without pre-tainting them *)
 
 val extract_signature_with_file_context :

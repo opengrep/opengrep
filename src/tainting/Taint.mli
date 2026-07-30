@@ -61,8 +61,14 @@ val compare_offset : offset -> offset -> int
 val equal_offset : offset -> offset -> bool
 val show_offset : offset -> string
 val show_offset_list : offset list -> string
-val offset_of_IL : IL.offset -> offset
-val offset_of_rev_IL_offset : rev_offset:IL.offset list -> offset list
+val offset_of_IL : Lang.t -> IL.offset -> offset
+(** The [Lang.t] matters for JS/TS only, where an integer index and its
+    canonical decimal string spelling denote the same property and are
+    conflated into [Oint]. Pass the language of the file under analysis
+    consistently: offsets computed under different languages do not
+    compare reliably. *)
+
+val offset_of_rev_IL_offset : Lang.t -> rev_offset:IL.offset list -> offset list
 
 val rev_IL_offset_of_offset : offset list -> IL.offset list option
 (** TODO(shapes): This is needed for stuff that is not yet fully adapted to shapes

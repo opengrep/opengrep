@@ -515,8 +515,19 @@ and find_in_obj_w_carry ~taints (offset : T.offset list) obj =
       | Oint _
       | Ostr _ -> (
           match Fields.find_opt o obj with
-          | None -> not_found
-          | Some o_cell -> find_in_cell_w_carry ~taints offset o_cell))
+          | Some o_cell -> find_in_cell_w_carry ~taints offset o_cell
+          | None -> (
+              (* Per INVARIANT(obj) in [Shape_and_sig], an [Oany] entry
+               * carries the taint and shape of any field that is not
+               * explicitly tracked — e.g. after `arr[i] = tainted` the
+               * taint lives under [Oany], and a read of the untracked
+               * `arr[0]` must find it. A *tracked* field does not consult
+               * [Oany]: writes through [Oany] weak-update every tracked
+               * entry (see [update_offset_in_obj]), so tracked entries
+               * are already up to date. *)
+              match Fields.find_opt T.Oany obj with
+              | None -> not_found
+              | Some any_cell -> find_in_cell_w_carry ~taints offset any_cell)))
 
 let find_in_cell offset cell =
   find_in_cell_w_carry ~taints:Taints.empty offset cell
