@@ -324,7 +324,7 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
   let targeting_conf =
     Opengrep_project_index.Discover.projidx_default_targeting_conf
   in
-  let rule_states, _langs, _fallbacks =
+  let rule_states, _langs, _fallbacks, _index_failures =
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork >)
       ~ncores

@@ -12,7 +12,11 @@ val load_interfile_build :
   < Cap.fork > ->
   ?ncores:int ->
   targeting_conf:Find_targets.conf ->
-  Lang.t -> Fpath.t -> (interfile_graph * resolved_asts) option
+  Lang.t -> Fpath.t ->
+  (interfile_graph * resolved_asts * (Fpath.t * string) list) option
+(** The third component lists per-file index build failures: those files'
+    functions and edges are missing from the graph, so callers surface them
+    as scan errors rather than dropping them. *)
 
 val absolutify_fid :
   Fpath.t option -> Function_id.t -> Function_id.t

@@ -32,5 +32,8 @@ val build_rule_states :
   targeting_conf:Find_targets.conf ->
   xconf:Match_env.xconfig ->
   rule_state list * Xlang.t list * (Rule_ID.t * Fpath.t list) list
-(** Returns rule_states, the interfile languages, and per-rule target
-    abs_paths dispatch doesn't cover (to run in per-target intrafile mode). *)
+  * (Fpath.t * string) list
+(** Returns rule_states, the interfile languages, per-rule target abs_paths
+    dispatch doesn't cover (to run in per-target intrafile mode), and
+    per-file index build failures — files whose functions/edges are missing
+    from the interfile graph, which [Core_scan] surfaces as scan errors. *)
