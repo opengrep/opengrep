@@ -104,6 +104,10 @@ let get_methods t cls = Class_name_map.find_opt cls t.methods
 
 let has_methods t cls = Class_name_map.mem cls t.methods
 
+let fold_methods (f : Names.Class_name.t -> Func_info.t list -> 'a -> 'a)
+    (t : t) (init : 'a) : 'a =
+  Class_name_map.fold f t.methods init
+
 let set_function_return t fn ty =
   { t with function_returns = Method_name_map.add fn ty t.function_returns }
 
