@@ -237,8 +237,12 @@ let effective_outputs (conf : conf) : (string option, Output_format.t) Map_.t =
            dest)
   | _else_ -> Map_.add conf.output conf.output_format conf.outputs
 
-let dispatch_output_format (caps : < Cap.stdout >) (profiler : Profiler.t)
-    (conf : conf) (cli_output : Out.cli_output) (hrules : Rule.hrules) : unit =
+let dispatch_output_format
+    (caps : < Cap.stdout >)
+    (profiler : Profiler.t)
+    (conf : conf)
+    (cli_output : Out.cli_output)
+    (hrules : Rule.hrules) : unit =
   let print = CapConsole.print caps#stdout in
   let print_stdout (kind : Output_format.t) : unit =
     match kind with
@@ -250,9 +254,8 @@ let dispatch_output_format (caps : < Cap.stdout >) (profiler : Profiler.t)
         Matches_report.pp_cli_output ~max_chars_per_line:conf.max_chars_per_line
           ~max_lines_per_finding:conf.max_lines_per_finding
             (* nosemgrep: forbid-console *)
-          ~color_output:conf.force_color
-          ~show_dataflow_traces:conf.show_dataflow_traces Format.std_formatter
-          cli_output
+          ~color_output:conf.force_color ~show_dataflow_traces:conf.show_dataflow_traces
+          Format.std_formatter cli_output
     | kind -> (
         match render conf profiler ~hrules kind cli_output with
         | Some str -> print str
