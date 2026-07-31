@@ -4,6 +4,12 @@ module Out = Semgrep_output_v1_j
 type conf = {
   (* mix of --json, --emacs, --vim, etc. *)
   output_format : Output_format.t;
+  (* destination of the primary output_format: file or URL set with
+   * -o/--output (None means stdout) *)
+  output : string option;
+  (* extra outputs set with --<format>-output=<destination>; the None key
+   * means stdout *)
+  outputs : (string option, Output_format.t) Map_.t;
   (* for Text *)
   max_chars_per_line : int;
   max_lines_per_finding : int;
@@ -29,7 +35,16 @@ val default : conf
 (* used with max_log_list_entries *)
 val too_much_data : string
 
-(* Output the core results on stdout depending on flags in conf.
+(* All the (destination, format) pairs that will be produced: conf.outputs
+ * plus the primary (conf.output, conf.output_format) pair.
+ * Aborts (like pysemgrep's OutputSettings.normalize()) if the -o destination
+ * is already used by a --<format>-output flag, so this is also called at
+ * CLI-parsing time in Scan_CLI.ml to report conflicts before the scan starts.
+ *)
+val effective_outputs : conf -> (string option, Output_format.t) Map_.t
+
+(* Output the core results on stdout (and in the files given by
+ * -o/--output and --<format>-output) depending on flags in conf.
  *
  * The format_context are parameters that are determined at runtime
  * that can also affect the output. For example, if a user is not logged in,

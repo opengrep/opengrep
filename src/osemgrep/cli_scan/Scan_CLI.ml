@@ -50,8 +50,7 @@ type conf = {
   autofix : bool;
   (* Performance options *)
   core_runner_conf : Core_runner.conf;
-  (* file or URL (None means output to stdout) *)
-  output : string option;
+  (* -o/--output and --<format>-output are in output_conf *)
   output_conf : Output.conf;
   incremental_output : bool;
   incremental_output_postprocess : bool;
@@ -101,7 +100,6 @@ let default : conf =
     (* trace = false;
        trace_endpoint = None; *)
     engine_type = OSS;
-    output = None;
     output_conf = Output.default;
     incremental_output = false;
     incremental_output_postprocess = false;
@@ -1247,8 +1245,16 @@ let outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
               (fun outputs output_destination ->
                 let key = Some output_destination in
                 if Map_.mem key outputs then
-                  (* TODO: Should probably error here. *)
-                  outputs
+                  let other_format = Map_.find key outputs in
+                  if other_format =*= output_format then outputs
+                  else
+                    Error.abort
+                      (spf
+                         "Can't write multiple outputs to the same \
+                          destination: %s and %s both output to %s."
+                         (Output_format.show other_format)
+                         (Output_format.show output_format)
+                         output_destination)
                 else Map_.add key output_format outputs)
               outputs)
        Map_.empty
@@ -1454,9 +1460,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
         ~gitlab_sast ~gitlab_secrets ~junit_xml
     in
-    (* TODO: Actually handle additional output files *)
-    (* _outputs is currently just parsed to support pysemgrep *)
-    let _outputs =
+    let outputs =
       outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
         ~sarif_outputs ~gitlab_sast_outputs ~gitlab_secrets_outputs
         ~junit_xml_outputs
@@ -1464,6 +1468,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     let output_conf : Output.conf =
       {
         output_format;
+        output;
+        outputs;
         max_chars_per_line;
         max_lines_per_finding;
         force_color;
@@ -1476,6 +1482,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           | _else_ -> false);
         max_log_list_entries;
       }
+    in
+    (* report -o/--<format>-output destination conflicts before the scan *)
+    let (_ : (string option, Output_format.t) Map_.t) =
+      Output.effective_outputs output_conf
     in
 
     let engine_type : Engine_type.t =
@@ -1610,7 +1620,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       error_on_findings = error;
       autofix;
       version_check;
-      output;
       output_conf;
       incremental_output;
       incremental_output_postprocess;

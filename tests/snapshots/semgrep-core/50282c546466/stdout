@@ -1,0 +1,10 @@
+--- begin input files ---
+eqeq.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 59 insertions(+)
+ create mode 100644 eqeq.yaml
+ create mode 100644 stupid.py
+aborted: Invalid output configuration: same output destination (out.json) with multiple formats.
