@@ -130,7 +130,10 @@ let eval_value ~argv cmd =
   (* the ~catch:false is to let non-cmdliner exn (e.g., Error.Semgrep_error)
    * to bubble up; those exns will then be caught in CLI.safe_run.
    *)
-  match Cmd.eval_value ~catch:false ~argv cmd with
+  (* ~env makes cmdliner honor the OPENGREP_* alias of every SEMGREP_* env var
+   * referenced via Cmd.Env.info (e.g., SEMGREP_RULES, SEMGREP_BASELINE_COMMIT),
+   * with the OPENGREP_* name taking precedence when both are set. *)
+  match Cmd.eval_value ~catch:false ~env:Opengrep_env.getenv_opt ~argv cmd with
   (* alt: could define a new Exit_code for those kinds of errors *)
   | Error (`Term | `Parse) -> Error.exit_code_exn (Exit_code.fatal ~__LOC__)
   (* this should never happen, because of the ~catch:false above *)

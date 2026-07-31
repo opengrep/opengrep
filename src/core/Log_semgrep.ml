@@ -61,10 +61,25 @@ let setup ?log_to_file ?require_one_of_these_tags
      filter by log level, so maybe we should send all? But that'll be expensive
      ... *)
   Logs_.setup ?log_to_file ?require_one_of_these_tags 
+    (* We accept both the OPENGREP_* names and the legacy SEMGREP_* ones, with
+     * the OPENGREP_* name winning when both are set (the lists are consulted in
+     * order of precedence). An empty (or, for the level, unrecognized) value is
+     * skipped so it doesn't shadow the lower-precedence SEMGREP_* fallback. *)
     ~read_level_from_env_vars:
-      [ "PYTEST_SEMGREP_LOG_LEVEL"; "SEMGREP_LOG_LEVEL" ]
-    ~read_srcs_from_env_vars:[ "PYTEST_SEMGREP_LOG_SRCS"; "SEMGREP_LOG_SRCS" ]
-    ~read_tags_from_env_vars:[ "PYTEST_SEMGREP_LOG_TAGS"; "SEMGREP_LOG_TAGS" ]
+      [
+        "PYTEST_OPENGREP_LOG_LEVEL"; "OPENGREP_LOG_LEVEL";
+        "PYTEST_SEMGREP_LOG_LEVEL"; "SEMGREP_LOG_LEVEL";
+      ]
+    ~read_srcs_from_env_vars:
+      [
+        "PYTEST_OPENGREP_LOG_SRCS"; "OPENGREP_LOG_SRCS";
+        "PYTEST_SEMGREP_LOG_SRCS"; "SEMGREP_LOG_SRCS";
+      ]
+    ~read_tags_from_env_vars:
+      [
+        "PYTEST_OPENGREP_LOG_TAGS"; "OPENGREP_LOG_TAGS";
+        "PYTEST_SEMGREP_LOG_TAGS"; "SEMGREP_LOG_TAGS";
+      ]
     ~level ();
   Logs.debug (fun m -> m "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   Logs.debug (fun m -> m "%s" help_msg);

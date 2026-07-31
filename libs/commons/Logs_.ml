@@ -127,9 +127,17 @@ let has_nonempty_intersection tag_str_list tag_set =
       ok || List.mem (Logs.Tag.name def) tag_str_list)
     tag_set false
 
-(* Consult environment variables from left-to-right in order of precedence. *)
+(* Consult environment variables left-to-right in order of precedence; the
+   first one that is set to a non-empty value wins. An empty value is treated as
+   unset so it doesn't shadow the lower-precedence variables (e.g. an empty
+   OPENGREP_LOG_SRCS still lets SEMGREP_LOG_SRCS win). *)
 let read_str_from_env_vars (vars : string list) : string option =
-  List.find_map (fun var -> USys.getenv_opt var) vars
+  List.find_map
+    (fun var ->
+      match USys.getenv_opt var with
+      | Some "" | None -> None
+      | Some _ as v -> v)
+    vars
 
 let read_comma_sep_strs_from_env_vars (vars : string list) : string list option
     =
@@ -248,10 +256,16 @@ let log_level_of_string_opt (str : string) : Logs.level option option =
   | "none" -> Some None
   | _ -> None
 
+(* Scalar setting: resolved by precedence, i.e. the first variable that is set
+   to a recognized level wins. An empty or unrecognized value is skipped so it
+   doesn't shadow the lower-precedence variables. *)
 let read_level_from_env (vars : string list) : Logs.level option option =
-  match read_str_from_env_vars vars with
-  | None -> None
-  | Some str -> log_level_of_string_opt str
+  List.find_map
+    (fun var ->
+      match USys.getenv_opt var with
+      | Some "" | None -> None
+      | Some str -> log_level_of_string_opt str)
+    vars
 
 (*****************************************************************************)
 (* Entry points *)
