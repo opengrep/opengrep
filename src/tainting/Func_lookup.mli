@@ -11,6 +11,10 @@ type alias_index
 type file_module_index
 type name_set
 
+(* Local import name -> the exported name it binds and the files that
+   export it; [import { C as Alias }] names its origin exactly. *)
+type class_alias_index
+
 val leaf_index_of_hashtbl :
   (string, Func_info.t list) Hashtbl.t -> leaf_index
 val module_index_of_hashtbl :
@@ -21,6 +25,11 @@ val file_module_index_of_hashtbl :
   (string, Names.Module_qn.t) Hashtbl.t -> file_module_index
 val name_set_of_hashtbl : (string, unit) Hashtbl.t -> name_set
 
+val class_alias_index_of_hashtbl :
+  (string, string * name_set) Hashtbl.t -> class_alias_index
+
+val name_set_mem : name_set -> string -> bool
+
 val create :
   ?funcs_by_name : leaf_index ->
   ?project_funcs_by_name : leaf_index ->
@@ -30,7 +39,11 @@ val create :
   ?funcs_by_package : leaf_index ->
   ?file_module_qn : file_module_index ->
   ?local_imports : name_set ->
+  ?class_aliases : class_alias_index ->
   unit -> t
+
+(* [None] when the name is not an import alias bound to a class. *)
+val resolve_class_alias : t -> string -> (string * name_set) option
 
 val with_local_imports :
   t -> name_set option -> t

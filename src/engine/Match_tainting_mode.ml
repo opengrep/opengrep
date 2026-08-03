@@ -783,7 +783,12 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
              singleton SCCs without a self-loop run once (the old behaviour). *)
           let module Sig_lattice = struct
             type t = Shape_and_sig.SignatureSet.t
-            let equal = Shape_and_sig.SignatureSet.equal
+
+            (* Guard-aware: plain [equal] is guard-blind and would declare
+               the SCC converged while an effect's guard still refines
+               (Clojure length-atom guards exist even with [effect_guards]
+               off). *)
+            let equal = Shape_and_sig.SignatureSet.equal_with_guards
           end in
           let module Sig_store = struct
             type t = Shape_and_sig.signature_database

@@ -1,0 +1,13 @@
+rules:
+  - id: same-name-offset-chain
+    mode: taint
+    message: >
+      Taint stored at o.data.data reaches the sink through a callee whose
+      signature reads the same-named two-segment chain.
+    severity: ERROR
+    languages:
+      - python
+    pattern-sources:
+      - pattern: taint(...)
+    pattern-sinks:
+      - pattern: sink(...)

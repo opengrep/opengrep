@@ -92,10 +92,36 @@ let find_func_in_scope (all_funcs : func_info list)
     else false
   ) all_funcs
 
-(* Get arity of a function from its definition *)
-let get_func_arity (fdef : G.function_definition) : int =
-  let params = fdef.fparams in
-  List.length (Tok.unbracket params)
+(* Arity of a function definition as seen from a call site: explicit
+   arguments only.  The definition-side explicit receiver — Go/Rust
+   [ParamReceiver], Python's first instance/class-method parameter
+   ([self]/[cls] by position, not name; [@staticmethod] has none) — takes
+   no call argument and must not count, or arity comparison against call
+   sites can never match for methods.  Mirrors
+   [Match_tainting_mode.is_implicit_receiver]. *)
+let get_func_arity ~(lang : Lang.t) (f : func_info) : int =
+  let params = Tok.unbracket f.fdef.G.fparams in
+  let is_static =
+    match f.entity with
+    | Some ent ->
+        List.exists
+          (fun (attr : G.attribute) ->
+             match attr with
+             | G.KeywordAttr (G.Static, _) -> true
+             | _ -> false)
+          ent.G.attrs
+    | None -> false
+  in
+  let is_method = Option.is_some (Func_info.enclosing_class f.fn_id) in
+  params
+  |> List.filteri (fun i (p : G.parameter) ->
+         match p with
+         | G.ParamReceiver _ -> false
+         | _ -> (
+             match lang with
+             | Lang.Python -> not (is_method && i =*= 0 && not is_static)
+             | _ -> true))
+  |> List.length
 
 (* Disambiguate among candidate functions matching a call site by name.
    [matches] are the candidates; [call_arity] is the number of arguments
@@ -121,13 +147,18 @@ let prefer_concrete (matches : func_info list) : func_info list =
   | [] -> matches
   | _ -> concrete
 
-let pick_by_arity (call_arity : int option) (matches : func_info list)
-    : fn_id option =
+let pick_by_arity ~(lang : Lang.t) (call_arity : int option)
+    (matches : func_info list) : fn_id option =
   let matches = prefer_concrete matches in
-  (* Reject a body-less synth candidate (Ruby [attr_reader]) against a positional-arg call. *)
+  (* Reject a body-less synth candidate (Ruby [attr_reader]: [FBNothing]
+     with an empty param list) against a positional-arg call.  A body-less
+     decl WITH params is an interface/abstract declaration and must stay
+     resolvable — dispatch merges the concrete impls' signatures into the
+     decl's vertex, so dropping its edge severs impl dispatch. *)
   let single_synth_with_args (f : func_info) : bool =
     match call_arity, f.fdef.G.fbody with
-    | Some n, (G.FBNothing | G.FBDecl _) when n > 0 -> true
+    | Some n, (G.FBNothing | G.FBDecl _)
+      when n > 0 && List_.null (Tok.unbracket f.fdef.G.fparams) -> true
     | _ -> false
   in
   match matches with
@@ -141,7 +172,7 @@ let pick_by_arity (call_arity : int option) (matches : func_info list)
       (match call_arity with
       | Some arity ->
           let arity_matches = List.filter (fun f ->
-            Int.equal (get_func_arity f.fdef) arity
+            Int.equal (get_func_arity ~lang f) arity
           ) matches in
           (match arity_matches with
           | [single_match] -> Some single_match.fn_id
@@ -328,7 +359,7 @@ let rec identify_callee ~(lang : Lang.t)
     in
     match interface_match with
     | Some f -> Some f.fn_id
-    | None -> pick_by_arity call_arity matches
+    | None -> pick_by_arity ~lang call_arity matches
   in
   let exceeds (lst : 'a list) (n : int) : bool =
     let rec go lst k =
@@ -355,13 +386,13 @@ let rec identify_callee ~(lang : Lang.t)
         List.sort_uniq String.compare (List.filter_map distinct_key xs)
       in
       let dk = distinct cands in
-      if Int.equal (List.length dk) 1 then pick_by_arity call_arity cands
+      if Int.equal (List.length dk) 1 then pick_by_arity ~lang call_arity cands
       else if List.length dk > unique_call_threshold then None
       else
         let same = same_file_filter cands in
         if Int.equal (List.length (distinct same)) 1
            && List.length same < List.length cands then
-          pick_by_arity call_arity same
+          pick_by_arity ~lang call_arity same
         else None
   in
   let try_unique_callee ~(callee_name : string) : fn_id option =
@@ -380,7 +411,14 @@ let rec identify_callee ~(lang : Lang.t)
         callee_name
   in
   let try_nested_callee ~(callee_name : string) : fn_id option =
-    match Func_lookup.nested_in_same_file func_lookup callee_name with
+    (* Methods are excluded: this resolves a BARE call, which supplies no
+       receiver, so a same-named method of some class in the file is not
+       a candidate (it would wire spurious cross-class edges). *)
+    match
+      Func_lookup.nested_in_same_file func_lookup callee_name
+      |> List.filter (fun (f : func_info) ->
+             Option.is_none (Func_info.enclosing_class f.fn_id))
+    with
     | [] -> None
     | [single] -> Some single.fn_id
     | _ -> None
@@ -397,7 +435,7 @@ let rec identify_callee ~(lang : Lang.t)
            Func_lookup.funcs_in_module func_lookup module_qn
            |> List.filter (fun f -> is_free_named f leaf_name)
          in
-         pick_by_arity call_arity candidates)
+         pick_by_arity ~lang call_arity candidates)
   in
   let try_unique_method_call ~(method_name : string) : fn_id option =
     try_unique_by_distinct_key
@@ -426,7 +464,7 @@ let rec identify_callee ~(lang : Lang.t)
         Func_lookup.funcs_in_module func_lookup target_qn
         |> List.filter (fun f -> is_free_named f method_name)
       in
-      (match pick_by_arity call_arity candidates with
+      (match pick_by_arity ~lang call_arity candidates with
           | Some _ as r -> r
           | None ->
             let cls_simple =
@@ -440,7 +478,7 @@ let rec identify_callee ~(lang : Lang.t)
                 Type_state.find_methods type_state ~fallback:[]
                   ~class_name:cls_simple ~method_name
               in
-              pick_by_arity call_arity method_matches)
+              pick_by_arity ~lang call_arity method_matches)
   in
   (* Kept un-narrowed for the bare-generic [foo<T>()] reroute. *)
   let unnarrowed_all_funcs = all_funcs in
@@ -575,7 +613,7 @@ let rec identify_callee ~(lang : Lang.t)
                                    Func_lookup.funcs_in_module func_lookup module_qn
                                    |> List.filter (fun f -> is_free_named f leaf_name)
                                  in
-                                 (match pick_by_arity call_arity candidates with
+                                 (match pick_by_arity ~lang call_arity candidates with
                                   | Some _ as r -> r
                                   | None ->
                                     try_unique_callee ~callee_name:callee_name_str)))))
@@ -615,7 +653,7 @@ let rec identify_callee ~(lang : Lang.t)
                           |> List.filter (fun f ->
                                is_free_named f callee_name_str)
                         in
-                        pick_by_arity call_arity candidates
+                        pick_by_arity ~lang call_arity candidates
                 in
                 (match alias_match with
                 | Some _ as r -> r
@@ -636,7 +674,7 @@ let rec identify_callee ~(lang : Lang.t)
                         ~class_name:class_name_str
                         ~method_name:callee_name_str
                     in
-                    pick_by_arity call_arity method_matches)))
+                    pick_by_arity ~lang call_arity method_matches)))
         (* Method call: this.method() or self.method() *)
         | G.DotAccess
             ( { e = G.IdSpecial ((G.This | G.Self), _); _ },
@@ -653,7 +691,7 @@ let rec identify_callee ~(lang : Lang.t)
                   Type_state.find_methods type_state ~fallback:all_funcs
                     ~class_name:class_name_str ~method_name:method_name_str
                 in
-                pick_by_arity call_arity method_matches
+                pick_by_arity ~lang call_arity method_matches
             | None -> None)
         (* No ctor/fuzzy fallback here (FP-prone on namespaced libs). *)
         | G.DotAccess
@@ -665,7 +703,7 @@ let rec identify_callee ~(lang : Lang.t)
               Type_state.find_methods type_state ~fallback:all_funcs
                 ~class_name:obj_name ~method_name:method_name_str
             in
-            pick_by_arity call_arity class_member_matches
+            pick_by_arity ~lang call_arity class_member_matches
         (* Method call: obj.method() - look up obj's class *)
         | G.DotAccess
             ( { e = G.N (G.Id ((obj_name, _), obj_id_info)); _ },
@@ -682,9 +720,42 @@ let rec identify_callee ~(lang : Lang.t)
                 let class_name_str =
                   Option.value (Ty_leaf.leaf_of_name class_name) ~default:""
                 in
-                let method_matches =
-                  Type_state.find_methods type_state ~fallback:all_funcs
-                    ~class_name:class_name_str ~method_name:method_name_str
+                (* [import { C as Alias }] then [new Alias()]: naming types
+                   the receiver from the initializer, so the class name is
+                   the local alias, which names no class.  The alias also
+                   names its origin file exactly — which is what tells two
+                   same-named imported classes apart. *)
+                let class_name_str, method_matches =
+                  let direct =
+                    Type_state.find_methods type_state ~fallback:all_funcs
+                      ~class_name:class_name_str ~method_name:method_name_str
+                  in
+                  match direct with
+                  | _ :: _ -> (class_name_str, direct)
+                  | [] -> (
+                      match
+                        Func_lookup.resolve_class_alias func_lookup
+                          class_name_str
+                      with
+                      | None -> (class_name_str, direct)
+                      | Some (exported, target_files) -> (
+                          let of_exported =
+                            Type_state.find_methods type_state
+                              ~fallback:all_funcs ~class_name:exported
+                              ~method_name:method_name_str
+                          in
+                          match
+                            List.filter
+                              (fun (f : func_info) ->
+                                match Func_info.def_file_opt f with
+                                | Some file ->
+                                    Func_lookup.name_set_mem target_files
+                                      (Fpath.to_string file)
+                                | None -> false)
+                              of_exported
+                          with
+                          | [] -> (exported, of_exported)
+                          | from_origin -> (exported, from_origin)))
                 in
                 resolve_class_method
                   ?qualifier:(Ty_leaf.qualifier_of_name class_name)
@@ -704,7 +775,7 @@ let rec identify_callee ~(lang : Lang.t)
                   in
                   from_class @ from_all
                 in
-                (match pick_by_arity call_arity class_member_matches with
+                (match pick_by_arity ~lang call_arity class_member_matches with
                 | Some _ as r -> r
                 | None ->
                     let module_match =
@@ -719,7 +790,7 @@ let rec identify_callee ~(lang : Lang.t)
                           Func_lookup.funcs_in_package func_lookup obj_name
                           |> List.filter (fun f -> is_free_named f method_name_str)
                         in
-                        pick_by_arity call_arity candidates
+                        pick_by_arity ~lang call_arity candidates
                       in
                       (match pkg_match with
                        | Some _ as r -> r
