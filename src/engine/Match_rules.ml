@@ -144,7 +144,8 @@ let is_relevant_rule_for_xtarget r xconf xtarget =
            neither — a file that can't seed or match any spec. *)
         let prefilter =
           if interfile_taint then
-            Analyze_rule.regexp_prefilter_of_interfile_taint_rule r
+            Analyze_rule.regexp_prefilter_of_interfile_taint_rule
+              ~cache:(Some cache) r
           else Analyze_rule.regexp_prefilter_of_rule ~cache:(Some cache) r
         in
         match prefilter with

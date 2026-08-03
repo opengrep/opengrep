@@ -771,21 +771,16 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
       []
 
 (* Fast path via [id_resolved] sid (= sig DB key), skipping the edge scan.
-   [?require_leaf] gates on the resolved def's name matching the call leaf,
-   guarding against wrong-scope stamps; constructor defs are the sanctioned
-   mismatch (Ruby [Cls.new]->[initialize], Python [Cls()]->[__init__]). *)
-let signature_via_id_resolved ?require_leaf ~lang ~project_root db
-    (id_info : G.id_info) arity =
+   The stamp is trusted whatever name it resolves to, gated only by the
+   lookup itself: a leaf-name mismatch is as likely to be a deliberate
+   alias (a class-body field alias exposes name X for a target named Y,
+   and projidx's write-back stamps the target's sid) or a constructor
+   (Ruby [Cls.new]->[initialize], Python [Cls()]->[__init__]) as a stale
+   stamp, and a stamp that resolves to a stored signature of the right
+   arity is evidence enough. *)
+let signature_via_id_resolved ~project_root db (id_info : G.id_info) arity =
   match !(id_info.G.id_resolved) with
   | Some (_, sid) when not (G.SId.is_unsafe_default sid) ->
-    let leaf_ok =
-      match require_leaf with
-      | None -> true
-      | Some leaf ->
-        let (rname, _, _, _) = G.SId.to_loc sid in
-        String.equal rname leaf
-        || Object_initialization.is_constructor lang rname None
-    in
     (* A project scan keys the sig DB by absolutified fids, while sids
        carry the as-parsed (possibly relative) file. *)
     let fid =
@@ -794,24 +789,17 @@ let signature_via_id_resolved ?require_leaf ~lang ~project_root db
       | Some root -> Function_id.make_absolute root fid
       | None -> fid
     in
-    if leaf_ok then Shape_and_sig.lookup_signature db fid arity
-    else
-      (* Leaf-name mismatch: either a stale stamp or a deliberate alias
-         (a class-body field alias exposes name X for a target named Y;
-         projidx's write-back stamps the target's sid). Trust it only
-         when the stamp resolves to an actual stored signature of the
-         right arity. *)
-      Shape_and_sig.lookup_signature db fid arity
+    Shape_and_sig.lookup_signature db fid arity
   | _ -> None
 
-let get_signature_for_object ?(callee_id_info : G.id_info option) ~lang
+let get_signature_for_object ?(callee_id_info : G.id_info option)
     ~project_root graph caller_node db method_name arity =
   (* obj.method(): prefer the callee leaf's [id_resolved] def-site sid,
      else the local call-graph edge, else the method-name fid. *)
   let fast =
     Option.bind callee_id_info (fun ii ->
         signature_via_id_resolved
-          ~require_leaf:(Function_id.show method_name) ~lang ~project_root
+          ~project_root
           db ii arity)
   in
   match fast with
@@ -846,7 +834,7 @@ let try_builtin_fallback env func_name arity result =
  * call branch and the Ruby [method(:name)] recogniser. *)
 let lookup_bare_function_name env db (name : IL.name) arity =
   match
-    signature_via_id_resolved ~lang:env.taint_inst.lang
+    signature_via_id_resolved
       ~project_root:env.taint_inst.project_root db name.IL.id_info arity
   with
   | Some _ as r -> r
@@ -934,7 +922,7 @@ let lookup_signature_with_object_context env fun_exp arity =
           }
         when Option.is_some env.class_name -> (
           match
-            signature_via_id_resolved ~lang:env.taint_inst.lang
+            signature_via_id_resolved
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
@@ -956,7 +944,6 @@ let lookup_signature_with_object_context env fun_exp arity =
           match
             get_signature_for_object
               ~callee_id_info:method_name.id_info
-              ~lang:env.taint_inst.lang
               ~project_root:env.taint_inst.project_root
               env.call_graph
               env.call_graph_caller
@@ -983,8 +970,6 @@ let lookup_signature_with_object_context env fun_exp arity =
              the resolution channel, same as the single-offset branch. *)
           match
             signature_via_id_resolved
-              ~require_leaf:(fst method_name.ident)
-              ~lang:env.taint_inst.lang
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
@@ -1007,6 +992,35 @@ let lookup_signature_with_object_context env fun_exp arity =
       | Fetch
           {
             base = VarSpecial ((Self | This), _);
+            rev_offset = [ { o = Dot method_name; _ } ];
+          } -> (
+          (* Direct self/this method call ([this.handle (x)]): the leaf
+             method's stamp, then the graph edge anchored at the method
+             token — the same channels as the self-field branch below.
+             No name-keyed DB fallback: a bare method-name lookup would
+             match any same-named method regardless of class. *)
+          match
+            signature_via_id_resolved
+              ~project_root:env.taint_inst.project_root db
+              method_name.id_info arity
+          with
+          | Some _ as r -> r
+          | None -> (
+              let call_tok =
+                Tok.abs_tok env.taint_inst.project_root
+                  (snd method_name.ident)
+              in
+              match
+                Call_graph.lookup_callee_from_graph env.call_graph
+                  (Option.map Function_id.of_il_name env.call_graph_caller)
+                  call_tok
+              with
+              | Some callee_node ->
+                  Shape_and_sig.lookup_signature db callee_node arity
+              | None -> None))
+      | Fetch
+          {
+            base = VarSpecial ((Self | This), _);
             rev_offset = { o = Dot method_name; _ } :: _ :: _;
           } -> (
           (* Call through a self-field (e.g. [self.worker.work(x)], the
@@ -1017,8 +1031,6 @@ let lookup_signature_with_object_context env fun_exp arity =
              match any same-named method regardless of class. *)
           match
             signature_via_id_resolved
-              ~require_leaf:(fst method_name.ident)
-              ~lang:env.taint_inst.lang
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with

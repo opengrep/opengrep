@@ -444,13 +444,11 @@ let default_effect_handler _fun_name new_effects = new_effects
 
 let taint_config_of_rule ~per_file_formula_cache
     ?(handle_effects = default_effect_handler) ?(allow_partial = false)
-    ?(require_sinks = false)
     xconf lang file ast_and_errors
     ({ mode = `Taint spec; _ } as rule : R.taint_rule) =
   match spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
       ast_and_errors rule with
   | { sinks = []; sources = []; sanitizers = []; propagators = [] }, _ -> None
-  | { sinks = []; _ }, _ when require_sinks -> None
   | ({ sinks = []; _ } | { sources = []; _ }), _ when not allow_partial -> None
   | spec_matches, expls ->
       let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in

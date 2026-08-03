@@ -6,11 +6,18 @@ type alias_index = (string, Names.Module_qn.t) Hashtbl.t
 type file_module_index = (string, Names.Module_qn.t) Hashtbl.t
 type name_set = (string, unit) Hashtbl.t
 
+(* Local import name -> the exported name it binds and the files that
+   export it.  [import { C as Alias }] names its origin exactly, which is
+   what tells two same-named imported classes apart. *)
+type class_alias_index = (string, string * name_set) Hashtbl.t
+
 let leaf_index_of_hashtbl tbl = tbl
 let module_index_of_hashtbl tbl = tbl
 let alias_index_of_hashtbl tbl = tbl
 let file_module_index_of_hashtbl tbl = tbl
 let name_set_of_hashtbl tbl = tbl
+let class_alias_index_of_hashtbl tbl = tbl
+let name_set_mem set name = Hashtbl.mem set name
 
 type t = {
   funcs_by_name : leaf_index option;
@@ -22,6 +29,7 @@ type t = {
   (* Disambiguates method homonyms across same-basename packages by exact import path. *)
   file_module_qn : file_module_index option;
   local_imports : name_set option;
+  class_aliases : class_alias_index option;
 }
 
 let empty = {
@@ -33,13 +41,14 @@ let empty = {
   funcs_by_package = None;
   file_module_qn = None;
   local_imports = None;
+  class_aliases = None;
 }
 
 let create
     ?funcs_by_name ?project_funcs_by_name
     ?funcs_by_module_qn ?alias_to_module_qn
     ?same_file_funcs_by_name ?funcs_by_package ?file_module_qn
-    ?local_imports () =
+    ?local_imports ?class_aliases () =
   { funcs_by_name;
     project_funcs_by_name;
     funcs_by_module_qn;
@@ -47,7 +56,14 @@ let create
     same_file_funcs_by_name;
     funcs_by_package;
     file_module_qn;
-    local_imports }
+    local_imports;
+    class_aliases }
+
+(* [None] when the name is not an import alias for a class. *)
+let resolve_class_alias t name =
+  match t.class_aliases with
+  | Some idx -> Hashtbl.find_opt idx name
+  | None -> None
 
 let with_local_imports t local_imports : t =
   { t with local_imports }

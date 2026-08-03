@@ -108,11 +108,31 @@ let max_poly_offset (lang : Lang.t) : int =
   | Lang.Go -> Limits_semgrep.taint_MAX_POLY_OFFSET_FLAT
   | _ -> Limits_semgrep.taint_MAX_POLY_OFFSET
 
+(* A repeated segment is a composition cycle only when it is the same
+   OCCURRENCE — [x = x.getX ()] re-composes the same field token each
+   round.  Same-named distinct fields ([x.data.data]) are legitimate
+   chains, and field idents carry default sids, so [T.equal_offset]
+   alone cannot tell the two apart: compare source positions as well.
+   Tokenless segments (ints, strings, slices) have no occurrence to
+   compare; identical repetition still counts as a cycle there, and
+   the cap bounds composition regardless. *)
+let same_offset_occurrence (o1 : T.offset) (o2 : T.offset) : bool =
+  T.equal_offset o1 o2
+  &&
+  match (o1, o2) with
+  | T.Ofld n1, T.Ofld n2 -> (
+      match
+        (Tok.loc_of_tok (snd n1.ident), Tok.loc_of_tok (snd n2.ident))
+      with
+      | Ok l1, Ok l2 -> Pos.equal l1.Tok.pos l2.Tok.pos
+      | _ -> true)
+  | _ -> true
+
 (* Append [offset]'s segments to [base] one at a time, under the same two
    bounds as [add_offset_to_lval] below: stop at the first segment already
-   present (the cycle guard, cf. [x = x.getX ()]) and at [max_poly_offset]
-   segments total.  [base] is respected as-is; only extensions are
-   guarded. *)
+   present as the same occurrence (the cycle guard, cf. [x = x.getX ()])
+   and at [max_poly_offset] segments total.  [base] is respected as-is;
+   only extensions are guarded. *)
 let compose_offset ~(lang : Lang.t) (base : T.offset list)
     (offset : T.offset list) : T.offset list =
   let cap = max_poly_offset lang in
@@ -129,7 +149,8 @@ let compose_offset ~(lang : Lang.t) (base : T.offset list)
               m "compose_offset: dropping %d segment(s) past poly-offset cap %d: base=%s offset=%s"
                 (List.length os) cap (debug_offset base) (debug_offset offset));
           List.rev rev_acc)
-        else if List.exists (T.equal_offset o) rev_acc then List.rev rev_acc
+        else if List.exists (same_offset_occurrence o) rev_acc then
+          List.rev rev_acc
         else go (o :: rev_acc) (n + 1) rest
   in
   go (List.rev base) (List.length base) offset
