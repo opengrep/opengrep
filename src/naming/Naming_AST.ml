@@ -384,7 +384,12 @@ let lookup_for_implicit_assign_opt id env =
           | None ->
               None))
   | Lang.Php, current_block :: _ -> lookup s [ current_block ]
-  | (Lang.Ruby | Lang.Crystal), (_ :: _ as blocks) ->
+  | (Lang.Ruby | Lang.Crystal), blocks ->
+      (* Blocks close over enclosing locals, and top-level locals stay
+         visible; [blocks] is empty at the top level, where the chain is
+         just the global scope.  The imported scope — where top-level
+         [def]s live — is excluded either way: that is what assignment
+         shadows (locals and methods are separate namespaces). *)
       lookup s (blocks @ [ !(env.names.global) ])
   | _ -> lookup_scope_opt id env
 
@@ -1177,7 +1182,20 @@ class ['self] resolve_visitor env lang =
           recurse := false
       (* specialized kname case when in expr context *)
       | N (Id (id, id_info)) ->
-          (match lookup_scope_opt id env with
+          (* A write target uses the same shadow-aware lookup as the
+             single-name [Assign] case above: destructuring targets,
+             augmented-assignment targets and (Ruby) top-level assignments
+             all reach the name through here, and must declare a local
+             rather than bind a same-named definition from an outer scope. *)
+          let lookup_here id env =
+            if
+              !(env.in_lvalue)
+              && assign_implicitly_declares lang
+              && is_resolvable_name_ctx env lang
+            then lookup_for_implicit_assign_opt id env
+            else lookup_scope_opt id env
+          in
+          (match lookup_here id env with
           | Some resolved ->
               (* name resolution *)
               set_resolved env id_info resolved

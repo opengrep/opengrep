@@ -275,7 +275,8 @@ let augment_return_types_from_bodies
     ~(type_state : Type_state.t)
     (all_funcs : FA.func_info list) : Type_state.t =
   let collect_return_exprs (func : FA.func_info) : G.expr list =
-    Nonfatal.catch ~default:[] (fun () ->
+    Nonfatal.catch ?on:(func_def_file func |> Option.map Fpath.v) ~default:[]
+      (fun () ->
       let body_stmt = AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody in
       Walker.fold_stmts_in_stmt ~skip_nested_fdefs:true (fun acc stmt ->
         match stmt.G.s with
@@ -459,7 +460,7 @@ let build_module_singleton_types
         (mp, name, rhs) :: acc
       | _ -> acc
     in
-    Nonfatal.catch ~default:[] (fun () ->
+    Nonfatal.catch ~on:fi.fi_file ~default:[] (fun () ->
       List.fold_left (fun acc top ->
         Walker.fold_stmts_in_stmt ~skip_nested_fdefs:true collect acc top
       ) [] fi.fi_ast
@@ -556,8 +557,9 @@ let augment_fields_from_self_assignments
           ) outer_acc (Tok.unbracket func.FA.fdef.G.fparams)
         else outer_acc
       in
+      let def_file_opt = func_def_file func |> Option.map Fpath.v in
       let body =
-        Nonfatal.catch ~default:None (fun () ->
+        Nonfatal.catch ?on:def_file_opt ~default:None (fun () ->
           Some (AST_generic_helpers.funcbody_to_stmt func.FA.fdef.G.fbody))
       in
       (match body with
@@ -572,7 +574,7 @@ let augment_fields_from_self_assignments
            ) param_types []
          in
          Object_initialization.stamp_id_types param_facts [body_stmt];
-         Nonfatal.catch ~default:outer_acc (fun () ->
+         Nonfatal.catch ?on:def_file_opt ~default:outer_acc (fun () ->
            Walker.fold_exprs_in_stmt ~skip_nested_fdefs:true (fun acc expr ->
              match expr.G.e with
              | G.Assign (

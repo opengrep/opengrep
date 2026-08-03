@@ -270,7 +270,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   let type_state =
     Go_inheritance.lift_embedded_interfaces ~lang file_infos type_state
   in
-  let type_state, inherited_by_class =
+  let type_state, inherited_by_class, override_pairs =
     if cfg.Index_lang_rules.walks_inheritance then
       let cross_module_parents =
         match cfg.Index_lang_rules.unqualified_scope with
@@ -279,7 +279,7 @@ let build_project_call_graph (caps : < Cap.fork >)
       in
       Mro.inherit_into_type_state ~cross_module_parents ~reexport_map
         ~class_infos ~func_def_file:Type_augment.func_def_file type_state
-    else (type_state, [])
+    else (type_state, [], [])
   in
 
   (* TS/JS class-body aliases [class C { static foo = importedFn }]. *)
@@ -472,6 +472,29 @@ let build_project_call_graph (caps : < Cap.fork >)
   if n_dispatch > 0 then
     Log.debug (fun m -> m "Interface dispatch: emitted %d Dispatch edges"
       n_dispatch);
+  (* Nominal override dispatch: a subclass method shadowing a body-less
+     ancestor decl (abstract method).  Same edge shape as interface
+     dispatch (impl -> decl), so [dispatch_merge_fbdecl] and the
+     reachability dispatch closure treat both alike. *)
+  let n_override =
+    List.fold_left
+      (fun n ((c_m : FA.func_info), (p_m : FA.func_info)) ->
+        match FA.fn_id_to_node c_m.FA.fn_id, FA.fn_id_to_node p_m.FA.fn_id with
+        | Some src, Some dst ->
+          let call_tok =
+            match c_m.FA.fn_id with
+            | [_; Some m_il] -> snd m_il.IL.ident
+            | _ -> snd c_m.FA.fdef.G.fkind
+          in
+          Call_graph.add_edge ~kind:Call_graph.Dispatch graph
+            ~src ~dst ~call_tok;
+          n + 1
+        | _ -> n)
+      0 override_pairs
+  in
+  if n_override > 0 then
+    Log.debug (fun m -> m "Override dispatch: emitted %d Dispatch edges"
+      n_override);
   (graph, inherited_by_class, phase1_failures @ phase2_failures)
 
 let project_root_abs_of (project_root : Fpath.t) : Fpath.t =

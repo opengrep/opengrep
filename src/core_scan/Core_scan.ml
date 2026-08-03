@@ -1097,12 +1097,21 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   let fallback_paths_by_rule : (Rule_ID.t, (string, unit) Hashtbl.t) Hashtbl.t =
     Hashtbl.create 4
   in
+  (* A rule can contribute several path lists (graph-coverage gaps plus one
+     per failed rule subgraph) — union them; replacing would silently drop
+     the earlier lists' targets from both dispatch and the per-target run. *)
   List.iter (fun (rid, paths) ->
-    let set = Hashtbl.create (List.length paths) in
+    let set =
+      match Hashtbl.find_opt fallback_paths_by_rule rid with
+      | Some set -> set
+      | None ->
+          let set = Hashtbl.create (List.length paths) in
+          Hashtbl.replace fallback_paths_by_rule rid set;
+          set
+    in
     List.iter (fun p ->
       Hashtbl.replace set (Fpath.to_string (Fpath.normalize p)) ())
-      paths;
-    Hashtbl.replace fallback_paths_by_rule rid set)
+      paths)
     interfile_fallback_rule_target_paths;
   let cwd = Fpath.v (Sys.getcwd ()) in
   let rule_runs_on_target (rule : R.t) (target : Target.t) : bool =

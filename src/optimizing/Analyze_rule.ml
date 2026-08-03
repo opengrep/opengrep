@@ -665,7 +665,9 @@ let regexp_prefilter_of_taint_rule ~xlang (_rule_id, rule_tok) taint_spec =
    containing a source OR a sink — unlike intrafile matching, the two
    need not co-occur in one file, so [regexp_prefilter_of_taint_rule]'s
    AND would wrongly drop source-only and sink-only files. *)
-let regexp_prefilter_of_interfile_taint_rule (r : R.rule) : prefilter option =
+let regexp_prefilter_of_interfile_taint_rule ?(cache = None) (r : R.rule)
+    : prefilter option =
+  let compute () : prefilter option =
   match r.R.mode with
   | `Taint taint_spec -> (
       let rule_id, rule_tok = r.R.id in
@@ -690,6 +692,14 @@ let regexp_prefilter_of_interfile_taint_rule (r : R.rule) : prefilter option =
                 (Rule_ID.to_string rule_id));
           None)
   | _ -> None
+  in
+  match cache with
+  | None -> compute ()
+  (* Keyed by rule id, like [regexp_prefilter_of_rule]: a rule is interfile
+     or not for the whole scan, so one rule never needs both variants in
+     the same cache.  Same domain-locality constraint as that function. *)
+  | Some cache ->
+    Common.memoized_not_thread_safe (Domain.DLS.get cache) (fst r.R.id) compute
 
 let regexp_prefilter_of_rule ~cache (r : R.rule) =
   let rule_id, _t = r.R.id in
