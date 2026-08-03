@@ -1,0 +1,16 @@
+rules:
+  - id: method-arity-disambiguation
+    languages: [python]
+    severity: ERROR
+    message: >
+      Two same-named classes declare a same-named method with different
+      arities.  The call passes one argument, so arity disambiguates —
+      but only if definition arity excludes the receiver parameter
+      ([self] takes no call argument).
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
