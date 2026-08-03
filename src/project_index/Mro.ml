@@ -142,7 +142,8 @@ let inherit_into_type_state
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
     ~(class_infos : class_info list)
     ~(func_def_file : FA.func_info -> string option)
-    (ts : Type_state.t) : Type_state.t * class_fun_info list =
+    (ts : Type_state.t)
+    : Type_state.t * class_fun_info list * (FA.func_info * FA.func_info) list =
   (* Each table holds at most one entry per class. *)
   let n_classes = List.length class_infos in
   let by_qn : (Names.Class_qn.t, class_info) Hashtbl.t =
@@ -255,7 +256,9 @@ let inherit_into_type_state
     match linearize [] ci with _ :: rest -> rest | [] -> []
   in
   List.fold_left (fun ((state : Type_state.t),
-                       (inherited_acc : class_fun_info list)) ci ->
+                       (inherited_acc : class_fun_info list),
+                       (override_acc : (FA.func_info * FA.func_info) list))
+                      ci ->
     let child_simple = Names.Class_qn.leaf ci.ci_qn in
     let child_name = Names.Class_name.of_string child_simple in
     let own =
@@ -274,7 +277,7 @@ let inherit_into_type_state
                   id_info = G.empty_id_info () }
     in
     match child_cls_il with
-    | None -> (state, inherited_acc)
+    | None -> (state, inherited_acc, override_acc)
     | Some child_cls_il ->
       let initial_names =
         List.filter_map (fun (func : FA.func_info) ->
@@ -282,7 +285,7 @@ let inherit_into_type_state
             (Func_info.as_method func.FA.fn_id)
         ) own |> List.sort_uniq String.compare
       in
-      let collect_from (names, added) (pci : class_info) =
+      let collect_from (names, added, ovr) (pci : class_info) =
         let parent_simple = Names.Class_qn.leaf pci.ci_qn in
         let pmethods =
           Option.value
@@ -328,24 +331,60 @@ let inherit_into_type_state
             ) by_leaf
           | pinned -> pinned
         in
-        List.fold_left (fun (names, added) pm ->
+        List.fold_left (fun (names, added, ovr) pm ->
           match Func_info.as_method pm.FA.fn_id with
           | Some (_, meth) ->
             let mname = fst meth.IL.ident in
-            if List.mem mname names then (names, added)
+            if List.mem mname names then
+              (* Not inherited: the child (or a nearer ancestor) defines
+                 [mname].  When the ancestor's version is a BODY-LESS decl
+                 (abstract method) and the child's own same-arity method
+                 shadows it, that is an override — record the pair so a
+                 dispatch edge connects it to the decl (a base-class
+                 self-call binds the decl; without the edge its merged
+                 signature stays empty and taint dies there).  Concrete
+                 ancestor methods are not wired: unioning a real body with
+                 its overrides is a precision call, not a gap. *)
+              let ovr =
+                match pm.FA.fdef.G.fbody with
+                | G.FBDecl _ | G.FBNothing ->
+                  let pm_arity =
+                    List.length (Tok.unbracket pm.FA.fdef.G.fparams)
+                  in
+                  (match
+                     List.find_opt
+                       (fun (om : FA.func_info) ->
+                          (match Func_info.as_method om.FA.fn_id with
+                           | Some (_, ometh) ->
+                             String.equal (fst ometh.IL.ident) mname
+                           | None -> false)
+                          && Int.equal
+                               (List.length
+                                  (Tok.unbracket om.FA.fdef.G.fparams))
+                               pm_arity)
+                       own
+                   with
+                   | Some om -> (om, pm) :: ovr
+                   | None -> ovr)
+                | _ -> ovr
+              in
+              (names, added, ovr)
             else
               (match synth_inherited child_cls_il pm with
-               | Some inh -> (mname :: names, inh :: added)
-               | None -> (names, added))
-          | None -> (names, added)
-        ) (names, added) pmethods
+               | Some inh -> (mname :: names, inh :: added, ovr)
+               | None -> (names, added, ovr))
+          | None -> (names, added, ovr)
+        ) (names, added, ovr) pmethods
       in
-      let _, added =
-        List.fold_left collect_from (initial_names, []) (mro_ancestors ci)
+      let _, added, overrides =
+        List.fold_left collect_from (initial_names, [], [])
+          (mro_ancestors ci)
       in
+      let override_acc = List.rev_append overrides override_acc in
       if added <> [] then
         (Type_state.add_inherited state
            (Names.Class_name.of_string child_simple) added,
-         (ci, added) :: inherited_acc)
-      else (state, inherited_acc)
-  ) (ts, []) class_infos
+         (ci, added) :: inherited_acc,
+         override_acc)
+      else (state, inherited_acc, override_acc)
+  ) (ts, [], []) class_infos

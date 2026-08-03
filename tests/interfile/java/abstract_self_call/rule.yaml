@@ -1,0 +1,16 @@
+rules:
+  - id: abstract-self-call
+    languages: [java]
+    severity: ERROR
+    message: >
+      Taint flows through an abstract self-call: [process] calls
+      [this.handle], declared abstract on the base class and implemented
+      in a subclass.  The body-less declaration must stay resolvable —
+      dispatch merges the impl's signature into it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

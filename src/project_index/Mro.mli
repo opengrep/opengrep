@@ -19,10 +19,15 @@ val resolve_parent_by_scope :
 
 (* C3 linearisation of every class hierarchy: extends the lattice with each
    class's inherited methods and also returns the per-class inherited lists
-   (the source for the diagnostic inherited-method entry rows). *)
+   (the source for the diagnostic inherited-method entry rows), plus the
+   override pairs [(child_method, ancestor_decl)] where a child's own
+   method shadows a BODY-LESS ancestor declaration (abstract method) of
+   the same arity — the source for nominal override dispatch edges. *)
 val inherit_into_type_state :
   cross_module_parents:bool ->
   reexport_map:(Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t ->
   class_infos:class_info list ->
   func_def_file:(Graph_from_AST.func_info -> string option) ->
-  Type_state.t -> Type_state.t * class_fun_info list
+  Type_state.t ->
+  Type_state.t * class_fun_info list
+  * (Graph_from_AST.func_info * Graph_from_AST.func_info) list

@@ -544,11 +544,16 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
     let method_hofs = Lang_config.hof_method_names lang in
     let function_hofs = Lang_config.hof_function_specs lang in
     Visit_function_defs.fold_toplevel_calls (fun acc _call_e callee args ->
-      let found = extract_hof_callbacks_from_call
-        ~lang ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
-        callee args
-      in
-      found @ acc
+      match callee.G.e with
+      (* Operator pseudo-calls (PEP 604 unions) would emit spurious
+         callback edges; same filter as [extract_toplevel_hof_callbacks]. *)
+      | G.IdSpecial (G.Op _, _) -> acc
+      | _ ->
+        let found = extract_hof_callbacks_from_call
+          ~lang ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
+          callee args
+        in
+        found @ acc
     ) [] ast
   in
   toplevel_hof_callbacks |> List.iter (fun (callback_fn_id, call_tok, tmp_opt) ->

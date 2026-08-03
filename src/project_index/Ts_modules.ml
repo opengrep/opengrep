@@ -235,9 +235,25 @@ let resolve_specifier
     in
     let base = Fpath.to_string base_path in
     let index_under name = Fpath.(base_path // v name) |> Fpath.to_string in
-    [ base ^ ".ts"; base ^ ".tsx"; base ^ ".js"; base ^ ".jsx";
-      index_under "index.ts"; index_under "index.tsx";
-      index_under "index.js"; index_under "index.jsx" ]
+    (* Extensioned specifiers: mandatory under NodeNext resolution, where
+       './utils.js' refers to utils.ts on disk (and plain CJS requires
+       name the real file).  Try the literal path and the source-extension
+       swaps first; appending to an already-extensioned base can only
+       produce names like [utils.js.ts], which never exist. *)
+    let extensioned =
+      let chop = Fpath.to_string (Fpath.rem_ext base_path) in
+      match Fpath.get_ext base_path with
+      | ".js" -> [ base; chop ^ ".ts"; chop ^ ".tsx" ]
+      | ".jsx" -> [ base; chop ^ ".tsx" ]
+      | ".mjs" -> [ base; chop ^ ".mts"; chop ^ ".ts" ]
+      | ".cjs" -> [ base; chop ^ ".cts"; chop ^ ".ts" ]
+      | ".ts" | ".tsx" | ".mts" | ".cts" -> [ base ]
+      | _ -> []
+    in
+    extensioned
+    @ [ base ^ ".ts"; base ^ ".tsx"; base ^ ".js"; base ^ ".jsx";
+        index_under "index.ts"; index_under "index.tsx";
+        index_under "index.js"; index_under "index.jsx" ]
   end
   else
     match path_suffix_index with

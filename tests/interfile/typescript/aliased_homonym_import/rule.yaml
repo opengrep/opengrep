@@ -1,0 +1,15 @@
+rules:
+  - id: aliased-homonym-import
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      Two files export a same-named class; one is imported under an
+      alias.  A call on the aliased receiver must resolve to the class
+      from the file it was imported from.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

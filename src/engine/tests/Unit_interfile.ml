@@ -29,7 +29,8 @@ let discover_test_cases (root : Fpath.t)
              (lang_dir, case_dir, Fpath.v (Filename.concat lang_path case_dir))))
     lang_dirs
 
-let run_test ?(taint_interfile = true) ?(taint_interfile_depth = 3)
+let run_test ?(taint_interfile = true) ?(taint_intrafile = true)
+    ?(taint_interfile_depth = 3)
     (caps : Core_scan.caps) (test_dir : Fpath.t) () : unit =
   let files = Testutil_files.read test_dir in
   Testutil_git.with_git_repo files (fun (raw_cwd : Fpath.t) ->
@@ -102,7 +103,7 @@ let run_test ?(taint_interfile = true) ?(taint_interfile_depth = 3)
           rule_source = Rule_file rule_file;
           target_source = Targets targets;
           output_format = Text (* NoOutput *);
-          taint_intrafile = true;
+          taint_intrafile;
           taint_interfile;
           taint_interfile_depth;
           engine_config = Engine_config.default;
@@ -145,6 +146,13 @@ let regression_tests (caps : Core_scan.caps) : Testo.t list =
     Testo.create "regression: intrafile cross-function with project root"
       (run_test ~taint_interfile:false caps
          Fpath.(root / "python" / "intrafile_cross_function"));
+    (* No config-level taint flags at all: the rule's own
+       [taint_interfile: true] option must imply taint_intrafile in the
+       per-rule merge, else the rule is dispatched with the signature
+       machinery off and instantiates nothing. *)
+    Testo.create "regression: rule-option interfile implies intrafile"
+      (run_test ~taint_interfile:false ~taint_intrafile:false caps
+         Fpath.(root / "python" / "mutual_recursion"));
   ]
 
 let tests (caps : Core_scan.caps) : Testo.t list =

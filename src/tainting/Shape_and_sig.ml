@@ -1096,14 +1096,28 @@ type extended_sig = {
 }
 [@@deriving show]
 
-module SignatureSet = Set.Make (struct
-  type t = extended_sig
+module SignatureSet = struct
+  include Set.Make (struct
+    type t = extended_sig
 
-  let compare = fun x y ->
-    let sig_cmp = Signature.compare x.sig_ y.sig_ in
-    if sig_cmp <> 0 then sig_cmp
-    else compare_sig_arity x.arity y.arity
-end)
+    let compare = fun x y ->
+      let sig_cmp = Signature.compare x.sig_ y.sig_ in
+      if sig_cmp <> 0 then sig_cmp
+      else compare_sig_arity x.arity y.arity
+  end)
+
+  (* [equal] pairs identity-equal elements positionally (both element lists
+     are sorted by the guard-blind compare), so a parallel walk checks each
+     signature against its counterpart. Fixpoint stability tests must use
+     this: plain [equal] declares convergence while guards still refine,
+     freezing whichever member last saw the narrower guard. *)
+  let equal_with_guards s1 s2 =
+    equal s1 s2
+    && List.for_all2
+         (fun (x : extended_sig) (y : extended_sig) ->
+           Signature.equal_with_guards x.sig_ y.sig_)
+         (elements s1) (elements s2)
+end
 
 type signature_database = {
   signatures : SignatureSet.t FunctionMap.t;
