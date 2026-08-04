@@ -186,6 +186,22 @@ let keeps_ignores (conf : conf) : bool =
          acc || Output_format.keep_ignores kind)
        conf.outputs false
 
+(* The nosem-ignored matches are in the results as soon as one of the outputs
+ * reports them (see keeps_ignores), so each destination drops them again
+ * unless its own format is one that reports them. Without this, asking for a
+ * SARIF file would add the suppressed findings to the text report too.
+ *)
+let for_output_format (conf : conf) (kind : Output_format.t)
+    (cli_output : Out.cli_output) : Out.cli_output =
+  if Output_format.keep_ignores kind || not (keeps_ignores conf) then cli_output
+  else
+    let not_ignored (m : Out.cli_match) : bool =
+      match m.extra.is_ignored with
+      | Some true -> false
+      | _ -> true
+    in
+    { cli_output with results = List.filter not_ignored cli_output.results }
+
 (* Render any output format to a string (without trailing newline).
  * Used for the file destinations of -o/--output and --<format>-output;
  * unlike on stdout, Text is rendered without colors.
@@ -253,7 +269,8 @@ let dispatch_output_format
     (cli_output : Out.cli_output)
     (hrules : Rule.hrules) : unit =
   let print = CapConsole.print caps#stdout in
-  let print_stdout (kind : Output_format.t) : unit =
+  let print_stdout (kind : Output_format.t) (cli_output : Out.cli_output) : unit
+      =
     match kind with
     | Text ->
         (* TODO: we should switch to Fmt_.with_buffer_to_string +
@@ -270,7 +287,8 @@ let dispatch_output_format
         | Some str -> print str
         | None -> ())
   in
-  let write_to_file (dest : string) (kind : Output_format.t) : unit =
+  let write_to_file (dest : string) (kind : Output_format.t)
+      (cli_output : Out.cli_output) : unit =
     if
       String.starts_with ~prefix:"http://" dest
       || String.starts_with ~prefix:"https://" dest
@@ -291,9 +309,10 @@ let dispatch_output_format
   in
   effective_outputs conf
   |> Map_.iter (fun dest kind ->
+         let cli_output = for_output_format conf kind cli_output in
          match dest with
-         | None -> print_stdout kind
-         | Some dest -> write_to_file dest kind)
+         | None -> print_stdout kind cli_output
+         | Some dest -> write_to_file dest kind cli_output)
 
 (*****************************************************************************)
 (* Entry points *)

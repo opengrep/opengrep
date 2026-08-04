@@ -9,17 +9,15 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 regex-nosemgrep.yaml
 
 
-┌─────────────────┐
-│ 2 Code Findings │
-└─────────────────┘
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
 
     regex-nosemgrep.txt
    ❯❯❱ detected-aws-account-id
           AWS Account ID detected
           Details: https://sg.run/xyz2
 
-            1┆ aws_account_id = 123456789012  # nosemgrep
-            ⋮┆----------------------------------------
             3┆ aws_account_id:123456789012
 
 --- content of findings.sarif ---
