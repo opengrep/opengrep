@@ -277,6 +277,14 @@ let test_sarif_output_file_nosemgrep (caps : Scan_subcommand.caps) () =
     ~targets:[ "targets/basic/regex-nosemgrep.txt" ]
     ~args:[ "--sarif-output"; "findings.sarif" ]
     ~output_files:[ "findings.sarif" ] ()
+
+(* SARIF keeps the suppressed findings so it can report them, but they are
+ * suppressed, so --error must not fail a scan that found nothing else. *)
+let test_sarif_error_only_suppressed (caps : Scan_subcommand.caps) () =
+  run_sarif_scan caps ~rule:"rules/regex/regex-nosemgrep.yaml"
+    ~targets:[ "targets/basic/regex-all-noopengrep.txt" ]
+    ~extra_args:[ "--error" ] ()
+
 (*****************************************************************************)
 (* Entry point                                                                *)
 (*****************************************************************************)
@@ -347,4 +355,7 @@ let tests (caps : < Scan_subcommand.caps >) =
          t "SARIF: --sarif-output file keeps nosemgrep suppressions"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_sarif_output_file_nosemgrep caps);
+         t "SARIF: --error ignores noopengrep-suppressed findings"
+           ~checked_output:(Testo.stdout ()) ~normalize:normalise
+           (test_sarif_error_only_suppressed caps);
        ])
