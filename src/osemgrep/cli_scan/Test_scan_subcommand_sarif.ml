@@ -40,15 +40,17 @@ let with_env_app_token ?(token : string = dummy_app_token) (f : unit -> 'a) : 'a
   Semgrep_envvars.with_envvar "SEMGREP_APP_TOKEN" token f
 
 (* Shared masks for stable snapshots. The tool driver's "semanticVersion" is
- * the engine version and would make snapshots drift every release. The
- * root-level "version" is the SARIF spec version (stable) and must NOT be
- * masked. *)
+ * the engine version and would make snapshots drift every release, and so
+ * would the "version" that opens the JSON output, recognisable by the
+ * "results" following it. The root-level "version" of SARIF is the spec
+ * version (stable, followed by "runs") and must NOT be masked. *)
 let normalise : (string -> string) list =
   [
     Testutil_logs.mask_time;
     Testutil.mask_temp_paths ();
     Testutil_git.mask_temp_git_hash;
     Testo.mask_pcre_pattern {|"semanticVersion":"[^"]*"|};
+    Testo.mask_pcre_pattern {|\{"version":"([^"]*)","results"|};
   ]
 
 (* Run the scan subcommand with --sarif over a fixture (rule + target) copied
@@ -267,6 +269,14 @@ let test_conflicting_output_destination (caps : Scan_subcommand.caps) () =
               | Error.Semgrep_error ((msg : string), _) ->
                   UCommon.pr ("aborted: " ^ msg))))
 
+(* A SARIF file asked for with --sarif-output reports the suppressed findings
+ * just like --sarif does, even though the format on stdout is text and would
+ * hide them. *)
+let test_sarif_output_file_nosemgrep (caps : Scan_subcommand.caps) () =
+  run_scan_with_output_files caps ~rule:"rules/regex/regex-nosemgrep.yaml"
+    ~targets:[ "targets/basic/regex-nosemgrep.txt" ]
+    ~args:[ "--sarif-output"; "findings.sarif" ]
+    ~output_files:[ "findings.sarif" ] ()
 (*****************************************************************************)
 (* Entry point                                                                *)
 (*****************************************************************************)
@@ -334,4 +344,7 @@ let tests (caps : < Scan_subcommand.caps >) =
          t "SARIF: conflicting formats for one destination"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_conflicting_output_destination caps);
+         t "SARIF: --sarif-output file keeps nosemgrep suppressions"
+           ~checked_output:(Testo.stdout ()) ~normalize:normalise
+           (test_sarif_output_file_nosemgrep caps);
        ])

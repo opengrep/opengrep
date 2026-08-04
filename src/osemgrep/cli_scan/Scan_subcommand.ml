@@ -579,11 +579,17 @@ let check_targets_with_rules
               rules
               result
           in
+          let output_conf : Output.conf =
+            { conf.output_conf with output_format }
+          in
           (* step 3'': adjust the matches, filter via nosemgrep and part1 autofix *)
           let keep_ignored =
             (not conf.core_runner_conf.nosem)
             (* --disable-nosem *)
-            || Output_format.keep_ignores output_format
+            (* every requested output is considered, not just output_format,
+               so that a SARIF file asked for with --sarif-output still gets
+               the suppressed matches it reports *)
+            || Output.keeps_ignores output_conf
           in
           let res = adjust_nosemgrep_and_autofix ~keep_ignored res in
 
@@ -594,10 +600,7 @@ let check_targets_with_rules
           Logs.info (fun m -> m "reporting matches if any");
           (* outputting the result on stdout! in JSON/Text/... depending on conf *)
           let cli_output =
-            Output.output_result
-              (caps :> < Cap.stdout >)
-              { conf.output_conf with output_format }
-              profiler res
+            Output.output_result (caps :> < Cap.stdout >) output_conf profiler res
           in
           Profiler.stop_ign profiler ~name:"total_time";
 

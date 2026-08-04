@@ -177,6 +177,15 @@ let format
                  in
                  String.concat ":" parts)
 
+(* true when any of the requested outputs wants the nosem-ignored matches;
+ * only SARIF does, as it labels them as suppressed rather than hiding them *)
+let keeps_ignores (conf : conf) : bool =
+  Output_format.keep_ignores conf.output_format
+  || Map_.fold
+       (fun _dest (kind : Output_format.t) (acc : bool) ->
+         acc || Output_format.keep_ignores kind)
+       conf.outputs false
+
 (* Render any output format to a string (without trailing newline).
  * Used for the file destinations of -o/--output and --<format>-output;
  * unlike on stdout, Text is rendered without colors.

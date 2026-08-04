@@ -43,6 +43,12 @@ val too_much_data : string
  *)
 val effective_outputs : conf -> (string option, Output_format.t) Map_.t
 
+(* Whether any of the outputs in conf wants the nosem-ignored matches, so
+ * that they must be left in the results instead of being filtered out.
+ * Only SARIF wants them, as it reports them as suppressed.
+ *)
+val keeps_ignores : conf -> bool
+
 (* Output the core results on stdout (and in the files given by
  * -o/--output and --<format>-output) depending on flags in conf.
  *
