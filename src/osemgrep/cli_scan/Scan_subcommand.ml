@@ -793,6 +793,10 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
     ~level:conf.common.logging_level;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 
+  (* only now that the fallback above has let us through: pysemgrep has its
+   * own handling of these destinations, and gets to keep it *)
+  Output.check_destinations conf.output_conf;
+
   let conf =
     if conf.common.profile then (
       (* ugly: no need to set Profiling.profile, this was done in CLI.ml
