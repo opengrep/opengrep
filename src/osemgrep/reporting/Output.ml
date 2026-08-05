@@ -301,6 +301,10 @@ let dispatch_output_format
       match render conf profiler ~hrules kind cli_output with
       | Some str ->
           let file = Fpath.v dest in
+          (* the scanned repository can ship a symlink here, and writing
+           * through it would truncate whatever it resolves to *)
+          if UFile.is_lnk file then
+            Error.abort (spf "Output is symlink: %s" dest);
           UFile.make_directories (Fpath.parent file);
           (* like CapConsole.print, end the file with a newline.
            * Note that this deviates from the behaviour in pysemgrep. *)

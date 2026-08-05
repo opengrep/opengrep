@@ -517,9 +517,16 @@ class OutputHandler:
         else:
             metrics.add_feature("output", "path")
             save_path = Path(destination)
+            # the scanned repository can ship a symlink here, and writing
+            # through it would truncate whatever it resolves to
+            if save_path.is_symlink():
+                raise SemgrepError(f"Output is symlink: {destination}")
             # create the folders if not exists
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            with save_path.open(mode="w", encoding="utf-8") as fout:
+            fd = os.open(
+                save_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o666
+            )
+            with os.fdopen(fd, mode="w", encoding="utf-8") as fout:
                 fout.write(output)
 
     def _post_output(self, output_url: str, output: str) -> None:
