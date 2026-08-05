@@ -270,6 +270,11 @@ let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
 
 let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
     ~show_dataflow_traces ~append_separator ppf (m : OutJ.cli_match) =
+  (* TODO: honour color_output, so that colours are decided per destination
+   * as in the python wrapper, where a text file gets them under
+   * SEMGREP_FORCE_COLOR. They currently come from the style renderer that
+   * Logs_ sets on the formatter, from --force-color or a tty, which this
+   * argument cannot override. *)
   ignore color_output;
   let lines =
     Option.value

@@ -25,7 +25,6 @@ type conf = {
   autofix : bool;
   (* Performance options *)
   core_runner_conf : Core_runner.conf;
-  (* -o/--output and --<format>-output are in output_conf *)
   output_conf : Output.conf;
   (* osemgrep-only: *)
   incremental_output : bool;

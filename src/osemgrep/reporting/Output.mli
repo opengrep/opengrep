@@ -7,8 +7,9 @@ type conf = {
   (* destination of the primary output_format: file or URL set with
    * -o/--output (None means stdout) *)
   output : string option;
-  (* extra outputs set with --<format>-output=<destination>; the None key
-   * means stdout *)
+  (* extra outputs set with --<format>-output=<destination>. Those flags
+   * always name a file, so the key is always Some; the option is there to
+   * share the type with check_destinations, where None is stdout. *)
   outputs : (string option, Output_format.t) Map_.t;
   (* for Text *)
   max_chars_per_line : int;

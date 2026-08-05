@@ -30,8 +30,10 @@ type conf = {
   (* destination of the primary output_format: file or URL set with
    * -o/--output (None means stdout), like output_destination in output.py *)
   output : string option;
-  (* extra outputs set with --<format>-output=<destination>, like
-   * outputs in output.py. The None key means stdout. *)
+  (* extra outputs set with --<format>-output=<destination>, like outputs in
+   * output.py. Those flags always name a file, so the key is always Some;
+   * the option is there to share the type with effective_outputs, where
+   * None is stdout. *)
   outputs : (string option, Output_format.t) Map_.t;
   (* alt: maybe we should define an Output_option.t, or add a record to
    * Output_format.Text as those fields are only valid for Text output *)
