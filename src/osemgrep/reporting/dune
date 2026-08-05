@@ -6,6 +6,7 @@
  (libraries
    commons
    fmt
+   uri
    terminal_size
    digestif
    xmlm

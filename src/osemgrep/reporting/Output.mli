@@ -35,13 +35,11 @@ val default : conf
 (* used with max_log_list_entries *)
 val too_much_data : string
 
-(* All the (destination, format) pairs that will be produced: conf.outputs
- * plus the primary (conf.output, conf.output_format) pair.
- * Aborts (like pysemgrep's OutputSettings.normalize()) if the -o destination
- * is already used by a --<format>-output flag, so this is also called at
- * CLI-parsing time in Scan_CLI.ml to report conflicts before the scan starts.
+(* Aborts on a destination we will not write to: a URL, a symlink, or one
+ * named by both -o and a --<format>-output flag. Called at CLI-parsing time
+ * so that the scan does not run first.
  *)
-val effective_outputs : conf -> (string option, Output_format.t) Map_.t
+val check_destinations : conf -> unit
 
 (* Whether any of the outputs in conf wants the nosem-ignored matches, so
  * that they must be left in the results instead of being filtered out.

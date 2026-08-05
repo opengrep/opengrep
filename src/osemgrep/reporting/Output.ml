@@ -262,6 +262,35 @@ let effective_outputs (conf : conf) : (string option, Output_format.t) Map_.t =
            dest)
   | _else_ -> Map_.add conf.output conf.output_format conf.outputs
 
+(* A destination carrying a scheme is a URL rather than a path. Fpath makes
+ * no such distinction: on Windows it reads any "<scheme>:" before a
+ * separator as a volume, so http://h/x becomes an absolute path on a volume
+ * named http:, and on other systems it becomes the relative http:/h/x.
+ * The exception is a Windows drive letter, which is a volume and is always
+ * a single letter. *)
+let is_url (dest : string) : bool =
+  match Uri.scheme (Uri.of_string dest) with
+  | None -> false
+  | Some scheme ->
+      not (Platform.is_windows && Int.equal (String.length scheme) 1)
+
+let check_destination (dest : string) : unit =
+  (* the python wrapper POSTs the output to the URL *)
+  if is_url dest then
+    Error.abort
+      (spf "Sending output to a URL (%s) is not supported yet by opengrep" dest);
+  (* the scanned repository can ship a symlink here, and writing through it
+   * would truncate whatever it resolves to *)
+  if UFile.is_lnk (Fpath.v dest) then
+    Error.abort (spf "Output is symlink: %s" dest)
+
+(* Called before the scan, so that a destination we will not write to costs
+ * nothing. Also aborts on the conflicts reported by effective_outputs. *)
+let check_destinations (conf : conf) : unit =
+  effective_outputs conf
+  |> Map_.iter (fun (dest : string option) (_kind : Output_format.t) ->
+         Option.iter check_destination dest)
+
 let dispatch_output_format
     (caps : < Cap.stdout >)
     (profiler : Profiler.t)
@@ -289,32 +318,27 @@ let dispatch_output_format
   in
   let write_to_file (dest : string) (kind : Output_format.t)
       (cli_output : Out.cli_output) : unit =
-    if
-      String.starts_with ~prefix:"http://" dest
-      || String.starts_with ~prefix:"https://" dest
-    then
-      (* pysemgrep POSTs the output to the URL *)
-      Error.abort
-        (spf "Sending output to a URL (%s) is not supported yet by opengrep"
-           dest)
-    else
-      match kind with
-      (* the matches were printed as they were found *)
-      | Incremental -> ()
-      | kind ->
-          (* a format with nothing to say still gets its file, so that a
-           * caller reading the destination back does not meet an ENOENT
-           * after a scan that simply found nothing *)
-          let str =
-            render conf profiler ~hrules kind cli_output ||| ""
-          in
-          let file = Fpath.v dest in
-          (* the scanned repository can ship a symlink here, and writing
-           * through it would truncate whatever it resolves to *)
-          if UFile.is_lnk file then
-            Error.abort (spf "Output is symlink: %s" dest);
-          UFile.make_directories (Fpath.parent file);
-          UFile.write_file ~file str
+    match kind with
+    (* the matches were printed as they were found *)
+    | Incremental -> ()
+    | kind ->
+        (* a format with nothing to say still gets its file, so that a caller
+         * reading the destination back does not meet an ENOENT after a scan
+         * that simply found nothing *)
+        let str = render conf profiler ~hrules kind cli_output ||| "" in
+        let file = Fpath.v dest in
+        (* a destination we cannot write to is the user's mistake, not ours,
+         * so report it without the backtrace of an unexpected exception *)
+        (try
+           UFile.make_directories (Fpath.parent file);
+           UFile.write_file ~file str
+         with
+        | Unix.Unix_error (err, _, _) ->
+            Error.abort
+              (spf "Cannot write output to %s: %s" dest
+                 (Unix.error_message err))
+        | Sys_error (msg : string) ->
+            Error.abort (spf "Cannot write output to %s: %s" dest msg))
   in
   effective_outputs conf
   |> Map_.iter (fun dest kind ->

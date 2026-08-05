@@ -11,19 +11,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 120000 findings.sarif
  create mode 100644 pointed_at.txt
  create mode 100644 stupid.py
-
-
-┌────────────────┐
-│ 1 Code Finding │
-└────────────────┘
-
-    stupid.py
-   ❯❯❱ eqeq-is-bad
-          useless comparison operation `a + b == a + b` or `a + b != a + b`
-          Details: https://sg.run/xyz1
-
-            3┆ return a + b == a + b
-
 aborted: Output is symlink: findings.sarif
 --- content of pointed_at.txt ---
 left alone

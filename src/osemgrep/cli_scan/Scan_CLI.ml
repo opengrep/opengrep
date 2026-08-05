@@ -1483,10 +1483,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         max_log_list_entries;
       }
     in
-    (* report -o/--<format>-output destination conflicts before the scan *)
-    let (_ : (string option, Output_format.t) Map_.t) =
-      Output.effective_outputs output_conf
-    in
+    Output.check_destinations output_conf;
 
     let engine_type : Engine_type.t =
       engine_type_conf ~oss ~taint_intrafile ~pro ~secrets
