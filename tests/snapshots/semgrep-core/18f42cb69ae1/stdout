@@ -1,0 +1,11 @@
+--- begin input files ---
+regex-nosemgrep.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 22 insertions(+)
+ create mode 100644 regex-nosemgrep.yaml
+ create mode 100644 stupid.py
+--- content of findings.vim ---
+

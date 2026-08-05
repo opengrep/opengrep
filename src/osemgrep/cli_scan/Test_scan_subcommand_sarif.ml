@@ -97,6 +97,14 @@ let test_sarif_output_file_nosemgrep (caps : Scan_subcommand.caps) () =
     ~extra_args:[ "--sarif-output"; "findings.sarif" ]
     ~output_files:[ "findings.sarif" ] ()
 
+(* The suppressed findings SARIF asks for must not reach the JSON on stdout,
+ * which reports them as ordinary findings carrying is_ignored. *)
+let test_sarif_output_file_keeps_json_clean (caps : Scan_subcommand.caps) () =
+  run_scan caps ~format_args:[] ~rule:"rules/regex/regex-nosemgrep.yaml"
+    ~targets:[ "targets/basic/regex-nosemgrep.txt" ]
+    ~extra_args:[ "--json"; "--sarif-output"; "findings.sarif" ]
+    ~output_files:[ "findings.sarif" ] ()
+
 (* SARIF keeps the suppressed findings so it can report them, but they are
  * suppressed, so --error must not fail a scan that found nothing else. *)
 let test_sarif_error_only_suppressed (caps : Scan_subcommand.caps) () =
@@ -156,6 +164,9 @@ let tests (caps : < Scan_subcommand.caps >) =
          t "SARIF: --sarif-output file keeps nosemgrep suppressions"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_sarif_output_file_nosemgrep caps);
+         t "SARIF: --sarif-output file keeps the JSON on stdout clean"
+           ~checked_output:(Testo.stdout ()) ~normalize:normalise
+           (test_sarif_output_file_keeps_json_clean caps);
          t "SARIF: --error ignores noopengrep-suppressed findings"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_sarif_error_only_suppressed caps);

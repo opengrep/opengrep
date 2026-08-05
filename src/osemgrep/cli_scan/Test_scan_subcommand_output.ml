@@ -66,12 +66,37 @@ let test_output_file_without_findings (caps : Scan_subcommand.caps) () =
     ~extra_args:[ "--sarif-output"; "findings.sarif" ]
     ~output_files:[ "findings.sarif" ] ()
 
-(* Two different formats targeting the same destination must abort. *)
+(* A format that renders to nothing when there are no findings, unlike SARIF
+ * which always has a document to write, still leaves its file behind. *)
+let test_empty_render_still_writes_the_file (caps : Scan_subcommand.caps) () =
+  run_scan caps ~format_args:[] ~rule:"rules/regex/regex-nosemgrep.yaml"
+    ~targets:[ "targets/basic/stupid.py" ]
+    ~extra_args:[ "--vim-output"; "findings.vim" ]
+    ~output_files:[ "findings.vim" ] ()
+
+(* Two different formats targeting the same destination must abort, whether
+ * the clash is between -o and a --<format>-output flag ... *)
 let test_conflicting_output_destination (caps : Scan_subcommand.caps) () =
   run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
     ~targets:[ "targets/basic/stupid.py" ]
     ~extra_args:[ "--json"; "-o"; "out.json"; "--sarif-output"; "out.json" ]
     ~expect_abort:true ()
+
+(* ... or between two --<format>-output flags, which is a separate check. *)
+let test_conflicting_format_output_flags (caps : Scan_subcommand.caps) () =
+  run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
+    ~targets:[ "targets/basic/stupid.py" ]
+    ~extra_args:
+      [ "--json-output"; "out.txt"; "--sarif-output"; "out.txt" ]
+    ~expect_abort:true ()
+
+(* The same format twice at one destination is not a conflict. *)
+let test_repeated_format_output_flag (caps : Scan_subcommand.caps) () =
+  run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
+    ~targets:[ "targets/basic/stupid.py" ]
+    ~extra_args:
+      [ "--sarif-output"; "findings.sarif"; "--sarif-output"; "findings.sarif" ]
+    ~output_files:[ "findings.sarif" ] ()
 
 (* A repository can carry a symlink where the output is meant to go, and
  * writing through it would truncate whatever it resolves to. *)
@@ -111,9 +136,18 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "output file written without findings"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (test_output_file_without_findings caps);
+      t "a format that renders nothing still leaves its file"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (test_empty_render_still_writes_the_file caps);
       t "conflicting formats for one destination"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (test_conflicting_output_destination caps);
+      t "conflicting --<format>-output flags for one destination"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (test_conflicting_format_output_flags caps);
+      t "the same --<format>-output flag twice"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (test_repeated_format_output_flag caps);
       t "output destination is a symlink" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (test_output_destination_is_symlink caps);
