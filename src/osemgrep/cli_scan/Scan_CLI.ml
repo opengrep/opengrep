@@ -1228,18 +1228,30 @@ let output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
 let outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
     ~sarif_outputs ~gitlab_sast_outputs ~gitlab_secrets_outputs
     ~junit_xml_outputs =
-  [
-    (Output_format.Text, text_outputs);
-    (Output_format.Json, json_outputs);
-    (Output_format.Emacs, emacs_outputs);
-    (Output_format.Vim, vim_outputs);
-    (Output_format.Sarif, sarif_outputs);
-    (Output_format.Gitlab_sast, gitlab_sast_outputs);
-    (Output_format.Gitlab_secrets, gitlab_secrets_outputs);
-    (Output_format.Junit_xml, junit_xml_outputs);
-  ]
+  (* the flag each format comes from, so that a clash can name what was
+   * actually typed rather than the constructor behind it *)
+  let by_format : (Output_format.t * string * string list) list =
+    [
+      (Output_format.Text, "--text-output", text_outputs);
+      (Output_format.Json, "--json-output", json_outputs);
+      (Output_format.Emacs, "--emacs-output", emacs_outputs);
+      (Output_format.Vim, "--vim-output", vim_outputs);
+      (Output_format.Sarif, "--sarif-output", sarif_outputs);
+      (Output_format.Gitlab_sast, "--gitlab-sast-output", gitlab_sast_outputs);
+      (Output_format.Gitlab_secrets, "--gitlab-secrets-output",
+       gitlab_secrets_outputs);
+      (Output_format.Junit_xml, "--junit-xml-output", junit_xml_outputs);
+    ]
+  in
+  let flag_of_format (format : Output_format.t) : string =
+    by_format
+    |> List.find_map (fun ((f : Output_format.t), (flag : string), _) ->
+           if f =*= format then Some flag else None)
+    |> Option.value ~default:(Output_format.show format)
+  in
+  by_format
   |> List.fold_left
-       (fun outputs (output_format, outputs_for_specific_format) ->
+       (fun outputs (output_format, flag, outputs_for_specific_format) ->
          outputs_for_specific_format
          |> List.fold_left
               (fun outputs output_destination ->
@@ -1249,12 +1261,8 @@ let outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
                   if other_format =*= output_format then outputs
                   else
                     Error.abort
-                      (spf
-                         "Can't write multiple outputs to the same \
-                          destination: %s and %s both output to %s."
-                         (Output_format.show other_format)
-                         (Output_format.show output_format)
-                         output_destination)
+                      (spf "Cannot write both %s and %s to %s"
+                         (flag_of_format other_format) flag output_destination)
                 else Map_.add key output_format outputs)
               outputs)
        Map_.empty
