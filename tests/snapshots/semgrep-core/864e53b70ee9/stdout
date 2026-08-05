@@ -1,0 +1,11 @@
+--- begin input files ---
+regex-nosemgrep.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 22 insertions(+)
+ create mode 100644 regex-nosemgrep.yaml
+ create mode 100644 stupid.py
+--- content of findings.sarif ---
+{"version":"2.1.0","runs":[{"invocations":[{"executionSuccessful":true,"toolExecutionNotifications":[]}],"results":[],"tool":{"driver":{"name":"Opengrep OSS","rules":[{"defaultConfiguration":{"level":"error"},"fullDescription":{"text":"AWS Account ID detected"},"help":{"markdown":"AWS Account ID detected","text":"AWS Account ID detected"},"id":"detected-aws-account-id","name":"detected-aws-account-id","properties":{"precision":"very-high","tags":[]},"shortDescription":{"text":"Opengrep Finding: detected-aws-account-id"}}],<MASKED>}}}],"$schema":"https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"}

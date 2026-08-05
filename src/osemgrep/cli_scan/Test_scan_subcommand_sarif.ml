@@ -229,6 +229,14 @@ let test_sarif_output_file_nosemgrep (caps : Scan_subcommand.caps) () =
     ~extra_args:[ "--sarif-output"; "findings.sarif" ]
     ~output_files:[ "findings.sarif" ] ()
 
+(* A scan that finds nothing still writes its SARIF file, reporting no
+ * results, rather than leaving the caller to meet an ENOENT. *)
+let test_sarif_output_file_without_findings (caps : Scan_subcommand.caps) () =
+  run_scan caps ~format_args:[] ~rule:"rules/regex/regex-nosemgrep.yaml"
+    ~targets:[ "targets/basic/stupid.py" ]
+    ~extra_args:[ "--sarif-output"; "findings.sarif" ]
+    ~output_files:[ "findings.sarif" ] ()
+
 (* A repository can carry a symlink where the output is meant to go, and
  * writing through it would truncate whatever it resolves to. *)
 let test_output_destination_is_symlink (caps : Scan_subcommand.caps) () =
@@ -325,4 +333,7 @@ let tests (caps : < Scan_subcommand.caps >) =
          t "SARIF: output destination is a symlink"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_output_destination_is_symlink caps);
+         t "SARIF: --sarif-output file written without findings"
+           ~checked_output:(Testo.stdout ()) ~normalize:normalise
+           (test_sarif_output_file_without_findings caps);
        ])

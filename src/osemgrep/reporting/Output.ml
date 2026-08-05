@@ -298,18 +298,23 @@ let dispatch_output_format
         (spf "Sending output to a URL (%s) is not supported yet by opengrep"
            dest)
     else
-      match render conf profiler ~hrules kind cli_output with
-      | Some str ->
+      match kind with
+      (* the matches were printed as they were found *)
+      | Incremental -> ()
+      | kind ->
+          (* a format with nothing to say still gets its file, so that a
+           * caller reading the destination back does not meet an ENOENT
+           * after a scan that simply found nothing *)
+          let str =
+            render conf profiler ~hrules kind cli_output ||| ""
+          in
           let file = Fpath.v dest in
           (* the scanned repository can ship a symlink here, and writing
            * through it would truncate whatever it resolves to *)
           if UFile.is_lnk file then
             Error.abort (spf "Output is symlink: %s" dest);
           UFile.make_directories (Fpath.parent file);
-          (* like CapConsole.print, end the file with a newline.
-           * Note that this deviates from the behaviour in pysemgrep. *)
-          UFile.write_file ~file (str ^ "\n")
-      | None -> ()
+          UFile.write_file ~file str
   in
   effective_outputs conf
   |> Map_.iter (fun dest kind ->
