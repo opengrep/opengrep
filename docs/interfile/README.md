@@ -13,7 +13,7 @@ implementation hinges on three layers:
    building up a signature database.
 3. The existing **taint engine** (`Dataflow_tainting`, `Sig_inst`,
    `Match_tainting_mode`) that extracts and instantiates function
-   signatures, now consuming signatures across the whole subgraph
+   signatures, consuming signatures across the whole subgraph
    instead of one file at a time.
 
 If you have never read this code before, read these documents in
@@ -32,10 +32,10 @@ earlier ones.
 ## Design at a glance
 
 - **The call graph is built in-process.**  Edge emission is in
-  source, language-by-language, behind one `Lang_config.t` per
-  supported language.  No external indexer, no separate index file,
-  no `--scip-index-dir`.  When recall is missing for a language, the
-  fix is a few lines in this repo.
+  source, language-by-language, behind one `Index_lang_rules.t` per
+  supported language.  No external indexer, no separate index
+  file.  When recall is missing for a language, the fix is a few
+  lines in this repo.
 - **Per-rule, not per-target.**  Interfile rules don't run once per
   target file; they run once per rule, processing the entire relevant
   call subgraph in topological order.  Per-target rules run alongside

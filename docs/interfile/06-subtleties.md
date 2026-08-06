@@ -45,10 +45,9 @@ enclosing function.
 Concretely:
 
 ```ocaml
-let arg_opt = (* try to find a BArg the callback is bound to *) in
-match arg_opt with
-| Some updated_arg ->
-    [ ToSinkInCall { callee = exp; arg = updated_arg; args_taints } ]
+match enclosing_param_of_exp callee with
+| Some arg ->
+    [ ToSinkInCall { callee; arg; arg_offset; args_taints; guards } ]
 | None ->
     []   (* drop the effect — preserving would be unsound *)
 ```
@@ -72,8 +71,10 @@ unsound.
 
 Instead, Phase 1:
 
-1. Looks up the function's `Dispatch` predecessors (implementations)
-   in `rs.relevant_graph`.  Filters out self-edges — the interface
+1. Looks up the function's implementations — first from the AST
+   mirror `id_info.id_resolved_alternatives`, falling back to the
+   `Dispatch` predecessors in `rs.relevant_graph` when the mirror is
+   empty.  Filters out self-edges — the interface
    declaration carries a Dispatch edge to itself; including its own
    empty body as an implementation would pollute the merge.
 2. If none of the implementations have signatures in `db` yet, this
@@ -93,8 +94,12 @@ The merge itself:
 - Filters effects depending on `BGlob`: implementations reference
   their own globals; those would resolve incorrectly at the
   interface call site.
-- Remaps each implementation's `BArg` indices to the interface's
-  canonical parameter positions.
+- Remaps each implementation's `BArg` indices to canonical
+  parameter positions — the first implementation's params are the
+  canonical set (the interface signature supplies only the param
+  count used for receiver stripping, and is the fallback when the
+  impl list is empty); an implementation with an incompatible param
+  count is skipped with a warning.
 - Unions all the effect sets.
 
 The reason for **pre-merge** (vs an on-the-fly lookup at every call
@@ -113,8 +118,12 @@ The same callback expression can appear in many `ToSinkInCall`
 entries across a single signature being instantiated.  Without
 memoisation, each occurrence independently walks the full nested
 call chain, driving exponential blow-up.  `recursive_cache` keys on
-`(callee_str, args_taints)` (structural equality on args_taints)
-and lives on the per-call instantiation context so it does not leak
+the callee's *structural* identity — buckets on
+`IL_helpers.hash_exp callee`, resolving collisions with
+`IL_helpers.equal_exp`, so two distinct callbacks that print the
+same do not collide — together with the callee's offset list and
+`args_taints` (`sig_cache_lookup cache callee offset args_key`).
+It lives on the per-call instantiation context so it does not leak
 across unrelated calls.
 
 ### A4. Enclosing-receiver field writes via a callee (`BThis`)
@@ -150,12 +159,21 @@ in the project".
 
 The shared disambiguation pipeline:
 
-1. **Same-file filter:** prefer candidates in the caller's file.
-2. **Same-dir filter:** prefer candidates in the caller's
-   directory (= same Go package).
-3. **Interface match:** if `s`'s declared type is an interface,
+1. **Package-qualifier filter:** `narrow_by_package_qualifier`
+   keeps candidates whose package matches the receiver's
+   qualifier.
+2. **Same-file filter:** prefer candidates in the caller's file.
+3. **Same-dir filter** (Go-gated): prefer candidates in the
+   caller's directory (= same Go package).
+4. **Interface match:** if `s`'s declared type is an interface,
    route to its FBDecl.
-4. **`pick_by_arity` fallback:** match on parameter count.
+5. **`pick_by_arity` fallback:** match on parameter count.
+
+For method calls on an *imported* class, the candidate set is first
+restricted to the files the receiver class's import specifier
+resolves to (ts/js) or the files the caller requires (ruby/php), so
+same-named classes in unrelated files never reach the arity
+tiebreak.
 
 This pipeline runs at both shapes that produce method calls in Go:
 
@@ -243,9 +261,10 @@ Lambda VarDefs (`const X = () => ...` in TS/JS, `x = lambda: ...`
 in Python) are valid call targets.  They have call-graph vertices
 (Phase 1 includes them), but a callsite-by-name resolver also needs
 them in the per-file `funcs_by_name` visibility set.  The visitor
-that builds the visibility set treats `Func_def`, `Class_def`, and
-`Var_def` (with a lambda RHS) uniformly via the
-`Walker.Observation.t` variant — there is no `FuncDef`-only branch.
+that builds the visibility set treats `Func_def`, `Type_def`, and
+`Class_def` uniformly via the `Walker.Observation.t` variant; a
+`VarDef` with a lambda RHS arrives as a `Func_def` observation by
+construction, so no separate branch is needed.
 
 ### B7. `set_parent` / `set_module_singleton` are last-wins
 
@@ -262,8 +281,8 @@ Same reasoning applies to `Type_state.set_module_singleton`.
 
 ### B8. Constructor calls resolve to the constructor method
 
-**Where:** `src/tainting/Graph_from_AST.ml`, `ctor_candidate_funcs`
-and `resolve_constructor_from_type`.
+**Where:** `src/tainting/Callee_resolution.ml`,
+`ctor_candidate_funcs` and `resolve_constructor_from_type`.
 
 A constructor call names the *class*, never the constructor method:
 `Foo()` (Python/Kotlin/Scala), `new Foo()` (Java/C#/JS/TS),
@@ -294,8 +313,9 @@ fail to link `f`.  The branch detects the
 Crystal, Scala) and resolves the call edge against the **inner**
 call, so `f` gets its edge while the `do |x|` block is still
 collected as a HOF callback.  (Bare generics `foo<T>(...)` in
-C++/Rust are handled nearby by rerouting to the plain `N (Id)`
-resolution path, which re-narrows from the project-wide index.)
+C++/Rust are handled in `Callee_resolution` by rerouting to the
+plain `N (Id)` resolution path, which re-narrows from the
+project-wide index.)
 
 ---
 
@@ -370,28 +390,29 @@ walking is paid once per `(lang, root)` per scan —
 `Interfile_dispatch` groups all of a language's rules onto one
 build, so nothing needs caching.
 
-### D2. `identify_callee` lookups are O(1)
+### D2. Callee-resolution lookups are O(1)
 
-Three sites in `Graph_from_AST.identify_callee` need to ask
-"which project-wide functions match this leaf name?":
+The name lookups behind `Callee_resolution.identify_callee` and the
+HOF extraction ask "which project-wide functions match this leaf
+name?":
 
-- HOF candidate filter in `extract_hof_callbacks_from_call`.
-- Bare-name uniqueness fallback in `try_unique_callee`.
-- Method-name uniqueness fallback in `try_unique_method_call`.
-
-Each is a structural query (does the callee declare a
-function-typed param? is there exactly one project-wide candidate?)
-that needs the unfiltered candidate set — not the per-file
-visibility-narrowed `funcs_by_name`.
+- The HOF candidate filter in `extract_hof_callbacks_from_call`
+  narrows via `Func_lookup.narrow_candidates_by_leaf` (the per-file
+  visibility-narrowed `funcs_by_name`), falling back to the full
+  function list when the narrowed set is empty.
+- The bare-name and method-name uniqueness fallbacks
+  (`try_unique_callee`, `try_unique_method_call`) share one lookup
+  path: `try_unique_by_distinct_key` → `funcs_with_leaf` →
+  `project_funcs_by_name` (project-wide, no visibility narrowing —
+  a uniqueness test needs the unfiltered set).
 
 `Func_lookup.t` therefore carries **two** name indexes:
 
 - `funcs_by_name` — project-wide, narrowed per-file to visible names.
 - `project_funcs_by_name` — project-wide, no narrowing.
 
-The three lookup sites use `project_funcs_by_name` and get O(1)
-hashtable hits instead of linear scans over tens of thousands of
-project funcs.
+Every lookup site gets O(1) hashtable hits instead of linear scans
+over tens of thousands of project funcs.
 
 ### D3. Interface dispatch matching is O(I + C)
 
@@ -415,11 +436,13 @@ Together the dispatch phase is effectively O(I + C).
 
 ### D4. Parallel phases via `Domainslib_.parmap`
 
-projidx Phase 2 (per-file edges) and `Interfile_dispatch`'s setup
-phases (target parse, spec extract, companion parse, rule-state
-init) all run as parmaps.  The unit of parallelism is one file in
-Phase 2 and one rule in `build_rule_states`; both grain sizes give
-good throughput on multi-core boxes.
+projidx's parse/collect and Phase 2 (per-file edges) and
+`Interfile_dispatch`'s setup phases all run as parmaps.  The work
+grains: batches of files for parsing and edge extraction (in
+`build_rule_states`, two target parses — the dispatch parse and the
+fresh extraction parse — plus the companion parse), `(rule, target
+chunk)` pairs for spec extraction, and one rule for rule-state
+init.  These grain sizes give good throughput on multi-core boxes.
 
 The signature fixpoint inside `run_rule` is the one explicitly serial
 phase — the signature database must converge callees-first (with cyclic

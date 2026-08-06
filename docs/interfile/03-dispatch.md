@@ -11,8 +11,12 @@ runs the per-rule signature fixpoint, and emits findings.
 
 - `build_rule_states` is called once per scan, before any parmap
   task fires.  It loads the graph, parses target and companion files,
-  builds per-rule subgraphs, and returns a `rule_state list`.  Each
-  `rule_state` is a fully-prepared work item.
+  builds per-rule subgraphs, and returns the prepared `rule_state`
+  list together with the xlangs it used, the per-rule target paths
+  its dispatch does not cover (routed to per-target intrafile
+  fallback), and the per-file index/parse failures that `Core_scan`
+  surfaces as scan errors.  Each `rule_state` is a fully-prepared
+  work item.
 - `run_rule rs` is the task body.  Given a `rule_state`, it runs the
   signature fixpoint and returns a `Core_match.t list` of findings.
 
@@ -40,9 +44,10 @@ signature database is threaded *functionally* through the fold; no
 field is mutated during `run_rule`.
 
 `info_map` is a `Function_id → fun_info` map containing, for every
-function in the subgraph, its parsed AST, its IL+CFG, the rule's
-`taint_inst` (source/sink predicates specialised to that file), and
-the file-level `glob_env`.  Building it is the expensive part of
+function in the subgraph, its parsed AST, its IL+CFG, and the rule's
+`taint_inst` (source/sink predicates specialised to that file); the
+file-level `glob_env` lives on the `file_env` and is fetched via
+`glob_env_of_fid`.  Building it is the expensive part of
 setup, which is why `build_rule_states` runs eagerly under one
 parmap rather than lazily inside `run_rule`.
 
@@ -52,7 +57,12 @@ calls) last.  Produced by `Call_graph.Topo.fold` on
 `relevant_graph`.  It drives the Phase 2 emission pass (order there is
 immaterial anyway); Phase 1 instead walks the SCC condensation of
 `relevant_graph` so cycles are handled as a unit (see "The signature
-fixpoint" below).
+fixpoint" below).  Before the order is taken,
+`prune_impl_interface_cycles` removes direct interface→impl `Call`
+edges so implementations precede their interfaces; only indirect
+cycles survive as SCCs.  Source/sink fids that are not vertices of
+the subgraph are appended to `topo_order` so their functions are
+still analysed.
 
 ## How a rule_state is built
 
@@ -73,10 +83,13 @@ Targets are grouped by the `project_root` carried on each
 without a discovered root fall back to `cwd`.  Multi-root scans
 produce multiple groups, each producing its own projidx graph.  For
 each `(language, project_root)` group with rules, call
-`Interfile_graph.load_interfile_graph ~ncores ~targeting_conf lang
-project_root`.  First call in a domain with that
-`(lang, root, targeting_conf)` builds the graph (Phase 0–3 of projidx,
-see [§ 2](02-call-graph.md)); subsequent calls hit the cache.
+`Interfile_graph.load_interfile_build ~ncores ~targeting_conf`,
+which builds the graph (Phase 0–3 of projidx, see
+[§ 2](02-call-graph.md)) and also returns the projidx-stamped ASTs
+(reused for the dispatch parse) and the per-file build failures.
+There is no cache, and no need for one: dispatch groups all of a
+language's rules onto this one call, so the build runs once per
+`(lang, project_root)` per scan.
 `targeting_conf` is the same `Find_targets.conf` the scan used, so
 projidx's file universe matches Semgrep's target selection
 (`--include`/`--exclude`, `.semgrepignore`, size/minified filtering).
@@ -89,21 +102,29 @@ the rule still produces findings on it.
 
 ### Phase C: Parse target files
 
-All targets across all languages are concatenated into one parmap.
-Each batch returns a `Hashtbl (Fpath.t, G.program)` of file → AST.
+All targets across all languages are concatenated into parse
+batches.  Two parses run: the dispatch parse reuses the
+projidx-stamped ASTs where available, and a separate fresh
+Naming-only parse produces the ASTs that spec extraction matches
+against — the projidx-stamped `id_info` payloads make pattern
+traversal roughly two orders of magnitude slower, so the matcher
+gets clean ASTs.  Each batch returns a `Hashtbl (Fpath.t,
+G.program)` of file → AST.
 
 ### Phase D: Extract per-rule specs
 
 For every `(rule, lang_context)` pair, run
-`Match_taint_spec.taint_config_of_rule` against each target file's
-AST.  This produces the source / sink / sanitiser / propagator
-matches that drive the rest of the analysis.  From those matches we
-extract `Function_id.t` lists for sources and sinks — the boundary
-that defines the relevant subgraph.
+`Match_taint_spec.spec_matches_of_taint_rule` against each target
+file's AST.  This produces the source / sink / sanitiser /
+propagator matches that drive the rest of the analysis.  From those
+matches we extract `Function_id.t` lists for sources and sinks — the
+boundary that defines the relevant subgraph.
 
-Spec extraction is parallel: one task per rule.  Per-rule per-file
-`Formula_cache.t` is created fresh each time (the cache is a
-mutable `Hashtbl` and isn't thread-safe).
+Spec extraction is parallel: work items are `(rule, target chunk)`
+pairs, with chunks capped at 2000 targets, so one expensive rule
+spreads across domains.  Per-rule per-file `Formula_cache.t` is
+created fresh each time (the cache is a mutable `Hashtbl` and isn't
+thread-safe).
 
 ### Phase E: Compute relevant subgraph
 
@@ -117,18 +138,20 @@ For each rule, call
 2. **Forward BFS** from sinks similarly.
 3. **Common ancestors** = intersection of the two reachable sets.
 4. **Relevant set** within the common ancestors: a vertex is
-   relevant if it's a source/sink itself, or if it has a predecessor
-   that's a source/sink, or if it has multiple predecessors in the
-   common set (it's a bridge between groups).
+   relevant if it's a source/sink itself, if it has a predecessor
+   that's a source/sink or that is reachable from only one of the
+   two sets (an entry point), or if it has multiple predecessors in
+   the common set (it's a bridge between groups).
 5. **Reverse BFS** from the relevant set to pull in the callee
    subtrees so each function's callees are present.
 6. **Dispatch closure**: pull in `Dispatch` predecessors
-   (implementations) for any interface vertex in the set.  Without
-   this, a bodiless interface method that lands in the subgraph
-   would have no implementations to dispatch to during signature
-   extraction, yielding an empty signature that poisons callers.
-   Repeat up to `max_depth` times since newly added implementations
-   may themselves call other interface methods.
+   (implementations) for any interface vertex in the set, along with
+   each added implementation's `Call` predecessors.  Without this, a
+   bodiless interface method that lands in the subgraph would have
+   no implementations to dispatch to during signature extraction,
+   yielding an empty signature that poisons callers.  Repeat up to
+   `max_depth` times since newly added implementations may
+   themselves call other interface methods.
 
 The relevant subgraph is typically a tiny slice of the project-wide
 graph: a single rule's sources and sinks rarely span more than a few
@@ -175,41 +198,48 @@ which runs in two phases:
   `SignatureSet` stops changing.  A plain topological walk has no valid
   order *inside* a cycle, so a member can be summarised before its
   cyclic callee and emit an incomplete, order-dependent signature; the
-  fixpoint removes that dependence (github issue #27).  The generic
+  fixpoint removes that dependence.  The generic
   driver is `Graph_fixpoint.Make(Call_graph.G)(Sig_lattice)(Sig_store)`
   (`run`, bounded by `max_iter` with an `on_max_iter` escape that keeps
   the current database rather than looping on a pathological rule).
 - **Phase 2 — emit findings.**  A single pass over `rs.topo_order`
-  against the converged database.  Every function's callees already
-  carry their final signatures, so order no longer matters and the
-  database is not threaded through this pass.
+  against the converged database.  Each function is re-extracted
+  against the converged database before checking; the re-extraction
+  is deliberate — dropping it silently loses findings on large
+  corpora, so it must not be optimised away without an A/B run.
+  Every function's callees already carry their final signatures, so
+  order no longer matters and the database is not threaded through
+  this pass.
 
 Within Phase 1, each function is summarised by its body shape:
 
-### Case 1: `FBDecl` (interface / abstract declaration)
+### Case 1: bodiless declarations (`FBDecl` / `FBNothing`)
 
-A bodiless interface or abstract method.  We do **not** extract a
-signature from the empty body — that would store an empty sig that
+A bodiless interface or abstract method (Java abstract methods lower
+to `FBNothing`).  We do **not** extract a signature from the empty
+body — that would store an empty sig that
 makes the function look like a no-op effects-wise, which is unsound
 (callers would see "no taint propagation" instead of falling back to
 conservative propagation).
 
 Instead:
 
-1. Look up the function's `Dispatch` predecessors (implementations)
-   in `rs.relevant_graph`.  Skip self-edges — the interface
-   declaration carries a Dispatch edge to itself; including its own
-   empty body as an implementation pollutes the merge.
+1. Look up the function's implementations: `dispatch_impls` first
+   reads the AST mirror `id_info.id_resolved_alternatives`, falling
+   back to the graph's `Dispatch` predecessors in
+   `rs.relevant_graph` when the mirror is empty.  Skip self-edges —
+   the interface declaration carries a Dispatch edge to itself;
+   including its own empty body as an implementation pollutes the
+   merge.
 2. Filter to implementations whose signature is already in `db`
    (which it should be — they're earlier in topo order).
 3. If none, skip this vertex entirely: `db` stays unchanged.  No
    empty signature gets stored.  Callers will fall back to
    conservative propagation when they hit a call to this vertex.
-4. If some, call `extract_and_check_function` to get a
-   "skeleton" signature from the interface (canonical param names),
-   then call `dispatch_merge_fbdecl` to merge the implementation
-   signatures into a single rich signature and `replace` the
-   skeleton in `db`.
+4. If some, extract a skeleton signature from the declaration via
+   `extract_replace`, then call `dispatch_merge_fbdecl` to merge the
+   implementation signatures into a single rich signature and
+   `replace` the skeleton in `db`.
 
 `Sig_inst.merge_dispatch_signatures` does the merge:
 
@@ -219,8 +249,12 @@ Instead:
 - Filter `BGlob`-dependent effects: implementations reference their
   own globals; those would resolve incorrectly at the interface
   call site.
-- Remap each implementation's `BArg` indices to the interface's
-  canonical parameter positions.
+- Remap each implementation's `BArg` indices to canonical parameter
+  positions — the canonical params are the *first implementation's*
+  (the interface signature only supplies the param count used for
+  receiver stripping, and is the fallback when the impl list is
+  empty).  An implementation with an incompatible param count is
+  skipped with a warning, not remapped.
 - Union all the effect sets.
 
 ### Case 2: normal function body
@@ -256,10 +290,10 @@ target sees the flow via the signature database.
 - **Within a rule, Phase 2 (finding emission):** order-independent —
   every callee already carries its final signature — but run serially
   as a plain fold for simplicity.
-- **Within `build_rule_states`:** the *setup* phases (target parse,
-  spec extract, companion parse, rule-state init) are each one
-  parmap.  Setup is more parallel than the fold because it has no
-  topological dependency.
+- **Within `build_rule_states`:** the *setup* phases (the two
+  target parses — dispatch and extraction — spec extract, companion
+  parse, rule-state init) are each one parmap.  Setup is more
+  parallel than the fold because it has no topological dependency.
 
 ## Why SCCs, not a plain `Call_graph.Topo.fold`
 
@@ -269,7 +303,7 @@ the members of a cycle come out in an arbitrary order fixed by graph
 construction — and since the project index is built in parallel, that
 order is not even stable between runs.  Summarising a cyclic caller
 before its mutual callee yields an incomplete, nondeterministic
-signature (issue #27).
+signature.
 
 Condensing to SCCs sidesteps this: the SCC condensation *is* a DAG, so
 processing SCCs callees-first is always well ordered, and each cyclic
@@ -277,7 +311,7 @@ SCC is iterated to a fixpoint so its result no longer depends on the
 within-cycle order.  `Graph_fixpoint` threads the signature database as
 its fold accumulator (input `db`, output the updated `db`), so the pass
 stays functional and lets us share the rule's state across rules
-without locks ([§ 1](01-architecture.md) "Caching").
+without locks ([§ 1](01-architecture.md) "State lifetimes").
 
 ## A note on bodiless / fallback signatures
 
