@@ -321,7 +321,8 @@ let scan_class_body (of_call : G.expr -> 'a list)
   let _, fields, _ = cdef.G.cbody in
   List.concat_map (fun (G.F stmt) -> scan_stmt stmt) fields
 
-(* Token points at the symbol literal so def-site location matches scip-ruby. *)
+(* Token points at the symbol literal so each synthesised accessor gets its
+   own def-site location. *)
 let ruby_class_body_synth_methods (cdef : G.class_definition)
   : (string * Tok.t) list =
   let names_from_call (expr : G.expr) : (string * Tok.t) list =

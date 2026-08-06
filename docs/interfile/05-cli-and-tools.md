@@ -102,10 +102,10 @@ $ bin/opengrep-interfile-graph topo-order   --rules my-rule.yaml /path/to/code -
   optionally with their callers/callees (`-v`).
 - `edges -p PATTERN [--kind call|dispatch]` — show callers and
   callees of matching vertices, optionally filtered by edge kind.
-- `relevant-graph --rules R --target T` — compute the per-rule
+- `relevant-graph --rules R TARGET...` — compute the per-rule
   relevant subgraph as the taint engine would (§ 3), and report
   vertices/edges/files for each rule.
-- `topo-order --rules R --target T [--signatures] [--json]` — emit
+- `topo-order --rules R TARGET... [--signatures] [--json]` — emit
   the topological order each rule would walk; with `--signatures`
   also run the signature-extraction fold and show the final signature
   for each function.
@@ -116,9 +116,12 @@ suspect the call graph or the relevant subgraph.
 ### `opengrep show dump-interfile-graph`
 
 Quick textual dump of the graph for one language under one project
-root.  Equivalent to `opengrep-interfile-graph full-graph -v` but
-embedded in the main `opengrep show` namespace.  Used by tests and
-quick interactive checks.
+root, embedded in the main `opengrep show` namespace.  Prints the
+vertex/edge counts, then every vertex, then every edge as
+`callee <- caller @ call_site, kind`, all on stdout (contrast
+`opengrep-interfile-graph full-graph -v`, which prints per-file
+vertex counts on stdout and a TSV edge dump on stderr).  Used by
+tests and quick interactive checks.
 
 ```
 $ opengrep show dump-interfile-graph go /path/to/repo
@@ -126,14 +129,17 @@ $ opengrep show dump-interfile-graph go /path/to/repo
 
 ## Configuration knobs you don't usually need
 
-These exist for testing and rare production tuning (all on
-`opengrep-interfile-graph index`):
+These exist for testing and rare production tuning (on
+`opengrep-interfile-graph index`; `--ncores` is also accepted by
+`relevant-graph` and `topo-order`):
 
 - `--ncores N` (also `-j N`) — cap projidx parallelism.  Defaults to
   the CPU count.
 - `--include <glob>` / `--exclude <glob>` — filter the file set.
-  `--exclude` is what overrides the per-language defaults for things
-  like `vendor/` or `node_modules/`.
+  Both are purely additive filters on top of discovery, which runs
+  with an empty semgrepignore set and no per-language default
+  excludes (the only language-supplied excludes are TypeScript's
+  tsconfig `exclude` arrays).
 - `--pyrefly-toml <pyrefly.toml>` — read `project-includes` /
   `project-excludes` arrays from a pyrefly config file.  Useful when
   a project already maintains those for another tool.

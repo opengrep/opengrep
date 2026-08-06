@@ -1,7 +1,7 @@
 class Controller
   def create
     @report = Report.new(report_params)
-    # ruleid: test-scip-misresolution
+    # ruleid: test-permit-homonym
     sink(@report)
   end
 

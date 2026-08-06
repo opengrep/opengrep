@@ -23,12 +23,21 @@ the hooks address it.
 | `class_body_synth_methods` | Ruby `attr_reader :foo` declares a method with no FuncDef. |
 | `class_body_extra_parents` | Ruby `include Foo`, `extend Foo`, `prepend Foo`. |
 | `extract_wrapper` / `wrapper_dunders` | Python PEP-681 `@dataclass_transform()`. |
-| `walks_inheritance` | Python/Java/Kotlin/C#/C++ yes; Go/C/Clojure no. |
+| `walks_inheritance` | Python/Ruby/PHP/Scala/Java/Kotlin/C#/C++ yes; Go/TS/JS/Rust/C/Clojure no. |
 | `has_reexports` | Python `__init__.py` re-exports. |
-| `include_anonymous_funcs` | Python/Go true; Ruby/TS/JS/Java/Kotlin/C#/C++ false (lambdas/blocks inflate the graph without adding signal). |
+| `include_anonymous_funcs` | Defaults to `true` (Rust, Scala, C, Clojure keep it); Python/Ruby/Go/TS/JS/PHP/Java/Kotlin/C#/C++ set `false` (lambdas/blocks inflate the graph without adding signal). |
 | `unqualified_scope` | `Per_file` (Python, Ruby, JS, Clojure), `Per_directory` (Go, C), or `Per_package` (Java, Kotlin, C#, C++) — see § Java/Kotlin below. |
-| `discover_excludes` | TypeScript walks `tsconfig*.json` for the `exclude` array. |
-| `class_def_reshape` | Coerce Ruby `module ... end` and Go `type T struct/interface` into `ClassDef` shape. |
+| `discover_excludes` | TypeScript walks for `tsconfig.build.json` / `tsconfig.json` files and reads their `exclude` arrays. |
+| `class_def_reshape` | Coerce Go `type T struct/interface` and Rust `impl Foo { ... }` into `ClassDef` shape.  (Ruby `module ... end` is handled by a dedicated `ModuleDef` branch in the symbol collector, not by this hook.) |
+| `package_directive_is_namespace` | The language's `Package`/`PackageEnd` directives are qn scopes (namespace blocks / package clauses), not the file's module identity.  PHP, Scala, Java, Kotlin, C#, C++. |
+| `class_identity_is_constant_path` | Class identity is its constant path, file-independent — drops the file-path prefix from class qns.  Ruby (class reopening). |
+| `narrow_methods_by_imports` | Narrow the project `Type_state` by per-file import hints.  Rust (crate homonyms). |
+| `narrow_methods_by_import_files` | Restrict each imported class's methods to the file(s) it was imported from, disambiguating same-named classes at dispatch.  TS/JS (two files each `export default class Handler`). |
+| `narrow_methods_by_required_files` | Restrict same-named colliding methods to the files the caller itself requires.  Ruby (`require_relative`), PHP (`require`/`include`). |
+| `strip_field_sigil` | Normalise field names.  PHP drops the `$` so `$this->x` and promoted ctor params share one field namespace. |
+| `class_constructor_synth_fields` | Extract fields declared by constructor parameters.  TS parameter properties (`constructor(private x: T)`). |
+| `ctor_param_promotion` | Register every typed constructor param as a candidate field.  PHP 8 property promotion. |
+| `interface_dispatch_uses_export_visibility` | Interface dispatch treats an interface with any unexported method as package-private — implementers must share its package.  Go. |
 
 ## Python
 
@@ -50,8 +59,9 @@ original `qn`.
 
 ### Dataclass / NamedTuple synthesis
 
-`@dataclass` on a class adds synthesised `__init__`, `__repr__`,
-`__eq__` methods.  `class X(NamedTuple)` adds `__init__`, `__new__`,
+`@dataclass` on a class adds synthesised `__init__` (unless
+`init=False`) and `__replace__` methods, plus `__hash__` when
+`frozen=True`.  `class X(NamedTuple)` adds `__init__`, `__new__`,
 `__iter__`, etc.  These methods have no AST FuncDef but are
 legitimate call targets:
 
@@ -226,27 +236,24 @@ with the block collected as a HOF callback (see
 
 ### RSpec spec files
 
-projidx uses class+method dispatch, not the name-only matching that
-some other indexers (notably `scip-ruby`) use.  In RSpec-heavy
-codebases this is a precision benefit: `scip-ruby` will happily link
-a test stub's `def create` to every real `create` in the application
-code, and a `shared_examples` block's contents to every spec that
-includes it.  projidx does not make these matches.
-
-Practically this means recall and precision metrics framed against
-SCIP are best measured on non-spec code: full-tree numbers
-under-report projidx because the "missed" edges are mostly the noisy
-spec edges projidx is intentionally not emitting.
+projidx uses class+method dispatch, not name-only matching.  In
+RSpec-heavy codebases this is a precision benefit: name-only
+matching would link a test stub's `def create` to every real
+`create` in the application code, and a `shared_examples` block's
+contents to every spec that includes it.  projidx does not make
+these matches.
 
 ## TypeScript / JavaScript
 
 ### `tsconfig.json` excludes
 
-`tsconfig*.json` files declare `exclude` arrays.
-`Index_lang_rules.discover_excludes` walks for these files starting at
-the project root and accumulates their `exclude` patterns
-(prefers `tsconfig.build.json` over `tsconfig.json` to match
-`scip-typescript`).  Patterns are glob-expanded via `Re.Glob`.
+`tsconfig.json` files declare `exclude` arrays.
+`Index_lang_rules.discover_excludes` walks the directory tree from
+the project root (skipping `node_modules`, `.git`, `.yarn`, `dist`,
+`build`, `.cache`, with a depth cap), per directory picking
+`tsconfig.build.json` if present, else `tsconfig.json`, and
+accumulates their `exclude` patterns.  Patterns are glob-expanded
+via `Re.Glob`.
 
 ### Default and named exports
 
@@ -263,15 +270,27 @@ new Handler();
 helper();
 ```
 
-Two indexes keep these resolutions O(1):
+Several indexes keep these resolutions O(1):
 
 - `default_export_class : (module_path, name)` — for `import X from
   "./y"`.
 - `named_export_classes : (module_path, leaf_name, name)` — for
   `import { X } from "./y"`.
+- `default_export_fn : (file_path, func_info)` — for CJS
+  `module.exports = fn`: the exported function value (often an
+  anonymous arrow present in no other index) resolves through
+  `require('./file')` callbacks.
+- `path_suffix_index` — maps each suffix of a file path (extension
+  and trailing `index` stripped) to the files it could name, so bare
+  import specifiers resolve as suffix lookups without probing the
+  filesystem; suffix length is capped at the longest specifier the
+  project actually imports.
 
 `I_namespace` (`import * as X from "./y"`) is recorded but
-resolution is best-effort.
+resolution is best-effort.  A TS post-pass also resolves class-body
+import aliases: `class C { static foo = importedFn }` makes
+`C.foo(...)` resolve to `importedFn` via a synthetic method under
+`C`.
 
 ### Lambda VarDefs
 
@@ -311,21 +330,26 @@ empty params).  Both `collect_in_ast` and `Visit_function_defs`
 see the methods bound to the impl'd type.
 
 The rewrite is `Index_lang_rules.rust_class_def_reshape`, shared by
-the collector and Main's stored-AST pre-pass.  The stored-AST
-application is **Rust-only**: Go and Ruby also wire
-`class_def_reshape`, but only for the collector's view — their
-stored `TypeDef`s/`ModuleDef`s must survive for the interface
-embedding and module walks.
+the symbol collector (`Symbols`) and the stored-AST pre-pass in
+`Project_index.run_pipeline`.  The stored-AST application is
+**Rust-only**: Go also wires `class_def_reshape`
+(`go_class_def_reshape`), but only for the collector's view — its
+stored `TypeDef`s must survive for the interface embedding walk.
 
 ## PHP
 
-PHP runs largely through the default config, with two field-typing
-hooks: `strip_field_sigil` drops the `$` so `$this->x` and promoted
-ctor params share one field namespace, and `ctor_param_promotion`
-registers every typed constructor param as a candidate field (PHP 8
-promotes them; the parser drops the visibility modifier).  Field
-types otherwise come from the shared self-assignment pass.  The main
-resolution twist:
+PHP sets `walks_inheritance = true` (the `extends` chain is walked
+like Java's), `package_directive_is_namespace = true` (`namespace
+App\Svc;` parses to `Package`/`PackageEnd` directives that scope qns
+rather than naming the file's module), and
+`narrow_methods_by_required_files = true` (same-named colliding
+methods are narrowed to the files the caller `require`s /
+`include`s).  Two field-typing hooks: `strip_field_sigil` drops the
+`$` so `$this->x` and promoted ctor params share one field
+namespace, and `ctor_param_promotion` registers every typed
+constructor param as a candidate field (PHP 8 promotes them; the
+parser drops the visibility modifier).  Field types otherwise come
+from the shared self-assignment pass.  The main resolution twist:
 
 ### `Class::staticMethod()` vs `Class->instanceMethod()`
 
@@ -382,11 +406,11 @@ Java/Kotlin classes can `extends Animal` / inherit `Animal`'s
 methods.  `walks_inheritance = true` triggers `Mro.inherit_into_type_state`
 which attaches the parent's methods to the subclass.
 
-The MRO walk early-exits for subclasses with **no own methods**
-(it derives the child's class identity from `Type_state.get_methods`).
-A test subclass like `class Dog extends Animal {}` won't inherit
-unless it has at least one declared method.  This is a known
-limitation of the current Mro implementation.
+The MRO walk derives the child's class identity from its own
+methods' `fn_id`s when it has any; for an empty subclass like
+`class Dog extends Animal {}` it synthesises the IL name from the
+class's simple name, so empty subclasses inherit their parents'
+methods like any other subclass.
 
 ### Lambdas
 

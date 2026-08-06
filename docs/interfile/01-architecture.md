@@ -20,8 +20,8 @@ pipeline laid out here.
    inherits taint via the signature database from a source in any
    file, we record the trace.
 
-The whole thing runs in one opengrep process.  No external indexer.
-No `--scip-index-dir`.
+The whole thing runs in one opengrep process, with no external
+indexer.
 
 ## Where each stage lives
 
@@ -31,7 +31,7 @@ No `--scip-index-dir`.
 | Group rules by language and targets by `project_root` | `src/engine/Interfile_dispatch.ml` `build_rule_states` | `lang_context` list (one per `(lang, root)` group) |
 | Build the project-wide call graph | `src/engine/Interfile_graph.ml` → `src/project_index/` (projidx) | `Call_graph.G.t` |
 | Filter targets to those present in the graph | `Interfile_dispatch.targets_in_interfile_graph` | `interfile_target list` |
-| Parse target files + companion files | `Interfile_dispatch.parse_companion_files` | `(Lang, AST table)` |
+| Parse target files + companion files | `Interfile_dispatch.parse_companion_files` | `(Lang, AST table)` list + per-file parse failures |
 | Extract sources/sinks per rule | `Match_taint_spec.taint_config_of_rule` | `taint_inst` per rule, per file |
 | Compute relevant subgraph | `Graph_reachability.compute_relevant_subgraph` | `Call_graph.G.t` |
 | Signature fixpoint + finding emission | `Interfile_dispatch.topo_fold` | `Shape_and_sig.signature_database` + findings |
@@ -62,29 +62,33 @@ project.  Concretely:
 
 ## Two modes of rule processing
 
-Inside `Core_scan` there are two parallel task pools:
+`Core_scan` builds a single work list containing two kinds of items:
 
-- **Per-target tasks**: for every target file, run every applicable
+- **Per-target items**: for every target file, run every applicable
   rule.  This is what runs for plain semgrep rules and for intrafile
   taint rules.
-- **Per-rule tasks** (the interfile path): for every interfile taint
-  rule, run *one* task that processes the entire relevant subgraph.
+- **Per-rule items** (the interfile path): for every interfile taint
+  rule, *one* item that processes the entire relevant subgraph.
 
-Both pools feed into the same `Domainslib_.parmap` so per-target and
-per-rule tasks execute in parallel.  Interfile tasks are placed
-**first** in the work list so the long-running ones start early.
+The whole list runs through one `Domainslib_.parmap` (via
+`Parallel_targets.map_work_items`), so per-target and per-rule items
+execute in parallel.  Interfile items are placed **first** in the
+work list so the long-running ones start early.
 
-The two pools must not double-count findings on the same `(rule,
-target)`, but they CAN overlap on the same rule when graph build
-partially fails.  `Interfile_dispatch.interfile_taint_rule_ids`
+The two kinds must not double-count findings on the same `(rule,
+target)`, but they CAN overlap on the same rule where per-rule
+dispatch does not cover a target.  `Interfile_dispatch.interfile_taint_rule_ids`
 returns the IDs of all rules that go through per-rule dispatch;
-`build_rule_states` additionally returns, per rule, the list of
-project_roots where its graph build failed.  `Core_scan` then gates
-per target: an interfile rule runs in the per-target queue only on
-targets whose `project_root` is in that rule's failed-roots list
-(intrafile fallback) — for targets under roots whose graph
-succeeded, per-rule dispatch handles them and the per-target queue
-skips them.
+`build_rule_states` additionally returns, per rule, the target paths
+its dispatch does not cover — because the graph build failed for that
+`(lang, project_root)`, the target never made it into the graph, its
+rule subgraph failed, or a parse/extraction batch failed.  `Core_scan`
+unions those paths per rule and gates per target: an interfile rule
+runs in the per-target queue only on targets in its uncovered set
+(intrafile fallback) — covered targets are handled by per-rule
+dispatch and the per-target queue skips them.  Per-file index build
+failures are also surfaced as scan warnings in the results, so a
+degraded scan is visible rather than silent.
 
 ## The signature database, in one paragraph
 
