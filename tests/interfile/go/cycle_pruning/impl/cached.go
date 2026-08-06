@@ -10,7 +10,7 @@ import (
 type cachedStore struct {
 	// inner is typed as iface.Store (the interface).  Calling
 	// s.inner.Get creates a Call edge from Store.Get to
-	// cachedStore.Get in the SCIP graph, forming a direct cycle
+	// cachedStore.Get in the call graph, forming a direct cycle
 	// with the Dispatch edge cachedStore.Get -> Store.Get.
 	inner iface.Store
 	mu    sync.RWMutex

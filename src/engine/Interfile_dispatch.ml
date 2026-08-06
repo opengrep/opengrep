@@ -380,8 +380,8 @@ type rule_subgraph = {
 }
 
 (* Break direct impl→interface cycles so impls precede interfaces in the
-   topo fold.  Only direct cycles; general case needs SCC processing
-   (github.com/opengrep/opengrep-incubator/issues/27). *)
+   topo fold.  Only direct cycles; indirect ones survive as SCCs and are
+   iterated to a fixpoint by [Sig_engine]. *)
 let prune_impl_interface_cycles (graph : Call_graph.G.t) : int =
   let to_remove =
     Call_graph.G.fold_edges_e
@@ -699,9 +699,9 @@ let fid_arity_of (rs : rule_state) (info : Match_tainting_mode.fun_info)
    topological fold ([Call_graph.Topo]) visits the members of a cycle in
    arbitrary order, so a caller inside a cycle can be summarised before its
    mutual callee and produce an incomplete signature (mutual recursion, and
-   indirect impl<->interface dispatch cycles — github issue #27).  Iterate each
-   cyclic SCC to a fixpoint; singleton SCCs without a self-loop run once, as the
-   old single pass did. *)
+   indirect impl<->interface dispatch cycles).  Iterate each cyclic SCC to a
+   fixpoint; singleton SCCs without a self-loop run once, as a plain single
+   pass would. *)
 module Sig_lattice = struct
   type t = Shape_and_sig.SignatureSet.t
 

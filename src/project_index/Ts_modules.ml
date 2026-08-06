@@ -118,7 +118,7 @@ let read_tsconfig_excludes (path : Fpath.t) : string list =
        | _ -> [])
     | _ -> [])
 
-(* Prefer tsconfig.build.json over tsconfig.json to match scip-typescript. *)
+(* Prefer tsconfig.build.json over tsconfig.json when both exist. *)
 let find_tsconfigs (project_root : Fpath.t) : Fpath.t list =
   let root_str = Fpath.to_string project_root in
   let skip_dir name =

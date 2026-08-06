@@ -9,10 +9,10 @@ The implementation hinges on four cooperating subsystems:
 1. **Object initialization detection** (`src/tainting/Object_initialization.ml`)
    discovers constructor calls so we can treat freshly created instances as
    trackable taint carriers.
-2. **Call graph construction and topological sorting**
-   (`src/tainting/Taint_signature_extractor.ml`) builds a dependency graph of
-   function calls and orders functions for analysis such that callees are
-   processed before callers.
+2. **Call graph construction and SCC ordering**
+   (`src/tainting/Graph_from_AST.ml`) builds a dependency graph of
+   function calls; the engine then orders its strongly-connected components
+   so that callees are processed before callers.
 3. **Signature extraction** (`src/tainting/Taint_signature_extractor.ml`)
    runs a focused dataflow on each function/constructor in topological order
    to capture how taint flows through parameters, fields, globals, and return
@@ -45,20 +45,17 @@ File: `src/tainting/Object_initialization.ml`
      matcher (e.g., `G.New` for Java/C#, `Call` for Python) plus metadata such
      as recognized constructor method names.
   3. Emit mappings whenever an l-value is initialized using a recognized
-     constructor. These mappings seed the signature database so that instance
-     variables (`this.x`, `self.y`) can be associated with the correct class
-     context during analysis.
+     constructor. These mappings are stamped onto the AST as `id_type`
+     annotations so that instance variables (`this.x`, `self.y`) can be
+     associated with the correct class context during analysis.
 
-The object mappings are inserted into the signature database at the start of
-`check_rule`, before we iterate over the file's function definitions:
+The object mappings are computed and stamped onto the AST before the call
+graph is built:
 
 ```ocaml
-let object_mappings =
-  Taint_signature_extractor.detect_object_initialization ast taint_inst.lang in
-let initial_signature_db =
-  Shape_and_sig.add_object_mappings
-    (signature_db ||| Shape_and_sig.empty_signature_database ())
-    object_mappings
+Object_initialization.(
+  stamp_id_types (detect_object_initialization ast lang) ast);
+let call_graph = Graph_from_AST.build_call_graph ~lang ast in
 ```
 
 ## Signature Extraction
@@ -78,10 +75,10 @@ To ensure that function signatures are available when needed (i.e., when a
 function calls another function, the callee's signature should already be
 computed), we use a **call graph** to determine the analysis order:
 
-1. **Build the call graph** (`build_call_graph`):
+1. **Build the call graph** (`Graph_from_AST.build_call_graph`):
    - Traverse the AST to identify all function definitions and their calls
    - Create a directed graph where an edge from `f` to `g` means "`f` calls `g`"
-   - Each node is identified by `(class_name option, function_name)`
+   - Each node is identified by a `Function_id.t`
    - Handle method calls, direct function calls, and constructor invocations
 
 2. **Condense into SCCs and order callees-first**:
@@ -92,7 +89,7 @@ computed), we use a **call graph** to determine the analysis order:
      callees-first order, so it is *iterated* to a fixpoint: its members
      are re-analyzed until every member's signature stops changing.  This
      removes the order-dependence that a plain topological walk would have
-     inside a cycle (github issue #27), and is driven by the same generic
+     inside a cycle, and is driven by the same generic
      `Graph_fixpoint` engine as the interfile loop
 
 3. **Analyze in that order**:
@@ -106,19 +103,19 @@ The call graph building happens in `Match_tainting_mode.check_rule` before the
 signature extraction loop:
 
 ```ocaml
-(* Build call graph and compute topological order *)
-let call_graph = Taint_signature_extractor.build_call_graph ast in
-let sorted_functions = Taint_signature_extractor.topological_sort call_graph in
-
-(* Extract signatures in topological order *)
-let signature_db =
-  sorted_functions
-  |> List.fold_left
-       (fun db (class_name, func_name, fdef) ->
-          Taint_signature_extractor.extract_signature_with_file_context
-            ~db ~class_name func_name fdef ...)
-       initial_signature_db
+let call_graph = Graph_from_AST.build_call_graph ~lang ast in
+(* ... narrowed to the source/sink-relevant subgraph [relevant_graph] ... *)
+let sccs_callees_first =
+  List.rev (Call_graph.SCC.scc_list relevant_graph)
+in
+let signature_db_after_order =
+  Engine.run ~sccs:sccs_callees_first ~graph:relevant_graph ~analyze
+    initial_signature_db
 ```
+
+Here `Engine` is an instance of `Graph_fixpoint.Make`, and `analyze` extracts
+a single function's signature(s) and replaces that function's entry in the
+database.
 
 ### Signature Extraction Algorithm
 
@@ -139,10 +136,11 @@ Once we have the proper analysis order, for each function we:
    - `extract_param_labels_from_sink` gathers which parameters must be tainted
      for a sink effect to fire; this becomes a precondition list stored in the
      signature.
-   - `filter_effects_with_real_sources` (implemented inline) discards effects
-     that only exist because of synthetic seed taint.
+   - `ToReturn` and `ToLval` effects are filtered inline: taints that cannot
+     materialize a value (shape variables) are dropped, and effects left with
+     no relevant data, shape, or control taint are discarded.
 4. **Persist signature:** the finalized signature and mapping are added to
-   the database keyed by `(class_name, function_name)`.
+   the database keyed by `Function_id.t` (a `Shape_and_sig.FunctionMap`).
 
 ### Why class properties matter
 
@@ -157,16 +155,16 @@ File: `src/tainting/Sig_inst.ml`
 - **Purpose:** When the engine encounters a function call, we consult the
   signature database to determine how taint should propagate from actual
   arguments to the callee's effects.
-- **Main routine:** `instantiate_sig ~env ~call_args signature`.
+- **Main routine:** `instantiate_function_signature`.
 - **Key steps:**
   1. Retrieve the pre-recorded signature using the callee's
-     `(class_name, function_name)` pair.
+     `Function_id.t`.
   2. Evaluate the signature's preconditions (`Precondition.solve`) against the
      current call-site taint state. If they fail, the signature simply does not
      contribute any effects.
   3. Substitute formal parameter references (`BArg index`, `BThis`, globals)
      with the actual call arguments, leveraging helpers such as
-     `instantiate_lval` and `instantiate_effect` (see lines ~640–870).
+     `instantiate_lval_using_actual_exps` and `instantiate_lval_using_shape`.
   4. Emit concrete `Effect.t` instances (sink hits, tainted returns, tainted
      l-values) which are merged into the surrounding dataflow state.
 
@@ -176,32 +174,32 @@ During intrafile analysis, `Match_tainting_mode.check_rule` uses the call graph
 to determine the order in which to extract signatures and analyze functions:
 
 ```ocaml
-(* Step 1: Build call graph and compute topological order *)
-let call_graph = Taint_signature_extractor.build_call_graph ast in
-let sorted_functions = Taint_signature_extractor.topological_sort call_graph in
+(* Step 1: Build the call graph *)
+let call_graph = Graph_from_AST.build_call_graph ~lang ast in
 
-(* Step 2: Extract signatures in topological order *)
-let signature_db =
-  sorted_functions
-  |> List.fold_left
-       (fun db (class_name, func_name, fdef) ->
-          Taint_signature_extractor.extract_signature_with_file_context
-            ~db ~taint_inst ~class_name func_name fdef)
-       initial_signature_db
-in
+(* Step 2: Converge the signature database over SCCs, callees first *)
+let sccs_callees_first =
+  List.rev (Call_graph.SCC.scc_list relevant_graph) in
+let signature_db_after_order =
+  Engine.run ~sccs:sccs_callees_first ~graph:relevant_graph ~analyze
+    initial_signature_db in
 
-(* Step 3: Run actual taint analysis with all signatures available *)
-Visit_function_defs.fold_with_class_context
-  (fun () opt_ent class_name fdef ->
-     let _flow, effects, _ =
-       check_fundef taint_inst name !ctx ~glob_env ~signature_db fdef
-     in
-     record_matches effects;
-     ())
-  () ast
+(* Step 3: Emit matches by re-checking each function in topological
+   order against the converged database *)
+List.fold_left
+  (fun matches node ->
+    match Shape_and_sig.FunctionMap.find_opt node info_map with
+    | None -> matches
+    | Some info ->
+        let _db, findings =
+          extract_and_check ~db:signature_db_after_order
+            ~detect_findings:true (* ... *) info
+        in
+        List.rev_append findings matches)
+  [] analysis_order
 ```
 
-The key insight is that signature extraction and taint analysis are now
+The key insight is that signature extraction and taint analysis are
 **two separate passes**:
 
 1. **First pass (signature extraction):** Analyze all functions in SCC
@@ -210,8 +208,10 @@ The key insight is that signature extraction and taint analysis are now
    functions `f` calls are available (for a cycle, once the SCC converges).
 
 2. **Second pass (taint analysis):** Run the full taint analysis with all
-   signatures available. Now `check_fundef` can use the complete `signature_db`
-   to instantiate signatures at call sites via `Sig_inst.instantiate_sig`.
+   signatures available. Each function is re-checked (`extract_and_check`,
+   which runs `check_fundef_with_cfg`) against the complete `signature_db`,
+   instantiating signatures at call sites via
+   `Sig_inst.instantiate_function_signature`.
 
 This two-pass approach ensures that cross-function taint flows are correctly
 captured, as the signature database is fully populated before we look for
@@ -221,8 +221,8 @@ actual taint violations.
 
 The `--taint-intrafile` implementation consists of several cooperating phases:
 
-1. **Object detection** seeds the database with constructor knowledge so that
-   instance fields map to concrete classes.
+1. **Object detection** stamps constructor knowledge onto the AST (as
+   `id_type` annotations) so that instance fields map to concrete classes.
 
 2. **Call graph construction** builds a directed graph of function calls to
    determine dependencies between functions.

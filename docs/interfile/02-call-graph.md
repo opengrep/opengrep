@@ -32,8 +32,11 @@ A `Call_graph.G.t` — a bidirectional labelled directed graph from
 
 ## The four-phase build
 
-projidx's main entry point is `Opengrep_project_index.Project_index.collect`
-(see `src/project_index/Project_index.ml`).  It runs four phases in order:
+The engine enters projidx through
+`Opengrep_project_index.Project_index.collect_resolved` (see
+`src/project_index/Project_index.ml`); the diagnostic CLI uses the
+thinner `collect`.  Both wrap the same internal pipeline, which runs
+four phases in order:
 
 ### Phase 0: Discover
 
@@ -51,9 +54,10 @@ passes the scan's actual `Find_targets.conf`; the
 disables size caps and `.semgrepignore` so large source files (e.g.
 pytorch's 1.3 MB `common_methods_invocations.py`) still get indexed.
 
-Per-language exclude globs come from `Lang_config.discover_excludes`.
-TypeScript walks `tsconfig*.json` files and accumulates their
-`exclude` arrays (matching what `scip-typescript` honours); other
+Per-language exclude globs come from
+`Index_lang_rules.discover_excludes`.
+TypeScript walks per-directory `tsconfig.build.json` /
+`tsconfig.json` files and accumulates their `exclude` arrays; other
 languages return `[]`.
 
 ### Phase 1: Vertices and types
@@ -109,18 +113,27 @@ caller's package.
 
 Population happens via two mechanisms:
 
-- **Direct collection:** Phase 1 walks each file's AST via
-  `Visit_function_defs.fold_with_parent_path` (for fdefs) and
-  `Walker.walk_file` (for class defs, type defs, var defs, other
-  defs).  Each observation is funnelled into the right `Type_state`
-  setter.
-- **Augmentation:** After the initial collection, `Project_index.ml` runs
-  augmentation passes that extend the lattice with derived
-  information.  Examples: walk class hierarchies for Python and
-  attach inherited methods; build Go embedded-interface inheritance;
-  stamp a var's class onto its occurrences' `id_type` when
-  `x = f()` returns a known class (variable classes live on the AST,
-  not in a side table).
+- **Direct collection:** the parse stage walks each file once with
+  `Walker.walk_file`, producing an observation list (fdefs, class
+  defs, type defs, var defs, other defs); Phase 1 folds those
+  observations into the right `Type_state` setters.  The
+  parse-and-collect stage runs in parallel over files through the
+  same batched `Domainslib_.parmap` helper as Phase 2.
+  (`Visit_function_defs.fold_with_parent_path` is used directly in
+  Phase 2's per-function traversal.)
+- **Augmentation:** after the initial collection, `Project_index.ml`
+  drives augmentation passes that live in dedicated modules:
+  `Mro.inherit_into_type_state` (C3 linearisation of class
+  hierarchies, which also yields the override pairs Phase 3
+  consumes), `Ts_class_aliases`, the `Type_augment.*` passes (e.g.
+  stamp a var's class onto its occurrences' `id_type` when `x = f()`
+  returns a known class — variable classes live on the AST, not in a
+  side table), `Cjs_exports.build_default_export_fn`, and
+  `Reexports` (re-export chains resolved to a fixpoint,
+  order-independently).  The return-type/field-type augmentation is
+  itself an outer fixpoint that rebuilds caller-argument types
+  between passes, capped by
+  `Limits_semgrep.projidx_CALL_GRAPH_MAX_PASSES`.
 
 **Constructor type inference is language-gated.**  When
 `Type_infer.infer_expr_type` sees a bare call `foo()` with no known
@@ -140,9 +153,9 @@ re-exported as `Graph_from_AST.uses_new_keyword`):
   same-named class's method and produce spurious cross-file edges.
 
 The residual case in no-`new` languages — a function and a class that
-share a name — is genuinely scope-dependent (which one `foo()` means
-depends on the file's imports) and is left to resolve by registration
-order; correctly disambiguating it would require import-aware inference.
+share a name — resolves by a fixed precedence: a known free-function
+return type wins, and only when no return type is known does
+`Type_infer` fabricate the instance type.
 
 `set_parent` / `set_module_singleton` are **last-wins**: when a
 simple class name appears in many files, the last write determines
@@ -157,7 +170,7 @@ strings.  Two distinct qualified types with the same leaf (Go's
 `pkg_a.Store` vs `pkg_b.Store`) must register as a change, otherwise
 the fixpoint would converge prematurely on a stale type.
 
-### Phase 2: Per-file edges (the parallel phase)
+### Phase 2: Per-file edges
 
 Phase 2 runs in parallel across `ncores` Domains via
 `Domainslib_.parmap` with `chunksize = 1`; each work unit is a batch
@@ -173,7 +186,7 @@ memory limit and timeout stay sound).  For each file the task calls
 
 2. **Walks every function definition** and extracts call edges via
    `Graph_from_AST.extract_calls`.  Each callee resolution goes
-   through `identify_callee`, which uses seven indexes bundled in
+   through `identify_callee`, which uses the indexes bundled in
    `Func_lookup.t`:
 
    ```
@@ -183,14 +196,25 @@ memory limit and timeout stay sound).  For each file the task calls
    alias_to_module_qn        (* per-file: import M as X *)
    same_file_funcs_by_name   (* per-file: defs in this file *)
    funcs_by_package          (* Go pkg.Func() resolution *)
-   local_imports             (* per-file: import set *)
+   file_module_qn            (* file → its module qualified name *)
+   class_aliases             (* per-file: imported-class alias → origin class *)
    ```
 
-   The split between `funcs_by_name` (visible) and
+   plus a per-file `local_imports` set layered on afterwards via
+   `Func_lookup.with_local_imports` (and cleared for top-level
+   extraction).  The split between `funcs_by_name` (visible) and
    `project_funcs_by_name` (everything) matters: structural queries
    like "does this callee declare a function-typed param?" need the
    unfiltered set; in-scope name resolution needs the
    visibility-narrowed one.  Lookups are O(1) hashtable hits.
+
+   The per-file `Type_state` handed to `extract_calls` is itself
+   narrowed by import origin: an imported class's methods are
+   restricted to the files its import specifier resolves to
+   (`narrow_methods_by_import_files`, ts/js) or to the files the
+   caller requires (`narrow_methods_by_required_files`, ruby/php),
+   so same-named classes in unrelated files don't collide at method
+   resolution.
 
 3. **Extracts top-level edges** — calls at module scope, decorators,
    and HOF callbacks registered at top level (`wire.NewSet(...)` in
@@ -203,16 +227,27 @@ memory limit and timeout stay sound).  For each file the task calls
    calls inside `(func() { ... })()` IIFEs still show up in the
    module's outgoing-edge set.
 
-### Phase 3: Interface dispatch
+### Phase 3: Dispatch edges
 
-The final phase adds `Dispatch` edges.  For each interface in the
-project, we look up the concrete classes that implement it and emit
-an `interface_method ↔ impl_method` Dispatch edge for each method.
+The final phase adds `Dispatch` edges, in two families:
 
-The naive shape — for each interface I, for each concrete class C,
-for each method M of I, ask "does C have M?" — is O(I × C × |I|),
-which is millions of probes on large projects.  Two optimisations
-make it tractable:
+- **Structural interface dispatch**
+  (`Structural_dispatch.emit_dispatch_edges`): for each interface in
+  the project, look up the concrete classes that implement it and
+  emit an `interface_method ↔ impl_method` Dispatch edge for each
+  method.  A concrete method matches an interface method on name and
+  arity **and** on return type, parameter types, and (for Go) export
+  visibility, so a same-named-but-differently-typed method doesn't
+  produce a spurious edge.
+- **Nominal override dispatch**: a subclass method that overrides a
+  body-less ancestor declaration (e.g. a Java abstract method) gets
+  the same impl → decl Dispatch edge, emitted from the override
+  pairs the `Mro` pass computed.
+
+The naive structural shape — for each interface I, for each concrete
+class C, for each method M of I, ask "does C have M?" — is
+O(I × C × |I|), which is millions of probes on large projects.  Two
+optimisations make it tractable:
 
 - **Memoise `methods_in_file`** per `(class_qn, file)`.  The inner
   loop becomes hashtable hits.
@@ -229,28 +264,27 @@ projidx emits vertices with file paths **as Find_targets returns
 them**, which may be relative to the project root.  The taint engine
 indexes graph vertices by absolute path.  The bridge is
 `Call_graph.make_paths_absolute`, called once at the boundary in
-`Interfile_graph.load_interfile_graph`:
+`Interfile_graph.load_interfile_build`.  After this every vertex in
+the graph has `Fpath.is_abs = true` and target lookups (which use
+absolute paths) match without surprise.
 
-```ocaml
-let graph = Call_graph.make_paths_absolute project_root_abs graph in
-```
-
-After this every vertex in the cached graph has `Fpath.is_abs = true`
-and target lookups (which use absolute paths) match without surprise.
-
-## Per-language hooks: Lang_config.t
+## Per-language hooks: Index_lang_rules.t
 
 projidx is language-agnostic; everything language-specific lives in
-the `Lang_config.t` value for that language.  See
+the `Index_lang_rules.t` value for that language.  (The separate
+`Lang_config.t` in `src/call_graph/` holds the taint engine's
+builtin models — HOF configs, constructor names,
+`uses_new_keyword`.)  See
 [04-language-quirks.md](04-language-quirks.md) for the full list of
 hooks and what each language overrides.
 
 The key entries:
 
 - `discover_excludes` — Phase 0 extra excludes.
-- `class_def_reshape` — coerce Ruby `module M ... end` and Go
-  `type T interface { ... }` into `ClassDef` shape so the visitor
-  can treat them uniformly.
+- `class_def_reshape` — coerce Go `type T interface { ... }` and
+  Rust `impl Foo { ... }` into `ClassDef` shape so the visitor can
+  treat them uniformly (Rust's reshape is also applied to the
+  stored AST).
 - `class_body_synth_methods` — Ruby `attr_reader` / `attr_accessor`
   declare accessor methods that have no AST FuncDef.
 - `class_body_extra_parents` — Ruby `include Foo`, `extend Foo`,

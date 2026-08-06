@@ -1,3 +1,3 @@
-module scip_test_intrafile
+module basic_taint
 
 go 1.21
