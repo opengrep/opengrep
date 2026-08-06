@@ -1,0 +1,12 @@
+rules:
+- id: taint-kotlin-destructuring
+  mode: taint
+  pattern-sources:
+    - pattern: |
+        taint_source()
+  pattern-sinks:
+    - pattern: |
+        sink(...)
+  message: Tainted value reaches sink through a destructuring declaration
+  severity: WARNING
+  languages: [kotlin]

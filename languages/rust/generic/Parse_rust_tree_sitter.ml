@@ -2614,7 +2614,11 @@ and map_pattern (env : env) (x : CST.pattern) : G.pattern =
       let _attrs = deoptionalize [ mutability ] in
       pattern
   | `Rema_field_pat tok ->
-      G.PatId (ident env tok, G.empty_id_info ()) (* ".." *)
+      (* ".." rest pattern in a slice/tuple/tuple-struct pattern. It skips
+       * the remaining elements and binds nothing; as a [PatId] it would
+       * read as a variable named "..". Same encoding as the struct-field
+       * form above ([map_struct_pattern_field]). *)
+      G.OtherPat (("..", token env tok), [])
   | `Mut_pat (v1, v2) ->
       let mut = token env v1 (* "mut" *) in
       let _mutability = G.KeywordAttr (G.Mutable, mut) in

@@ -45,12 +45,14 @@ val hook_propagate_to :
 
 val empty : env
 val empty_inout : env Dataflow_core.inout
-val normalize_lval : IL.lval -> (IL.name * Taint.offset list) option
+val normalize_lval : Lang.t -> IL.lval -> (IL.name * Taint.offset list) option
+(** The [Lang.t] is threaded to [Taint.offset_of_IL]; see its docs for why
+    offsets are language-sensitive (JS/TS integer-vs-string keys). *)
 
 val add_shape :
   IL.name -> Taint.offset list -> Taint.taints -> shape -> env -> env
 
-val add_lval_shape : IL.lval -> Taint.taints -> shape -> env -> env
+val add_lval_shape : Lang.t -> IL.lval -> Taint.taints -> shape -> env -> env
 (** Add taints & shape to an l-value.
 
     Adding taints to x.a_1. ... .a_N will NOT taint the prefixes
@@ -59,16 +61,17 @@ val add_lval_shape : IL.lval -> Taint.taints -> shape -> env -> env
 
 val add : IL.name -> Taint.offset list -> Taint.taints -> env -> env
 
-val add_lval : add_fn
-(** Assign a set of taints (but no specific shape) to an l-value. *)
+val add_lval : Lang.t -> IL.lval -> Taint.taints -> env -> env
+(** Assign a set of taints (but no specific shape) to an l-value.
+    [add_lval lang] is an [add_fn]. *)
 
 (* THINK: Perhaps keep propagators outside of this environment? *)
-val propagate_to : Dataflow_var_env.var -> Taint.taints -> env -> env
+val propagate_to : Lang.t -> Dataflow_var_env.var -> Taint.taints -> env -> env
 
 val find_var : env -> IL.name -> cell option
 (** Find the 'cell' of a variable. *)
 
-val find_lval : env -> IL.lval -> cell option
+val find_lval : Lang.t -> env -> IL.lval -> cell option
 (** Find the 'cell' of an l-value. *)
 
 val find_poly :
@@ -102,10 +105,10 @@ val find_poly :
         Some ({'t.u}, Bot)
   *)
 
-val find_lval_poly : env -> IL.lval -> (Taint.taints * shape) option
+val find_lval_poly : Lang.t -> env -> IL.lval -> (Taint.taints * shape) option
 (** Same as 'find_poly' for l-values. *)
 
-val find_lval_xtaint : env -> IL.lval -> Xtaint.t
+val find_lval_xtaint : Lang.t -> env -> IL.lval -> Xtaint.t
 (** Look up an l-value on the environemnt and return whether it's tainted, clean,
     or we hold no info about it. It does not check sub-lvalues, e.g. if we record
     that 'x.a' is tainted but had no explicit info about 'x.a.b', checking for
@@ -115,7 +118,7 @@ val find_lval_xtaint : env -> IL.lval -> Xtaint.t
 val propagate_from : Dataflow_var_env.var -> env -> Taint.taints option * env
 val pending_propagation : Dataflow_var_env.var -> IL.lval -> env -> env
 
-val clean : env -> IL.lval -> env
+val clean : Lang.t -> env -> IL.lval -> env
 (** Remove taint from an lvalue.
 
     Cleaning x.a_1. ... .a_N will clean that l-value as well as all its
@@ -176,7 +179,7 @@ val union : env -> env -> env
 val union_list : ?default:env -> env list -> env
 val equal : env -> env -> bool
 
-val equal_by_lval : env -> env -> IL.lval -> bool
+val equal_by_lval : Lang.t -> env -> env -> IL.lval -> bool
 (** Check whether two environments assign the exact same taint to an l-value
  * and each one of its extensions. *)
 

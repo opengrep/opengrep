@@ -1199,7 +1199,8 @@ let classify_guards ~(lang : Lang.t) ?(can_freeze = false)
     TODO(shapes): This is needed for stuff that is not yet fully adapted to shapes,
              in theory we should only need 'instantiate_lval_using_shape'.
 *)
-let instantiate_lval_using_actual_exps (fun_exp : IL.exp) fparams args_exps
+let instantiate_lval_using_actual_exps ~(lang : Lang.t) (fun_exp : IL.exp)
+    fparams args_exps
     (tlval : T.lval) : (IL.name * T.offset list * T.tainted_token) option =
   (* Error handling  *)
   let log_error () =
@@ -1236,7 +1237,7 @@ let instantiate_lval_using_actual_exps (fun_exp : IL.exp) fparams args_exps
       in
       match (arg_exp.e, tlval.offset) with
       | Fetch ({ base = Var obj; _ } as arg_lval), _ ->
-          let* var, offset = Lval_env.normalize_lval arg_lval in
+          let* var, offset = Lval_env.normalize_lval lang arg_lval in
           Some (var, offset @ tlval.offset, snd obj.ident)
       | __else__ -> None)
   | BThis -> (
@@ -1282,7 +1283,7 @@ let instantiate_lval_using_actual_exps (fun_exp : IL.exp) fparams args_exps
               (* fun_exp = `this.obj.method(...)` (e.g.), given lval = `this.x.y`
                  the instantiated l-value is `obj.x.y`. *)
               let lval = IL.{ base; rev_offset = rev_offset' } in
-              let* var, offset = Lval_env.normalize_lval lval in
+              let* var, offset = Lval_env.normalize_lval lang lval in
               Some (var, offset @ tlval.offset, snd method_.ident))
       | __else__ ->
           log_error ();
@@ -1413,7 +1414,7 @@ let instantiate_lval_using_shape lval_env fparams (fun_exp : IL.exp) args_taints
   Shape.find_in_shape_poly ~taints:base_taints offset base_shape
 
 (* What is the taint denoted by 'sig_lval' ? *)
-let instantiate_lval lval_env fparams fun_exp args_exps
+let instantiate_lval ~(lang : Lang.t) lval_env fparams fun_exp args_exps
     (args_taints : (Taints.t * shape) IL.argument list) (sig_lval : T.lval) =
   Log.debug (fun m ->
       m "INST_LVAL: resolving %s in args_taints=%d items, fparams=%s"
@@ -1438,7 +1439,7 @@ let instantiate_lval lval_env fparams fun_exp args_exps
            *   see 'lval_of_sig_lval'.
            *)
           let* var, offset, _obj =
-            instantiate_lval_using_actual_exps fun_exp fparams args_exps
+            instantiate_lval_using_actual_exps ~lang fun_exp fparams args_exps
               sig_lval
           in
           let lval_taints, shape =
@@ -1531,7 +1532,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
        So we will isolate this as a specific step to be applied as necessary.
     *)
     let opt_taints_shape =
-      instantiate_lval lval_env taint_sig.params callee args args_taints lval
+      instantiate_lval ~lang lval_env taint_sig.params callee args args_taints
+        lval
     in
     Log.debug (fun m ->
         m ~tags:sigs_tag "- Instantiating %s: %s -> %s"
@@ -1569,7 +1571,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         | T.BGlob gvar -> Some (gvar, lval.offset, snd gvar.ident)
         | T.BArg _ | T.BThis -> None)
     | Some args ->
-        instantiate_lval_using_actual_exps callee taint_sig.params args lval
+        instantiate_lval_using_actual_exps ~lang callee taint_sig.params args
+          lval
   in
   (* Freezing is allowed only with concrete actuals: the recursive-HOF
    * path ([args = None]) re-classifies in the right frame later. *)
@@ -1773,8 +1776,8 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                         (T.show_lval dst_sig_lval));
                   None)
           | Some args ->
-              instantiate_lval_using_actual_exps callee taint_sig.params args
-                dst_sig_lval
+              instantiate_lval_using_actual_exps ~lang callee taint_sig.params
+                args dst_sig_lval
         in
         let taints =
           taints

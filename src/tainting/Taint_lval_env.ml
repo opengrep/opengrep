@@ -155,7 +155,7 @@ let union_list ?(default = empty) les = List.fold_left union default les
  * not represent the exact same object as the original l-value, but an
  * overapproximation. For example, the normalized l-value of `x[i]` will be `x`,
  * so the taints of any element of an array are tracked via the array itself. *)
-let normalize_lval lval =
+let normalize_lval lang lval =
   let open Common in
   let { IL.base; rev_offset } = lval in
   let* base, rev_offset =
@@ -184,7 +184,7 @@ let normalize_lval lval =
             None)
     | Mem _ -> None
   in
-  let offset = T.offset_of_rev_IL_offset ~rev_offset in
+  let offset = T.offset_of_rev_IL_offset lang ~rev_offset in
   Some (base, offset)
 
 (* TODO: This is an experiment, try to raise taint_MAX_TAINTED_LVALS and run
@@ -249,8 +249,8 @@ let add_shape var offset new_taints new_shape lval_env =
             tainted;
       }
 
-let add_lval_shape lval new_taints new_shape lval_env =
-  match normalize_lval lval with
+let add_lval_shape lang lval new_taints new_shape lval_env =
+  match normalize_lval lang lval with
   | None ->
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
          variable. We just return the same environment untouched. *)
@@ -260,10 +260,10 @@ let add_lval_shape lval new_taints new_shape lval_env =
 let add var offset new_taints lval_env =
   add_shape var offset new_taints Bot lval_env
 
-let add_lval lval new_taints lval_env =
-  add_lval_shape lval new_taints Bot lval_env
+let add_lval lang lval new_taints lval_env =
+  add_lval_shape lang lval new_taints Bot lval_env
 
-let propagate_to prop_var taints env =
+let propagate_to lang prop_var taints env =
   (* THINK: Should we record empty propagations anyways so that we can always
    *   match 'from' and 'to' ? We may be keeping around "pending" propagations
    *   that will never take place. *)
@@ -282,12 +282,12 @@ let propagate_to prop_var taints env =
           ~pending_propagation_dests:env.pending_propagation_dests
           ~prop:(fun ~taints_to_propagate ~pending_propagation_dests ->
             { env with taints_to_propagate; pending_propagation_dests })
-          ~add:add_lval
+          ~add:(add_lval lang)
 
 let find_var { tainted; _ } var = NameMap.find_opt var tainted
 
-let find_lval { tainted; _ } lval =
-  let* var, offsets = normalize_lval lval in
+let find_lval lang { tainted; _ } lval =
+  let* var, offsets = normalize_lval lang lval in
   let* var_ref = NameMap.find_opt var tainted in
   match Shape.find_in_cell offsets var_ref with
   | `Clean
@@ -299,12 +299,12 @@ let find_poly { tainted; _ } var offsets =
   let* var_ref = NameMap.find_opt var tainted in
   Shape.find_in_cell_poly offsets var_ref
 
-let find_lval_poly lval_env lval =
-  let* var, offsets = normalize_lval lval in
+let find_lval_poly lang lval_env lval =
+  let* var, offsets = normalize_lval lang lval in
   find_poly lval_env var offsets
 
-let find_lval_xtaint env lval =
-  match find_lval env lval with
+let find_lval_xtaint lang env lval =
+  match find_lval lang env lval with
   | None -> `None
   | Some (Cell (xtaints, _shape)) -> xtaints
 
@@ -327,8 +327,8 @@ let pending_propagation prop_var lval env =
       VarMap.add prop_var lval env.pending_propagation_dests;
   }
 
-let clean lval_env lval =
-  match normalize_lval lval with
+let clean lang lval_env lval =
+  match normalize_lval lang lval with
   | None ->
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
          variable. We just return the same environment untouched. *)
@@ -418,8 +418,9 @@ let equal
   && Effect_guard.Set.equal guards1 guards2
   && IL.NameSet.equal reassigned1 reassigned2
 
-let equal_by_lval { tainted = tainted1; _ } { tainted = tainted2; _ } lval =
-  match normalize_lval lval with
+let equal_by_lval lang { tainted = tainted1; _ } { tainted = tainted2; _ } lval
+    =
+  match normalize_lval lang lval with
   | None ->
       (* Cannot track taint for this l-value; e.g. because the base is not a simple
          variable. We just return the same environment untouched. *)

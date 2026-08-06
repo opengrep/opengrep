@@ -100,25 +100,27 @@ let mk_method_property_assumptions (properties : G.expr list)
            | VarSpecial (This, _)
            | VarSpecial (Self, _) ->
                let taint_offsets =
-                 Taint.offset_of_rev_IL_offset ~rev_offset:il_lval.rev_offset
+                 Taint.offset_of_rev_IL_offset lang
+                   ~rev_offset:il_lval.rev_offset
                in
                Taint.{ base = BThis; offset = taint_offsets }
            | _ ->
                (* Fallback for other cases *)
                let taint_offsets =
-                 Taint.offset_of_rev_IL_offset ~rev_offset:il_lval.rev_offset
+                 Taint.offset_of_rev_IL_offset lang
+                   ~rev_offset:il_lval.rev_offset
                in
                Taint.{ base = BThis; offset = taint_offsets }
          in
          let generic_taint = Taint.{ orig = Var taint_lval; tokens = [] } in
          let taint_set = Taint.Taint_set.singleton generic_taint in
-         Taint_lval_env.add_lval il_lval taint_set taint_env)
+         Taint_lval_env.add_lval lang il_lval taint_set taint_env)
        Taint_lval_env.empty
 
 (** Helper to add a parameter with Arg shape to the environment *)
-let add_param_to_env il_lval taint_set taint_arg env =
+let add_param_to_env lang il_lval taint_set taint_arg env =
   let param_shape = Shape.Arg (taint_arg, [ [] ]) in
-  Taint_lval_env.add_lval_shape il_lval taint_set param_shape env
+  Taint_lval_env.add_lval_shape lang il_lval taint_set param_shape env
 
 (* [pattern_leaves_with_offsets] moved to [Dataflow_tainting] to avoid a
  * module-dependency cycle; this file already depends on
@@ -166,7 +168,10 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                in
                let taint_set = Taint.Taint_set.union (Taint.Taint_set.singleton generic_taint) source_taints in
                (* Give the parameter an Arg shape so it can be used in HOF *)
-               let new_env = add_param_to_env il_lval taint_set taint_arg env in
+               let new_env =
+                 add_param_to_env taint_inst.TRI.lang il_lval taint_set
+                   taint_arg env
+               in
                (* For destructuring [ParamPattern], additionally seed each
                 * leaf's lval with its offset path off the implicit binder.
                 * The shape system handles call-site projection from the
@@ -234,8 +239,8 @@ let mk_param_assumptions ~(taint_inst : TRI.t) (params : IL.param list) :
                               Taint.Taint_set.add_taint leaf_taint
                                 source_taints
                             in
-                            Taint_lval_env.add_lval_shape leaf_lval leaf_taints
-                              leaf_shape env)
+                            Taint_lval_env.add_lval_shape taint_inst.TRI.lang
+                              leaf_lval leaf_taints leaf_shape env)
                           new_env
                  | _ -> new_env
                in
@@ -373,7 +378,7 @@ let extract_signature (taint_inst : TRI.t) ?(in_env : Taint_lval_env.t option)
         (Signature.show signature));
   { signature; mapping }
 
-let mk_global_assumptions_with_sids
+let mk_global_assumptions_with_sids (lang : Lang.t)
     (global_vars : (string * G.SId.t) list) : Taint_lval_env.t =
   global_vars
   |> List.fold_left
@@ -391,10 +396,10 @@ let mk_global_assumptions_with_sids
          let taint_lval : Taint.lval = { base = BGlob var_id; offset = [] } in
          let generic_taint = Taint.{ orig = Var taint_lval; tokens = [] } in
          let taint_set = Taint.Taint_set.singleton generic_taint in
-         Taint_lval_env.add_lval il_lval taint_set env)
+         Taint_lval_env.add_lval lang il_lval taint_set env)
        Taint_lval_env.empty
 
-let mk_global_tracking_without_taint
+let mk_global_tracking_without_taint (lang : Lang.t)
     (global_vars : (string * G.SId.t) list) : Taint_lval_env.t =
   global_vars
   |> List.fold_left
@@ -410,7 +415,7 @@ let mk_global_tracking_without_taint
          in
          let il_lval : IL.lval = { base = Var var_id; rev_offset = [] } in
          (* Register the lval for tracking but with empty taint set *)
-         Taint_lval_env.add_lval il_lval Taint.Taint_set.empty env)
+         Taint_lval_env.add_lval lang il_lval Taint.Taint_set.empty env)
        Taint_lval_env.empty
 
 let extract_global_var_sids_from_ast (ast : G.program) :
@@ -446,7 +451,9 @@ let extract_signature_with_file_context
     func_cfg
     (ast : G.program) : signature_database * Signature.t =
   let global_sids = extract_global_var_sids_from_ast ast in
-  let global_env = mk_global_assumptions_with_sids global_sids in
+  let global_env =
+    mk_global_assumptions_with_sids taint_inst.lang global_sids
+  in
 
   (* Add method property assumptions for methods with properties *)
   let combined_global_env =

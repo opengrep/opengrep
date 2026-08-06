@@ -41,7 +41,7 @@ let check_var_def (taint_inst : Taint_rule_inst.t) env id ii expr =
   in
   let out_env = end_mapping.(cfg.exit).Dataflow_core.out_env in
   let lval : IL.lval = { base = Var name; rev_offset = [] } in
-  let xtaint = Taint_lval_env.find_lval_xtaint out_env lval in
+  let xtaint = Taint_lval_env.find_lval_xtaint taint_inst.lang out_env lval in
   (xtaint, effects)
 
 let add_to_env_aux (taint_inst : Taint_rule_inst.t) env id ii opt_expr =
@@ -69,7 +69,9 @@ let add_to_env_aux (taint_inst : Taint_rule_inst.t) env id ii opt_expr =
       var_type
   in
   let env =
-    env |> Taint_lval_env.add_lval (IL_helpers.lval_of_var var) taints
+    env
+    |> Taint_lval_env.add_lval taint_inst.lang (IL_helpers.lval_of_var var)
+         taints
   in
   (env, expr_effects)
 
