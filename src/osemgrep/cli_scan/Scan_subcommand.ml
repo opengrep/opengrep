@@ -533,6 +533,11 @@ let check_targets_with_rules
       let output_format, file_match_hook =
         choose_output_format_and_match_hook (caps :> < Cap.stdout >) conf rules
       in
+      (match (output_format, conf.output_conf.output) with
+      | Output_format.Incremental, Some _ ->
+          Logs.warn (fun m ->
+              m "Writing incremental output to a file is not supported")
+      | _else_ -> ());
       (* step 3': call the engine! *)
       Logs.info (fun m ->
           m "scan subcommand: %i valid rules, %i invalid rules, %i targets"
