@@ -264,6 +264,8 @@ let file_type_of_file file =
   | "coffee" -> PL (Web Coffee)
   | "ts" -> PL (Web TypeScript)
   | "tsx" -> PL (Web TypeScript) (* Typescript with JSX enabled *)
+  | "mts" -> PL (Web TypeScript) (* TypeScript ESM module *)
+  | "cts" -> PL (Web TypeScript) (* TypeScript CJS module *)
   | "vue" -> PL (Web Vue)
   | "html"
   | "htm" ->
