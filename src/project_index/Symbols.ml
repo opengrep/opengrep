@@ -163,7 +163,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             List.iter (emit_synth_dunder ~class_id ~range:class_range)
               synthesized;
             (* Class-body macro methods (Ruby [attr_reader]); def-site tok from
-               the symbol literal to match scip-ruby. *)
+               the symbol literal so each accessor has its own location. *)
             List.iter (fun (m_name, m_tok) ->
               let m_id = Function_id.of_string_and_tok m_name m_tok in
               entries := mk_entry ~id:m_id ~name:m_name ~kind:K_method
