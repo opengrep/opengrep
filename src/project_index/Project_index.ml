@@ -522,9 +522,8 @@ let run_pipeline (caps : < Cap.fork >)
      so the walkers see the methods. *)
   (* Rust only: impl methods must look like class methods to every later
      pass, so the STORED ast is reshaped too ([cfg.class_def_reshape]).
-     Go/Ruby also wire the hook but reshape only the collector's view —
-     their stored TypeDefs/ModuleDefs must survive for the embedding and
-     module walks. *)
+     Go also wires the hook but reshapes only the collector's view —
+     its stored TypeDefs must survive for the embedding walk. *)
   let reshape_class_defs (ast : G.program) : G.program =
     if not (Lang.equal lang Lang.Rust) then ast
     else

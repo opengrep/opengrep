@@ -1,9 +1,9 @@
 rules:
-  - id: test-scip-misresolution
+  - id: test-permit-homonym
     mode: taint
     languages:
       - ruby
-    message: "Taint through private method with permit should not be killed by wrong SCIP resolution"
+    message: "Taint through a private method's permit chain must not be killed by resolving permit to a same-named free function"
     severity: ERROR
     options:
       taint_interfile: true

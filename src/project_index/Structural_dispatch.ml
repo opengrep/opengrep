@@ -233,7 +233,7 @@ let emit_dispatch_edges
         (match FA.fn_id_to_node c_m.FA.fn_id,
                FA.fn_id_to_node i_m.FA.fn_id with
          | Some src, Some dst ->
-           (* Impl method's NAME token as call_site, matching scip-go's Dispatch convention. *)
+           (* Impl method's NAME token as the Dispatch edge's call_site. *)
            let call_tok =
              match c_m.FA.fn_id with
              | [_; Some m_il] -> snd m_il.IL.ident
