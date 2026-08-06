@@ -88,6 +88,7 @@ let known_subcommands =
     "scan";
     (* osemgrep-only *)
     "install-ci";
+    "server";
     "show";
     "test";
     "validate";
@@ -149,6 +150,7 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
         (* | "logout" ->
                Logout_subcommand.main (caps :> < Cap.stdout >) subcmd_argv *)
         | "install-ci" -> Install_ci_subcommand.main caps subcmd_argv
+        | "server" -> Server_subcommand.main caps subcmd_argv
         | "interactive" -> !hook_semgrep_interactive subcmd_argv
         | "show" -> Show_subcommand.main caps subcmd_argv
         | "test" -> Test_subcommand.main caps subcmd_argv

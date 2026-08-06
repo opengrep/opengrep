@@ -1,0 +1,22 @@
+; HTTP facade for 'opengrep server' (see ../server_core for the state
+; and scan/graph logic it exposes).
+
+(library
+ (public_name semgrep.osemgrep_server_lib)
+ (name osemgrep_server_lib)
+ (wrapped false)
+ (libraries
+   lwt
+   lwt.unix
+   cohttp-lwt-unix
+   conduit-lwt-unix
+   uri
+   yojson
+   osemgrep_server_core
+ )
+ (preprocess
+  (pps
+    lwt_ppx
+  )
+ )
+)

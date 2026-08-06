@@ -1,0 +1,23 @@
+; OCaml implementation of the 'opengrep server' subcommand.
+
+(library
+  (public_name semgrep.osemgrep_cli_server)
+  (name osemgrep_cli_server)
+  (wrapped false)
+  (libraries
+    cmdliner
+    commons
+    lwt.unix
+    osemgrep_core
+    osemgrep_configuring
+    osemgrep_networking
+    osemgrep_server_core
+    osemgrep_server_lib
+  )
+ (preprocess
+   (pps
+     ppx_deriving.show
+     lwt_ppx
+   )
+ )
+)

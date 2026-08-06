@@ -24,14 +24,14 @@ let export_dot (graph : G.t) (path : string) =
   Dot.output_graph oc graph;
   close_out oc
 
+(* Generate unique node ID from name, file, line, col - avoids hash collisions *)
+let node_unique_id v =
+  let name = Function_id.show v in
+  let file, line, col = Function_id.to_file_line_col v in
+  Printf.sprintf "%s|%s|%d|%d" name file line col
+
 (* Export graph to JSON format (Graphology format for Cytoscape.js viewer) *)
 let graph_to_graphology (graph : G.t) : Yojson.Basic.t =
-  (* Generate unique node ID from name, file, line, col - avoids hash collisions *)
-  let node_unique_id v =
-    let name = Function_id.show v in 
-    let file, line, col = Function_id.to_file_line_col v in
-    Printf.sprintf "%s|%s|%d|%d" name file line col
-  in
   let node_to_json v =
     let name = Function_id.show v in 
     let file, line, _col = Function_id.to_file_line_col v in

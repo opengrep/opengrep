@@ -1,0 +1,26 @@
+; Protocol-neutral core for 'opengrep server': wraps the language server's
+; Session/Scan_helpers machinery and serves scans + call graphs to the
+; HTTP facade in ../server_lib.
+
+(library
+ (public_name semgrep.osemgrep_server_core)
+ (name osemgrep_server_core)
+ (wrapped false)
+ (libraries
+   lsp
+   lwt
+   semgrep.language_server.server
+   semgrep.language_server.scan_helpers
+   osemgrep_core_runner
+   osemgrep_networking
+   semgrep.call_graph
+   semgrep.tainting
+   semgrep_parsing
+   yojson
+ )
+ (preprocess
+  (pps
+    lwt_ppx
+  )
+ )
+)

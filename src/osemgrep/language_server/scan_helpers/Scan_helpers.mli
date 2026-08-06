@@ -8,6 +8,26 @@ val run_core_search :
     process, bypassing the CLI.
   *)
 
+val run_semgrep :
+  ?targets:Fpath.t list ->
+  ?rules:Rule.t list ->
+  ?git_ref:string ->
+  Session.t ->
+  Semgrep_output_v1_t.cli_match list * Fpath.t list
+(** [run_semgrep session] runs a scan with the session's cached rules (or
+    [rules] if provided) on the session's targets (or [targets] if provided)
+    and returns the processed matches and the list of scanned files. This is
+    the scan primitive shared with 'opengrep server'. *)
+
+val run_semgrep_detached :
+  ?targets:Fpath.t list ->
+  ?rules:Rule.t list ->
+  ?git_ref:string ->
+  Session.t ->
+  (Semgrep_output_v1_t.cli_match list * Fpath.t list) Lwt.t
+(** [run_semgrep_detached session] is [run_semgrep] on a detached preemptive
+    thread so it does not block the Lwt event loop. *)
+
 val scan_workspace : Session.t -> Lsp_.Reply.t
 (** [scan_workspace server] scans the workspace of the given session. *)
 
