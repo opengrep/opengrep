@@ -50,6 +50,14 @@ let test_primary_output_to_file (caps : Scan_subcommand.caps) () =
     ~extra_args:[ "--sarif"; "-o"; "findings.sarif" ]
     ~output_files:[ "findings.sarif" ] ()
 
+(* Text is the one format rendered through a formatter of its own rather
+ * than the one stdout is printed with, so a file gets it uncoloured. *)
+let test_text_output_to_file (caps : Scan_subcommand.caps) () =
+  run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
+    ~targets:[ "targets/basic/stupid.py" ]
+    ~extra_args:[ "-o"; "findings.txt" ]
+    ~output_files:[ "findings.txt" ] ()
+
 (* A nested destination: the parent directories are created. *)
 let test_output_file_nested (caps : Scan_subcommand.caps) () =
   run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
@@ -130,6 +138,9 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "-o file, nothing on stdout" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (test_primary_output_to_file caps);
+      t "-o file, text format" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (test_text_output_to_file caps);
       t "--<format>-output nested destination"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (test_output_file_nested caps);

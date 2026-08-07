@@ -1,0 +1,24 @@
+--- begin input files ---
+eqeq.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 59 insertions(+)
+ create mode 100644 eqeq.yaml
+ create mode 100644 stupid.py
+--- content of findings.txt ---
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    stupid.py
+   ❯❯❱ eqeq-is-bad
+          useless comparison operation `a + b == a + b` or `a + b != a + b`
+          Details: https://sg.run/xyz1
+
+            3┆ return a + b == a + b
+
+
