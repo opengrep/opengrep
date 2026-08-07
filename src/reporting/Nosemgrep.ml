@@ -44,14 +44,16 @@ let rule_id_re_str = {|(?:[:=][\s]?(?P<ids>([^,\s](?:[,\s]+)?)+))?|}
    ' nosemgrep: example-pattern-id'
    ' nosem: pattern-id1,pattern-id2'
    ' NOSEMGREP:pattern-id1,pattern-id2'
-   ' noopengrep: example-pattern-id' (if --opengrep-ignore-pattern=noopengrep is set)
+   ' noopengrep: example-pattern-id'
+   ' noscan: example-pattern-id' (with --opengrep-ignore-pattern=noscan)
 
    * We do not want to capture the ': ' that follows 'nosem'
    * We do not care about the casing of 'nosem'
    * We want a comma-separated list of ids
    * We want multi-language support, so we cannot strictly look for
      Python comments that begin with '# '
-   * nosem and nosemgrep should be interchangeable
+   * nosem, nosemgrep and noopengrep are interchangeable, and
+     --opengrep-ignore-pattern adds a fourth rather than replacing them
 *)
 
 let get_nosem_pattern_choices ?(config=Engine_config.default) () =

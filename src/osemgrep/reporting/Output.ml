@@ -30,8 +30,10 @@ type conf = {
   (* destination of the primary output_format: file or URL set with
    * -o/--output (None means stdout), like output_destination in output.py *)
   output : string option;
-  (* extra outputs set with --<format>-output=<destination>, like
-   * outputs in output.py. The None key means stdout. *)
+  (* extra outputs set with --<format>-output=<destination>, like outputs in
+   * output.py. Those flags always name a file, so the key is always Some;
+   * the option is there to share the type with effective_outputs, where
+   * None is stdout. *)
   outputs : (string option, Output_format.t) Map_.t;
   (* alt: maybe we should define an Output_option.t, or add a record to
    * Output_format.Text as those fields are only valid for Text output *)
@@ -186,6 +188,22 @@ let keeps_ignores (conf : conf) : bool =
          acc || Output_format.keep_ignores kind)
        conf.outputs false
 
+(* The nosem-ignored matches are in the results as soon as one of the outputs
+ * reports them (see keeps_ignores), so each destination drops them again
+ * unless its own format is one that reports them. Without this, asking for a
+ * SARIF file would add the suppressed findings to the text report too.
+ *)
+let for_output_format (conf : conf) (kind : Output_format.t)
+    (cli_output : Out.cli_output) : Out.cli_output =
+  if Output_format.keep_ignores kind || not (keeps_ignores conf) then cli_output
+  else
+    let not_ignored (m : Out.cli_match) : bool =
+      match m.extra.is_ignored with
+      | Some true -> false
+      | _ -> true
+    in
+    { cli_output with results = List.filter not_ignored cli_output.results }
+
 (* Render any output format to a string (without trailing newline).
  * Used for the file destinations of -o/--output and --<format>-output;
  * unlike on stdout, Text is rendered without colors.
@@ -246,6 +264,35 @@ let effective_outputs (conf : conf) : (string option, Output_format.t) Map_.t =
            dest)
   | _else_ -> Map_.add conf.output conf.output_format conf.outputs
 
+(* A destination carrying a scheme is a URL rather than a path. Fpath makes
+ * no such distinction: on Windows it reads any "<scheme>:" before a
+ * separator as a volume, so http://h/x becomes an absolute path on a volume
+ * named http:, and on other systems it becomes the relative http:/h/x.
+ * The exception is a Windows drive letter, which is a volume and is always
+ * a single letter. *)
+let is_url (dest : string) : bool =
+  match Uri.scheme (Uri.of_string dest) with
+  | None -> false
+  | Some scheme ->
+      not (Platform.is_windows && Int.equal (String.length scheme) 1)
+
+let check_destination (dest : string) : unit =
+  (* the python wrapper POSTs the output to the URL *)
+  if is_url dest then
+    Error.abort
+      (spf "Sending output to a URL (%s) is not supported yet by opengrep" dest);
+  (* the scanned repository can ship a symlink here, and writing through it
+   * would truncate whatever it resolves to *)
+  if UFile.is_lnk (Fpath.v dest) then
+    Error.abort (spf "Output is symlink: %s" dest)
+
+(* Called before the scan, so that a destination we will not write to costs
+ * nothing. Also aborts on the conflicts reported by effective_outputs. *)
+let check_destinations (conf : conf) : unit =
+  effective_outputs conf
+  |> Map_.iter (fun (dest : string option) (_kind : Output_format.t) ->
+         Option.iter check_destination dest)
+
 let dispatch_output_format
     (caps : < Cap.stdout >)
     (profiler : Profiler.t)
@@ -253,7 +300,8 @@ let dispatch_output_format
     (cli_output : Out.cli_output)
     (hrules : Rule.hrules) : unit =
   let print = CapConsole.print caps#stdout in
-  let print_stdout (kind : Output_format.t) : unit =
+  let print_stdout (kind : Output_format.t) (cli_output : Out.cli_output) : unit
+      =
     match kind with
     | Text ->
         (* TODO: we should switch to Fmt_.with_buffer_to_string +
@@ -270,30 +318,36 @@ let dispatch_output_format
         | Some str -> print str
         | None -> ())
   in
-  let write_to_file (dest : string) (kind : Output_format.t) : unit =
-    if
-      String.starts_with ~prefix:"http://" dest
-      || String.starts_with ~prefix:"https://" dest
-    then
-      (* pysemgrep POSTs the output to the URL *)
-      Error.abort
-        (spf "Sending output to a URL (%s) is not supported yet by opengrep"
-           dest)
-    else
-      match render conf profiler ~hrules kind cli_output with
-      | Some str ->
-          let file = Fpath.v dest in
-          UFile.make_directories (Fpath.parent file);
-          (* like CapConsole.print, end the file with a newline.
-           * Note that this deviates from the behaviour in pysemgrep. *)
-          UFile.write_file ~file (str ^ "\n")
-      | None -> ()
+  let write_to_file (dest : string) (kind : Output_format.t)
+      (cli_output : Out.cli_output) : unit =
+    match kind with
+    (* the matches were printed as they were found *)
+    | Incremental -> ()
+    | kind ->
+        (* a format with nothing to say still gets its file, so that a caller
+         * reading the destination back does not meet an ENOENT after a scan
+         * that simply found nothing *)
+        let str = render conf profiler ~hrules kind cli_output ||| "" in
+        let file = Fpath.v dest in
+        (* a destination we cannot write to is the user's mistake, not ours,
+         * so report it without the backtrace of an unexpected exception *)
+        (try
+           UFile.make_directories (Fpath.parent file);
+           UFile.write_file ~file str
+         with
+        | Unix.Unix_error (err, _, _) ->
+            Error.abort
+              (spf "Cannot write output to %s: %s" dest
+                 (Unix.error_message err))
+        | Sys_error (msg : string) ->
+            Error.abort (spf "Cannot write output to %s: %s" dest msg))
   in
   effective_outputs conf
   |> Map_.iter (fun dest kind ->
+         let cli_output = for_output_format conf kind cli_output in
          match dest with
-         | None -> print_stdout kind
-         | Some dest -> write_to_file dest kind)
+         | None -> print_stdout kind cli_output
+         | Some dest -> write_to_file dest kind cli_output)
 
 (*****************************************************************************)
 (* Entry points *)

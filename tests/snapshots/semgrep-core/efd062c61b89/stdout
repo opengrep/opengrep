@@ -7,18 +7,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 13 insertions(+)
  create mode 100644 regex-nosemgrep.txt
  create mode 100644 regex-nosemgrep.yaml
-
-
-┌────────────────┐
-│ 1 Code Finding │
-└────────────────┘
-
-    regex-nosemgrep.txt
-   ❯❯❱ detected-aws-account-id
-          AWS Account ID detected
-          Details: https://sg.run/xyz2
-
-            3┆ aws_account_id:123456789012
-
+{"version":"<MASKED>","results":[{"check_id":"detected-aws-account-id","path":"regex-nosemgrep.txt","start":{"line":3,"col":1,"offset":44},"end":{"line":3,"col":28,"offset":71},"extra":{"metavars":{"$2":{"start":{"line":3,"col":1,"offset":44},"end":{"line":3,"col":4,"offset":47},"abstract_content":"aws"},"$AWS":{"start":{"line":3,"col":1,"offset":44},"end":{"line":3,"col":4,"offset":47},"abstract_content":"aws"},"$3":{"start":{"line":3,"col":5,"offset":48},"end":{"line":3,"col":12,"offset":55},"abstract_content":"account"},"$ACCOUNT":{"start":{"line":3,"col":5,"offset":48},"end":{"line":3,"col":12,"offset":55},"abstract_content":"account"},"$4":{"start":{"line":3,"col":13,"offset":56},"end":{"line":3,"col":15,"offset":58},"abstract_content":"id"},"$ID":{"start":{"line":3,"col":13,"offset":56},"end":{"line":3,"col":15,"offset":58},"abstract_content":"id"},"$6":{"start":{"line":3,"col":15,"offset":58},"end":{"line":3,"col":16,"offset":59},"abstract_content":":"},"$DELIM":{"start":{"line":3,"col":15,"offset":58},"end":{"line":3,"col":16,"offset":59},"abstract_content":":"}},"message":"AWS Account ID detected","metadata":{"source-rule-url":"https://github.com/grab/secret-scanner/blob/master/scanner/signatures/pattern.go","shortlink":"https://sg.run/xyz2"},"severity":"ERROR","fingerprint":"811e6ee58e5168f689c538dcacfc68978de06c07fc5fd8f0bca933bdba7fe398740ff4bfe5cc10b0a95cdfaadca6c05b4562fc5160fcd9192316c097f54091d1_1","lines":"aws_account_id:123456789012","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["regex-nosemgrep.txt","regex-nosemgrep.yaml"]},"interfile_languages_used":[],"skipped_rules":[]}
 --- content of findings.sarif ---
 {"version":"2.1.0","runs":[{"invocations":[{"executionSuccessful":true,"toolExecutionNotifications":[]}],"results":[{"fingerprints":{"matchBasedId/v1":"811e6ee58e5168f689c538dcacfc68978de06c07fc5fd8f0bca933bdba7fe398740ff4bfe5cc10b0a95cdfaadca6c05b4562fc5160fcd9192316c097f54091d1_0"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"regex-nosemgrep.txt","uriBaseId":"%SRCROOT%"},"region":{"endColumn":30,"endLine":1,"snippet":{"text":"aws_account_id = 123456789012  # nosemgrep"},"startColumn":1,"startLine":1}}}],"message":{"text":"AWS Account ID detected"},"properties":{},"ruleId":"detected-aws-account-id","suppressions":[{"kind":"inSource"}]},{"fingerprints":{"matchBasedId/v1":"811e6ee58e5168f689c538dcacfc68978de06c07fc5fd8f0bca933bdba7fe398740ff4bfe5cc10b0a95cdfaadca6c05b4562fc5160fcd9192316c097f54091d1_1"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"regex-nosemgrep.txt","uriBaseId":"%SRCROOT%"},"region":{"endColumn":28,"endLine":3,"snippet":{"text":"aws_account_id:123456789012"},"startColumn":1,"startLine":3}}}],"message":{"text":"AWS Account ID detected"},"properties":{},"ruleId":"detected-aws-account-id"}],"tool":{"driver":{"name":"Opengrep OSS","rules":[{"defaultConfiguration":{"level":"error"},"fullDescription":{"text":"AWS Account ID detected"},"help":{"markdown":"AWS Account ID detected","text":"AWS Account ID detected"},"id":"detected-aws-account-id","name":"detected-aws-account-id","properties":{"precision":"very-high","tags":[]},"shortDescription":{"text":"Opengrep Finding: detected-aws-account-id"}}],<MASKED>}}}],"$schema":"https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"}

@@ -1,0 +1,17 @@
+--- begin input files ---
+eqeq.yaml
+findings.sarif
+pointed_at.txt
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 61 insertions(+)
+ create mode 100644 eqeq.yaml
+ create mode 120000 findings.sarif
+ create mode 100644 pointed_at.txt
+ create mode 100644 stupid.py
+aborted: Output is symlink: findings.sarif
+--- content of pointed_at.txt ---
+left alone
+
