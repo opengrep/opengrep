@@ -294,8 +294,71 @@ let rust_narrow_methods_by_imports
         else state
     ) import_hint ts
 
+(* [from pkg.mod import Widget] records [("Widget", pkg.mod.Widget)] in
+   [fi_imports]; dropping the trailing class name leaves the module it came
+   from, and a file provides that module when its path ends in those segments —
+   [pkg/mod.py], or the package form [pkg/mod/__init__.py].  Python needs its
+   own hook rather than [narrow_methods_by_import_files]: [ImportFrom] carries a
+   [DottedName], which records no raw specifier, so the file-target narrowing
+   TS/JS uses has nothing to resolve.  Keyed on the imported name rather than
+   the local one, because that is the name the class is indexed under —
+   [from m import Widget as W] must still narrow [Widget]'s methods.  A bare
+   [import mod] binds a one-segment qn naming no class, and contributes
+   nothing. *)
+let python_narrow_methods_by_imports
+    ~(fi_imports : (string * Names.Module_qn.t) list)
+    ~(file_of_func : Func_info.t -> string option)
+    (ts : Type_state.t) : Type_state.t =
+  (* Imported class name paired with the module it came from, segments
+     reversed so it can be matched against a file path from the basename up. *)
+  let imported =
+    List.filter_map (fun (_local, target) ->
+      match List.rev (Names.Module_qn.parts target) with
+      | cls :: (_ :: _ as rev_module) -> Some (cls, rev_module)
+      | _ -> None)
+      fi_imports
+  in
+  let rev_module_segs (file : string) : string list =
+    match Fpath.of_string file with
+    | Error _ -> []
+    | Ok path ->
+      (match List.rev (Fpath.segs path) with
+       | [] -> []
+       | last :: rev_init ->
+         let last = Filename.remove_extension last in
+         (* [pkg/mod/__init__.py] provides [pkg.mod], not [pkg.mod.__init__]. *)
+         if String.equal last "__init__" then rev_init else last :: rev_init)
+  in
+  let rec prefix_of pre l =
+    match pre, l with
+    | [], _ -> true
+    | p :: ps, x :: xs -> String.equal p x && prefix_of ps xs
+    | _ :: _, [] -> false
+  in
+  List.fold_left (fun state cls ->
+    let cls_name = Names.Class_name.of_string cls in
+    match Type_state.get_methods state cls_name with
+    | None -> state
+    | Some methods ->
+      let keep (func : Func_info.t) : bool =
+        match file_of_func func with
+        | None -> false
+        | Some file ->
+          let rev_segs = rev_module_segs file in
+          List.exists
+            (fun (c, rev_module) ->
+               String.equal c cls && prefix_of rev_module rev_segs)
+            imported
+      in
+      (match Func_info.narrow_colliding_groups ~keep methods with
+       | Some filtered -> Type_state.set_methods state cls_name filtered
+       | None -> state))
+    ts
+    (List.sort_uniq String.compare (List.map fst imported))
+
 let python : t = { default with
   is_init_file = python_is_init_file;
+  narrow_methods_by_imports = python_narrow_methods_by_imports;
   rewrite_module_path = python_rewrite_module_path;
   class_dunders_from_decorators = python_dataclass_dunders;
   class_dunders_from_extends = python_class_dunders_from_extends;

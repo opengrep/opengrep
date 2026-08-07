@@ -129,6 +129,38 @@ let induced_subgraph ?(g_global : graph option) (g : graph)
              G.add_edge_e sg e) ag v) vertices);
   sg
 
+(* Closure around [seeds], for a rule whose sources (or sinks) matched nothing
+   among the scanned targets.  That is not proof no flow exists: specs are
+   extracted only over target files, so on a partial scan (a single file, a
+   diff scan) the counterpart can sit in an untargeted companion.  Expanding
+   from the side we do have pulls those companions into the work set and leaves
+   the verdict to the taint analysis.  [depth] caps hops; [g_global] is
+   read-only. *)
+let compute_seeded_subgraph ?(g_global : Call_graph.G.t option)
+    ?(depth : int option)
+    (graph : Call_graph.G.t)
+    ~(seeds : Function_id.t list)
+    : Call_graph.G.t =
+  match seeds with
+  | [] -> Call_graph.G.create ()
+  | _ :: _ ->
+      let max_depth =
+        match depth with
+        | Some d -> d
+        | None -> -1 (* unbounded *)
+      in
+      (* Edges run callee -> caller, so successors are callers: take those
+         first, since they are what can carry taint in or out, then their
+         callees, so the helpers a companion routes through are present too. *)
+      let callers =
+        bfs_vertices ?g_global iter_succ_e_either G.E.dst graph seeds max_depth
+      in
+      let with_callees =
+        bfs_vertices ?g_global iter_pred_e_either G.E.src graph
+          (VSet.elements callers) max_depth
+      in
+      induced_subgraph ?g_global graph with_callees
+
 (* Compute the subgraph containing only functions relevant for taint flow
    from sources to sinks. [depth] caps hops; [g_global] is read-only. *)
 let compute_relevant_subgraph ?(g_global : Call_graph.G.t option)
