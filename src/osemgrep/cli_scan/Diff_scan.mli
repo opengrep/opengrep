@@ -1,6 +1,6 @@
 type diff_scan_func =
   ?diff_config:Differential_scan_config.t ->
-  Fpath.t list ->
+  Target_and_root.t list ->
   Rule.rules ->
   Core_result.result_or_exn
 
@@ -9,7 +9,7 @@ val scan_baseline :
   Scan_CLI.conf ->
   Profiler.t ->
   string (* baseline commit *) ->
-  Fpath.t list ->
+  Target_and_root.t list ->
   Rule.rules ->
   diff_scan_func ->
   Core_result.result_or_exn

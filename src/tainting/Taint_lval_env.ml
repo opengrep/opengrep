@@ -289,19 +289,19 @@ let find_var { tainted; _ } var = NameMap.find_opt var tainted
 let find_lval lang { tainted; _ } lval =
   let* var, offsets = normalize_lval lang lval in
   let* var_ref = NameMap.find_opt var tainted in
-  match Shape.find_in_cell offsets var_ref with
+  match Shape.find_in_cell ~lang offsets var_ref with
   | `Clean
   | `Not_found _ ->
       None
   | `Found cell -> Some cell
 
-let find_poly { tainted; _ } var offsets =
+let find_poly ~lang { tainted; _ } var offsets =
   let* var_ref = NameMap.find_opt var tainted in
-  Shape.find_in_cell_poly offsets var_ref
+  Shape.find_in_cell_poly ~lang offsets var_ref
 
 let find_lval_poly lang lval_env lval =
   let* var, offsets = normalize_lval lang lval in
-  find_poly lval_env var offsets
+  find_poly ~lang lval_env var offsets
 
 let find_lval_xtaint lang env lval =
   match find_lval lang env lval with

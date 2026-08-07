@@ -1,0 +1,13 @@
+rules:
+  - id: test-setter-false-positive
+    mode: taint
+    languages:
+      - python
+    message: "False positive: taint flows through setter return value"
+    severity: ERROR
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

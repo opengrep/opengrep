@@ -1,0 +1,16 @@
+rules:
+  - id: dispatch-param-type-mismatch
+    languages: [go]
+    severity: ERROR
+    message: >
+      Structural dispatch must match implementations by parameter type,
+      not just name+arity+return: Cache.Put shares Store.Put's name, arity
+      and return type but takes []byte where Store wants string, so it does
+      not implement Store and its sink must not fire from a Store.Put call.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

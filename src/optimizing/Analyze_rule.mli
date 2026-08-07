@@ -51,6 +51,18 @@ val regexp_prefilter_of_rule :
 val regexp_prefilter_of_formula :
   xlang:Xlang.t -> Rule.formula -> prefilter option
 
+(* Prefilter for interfile taint spec extraction: a file is relevant
+ * when it can match some source OR some sink.  Unlike
+ * [regexp_prefilter_of_rule] on a taint rule, which requires both in
+ * the same file (the intrafile condition), this keeps source-only and
+ * sink-only files.  [None] for non-taint rules or when no regexp
+ * formula could be extracted.  Memoized when a [cache] is given, under
+ * the same rule-id key and domain-locality constraint as
+ * [regexp_prefilter_of_rule].
+ *)
+val regexp_prefilter_of_interfile_taint_rule :
+  ?cache:prefilter_cache option -> Rule.t -> prefilter option
+
 (* For external tools like Semgrep query console to be able to
  * also prune certain rules/files.
  *)

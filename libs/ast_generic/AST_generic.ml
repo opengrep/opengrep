@@ -280,7 +280,64 @@ type module_name =
   | FileName of string wrap (* ex: Js import, C #include, Go import *)
 [@@deriving show { with_path = false }, eq, ord, hash]
 
-module SId = Gensym.MkId ()
+(* A per-file source identity: either a real token place ([idx = 0], same
+   scheme as [Function_id]) or a synthetic IL temp ([idx >= 1]); the two never
+   collide within a file.  Not a [Tok.t] because that lacks [hash] and its
+   equality is position-insensitive, which would destroy sid identity. *)
+module SId : sig
+  type t [@@deriving show, eq, ord, hash, sexp]
+
+  (* [?name] overrides the token text: synthetic names (e.g. lambda
+     [_tmp_lambda]) key [Function_id] on the ident string, not the text
+     of the located-fake token they carry. *)
+  val of_tok : ?name:string -> file:string -> Tok.t -> t
+  val of_index : file:string -> int -> t
+  val to_int : t -> int
+
+  (* Human-readable positional identity for AST dumps, not the [to_int] hash. *)
+  val to_string : t -> string
+
+  (* Positional identity; [idx] dropped (a temp is never a function-def key).
+     Used by [Function_id.of_sid] without consulting the call graph. *)
+  val to_loc : t -> string * string * int * int
+  val unsafe_default : t
+  val is_unsafe_default : t -> bool
+end = struct
+  type t = { name : string; file : string; line : int; col : int; idx : int }
+  [@@deriving show, eq, ord, hash, sexp]
+
+  (* Caller supplies the real [file] (single-file lowered program); a placeless
+     [Error] token still gets the real file with zeroed position. *)
+  let of_tok ?name ~file tok =
+    match Tok.loc_of_tok tok with
+    | Ok loc ->
+        {
+          name = (match name with Some n -> n | None -> loc.Tok.str);
+          file;
+          line = loc.Tok.pos.line;
+          col = loc.Tok.pos.column;
+          idx = 0;
+        }
+    | Error _ -> { name = ""; file; line = 0; col = 0; idx = 0 }
+
+  let of_index ~file idx = { name = ""; file; line = 0; col = 0; idx }
+
+  let to_int t = Hashtbl.hash t
+
+  let to_string t =
+    if t.idx > 0 then
+      Printf.sprintf "#%d@%s" t.idx t.file
+    else if String.equal t.file "" && String.equal t.name "" then
+      "<unresolved>"
+    else Printf.sprintf "%s@%s:%d:%d" t.name t.file t.line t.col
+
+  let to_loc t = (t.name, t.file, t.line, t.col)
+
+  (* The "not yet resolved" sentinel; left fileless (unlike [of_tok]/[of_index])
+     since naming overwrites it before the file would matter. *)
+  let unsafe_default = { name = ""; file = ""; line = 0; col = 0; idx = 0 }
+  let is_unsafe_default t = equal t unsafe_default
+end
 
 (* A single unique id: sid (uid would be a better name, but it usually
  * means "user id" for people).
@@ -296,7 +353,6 @@ module SId = Gensym.MkId ()
  * You need to call Naming_AST.resolve (or one of the lang-specific
  * Resolve_xxx.resolve) on the generic AST to set it correctly.
  *)
-(* a single unique gensym'ed number. *)
 type sid = SId.t
 and resolved_name = resolved_name_kind * sid
 

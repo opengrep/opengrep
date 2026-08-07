@@ -1,0 +1,17 @@
+rules:
+  - id: embed-homonym-interface
+    languages: [go]
+    severity: ERROR
+    message: >
+      An interface embedding must lift only the embedded interface's own
+      methods.  A same-named interface in an unrelated package must not
+      contribute its methods to the embedder's required set, or concrete
+      types that do satisfy the embedder stop matching and the dispatch
+      edge is lost.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

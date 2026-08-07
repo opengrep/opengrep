@@ -15,6 +15,7 @@
    The 'Empty' case is useful for testing.
 *)
 type default_semgrepignore_patterns = Empty | Semgrep_scan_legacy
+[@@deriving show]
 
 type exclusion_mechanism = {
   use_gitignore_files : bool;

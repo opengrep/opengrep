@@ -1,0 +1,18 @@
+rules:
+  - id: reopened-class-inheritance
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      `Sub < Widget` inherits `run`, which is defined in a REOPENING of
+      `Widget` (widget_b.rb) separate from the file where `Widget` was first
+      opened (widget_a.rb).  Ruby class identity is the constant path, so the
+      reopenings are one class and their methods union.  A homonym
+      `Dec::Widget#run` (decoy.rb) must NOT be reached — resolution goes
+      through `Sub`'s type/MRO, not global method-name dispatch.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink(...)

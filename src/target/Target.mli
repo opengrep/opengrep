@@ -49,6 +49,9 @@ type regular = {
           determining these associations; rather, the target selection and
           generation process must resolve these connections as part of
           generating regular targets. *)
+  project_root : Fpath.t option;
+      (** Absolute project root, threaded from [Find_targets] during target
+          discovery; used by the interfile taint engine to absolutize paths. *)
 }
 (** A regular semgrep target, comprising source code (or, for
    regex/generic, arbitrary text data) to be executed. See also {!Xtarget.t},
@@ -77,7 +80,7 @@ type t = Regular of regular | Lockfile of Lockfile.t [@@deriving show]
 (*****************************************************************************)
 
 val mk_regular :
-  ?lockfile:Lockfile.t -> Xlang.t -> Product.t list -> Origin.t -> regular
+  ?lockfile:Lockfile.t -> ?project_root:Fpath.t -> Xlang.t -> Product.t list -> Origin.t -> regular
 (** [mk_regular analyzer products origin] is a {!regular} target
       originating from [origin] to be analyzed with [analyzer] for [products].
       If [lockfile] is specified then it shall be used as the associated
@@ -89,7 +92,7 @@ val mk_regular :
  *)
 
 (* useful in tests *)
-val mk_target : Xlang.t -> Fpath.t -> t
+val mk_target : ?project_root:Fpath.t -> Xlang.t -> Fpath.t -> t
 
 (*****************************************************************************)
 (* Semgrep_output_v1.target -> Target.t *)
@@ -103,6 +106,12 @@ val target_of_target : Semgrep_output_v1_t.target -> t
 val internal_path : t -> Fpath.t
 (** [internal_path target] is the path to a file containing the
     contents of [target]. *)
+
+val abs_path : cwd:Fpath.t -> t -> Fpath.t option
+(** Normalised absolute content path of a regular target (None for
+    lockfiles).  Relative target paths are relative to [cwd] (they extend
+    the scanning roots as typed on the command line), not to the project
+    root. *)
 
 val origin : t -> Origin.t
 (** [origin target] is the user-reportable origin of [target]. *)

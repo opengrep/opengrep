@@ -535,6 +535,7 @@ For more information see https://opengrep.dev.
                          ; not exposed in the public interface.
     domainslib
     kcas_data ; lock-free data structures, also makes life easier for refactoring.
+    otoml ; pyproject.toml include/exclude parsing in projidx
   )
 )
 

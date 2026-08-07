@@ -51,6 +51,8 @@ type conf = {
   dataflow_traces : bool;
   taint_intrafile : bool;
   effect_guards : bool;
+  taint_interfile : bool;
+  taint_interfile_depth : int;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
 }
@@ -89,14 +91,12 @@ type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
     conf ->
-    (* TODO alt: pass a bool alongside each target path that indicates whether
-       the target is explicit i.e. occurs directly on the command line *)
     Find_targets.conf ->
     Match_patterns.matching_conf ->
-    (* LATER? alt: use Config_resolve.rules_and_origin instead? *)
     Rule_error.rules_and_invalid ->
-    (* Takes a list of target files, not scanning roots. *)
-    Fpath.t list ->
+    (* Target files with their project roots (threaded from Find_targets
+       for interfile path resolution), not scanning roots. *)
+    Target_and_root.t list ->
     Core_result.result_or_exn;
 }
 
@@ -130,6 +130,8 @@ let default_conf : conf =
     inline_metavariables = false;
     taint_intrafile = false;
     effect_guards = false;
+    taint_interfile = false;
+    taint_interfile_depth = 3;
     nosem = true;
     strict = false;
     engine_config = Engine_config.default;
@@ -165,8 +167,8 @@ let (hook_pro_git_remote_scan_setup : (func -> func) option ref) = ref None
 (* Metrics and reporting *)
 (*************************************************************************)
 let report_status ~respect_gitignore
-    (lang_jobs : Lang_job.t list) (rules : Rule.t list) (targets : Fpath.t list)
-    =
+    (lang_jobs : Lang_job.t list) (rules : Rule.t list)
+    (targets : Target_and_root.t list) =
   Logs.app (fun m ->
       m "%a"
         (fun ppf () ->
@@ -256,23 +258,23 @@ let add_typescript_to_javascript_rules_hack (rules : Rule.t list) : Rule.t list
              { r with Rule.target_analyzer = L (l, lset |> Set_.elements) })
 
 let split_jobs_by_language (conf : Find_targets.conf) (rules : Rule.t list)
-    (targets : Fpath.t list) : Lang_job.t list =
+    (targets : Target_and_root.t list) : Lang_job.t list =
   let rules = add_typescript_to_javascript_rules_hack rules in
   let extract_languages = detect_extract_languages rules in
   rules |> group_rules_by_target_language
   |> List_.filter_map (fun (xlang, rules) ->
          let targets =
            targets
-           |> List.filter (fun path ->
+           |> List.filter (fun ({ Target_and_root.target_fpath; _ }) ->
                   (* bypass normal analyzer detection for explicit targets with
                      '--scan-unknown-extensions' *)
                   let bypass_language_detection =
                     conf.always_select_explicit_targets
                     && Find_targets.Explicit_targets.mem conf.explicit_targets
-                         path
+                         target_fpath
                   in
                   bypass_language_detection
-                  || Filter_target.filter_target_for_xlang xlang path)
+                  || Filter_target.filter_target_for_xlang xlang target_fpath)
          in
          if List_.null targets && not (XlangSet.mem xlang extract_languages)
          then None
@@ -280,8 +282,8 @@ let split_jobs_by_language (conf : Find_targets.conf) (rules : Rule.t list)
 
 let targets_of_lang_job (x : Lang_job.t) : Target.t list =
   x.targets
-  |> List_.map (fun (path : Fpath.t) : Target.t ->
-         Target.mk_target x.xlang path)
+  |> List_.map (fun ({ target_fpath; project_root } : Target_and_root.t) : Target.t ->
+         Target.mk_target ?project_root x.xlang target_fpath)
 
 let targets_and_rules_of_lang_jobs (lang_jobs : Lang_job.t list) :
     Target.t list * Rule.t list =
@@ -293,14 +295,30 @@ let targets_and_rules_of_lang_jobs (lang_jobs : Lang_job.t list) :
         (List_.append targets acc_targets, List_.append rules acc_rules))
       lang_jobs ([], [])
   in
-  (* TODO: deduplicate rules? *)
+  (* The same Rule.t can appear in several [lang_jobs] (multi-language
+     analyzer buckets); interfile dispatch would run each copy through its
+     own subgraph, doubling work. Dedup by Rule_ID, keeping the first. *)
+  let rules =
+    let seen : (Rule_ID.t, unit) Hashtbl.t = Hashtbl.create 64 in
+    List.filter (fun (r : Rule.t) ->
+      let id = fst r.Rule.id in
+      if Hashtbl.mem seen id then false
+      else (Hashtbl.add seen id (); true))
+      rules
+  in
   (targets, rules)
 
 (* used only in Test_subcommand.ml *)
 let targets_for_files_and_rules (files : Fpath.t list) (rules : Rule.t list) :
     Target.t list =
   let conf = Find_targets.default_conf in
-  let lang_jobs = split_jobs_by_language conf rules files in
+  let targets =
+    List_.map
+      (fun (fpath : Fpath.t) : Target_and_root.t ->
+        { target_fpath = fpath; project_root = None })
+      files
+  in
+  let lang_jobs = split_jobs_by_language conf rules targets in
   lang_jobs |> List.concat_map targets_of_lang_job
 
 (*************************************************************************)
@@ -373,6 +391,8 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    matching_explanations;
    taint_intrafile;
    effect_guards;
+   taint_interfile;
+   taint_interfile_depth;
    nosem = _TODO;
    strict;
    time_flag;
@@ -399,6 +419,8 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         matching_explanations;
         taint_intrafile;
         effect_guards;
+        taint_interfile;
+        taint_interfile_depth;
         strict;
         report_time = time_flag;
         (* set later in mk_core_run_for_osemgrep *)
@@ -414,16 +436,23 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         equivalences_file = None;
         respect_rule_paths = true;
         max_match_per_file;
+        (* Overridden in [mk_core_run_for_osemgrep] with the scan's actual
+           conf; the default keeps [core_scan_config_of_conf] usable alone. *)
+        targeting_conf = Find_targets.default_conf;
       }
 
 (* output adapter to Core_scan.scan.
  * LATER: we want to avoid this intermediate data structure but
  * for now that's what pysemgrep used to get so simpler to return it.
  *)
-let mk_result ?(inline = false) (all_rules : Rule.rule list) (res : Core_result.t) : result =
+let mk_result ?(inline = false) ?(taint_interfile = false)
+    (all_rules : Rule.rule list) (res : Core_result.t) : result =
   (* similar to Core_command.output_core_results code *)
   let scanned = res.scanned |> List_.map Target.internal_path |> Set_.of_list in
-  let match_results = Core_json_output.core_output_of_matches_and_errors ~inline res in
+  let match_results =
+    Core_json_output.core_output_of_matches_and_errors ~inline
+      ~taint_interfile res
+  in
   (* TOPORT? or move in semgrep-core so get info ASAP
      if match_results.skipped_targets:
          for skip in match_results.skipped_targets:
@@ -446,7 +475,7 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
   let run ?file_match_hook (conf : conf) (targeting_conf : Find_targets.conf)
       (matching_conf : Match_patterns.matching_conf)
       (rules_and_invalid : Rule_error.rules_and_invalid)
-      (targets : Fpath.t list) : Core_result.result_or_exn =
+      (targets : Target_and_root.t list) : Core_result.result_or_exn =
     (*
        At this point, we already have the full list of targets. These targets
        will populate the 'target_source' field of the config object
@@ -482,7 +511,12 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
     let code_targets, applicable_rules =
       targets_and_rules_of_lang_jobs lang_jobs
     in
-    let lockfiles = find_lockfiles targets in
+    let target_fpaths =
+      List_.map
+        (fun ({ target_fpath; _ } : Target_and_root.t) -> target_fpath)
+        targets
+    in
+    let lockfiles = find_lockfiles target_fpaths in
     let final_targets =
       add_possibly_lockfile_to_regular_target lockfiles code_targets
       @ (lockfiles |> List_.map (fun x -> Target.Lockfile x))
@@ -498,7 +532,10 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
         file_match_hook;
         target_source = Targets final_targets;
         rule_source = Rules applicable_rules;
-        matching_conf
+        matching_conf;
+        (* Pass the scan's targeting conf so projidx (the interfile
+           call-graph builder) sees the same file universe as targeting. *)
+        targeting_conf;
       }
     in
     (* !!!!Finally! this is where we branch to semgrep-core core scan fun!!! *)

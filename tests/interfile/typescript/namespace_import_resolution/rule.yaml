@@ -1,0 +1,35 @@
+rules:
+  - id: namespace-import-resolution
+    languages: [ts]
+    severity: ERROR
+    message: >
+      `import * as lib from "./lib"` — namespace import.  Use site
+      is `lib.process(req.query.q)`.
+
+      § 4 TS says directly: "I_namespace (import * as X from "./y")
+      is recorded but resolution is **best-effort**."  This test
+      pins what "best-effort" buys us today.
+
+      For the cross-file edge `app.ts:handle -> lib.ts:process` to
+      exist, projidx must (a) record the namespace import,
+      (b) recognize that `lib.<name>` at the use site refers to the
+      named export `name` from "./lib", and (c) resolve to lib.ts's
+      `process`.  Step (b) is the hard part: it requires treating
+      `lib.process` differently from a regular `obj.method()` site
+      (which goes through MRO / interface dispatch) — it has to
+      route through the namespace import's path lookup.
+
+      If "best-effort" doesn't cover this pattern: no edge, no
+      finding, test red.  That outcome documents a real gap and
+      would justify either (a) upgrading the implementation, or
+      (b) downgrading the docs to be explicit about the limit.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY
