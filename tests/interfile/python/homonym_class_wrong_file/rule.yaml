@@ -1,0 +1,16 @@
+rules:
+  - id: homonym-class-wrong-file
+    languages: [python]
+    severity: ERROR
+    message: >
+      When two files declare a same-named class whose same-named methods differ
+      in arity, arity alone must not decide the callee: the call has to resolve
+      against the class the caller actually imported, not against an unimported
+      homonym that happens to match the argument count.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

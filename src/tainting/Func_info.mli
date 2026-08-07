@@ -19,3 +19,10 @@ val free_id : IL.name -> fn_id
 
 (* File of the def's [fkind] token; [None] only for location-less tokens. *)
 val def_file_opt : t -> Fpath.t option
+
+(* Drop non-[keep] methods, but only within method-name groups that hold
+   several entries and would keep at least one survivor.  Uniquely named
+   methods and groups [keep] would empty are left alone, so a failed match
+   degrades to the un-narrowed set.  [None] = nothing changed. *)
+val narrow_colliding_groups :
+  keep:(t -> bool) -> t list -> t list option

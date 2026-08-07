@@ -644,7 +644,7 @@ let check_targets_with_rules ?(print_summary = true)
             let result_or_exn =
               Diff_scan.scan_baseline
                 (caps :> < Cap.chdir ; Cap.tmp >)
-                profiler baseline selected rules
+                conf profiler baseline selected rules
                 ~explicit_targets:conf.targeting_conf.explicit_targets
                 diff_scan_func
             in
