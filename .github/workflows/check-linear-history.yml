@@ -1,0 +1,39 @@
+# Enforces the semi-linear history described in CONTRIBUTING.md: rebase the PR
+# branch, never merge the target branch into it.
+name: check-linear-history
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  pull-requests: read
+
+jobs:
+  no-merge-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject merge commits on the PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          DOC: ${{ github.server_url }}/${{ github.repository }}/blob/main/CONTRIBUTING.md#semi-linear-history-with-merge-commits
+        run: |
+          set -euo pipefail
+          # The endpoint below lists at most 250 commits.
+          total=$(gh api "repos/$REPO/pulls/$PR" --jq '.commits')
+          if [ "$total" -gt 250 ]; then
+            echo "::error::PR has $total commits; the API lists at most 250. Cannot verify."
+            exit 1
+          fi
+          # --paginate applies --jq per page, so emit a sha per line, not a count.
+          merges=$(gh api "repos/$REPO/pulls/$PR/commits?per_page=100" --paginate \
+                     --jq '.[] | select(.parents | length > 1) | .sha')
+          if [ -n "$merges" ]; then
+            echo "::error::This PR merges main into the branch. We keep a semi-linear history -- rebase instead (use 'Update with rebase' on the Update branch button). See $DOC"
+            printf '%s\n' "$merges"
+            exit 1
+          fi
+          echo "OK: no merge commits"
