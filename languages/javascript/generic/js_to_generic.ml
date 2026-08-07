@@ -244,10 +244,11 @@ and expr (x : expr) =
   | ExprTodo (v1, v2) ->
       let v2 = list expr v2 in
       G.OtherExpr (v1, v2 |> List_.map (fun e -> G.E e)) |> G.e
-  | ParenExpr (l, e, r) ->
-      let e = expr e in
-      H.set_e_range l r e;
-      e
+  | ParenExpr (_l, e, _r) ->
+      (* Grouping parens are dropped; the inner expression keeps its own tight
+         range. When such an expression is an operand, [operand] folds the parens
+         into the enclosing operator's range instead. *)
+      expr e
   | L x -> G.L (literal x) |> G.e
   | Id v1 ->
       let v1 = name v1 in
@@ -264,12 +265,16 @@ and expr (x : expr) =
        | SR_Expr e -> e)
       |> G.e
   | Assign (v1, tok, v2) ->
-      let v1 = expr v1 and v2 = expr v2 in
+      let v1, lparens = operand v1 and v2, rparens = operand v2 in
       let tok = info tok in
-      G.Assign (v1, tok, v2) |> G.e
+      let e = G.Assign (v1, tok, v2) |> G.e in
+      H.set_range_with_parens (lparens @ rparens) e;
+      e
   | ArrAccess (v1, v2) ->
-      let v1 = expr v1 and v2 = bracket expr v2 in
-      G.ArrayAccess (v1, v2) |> G.e
+      let v1, parens = operand v1 and v2 = bracket expr v2 in
+      let e = G.ArrayAccess (v1, v2) |> G.e in
+      H.set_range_with_parens parens e;
+      e
   | Obj v1 ->
       let flds = obj_ v1 in
       G.Record flds |> G.e
@@ -287,7 +292,7 @@ and expr (x : expr) =
       let def, _more_attrsTODOEMPTY = class_ v1 in
       G.AnonClass def |> G.e
   | ObjAccess (v1, t, v2) ->
-      let e = expr v1 in
+      let e, parens = operand v1 in
       let t, v1 =
         match t with
         | Dot, tok -> (info tok, e)
@@ -298,10 +303,14 @@ and expr (x : expr) =
               |> G.e )
       in
       let v2 = property_name v2 in
-      (match v2 with
-      | Left n -> G.DotAccess (v1, t, G.FN (G.Id (n, G.empty_id_info ())))
-      | Right e -> G.DotAccess (v1, t, G.FDynamic e))
-      |> G.e
+      let res =
+        (match v2 with
+        | Left n -> G.DotAccess (v1, t, G.FN (G.Id (n, G.empty_id_info ())))
+        | Right e -> G.DotAccess (v1, t, G.FDynamic e))
+        |> G.e
+      in
+      H.set_range_with_parens parens res;
+      res
   | Fun (v1, _v2TODO) ->
       let def, more_attrs = fun_ v1 in
       (* TODO: Include attrs in generic AST? Where? *)
@@ -314,6 +323,9 @@ and expr (x : expr) =
       e
   | Apply (IdSpecial v1, v2) ->
       let x = special v1 in
+      (* An IdSpecial application is an operator (arithmetic op, typeof, seq, …);
+         fold the parens of any parenthesized operand into the operator range. *)
+      let parens = paren_toks_of_operands (Tok.unbracket v2) in
       let v2 = bracket (list expr) v2 in
       (match x with
       | SR_Special v ->
@@ -330,24 +342,43 @@ and expr (x : expr) =
             ( G.OtherExpr (categ, []) |> G.e,
               bracket (List_.map (fun e -> G.Arg e)) v2 )
       | SR_Expr e -> G.Call (e |> G.e, bracket (List_.map G.arg) v2))
-      |> G.e
+      |> G.e |> fun e ->
+      H.set_range_with_parens parens e;
+      e
   | Apply (v1, v2) ->
-      let v1 = expr v1 and v2 = bracket (list expr) v2 in
-      G.Call (v1, bracket (List_.map (fun e -> G.Arg e)) v2) |> G.e
+      let v1, parens = operand v1 and v2 = bracket (list expr) v2 in
+      let e = G.Call (v1, bracket (List_.map (fun e -> G.Arg e)) v2) |> G.e in
+      H.set_range_with_parens parens e;
+      e
   | New (tok, e, args) ->
       let tok = info tok in
-      let e = expr e in
+      let e, parens = operand e in
       let args = bracket (list (fun arg -> G.Arg (expr arg))) args in
-      G.New (tok, H.expr_to_type e, G.empty_id_info (), args) |> G.e
+      let res = G.New (tok, H.expr_to_type e, G.empty_id_info (), args) |> G.e in
+      H.set_range_with_parens parens res;
+      res
   | Arr v1 ->
       let v1 = bracket (list expr) v1 in
       G.Container (G.Array, v1) |> G.e
   | Conditional (v1, v2, v3) ->
-      let v1 = expr v1 and v2 = expr v2 and v3 = expr v3 in
-      G.Conditional (v1, v2, v3) |> G.e
+      let v1, p1 = operand v1 and v2, p2 = operand v2 and v3, p3 = operand v3 in
+      let e = G.Conditional (v1, v2, v3) |> G.e in
+      H.set_range_with_parens (p1 @ p2 @ p3) e;
+      e
   | Xml v1 ->
       let v1 = xml v1 in
       G.Xml v1 |> G.e
+
+(* Translate an operand of an operator. The operand's own range is kept tight;
+   if it is directly parenthesized we also return the paren tokens so the
+   enclosing operator can span them. *)
+and operand (x : expr) : G.expr * G.tok list =
+  match x with
+  | ParenExpr (l, e, r) -> (expr e, [ l; r ])
+  | _ -> (expr x, [])
+
+and paren_toks_of_operands (xs : expr list) : G.tok list =
+  xs |> List.concat_map (function ParenExpr (l, _, r) -> [ l; r ] | _ -> [])
 
 and stmt x =
   match x with

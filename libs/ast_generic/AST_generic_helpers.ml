@@ -694,6 +694,16 @@ let set_e_range_with_anys anys e =
       Log.warn (fun m -> m "set_e_range_with_anys failed: no locations found");
       ()
 
+(* Parentheses wrapping an operand are dropped from the generic AST, so an
+   operator's range would otherwise stop at the operand's own tokens and lose
+   them (e.g. "(2*3)+1" captured as "2*3)+1"). [set_range_with_parens toks e]
+   extends [e]'s range to also span the operand parens [toks], while leaving
+   each operand's own range tight. *)
+let set_range_with_parens (toks : Tok.t list) (e : expr) : unit =
+  match toks with
+  | [] -> ()
+  | _ -> set_e_range_with_anys (E e :: List_.map (fun t -> Tk t) toks) e
+
 let range_of_tokens_unsafe tokens =
   List.filter Tok.is_origintok tokens |> Tok_range.min_max_toks_by_pos
 [@@profiling]

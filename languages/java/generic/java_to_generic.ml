@@ -244,16 +244,34 @@ and literal = function
       let v1 = wrap bool v1 in
       G.Bool v1
 
-(* AST generic does not contain a bracket for a call of an infix operation,
- * so the parentheses on the outside of an infix expression are not taken
- * into account if range is calculated based on the tokens inside (as is
- * the case here). Hence, we "manually" fix the range based on the '(' and ')'
- * tokens, before they are lost in the translation to AST generic. *)
+and paren_toks_of_operand : expr -> G.tok list = function
+  | Paren (t1, _, t2) -> [ t1; t2 ]
+  | _ -> []
+
+(* AST generic drops the parentheses wrapping an operand, so an operator's range
+ * would otherwise stop at the operand's own tokens and lose them (e.g. "(2+2)*3"
+ * captured as "2+2)*3"). Given the original Java node [orig] and its translation
+ * [e], we fold the parens of any parenthesized operand into [e]'s range, while
+ * leaving each operand's own range tight. *)
 and adjust_range_of_parenthesized_expr (orig : expr) (e : G.expr) : G.expr =
-  (match orig with
-   | Paren (t1, _, t2) ->
-       e.e_range <- Some (Tok.unsafe_loc_of_tok t1, Tok.unsafe_loc_of_tok t2);
-   | _ -> ());
+  let toks =
+    match orig with
+    | Infix (v1, _, v3) | Assign (v1, _, v3) | AssignOp (v1, _, v3) ->
+        paren_toks_of_operand v1 @ paren_toks_of_operand v3
+    | Conditional (v1, v2, v3) ->
+        paren_toks_of_operand v1 @ paren_toks_of_operand v2
+        @ paren_toks_of_operand v3
+    | Unary (_, v2) | Prefix (_, v2) | Cast (_, v2) -> paren_toks_of_operand v2
+    | Postfix (v1, _)
+    | Dot (v1, _, _)
+    | ArrayAccess (v1, _)
+    | Call (v1, _)
+    | InstanceOf (v1, _, _)
+    | ObjAccessEllipsis (v1, _) ->
+        paren_toks_of_operand v1
+    | _ -> []
+  in
+  H.set_range_with_parens toks e;
   e
 
 and expr e =

@@ -199,7 +199,7 @@ and map_decrement_expression (env : env) ((v1, v2) : CST.decrement_expression) =
 
 and map_array_access_expression (env : env)
     ((v1, v2, v3, v4) : CST.array_access_expression) =
-  let expression = map_expression env v1 in
+  let expression, parens = map_operand env v1 in
   let lbracket = (* "[" *) token env v2 in
   let index =
     match v3 with
@@ -207,7 +207,9 @@ and map_array_access_expression (env : env)
     | None -> G.L (Null lbracket) |> G.e
   in
   let rbracket = (* "]" *) token env v4 in
-  G.ArrayAccess (expression, (lbracket, index, rbracket)) |> G.e
+  let e = G.ArrayAccess (expression, (lbracket, index, rbracket)) |> G.e in
+  H2.set_range_with_parens parens e;
+  e
 
 and map_expression_statement (env : env) (x : CST.expression_statement) =
   match x with
@@ -223,136 +225,79 @@ and map_expression_statement (env : env) (x : CST.expression_statement) =
       let tdots = (* "..." *) token env tok in
       (Ellipsis tdots |> G.e, G.sc)
 
+(* Translate an operand of an operator. The operand's own range is kept tight;
+   if it is directly parenthesized we also return the paren tokens so the
+   enclosing operator can span them. *)
+and map_operand (env : env) (x : CST.expression) : expr * G.tok list =
+  match x with
+  | `Choice_int (`Paren_exp (v1, v2, v3)) ->
+      let lp = (* "(" *) token env v1 in
+      let e = map_expression env v2 in
+      let rp = (* ")" *) token env v3 in
+      (e, [ lp; rp ])
+  | _ -> (map_expression env x, [])
+
+(* Build an infix operator, keeping each operand's range tight but folding any
+   parens that directly wrap an operand into the operator's range. *)
+and map_binop (env : env) (v1 : CST.expression) ((op, optok) : G.operator * G.tok)
+    (v3 : CST.expression) : expr =
+  let l, lparens = map_operand env v1 in
+  let r, rparens = map_operand env v3 in
+  let e = G.opcall (op, optok) [ l; r ] in
+  H2.set_range_with_parens (lparens @ rparens) e;
+  e
+
+(* Build a prefix operator, keeping the operand's range tight but folding any
+   wrapping parens into the operator's range. *)
+and map_prefix_op (env : env) (optok : G.tok) (op : G.operator)
+    (v2 : CST.expression) : expr =
+  let e2, parens = map_operand env v2 in
+  let e = G.opcall (op, optok) [ e2 ] in
+  H2.set_range_with_parens parens e;
+  e
+
 and map_unary_expression (env : env) (x : CST.unary_expression) : expr =
   match x with
-  | `BANG_exp (v1, v2) ->
-      let op = (* "!" *) token env v1 in
-      let expr = map_expression env v2 in
-      G.opcall (Not, op) [ expr ]
-  | `TILDE_exp (v1, v2) ->
-      let op = (* "~" *) token env v1 in
-      let expr = map_expression env v2 in
-      G.opcall (BitNot, op) [ expr ]
-  | `DASH_exp (v1, v2) ->
-      let op = (* "-" *) token env v1 in
-      let expr = map_expression env v2 in
-      G.opcall (Minus, op) [ expr ]
-  | `PLUS_exp (v1, v2) ->
-      let op = (* "+" *) token env v1 in
-      let expr = map_expression env v2 in
-      G.opcall (Plus, op) [ expr ]
+  | `BANG_exp (v1, v2) -> map_prefix_op env ((* "!" *) token env v1) Not v2
+  | `TILDE_exp (v1, v2) -> map_prefix_op env ((* "~" *) token env v1) BitNot v2
+  | `DASH_exp (v1, v2) -> map_prefix_op env ((* "-" *) token env v1) Minus v2
+  | `PLUS_exp (v1, v2) -> map_prefix_op env ((* "+" *) token env v1) Plus v2
 
 and map_binary_expression (env : env) (x : CST.binary_expression) : expr =
   match x with
-  | `Exp_AMPAMP_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "&&" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (And, op) [ expr; expr2 ]
-  | `Exp_BARBAR_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "||" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Or, op) [ expr; expr2 ]
-  | `Exp_GTGT_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* ">>" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (LSR, op) [ expr; expr2 ]
-  | `Exp_LTLT_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "<<" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (LSL, op) [ expr; expr2 ]
-  | `Exp_AMP_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "&" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (BitAnd, op) [ expr; expr2 ]
-  | `Exp_HAT_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "^" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (BitXor, op) [ expr; expr2 ]
-  | `Exp_BAR_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "|" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (BitOr, op) [ expr; expr2 ]
-  | `Exp_PLUS_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "+" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Plus, op) [ expr; expr2 ]
-  | `Exp_DASH_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "-" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Minus, op) [ expr; expr2 ]
-  | `Exp_STAR_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "*" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Mult, op) [ expr; expr2 ]
-  | `Exp_SLASH_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "/" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Div, op) [ expr; expr2 ]
-  | `Exp_PERC_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "%" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Mod, op) [ expr; expr2 ]
-  | `Exp_STARSTAR_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "**" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Pow, op) [ expr; expr2 ]
-  | `Exp_LT_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "<" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Lt, op) [ expr; expr2 ]
-  | `Exp_LTEQ_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "<=" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (LtE, op) [ expr; expr2 ]
-  | `Exp_EQEQ_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "==" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Eq, op) [ expr; expr2 ]
-  | `Exp_BANGEQ_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "!=" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (NotEq, op) [ expr; expr2 ]
-  | `Exp_GTEQ_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* ">=" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (GtE, op) [ expr; expr2 ]
-  | `Exp_GT_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* ">" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (Gt, op) [ expr; expr2 ]
-  | `Exp_BSLASH_exp (v1, v2, v3) ->
-      let expr = map_expression env v1 in
-      let op = (* "\\" *) token env v2 in
-      let expr2 = map_expression env v3 in
-      G.opcall (FloorDiv, op) [ expr; expr2 ]
+  | `Exp_AMPAMP_exp (v1, v2, v3) -> map_binop env v1 (And, (* "&&" *) token env v2) v3
+  | `Exp_BARBAR_exp (v1, v2, v3) -> map_binop env v1 (Or, (* "||" *) token env v2) v3
+  | `Exp_GTGT_exp (v1, v2, v3) -> map_binop env v1 (LSR, (* ">>" *) token env v2) v3
+  | `Exp_LTLT_exp (v1, v2, v3) -> map_binop env v1 (LSL, (* "<<" *) token env v2) v3
+  | `Exp_AMP_exp (v1, v2, v3) -> map_binop env v1 (BitAnd, (* "&" *) token env v2) v3
+  | `Exp_HAT_exp (v1, v2, v3) -> map_binop env v1 (BitXor, (* "^" *) token env v2) v3
+  | `Exp_BAR_exp (v1, v2, v3) -> map_binop env v1 (BitOr, (* "|" *) token env v2) v3
+  | `Exp_PLUS_exp (v1, v2, v3) -> map_binop env v1 (Plus, (* "+" *) token env v2) v3
+  | `Exp_DASH_exp (v1, v2, v3) -> map_binop env v1 (Minus, (* "-" *) token env v2) v3
+  | `Exp_STAR_exp (v1, v2, v3) -> map_binop env v1 (Mult, (* "*" *) token env v2) v3
+  | `Exp_SLASH_exp (v1, v2, v3) -> map_binop env v1 (Div, (* "/" *) token env v2) v3
+  | `Exp_PERC_exp (v1, v2, v3) -> map_binop env v1 (Mod, (* "%" *) token env v2) v3
+  | `Exp_STARSTAR_exp (v1, v2, v3) -> map_binop env v1 (Pow, (* "**" *) token env v2) v3
+  | `Exp_LT_exp (v1, v2, v3) -> map_binop env v1 (Lt, (* "<" *) token env v2) v3
+  | `Exp_LTEQ_exp (v1, v2, v3) -> map_binop env v1 (LtE, (* "<=" *) token env v2) v3
+  | `Exp_EQEQ_exp (v1, v2, v3) -> map_binop env v1 (Eq, (* "==" *) token env v2) v3
+  | `Exp_BANGEQ_exp (v1, v2, v3) -> map_binop env v1 (NotEq, (* "!=" *) token env v2) v3
+  | `Exp_GTEQ_exp (v1, v2, v3) -> map_binop env v1 (GtE, (* ">=" *) token env v2) v3
+  | `Exp_GT_exp (v1, v2, v3) -> map_binop env v1 (Gt, (* ">" *) token env v2) v3
+  | `Exp_BSLASH_exp (v1, v2, v3) -> map_binop env v1 (FloorDiv, (* "\\" *) token env v2) v3
 
 and map_ternary_expression (env : env)
     ((v1, v2, v3, v4, v5) : CST.ternary_expression) =
-  let cond = map_expression env v1 in
-  let quest = (* "?" *) token env v2 in
+  (* The whole "? :" is one operator: its branches stay tight, and the parens
+     of its outer operands are folded into its range. *)
+  let cond, cparens = map_operand env v1 in
+  let _quest = (* "?" *) token env v2 in
   let ok = map_expression env v3 in
-  let s = (* ":" *) token env v4 in
-  let elseE = map_expression env v5 in
-  Conditional (cond, ok, elseE) |> G.e
+  let _s = (* ":" *) token env v4 in
+  let elseE, eparens = map_operand env v5 in
+  let e = Conditional (cond, ok, elseE) |> G.e in
+  H2.set_range_with_parens (cparens @ eparens) e;
+  e
 
 and map_parenthesized_expression (env : env)
     ((v1, v2, v3) : CST.parenthesized_expression) : expr =
@@ -448,22 +393,24 @@ and map_array_ (env : env) ((v1, v2, v3, v4, v5) : CST.array_) =
   G.Container (G.Array, (lb, expr1 :: items, rb)) |> G.e
 
 and map_member_expression (env : env) ((v1, v2, v3) : CST.member_expression) =
-  let e =
+  let e, parens =
     match v1 with
-    | `Exp x -> map_expression env x
+    | `Exp x -> map_operand env x
     | `Id tok ->
         let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
-        N (H2.name_of_id id) |> G.e
+        (N (H2.name_of_id id) |> G.e, [])
   in
   let tdot = (* "." *) token env v2 in
   let fld = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v3 in
-  DotAccess (e, tdot, FN (H2.name_of_id fld)) |> G.e
+  let res = DotAccess (e, tdot, FN (H2.name_of_id fld)) |> G.e in
+  H2.set_range_with_parens parens res;
+  res
 
 and map_assignment_expression (env : env)
     ((v1, v2, v3) : CST.assignment_expression) =
-  let le =
+  let le, lparens =
     match v1 with
-    | `Exp x -> map_expression env x
+    | `Exp x -> map_operand env x
   in
   let op =
     match v2 with
@@ -486,8 +433,10 @@ and map_assignment_expression (env : env)
     | `EQEQEQ tok -> (* "===" *) (PhysEq, token env tok)
     | `EQ tok -> (* "=" *) (Eq, token env tok)
   in
-  let re = map_expression env v3 in
-  G.AssignOp (le, op, re) |> G.e
+  let re, rparens = map_operand env v3 in
+  let e = G.AssignOp (le, op, re) |> G.e in
+  H2.set_range_with_parens (lparens @ rparens) e;
+  e
 
 and map_expression (env : env) (x : CST.expression) =
   match x with
