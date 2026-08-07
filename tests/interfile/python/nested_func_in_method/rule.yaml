@@ -1,0 +1,16 @@
+rules:
+  - id: nested-func-in-method
+    languages: [python]
+    severity: ERROR
+    message: >
+      A function nested inside a method is not itself a method: it has no
+      implicit receiver, so its first parameter is a real parameter and must
+      carry taint.  Only a function whose immediate enclosing scope is the
+      class body gets its first parameter stripped as [self].
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

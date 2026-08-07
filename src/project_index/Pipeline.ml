@@ -232,45 +232,6 @@ let build_class_aliases
     fi.fi_import_specifiers;
   tbl
 
-(* Narrow one class's method list per method-name group.  Two same-named
-   classes in different files land under one bare class name at method
-   dispatch, and [pick_by_arity] drops the call on the (class, method, arity)
-   collision — a silent cross-file false negative caused by an unrelated
-   homonym.  Only a group holding several entries is that collision, so
-   narrowing applies per method name, not per class: a uniquely named method
-   is kept whatever its file (a TS class-body alias carries the aliased
-   function's file, not the class's, and would otherwise be dropped whenever
-   the class also declares an ordinary method).  A group [keep] would empty is
-   left untouched, so a path-shape mismatch degrades to the un-narrowed set
-   rather than erasing the method.  [None] = nothing changed. *)
-let narrow_method_groups ~(keep : Func_info.t -> bool)
-    (methods : Func_info.t list) : Func_info.t list option =
-  let leaf (func : Func_info.t) : string =
-    match Func_info.leaf_name func.Func_info.fn_id with
-    | Some (name : IL.name) -> fst name.IL.ident
-    | None -> ""
-  in
-  let named = List.map (fun func -> (leaf func, func)) methods in
-  (* Method names whose group spans several entries and keeps at least one
-     survivor; every other name is left alone. *)
-  let narrowed_names =
-    List.sort_uniq String.compare (List.map fst named)
-    |> List.filter (fun name ->
-         let group =
-           List.filter (fun (n, _) -> String.equal n name) named
-         in
-         List.length group > 1
-         && List.exists (fun (_, func) -> keep func) group)
-  in
-  let filtered =
-    List.filter_map (fun (name, func) ->
-      if List.exists (String.equal name) narrowed_names && not (keep func)
-      then None
-      else Some func)
-      named
-  in
-  if List.length filtered <> List.length methods then Some filtered else None
-
 (* Restrict an imported class's colliding methods to the file(s) it was
    imported from (keyed by the import's local name) or the caller's own
    file. *)
@@ -290,7 +251,7 @@ let narrow_methods_by_import_files
         | Some file ->
           Hashtbl.mem target_set file || String.equal file caller_file
       in
-      (match narrow_method_groups ~keep methods with
+      (match Func_info.narrow_colliding_groups ~keep methods with
        | Some filtered -> Type_state.set_methods state cls_name filtered
        | None -> state)
   ) import_target_files ts
@@ -349,7 +310,7 @@ let narrow_methods_by_required_files
               spec_suffixes)
     in
     Type_state.fold_methods (fun cls_name methods state ->
-      match narrow_method_groups ~keep methods with
+      match Func_info.narrow_colliding_groups ~keep methods with
       | Some filtered -> Type_state.set_methods state cls_name filtered
       | None -> state)
       ts ts

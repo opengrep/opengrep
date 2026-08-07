@@ -896,14 +896,30 @@ let handle_work_item
   | Interfile_rule rs ->
     (* Run under the global memory limit so [--max-memory] applies to
        interfile dispatch too. *)
-    Interfile_result
-      (Memory_limit.run_with_global_memory_limit
-         (caps :> < Cap.memory_limit >)
-         ~get_context:(fun () ->
-           spf "interfile rule %s"
-             (Rule_ID.to_string (Interfile_dispatch.rule_id_of rs)))
-         ~mem_limit_mb:config.max_memory_mb
-         (fun () -> Interfile_dispatch.run_rule rs))
+    let matches =
+      Memory_limit.run_with_global_memory_limit
+        (caps :> < Cap.memory_limit >)
+        ~get_context:(fun () ->
+          spf "interfile rule %s"
+            (Rule_ID.to_string (Interfile_dispatch.rule_id_of rs)))
+        ~mem_limit_mb:config.max_memory_mb
+        (fun () -> Interfile_dispatch.run_rule rs)
+    in
+    (* Stream these like per-target matches.  [Output_format.Incremental] skips
+       the final render on the assumption everything was already emitted through
+       this hook, so an interfile match that never reaches it is counted in the
+       totals and the exit code but never printed.  Grouped by file because the
+       hook is documented per-file, even though the emitting rule spans several. *)
+    config.file_match_hook
+    |> Option.iter (fun hook ->
+        matches
+        |> Assoc.group_by (fun (pm : PM.t) ->
+             pm.PM.path.Target.internal_path_to_content)
+        |> List.iter (fun (file, pms) ->
+            hook file
+              (Core_result.mk_match_result pms ESet.empty
+                 (Core_profiling.empty_partial_profiling file))));
+    Interfile_result matches
 
 let unified_exception_handler (item : scan_work_item) (e : Exception.t)
     : scan_work_error =
