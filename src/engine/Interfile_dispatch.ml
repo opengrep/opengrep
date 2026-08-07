@@ -437,10 +437,29 @@ let compute_rule_subgraph
           (Rule_ID.to_string (fst rule.R.id))
           (List.length sources) (List.length sinks)
           (List.length src_in) (List.length snk_in));
+    (* An empty side only proves there is no flow when the scan covered every
+       file the graph knows about; on a partial scan the counterpart may sit in
+       a file that was never a target and so never had its specs extracted. *)
+    let scan_is_partial =
+      let targets =
+        lc.lc_matching_targets
+        |> List.map (fun (t : interfile_target) -> Fpath.normalize t.abs_path)
+        |> FpathSet.of_list
+      in
+      Interfile_graph.files_of_graph interfile_graph
+      |> List.exists (fun f -> not (FpathSet.mem (Fpath.normalize f) targets))
+    in
     let relevant_graph =
-      Graph_reachability.compute_relevant_subgraph ?depth:interfile_depth
-        ~g_global:interfile_graph
-        (Call_graph.G.create ()) ~sources ~sinks
+      match sources, sinks with
+      | [], seeds
+      | seeds, [] when scan_is_partial ->
+        Graph_reachability.compute_seeded_subgraph ?depth:interfile_depth
+          ~g_global:interfile_graph
+          (Call_graph.G.create ()) ~seeds
+      | _ ->
+        Graph_reachability.compute_relevant_subgraph ?depth:interfile_depth
+          ~g_global:interfile_graph
+          (Call_graph.G.create ()) ~sources ~sinks
     in
     Log.info (fun m ->
         m "interfile dispatch: rule %s: relevant subgraph %d vertices, %d edges"
@@ -529,8 +548,12 @@ let init_rule_state
                  (Rule_ID.to_string (fst rule.R.id)) bt);
            Exception.catch_and_reraise exn
          | exn ->
-           Log.warn (fun m ->
-               m "interfile dispatch: skipping file %s for rule %s: %s"
+           (* See [parse_file_batch]: [semgrep.tainting] is muted by default,
+              and this drops one file's functions from the rule's interfile
+              state. *)
+           Logs.warn (fun m ->
+               m "interfile dispatch: skipping file %s for rule %s, its \
+                  functions are excluded from cross-file analysis: %s"
                  (Fpath.to_string file_path)
                  (Rule_ID.to_string (fst rule.R.id))
                  (Printexc.to_string exn));
@@ -812,12 +835,21 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
         | G.FBDecl _
         | G.FBNothing -> matches_acc
         | _ ->
-          let do_detect =
-            detect_findings
-            && (match file_of_fid fid with
-                | Some fp -> is_target_file rs.target_root_map fp
-                | None -> false)
+          let fid_file = file_of_fid fid in
+          let fid_is_target =
+            match fid_file with
+            | Some fp -> is_target_file rs.target_root_map fp
+            | None -> false
           in
+          (* Detect in companions too, not just targets.  A cross-file finding
+             is emitted while analysing the CALLER that instantiates the
+             callee's signature, so when only the sink's file was targeted the
+             caller is a companion and gating on it drops the finding even
+             though the sink itself is in scope.  Companion findings are then
+             filtered to target files below, so nothing outside the requested
+             scope is reported.  On a whole-project scan every file is a target
+             and this costs nothing. *)
+          let do_detect = detect_findings && Option.is_some fid_file in
           if not do_detect then matches_acc
           else
             (* The re-extraction against [converged_db] is NOT redundant:
@@ -832,6 +864,15 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
             let _db, findings =
               extract_and_check_function rs fid info ~detect_findings:true
                 converged_db
+            in
+            let findings =
+              if fid_is_target then findings
+              else
+                List.filter
+                  (fun (pm : PM.t) ->
+                     is_target_file rs.target_root_map
+                       pm.PM.path.Target.internal_path_to_content)
+                  findings
             in
             List.rev_append findings matches_acc)
   in
@@ -982,8 +1023,15 @@ let parse_file_batch
            | Time_limit.Timeout _) as exn ->
            Exception.catch_and_reraise exn
          | exn ->
-           Log.warn (fun m ->
-               m "interfile parse: failed to parse %s: %s"
+           (* [Logs] rather than [Log]: the [semgrep.tainting] source is
+              skipped by default even under [--debug], so routing this there
+              drops the file from analysis with no visible trace at all.  Only
+              an internal failure reaches here — malformed input is either
+              recovered by the parser or excluded upstream — so it means a bug,
+              and must not be silent. *)
+           Logs.warn (fun m ->
+               m "interfile parse: failed to parse %s, excluding it from \
+                  cross-file analysis: %s"
                  (Fpath.to_string file)
                  (Printexc.to_string exn));
            None)

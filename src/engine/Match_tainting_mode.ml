@@ -313,39 +313,48 @@ let check_fundef (taint_inst : Taint_rule_inst.t) (name : IL.name) ?glob_env
   check_fundef_with_cfg taint_inst name ?glob_env ?class_name ?signature_db
     ?builtin_signature_db ?call_graph (CFG_build.cfg_of_fdef fdef)
 
+(* Only a [def] whose immediate enclosing scope is the class body is a method.
+   A function nested inside a method is lexically under the class — so it keeps
+   [class_name_str] for [self.]-resolution — but it is not itself a method and
+   takes no implicit receiver.  [Python_to_generic] already draws this line:
+   [fkind] is [Method] only for [context = InClass], and a function body
+   switches the context to [InFunctionOrMethod]. *)
+let is_method_fdef (fdef : G.function_definition) : bool =
+  match fst fdef.G.fkind with
+  | G.Method -> true
+  | _ -> false
+
 (* Implicit receiver (Go/Rust ParamReceiver, Python first method param);
    reached as [BThis] not [BArg], so stripping keeps [BArg] indices aligned. *)
-let is_implicit_receiver (lang : Lang.t) ~(is_first : bool)
-    ~(is_static : bool) (class_name_str : string option)
+let is_implicit_receiver (lang : Lang.t) ~(is_first : bool) (info : fun_info)
     (gparam : G.parameter) : bool =
   match lang, gparam with
   | Lang.Go, G.ParamReceiver _ -> true
   | Lang.Rust, G.ParamReceiver _ -> true
   | _ -> (
-      match class_name_str with
+      match info.class_name_str with
       | None -> false
       | Some _ ->
           (* Python's receiver is the first parameter of an instance/class
              method whatever it is named ([self], [cls], or otherwise); a
              [@staticmethod] has no receiver. *)
           (match lang with
-           | Lang.Python -> is_first && not is_static
+           | Lang.Python ->
+               is_first && (not info.is_static) && is_method_fdef info.fdef
            | _ -> false))
 
 let get_arity params info lang =
   List.length
     (List.filteri
        (fun i (gp : G.parameter) ->
-          not (is_implicit_receiver lang ~is_first:(i =*= 0)
-                 ~is_static:info.is_static info.class_name_str gp))
+          not (is_implicit_receiver lang ~is_first:(i =*= 0) info gp))
        params)
 
 (* Drop implicit-receiver IL params; G and IL param lists share length/order. *)
-let filter_implicit_receiver_params (lang : Lang.t) ~(is_static : bool)
-    (class_name_str : string option)
+let filter_implicit_receiver_params (lang : Lang.t) (info : fun_info)
     (g_params : G.parameter list) (il_params : IL.param list)
     : IL.param list =
-  match class_name_str with
+  match info.class_name_str with
   | None -> il_params
   | Some _ ->
     List.combine g_params il_params
@@ -354,9 +363,7 @@ let filter_implicit_receiver_params (lang : Lang.t) ~(is_static : bool)
             match ip with
             (* Keep IL.ParamReceiver — extractor maps it to BThis without consuming an arg index. *)
             | IL.ParamReceiver _ -> true
-            | _ ->
-              not (is_implicit_receiver lang ~is_first:(i =*= 0) ~is_static
-                     class_name_str gp))
+            | _ -> not (is_implicit_receiver lang ~is_first:(i =*= 0) info gp))
     |> List.map snd
 
 (* [fid_filter] skips IL/CFG build for out-of-subgraph fns.  Records get [file_ast]/[taint_inst] = [None]; callers set them when needed. *)
@@ -484,8 +491,7 @@ let extract_signatures
   let arity = get_arity params info lang in
   let sig_cfg =
     let filtered_params =
-      filter_implicit_receiver_params lang ~is_static:info.is_static
-        info.class_name_str params info.cfg.IL.params
+      filter_implicit_receiver_params lang info params info.cfg.IL.params
     in
     { info.cfg with IL.params = filtered_params }
   in

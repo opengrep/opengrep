@@ -59,6 +59,51 @@ rules:
     severity: ERROR
 |}
 
+(* The sink is reached only through a call from another file, so this finding
+   comes out of interfile dispatch rather than a per-target scan. *)
+let taint_interfile_content =
+  {|
+rules:
+  - id: interfile-taint
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "cross-file taint"
+    languages: [python]
+    severity: ERROR
+|}
+
+let interfile_caller_py_content = {|
+from sinks import leak
+
+def go():
+    leak(source())
+|}
+
+let interfile_sink_py_content = {|
+def leak(v):
+    sink(v)
+|}
+
+(* The baseline revision of the helper: same signature, no sink yet. *)
+let interfile_sink_py_baseline_content = {|
+def leak(v):
+    pass
+|}
+
+(* Cosmetically edited helper: the sink is untouched and stays on the same
+   line, so any finding it carries is pre-existing rather than introduced. *)
+let interfile_sink_py_touched_content = {|
+def leak(v):
+    sink(v)
+
+# unrelated trailing comment added by this commit
+|}
+
 (* coupling: similar to cli/tests/.../targets/basic/stupid.py *)
 let stupid_py_content = {|
 def foo(a, b):
@@ -149,6 +194,12 @@ let normalize =
     Testo.mask_line ~after:"Opengrep version: " ();
     Testo.mask_pcre_pattern {|\{"version":"([^"]+)","results":\[|}
   ]
+
+(* [Testutil_git.mask_temp_git_hash] only masks the root commit's line.  A test
+   that commits a second time prints [[main <short hash>] msg], whose hash
+   varies per run and would otherwise make the snapshot unstable. *)
+let normalize_multi_commit =
+  normalize @ [ Testo.mask_line ~after:"[main " ~before:"]" () ]
 
 let without_settings f =
   Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml" f
@@ -360,6 +411,115 @@ let test_truncated_terraform_block (caps : Scan_subcommand.caps) () =
           in
           Exit_code.Check.ok exit_code))
 
+(* [--incremental-output] suppresses the final render on the assumption that
+   every finding was already streamed per file.  Interfile dispatch produces its
+   matches outside the per-target path, so unless it streams them too they are
+   counted in the summary and the exit code but never printed. *)
+let test_interfile_incremental_output (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "--incremental-output";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* Sources and sinks are extracted only over the scan's target files, so a
+   partial scan — one file here, but equally a diff scan or a CI changed-files
+   run — sees just one side of the flow.  Scanning only the sink file must
+   still follow the call back into the untargeted companion that supplies the
+   taint, rather than concluding from the empty source list that no flow
+   exists. *)
+let test_interfile_partial_target (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "sinks.py";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* The CI shape of a partial scan: a commit adds a sink to a helper that
+   pre-existing, untouched code already feeds a source into.  Only the helper
+   is added-or-modified, so the caller carrying the source is not a target and
+   the flow is only found if companions are analysed.  The finding itself lands
+   in the changed file, so it does belong in a diff scan's output. *)
+let test_interfile_diff_scan (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_baseline_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          (* Second commit: introduce the sink, leaving main.py untouched. *)
+          UFile.write_file ~file:(Fpath.v "sinks.py") interfile_sink_py_content;
+          Git_wrapper.add [ Fpath.v "." ];
+          Git_wrapper.commit "Add the sink";
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "--baseline-commit"; "HEAD~1";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* The reverse of the diff-scan test above: the cross-file flow already exists
+   in the baseline and this commit only appends a comment, so the diff must
+   report NOTHING.  The baseline replay has to rescan enough files to reproduce
+   an interfile finding — replaying only the files that carry a match leaves out
+   the caller supplying the taint, so the baseline comes up empty and a
+   pre-existing finding is misreported as newly introduced. *)
+let test_interfile_diff_scan_preexisting (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          UFile.write_file ~file:(Fpath.v "sinks.py")
+            interfile_sink_py_touched_content;
+          Git_wrapper.add [ Fpath.v "." ];
+          Git_wrapper.commit "Touch the sink file";
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "--baseline-commit"; "HEAD~1";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -376,6 +536,18 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "incremental output with --incremental-output-postprocess"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_basic_output_nosem_incremental caps);
+      t "interfile pre-existing findings are not reported by a diff scan"
+        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_multi_commit
+        (test_interfile_diff_scan_preexisting caps);
+      t "interfile findings in a diff scan"
+        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_multi_commit
+        (test_interfile_diff_scan caps);
+      t "interfile findings from a partial target set"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_interfile_partial_target caps);
+      t "interfile findings with --incremental-output"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_interfile_incremental_output caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_basic_output_nosem_incremental_disabled caps);
