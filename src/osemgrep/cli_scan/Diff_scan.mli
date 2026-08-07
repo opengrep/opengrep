@@ -3,6 +3,7 @@ type diff_scan_func =
 
 val scan_baseline :
   < Cap.chdir ; Cap.tmp > ->
+  Scan_CLI.conf ->
   Profiler.t ->
   Find_targets.baseline_ref ->
   Target_and_root.t list ->

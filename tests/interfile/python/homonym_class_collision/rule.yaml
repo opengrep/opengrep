@@ -1,0 +1,16 @@
+rules:
+  - id: homonym-class-collision
+    languages: [python]
+    severity: ERROR
+    message: >
+      Two files declare a same-named class with a same-named, same-arity
+      method.  Only one of them is imported by the caller, so the call must
+      resolve to that one rather than becoming ambiguous and resolving to
+      neither.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

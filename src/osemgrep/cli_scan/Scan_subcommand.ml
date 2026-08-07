@@ -619,7 +619,7 @@ let check_targets_with_rules ?(print_summary = true)
             in
             Diff_scan.scan_baseline
               (caps :> < Cap.chdir ; Cap.tmp >)
-              profiler baseline selected rules diff_scan_func
+              conf profiler baseline selected rules diff_scan_func
       in
       match result_or_exn with
       | Error exn ->
