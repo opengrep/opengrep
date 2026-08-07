@@ -824,13 +824,15 @@ def ci(
             if match.is_ignored and not keep_ignored:
                 continue
 
-            applicable_result_list = (
-                cai_matches
-                if "r2c-internal-cai" in rule.id
-                else blocking_matches
-                if match.is_blocking
-                else nonblocking_matches
-            )
+            # Keep plain branches here: Nuitka miscompiles the nested
+            # conditional expression that used to select the list, losing
+            # the append in compiled builds.
+            if "r2c-internal-cai" in rule.id:
+                applicable_result_list = cai_matches
+            elif match.is_blocking:
+                applicable_result_list = blocking_matches
+            else:
+                applicable_result_list = nonblocking_matches
             applicable_result_list.append(match)
             if "r2c-internal-cai" not in rule.id:
                 non_cai_matches_by_rule[rule].append(match)
