@@ -149,7 +149,7 @@ let error_with_rule_id rule_id (error : Core_error.t) =
   | PartialParsing _ -> error
   | _ -> { error with rule_id = Some rule_id }
 
-let lazy_force x = Lazy.force x [@@profiling]
+let lazy_force x = Lazy_with_restart.force x [@@profiling]
 
 (* `fold_with_expls` is a left fold across a list of things, while
    accumulating an explanation for each item. it preserves the
@@ -718,7 +718,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
                    | Xlang.LAliengrep ->
                        raise Impossible
                  in
-                 let ast, _ = Lazy.force env.xtarget.lazy_ast_and_errors in
+                 let ast, _ = Lazy_with_restart.force env.xtarget.lazy_ast_and_errors in
                  (* This call iterates over the program's top-level statements, and
                     thus incurs some cost, but it shouldn't be much.
                  *)

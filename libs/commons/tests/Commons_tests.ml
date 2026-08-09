@@ -12,4 +12,5 @@ let tests =
       Unit_String_.tests;
       Unit_List_.tests;
       Unit_File.tests;
+      Unit_Lazy_with_restart.tests;
     ]

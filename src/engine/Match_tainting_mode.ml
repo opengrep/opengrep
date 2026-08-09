@@ -82,7 +82,7 @@ let get_source_requires src =
 (* Testing whether some matches a taint spec *)
 (*****************************************************************************)
 
-let lazy_force x = Lazy.force x [@@profiling]
+let lazy_force x = Lazy_with_restart.force x [@@profiling]
 
 (*****************************************************************************)
 (* Pattern match from finding *)

@@ -139,7 +139,7 @@ let is_relevant_rule_for_xtarget r xconf xtarget =
           (* NOTE: If [lazy_content] is shared in > 1 thread, then this is not
            * thread-safe. However, each [Xtarget.t] is only accessed in 1 worker
            * task, so there should be no race. *)
-          let content = Lazy.force lazy_content in
+          let content = Lazy_with_restart.force lazy_content in
           Log.info (fun m ->
               let s = Semgrep_prefilter_j.string_of_formula prefilter_formula in
               m "looking for %s in %s" s !!internal_path_to_content);
@@ -295,10 +295,7 @@ let check
   | Profiling.ProfAll, Xlang.L (_lang, []) ->
       Log.debug (fun m ->
           m "forcing parsing of AST outside of rules, for better profile");
-      (* XXX: Can result in [CamlinternalLazy.Undefined] error.
-       * But it should not be the case, as we parse in the worker thread, which
-       * is running alone in the domain. *)
-      Lazy.force lazy_ast_and_errors |> ignore
+      Lazy_with_restart.force lazy_ast_and_errors |> ignore
   | _else_ -> ());
 
   let per_rule_boilerplate_fn = per_rule_boilerplate_fn timeout file in
