@@ -916,41 +916,34 @@ and class_body env st (mets, flds) =
   | DeclEllipsis _ ->
       (mets, flds)
 
+(* A parameter carrying constructor-promotion modifiers also declares a class
+ * property, so we additionally expose it as a field. This mirrors
+ * parameter_to_field in Parse_csharp_tree_sitter.ml, which does the same for
+ * C# primary constructor parameters. Like there, we do not synthesize the
+ * implicit '$this->x = $x' assignments: they would need fake tokens, and a
+ * field is already enough for the analyses that look at class properties.
+ *)
+and promoted_field p =
+  match p with
+  | A.ParamClassic
+      { p_modifiers = _ :: _ as cv_modifiers; p_name; p_type; p_default; _ } ->
+      Some
+        {
+          A.cv_name = p_name;
+          A.cv_type = p_type;
+          A.cv_value = p_default;
+          A.cv_modifiers;
+          A.cv_hooks = [];
+        }
+  | A.ParamClassic _
+  | A.ParamEllipsis _ ->
+      None
+
 and method_def env m =
   let _, params, _ = m.f_params in
   let mds = List_.map (modifier env) m.f_modifiers in
   let params = comma_list_dots_params (parameter env) params in
-  (*
-  let implicits =
-    params |> List_.filter_map (fun p ->
-      match p.p_modifier with
-      | None -> None
-      | Some modifier -> Some (p.p_name, modifier, p.p_type)
-    )
-  in
-  let implicit_flds = implicits |> List.map (fun (var, modifier, topt) ->
-    { A.cv_name = dname var;
-      (* less: should use default val of parameter?*)
-      A.cv_value = None;
-      A.cv_modifiers = [modifier];
-      A.cv_type = opt hint_type env topt;
-    }
-  )
-  in
-  let implicit_assigns =
-    implicits |> List.map (fun (var, _, _) ->
-      let (str_with_dollar, tok) = dname var in
-      let str_without_dollar = Cst_php.str_of_dname var in
-      A.Expr (
-        A.Assign (A.Obj_get(A.IdSpecial(A.This,tok), fake ".",
-                            A.Id [str_without_dollar, tok]),
-                  fake "=",
-                  A.Var (str_with_dollar, tok)), PI.sc)
-    )
-  in
-*)
-  let implicit_flds = [] in
-  (* TODO? *)
+  let implicit_flds = List_.filter_map promoted_field params in
   ( {
       A.m_modifiers = mds;
       A.f_ref =
@@ -962,7 +955,7 @@ and method_def env m =
       A.f_params = params;
       A.f_return_type =
         Option.map (fun (_, t) -> hint_type env t) m.f_return_type;
-      A.f_body = (* implicit_assigns @ *) method_body env m.f_body;
+      A.f_body = method_body env m.f_body;
       A.f_kind = (A.Method, m.f_tok);
       A.l_uses = [];
     },
@@ -978,7 +971,7 @@ and parameter env
       p_name = name;
       p_default = d;
       p_attrs = a;
-      p_modifier = _mTODO;
+      p_modifiers = ms;
       p_variadic = variadic;
     } =
   {
@@ -987,6 +980,7 @@ and parameter env
     A.p_name = dname name;
     A.p_default = opt static_scalar_affect env d;
     A.p_attrs = attributes env a;
+    A.p_modifiers = List_.map (modifier env) ms;
     A.p_variadic = variadic;
   }
 

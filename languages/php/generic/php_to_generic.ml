@@ -621,18 +621,21 @@ and parameter x =
   | ParamClassic x -> parameter_classic x
   | ParamEllipsis t -> G.ParamEllipsis t
 
-and parameter_classic { p_type; p_ref; p_name; p_default; p_attrs; p_variadic }
-    =
+and parameter_classic
+    { p_type; p_ref; p_name; p_default; p_attrs; p_modifiers; p_variadic } =
   let p_type = option hint_type p_type in
   let p_name = var p_name in
   let p_default = option expr p_default in
   let p_attrs = list attribute p_attrs in
+  (* constructor property promotion: keep the modifiers so patterns can
+   * distinguish e.g. 'private readonly' from 'public' *)
+  let p_modifiers = list modifier_to_attr p_modifiers in
   let pclassic =
     {
       G.pname = Some p_name;
       ptype = p_type;
       pdefault = p_default;
-      pattrs = p_attrs;
+      pattrs = p_modifiers @ p_attrs;
       pinfo = G.empty_id_info ();
     }
   in
