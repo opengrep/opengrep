@@ -48,7 +48,7 @@ jobs:
           pipenv --python 3.13
 
       - name: Install nuitka
-        run: pipenv run pip install nuitka==2.8.9 protobuf jaraco.text
+        run: pipenv run pip install "nuitka[onefile]==4.1.3" protobuf jaraco.text
 
       - name: install some dependencies for windows (pyinstaller only)
         run: pipenv run pip install chardet charset-normalizer
