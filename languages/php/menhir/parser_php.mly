@@ -68,7 +68,7 @@ let mk_param s =
     p_ref = None;
     p_name = DName s;
     p_default = None;
-    p_modifier = None;
+    p_modifiers = [];
     p_variadic = None;
   }
 
@@ -612,16 +612,16 @@ parameter_list:
  (* php-facebook-ext: trailing comma *)
  | parameter "," parameter_list   { $1 :: (Right3 $2) :: $3 }
 
-parameter: attributes? ctor_modifier? ioption(type_php) parameter_bis
+parameter: attributes? ctor_modifier* ioption(type_php) parameter_bis
    { match $4 with
      | Left3 param ->
          let hint = match param.p_type with
               | Some(HintVariadic (tok, _)) -> Some(HintVariadic (tok, $3))
               | _ -> $3
          in
-         Left3 { param with p_modifier = $2; p_attrs = $1; p_type = hint; }
+         Left3 { param with p_modifiers = $2; p_attrs = $1; p_type = hint; }
       | _ -> match ($1, $2, $3) with
-             | (None, None, None) -> $4
+             | (None, [], None) -> $4
              | _ -> raise Parsing.Parse_error
       }
 
@@ -652,8 +652,12 @@ variable:
  | T_METAVAR { $1 }
 
 
-(* php-facebook-ext: implicit field via constructor parameter *)
-ctor_modifier: visibility_modifier { $1 }
+(* constructor property promotion (PHP 8.0, was a php-facebook-ext) *)
+ctor_modifier:
+ | visibility_modifier { $1 }
+ (* PHP 8.1 readonly promoted properties *)
+ | T_READONLY { Readonly, $1 }
+ | set_visibility_modifier { $1 }
 
 is_reference: TAND?  { $1 }
 
@@ -778,7 +782,10 @@ variable_modifiers:
  | T_STATIC    { Static,($1) }
  | T_ASYNC     { Async,($1) }
  | T_READONLY  { Readonly,($1) }
- (* PHP 8.4 asymmetric visibility *)
+ | set_visibility_modifier { $1 }
+
+(* PHP 8.4 asymmetric visibility *)
+%inline set_visibility_modifier:
  | T_PRIVATE "(" T_IDENT ")"
      { let (s, _) = $3 in
        if s = "set" then PrivateSet, $1

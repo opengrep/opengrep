@@ -14,3 +14,11 @@ class AsymmetricVisibility {
         $this->count++;
     }
 }
+
+class AsymmetricVisibilityPromoted {
+    public function __construct(
+        public private(set) int $count,
+        protected protected(set) string $name,
+        public private(set) readonly float $ratio,
+    ) {}
+}

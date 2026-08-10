@@ -978,7 +978,7 @@ and parameter env
       p_name = name;
       p_default = d;
       p_attrs = a;
-      p_modifier = _mTODO;
+      p_modifiers = ms;
       p_variadic = variadic;
     } =
   {
@@ -987,6 +987,7 @@ and parameter env
     A.p_name = dname name;
     A.p_default = opt static_scalar_affect env d;
     A.p_attrs = attributes env a;
+    A.p_modifiers = List_.map (modifier env) ms;
     A.p_variadic = variadic;
   }
 

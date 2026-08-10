@@ -373,6 +373,9 @@ and parameter_classic = {
   p_name : var;
   p_default : expr option;
   p_attrs : attribute list;
+  (* constructor property promotion: a visibility, Readonly, or an
+   * asymmetric visibility; empty for regular parameters *)
+  p_modifiers : modifier list;
   p_variadic : tok option;
 }
 

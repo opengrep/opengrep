@@ -629,6 +629,7 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_name = v4;
           p_default = v5;
           p_attrs = v1;
+          p_modifiers = [];
           p_variadic = None;
         }
   | `Vari_param (v1, v2, v3, v4, v5) ->
@@ -656,10 +657,11 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_name = v5;
           p_default = None;
           p_attrs = v1;
+          p_modifiers = [];
           p_variadic = Some v4;
         }
   | `Prop_prom_param (v1, v2, v3, v4) ->
-      let v1_todo = map_visibility_modifier env v1 in
+      let v1 = map_visibility_modifier env v1 in
       let v2 =
         match v2 with
         | Some x -> Some (map_type_ env x)
@@ -678,6 +680,7 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_name = v3;
           p_default = v4;
           p_attrs = [];
+          p_modifiers = [ v1 ];
           p_variadic = None;
         }
 

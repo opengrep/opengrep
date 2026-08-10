@@ -582,11 +582,12 @@ and function_type =
 
 and parameter = {
   p_attrs : attributes option;
-  (* php-facebook-ext: implicit field via constructor parameter,
-   * this is always None except for constructors and the modifier
-   * can be only Public or Protected or Private (but never Static, etc).
+  (* constructor property promotion (PHP 8.0, was a php-facebook-ext),
+   * this is always empty except for constructors, and the modifiers can
+   * be only a visibility, Readonly (PHP 8.1), or an asymmetric visibility
+   * (PHP 8.4), but never Static, Abstract, etc.
    *)
-  p_modifier : modifier wrap option;
+  p_modifiers : modifier wrap list;
   p_type : hint_type option;
   p_ref : is_ref;
   p_name : dname;
