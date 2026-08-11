@@ -36,9 +36,24 @@ RUN ['a']
 # MATCH:
 RUN [["a"]]
 
-# Trailing junk after the closing bracket.
+# A well-formed array trailed by anything else: the argument as a whole is not
+# valid JSON, so docker runs the line through the shell.
 # MATCH:
-RUN [ x ] && echo done
+RUN ["a"] && echo done
+
+# MATCH:
+RUN ["a"] extra
+
+# MATCH:
+RUN ["a"] # not a comment to docker
+
+# MATCH:
+RUN ["a"] \
+    && echo b
+
+# MATCH:
+RUN ["a", \
+     "b"] && echo c
 
 # Exec form: not a shell command.
 RUN ["a", "b"]

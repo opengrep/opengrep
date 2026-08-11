@@ -26,6 +26,14 @@ RUN ["echo", "[ok] a,b \"c\""]
 RUN ["a", \
      "b"]
 
+# Trailing blanks and a trailing continuation don't end the exec form.
+# MATCH:
+RUN ["a"]	
+
+# MATCH:
+RUN ["a"] \
+
 # Not arrays.
 RUN [ -f /x ]
 RUN ["a" "b"]
+RUN ["a"] && echo b
