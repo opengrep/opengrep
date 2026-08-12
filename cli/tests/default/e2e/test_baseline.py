@@ -680,6 +680,32 @@ def test_staged_changes(git_tmp_path, snapshot):
     assert_err_match(snapshot, output, "error.txt")
 
 
+def test_baseline_worktree_dirty_from_eol_normalization(git_tmp_path, snapshot):
+    # A fresh checkout of the baseline commit can be "dirty" without any real
+    # modification when .gitattributes normalizes line endings but files were
+    # committed unnormalized (e.g. CRLF blobs later covered by `*.py text eol=lf`).
+    # `git worktree remove` refuses to delete such a worktree unless --force is
+    # used, which previously aborted the entire scan (exit 2) after the scan
+    # itself had already completed successfully.
+    foo = git_tmp_path / "foo.py"
+    foo.write_bytes(b"x = 1\r\n")  # CRLF blob, committed before any attributes
+    subprocess.run(["git", "add", "."], check=True, capture_output=True)
+    _git_commit(1)
+
+    # Normalization rule added after the fact: from now on every fresh
+    # checkout of the commit above reports foo.py as phantom-modified.
+    (git_tmp_path / ".gitattributes").write_text("*.py text eol=lf\n")
+    subprocess.run(["git", "add", "."], check=True, capture_output=True)
+    base_commit = _git_commit(2)
+
+    foo.write_bytes(f"x = 1\r\ny = {SENTINEL_1}\r\n".encode())
+    subprocess.run(["git", "add", "."], check=True, capture_output=True)
+    _git_commit(3)
+
+    output = run_sentinel_scan(base_commit=base_commit, check=False)
+    assert output.returncode == 0
+
+
 # TODO
 # def test_baseline_has_head_untracked(git_tmp_path, snapshot):
 #    pass
