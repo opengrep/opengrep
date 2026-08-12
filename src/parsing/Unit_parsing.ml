@@ -230,7 +230,6 @@ let langs_with_error_tolerance =
     (Lang.Csharp, Strict);
     (Lang.Crystal, Strict);
     (Lang.Dockerfile, Strict);
-    (Lang.Dockerfile, Todo);
     (Lang.Lua, Strict);
     (Lang.Lua, Todo);
     (Lang.Move_on_aptos, Strict);
