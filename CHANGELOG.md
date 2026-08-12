@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.27.0](https://github.com/opengrep/opengrep/releases/tag/v1.27.0) - 12-08-2026
+
+### Language support
+
+* JS/TS: Taint `..rest` of object in destructuring by @maciejpirog in #772
+* ast-to-il: bind the variables of destructuring declarations by @corneliuhoffman in #773
+* PHP: Readonly properties + promoted properties by @maciejpirog in #785
+* Dockerfile: Fix parsing of square brackets by @maciejpirog in #786
+
+### Improvements
+
+* Load rules from a remote git repository via `--config git+<url>` by @maciejpirog in #766
+* Honor `OPENGREP_*` environment variables alongside legacy `SEMGREP_*` by @maciejpirog in #775
+* Add osemgrep output flag support by @mspraggs in #761
+
+### Bug fixes
+
+* opengrep-cli: output destination fixes (follow-up to #761) by @dimitris-m in #780
+* opengrep-cli: fix the blocking-findings count in compiled ci builds by @dimitris-m in #782
+
+### Binaries
+
+* windows: ship only the DLLs opengrep-core links against by @dimitris-m in #776
+* workflows: nuitka 2.8.9 -> 4.1.3 with the onefile extra by @dimitris-m in #783
+
+### CI
+
+* ci: reject merge commits on PR branches by @dimitris-m in #781
+
+### New Contributors
+
+* @mspraggs made their first contribution in #761
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.26.0...v1.27.0
+
+
 ## [1.26.0](https://github.com/opengrep/opengrep/releases/tag/v1.26.0) - 24-07-2026
 
 ### Infrastructure
