@@ -353,8 +353,14 @@ class BaselineHandler:
             finally:
                 os.chdir(cwd)
                 logger.debug("Cleaning up git worktree")
-                # Remove the working tree
-                git_check_output(["git", "worktree", "remove", tmpdir])
+                # Remove the working tree. --force is required because the
+                # worktree can be "dirty" through no fault of ours: repos whose
+                # .gitattributes normalize line endings (e.g. `* text=auto`
+                # with files committed as CRLF) produce phantom modifications
+                # on a fresh checkout, and `git worktree remove` refuses to
+                # delete such a worktree. The worktree is a throwaway temporary
+                # directory, so forcing removal is always safe here.
+                git_check_output(["git", "worktree", "remove", "--force", tmpdir])
                 logger.debug("Finished cleaning up git worktree")
 
     def print_git_log(self) -> None:
