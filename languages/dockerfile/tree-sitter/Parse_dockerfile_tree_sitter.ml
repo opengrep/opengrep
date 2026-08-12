@@ -664,7 +664,7 @@ let shell_fragment (env : env) (xs : CST.shell_fragment) : tok =
       | `Here_marker_pat_ea34a52 (v1, _v2) ->
           Some (token env v1)
       | `Pat_b1120d3 tok
-      | `Pat_f8ab07f tok
+      | `Pat_7f1e397 tok
       | `Pat_eda9032 tok
       | `Pat_a667757 tok ->
           Some (token env tok))
