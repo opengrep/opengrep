@@ -85,8 +85,7 @@ class ParsingData:
                 lang_parse_data.error_bytes += os.path.getsize(path)
             except OSError:
                 # In the case that this path is no longer a valid path to a
-                # file, just report the original bytes as okay for metrics
-                # purposes.
+                # file, just report the original bytes as okay.
                 pass
         # Partial errors for a subsection of the file
         elif isinstance(err.error_type.value, out.PartialParsing):

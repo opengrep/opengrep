@@ -10,7 +10,6 @@ from attrs import frozen
 from semgrep.app.session import AppSession
 from semgrep.env import Env
 from semgrep.error_handler import ErrorHandler
-from semgrep.metrics import Metrics
 from semgrep.semgrep_types import get_frozen_id
 from semgrep.settings import Settings
 from semgrep.terminal import Terminal
@@ -35,7 +34,6 @@ class SemgrepState:
     app_session: AppSession = Factory(AppSession)
     local_scan_id: UUID = get_frozen_id()
     env: Env = Factory(Env)
-    metrics: Metrics = Factory(Metrics)
     error_handler: ErrorHandler = Factory(ErrorHandler)
     settings: Settings = Factory(Settings)
     terminal: Terminal = Factory(Terminal)

@@ -100,40 +100,28 @@ class ConfigLoader:
         project_url: Optional[str] = None,
     ) -> None:
         """
-        Mutates Metrics state!
         Takes a user's inputted config_str and transforms it into the appropriate
-        path, checking whether the config string is a registry url or not. If it
-        is, also set the appropriate Metrics flag
+        path, checking whether the config string is a registry url or not
         """
         state = get_state()
         self._project_url = project_url
         self._origin = ConfigType.REGISTRY
         self._supports_fallback_config = False
         if config_str == "r2c":
-            state.metrics.add_feature("config", "r2c")
             self._config_path = "https://semgrep.dev/c/p/r2c"
         elif is_url(config_str):
-            state.metrics.add_feature("config", "url")
             self._config_path = config_str
         elif is_product_names(config_str):
             self._origin = ConfigType.SEMGREP_CLOUD_PLATFORM
-            add_metrics_for_products(config_str)
             self._config_path = config_str
             self._supports_fallback_config = True
         elif is_registry_id(config_str):
-            state.metrics.add_feature("config", f"registry:prefix-{config_str[0]}")
             self._config_path = registry_id_to_url(config_str)
         elif config_str == AUTO_CONFIG_KEY:
-            state.metrics.add_feature("config", "auto")
             self._config_path = f"{state.env.semgrep_url}/{AUTO_CONFIG_LOCATION}"
         else:
-            state.metrics.add_feature("config", "local")
             self._origin = ConfigType.LOCAL
             self._config_path = str(Path(config_str).expanduser())
-
-        if self.is_registry_url():
-            state.metrics.is_using_registry = True
-            state.metrics.add_registry_url(self._config_path)
 
     @classmethod
     def includes_remote_config(cls, configs: Sequence[str]) -> bool:
@@ -915,15 +903,6 @@ def is_product_names(config_str: str) -> bool:
     allowed = set(PRODUCT_NAMES.keys())
     names = set(config_str.split(","))
     return names <= allowed
-
-
-def add_metrics_for_products(config_str: str) -> None:
-    state = get_state()
-    for product_name in config_str.split(","):
-        if is_policy_id(product_name):
-            state.metrics.add_feature("config", "policy")
-        else:
-            state.metrics.add_feature("config", PRODUCT_NAMES[product_name])
 
 
 def is_policy_id(config_str: str) -> bool:

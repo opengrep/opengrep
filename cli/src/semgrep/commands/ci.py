@@ -49,7 +49,6 @@ from semgrep.ignores import IGNORE_FILE_NAME
 from semgrep.meta import generate_meta_from_environment
 from semgrep.meta import GithubMeta
 from semgrep.meta import GitMeta
-from semgrep.metrics import MetricsState
 from semgrep.output import OutputHandler
 from semgrep.output import OutputSettings
 from semgrep.rule import Rule
@@ -318,7 +317,6 @@ def ci(
             "WARNING: --inline-metavariables is set but will be ignored."
         )
 
-    state.metrics.configure(None)
     state.error_handler.configure(suppress_errors)
     scan_handler = None
     capture_core_stderr = not debug
@@ -735,10 +733,9 @@ def ci(
                 # Don't care about historically renamed targets
                 # Seems like this is just ignored by app anyway.
                 _historical_renamed_targets,
-                # Only used in metrics; too noisy for now.
+                # Too noisy to report for now.
                 _historical_ignore_log,
                 historical_filtered_rules,
-                # For metrics; not yet sent.
                 _historical_profiler,
                 # Wrapper for some extra info; not currently sent for
                 # historical scans.

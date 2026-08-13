@@ -3,7 +3,6 @@
 ##############################################################################
 # Helpers to run_scan.py to report scan status
 import sys
-from textwrap import wrap
 from typing import Dict
 from typing import List
 from typing import Sequence
@@ -22,7 +21,6 @@ from semgrep.core_runner import CoreRunner
 from semgrep.core_runner import Plan
 from semgrep.rule import Rule
 from semgrep.state import DesignTreatment
-from semgrep.state import get_state
 from semgrep.subproject import ResolvedSubproject
 from semgrep.target_manager import TargetManager
 from semgrep.target_mode import TargetModeConfig
@@ -237,7 +235,6 @@ def _print_detailed_sca_table(
         _print_sca_table(sca_plan, rule_count)
         return
 
-    sep = "\n   "
     message = "No rules to run."
     """
     We need to account for several edges cases:
@@ -245,39 +242,6 @@ def _print_detailed_sca_table(
         - `semgrep scan` was invoked with the supply-chain flag and no rules found.
         - `semgrep ci` was invoked without the supply-chain flag or feature enabled.
     """
-    # 1. Validate that the user is indeed running SCA (and not from semgrep scan).
-    is_scan = get_state().is_scan_invocation()
-    # 2. Check if the user has metrics enabled.
-    metrics = get_state().metrics
-    metrics_enabled = metrics.is_enabled
-    # If the user has metrics enabled, we can suggest they run `semgrep ci` to get more findings.
-    # Otherwise, we should expect the user to be already aware of the other products.
-    # 3. Check if the user has logged in.
-    has_auth = auth.get_token() is not None
-    # Users who have not logged in will not be able to run `semgrep ci`.
-    # For users with metrics enabled who are running scan without auth,
-    # we should suggest they login and run semgrep ci.
-    if is_scan and metrics_enabled:
-        login_command = with_color(Colors.gray, "`semgrep login`")
-        ci_command = with_color(Colors.gray, "`semgrep ci`")
-        if not has_auth:
-            message = sep.join(
-                wrap(
-                    f"💎 Sign in with {login_command} and run {ci_command} to find dependency vulnerabilities and advanced cross-file findings.",
-                    width=70,
-                )
-            )
-        elif not with_supply_chain:
-            message = sep.join(
-                wrap(
-                    f"💎 Run {ci_command} to find dependency vulnerabilities and advanced cross-file findings.",
-                    width=70,
-                )
-            )
-        else:  # supply chain but no rules (e.g. no lockfile)
-            pass
-    else:  # skip nudge for users who have not enabled metrics or are already running ci
-        pass
     console.print(f"\n{message}\n")
 
 

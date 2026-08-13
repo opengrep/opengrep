@@ -54,7 +54,6 @@ def cli(ctx: click.Context) -> None:
 
     state.app_session.authenticate()
     state.app_session.user_agent.tags.add(f"command/{subcommand}")
-    state.metrics.add_feature("subcommand", subcommand)
 
     maybe_set_git_safe_directories()
 

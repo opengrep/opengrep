@@ -43,7 +43,6 @@ from semgrep.core_runner import CoreRunner
 from semgrep.engine import EngineType
 from semgrep.error import SemgrepError
 from semgrep.git import get_project_url
-from semgrep.metrics import MetricsState
 from semgrep.output import OutputHandler
 from semgrep.output import OutputSettings
 from semgrep.rule import Rule
@@ -53,40 +52,11 @@ from semgrep.state import get_state
 from semgrep.target_manager import ALL_PRODUCTS
 from semgrep.target_manager import write_pipes_to_disk
 from semgrep.util import abort
-from semgrep.util import is_truthy
 from semgrep.util import with_color
 from semgrep.verbose_logging import getLogger
 
 logger = getLogger(__name__)
 
-
-class MetricsStateType(click.ParamType):
-    name = "metrics_state"
-
-    def get_metavar(self, _param: click.Parameter) -> str:
-        return "[auto|on|off]"
-
-    def convert(
-        self,
-        value: Any,
-        _param: Optional["click.Parameter"],
-        ctx: Optional["click.Context"],
-    ) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            lower = value.lower()
-            if lower == "auto":
-                return MetricsState.AUTO
-            # Support setting via old environment variable values 0/1/true/false
-            if is_truthy(value):
-                return MetricsState.ON
-            if lower == "off" or lower == "0" or lower == "false":
-                return MetricsState.OFF
-        self.fail("expected 'auto', 'on', or 'off'")
-
-
-METRICS_STATE_TYPE = MetricsStateType()
 
 # This subset of scan options is reused in ci.py
 _scan_options: List[Callable] = [
@@ -684,7 +654,6 @@ def scan(
     if dataflow_traces is None:
         dataflow_traces = engine_type.has_dataflow_traces
 
-    state.metrics.configure(None)
     state.terminal.configure(
         verbose=verbose,
         debug=debug,

@@ -49,7 +49,7 @@ def test_stack_size(run_semgrep_in_tmp: RunSemgrep, snapshot):
     # '--x-ignore-semgrepignore-files' is needed since our repo has a
     # .semgrepignore file that excludes '/tests/'.
     output = subprocess.run(
-        f"ulimit -s {ulimit_size} && {SEMGREP_BASE_SCAN_COMMAND_STR} --x-ignore-semgrepignore-files --disable-version-check --metrics off --config {rulepath} --jobs 1 --verbose {targetpath}",
+        f"ulimit -s {ulimit_size} && {SEMGREP_BASE_SCAN_COMMAND_STR} --x-ignore-semgrepignore-files --disable-version-check --config {rulepath} --jobs 1 --verbose {targetpath}",
         shell=True,
         capture_output=True,
         encoding="utf-8",
@@ -63,7 +63,7 @@ def test_stack_size(run_semgrep_in_tmp: RunSemgrep, snapshot):
 
     # If only set soft limit, semgrep should raise it as necessary so we don't hit soft limit
     output = subprocess.run(
-        f"ulimit -S -s {ulimit_size} && {SEMGREP_BASE_SCAN_COMMAND_STR} --disable-version-check --metrics off --config {rulepath} --jobs 1 --verbose {targetpath}",
+        f"ulimit -S -s {ulimit_size} && {SEMGREP_BASE_SCAN_COMMAND_STR} --disable-version-check --config {rulepath} --jobs 1 --verbose {targetpath}",
         shell=True,
         capture_output=True,
         encoding="utf-8",

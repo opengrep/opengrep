@@ -79,12 +79,6 @@ from semgrep.rpc_call import dump_rule_partitions
 from semgrep.rule import Rule
 from semgrep.rule_match import RuleMatches
 from semgrep.rule_match import RuleMatchMap
-from semgrep.semgrep_interfaces.semgrep_metrics import Any_ as AnySecretsOrigin
-from semgrep.semgrep_interfaces.semgrep_metrics import CodeConfig
-from semgrep.semgrep_interfaces.semgrep_metrics import SecretsConfig
-from semgrep.semgrep_interfaces.semgrep_metrics import SecretsOrigin
-from semgrep.semgrep_interfaces.semgrep_metrics import Semgrep as SemgrepSecretsOrigin
-from semgrep.semgrep_interfaces.semgrep_metrics import SupplyChainConfig
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Ecosystem
 from semgrep.semgrep_interfaces.semgrep_output_v1 import FoundDependency
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Product
@@ -647,30 +641,6 @@ def run_scan(
     # TODO: handle de-duplication for pro-rules
     missed_rule_count = configs_obj.missed_rule_count
 
-    # Metrics send part 1: add environment information
-    # Must happen after configs are resolved because it is determined
-    # then whether metrics are sent or not
-    metrics = get_state().metrics
-    if metrics.is_enabled:
-        metrics.add_project_url(project_url)
-        metrics.add_integration_name(environ.get("SEMGREP_INTEGRATION_NAME"))
-        metrics.add_configs(configs)
-        metrics.add_engine_config(
-            engine_type,
-            CodeConfig() if with_code_rules else None,
-            SecretsConfig(
-                SecretsOrigin(AnySecretsOrigin())
-                if allow_untrusted_validators
-                else SecretsOrigin(SemgrepSecretsOrigin())
-            )
-            if run_secrets and not disable_secrets_validation
-            else None,
-            SupplyChainConfig() if with_supply_chain else None,
-        )
-        metrics.add_is_diff_scan(baseline_commit is not None)
-        if engine_type.is_pro:
-            metrics.add_diff_depth(diff_depth)
-
     if not severity:
         shown_severities = DEFAULT_SHOWN_SEVERITIES
         filtered_rules = all_rules
@@ -991,21 +961,6 @@ def run_scan(
     profiler.save("ignores_time", ignores_start_time)
 
     profiler.save("total_time", rule_start_time)
-
-    # Metrics send part 2: send results
-    if metrics.is_enabled:
-        metrics.add_rules(filtered_rules, output_extra.core.time)
-        metrics.add_max_memory_bytes(output_extra.core.time)
-        metrics.add_targets(output_extra.all_targets, output_extra.core.time)
-        metrics.add_findings(filtered_matches_by_rule)
-        metrics.add_errors(semgrep_errors)
-        metrics.add_profiling(profiler)
-        metrics.add_parse_rates(output_extra.parsing_data)
-        metrics.add_interfile_languages_used(output_extra.core.interfile_languages_used)
-        if engine_type.is_pro and baseline_handler:
-            metrics.add_num_diff_scanned(
-                {Path(t.value) for t in output_extra.core.paths.scanned}, filtered_rules
-            )
 
     if autofix:
         apply_fixes(filtered_matches_by_rule.kept, dryrun)

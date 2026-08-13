@@ -35,14 +35,11 @@ yaml.default_flow_style = False
 
 
 class SettingsSchema(TypedDict, total=False):
-    has_shown_metrics_notification: bool
     api_token: Optional[str]
     anonymous_user_id: str
 
 
-SettingsKeys = Literal[
-    "has_shown_metrics_notification", "api_token", "anonymous_user_id"
-]
+SettingsKeys = Literal["api_token", "anonymous_user_id"]
 
 
 def generate_anonymous_user_id(api_token: Optional[str]) -> str:
@@ -52,7 +49,6 @@ def generate_anonymous_user_id(api_token: Optional[str]) -> str:
 def generate_default_settings(api_token: Optional[str] = None) -> SettingsSchema:
     anonymous_user_id = generate_anonymous_user_id(api_token)
     logged_out_settings: SettingsSchema = {
-        "has_shown_metrics_notification": False,
         "anonymous_user_id": anonymous_user_id,
     }
     return  logged_out_settings

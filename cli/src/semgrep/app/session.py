@@ -163,12 +163,8 @@ class AppSession(requests.Session):
     def authenticate(self) -> None:
         # avoid circular imports in semgrep.state
         from semgrep.app import auth
-        from semgrep.state import get_state
 
         self.token = auth.get_token()
-
-        metrics = get_state().metrics
-        metrics.add_token(self.token)
 
     @property
     def is_authenticated(self) -> bool:

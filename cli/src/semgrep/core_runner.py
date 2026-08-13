@@ -261,9 +261,6 @@ class StreamingSemgrepCore:
                 # or more ".\n" has fewer than two bytes, such as:
                 # "", "3", ".\n.\n3", ".\n.\n.\n.", etc.
 
-                # Hack: the exact wording of parts this message may be used in metrics queries
-                # that are looking for it. Make sure `semgrep-core exited with unexpected output`
-                # and `interfile analysis` are both in the message, or talk to Emma.
                 raise SemgrepError(
                     f"""
                     You are seeing this because the engine was killed.
@@ -917,7 +914,6 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                     bypass_includes_excludes_for_files=bypass_includes_excludes_for_files
                 )
 
-            plan.record_metrics()
             if target_mode_config.is_historical_scan:
                 cmd.extend(["-historical", "-only_validated"])
             else:
