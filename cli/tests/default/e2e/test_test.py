@@ -65,13 +65,14 @@ def test_cli_test_directory(run_semgrep_in_tmp: RunSemgrep, snapshot):
 
 # It should output an "error" field with the right error message (timeout)
 # in the JSON output.
-# TODO: adding "--timeout", "1", does not seem to speedup things
+# --timeout must be passed explicitly: --test otherwise runs with no timeout at
+# all, and this rule is written to never finish.
 @pytest.mark.slow
 @pytest.mark.osemfail
 def test_timeout(run_semgrep_in_tmp: RunSemgrep, snapshot):
     results, _ = run_semgrep_in_tmp(
         "rules/test_test/rule_that_timeout.yaml",
-        options=["--test"],
+        options=["--test", "--timeout", "1"],
         target_name="test_test/long.py",
         output_format=OutputFormat.JSON,
         assert_exit_code=1,
