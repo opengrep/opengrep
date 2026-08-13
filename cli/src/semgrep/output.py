@@ -629,9 +629,6 @@ class OutputHandler:
             self.severities,
             out.FormatContext(
                 is_ci_invocation=self.is_ci_invocation,
-                # both only gate the Semgrep login nudge, which opengrep never shows
-                is_logged_in=False,
-                is_using_registry=False,
             ),
         )
         return (output_destination, output)

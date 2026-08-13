@@ -21,7 +21,7 @@ module Out = Semgrep_output_v1_j
 
 (* This is part of Scan_CLI.conf
  *
- * See also Out.format_context for the runtime params (e.g., is_logged_in).
+ * See also Out.format_context for the runtime params.
  *)
 type conf = {
   (* Display options *)
@@ -231,10 +231,8 @@ let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
         (* FIXME: Remove. *)
         | Some `PRO -> "PRO"
       in
-      let hide_nudge = true
-      in
       let sarif_json =
-        Sarif_output.sarif_output hrules cli_output hide_nudge engine_label
+        Sarif_output.sarif_output hrules cli_output engine_label
           conf.show_dataflow_traces
       in
       Some (Sarif.Sarif_v_2_1_0_j.string_of_sarif_json_schema sarif_json)

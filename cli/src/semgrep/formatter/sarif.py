@@ -49,19 +49,7 @@ class SarifFormatter(base.BaseFormatter):
               rule_file.close()
               rules_path = out.Fpath(rule_file.name)
 
-              """
-              Exclude Semgrep notice for users who
-              1. log in
-              2. use pro engine
-              3. are not using registry
-              """
-              is_pro = (
-                  cli_output_extra.engine_requested
-                  and cli_output_extra.engine_requested == out.EngineKind(out.PRO_())
-              )
-              hide_nudge = ctx.is_logged_in or is_pro or not ctx.is_using_registry
-
-              engine_label = "PRO" if is_pro else "OSS"
+              engine_label = "OSS"
 
               show_dataflow_traces = extra.get("dataflow_traces", False)
 
@@ -74,7 +62,6 @@ class SarifFormatter(base.BaseFormatter):
               cli_errors = [e.to_CliError() for e in semgrep_structured_errors]
 
               rpc_params = out.SarifFormatParams(
-                  hide_nudge=hide_nudge,
                   engine_label=engine_label,
                   rules=rules_path,
                   cli_matches=cli_matches,

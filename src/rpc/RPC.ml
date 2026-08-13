@@ -21,7 +21,6 @@ let handle_call (caps : < Cap.exec ; Cap.tmp >) :
   | `CallSarifFormat
       ( _,
         {
-          hide_nudge;
           engine_label;
           rules;
           cli_matches;
@@ -31,7 +30,7 @@ let handle_call (caps : < Cap.exec ; Cap.tmp >) :
       let output, format_time_seconds =
         RPC_return.sarif_format
           (caps :> < Cap.tmp >)
-          rules hide_nudge engine_label show_dataflow_traces cli_matches
+          rules engine_label show_dataflow_traces cli_matches
           cli_errors
       in
       Ok (`RetSarifFormat { output; format_time_seconds })

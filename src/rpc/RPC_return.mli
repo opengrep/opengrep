@@ -6,7 +6,6 @@ val format : Out.output_format -> Out.cli_output -> string
 val sarif_format :
   < tmp : Cap.FS.tmp > ->
   Out.fpath (* path to a temporary files containing the rules *) ->
-  bool ->
   string ->
   bool ->
   Out.cli_match list ->
