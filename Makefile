@@ -148,8 +148,18 @@ clean:
 # We still need to keep the nonempty opam files in git for
 # 'make setup', so we should only remove the empty opam files.
 # This removes the gitignored opam files.
-	git clean -fX *.opam
+# Disabled: there are no longer any .opam files at the root, they live in
+# opam/, and this pathspec matches at any depth rather than just the root.
+#	git clean -fX *.opam
 	-$(MAKE) -C cli clean
+
+# setuptools stages the package in cli/build/lib and copies changed sources
+# into it, but never drops files that were deleted from cli/src. Those stale
+# copies are then packaged into the wheel, so a removed module survives
+# 'make install'. Run this after deleting any Python source file.
+.PHONY: clean-cli-staging
+clean-cli-staging:
+	rm -rf cli/build
 
 ###############################################################################
 # Install targets
