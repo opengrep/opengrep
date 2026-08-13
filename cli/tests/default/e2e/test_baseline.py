@@ -96,15 +96,12 @@ def run_sentinel_scan(check: bool = True, base_commit: Optional[str] = None):
     unique_settings_file = tempfile.NamedTemporaryFile().name
     Path(unique_settings_file).write_text(
         "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
-        "has_shown_metrics_notification: true\n"
     )
     env["SEMGREP_SETTINGS_FILE"] = unique_settings_file
     env["PATH"] = os.environ.get("PATH", "")
 
     cmd = SEMGREP_BASE_SCAN_COMMAND + [
         "--disable-version-check",
-        "--metrics",
-        "off",
         "-e",
         f"$X = {SENTINEL_1}",
         "-l",
@@ -680,7 +677,7 @@ def test_staged_changes(git_tmp_path, snapshot):
     assert_err_match(snapshot, output, "error.txt")
 
 
-def test_baseline_worktree_dirty_from_eol_normalization(git_tmp_path, snapshot):
+def test_baseline_worktree_dirty_from_eol_normalization(git_tmp_path):
     # A fresh checkout of the baseline commit can be "dirty" without any real
     # modification when .gitattributes normalizes line endings but files were
     # committed unnormalized (e.g. CRLF blobs later covered by `*.py text eol=lf`).
@@ -694,9 +691,19 @@ def test_baseline_worktree_dirty_from_eol_normalization(git_tmp_path, snapshot):
 
     # Normalization rule added after the fact: from now on every fresh
     # checkout of the commit above reports foo.py as phantom-modified.
+    # Stage only .gitattributes: `git add .` re-reads foo.py, applies the new
+    # rule and stores it as LF, and then the checkout is clean and the bug
+    # does not happen.
     (git_tmp_path / ".gitattributes").write_text("*.py text eol=lf\n")
-    subprocess.run(["git", "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "add", ".gitattributes"], check=True, capture_output=True)
     base_commit = _git_commit(2)
+
+    # Without CRLF in the committed blob the baseline worktree checks out
+    # clean, and the test passes with or without the fix.
+    assert (
+        b"\r\n"
+        in subprocess.check_output(["git", "cat-file", "-p", f"{base_commit}:foo.py"])
+    )
 
     foo.write_bytes(f"x = 1\r\ny = {SENTINEL_1}\r\n".encode())
     subprocess.run(["git", "add", "."], check=True, capture_output=True)
@@ -704,6 +711,9 @@ def test_baseline_worktree_dirty_from_eol_normalization(git_tmp_path, snapshot):
 
     output = run_sentinel_scan(base_commit=base_commit, check=False)
     assert output.returncode == 0
+    # A scan with no findings never creates the baseline worktree, so exit 0 on
+    # its own does not tell us the cleanup ran.
+    assert str(SENTINEL_1) in output.stdout
 
 
 # TODO
