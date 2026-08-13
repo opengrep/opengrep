@@ -25,7 +25,6 @@ from ruamel.yaml import YAMLError
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep import __VERSION__
-from semgrep import tracing
 from semgrep.constants import CLI_RULE_ID
 from semgrep.constants import Colors
 from semgrep.constants import DEFAULT_SEMGREP_APP_CONFIG_URL
@@ -241,7 +240,6 @@ def read_config_folder(loc: Path, relative: bool = False) -> List[ConfigFile]:
     return configs
 
 
-@tracing.trace()
 def parse_config_files(
     loaded_config_infos: List[ConfigFile],
     force_jsonschema: bool = False,
@@ -261,7 +259,6 @@ def parse_config_files(
     #
     # for config_id, contents, config_path in loaded_config_infos:
     from concurrent.futures import ThreadPoolExecutor
-    @tracing.trace()
     def process_config_item(config_item):
         config_id, contents, config_path = config_item
         try:
@@ -320,7 +317,6 @@ def parse_config_files(
     return config, errors
 
 
-@tracing.trace()
 def resolve_config(
     config_str: str,
     project_url: Optional[str] = None,
@@ -359,7 +355,6 @@ class Config:
         self.missed_rule_count = missed_rule_count
 
     @classmethod
-    @tracing.trace()
     def from_pattern_lang(
         cls, pattern: str, lang: str, replacement: Optional[str] = None
     ) -> Tuple["Config", List[SemgrepError]]:
@@ -368,7 +363,6 @@ class Config:
         return cls(valid), errors
 
     @classmethod
-    @tracing.trace()
     @lru_cache(maxsize=None)
     def from_rules_yaml(
         cls,
@@ -398,7 +392,6 @@ class Config:
         return cls(valid), errors
 
     @classmethod
-    @tracing.trace()
     def from_config_list(
         cls,
         configs: Sequence[str],
@@ -615,7 +608,6 @@ def indent(msg: str) -> str:
     return "\n".join(["\t" + line for line in msg.splitlines()])
 
 
-@tracing.trace()
 def parse_config_string(
     config_id: str,
     contents: str,
@@ -707,7 +699,6 @@ def is_pack_id(config_str: str) -> bool:
     return config_str[:2] == "p/"
 
 
-@tracing.trace()
 def get_config(
     pattern: Optional[str],
     lang: Optional[str],

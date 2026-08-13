@@ -12,7 +12,6 @@ from attrs import define
 from attrs import field
 
 from semgrep import __VERSION__
-from semgrep import tracing
 
 
 @define
@@ -160,7 +159,6 @@ class AppSession(requests.Session):
         self.mount("https://", retry_adapter)
         self.mount("http://", retry_adapter)
 
-    @tracing.trace()
     def request(self, *args: Any, **kwargs: Any) -> requests.Response:
         kwargs.setdefault(
             "timeout", 70

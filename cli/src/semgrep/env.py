@@ -16,11 +16,6 @@ def url(value: str) -> str:
     return value.rstrip("/")
 
 
-def migrate_fail_open_url(value: str) -> str:
-    # Supports the fail_open_url being the hostname without the path even when some folks might set the path
-    return url(value.replace("/failure", ""))
-
-
 @overload
 def EnvFactory(envvars: Union[str, Iterable[str]], default: str) -> str:
     ...
@@ -55,13 +50,6 @@ class Env:
     between multiple invocations.
     """
 
-    fail_open_url: str = field(
-        default=EnvFactory(
-            ["SEMGREP_FAIL_OPEN_URL"],
-            "https://fail-open.prod.semgrep.dev",
-        ),
-        converter=migrate_fail_open_url,
-    )
     semgrep_url: str = field(
         # TODO: This needs to be changed to https://opengrep.dev, but tests fail
         # without it.
