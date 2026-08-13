@@ -68,10 +68,6 @@ class Env:
         default=EnvFactory(["SEMGREP_URL", "SEMGREP_APP_URL"], "https://semgrep.dev"),
         converter=url,
     )
-    app_token: Optional[str] = field(default=EnvFactory("SEMGREP_APP_TOKEN"))
-
-    # Unique identifier for the managed_scan in semgrep-app
-    sms_scan_id: Optional[str] = field(default=EnvFactory("SEMGREP_MANAGED_SCAN_ID"))
 
     version_check_url: str = field(
         # TODO: Use Github releases when this is re-activated.
