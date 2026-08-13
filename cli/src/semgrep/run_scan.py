@@ -249,9 +249,6 @@ def run_rules(
     matching_explanations: bool,
     engine_type: EngineType,
     strict: bool,
-    # TODO: Use an array of semgrep_output_v1.Product instead of booleans flags for secrets, code, and supply chain
-    run_secrets: bool = False,
-    disable_secrets_validation: bool = False,
     target_mode_config: Optional[TargetModeConfig] = None,
     *,
     with_code_rules: bool = True,
@@ -361,8 +358,6 @@ def run_rules(
         matching_explanations,
         engine_type,
         strict,
-        run_secrets,
-        disable_secrets_validation,
         target_mode_config,
         resolved_subprojects,
         opengrep_ignore_pattern=opengrep_ignore_pattern,
@@ -511,11 +506,8 @@ def run_scan(
     time_flag: bool = False,
     matching_explanations: bool = False,
     engine_type: EngineType = EngineType.OSS,
-    run_secrets: bool = False,
-    disable_secrets_validation: bool = False,
     output_handler: OutputHandler,
     target: Sequence[str],
-    historical_secrets: bool = False,
     pattern: Optional[str],
     lang: Optional[str],
     configs: Sequence[
@@ -542,14 +534,12 @@ def run_scan(
     max_target_bytes: int = 0,
     timeout_threshold: int = 0,
     skip_unknown_extensions: bool = False,
-    allow_untrusted_validators: bool = False,
     severity: Optional[Sequence[str]] = None,
     optimizations: str = "none",
     baseline_commit: Optional[str] = None,
     baseline_commit_is_mergebase: bool = False,
     x_ls: bool = False,
     x_ls_long: bool = False,
-    path_sensitive: bool = False,
     capture_core_stderr: bool = True,
     allow_local_builds: bool = False,
     dump_n_rule_partitions: Optional[int] = None,
@@ -738,18 +728,8 @@ def run_scan(
     except FilesNotFoundError as e:
         raise SemgrepError(e)
 
-    if historical_secrets:
-        target_mode_config = TargetModeConfig.historical_scan()
-    elif baseline_handler is not None:
-        if engine_type.is_interfile:
-            target_mode_config = TargetModeConfig.pro_diff_scan(
-                # `target_manager.get_all_files()` will only return changed files
-                # (diff targets) when baseline_handler is set
-                target_manager.get_all_files(),
-                diff_depth,
-            )
-        else:
-            target_mode_config = TargetModeConfig.diff_scan()
+    if baseline_handler is not None:
+        target_mode_config = TargetModeConfig.diff_scan()
     else:
         target_mode_config = TargetModeConfig.whole_scan()
 
@@ -765,9 +745,7 @@ def run_scan(
         # trace_endpoint=trace_endpoint,
         capture_stderr=capture_core_stderr,
         optimizations=optimizations,
-        allow_untrusted_validators=allow_untrusted_validators,
         respect_rule_paths=respect_rule_paths,
-        path_sensitive=path_sensitive,
     )
 
     experimental_rules, normal_rules = partition(
@@ -808,8 +786,6 @@ def run_scan(
         matching_explanations,
         engine_type,
         strict,
-        run_secrets,
-        disable_secrets_validation,
         target_mode_config,
         with_code_rules=with_code_rules,
         with_supply_chain=with_supply_chain,
@@ -861,34 +837,12 @@ def run_scan(
             logger.info("")
             try:
                 with baseline_handler.baseline_context():
-                    baseline_target_strings = target_strings
                     baseline_target_mode_config = target_mode_config
-                    if target_mode_config.is_pro_diff_scan:
-                        scanned = [
-                            # Conducting the inter-file diff scan twice with the exact same configuration,
-                            # both on the current commit and the baseline commit, could result in the absence
-                            # of a newly added file and its dependencies from the baseline run. Consequently,
-                            # this may lead to the failure to remove pre-existing findings. A more effective
-                            # approach would involve utilizing the same set of scanned diff targets from the
-                            # first run in the baseline run. This approach ensures the safe elimination of any
-                            # existing findings in the dependency files, even if the original file does not
-                            # exist in the baseline commit.
-                            Path(t.value)
-                            for t in output_extra.core.paths.scanned
-                        ]
-                        scanned.extend(baseline_handler.status.renamed.values())
-                        baseline_target_mode_config = TargetModeConfig.pro_diff_scan(
-                            frozenset(
-                                t for t in scanned if t.exists() and not t.is_symlink()
-                            ),
-                            0,  # scanning the same set of files in the second run
-                        )
-                    else:
-                        baseline_target_strings = frozenset(
-                            Path(t)
-                            for t in baseline_targets
-                            if t.exists() and not t.is_symlink()
-                        )
+                    baseline_target_strings = frozenset(
+                        Path(t)
+                        for t in baseline_targets
+                        if t.exists() and not t.is_symlink()
+                    )
                     baseline_target_manager = TargetManager(
                         includes=include,
                         excludes=exclude,
@@ -926,8 +880,6 @@ def run_scan(
                         matching_explanations,
                         engine_type,
                         strict,
-                        run_secrets,
-                        disable_secrets_validation,
                         baseline_target_mode_config,
                         allow_local_builds=allow_local_builds,
                         prioritize_dependency_graph_generation=prioritize_dependency_graph_generation,

@@ -336,32 +336,20 @@ _scan_options: List[Callable] = [
     ),
     optgroup.option("--sarif-output", "outputs_sarif", multiple=True, default=[]),
     optgroup.option("--vim-output", "outputs_vim", multiple=True, default=[]),
-    optgroup.group("Semgrep Pro Engine options"),
-    optgroup.option(
-        "--pro",
-        "requested_engine",
-        type=EngineType,
-        flag_value=EngineType.PRO_INTERFILE,
-    ),
+    optgroup.group("Analysis options"),
     optgroup.option(
         "--taint-intrafile",
         "taint_intrafile",
         is_flag=True, default=False
     ),
-    optgroup.option(
-        "--pro-languages",
-        "requested_engine",
-        type=EngineType,
-        flag_value=EngineType.PRO_LANG,
-    ),
-    optgroup.option(
-        "--pro-path-sensitive", "path_sensitive", is_flag=True, default=False
-    ),
+    # Accepted so existing invocations keep working; opengrep only ever runs
+    # the open source engine.
     optgroup.option(
         "--oss-only",
         "requested_engine",
         type=EngineType,
         flag_value=EngineType.OSS,
+        hidden=True,
     ),
     optgroup.option(
         "--diff-depth",
@@ -369,22 +357,6 @@ _scan_options: List[Callable] = [
         default=DEFAULT_DIFF_DEPTH,
     ),
     optgroup.option("--dump-command-for-core", "-d", is_flag=True, hidden=True),
-    optgroup.option(
-        "--no-secrets-validation",
-        "disable_secrets_validation_flag",
-        is_flag=True,
-        hidden=True,
-    ),
-    optgroup.option(
-        "--historical-secrets",
-        "historical_secrets",
-        is_flag=True,
-    ),
-    optgroup.option(
-        "--allow-untrusted-validators",
-        "allow_untrusted_validators",
-        is_flag=True,
-    ),
     optgroup.option(
         "--allow-local-builds",
         "allow_local_builds",
@@ -516,11 +488,6 @@ def scan_options(func: Callable) -> Callable:
 # These flags are deprecated or experimental - users should not
 # rely on their existence, or their output being stable
 @click.option("--dump-engine-path", is_flag=True, hidden=True)
-@click.option(
-    "--secrets",
-    "run_secrets_flag",
-    is_flag=True,
-)
 @scan_options
 @handle_command_errors
 def scan(
@@ -532,9 +499,6 @@ def scan(
     diff_depth: int,
     dump_engine_path: bool,
     requested_engine: Optional[EngineType],
-    run_secrets_flag: bool,
-    disable_secrets_validation_flag: bool,
-    historical_secrets: bool,
     dryrun: bool,
     dump_command_for_core: bool,
     enable_nosem: bool,
@@ -568,7 +532,6 @@ def scan(
     quiet: bool,
     replacement: Optional[str],
     rewrite_rule_ids: bool,
-    allow_untrusted_validators: bool,
     scan_unknown_extensions: bool,
     severity: Optional[Tuple[str, ...]],
     strict: bool,
@@ -589,7 +552,6 @@ def scan(
     x_ignore_semgrepignore_files: bool,
     x_ls: bool,
     x_ls_long: bool,
-    path_sensitive: bool,
     allow_local_builds: bool,
     opengrep_ignore_pattern: Optional[str],
     bypass_includes_excludes_for_files: bool = True,
@@ -608,19 +570,9 @@ def scan(
             version_check()
         return None
 
-    # I wish there was an easy way to leverage the engine_params from the
-    # new GET /api/cli/scans endpoint here but that info is not available
-    # until we fetch the rules which happens further along when processing
-    # the config.
-    if config and "secrets" in config:
-        # If the user has specified --config secrets, we should enable secrets
-        # so the engine is properly chosen.
-        run_secrets_flag = True
-
-    # Handled error outside engine type for more actionable advice.
-    if run_secrets_flag and requested_engine is EngineType.OSS:
-        abort(
-            "Cannot run secrets scan with OSS engine (--oss specified). Semgrep Secrets is a proprietary extension."
+    if requested_engine is not None:
+        logger.info(
+            "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
         )
 
     # Define engine_type for later use in the scan output messages
@@ -637,11 +589,7 @@ def scan(
     #     )
     # state.traces.configure(trace, trace_endpoint)
     # with tracing.TRACER.start_as_current_span("semgrep.commands.scan"):
-    engine_type = EngineType.decide_engine_type(
-        engine_flag=requested_engine,
-        run_secrets=run_secrets_flag,
-        interfile_diff_scan_enabled=diff_depth >= 0,
-    )
+    engine_type = EngineType.decide_engine_type()
 
     # this is useful for our CI job to find where semgrep-core (or semgrep-core-proprietary)
     # is installed and check if the binary is statically linked.
@@ -805,8 +753,6 @@ def scan(
                             # trace_endpoint=trace_endpoint,
                             capture_stderr=capture_core_stderr,
                             optimizations=optimizations,
-                            allow_untrusted_validators=allow_untrusted_validators,
-                            path_sensitive=path_sensitive,
                         ).validate_configs(config)
                     except SemgrepError as e:
                         metacheck_errors = [e]
@@ -845,9 +791,6 @@ def scan(
                     time_flag=time_flag,
                     matching_explanations=matching_explanations,
                     engine_type=engine_type,
-                    run_secrets=run_secrets_flag,
-                    disable_secrets_validation=disable_secrets_validation_flag,
-                    historical_secrets=historical_secrets,
                     output_handler=output_handler,
                     taint_intrafile=taint_intrafile,
                     target=targets,
@@ -874,13 +817,11 @@ def scan(
                     # trace=trace,
                     # trace_endpoint=trace_endpoint,
                     skip_unknown_extensions=(not scan_unknown_extensions),
-                    allow_untrusted_validators=allow_untrusted_validators,
                     severity=severity,
                     optimizations=optimizations,
                     baseline_commit=baseline_commit,
                     x_ls=x_ls,
                     x_ls_long=x_ls_long,
-                    path_sensitive=path_sensitive,
                     capture_core_stderr=capture_core_stderr,
                     allow_local_builds=allow_local_builds,
                     opengrep_ignore_pattern=opengrep_ignore_pattern,

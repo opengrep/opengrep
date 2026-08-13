@@ -76,17 +76,8 @@ def _print_scan_plan_header(
     legacy_cli_ux = cli_ux == DesignTreatment.LEGACY
     simple_ux = cli_ux == DesignTreatment.SIMPLE
 
-    if target_mode_config.is_pro_diff_scan:
-        total_file_count = len(
-            evolve(target_manager, baseline_handler=None).get_all_files()
-        )
-        diff_file_count = len(target_mode_config.get_diff_targets())
-        summary_line = (
-            f"Inter-file Differential Scanning {unit_str(diff_file_count, 'file')}"
-        )
-    else:
-        file_count = len(target_manager.get_all_files())
-        summary_line = f"Scanning {unit_str(file_count, 'file')}"
+    file_count = len(target_manager.get_all_files())
+    summary_line = f"Scanning {unit_str(file_count, 'file')}"
 
     if target_manager.respect_git_ignore:
         summary_line += (
@@ -274,11 +265,7 @@ def print_scan_status(
                 and (not rule.from_transient_scan)
             )
         ],
-        target_manager
-        if not target_mode_config.is_pro_diff_scan
-        else evolve(
-            target_manager, target_strings=target_mode_config.get_diff_targets()
-        ),
+        target_manager,
         product=out.Product(
             out.SAST()
         ),  # code-smell since secrets and sast are within the same plan

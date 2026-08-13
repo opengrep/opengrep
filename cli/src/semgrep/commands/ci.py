@@ -145,11 +145,6 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
 )
 @click.option("--code", is_flag=True, hidden=True)
 @click.option(
-    "--secrets",
-    "run_secrets_flag",
-    is_flag=True,
-)
-@click.option(
     "--suppress-errors/--no-suppress-errors",
     "suppress_errors",
     default=True,
@@ -197,7 +192,6 @@ def ci(
     audit_on: Sequence[str],
     autofix: bool,
     baseline_commit: Optional[str],
-    historical_secrets: bool,
     internal_ci_scan_results: bool,
     code: bool,
     config: Optional[Tuple[str, ...]],
@@ -233,9 +227,6 @@ def ci(
     requested_engine: EngineType,
     quiet: bool,
     rewrite_rule_ids: bool,
-    run_secrets_flag: bool, # NOTE: To be removed.
-    disable_secrets_validation_flag: bool,
-    allow_untrusted_validators: bool,
     supply_chain: bool, # NOTE: to be removed.
     scan_unknown_extensions: bool,
     subdir: Optional[Path],
@@ -247,7 +238,6 @@ def ci(
     # trace_endpoint: str,
     use_git_ignore: bool,
     verbose: bool,
-    path_sensitive: bool,
     allow_local_builds: bool,
     dump_n_rule_partitions: Optional[int],
     dump_rule_partitions_dir: Optional[Path],
@@ -360,27 +350,12 @@ def ci(
 
     fix_head_if_github_action(metadata)
 
-    # Handled error outside engine type for more actionable advice.
-    if run_secrets_flag and requested_engine is EngineType.OSS:
+    if requested_engine is not None:
         logger.info(
-            "The --secrets and --oss-only flags are incompatible. Semgrep Secrets is a proprietary extension of Open Source Semgrep."
+            "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
         )
-        sys.exit(FATAL_EXIT_CODE)
 
-    run_secrets = run_secrets_flag
-
-    if not run_secrets and historical_secrets:
-        logger.info("Cannot run historical secrets scan without secrets enabled.")
-        sys.exit(FATAL_EXIT_CODE)
-
-    supply_chain_only = supply_chain and not code and not run_secrets
-    engine_type = EngineType.decide_engine_type(
-        engine_flag=requested_engine,
-        run_secrets=run_secrets,
-        interfile_diff_scan_enabled=diff_depth >= 0,
-        git_meta=metadata,
-        supply_chain_only=supply_chain_only,
-    )
+    engine_type = EngineType.decide_engine_type()
 
     # set default settings for selected engine type
     if dataflow_traces is None:
@@ -453,8 +428,6 @@ def ci(
     # the two target lists and perform one scan.
     run_scan_args = {
         "engine_type": engine_type,
-        "run_secrets": run_secrets,
-        "disable_secrets_validation": disable_secrets_validation_flag,
         "output_handler": output_handler,
         "taint_intrafile": taint_intrafile,
         "target": [target],
@@ -486,7 +459,6 @@ def ci(
         # "trace_endpoint": trace_endpoint,
         "timeout_threshold": timeout_threshold,
         "skip_unknown_extensions": (not scan_unknown_extensions),
-        "allow_untrusted_validators": allow_untrusted_validators,
         "optimizations": optimizations,
         "baseline_commit": metadata.merge_base_ref,
         "baseline_commit_is_mergebase": True,
@@ -529,66 +501,6 @@ def ci(
         logger.info(f"Encountered error when running rules: {e}")
 
         sys.exit(exit_code)
-
-    # Run a separate scan for historical. This is due to the split in how the
-    # file targeting works. If file targeting could all be handled in the same
-    # place we wouldn't need this seprarately. There are some benefits
-    # (e.g., separate progress bar), but it would simplify output logic if we
-    # simply had one "scan".
-    run_historical_secrets_scan = historical_secrets
-
-    if run_historical_secrets_scan and metadata.merge_base_ref:
-        logger.info(
-            f"Historical scanning was enabled, but is not yet supported on diff scans."
-        )
-    elif run_historical_secrets_scan:
-        try:
-            console.print(Title("Secrets Historical Scan"))
-
-            (
-                historical_filtered_matches_by_rule,
-                historical_semgrep_errors,
-                # Don't care about historically renamed targets
-                # Seems like this is just ignored by app anyway.
-                _historical_renamed_targets,
-                # Too noisy to report for now.
-                _historical_ignore_log,
-                historical_filtered_rules,
-                _historical_profiler,
-                # Wrapper for some extra info; not currently sent for
-                # historical scans.
-                _historical_output_extra,
-                # Severity filtering should be the same, since the same
-                # settings have been passed. So we can just use the "normal"
-                # shown_severities.
-                _historical_shown_severities,
-                # Not relevant for secrets.
-                _historical_dependencies,
-                _historical_dependency_parser_errors,
-                # Usage limits currently only consider last 30 days.
-                _executed_rule_count,
-                _missed_rule_count,
-                _historical_all_subprojects,
-            ) = semgrep.run_scan.run_scan(
-                **run_scan_args,
-                historical_secrets=True,
-            )
-
-            for key, value in historical_filtered_matches_by_rule.items():
-                filtered_matches_by_rule[key].extend(value)
-
-            semgrep_errors.extend(historical_semgrep_errors)
-            filtered_rules.extend(historical_filtered_rules)
-
-        except SemgrepError as e:
-            # We know the non-historical scan completed successfully (since
-            # otherwise the program would exit), so we can just inform the
-            # user of the issue here.
-            output_handler.handle_semgrep_errors([e])
-            logger.info(
-                f"Encountered error when running rules for historical scan: {e}"
-            )
-            logger.info(f"Finalizing non-historical results")
 
     total_time = time.time() - start
 

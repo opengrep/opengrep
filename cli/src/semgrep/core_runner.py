@@ -519,9 +519,7 @@ class CoreRunner:
         # trace_endpoint: Optional[str],
         capture_stderr: bool,
         optimizations: str,
-        allow_untrusted_validators: bool,
         respect_rule_paths: bool = True,
-        path_sensitive: bool = False,
     ):
         self._binary_path = engine_type.get_binary_path()
         self._jobs = jobs or engine_type.default_jobs
@@ -533,8 +531,6 @@ class CoreRunner:
         # self._trace = trace
         # self._trace_endpoint = trace_endpoint
         self._optimizations = optimizations
-        self._allow_untrusted_validators = allow_untrusted_validators
-        self._path_sensitive = path_sensitive
         self._respect_rule_paths = respect_rule_paths
         self._capture_stderr = capture_stderr
 
@@ -784,8 +780,6 @@ class CoreRunner:
         matching_explanations: bool,
         engine: EngineType,
         strict: bool,
-        run_secrets: bool,
-        disable_secrets_validation: bool,
         target_mode_config: TargetModeConfig,
         sca_subprojects: Dict[out.Ecosystem, List[ResolvedSubproject]],
         opengrep_ignore_pattern: Optional[str],
@@ -824,38 +818,20 @@ class CoreRunner:
                 "w+", suffix=".json", delete=(not IS_WINDOWS)
             )
         )
-        # A historical scan does not create a targeting file since targeting is
-        # performed directly by core.
-        if not target_mode_config.is_historical_scan:
-            target_file = exit_stack.enter_context(
-                (state.env.user_data_folder / "semgrep_targets.txt").open("w+")
-                if dump_command_for_core
-                else tempfile.NamedTemporaryFile("w+", delete=(not IS_WINDOWS))
-            )
-        if target_mode_config.is_pro_diff_scan:
-            diff_target_file = exit_stack.enter_context(
-                (state.env.user_data_folder / "semgrep_diff_targets.txt").open("w+")
-                if dump_command_for_core
-                else tempfile.NamedTemporaryFile("w+", delete=(not IS_WINDOWS))
-            )
+        target_file = exit_stack.enter_context(
+            (state.env.user_data_folder / "semgrep_targets.txt").open("w+")
+            if dump_command_for_core
+            else tempfile.NamedTemporaryFile("w+", delete=(not IS_WINDOWS))
+        )
 
         with exit_stack:
             if self._binary_path is None:
-                if engine.is_pro:
-                    logger.error(
-                        f"""
-Semgrep Pro is either uninstalled or it is out of date.
-
-Try installing Semgrep Pro (`semgrep install-semgrep-pro`).
+                # This really shouldn't happen, but let's cover our bases
+                logger.error(
+                    f"""
+Could not find the opengrep-core executable. Your Opengrep install is likely corrupted. Please uninstall Opengrep and try again.
                         """
-                    )
-                else:
-                    # This really shouldn't happen, but let's cover our bases
-                    logger.error(
-                        f"""
-Could not find the semgrep-core executable. Your Semgrep install is likely corrupted. Please uninstall Semgrep and try again.
-                        """
-                    )
+                )
                 sys.exit(2)
             cmd = [
                 # bugfix: self._binary_path is an Optional[Path]. The
@@ -882,46 +858,19 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 cmd.extend(["-strict"])
 
             # adding targets option
-            if target_mode_config.is_pro_diff_scan:
-                diff_targets = target_mode_config.get_diff_targets()
-                diff_target_file_contents = "\n".join(
-                    [str(path) for path in diff_targets]
-                )
-                diff_target_file.write(diff_target_file_contents)
-                diff_target_file.flush()
-                cmd.extend(["-diff_targets", diff_target_file.name])
-                cmd.extend(["-diff_depth", str(target_mode_config.get_diff_depth())])
+            plan = self.plan_core_run(
+                rules,
+                target_manager,
+                all_targets=all_targets,
+                sca_subprojects=sca_subprojects,
+                bypass_includes_excludes_for_files=bypass_includes_excludes_for_files
+            )
 
-                # For the pro diff scan, it's necessary to consider all input files as
-                # "targets" and the files that have changed between the head and baseline
-                # commits as "diff targets". To compile a comprehensive list of all input files
-                # for `plan`, the `baseline_handler` is disabled within the `target_manager`
-                # when executing `plan_core_run`.
-                plan = self.plan_core_run(
-                    rules,
-                    evolve(target_manager, baseline_handler=None),
-                    all_targets=all_targets,
-                    sca_subprojects=sca_subprojects,
-                    bypass_includes_excludes_for_files=bypass_includes_excludes_for_files
-                )
-
-            else:
-                plan = self.plan_core_run(
-                    rules,
-                    target_manager,
-                    all_targets=all_targets,
-                    sca_subprojects=sca_subprojects,
-                    bypass_includes_excludes_for_files=bypass_includes_excludes_for_files
-                )
-
-            if target_mode_config.is_historical_scan:
-                cmd.extend(["-historical", "-only_validated"])
-            else:
-                parsing_data.add_targets(plan)
-                target_file_contents = json.dumps(plan.to_json())
-                target_file.write(target_file_contents)
-                target_file.flush()
-                cmd.extend(["-targets", target_file.name])
+            parsing_data.add_targets(plan)
+            target_file_contents = json.dumps(plan.to_json())
+            target_file.write(target_file_contents)
+            target_file.flush()
+            cmd.extend(["-targets", target_file.name])
 
             # adding limits
             cmd.extend(
@@ -961,11 +910,7 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
             # having it actually read the files.
             vfs_map: Dict[str, bytes] = {
                 rule_file.name: rule_file_contents.encode("UTF-8"),
-                **(
-                    {target_file.name: target_file_contents.encode("UTF-8")}
-                    if not target_mode_config.is_historical_scan
-                    else {}
-                ),
+                target_file.name: target_file_contents.encode("UTF-8"),
             }
 
             if self._optimizations != "none":
@@ -976,51 +921,6 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
 
             # if self._trace_endpoint:
             #     cmd.extend(["-trace_endpoint", self._trace_endpoint])
-
-            if run_secrets and not disable_secrets_validation:
-                cmd += ["-secrets"]
-                if not engine.is_pro:
-                    # This should be impossible, but the types don't rule it out so...
-                    raise SemgrepError(
-                        "Secrets post processors tried to run without the pro-engine."
-                    )
-
-            if self._allow_untrusted_validators:
-                cmd.append("-allow-untrusted-validators")
-
-            if self._path_sensitive:
-                cmd.append("-path_sensitive")
-
-            # TODO: use exact same command-line arguments so just
-            # need to replace the SemgrepCore.path() part.
-            if engine.is_pro:
-                if auth.get_token() is None:
-                    raise SemgrepError(
-                        "This is a proprietary extension of semgrep.\n"
-                        "You must log in with `semgrep login` to access this extension."
-                    )
-
-                if engine is EngineType.PRO_INTERFILE:
-                    logger.error(
-                        "Semgrep Pro Engine may be slower and show different results than Semgrep OSS."
-                    )
-
-                if engine is EngineType.PRO_INTERFILE:
-                    targets = target_manager.targets
-                    if len(targets) == 1:
-                        root = str(targets[0].path)
-                    else:
-                        raise SemgrepError(
-                            "Inter-file analysis can only take a single target (for multiple files pass a directory)"
-                        )
-                    cmd += ["-deep_inter_file"]
-                    cmd += [
-                        "-timeout_for_interfile_analysis",
-                        str(self._interfile_timeout),
-                    ]
-                    cmd += [root]
-                elif engine is EngineType.PRO_INTRAFILE:
-                    cmd += ["-deep_intra_file"]
 
             if state.terminal.is_debug:
                 cmd += ["-debug"]
@@ -1124,8 +1024,6 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
         matching_explanations: bool,
         engine: EngineType,
         strict: bool,
-        run_secrets: bool,
-        disable_secrets_validation: bool,
         target_mode_config: TargetModeConfig,
         sca_subprojects: Dict[out.Ecosystem, List[ResolvedSubproject]],
         opengrep_ignore_pattern: Optional[str] = None,
@@ -1155,8 +1053,6 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
                 matching_explanations,
                 engine,
                 strict,
-                run_secrets,
-                disable_secrets_validation,
                 target_mode_config,
                 sca_subprojects,
                 opengrep_ignore_pattern=opengrep_ignore_pattern,
@@ -1173,24 +1069,6 @@ Could not find the semgrep-core executable. Your Semgrep install is likely corru
             # Handle Semgrep errors normally
             raise e
         except Exception as e:
-            # Unexpected error, output a warning that the engine might be out of date
-            if engine.is_pro:
-                logger.error(
-                    f"""
-
-Semgrep Pro crashed during execution (unknown reason).
-This can sometimes happen because either Semgrep Pro or Semgrep is out of date.
-
-Try updating your version of Semgrep Pro (`semgrep install-semgrep-pro`) or your version of Semgrep (`pip install semgrep/brew install semgrep`).
-If both are up-to-date and the crash persists, please contact support to report an issue!
-When reporting the issue, please re-run the semgrep command with the
-`--debug` flag so as to print more details about what happened, if you can.
-
-Exception raised: `{e}`
-                    """
-                )
-                # replace the sys.exit below with `raise e` to help debug
-                sys.exit(2)
             raise e
 
     # end _run_rules_direct_to_semgrep_core
@@ -1204,8 +1082,6 @@ Exception raised: `{e}`
         matching_explanations: bool,
         engine: EngineType,
         strict: bool,
-        run_secrets: bool,
-        disable_secrets_validation: bool,
         target_mode_config: TargetModeConfig,
         sca_subprojects: Dict[out.Ecosystem, List[ResolvedSubproject]],
         opengrep_ignore_pattern: Optional[str] = None,
@@ -1235,8 +1111,6 @@ Exception raised: `{e}`
             matching_explanations,
             engine,
             strict,
-            run_secrets,
-            disable_secrets_validation,
             target_mode_config,
             sca_subprojects,
             opengrep_ignore_pattern=opengrep_ignore_pattern,
