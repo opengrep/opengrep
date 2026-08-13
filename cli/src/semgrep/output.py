@@ -22,7 +22,6 @@ from typing import Type
 import requests
 from boltons.iterutils import partition
 
-import semgrep.app.auth as auth
 import semgrep.formatter.base as base
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.console import console
@@ -630,8 +629,8 @@ class OutputHandler:
             self.severities,
             out.FormatContext(
                 is_ci_invocation=self.is_ci_invocation,
-                is_logged_in=auth.is_logged_in_weak(),
-                # only gates the Semgrep login nudge, which opengrep never shows
+                # both only gate the Semgrep login nudge, which opengrep never shows
+                is_logged_in=False,
                 is_using_registry=False,
             ),
         )

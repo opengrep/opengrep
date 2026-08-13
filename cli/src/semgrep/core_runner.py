@@ -29,7 +29,6 @@ from ruamel.yaml import YAML
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep import tracing
-from semgrep.app import auth
 from semgrep.config_resolver import Config
 from semgrep.console import console
 from semgrep.constants import Colors

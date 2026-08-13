@@ -160,16 +160,6 @@ class AppSession(requests.Session):
         self.mount("https://", retry_adapter)
         self.mount("http://", retry_adapter)
 
-    def authenticate(self) -> None:
-        # avoid circular imports in semgrep.state
-        from semgrep.app import auth
-
-        self.token = auth.get_token()
-
-    @property
-    def is_authenticated(self) -> bool:
-        return self.token is not None
-
     @tracing.trace()
     def request(self, *args: Any, **kwargs: Any) -> requests.Response:
         kwargs.setdefault(
@@ -183,8 +173,6 @@ class AppSession(requests.Session):
 
         kwargs["headers"].setdefault("User-Agent", str(self.user_agent))
         kwargs["headers"].setdefault("X-Semgrep-Scan-ID", str(state.local_scan_id))
-        if self.token:
-            kwargs["headers"].setdefault("Authorization", f"Bearer {self.token}")
 
         try:
             response = super().request(*args, **kwargs)
