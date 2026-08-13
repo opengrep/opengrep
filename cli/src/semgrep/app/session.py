@@ -186,16 +186,9 @@ class AppSession(requests.Session):
         if self.token:
             kwargs["headers"].setdefault("Authorization", f"Bearer {self.token}")
 
-        error_handler = state.error_handler
-        method, url = args
-        error_handler.push_request(method, url, **kwargs)
         try:
             response = super().request(*args, **kwargs)
         except requests.exceptions.SSLError as err:
             raise enhance_ssl_error_message(err)
 
-        if response.ok:
-            error_handler.pop_request()
-        else:
-            error_handler.append_request(status_code=response.status_code)
         return response
