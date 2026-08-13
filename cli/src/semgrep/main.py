@@ -16,12 +16,9 @@ def conditional_welcome() -> None:
     """
     # See CLI.ml for the list of pysemgrep commands
     exclusionary_pysemgrep_commands = {
-        "publish",
-        "login",
         "ci",
         # "install-semgrep-pro",
         "lsp",
-        "logout",
     }
     # Check if any of the exclusionary commands are provided
     args = set(sys.argv[1:])
