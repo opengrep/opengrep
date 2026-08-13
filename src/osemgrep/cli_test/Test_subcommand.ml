@@ -865,12 +865,6 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
 (*****************************************************************************)
 let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
   CLI_common.setup_logging ~force_color:true ~level:conf.common.logging_level;
-  (* Metrics_.configure Metrics_.On; ?? and allow to disable it?
-   * semgrep-rules/Makefile is running semgrep --test with metrics=off
-   * (and also --disable-version-check), but maybe because it is used from
-   * 'semgrep scan'; in 'osemgrep test' context, we should not even have
-   * those options and we should disable metrics (and version-check) by default.
-   *)
   Logs.debug (fun m -> m "conf = %s" (Test_CLI.show_conf conf));
   if conf.pro then !hook_pro_init ();
   let matching_diagnosis = conf.matching_diagnosis in
