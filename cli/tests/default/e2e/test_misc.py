@@ -355,10 +355,26 @@ def test_multiple_configs_different_origins(run_semgrep_in_tmp: RunSemgrep, snap
 
 @pytest.mark.kinda_slow
 def test_taint_mode(run_semgrep_in_tmp: RunSemgrep, snapshot):
+    # taint.py sanitizes under `if True`, so the tainted branch is dead
     snapshot.assert_match(
         run_semgrep_in_tmp(
             "rules/taint.yaml",
             target_name="taint/taint.py",
+        ).stdout,
+        "results.json",
+    )
+
+
+@pytest.mark.kinda_slow
+def test_taint_mode_reaches_sink_through_branch(
+    run_semgrep_in_tmp: RunSemgrep, snapshot
+):
+    # same shape as taint.py but with a condition that cannot be folded away,
+    # so the tainted branch survives and reaches the sink
+    snapshot.assert_match(
+        run_semgrep_in_tmp(
+            "rules/taint.yaml",
+            target_name="taint/taint_branches.py",
         ).stdout,
         "results.json",
     )

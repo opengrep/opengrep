@@ -469,16 +469,19 @@ def print_time_summary(
 
     # Compute summary timings
     rule_parsing_time = time_data.rules_parse_time
-    rule_match_timings = {
-        rule.value: sum(t.match_times[i] for t in targets if t.match_times[i] >= 0)
-        for i, rule in enumerate(time_data.rules)
-    }
+    # match_times only lists the rules that ran on a target, so start every
+    # rule at zero and add what each target reports for it
+    rule_match_timings = {rule.value: 0.0 for rule in time_data.rules}
+    for target in targets:
+        for rule_id, match_time in target.match_times:
+            if match_time >= 0 and rule_id.value in rule_match_timings:
+                rule_match_timings[rule_id.value] += match_time
     file_parsing_time = sum(
-        sum(t for t in target.parse_times if t >= 0) for target in targets
+        target.parse_time for target in targets if target.parse_time >= 0
     )
     file_timings = {
         target.path.value: (
-            sum(t for t in target.parse_times if t >= 0),
+            target.parse_time if target.parse_time >= 0 else 0.0,
             target.run_time,
         )
         for target in targets
