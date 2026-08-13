@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Optional
 
 from semgrep import __VERSION__
-from semgrep.app.scans import ScanHandler
 from semgrep.constants import DEFAULT_MAX_MEMORY_PRO_CI
 from semgrep.constants import DEFAULT_PRO_TIMEOUT_CI
 from semgrep.error import SemgrepError
@@ -33,40 +32,26 @@ class EngineType(Enum):
     @classmethod
     def decide_engine_type(
         cls,
-        logged_in: bool = False,
         engine_flag: Optional["EngineType"] = None,
         run_secrets: bool = False,
         interfile_diff_scan_enabled: bool = False,
         # ci-only args
-        ci_scan_handler: Optional[ScanHandler] = None,
         git_meta: Optional[GitMeta] = None,
         supply_chain_only: bool = False,
     ) -> "EngineType":
         """Determine which Semgrep engine type to run with.
 
         Takes into account the following rules:
-        - The CLI flag > Semgrep Cloud Platform settings > defaults
+        - The CLI flag > defaults
         - Requesting the secrets engine implies requesting PRO_INTRAFILE
-        - By default, logged in `semgrep ci` scans use PRO_INTRAFILE
-        - By default, all other scans use OSS
+        - By default, all scans use OSS
 
         There are also some restrictions based on version control state and
         product requested, to ensure users get fast scans when they expect it.
         """
-        interfile_is_requested_via_app = ci_scan_handler and ci_scan_handler.deepsemgrep
-
         if engine_flag is not None:
             requested_engine = engine_flag
-        elif interfile_is_requested_via_app:
-            requested_engine = cls.PRO_INTERFILE
         elif run_secrets:
-            requested_engine = cls.PRO_INTRAFILE
-        elif logged_in and ci_scan_handler:
-            # - logged_in indicates that pro analysis is available to the user
-            # - ci_scan_handler indicates that `semgrep ci` was the entrypoint
-            # Given these two conditions, the default engine is PRO_INTRAFILE
-            # Note: `ci_scan_handler` currently requires being logged in, but
-            # we check both explicitly in case that changes
             requested_engine = cls.PRO_INTRAFILE
         else:
             requested_engine = cls.OSS

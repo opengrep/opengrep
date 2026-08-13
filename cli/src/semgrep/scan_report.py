@@ -13,7 +13,6 @@ from rich.padding import Padding
 from rich.table import Table
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
-from semgrep.app import auth
 from semgrep.console import console
 from semgrep.console import Title
 from semgrep.constants import Colors
@@ -40,8 +39,6 @@ def _print_product_status(sast_enabled: bool = True, sca_enabled: bool = False) 
     is given the product-focused CLI UX treatment.
     """
     learn_more_url = with_color(Colors.cyan, "https://opengrep.dev", underline=True)
-    is_logged_in = auth.is_logged_in_weak()
-    all_enabled = True  # assume all enabled until we find a disabled product
 
     sections = [
         (
@@ -54,20 +51,14 @@ def _print_product_status(sast_enabled: bool = True, sca_enabled: bool = False) 
     ]
 
     for name, enabled, features in sections:
-        all_enabled = all_enabled and enabled
         console.print(
             f"\n{with_feature_status(enabled=enabled)} {with_color(Colors.foreground, name, bold=True)}"
         )
         for feature in features:
             console.print(f"  {with_feature_status(enabled=enabled)} {feature}")
 
-    if not is_logged_in:
-        message = f"✨ Learn more at {learn_more_url}."
-        console.print(f"\n{message}\n")
-    elif not all_enabled:
-        console.print(" ")  # space intentional for progress bar padding
-    else:
-        console.print(" ")  # space intentional for progress bar padding
+    message = f"✨ Learn more at {learn_more_url}."
+    console.print(f"\n{message}\n")
 
 
 def _print_scan_plan_header(
