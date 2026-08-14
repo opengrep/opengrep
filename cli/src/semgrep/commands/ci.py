@@ -173,18 +173,6 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     type=click.Path(allow_dash=True, path_type=Path),
     hidden=True,
 )
-@click.option(
-    "--x-partial-config",
-    "partial_config",
-    type=click.Path(allow_dash=True, path_type=Path),
-    hidden=True,
-)
-@click.option(
-    "--x-partial-output",
-    "partial_output",
-    type=click.Path(allow_dash=True, path_type=Path),
-    hidden=True,
-)
 @handle_command_errors
 def ci(
     ctx: click.Context,
@@ -241,8 +229,6 @@ def ci(
     allow_local_builds: bool,
     dump_n_rule_partitions: Optional[int],
     dump_rule_partitions_dir: Optional[Path],
-    partial_config: Optional[Path],
-    partial_output: Optional[Path],
     opengrep_ignore_pattern: Optional[str],
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
@@ -305,12 +291,6 @@ def ci(
             "WARNING: `opengrep ci` is meant to be run from the root of a git repo.\nWhen `opengrep ci` is not run from a git repo, it will not be able to perform all operations.\nWhen `opengrep ci` is run from a git repo, but not the root, links in the uploaded findings may be broken.\n\nTo run `opengrep ci` on only a subdirectory of a git repo, see `--subdir`."
         )
 
-    if config and partial_config:
-        logger.info(
-            "The `--config` and `--x-partial-config` flags are mutually exclusive. They serve different purposes."
-        )
-        sys.exit(FATAL_EXIT_CODE)
-
     if (dump_n_rule_partitions and not dump_rule_partitions_dir) or (
         not dump_n_rule_partitions and dump_rule_partitions_dir
     ):
@@ -319,15 +299,7 @@ def ci(
         )
         sys.exit(FATAL_EXIT_CODE)
 
-    if partial_config and not partial_output:
-        logger.info(
-            "When --x-partial-config is specified, --x-partial-output must also be specified."
-        )
-        sys.exit(FATAL_EXIT_CODE)
-
-    if partial_config:
-        config = (str(partial_config),)
-    elif not config:
+    if not config:
         config = (AUTO_CONFIG_KEY,)
 
     metadata = generate_meta_from_environment(baseline_commit, subdir)
