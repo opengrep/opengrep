@@ -153,14 +153,6 @@ clean:
 #	git clean -fX *.opam
 	-$(MAKE) -C cli clean
 
-# setuptools stages the package in cli/build/lib and copies changed sources
-# into it, but never drops files that were deleted from cli/src. Those stale
-# copies are then packaged into the wheel, so a removed module survives
-# 'make install'. Run this after deleting any Python source file.
-.PHONY: clean-cli-staging
-clean-cli-staging:
-	rm -rf cli/build
-
 ###############################################################################
 # Install targets
 ###############################################################################
