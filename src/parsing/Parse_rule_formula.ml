@@ -311,6 +311,23 @@ let parse_options (env : env) (dict : dict) :
         take_opt mv_analysis_dict env parse_metavariable_analysis_options "options" in
 *)
 
+(* The engine evaluates a negation by subtracting its matches from the
+ * positive conjuncts of the enclosing And; anywhere else it fails at match
+ * time (see the Not case of Match_search_mode.evaluate_formula).
+ *)
+let check_no_negated_member (env : env) (members : R.formula list) :
+    (unit, Rule_error.t) result =
+  List.fold_left
+    (fun acc (member : R.formula) ->
+      let/ () = acc in
+      match member.f with
+      | R.Not (tok, _) ->
+          Error
+            (Rule_error.mk_error ~rule_id:env.id
+               (InvalidRule (MisplacedNegation, env.id, tok)))
+      | _ -> Ok ())
+    (Ok ()) members
+
 let rec parse_formula_old_from_dict (env : env) (rule_dict : dict) :
     (R.formula, Rule_error.t) result =
   (* bTODO: filter out unconstrained nots *)
@@ -367,14 +384,17 @@ and parse_pair_old env ((key, value) : key * G.expr) :
       let+ pat = get_pattern value in
       R.P pat |> R.f
   | "pattern-not" ->
-      let+ formula = get_formula ~allow_string:true env value in
-      R.Not (t, formula) |> R.f
+      let/ formula = get_formula ~allow_string:true env value in
+      let/ () = check_no_negated_member env [ formula ] in
+      Ok (R.Not (t, formula) |> R.f)
   | "pattern-inside" ->
-      let+ formula = get_formula ~allow_string:true env value in
-      R.Inside (t, formula) |> R.f
+      let/ formula = get_formula ~allow_string:true env value in
+      let/ () = check_no_negated_member env [ formula ] in
+      Ok (R.Inside (t, formula) |> R.f)
   | "pattern-not-inside" ->
-      let+ formula = get_formula ~allow_string:true env value in
-      R.Not (t, R.Inside (t, formula) |> R.f) |> R.f
+      let/ formula = get_formula ~allow_string:true env value in
+      let/ () = check_no_negated_member env [ formula ] in
+      Ok (R.Not (t, R.Inside (t, formula) |> R.f) |> R.f)
   | "semgrep-internal-pattern-anywhere" ->
       let/ pattern = parse_str_or_dict env value in
       let+ formula =
@@ -388,10 +408,11 @@ and parse_pair_old env ((key, value) : key * G.expr) :
       in
       R.f formula
   | "pattern-either" ->
-      let+ formulae =
+      let/ formulae =
         parse_listi env key (get_nested_formula_in_list env) value
       in
-      R.Or (t, formulae) |> R.f
+      let/ () = check_no_negated_member env formulae in
+      Ok (R.Or (t, formulae) |> R.f)
   | "patterns" ->
       let parse_pattern i expr =
         let/ pattern = parse_str_or_dict env expr in
@@ -921,14 +942,17 @@ and parse_pair env ((key, value) : key * G.expr) :
       let+ pattern = get_string_pattern value in
       R.P pattern |> R.f
   | "not" ->
-      let+ formula = parse_formula env value in
-      R.Not (t, formula) |> R.f
+      let/ formula = parse_formula env value in
+      let/ () = check_no_negated_member env [ formula ] in
+      Ok (R.Not (t, formula) |> R.f)
   | "inside" ->
-      let+ formula = parse_formula env value in
-      R.Inside (t, formula) |> R.f
+      let/ formula = parse_formula env value in
+      let/ () = check_no_negated_member env [ formula ] in
+      Ok (R.Inside (t, formula) |> R.f)
   | "anywhere" ->
-      let+ formula = parse_formula env value in
-      R.Anywhere (t, formula) |> R.f
+      let/ formula = parse_formula env value in
+      let/ () = check_no_negated_member env [ formula ] in
+      Ok (R.Anywhere (t, formula) |> R.f)
   | "all" ->
       let/ conjuncts = parse_listi env key parse_formula value in
       let pos, _ = R.split_and conjuncts in
@@ -938,8 +962,9 @@ and parse_pair env ((key, value) : key * G.expr) :
              (InvalidRule (MissingPositiveTermInAnd, env.id, t)))
       else Ok (R.And (t, conjuncts) |> R.f)
   | "any" ->
-      let+ formulae = parse_listi env key parse_formula value in
-      R.Or (t, formulae) |> R.f
+      let/ formulae = parse_listi env key parse_formula value in
+      let/ () = check_no_negated_member env formulae in
+      Ok (R.Or (t, formulae) |> R.f)
   | "regex" ->
       let/ x = parse_string_wrap env key value in
       let/ regex = parse_regexp env x in
