@@ -18,8 +18,11 @@
 type t = {
   path : Target.path;
   xlang : Xlang.t;
-  lazy_content : string lazy_t; (* TODO: Check concurrent usage; also below. *)
-  lazy_ast_and_errors : (AST_generic.program * Tok.location list) lazy_t;
+  (* [Lazy_with_restart] rather than [Stdlib.Lazy]: forcing these can be
+   * interrupted by a per-rule timeout, and we must not memoize that exception
+   * and re-raise it for the next rule (see Lazy_with_restart.mli). *)
+  lazy_content : string Lazy_with_restart.t;
+  lazy_ast_and_errors : (AST_generic.program * Tok.location list) Lazy_with_restart.t;
 }
 
 let parse_file parser (analyzer : Xlang.t) path =
@@ -42,15 +45,15 @@ let resolve_with_ast ast (target : Target.regular) : t =
   {
     path = target.path;
     xlang = target.analyzer;
-    (* TODO: Check if used concurrently, lazy is not thread-safe. However, we
-     * only spawn one parallel task per target. *)
-    lazy_content = lazy (UFile.read_file target.path.internal_path_to_content);
+    lazy_content =
+      Lazy_with_restart.from_fun (fun () ->
+          UFile.read_file target.path.internal_path_to_content);
     lazy_ast_and_errors = ast;
   }
 
 let resolve parser (target : Target.regular) : t =
   let ast =
-    lazy
-      (parse_file parser target.analyzer target.path.internal_path_to_content)
+    Lazy_with_restart.from_fun (fun () ->
+        parse_file parser target.analyzer target.path.internal_path_to_content)
   in
   resolve_with_ast ast target

@@ -226,13 +226,13 @@ let spec_matches_of_taint_rule ~per_file_formula_cache xconf file ast_and_errors
   let file = Fpath.v file in
   let formula_cache = per_file_formula_cache in
   let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
-  let lazy_ast_and_errors = lazy ast_and_errors in
+  let lazy_ast_and_errors = Lazy_with_restart.from_val ast_and_errors in
   (* TODO: should this function just take a target, rather than a file? *)
   let xtarget : Xtarget.t =
     {
       path = { origin = File file; internal_path_to_content = file };
       xlang = rule.target_analyzer;
-      lazy_content = lazy (UFile.read_file file);
+      lazy_content = Lazy_with_restart.from_fun (fun () -> UFile.read_file file);
       lazy_ast_and_errors;
     }
   in
