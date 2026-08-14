@@ -1033,6 +1033,10 @@ let parse_one_rule ~rewrite_rule_ids (i : int) (rule : G.expr) :
   in
   (* this parses the search formula, or taint spec, or extract mode, etc. *)
   let/ mode = parse_mode env mode_opt dep_formula_opt rd in
+  (* the nested cases are rejected by the formula parsers themselves *)
+  let/ () =
+    Parse_rule_formula.check_no_negated_member env (R.formulas_of_mode mode)
+  in
   let/ metadata_opt = take_opt_no_env rd (generic_to_json rule_id) "metadata" in
   let product = parse_product metadata_opt dep_formula_opt in
   let/ message, severity =

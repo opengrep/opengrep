@@ -51,6 +51,7 @@ and invalid_rule_kind =
   | InvalidRegexp of string (* PCRE error message *)
   | DeprecatedFeature of string (* e.g., pattern-where-python: *)
   | MissingPositiveTermInAnd
+  | MisplacedNegation
   | IncompatibleRule of
       Semver_.t (* this version of Semgrep *)
       * (Semver_.t option (* minimum version supported by this rule *)
@@ -121,6 +122,8 @@ let string_of_invalid_rule_kind = function
         (Xlang.to_string xlang) message pattern
   | MissingPositiveTermInAnd ->
       "you need at least one positive term (not just negations or conditions)"
+  | MisplacedNegation ->
+      "you can only negate directly inside `patterns:` or `all:`"
   | DeprecatedFeature s -> spf "deprecated feature: %s" s
   | IncompatibleRule (cur, (Some min_version, None)) ->
       spf "This rule requires upgrading Opengrep to a version compatible with \
@@ -179,6 +182,7 @@ let is_skippable_error (kind : invalid_rule_kind) : bool =
   | InvalidRegexp _
   | DeprecatedFeature _
   | MissingPositiveTermInAnd
+  | MisplacedNegation
   | InvalidOther _ ->
       false
   | IncompatibleRule _

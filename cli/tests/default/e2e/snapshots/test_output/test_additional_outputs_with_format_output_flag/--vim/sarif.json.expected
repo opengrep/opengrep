@@ -72,7 +72,7 @@
                 "text": "useless comparison operation `$X == $X` or `$X != $X`"
               },
               "help": {
-                "markdown": "useless comparison operation `$X == $X` or `$X != $X`\n\n<b>References:</b>\n - [Semgrep Rule](https://semgrep.dev/r/eqeq-bad)\n",
+                "markdown": "useless comparison operation `$X == $X` or `$X != $X`\n\n<b>References:</b>\n - [Rule](https://semgrep.dev/r/eqeq-bad)\n",
                 "text": "useless comparison operation `$X == $X` or `$X != $X`"
               },
               "helpUri": "https://semgrep.dev/r/eqeq-bad",

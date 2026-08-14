@@ -402,8 +402,7 @@ let error_to_sarif_notification (e : Out.cli_error) =
 (*****************************************************************************)
 
 let sarif_output hrules (cli_output : Out.cli_output)
-    ~hide_nudge ~engine_label ~show_dataflow_traces : Sarif.sarif_json_schema =
-  ignore hide_nudge;
+    ~engine_label ~show_dataflow_traces : Sarif.sarif_json_schema =
   let sarif_schema =
     "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"
   in

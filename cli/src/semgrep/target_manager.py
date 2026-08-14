@@ -113,6 +113,9 @@ class FileTargetingLog:
     target_manager: "TargetManager"
 
     semgrepignored: Set[Path] = Factory(set)
+    # Directories dropped whole by .semgrepignore during the filesystem walk.
+    # The walk never descends into them, so they are reported as directories.
+    semgrepignored_dirs: Set[Path] = Factory(set)
     always_skipped: Set[Path] = Factory(set)
     cli_includes: Set[Path] = Factory(set)
     cli_excludes: Set[Path] = Factory(set)
@@ -213,9 +216,14 @@ class FileTargetingLog:
                 f"{len(self.size_limit)} files larger than {self.target_manager.max_target_bytes / 1000 / 1000} MB"
             )
 
-        if self.semgrepignored:
+        if self.semgrepignored or self.semgrepignored_dirs:
+            counts = []
+            if self.semgrepignored:
+                counts.append(f"{len(self.semgrepignored)} files")
+            if self.semgrepignored_dirs:
+                counts.append(f"{len(self.semgrepignored_dirs)} directories")
             skip_fragments.append(
-                f"{len(self.semgrepignored)} files matching .semgrepignore patterns"
+                f"{' and '.join(counts)} matching .semgrepignore patterns"
             )
         if self.core_failure_lines_by_file:
             partial_fragments.append(
@@ -268,11 +276,12 @@ class FileTargetingLog:
             1,
             "- https://semgrep.dev/docs/ignoring-files-folders-code/#understand-semgrep-defaults",
         )
-        if self.semgrepignored:
-            if too_many_entries > 0 and len(self.semgrepignored) > too_many_entries:
+        semgrepignored = self.semgrepignored | self.semgrepignored_dirs
+        if semgrepignored:
+            if too_many_entries > 0 and len(semgrepignored) > too_many_entries:
                 yield 2, TOO_MUCH_DATA
             else:
-                for path in sorted(self.semgrepignored):
+                for path in sorted(semgrepignored):
                     yield 2, with_color(Colors.cyan, str(path))
         else:
             yield 2, "<none>"
@@ -375,7 +384,7 @@ class FileTargetingLog:
         # add it also to semgrep_output_v1.atd.
         for path in self.always_skipped:
             yield {"path": str(path), "reason": "always_skipped"}
-        for path in self.semgrepignored:
+        for path in self.semgrepignored | self.semgrepignored_dirs:
             yield {"path": str(path), "reason": "semgrepignore_patterns_match"}
         for path in self.cli_includes:
             yield {"path": str(path), "reason": "cli_include_flags_do_not_match"}
@@ -508,18 +517,22 @@ class Target:
         self,
         preprocessed_patterns: Tuple[str, ...],
         file_ignore: Optional[FileIgnore] = None,
-    ) -> FrozenSet[Path]:
+    ) -> Tuple[FrozenSet[Path], FrozenSet[Path]]:
         """
         Like files_from_filesystem but uses os.walk with directory-level pruning.
         Receives already-preprocessed wcmatch patterns (via preprocess_path_patterns).
         Optionally also accepts a FileIgnore to prune .semgrepignore-excluded dirs.
         Directories matching either source of patterns are removed from dirnames
         in-place so os.walk never descends into them.
+
+        Returns the files found and the directories pruned by the FileIgnore
+        (names only -- the walk never descends into them).
         """
         if not preprocessed_patterns and file_ignore is None:
-            return self.files_from_filesystem()
+            return self.files_from_filesystem(), frozenset()
 
         result: Set[Path] = set()
+        pruned: Set[Path] = set()
         for dirpath_str, dirnames, filenames in os.walk(
             str(self.path), topdown=True, followlinks=False
         ):
@@ -527,28 +540,30 @@ class Target:
             # Prune directories in-place — os.walk won't descend into removed entries.
             # Use paths relative to self.path so that patterns like **/node_modules
             # (which have no leading /) match correctly.
-            dirnames[:] = [
-                d
-                for d in dirnames
-                if not wcglob.globfilter(
+            kept = []
+            for d in dirnames:
+                if wcglob.globfilter(
                     [str((dirpath / d).relative_to(self.path))],
                     list(preprocessed_patterns),
                     flags=wcglob.GLOBSTAR | wcglob.DOTGLOB,
-                )
+                ):
+                    continue
                 # For .semgrepignore: check a virtual sentinel file inside the
                 # directory. _survives() is pure pattern-matching (no filesystem
                 # access) and checking `dir/__check__` correctly handles both `dir`
                 # patterns (matched via `dir/**`) and `dir/` folder patterns.
-                and (
-                    file_ignore is None
-                    or file_ignore._survives((dirpath / d / ".__check__").absolute())
-                )
-            ]
+                if file_ignore is not None and not file_ignore._survives(
+                    (dirpath / d / ".__check__").absolute()
+                ):
+                    pruned.add(dirpath / d)
+                    continue
+                kept.append(d)
+            dirnames[:] = kept
             for filename in filenames:
                 filepath = dirpath / filename
                 if filepath.is_file() and not filepath.is_symlink():
                     result.add(filepath)
-        return frozenset(result)
+        return frozenset(result), frozenset(pruned)
 
     @lru_cache(maxsize=None)
     def files(self, ignore_baseline_handler: bool = False) -> FrozenSet[Path]:
@@ -801,7 +816,7 @@ class TargetManager:
         exclude_patterns: Tuple[str, ...],
         ignore_baseline_handler: bool = False,
         file_ignore: Optional[FileIgnore] = None,
-    ) -> FrozenSet[Path]:
+    ) -> Tuple[FrozenSet[Path], FrozenSet[Path]]:
         """
         Like get_all_files but performs directory-level pruning during filesystem
         traversal for directory targets that use the filesystem scanner.
@@ -815,6 +830,7 @@ class TargetManager:
             TargetManager.preprocess_path_patterns(list(exclude_patterns))
         )
         result: Set[Path] = set()
+        pruned_dirs: Set[Path] = set()
         for target in self.targets:
             if not target.path.is_dir():
                 # Explicit file target (or non-directory path) — no pruning needed.
@@ -827,7 +843,11 @@ class TargetManager:
             if target.baseline_handler is not None:
                 if ignore_baseline_handler:
                     # Scan all files ignoring the baseline (e.g. SCA lockfile scan).
-                    result |= target.files_from_filesystem_with_dir_pruning(preprocessed, file_ignore)
+                    files, dirs = target.files_from_filesystem_with_dir_pruning(
+                        preprocessed, file_ignore
+                    )
+                    result |= files
+                    pruned_dirs |= dirs
                     continue
                 try:
                     result |= target.files_from_git_diff()
@@ -848,10 +868,11 @@ class TargetManager:
                     # `.m2` exclude costs almost nothing), and the
                     # intersection restores the git-tracked semantics.
                     if preprocessed or file_ignore is not None:
-                        pruned = target.files_from_filesystem_with_dir_pruning(
+                        kept, dirs = target.files_from_filesystem_with_dir_pruning(
                             preprocessed, file_ignore
                         )
-                        git_files = git_files & pruned
+                        pruned_dirs |= dirs
+                        git_files = git_files & kept
                     result |= git_files
                     continue
                 except (subprocess.CalledProcessError, FileNotFoundError):
@@ -859,9 +880,13 @@ class TargetManager:
                         f"Unable to ignore files ignored by git ({target.path} is not a git directory or git is not installed). Running on all files instead..."
                     )
 
-            result |= target.files_from_filesystem_with_dir_pruning(preprocessed, file_ignore)
+            files, dirs = target.files_from_filesystem_with_dir_pruning(
+                preprocessed, file_ignore
+            )
+            result |= files
+            pruned_dirs |= dirs
 
-        return frozenset(result)
+        return frozenset(result), frozenset(pruned_dirs)
 
     @lru_cache(maxsize=None)
     def get_files_for_language(
@@ -895,9 +920,10 @@ class TargetManager:
             if self.respect_semgrepignore
             else None
         )
-        all_files = self.get_all_files_with_dir_pruning(
+        all_files, semgrepignored_dirs = self.get_all_files_with_dir_pruning(
             all_excludes_for_pruning, ignore_baseline_handler, file_ignore_for_pruning
         )
+        self.ignore_log.semgrepignored_dirs.update(semgrepignored_dirs)
 
         if isinstance(lang, Language):
             files = self.filter_by_language(lang, candidates=all_files)

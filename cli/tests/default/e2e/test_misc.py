@@ -214,7 +214,6 @@ def test_stdin_input(snapshot):
     unique_settings_file = tempfile.NamedTemporaryFile().name
     Path(unique_settings_file).write_text(
         "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
-        "has_shown_metrics_notification: true\n"
     )
     process = subprocess.Popen(
         SEMGREP_BASE_SCAN_COMMAND + ["--json", "-e", "a", "--lang", "js", "-"],
@@ -224,7 +223,6 @@ def test_stdin_input(snapshot):
             "SEMGREP_SETTINGS_FILE": unique_settings_file,
             "SEMGREP_VERSION_CACHE_PATH": tempfile.TemporaryDirectory().name,
             "SEMGREP_ENABLE_VERSION_CHECK": "0",
-            "SEMGREP_SEND_METRICS": "off",
         },
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -238,7 +236,6 @@ def test_subshell_input(snapshot):
     unique_settings_file = tempfile.NamedTemporaryFile().name
     Path(unique_settings_file).write_text(
         "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
-        "has_shown_metrics_notification: true\n"
     )
     stdout = subprocess.check_output(
         [
@@ -252,7 +249,6 @@ def test_subshell_input(snapshot):
             "SEMGREP_SETTINGS_FILE": unique_settings_file,
             "SEMGREP_VERSION_CACHE_PATH": tempfile.TemporaryDirectory().name,
             "SEMGREP_ENABLE_VERSION_CHECK": "0",
-            "SEMGREP_SEND_METRICS": "off",
         },
     )
     # Clean fingerprint from result since it's path dependent and that changes
@@ -266,7 +262,6 @@ def test_multi_subshell_input(snapshot):
     unique_settings_file = tempfile.NamedTemporaryFile().name
     Path(unique_settings_file).write_text(
         "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
-        "has_shown_metrics_notification: true\n"
     )
     stdout = subprocess.check_output(
         [
@@ -280,7 +275,6 @@ def test_multi_subshell_input(snapshot):
             "SEMGREP_SETTINGS_FILE": unique_settings_file,
             "SEMGREP_VERSION_CACHE_PATH": tempfile.TemporaryDirectory().name,
             "SEMGREP_ENABLE_VERSION_CHECK": "0",
-            "SEMGREP_SEND_METRICS": "off",
         },
     )
     snapshot.assert_match(mask_variable_text(stdout), "results.json")
@@ -361,10 +355,26 @@ def test_multiple_configs_different_origins(run_semgrep_in_tmp: RunSemgrep, snap
 
 @pytest.mark.kinda_slow
 def test_taint_mode(run_semgrep_in_tmp: RunSemgrep, snapshot):
+    # taint.py sanitizes under `if True`, so the tainted branch is dead
     snapshot.assert_match(
         run_semgrep_in_tmp(
             "rules/taint.yaml",
             target_name="taint/taint.py",
+        ).stdout,
+        "results.json",
+    )
+
+
+@pytest.mark.kinda_slow
+def test_taint_mode_reaches_sink_through_branch(
+    run_semgrep_in_tmp: RunSemgrep, snapshot
+):
+    # same shape as taint.py but with a condition that cannot be folded away,
+    # so the tainted branch survives and reaches the sink
+    snapshot.assert_match(
+        run_semgrep_in_tmp(
+            "rules/taint.yaml",
+            target_name="taint/taint_branches.py",
         ).stdout,
         "results.json",
     )

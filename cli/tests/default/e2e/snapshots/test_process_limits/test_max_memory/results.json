@@ -3,8 +3,9 @@
     {
       "code": 2,
       "level": "warn",
-      "message": "Out of memory at line targets/equivalence/open_redirect.py:1:\n Exceeded memory limit of 1 MiB",
+      "message": "Out of memory when running rules.forcetimeout on targets/equivalence/open_redirect.py:\n Exceeded memory limit of 1 MiB",
       "path": "targets/equivalence/open_redirect.py",
+      "rule_id": "rules.forcetimeout",
       "type": "Out of memory"
     }
   ],

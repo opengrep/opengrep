@@ -62,8 +62,7 @@ def handle_command_errors(func: Callable) -> Callable:
             exit_code = 0
         finally:
             error_handler = state.get_state().error_handler
-            error_handler.capture_error(exc)
-            exit_code = error_handler.send(exit_code)
+            exit_code = error_handler.suppress(exit_code)
 
         # not inside the finally block to avoid overriding other sys.exits
         sys.exit(exit_code)

@@ -309,11 +309,5 @@ class Plan:
 
         return table
 
-    def record_metrics(self) -> None:
-        metrics = get_state().metrics
-
-        for language in self.split_by_lang_label():
-            metrics.add_feature("language", language)
-
     def __str__(self) -> str:
         return f"<Plan of {len(self.target_mappings)} tasks for {list(self.split_by_lang_label())}>"

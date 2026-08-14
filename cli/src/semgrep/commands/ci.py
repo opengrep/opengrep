@@ -13,19 +13,13 @@ from typing import Tuple
 
 import click
 from rich.padding import Padding
-from rich.progress import Progress
-from rich.progress import SpinnerColumn
-from rich.progress import TextColumn
 from rich.table import Table
 
-import semgrep.app.auth as auth
 import semgrep.rpc_call
 import semgrep.run_scan
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 # from semgrep import tracing
-from semgrep.app.project_config import ProjectConfig
-from semgrep.app.scans import ScanCompleteResult
-from semgrep.app.scans import ScanHandler
+from semgrep.config_resolver import AUTO_CONFIG_KEY
 # from semgrep.commands.install import run_install_semgrep_pro
 from semgrep.commands.scan import collect_additional_outputs
 from semgrep.commands.scan import scan_options
@@ -40,8 +34,6 @@ from semgrep.console import Title
 from semgrep.constants import OutputFormat
 from semgrep.engine import EngineType
 from semgrep.error import FATAL_EXIT_CODE
-from semgrep.error import INVALID_API_KEY_EXIT_CODE
-from semgrep.error import MISSING_CONFIG_EXIT_CODE
 from semgrep.error import SemgrepError
 from semgrep.git import git_check_output
 from semgrep.git import is_git_repo_root_approx
@@ -49,7 +41,6 @@ from semgrep.ignores import IGNORE_FILE_NAME
 from semgrep.meta import generate_meta_from_environment
 from semgrep.meta import GithubMeta
 from semgrep.meta import GitMeta
-from semgrep.metrics import MetricsState
 from semgrep.output import OutputHandler
 from semgrep.output import OutputSettings
 from semgrep.rule import Rule
@@ -67,14 +58,6 @@ ALWAYS_EXCLUDE_PATTERNS = [".semgrep/", ".semgrep_logs/"]
 
 # These patterns are excluded via --exclude unless the user provides their own .semgrepignore
 DEFAULT_EXCLUDE_PATTERNS = ["test/", "tests/", "*_test.go"]
-
-# Conversion of product codes to product names
-PRODUCT_NAMES_MAP = {
-    "sast": "Code",
-    "sca": "Supply Chain",
-    "secrets": "Secrets",
-}
-
 
 def is_valid_pattern(pattern: str) -> bool:
     """
@@ -157,19 +140,10 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     envvar="SEMGREP_RULES",
 )
 @click.option(
-    "--dry-run",
-    is_flag=True,
-)
-@click.option(
     "--supply-chain",
     is_flag=True,
 )
 @click.option("--code", is_flag=True, hidden=True)
-@click.option(
-    "--secrets",
-    "run_secrets_flag",
-    is_flag=True,
-)
 @click.option(
     "--suppress-errors/--no-suppress-errors",
     "suppress_errors",
@@ -199,18 +173,6 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     type=click.Path(allow_dash=True, path_type=Path),
     hidden=True,
 )
-@click.option(
-    "--x-partial-config",
-    "partial_config",
-    type=click.Path(allow_dash=True, path_type=Path),
-    hidden=True,
-)
-@click.option(
-    "--x-partial-output",
-    "partial_output",
-    type=click.Path(allow_dash=True, path_type=Path),
-    hidden=True,
-)
 @handle_command_errors
 def ci(
     ctx: click.Context,
@@ -218,14 +180,12 @@ def ci(
     audit_on: Sequence[str],
     autofix: bool,
     baseline_commit: Optional[str],
-    historical_secrets: bool,
     internal_ci_scan_results: bool,
     code: bool,
     config: Optional[Tuple[str, ...]],
     debug: bool,
     diff_depth: int,
     dump_command_for_core: bool,
-    dry_run: bool,
     enable_nosem: bool,
     enable_version_check: bool,
     exclude: Optional[Tuple[str, ...]],
@@ -255,9 +215,6 @@ def ci(
     requested_engine: EngineType,
     quiet: bool,
     rewrite_rule_ids: bool,
-    run_secrets_flag: bool, # NOTE: To be removed.
-    disable_secrets_validation_flag: bool,
-    allow_untrusted_validators: bool,
     supply_chain: bool, # NOTE: to be removed.
     scan_unknown_extensions: bool,
     subdir: Optional[Path],
@@ -269,12 +226,9 @@ def ci(
     # trace_endpoint: str,
     use_git_ignore: bool,
     verbose: bool,
-    path_sensitive: bool,
     allow_local_builds: bool,
     dump_n_rule_partitions: Optional[int],
     dump_rule_partitions_dir: Optional[Path],
-    partial_config: Optional[Path],
-    partial_output: Optional[Path],
     opengrep_ignore_pattern: Optional[str],
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
@@ -318,9 +272,7 @@ def ci(
             "WARNING: --inline-metavariables is set but will be ignored."
         )
 
-    state.metrics.configure(None)
     state.error_handler.configure(suppress_errors)
-    scan_handler = None
     capture_core_stderr = not debug
 
     if subdir:
@@ -339,12 +291,6 @@ def ci(
             "WARNING: `opengrep ci` is meant to be run from the root of a git repo.\nWhen `opengrep ci` is not run from a git repo, it will not be able to perform all operations.\nWhen `opengrep ci` is run from a git repo, but not the root, links in the uploaded findings may be broken.\n\nTo run `opengrep ci` on only a subdirectory of a git repo, see `--subdir`."
         )
 
-    if config and partial_config:
-        logger.info(
-            "The `--config` and `--x-partial-config` flags are mutually exclusive. They serve different purposes."
-        )
-        sys.exit(FATAL_EXIT_CODE)
-
     if (dump_n_rule_partitions and not dump_rule_partitions_dir) or (
         not dump_n_rule_partitions and dump_rule_partitions_dir
     ):
@@ -353,44 +299,8 @@ def ci(
         )
         sys.exit(FATAL_EXIT_CODE)
 
-    if partial_config and not partial_output:
-        logger.info(
-            "When --x-partial-config is specified, --x-partial-output must also be specified."
-        )
-        sys.exit(FATAL_EXIT_CODE)
-
-    token = state.app_session.token
-    if not token and not config:
-        # Not logged in and no explicit config
-        logger.info(
-            "run `semgrep login` before using `opengrep ci` or use `opengrep scan` and set `--config`"
-        )
-        sys.exit(INVALID_API_KEY_EXIT_CODE)
-    elif not token and config:
-        # Not logged in but has explicit config
-        pass
-    elif token and config:
-        # Logged in but has explicit config
-        logger.info(
-            "Cannot run `opengrep ci` with --config while logged in. The `opengrep ci` command will upload findings to semgrep-app and those findings must come from rules configured there. Drop the `--config` to use rules configured on semgrep.dev or log out."
-        )
-        sys.exit(FATAL_EXIT_CODE)
-    elif token:
-        # Dumping partitions implies a dry run because we are not
-        # scanning or uploading results to the app.
-        if dump_n_rule_partitions:
-            dry_run = True
-        # Partial scans also implies a dry run. We'll be saving results
-        # to disk, but not upload them yet.
-        if partial_output:
-            dry_run = True
-        scan_handler = ScanHandler(dry_run=dry_run, partial_output=partial_output)
-    else:  # impossible state… until we break the code above
-        raise RuntimeError("The token and/or config are misconfigured")
-
-    # For account admins to force suppressing errors. This overrides the CLI flag!
-    if scan_handler and scan_handler.always_suppress_errors:
-        state.error_handler.configure(suppress_errors=True)
+    if not config:
+        config = (AUTO_CONFIG_KEY,)
 
     metadata = generate_meta_from_environment(baseline_commit, subdir)
 
@@ -412,128 +322,12 @@ def ci(
 
     fix_head_if_github_action(metadata)
 
-    try:
-        # Note this needs to happen within fix_head_if_github_action
-        # so that metadata of current commit is correct
-        if scan_handler:
-            console.print(Title("Connection", order=2))
-
-            # Build project_metadata
-            project_meta: out.ProjectMetadata = metadata.to_project_metadata()
-            project_meta.is_sca_scan = supply_chain
-            project_meta.is_code_scan = code
-            project_meta.is_secrets_scan = run_secrets_flag
-
-            # TODO: move ProjectConfig to ATD too
-            project_config = ProjectConfig.load_all()
-
-            # Build scan_metadata
-            if code:
-                scan_handler.scan_metadata.requested_products.append(
-                    out.Product(out.SAST())
-                )
-            if supply_chain:
-                scan_handler.scan_metadata.requested_products.append(
-                    out.Product(out.SCA())
-                )
-            if run_secrets_flag:
-                scan_handler.scan_metadata.requested_products.append(
-                    out.Product(out.Secrets())
-                )
-
-            with Progress(
-                TextColumn("  {task.description}"),
-                SpinnerColumn(spinner_name="simpleDotsScrolling"),
-                console=console,
-            ) as progress_bar:
-                at_url_maybe = (
-                    f" at [bold]{state.env.semgrep_url}[/bold]"
-                    if state.env.semgrep_url != "https://semgrep.dev"
-                    else ""
-                )
-
-                start_scan_desc = "Initializing scan"
-                start_scan_task = progress_bar.add_task(start_scan_desc)
-                scan_handler.start_scan(project_meta, project_config)
-                extra_fields = []
-                if scan_handler.deployment_name:
-                    extra_fields.append(
-                        f"deployment={scan_handler.deployment_name}"
-                    )
-                if scan_handler.scan_id:
-                    extra_fields.append(f"scan_id={scan_handler.scan_id}")
-                if extra_fields:
-                    start_scan_desc += f" ({', '.join(extra_fields)})"
-                progress_bar.update(
-                    start_scan_task, completed=100, description=start_scan_desc
-                )
-
-                product_names = [
-                    PRODUCT_NAMES_MAP.get(p) or p
-                    for p in scan_handler.enabled_products
-                ]
-                products_str = ", ".join(product_names) or "None"
-                products_task = progress_bar.add_task(
-                    f"Enabled products: [bold]{products_str}[/bold]"
-                )
-                progress_bar.update(products_task, completed=100)
-
-            if scan_handler.rules == '{"rules":[]}' and set(
-                scan_handler.enabled_products
-            ).issubset({"sast", "secrets"}):
-                console.print(
-                    f"No rules configured. Visit {state.env.semgrep_url}/orgs/-/policies to configure rules to scan your code.\n"
-                )
-                sys.exit(MISSING_CONFIG_EXIT_CODE)
-
-            # Partial config overrides the config we get from the app,
-            # but we still need to communicate with the app to get other
-            # configs such as products, deployment ID, etc.
-            if partial_config:
-                config = (str(partial_config),)
-            else:
-                config = (scan_handler.rules,)
-
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc()
-        logger.info(f"Could not start scan {e}")
-        sys.exit(FATAL_EXIT_CODE)
-
-    # Enable beta features
-    if scan_handler and scan_handler.generic_slow_rollout:
-        # slow rollout for pro diff scan
-        diff_depth = 2
-
-    # Handled error outside engine type for more actionable advice.
-    if run_secrets_flag and requested_engine is EngineType.OSS:
+    if requested_engine is not None:
         logger.info(
-            "The --secrets and --oss-only flags are incompatible. Semgrep Secrets is a proprietary extension of Open Source Semgrep."
+            "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
         )
-        sys.exit(FATAL_EXIT_CODE)
 
-    run_secrets = run_secrets_flag or bool(
-        # Run without secrets, regardless of the enabled products, if the --oss-only flag was passed.
-        (not requested_engine is EngineType.OSS)
-        and scan_handler
-        and "secrets" in scan_handler.enabled_products
-    )
-
-    if not run_secrets and historical_secrets:
-        logger.info("Cannot run historical secrets scan without secrets enabled.")
-        sys.exit(FATAL_EXIT_CODE)
-
-    supply_chain_only = supply_chain and not code and not run_secrets
-    engine_type = EngineType.decide_engine_type(
-        logged_in=auth.is_logged_in_weak(),
-        engine_flag=requested_engine,
-        run_secrets=run_secrets,
-        interfile_diff_scan_enabled=diff_depth >= 0,
-        ci_scan_handler=scan_handler,
-        git_meta=metadata,
-        supply_chain_only=supply_chain_only,
-    )
+    engine_type = EngineType.decide_engine_type()
 
     # set default settings for selected engine type
     if dataflow_traces is None:
@@ -589,15 +383,7 @@ def ci(
     per_product_excludes = {
         product: [*exclude] if exclude else [] for product in ALL_PRODUCTS
     }
-    excludes_from_app = (
-        {
-            product: [ignore.value for ignore in ignores]
-            for product, ignores in scan_handler.ignore_patterns.value.items()
-        }
-        if scan_handler
-        else None
-    )
-    additional_exclude_paths = get_exclude_paths(excludes_from_app)
+    additional_exclude_paths = get_exclude_paths(None)
     for product in ALL_PRODUCTS:
         per_product_excludes[product].extend(additional_exclude_paths[product])
 
@@ -614,8 +400,6 @@ def ci(
     # the two target lists and perform one scan.
     run_scan_args = {
         "engine_type": engine_type,
-        "run_secrets": run_secrets,
-        "disable_secrets_validation": disable_secrets_validation_flag,
         "output_handler": output_handler,
         "taint_intrafile": taint_intrafile,
         "target": [target],
@@ -629,10 +413,10 @@ def ci(
         "exclude": per_product_excludes,
         "exclude_rule": exclude_rule,
         "max_target_bytes": max_target_bytes,
-        "autofix": scan_handler.autofix if scan_handler else False,
+        "autofix": False,
         "dryrun": True,
         # Always true, as we want to always report all findings, even
-        # ignored ones, to the backend
+        # ignored ones
         "disable_nosem": True,
         "no_git_ignore": (not use_git_ignore),
         "timeout": timeout,
@@ -647,7 +431,6 @@ def ci(
         # "trace_endpoint": trace_endpoint,
         "timeout_threshold": timeout_threshold,
         "skip_unknown_extensions": (not scan_unknown_extensions),
-        "allow_untrusted_validators": allow_untrusted_validators,
         "optimizations": optimizations,
         "baseline_commit": metadata.merge_base_ref,
         "baseline_commit_is_mergebase": True,
@@ -656,24 +439,11 @@ def ci(
         "allow_local_builds": allow_local_builds,
         "dump_n_rule_partitions": dump_n_rule_partitions,
         "dump_rule_partitions_dir": dump_rule_partitions_dir,
-        "prioritize_dependency_graph_generation": scan_handler.prioritize_dependency_graph_generation
-        if scan_handler
-        else False,
+        "prioritize_dependency_graph_generation": False,
     }
 
     try:
         start = time.time()
-
-        if scan_handler:
-            if not scan_handler.enabled_products:
-                raise SemgrepError(
-                    "No products are enabled for this organization. Please enable a product in the Settings > Deployment tab of Semgrep Cloud Platform or reach out to support@semgrep.com for assistance."
-                )
-
-            if dump_n_rule_partitions and scan_handler.enabled_products != ["sast"]:
-                raise SemgrepError(
-                    "--x-dump-rule-partitions is only compatible with SAST."
-                )
 
         # TODO? we're not passing time_flag below (or matching_explanations),
         # is it indended?
@@ -693,87 +463,16 @@ def ci(
             all_subprojects,
         ) = semgrep.run_scan.run_scan(**run_scan_args)
     except SemgrepError as e:
-        # We place output_handler calls after scan_handler calls
-        # because the output handler may raise an exception further
-        # for the top-level error handler to handle.
-        #
-        # We'd still like scan_handler to notify the app for failures
-        # so we do it before calling output handler.
         if isinstance(e, SemgrepError):
             exit_code = e.code
         else:
             exit_code = FATAL_EXIT_CODE
-        if scan_handler:
-            scan_handler.report_failure(exit_code)
 
         output_handler.handle_semgrep_errors([e])
         output_handler.output({}, all_targets=set(), filtered_rules=[])
         logger.info(f"Encountered error when running rules: {e}")
 
         sys.exit(exit_code)
-
-    # Run a separate scan for historical. This is due to the split in how the
-    # file targeting works. If file targeting could all be handled in the same
-    # place we wouldn't need this seprarately. There are some benefits
-    # (e.g., separate progress bar), but it would simplify output logic if we
-    # simply had one "scan".
-    run_historical_secrets_scan = (
-        run_secrets and scan_handler and scan_handler.historical_config.enabled
-    ) or historical_secrets
-
-    if run_historical_secrets_scan and metadata.merge_base_ref:
-        logger.info(
-            f"Historical scanning was enabled, but is not yet supported on diff scans."
-        )
-    elif run_historical_secrets_scan:
-        try:
-            console.print(Title("Secrets Historical Scan"))
-
-            (
-                historical_filtered_matches_by_rule,
-                historical_semgrep_errors,
-                # Don't care about historically renamed targets
-                # Seems like this is just ignored by app anyway.
-                _historical_renamed_targets,
-                # Only used in metrics; too noisy for now.
-                _historical_ignore_log,
-                historical_filtered_rules,
-                # For metrics; not yet sent.
-                _historical_profiler,
-                # Wrapper for some extra info; not currently sent for
-                # historical scans.
-                _historical_output_extra,
-                # Severity filtering should be the same, since the same
-                # settings have been passed. So we can just use the "normal"
-                # shown_severities.
-                _historical_shown_severities,
-                # Not relevant for secrets.
-                _historical_dependencies,
-                _historical_dependency_parser_errors,
-                # Usage limits currently only consider last 30 days.
-                _executed_rule_count,
-                _missed_rule_count,
-                _historical_all_subprojects,
-            ) = semgrep.run_scan.run_scan(
-                **run_scan_args,
-                historical_secrets=True,
-            )
-
-            for key, value in historical_filtered_matches_by_rule.items():
-                filtered_matches_by_rule[key].extend(value)
-
-            semgrep_errors.extend(historical_semgrep_errors)
-            filtered_rules.extend(historical_filtered_rules)
-
-        except SemgrepError as e:
-            # We know the non-historical scan completed successfully (since
-            # otherwise the program would exit), so we can just inform the
-            # user of the issue here.
-            output_handler.handle_semgrep_errors([e])
-            logger.info(
-                f"Encountered error when running rules for historical scan: {e}"
-            )
-            logger.info(f"Finalizing non-historical results")
 
     total_time = time.time() - start
 
@@ -811,15 +510,6 @@ def ci(
     # keep ignored matches currently is sarif.
     keep_ignored = not enable_nosem or output_handler.keep_ignores()
     for rule, matches in removed_prev_scan_matches.items():
-        # Filter out any matches that are triaged as ignored on the app
-        if scan_handler:
-            matches = [
-                match
-                for match in matches
-                if match.syntactic_id not in scan_handler.skipped_syntactic_ids
-                and match.match_based_id not in scan_handler.skipped_match_based_ids
-            ]
-
         for match in matches:
             if match.is_ignored and not keep_ignored:
                 continue
@@ -868,69 +558,6 @@ def ci(
         f"  Found {unit_str(num_blocking_findings + num_nonblocking_findings, 'finding')} ({num_blocking_findings} blocking) from {unit_str(len(filtered_rules), 'rule')}."
     )
 
-    complete_result: ScanCompleteResult | None = None
-    contributions = semgrep.rpc_call.contributions()
-    if scan_handler:
-        with Progress(
-            TextColumn("  {task.description}"),
-            SpinnerColumn(spinner_name="simpleDotsScrolling"),
-            console=console,
-        ) as progress_bar:
-            complete_result = scan_handler.report_findings(
-                filtered_matches_by_rule,
-                semgrep_errors,
-                filtered_rules,
-                output_extra.all_targets,
-                renamed_targets,
-                ignore_log.unsupported_lang_paths,
-                cli_suggested_exit_code,
-                output_extra.parsing_data,
-                total_time,
-                metadata.commit_datetime,
-                dependencies,
-                dependency_parser_errors,
-                all_subprojects,
-                contributions,
-                engine_type,
-                progress_bar,
-            )
-
-        if internal_ci_scan_results:
-            # console.print() would go to stderr; here we print() directly to stdout
-            print(
-                json.dumps(
-                    (
-                        scan_handler.ci_scan_results.to_json()
-                        if scan_handler.ci_scan_results
-                        else {}
-                    ),
-                    sort_keys=True,
-                    default=lambda x: x.to_json(),
-                )
-            )
-
-        # These logs are not relevant when dry running
-        if not dry_run:
-            if complete_result.success:
-                logger.info("  View results in Semgrep Cloud Platform:")
-            else:
-                logger.info(
-                    "  Semgrep Cloud Platform is still processing the results of the scan, they will be available soon:"
-                )
-
-            ref_if_available = f"&ref={metadata.branch}" if metadata.branch else ""
-
-            logger.info(
-                f"    {state.env.semgrep_url}/orgs/{scan_handler.deployment_name}/findings?repo={metadata.repo_display_name}{ref_if_available}"
-            )
-            if "r2c-internal-project-depends-on" in scan_handler.rules:
-                logger.info(
-                    f"    {state.env.semgrep_url}/orgs/{scan_handler.deployment_name}/supply-chain/vulnerabilities?repo={metadata.repo_display_name}{ref_if_available}"
-                )
-
-    # Although the cli came up with a suggested exit code, we could still
-    # exit with a different exit code, as the cli depends on the app to
-    # compute its own exit code
     audit_mode = metadata.event_name in audit_on
     if cli_suggested_exit_code == 1:
         if audit_mode:
@@ -941,25 +568,8 @@ def ci(
         else:
             logger.info("  Has findings for blocking rules so exiting with code 1")
             exit_code = 1
-            if complete_result and complete_result.app_block_override:
-                logger.info(complete_result.app_block_reason)
     else:
-        if (
-            complete_result
-            and complete_result.app_block_override
-            and not audit_mode
-        ):
-            logger.info(
-                f"  semgrep.dev is suggesting a non-zero exit code ({complete_result.app_block_reason})"
-            )
-            exit_code = 1
-        else:
-            logger.info("  No blocking findings so exiting with code 0")
-            exit_code = 0
-
-    if enable_version_check:
-        from semgrep.app.version import version_check
-
-        version_check()
+        logger.info("  No blocking findings so exiting with code 0")
+        exit_code = 0
 
     sys.exit(exit_code)

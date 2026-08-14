@@ -47,7 +47,7 @@ Files skipped:
 
   Partially analyzed due to parsing or internal Opengrep errors
 
-   • targets/equivalence/open_redirect.py
+   • targets/equivalence/open_redirect.py with rule rules.forcetimeout
 
 
 
@@ -59,4 +59,3 @@ Some files were skipped or only partially analyzed.
   Partially scanned: 1 files only partially analyzed due to parsing or internal Opengrep errors
 
 Ran 1 rule on 1 file: 0 findings.
-Not sending pseudonymous metrics since metrics are configured to OFF and registry usage is False

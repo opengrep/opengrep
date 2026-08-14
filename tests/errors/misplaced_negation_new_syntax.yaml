@@ -1,0 +1,11 @@
+rules:
+- id: misplaced-negation-new-syntax-test
+  match:
+    any:
+      - pattern: $X == $Y
+      #ERROR: negation directly under any
+      - not: $Z == $Z
+  message: test
+  languages:
+  - python
+  severity: INFO

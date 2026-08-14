@@ -1,0 +1,20 @@
+rules:
+- id: valid-negation-new-syntax-test
+  match:
+    all:
+      - foo($X)
+      - not: foo(1)
+      - any:
+          - foo(2, ...)
+          - foo($X, 3)
+      - inside: |
+          def bar(...):
+            ...
+    where:
+      - metavariable: $X
+        all:
+          - not: "1000"
+  message: test
+  languages:
+  - python
+  severity: INFO

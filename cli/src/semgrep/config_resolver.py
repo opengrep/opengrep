@@ -25,8 +25,6 @@ from ruamel.yaml import YAMLError
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep import __VERSION__
-from semgrep import tracing
-from semgrep.app import auth
 from semgrep.constants import CLI_RULE_ID
 from semgrep.constants import Colors
 from semgrep.constants import DEFAULT_SEMGREP_APP_CONFIG_URL
@@ -85,7 +83,6 @@ class ConfigFile(NamedTuple):
 
 class ConfigType(Enum):
     REGISTRY = auto()
-    SEMGREP_CLOUD_PLATFORM = auto()
     LOCAL = auto()
 
 
@@ -100,40 +97,23 @@ class ConfigLoader:
         project_url: Optional[str] = None,
     ) -> None:
         """
-        Mutates Metrics state!
         Takes a user's inputted config_str and transforms it into the appropriate
-        path, checking whether the config string is a registry url or not. If it
-        is, also set the appropriate Metrics flag
+        path, checking whether the config string is a registry url or not
         """
         state = get_state()
         self._project_url = project_url
         self._origin = ConfigType.REGISTRY
-        self._supports_fallback_config = False
         if config_str == "r2c":
-            state.metrics.add_feature("config", "r2c")
             self._config_path = "https://semgrep.dev/c/p/r2c"
         elif is_url(config_str):
-            state.metrics.add_feature("config", "url")
             self._config_path = config_str
-        elif is_product_names(config_str):
-            self._origin = ConfigType.SEMGREP_CLOUD_PLATFORM
-            add_metrics_for_products(config_str)
-            self._config_path = config_str
-            self._supports_fallback_config = True
         elif is_registry_id(config_str):
-            state.metrics.add_feature("config", f"registry:prefix-{config_str[0]}")
             self._config_path = registry_id_to_url(config_str)
         elif config_str == AUTO_CONFIG_KEY:
-            state.metrics.add_feature("config", "auto")
             self._config_path = f"{state.env.semgrep_url}/{AUTO_CONFIG_LOCATION}"
         else:
-            state.metrics.add_feature("config", "local")
             self._origin = ConfigType.LOCAL
             self._config_path = str(Path(config_str).expanduser())
-
-        if self.is_registry_url():
-            state.metrics.is_using_registry = True
-            state.metrics.add_registry_url(self._config_path)
 
     @classmethod
     def includes_remote_config(cls, configs: Sequence[str]) -> bool:
@@ -143,7 +123,6 @@ class ConfigLoader:
         return any(
             config == AUTO_CONFIG_KEY
             or config == "r2c"
-            or is_product_names(config)
             or is_registry_id(config)
             or is_url(config)
             for config in configs
@@ -158,8 +137,6 @@ class ConfigLoader:
         """
         if self._origin == ConfigType.REGISTRY:
             return [self._download_config()]
-        elif self._origin == ConfigType.SEMGREP_CLOUD_PLATFORM:
-            return [self._fetch_semgrep_cloud_platform_scan_config()]
         else:
             return self._load_config_from_local_path()
 
@@ -177,23 +154,9 @@ class ConfigLoader:
 
     def _download_config(self) -> ConfigFile:
         """
-        Download a configuration from semgrep.dev
+        Download a configuration from the registry
         """
-        try:
-            return self._download_config_from_url(self._config_path)
-        except Exception:
-            if self._supports_fallback_config:
-                try:
-                    fallback_url = re.sub(
-                        r"^[^?]*",  # replace everything but query params
-                        f"{get_state().env.fail_open_url}/config",
-                        self._config_path,
-                    )
-                    return self._download_config_from_url(fallback_url)
-                except Exception:
-                    pass
-
-            raise  # error from first fetch
+        return self._download_config_from_url(self._config_path)
 
     def _download_config_from_url(self, url: str) -> ConfigFile:
         app_session = get_state().app_session
@@ -257,149 +220,6 @@ class ConfigLoader:
     def is_registry_url(self) -> bool:
         return self._origin == ConfigType.REGISTRY
 
-    def _project_metadata_for_standalone_scan(
-        self, require_repo_name: bool
-    ) -> out.ProjectMetadata:
-        repo_name = os.environ.get("SEMGREP_REPO_NAME")
-        repo_display_name = os.environ.get("SEMGREP_REPO_DISPLAY_NAME", repo_name)
-
-        if repo_name is None:
-            if require_repo_name:
-                raise SemgrepError(
-                    f"Need to set env var SEMGREP_REPO_NAME to use `--config {self._config_path}`"
-                )
-            else:
-                repo_name = "unknown"
-
-        return out.ProjectMetadata(
-            semgrep_version=out.Version(__VERSION__),
-            scan_environment="semgrep-scan",
-            repository=repo_name,
-            repo_display_name=repo_display_name,
-            repo_url=None,
-            branch=None,
-            commit=None,
-            commit_title=None,
-            commit_author_email=None,
-            commit_author_name=None,
-            commit_author_username=None,
-            commit_author_image_url=None,
-            ci_job_url=None,
-            on="unknown",
-            pull_request_author_username=None,
-            pull_request_author_image_url=None,
-            pull_request_id=None,
-            pull_request_title=None,
-            is_full_scan=True,  # always true for standalone scan
-        )
-
-    def _fetch_semgrep_cloud_platform_scan_config(self) -> ConfigFile:
-        """
-        Download a configuration from semgrep.dev using new /api/cli/scans endpoint
-        """
-        state = get_state()
-
-        products = [
-            out.Product.from_json(PRODUCT_NAMES[p])
-            for p in self._config_path.split(",")
-        ]
-
-        # Require SEMGREP_REPO_NAME env var if SAST or Secrets are requested
-        require_repo_name = any(
-            p.value in [out.SAST(), out.Secrets()] for p in products
-        )
-
-        request = out.ScanRequest(
-            meta=out.RawJson({}),  # required for now, but we won't populate it
-            scan_metadata=out.ScanMetadata(
-                cli_version=out.Version(__VERSION__),
-                unique_id=out.Uuid(str(state.local_scan_id)),
-                requested_products=products,
-                dry_run=True,  # semgrep scan never submits findings, so always a dry run
-            ),
-            project_metadata=self._project_metadata_for_standalone_scan(
-                require_repo_name
-            ),
-        )
-
-        try:
-            return self._download_semgrep_cloud_platform_scan_config(request)
-        except Exception:
-            if self._supports_fallback_config:
-                try:
-                    return self._download_semgrep_cloud_platform_fallback_scan_config()
-                except Exception:
-                    pass
-
-            raise  # error from first fetch
-
-    def _download_semgrep_cloud_platform_scan_config(
-        self, request: out.ScanRequest
-    ) -> ConfigFile:
-        state = get_state()
-        url = f"{state.env.semgrep_url}/api/cli/scans"
-        logger.debug("Downloading config from %s", url)
-        error = f"Failed to download configuration from {url}"
-        try:
-            response = state.app_session.post(
-                f"{state.env.semgrep_url}/api/cli/scans",
-                json=request.to_json(),
-            )
-
-            if response.status_code == requests.codes.unauthorized:
-                raise SemgrepError(
-                    "Invalid API Key. Run `semgrep logout` and `semgrep login` again.",
-                    code=INVALID_API_KEY_EXIT_CODE,
-                )
-
-            try:
-                response.raise_for_status()
-            except requests.RequestException:
-                raise Exception(
-                    f"API server at {state.env.semgrep_url} returned this error: {response.text}"
-                )
-
-            scan_response = out.ScanResponse.from_json(response.json())
-            # get_state().traces.set_scan_info(scan_response.info)
-            return ConfigFile(None, scan_response.config.rules.to_json_string(), url)
-
-        except requests.exceptions.RetryError as ex:
-            error += f" Failed after multiple attempts ({ex.args[0].reason})"
-
-            logger.debug(
-                error
-            )  # since the raised exception may be caught and suppressed
-
-            raise SemgrepError(error)
-
-    def _download_semgrep_cloud_platform_fallback_scan_config(self) -> ConfigFile:
-        """
-        This function decides what fallback url to call if the semgrep cloud platform
-        scan config endpoint fails
-
-        ! This will manually rebuild the url until we have a better solution
-        """
-        fallback_url = None
-
-        if is_code(self._config_path):
-            fallback_url = url_for_code()
-        elif is_supply_chain(self._config_path):
-            fallback_url = url_for_supply_chain()
-        elif is_secrets(self._config_path):
-            fallback_url = url_for_secrets()
-        elif is_policy_id(self._config_path):
-            fallback_url = url_for_policy()
-        else:
-            raise
-
-        fallback_url = re.sub(
-            r"^[^?]*",  # replace everything but query params
-            f"{get_state().env.fail_open_url}/config",
-            fallback_url,
-        )
-
-        return self._download_config_from_url(fallback_url)
-
 
 def read_config_at_path(loc: Path, base_path: Optional[Path] = None) -> ConfigFile:
     """
@@ -420,7 +240,6 @@ def read_config_folder(loc: Path, relative: bool = False) -> List[ConfigFile]:
     return configs
 
 
-@tracing.trace()
 def parse_config_files(
     loaded_config_infos: List[ConfigFile],
     force_jsonschema: bool = False,
@@ -440,7 +259,6 @@ def parse_config_files(
     #
     # for config_id, contents, config_path in loaded_config_infos:
     from concurrent.futures import ThreadPoolExecutor
-    @tracing.trace()
     def process_config_item(config_item):
         config_id, contents, config_path = config_item
         try:
@@ -499,7 +317,6 @@ def parse_config_files(
     return config, errors
 
 
-@tracing.trace()
 def resolve_config(
     config_str: str,
     project_url: Optional[str] = None,
@@ -538,7 +355,6 @@ class Config:
         self.missed_rule_count = missed_rule_count
 
     @classmethod
-    @tracing.trace()
     def from_pattern_lang(
         cls, pattern: str, lang: str, replacement: Optional[str] = None
     ) -> Tuple["Config", List[SemgrepError]]:
@@ -547,7 +363,6 @@ class Config:
         return cls(valid), errors
 
     @classmethod
-    @tracing.trace()
     @lru_cache(maxsize=None)
     def from_rules_yaml(
         cls,
@@ -577,7 +392,6 @@ class Config:
         return cls(valid), errors
 
     @classmethod
-    @tracing.trace()
     def from_config_list(
         cls,
         configs: Sequence[str],
@@ -794,7 +608,6 @@ def indent(msg: str) -> str:
     return "\n".join(["\t" + line for line in msg.splitlines()])
 
 
-@tracing.trace()
 def parse_config_string(
     config_id: str,
     contents: str,
@@ -870,103 +683,6 @@ def registry_id_to_url(registry_id: str) -> str:
     return f"{env.semgrep_url}/{registry_id}"
 
 
-def url_for_policy() -> str:
-    """
-    Return url to download a policy for a given repo_name
-
-    For now uses envvar to know what repo_name is
-    """
-    deployment_id = auth.get_deployment_id()
-    if deployment_id is None:
-        raise SemgrepError(
-            "Invalid API Key. Run `semgrep logout` and `semgrep login` again."
-        )
-
-    repo_name = os.environ.get("SEMGREP_REPO_NAME")
-    if repo_name is None:
-        raise SemgrepError(
-            "Need to set env var SEMGREP_REPO_NAME to use `--config policy`"
-        )
-
-    env = get_state().env
-
-    # The app considers anything that will not POST back to it to be a dry_run
-    params = {
-        "sca": False,
-        "is_secrets_scan": False,
-        "dry_run": True,
-        "full_scan": True,
-        "repo_name": repo_name,
-        "semgrep_version": __VERSION__,
-    }
-    params_str = urlencode(params)
-    return f"{env.semgrep_url}/{DEFAULT_SEMGREP_APP_CONFIG_URL}?{params_str}"
-
-
-PRODUCT_NAMES = {
-    "code": "sast",
-    "policy": "sast",  # although policy isn't a product, it's effectively an alias for code
-    "secrets": "secrets",
-    "supply-chain": "sca",
-}
-
-
-def is_product_names(config_str: str) -> bool:
-    allowed = set(PRODUCT_NAMES.keys())
-    names = set(config_str.split(","))
-    return names <= allowed
-
-
-def add_metrics_for_products(config_str: str) -> None:
-    state = get_state()
-    for product_name in config_str.split(","):
-        if is_policy_id(product_name):
-            state.metrics.add_feature("config", "policy")
-        else:
-            state.metrics.add_feature("config", PRODUCT_NAMES[product_name])
-
-
-def is_policy_id(config_str: str) -> bool:
-    return config_str == "policy"
-
-
-def legacy_url_for_scan(extra_params: Optional[dict] = None) -> str:
-    """
-    Generates a legacy scan url (api/agent/deployments/scans/config) to
-    fetch a scan configuration.
-    """
-    env = get_state().env
-
-    # Common parameters for all scans
-    # - The app considers anything that will not POST back to it to be a dry_run
-    params = {
-        "dry_run": True,
-        "full_scan": True,
-        "semgrep_version": __VERSION__,
-    }
-
-    if extra_params:
-        params.update(extra_params)
-
-    if "SEMGREP_REPO_NAME" in os.environ:
-        params["repo_name"] = os.environ.get("SEMGREP_REPO_NAME")
-
-    params_str = urlencode(params)
-    return f"{env.semgrep_url}/{DEFAULT_SEMGREP_APP_CONFIG_URL}?{params_str}"
-
-
-def url_for_code() -> str:
-    return legacy_url_for_scan()
-
-
-def url_for_supply_chain() -> str:
-    return legacy_url_for_scan({"sca": True})
-
-
-def url_for_secrets() -> str:
-    return legacy_url_for_scan({"is_secrets_scan": True})
-
-
 def is_code(config_str: str) -> bool:
     return config_str == "code"
 
@@ -983,7 +699,6 @@ def is_pack_id(config_str: str) -> bool:
     return config_str[:2] == "p/"
 
 
-@tracing.trace()
 def get_config(
     pattern: Optional[str],
     lang: Optional[str],

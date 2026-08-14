@@ -1,0 +1,11 @@
+rules:
+- id: misplaced-negation-test
+  patterns:
+  - pattern-either:
+      - pattern: $X == $Y
+      #ERROR: negation directly under pattern-either
+      - pattern-not: $Z == $Z
+  message: test
+  languages:
+  - python
+  severity: INFO

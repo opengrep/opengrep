@@ -148,7 +148,9 @@ clean:
 # We still need to keep the nonempty opam files in git for
 # 'make setup', so we should only remove the empty opam files.
 # This removes the gitignored opam files.
-	git clean -fX *.opam
+# Disabled: there are no longer any .opam files at the root, they live in
+# opam/, and this pathspec matches at any depth rather than just the root.
+#	git clean -fX *.opam
 	-$(MAKE) -C cli clean
 
 ###############################################################################

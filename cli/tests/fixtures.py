@@ -47,7 +47,6 @@ class RunSemgrep(Protocol):
         assert_exit_code: None | int | set[int] = 0,
         force_color: bool | None = None,
         assume_targets_dir: bool = True,
-        force_metrics_off: bool = True,
         stdin: str | None = None,
         clean_fingerprint: bool = True,
         use_click_runner: bool = False,

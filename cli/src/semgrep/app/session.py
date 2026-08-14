@@ -12,7 +12,6 @@ from attrs import define
 from attrs import field
 
 from semgrep import __VERSION__
-from semgrep import tracing
 
 
 @define
@@ -121,7 +120,6 @@ class AppSession(requests.Session):
     - A User-Agent is automatically added to each request
     - Request IDs are automatically added to each request
     - A default timeout of 70 seconds is added to each request
-    - If a token is available, it is added to the request as an Authorization header
 
     Normal usage:
     >>> from semgrep.state import get_state
@@ -133,15 +131,11 @@ class AppSession(requests.Session):
 
     Disable timeout for a request:
     >>> app_session.get(url, timeout=None)
-
-    Disable authentication for a request:
-    >>> app_session.get(url, headers={"Authorization": None})
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.user_agent = UserAgent()
-        self.token: Optional[str] = None
         if os.getenv("SEMGREP_COOKIES_PATH"):
             cookies = MozillaCookieJar(os.environ["SEMGREP_COOKIES_PATH"])
             cookies.load()
@@ -160,21 +154,6 @@ class AppSession(requests.Session):
         self.mount("https://", retry_adapter)
         self.mount("http://", retry_adapter)
 
-    def authenticate(self) -> None:
-        # avoid circular imports in semgrep.state
-        from semgrep.app import auth
-        from semgrep.state import get_state
-
-        self.token = auth.get_token()
-
-        metrics = get_state().metrics
-        metrics.add_token(self.token)
-
-    @property
-    def is_authenticated(self) -> bool:
-        return self.token is not None
-
-    @tracing.trace()
     def request(self, *args: Any, **kwargs: Any) -> requests.Response:
         kwargs.setdefault(
             "timeout", 70
@@ -187,19 +166,10 @@ class AppSession(requests.Session):
 
         kwargs["headers"].setdefault("User-Agent", str(self.user_agent))
         kwargs["headers"].setdefault("X-Semgrep-Scan-ID", str(state.local_scan_id))
-        if self.token:
-            kwargs["headers"].setdefault("Authorization", f"Bearer {self.token}")
 
-        error_handler = state.error_handler
-        method, url = args
-        error_handler.push_request(method, url, **kwargs)
         try:
             response = super().request(*args, **kwargs)
         except requests.exceptions.SSLError as err:
             raise enhance_ssl_error_message(err)
 
-        if response.ok:
-            error_handler.pop_request()
-        else:
-            error_handler.append_request(status_code=response.status_code)
         return response

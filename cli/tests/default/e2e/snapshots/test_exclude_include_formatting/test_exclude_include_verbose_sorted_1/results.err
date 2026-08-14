@@ -66,4 +66,3 @@ Some files were skipped or only partially analyzed.
   For a full list of skipped files, run opengrep with the --verbose flag.
 
 Ran 4 rules on 0 files: 0 findings.
-Not sending pseudonymous metrics since metrics are configured to OFF and registry usage is False

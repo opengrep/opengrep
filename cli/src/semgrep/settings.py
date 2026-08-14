@@ -35,27 +35,18 @@ yaml.default_flow_style = False
 
 
 class SettingsSchema(TypedDict, total=False):
-    has_shown_metrics_notification: bool
-    api_token: Optional[str]
     anonymous_user_id: str
 
 
-SettingsKeys = Literal[
-    "has_shown_metrics_notification", "api_token", "anonymous_user_id"
-]
+SettingsKeys = Literal["anonymous_user_id"]
 
 
-def generate_anonymous_user_id(api_token: Optional[str]) -> str:
+def generate_anonymous_user_id() -> str:
     return str(uuid.uuid4())
 
 
-def generate_default_settings(api_token: Optional[str] = None) -> SettingsSchema:
-    anonymous_user_id = generate_anonymous_user_id(api_token)
-    logged_out_settings: SettingsSchema = {
-        "has_shown_metrics_notification": False,
-        "anonymous_user_id": anonymous_user_id,
-    }
-    return  logged_out_settings
+def generate_default_settings() -> SettingsSchema:
+    return {"anonymous_user_id": generate_anonymous_user_id()}
 
 
 @define
@@ -76,10 +67,7 @@ class Settings:
     @_contents.default
     def get_default_contents(self) -> SettingsSchema:
         """If file exists, read file. Otherwise use default"""
-        # Must perform access check first in case we don't have permission to stat the path
-        env = Env()
-        default_settings = generate_default_settings(env.app_token)
-        return default_settings
+        return generate_default_settings()
 
     def __attrs_post_init__(self) -> None:
         return

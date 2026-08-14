@@ -16,15 +16,11 @@ import click
 from click_option_group import MutuallyExclusiveOptionGroup
 from click_option_group import optgroup
 
-import semgrep.app.auth as auth
 import semgrep.config_resolver
 import semgrep.run_scan
 import semgrep.test
 from semgrep import __VERSION__
 from semgrep import bytesize
-from semgrep.app.version import get_no_findings_msg
-from semgrep.app.version import get_too_many_findings_msg
-from semgrep.app.version import TOO_MANY_FINDINGS_THRESHOLD
 from semgrep.commands.wrapper import handle_command_errors
 from semgrep.constants import Colors
 from semgrep.constants import DEFAULT_DIFF_DEPTH
@@ -43,7 +39,6 @@ from semgrep.core_runner import CoreRunner
 from semgrep.engine import EngineType
 from semgrep.error import SemgrepError
 from semgrep.git import get_project_url
-from semgrep.metrics import MetricsState
 from semgrep.output import OutputHandler
 from semgrep.output import OutputSettings
 from semgrep.rule import Rule
@@ -53,40 +48,11 @@ from semgrep.state import get_state
 from semgrep.target_manager import ALL_PRODUCTS
 from semgrep.target_manager import write_pipes_to_disk
 from semgrep.util import abort
-from semgrep.util import is_truthy
 from semgrep.util import with_color
 from semgrep.verbose_logging import getLogger
 
 logger = getLogger(__name__)
 
-
-class MetricsStateType(click.ParamType):
-    name = "metrics_state"
-
-    def get_metavar(self, _param: click.Parameter) -> str:
-        return "[auto|on|off]"
-
-    def convert(
-        self,
-        value: Any,
-        _param: Optional["click.Parameter"],
-        ctx: Optional["click.Context"],
-    ) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            lower = value.lower()
-            if lower == "auto":
-                return MetricsState.AUTO
-            # Support setting via old environment variable values 0/1/true/false
-            if is_truthy(value):
-                return MetricsState.ON
-            if lower == "off" or lower == "0" or lower == "false":
-                return MetricsState.OFF
-        self.fail("expected 'auto', 'on', or 'off'")
-
-
-METRICS_STATE_TYPE = MetricsStateType()
 
 # This subset of scan options is reused in ci.py
 _scan_options: List[Callable] = [
@@ -367,32 +333,20 @@ _scan_options: List[Callable] = [
     ),
     optgroup.option("--sarif-output", "outputs_sarif", multiple=True, default=[]),
     optgroup.option("--vim-output", "outputs_vim", multiple=True, default=[]),
-    optgroup.group("Semgrep Pro Engine options"),
-    optgroup.option(
-        "--pro",
-        "requested_engine",
-        type=EngineType,
-        flag_value=EngineType.PRO_INTERFILE,
-    ),
+    optgroup.group("Analysis options"),
     optgroup.option(
         "--taint-intrafile",
         "taint_intrafile",
         is_flag=True, default=False
     ),
-    optgroup.option(
-        "--pro-languages",
-        "requested_engine",
-        type=EngineType,
-        flag_value=EngineType.PRO_LANG,
-    ),
-    optgroup.option(
-        "--pro-path-sensitive", "path_sensitive", is_flag=True, default=False
-    ),
+    # Accepted so existing invocations keep working; opengrep only ever runs
+    # the open source engine.
     optgroup.option(
         "--oss-only",
         "requested_engine",
         type=EngineType,
         flag_value=EngineType.OSS,
+        hidden=True,
     ),
     optgroup.option(
         "--diff-depth",
@@ -400,22 +354,6 @@ _scan_options: List[Callable] = [
         default=DEFAULT_DIFF_DEPTH,
     ),
     optgroup.option("--dump-command-for-core", "-d", is_flag=True, hidden=True),
-    optgroup.option(
-        "--no-secrets-validation",
-        "disable_secrets_validation_flag",
-        is_flag=True,
-        hidden=True,
-    ),
-    optgroup.option(
-        "--historical-secrets",
-        "historical_secrets",
-        is_flag=True,
-    ),
-    optgroup.option(
-        "--allow-untrusted-validators",
-        "allow_untrusted_validators",
-        is_flag=True,
-    ),
     optgroup.option(
         "--allow-local-builds",
         "allow_local_builds",
@@ -547,11 +485,6 @@ def scan_options(func: Callable) -> Callable:
 # These flags are deprecated or experimental - users should not
 # rely on their existence, or their output being stable
 @click.option("--dump-engine-path", is_flag=True, hidden=True)
-@click.option(
-    "--secrets",
-    "run_secrets_flag",
-    is_flag=True,
-)
 @scan_options
 @handle_command_errors
 def scan(
@@ -563,9 +496,6 @@ def scan(
     diff_depth: int,
     dump_engine_path: bool,
     requested_engine: Optional[EngineType],
-    run_secrets_flag: bool,
-    disable_secrets_validation_flag: bool,
-    historical_secrets: bool,
     dryrun: bool,
     dump_command_for_core: bool,
     enable_nosem: bool,
@@ -599,7 +529,6 @@ def scan(
     quiet: bool,
     replacement: Optional[str],
     rewrite_rule_ids: bool,
-    allow_untrusted_validators: bool,
     scan_unknown_extensions: bool,
     severity: Optional[Tuple[str, ...]],
     strict: bool,
@@ -620,7 +549,6 @@ def scan(
     x_ignore_semgrepignore_files: bool,
     x_ls: bool,
     x_ls_long: bool,
-    path_sensitive: bool,
     allow_local_builds: bool,
     opengrep_ignore_pattern: Optional[str],
     bypass_includes_excludes_for_files: bool = True,
@@ -633,25 +561,11 @@ def scan(
 ) -> Optional[Tuple[RuleMatchMap, List[SemgrepError], List[Rule], Set[Path]]]:
     if version:
         print(__VERSION__)
-        if enable_version_check:
-            from semgrep.app.version import version_check
-
-            version_check()
         return None
 
-    # I wish there was an easy way to leverage the engine_params from the
-    # new GET /api/cli/scans endpoint here but that info is not available
-    # until we fetch the rules which happens further along when processing
-    # the config.
-    if config and "secrets" in config:
-        # If the user has specified --config secrets, we should enable secrets
-        # so the engine is properly chosen.
-        run_secrets_flag = True
-
-    # Handled error outside engine type for more actionable advice.
-    if run_secrets_flag and requested_engine is EngineType.OSS:
-        abort(
-            "Cannot run secrets scan with OSS engine (--oss specified). Semgrep Secrets is a proprietary extension."
+    if requested_engine is not None:
+        logger.info(
+            "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
         )
 
     # Define engine_type for later use in the scan output messages
@@ -668,12 +582,7 @@ def scan(
     #     )
     # state.traces.configure(trace, trace_endpoint)
     # with tracing.TRACER.start_as_current_span("semgrep.commands.scan"):
-    engine_type = EngineType.decide_engine_type(
-        logged_in=auth.is_logged_in_weak(),
-        engine_flag=requested_engine,
-        run_secrets=run_secrets_flag,
-        interfile_diff_scan_enabled=diff_depth >= 0,
-    )
+    engine_type = EngineType.decide_engine_type()
 
     # this is useful for our CI job to find where semgrep-core (or semgrep-core-proprietary)
     # is installed and check if the binary is statically linked.
@@ -684,7 +593,6 @@ def scan(
     if dataflow_traces is None:
         dataflow_traces = engine_type.has_dataflow_traces
 
-    state.metrics.configure(None)
     state.terminal.configure(
         verbose=verbose,
         debug=debug,
@@ -838,8 +746,6 @@ def scan(
                             # trace_endpoint=trace_endpoint,
                             capture_stderr=capture_core_stderr,
                             optimizations=optimizations,
-                            allow_untrusted_validators=allow_untrusted_validators,
-                            path_sensitive=path_sensitive,
                         ).validate_configs(config)
                     except SemgrepError as e:
                         metacheck_errors = [e]
@@ -878,9 +784,6 @@ def scan(
                     time_flag=time_flag,
                     matching_explanations=matching_explanations,
                     engine_type=engine_type,
-                    run_secrets=run_secrets_flag,
-                    disable_secrets_validation=disable_secrets_validation_flag,
-                    historical_secrets=historical_secrets,
                     output_handler=output_handler,
                     taint_intrafile=taint_intrafile,
                     target=targets,
@@ -907,13 +810,11 @@ def scan(
                     # trace=trace,
                     # trace_endpoint=trace_endpoint,
                     skip_unknown_extensions=(not scan_unknown_extensions),
-                    allow_untrusted_validators=allow_untrusted_validators,
                     severity=severity,
                     optimizations=optimizations,
                     baseline_commit=baseline_commit,
                     x_ls=x_ls,
                     x_ls_long=x_ls_long,
-                    path_sensitive=path_sensitive,
                     capture_core_stderr=capture_core_stderr,
                     allow_local_builds=allow_local_builds,
                     opengrep_ignore_pattern=opengrep_ignore_pattern,
@@ -951,35 +852,5 @@ def scan(
                 filtered_rules,
                 output_extra.all_targets,
             )
-
-    findings_count = sum(
-        len(matches) for matches in filtered_matches_by_rule.values()
-    )
-    no_findings = findings_count == 0
-
-    if enable_version_check:
-        from semgrep.app.version import version_check
-
-        # Fetch the latest version and potentially display a banner
-        version_check()
-
-        if no_findings:
-            try:
-                msg = get_no_findings_msg()
-                if msg:
-                    logger.info(msg)
-            except Exception as e:
-                logger.debug(f"Error getting no findings message: {e}")
-
-        if (
-            findings_count > TOO_MANY_FINDINGS_THRESHOLD
-            and engine_type is EngineType.OSS
-        ):
-            try:
-                msg = get_too_many_findings_msg()
-                if msg:
-                    logger.info(msg)
-            except Exception as e:
-                logger.debug(f"Error getting too many findings message: {e}")
 
     return return_data

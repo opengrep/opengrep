@@ -16,11 +16,6 @@ def url(value: str) -> str:
     return value.rstrip("/")
 
 
-def migrate_fail_open_url(value: str) -> str:
-    # Supports the fail_open_url being the hostname without the path even when some folks might set the path
-    return url(value.replace("/failure", ""))
-
-
 @overload
 def EnvFactory(envvars: Union[str, Iterable[str]], default: str) -> str:
     ...
@@ -55,32 +50,12 @@ class Env:
     between multiple invocations.
     """
 
-    fail_open_url: str = field(
-        default=EnvFactory(
-            ["SEMGREP_FAIL_OPEN_URL"],
-            "https://fail-open.prod.semgrep.dev",
-        ),
-        converter=migrate_fail_open_url,
-    )
     semgrep_url: str = field(
         # TODO: This needs to be changed to https://opengrep.dev, but tests fail
         # without it.
         default=EnvFactory(["SEMGREP_URL", "SEMGREP_APP_URL"], "https://semgrep.dev"),
         converter=url,
     )
-    app_token: Optional[str] = field(default=EnvFactory("SEMGREP_APP_TOKEN"))
-
-    # Unique identifier for the managed_scan in semgrep-app
-    sms_scan_id: Optional[str] = field(default=EnvFactory("SEMGREP_MANAGED_SCAN_ID"))
-
-    version_check_url: str = field(
-        # TODO: Use Github releases when this is re-activated.
-        default=EnvFactory(
-            "SEMGREP_VERSION_CHECK_URL", "https://opengrep.dev/api/check-version"
-        )
-    )
-    version_check_timeout: int = field()
-    version_check_cache_path: Path = field()
 
     git_command_timeout: int = field()
 
@@ -91,24 +66,9 @@ class Env:
 
     in_docker: bool = field()
     in_gh_action: bool = field()
-    in_agent: bool = field()
     with_new_cli_ux: bool = field()
     mock_using_registry: bool = field()
     min_fetch_depth: int = field()
-
-    upload_findings_timeout: int = field()
-
-    @version_check_timeout.default
-    def version_check_timeout_default(self) -> int:
-        value = os.getenv("OPENGREP_VERSION_CHECK_TIMEOUT", "2")
-        return int(value)
-
-    @version_check_cache_path.default
-    def version_check_cache_path_default(self) -> Path:
-        value = os.getenv("OPENGREP_VERSION_CACHE_PATH")
-        if value:
-            return Path(value)
-        return Path.home() / ".cache" / "opengrep_version"
 
     @git_command_timeout.default
     def git_command_timeout_default(self) -> int:
@@ -151,10 +111,6 @@ class Env:
     def in_gh_action_default(self) -> bool:
         return "GITHUB_WORKSPACE" in os.environ
 
-    @in_agent.default
-    def in_agent_default(self) -> bool:
-        return "SEMGREP_AGENT" in os.environ
-
     @with_new_cli_ux.default
     def with_new_cli_default(self) -> bool:
         return os.environ.get("SEMGREP_NEW_CLI_UX", "0") == "1"
@@ -166,9 +122,4 @@ class Env:
     @min_fetch_depth.default
     def min_fetch_depth_default(self) -> int:
         value = os.getenv("SEMGREP_GHA_MIN_FETCH_DEPTH", "0")
-        return int(value)
-
-    @upload_findings_timeout.default
-    def upload_findings_timeout_default(self) -> int:
-        value = os.getenv("SEMGREP_UPLOAD_FINDINGS_TIMEOUT", "300")
         return int(value)

@@ -3,7 +3,6 @@
 ##############################################################################
 # Helpers to run_scan.py to report scan status
 import sys
-from textwrap import wrap
 from typing import Dict
 from typing import List
 from typing import Sequence
@@ -14,7 +13,6 @@ from rich.padding import Padding
 from rich.table import Table
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
-from semgrep.app import auth
 from semgrep.console import console
 from semgrep.console import Title
 from semgrep.constants import Colors
@@ -22,7 +20,6 @@ from semgrep.core_runner import CoreRunner
 from semgrep.core_runner import Plan
 from semgrep.rule import Rule
 from semgrep.state import DesignTreatment
-from semgrep.state import get_state
 from semgrep.subproject import ResolvedSubproject
 from semgrep.target_manager import TargetManager
 from semgrep.target_mode import TargetModeConfig
@@ -42,8 +39,6 @@ def _print_product_status(sast_enabled: bool = True, sca_enabled: bool = False) 
     is given the product-focused CLI UX treatment.
     """
     learn_more_url = with_color(Colors.cyan, "https://opengrep.dev", underline=True)
-    is_logged_in = auth.is_logged_in_weak()
-    all_enabled = True  # assume all enabled until we find a disabled product
 
     sections = [
         (
@@ -56,20 +51,14 @@ def _print_product_status(sast_enabled: bool = True, sca_enabled: bool = False) 
     ]
 
     for name, enabled, features in sections:
-        all_enabled = all_enabled and enabled
         console.print(
             f"\n{with_feature_status(enabled=enabled)} {with_color(Colors.foreground, name, bold=True)}"
         )
         for feature in features:
             console.print(f"  {with_feature_status(enabled=enabled)} {feature}")
 
-    if not is_logged_in:
-        message = f"✨ Learn more at {learn_more_url}."
-        console.print(f"\n{message}\n")
-    elif not all_enabled:
-        console.print(" ")  # space intentional for progress bar padding
-    else:
-        console.print(" ")  # space intentional for progress bar padding
+    message = f"✨ Learn more at {learn_more_url}."
+    console.print(f"\n{message}\n")
 
 
 def _print_scan_plan_header(
@@ -87,17 +76,8 @@ def _print_scan_plan_header(
     legacy_cli_ux = cli_ux == DesignTreatment.LEGACY
     simple_ux = cli_ux == DesignTreatment.SIMPLE
 
-    if target_mode_config.is_pro_diff_scan:
-        total_file_count = len(
-            evolve(target_manager, baseline_handler=None).get_all_files()
-        )
-        diff_file_count = len(target_mode_config.get_diff_targets())
-        summary_line = (
-            f"Inter-file Differential Scanning {unit_str(diff_file_count, 'file')}"
-        )
-    else:
-        file_count = len(target_manager.get_all_files())
-        summary_line = f"Scanning {unit_str(file_count, 'file')}"
+    file_count = len(target_manager.get_all_files())
+    summary_line = f"Scanning {unit_str(file_count, 'file')}"
 
     if target_manager.respect_git_ignore:
         summary_line += (
@@ -237,7 +217,6 @@ def _print_detailed_sca_table(
         _print_sca_table(sca_plan, rule_count)
         return
 
-    sep = "\n   "
     message = "No rules to run."
     """
     We need to account for several edges cases:
@@ -245,39 +224,6 @@ def _print_detailed_sca_table(
         - `semgrep scan` was invoked with the supply-chain flag and no rules found.
         - `semgrep ci` was invoked without the supply-chain flag or feature enabled.
     """
-    # 1. Validate that the user is indeed running SCA (and not from semgrep scan).
-    is_scan = get_state().is_scan_invocation()
-    # 2. Check if the user has metrics enabled.
-    metrics = get_state().metrics
-    metrics_enabled = metrics.is_enabled
-    # If the user has metrics enabled, we can suggest they run `semgrep ci` to get more findings.
-    # Otherwise, we should expect the user to be already aware of the other products.
-    # 3. Check if the user has logged in.
-    has_auth = auth.get_token() is not None
-    # Users who have not logged in will not be able to run `semgrep ci`.
-    # For users with metrics enabled who are running scan without auth,
-    # we should suggest they login and run semgrep ci.
-    if is_scan and metrics_enabled:
-        login_command = with_color(Colors.gray, "`semgrep login`")
-        ci_command = with_color(Colors.gray, "`semgrep ci`")
-        if not has_auth:
-            message = sep.join(
-                wrap(
-                    f"💎 Sign in with {login_command} and run {ci_command} to find dependency vulnerabilities and advanced cross-file findings.",
-                    width=70,
-                )
-            )
-        elif not with_supply_chain:
-            message = sep.join(
-                wrap(
-                    f"💎 Run {ci_command} to find dependency vulnerabilities and advanced cross-file findings.",
-                    width=70,
-                )
-            )
-        else:  # supply chain but no rules (e.g. no lockfile)
-            pass
-    else:  # skip nudge for users who have not enabled metrics or are already running ci
-        pass
     console.print(f"\n{message}\n")
 
 
@@ -319,11 +265,7 @@ def print_scan_status(
                 and (not rule.from_transient_scan)
             )
         ],
-        target_manager
-        if not target_mode_config.is_pro_diff_scan
-        else evolve(
-            target_manager, target_strings=target_mode_config.get_diff_targets()
-        ),
+        target_manager,
         product=out.Product(
             out.SAST()
         ),  # code-smell since secrets and sast are within the same plan

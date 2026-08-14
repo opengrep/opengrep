@@ -61,7 +61,6 @@ def assert_sentinel_results(repo_path, sentinel_path, language):
         language,
         "--json",
         repo_path,
-        "--metrics=off",
         # Turn off optimizations since it skips parsing when it can and this test is testing parsing
         "--optimizations=none",
     ]
@@ -169,7 +168,6 @@ def test_semgrep_on_repo(monkeypatch, tmp_path, repo):
         "--config=rules/regex-sentinel.yaml",
         "--strict",
         "--json",
-        "--metrics=off",
         # Turn off optimizations since it skips parsing when it can and this test is testing parsing
         "--optimizations=none",
         repo_path,

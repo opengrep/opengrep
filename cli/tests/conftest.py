@@ -133,7 +133,6 @@ def make_semgrepconfig_file(dir_path: Path, contents: str) -> None:
 def make_settings_file(unique_path: Path) -> None:
     Path(unique_path).write_text(
         "anonymous_user_id: 5f52484c-3f82-4779-9353-b29bbd3193b6\n"
-        "has_shown_metrics_notification: true\n"
     )
 
 
@@ -394,7 +393,6 @@ def _run_semgrep(
     force_color: Optional[bool] = None,
     # See e2e/test_dependency_aware_rule.py for why this is here
     assume_targets_dir: bool = True,
-    force_metrics_off: bool = True,
     stdin: Optional[str] = None,
     clean_fingerprint: bool = True,
     # Deprecated! see semgrep_runner.py toplevel comment
@@ -413,7 +411,7 @@ def _run_semgrep(
     :param output_format: which format to use
     :param stderr: whether to merge stderr into the returned string
     :param settings_file: what setting file for semgrep to use. If None, a random temp file is generated
-                          with default params for anonymous_user_id and has_shown_metrics_notification
+                          with a default anonymous_user_id
     """
     try:
         prepare_workspace()
@@ -442,8 +440,6 @@ def _run_semgrep(
                 env["SEMGREP_VERSION_CACHE_PATH"] = tempfile.TemporaryDirectory().name
             if "SEMGREP_ENABLE_VERSION_CHECK" not in env:
                 env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
-            if force_metrics_off and "SEMGREP_SEND_METRICS" not in env:
-                env["SEMGREP_SEND_METRICS"] = "off"
 
             # In https://github.com/semgrep/semgrep-proprietary/pull/2605
             # we started to gate some JSON fields with an is_logged_in check
@@ -503,9 +499,7 @@ def _run_semgrep(
             args = " ".join(shlex.quote(str(c)) for c in [*options, *targets])
             env_string = " ".join(f'{k}="{v}"' for k, v in env.items())
 
-            runner = SemgrepRunner(
-                env=env, mix_stderr=False, use_click_runner=use_click_runner
-            )
+            runner = SemgrepRunner(env=env, use_click_runner=use_click_runner)
             click_result = runner.invoke(
                 cli, subcommand=subcommand, args=args, input=stdin
             )

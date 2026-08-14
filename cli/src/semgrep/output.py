@@ -22,7 +22,6 @@ from typing import Type
 import requests
 from boltons.iterutils import partition
 
-import semgrep.app.auth as auth
 import semgrep.formatter.base as base
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.console import console
@@ -479,14 +478,6 @@ class OutputHandler:
 
             ignores_line = str(ignore_log or "No ignore information available")
             suggestion_line = ""
-            if (
-                num_findings == 0
-                and num_targets > 0
-                and num_rules > 0
-                and state.metrics.is_using_registry
-                and (not auth.is_logged_in_weak())
-            ):
-                suggestion_line = ""
             stats_line = ""
             if print_summary:
                 stats_line = f"\nRan {unit_str(num_rules, 'rule')} on {unit_str(num_targets, 'file')}: {unit_str(num_findings, 'finding')}."
@@ -510,12 +501,9 @@ class OutputHandler:
         self._final_raise(final_error)
 
     def _save_output(self, destination: str, output: str) -> None:
-        metrics = get_state().metrics
         if is_url(destination):
-            metrics.add_feature("output", "url")
             self._post_output(destination, output)
         else:
-            metrics.add_feature("output", "path")
             save_path = Path(destination)
             # the scanned repository can ship a symlink here, and writing
             # through it would truncate whatever it resolves to
@@ -641,10 +629,6 @@ class OutputHandler:
             self.severities,
             out.FormatContext(
                 is_ci_invocation=self.is_ci_invocation,
-                is_logged_in=auth.is_logged_in_weak(),
-                # If users are not using our registry, we will not nudge them to login
-                is_using_registry=state.metrics.is_using_registry
-                or state.env.mock_using_registry,
             ),
         )
         return (output_destination, output)

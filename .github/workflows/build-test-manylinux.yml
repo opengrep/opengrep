@@ -49,6 +49,26 @@ jobs:
         with:
           name: manylinux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}-wheel
           path: cli/dist.zip
+      - name: install the test dependencies and the wheel
+        if: inputs.arch == 'x86_64'
+        working-directory: cli
+        run: |
+          python3 -m pip install --upgrade pipenv
+          pipenv install --categories=dev-packages
+          # pytest needs exceptiongroup on python 3.10, and the lockfile has it
+          # under [packages] rather than [dev-packages]
+          pipenv run pip install exceptiongroup dist/*.whl
+      - name: run the python test suite
+        if: inputs.arch == 'x86_64'
+        # the test snapshots assume opengrep is not itself running in CI,
+        # that git accepts the checkout despite the container uid mismatch,
+        # and that a capable terminal drives the CLI's styled error output
+        run: |
+          unset CI
+          unset "${!GITHUB_@}"
+          git config --global --add safe.directory "$(pwd)"
+          export TERM=xterm-256color
+          make -C cli ci-test
 
   test-wheels:
     container: ${{ inputs.arch == 'x86_64' && 'quay.io/pypa/manylinux_2_28_x86_64' || 'quay.io/pypa/manylinux_2_28_aarch64' }} 

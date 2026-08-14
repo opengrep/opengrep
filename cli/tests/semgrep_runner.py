@@ -138,16 +138,15 @@ class SemgrepRunner:
     If a property is missing on the runner object, please add it here.
     """
 
-    def __init__(self, env=None, mix_stderr=True, use_click_runner=False):
+    def __init__(self, env=None, use_click_runner=False):
         if use_click_runner and USE_OSEMGREP:
             use_click_runner = False
             print("disabling Click_runner use because of PYTEST_USE_OSEMGREP")
         self._use_click_runner = use_click_runner
         self._output = ""
         self._env = env
-        self._mix_stderr = mix_stderr
         if self._use_click_runner:
-            self._runner = CliRunner(env=env, mix_stderr=mix_stderr)
+            self._runner = CliRunner(env=env)
 
     def invoke(
         self,
@@ -172,8 +171,7 @@ class SemgrepRunner:
                 f"[click] semgrep command args: {' '.join(arg_list)}", file=sys.stderr
             )
             result = self._runner.invoke(python_cli, arg_list, input=input, env=env)
-            stderr = result.stderr if not self._mix_stderr else ""
-            return Result(result.exit_code, result.stdout, stderr)
+            return Result(result.exit_code, result.stdout, result.stderr)
         else:
             # TODO: do we need to support 'input' i.e. passing a string
             # to the program's stdin?

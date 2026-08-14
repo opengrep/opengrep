@@ -10,10 +10,8 @@
   -h, --help  Show this message and exit.
 
 [4mCommands[24m:
-  [36mci[39m                   Run Opengrep on a git diff (for use in CI)
   [36mlsp[39m                  Start the Opengrep LSP server (useful for IDEs)
-  [36mpublish[39m              Upload rule to [36m[4mopengrep.dev[39m[24m
   [36mscan[39m                 Run Opengrep rules on local folders or files
   [36mshow[39m                 Show various types of information
   [36mtest[39m                 Test the rules
-  [36mvalidate[39m             Validate the rules
+  [36mvalidate[39m             Validate rules in local files/directories

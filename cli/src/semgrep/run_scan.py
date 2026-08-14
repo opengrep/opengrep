@@ -39,7 +39,6 @@ import semgrep.scan_report as scan_report
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semdep.parsers.util import DependencyParserError
 from semgrep import __VERSION__
-from semgrep import tracing
 from semgrep.autofix import apply_fixes
 from semgrep.config_resolver import ConfigLoader
 from semgrep.config_resolver import get_config
@@ -79,12 +78,6 @@ from semgrep.rpc_call import dump_rule_partitions
 from semgrep.rule import Rule
 from semgrep.rule_match import RuleMatches
 from semgrep.rule_match import RuleMatchMap
-from semgrep.semgrep_interfaces.semgrep_metrics import Any_ as AnySecretsOrigin
-from semgrep.semgrep_interfaces.semgrep_metrics import CodeConfig
-from semgrep.semgrep_interfaces.semgrep_metrics import SecretsConfig
-from semgrep.semgrep_interfaces.semgrep_metrics import SecretsOrigin
-from semgrep.semgrep_interfaces.semgrep_metrics import Semgrep as SemgrepSecretsOrigin
-from semgrep.semgrep_interfaces.semgrep_metrics import SupplyChainConfig
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Ecosystem
 from semgrep.semgrep_interfaces.semgrep_output_v1 import FoundDependency
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Product
@@ -244,7 +237,6 @@ def filter_dependency_aware_rules(
 
 
 # This runs semgrep-core (and also handles SCA and join rules)
-@tracing.trace()
 def run_rules(
     filtered_rules: List[Rule],
     target_manager: TargetManager,
@@ -255,9 +247,6 @@ def run_rules(
     matching_explanations: bool,
     engine_type: EngineType,
     strict: bool,
-    # TODO: Use an array of semgrep_output_v1.Product instead of booleans flags for secrets, code, and supply chain
-    run_secrets: bool = False,
-    disable_secrets_validation: bool = False,
     target_mode_config: Optional[TargetModeConfig] = None,
     *,
     with_code_rules: bool = True,
@@ -367,8 +356,6 @@ def run_rules(
         matching_explanations,
         engine_type,
         strict,
-        run_secrets,
-        disable_secrets_validation,
         target_mode_config,
         resolved_subprojects,
         opengrep_ignore_pattern=opengrep_ignore_pattern,
@@ -509,7 +496,6 @@ def list_targets_and_exit(
 
 # cli/bin/semgrep -> main.py -> cli.py -> commands/scan.py -> run_scan()
 # old: this used to be called semgrep.semgrep_main.main
-@tracing.trace()
 def run_scan(
     *,
     diff_depth: int = DEFAULT_DIFF_DEPTH,
@@ -517,11 +503,8 @@ def run_scan(
     time_flag: bool = False,
     matching_explanations: bool = False,
     engine_type: EngineType = EngineType.OSS,
-    run_secrets: bool = False,
-    disable_secrets_validation: bool = False,
     output_handler: OutputHandler,
     target: Sequence[str],
-    historical_secrets: bool = False,
     pattern: Optional[str],
     lang: Optional[str],
     configs: Sequence[
@@ -548,14 +531,12 @@ def run_scan(
     max_target_bytes: int = 0,
     timeout_threshold: int = 0,
     skip_unknown_extensions: bool = False,
-    allow_untrusted_validators: bool = False,
     severity: Optional[Sequence[str]] = None,
     optimizations: str = "none",
     baseline_commit: Optional[str] = None,
     baseline_commit_is_mergebase: bool = False,
     x_ls: bool = False,
     x_ls_long: bool = False,
-    path_sensitive: bool = False,
     capture_core_stderr: bool = True,
     allow_local_builds: bool = False,
     dump_n_rule_partitions: Optional[int] = None,
@@ -646,30 +627,6 @@ def run_scan(
     with_supply_chain = configs_obj.with_supply_chain
     # TODO: handle de-duplication for pro-rules
     missed_rule_count = configs_obj.missed_rule_count
-
-    # Metrics send part 1: add environment information
-    # Must happen after configs are resolved because it is determined
-    # then whether metrics are sent or not
-    metrics = get_state().metrics
-    if metrics.is_enabled:
-        metrics.add_project_url(project_url)
-        metrics.add_integration_name(environ.get("SEMGREP_INTEGRATION_NAME"))
-        metrics.add_configs(configs)
-        metrics.add_engine_config(
-            engine_type,
-            CodeConfig() if with_code_rules else None,
-            SecretsConfig(
-                SecretsOrigin(AnySecretsOrigin())
-                if allow_untrusted_validators
-                else SecretsOrigin(SemgrepSecretsOrigin())
-            )
-            if run_secrets and not disable_secrets_validation
-            else None,
-            SupplyChainConfig() if with_supply_chain else None,
-        )
-        metrics.add_is_diff_scan(baseline_commit is not None)
-        if engine_type.is_pro:
-            metrics.add_diff_depth(diff_depth)
 
     if not severity:
         shown_severities = DEFAULT_SHOWN_SEVERITIES
@@ -768,18 +725,8 @@ def run_scan(
     except FilesNotFoundError as e:
         raise SemgrepError(e)
 
-    if historical_secrets:
-        target_mode_config = TargetModeConfig.historical_scan()
-    elif baseline_handler is not None:
-        if engine_type.is_interfile:
-            target_mode_config = TargetModeConfig.pro_diff_scan(
-                # `target_manager.get_all_files()` will only return changed files
-                # (diff targets) when baseline_handler is set
-                target_manager.get_all_files(),
-                diff_depth,
-            )
-        else:
-            target_mode_config = TargetModeConfig.diff_scan()
+    if baseline_handler is not None:
+        target_mode_config = TargetModeConfig.diff_scan()
     else:
         target_mode_config = TargetModeConfig.whole_scan()
 
@@ -795,9 +742,7 @@ def run_scan(
         # trace_endpoint=trace_endpoint,
         capture_stderr=capture_core_stderr,
         optimizations=optimizations,
-        allow_untrusted_validators=allow_untrusted_validators,
         respect_rule_paths=respect_rule_paths,
-        path_sensitive=path_sensitive,
     )
 
     experimental_rules, normal_rules = partition(
@@ -838,8 +783,6 @@ def run_scan(
         matching_explanations,
         engine_type,
         strict,
-        run_secrets,
-        disable_secrets_validation,
         target_mode_config,
         with_code_rules=with_code_rules,
         with_supply_chain=with_supply_chain,
@@ -891,34 +834,12 @@ def run_scan(
             logger.info("")
             try:
                 with baseline_handler.baseline_context():
-                    baseline_target_strings = target_strings
                     baseline_target_mode_config = target_mode_config
-                    if target_mode_config.is_pro_diff_scan:
-                        scanned = [
-                            # Conducting the inter-file diff scan twice with the exact same configuration,
-                            # both on the current commit and the baseline commit, could result in the absence
-                            # of a newly added file and its dependencies from the baseline run. Consequently,
-                            # this may lead to the failure to remove pre-existing findings. A more effective
-                            # approach would involve utilizing the same set of scanned diff targets from the
-                            # first run in the baseline run. This approach ensures the safe elimination of any
-                            # existing findings in the dependency files, even if the original file does not
-                            # exist in the baseline commit.
-                            Path(t.value)
-                            for t in output_extra.core.paths.scanned
-                        ]
-                        scanned.extend(baseline_handler.status.renamed.values())
-                        baseline_target_mode_config = TargetModeConfig.pro_diff_scan(
-                            frozenset(
-                                t for t in scanned if t.exists() and not t.is_symlink()
-                            ),
-                            0,  # scanning the same set of files in the second run
-                        )
-                    else:
-                        baseline_target_strings = frozenset(
-                            Path(t)
-                            for t in baseline_targets
-                            if t.exists() and not t.is_symlink()
-                        )
+                    baseline_target_strings = frozenset(
+                        Path(t)
+                        for t in baseline_targets
+                        if t.exists() and not t.is_symlink()
+                    )
                     baseline_target_manager = TargetManager(
                         includes=include,
                         excludes=exclude,
@@ -956,8 +877,6 @@ def run_scan(
                         matching_explanations,
                         engine_type,
                         strict,
-                        run_secrets,
-                        disable_secrets_validation,
                         baseline_target_mode_config,
                         allow_local_builds=allow_local_builds,
                         prioritize_dependency_graph_generation=prioritize_dependency_graph_generation,
@@ -991,21 +910,6 @@ def run_scan(
     profiler.save("ignores_time", ignores_start_time)
 
     profiler.save("total_time", rule_start_time)
-
-    # Metrics send part 2: send results
-    if metrics.is_enabled:
-        metrics.add_rules(filtered_rules, output_extra.core.time)
-        metrics.add_max_memory_bytes(output_extra.core.time)
-        metrics.add_targets(output_extra.all_targets, output_extra.core.time)
-        metrics.add_findings(filtered_matches_by_rule)
-        metrics.add_errors(semgrep_errors)
-        metrics.add_profiling(profiler)
-        metrics.add_parse_rates(output_extra.parsing_data)
-        metrics.add_interfile_languages_used(output_extra.core.interfile_languages_used)
-        if engine_type.is_pro and baseline_handler:
-            metrics.add_num_diff_scanned(
-                {Path(t.value) for t in output_extra.core.paths.scanned}, filtered_rules
-            )
 
     if autofix:
         apply_fixes(filtered_matches_by_rule.kept, dryrun)
