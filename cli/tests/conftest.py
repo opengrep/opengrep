@@ -499,9 +499,7 @@ def _run_semgrep(
             args = " ".join(shlex.quote(str(c)) for c in [*options, *targets])
             env_string = " ".join(f'{k}="{v}"' for k, v in env.items())
 
-            runner = SemgrepRunner(
-                env=env, mix_stderr=False, use_click_runner=use_click_runner
-            )
+            runner = SemgrepRunner(env=env, use_click_runner=use_click_runner)
             click_result = runner.invoke(
                 cli, subcommand=subcommand, args=args, input=stdin
             )
