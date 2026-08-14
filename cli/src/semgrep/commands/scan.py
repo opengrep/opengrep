@@ -21,9 +21,6 @@ import semgrep.run_scan
 import semgrep.test
 from semgrep import __VERSION__
 from semgrep import bytesize
-from semgrep.app.version import get_no_findings_msg
-from semgrep.app.version import get_too_many_findings_msg
-from semgrep.app.version import TOO_MANY_FINDINGS_THRESHOLD
 from semgrep.commands.wrapper import handle_command_errors
 from semgrep.constants import Colors
 from semgrep.constants import DEFAULT_DIFF_DEPTH
@@ -564,10 +561,6 @@ def scan(
 ) -> Optional[Tuple[RuleMatchMap, List[SemgrepError], List[Rule], Set[Path]]]:
     if version:
         print(__VERSION__)
-        if enable_version_check:
-            from semgrep.app.version import version_check
-
-            version_check()
         return None
 
     if requested_engine is not None:
@@ -859,35 +852,5 @@ def scan(
                 filtered_rules,
                 output_extra.all_targets,
             )
-
-    findings_count = sum(
-        len(matches) for matches in filtered_matches_by_rule.values()
-    )
-    no_findings = findings_count == 0
-
-    if enable_version_check:
-        from semgrep.app.version import version_check
-
-        # Fetch the latest version and potentially display a banner
-        version_check()
-
-        if no_findings:
-            try:
-                msg = get_no_findings_msg()
-                if msg:
-                    logger.info(msg)
-            except Exception as e:
-                logger.debug(f"Error getting no findings message: {e}")
-
-        if (
-            findings_count > TOO_MANY_FINDINGS_THRESHOLD
-            and engine_type is EngineType.OSS
-        ):
-            try:
-                msg = get_too_many_findings_msg()
-                if msg:
-                    logger.info(msg)
-            except Exception as e:
-                logger.debug(f"Error getting too many findings message: {e}")
 
     return return_data
