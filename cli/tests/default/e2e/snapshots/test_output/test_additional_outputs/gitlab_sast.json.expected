@@ -2,21 +2,21 @@
   "$schema": "https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/blob/master/dist/sast-report-format.json",
   "scan": {
     "analyzer": {
-      "id": "semgrep",
-      "name": "Semgrep",
-      "url": "https://semgrep.dev",
+      "id": "opengrep",
+      "name": "Opengrep",
+      "url": "https://opengrep.dev",
       "vendor": {
-        "name": "Semgrep"
+        "name": "Opengrep"
       },
       "version": "<MASKED>"
     },
     "end_time": "<MASKED>",
     "scanner": {
-      "id": "semgrep",
-      "name": "Semgrep",
-      "url": "https://semgrep.dev",
+      "id": "opengrep",
+      "name": "Opengrep",
+      "url": "https://opengrep.dev",
       "vendor": {
-        "name": "Semgrep"
+        "name": "Opengrep"
       },
       "version": "<MASKED>"
     },
