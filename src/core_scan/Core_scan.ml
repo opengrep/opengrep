@@ -474,19 +474,19 @@ let errors_of_timeout_or_memory_exn (exn : exn) (target : Target.t) : ESet.t =
   | Out_of_memory ->
       Logs.warn (fun m -> m "OutOfMemory on %s" (Origin.to_string origin));
       ESet.singleton
-        (E.mk_error
+        (E.mk_error ~msg:"Heap space exceeded"
            ?rule_id:(TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule)
            ~loc Out.OutOfMemory)
   | Stack_overflow ->
       Logs.warn (fun m -> m "StackOverflow on %s" (Origin.to_string origin));
       ESet.singleton
-        (E.mk_error
+        (E.mk_error ~msg:"Stack overflow"
            ?rule_id:(TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule)
            ~loc Out.StackOverflow)
-  | Memory_limit.ExceededMemoryLimit _ ->
+  | Memory_limit.ExceededMemoryLimit msg ->
       Logs.warn (fun m -> m "ExceededMemoryLimit on %s" (Origin.to_string origin));
       ESet.singleton
-        (E.mk_error
+        (E.mk_error ~msg
            ?rule_id:(TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule)
            ~loc Out.OutOfMemory)
   | _ -> raise Impossible
