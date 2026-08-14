@@ -60,10 +60,14 @@ jobs:
           pipenv run pip install exceptiongroup dist/*.whl
       - name: run the python test suite
         if: inputs.arch == 'x86_64'
-        # the test snapshots assume opengrep is not itself running in CI
+        # the test snapshots assume opengrep is not itself running in CI,
+        # that git accepts the checkout despite the container uid mismatch,
+        # and that a capable terminal drives the CLI's styled error output
         run: |
           unset CI
           unset "${!GITHUB_@}"
+          git config --global --add safe.directory "$(pwd)"
+          export TERM=xterm-256color
           make -C cli ci-test
 
   test-wheels:
