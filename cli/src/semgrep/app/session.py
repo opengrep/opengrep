@@ -120,7 +120,6 @@ class AppSession(requests.Session):
     - A User-Agent is automatically added to each request
     - Request IDs are automatically added to each request
     - A default timeout of 70 seconds is added to each request
-    - If a token is available, it is added to the request as an Authorization header
 
     Normal usage:
     >>> from semgrep.state import get_state
@@ -132,15 +131,11 @@ class AppSession(requests.Session):
 
     Disable timeout for a request:
     >>> app_session.get(url, timeout=None)
-
-    Disable authentication for a request:
-    >>> app_session.get(url, headers={"Authorization": None})
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.user_agent = UserAgent()
-        self.token: Optional[str] = None
         if os.getenv("SEMGREP_COOKIES_PATH"):
             cookies = MozillaCookieJar(os.environ["SEMGREP_COOKIES_PATH"])
             cookies.load()
