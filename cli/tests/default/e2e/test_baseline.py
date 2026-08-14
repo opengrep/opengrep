@@ -39,7 +39,7 @@ def _git_commit(serial_no: int = 1, add: bool = False) -> str:
             "--date",
             date_string,
         ],
-        env={"GIT_COMMITTER_DATE": date_string},
+        env={"PATH": os.environ.get("PATH", ""), "GIT_COMMITTER_DATE": date_string},
         check=True,
         capture_output=True,
     )
@@ -64,7 +64,7 @@ def _git_merge(ref: str) -> str:
             "-m",
             f"merging {ref}",
         ],
-        env={"GIT_COMMITTER_DATE": date_string},
+        env={"PATH": os.environ.get("PATH", ""), "GIT_COMMITTER_DATE": date_string},
         check=True,
         capture_output=True,
     )
@@ -81,7 +81,7 @@ def _git_merge(ref: str) -> str:
             "--date",
             date_string,
         ],
-        env={"GIT_COMMITTER_DATE": date_string},
+        env={"PATH": os.environ.get("PATH", ""), "GIT_COMMITTER_DATE": date_string},
         check=True,
         capture_output=True,
     )
