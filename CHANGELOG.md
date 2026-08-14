@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.27.1](https://github.com/opengrep/opengrep/releases/tag/v1.27.1) - 14-08-2026
+
+### Bug fixes
+
+* fix: force-remove baseline worktree so EOL-normalizing repos don't fail scans by @guydanko-orca in #788
+
+### Improvements
+
+* Remove Semgrep infrastructure and run the python tests in CI by @dimitris-m in #789
+
+### New Contributors
+
+* @guydanko-orca made their first contribution in #788
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.27.0...v1.27.1
+
+
 ## [1.27.0](https://github.com/opengrep/opengrep/releases/tag/v1.27.0) - 12-08-2026
 
 ### Language support
