@@ -272,6 +272,9 @@ def ci(
             "WARNING: --inline-metavariables is set but will be ignored."
         )
 
+    if ctx.get_parameter_source("diff_depth") != click.core.ParameterSource.DEFAULT:
+        logger.info("WARNING: --diff-depth is set but will be ignored.")
+
     state.error_handler.configure(suppress_errors)
     capture_core_stderr = not debug
 
