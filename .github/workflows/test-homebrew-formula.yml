@@ -1,0 +1,45 @@
+name: test-homebrew-formula
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        description: "Architecture (x86_64 or aarch64)"
+        required: false
+        default: "aarch64"
+        type: string
+
+jobs:
+  test:
+    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: opengrep/homebrew-tap
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: opengrep_osx_binary_${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}
+
+      - name: Unzip and prepare binary
+        run: |
+          unzip opengrep.zip
+          BINARY_NAME="opengrep_osx_${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}"
+          mv opengrep "$BINARY_NAME"
+          shasum -a 256 "$BINARY_NAME"
+          echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
+
+      - name: Patch formula to use local binary
+        run: |
+          SHA=$(shasum -a 256 "$BINARY_NAME" | cut -d' ' -f1)
+          sed -i '' 's|url "https://.*"|url "file://'$(pwd)'/'$BINARY_NAME'"|' Formula/opengrep.rb
+          sed -i '' 's|sha256 ".*"|sha256 "'"$SHA"'"|' Formula/opengrep.rb
+
+      - name: Install formula
+        run: brew install --verbose ./Formula/opengrep.rb
+
+      - name: Test formula
+        run: brew test ./Formula/opengrep.rb
+
+      - name: Audit formula
+        run: brew audit --strict ./Formula/opengrep.rb || true
