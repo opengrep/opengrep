@@ -27,6 +27,7 @@ type ls_files_kind =
    * excluding .git/
    *)
   | Others
+  | Ignored
 
 (*
    cwd: directory to cd into (-C)
@@ -61,6 +62,21 @@ val ls_files_relative :
   project_root:Rpath.t ->
   Fpath.t list ->
   Fpath.t list
+
+(*
+   Get committed file sizes from 'git ls-tree -r -l HEAD' in a single
+   git invocation.  Returns a hashtable from path relative to project root
+   (e.g. "src/foo.ml") to size in bytes.
+   Returns an empty table on error (no HEAD, not a git repo, etc.).
+*)
+val ls_tree_sizes : ?cwd:Fpath.t -> unit -> (string, int) Hashtbl.t
+
+(*
+   Return the set of paths (relative to project root) whose working tree
+   content differs from HEAD.  Includes staged and unstaged changes but
+   not untracked files.  Returns an empty set on error.
+*)
+val diff_names : ?cwd:Fpath.t -> unit -> string Set_.t
 
 (* get merge base between arg and HEAD *)
 val merge_base : string -> string
