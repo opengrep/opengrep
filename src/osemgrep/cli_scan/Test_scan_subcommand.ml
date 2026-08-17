@@ -91,6 +91,45 @@ def leak(v):
     sink(v)
 |}
 
+(* Two call sites feeding the same sink: distinct sources, one sink line. *)
+let interfile_two_sources_py_content = {|
+from sinks import leak
+
+def go():
+    leak(source())
+
+def go2():
+    leak(source())
+|}
+
+(* Same taint rule but without the [taint_interfile] option: findings dedup
+   on the sink alone. *)
+let taint_intrafile_content =
+  {|
+rules:
+  - id: intrafile-taint
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "intrafile taint"
+    languages: [python]
+    severity: ERROR
+|}
+
+(* The interfile two-source shape folded into a single file. *)
+let intrafile_two_sources_py_content = {|
+def leak(v):
+    sink(v)
+
+def go():
+    leak(source())
+
+def go2():
+    leak(source())
+|}
+
 (* The baseline revision of the helper: same signature, no sink yet. *)
 let interfile_sink_py_baseline_content = {|
 def leak(v):
@@ -476,6 +515,50 @@ let test_interfile_partial_target (caps : Scan_subcommand.caps) () =
                   [|
                     "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
                     "--taint-interfile"; "sinks.py";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* Two distinct sources reach the same sink line: interfile dedup keys on
+   source+sink, so both findings must be reported.  [--dataflow-traces] prints
+   each finding's trace, pinning in the snapshot that the sources differ. *)
+let test_interfile_source_sink_dedup (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_two_sources_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "--dataflow-traces";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* The intrafile counterpart of the test above: without interfile, the dedup
+   key omits the source, so the same two flows collapse into one finding. *)
+let test_intrafile_same_sink_dedup (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_intrafile_content);
+          F.File ("code.py", intrafile_two_sources_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-intrafile"; "--dataflow-traces";
                   |])
           in
           Exit_code.Check.ok exit_code))
@@ -1852,6 +1935,12 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "interfile findings from a partial target set"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_interfile_partial_target caps);
+      t "interfile same-sink findings keep distinct sources"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_interfile_source_sink_dedup caps);
+      t "intrafile same-sink findings dedup to one"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_intrafile_same_sink_dedup caps);
       t "interfile findings with --incremental-output"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_interfile_incremental_output caps);
