@@ -15,10 +15,11 @@ fi
 
 EXTRA_ARGS=()
 
-# On linux we only compile to --onefile if forced using FORCE_ONEFILE.
+# On linux and Windows we only compile to --onefile if forced using
+# FORCE_ONEFILE; on macOS it is always used.
 # In that case, we fix the tempdir to a reasonable cache directory, for
 # performance reasons. Nuitka expands {CACHE_DIR} suitably for each platform.
-if [[ "$FORCE_ONEFILE" == "true" || "$(uname)" == "Darwin" || "$(uname -s)" =~ ^(CYGWIN|MINGW|MSYS) ]]; then
+if [[ "$FORCE_ONEFILE" == "true" || "$(uname)" == "Darwin" ]]; then
   EXTRA_ARGS+=(
     --onefile
     --onefile-tempdir-spec="{CACHE_DIR}/opengrep/$VERSION"
