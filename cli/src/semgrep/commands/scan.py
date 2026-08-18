@@ -568,6 +568,12 @@ def scan(
             "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
         )
 
+    if (
+        click.get_current_context().get_parameter_source("diff_depth")
+        != click.core.ParameterSource.DEFAULT
+    ):
+        logger.info("WARNING: --diff-depth is set but will be ignored.")
+
     # Define engine_type for later use in the scan output messages
     engine_type: Optional[EngineType] = None
 
