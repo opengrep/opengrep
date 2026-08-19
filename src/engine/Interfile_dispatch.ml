@@ -771,7 +771,19 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
       in
       let fresh_set =
         List.fold_left
-          (fun acc s -> Shape_and_sig.SignatureSet.add s acc)
+          (fun acc (xs : Shape_and_sig.extended_sig) ->
+            (* Widen stored shapes: a self-recursive tree-builder nests its
+               return shape one level deeper per SCC round (no fixpoint in
+               the shape domain); truncating at the store point cuts the
+               ascending chain where the cost is incurred. *)
+            let xs =
+              { xs with
+                Shape_and_sig.sig_ =
+                  Taint_shape.truncate_signature
+                    ~max_depth:Limits_semgrep.taint_MAX_SIG_SHAPE_DEPTH
+                    xs.Shape_and_sig.sig_ }
+            in
+            Shape_and_sig.SignatureSet.add xs acc)
           Shape_and_sig.SignatureSet.empty fresh
       in
       Sig_store.set fid fresh_set db'

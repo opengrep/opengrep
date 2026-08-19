@@ -1,0 +1,16 @@
+rules:
+  - id: arrow-fn-taint
+    options:
+      taint_interfile: true
+    message: >
+      A PHP short lambda (fn($x) => $expr) implicitly returns its body, so
+      taint must flow out of the arrow function, and an operator in the body
+      must not be lowered as a void-context pseudo method call.
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
