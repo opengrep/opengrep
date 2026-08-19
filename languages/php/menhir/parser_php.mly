@@ -70,6 +70,7 @@ let mk_param s =
     p_default = None;
     p_modifiers = [];
     p_variadic = None;
+    p_hooks = None;
   }
 
 let make_class_vars single = 
@@ -617,16 +618,21 @@ parameter_list:
  (* php-facebook-ext: trailing comma *)
  | parameter "," parameter_list   { $1 :: (Right3 $2) :: $3 }
 
+(* the trailing hooks are for PHP 8.4 constructor property promotion, as in
+ * '__construct(public string $n { set => strtolower($value); })'
+ *)
 parameter: attributes? ctor_modifier* ioption(type_php) parameter_bis
+           property_hooks?
    { match $4 with
      | Left3 param ->
          let hint = match param.p_type with
               | Some(HintVariadic (tok, _)) -> Some(HintVariadic (tok, $3))
               | _ -> $3
          in
-         Left3 { param with p_modifiers = $2; p_attrs = $1; p_type = hint; }
-      | _ -> match ($1, $2, $3) with
-             | (None, [], None) -> $4
+         Left3 { param with p_modifiers = $2; p_attrs = $1; p_type = hint;
+                 p_hooks = $5; }
+      | _ -> match ($1, $2, $3, $5) with
+             | (None, [], None, None) -> $4
              | _ -> raise Parsing.Parse_error
       }
 
@@ -875,15 +881,20 @@ property_hooks:
  | "{" property_hook* "}" { ($1, $2, $3) }
 
 property_hook:
- | T_IDENT property_hook_params? property_hook_body
-     { let (s, tok) = $1 in
+ | hook_modifier* is_reference T_IDENT property_hook_params? property_hook_body
+     { let (s, tok) = $3 in
        let kind = match s with
          | "get" -> PhGet
          | "set" -> PhSet
          | _ -> raise (Parsing.Parse_error)
        in
-       { ph_kind = (kind, tok); ph_params = $2; ph_body = $3 }
+       { ph_modifiers = $1; ph_ref = $2; ph_kind = (kind, tok);
+         ph_params = $4; ph_body = $5 }
      }
+
+(* only 'final' is allowed on a hook *)
+hook_modifier:
+ | T_FINAL { Final, $1 }
 
 property_hook_params:
  | "(" parameter_list ")" { ($1, $2, $3) }
@@ -891,6 +902,8 @@ property_hook_params:
 property_hook_body:
  | "{" inner_statement* "}" { PHBlock ($1, $2, $3) }
  | T_ARROW expr ";" { PHExpr ($1, $2, $3) }
+ (* no body, as in interfaces and abstract classes *)
+ | ";" { PHAbstract $1 }
 
 method_body:
  | "{" inner_statement* "}" { ($1, $2, $3), MethodRegular }

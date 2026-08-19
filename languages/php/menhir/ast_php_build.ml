@@ -889,8 +889,11 @@ and property_hook env hook =
     | PHExpr (_, e, sc) -> Some (A.Expr (expr env e, sc))
     | PHBlock (l, stmts, r) ->
         Some (A.Block (l, List_.fold_right (stmt_and_def env) stmts [], r))
+    | PHAbstract _ -> None
   in
-  { A.ph_kind = kind; A.ph_params = params; A.ph_body = body }
+  { A.ph_modifiers = List_.map (modifier env) hook.ph_modifiers;
+    A.ph_ref = hook.ph_ref; A.ph_kind = kind; A.ph_params = params;
+    A.ph_body = body }
 
 and modifier _env m =
   let m, tok = m in
@@ -928,14 +931,21 @@ and class_body env st (mets, flds) =
 and promoted_field p =
   match p with
   | A.ParamClassic
-      { p_modifiers = _ :: _ as cv_modifiers; p_name; p_type; p_default; _ } ->
+      {
+        p_modifiers = _ :: _ as cv_modifiers;
+        p_name;
+        p_type;
+        p_default;
+        p_hooks;
+        _;
+      } ->
       Some
         {
           A.cv_name = p_name;
           A.cv_type = p_type;
           A.cv_value = p_default;
           A.cv_modifiers;
-          A.cv_hooks = [];
+          A.cv_hooks = p_hooks;
         }
   | A.ParamClassic _
   | A.ParamEllipsis _ ->
@@ -975,6 +985,7 @@ and parameter env
       p_attrs = a;
       p_modifiers = ms;
       p_variadic = variadic;
+      p_hooks = hooks;
     } =
   {
     A.p_type = opt hint_type env t;
@@ -984,6 +995,10 @@ and parameter env
     A.p_attrs = attributes env a;
     A.p_modifiers = List_.map (modifier env) ms;
     A.p_variadic = variadic;
+    A.p_hooks =
+      (match hooks with
+      | None -> []
+      | Some (_, hs, _) -> List_.map (property_hook env) hs);
   }
 
 (*****************************************************************************)

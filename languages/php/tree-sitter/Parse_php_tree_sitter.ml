@@ -631,6 +631,7 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_attrs = v1;
           p_modifiers = [];
           p_variadic = None;
+          p_hooks = [];
         }
   | `Vari_param (v1, v2, v3, v4, v5) ->
       let v1 =
@@ -659,6 +660,7 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_attrs = v1;
           p_modifiers = [];
           p_variadic = Some v4;
+          p_hooks = [];
         }
   | `Prop_prom_param (v1, v2, v3, v4) ->
       let v1 = map_visibility_modifier env v1 in
@@ -679,11 +681,13 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_ref = None;
           p_name = v3;
           p_default = v4;
-          (* this grammar's property_promotion_parameter carries no
-           * attribute_list, so there is nothing to propagate here *)
+          (* this grammar's property_promotion_parameter carries neither an
+           * attribute_list nor PHP 8.4 property hooks, so there is nothing to
+           * propagate into p_attrs/p_hooks here *)
           p_attrs = [];
           p_modifiers = [ v1 ];
           p_variadic = None;
+          p_hooks = [];
         }
 
 and map_argument (env : env) ((v1, v2) : CST.argument) =
@@ -1531,6 +1535,11 @@ and map_member_declaration (env : env) (x : CST.member_declaration) :
               A.cv_type = v3;
               A.cv_value = value;
               A.cv_modifiers = v2;
+              (* This grammar has no notion of PHP 8.4 property hooks at all:
+               * 'public int $x { get => 1; }' makes it emit an ERROR node for
+               * the whole '{ get => 1; }' part, so there is nothing to map.
+               * Propagating them would require regenerating the grammar.
+               * The menhir parser (the primary one for PHP) does handle them. *)
               A.cv_hooks = [];
             })
         (v4 :: v5)
