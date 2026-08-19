@@ -1597,6 +1597,15 @@ and map_nullsafe_member_access_expression (env : env)
   let v3 = map_member_name env v3 in
   A.Obj_get (v1, v2, v3)
 
+(* Known limitation: this grammar predates PHP 8.4 'new Foo()->bar()', and it
+ * does not reject it — it silently applies the old precedence and yields
+ * 'new (Foo()->bar())' instead of '(new Foo())->bar()'. The two spellings are
+ * still distinguishable here ('new Foo()->bar()' puts a Call at the head of
+ * the chain, 'new Foo->bar()' a plain name), so the tree could in principle be
+ * re-associated, but doing that for every postfix form ('->', '::', '[', '(')
+ * is a rewrite better handled by regenerating the grammar.
+ * The menhir parser (the primary one for PHP) gets this right.
+ *)
 and map_object_creation_expression (env : env)
     (x : CST.object_creation_expression) =
   match x with

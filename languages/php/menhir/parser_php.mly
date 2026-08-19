@@ -1193,7 +1193,23 @@ simple_expr:
 
 new_expr:
  | member_expr { $1 }
- | T_NEW member_expr arguments? { New ($1, $2, $3) }
+ (* Without parentheses. The parenthesized form is a call_expr instead, so
+  * that PHP 8.4 can dereference it directly, as in 'new Foo()->bar()'.
+  * Note that 'new Foo->bar()' keeps its old meaning of 'new (Foo->bar)()'.
+  *)
+ | T_NEW member_expr { New ($1, $2, None) }
+
+call_expr:
+ | member_expr arguments { Call ($1, $2) }
+ (* PHP 8.4: 'new Foo()' is dereferencable, so it lives here rather than in
+  * new_expr; the postfix rules below then give '->', '::', '[' and '(' for
+  * free, as in 'new Foo()->bar()' or 'new Foo()::CONST'.
+  *)
+ | T_NEW member_expr arguments { New ($1, $2, Some $3) }
+ (* An anonymous class is dereferencable too, and unlike a named class it does
+  * not need the parentheses, since its own brackets come before the body:
+  * both 'new class {}->m()' and 'new class () {}->m()' are valid.
+  *)
  | T_NEW T_CLASS arguments? extends_from implements_list
    "{" member_declaration* "}"
      { let class_ =
@@ -1204,9 +1220,6 @@ new_expr:
        in
        NewAnonClass ($1, $3, class_)
      }
-
-call_expr:
- | member_expr arguments { Call ($1, $2) }
  (* PHP 8.1: first-class callable syntax: strlen(...), $obj->method(...), etc.
   * In sgrep/pattern mode, ... means ellipsis (match any args).
   * In code mode, ... means first-class callable. *)
@@ -1226,6 +1239,16 @@ call_expr:
  (* semgrep-ext: *)
  | call_expr "->" "..."
     { Flag_parsing.sgrep_guard (ObjGet($1, $2, Ellipsis $3)) }
+ (* '::' after a call, as in 'foo()::CONST' or 'new Foo()::CONST'.
+  * These mirror the member_expr rules below.
+  *)
+ | call_expr "::" primary_expr { ClassGet($1, $2, $3) }
+ | call_expr "::" keyword_as_ident_for_field
+    { ClassGet($1, $2, Id (XName [QI (Name $3)]))  }
+ | call_expr "::" T_CLASS
+     { ClassGet($1, $2, Id (XName [QI (Name("class", $3))])) }
+ | call_expr "::" "{" expr "}"
+     { ClassGet($1, $2, (BraceIdent ($3, $4, $5))) }
 
 member_expr:
  | primary_expr { $1 }
