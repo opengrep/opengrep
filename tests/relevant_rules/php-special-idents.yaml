@@ -1,0 +1,31 @@
+# Targets filter_irrelevant_rules.
+#
+# ast_php_build.ml encodes a leading '\', late static binding, and '::class'
+# as synthetic '__special__xxx' identifiers. Those never occur in source text,
+# so if they leak into the prefilter the rule is considered irrelevant for
+# every target and silently never runs.
+# coupling: Pattern.is_special_identifier
+rules:
+  - id: php-root-qualified-call
+    pattern: \foo(...)
+    message: root-qualified call
+    languages: [php]
+    severity: WARNING
+
+  - id: php-root-qualified-static-call
+    pattern: \App\Bar::baz(...)
+    message: root-qualified static call
+    languages: [php]
+    severity: WARNING
+
+  - id: php-late-static-binding
+    pattern: static::make()
+    message: late static binding call
+    languages: [php]
+    severity: WARNING
+
+  - id: php-class-constant
+    pattern: C::class
+    message: class name fetch
+    languages: [php]
+    severity: WARNING

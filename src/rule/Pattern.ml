@@ -73,6 +73,13 @@ let is_special_identifier ?lang str =
   || (lang =*= Some Lang.Java && str = "this")
   || (* TODO: PHP converts some Eval in __builtin *)
   (lang =*= Some Lang.Php && str =~ "__builtin__*")
+  (* ast_php_build.ml encodes the leading '\' of a root-qualified name, the
+   * 'static' of late static binding, 'C::class', 'namespace\' and lambdas
+   * as synthetic '__special__xxx' identifiers. None of them occur literally
+   * in source, so demanding them in the prefilter skips every target and the
+   * pattern silently never matches.
+   * coupling: Ast_php.special *)
+  || (lang =*= Some Lang.Php && String.starts_with ~prefix:"__special__" str)
   (* Used in encodings of Elixir and OCaml functions with pattern cases,
    * these identifiers are not expected to be found in the source files!
    * Else targets are skipped when they should not be. *)
