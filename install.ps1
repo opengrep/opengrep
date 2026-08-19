@@ -64,7 +64,22 @@ param(
     [switch]$Help
 )
 
+# Session-global under irm | iex, like SecurityProtocol below; both are
+# restored at the end of the run.
+$originalErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Stop"
+
+# PowerShell 5.1's SystemDefault protocol negotiation can be aborted by
+# github.com ("connection was closed unexpectedly"), which also masks HTTP
+# status codes such as 404. The same happens when TLS 1.3 is enabled, as
+# .NET Framework's TLS 1.3 support is unreliable; force TLS 1.2 only.
+# The setting is process-global, so it is restored at the end of the run:
+# under the documented one-liners the script executes in the caller's
+# session, which must not stay pinned to TLS 1.2.
+$originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
+if ($PSVersionTable.PSEdition -ne 'Core') {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 $ScriptName = if ($MyInvocation.MyCommand.Name) { $MyInvocation.MyCommand.Name } else { "install.ps1" }
 
@@ -90,29 +105,84 @@ function Print-Usage {
     Write-Host "  - '-List' and '-Help' cannot be combined with other options."
 }
 
-function Get-AvailableVersions {
-    try {
-        $response = Invoke-RestMethod -Uri "https://api.github.com/repos/opengrep/opengrep/releases" -UseBasicParsing
-        return $response | ForEach-Object { $_.tag_name }
-    }
-    catch {
-        Write-Error "Failed to fetch available versions: $_"
-        exit 1
+# The version is interpolated into the install path and download URL, so accept
+# only a release tag. Same semver shape as validate-inputs in rolling-release,
+# with the suffix restricted to tag characters so no path separator gets through.
+# [.] rather than \. to match the regex literal in install.sh; \z rather
+# than $ because .NET $ accepts a trailing newline where bash rejects it.
+$ReleaseTagRegex = '^v[0-9]+[.][0-9]+[.][0-9]+(-[A-Za-z0-9._-]+)?\z'
+
+function Test-VersionFormat {
+    param([string]$Version)
+
+    if ($Version -cnotmatch $ReleaseTagRegex) {
+        throw "Invalid version '$Version'. Expected a release tag such as v1.27.1."
     }
 }
 
-function Validate-Version {
-    param([string]$VersionToValidate)
+function Throw-FetchFailed {
+    param([string]$Reason)
 
-    $availableVersions = Get-AvailableVersions
-    if ($availableVersions -contains $VersionToValidate) {
-        return $true
+    if ($Reason) { throw "Failed to fetch available versions from GitHub: $Reason" }
+    throw "Failed to fetch available versions from GitHub."
+}
+
+# Lists the Count most recent releases, newest first, marking pre-releases.
+# Throws on failure so a caller mid-install can still clean up.
+function Get-VersionList {
+    param([int]$Count)
+
+    try {
+        $response = Invoke-RestMethod -Uri "https://api.github.com/repos/opengrep/opengrep/releases?per_page=$Count" -UseBasicParsing
     }
-    else {
-        Write-Host "Error: Version $VersionToValidate not found" -ForegroundColor Red
-        Write-Host "Available versions (latest 3):"
-        $availableVersions | Select-Object -First 3 | ForEach-Object { Write-Host "  $_" }
-        exit 1
+    catch {
+        $reason = $_.Exception.Message
+        if ($_.Exception.Response) {
+            $status = [int]$_.Exception.Response.StatusCode
+            # GitHub API error bodies explain the failure in a "message" field.
+            $detail = $null
+            try { $detail = (ConvertFrom-Json $_.ErrorDetails.Message).message } catch {}
+            $reason = if ($detail) { "HTTP status $status ($detail)." } else { "HTTP status $status." }
+        }
+        Throw-FetchFailed $reason
+    }
+    # Tags that are not release tags are not listed.
+    $versions = @($response | Where-Object { $_.tag_name -cmatch $ReleaseTagRegex } | ForEach-Object {
+        if ($_.prerelease) { "$($_.tag_name) (pre-release)" } else { $_.tag_name }
+    })
+    if ($versions.Count -eq 0) {
+        Throw-FetchFailed
+    }
+    return $versions
+}
+
+function Show-VersionList {
+    param([int]$Count)
+
+    Write-Host "Available versions (latest $Count):"
+    Get-VersionList -Count $Count | ForEach-Object { Write-Host "  $_" }
+}
+
+# The /releases/latest web redirect never points to a pre-release or draft,
+# and does not use the rate-limited API.
+function Get-LatestVersion {
+    try {
+        $response = Invoke-WebRequest -Uri "https://github.com/opengrep/opengrep/releases/latest" -Method Head -UseBasicParsing
+        $finalUri = if ($PSVersionTable.PSEdition -eq 'Core') {
+            # PowerShell 7+ (HttpResponseMessage)
+            $response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+        }
+        else {
+            # PowerShell 5.1 (HttpWebResponse)
+            $response.BaseResponse.ResponseUri.AbsoluteUri
+        }
+        if ($finalUri -match '/releases/tag/([^/]+)$') {
+            return $Matches[1]
+        }
+        throw "unexpected final URL $finalUri"
+    }
+    catch {
+        throw "Failed to determine the latest version: $_"
     }
 }
 
@@ -169,9 +239,8 @@ function Validate-Signature {
             Write-Host "Signature valid."
         }
         else {
-            Write-Host "Error: Signature validation error." -ForegroundColor Red
             Write-Host $result.Trim()
-            exit 1
+            throw "Signature validation error."
         }
     }
     else {
@@ -185,6 +254,7 @@ function Cleanup-OnFailure {
 
     Write-Host "An error occurred during the installation. Cleaning up $InstallPath..." -ForegroundColor Yellow
     Remove-Item -Path "$InstallPath\opengrep.exe" -ErrorAction SilentlyContinue
+    Remove-Item -Path "$InstallPath\opengrep.exe.download" -ErrorAction SilentlyContinue
     Remove-Item -Path "$InstallPath\opengrep.sig" -ErrorAction SilentlyContinue
     Remove-Item -Path "$InstallPath\opengrep.cert" -ErrorAction SilentlyContinue
     Remove-Item -Path $InstallPath -ErrorAction SilentlyContinue
@@ -243,8 +313,7 @@ function Main {
         $dist = "opengrep_windows_x86.exe"
     }
     else {
-        Write-Host "Error: Architecture '$arch' is unsupported." -ForegroundColor Red
-        exit 1
+        throw "Architecture '$arch' is unsupported."
     }
 
     $url = "https://github.com/opengrep/opengrep/releases/download/$VersionToInstall/$dist"
@@ -272,7 +341,24 @@ function Main {
             # Download the binary
             Write-Host "Downloading $url..."
             $progressPreference = 'SilentlyContinue'  # Speeds up Invoke-WebRequest
-            Invoke-WebRequest -Uri $url -OutFile $binaryPath -UseBasicParsing
+            # The download also validates the version, avoiding the rate-limited
+            # GitHub API: a 404 means the tag does not exist or has no asset for
+            # this platform. A temporary name, renamed only on success, so an
+            # interrupted download is never mistaken for an installed binary.
+            $downloadPath = "$binaryPath.download"
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing
+            }
+            catch {
+                if ($_.Exception.Response.StatusCode -eq 404) {
+                    Write-Host "Error: Version $VersionToInstall not found, or it has no $dist asset." -ForegroundColor Red
+                    # A listing failure must not mask the diagnosis above.
+                    try { Show-VersionList -Count 3 } catch { Write-Host "  ($_)" }
+                    throw "Version not found"
+                }
+                throw "Failed to download $url`: $_"
+            }
+            Move-Item -Force -Path $downloadPath -Destination $binaryPath
 
             $sigExists = $true
 
@@ -385,70 +471,77 @@ function Main {
 
 # --- Main script execution ---
 
-# Check for cosign
-$script:HasCosign = Test-CosignInstalled
+# Failures are thrown and reported once in the catch below; `exit` happens
+# only at the very end, and only when running as a script file. Under the
+# documented one-liners the script executes at session scope, where an
+# early exit would close the caller's console; the failure is rethrown
+# instead, so callers still observe a terminating error.
+$failed = $false
+try {
+    # Check for cosign
+    $script:HasCosign = Test-CosignInstalled
 
-# Validate argument combinations
-if ($Help -and ($List -or $Version -or $VerifySignatures)) {
-    Write-Host "Error: incorrect arguments:" -ForegroundColor Red
-    Print-Usage
-    exit 1
-}
+    # Validate argument combinations
+    if (($Help -and ($List -or $Version -or $VerifySignatures)) -or
+        ($List -and ($Version -or $VerifySignatures))) {
+        Print-Usage
+        throw "incorrect arguments"
+    }
 
-if ($List -and ($Version -or $VerifySignatures)) {
-    Write-Host "Error: incorrect arguments:" -ForegroundColor Red
-    Print-Usage
-    exit 1
-}
-
-if ($VerifySignatures -and -not $script:HasCosign) {
-    Write-Host "Error: cosign is required for -VerifySignatures but is not installed." -ForegroundColor Red
-    Write-Host "Go to https://github.com/sigstore/cosign to install it or run without the -VerifySignatures flag to install without signature verification."
-    exit 1
-}
-elseif (-not $script:HasCosign) {
-    Write-Host "Warning: cosign is required for -VerifySignatures but is not installed. Skipping signature validation." -ForegroundColor Yellow
-    Write-Host "Go to https://github.com/sigstore/cosign to install it."
-}
-elseif ($script:HasCosign) {
-    $cosignMajor = Get-CosignMajorVersion
-    if ($null -eq $cosignMajor) {
-        if ($VerifySignatures) {
-            Write-Host "Error: could not determine cosign version and -VerifySignatures was requested." -ForegroundColor Red
-            Write-Host "Your cosign binary may have been built without version metadata (e.g. distro packages)."
-            Write-Host "Install cosign from https://github.com/sigstore/cosign or run without -VerifySignatures."
-            exit 1
+    if ($VerifySignatures -and -not $script:HasCosign) {
+        throw "cosign is required for -VerifySignatures but is not installed.`nGo to https://github.com/sigstore/cosign to install it or run without the -VerifySignatures flag to install without signature verification."
+    }
+    elseif (-not $script:HasCosign) {
+        Write-Host "Warning: cosign is required for -VerifySignatures but is not installed. Skipping signature validation." -ForegroundColor Yellow
+        Write-Host "Go to https://github.com/sigstore/cosign to install it."
+    }
+    elseif ($script:HasCosign) {
+        $cosignMajor = Get-CosignMajorVersion
+        if ($null -eq $cosignMajor) {
+            if ($VerifySignatures) {
+                throw "could not determine cosign version and -VerifySignatures was requested.`nYour cosign binary may have been built without version metadata (e.g. distro packages).`nInstall cosign from https://github.com/sigstore/cosign or run without -VerifySignatures."
+            }
+            else {
+                Write-Host "Warning: could not determine cosign version. Signature validation may not work correctly." -ForegroundColor Yellow
+            }
         }
-        else {
-            Write-Host "Warning: could not determine cosign version. Signature validation may not work correctly." -ForegroundColor Yellow
+        elseif ($cosignMajor -lt 2) {
+            Write-Host "Warning: cosign version is less than 2.0.0, signature validation may fail." -ForegroundColor Yellow
         }
     }
-    elseif ($cosignMajor -lt 2) {
-        Write-Host "Warning: cosign version is less than 2.0.0, signature validation may fail." -ForegroundColor Yellow
+
+    if ($Help) {
+        Print-Usage
+    }
+    elseif ($List) {
+        Show-VersionList -Count 3
+    }
+    else {
+        # Determine version to install; an explicit empty -Version is
+        # rejected by the format check, as in install.sh
+        if (-not $PSBoundParameters.ContainsKey('Version')) {
+            $Version = Get-LatestVersion
+        }
+        Test-VersionFormat -Version $Version
+        Main -VersionToInstall $Version -DoVerifySignatures $VerifySignatures.IsPresent
+    }
+}
+catch {
+    if ($MyInvocation.MyCommand.Path) {
+        Write-Host "Error: $_" -ForegroundColor Red
+        $failed = $true
+    }
+    else {
+        throw
+    }
+}
+finally {
+    $ErrorActionPreference = $originalErrorActionPreference
+    if ($PSVersionTable.PSEdition -ne 'Core') {
+        [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol
     }
 }
 
-if ($Help) {
-    Print-Usage
-    exit 0
+if ($failed) {
+    exit 1
 }
-
-if ($List) {
-    Write-Host "Available versions (latest 3):"
-    Get-AvailableVersions | Select-Object -First 3 | ForEach-Object { Write-Host "  $_" }
-    exit 0
-}
-
-# Determine version to install
-if (-not $Version) {
-    $Version = (Get-AvailableVersions | Select-Object -First 1)
-    if (-not $Version) {
-        Write-Host "Error: Could not determine latest version." -ForegroundColor Red
-        exit 1
-    }
-}
-else {
-    Validate-Version -VersionToValidate $Version
-}
-
-Main -VersionToInstall $Version -DoVerifySignatures $VerifySignatures.IsPresent

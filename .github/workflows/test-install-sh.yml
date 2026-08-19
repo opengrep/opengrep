@@ -1,0 +1,153 @@
+name: test-install-sh
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'install.sh'
+      - '.github/workflows/test-install-sh.yml'
+  pull_request:
+    paths:
+      - 'install.sh'
+      - '.github/workflows/test-install-sh.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-install-script:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      # Test help output
+      - name: Test -h flag
+        run: bash ./install.sh -h
+
+      # Test listing versions
+      - name: Test -l flag
+        run: bash ./install.sh -l
+
+      # A nonexistent version must fail with the not-found message
+      - name: Install nonexistent version (expect failure)
+        run: |
+          set +e
+          output=$(bash ./install.sh -v v9.9.9 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "Expected the install of a nonexistent version to fail" 1>&2
+            exit 1
+          fi
+          echo "$output" | grep -q "not found" || {
+            echo "Expected a version-not-found message" 1>&2
+            exit 1
+          }
+
+      - name: Resolve latest release tag
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest_tag=$(gh api repos/opengrep/opengrep/releases/latest --jq .tag_name)
+          if [ -z "$latest_tag" ]; then
+            echo "Failed to resolve the expected latest tag via gh" 1>&2
+            exit 1
+          fi
+          echo "tag=$latest_tag" >> "$GITHUB_OUTPUT"
+
+      # Test installing latest version; it must resolve to the latest stable
+      # release, never a pre-release
+      - name: Install latest version
+        run: |
+          set +e
+          output=$(bash ./install.sh 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -ne 0 ]; then
+            echo "Default install failed" 1>&2
+            exit 1
+          fi
+          latest_tag='${{ steps.latest.outputs.tag }}'
+          echo "$output" | grep -qF "Installing Opengrep $latest_tag" || {
+            echo "Default install did not resolve the latest stable version ($latest_tag)" 1>&2
+            exit 1
+          }
+
+      # Verify installation
+      - name: Verify installation
+        run: |
+          binary="$HOME/.opengrep/cli/latest/opengrep"
+          if [ -f "$binary" ]; then
+            "$binary" --version
+          else
+            echo "Binary not found at $binary" 1>&2
+            exit 1
+          fi
+
+      # Test specific version install (re-install same or older version);
+      # v1.11.2 is older than the GitHub API's first page of releases
+      - name: Install specific version
+        run: bash ./install.sh -v v1.11.2
+
+      # Pre-releases are never the default but must be installable explicitly;
+      # disabled because it pins a tag that may be deleted after a rebuild
+      # - name: Install pre-release version
+      #   run: bash ./install.sh -v v1.28.0-interfile.alpha.1
+
+      # Test remote execution style (one-liner simulation)
+      - name: Test script from stdin
+        run: bash -s -- -h < ./install.sh
+
+  test-musllinux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      # Alpine exercises the musl detection path, which selects the
+      # musllinux asset
+      - name: Install and verify on Alpine (musl)
+        run: |
+          docker run --rm -v "$PWD:/work" alpine:3.21 sh -c '
+            apk add --no-cache bash curl
+            bash /work/install.sh
+            "$HOME/.opengrep/cli/latest/opengrep" --version
+          '
+
+  test-with-cosign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+
+      - name: Verify cosign installed
+        run: cosign version
+
+      - name: Install with signature verification
+        run: bash ./install.sh --verify-signatures
+
+      - name: Verify installation
+        run: |
+          "$HOME/.opengrep/cli/latest/opengrep" --version
