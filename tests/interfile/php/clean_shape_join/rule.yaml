@@ -1,0 +1,18 @@
+rules:
+  - id: clean-join-taint
+    options:
+      taint_interfile: true
+    message: >
+      Joining a branch that leaves a variable clean with a branch that taints
+      a field under it must not hide the field's taint (INVARIANT(cell).2 in
+      unify_cell - Clean union None with a non-Bot shape).
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-sanitizers:
+      - pattern: sanitize(...)
