@@ -106,8 +106,16 @@ let mark_implicit_return lang ast =
          match fkind with
          | __any__ when lang_supports_implicit_return lang ->
              mark_implicit_return_fdef lang ~tok fdef
-         | LambdaKind ->
+         | LambdaKind
+         | Arrow ->
              (* Lambdas expressions tend to always support implicit returns,
-              * even in languages that require explicit returns like Java. *)
+              * even in languages that require explicit returns like Java.
+              * Arrow includes PHP's short lambdas ([fn($x) => $expr]), whose
+              * body php_to_generic keeps as a bare ExprStmt: without the
+              * mark, AST_to_IL lowers the body in void context, where an
+              * operator call like [===] is assumed to be method-call sugar
+              * and becomes a bogus [obj.===(...)] pseudo-call. (JS arrows
+              * are unaffected either way: the JS parser already normalizes
+              * expression bodies to explicit Return statements.) *)
              mark_implicit_return_fdef lang ~tok fdef
          | __else__ -> ())

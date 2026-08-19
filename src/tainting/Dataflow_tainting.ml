@@ -346,6 +346,23 @@ let record_effects env new_effects =
         let g = Effect_guard.conjoin (Effect_guard.Set.elements active) in
         List.map (Effect.add_guards g) new_effects)
     in
+    (* Widen the recorded shapes ([ToReturn] data shapes, [ToSinkInCall]
+     * argument shapes). A self-recursive tree-builder — one that wraps its
+     * own recursive result in a fresh container — has no fixpoint in the
+     * shape domain: the recursive call sees the in-progress effects via
+     * [self_sig_if_recursive], so each pass of the INNER dataflow fixpoint
+     * nests the return shape one level deeper (and branch unification can
+     * double the node count per pass), running the clock out on the taint
+     * fixpoint timeout with a huge lval_env. Truncating every effect as it
+     * is recorded cuts that ascending chain where it feeds back, and bounds
+     * the shapes stored in signature databases (SCC-level recursion
+     * included). See [Limits_semgrep.taint_MAX_SIG_SHAPE_DEPTH]. *)
+    let new_effects =
+      new_effects
+      |> List_.map
+           (Shape.truncate_effect
+              ~max_depth:Limits_semgrep.taint_MAX_SIG_SHAPE_DEPTH)
+    in
     env.effects_acc := Effects.add_list new_effects !(env.effects_acc)
 
 (* Field write on the enclosing receiver: record [BThis] so it composes
