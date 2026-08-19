@@ -1,0 +1,19 @@
+rules:
+  - id: recursive-tree-builder-taint
+    options:
+      taint_interfile: true
+    message: >
+      A self-recursive tree-builder (wraps its own recursive result in a
+      fresh container) has no fixpoint in the shape domain; without depth
+      widening at effect-recording time its analysis blows up exponentially
+      (minutes of CPU, gigabytes of RSS) and hits the fixpoint timeout.
+      This must terminate quickly AND keep the taint flowing through the
+      truncated shape.
+    languages:
+      - php
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

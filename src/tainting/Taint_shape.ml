@@ -241,7 +241,17 @@ let rec unify_cell cell1 cell2 =
   (* TODO: Apply 'Flag_semgrep.max_taint_set_size' here too ? *)
   let xtaint = Xtaint.union xtaint1 xtaint2 in
   let shape = unify_shape shape1 shape2 in
-  Cell (xtaint, shape)
+  match (xtaint, shape) with
+  (* Restore INVARIANT(cell).2: 'Xtaint.union' gives 'Clean ∪ None = Clean'
+   * while 'unify_shape' gives 'Bot ∪ shape = shape', so unifying
+   * 'Cell(Clean, Bot)' with 'Cell(None, Obj _)' would produce
+   * 'Cell(Clean, Obj _)'. The 'Clean' claim only held on one side, and a
+   * join must not hide the taint recorded under the other side's shape
+   * ('find_in_cell_w_carry' stops at a 'Clean' cell). *)
+  | `Clean, (Obj _ | Arg _ | Fun _) -> Cell (`None, shape)
+  | ( (`Clean | `None | `Tainted _),
+      (Bot | Obj _ | Arg _ | Fun _) ) ->
+      Cell (xtaint, shape)
 
 and unify_shape shape1 shape2 =
   match (shape1, shape2) with
@@ -442,6 +452,139 @@ and gather_all_taints_in_obj_acc acc obj =
 
 let gather_all_taints_in_cell = gather_all_taints_in_cell_acc Taints.empty
 let gather_all_taints_in_shape = gather_all_taints_in_shape_acc Taints.empty
+
+(*********************************************************)
+(* Depth widening (shape truncation) *)
+(*********************************************************)
+
+(* Widen a cell to at most [budget] further levels of [Obj] nesting.
+ *
+ * A self-recursive tree-builder (a function that wraps its own recursive
+ * result in a fresh container) has no fixpoint in the shape domain: each
+ * SCC round of the interfile fold nests its return shape one level deeper,
+ * and branch unification can double the node count per round.
+ * [Limits_semgrep.taint_MAX_SHAPE_DEPTH] only widens the *equality* test,
+ * which stops the iteration after near-depth-50 shapes have already been
+ * built and instantiated — far past any practical cost. This truncates
+ * where the cost is incurred, when a signature is stored.
+ *
+ * Subtrees below the cutoff collapse into the cutoff cell's xtaint via
+ * [gather_all_taints_in_cell]: fields below the cutoff then inherit the
+ * cell's own taint (see the 'x.a.v' example in INVARIANT(cell)'s doc), so
+ * reachability of the deep taints is preserved at the price of offset
+ * precision. [`Clean] markers below the cutoff are dropped (conservative
+ * towards taint). [Fun] shapes are left untouched: truncating one would
+ * drop its effects (real false negatives), they don't participate in the
+ * tree-builder ascending chain bounded here, and their inner shapes were
+ * already truncated when the lambda's own signature was stored.
+ *
+ * Returns [None] when the truncated cell carries no information
+ * ([`None]/[Bot]), so obj entries can be dropped and INVARIANT(cell) is
+ * preserved. *)
+let rec truncate_cell ~budget cell : cell option =
+  let (Cell (xtaint, shape)) = cell in
+  match shape with
+  | Bot
+  | Arg _
+  | Fun _ ->
+      Some cell
+  | Obj obj ->
+      if budget <= 0 then (
+        let deep = gather_all_taints_in_cell cell in
+        if Taints.is_empty deep then None
+        else Some (Cell (`Tainted deep, Bot)))
+      else
+        let obj' =
+          Fields.filter_map
+            (fun _o inner -> truncate_cell ~budget:(budget - 1) inner)
+            obj
+        in
+        let shape' = if Fields.is_empty obj' then Bot else Obj obj' in
+        (match (xtaint, shape') with
+        (* Restore INVARIANT(cell).1 *)
+        | `None, Bot -> None
+        (* Restore INVARIANT(cell).2, see 'unify_cell'. *)
+        | `Clean, (Obj _ | Arg _ | Fun _) -> Some (Cell (`None, shape'))
+        | ( (`Clean | `None | `Tainted _),
+            (Bot | Obj _ | Arg _ | Fun _) ) ->
+            Some (Cell (xtaint, shape')))
+
+(* Fast path for [truncate_shape]: [record_effects] truncates every effect
+ * it records, and almost all shapes are nowhere near the cutoff, so don't
+ * rebuild (reallocate) a shape that is already within budget. Short-circuits
+ * via [Fields.exists]. *)
+let rec cell_depth_exceeds ~budget (Cell (_xtaint, shape)) =
+  shape_depth_exceeds ~budget shape
+
+and shape_depth_exceeds ~budget shape =
+  match shape with
+  | Bot
+  | Arg _
+  | Fun _ ->
+      false
+  | Obj obj ->
+      budget <= 0
+      || Fields.exists
+           (fun _o cell -> cell_depth_exceeds ~budget:(budget - 1) cell)
+           obj
+
+(* Widen [shape] to at most [max_depth] levels of [Obj] nesting;
+ * see [truncate_cell]. *)
+let truncate_shape ~max_depth shape =
+  if max_depth < 1 then shape
+  else
+    match shape with
+    | Bot
+    | Arg _
+    | Fun _ ->
+        shape
+    | Obj obj ->
+        if not (shape_depth_exceeds ~budget:max_depth shape) then shape
+        else
+          let obj' =
+            Fields.filter_map
+              (fun _o cell -> truncate_cell ~budget:(max_depth - 1) cell)
+              obj
+          in
+          if Fields.is_empty obj' then Bot else Obj obj'
+
+(* Identity-preserving: returns [eff] itself when no shape was truncated
+ * ([truncate_shape]'s fast path returns the shape physically unchanged when
+ * it is within budget), so [Effects.map] in [truncate_signature] can keep
+ * the original set without re-inserting structurally-equal effects. *)
+let truncate_effect ~max_depth (eff : Shape_and_sig.Effect.t) :
+    Shape_and_sig.Effect.t =
+  match eff with
+  | Shape_and_sig.Effect.ToReturn tr ->
+      let data_shape = truncate_shape ~max_depth tr.data_shape in
+      if phys_equal data_shape tr.data_shape then eff
+      else Shape_and_sig.Effect.ToReturn { tr with data_shape }
+  | Shape_and_sig.Effect.ToSinkInCall r ->
+      let truncate_arg arg =
+        match arg with
+        | IL.Unnamed (taints, shape) ->
+            let shape' = truncate_shape ~max_depth shape in
+            if phys_equal shape' shape then arg
+            else IL.Unnamed (taints, shape')
+        | IL.Named (ident, (taints, shape)) ->
+            let shape' = truncate_shape ~max_depth shape in
+            if phys_equal shape' shape then arg
+            else IL.Named (ident, (taints, shape'))
+      in
+      let args_taints = List_.map truncate_arg r.args_taints in
+      if List.for_all2 phys_equal args_taints r.args_taints then eff
+      else Shape_and_sig.Effect.ToSinkInCall { r with args_taints }
+  | Shape_and_sig.Effect.ToSink _
+  | Shape_and_sig.Effect.ToLval _ ->
+      eff
+
+(* Widen every shape stored in a signature's effects; the entry point used
+ * by the interfile fold when a signature is (re-)stored. [Effects.map]
+ * returns the set physically unchanged when [truncate_effect] is the
+ * identity on every element, so the common case allocates nothing. *)
+let truncate_signature ~max_depth (s : Signature.t) : Signature.t =
+  let effects = Effects.map (truncate_effect ~max_depth) s.effects in
+  if phys_equal effects s.effects then s else { s with effects }
 
 (*********************************************************)
 (* Find an offset *)
