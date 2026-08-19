@@ -377,6 +377,8 @@ and parameter_classic = {
    * asymmetric visibility; empty for regular parameters *)
   p_modifiers : modifier list;
   p_variadic : tok option;
+  (* PHP 8.4: hooks on a constructor-promoted property *)
+  p_hooks : property_hook list;
 }
 
 (* for methods, and below for fields too *)
@@ -433,6 +435,10 @@ and xhp_field = class_var * bool
 
 (* PHP 8.4 property hooks *)
 and property_hook = {
+  (* only 'final' is allowed here *)
+  ph_modifiers : modifier list;
+  (* by-reference getter, as in '&get' *)
+  ph_ref : tok option;
   ph_kind : property_hook_kind;
   ph_params : parameter list; (* set($value) parameter *)
   ph_body : stmt option; (* None for abstract, Some for body *)

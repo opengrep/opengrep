@@ -593,6 +593,8 @@ and parameter = {
   p_name : dname;
   p_default : static_scalar_affect option;
   p_variadic : tok (* ... *) option;
+  (* PHP 8.4: hooks on a constructor-promoted property *)
+  p_hooks : property_hook list brace option;
 }
 
 and is_ref = tok (* bool wrap ? *) option
@@ -714,6 +716,10 @@ and class_constant = ident * static_scalar_affect
 
 (* PHP 8.4 property hooks *)
 and property_hook = {
+  (* only 'final' is allowed here *)
+  ph_modifiers: modifier wrap list;
+  (* by-reference getter, as in '&get' *)
+  ph_ref: is_ref;
   ph_kind: property_hook_kind wrap;
   ph_params: parameter comma_list_dots paren option; (* set($value) *)
   ph_body: property_hook_body;
@@ -724,6 +730,8 @@ and property_hook_kind = PhGet | PhSet
 and property_hook_body =
   | PHExpr of tok (* => *) * expr * tok (* ; *)
   | PHBlock of stmt_and_def list brace
+  (* no body, as in interfaces and abstract classes: 'public int $x { get; }' *)
+  | PHAbstract of tok (* ; *)
 
 and class_variable = dname * static_scalar_affect option * property_hook list brace option
 

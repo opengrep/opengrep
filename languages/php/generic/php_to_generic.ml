@@ -622,7 +622,19 @@ and parameter x =
   | ParamEllipsis t -> G.ParamEllipsis t
 
 and parameter_classic
-    { p_type; p_ref; p_name; p_default; p_attrs; p_modifiers; p_variadic } =
+    {
+      p_type;
+      p_ref;
+      p_name;
+      p_default;
+      p_attrs;
+      p_modifiers;
+      p_variadic;
+      (* hooks on a promoted parameter are surfaced on the class field that
+       * the promotion declares (see promoted_field in ast_php_build.ml), so
+       * there is nothing to add on the parameter itself *)
+      p_hooks = _;
+    } =
   let p_type = option hint_type p_type in
   let p_name = var p_name in
   let p_default = option expr p_default in
@@ -770,10 +782,17 @@ and class_var
   let hooks = list property_hook chooks in
   (ent, def, hooks)
 
-and property_hook { ph_kind; ph_params; ph_body } =
+and property_hook { ph_modifiers; ph_ref; ph_kind; ph_params; ph_body } =
   let attr, tok, name_str = match ph_kind with
     | PhGet tok -> (G.KeywordAttr (G.Getter, tok), tok, "get")
     | PhSet tok -> (G.KeywordAttr (G.Setter, tok), tok, "set")
+  in
+  (* keep 'final' and the '&' of '&get' so patterns can match on them *)
+  let modifiers = list modifier_to_attr ph_modifiers in
+  let ref_attr =
+    match ph_ref with
+    | None -> []
+    | Some tok -> [ G.OtherAttribute (("&", tok), []) ]
   in
   let params = list parameter ph_params in
   let body = match ph_body with
@@ -786,7 +805,10 @@ and property_hook { ph_kind; ph_params; ph_body } =
     frettype = None;
     fbody = body;
   } in
-  let ent = G.basic_entity (name_str, tok) ~case_insensitive:false ~attrs:[attr] in
+  let ent =
+    G.basic_entity (name_str, tok) ~case_insensitive:false
+      ~attrs:((attr :: modifiers) @ ref_attr)
+  in
   (ent, G.FuncDef fdef)
 
 and method_def v = func_def v
