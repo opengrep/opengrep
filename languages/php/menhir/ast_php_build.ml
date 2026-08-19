@@ -677,10 +677,11 @@ and hint_type env = function
 (* Definitions *)
 (* ------------------------------------------------------------------------- *)
 and constant_def env
-    { cst_name; cst_val; cst_type = _TODO; cst_toks = tok, _, _ } =
+    { cst_name; cst_val; cst_type = _TODO; cst_toks = tok, _, _; cst_attrs } =
   let name = ident env cst_name in
   let value = expr env cst_val in
-  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value; A.cst_modifiers = [] }
+  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value; A.cst_modifiers = [];
+    A.cst_attrs = attributes env cst_attrs }
 
 and comma_list_dots_params f xs =
   match xs with
@@ -831,14 +832,15 @@ and class_traits env x acc =
 
 and class_constants env st acc =
   match st with
-  | ClassConstants (mods, tok, _, cl, _) ->
+  | ClassConstants (attrs, mods, tok, _, cl, _) ->
       let modifiers = List_.map (modifier env) mods in
+      let attrs = attributes env attrs in
       List_.fold_right
         (fun (n, ss) acc ->
           let body = static_scalar_affect env ss in
           let cst =
             { A.cst_name = ident env n; cst_body = body; cst_tok = tok;
-              cst_modifiers = modifiers }
+              cst_modifiers = modifiers; cst_attrs = attrs }
           in
           cst :: acc)
         (comma_list cl) acc
@@ -1083,12 +1085,8 @@ and attributes env = function
       let xs = comma_list xs in
       xs
       |> List_.map (function
-           | Attribute (s, tok) -> A.Id [ (s, wrap tok) ]
-           | AttributeWithArgs ((s, tok), (lp, xs, rp)) ->
+           | Attribute n -> name_expr env n
+           | AttributeWithArgs (n, (lp, xs, rp)) ->
                A.Call
-                 ( A.Id [ (s, wrap tok) ],
-                   ( lp,
-                     List_.map
-                       (fun e -> A.Arg (static_scalar env e))
-                       (comma_list xs),
-                     rp ) ))
+                 ( name_expr env n,
+                   (lp, List_.map (argument env) (comma_list xs), rp) ))

@@ -630,6 +630,8 @@ and constant_def = {
   cst_name : ident;
   cst_type : hint_type option;
   cst_val : static_scalar;
+  (* PHP 8.5 attributes on constants *)
+  cst_attrs : attributes option;
 }
 
 (* ------------------------------------------------------------------------- *)
@@ -685,7 +687,8 @@ and class_stmt =
   (* This is abused to represent class constants in enums, so sometimes
    * tok is actually fakeInfo. *)
   | ClassConstants of
-      modifier wrap list
+      attributes option (* PHP 8.0, e.g. '#[\Deprecated]' (PHP 8.4) *)
+      * modifier wrap list
       * tok (* const *)
       * hint_type option
       * class_constant comma_list
@@ -809,8 +812,9 @@ and static_scalar_affect = tok (* = *) * static_scalar
 
 (* HPHP extension similar to http://en.wikipedia.org/wiki/Java_annotation *)
 and attribute =
-  | Attribute of string wrap
-  | AttributeWithArgs of string wrap * static_scalar comma_list paren
+  (* the name can be qualified ('#[A\B]') or root-prefixed ('#[\Deprecated]') *)
+  | Attribute of name
+  | AttributeWithArgs of name * argument comma_list paren
 
 and attributes = attribute comma_list angle
 
