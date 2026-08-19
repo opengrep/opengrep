@@ -574,9 +574,14 @@ use_filename:
 (*************************************************************************)
 
 (* PHP 5.3 *)
-constant_declaration:
+(* PHP 8.5 allows attributes on constants, e.g. '#[\Deprecated] const X = 1;' *)
+constant_declaration: ioption(attributes) unticked_constant_declaration
+   { { $2 with cst_attrs = $1 } }
+
+unticked_constant_declaration:
   T_CONST ioption(type_php) ident_constant_name TEQ static_scalar ";"
-   { { cst_toks = ($1,$4,$6); cst_name = Name $3; cst_val = $5; cst_type = $2}}
+   { { cst_toks = ($1,$4,$6); cst_name = Name $3; cst_val = $5; cst_type = $2;
+       cst_attrs = None }}
 
 (*************************************************************************)
 (* Function declaration *)
@@ -814,9 +819,9 @@ implements_list:
 
 member_declaration:
  (* class constants - PHP 8.1 allows final modifier *)
- | const_modifier*
+ | ioption(attributes) const_modifier*
    T_CONST ioption(type_php) listc(class_constant_declaration)  ";"
-     { ClassConstants($1, $2, $3, $4, $5) }
+     { ClassConstants($1, $2, $3, $4, $5, $6) }
 
 (* class variables (aka properties) *)
  | variable_modifiers ioption(type_php) listc(class_variable_simple) ";"
@@ -1011,10 +1016,15 @@ attributes:
 | attributes attributes {match ($1, $2) with ((lp,xs1,_),(_,xs2,rp)) -> (lp,xs1@xs2,rp)}
 
 attribute:
- | ident                                  { Attribute $1 }
- | ident "(" attribute_argument_list ")"  { AttributeWithArgs ($1,($2,$3,$4)) }
+ | qualified_class_name                                  { Attribute $1 }
+ | qualified_class_name "(" attribute_argument_list ")"  { AttributeWithArgs ($1,($2,$3,$4)) }
 
-attribute_argument: static_scalar { $1 }
+(* attribute arguments are static scalars, but may be named (PHP 8.0),
+ * as in '#[\Deprecated(message: "...", since: "8.4")]'
+ *)
+attribute_argument:
+ | static_scalar           { Arg $1 }
+ | ident ":" static_scalar { ArgLabel (Name $1, $2, $3) }
 
 (*************************************************************************)
 (* Expressions *)

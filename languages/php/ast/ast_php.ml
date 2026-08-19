@@ -405,6 +405,8 @@ and constant_def = {
   cst_body : expr;
   (* PHP 7.1: class constant visibility *)
   cst_modifiers : modifier list;
+  (* PHP 8.0 attributes, e.g. '#[\Deprecated]' (PHP 8.4) *)
+  cst_attrs : attribute list;
 }
 
 and enum_type = { e_base : hint_type; e_constraint : hint_type option }
