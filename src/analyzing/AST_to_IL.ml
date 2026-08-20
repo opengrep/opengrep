@@ -2380,11 +2380,15 @@ and expr_aux env ?(void = false) g_expr : stmts * exp =
   | G.OtherExpr (("ShortLambda", _), _) when env.lang =*= Lang.Elixir ->
       let lambda_expr = AST_modifications.convert_elixir_short_lambda g_expr in
       expr env lambda_expr
-  (* Elixir pipe: OtherExpr("PipelineCall", [E call]) is a desugared
-   * x |> f(a) => f(x, a). The tag preserves search distinction; for
-   * IL/taint we evaluate the inner call transparently. *)
+  (* Pipe operator: OtherExpr("PipelineCall", [E call]) is a desugared
+   * 'x |> f(a)' => 'f(x, a)', produced by Elixir_to_generic (Elixir) and
+   * Php_to_generic (PHP 8.5). The tag preserves the search distinction
+   * between a piped and a direct call; for IL/taint we evaluate the inner
+   * call transparently.
+   * coupling: a language that grows a pipe operator and emits this tag must
+   * be added here too, or taint will not flow through its pipes. *)
   | G.OtherExpr (("PipelineCall", _tk), [ G.E inner ])
-    when env.lang =*= Lang.Elixir ->
+    when env.lang =*= Lang.Elixir || env.lang =*= Lang.Php ->
       expr env inner
   (* The idea here is that this is like a block, and we only
    * really care about the last expression. *)

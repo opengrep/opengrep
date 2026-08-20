@@ -426,6 +426,10 @@ and expr env = function
       let e2 = expr env e2 in
       let bop = binary_op bop in
       A.Binop (e1, (bop, tok), e2)
+  | Pipe (e1, tok, e2) ->
+      let e1 = expr env e1 in
+      let e2 = expr env e2 in
+      A.Pipe (e1, tok, e2)
   | Unary ((uop, tok), e) ->
       let e = expr env e in
       let uop = unary_op uop in

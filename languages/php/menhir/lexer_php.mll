@@ -475,6 +475,8 @@ rule st_in_scripting state = parse
       | "<<" { T_SL(tokinfo lexbuf) }
       | ">>" { T_SR(tokinfo lexbuf) }
       | "&"  { TAND(tokinfo lexbuf) }
+      (* PHP 8.5 pipe operator; must not be lexed as '|' followed by '>' *)
+      | "|>" { T_PIPE_GT(tokinfo lexbuf) }
       | "|"  { TOR(tokinfo lexbuf) }
       | "^"  { TXOR(tokinfo lexbuf) }
 

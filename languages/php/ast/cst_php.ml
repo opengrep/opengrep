@@ -222,6 +222,10 @@ and expr =
   (* start of expr_without_variable in original PHP lexer/parser terminology *)
   | Sc of scalar
   | Binary of expr * binaryOp wrap * expr
+  (* PHP 8.5 pipe operator: '$x |> f(...)' calls f with $x as its only
+   * argument. Kept as its own node rather than a binaryOp because turning it
+   * into the equivalent call needs both operands. *)
+  | Pipe of expr * tok (* |> *) * expr
   | Unary of unaryOp wrap * expr
   (* should be a statement ... *)
   | Assign of lvalue * tok (* = *) * expr

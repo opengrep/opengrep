@@ -204,6 +204,8 @@ type expr =
   | Infix of AST_generic.incr_decr wrap * expr
   | Postfix of AST_generic.incr_decr wrap * expr
   | Binop of expr * binaryOp wrap * expr
+  (* PHP 8.5 pipe operator, see Cst_php.Pipe *)
+  | Pipe of expr * tok (* |> *) * expr
   | Unop of unaryOp wrap * expr
   | Guil of expr list bracket
   | ConsArray of array_value list bracket
