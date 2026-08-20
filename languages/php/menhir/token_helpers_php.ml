@@ -173,6 +173,7 @@ let visitor_info_of_tok f = function
   | TMOD ii -> TMOD (f ii)
   | TAND ii -> TAND (f ii)
   | TOR ii -> TOR (f ii)
+  | T_PIPE_GT ii -> T_PIPE_GT (f ii)
   | TEQ ii -> TEQ (f ii)
   | TSMALLER ii -> TSMALLER (f ii)
   | TGREATER ii -> TGREATER (f ii)

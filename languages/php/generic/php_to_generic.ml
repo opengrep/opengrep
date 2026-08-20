@@ -419,6 +419,29 @@ and expr e : G.expr =
           |> G.e
       | Right x ->
           G.Call (G.IdSpecial x |> G.e, fb [ G.Arg v1; G.Arg v3 ]) |> G.e)
+  (* PHP 8.5: '$x |> f(...)' means 'f($x)'. Desugar it into that call so that
+   * rules written against the call, and the dataflow that follows it, both
+   * work; then tag it so a rule can still tell a piped call from a direct one
+   * (same approach as Elixir_to_generic.map_pipeline). *)
+  | Pipe (v1, t, v2) ->
+      let arg = expr v1 in
+      let callee =
+        match v2 with
+        (* the right-hand side is normally first-class callable syntax; pipe
+         * to the callable itself rather than to its Closure::fromCallable
+         * desugaring *)
+        | FirstClassCallable (callable_expr, _) -> expr callable_expr
+        (* In a pattern, 'f(...)' parses as a call whose only argument is an
+         * ellipsis rather than as FirstClassCallable (see parser_php.mly), so
+         * '$X |> f(...)' would otherwise desugar to a call of f(...)'s result
+         * and never match piped code. Real code cannot produce this shape,
+         * since an ellipsis argument only exists in patterns. *)
+        | Call (callable_expr, (_, [ Arg (Ellipsis _) ], _)) ->
+            expr callable_expr
+        | _ -> expr v2
+      in
+      let desugared = G.Call (callee, fb [ G.Arg arg ]) |> G.e in
+      G.OtherExpr (("PipelineCall", t), [ G.E desugared ]) |> G.e
   | Unop ((v1, t), v2) ->
       let v1 = unaryOp v1 and v2 = expr v2 in
       G.Call (G.IdSpecial (G.Op v1, t) |> G.e, fb [ G.Arg v2 ]) |> G.e

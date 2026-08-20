@@ -830,6 +830,10 @@ and map_attribute_list (env : env) (xs : CST.attribute_list) : A.attribute list
       v2 :: v3)
     xs
 
+(* No case for the PHP 8.5 pipe operator below: this grammar has no '|>'
+ * token, so '$x |> f(...)' lexes as '|' followed by '>' and yields an ERROR
+ * node. Supporting it would require regenerating the grammar.
+ * The menhir parser (the primary one for PHP) does handle it. *)
 and map_binary_expression (env : env) (x : CST.binary_expression) =
   match x with
   | `Un_exp_pat_inst__choice_qual_name (v1, v2, v3) ->

@@ -196,6 +196,8 @@ let str_of_info x = Tok.content_of_tok x
  TPLUS TMINUS TMUL TDIV TMOD TPOW
  T_NULL_COALLESCING
  TAND TOR "|" TXOR
+ (* PHP 8.5 pipe operator *)
+ T_PIPE_GT "|>"
  TEQ
  (* now also used for types/generics, as in vector<int> *)
  TSMALLER "<" TGREATER ">"
@@ -274,6 +276,7 @@ let str_of_info x = Tok.content_of_tok x
 %left     TEQ  T_PLUS_EQUAL T_MINUS_EQUAL T_MUL_EQUAL T_DIV_EQUAL T_CONCAT_EQUAL T_MOD_EQUAL T_AND_EQUAL T_OR_EQUAL T_XOR_EQUAL T_SL_EQUAL T_SR_EQUAL
 
 %left      TQUESTION TCOLON
+%right     T_NULL_COALLESCING
 %left      T_BOOLEAN_OR
 %left      T_BOOLEAN_AND
 %left      TOR
@@ -281,6 +284,12 @@ let str_of_info x = Tok.content_of_tok x
 %left      TAND
 %nonassoc  T_IS_EQUAL T_IS_NOT_EQUAL T_IS_IDENTICAL T_IS_NOT_IDENTICAL T_ROCKET
 %nonassoc  TSMALLER T_IS_SMALLER_OR_EQUAL TGREATER T_IS_GREATER_OR_EQUAL
+(* PHP 8.5 pipe operator: left-associative, binding tighter than the
+ * comparisons above but looser than the arithmetic below, so that
+ * '5 + 2 |> f(...)' is '(5 + 2) |> f(...)' and
+ * '$s |> strlen(...) == 4' is '($s |> strlen(...)) == 4'.
+ *)
+%left      T_PIPE_GT
 %left      T_SL T_SR
 %left      TPLUS TMINUS TDOT
 %left      TMUL TDIV TMOD
@@ -1079,6 +1088,9 @@ expr:
  | expr T_LOGICAL_OR   expr { Binary($1,(Logical OrLog,  $2),$3) }
  | expr T_LOGICAL_AND  expr { Binary($1,(Logical AndLog, $2),$3) }
  | expr T_LOGICAL_XOR  expr { Binary($1,(Logical XorLog, $2),$3) }
+
+ (* PHP 8.5 pipe operator *)
+ | expr "|>" expr { Pipe($1, $2, $3) }
 
  | expr TPLUS expr  { Binary($1,(Arith Plus ,$2),$3) }
  | expr TMINUS expr     { Binary($1,(Arith Minus,$2),$3) }
