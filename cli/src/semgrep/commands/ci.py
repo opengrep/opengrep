@@ -379,6 +379,7 @@ def ci(
         max_log_list_entries=max_log_list_entries,
     )
     output_handler = OutputHandler(output_settings)
+    output_handler.check_destinations()
 
     per_product_excludes = {
         product: [*exclude] if exclude else [] for product in ALL_PRODUCTS
