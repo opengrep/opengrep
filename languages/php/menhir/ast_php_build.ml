@@ -609,6 +609,7 @@ and cast_type _env = function
   | StringTy -> A.StringTy
   | ArrayTy -> A.ArrayTy
   | ObjectTy -> A.ObjectTy
+  | VoidTy -> A.VoidTy
 
 and scalar env = function
   | C cst -> constant env cst

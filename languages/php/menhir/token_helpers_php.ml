@@ -207,6 +207,7 @@ let visitor_info_of_tok f = function
   | T_ARRAY_CAST ii -> T_ARRAY_CAST (f ii)
   | T_OBJECT_CAST ii -> T_OBJECT_CAST (f ii)
   | T_UNSET_CAST ii -> T_UNSET_CAST (f ii)
+  | T_VOID_CAST ii -> T_VOID_CAST (f ii)
   | T_IS_IDENTICAL ii -> T_IS_IDENTICAL (f ii)
   | T_IS_NOT_IDENTICAL ii -> T_IS_NOT_IDENTICAL (f ii)
   | T_IS_EQUAL ii -> T_IS_EQUAL (f ii)

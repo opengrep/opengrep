@@ -171,6 +171,7 @@ and ptype =
   | StringTy
   | ArrayTy
   | ObjectTy
+  | VoidTy (* PHP 8.5 *)
 
 (*****************************************************************************)
 (* Expression *)
