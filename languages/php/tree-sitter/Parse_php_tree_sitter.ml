@@ -681,9 +681,11 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_ref = None;
           p_name = v3;
           p_default = v4;
-          (* this grammar's property_promotion_parameter carries neither an
-           * attribute_list nor PHP 8.4 property hooks, so there is nothing to
-           * propagate into p_attrs/p_hooks here *)
+          (* this grammar's property_promotion_parameter carries only a
+           * visibility modifier: no attribute_list, no PHP 8.4 property hooks,
+           * and no PHP 8.5 'final' (which it rejects outright), so there is
+           * nothing to propagate into p_attrs/p_hooks, and p_modifiers can
+           * only ever hold the visibility *)
           p_attrs = [];
           p_modifiers = [ v1 ];
           p_variadic = None;
@@ -1195,9 +1197,7 @@ and map_enum_member_declaration (env : env) (x : CST.enum_member_declaration) :
     classmember list =
   match x with
   | `Enum_case (v1, v2, v3, v4, v5) ->
-      (* Same as for properties: parsed by the grammar, but ast_php's
-       * class_var (used for enum cases) has nowhere to put them. *)
-      let _attrs_TODO =
+      let attrs =
         match v1 with
         | Some x -> map_attribute_list env x
         | None -> []
@@ -1229,7 +1229,8 @@ and map_enum_member_declaration (env : env) (x : CST.enum_member_declaration) :
       let type_, value = v4 in
       [
         EnumCase
-          { cv_name = v3; cv_type = type_; cv_value = value; cv_modifiers = []; cv_hooks = [] };
+          { cv_name = v3; cv_type = type_; cv_value = value; cv_modifiers = [];
+            cv_hooks = []; cv_attrs = attrs };
       ]
   | `Meth_decl x -> [ map_method_declaration env x ]
   | `Use_decl x -> map_use_declaration env x
@@ -1507,10 +1508,7 @@ and map_member_declaration (env : env) (x : CST.member_declaration) :
       in
       map_const_declaration ~attrs ~modifiers env v3
   | `Prop_decl (v1, v2, v3, v4, v5, v6) ->
-      (* The grammar does parse attributes on properties, but ast_php's
-       * class_var has no field to hold them, so they are dropped here.
-       * (The menhir parser does not accept them either.) *)
-      let _attrs_TODO =
+      let attrs =
         match v1 with
         | Some x -> map_attribute_list env x
         | None -> []
@@ -1545,6 +1543,7 @@ and map_member_declaration (env : env) (x : CST.member_declaration) :
                * Propagating them would require regenerating the grammar.
                * The menhir parser (the primary one for PHP) does handle them. *)
               A.cv_hooks = [];
+              A.cv_attrs = attrs;
             })
         (v4 :: v5)
   | `Meth_decl x -> [ map_method_declaration env x ]

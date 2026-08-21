@@ -795,12 +795,16 @@ and class_var
       cv_value = cvalue;
       cv_modifiers = cmodifiers;
       cv_hooks = chooks;
+      cv_attrs = cattrs;
     } =
   let id = var cname in
   let typ = option hint_type ctype in
   let value = option expr cvalue in
   let modifiers = list modifier_to_attr cmodifiers in
-  let ent = G.basic_entity id ~case_insensitive:false ~attrs:modifiers in
+  let attrs = list attribute cattrs in
+  let ent =
+    G.basic_entity id ~case_insensitive:false ~attrs:(modifiers @ attrs)
+  in
   let def = { G.vtype = typ; vinit = value; vtok = G.no_sc } in
   let hooks = list property_hook chooks in
   (ent, def, hooks)

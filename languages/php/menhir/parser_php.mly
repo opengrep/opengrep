@@ -73,8 +73,9 @@ let mk_param s =
     p_hooks = None;
   }
 
-let make_class_vars single = 
-  ClassVariables(NoModifiers(Tok.FakeTok("", None)),None, [Left(single)],Tok.FakeTok("", None))
+let make_class_vars attrs single =
+  ClassVariables(attrs, NoModifiers(Tok.FakeTok("", None)), None, [Left(single)],
+                 Tok.FakeTok("", None))
 
 let mk_var (s, tok) =
   match s with
@@ -677,6 +678,9 @@ ctor_modifier:
  | visibility_modifier { $1 }
  (* PHP 8.1 readonly promoted properties *)
  | T_READONLY { Readonly, $1 }
+ (* PHP 8.5 final promoted properties; 'final' alone also promotes, and the
+  * property is then public *)
+ | T_FINAL { Final, $1 }
  | set_visibility_modifier { $1 }
 
 is_reference: TAND?  { $1 }
@@ -759,13 +763,15 @@ unticked_class_declaration:
      }
 
   backed_enum_single:
-  | T_CASE ident TEQ static_scalar TSEMICOLON {make_class_vars (DName $2, Some ($3, $4), None) }
+  | ioption(attributes) T_CASE ident TEQ static_scalar TSEMICOLON
+      { make_class_vars $1 (DName $3, Some ($4, $5), None) }
   | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
 
 
 enum_single:
-    | T_CASE ident TSEMICOLON { make_class_vars (DName $2, None, None)  }
+    | ioption(attributes) T_CASE ident TSEMICOLON
+        { make_class_vars $1 (DName $3, None, None)  }
     | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
 
@@ -783,18 +789,9 @@ visibility_modifier:
  | T_PROTECTED { Protected,($1) }
  | T_PRIVATE   { Private,($1) }
 
-(* PHP 8.1: class constants can have visibility and final modifiers *)
-const_modifier:
- | visibility_modifier { $1 }
- | T_FINAL { Final, $1 }
-
 class_modifier:
  | T_ABSTRACT { Abstract, $1 }
  | T_FINAL    { Final, $1 }
-
-variable_modifiers:
- | T_VAR                  { NoModifiers $1 }
- | member_modifier+       { VModifiers $1 }
 
 %inline member_modifier:
  | class_modifier { $1 }
@@ -832,21 +829,34 @@ implements_list:
 (* Member declaration *)
 (*----------------------------*)
 
+(* Constants, properties and methods all start with the same optional
+ * attributes and modifiers, so they share that prefix here and are told apart
+ * by what follows it. Giving each its own modifier rule instead would force
+ * the parser to pick a member kind before it can know, which is ambiguous:
+ * 'final public function f() {}' and 'public final const K = 1;' were then
+ * rejected while the other order of the same modifiers was accepted.
+ *
+ * The modifiers a given member kind actually accepts are not checked here.
+ *)
 member_declaration:
- (* class constants - PHP 8.1 allows final modifier *)
- | ioption(attributes) const_modifier*
+ | ioption(attributes) member_modifier*
    T_CONST ioption(type_php) listc(class_constant_declaration)  ";"
      { ClassConstants($1, $2, $3, $4, $5, $6) }
 
 (* class variables (aka properties) *)
- | variable_modifiers ioption(type_php) listc(class_variable_simple) ";"
-     { ClassVariables($1, $2, $3, $4)  }
+ | ioption(attributes) member_modifier* ioption(type_php)
+   listc(class_variable_simple) ";"
+     { ClassVariables($1, VModifiers $2, $3, $4, $5)  }
  (* PHP 8.4: property with hooks - single variable, no semicolon *)
- | variable_modifiers ioption(type_php) class_variable_hooked
-     { ClassVariables($1, $2, [Left $3], Tok.FakeTok(";", None))  }
+ | ioption(attributes) member_modifier* ioption(type_php) class_variable_hooked
+     { ClassVariables($1, VModifiers $2, $3, [Left $4], Tok.FakeTok(";", None)) }
+ (* the old 'var $x;' form *)
+ | T_VAR ioption(type_php) listc(class_variable_simple) ";"
+     { ClassVariables(None, NoModifiers $1, $2, $3, $4)  }
 
 (* class methods *)
- | ioption(attributes) method_declaration { Method { $2 with f_attrs = $1 } }
+ | ioption(attributes) member_modifier* method_declaration
+     { Method { $3 with f_attrs = $1; f_modifiers = $2 } }
 
 (* php 5.4 traits *)
  | T_USE class_name_list ";"
@@ -857,16 +867,17 @@ member_declaration:
  (* semgrep-ext: *)
  | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
+(* the modifiers are supplied by the caller, see member_declaration *)
 method_declaration:
-  member_modifier* T_FUNCTION is_reference ident_method_name type_params_opt
+  T_FUNCTION is_reference ident_method_name type_params_opt
      "(" parameter_list ")"
      return_type?
      method_body
-     { validate_parameter_list $7;
-       let body, function_type = $10 in
-       ({ f_tok = $2; f_ref = $3; f_name = Name $4; f_tparams = $5;
-          f_params = ($6, $7, $8); f_return_type = $9;
-          f_body = body; f_type = function_type; f_modifiers = $1;
+     { validate_parameter_list $6;
+       let body, function_type = $9 in
+       ({ f_tok = $1; f_ref = $2; f_name = Name $3; f_tparams = $4;
+          f_params = ($5, $6, $7); f_return_type = $8;
+          f_body = body; f_type = function_type; f_modifiers = [];
           f_attrs = None;
         })
      }

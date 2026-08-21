@@ -455,6 +455,7 @@ and class_var = {
   cv_value : expr option;
   cv_modifiers : modifier list;
   cv_hooks : property_hook list; (* PHP 8.4 property hooks *)
+  cv_attrs : attribute list;
 }
 
 and method_def = func_def

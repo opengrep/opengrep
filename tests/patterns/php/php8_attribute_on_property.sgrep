@@ -1,0 +1,1 @@
+class $C { #[\Deprecated] public $T $X; }
