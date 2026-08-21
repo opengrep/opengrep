@@ -588,8 +588,8 @@ and parameter = {
   p_attrs : attributes option;
   (* constructor property promotion (PHP 8.0, was a php-facebook-ext),
    * this is always empty except for constructors, and the modifiers can
-   * be only a visibility, Readonly (PHP 8.1), or an asymmetric visibility
-   * (PHP 8.4), but never Static, Abstract, etc.
+   * be only a visibility, Readonly (PHP 8.1), an asymmetric visibility
+   * (PHP 8.4) or Final (PHP 8.5), but never Static, Abstract, etc.
    *)
   p_modifiers : modifier wrap list;
   p_type : hint_type option;
@@ -700,7 +700,8 @@ and class_stmt =
       * class_constant comma_list
       * tok (*;*)
   | ClassVariables of
-      class_var_modifier
+      attributes option
+      * class_var_modifier
       * (* static-php-ext: *)
       hint_type option
       * class_variable comma_list

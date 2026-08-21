@@ -853,13 +853,14 @@ and class_constants env st acc =
 (* as above we have the case of enums in which we make sure not to add $ to dname*)
 and class_variables env ?(add_dollar = true) st acc =
   match st with
-  | ClassVariables (m, ht, cvl, _) ->
+  | ClassVariables (attrs, m, ht, cvl, _) ->
       let cvl = comma_list cvl in
       let m =
         match m with
         | NoModifiers _ -> []
         | VModifiers l -> List_.map (modifier env) l
       in
+      let attrs = attributes env attrs in
       let ht = opt hint_type env ht in
       List_.map
         (fun (n, ss, hooks_opt) ->
@@ -875,6 +876,7 @@ and class_variables env ?(add_dollar = true) st acc =
             A.cv_modifiers = m;
             A.cv_type = ht;
             A.cv_hooks = hooks;
+            A.cv_attrs = attrs;
           })
         cvl
       @ acc
@@ -941,6 +943,7 @@ and promoted_field p =
         p_type;
         p_default;
         p_hooks;
+        p_attrs;
         _;
       } ->
       Some
@@ -950,6 +953,7 @@ and promoted_field p =
           A.cv_value = p_default;
           A.cv_modifiers;
           A.cv_hooks = p_hooks;
+          A.cv_attrs = p_attrs;
         }
   | A.ParamClassic _
   | A.ParamEllipsis _ ->
