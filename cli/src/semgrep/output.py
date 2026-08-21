@@ -1,6 +1,7 @@
 import dataclasses
 import os
 import pathlib
+import stat
 import sys
 from collections import defaultdict
 from functools import reduce
@@ -451,7 +452,14 @@ class OutputHandler:
         if self.has_output:
             for output_destination, output in self._build_outputs():
                 if output_destination:
-                    self._save_output(output_destination, output)
+                    try:
+                        self._save_output(output_destination, output)
+                    except SemgrepError as e:
+                        # wrapper.py exits without printing a SemgrepError, on
+                        # the assumption that it was already reported; errors
+                        # raised while saving have not been
+                        logger.error(e.format_for_terminal())
+                        raise
                 else:
                     if output:
                         try:
@@ -500,6 +508,18 @@ class OutputHandler:
 
         self._final_raise(final_error)
 
+    def check_destinations(self) -> None:
+        # mirrors the OCaml Output.check_destinations: refuse a bad
+        # destination before the scan, not after. URL destinations are
+        # skipped: the wrapper supports posting to them.
+        for destination, _format in self.settings.get_outputs():
+            if destination is not None and not is_url(destination):
+                if Path(destination).is_symlink():
+                    error = SemgrepError(f"Output is symlink: {destination}")
+                    # wrapper.py exits without printing a SemgrepError
+                    logger.error(error.format_for_terminal())
+                    raise error
+
     def _save_output(self, destination: str, output: str) -> None:
         if is_url(destination):
             self._post_output(destination, output)
@@ -511,11 +531,38 @@ class OutputHandler:
                 raise SemgrepError(f"Output is symlink: {destination}")
             # create the folders if not exists
             save_path.parent.mkdir(parents=True, exist_ok=True)
+            # an existing regular destination keeps its permission bits; a
+            # new one gets the kernel-masked mode a plain open would have
+            # used
+            try:
+                st = os.lstat(save_path)
+                mode = stat.S_IMODE(st.st_mode) if stat.S_ISREG(st.st_mode) else None
+            except FileNotFoundError:
+                mode = None
+            # write to a sibling temporary file and rename: os.replace
+            # swaps a symlink leaf rather than writing through it, and an
+            # interrupted write cannot leave a truncated output file
+            tmp_path = f"{destination}.{os.urandom(8).hex()}.tmp"
             fd = os.open(
-                save_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o666
+                tmp_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                mode if mode is not None else 0o666,
             )
-            with os.fdopen(fd, mode="w", encoding="utf-8") as fout:
-                fout.write(output)
+            try:
+                # the creation mode is masked by the umask; restore the
+                # exact bits of an existing destination; fchmod so no path
+                # is followed (Windows has neither fchmod nor POSIX modes)
+                if mode is not None and hasattr(os, "fchmod"):
+                    os.fchmod(fd, mode)
+                with os.fdopen(fd, mode="w", encoding="utf-8") as fout:
+                    fout.write(output)
+                os.replace(tmp_path, save_path)
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
 
     def _post_output(self, output_url: str, output: str) -> None:
         logger.info(f"posting to {output_url}...")
