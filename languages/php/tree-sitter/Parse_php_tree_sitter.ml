@@ -120,6 +120,11 @@ let map_primitive_type (env : env) (x : CST.primitive_type) : A.hint_type =
   | `False tok -> (* "false" *) Hint (map_name env tok)
   | `Null tok -> (* "null" *) Hint (map_name env tok)
 
+(* No case for the PHP 8.5 '(void)' cast below: it is absent from this
+ * grammar's cast_type, so '(void) foo()' is parsed as a parenthesized
+ * expression followed by an ERROR node rather than as a cast. Supporting it
+ * would require regenerating the grammar.
+ * The menhir parser (the primary one for PHP) does handle it. *)
 let map_cast_type (env : env) (x : CST.cast_type) =
   match x with
   | `Array tok -> (* "array" *) (A.ArrayTy, token env tok)

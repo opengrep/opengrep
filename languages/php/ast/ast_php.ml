@@ -227,6 +227,7 @@ and cast_type =
   | StringTy
   | ArrayTy
   | ObjectTy
+  | VoidTy (* PHP 8.5 *)
 
 and special =
   (* often transformed in Var "$this" in the analysis *)

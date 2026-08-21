@@ -211,6 +211,8 @@ let str_of_info x = Tok.content_of_tok x
  T_IS_SMALLER_OR_EQUAL    T_IS_GREATER_OR_EQUAL
  T_BOOL_CAST T_INT_CAST T_DOUBLE_CAST T_STRING_CAST T_ARRAY_CAST T_OBJECT_CAST
  T_UNSET_CAST
+ (* PHP 8.5 *)
+ T_VOID_CAST
  T_IS_IDENTICAL T_IS_NOT_IDENTICAL T_IS_EQUAL     T_IS_NOT_EQUAL
  T__AT "@"
  (* was declared implicitely because was using directly the character *)
@@ -298,7 +300,7 @@ let str_of_info x = Tok.content_of_tok x
 
 %right     TBANG
 %nonassoc  T_INSTANCEOF
-%right     TTILDE T_INC T_DEC T_INT_CAST T_DOUBLE_CAST T_STRING_CAST T_ARRAY_CAST T_OBJECT_CAST T_BOOL_CAST T_UNSET_CAST
+%right     TTILDE T_INC T_DEC T_INT_CAST T_DOUBLE_CAST T_STRING_CAST T_ARRAY_CAST T_OBJECT_CAST T_BOOL_CAST T_UNSET_CAST T_VOID_CAST
 %right     T__AT
 %nonassoc  T_CLONE
 %left      T_ELSEIF
@@ -1151,6 +1153,8 @@ expr:
  | T_STRING_CAST expr   { Cast((StringTy,$1),$2) }
  | T_ARRAY_CAST  expr   { Cast((ArrayTy,$1),$2) }
  | T_OBJECT_CAST expr   { Cast((ObjectTy,$1),$2) }
+ (* PHP 8.5: marks that not using the value is intentional *)
+ | T_VOID_CAST   expr   { Cast((VoidTy,$1),$2) }
   | T_MATCH "(" expr_or_dots ")" match_cases
   { Match ($1,$3,$5)}
 

@@ -96,6 +96,7 @@ let ptype (x, t) =
   (* TODO: TyArray of gen? *)
   | ArrayTy -> G.ty_builtin ("array", t)
   | ObjectTy -> G.ty_builtin ("object", t)
+  | VoidTy -> G.ty_builtin ("void", t)
 
 let list_expr_to_opt xs =
   match xs with
