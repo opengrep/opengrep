@@ -1,0 +1,20 @@
+rules:
+  - id: compact-module-class
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      User input flows from app.rb into `Client.new.handle(tainted)`.
+      `handle` is not defined on `Client`; it is inherited from
+      `Svc::Base`, which is declared in compact form (`class Svc::Base`)
+      in lib.rb.  The cross-file parent edge `Client -> Svc::Base` only
+      exists if projidx decomposes the compact name into the namespace
+      qn `Svc.Base`.  Without that, `Svc::Base` is indexed as a bare
+      top-level `Base`, the parent path `Svc.Base` fails to resolve, and
+      the sink is unreachable.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source
+    pattern-sinks:
+      - pattern: sink(...)

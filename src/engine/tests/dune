@@ -7,8 +7,11 @@
    kcas_data
 
    semgrep.core
+   semgrep.core_scan
    semgrep.il
    semgrep.engine
+   semgrep.targeting
+   git_wrapper
  )
  (preprocess
     (pps

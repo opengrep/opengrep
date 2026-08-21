@@ -1,0 +1,44 @@
+rules:
+  - id: dispatch-closure-chain
+    languages: [go]
+    severity: ERROR
+    message: >
+      Two-iteration dispatch-closure stress.  Source flows from
+      main.go through iface1.I1.F (FBDecl, no body), whose only
+      implementation impl1.Impl1.F calls iface2.I2.G (also FBDecl),
+      whose only implementation impl2.Impl2.G holds the sink.
+
+      § 6 C1 says compute_relevant_subgraph's dispatch closure must
+      iterate "up to max_depth times since newly added implementations
+      may themselves call other interface methods."  The first
+      iteration of the closure pulls Impl1.F into the subgraph as a
+      Dispatch predecessor of I1.F.  Once Impl1.F is in, the
+      reverse-callee BFS step (Phase E.5) brings I2.G in as Impl1.F's
+      Call callee.  But Impl2.G — the Dispatch predecessor of I2.G —
+      is NOT pulled in by step 5; only a second iteration of the
+      closure brings it in.
+
+      Failure modes if max_depth is too low (e.g. 1) or the iteration
+      isn't a true fixpoint:
+        - Impl2.G never enters the subgraph.
+        - At topo-fold time the FBDecl case for I2.G finds no impl
+          signatures in db → merges nothing → stores an empty
+          skeleton signature.
+        - Impl1.F's signature (extracted in topo order before I2.G
+          via the BFS-determined order) reports no taint flow at the
+          I2.G call site → caller chain breaks → no finding.
+
+      Annotation lives at the second-level impl's sink.  If the test
+      is silently green even with single-iteration closure, that
+      hints at a different (perhaps fortunate) execution order that
+      should be investigated.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.URL.Query().Get($PARAM)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.Query($QUERY)
+          - focus-metavariable: $QUERY

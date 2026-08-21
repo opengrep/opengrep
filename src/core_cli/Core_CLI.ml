@@ -90,6 +90,10 @@ let equivalences_file = ref None
 
 (* intrafile tainting mode *)
 let taint_intrafile = ref Core_scan_config.default.taint_intrafile
+(* interfile tainting mode *)
+let taint_interfile = ref Core_scan_config.default.taint_interfile
+let taint_interfile_depth = ref Core_scan_config.default.taint_interfile_depth
+
 
 (* ------------------------------------------------------------------------- *)
 (* limits *)
@@ -256,7 +260,9 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
       in
       let res =
         Logs_.with_debug_trace ~__FUNCTION__ (fun () ->
-            Core_json_output.core_output_of_matches_and_errors ~inline:config.inline_metavariables res)
+            Core_json_output.core_output_of_matches_and_errors
+              ~inline:config.inline_metavariables
+              ~taint_interfile:config.taint_interfile res)
       in
       (*
         Not pretty-printing the json output (Yojson.Safe.prettify)
@@ -292,6 +298,7 @@ let output_core_results (caps : < Cap.stdout ; Cap.stderr ; Cap.exit >)
           in
           let matches =
             Core_json_output.dedup_and_sort
+              ~taint_interfile:config.taint_interfile
               (Core_match.to_rule_id_options_map
                  List_.(map (fun (Core_result.{pm; _}) -> pm) res.processed_matches))
               matches
@@ -345,9 +352,13 @@ let mk_config () : Core_scan_config.t =
     max_match_per_file = !max_match_per_file;
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
+    (* taint_interfile implies taint_intrafile; enforced in Core_scan.scan. *)
     taint_intrafile = !taint_intrafile;
     effect_guards = false;
+    taint_interfile = !taint_interfile;
+    taint_interfile_depth = !taint_interfile_depth;
     engine_config = Engine_config.default;
+    targeting_conf = Find_targets.default_conf;
   }
 
 (*****************************************************************************)
@@ -674,6 +685,12 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
     ( "-taint_intrafile",
       Arg.Set taint_intrafile,
       " activate intrafile tainting mode" );
+    ( "-taint_interfile",
+      Arg.Set taint_interfile,
+      " activate interfile tainting mode (implies -taint_intrafile)" );
+    ( "-taint_interfile_depth",
+      Arg.Set_int taint_interfile_depth,
+      " <int> maximum call chain depth for companion file discovery (default 3)" );
   ]
   @ Flag_parsing_cpp.cmdline_flags_macrofile ()
   (* inlining of: Common2.cmdline_flags_devel () @ *)
@@ -872,7 +889,7 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
                    targeting use opengrep"
           in
           let engine_config =
-            Engine_config.{ custom_ignore_pattern = !Flag.opengrep_ignore_pattern; taint_intrafile = None }
+            Engine_config.{ custom_ignore_pattern = !Flag.opengrep_ignore_pattern }
           in
           let config = { config with target_source; ncores; engine_config } in
 

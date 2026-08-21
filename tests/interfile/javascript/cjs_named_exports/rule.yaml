@@ -1,0 +1,16 @@
+rules:
+  - id: cjs-named-exports
+    languages: [js]
+    severity: ERROR
+    message: >
+      CommonJS named exports — module.exports = { fn } and
+      module.exports.fn = fn — must resolve at the requiring file, so
+      taint flows into the exported functions.  A same-file function that
+      is never exported must not be reached through the module object.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -1,0 +1,15 @@
+rules:
+  - id: toplevel-only-flow
+    languages: [python]
+    severity: ERROR
+    message: >
+      Every source and sink here sits at module top level, so no enclosing
+      function exists to seed a call-graph subgraph.  Enabling interfile taint
+      must not cost the rule its ordinary intrafile findings.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

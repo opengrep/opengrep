@@ -1,0 +1,17 @@
+rules:
+  - id: mutual-recursion
+    languages: [go]
+    severity: ERROR
+    message: >
+      Tainted input flows through a mutually-recursive cycle p->q->r->p whose
+      members live in SEPARATE files (a genuinely interfile cycle).  The source
+      is injected inside the cycle (q -> r(source())) and must flow around it to
+      reach the sink; without the interfile SCC signature fixpoint, one cycle
+      member is summarised before its cross-file callee and the taint is lost.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

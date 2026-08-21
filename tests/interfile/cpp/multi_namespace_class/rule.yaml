@@ -1,0 +1,18 @@
+rules:
+  - id: multi-namespace-class
+    languages: [cpp]
+    severity: ERROR
+    message: >
+      Tainted data flows from app.cpp into `Client.handle`, inherited from
+      `b::Base`.  `Base` lives in the second of two namespaces in lib.cpp.
+      The cross-file parent edge `Client -> b::Base` exists only if projidx
+      attributes classes by their open `Package`/`PackageEnd` region rather
+      than the file's first namespace — otherwise `Base` is mis-indexed as
+      `a.Base` and the sink is unreachable.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

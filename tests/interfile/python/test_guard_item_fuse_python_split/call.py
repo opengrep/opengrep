@@ -1,0 +1,2 @@
+def call():
+    caller(source())

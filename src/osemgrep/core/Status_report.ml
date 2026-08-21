@@ -96,8 +96,8 @@ let pp_status ~num_rules ~num_targets ~respect_gitignore lang_jobs ppf =
              let targets =
                xxs
                |> List.concat_map (fun (_, _, targets) -> targets)
-               |> Assoc.group_by Fun.id
-               |> List_.map (fun (target, _) -> target)
+               |> Assoc.group_by (fun ({ Target_and_root.target_fpath; _ }) -> target_fpath)
+               |> List_.map (fun (fpath, _) -> fpath)
                |> List.length
              in
              let rules =

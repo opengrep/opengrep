@@ -82,17 +82,23 @@ module G = AST_generic
 (*****************************************************************************)
 
 (* the classic *)
-type tok = G.tok [@@deriving show]
-type 'a wrap = 'a G.wrap [@@deriving show]
+(* WARNING: the [ord] derived here (and on the IL types below) is
+   TOKEN-SENSITIVE — it compares positions, so two otherwise-identical
+   names/exprs at different source locations sort as distinct.  That is NOT
+   what taint identity wants: for taint sets/keys use the hand-written,
+   token-INSENSITIVE [IL_helpers.compare_exp] / [compare_lval] / etc.
+   Reserve these derived comparators for position-aware uses only. *)
+type tok = G.tok [@@deriving show, ord]
+type 'a wrap = 'a G.wrap [@@deriving show, ord]
 
 (* useful mainly for empty containers *)
-type 'a bracket = tok * 'a * tok [@@deriving show]
+type 'a bracket = tok * 'a * tok [@@deriving show, ord]
 
 (*****************************************************************************)
 (* Names *)
 (*****************************************************************************)
 
-type ident = G.ident [@@deriving show, eq]
+type ident = G.ident [@@deriving show, eq, ord]
 
 (* 'sid' below is the result of name resolution and variable disambiguation
  * using a gensym (see Naming_AST.ml). A name is guaranteed to be
@@ -146,7 +152,7 @@ type fixme_kind =
   | ToDo (* some construct that we still don't support *)
   | Sgrep_construct (* some Sgrep construct shows up in the code, e.g. `...' *)
   | Impossible (* something we thought impossible happened *)
-[@@deriving show]
+[@@deriving show, ord]
 
 (*****************************************************************************)
 (* Mapping back to Generic *)
@@ -181,17 +187,18 @@ let any_of_orig = function
 (*****************************************************************************)
 
 type name_param = { pname : name; pdefault : G.expr option }
-[@@deriving show { with_path = false }]
+[@@deriving show { with_path = false }, ord]
 
 type param =
   | Param of name_param
+  | ParamReceiver of name_param  (** Go/Java method receiver (maps to BThis) *)
   | ParamRest of name_param
   | ParamPattern of name_param * G.pattern
   | ParamFixme
-[@@deriving show { with_path = false }]
+[@@deriving show { with_path = false }, ord]
 
 type 'a argument = Unnamed of 'a | Named of ident * 'a
-[@@deriving show { with_path = false }]
+[@@deriving ord, eq, show { with_path = false }]
 
 (*****************************************************************************)
 (* Parent iterator *)
@@ -222,6 +229,7 @@ class virtual ['self] iter_parent =
     method visit_param env param =
       match param with
       | Param { pname; pdefault = _ }
+      | ParamReceiver { pname; pdefault = _ }
       | ParamRest { pname; pdefault = _ }
       | ParamPattern ({ pname; pdefault = _ }, _) ->
           self#visit_name env pname
@@ -486,7 +494,7 @@ and node_kind =
   | NOther of other_stmt
   | NTodo of stmt
 [@@deriving
-  show { with_path = false },
+  show { with_path = false }, ord,
     visitors { variety = "iter"; ancestors = [ "iter_parent" ] }]
 
 (* For now there is just one kind of edge.
@@ -521,6 +529,29 @@ type any = L of lval | E of exp | I of instr | S of stmt | Ss of stmt list
 
 let ident_str_of_name name = fst name.ident
 let str_of_label ((n, _), _) = n
+
+(* Rewrite a [name] so that its token carries an absolute file path,
+   mirroring what [Function_id.make_absolute] does for Function_ids.
+   No-op when [project_root] is [None], the token is fake, or the
+   path is already absolute. *)
+let absolutify_name (project_root : Fpath.t option) (n : name) : name =
+  match project_root with
+  | Some root ->
+    let name_str, tok = n.ident in
+    if Tok.is_fake tok then n
+    else
+      let file = Tok.file_of_tok tok in
+      if Fpath.is_abs file then n
+      else
+        let abs_file = Fpath.(root // file) |> Fpath.normalize in
+        let new_tok =
+          Tok.fix_location
+            (fun (loc : Tok.location) ->
+              { loc with pos = { loc.pos with Pos.file = abs_file } })
+            tok
+        in
+        { n with ident = (name_str, new_tok) }
+  | None -> n
 
 let rec equal_base base1 base2 =
   match (base1, base2) with

@@ -21,14 +21,17 @@ type matcher = G.expr -> G.name list -> G.name option
 (* Common Matchers *)
 (*****************************************************************************)
 
-(* Check if a name is in the known classes list *)
+(* Matched on leaf name, so a qualified ref matches a class by its simple name. *)
 let is_known_class (name : G.name) (class_names : G.name list) : bool =
-  List.exists
-    (fun class_name ->
-      match (name, class_name) with
-      | G.Id ((str1, _), _), G.Id ((str2, _), _) -> str1 = str2
-      | _ -> false)
-    class_names
+  match Ty_leaf.leaf_of_name name with
+  | None -> false
+  | Some s1 ->
+    List.exists
+      (fun class_name ->
+        match Ty_leaf.leaf_of_name class_name with
+        | Some s2 -> String.equal s1 s2
+        | None -> false)
+      class_names
 
 (* Check if string starts with uppercase *)
 let is_uppercase_start str =
@@ -80,6 +83,12 @@ let match_dot_new rval_expr class_names =
       | _ -> None)
   | _ -> None
 
+let rec match_rust_struct rval_expr class_names =
+  match rval_expr.G.e with
+  | G.Constructor (name, _) when is_known_class name class_names -> Some name
+  | G.Ref (_, inner) -> match_rust_struct inner class_names
+  | _ -> None
+
 (* Matcher: Go &Struct{} or Struct{} *)
 let match_go_struct rval_expr class_names =
   match rval_expr.G.e with
@@ -118,7 +127,8 @@ let get_matcher (lang : Lang.t) : matcher option =
   | Lang.Java | Lang.Csharp | Lang.Vb -> Some match_new_basic
   | Lang.Php -> Some match_new_with_tyexpr
   | Lang.Python | Lang.Python2 | Lang.Python3 | Lang.Swift -> Some match_call_uppercase
-  | Lang.Crystal | Lang.Ruby | Lang.Rust -> Some match_dot_new
+  | Lang.Crystal | Lang.Ruby -> Some match_dot_new
+  | Lang.Rust -> Some (combine [match_dot_new; match_rust_struct])
   | Lang.Go -> Some match_go_struct
   | Lang.Apex -> Some match_apex
   | Lang.Kotlin | Lang.Cpp -> Some (combine [match_new_basic; match_call_uppercase])
@@ -173,10 +183,23 @@ let extract_class_name_from_constructor (rval_expr : G.expr) (lang : Lang.t)
   | Some matcher -> matcher rval_expr class_names
   | None -> None
 
-(* Object initialization detection for different languages *)
-let detect_object_initialization (ast : G.program) (lang : Lang.t) :
+(* [extra_class_names] supplies project-wide/interfile classes, deduped. *)
+let detect_object_initialization
+    ?(extra_class_names : G.name list = [])
+    (ast : G.program) (lang : Lang.t) :
     object_mapping list =
-  let class_names = collect_class_names ast in
+  let class_names =
+    let module StringSet = Set.Make (String) in
+    let _, acc =
+      List.fold_left (fun (seen, acc) n ->
+        match n with
+        | G.Id ((s, _), _) when not (StringSet.mem s seen) ->
+          (StringSet.add s seen, n :: acc)
+        | _ -> (seen, acc)
+      ) (StringSet.empty, []) (collect_class_names ast @ extra_class_names)
+    in
+    acc
+  in
   let object_mappings = ref [] in
 
   let visitor =
@@ -188,7 +211,22 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
         | G.DefStmt (entity, def_kind) -> (
             match def_kind with
             | G.VarDef var_def -> (
-                match (entity.G.name, var_def.G.vinit) with
+                (* Rust [let s = ...] gives [EPattern], not [EN]; get the leaf id. *)
+                let normalized_name =
+                  match entity.G.name with
+                  | G.EN _ -> entity.G.name
+                  | G.EPattern p ->
+                      let rec leaf = function
+                        | G.PatId (id, info) -> Some (G.Id (id, info))
+                        | G.PatTyped (inner, _) -> leaf inner
+                        | _ -> None
+                      in
+                      (match leaf p with
+                       | Some n -> G.EN n
+                       | None -> entity.G.name)
+                  | _ -> entity.G.name
+                in
+                match (normalized_name, var_def.G.vinit) with
                 | G.EN var_name, Some init_expr -> (
                     let class_name =
                       extract_class_name_from_constructor init_expr lang
@@ -212,19 +250,15 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
                     | Some cls ->
                         object_mappings := (var_name, cls) :: !object_mappings
                     | _ -> ())
-                | G.EN var_name, None when lang = Lang.Cpp -> (
+                | G.EN var_name, None
+                  when Lang.equal lang Lang.Cpp
+                       || Lang.equal lang Lang.Rust -> (
                     match var_def.G.vtype with
                     | Some var_type -> (
-                        match var_type.G.t with
-                        | G.TyN name when is_known_class name class_names ->
-                            object_mappings :=
-                              (var_name, name) :: !object_mappings
-                        | G.TyFun (_, return_type) -> (
-                            match return_type.G.t with
-                            | G.TyN name when is_known_class name class_names ->
-                                object_mappings :=
-                                  (var_name, name) :: !object_mappings
-                            | _ -> ())
+                        match Ty_leaf.inner_class_name_of_ty
+                                ~through_funty:true var_type with
+                        | Some name when is_known_class name class_names ->
+                          object_mappings := (var_name, name) :: !object_mappings
                         | _ -> ())
                     | None -> ())
                 | _ -> ())
@@ -235,7 +269,8 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
                 let var_name =
                   match lval_expr.G.e with
                   | G.N name -> Some name
-                  | G.DotAccess (obj_expr, _, G.FN _) when lang = Lang.Go -> (
+                  | G.DotAccess (obj_expr, _, G.FN _)
+                    when Lang.equal lang Lang.Go -> (
                       match obj_expr.G.e with
                       | G.N obj_name -> (
                           let existing_mapping =
@@ -298,6 +333,80 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
   visitor#visit_program () ast;
   !object_mappings
 
+(* Stamp each mapping's class onto every occurrence's [id_type] so consumers
+   read it off the AST (fill-on-None; a [TyFun] [id_type] is overwritten —
+   C++'s most vexing parse). First mapping per leaf wins. *)
+let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
+  let sid_of_name (n : G.name) : G.SId.t option =
+    match n with
+    | G.Id (_, info) -> (
+        match !(info.G.id_resolved) with Some (_, sid) -> Some sid | None -> None)
+    | _ -> None
+  in
+  (* sid equality required only when both sides have resolved sids; else
+     name-only — which can stamp a same-named var from an unrelated scope
+     when sids are unresolved (Go/C++ often lack one). *)
+  let by_leaf : (string, (G.SId.t option * G.name) list) Hashtbl.t =
+    Hashtbl.create (max 16 (2 * List.length mappings))
+  in
+  List.iter
+    (fun (lhs, ty) ->
+      match Ty_leaf.leaf_of_name lhs with
+      | Some s ->
+        let prev = Option.value (Hashtbl.find_opt by_leaf s) ~default:[] in
+        Hashtbl.replace by_leaf s ((sid_of_name lhs, ty) :: prev)
+      | None -> ())
+    mappings;
+  Hashtbl.filter_map_inplace (fun _ l -> Some (List.rev l)) by_leaf;
+  let class_of_occurrence (n : G.name) : G.name option =
+    let sid_o = sid_of_name n in
+    match Ty_leaf.leaf_of_name n with
+    | None -> None
+    | Some s -> (
+        match Hashtbl.find_opt by_leaf s with
+        | None -> None
+        | Some cands ->
+          List.find_map
+            (fun (sid_m, ty) ->
+              match (sid_o, sid_m) with
+              | Some a, Some b -> if G.SId.equal a b then Some ty else None
+              | _ -> Some ty)
+            cands)
+  in
+  (* A stamped [id_type] carries the class name — strings and location
+     tokens — but NOT live [id_info]s: a name stamped with its AST
+     [id_info] embeds that node's own (possibly later-stamped) refs,
+     growing payloads into cross-file webs (cyclic ones on
+     self-referential classes) that every structural traversal then
+     crawls or overflows on. *)
+  let detacher =
+    object
+      inherit [_] G.map
+      method! visit_id_info _env _ii = G.empty_id_info ()
+    end
+  in
+  let stamper =
+    object
+      inherit [_] G.iter_no_id_info as super
+
+      method! visit_expr () e =
+        (match e.G.e with
+        | G.N (G.Id (_, info) as n)
+          when (match !(info.G.id_type) with
+               | None | Some { G.t = G.TyFun _; _ } -> true
+               | Some _ -> false) -> (
+            match class_of_occurrence n with
+            | Some ty ->
+                info.G.id_type :=
+                  Some { G.t = G.TyN (detacher#visit_name () ty);
+                         G.t_attrs = [] }
+            | None -> ())
+        | _ -> ());
+        super#visit_expr () e
+    end
+  in
+  stamper#visit_program () ast
+
 (*****************************************************************************)
 (* Constructor Detection Utilities *)
 (*****************************************************************************)
@@ -306,12 +415,9 @@ let detect_object_initialization (ast : G.program) (lang : Lang.t) :
 let is_constructor (lang : Lang.t) (func_name : string)
     (class_name_opt : string option) : bool =
   let config = Lang_config.get lang in
-  List.mem func_name config.constructor_names
+  List.exists (String.equal func_name) config.constructor_names
   ||
-  match class_name_opt with
-  | Some class_name ->
-      func_name = class_name
-  | None -> false
+  Option.fold ~none:false ~some:(String.equal func_name) class_name_opt
 
 (* Get all constructor method names for a language *)
 let get_constructor_names (lang : Lang.t) : string list =
@@ -327,10 +433,7 @@ let uses_new_keyword (lang : Lang.t) : bool =
 
 let execute_unified_constructor constructor_exp args args_taints
     check_function_call_fn env =
-  match check_function_call_fn env constructor_exp args args_taints with
-  | Some (call_taints, shape, updated_lval_env) ->
-      Some (call_taints, shape, updated_lval_env)
-  | None -> None
+  check_function_call_fn env constructor_exp args args_taints
 
 let execute_constructor_call lang constructor_name class_name args =
   if is_constructor lang constructor_name class_name then
