@@ -1,43 +1,98 @@
 name: test-install-ps1
 
 on:
-  # push:
-  #   branches:
-  #     - main
-  #   paths:
-  #     - 'install.ps1'
-  # pull_request:
-  #   paths:
-  #     - 'install.ps1'
+  push:
+    branches:
+      - main
+    paths:
+      - 'install.ps1'
+      - '.github/workflows/test-install-ps1.yml'
+  pull_request:
+    paths:
+      - 'install.ps1'
+      - '.github/workflows/test-install-ps1.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test-install-script:
     runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        # 'powershell' is Windows PowerShell 5.1, 'pwsh' is PowerShell 7;
+        # they differ in TLS negotiation and HTTP error handling.
+        shell: [pwsh, powershell]
+    defaults:
+      run:
+        # Step-level shell does not receive the matrix context.
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
           submodules: false
+          persist-credentials: false
 
       # Test help output
       - name: Test -Help flag
-        shell: pwsh
         run: .\install.ps1 -Help
 
       # Test listing versions
       - name: Test -List flag
-        shell: pwsh
         run: .\install.ps1 -List
 
-      # Test installing latest version
+      # A nonexistent version must fail with a non-zero exit; the not-found
+      # message is advisory, as PS 5.1 can lose the connection before the 404.
+      - name: Install nonexistent version (expect failure)
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $output = & ${{ matrix.shell }} -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version v9.9.9 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "Expected the install of a nonexistent version to fail"
+            exit 1
+          }
+          if ($output -notmatch 'not found') {
+            Write-Host "::notice::No not-found message; the download failed at transport level"
+          }
+          # The runner appends `exit $LASTEXITCODE`; the child's expected
+          # non-zero exit code must not fail the step.
+          exit 0
+
+      - name: Resolve latest release tag
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = gh api repos/opengrep/opengrep/releases/latest --jq .tag_name
+          if (-not $tag) {
+            Write-Error "Failed to resolve the expected latest tag via gh"
+            exit 1
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      # Test installing latest version; it must resolve to the latest stable
+      # release, never a pre-release
       - name: Install latest version
-        shell: pwsh
-        run: .\install.ps1
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $output = & ${{ matrix.shell }} -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Default install failed"
+            exit 1
+          }
+          $latestTag = '${{ steps.latest.outputs.tag }}'
+          if ($output -notmatch [regex]::Escape("Installing Opengrep $latestTag")) {
+            Write-Error "Default install did not resolve the latest stable version ($latestTag)"
+            exit 1
+          }
 
       # Verify installation
       - name: Verify installation
-        shell: pwsh
         run: |
           $binary = "$env:USERPROFILE\.opengrep\cli\latest\opengrep.exe"
           if (Test-Path $binary) {
@@ -47,14 +102,18 @@ jobs:
             exit 1
           }
 
-      # Test specific version install (re-install same or older version)
+      # Test specific version install (re-install same or older version);
+      # v1.11.2 is older than the GitHub API's first page of releases
       - name: Install specific version
-        shell: pwsh
-        run: .\install.ps1 -Version v1.15.0
+        run: .\install.ps1 -Version v1.11.2
+
+      # Pre-releases are never the default but must be installable explicitly;
+      # disabled because it pins a tag that may be deleted after a rebuild
+      # - name: Install pre-release version
+      #   run: .\install.ps1 -Version v1.28.0-interfile.alpha.1
 
       # Test remote execution style (one-liner simulation)
       - name: Test script from stdin
-        shell: pwsh
         run: |
           $script = Get-Content -Raw .\install.ps1
           & ([scriptblock]::Create($script)) -Help
@@ -66,6 +125,7 @@ jobs:
         with:
           fetch-depth: 1
           submodules: false
+          persist-credentials: false
 
       - name: Install cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
@@ -90,6 +150,7 @@ jobs:
         with:
           fetch-depth: 1
           submodules: false
+          persist-credentials: false
 
       # Test that ARM64 gets a warning but still installs
       - name: Install on ARM64 (should warn and use x86 emulation)
