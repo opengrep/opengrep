@@ -1040,7 +1040,14 @@ type_arg_list:
   | type_php                       { [Left $1]}
   | type_php "," type_arg_list     { (Left $1)::(Right $2):: $3 }
 
-return_type: ":" type_php                 { $1, $2 }
+(* 'static' is a type only in return position, so it is spelled out here
+ * rather than in primary_type_php, where it would be ambiguous with the
+ * 'static' modifier of a property or method.
+ *)
+return_type:
+ | ":" type_php     { $1, $2 }
+ | ":" T_STATIC     { $1, Hint (LateStatic $2, None) }
+ | ":" "?" T_STATIC { $1, HintQuestion ($2, Hint (LateStatic $3, None)) }
 
 (*************************************************************************)
 (* Attributes *)
