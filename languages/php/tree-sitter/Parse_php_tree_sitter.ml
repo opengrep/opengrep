@@ -120,6 +120,11 @@ let map_primitive_type (env : env) (x : CST.primitive_type) : A.hint_type =
   | `False tok -> (* "false" *) Hint (map_name env tok)
   | `Null tok -> (* "null" *) Hint (map_name env tok)
 
+(* No case for the PHP 8.5 '(void)' cast below: it is absent from this
+ * grammar's cast_type, so '(void) foo()' is parsed as a parenthesized
+ * expression followed by an ERROR node rather than as a cast. Supporting it
+ * would require regenerating the grammar.
+ * The menhir parser (the primary one for PHP) does handle it. *)
 let map_cast_type (env : env) (x : CST.cast_type) =
   match x with
   | `Array tok -> (* "array" *) (A.ArrayTy, token env tok)
@@ -631,6 +636,7 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_attrs = v1;
           p_modifiers = [];
           p_variadic = None;
+          p_hooks = [];
         }
   | `Vari_param (v1, v2, v3, v4, v5) ->
       let v1 =
@@ -659,6 +665,7 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_attrs = v1;
           p_modifiers = [];
           p_variadic = Some v4;
+          p_hooks = [];
         }
   | `Prop_prom_param (v1, v2, v3, v4) ->
       let v1 = map_visibility_modifier env v1 in
@@ -679,9 +686,15 @@ and map_anon_choice_simple_param_5af5eb3 (env : env)
           p_ref = None;
           p_name = v3;
           p_default = v4;
+          (* this grammar's property_promotion_parameter carries only a
+           * visibility modifier: no attribute_list, no PHP 8.4 property hooks,
+           * and no PHP 8.5 'final' (which it rejects outright), so there is
+           * nothing to propagate into p_attrs/p_hooks, and p_modifiers can
+           * only ever hold the visibility *)
           p_attrs = [];
           p_modifiers = [ v1 ];
           p_variadic = None;
+          p_hooks = [];
         }
 
 and map_argument (env : env) ((v1, v2) : CST.argument) =
@@ -824,6 +837,10 @@ and map_attribute_list (env : env) (xs : CST.attribute_list) : A.attribute list
       v2 :: v3)
     xs
 
+(* No case for the PHP 8.5 pipe operator below: this grammar has no '|>'
+ * token, so '$x |> f(...)' lexes as '|' followed by '>' and yields an ERROR
+ * node. Supporting it would require regenerating the grammar.
+ * The menhir parser (the primary one for PHP) does handle it. *)
 and map_binary_expression (env : env) (x : CST.binary_expression) =
   match x with
   | `Un_exp_pat_inst__choice_qual_name (v1, v2, v3) ->
@@ -1080,14 +1097,17 @@ and map_compound_statement_ (env : env) ((v1, v2, v3) : CST.compound_statement)
 and map_compound_statement (env : env) ((v1, v2, v3) : CST.compound_statement) =
   A.Block (map_compound_statement_ env (v1, v2, v3))
 
-and map_const_declaration (env : env) (x : CST.const_declaration) :
-    classmember list =
-  let consts = map_const_declaration_ env x in
+(* [attrs] and [modifiers] come from the enclosing class_const_declaration,
+ * which is where this grammar keeps the attribute list and the 'final'
+ * keyword. *)
+and map_const_declaration ?(attrs = []) ?(modifiers = []) (env : env)
+    (x : CST.const_declaration) : classmember list =
+  let consts = map_const_declaration_ ~attrs ~modifiers env x in
   List_.map (fun c -> ConstantDef c) consts
 
-and map_const_declaration_ (env : env)
+and map_const_declaration_ ?(attrs = []) ?(modifiers = []) (env : env)
     ((v1, v2, v3, v4, v5) : CST.const_declaration_) =
-  let v1 =
+  let visibility =
     match v1 with
     | Some x -> [ map_visibility_modifier env x ]
     | None -> []
@@ -1105,7 +1125,8 @@ and map_const_declaration_ (env : env)
   let v5 = map_semicolon env v5 in
   List_.map
     (fun (name, expr) ->
-      { A.cst_tok = v2; A.cst_name = name; A.cst_body = expr; A.cst_modifiers = [] })
+      { A.cst_tok = v2; A.cst_name = name; A.cst_body = expr;
+        A.cst_modifiers = modifiers @ visibility; A.cst_attrs = attrs })
     (v3 :: v4)
 
 and map_const_element (env : env) ((v1, v2, v3) : CST.const_element) =
@@ -1181,7 +1202,7 @@ and map_enum_member_declaration (env : env) (x : CST.enum_member_declaration) :
     classmember list =
   match x with
   | `Enum_case (v1, v2, v3, v4, v5) ->
-      let v1 =
+      let attrs =
         match v1 with
         | Some x -> map_attribute_list env x
         | None -> []
@@ -1213,7 +1234,8 @@ and map_enum_member_declaration (env : env) (x : CST.enum_member_declaration) :
       let type_, value = v4 in
       [
         EnumCase
-          { cv_name = v3; cv_type = type_; cv_value = value; cv_modifiers = []; cv_hooks = [] };
+          { cv_name = v3; cv_type = type_; cv_value = value; cv_modifiers = [];
+            cv_hooks = []; cv_attrs = attrs };
       ]
   | `Meth_decl x -> [ map_method_declaration env x ]
   | `Use_decl x -> map_use_declaration env x
@@ -1478,21 +1500,20 @@ and map_member_declaration (env : env) (x : CST.member_declaration) :
     classmember list =
   match x with
   | `Class_const_decl (v1, v2, v3) ->
-      let v1 =
+      let attrs =
         match v1 with
         | Some x -> map_attribute_list env x
         | None -> []
       in
-      let v2 =
+      let modifiers =
         match v2 with
         | Some tok ->
             (* pattern [fF][iI][nN][aA][lL] *) [ (A.Final, token env tok) ]
         | None -> []
       in
-      let v3 = map_const_declaration env v3 in
-      v3
+      map_const_declaration ~attrs ~modifiers env v3
   | `Prop_decl (v1, v2, v3, v4, v5, v6) ->
-      let v1 =
+      let attrs =
         match v1 with
         | Some x -> map_attribute_list env x
         | None -> []
@@ -1521,7 +1542,13 @@ and map_member_declaration (env : env) (x : CST.member_declaration) :
               A.cv_type = v3;
               A.cv_value = value;
               A.cv_modifiers = v2;
+              (* This grammar has no notion of PHP 8.4 property hooks at all:
+               * 'public int $x { get => 1; }' makes it emit an ERROR node for
+               * the whole '{ get => 1; }' part, so there is nothing to map.
+               * Propagating them would require regenerating the grammar.
+               * The menhir parser (the primary one for PHP) does handle them. *)
               A.cv_hooks = [];
+              A.cv_attrs = attrs;
             })
         (v4 :: v5)
   | `Meth_decl x -> [ map_method_declaration env x ]
@@ -1578,6 +1605,15 @@ and map_nullsafe_member_access_expression (env : env)
   let v3 = map_member_name env v3 in
   A.Obj_get (v1, v2, v3)
 
+(* Known limitation: this grammar predates PHP 8.4 'new Foo()->bar()', and it
+ * does not reject it — it silently applies the old precedence and yields
+ * 'new (Foo()->bar())' instead of '(new Foo())->bar()'. The two spellings are
+ * still distinguishable here ('new Foo()->bar()' puts a Call at the head of
+ * the chain, 'new Foo->bar()' a plain name), so the tree could in principle be
+ * re-associated, but doing that for every postfix form ('->', '::', '[', '(')
+ * is a rewrite better handled by regenerating the grammar.
+ * The menhir parser (the primary one for PHP) gets this right.
+ *)
 and map_object_creation_expression (env : env)
     (x : CST.object_creation_expression) =
   match x with
@@ -1626,6 +1662,7 @@ and map_object_creation_expression (env : env)
             c_uses = uses;
             c_enum_type = None;
             c_modifiers = [];
+            (* this grammar's anonymous class carries no attribute_list *)
             c_attrs = [];
             c_constants = consts;
             c_variables = vars;
@@ -1683,6 +1720,8 @@ and map_primary_expression (env : env) (x : CST.primary_expression) : A.expr =
           A.f_return_type = v6;
           A.f_ref = v3;
           A.m_modifiers = v1;
+          (* this grammar's anonymous_function_creation_expression carries no
+           * attribute_list *)
           A.f_attrs = [];
           A.l_uses = v5;
           A.f_body = v7;
@@ -1712,6 +1751,7 @@ and map_primary_expression (env : env) (x : CST.primary_expression) : A.expr =
           A.f_return_type = v5;
           A.f_ref = v3;
           A.m_modifiers = v1;
+          (* this grammar's arrow_function carries no attribute_list *)
           A.f_attrs = [];
           A.l_uses = [];
           A.f_body = Expr (v7, Tok.unsafe_sc);
@@ -1982,6 +2022,12 @@ and map_statement (env : env) (x : CST.statement) =
       A.Expr
         (A.Call (A.IdSpecial (A.FuncLike A.Unset, v1), (v2, v3 :: v4, v5)), v6)
   | `Const_decl x ->
+      (* No attributes here, and none are recoverable: this grammar predates
+       * PHP 8.5 attributes on global constants, so '#[A] const X = 1;' makes
+       * the parser emit an ERROR node holding the attribute_list as a sibling
+       * of the const declaration, and the typed CST we get passed keeps only
+       * the const. Propagating them would require regenerating the grammar.
+       * The menhir parser (the primary one for PHP) does handle them. *)
       let consts = map_const_declaration_ env x in
       let consts = List_.map (fun c -> A.ConstantDef c) consts in
       stmt1 consts
@@ -2087,6 +2133,7 @@ and map_statement (env : env) (x : CST.statement) =
           c_uses = uses;
           c_enum_type = None;
           c_modifiers = [];
+          (* this grammar's interface_declaration carries no attribute_list *)
           c_attrs = [];
           c_constants = consts;
           c_variables = vars;
@@ -2111,6 +2158,7 @@ and map_statement (env : env) (x : CST.statement) =
           c_uses = uses;
           c_enum_type = None;
           c_modifiers = [];
+          (* this grammar's trait_declaration carries no attribute_list *)
           c_attrs = [];
           c_constants = consts;
           c_variables = vars;

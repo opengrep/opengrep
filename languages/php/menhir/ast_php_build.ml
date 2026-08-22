@@ -426,6 +426,10 @@ and expr env = function
       let e2 = expr env e2 in
       let bop = binary_op bop in
       A.Binop (e1, (bop, tok), e2)
+  | Pipe (e1, tok, e2) ->
+      let e1 = expr env e1 in
+      let e2 = expr env e2 in
+      A.Pipe (e1, tok, e2)
   | Unary ((uop, tok), e) ->
       let e = expr env e in
       let uop = unary_op uop in
@@ -605,6 +609,7 @@ and cast_type _env = function
   | StringTy -> A.StringTy
   | ArrayTy -> A.ArrayTy
   | ObjectTy -> A.ObjectTy
+  | VoidTy -> A.VoidTy
 
 and scalar env = function
   | C cst -> constant env cst
@@ -677,10 +682,11 @@ and hint_type env = function
 (* Definitions *)
 (* ------------------------------------------------------------------------- *)
 and constant_def env
-    { cst_name; cst_val; cst_type = _TODO; cst_toks = tok, _, _ } =
+    { cst_name; cst_val; cst_type = _TODO; cst_toks = tok, _, _; cst_attrs } =
   let name = ident env cst_name in
   let value = expr env cst_val in
-  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value; A.cst_modifiers = [] }
+  { A.cst_tok = tok; A.cst_name = name; A.cst_body = value; A.cst_modifiers = [];
+    A.cst_attrs = attributes env cst_attrs }
 
 and comma_list_dots_params f xs =
   match xs with
@@ -831,14 +837,15 @@ and class_traits env x acc =
 
 and class_constants env st acc =
   match st with
-  | ClassConstants (mods, tok, _, cl, _) ->
+  | ClassConstants (attrs, mods, tok, _, cl, _) ->
       let modifiers = List_.map (modifier env) mods in
+      let attrs = attributes env attrs in
       List_.fold_right
         (fun (n, ss) acc ->
           let body = static_scalar_affect env ss in
           let cst =
             { A.cst_name = ident env n; cst_body = body; cst_tok = tok;
-              cst_modifiers = modifiers }
+              cst_modifiers = modifiers; cst_attrs = attrs }
           in
           cst :: acc)
         (comma_list cl) acc
@@ -847,13 +854,14 @@ and class_constants env st acc =
 (* as above we have the case of enums in which we make sure not to add $ to dname*)
 and class_variables env ?(add_dollar = true) st acc =
   match st with
-  | ClassVariables (m, ht, cvl, _) ->
+  | ClassVariables (attrs, m, ht, cvl, _) ->
       let cvl = comma_list cvl in
       let m =
         match m with
         | NoModifiers _ -> []
         | VModifiers l -> List_.map (modifier env) l
       in
+      let attrs = attributes env attrs in
       let ht = opt hint_type env ht in
       List_.map
         (fun (n, ss, hooks_opt) ->
@@ -869,6 +877,7 @@ and class_variables env ?(add_dollar = true) st acc =
             A.cv_modifiers = m;
             A.cv_type = ht;
             A.cv_hooks = hooks;
+            A.cv_attrs = attrs;
           })
         cvl
       @ acc
@@ -887,8 +896,11 @@ and property_hook env hook =
     | PHExpr (_, e, sc) -> Some (A.Expr (expr env e, sc))
     | PHBlock (l, stmts, r) ->
         Some (A.Block (l, List_.fold_right (stmt_and_def env) stmts [], r))
+    | PHAbstract _ -> None
   in
-  { A.ph_kind = kind; A.ph_params = params; A.ph_body = body }
+  { A.ph_modifiers = List_.map (modifier env) hook.ph_modifiers;
+    A.ph_ref = hook.ph_ref; A.ph_kind = kind; A.ph_params = params;
+    A.ph_body = body }
 
 and modifier _env m =
   let m, tok = m in
@@ -926,14 +938,23 @@ and class_body env st (mets, flds) =
 and promoted_field p =
   match p with
   | A.ParamClassic
-      { p_modifiers = _ :: _ as cv_modifiers; p_name; p_type; p_default; _ } ->
+      {
+        p_modifiers = _ :: _ as cv_modifiers;
+        p_name;
+        p_type;
+        p_default;
+        p_hooks;
+        p_attrs;
+        _;
+      } ->
       Some
         {
           A.cv_name = p_name;
           A.cv_type = p_type;
           A.cv_value = p_default;
           A.cv_modifiers;
-          A.cv_hooks = [];
+          A.cv_hooks = p_hooks;
+          A.cv_attrs = p_attrs;
         }
   | A.ParamClassic _
   | A.ParamEllipsis _ ->
@@ -973,6 +994,7 @@ and parameter env
       p_attrs = a;
       p_modifiers = ms;
       p_variadic = variadic;
+      p_hooks = hooks;
     } =
   {
     A.p_type = opt hint_type env t;
@@ -982,6 +1004,10 @@ and parameter env
     A.p_attrs = attributes env a;
     A.p_modifiers = List_.map (modifier env) ms;
     A.p_variadic = variadic;
+    A.p_hooks =
+      (match hooks with
+      | None -> []
+      | Some (_, hs, _) -> List_.map (property_hook env) hs);
   }
 
 (*****************************************************************************)
@@ -1083,12 +1109,8 @@ and attributes env = function
       let xs = comma_list xs in
       xs
       |> List_.map (function
-           | Attribute (s, tok) -> A.Id [ (s, wrap tok) ]
-           | AttributeWithArgs ((s, tok), (lp, xs, rp)) ->
+           | Attribute n -> name_expr env n
+           | AttributeWithArgs (n, (lp, xs, rp)) ->
                A.Call
-                 ( A.Id [ (s, wrap tok) ],
-                   ( lp,
-                     List_.map
-                       (fun e -> A.Arg (static_scalar env e))
-                       (comma_list xs),
-                     rp ) ))
+                 ( name_expr env n,
+                   (lp, List_.map (argument env) (comma_list xs), rp) ))

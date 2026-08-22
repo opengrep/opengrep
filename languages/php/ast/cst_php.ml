@@ -171,6 +171,7 @@ and ptype =
   | StringTy
   | ArrayTy
   | ObjectTy
+  | VoidTy (* PHP 8.5 *)
 
 (*****************************************************************************)
 (* Expression *)
@@ -222,6 +223,10 @@ and expr =
   (* start of expr_without_variable in original PHP lexer/parser terminology *)
   | Sc of scalar
   | Binary of expr * binaryOp wrap * expr
+  (* PHP 8.5 pipe operator: '$x |> f(...)' calls f with $x as its only
+   * argument. Kept as its own node rather than a binaryOp because turning it
+   * into the equivalent call needs both operands. *)
+  | Pipe of expr * tok (* |> *) * expr
   | Unary of unaryOp wrap * expr
   (* should be a statement ... *)
   | Assign of lvalue * tok (* = *) * expr
@@ -584,8 +589,8 @@ and parameter = {
   p_attrs : attributes option;
   (* constructor property promotion (PHP 8.0, was a php-facebook-ext),
    * this is always empty except for constructors, and the modifiers can
-   * be only a visibility, Readonly (PHP 8.1), or an asymmetric visibility
-   * (PHP 8.4), but never Static, Abstract, etc.
+   * be only a visibility, Readonly (PHP 8.1), an asymmetric visibility
+   * (PHP 8.4) or Final (PHP 8.5), but never Static, Abstract, etc.
    *)
   p_modifiers : modifier wrap list;
   p_type : hint_type option;
@@ -593,6 +598,8 @@ and parameter = {
   p_name : dname;
   p_default : static_scalar_affect option;
   p_variadic : tok (* ... *) option;
+  (* PHP 8.4: hooks on a constructor-promoted property *)
+  p_hooks : property_hook list brace option;
 }
 
 and is_ref = tok (* bool wrap ? *) option
@@ -630,6 +637,8 @@ and constant_def = {
   cst_name : ident;
   cst_type : hint_type option;
   cst_val : static_scalar;
+  (* PHP 8.5 attributes on constants *)
+  cst_attrs : attributes option;
 }
 
 (* ------------------------------------------------------------------------- *)
@@ -685,13 +694,15 @@ and class_stmt =
   (* This is abused to represent class constants in enums, so sometimes
    * tok is actually fakeInfo. *)
   | ClassConstants of
-      modifier wrap list
+      attributes option (* PHP 8.0, e.g. '#[\Deprecated]' (PHP 8.4) *)
+      * modifier wrap list
       * tok (* const *)
       * hint_type option
       * class_constant comma_list
       * tok (*;*)
   | ClassVariables of
-      class_var_modifier
+      attributes option
+      * class_var_modifier
       * (* static-php-ext: *)
       hint_type option
       * class_variable comma_list
@@ -711,6 +722,10 @@ and class_constant = ident * static_scalar_affect
 
 (* PHP 8.4 property hooks *)
 and property_hook = {
+  (* only 'final' is allowed here *)
+  ph_modifiers: modifier wrap list;
+  (* by-reference getter, as in '&get' *)
+  ph_ref: is_ref;
   ph_kind: property_hook_kind wrap;
   ph_params: parameter comma_list_dots paren option; (* set($value) *)
   ph_body: property_hook_body;
@@ -721,6 +736,8 @@ and property_hook_kind = PhGet | PhSet
 and property_hook_body =
   | PHExpr of tok (* => *) * expr * tok (* ; *)
   | PHBlock of stmt_and_def list brace
+  (* no body, as in interfaces and abstract classes: 'public int $x { get; }' *)
+  | PHAbstract of tok (* ; *)
 
 and class_variable = dname * static_scalar_affect option * property_hook list brace option
 
@@ -809,8 +826,9 @@ and static_scalar_affect = tok (* = *) * static_scalar
 
 (* HPHP extension similar to http://en.wikipedia.org/wiki/Java_annotation *)
 and attribute =
-  | Attribute of string wrap
-  | AttributeWithArgs of string wrap * static_scalar comma_list paren
+  (* the name can be qualified ('#[A\B]') or root-prefixed ('#[\Deprecated]') *)
+  | Attribute of name
+  | AttributeWithArgs of name * argument comma_list paren
 
 and attributes = attribute comma_list angle
 
