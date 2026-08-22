@@ -1027,6 +1027,7 @@ and encaps env = function
 
 and array_pair env = function
   | ArrayExpr e -> expr env e
+  | ArrayUnpack (_, e) -> A.Unpack (expr env e)
   | ArrayRef (tok, lv) -> A.Ref (tok, lvalue env lv)
   | ArrayArrowExpr (e1, tok, e2) -> A.Arrow (expr env e1, tok, expr env e2)
   | ArrayArrowRef (e1, arrow, tokref, lv) ->

@@ -395,6 +395,8 @@ and list_assign =
 
 and array_pair =
   | ArrayExpr of expr
+  (* array unpacking, as in '[...$a, ...$b]' *)
+  | ArrayUnpack of tok (* ... *) * expr
   | ArrayRef of tok (* & *) * lvalue
   | ArrayArrowExpr of expr * tok (* => *) * expr
   | ArrayArrowRef of expr * tok (* => *) * tok (* & *) * lvalue
