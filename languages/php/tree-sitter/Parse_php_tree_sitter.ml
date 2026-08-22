@@ -1077,6 +1077,10 @@ and map_class_type_designator (env : env) (x : CST.class_type_designator) =
   | `Scoped_prop_access_exp x -> map_scoped_property_access_expression env x
   | `Choice_dyna_var_name x -> map_variable_name_ env x
 
+(* Only the prefix 'clone $obj' below: this grammar predates PHP 8.5
+ * clone-with, so 'clone($obj, ['p' => 1])' makes it emit an ERROR node at the
+ * comma. Supporting it would require regenerating the grammar.
+ * The menhir parser (the primary one for PHP) does handle it. *)
 and map_clone_expression (env : env) ((v1, v2) : CST.clone_expression) =
   let v1 = (* "clone" *) _str env v1 in
   let v2 = map_primary_expression env v2 in

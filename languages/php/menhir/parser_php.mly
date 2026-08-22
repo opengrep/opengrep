@@ -1233,6 +1233,11 @@ call_expr:
   * free, as in 'new Foo()->bar()' or 'new Foo()::CONST'.
   *)
  | T_NEW member_expr arguments { New ($1, $2, Some $3) }
+ (* PHP 8.5 clone-with. It lives here rather than next to the prefix 'clone'
+  * so that the postfix rules apply to its result, as in
+  * 'clone($obj, ['p' => 1])->m()'.
+  *)
+ | T_CLONE "(" expr "," expr ")" { CloneWith($1, ($2, ($3, $4, $5), $6)) }
  (* An anonymous class is dereferencable too, and unlike a named class it does
   * not need the parentheses, since its own brackets come before the body:
   * both 'new class {}->m()' and 'new class () {}->m()' are valid.

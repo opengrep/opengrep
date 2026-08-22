@@ -476,6 +476,10 @@ and expr env = function
   | Clone (tok, e) ->
       A.Call
         (A.Id [ (A.builtin "clone", wrap tok) ], fb tok [ A.Arg (expr env e) ])
+  | CloneWith (tok, (lp, (e1, _, e2), rp)) ->
+      A.Call
+        ( A.Id [ (A.builtin "clone", wrap tok) ],
+          (lp, [ A.Arg (expr env e1); A.Arg (expr env e2) ], rp) )
   | AssignRef (e1, tokeq, tokref, e2) ->
       let e1 = lvalue env e1 in
       let e2 = lvalue env e2 in

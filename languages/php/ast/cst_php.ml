@@ -250,6 +250,10 @@ and expr =
   | New of tok * class_name_reference * arguments option
   | NewAnonClass of tok * arguments option * class_def (* c_name = "!ANON!" *)
   | Clone of tok * expr
+  (* PHP 8.5 clone-with: 'clone($obj, ['p' => $v])' returns a copy of $obj
+   * with those properties replaced. The one-argument 'clone($obj)' is still
+   * a Clone applied to a ParenExpr. *)
+  | CloneWith of tok (* clone *) * (expr * tok (* , *) * expr) paren
   | AssignRef of lvalue * tok (* = *) * tok (* & *) * lvalue
   | AssignNew of
       lvalue
