@@ -11,6 +11,7 @@
     osemgrep_configuring
     osemgrep_core
     osemgrep_networking
+    semgrep.targeting
     osemgrep_cli_scan ; reusing the same flags and most of the code
     osemgrep_distributed_scan_stub
   )

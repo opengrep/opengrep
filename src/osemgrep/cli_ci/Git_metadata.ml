@@ -111,11 +111,57 @@ let env : env Term.t =
     $ semgrep_branch)
 
 (*****************************************************************************)
+(* Helpers for the provider subclasses *)
+(*****************************************************************************)
+(* The OPENGREP_*/SEMGREP_* override always wins over the provider's own
+ * variable. The provider variables are read via Opengrep_env so that an
+ * empty value counts as unset, like pyopengrep's os.getenv values are
+ * falsy when empty. *)
+
+let override_or_getenv (override : string option) (var : string) :
+    string option =
+  match override with
+  | Some _ as v -> v
+  | None -> Opengrep_env.getenv_opt var
+
+let uri_override_or_getenv (override : Uri.t option) (var : string) :
+    Uri.t option =
+  match override with
+  | Some _ as v -> v
+  | None -> Option.map Uri.of_string (Opengrep_env.getenv_opt var)
+
+let sha_override_or_getenv (override : Digestif.SHA1.t option) (var : string) :
+    Digestif.SHA1.t option =
+  match override with
+  | Some _ as v -> v
+  | None -> Option.bind (Opengrep_env.getenv_opt var) Digestif.SHA1.of_hex_opt
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
+(* the surface shared by all the provider metadata classes *)
+class type meta_t = object
+  method project_metadata : Project_metadata.t
+  method branch : string option
+  method ci_job_url : Uri.t option
+  method commit_sha : Digestif.SHA1.t option
+  method event_name : string
+  method is_full_scan : bool
+  method pr_id : string option
+  method pr_title : string option
+  method repo_name : string
+  method repo_display_name : string
+  method repo_url : Uri.t option
+  method merge_base_ref : Find_targets.baseline_ref option
+  method is_pull_request_event : bool
+  method head_branch_hash : Digestif.SHA1.t option
+end
+
+(* cli_baseline_ref is the raw --baseline-commit rev, any git rev like
+ * pyopengrep's cli_baseline_ref (not necessarily a commit id) *)
 class meta (caps : < Cap.exec >) ~scan_environment
-  ~(baseline_ref : Digestif.SHA1.t option) env =
+  ~(cli_baseline_ref : string option) env =
   object (self)
     method project_metadata : Project_metadata.t =
       let commit_title : string =
@@ -232,6 +278,15 @@ class meta (caps : < Cap.exec >) ~scan_environment
     method pr_title = env._SEMGREP_PR_TITLE
     method is_full_scan = self#merge_base_ref =*= None
 
+    (* both are only meaningful on GitHub Actions (overridden there); they
+     * let 'opengrep ci' fix up the checked-out head without the isinstance
+     * test pyopengrep's fix_head_if_github_action does *)
+    method is_pull_request_event : bool = false
+    method head_branch_hash : Digestif.SHA1.t option = None
+
     (* TODO? get rid of? use directly baseline_ref in is_full_scan? *)
-    method merge_base_ref = baseline_ref
+    method merge_base_ref : Find_targets.baseline_ref option =
+      (* the flag names the base itself, not something to compute a
+       * merge-base from (python: ci passes is_mergebase=True) *)
+      Option.map (fun rev -> Find_targets.Rev rev) cli_baseline_ref
   end
