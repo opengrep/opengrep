@@ -261,7 +261,7 @@ def ci(
 
     # Maybe move this and the above to the scan-only params, since they are not
     # needed here.
-    if bypass_includes_excludes_for_files:
+    if not bypass_includes_excludes_for_files:
         logger.info(
             "WARNING: --force-exclude is set but will be ignored: "
             "no explicit targets are passed to the ci command"
