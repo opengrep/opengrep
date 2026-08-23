@@ -50,6 +50,10 @@ type conf = {
   skipped_files : bool;
   (* alt: in CLI_common.conf *)
   max_log_list_entries : int;
+  (* true for 'opengrep ci': the Text format then keeps blocking and
+   * non-blocking findings in separate groups and appends the
+   * "RULES FIRED" sections (python: FormatContext.is_ci_invocation) *)
+  is_ci_invocation : bool;
 }
 [@@deriving show]
 
@@ -66,6 +70,7 @@ let default : conf =
     fixed_lines = false;
     skipped_files = false;
     max_log_list_entries = 100;
+    is_ci_invocation = false;
   }
 
 (* used with max_log_list_entries *)
@@ -221,7 +226,8 @@ let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
               ~max_chars_per_line:conf.max_chars_per_line
               ~max_lines_per_finding:conf.max_lines_per_finding
               ~color_output:false
-              ~show_dataflow_traces:conf.show_dataflow_traces)
+              ~show_dataflow_traces:conf.show_dataflow_traces
+              ~is_ci_invocation:conf.is_ci_invocation)
            cli_output)
   | Sarif ->
       let engine_label =
@@ -310,6 +316,7 @@ let dispatch_output_format
           ~max_lines_per_finding:conf.max_lines_per_finding
             (* nosemgrep: forbid-console *)
           ~color_output:conf.force_color ~show_dataflow_traces:conf.show_dataflow_traces
+          ~is_ci_invocation:conf.is_ci_invocation
           Format.std_formatter cli_output
     | kind -> (
         match render conf profiler ~hrules kind cli_output with

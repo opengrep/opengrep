@@ -71,6 +71,8 @@ let sort_by_groups als =
   let compare_group x y = group_order x - group_order y in
   als |> List.stable_sort (Common.on compare_group fst)
 
+(* like pyopengrep rule_match.py: a match with no "dev.semgrep.actions"
+ * metadata is blocking *)
 let is_blocking (json : Yojson.Basic.t) =
   match Yojson.Basic.Util.member "dev.semgrep.actions" json with
   | `List stuff ->
@@ -78,6 +80,7 @@ let is_blocking (json : Yojson.Basic.t) =
       |> List.exists (function
            | `String s -> String.equal s "block"
            | _else -> false)
+  | `Null -> true
   | _else -> false
 
 let ws_prefix s =
@@ -489,59 +492,101 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
 (* Entry point *)
 (*****************************************************************************)
 
+(* the check_ids of the blocking rules behind [matches], for the
+ * "RULES FIRED" sections of the ci output; "-" is the id of a -e/--pattern
+ * rule and is discarded like in pyopengrep text.py *)
+let blocking_rule_ids (matches : OutJ.cli_match list) : string list =
+  matches
+  |> List_.map (fun (m : OutJ.cli_match) -> Rule_ID.to_string m.check_id)
+  |> List.filter (fun id -> not (String.equal id "-"))
+  |> Set_.of_list |> Set_.elements |> List.sort String.compare
+
+let pp_rules_fired ppf (title : string) (ids : string list) : unit =
+  if not (List_.null ids) then (
+    Fmt.pf ppf "@.  %s@." title;
+    ids |> List.iter (fun id -> Fmt.pf ppf "    %s@." id))
+
 let pp_cli_output
     ~max_chars_per_line
     ~max_lines_per_finding
     ~color_output
     ~show_dataflow_traces
+    ?(is_ci_invocation = false)
     ppf
     (cli_output : OutJ.cli_output) =
-  cli_output.results |> Semgrep_output_utils.sort_cli_matches
-  |> Assoc.group_by (fun (m : OutJ.cli_match) ->
-         match Product.of_cli_match m with
-         | `SCA ->
-             (* TO PORT:
-                       subgroup = match.exposure_type or "undetermined"
+  let groups =
+    cli_output.results |> Semgrep_output_utils.sort_cli_matches
+    |> Assoc.group_by (fun (m : OutJ.cli_match) ->
+           match Product.of_cli_match m with
+           | `SCA ->
+               (* TO PORT:
+                         subgroup = match.exposure_type or "undetermined"
 
-                        figuring out the product, python uses (rule.py):
-                           RuleProduct.sca
-                           if "r2c-internal-project-depends-on" in self._raw
-                           else RuleProduct.sast
+                          figuring out the product, python uses (rule.py):
+                             RuleProduct.sca
+                             if "r2c-internal-project-depends-on" in self._raw
+                             else RuleProduct.sast
 
-                        and exposure_type (rule_match.py):
-                        if "sca_info" not in self.extra:
-                            return None
+                          and exposure_type (rule_match.py):
+                          if "sca_info" not in self.extra:
+                              return None
 
-                        if self.metadata.get("sca-kind") == "upgrade-only":
-                            return "reachable"
-                        elif self.metadata.get("sca-kind") == "legacy":
-                            return "undetermined"
-                        else:
-                            return "reachable" if self.extra["sca_info"].reachable else "unreachable" *)
-             `Undetermined
-         | `SAST when is_blocking m.extra.metadata -> `Blocking
-         | `SAST -> `Nonblocking
-         | `Secrets ->
-             (Option.value ~default:`No_validator m.extra.validation_state
-               :> report_group))
-  |> (fun groups ->
-       (* TO PORT:
-          if not is_ci_invocation: *)
-       let merged =
-         (try List.assoc `Nonblocking groups with
-         | Not_found -> [])
-         @
-         try List.assoc `Blocking groups with
-         | Not_found -> []
-       in
-       (`Merged, merged)
-       :: List.filter
-            (fun (k, _) -> not (k = `Nonblocking || k = `Blocking))
-            groups)
-  |> sort_by_groups
+                          if self.metadata.get("sca-kind") == "upgrade-only":
+                              return "reachable"
+                          elif self.metadata.get("sca-kind") == "legacy":
+                              return "undetermined"
+                          else:
+                              return "reachable" if self.extra["sca_info"].reachable else "unreachable" *)
+               `Undetermined
+           | `SAST when is_blocking m.extra.metadata -> `Blocking
+           | `SAST -> `Nonblocking
+           | `Secrets ->
+               (Option.value ~default:`No_validator m.extra.validation_state
+                 :> report_group))
+  in
+  let groups =
+    (* from text.py:
+       if not is_ci_invocation: *)
+    if is_ci_invocation then groups
+    else
+      let merged =
+        (try List.assoc `Nonblocking groups with
+        | Not_found -> [])
+        @
+        try List.assoc `Blocking groups with
+        | Not_found -> []
+      in
+      (`Merged, merged)
+      :: List.filter
+           (fun (k, _) -> not (k = `Nonblocking || k = `Blocking))
+           groups
+  in
+  groups |> sort_by_groups
   |> List.iter (fun (group, matches) ->
          if not (List_.null matches) then
            Fmt_.pp_heading ppf
              (String_.unit_str (List.length matches) (group_titles group));
          pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
-           ~color_output ~show_dataflow_traces ppf matches)
+           ~color_output ~show_dataflow_traces ppf matches);
+  if is_ci_invocation then (
+    pp_rules_fired ppf "BLOCKING CODE RULES FIRED:"
+      (match List.assoc_opt `Blocking groups with
+      | Some matches -> blocking_rule_ids matches
+      | None -> []);
+    (* fork: without secrets validators every Secrets match lands in the
+     * No_validator group, where pyopengrep falls back to the plain
+     * "dev.semgrep.actions" check *)
+    let secrets_ids =
+      ([ `Confirmed_valid; `Confirmed_invalid; `Validation_error; `No_validator ]
+        : report_group list)
+      |> List.concat_map (fun g ->
+             match List.assoc_opt g groups with
+             | Some matches ->
+                 matches
+                 |> List.filter (fun (m : OutJ.cli_match) ->
+                        is_blocking m.extra.metadata)
+                 |> blocking_rule_ids
+             | None -> [])
+      |> Set_.of_list |> Set_.elements |> List.sort String.compare
+    in
+    pp_rules_fired ppf "BLOCKING SECRETS RULES FIRED:" secrets_ids)
