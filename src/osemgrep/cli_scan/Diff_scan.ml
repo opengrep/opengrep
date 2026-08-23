@@ -204,12 +204,21 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 (*****************************************************************************)
 
 let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) (baseline_commit : string) (targets : Fpath.t list)
-    (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
-    Core_result.result_or_exn =
+    (profiler : Profiler.t) (baseline : Find_targets.baseline_ref)
+    (targets : Fpath.t list) (rules : Rule.rules)
+    (diff_scan_func : diff_scan_func) : Core_result.result_or_exn =
   Logs.info (fun m ->
-      m "running differential scan on base commit %s" baseline_commit);
-  let commit = Git_wrapper.merge_base baseline_commit in
+      m "running differential scan on baseline %s"
+        (Find_targets.show_baseline_ref baseline));
+  (* Commit and Rev already are the wanted base ('opengrep ci' hands those
+   * out; python: BaselineHandler is_mergebase): recomputing the merge-base
+   * can fail on the shallow clones CI providers hand out *)
+  let commit =
+    match baseline with
+    | Find_targets.Merge_base_of rev -> Git_wrapper.merge_base rev
+    | Find_targets.Commit sha -> Digestif.SHA1.to_hex sha
+    | Find_targets.Rev rev -> rev
+  in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
   let diff_depth = Differential_scan_config.default_depth in
   let targets, diff_targets =

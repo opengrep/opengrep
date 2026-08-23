@@ -77,6 +77,14 @@ val o_secrets : bool Cmdliner.Term.t
 
 (* exported because used by Ci_CLI.ml *)
 val o_allow_local_builds : bool Cmdliner.Term.t
+val o_allow_rule_timeout_control : bool Cmdliner.Term.t
+val o_apply_includes_excludes_to_files : bool Cmdliner.Term.t
+val o_config : string list Cmdliner.Term.t
+val o_dynamic_timeout : bool Cmdliner.Term.t
+val o_dynamic_timeout_max_multiplier : int Cmdliner.Term.t
+val o_dynamic_timeout_unit_kb : int Cmdliner.Term.t
+val o_max_match_per_file : int Cmdliner.Term.t
+val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
 val o_allow_untrusted_validators : bool Cmdliner.Term.t
 val o_autofix : bool Cmdliner.Term.t
 val o_baseline_commit : string option Cmdliner.Term.t

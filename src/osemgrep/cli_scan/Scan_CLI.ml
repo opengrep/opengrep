@@ -1488,6 +1488,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           | Some (Info | Debug) -> true
           | _else_ -> false);
         max_log_list_entries;
+        is_ci_invocation = false;
       }
     in
 
@@ -1548,7 +1549,10 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         exclude = exclude_;
         include_;
         apply_includes_excludes_to_file_targets = apply_includes_excludes_to_files;
-        baseline_commit;
+        baseline_commit =
+          Option.map
+            (fun rev -> Find_targets.Merge_base_of rev)
+            baseline_commit;
         diff_depth;
         max_target_bytes;
         always_select_explicit_targets =

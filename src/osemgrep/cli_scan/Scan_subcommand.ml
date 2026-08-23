@@ -445,7 +445,7 @@ let adjust_nosemgrep_and_autofix ~keep_ignored (res : Core_runner.result) :
 (* this is called also from Ci_subcommand.ml.
  * caps = topevel caps - Cap.network
  *)
-let check_targets_with_rules
+let check_targets_with_rules ?(print_summary = true)
     (caps :
       < Cap.stdout
       ; Cap.chdir
@@ -556,7 +556,7 @@ let check_targets_with_rules
                 run ?file_match_hook
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
                   (rules, invalid_rules) selected)
-        | Some baseline_commit ->
+        | Some baseline ->
             (* scan_baseline calls internally Profiler.record "head_core_time"  *)
             (* diff scan mode *)
             let diff_scan_func : Diff_scan.diff_scan_func =
@@ -571,7 +571,7 @@ let check_targets_with_rules
             in
             Diff_scan.scan_baseline
               (caps :> < Cap.chdir ; Cap.tmp >)
-              conf profiler baseline_commit selected rules diff_scan_func
+              conf profiler baseline selected rules diff_scan_func
       in
       match result_or_exn with
       | Error exn ->
@@ -640,11 +640,14 @@ let check_targets_with_rules
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
                    ~skipped_groups)
                 ());
-          Logs.app (fun m ->
-              m "Ran %s on %s: %s."
-                (String_.unit_str (List.length valid_rules) "rule")
-                (String_.unit_str (List.length cli_output.paths.scanned) "file")
-                (String_.unit_str (List.length cli_output.results) "finding"));
+          (* python: the print_summary parameter of output(); 'opengrep ci'
+           * prints its own completion lines instead *)
+          if print_summary then
+            Logs.app (fun m ->
+                m "Ran %s on %s: %s."
+                  (String_.unit_str (List.length valid_rules) "rule")
+                  (String_.unit_str (List.length cli_output.paths.scanned) "file")
+                  (String_.unit_str (List.length cli_output.results) "finding"));
 
           (* step 6: apply autofixes *)
           (* this must happen posterior to reporting matches, or will report the

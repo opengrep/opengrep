@@ -27,6 +27,22 @@ module Explicit_targets : sig
   val pp : Format.formatter -> t -> unit
 end
 
+(* What a differential scan diffs against. The constructors record what the
+ * producer knows about the ref:
+ * - Merge_base_of: any git rev; Diff_scan first computes
+ *   merge-base(HEAD, rev). This is 'opengrep scan --baseline-commit'.
+ * - Commit: a resolved commit that already is the wanted base, diffed
+ *   against directly. 'opengrep ci' produces these from its CI-provider
+ *   merge-base machinery (python: BaselineHandler is_mergebase).
+ * - Rev: a symbolic rev used directly as the base, no merge-base
+ *   computation. 'opengrep ci --baseline-commit main' is this.
+ *)
+type baseline_ref =
+  | Merge_base_of of string
+  | Commit of Digestif.SHA1.t
+  | Rev of string
+[@@deriving show]
+
 type conf = {
   (* global exclude list, passed via semgrep --exclude (a glob) *)
   exclude : string list;
@@ -76,7 +92,7 @@ type conf = {
       max_target_bytes, default true *)
   exclude_minified_files : bool;
   (* TODO: not used for now *)
-  baseline_commit : string option;
+  baseline_commit : baseline_ref option;
   diff_depth : int;
 }
 [@@deriving show]

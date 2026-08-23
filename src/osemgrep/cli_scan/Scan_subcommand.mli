@@ -24,8 +24,12 @@ val main : < caps ; .. > -> string array -> Exit_code.t
 val run_conf : < caps ; .. > -> Scan_CLI.conf -> Exit_code.t
 val run_scan_conf : < caps ; .. > -> Scan_CLI.conf -> Exit_code.t
 
-(* internal: also used in CI *)
+(* internal: also used in CI.
+ * print_summary is python's output(print_summary=...): 'opengrep ci' passes
+ * false and prints its own completion lines instead of "Ran N rules ...".
+ *)
 val check_targets_with_rules :
+  ?print_summary:bool ->
   (* caps - network *)
   < Cap.stdout
   ; Cap.chdir
