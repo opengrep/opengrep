@@ -33,6 +33,7 @@ val sha_override_or_getenv :
  * Actions only (false/None elsewhere); they let 'opengrep ci' fix up the
  * checked-out head in PR context. *)
 class type meta_t = object
+  method scan_environment : string
   method project_metadata : Semgrep_output_v1_t.project_metadata
   method branch : string option
   method ci_job_url : Uri.t option
@@ -51,9 +52,11 @@ end
 
 (* cli_baseline_ref is the raw --baseline-commit rev (any git rev, not
  * necessarily a commit id); merge_base_ref classifies it, or in children
- * computes the base from the CI provider's machinery *)
+ * computes the base from the CI provider's machinery.
+ * subdir is the --subdir of 'opengrep ci', qualifying repo_display_name. *)
 class meta :
   < Cap.exec > ->
+  ?subdir:string ->
   scan_environment:string ->
   cli_baseline_ref:string option ->
   env ->

@@ -91,6 +91,7 @@ let sha_override_or_getenv (override : Digestif.SHA1.t option) (var : string) :
 
 (* the surface shared by all the provider metadata classes *)
 class type meta_t = object
+  method scan_environment : string
   method project_metadata : Project_metadata.t
   method branch : string option
   method ci_job_url : Uri.t option
@@ -108,10 +109,13 @@ class type meta_t = object
 end
 
 (* cli_baseline_ref is the raw --baseline-commit rev, any git rev like
- * pyopengrep's cli_baseline_ref (not necessarily a commit id) *)
-class meta (caps : < Cap.exec >) ~scan_environment
+ * pyopengrep's cli_baseline_ref (not necessarily a commit id).
+ * subdir is the --subdir of 'opengrep ci', which qualifies the display
+ * name so the scans of one monorepo's directories stay apart. *)
+class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
   ~(cli_baseline_ref : string option) env =
   object (self)
+    method scan_environment : string = scan_environment
     method project_metadata : Project_metadata.t =
       let commit_title : string =
         Git_wrapper.command caps [ "show"; "-s"; "--format=%B" ]
@@ -176,7 +180,10 @@ class meta (caps : < Cap.exec >) ~scan_environment
     method repo_display_name =
       match env._SEMGREP_REPO_DISPLAY_NAME with
       | Some repo_display_name -> repo_display_name
-      | None -> self#repo_name
+      | None -> (
+          match subdir with
+          | Some dir -> spf "%s/%s" self#repo_name dir
+          | None -> self#repo_name)
 
     method repo_url =
       match env._SEMGREP_REPO_URL with

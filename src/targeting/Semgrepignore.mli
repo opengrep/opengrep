@@ -16,6 +16,8 @@
 *)
 type default_semgrepignore_patterns = Empty | Semgrep_scan_legacy
 
+val default_semgrepignore_filename : string
+
 type exclusion_mechanism = {
   use_gitignore_files : bool;
   use_semgrepignore_files : bool;

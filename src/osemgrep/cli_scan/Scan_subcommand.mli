@@ -24,6 +24,27 @@ val main : < caps ; .. > -> string array -> Exit_code.t
 val run_conf : < caps ; .. > -> Scan_CLI.conf -> Exit_code.t
 val run_scan_conf : < caps ; .. > -> Scan_CLI.conf -> Exit_code.t
 
+(* internal: also used in CI *)
+val rules_from_rules_source :
+  ?skip_invalid_configs:bool ->
+  rewrite_rule_ids:bool ->
+  strict:bool ->
+  < Cap.network ; Cap.tmp > ->
+  Rules_source.t ->
+  Rule_fetching.rules_and_origin list * Rule_error.t list
+
+(* internal: also used in CI *)
+val core_errors_of_fatal_rule_errors : Rule_error.t list -> Core_error.t list
+
+(* internal: also used in CI *)
+val output_and_exit_from_fatal_core_errors_exn :
+  exit_code:Exit_code.t ->
+  < Cap.stdout > ->
+  Scan_CLI.conf ->
+  Profiler.t ->
+  Core_error.t list ->
+  Exit_code.t
+
 (* internal: also used in CI.
  * print_summary is python's output(print_summary=...): 'opengrep ci' passes
  * false and prints its own completion lines instead of "Ran N rules ...".
