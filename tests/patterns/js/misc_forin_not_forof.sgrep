@@ -1,0 +1,3 @@
+for ($K in $OBJ) {
+  $TARGET[$K] = $VAL;
+}

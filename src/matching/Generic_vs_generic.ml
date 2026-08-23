@@ -2931,8 +2931,30 @@ and m_for_header a b =
       fail ()
 
 and m_for_each (a1, at, a2) (b1, bt, b2) =
-  m_pattern a1 b1 >>= fun () ->
-  m_tok at bt >>= fun () -> m_expr a2 b2
+  (* JS/TS desugars `for (x of xs)` into a ForEach whose iterated expression is
+   * wrapped in a `ForOf` IdSpecial marker (see js_to_generic.ml), while
+   * `for (x in xs)` is left bare. A pattern written `for ($K in $OBJ)`
+   * therefore puts a bare metavariable in the iterated position, and that
+   * metavariable binds to the whole marker call — so a for-in pattern also
+   * matches for-of code. The opposite direction is already correct, because a
+   * for-of pattern carries a marker that for-in code does not have.
+   *
+   * `for..of` over an array is one of the most common loops in modern JS, so
+   * any rule keying on for-in to mean "iterating object keys" over-matches
+   * badly. Note this cannot be worked around in a rule: `pattern-not` on the
+   * for-of form is subject to the same conflation.
+   *
+   * Languages that never emit the marker (Python's `for x in xs`, Go, PHP,
+   * Java, Scala) are unaffected, since neither side is wrapped. *)
+  let is_for_of e =
+    match e.G.e with
+    | G.Call ({ e = G.IdSpecial (G.ForOf, _); _ }, _) -> true
+    | _ -> false
+  in
+  if is_for_of b2 && not (is_for_of a2) then fail ()
+  else
+    m_pattern a1 b1 >>= fun () ->
+    m_tok at bt >>= fun () -> m_expr a2 b2
 
 and m_multi_for_each a b =
   match (a, b) with
