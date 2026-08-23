@@ -13,13 +13,10 @@ type env = {
   _SEMGREP_BRANCH : string option;
 }
 
-(* Extract the environment variable via Cmdliner.
- * Why using cmdliner? Why not simply access them with Sys.getenv_opt?
- * The advantage of cmdliner is that we can document those variables
- * and the env constant below can be combined in Ci_CLI.ml so those
- * variables can be part of the 'semgrep ci' man page!!
- *)
-val env : env Cmdliner.Term.t
+(* Read via Opengrep_env: the OPENGREP_* alias of each variable wins over
+ * the SEMGREP_* name, and empty values count as unset. Aborts when
+ * SEMGREP_COMMIT is set but not a full commit id. *)
+val env_from_environment : unit -> env
 
 (* For the provider subclasses: the OPENGREP_*/SEMGREP_* override wins over
  * the provider's own variable, which is read via Opengrep_env (an empty

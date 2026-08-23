@@ -1,7 +1,4 @@
 open Common
-module Arg = Cmdliner.Arg
-module Term = Cmdliner.Term
-module Cmdl = Cmdliner.Cmd
 
 (*****************************************************************************)
 (* Prelude *)
@@ -41,108 +38,35 @@ let _MAX_FETCH_ATTEMPT_COUNT = 10
    between two branches. *)
 
 (*****************************************************************************)
-(* Cmdliner *)
+(* Reading the environment *)
 (*****************************************************************************)
 
-let env : env Term.t =
-  let github_event_path =
-    let doc = "The GitHub event path." in
-    let env = Cmdl.Env.info "GITHUB_EVENT_PATH" in
-    Arg.(
-      value & opt Glom.cli Glom.default & info [ "github-event-path" ] ~env ~doc)
-  in
-  let github_sha =
-    let doc = "The GitHub commit." in
-    let env = Cmdl.Env.info "GITHUB_SHA" in
-    Arg.(
-      value & opt (some Cmdliner_.sha1) None & info [ "github-sha" ] ~env ~doc)
-  in
-  let gh_token =
-    let doc = "The GitHub token." in
-    let env = Cmdl.Env.info "GH_TOKEN" in
-    Arg.(value & opt (some string) None & info [ "gh-token" ] ~env ~doc)
-  in
-  let github_repository =
-    let doc = "The GitHub repository." in
-    let env = Cmdl.Env.info "GITHUB_REPOSITORY" in
-    Arg.(
-      value & opt (some string) None & info [ "github-repository" ] ~env ~doc)
-  in
-  let github_server_url =
-    let doc = "The GitHub server URL." in
-    let env = Cmdl.Env.info "GITHUB_SERVER_URL" in
-    Arg.(
-      value
-      & opt Cmdliner_.uri (Uri.of_string "https://github.com")
-      & info [ "github-server-url" ] ~doc ~env)
-  in
-  let github_api_url =
-    let doc = "The GitHub API URL." in
-    let env = Cmdl.Env.info "GITHUB_API_URL" in
-    Arg.(
-      value
-      & opt (some Cmdliner_.uri) None
-      & info [ "github-api-url" ] ~doc ~env)
-  in
-  let github_run_id =
-    let doc = "The GitHub run ID." in
-    let env = Cmdl.Env.info "GITHUB_RUN_ID" in
-    Arg.(value & opt (some string) None & info [ "github-run-id" ] ~doc ~env)
-  in
-  let github_event_name =
-    let doc = "The GitHub event name." in
-    let env = Cmdl.Env.info "GITHUB_EVENT_NAME" in
-    Arg.(
-      value & opt (some string) None & info [ "github-event-name" ] ~doc ~env)
-  in
-  let github_ref =
-    let doc = "The GitHub ref." in
-    let env = Cmdl.Env.info "GITHUB_REF" in
-    Arg.(value & opt (some string) None & info [ "github-ref" ] ~doc ~env)
-  in
-  let github_head_ref =
-    let doc = "The GitHub HEAD ref." in
-    let env = Cmdl.Env.info "GITHUB_HEAD_REF" in
-    Arg.(value & opt (some string) None & info [ "github-head-ref" ] ~doc ~env)
-  in
-  let github_repository_id =
-    let doc = "The ID of the repository." in
-    let env = Cmdl.Env.info "GITHUB_REPOSITORY_ID" in
-    Arg.(
-      value & opt (some string) None & info [ "github-repository-id" ] ~doc ~env)
-  in
-  let github_repository_owner_id =
-    let doc = "The repository owner's account ID." in
-    let env = Cmdl.Env.info "GITHUB_REPOSITORY_OWNER_ID" in
-    Arg.(
-      value
-      & opt (some string) None
-      & info [ "github-repository-owner-id" ] ~doc ~env)
-  in
-  let run (_, _GITHUB_EVENT_JSON) _GITHUB_SHA _GITHUB_REPOSITORY
-      _GITHUB_SERVER_URL _GITHUB_API_URL _GITHUB_RUN_ID _GITHUB_EVENT_NAME
-      _GITHUB_REF _GITHUB_HEAD_REF _GH_TOKEN _GITHUB_REPOSITORY_ID
-      _GITHUB_REPOSITORY_OWNER_ID =
-    {
-      _GITHUB_EVENT_JSON;
-      _GITHUB_REPOSITORY;
-      _GITHUB_API_URL;
-      _GITHUB_SHA;
-      _GITHUB_SERVER_URL;
-      _GITHUB_RUN_ID;
-      _GITHUB_EVENT_NAME;
-      _GITHUB_REF;
-      _GITHUB_HEAD_REF;
-      _GH_TOKEN;
-      _GITHUB_REPOSITORY_ID;
-      _GITHUB_REPOSITORY_OWNER_ID;
-    }
-  in
-  Term.(
-    const run $ github_event_path $ github_sha $ github_repository
-    $ github_server_url $ github_api_url $ github_run_id $ github_event_name
-    $ github_ref $ github_head_ref $ gh_token $ github_repository_id
-    $ github_repository_owner_id)
+let env_from_environment () : env =
+  let get = Opengrep_env.getenv_opt in
+  {
+    _GITHUB_EVENT_JSON =
+      (match get "GITHUB_EVENT_PATH" with
+      | None -> `Null
+      | Some path -> (
+          try Yojson.Basic.from_file ~fname:path path with
+          | Yojson.Json_error _
+          | Sys_error _ ->
+              Error.abort (spf "Invalid JSON file: %s" path)));
+    _GITHUB_REPOSITORY = get "GITHUB_REPOSITORY";
+    _GITHUB_REPOSITORY_ID = get "GITHUB_REPOSITORY_ID";
+    _GITHUB_REPOSITORY_OWNER_ID = get "GITHUB_REPOSITORY_OWNER_ID";
+    _GITHUB_API_URL = Option.map Uri.of_string (get "GITHUB_API_URL");
+    _GITHUB_SERVER_URL =
+      (match get "GITHUB_SERVER_URL" with
+      | Some url -> Uri.of_string url
+      | None -> Uri.of_string "https://github.com");
+    _GITHUB_SHA = Git_metadata.sha_override_or_getenv None "GITHUB_SHA";
+    _GITHUB_REF = get "GITHUB_REF";
+    _GITHUB_HEAD_REF = get "GITHUB_HEAD_REF";
+    _GITHUB_RUN_ID = get "GITHUB_RUN_ID";
+    _GITHUB_EVENT_NAME = get "GITHUB_EVENT_NAME";
+    _GH_TOKEN = get "GH_TOKEN";
+  }
 
 (*****************************************************************************)
 (* Helpers *)

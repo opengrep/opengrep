@@ -15,7 +15,9 @@ type env = {
   _GH_TOKEN : string option;
 }
 
-val env : env Cmdliner.Term.t
+(* Read via Opengrep_env (empty values count as unset). Aborts when
+ * GITHUB_EVENT_PATH names a missing or invalid JSON file. *)
+val env_from_environment : unit -> env
 
 (* network is for the merge-base shortcut through the GitHub API *)
 class meta :

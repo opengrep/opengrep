@@ -1,7 +1,4 @@
 open Common
-module Arg = Cmdliner.Arg
-module Term = Cmdliner.Term
-module XCmd = Cmdliner.Cmd
 
 (*****************************************************************************)
 (* Prelude *)
@@ -28,87 +25,30 @@ type env = {
 }
 
 (*****************************************************************************)
-(* Cmdliner *)
+(* Reading the environment *)
 (*****************************************************************************)
 
-(* TODO: right now we have also to use CLI flags like "semgrep-repo-name"
- * otherwise cmdliner raise an exn about empty info.
- *)
-let env : env Term.t =
-  let semgrep_repo_name =
-    let doc = "The name of the Git repository." in
-    let env = XCmd.Env.info "SEMGREP_REPO_NAME" in
-    Arg.(
-      value & opt (some string) None & info [ "semgrep-repo-name" ] ~env ~doc)
-  in
-  let semgrep_repo_display_name =
-    let doc =
-      "The name the repository should be displayed as for this scan. Setting \
-       it allows users to scan individual repos in one monorepo separately."
-    in
-    let env = XCmd.Env.info "SEMGREP_REPO_DISPLAY_NAME" in
-    Arg.(
-      value
-      & opt (some string) None
-      & info [ "semgrep-repo-display-name" ] ~env ~doc)
-  in
-  let semgrep_repo_url =
-    let doc = "The URL of the Git repository." in
-    let env = XCmd.Env.info "SEMGREP_REPO_URL" in
-    Arg.(
-      value
-      & opt (some Cmdliner_.uri) None
-      & info [ "semgrep-repo-url" ] ~env ~doc)
-  in
-  let semgrep_commit =
-    let doc = "The commit of the Git repository." in
-    let env = XCmd.Env.info "SEMGREP_COMMIT" in
-    Arg.(
-      value
-      & opt (some Cmdliner_.sha1) None
-      & info [ "semgrep-commit" ] ~env ~doc)
-  in
-  let semgrep_job_url =
-    let doc = "The job URL." in
-    let env = XCmd.Env.info "SEMGREP_JOB_URL" in
-    Arg.(
-      value
-      & opt (some Cmdliner_.uri) None
-      & info [ "semgrep-job-url" ] ~env ~doc)
-  in
-  let semgrep_pr_id =
-    let doc = "The PR/MR ID." in
-    let env = XCmd.Env.info "SEMGREP_PR_ID" in
-    Arg.(value & opt (some string) None & info [ "semgrep-pr-id" ] ~env ~doc)
-  in
-  let semgrep_pr_title =
-    let doc = "The PR/MR title." in
-    let env = XCmd.Env.info "SEMGREP_PR_TITLE" in
-    Arg.(value & opt (some string) None & info [ "semgrep-pr-title" ] ~env ~doc)
-  in
-  let semgrep_branch =
-    let doc = "The Git branch." in
-    let env = XCmd.Env.info "SEMGREP_BRANCH" in
-    Arg.(value & opt (some string) None & info [ "semgrep-branch" ] ~env ~doc)
-  in
-  let run _SEMGREP_REPO_NAME _SEMGREP_REPO_DISPLAY_NAME _SEMGREP_REPO_URL
-      _SEMGREP_COMMIT _SEMGREP_JOB_URL _SEMGREP_PR_ID _SEMGREP_PR_TITLE
-      _SEMGREP_BRANCH =
-    {
-      _SEMGREP_REPO_NAME;
-      _SEMGREP_REPO_DISPLAY_NAME;
-      _SEMGREP_REPO_URL;
-      _SEMGREP_COMMIT;
-      _SEMGREP_JOB_URL;
-      _SEMGREP_PR_ID;
-      _SEMGREP_PR_TITLE;
-      _SEMGREP_BRANCH;
-    }
-  in
-  Term.(
-    const run $ semgrep_repo_name $ semgrep_repo_display_name $ semgrep_repo_url
-    $ semgrep_commit $ semgrep_job_url $ semgrep_pr_id $ semgrep_pr_title
-    $ semgrep_branch)
+let env_from_environment () : env =
+  let get = Opengrep_env.getenv_opt in
+  {
+    _SEMGREP_REPO_NAME = get "SEMGREP_REPO_NAME";
+    _SEMGREP_REPO_DISPLAY_NAME = get "SEMGREP_REPO_DISPLAY_NAME";
+    _SEMGREP_REPO_URL = Option.map Uri.of_string (get "SEMGREP_REPO_URL");
+    _SEMGREP_COMMIT =
+      (match get "SEMGREP_COMMIT" with
+      | None -> None
+      | Some str -> (
+          match Digestif.SHA1.of_hex_opt str with
+          | Some _ as sha -> sha
+          (* aborting rather than falling back to HEAD: the fallback would
+             silently misattribute the findings to another commit *)
+          | None ->
+              Error.abort (spf "SEMGREP_COMMIT is not a full commit id: %s" str)));
+    _SEMGREP_JOB_URL = Option.map Uri.of_string (get "SEMGREP_JOB_URL");
+    _SEMGREP_PR_ID = get "SEMGREP_PR_ID";
+    _SEMGREP_PR_TITLE = get "SEMGREP_PR_TITLE";
+    _SEMGREP_BRANCH = get "SEMGREP_BRANCH";
+  }
 
 (*****************************************************************************)
 (* Helpers for the provider subclasses *)
@@ -134,7 +74,16 @@ let sha_override_or_getenv (override : Digestif.SHA1.t option) (var : string) :
     Digestif.SHA1.t option =
   match override with
   | Some _ as v -> v
-  | None -> Option.bind (Opengrep_env.getenv_opt var) Digestif.SHA1.of_hex_opt
+  | None -> (
+      match Opengrep_env.getenv_opt var with
+      | None -> None
+      | Some str -> (
+          match Digestif.SHA1.of_hex_opt str with
+          | Some _ as sha -> sha
+          | None ->
+              Logs.warn (fun m ->
+                  m "%s is not a full commit id, ignoring it: %s" var str);
+              None))
 
 (*****************************************************************************)
 (* Entry point *)
