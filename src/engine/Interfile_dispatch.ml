@@ -1173,6 +1173,7 @@ let parse_companion_files
 let build_rule_states
     (caps : < Cap.fork >)
     ~(ncores : int)
+    ~(graph_hook : (Lang.t -> Fpath.t -> Call_graph.G.t -> unit) option)
     ~(taint_interfile : bool)
     ~(valid_rules : R.rule list)
     ~(targets : Target.t list)
@@ -1272,6 +1273,10 @@ let build_rule_states
            | Some (_, asts, _) ->
              Hashtbl.iter (Hashtbl.replace projidx_asts) asts
            | None -> ());
+          (match (build_opt, graph_hook) with
+           | Some (interfile_graph, _, _), Some hook ->
+             hook lang project_root interfile_graph
+           | _ -> ());
           let file_failures =
             match build_opt with
             | None -> []

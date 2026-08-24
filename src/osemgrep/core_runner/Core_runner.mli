@@ -52,6 +52,7 @@ type result = {
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
+    ?interfile_graph_hook:(Lang.t -> Fpath.t -> Call_graph.G.t -> unit) ->
     conf ->
     Find_targets.conf ->
     Match_patterns.matching_conf ->

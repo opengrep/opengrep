@@ -90,6 +90,7 @@ type result = {
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
+    ?interfile_graph_hook:(Lang.t -> Fpath.t -> Call_graph.G.t -> unit) ->
     conf ->
     Find_targets.conf ->
     Match_patterns.matching_conf ->
@@ -428,6 +429,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         target_source = Targets [];
         rule_source = Rules [];
         file_match_hook = None;
+        interfile_graph_hook = None;
         engine_config = engine_config;
         (* same than in Core_scan_config.default
          * alt: we could use a 'Core_scan_config.default with ...' but better
@@ -472,7 +474,8 @@ let mk_result ?(inline = false) ?(taint_interfile = false)
 
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
-  let run ?file_match_hook (conf : conf) (targeting_conf : Find_targets.conf)
+  let run ?file_match_hook ?interfile_graph_hook (conf : conf)
+      (targeting_conf : Find_targets.conf)
       (matching_conf : Match_patterns.matching_conf)
       (rules_and_invalid : Rule_error.rules_and_invalid)
       (targets : Target_and_root.t list) : Core_result.result_or_exn =
@@ -530,6 +533,7 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
       {
         (core_scan_config_of_conf conf) with
         file_match_hook;
+        interfile_graph_hook;
         target_source = Targets final_targets;
         rule_source = Rules applicable_rules;
         matching_conf;

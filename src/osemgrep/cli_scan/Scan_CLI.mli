@@ -48,6 +48,9 @@ type conf = {
   ls : bool;
   (* --x-ls-long: *)
   ls_format : Ls_subcommand.format;
+  (* start the taint viewer web server on the results after the scan *)
+  viewer_server : bool;
+  viewer_server_port : int;
 }
 [@@deriving show]
 

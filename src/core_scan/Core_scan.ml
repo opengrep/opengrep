@@ -1069,6 +1069,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork >)
       ~ncores:config.ncores
+      ~graph_hook:config.interfile_graph_hook
       ~taint_interfile:config.taint_interfile
       ~valid_rules ~targets
       ~targeting_conf:config.targeting_conf

@@ -447,6 +447,7 @@ let adjust_nosemgrep_and_autofix ~keep_ignored (res : Core_runner.result) :
  * caps = topevel caps - Cap.network
  *)
 let check_targets_with_rules
+    ?interfile_graph_hook
     (caps :
       < Cap.stdout
       ; Cap.chdir
@@ -558,7 +559,7 @@ let check_targets_with_rules
                   mk_core_run_for_osemgrep caps conf
                     Differential_scan_config.WholeScan
                 in
-                run ?file_match_hook
+                run ?file_match_hook ?interfile_graph_hook
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
                   (rules, invalid_rules) selected)
         | Some baseline_commit ->
@@ -570,7 +571,7 @@ let check_targets_with_rules
               let { run } : Core_runner.func =
                 mk_core_run_for_osemgrep caps conf diff_config
               in
-              run ?file_match_hook
+              run ?file_match_hook ?interfile_graph_hook
                 conf.core_runner_conf conf.targeting_conf conf.matching_conf
                 (rules, invalid_rules) targets
             in
@@ -732,8 +733,22 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
       in
 
       (* step3: let's go *)
+      (* Graphs built by the scan, kept for `--server` so the viewer does
+         not rebuild them. The table is only written from the interfile
+         preprocess (parent process, before the parallel per-file phase)
+         and only read after the scan returns. *)
+      let interfile_graphs :
+          ((Lang.t * string), Call_graph.G.t) Hashtbl.t option =
+        if conf.viewer_server then Some (Hashtbl.create 4) else None
+      in
+      let interfile_graph_hook =
+        Option.map
+          (fun tbl lang root graph ->
+            Hashtbl.replace tbl (lang, Fpath.to_string root) graph)
+          interfile_graphs
+      in
       let res =
-        check_targets_with_rules
+        check_targets_with_rules ?interfile_graph_hook
           (caps
             :> < Cap.stdout
                ; Cap.chdir
@@ -748,6 +763,44 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
       match res with
       | Error exit_code -> exit_code
       | Ok (_rules, res, cli_output) ->
+          (* Optionally serve the results in the taint viewer; blocks until
+             interrupted, then falls through to the normal exit code. *)
+          if conf.viewer_server then begin
+            let json_str =
+              Semgrep_output_v1_j.string_of_cli_output cli_output
+            in
+            let project_root =
+              match conf.target_roots with
+              | [ r ] ->
+                  let f = Scanning_root.to_fpath r in
+                  if Sys.is_directory (Fpath.to_string f) then f
+                  else Fpath.parent f
+              | _ -> Fpath.v "."
+            in
+            let call_graph =
+              match interfile_graphs with
+              | None -> None
+              | Some tbl -> (
+                  (* Prefer the graph of the results' majority language;
+                     otherwise take any graph the scan built. *)
+                  let by_lang =
+                    match Viewer_server.infer_lang json_str with
+                    | None -> None
+                    | Some lang ->
+                        Hashtbl.fold
+                          (fun (l, _) g acc ->
+                            if Lang.equal l lang then Some g else acc)
+                          tbl None
+                  in
+                  match by_lang with
+                  | Some g -> Some g
+                  | None -> Hashtbl.fold (fun _ g _ -> Some g) tbl None)
+            in
+            Viewer_server.serve
+              (caps :> < Cap.fork >)
+              ~project_root ?call_graph ~json_str
+              ~port:conf.viewer_server_port ()
+          end;
           (* final result for the shell *)
           (* the nosem-suppressed matches are still in cli_output when an
              output reports them (see Output.keeps_ignores), but they are

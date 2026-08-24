@@ -341,6 +341,7 @@ let mk_config () : Core_scan_config.t =
     respect_rule_paths = !respect_rule_paths;
     equivalences_file = !equivalences_file;
     file_match_hook = None;
+    interfile_graph_hook = None;
     (* limits and perf *)
     timeout = !timeout;
     dynamic_timeout = !dynamic_timeout;

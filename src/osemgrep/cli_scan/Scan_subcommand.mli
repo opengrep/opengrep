@@ -26,6 +26,7 @@ val run_scan_conf : < caps ; .. > -> Scan_CLI.conf -> Exit_code.t
 
 (* internal: also used in CI *)
 val check_targets_with_rules :
+  ?interfile_graph_hook:(Lang.t -> Fpath.t -> Call_graph.G.t -> unit) ->
   (* caps - network *)
   < Cap.stdout
   ; Cap.chdir

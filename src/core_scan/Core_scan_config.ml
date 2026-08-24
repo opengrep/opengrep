@@ -70,6 +70,10 @@ type t = {
    * This is also now used in Runner_service.ml and Git_remote.ml.
    *)
   file_match_hook : (Fpath.t -> Core_result.matches_single_file -> unit) option;
+  (* Hook called with each interfile call graph built during the scan (one
+   * per project root and language), so the caller can reuse the graph
+   * (e.g. `opengrep scan --server`) instead of rebuilding it. *)
+  interfile_graph_hook : (Lang.t -> Fpath.t -> Call_graph.G.t -> unit) option;
   (* Limits *)
   (* maximum time to spend running a rule on a single file *)
   timeout : float;
@@ -123,6 +127,7 @@ let default =
     matching_conf = Match_patterns.default_matching_conf;
     respect_rule_paths = true;
     file_match_hook = None;
+    interfile_graph_hook = None;
     (* Limits *)
     (* maximum time to spend running a rule on a single file *)
     timeout = 0.;

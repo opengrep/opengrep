@@ -67,6 +67,9 @@ type conf = {
   allow_local_builds : bool;
   ls : bool;
   ls_format : Ls_subcommand.format;
+  (* start the taint viewer web server on the results after the scan *)
+  viewer_server : bool;
+  viewer_server_port : int;
 }
 [@@deriving show]
 
@@ -115,6 +118,8 @@ let default : conf =
     allow_local_builds = false;
     ls = false;
     ls_format = Ls_subcommand.default_format;
+    viewer_server = false;
+    viewer_server_port = 8080;
   }
 
 (*************************************************************************)
@@ -254,6 +259,23 @@ CHANGE OR DISAPPEAR WITHOUT NOTICE.
 |}
   in
   Arg.value (Arg.flag info)
+
+let o_server : bool Term.t =
+  let info =
+    Arg.info [ "server" ]
+      ~doc:
+        "Serve the results in the taint trace viewer web page once the scan \
+         completes (blocks until interrupted). The interfile call graph is \
+         built for the majority language of the findings."
+  in
+  Arg.value (Arg.flag info)
+
+let o_server_port : int Term.t =
+  let info =
+    Arg.info [ "server-port" ] ~docv:"PORT"
+      ~doc:"Port for $(b,--server) (default 8080)."
+  in
+  Arg.value (Arg.opt Arg.int 8080 info)
 
 let o_semgrepignore_filename : string option Term.t =
   let info =
@@ -1446,7 +1468,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       output output_enclosing_context pattern pro project_root taint_interfile
       taint_interfile_depth taint_intrafile effect_guards
       pro_path_sensitive remote replacement rewrite_rule_ids sarif sarif_outputs
-      scan_unknown_extensions secrets semgrepignore_filename severity show_supported_languages
+      scan_unknown_extensions secrets semgrepignore_filename server server_port
+      severity show_supported_languages
       skip_invalid_configs
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
       _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
@@ -1667,6 +1690,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       allow_local_builds;
       ls;
       ls_format;
+      viewer_server = server;
+      viewer_server_port = server_port;
     }
   in
   (* Term defines 'const' but also the '$' operator *)
@@ -1693,7 +1718,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_effect_guards
     $ o_pro_path_sensitive $ o_remote $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
-    $ o_secrets $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages
+    $ o_secrets $ o_semgrepignore_filename $ o_server $ o_server_port
+    $ o_severity $ o_show_supported_languages
     $ o_skip_invalid_configs $ o_strict
     $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile

@@ -26,6 +26,7 @@ val interfile_taint_rule_ids :
 val build_rule_states :
   < Cap.fork > ->
   ncores:int ->
+  graph_hook:(Lang.t -> Fpath.t -> Call_graph.G.t -> unit) option ->
   taint_interfile:bool ->
   valid_rules:Rule.t list ->
   targets:Target.t list ->
