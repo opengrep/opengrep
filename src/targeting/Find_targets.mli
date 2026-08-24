@@ -3,12 +3,7 @@
    regardless of rules or languages.
  *)
 
-type project_root =
-  | Filesystem of Rfpath.t
-  (* currently used to optimize Semgrep query console *)
-  | Git_remote of git_remote
-
-and git_remote = { url : Uri.t } [@@deriving show]
+type project_root = Filesystem of Rfpath.t [@@deriving show]
 
 (*
    Abstract type designed for quickly determining whether a path is in the

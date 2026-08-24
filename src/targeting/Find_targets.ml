@@ -119,12 +119,7 @@ module Log = Log_targeting.Log
 (* Types *)
 (*************************************************************************)
 
-type project_root =
-  | Filesystem of Rfpath.t
-  (* for Semgrep query console *)
-  | Git_remote of git_remote
-
-and git_remote = { url : Uri.t } [@@deriving show]
+type project_root = Filesystem of Rfpath.t [@@deriving show]
 
 (* Yet another file path related type ...
 
@@ -702,7 +697,6 @@ let group_scanning_roots_by_project (conf : conf)
            why it's like this.
            TODO: make tests work without requiring --project-root? *)
         Some Project.{ kind = Project.Gitignore_project; root = proj_root }
-    | Some (Git_remote _)
     | None ->
         (* Usual case when scanning the local file system *)
         None
@@ -911,25 +905,6 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
   in
   { selected = selected_targets; skipped = skipped_targets; git_repo = is_git_repo }
 
-(* for semgrep query console *)
-let clone_if_remote_project_root conf =
-  match conf.force_project_root with
-  | Some (Git_remote { url }) ->
-      let cwd = Fpath.v (Unix.getcwd ()) in
-      Log.info (fun m ->
-          m "Sparse cloning %a into CWD: %a" Uri.pp url Fpath.pp cwd);
-      (match Git_wrapper.sparse_shallow_filtered_checkout url (Fpath.v ".") with
-      | Ok () -> ()
-      | Error msg ->
-          failwith
-            (spf "Error while sparse cloning %s into %s: %s" (Uri.to_string url)
-               (Fpath.to_string cwd) msg));
-      Git_wrapper.checkout ();
-      Log.info (fun m -> m "Sparse cloning done")
-  | Some (Filesystem _)
-  | None ->
-      ()
-
 (*************************************************************************)
 (* Entry point *)
 (*************************************************************************)
@@ -940,7 +915,6 @@ let clone_if_remote_project_root conf =
  * at least one root is a git repo. Should we be more precise and
  * display which roots are git repos? Maybe in verbose mode? *)
 let get_targets conf scanning_roots : Fppath.t targets =
-  clone_if_remote_project_root conf;
   let raw =
     List.fold_left
       (fun acc root ->

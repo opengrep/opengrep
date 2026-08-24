@@ -236,7 +236,7 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
   | DumpPatternsOfRule file ->
       Core_CLI.dump_patterns_of_rule file;
       Exit_code.ok ~__LOC__
-  | DumpEnginePath _pro -> failwith "TODO: dump-engine-path not implemented yet"
+  | DumpEnginePath -> failwith "TODO: dump-engine-path not implemented yet"
   | DumpCommandForCore ->
       failwith "TODO: dump-command-for-core not implemented yet"
   | DumpIntrafileGraph (file, lang) ->

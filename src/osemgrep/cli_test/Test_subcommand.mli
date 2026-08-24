@@ -15,14 +15,3 @@ val main : < caps ; .. > -> string array -> Exit_code.t
  * legacy way to test things (e.g., 'semgrep scan --tests <dir>')
  *)
 val run_conf : < caps ; .. > -> Test_CLI.conf -> Exit_code.t
-
-(* pro hooks *)
-val hook_pro_init : (unit -> unit) ref
-val hook_pro_scan : (Core_scan.caps -> Core_scan.func) ref
-
-val hook_deep_scan :
-  (< Cap.tmp ; Cap.fork ; Cap.time_limit ; Cap.memory_limit > ->
-  Core_scan_config.t ->
-  Fpath.t (* root *) ->
-  Core_result.result_or_exn)
-  ref

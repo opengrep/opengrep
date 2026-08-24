@@ -55,13 +55,9 @@ logger = getLogger(__name__)
 
 
 # This subset of scan options is reused in ci.py
+# (--autofix is scan-only: ci never modifies the checkout)
 _scan_options: List[Callable] = [
     click.help_option("--help", "-h"),
-    click.option(
-        "-a",
-        "--autofix/--no-autofix",
-        is_flag=True,
-    ),
     click.option(
         "--baseline-commit",
         envvar=["SEMGREP_BASELINE_COMMIT", "SEMGREP_BASELINE_REF"],
@@ -339,15 +335,6 @@ _scan_options: List[Callable] = [
         "taint_intrafile",
         is_flag=True, default=False
     ),
-    # Accepted so existing invocations keep working; opengrep only ever runs
-    # the open source engine.
-    optgroup.option(
-        "--oss-only",
-        "requested_engine",
-        type=EngineType,
-        flag_value=EngineType.OSS,
-        hidden=True,
-    ),
     optgroup.option(
         "--diff-depth",
         type=int,
@@ -414,6 +401,11 @@ def scan_options(func: Callable) -> Callable:
 # Those are the scan-only options (not reused in ci.py)
 @click.command()
 @click.argument("targets", nargs=-1, type=click.Path(allow_dash=True))
+@click.option(
+    "-a",
+    "--autofix/--no-autofix",
+    is_flag=True,
+)
 @click.option(
     "--replacement",
 )
@@ -495,7 +487,6 @@ def scan(
     debug: bool,
     diff_depth: int,
     dump_engine_path: bool,
-    requested_engine: Optional[EngineType],
     dryrun: bool,
     dump_command_for_core: bool,
     enable_nosem: bool,
@@ -562,11 +553,6 @@ def scan(
     if version:
         print(__VERSION__)
         return None
-
-    if requested_engine is not None:
-        logger.info(
-            "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
-        )
 
     # Define engine_type for later use in the scan output messages
     engine_type: Optional[EngineType] = None

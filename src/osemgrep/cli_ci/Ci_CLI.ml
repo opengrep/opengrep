@@ -123,11 +123,6 @@ let cmdline_term : conf Term.t =
         is_ci_invocation = true;
       }
     in
-    let engine_type : Engine_type.t =
-      SC.engine_type_conf ~oss:false ~taint_intrafile ~pro:false ~secrets:false
-        ~no_secrets_validation:false ~allow_untrusted_validators:false
-        ~pro_path_sensitive:false
-    in
     let rules_source : Rules_source.t =
       (* python: config = config or (AUTO_CONFIG_KEY,) *)
       match config with
@@ -226,7 +221,6 @@ let cmdline_term : conf Term.t =
         output_conf;
         incremental_output = false;
         incremental_output_postprocess = false;
-        engine_type;
         rewrite_rule_ids;
         skip_invalid_configs = SC.default.skip_invalid_configs;
         matching_conf;

@@ -35,10 +35,7 @@ module SS = Set.Make (String)
 (* Types *)
 (*****************************************************************************)
 type diff_scan_func =
-  ?diff_config:Differential_scan_config.t ->
-  Fpath.t list ->
-  Rule.rules ->
-  Core_result.result_or_exn
+  Fpath.t list -> Rule.rules -> Core_result.result_or_exn
 
 (*****************************************************************************)
 (* Helpers *)
@@ -112,14 +109,10 @@ let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
    scan. Subsequently, eliminate any previously identified matches
    from the results of the head checkout scan. *)
 let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
-    (conf : Scan_CLI.conf) (profiler : Profiler.t)
+    (profiler : Profiler.t)
     (result_or_exn : Core_result.result_or_exn) (rules : Rule.rules)
     (commit : string) (status : Git_wrapper.status)
-    (core :
-      ?diff_config:Differential_scan_config.t ->
-      Fpath.t list ->
-      Rule.rules ->
-      Core_result.result_or_exn) : Core_result.result_or_exn =
+    (core : diff_scan_func) : Core_result.result_or_exn =
   let/ r = result_or_exn in
   if r.processed_matches <> [] then
     let add_renamed paths =
@@ -164,34 +157,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                        !!(pm.path.internal_path_to_content))
                 |> prepare_targets
               in
-              let paths_in_scanned =
-                r.scanned
-                |> List_.map (fun p ->
-                       p |> Target.internal_path |> Fpath.to_string)
-                |> prepare_targets
-              in
-              let baseline_targets, baseline_diff_targets =
-                match conf.engine_type with
-                | PRO Engine_type.{ analysis = Interprocedural; _ } ->
-                    (* Keeping all the PRO stuff since we will probably need
-                     * these code paths. *)
-                    let { Find_targets.selected = all_in_baseline; _ } =
-                      Find_targets.get_target_fpaths conf.targeting_conf
-                        conf.target_roots
-                    in
-                    (* Performing a scan on the same set of files for the
-                       baseline that were previously scanned for the head.
-                       In Interfile mode, the matches are influenced not
-                       only by the file displaying matches but also by its
-                       dependencies. Hence, merely rescanning files with
-                       matches is insufficient. *)
-                    (all_in_baseline, paths_in_scanned)
-                | _ -> (paths_in_match, [])
-              in
-              core
-                ~diff_config:
-                  (Differential_scan_config.BaseLine baseline_diff_targets)
-                baseline_targets baseline_rules))
+              core paths_in_match baseline_rules))
     in
     match baseline_result with
     | Error _exn -> baseline_result
@@ -203,10 +169,10 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 (* Entry point *)
 (*****************************************************************************)
 
-let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) (baseline : Find_targets.baseline_ref)
-    (targets : Fpath.t list) (rules : Rule.rules)
-    (diff_scan_func : diff_scan_func) : Core_result.result_or_exn =
+let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
+    (baseline : Find_targets.baseline_ref) (targets : Fpath.t list)
+    (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
+    Core_result.result_or_exn =
   Logs.info (fun m ->
       m "running differential scan on baseline %s"
         (Find_targets.show_baseline_ref baseline));
@@ -220,42 +186,16 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
     | Find_targets.Rev rev -> rev
   in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
-  let diff_depth = Differential_scan_config.default_depth in
-  let targets, diff_targets =
+  let targets =
     let added_or_modified =
       status.added @ status.modified |> List_.map Fpath.v
     in
-    match conf.engine_type with
-    | PRO Engine_type.{ analysis = Interfile; _ } -> (targets, added_or_modified)
-    | _ ->
-      let targets_modified_or_added =
-        let added_or_modified_set = Fpath.Set.of_list added_or_modified in
-        List.filter
-          (fun p -> Fpath.Set.mem p added_or_modified_set)
-          targets
-      in
-      (targets_modified_or_added, [])
+    let added_or_modified_set = Fpath.Set.of_list added_or_modified in
+    List.filter (fun p -> Fpath.Set.mem p added_or_modified_set) targets
   in
   let (head_scan_result : Core_result.result_or_exn) =
     Profiler.record profiler ~name:"head_core_time" (fun () ->
-        diff_scan_func
-          ~diff_config:
-            (Differential_scan_config.Depth (diff_targets, diff_depth))
-          targets rules)
+        diff_scan_func targets rules)
   in
-  (match (head_scan_result, conf.engine_type) with
-  | Ok r, PRO Engine_type.{ analysis = Interfile; _ } ->
-      let count_by_lang = Hashtbl.create 10 in
-      r.scanned
-      |> List.iter (function
-           | Target.Regular { analyzer = L (lang, _); _ } ->
-               let count =
-                 match Hashtbl.find_opt count_by_lang lang with
-                 | Some c -> c
-                 | None -> 0
-               in
-               Hashtbl.replace count_by_lang lang (count + 1)
-           | _ -> ())
-  | _ -> ());
-  scan_baseline_and_remove_duplicates caps conf profiler head_scan_result rules
+  scan_baseline_and_remove_duplicates caps profiler head_scan_result rules
     commit status diff_scan_func

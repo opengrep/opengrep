@@ -140,11 +140,6 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     envvar="SEMGREP_RULES",
 )
 @click.option(
-    "--supply-chain",
-    is_flag=True,
-)
-@click.option("--code", is_flag=True, hidden=True)
-@click.option(
     "--suppress-errors/--no-suppress-errors",
     "suppress_errors",
     default=True,
@@ -178,10 +173,8 @@ def ci(
     ctx: click.Context,
     *,
     audit_on: Sequence[str],
-    autofix: bool,
     baseline_commit: Optional[str],
     internal_ci_scan_results: bool,
-    code: bool,
     config: Optional[Tuple[str, ...]],
     debug: bool,
     diff_depth: int,
@@ -212,10 +205,8 @@ def ci(
     outputs_gitlab_secrets: List[str],
     outputs_junit_xml: List[str],
     outputs_sarif: List[str],
-    requested_engine: EngineType,
     quiet: bool,
     rewrite_rule_ids: bool,
-    supply_chain: bool, # NOTE: to be removed.
     scan_unknown_extensions: bool,
     subdir: Optional[Path],
     time_flag: bool,
@@ -321,11 +312,6 @@ def ci(
     console.print(debugging_table, markup=True)
 
     fix_head_if_github_action(metadata)
-
-    if requested_engine is not None:
-        logger.info(
-            "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
-        )
 
     engine_type = EngineType.decide_engine_type()
 

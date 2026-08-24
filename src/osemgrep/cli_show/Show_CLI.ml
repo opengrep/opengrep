@@ -54,7 +54,7 @@ and show_kind =
   (* 'semgrep show ???'
    * accessible also as 'semgrep scan --dump-engine-path
    * LATER: get rid of it? *)
-  | DumpEnginePath of bool (* pro = true *)
+  | DumpEnginePath
   (* 'semgrep show ???'
    * accessible also as 'semgrep scan --dump-command-for-core' (or just '-d')
    * LATER: get rid of it *)

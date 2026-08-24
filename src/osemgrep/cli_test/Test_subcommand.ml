@@ -113,29 +113,6 @@ let break_line =
   "--------------------------------------------------------------------------------"
 
 (*****************************************************************************)
-(* Pro hooks *)
-(*****************************************************************************)
-
-let hook_pro_init : (unit -> unit) ref =
-  ref (fun () ->
-      failwith "semgrep test --pro not available (need --install-semgrep-pro)")
-
-let hook_pro_scan : (Core_scan.caps -> Core_scan.func) ref =
-  ref (fun _caps _config ->
-      failwith "semgrep test --pro not available (need --install-semgrep-pro)")
-
-(* note that we run DeepScan with
- *  - force_interfile=true (no need for the interfile: true metadata in the rule)
- *  - experimental_languages=true (analyze with DeepScan also Ruby and a few
- *    other languages)
- *)
-let hook_deep_scan :
-    (scan_caps -> Core_scan_config.t -> Fpath.t -> Core_result.result_or_exn)
-    ref =
-  ref (fun _caps _config _root ->
-      failwith "semgrep test --pro not available (need --install-semgrep-pro)")
-
-(*****************************************************************************)
 (* File targeting (the set of tests) *)
 (*****************************************************************************)
 
@@ -463,14 +440,10 @@ let run_rules_against_targets_for_engine caps (env : env) (rules : Rule.t list)
   let res_or_exn : Core_result.result_or_exn =
     match env.engine with
     | A.OSS -> Core_scan.scan caps config
-    | A.Pro -> !hook_pro_scan (caps :> Core_scan.caps) config
+    | A.Pro
     | A.Deep ->
-        (* LATER: support also interfile tests where many targets are in
-         * a subdir (using the same name than the rule file)
-         *)
-        let root, _base = Fpath.split_base env.rule_file in
-        (* Deep_scan.caps but can't reference it from OSS/ *)
-        !hook_deep_scan (caps :> scan_caps) config root
+        (* the annotations still parse, but no such test run is constructed *)
+        failwith "pro/deep test runs do not exist in opengrep"
   in
   match res_or_exn with
   | Error exn -> Exception.reraise exn
@@ -775,51 +748,7 @@ let run_test (caps : < scan_caps ; .. >) (conf : Test_CLI.conf)
   in
 
   let env = { rule_file; target_files; engine = A.OSS; conf; errors } in
-  let checks_oss, fixtest_oss =
-    run_engine caps env rules targets files_and_annots
-  in
-  (* When conf.pro, we should run the engine 3 times:
-   *  - with Core_scan and check just the ruleid:
-   *  - with Pro_scan and check also the proruleid:
-   *  - with Deep_scan and check also the deepruleid:.
-   * The json will give information about those 3 different runs by using
-   * different rule IDs suffix (e.g., "myrule--PRO")
-   *)
-  if conf.pro then
-    (* note that we do not run fixtest for Pro because that would require
-     * sometimes have a separate .pro.fixed as the matches are different
-     * TODO? have those .pro.fixed? actually when I run on semgrep-rules-pro
-     * the fixtest seems bad for some python tests
-     *)
-    let checks_pro, _ =
-      let env = { env with engine = A.Pro } in
-      run_engine caps env rules targets files_and_annots
-    in
-    (* adjust rule id to have the --PRO suffix so the different matching results
-     * are visible in the JSON
-     * alt: add some extra_checks: next to checks: in the JSON
-     *)
-    let checks_pro =
-      checks_pro
-      |> List_.map (fun (id, rule_result) ->
-             let s = Rule_ID.to_string id in
-             let id = Rule_ID.of_string_exn (s ^ "--PRO") in
-             (id, rule_result))
-    in
-    (* same for deep *)
-    let checks_deep, _ =
-      let env = { env with engine = A.Deep } in
-      run_engine caps env rules targets files_and_annots
-    in
-    let checks_deep =
-      checks_deep
-      |> List_.map (fun (id, rule_result) ->
-             let s = Rule_ID.to_string id in
-             let id = Rule_ID.of_string_exn (s ^ "--DEEP") in
-             (id, rule_result))
-    in
-    (checks_oss @ checks_pro @ checks_deep, fixtest_oss)
-  else (checks_oss, fixtest_oss)
+  run_engine caps env rules targets files_and_annots
 
 let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
     (errors : error list ref) :
@@ -866,7 +795,6 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
 let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
   CLI_common.setup_logging ~force_color:true ~level:conf.common.logging_level;
   Logs.debug (fun m -> m "conf = %s" (Test_CLI.show_conf conf));
-  if conf.pro then !hook_pro_init ();
   let matching_diagnosis = conf.matching_diagnosis in
   let errors = ref [] in
 

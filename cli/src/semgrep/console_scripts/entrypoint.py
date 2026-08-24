@@ -77,9 +77,6 @@ PATH = os.environ.get("PATH", "")
 # nosem: no-env-vars-on-top-level
 os.environ["PATH"] = PATH + os.pathsep + sysconfig.get_path("scripts")
 
-PRO_FLAGS = ["--pro", "--pro-languages", "--pro-intrafile"]
-
-
 class CoreNotFound(Exception):
     def __init__(self, value):
         self.value = value
