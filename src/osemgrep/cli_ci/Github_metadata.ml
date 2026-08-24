@@ -280,18 +280,33 @@ let find_branchoff_point (caps : < Cap.exec ; Cap.network >)
       in
       ());
     let branchoff_from_api =
-      if attempt_count =|= 0 then
-        Lwt_platform.run
-          (find_branchoff_point_from_github_api caps ~base_branch_hash
-             ~head_branch_hash repo_name env)
+      if attempt_count =|= 0 then (
+        (* like meta.py: the API is an external service; on any failure log
+           and fall through to the local merge-base computation *)
+        try
+          match
+            Lwt_platform.run
+              (find_branchoff_point_from_github_api caps ~base_branch_hash
+                 ~head_branch_hash repo_name env)
+          with
+          | Some base ->
+              (* the API result is not necessarily available locally, and
+                 later steps check out the merge base *)
+              shallow_fetch_commit (caps :> < Cap.exec >) base;
+              Some base
+          | None -> None
+        with
+        | e ->
+            Logs.debug (fun m ->
+                m
+                  "Encountered error while getting merge base using GitHub \
+                   API: %s"
+                  (Printexc.to_string e));
+            None)
       else None
     in
     match branchoff_from_api with
-    | Some base ->
-        (* the API result is not necessarily available locally, and later
-           steps check out the merge base *)
-        shallow_fetch_commit (caps :> < Cap.exec >) base;
-        Some base
+    | Some base -> Some base
     | None -> (
         let cmd =
           ( Cmd.Name "git",

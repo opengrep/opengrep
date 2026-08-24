@@ -59,6 +59,11 @@ let normalize =
     Testo.mask_line ~after:"versions    - opengrep " ();
   ]
 
+(* the merge-base machinery logs full commit hashes, different on each run *)
+let normalize_commit_hashes =
+  normalize
+  @ [ Testo.mask_pcre_pattern ~replace:(fun _ -> "<HASH>") "[a-f0-9]{40}" ]
+
 let without_settings f =
   Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml" f
 
@@ -155,6 +160,87 @@ let test_baseline_rev_in_subdir (caps : Ci_subcommand.caps) () =
       [ "--baseline-commit"; baseline; "--subdir"; "sub" ])
     ()
 
+(* the API shortcut for the GitHub merge base answers garbage; the local
+ * merge-base computation is used instead *)
+let test_github_branchoff_api_failure (caps : Ci_subcommand.caps) () =
+  let caps_exec = (caps :> < Cap.exec >) in
+  let repo_files = [ F.File ("foo.py", clean_py_content) ] in
+  Testutil_git.with_git_repo ~verbose:true repo_files (fun cwd ->
+      (* the origin holds main and a feature branch; the merge-base
+       * machinery runs in a clone, like on a CI runner *)
+      let base = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      let _ = Git_wrapper.command caps_exec [ "checkout"; "-b"; "feature" ] in
+      UFile.write_file ~file:(Fpath.v "foo.py") finding_py_content;
+      let _ = Git_wrapper.command caps_exec [ "add"; "foo.py" ] in
+      let _ = Git_wrapper.command caps_exec [ "commit"; "-m"; "change" ] in
+      let head = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      let _ =
+        Git_wrapper.command caps_exec
+          [ "clone"; Fpath.to_string cwd; "clone" ]
+      in
+      Testutil_files.with_chdir (Fpath.v "clone") @@ fun () ->
+      let event : Yojson.Basic.t =
+        `Assoc
+          [
+            ( "pull_request",
+              `Assoc
+                [
+                  ("base", `Assoc [ ("ref", `String "main") ]);
+                  ( "head",
+                    `Assoc [ ("ref", `String "feature"); ("sha", `String head) ]
+                  );
+                ] );
+          ]
+      in
+      let gha_env : Github_metadata.env =
+        {
+          _GITHUB_EVENT_JSON = event;
+          _GITHUB_REPOSITORY = Some "example/repo";
+          _GITHUB_REPOSITORY_ID = None;
+          _GITHUB_REPOSITORY_OWNER_ID = None;
+          _GITHUB_API_URL = Some (Uri.of_string "https://api.github.example");
+          _GITHUB_SERVER_URL = Uri.of_string "https://github.com";
+          _GITHUB_SHA = None;
+          _GITHUB_REF = None;
+          _GITHUB_HEAD_REF = None;
+          _GITHUB_RUN_ID = None;
+          _GITHUB_EVENT_NAME = Some "pull_request";
+          _GH_TOKEN = Some "dummy-token";
+        }
+      in
+      let git_env : Git_metadata.env =
+        {
+          _SEMGREP_REPO_NAME = None;
+          _SEMGREP_REPO_DISPLAY_NAME = None;
+          _SEMGREP_REPO_URL = None;
+          _SEMGREP_COMMIT = None;
+          _SEMGREP_JOB_URL = None;
+          _SEMGREP_PR_ID = None;
+          _SEMGREP_PR_TITLE = None;
+          _SEMGREP_BRANCH = None;
+        }
+      in
+      Http_mock_client.with_testing_client
+        (fun _req _body ->
+          (* recorded in the checked output: proves the shortcut was tried *)
+          print_endline "github API merge-base request received";
+          Lwt.return
+            (Http_mock_client.basic_response
+               (Cohttp_lwt.Body.of_string "not json")))
+        (fun () ->
+          let meta =
+            new Github_metadata.meta
+              (caps :> < Cap.exec ; Cap.network >)
+              ~cli_baseline_ref:None git_env gha_env
+          in
+          match meta#merge_base_ref with
+          | Some (Find_targets.Commit sha) ->
+              Alcotest.(check string)
+                "merge base is the branch-off commit" base
+                (Digestif.SHA1.to_hex sha)
+          | _else_ -> Alcotest.fail "expected a commit merge base")
+        ())
+
 let test_gitlab_environment (caps : Ci_subcommand.caps) () =
   Semgrep_envvars.with_envvar "GITLAB_CI" "true" (fun () ->
       Semgrep_envvars.with_envvar "CI_PIPELINE_SOURCE" "merge_request_event"
@@ -195,6 +281,9 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "baseline rev in subdir keeps only the new finding"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_baseline_rev_in_subdir caps);
+      t "github merge-base API failure falls back to git"
+        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
+        (test_github_branchoff_api_failure caps);
       t "gitlab environment is detected" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_gitlab_environment caps);
       t "github environment is detected" ~checked_output:(Testo.stdxxx ())
