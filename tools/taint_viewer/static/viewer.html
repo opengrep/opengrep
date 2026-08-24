@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Taint Trace Viewer</title>
+  <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+  <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+  <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+  <link rel="stylesheet" href="/viewer.css">
+</head>
+<body>
+  <div id="sidebar">
+    <h2>Findings</h2>
+    <div id="findings-list"></div>
+  </div>
+  <div id="cy"></div>
+  <div id="file-legend" class="file-legend"></div>
+  <div id="code-popup" class="code-popup hidden"></div>
+  <script>
+    const FINDINGS = {{FINDINGS_DATA}};
+  </script>
+  <script src="/viewer.js"></script>
+</body>
+</html>

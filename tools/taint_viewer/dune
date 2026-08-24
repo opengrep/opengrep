@@ -1,0 +1,53 @@
+(library
+ (name taint_viewer_lib)
+ (public_name semgrep.taint_viewer)
+ (wrapped false)
+ (modules Taint_graph Taint_viewer Static_files Viewer_server)
+ (libraries
+   cohttp-lwt-unix
+   lwt
+   lwt.unix
+   yojson
+   fpath
+   str
+   commons
+   call_graph
+   opengrep_project_index
+   TCB
+   semgrep_engine
+   semgrep.core_scan
+   semgrep.targeting
+   semgrep.parsing
+   semgrep.parsing_languages
+   semgrep.tainting)
+ (preprocess (pps lwt_ppx)))
+
+(executable
+ (name Main)
+ (modules Main)
+ (libraries
+   taint_viewer_lib
+   cmdliner
+   fpath
+   commons
+   TCB
+   semgrep.parsing_languages)
+ (preprocess (pps lwt_ppx)))
+
+(install
+ (package semgrep)
+ (section bin)
+ (files (Main.exe as taint_viewer)))
+
+(rule
+ (target Static_files.ml)
+ (deps static/viewer.html static/viewer.css static/viewer.js)
+ (action (with-stdout-to %{target}
+   (progn
+     (echo "let viewer_html = {|")
+     (cat static/viewer.html)
+     (echo "|}\n\nlet viewer_css = {|")
+     (cat static/viewer.css)
+     (echo "|}\n\nlet viewer_js = {|")
+     (cat static/viewer.js)
+     (echo "|}")))))

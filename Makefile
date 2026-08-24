@@ -116,6 +116,10 @@ minimal-build:
 opengrep-interfile-graph:
 	dune build $(BUILD)/install/default/bin/opengrep-interfile-graph
 
+.PHONY: taint-viewer
+taint-viewer:
+	dune build $(BUILD)/install/default/bin/taint_viewer
+
 .PHONY: opengrep-diff
 opengrep-diff:
 	dune build $(BUILD)/install/default/bin/opengrep-diff
