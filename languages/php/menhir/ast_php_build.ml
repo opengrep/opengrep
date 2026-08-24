@@ -746,21 +746,24 @@ and short_lambda_def env def =
     | None -> wrap (unsafe_fake "_lambda")
   in
   {
-    A.f_ref = false;
+    A.f_ref = def.sl_ref <> None;
     f_name = (A.special "_lambda", sl_tok);
     f_params =
       (match def.sl_params with
       | SLSingleParam p -> [ ParamClassic (parameter env p) ]
       | SLParamsOmitted -> []
       | SLParams (_, xs, _) -> comma_list_dots_params (parameter env) xs);
-    f_return_type = None;
+    f_return_type =
+      (match def.sl_return_type with
+      | None -> None
+      | Some (_, t) -> Some (hint_type env t));
     f_body =
       (match def.sl_body with
       | SLExpr e -> A.Expr (expr env e, Tok.sc sl_tok)
       | SLBody (lb, body, rb) ->
           Block (lb, List_.fold_right (stmt_and_def env) body [], rb));
     f_kind = (A.ShortLambda, sl_tok);
-    m_modifiers = [];
+    m_modifiers = List_.map (modifier env) def.sl_modifiers;
     f_attrs = [];
     l_uses = [];
   }

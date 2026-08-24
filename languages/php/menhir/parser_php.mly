@@ -1524,12 +1524,13 @@ encaps_var_offset:
  *)
 
 arrow_expr:
- | T_FN "(" parameter_list ")" T_ARROW expr
-   { validate_parameter_list $3;
-     let sl_tok = Some $5 in
-     let sl_body = SLExpr $6 in
-     let sl_params = SLParams ($2, $3, $4) in
-     ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = []; }
+ | async_opt T_FN is_reference "(" parameter_list ")" return_type? T_ARROW expr
+   { validate_parameter_list $5;
+     let sl_tok = Some $8 in
+     let sl_body = SLExpr $9 in
+     let sl_params = SLParams ($4, $5, $6) in
+     ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = $1;
+                   sl_ref = $3; sl_return_type = $7; }
    }
 
 lambda_expr:
@@ -1538,27 +1539,31 @@ lambda_expr:
      {
        let sl_tok, sl_body = $2 in
        let sl_params = SLSingleParam (mk_param $1) in
-       ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [] }
+       ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [];
+                     sl_ref = None; sl_return_type = None }
      }
  | T_ASYNC T_VARIABLE lambda_body
      {
        let sl_tok, sl_body = $3 in
        let sl_params = SLSingleParam (mk_param $2) in
-       ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [Async,($1)] }
+       ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [Async,($1)];
+                     sl_ref = None; sl_return_type = None }
      }
  | T_LAMBDA_OPAR parameter_list T_LAMBDA_CPAR return_type? lambda_body
      {
        validate_parameter_list $2;
        let sl_tok, sl_body = $5 in
        let sl_params = SLParams ($1, $2, $3) in
-       ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = []; }
+       ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [];
+                     sl_ref = None; sl_return_type = None; }
      }
  | T_ASYNC T_LAMBDA_OPAR parameter_list T_LAMBDA_CPAR return_type? lambda_body
      {
        validate_parameter_list $3;
        let sl_tok, sl_body = $6 in
        let sl_params = SLParams ($2, $3, $4) in
-       ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [Async,($1)]; }
+       ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [Async,($1)];
+                     sl_ref = None; sl_return_type = None; }
      }
  | T_ASYNC "{" inner_statement* "}"
      {
@@ -1567,6 +1572,8 @@ lambda_expr:
                      sl_tok = None;
                      sl_body;
                      sl_modifiers = [Async,($1)];
+                     sl_ref = None;
+                     sl_return_type = None;
                    }
      }
 

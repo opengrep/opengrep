@@ -621,9 +621,12 @@ and lexical_var = LexicalVar of is_ref * dname
  * is a simple expression
  *)
 and short_lambda_def = {
-  (* "async" is the only valid modifier *)
+  (* "async" and "static" are the only valid modifiers *)
   sl_modifiers : modifier wrap list;
+  (* returns by reference, as in 'fn&($x) => ...' *)
+  sl_ref : is_ref;
   sl_params : short_lambda_params;
+  sl_return_type : (tok (* : *) * hint_type) option;
   sl_tok : tok (* ==> *) option; (* async { } doesn't use a ==> *)
   sl_body : short_lambda_body;
 }
