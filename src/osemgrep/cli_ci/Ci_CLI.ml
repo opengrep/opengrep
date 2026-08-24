@@ -82,7 +82,7 @@ let cmdline_term : conf Term.t =
      of the corresponding '$ o_xx $' further below! *)
   let combine allow_local_builds allow_rule_timeout_control
       apply_includes_excludes_to_files audit_on baseline_commit common config
-      dataflow_traces diff_depth dynamic_timeout
+      dataflow_traces dynamic_timeout
       dynamic_timeout_max_multiplier dynamic_timeout_unit_kb emacs
       emacs_outputs exclude_ exclude_rule_ids files_with_matches force_color
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
@@ -177,7 +177,6 @@ let cmdline_term : conf Term.t =
           apply_includes_excludes_to_files;
         (* set from the CI metadata in Ci_subcommand.run_conf *)
         baseline_commit = None;
-        diff_depth;
         max_target_bytes;
         always_select_explicit_targets = scan_unknown_extensions;
         explicit_targets = Find_targets.Explicit_targets.empty;
@@ -250,7 +249,7 @@ let cmdline_term : conf Term.t =
     const combine $ SC.o_allow_local_builds $ SC.o_allow_rule_timeout_control
     $ SC.o_apply_includes_excludes_to_files $ o_audit_on
     $ SC.o_baseline_commit $ CLI_common.o_common $ SC.o_config
-    $ SC.o_dataflow_traces $ SC.o_diff_depth $ SC.o_dynamic_timeout
+    $ SC.o_dataflow_traces $ SC.o_dynamic_timeout
     $ SC.o_dynamic_timeout_max_multiplier $ SC.o_dynamic_timeout_unit_kb
     $ SC.o_emacs $ SC.o_emacs_outputs $ SC.o_exclude $ SC.o_exclude_rule_ids
     $ SC.o_files_with_matches $ SC.o_force_color $ SC.o_gitlab_sast

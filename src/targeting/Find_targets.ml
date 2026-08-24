@@ -218,7 +218,6 @@ type conf = {
   exclude_minified_files : bool;
   (* TODO? remove it? This is now done in Diff_scan.ml instead? *)
   baseline_commit : baseline_ref option;
-  diff_depth : int;
 }
 [@@deriving show]
 
@@ -244,7 +243,6 @@ let default_conf : conf =
     explicit_targets = Explicit_targets.empty;
     exclude_minified_files = false;
     baseline_commit = None;
-    diff_depth = 2;
   }
 
 

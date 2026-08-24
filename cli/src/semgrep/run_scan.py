@@ -43,7 +43,6 @@ from semgrep.autofix import apply_fixes
 from semgrep.config_resolver import ConfigLoader
 from semgrep.config_resolver import get_config
 from semgrep.console import console
-from semgrep.constants import DEFAULT_DIFF_DEPTH
 from semgrep.constants import DEFAULT_TIMEOUT
 from semgrep.constants import OutputFormat
 from semgrep.constants import TOO_MUCH_DATA
@@ -498,7 +497,6 @@ def list_targets_and_exit(
 # old: this used to be called semgrep.semgrep_main.main
 def run_scan(
     *,
-    diff_depth: int = DEFAULT_DIFF_DEPTH,
     dump_command_for_core: bool = False,
     time_flag: bool = False,
     matching_explanations: bool = False,

@@ -23,7 +23,6 @@ from semgrep import __VERSION__
 from semgrep import bytesize
 from semgrep.commands.wrapper import handle_command_errors
 from semgrep.constants import Colors
-from semgrep.constants import DEFAULT_DIFF_DEPTH
 from semgrep.constants import DEFAULT_MAX_CHARS_PER_LINE
 from semgrep.constants import DEFAULT_MAX_LINES_PER_FINDING
 from semgrep.constants import DEFAULT_MAX_LOG_LIST_ENTRIES
@@ -335,11 +334,6 @@ _scan_options: List[Callable] = [
         "taint_intrafile",
         is_flag=True, default=False
     ),
-    optgroup.option(
-        "--diff-depth",
-        type=int,
-        default=DEFAULT_DIFF_DEPTH,
-    ),
     optgroup.option("--dump-command-for-core", "-d", is_flag=True, hidden=True),
     optgroup.option(
         "--allow-local-builds",
@@ -485,7 +479,6 @@ def scan(
     baseline_commit: Optional[str],
     config: Optional[Tuple[str, ...]],
     debug: bool,
-    diff_depth: int,
     dump_engine_path: bool,
     dryrun: bool,
     dump_command_for_core: bool,
@@ -769,7 +762,6 @@ def scan(
                     missed_rule_count,
                     _all_subprojects,
                 ) = semgrep.run_scan.run_scan(
-                    diff_depth=diff_depth,
                     dump_command_for_core=dump_command_for_core,
                     time_flag=time_flag,
                     matching_explanations=matching_explanations,

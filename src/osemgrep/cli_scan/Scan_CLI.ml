@@ -293,18 +293,6 @@ given baseline hash doesn't exist.
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
-let o_diff_depth : int Term.t =
-  let info =
-    Arg.info [ "diff-depth" ]
-      ~doc:
-        {|The depth of the Pro (interfile) differential scan, the number of
-       steps (both in the caller and callee sides) from the targets in the
-       call graph tracked by the deep preprocessor. Only applied in differential
-       scan mode. Default to 2.
-       |}
-  in
-  Arg.value (Arg.opt Arg.int default.targeting_conf.diff_depth info)
-
 (* ------------------------------------------------------------------ *)
 (* Performance and memory options *)
 (* ------------------------------------------------------------------ *)
@@ -1265,7 +1253,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   let combine
       allow_local_builds allow_rule_timeout_control
       apply_includes_excludes_to_files inline_metavariables autofix baseline_commit common config
-      dataflow_traces diff_depth dryrun dump_ast dump_command_for_core dump_engine_path
+      dataflow_traces dryrun dump_ast dump_command_for_core dump_engine_path
       dynamic_timeout dynamic_timeout_max_multiplier dynamic_timeout_unit_kb
       emacs emacs_outputs error exclude_ exclude_minified_files exclude_rule_ids files_with_matches
       force_color gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
@@ -1400,7 +1388,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           Option.map
             (fun rev -> Find_targets.Merge_base_of rev)
             baseline_commit;
-        diff_depth;
         max_target_bytes;
         always_select_explicit_targets =
           scan_unknown_extensions || imply_always_select_explicit_targets;
@@ -1499,7 +1486,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     const combine $ o_allow_local_builds $ o_allow_rule_timeout_control
     $ o_apply_includes_excludes_to_files $ o_inline_metavariables
     $ o_autofix $ o_baseline_commit $ CLI_common.o_common $ o_config
-    $ o_dataflow_traces $ o_diff_depth $ o_dryrun $ o_dump_ast
+    $ o_dataflow_traces $ o_dryrun $ o_dump_ast
     $ o_dump_command_for_core $ o_dump_engine_path
     $ o_dynamic_timeout $ o_dynamic_timeout_max_multiplier $ o_dynamic_timeout_unit_kb
     $ o_emacs $ o_emacs_outputs

@@ -88,7 +88,6 @@ type conf = {
   exclude_minified_files : bool;
   (* TODO: not used for now *)
   baseline_commit : baseline_ref option;
-  diff_depth : int;
 }
 [@@deriving show]
 
