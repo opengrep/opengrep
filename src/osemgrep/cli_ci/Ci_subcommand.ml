@@ -139,8 +139,8 @@ let resolve_subdir (subdir : string option) :
       in
       match (Rfpath.of_string dir, Rfpath.of_string ".") with
       | Ok subdir_real, Ok cwd_real -> (
-          let subdir_real = Rfpath.to_fpath subdir_real in
-          let cwd_real = Rfpath.to_fpath cwd_real in
+          let subdir_real = Rpath.to_fpath (Rfpath.to_rpath subdir_real) in
+          let cwd_real = Rpath.to_fpath (Rfpath.to_rpath cwd_real) in
           if Fpath.equal subdir_real cwd_real then Ok (Some ".")
           else
             match Fpath.rem_prefix cwd_real subdir_real with
@@ -210,11 +210,10 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
       (* the targeting the flags could not know: the current directory (or
        * --subdir) as the only root, the ci excludes, and the baseline from
        * the CI metadata *)
-      let target =
-        match subdir with
-        | Some dir -> "./" ^ dir
-        | None -> "."
-      in
+      (* not "./" ^ dir as in ci.py: pathlib normalises the "./" away but
+       * Fpath does not, and the diff filter in Diff_scan.scan_baseline
+       * compares against the plain relative paths git reports *)
+      let target = Option.value subdir ~default:"." in
       let conf : Scan_CLI.conf =
         {
           conf with

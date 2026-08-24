@@ -186,6 +186,9 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
     | Find_targets.Rev rev -> rev
   in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
+  (* git reports plain relative paths; a "./"-prefixed scanning root would
+     otherwise never match them *)
+  let targets = List_.map Fpath.normalize targets in
   let targets =
     let added_or_modified =
       status.added @ status.modified |> List_.map Fpath.v

@@ -63,13 +63,18 @@ let without_settings f =
   Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml" f
 
 (* Run the ci subcommand in a throw-away git repo holding a rule file and
- * one target, and check the exit code. *)
+ * one target (under [target_dir] when given), and check the exit code. *)
 let run_ci (caps : Ci_subcommand.caps) ~(rule : string) ~(target : string)
-    ?(extra_args : string list = [])
+    ?(target_dir : string option) ?(extra_args : string list = [])
     ?(check : Exit_code.t -> unit = Exit_code.Check.ok)
     ?(before_scan : unit -> string list = fun () -> []) () =
+  let target_file = F.File ("foo.py", target) in
   let repo_files =
-    [ F.File ("rules.yaml", rule); F.File ("foo.py", target) ]
+    F.File ("rules.yaml", rule)
+    ::
+    (match target_dir with
+    | None -> [ target_file ]
+    | Some dir -> [ F.Dir (dir, [ target_file ]) ])
   in
   Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
       let late_args = before_scan () in
@@ -110,6 +115,12 @@ let test_subdir_outside_cwd_fatal (caps : Ci_subcommand.caps) () =
     ~extra_args:[ "--subdir"; "/etc"; "--no-suppress-errors" ]
     ~check:Exit_code.Check.fatal ()
 
+let test_subdir_findings (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~target_dir:"sub"
+    ~extra_args:[ "--subdir"; "sub" ]
+    ~check:Exit_code.Check.findings ()
+
 (* the baseline (as a rev, like --baseline-commit main) removes the
  * pre-existing finding; only the one added on top of it remains *)
 let test_baseline_rev (caps : Ci_subcommand.caps) () =
@@ -125,6 +136,23 @@ let test_baseline_rev (caps : Ci_subcommand.caps) () =
         Git_wrapper.command caps_exec [ "commit"; "-m"; "add a finding" ]
       in
       [ "--baseline-commit"; baseline ])
+    ()
+
+(* same as test_baseline_rev but everything happens under --subdir *)
+let test_baseline_rev_in_subdir (caps : Ci_subcommand.caps) () =
+  let caps_exec = (caps :> < Cap.exec >) in
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~target_dir:"sub" ~check:Exit_code.Check.findings
+    ~before_scan:(fun () ->
+      let baseline = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      UFile.write_file
+        ~file:(Fpath.v "sub/foo.py")
+        (finding_py_content ^ "\ndef bar(c, d):\n    return c + d == c + d\n");
+      let _ = Git_wrapper.command caps_exec [ "add"; "sub/foo.py" ] in
+      let _ =
+        Git_wrapper.command caps_exec [ "commit"; "-m"; "add a finding" ]
+      in
+      [ "--baseline-commit"; baseline; "--subdir"; "sub" ])
     ()
 
 let test_gitlab_environment (caps : Ci_subcommand.caps) () =
@@ -161,6 +189,12 @@ let tests (caps : < Ci_subcommand.caps >) =
         (test_subdir_outside_cwd_fatal caps);
       t "baseline rev keeps only the new finding"
         ~checked_output:(Testo.stdxxx ()) ~normalize (test_baseline_rev caps);
+      t "subdir restricts the scan and finds findings"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_subdir_findings caps);
+      t "baseline rev in subdir keeps only the new finding"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_baseline_rev_in_subdir caps);
       t "gitlab environment is detected" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_gitlab_environment caps);
       t "github environment is detected" ~checked_output:(Testo.stdxxx ())
