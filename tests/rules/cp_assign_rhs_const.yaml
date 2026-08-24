@@ -1,0 +1,27 @@
+rules:
+# A constant propagated into a bare-Id assignment RHS (query = SQL_QUERY)
+# must get its svalue stamped at the assignment site, so literal patterns
+# fold against it. Pins the self-dispatch of the Assign RHS in
+# Constant_propagation.propagate_basic_visitor for a language with true
+# Assign statements (the Go test's `:=` lowers to AssignOp and does not
+# exercise that branch).
+- id: cp-assign-rhs-const
+  patterns:
+    - pattern: query = "$SQL"
+    - metavariable-regex:
+        metavariable: $SQL
+        regex: (?i)^SELECT\s
+  message: constant SQL query propagated into assignment RHS
+  languages:
+    - python
+  severity: WARNING
+# The same stamping also affects negative matching: a pattern-not literal
+# now folds against the propagated constant, suppressing the finding.
+- id: cp-assign-rhs-not-safe
+  patterns:
+    - pattern: value = $X
+    - pattern-not: value = "safe"
+  message: pattern-not folds against propagated constants
+  languages:
+    - python
+  severity: WARNING

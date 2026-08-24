@@ -33,6 +33,14 @@ let initial_context =
 (* In principle you should just override the 'visit_xyz' methods and call
  * 'super#visit_xyz' to recurse, so you could mostly ignore the
  * 'with_context_visit_xyz' methods.
+ *
+ * Note that 'with_context_visit_expr' is only a fallback: ArrayAccess,
+ * Assign and AssignOp nodes dispatch their children through
+ * 'self#visit_expr' directly and never reach 'with_context_visit_expr'
+ * themselves. Their children still do (via the '__else__' arm), so an
+ * override of 'with_context_visit_expr' observes every expression except
+ * those three node kinds. This differs from 'with_context_visit_definition',
+ * which is applied to every definition, including ClassDef and FuncDef.
  *)
 class virtual ['self] iter_with_context =
   object (self : 'self)
@@ -72,12 +80,19 @@ class virtual ['self] iter_with_context =
 
     method! visit_expr (env, ctx) x =
       match x.e with
+      (* The sub-expressions are dispatched through [self#visit_expr] so that
+         subclass overrides apply to them; [with_context_visit_expr] (= the
+         base traversal) is only for [x] itself, where re-dispatching would
+         loop. *)
       | ArrayAccess (e1, (_, e2, _)) ->
-          self#with_context_visit_expr (env, ctx) e1;
-          self#with_context_visit_expr (env, { ctx with in_lvalue = false }) e2
+          self#visit_expr (env, ctx) e1;
+          self#visit_expr (env, { ctx with in_lvalue = false }) e2
       | Assign (e1, _, e2)
       | AssignOp (e1, _, e2) ->
-          self#with_context_visit_expr (env, { ctx with in_lvalue = true }) e1;
-          self#with_context_visit_expr (env, ctx) e2
+          self#visit_expr (env, { ctx with in_lvalue = true }) e1;
+          (* reset in_lvalue: even when the assignment itself sits in lvalue
+             position (e.g. `*(p = q) = v`, `(x = obj).prop = v`), its RHS is
+             a pure read *)
+          self#visit_expr (env, { ctx with in_lvalue = false }) e2
       | __else__ -> self#with_context_visit_expr (env, ctx) x
   end

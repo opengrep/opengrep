@@ -92,7 +92,10 @@ let is_private attr =
   | _ -> false
 
 (* TODO: incomplete, e.g. Record is not handled *)
-let rec lvars_in_lhs expr =
+(* [base] is set while peeling the receiver of a subscript/field store: a
+   Container there is a temporary literal (`[x][0] = v`), not a
+   destructuring target, and the variables inside it are not written. *)
+let rec lvars_in_lhs ?(base = false) expr =
   match expr.e with
   | N (Id (id, { id_resolved = { contents = Some (_kind, sid) }; _ }))
   | DotAccess
@@ -100,7 +103,16 @@ let rec lvars_in_lhs expr =
         _,
         FN (Id (id, { id_resolved = { contents = Some (_kind, sid) }; _ })) ) ->
       [ (id, sid) ]
-  | Container ((Tuple | Array), (_, es, _)) -> List.concat_map lvars_in_lhs es
+  | Container ((Tuple | Array), (_, es, _)) when not base ->
+      List.concat_map lvars_in_lhs es
+  (* A store through a subscript or a field (`a[i] = v`, `a.f = v`,
+     `a[i].f = v`) mutates the container/object held by the base variable,
+     so it must count as a write to it: otherwise `a = {}; a[k] = v` leaves
+     `a` "assigned just once" and its stale initial value gets propagated
+     into later reads of `a`. *)
+  | ArrayAccess (e, _)
+  | DotAccess (e, _, _) ->
+      lvars_in_lhs ~base:true e
   | __else__ -> []
 
 class ['self] no_cycles_in_sym_prop_visitor =
@@ -600,7 +612,11 @@ class ['self] propagate_basic_visitor lang stats =
                   && no_cycles_in_sym_prop sid rexp
                 then add_constant_env id (sid, Sym rexp) env;
                 ());
-          super#visit_expr (env, ctx) rexp
+          (* Let Iter_with_context's Assign branch dispatch the children: it
+             sends [rexp] back through [self#visit_expr], so an RHS that is
+             exactly an Id (q = SOME_CONST) gets its svalue stamped, like the
+             same id in argument position would. *)
+          super#visit_expr (env, ctx) x
       | __else__ -> super#visit_expr (env, ctx) x
   end
 

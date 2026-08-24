@@ -1,0 +1,10 @@
+rules:
+# Pins that a store through a subscript (`a[k] = v`) is counted as a write
+# to `a` by the const-prop stats pass (lvars_in_lhs), so a variable whose
+# contents are mutated does not keep propagating its initial literal.
+- id: cp-container-store-write
+  pattern: f("abc")
+  message: mutated variable must not propagate its initial value
+  languages:
+    - python
+  severity: WARNING
