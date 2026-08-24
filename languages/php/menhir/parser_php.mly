@@ -1175,6 +1175,15 @@ expr:
  | T_CLONE expr { Clone($1,$2) }
 
  (* PHP 5.3 Closures *)
+ | closure_expr { $1 }
+ (* php-facebook-ext: lambda (short closure)s *)
+ | lambda_expr { $1 }
+ (* arrow functions, since PHP 7.4 *)
+ | arrow_expr { $1 }
+
+(* named so that static_scalar can reuse it: PHP 8.5 allows a closure in a
+ * constant expression *)
+closure_expr:
  | async_opt T_FUNCTION is_reference "(" parameter_list ")"
    lexical_vars return_type?
    "{" inner_statement* "}"
@@ -1189,10 +1198,6 @@ expr:
                      f_attrs = None;
        })
    }
- (* php-facebook-ext: lambda (short closure)s *)
- | lambda_expr { $1 }
- (* arrow functions, since PHP 7.4 *)
- | arrow_expr { $1 }
 
  (* php-facebook-ext: in hphp.y yield are at the statement level
   * and are restricted to a few forms.
@@ -1404,6 +1409,27 @@ static_scalar_primary:
  | T_ARRAY "(" array_pair_list ")"  { ArrayLong($1,($2,$3,$4)) }
  | "[" array_pair_list "]"          { ArrayShort($1,$2,$3) }
  | "(" static_scalar ")"            { ParenExpr($1,$2,$3) }
+ (* PHP 8.5: a constant expression may be a closure or a first-class
+  * callable. PHP requires the closure to be static and forbids 'use', which
+  * is not enforced here. *)
+ | closure_expr { $1 }
+ | arrow_expr   { $1 }
+ (* first-class callables; PHP only allows a function or a static method
+  * here, since the closure a constant expression yields has to be static *)
+ | qualified_class_name "(" "..." ")"
+     { if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Call (Id $1, ($2, [Left (Arg (Ellipsis $3))], $4))
+       else FirstClassCallable (Id $1, $2, $3, $4) }
+ | qualified_class_name "::" ident "(" "..." ")"
+     { let callee = ClassGet(Id $1, $2, Id (XName [QI (Name $3)])) in
+       if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Call (callee, ($4, [Left (Arg (Ellipsis $5))], $6))
+       else FirstClassCallable (callee, $4, $5, $6) }
+ | T_SELF "::" ident "(" "..." ")"
+     { let callee = ClassGet(Id (Self $1), $2, Id (XName [QI (Name $3)])) in
+       if Domain.DLS.get Flag_parsing.sgrep_mode
+       then Call (callee, ($4, [Left (Arg (Ellipsis $5))], $6))
+       else FirstClassCallable (callee, $4, $5, $6) }
  (* Class constant access: self/parent must come before qualified_class_name *)
  | T_SELF "::" ident                 { ClassGet(Id (Self $1),$2,Id (XName [QI (Name $3)])) }
  | T_SELF "::" T_CLASS               { ClassGet(Id (Self $1),$2,Id (XName [QI (Name ("class",$3))])) }
