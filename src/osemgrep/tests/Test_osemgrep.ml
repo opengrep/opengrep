@@ -72,6 +72,30 @@ let test_absolute_target_path caps =
   in
   Testo.create "absolute path as target" func
 
+(* 'opengrep --experimental ci' must reach the ci subcommand, not become a
+   scan with 'ci' as scanning root *)
+let test_subcommand_after_global_flag (caps : CLI.caps) () =
+  let repo_files =
+    Testutil_files.
+      [
+        File
+          ( "rules.yaml",
+            "rules:\n\
+             - id: eqeq-bad\n\
+            \  pattern: $X == $X\n\
+            \  message: bad\n\
+            \  languages: [python]\n\
+            \  severity: ERROR\n" );
+        File ("foo.py", "def foo(a, b):\n    return a + b == a + b\n");
+      ]
+  in
+  Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+      Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml"
+        (fun () ->
+          CLI.main caps
+            [| "opengrep"; "--experimental"; "ci"; "--config"; "rules.yaml" |]
+          |> Exit_code.Check.findings))
+
 let random_init = lazy (Random.self_init ())
 
 let create_named_pipe () =
@@ -139,6 +163,8 @@ let tests (caps : CLI.caps) =
   Testo.categorize "Osemgrep multi subcommands (e2e)"
     [
       test_scan_config_registry_no_token caps;
+      Testo.create "subcommand after global flag"
+        (test_subcommand_after_global_flag caps);
       test_absolute_target_path scan_caps;
       test_named_pipe scan_caps;
     ]
