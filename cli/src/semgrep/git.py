@@ -31,6 +31,15 @@ def zsplit(s: str) -> List[str]:
         return []
 
 
+def redact_url_userinfo(text: str) -> str:
+    """
+    Replace the userinfo part of any URL in the text with "***", so that
+    credentials spliced into a fetch URL (e.g. the GitLab job token) do not
+    reach the logs.
+    """
+    return re.sub(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@", r"\1***@", text)
+
+
 def git_check_output(command: Sequence[str], cwd: Optional[str] = None) -> str:
     """
     Helper function to run a GIT command that prints out helpful debugging information
@@ -53,14 +62,15 @@ def git_check_output(command: Sequence[str], cwd: Optional[str] = None) -> str:
             cwd=cwd,
         ).strip()
     except subprocess.CalledProcessError as e:
-        command_str = " ".join(command)
+        command_str = redact_url_userinfo(" ".join(command))
+        stderr_str = redact_url_userinfo(e.stderr) if e.stderr else e.stderr
         raise SemgrepError(
             dedent(
                 f"""
                 Command failed with exit code: {e.returncode}
                 -----
                 Command failed with output:
-                {e.stderr}
+                {stderr_str}
 
                 Failed to run '{command_str}'. Possible reasons:
 

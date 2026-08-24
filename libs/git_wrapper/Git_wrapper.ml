@@ -125,6 +125,14 @@ exception Error of string
  *)
 let git_diff_lines_re = Pcre2_.regexp {|@@ -\d*,?\d* \+(?P<lines>\d*,?\d*) @@|}
 let remote_repo_name_re = Pcre2_.regexp {|^http.*\/(.*)\.git$|}
+
+(* the userinfo part of a URL, e.g. gitlab-ci-token:$CI_JOB_TOKEN spliced
+ * into a fetch URL as credentials *)
+let url_userinfo_re =
+  Pcre2_.regexp {|([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@|}
+
+let redact_url_userinfo (str : string) : string =
+  Pcre2_.replace ~rex:url_userinfo_re ~template:"$1***@" str
 let getcwd () = USys.getcwd () |> Fpath.v
 
 (*
@@ -274,7 +282,7 @@ Failed to run %s. Possible reasons:
   (fix with `git config --global --add safe.directory $(pwd)`)
 
 Try running the command yourself to debug the issue.|}
-            (Cmd.to_string cmd));
+            (redact_url_userinfo (Cmd.to_string cmd)));
       raise (Error "Error when we run a git command")
 
 let commit_blobs_by_date objects =
