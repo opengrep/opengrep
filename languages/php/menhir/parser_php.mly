@@ -855,6 +855,8 @@ member_declaration:
  (* the old 'var $x;' form *)
  | T_VAR ioption(type_php) listc(class_variable_simple) ";"
      { ClassVariables(None, NoModifiers $1, $2, $3, $4)  }
+ | T_VAR ioption(type_php) class_variable_hooked
+     { ClassVariables(None, NoModifiers $1, $2, [Left $3], Tok.FakeTok(";", None)) }
 
 (* class methods *)
  | ioption(attributes) member_modifier* method_declaration

@@ -30,3 +30,9 @@ class C
         public string $promoted { set => strtolower($value); }
     ) {}
 }
+
+// hooks also work on the old 'var' form of a property declaration
+class WithVar
+{
+    var $prop { get => 42; }
+}
