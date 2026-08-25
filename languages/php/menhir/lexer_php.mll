@@ -580,7 +580,9 @@ rule st_in_scripting state = parse
         {
           let s = tok lexbuf in
           let ii = tokinfo lexbuf in
-          T_BOOL (bool_of_string s, ii)
+          (* BOOL above matches any casing, as PHP is case-insensitive here,
+           * but bool_of_string only accepts "true" and "false" *)
+          T_BOOL (bool_of_string (String.lowercase_ascii s), ii)
         }
     | LNUM | BINNUM | HEXNUM
         {
