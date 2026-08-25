@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.28.0](https://github.com/opengrep/opengrep/releases/tag/v1.28.0) - 26-08-2026
+
+## Improvements
+
+* Improve install scripts by @dimitris-m in #796
+* opengrep-cli: fix -o on Windows, check destinations early by @dimitris-m in #798
+* Constant propagation: stamp svalues on assignment RHS and array indices by @corneliuhoffman in #803
+* PHP fixes in Menhir by @maciejpirog in #795
+* More PHP fixes by @maciejpirog in #804
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.27.1...v1.28.0
+
+
 ## [1.27.1](https://github.com/opengrep/opengrep/releases/tag/v1.27.1) - 14-08-2026
 
 ### Bug fixes
