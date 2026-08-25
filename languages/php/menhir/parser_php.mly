@@ -1417,6 +1417,21 @@ static_scalar_primary:
   * is not enforced here. *)
  | closure_expr { $1 }
  | arrow_expr   { $1 }
+ (* PHP 8.1: 'new' in initializers. The class name is a plain name rather than
+  * any constant expression, which keeps this conflict-free and covers what
+  * PHP itself allows here.
+  *)
+ | T_NEW qualified_class_name arguments? { New ($1, Id $2, $3) }
+ | T_NEW ioption(attributes) T_CLASS arguments? extends_from implements_list
+   "{" member_declaration* "}"
+     { let class_ =
+         { c_type = ClassRegular $3; c_name = Name ("!ANON!", $3);
+           c_extends = $5; c_tparams = None;
+           c_implements = $6; c_body = $7, $8, $9;
+           c_attrs = $2; c_enum_type = None; }
+       in
+       NewAnonClass ($1, $4, class_)
+     }
  (* first-class callables; PHP only allows a function or a static method
   * here, since the closure a constant expression yields has to be static *)
  | qualified_class_name "(" "..." ")"
