@@ -204,6 +204,8 @@ type expr =
   | Infix of AST_generic.incr_decr wrap * expr
   | Postfix of AST_generic.incr_decr wrap * expr
   | Binop of expr * binaryOp wrap * expr
+  (* PHP 8.5 pipe operator, see Cst_php.Pipe *)
+  | Pipe of expr * tok (* |> *) * expr
   | Unop of unaryOp wrap * expr
   | Guil of expr list bracket
   | ConsArray of array_value list bracket
@@ -225,6 +227,7 @@ and cast_type =
   | StringTy
   | ArrayTy
   | ObjectTy
+  | VoidTy (* PHP 8.5 *)
 
 and special =
   (* often transformed in Var "$this" in the analysis *)
@@ -377,6 +380,8 @@ and parameter_classic = {
    * asymmetric visibility; empty for regular parameters *)
   p_modifiers : modifier list;
   p_variadic : tok option;
+  (* PHP 8.4: hooks on a constructor-promoted property *)
+  p_hooks : property_hook list;
 }
 
 (* for methods, and below for fields too *)
@@ -405,6 +410,8 @@ and constant_def = {
   cst_body : expr;
   (* PHP 7.1: class constant visibility *)
   cst_modifiers : modifier list;
+  (* PHP 8.0 attributes, e.g. '#[\Deprecated]' (PHP 8.4) *)
+  cst_attrs : attribute list;
 }
 
 and enum_type = { e_base : hint_type; e_constraint : hint_type option }
@@ -431,6 +438,11 @@ and xhp_field = class_var * bool
 
 (* PHP 8.4 property hooks *)
 and property_hook = {
+  ph_attrs : attribute list;
+  (* only 'final' is allowed here *)
+  ph_modifiers : modifier list;
+  (* by-reference getter, as in '&get' *)
+  ph_ref : tok option;
   ph_kind : property_hook_kind;
   ph_params : parameter list; (* set($value) parameter *)
   ph_body : stmt option; (* None for abstract, Some for body *)
@@ -445,6 +457,7 @@ and class_var = {
   cv_value : expr option;
   cv_modifiers : modifier list;
   cv_hooks : property_hook list; (* PHP 8.4 property hooks *)
+  cv_attrs : attribute list;
 }
 
 and method_def = func_def

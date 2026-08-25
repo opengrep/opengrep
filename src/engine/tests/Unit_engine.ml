@@ -610,6 +610,61 @@ let filter_irrelevant_rules_tests () =
      target_files
      |> List_.map (fun target_file -> test_irrelevant_rule_file target_file))
 
+(* The dual of test_irrelevant_rule: check that the prefilter does *not*
+ * discard a target the rule actually matches.
+ *
+ * This needs its own harness because the rest of the test suite runs with
+ * Match_env.default_xconfig, which sets filter_irrelevant_rules =
+ * NoPrefiltering. A rule can therefore pass every tests/rules and
+ * tests/patterns test and still never fire in production, because the
+ * prefilter demands an identifier that a *_to_generic converter synthesised
+ * and which never occurs in source text.
+ *)
+let test_relevant_rule rule_file target_file =
+  let _ = Domain.DLS.set cache (Hashtbl.create 101) in
+  let cache = Some cache in
+  let rules = Parse_rule.parse rule_file |> Result.get_ok in
+  rules
+  |> List.iter (fun rule ->
+         match Analyze_rule.regexp_prefilter_of_rule ~cache rule with
+         (* no prefilter at all is fine: nothing gets skipped *)
+         | None -> ()
+         | Some (f, func) ->
+             let content = UFile.read_file target_file in
+             let s = Semgrep_prefilter_j.string_of_formula f in
+             if not (func content) then
+               Alcotest.fail
+                 (spf
+                    "Rule %s considered irrelevant by regex prefilter, so it \
+                     would never run on this target: %s"
+                    (Rule_ID.to_string (fst rule.id))
+                    s))
+
+let test_relevant_rule_file target_file =
+  t (Fpath.basename target_file) (fun () ->
+      let rules_file =
+        let d, b, _e = Filename_.dbe_of_filename !!target_file in
+        let candidate1 = Filename_.filename_of_dbe (d, b, "yaml") in
+        if Sys.file_exists candidate1 then Fpath.v candidate1
+        else
+          failwith
+            (spf "could not find rule file for relevant rule %s" !!target_file)
+      in
+      test_relevant_rule rules_file target_file)
+
+let filter_relevant_rules_tests () =
+  Testo.categorize "filter relevant rules"
+    (let dir = tests_path / "relevant_rules" in
+     let target_files =
+       Common2.glob (spf "%s/*" !!dir)
+       |> Fpath_.of_strings
+       |> File_type.files_of_dirs_or_files (function
+            | File_type.Config File_type.Yaml -> false
+            | _ -> true)
+     in
+     target_files
+     |> List_.map (fun target_file -> test_relevant_rule_file target_file))
+
 (*****************************************************************************)
 (* Tainting tests *)
 (*****************************************************************************)
@@ -816,6 +871,7 @@ let tests () =
       lang_autofix_tests ~polyglot_pattern_path;
       eval_regression_tests ();
       filter_irrelevant_rules_tests ();
+      filter_relevant_rules_tests ();
       maturity_tests ();
       full_rule_taint_maturity_tests ();
       full_rule_regression_tests ();

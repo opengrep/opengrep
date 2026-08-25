@@ -455,6 +455,8 @@ rule st_in_scripting state = parse
       | "<<=" { T_SL_EQUAL(tokinfo lexbuf) }
       | ">>=" { T_SR_EQUAL(tokinfo lexbuf) }
       | ".="  { T_CONCAT_EQUAL(tokinfo lexbuf) }
+      | "**=" { T_POW_EQUAL(tokinfo lexbuf) }
+      | "??=" { T_NULL_COALESCE_EQUAL(tokinfo lexbuf) }
 
       | "=="  { T_IS_EQUAL(tokinfo lexbuf) }
       | "!="  { T_IS_NOT_EQUAL(tokinfo lexbuf) }
@@ -475,6 +477,8 @@ rule st_in_scripting state = parse
       | "<<" { T_SL(tokinfo lexbuf) }
       | ">>" { T_SR(tokinfo lexbuf) }
       | "&"  { TAND(tokinfo lexbuf) }
+      (* PHP 8.5 pipe operator; must not be lexed as '|' followed by '>' *)
+      | "|>" { T_PIPE_GT(tokinfo lexbuf) }
       | "|"  { TOR(tokinfo lexbuf) }
       | "^"  { TXOR(tokinfo lexbuf) }
 
@@ -578,7 +582,9 @@ rule st_in_scripting state = parse
         {
           let s = tok lexbuf in
           let ii = tokinfo lexbuf in
-          T_BOOL (bool_of_string s, ii)
+          (* BOOL above matches any casing, as PHP is case-insensitive here,
+           * but bool_of_string only accepts "true" and "false" *)
+          T_BOOL (bool_of_string (String.lowercase_ascii s), ii)
         }
     | LNUM | BINNUM | HEXNUM
         {
@@ -749,6 +755,10 @@ rule st_in_scripting state = parse
 
     | "(" TABS_AND_SPACES ("unset") TABS_AND_SPACES ")"
         { lang_ext_or_cast state (T_UNSET_CAST(tokinfo lexbuf)) lexbuf }
+
+    (* PHP 8.5 *)
+    | "(" TABS_AND_SPACES "void" TABS_AND_SPACES ")"
+        { lang_ext_or_cast state (T_VOID_CAST(tokinfo lexbuf)) lexbuf }
     | "?>"
         {
           (* because of XHP and my token merger:

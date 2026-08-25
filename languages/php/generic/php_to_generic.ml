@@ -96,6 +96,7 @@ let ptype (x, t) =
   (* TODO: TyArray of gen? *)
   | ArrayTy -> G.ty_builtin ("array", t)
   | ObjectTy -> G.ty_builtin ("object", t)
+  | VoidTy -> G.ty_builtin ("void", t)
 
 let list_expr_to_opt xs =
   match xs with
@@ -419,6 +420,29 @@ and expr e : G.expr =
           |> G.e
       | Right x ->
           G.Call (G.IdSpecial x |> G.e, fb [ G.Arg v1; G.Arg v3 ]) |> G.e)
+  (* PHP 8.5: '$x |> f(...)' means 'f($x)'. Desugar it into that call so that
+   * rules written against the call, and the dataflow that follows it, both
+   * work; then tag it so a rule can still tell a piped call from a direct one
+   * (same approach as Elixir_to_generic.map_pipeline). *)
+  | Pipe (v1, t, v2) ->
+      let arg = expr v1 in
+      let callee =
+        match v2 with
+        (* the right-hand side is normally first-class callable syntax; pipe
+         * to the callable itself rather than to its Closure::fromCallable
+         * desugaring *)
+        | FirstClassCallable (callable_expr, _) -> expr callable_expr
+        (* In a pattern, 'f(...)' parses as a call whose only argument is an
+         * ellipsis rather than as FirstClassCallable (see parser_php.mly), so
+         * '$X |> f(...)' would otherwise desugar to a call of f(...)'s result
+         * and never match piped code. Real code cannot produce this shape,
+         * since an ellipsis argument only exists in patterns. *)
+        | Call (callable_expr, (_, [ Arg (Ellipsis _) ], _)) ->
+            expr callable_expr
+        | _ -> expr v2
+      in
+      let desugared = G.Call (callee, fb [ G.Arg arg ]) |> G.e in
+      G.OtherExpr (("PipelineCall", t), [ G.E desugared ]) |> G.e
   | Unop ((v1, t), v2) ->
       let v1 = unaryOp v1 and v2 = expr v2 in
       G.Call (G.IdSpecial (G.Op v1, t) |> G.e, fb [ G.Arg v2 ]) |> G.e
@@ -453,7 +477,11 @@ and expr e : G.expr =
        m_modifiers = _;
        f_name = _;
        l_uses;
-       f_attrs = [];
+       (* G.Lambda has no attribute slot, so an attribute on a closure is
+        * dropped here, as its modifiers and '&' already are. Matching this
+        * on [] instead would send every attributed closure to the error
+        * below and fail the whole file. *)
+       f_attrs = _;
        f_params = ps;
        f_return_type = rett;
        f_body = body;
@@ -483,8 +511,7 @@ and expr e : G.expr =
               fbody = G.FBStmt body;
               fkind = (lambdakind, t);
             }
-          |> G.e
-      | _ -> error tok "TODO: Lambda")
+          |> G.e)
   | Match (tok, e, matches) ->
       let e = expr e in
       let matches = List_.map match_ matches in
@@ -622,7 +649,19 @@ and parameter x =
   | ParamEllipsis t -> G.ParamEllipsis t
 
 and parameter_classic
-    { p_type; p_ref; p_name; p_default; p_attrs; p_modifiers; p_variadic } =
+    {
+      p_type;
+      p_ref;
+      p_name;
+      p_default;
+      p_attrs;
+      p_modifiers;
+      p_variadic;
+      (* hooks on a promoted parameter are surfaced on the class field that
+       * the promotion declares (see promoted_field in ast_php_build.ml), so
+       * there is nothing to add on the parameter itself *)
+      p_hooks = _;
+    } =
   let p_type = option hint_type p_type in
   let p_name = var p_name in
   let p_default = option expr p_default in
@@ -668,11 +707,12 @@ and attribute v =
   | _ -> raise Impossible
 
 (* see ast_php_build.ml *)
-and constant_def { cst_name; cst_body; cst_tok = tok; cst_modifiers } =
+and constant_def { cst_name; cst_body; cst_tok = tok; cst_modifiers; cst_attrs } =
   let id = ident cst_name in
   let body = expr cst_body in
   let modifiers = list modifier_to_attr cst_modifiers in
-  let attr = G.KeywordAttr (G.Const, tok) :: modifiers in
+  let attrs = list attribute cst_attrs in
+  let attr = (G.KeywordAttr (G.Const, tok) :: modifiers) @ attrs in
   let ent = G.basic_entity id ~case_insensitive:false ~attrs:attr in
   (ent, { G.vinit = Some body; vtype = None; vtok = G.no_sc })
 
@@ -759,20 +799,31 @@ and class_var
       cv_value = cvalue;
       cv_modifiers = cmodifiers;
       cv_hooks = chooks;
+      cv_attrs = cattrs;
     } =
   let id = var cname in
   let typ = option hint_type ctype in
   let value = option expr cvalue in
   let modifiers = list modifier_to_attr cmodifiers in
-  let ent = G.basic_entity id ~case_insensitive:false ~attrs:modifiers in
+  let attrs = list attribute cattrs in
+  let ent =
+    G.basic_entity id ~case_insensitive:false ~attrs:(modifiers @ attrs)
+  in
   let def = { G.vtype = typ; vinit = value; vtok = G.no_sc } in
   let hooks = list property_hook chooks in
   (ent, def, hooks)
 
-and property_hook { ph_kind; ph_params; ph_body } =
+and property_hook { ph_attrs; ph_modifiers; ph_ref; ph_kind; ph_params; ph_body } =
   let attr, tok, name_str = match ph_kind with
     | PhGet tok -> (G.KeywordAttr (G.Getter, tok), tok, "get")
     | PhSet tok -> (G.KeywordAttr (G.Setter, tok), tok, "set")
+  in
+  (* keep 'final' and the '&' of '&get' so patterns can match on them *)
+  let modifiers = list modifier_to_attr ph_modifiers in
+  let ref_attr =
+    match ph_ref with
+    | None -> []
+    | Some tok -> [ G.OtherAttribute (("&", tok), []) ]
   in
   let params = list parameter ph_params in
   let body = match ph_body with
@@ -785,7 +836,10 @@ and property_hook { ph_kind; ph_params; ph_body } =
     frettype = None;
     fbody = body;
   } in
-  let ent = G.basic_entity (name_str, tok) ~case_insensitive:false ~attrs:[attr] in
+  let ent =
+    G.basic_entity (name_str, tok) ~case_insensitive:false
+      ~attrs:((attr :: modifiers) @ ref_attr @ list attribute ph_attrs)
+  in
   (ent, G.FuncDef fdef)
 
 and method_def v = func_def v
