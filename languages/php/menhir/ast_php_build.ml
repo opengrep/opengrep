@@ -548,7 +548,9 @@ and expr env = function
         ( id,
           (lp, List_.map (fun e -> A.Arg (lvalue env e)) (comma_list lvl), rp)
         )
-  | Yield (tok, e) ->
+  | Yield (tok, None) ->
+      A.Call (A.Id [ (A.builtin "yield", wrap tok) ], fb tok [])
+  | Yield (tok, Some e) ->
       A.Call
         ( A.Id [ (A.builtin "yield", wrap tok) ],
           fb tok [ A.Arg (array_pair env e) ] )

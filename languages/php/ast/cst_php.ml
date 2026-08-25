@@ -292,7 +292,8 @@ and expr =
    * understand yield so for now just make it simple and add yield
    * at the expression level.
    *)
-  | Yield of tok * array_pair (* should have no ref inside *)
+  (* the operand is absent in a bare 'yield;' *)
+  | Yield of tok * array_pair option (* should have no ref inside *)
   | YieldBreak of tok * tok
   (* php-facebook-ext: Just like yield, this should be at the statement level *)
   | Await of tok * expr
