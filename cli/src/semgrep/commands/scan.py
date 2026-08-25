@@ -694,6 +694,11 @@ def scan(
 
     filtered_matches_by_rule: RuleMatchMap = {}
 
+    # refuse a bad destination before the scan runs and before the
+    # stdin/FIFO targets below are read
+    output_handler = OutputHandler(output_settings)
+    output_handler.check_destinations()
+
     # The 'optional_stdin_target' context manager must remain before
     # 'managed_output'. Output depends on file contents so we cannot have
     # already deleted the temporary stdin file.
@@ -709,7 +714,6 @@ def scan(
 
         targets = write_pipes_to_disk(targets, Path(pipes_dir))
 
-        output_handler = OutputHandler(output_settings)
         return_data: Optional[
             Tuple[RuleMatchMap, List[SemgrepError], List[Rule], Set[Path]]
         ] = None
