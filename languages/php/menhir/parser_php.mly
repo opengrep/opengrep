@@ -363,9 +363,14 @@ semgrep_pattern:
   * with regular functions. Thus, we force the visibility_modifier.
   * Without such modifier, the regular function_declaration should work for
   * a method_declaration anyway. *)
- | visibility_modifier method_declaration EOF {
-    let def = $2 in
-    let def = { def with f_modifiers = $1::def.f_modifiers } in
+ | visibility_modifier member_modifier* method_declaration EOF {
+    let def = $3 in
+    let def = { def with f_modifiers = $1 :: $2 @ def.f_modifiers } in
+    Toplevel (FuncDef def)
+    }
+ | class_modifier member_modifier* method_declaration EOF {
+    let def = $3 in
+    let def = { def with f_modifiers = $1 :: $2 @ def.f_modifiers } in
     Toplevel (FuncDef def)
     }
 
