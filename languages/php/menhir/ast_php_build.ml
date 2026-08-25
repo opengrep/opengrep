@@ -319,26 +319,33 @@ and stmt env st acc =
       let id = A.IdSpecial (A.FuncLike A.Unset, wrap tok) in
       A.Expr (A.Call (id, (t1, lp, t2)), sc) :: acc
   (* http://php.net/manual/en/control-structures.declare.php *)
-  | Declare (tok, args, colon_st) -> (
-      match (args, colon_st) with
-      (* declare(strict=1); (or 0) can be skipped,
-       * See 'i wiki/index.php/Pfff/Declare_strict' *)
-      | ( (_, [ Either.Left (Name ("strict", _), (_, Sc (C (Int pi)))) ], _),
-          SingleStmt (EmptyStmt _) )
-      | ( ( _,
-            [ Either.Left (Name ("strict_types", _), (_, Sc (C (Int pi)))) ],
-            _ ),
-          SingleStmt (EmptyStmt _) )
-        when Parsed_int.eq_const pi 0 || Parsed_int.eq_const pi 1
-             (* declare(ticks=1); can be skipped too.
-              * http://www.php.net/manual/en/control-structures.declare.php#control-structures.declare.ticks
-              *) ->
-          acc
-      | (_, [ Either.Left (Name ("ticks", _), (_, Sc (C (Int pi)))) ], _), _
-        when Parsed_int.eq_const pi 1 ->
-          let cst = colon_stmt tok env colon_st in
-          cst :: acc
-      | _ -> error tok "TODO: declare")
+  | Declare (tok, (lp, args, rp), colon_st) ->
+      (* A directive says how the file is to be compiled, not what it does:
+       * strict_types, ticks and encoding all leave the code itself unchanged,
+       * and the block form runs its body unconditionally and adds no scope.
+       *
+       * It is kept as a call to a builtin so that rules can match on it, and
+       * emitted as a statement *beside* the body rather than around it, so
+       * that the body's dataflow is the same as if the declare were not
+       * there.
+       *)
+      let directive =
+        A.Expr
+          ( A.Call
+              ( A.Id [ (A.builtin "declare", wrap tok) ],
+                ( lp,
+                  comma_list args
+                  |> List_.map (fun (name, (eqtok, v)) ->
+                         A.ArgLabel (ident env name, eqtok, static_scalar env v)),
+                  rp ) ),
+            tok )
+      in
+      let body =
+        match colon_st with
+        | SingleStmt (EmptyStmt _) -> acc
+        | _ -> colon_stmt tok env colon_st :: acc
+      in
+      directive :: body
   | FuncDefNested fd -> A.FuncDef (func_def env fd) :: acc
   | ClassDefNested cd -> A.ClassDef (class_def env cd) :: acc
 
