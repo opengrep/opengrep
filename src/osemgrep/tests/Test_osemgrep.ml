@@ -96,6 +96,34 @@ let test_subcommand_after_global_flag (caps : CLI.caps) () =
             [| "opengrep"; "--experimental"; "ci"; "--config"; "rules.yaml" |]
           |> Exit_code.Check.findings))
 
+(* 'opengrep ci -d' must be accepted by the ci parser (so that without
+   --experimental the run still falls back to pysemgrep, where the flag
+   works) and dispatch to the show subcommand like scan does; a parser
+   rejection would print an unknown-option usage error instead *)
+let test_ci_dump_command_for_core (caps : CLI.caps) () =
+  let repo_files =
+    Testutil_files.
+      [
+        File
+          ( "rules.yaml",
+            "rules:\n\
+             - id: eqeq-bad\n\
+            \  pattern: $X == $X\n\
+            \  message: bad\n\
+            \  languages: [python]\n\
+            \  severity: ERROR\n" );
+        File ("foo.py", "def foo(a, b):\n    return a + b == a + b\n");
+      ]
+  in
+  Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+      Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml"
+        (fun () ->
+          CLI.main caps
+            [|
+              "opengrep"; "--experimental"; "ci"; "--config"; "rules.yaml"; "-d";
+            |]
+          |> Exit_code.Check.fatal))
+
 let random_init = lazy (Random.self_init ())
 
 let create_named_pipe () =
@@ -165,6 +193,15 @@ let tests (caps : CLI.caps) =
       test_scan_config_registry_no_token caps;
       Testo.create "subcommand after global flag"
         (test_subcommand_after_global_flag caps);
+      Testo.create "ci accepts dump-command-for-core"
+        ~checked_output:(Testo.stdxxx ())
+        ~normalize:
+          [
+            Testutil_logs.mask_time;
+            Testutil.mask_temp_paths ();
+            Testutil_git.mask_temp_git_hash;
+          ]
+        (test_ci_dump_command_for_core caps);
       test_absolute_target_path scan_caps;
       test_named_pipe scan_caps;
     ]
