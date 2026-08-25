@@ -140,6 +140,18 @@ let test_subdir_outside_cwd_fatal (caps : Ci_subcommand.caps) () =
     ~extra_args:[ "--subdir"; "/etc"; "--no-suppress-errors" ]
     ~check:Exit_code.Check.fatal ()
 
+(* a nonexistent subdir must be reported as not found, not as being
+ * outside the current directory *)
+let test_subdir_nonexistent_suppressed (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:[ "--subdir"; "no-such-dir" ]
+    ()
+
+let test_subdir_nonexistent_fatal (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:[ "--subdir"; "no-such-dir"; "--no-suppress-errors" ]
+    ~check:Exit_code.Check.fatal ()
+
 (* an explicit false in the environment must turn suppression off, exactly
  * like the --no-suppress-errors flag *)
 let test_suppress_errors_env_false (caps : Ci_subcommand.caps) () =
@@ -321,6 +333,12 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "subdir outside cwd is fatal without suppression"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_subdir_outside_cwd_fatal caps);
+      t "nonexistent subdir is reported as not found"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_subdir_nonexistent_suppressed caps);
+      t "nonexistent subdir is fatal without suppression"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_subdir_nonexistent_fatal caps);
       t "suppress-errors env var set to false"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_suppress_errors_env_false caps);

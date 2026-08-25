@@ -146,7 +146,12 @@ let resolve_subdir (subdir : string option) :
             match Fpath.rem_prefix cwd_real subdir_real with
             | Some rel -> Ok (Some (Fpath.to_string rel))
             | None -> err ())
-      | __else__ -> err ())
+      (* the directory cannot be resolved because it does not exist (or is
+       * not accessible) *)
+      | Error _, _ ->
+          Logs.err (fun m -> m "File not found: %s" dir);
+          Error (Exit_code.fatal ~__LOC__)
+      | _, Error _ -> err ())
 
 let is_git_repo_root_approx () : bool =
   Sys.file_exists ".git" && Sys.is_directory ".git"
