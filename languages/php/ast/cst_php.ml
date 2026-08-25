@@ -625,6 +625,7 @@ and short_lambda_def = {
   sl_modifiers : modifier wrap list;
   (* returns by reference, as in 'fn&($x) => ...' *)
   sl_ref : is_ref;
+  sl_attrs : attributes option;
   sl_params : short_lambda_params;
   sl_return_type : (tok (* : *) * hint_type) option;
   sl_tok : tok (* ==> *) option; (* async { } doesn't use a ==> *)
@@ -731,6 +732,7 @@ and class_constant = ident * static_scalar_affect
 
 (* PHP 8.4 property hooks *)
 and property_hook = {
+  ph_attrs: attributes option;
   (* only 'final' is allowed here *)
   ph_modifiers: modifier wrap list;
   (* by-reference getter, as in '&get' *)

@@ -905,15 +905,16 @@ property_hooks:
  | "{" property_hook* "}" { ($1, $2, $3) }
 
 property_hook:
- | hook_modifier* is_reference T_IDENT property_hook_params? property_hook_body
-     { let (s, tok) = $3 in
+ | ioption(attributes) hook_modifier* is_reference T_IDENT
+   property_hook_params? property_hook_body
+     { let (s, tok) = $4 in
        let kind = match s with
          | "get" -> PhGet
          | "set" -> PhSet
          | _ -> raise (Parsing.Parse_error)
        in
-       { ph_modifiers = $1; ph_ref = $2; ph_kind = (kind, tok);
-         ph_params = $4; ph_body = $5 }
+       { ph_attrs = $1; ph_modifiers = $2; ph_ref = $3; ph_kind = (kind, tok);
+         ph_params = $5; ph_body = $6 }
      }
 
 (* only 'final' is allowed on a hook *)
@@ -1186,18 +1187,18 @@ expr:
 (* named so that static_scalar can reuse it: PHP 8.5 allows a closure in a
  * constant expression *)
 closure_expr:
- | async_opt T_FUNCTION is_reference "(" parameter_list ")"
+ | ioption(attributes) async_opt T_FUNCTION is_reference "(" parameter_list ")"
    lexical_vars return_type?
    "{" inner_statement* "}"
-   { validate_parameter_list $5;
-     let params = ($4, $5, $6) in
-       let body = ($9, $10, $11) in
-       Lambda ($7, { f_tok = $2;f_ref = $3;f_params = params; f_body = body;
+   { validate_parameter_list $6;
+     let params = ($5, $6, $7) in
+       let body = ($10, $11, $12) in
+       Lambda ($8, { f_tok = $3;f_ref = $4;f_params = params; f_body = body;
                      f_tparams = None;
-                     f_name = Name("__lambda__", $2);
-                     f_return_type = $8; f_type = FunctionLambda;
-                     f_modifiers = $1;
-                     f_attrs = None;
+                     f_name = Name("__lambda__", $3);
+                     f_return_type = $9; f_type = FunctionLambda;
+                     f_modifiers = $2;
+                     f_attrs = $1;
        })
    }
 
@@ -1256,15 +1257,15 @@ call_expr:
   * not need the parentheses, since its own brackets come before the body:
   * both 'new class {}->m()' and 'new class () {}->m()' are valid.
   *)
- | T_NEW T_CLASS arguments? extends_from implements_list
+ | T_NEW ioption(attributes) T_CLASS arguments? extends_from implements_list
    "{" member_declaration* "}"
      { let class_ =
-         { c_type = ClassRegular $2; c_name = Name ("!ANON!", $2);
-           c_extends = $4; c_tparams = None;
-           c_implements = $5; c_body = $6, $7, $8;
-           c_attrs = None; c_enum_type = None; }
+         { c_type = ClassRegular $3; c_name = Name ("!ANON!", $3);
+           c_extends = $5; c_tparams = None;
+           c_implements = $6; c_body = $7, $8, $9;
+           c_attrs = $2; c_enum_type = None; }
        in
-       NewAnonClass ($1, $3, class_)
+       NewAnonClass ($1, $4, class_)
      }
  (* PHP 8.1: first-class callable syntax: strlen(...), $obj->method(...), etc.
   * In sgrep/pattern mode, ... means ellipsis (match any args).
@@ -1552,13 +1553,14 @@ encaps_var_offset:
  *)
 
 arrow_expr:
- | async_opt T_FN is_reference "(" parameter_list ")" return_type? T_ARROW expr
-   { validate_parameter_list $5;
-     let sl_tok = Some $8 in
-     let sl_body = SLExpr $9 in
-     let sl_params = SLParams ($4, $5, $6) in
-     ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = $1;
-                   sl_ref = $3; sl_return_type = $7; }
+ | ioption(attributes) async_opt T_FN is_reference "(" parameter_list ")"
+   return_type? T_ARROW expr
+   { validate_parameter_list $6;
+     let sl_tok = Some $9 in
+     let sl_body = SLExpr $10 in
+     let sl_params = SLParams ($5, $6, $7) in
+     ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = $2;
+                   sl_ref = $4; sl_return_type = $8; sl_attrs = $1; }
    }
 
 lambda_expr:
@@ -1568,14 +1570,14 @@ lambda_expr:
        let sl_tok, sl_body = $2 in
        let sl_params = SLSingleParam (mk_param $1) in
        ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [];
-                     sl_ref = None; sl_return_type = None }
+                     sl_ref = None; sl_return_type = None; sl_attrs = None }
      }
  | T_ASYNC T_VARIABLE lambda_body
      {
        let sl_tok, sl_body = $3 in
        let sl_params = SLSingleParam (mk_param $2) in
        ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [Async,($1)];
-                     sl_ref = None; sl_return_type = None }
+                     sl_ref = None; sl_return_type = None; sl_attrs = None }
      }
  | T_LAMBDA_OPAR parameter_list T_LAMBDA_CPAR return_type? lambda_body
      {
@@ -1583,7 +1585,7 @@ lambda_expr:
        let sl_tok, sl_body = $5 in
        let sl_params = SLParams ($1, $2, $3) in
        ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [];
-                     sl_ref = None; sl_return_type = None; }
+                     sl_ref = None; sl_return_type = None; sl_attrs = None; }
      }
  | T_ASYNC T_LAMBDA_OPAR parameter_list T_LAMBDA_CPAR return_type? lambda_body
      {
@@ -1591,7 +1593,7 @@ lambda_expr:
        let sl_tok, sl_body = $6 in
        let sl_params = SLParams ($2, $3, $4) in
        ShortLambda { sl_params; sl_tok; sl_body; sl_modifiers = [Async,($1)];
-                     sl_ref = None; sl_return_type = None; }
+                     sl_ref = None; sl_return_type = None; sl_attrs = None; }
      }
  | T_ASYNC "{" inner_statement* "}"
      {
@@ -1602,6 +1604,7 @@ lambda_expr:
                      sl_modifiers = [Async,($1)];
                      sl_ref = None;
                      sl_return_type = None;
+                     sl_attrs = None;
                    }
      }
 

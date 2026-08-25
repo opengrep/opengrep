@@ -477,7 +477,11 @@ and expr e : G.expr =
        m_modifiers = _;
        f_name = _;
        l_uses;
-       f_attrs = [];
+       (* G.Lambda has no attribute slot, so an attribute on a closure is
+        * dropped here, as its modifiers and '&' already are. Matching this
+        * on [] instead would send every attributed closure to the error
+        * below and fail the whole file. *)
+       f_attrs = _;
        f_params = ps;
        f_return_type = rett;
        f_body = body;
@@ -507,8 +511,7 @@ and expr e : G.expr =
               fbody = G.FBStmt body;
               fkind = (lambdakind, t);
             }
-          |> G.e
-      | _ -> error tok "TODO: Lambda")
+          |> G.e)
   | Match (tok, e, matches) ->
       let e = expr e in
       let matches = List_.map match_ matches in
@@ -810,7 +813,7 @@ and class_var
   let hooks = list property_hook chooks in
   (ent, def, hooks)
 
-and property_hook { ph_modifiers; ph_ref; ph_kind; ph_params; ph_body } =
+and property_hook { ph_attrs; ph_modifiers; ph_ref; ph_kind; ph_params; ph_body } =
   let attr, tok, name_str = match ph_kind with
     | PhGet tok -> (G.KeywordAttr (G.Getter, tok), tok, "get")
     | PhSet tok -> (G.KeywordAttr (G.Setter, tok), tok, "set")
@@ -835,7 +838,7 @@ and property_hook { ph_modifiers; ph_ref; ph_kind; ph_params; ph_body } =
   } in
   let ent =
     G.basic_entity (name_str, tok) ~case_insensitive:false
-      ~attrs:((attr :: modifiers) @ ref_attr)
+      ~attrs:((attr :: modifiers) @ ref_attr @ list attribute ph_attrs)
   in
   (ent, G.FuncDef fdef)
 

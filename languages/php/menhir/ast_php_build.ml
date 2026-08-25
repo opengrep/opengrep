@@ -764,7 +764,7 @@ and short_lambda_def env def =
           Block (lb, List_.fold_right (stmt_and_def env) body [], rb));
     f_kind = (A.ShortLambda, sl_tok);
     m_modifiers = List_.map (modifier env) def.sl_modifiers;
-    f_attrs = [];
+    f_attrs = attributes env def.sl_attrs;
     l_uses = [];
   }
 
@@ -905,7 +905,8 @@ and property_hook env hook =
         Some (A.Block (l, List_.fold_right (stmt_and_def env) stmts [], r))
     | PHAbstract _ -> None
   in
-  { A.ph_modifiers = List_.map (modifier env) hook.ph_modifiers;
+  { A.ph_attrs = attributes env hook.ph_attrs;
+    A.ph_modifiers = List_.map (modifier env) hook.ph_modifiers;
     A.ph_ref = hook.ph_ref; A.ph_kind = kind; A.ph_params = params;
     A.ph_body = body }
 

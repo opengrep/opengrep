@@ -438,6 +438,7 @@ and xhp_field = class_var * bool
 
 (* PHP 8.4 property hooks *)
 and property_hook = {
+  ph_attrs : attribute list;
   (* only 'final' is allowed here *)
   ph_modifiers : modifier list;
   (* by-reference getter, as in '&get' *)
