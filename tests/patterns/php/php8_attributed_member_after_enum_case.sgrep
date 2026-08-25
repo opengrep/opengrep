@@ -1,0 +1,5 @@
+enum $E {
+  case $C;
+  #[Deprecated]
+  public function $F(): void { ... }
+}

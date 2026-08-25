@@ -34,6 +34,17 @@ enum Suit: string
     case Spades = 'S';
 
     case Clubs = 'C';
+
+    // an attributed member following the cases
+
+    #[\Deprecated]
+    public const K = 1;
+
+    #[\Deprecated]
+    public function label(): string
+    {
+        return $this->value;
+    }
 }
 
 enum Plain
@@ -42,4 +53,43 @@ enum Plain
     case A;
 
     case B;
+
+    #[\Deprecated]
+    public function f(): void {}
+
+    // a case may also follow a member
+
+    case C;
+}
+
+// every attribute form is allowed on a member following a case
+
+interface HasLabel {}
+
+enum Rich: string implements HasLabel
+{
+    case A = 'a';
+
+    #[First]
+    #[\Second]
+    public function m1(): void {}
+
+    #[Attr(1, b: 2)]
+    final public function m2(): void {}
+
+    #[\Foo\Bar]
+    public static function m3(): void {}
+
+    #[\Deprecated]
+    public const K = 1;
+
+    case B = 'b';
+}
+
+// an enum need not have any case at all
+
+enum NoCases
+{
+    #[\Deprecated]
+    public function f(): void {}
 }

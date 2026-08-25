@@ -721,7 +721,12 @@ and func_def env f =
     A.f_return_type = Option.map (fun (_, t) -> hint_type env t) f.f_return_type;
     A.f_body = A.Block (lb, List_.fold_right (stmt_and_def env) body [], rb);
     A.f_kind = (A.Function, f.f_tok);
-    A.m_modifiers = [];
+    (* a plain function has no visibility, but a semgrep pattern such as
+     * 'public function $F(...) { ... }' is parsed by semgrep_pattern as a
+     * function carrying the modifier, and dropping it here would make the
+     * pattern match methods of any visibility
+     *)
+    A.m_modifiers = List_.map (modifier env) f.f_modifiers;
     A.l_uses = [];
   }
 
@@ -980,6 +985,26 @@ and promoted_field p =
 and method_def env m =
   let _, params, _ = m.f_params in
   let mds = List_.map (modifier env) m.f_modifiers in
+  (* a method declared without a visibility modifier is public, so say so
+   * explicitly: a 'public function ...' pattern is expected to match it, as
+   * well as the methods that spell the modifier out.
+   * Only in code: adding it to a pattern would instead stop a modifier-less
+   * pattern from matching a private or protected method.
+   *)
+  let mds =
+    if
+      Domain.DLS.get Flag_parsing.sgrep_mode
+      || mds
+         |> List.exists (fun (m, _) ->
+                match m with
+                | A.Public
+                | A.Private
+                | A.Protected ->
+                    true
+                | _ -> false)
+    then mds
+    else (A.Public, fake m.f_tok "public") :: mds
+  in
   let params = comma_list_dots_params (parameter env) params in
   let implicit_flds = List_.filter_map promoted_field params in
   ( {
