@@ -128,7 +128,7 @@ let o_version_check : bool Term.t =
   H.negatable_flag_with_env [ "enable-version-check" ]
     ~neg_options:[ "disable-version-check" ]
     ~default:default.version_check
-    ~env:(Cmd.Env.info "OPENGREP_ENABLE_VERSION_CHECK")
+    ~env:"OPENGREP_ENABLE_VERSION_CHECK"
     ~doc:
       {|Checks Opengrep servers to see if the latest version is run; disabling
  this may reduce exit time after returning results.
@@ -460,7 +460,7 @@ let o_force_color : bool Term.t =
       (* TOPORT? need handle SEMGREP_COLOR_NO_COLOR or NO_COLOR
        * # https://no-color.org/
        *)
-    ~env:(Cmd.Env.info "SEMGREP_FORCE_COLOR")
+    ~env:"SEMGREP_FORCE_COLOR"
     ~doc:
       {|Always include ANSI color in the output, even if not writing to
 a TTY; defaults to using the TTY status

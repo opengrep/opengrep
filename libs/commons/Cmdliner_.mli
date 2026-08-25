@@ -10,13 +10,15 @@ val negatable_flag :
   bool Cmdliner.Term.t
 
 (* Define a flag that can be negated e.g. --foo and --no-foo, and being able to
-   specify an environment variable.
+   specify an environment variable. env is the variable's name: the helper
+   also reads the variable itself, so that an explicit false value and the
+   OPENGREP_/SEMGREP_ alias are honoured (see the .ml).
    It's not supported out-of-the-box by cmdliner but we want it for
    backward compatibility with the Python CLI.
 *)
 val negatable_flag_with_env :
   ?default:bool ->
-  ?env:Cmdliner.Cmd.Env.info ->
+  ?env:string ->
   neg_options:string list ->
   doc:string ->
   string list ->

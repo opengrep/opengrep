@@ -54,7 +54,7 @@ matches one of the given names (e.g., --audit-on push).|}
 let o_suppress_errors : bool Term.t =
   H.negatable_flag_with_env [ "suppress-errors" ]
     ~neg_options:[ "no-suppress-errors" ]
-    ~env:(Cmd.Env.info "SEMGREP_SUPPRESS_ERRORS")
+    ~env:"SEMGREP_SUPPRESS_ERRORS"
     ~default:true
     ~doc:
       {|Configures how the CI command reacts when an error occurs.

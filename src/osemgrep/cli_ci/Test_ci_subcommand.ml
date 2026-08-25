@@ -120,6 +120,14 @@ let test_subdir_outside_cwd_fatal (caps : Ci_subcommand.caps) () =
     ~extra_args:[ "--subdir"; "/etc"; "--no-suppress-errors" ]
     ~check:Exit_code.Check.fatal ()
 
+(* an explicit false in the environment must turn suppression off, exactly
+ * like the --no-suppress-errors flag *)
+let test_suppress_errors_env_false (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "SEMGREP_SUPPRESS_ERRORS" "false" (fun () ->
+      run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+        ~extra_args:[ "--subdir"; "/etc" ]
+        ~check:Exit_code.Check.fatal ())
+
 let test_subdir_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
     ~target_dir:"sub"
@@ -273,6 +281,9 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "subdir outside cwd is fatal without suppression"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_subdir_outside_cwd_fatal caps);
+      t "suppress-errors env var set to false"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_suppress_errors_env_false caps);
       t "baseline rev keeps only the new finding"
         ~checked_output:(Testo.stdxxx ()) ~normalize (test_baseline_rev caps);
       t "subdir restricts the scan and finds findings"

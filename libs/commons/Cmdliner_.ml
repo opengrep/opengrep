@@ -61,26 +61,50 @@ let negatable_flag ?(default = false) ~neg_options ~doc options =
   let disable = (false, Arg.info neg_options ~doc:neg_doc) in
   Arg.value (Arg.vflag default [ enable; disable ])
 
-(* Cmdliner.Arg.vflag does not support environment variables, thus we use
-   Arg.value manually if we need supporting environment variables as well *)
+(* same vocabulary as cmdliner's env_bool_parse, which is not exported *)
+let parse_env_bool (var : string) (value : string) : bool =
+  match String.lowercase_ascii value with
+  | "false"
+  | "no"
+  | "n"
+  | "0" ->
+      false
+  | "true"
+  | "yes"
+  | "y"
+  | "1" ->
+      true
+  | _else_ ->
+      invalid_arg (Printf.sprintf "%s: invalid boolean value %S" var value)
+
+(* Cmdliner.Arg.vflag_all ignores environment variables (the one on the
+   positive flag is attached only for the man page), so the variable is read
+   here instead, through Opengrep_env so the OPENGREP_/SEMGREP_ alias also
+   counts, and an explicit false is distinguished from an unset variable.
+   vflag_all keeps the command-line order: with the flag and its negation
+   both given, the last one wins, and an explicit flag wins over the
+   environment. *)
 let negatable_flag_with_env ?(default = false) ?env ~neg_options ~doc options =
   let neg_doc =
     let options_str = add_option_dashes options |> String.concat "/" in
     Printf.sprintf "negates %s" options_str
   in
-  let enable = Arg.(value (flag (info options ~doc ?env))) in
-  let disable = Arg.(value (flag (info neg_options ~doc:neg_doc))) in
-  let combine yes no =
-    match (yes, no) with
-    | true, false -> true
-    | false, true -> false
-    | false, false -> default
-    | true, true ->
-        invalid_arg
-          ("mutually exclusive options: "
-          ^ String.concat ", " (options @ neg_options))
+  let env_info = Option.map Cmd.Env.info env in
+  let enable = (true, Arg.info options ~doc ?env:env_info) in
+  let disable = (false, Arg.info neg_options ~doc:neg_doc) in
+  let flags = Arg.(value (vflag_all [] [ enable; disable ])) in
+  let combine (values : bool list) =
+    match List.rev values with
+    | last :: _ -> last
+    | [] -> (
+        match env with
+        | None -> default
+        | Some var -> (
+            match Opengrep_env.getenv_opt var with
+            | Some value -> parse_env_bool var value
+            | None -> default))
   in
-  Term.(const combine $ enable $ disable)
+  Term.(const combine $ flags)
 
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'
