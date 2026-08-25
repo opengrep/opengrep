@@ -1,0 +1,18 @@
+rules:
+# Constants used as array/subscript indices must get their svalue stamped
+# even when the ArrayAccess is in lvalue position. Pins the
+# `in_lvalue = false` reset on the index in Iter_with_context.
+- id: cp-array-index-const-write
+  patterns:
+    - pattern: $H["authorization"] = $V
+  message: constant index folded in subscript store
+  languages:
+    - python
+  severity: WARNING
+- id: cp-array-index-const-read
+  patterns:
+    - pattern: $H["content-type"]
+  message: constant index folded in subscript read
+  languages:
+    - python
+  severity: WARNING

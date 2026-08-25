@@ -1,0 +1,11 @@
+rules:
+# Pins that stores through a field (`a.f = v`) or a subscript (`a[i] = v`),
+# possibly chained, are counted as writes to `a` by the const-prop stats
+# pass (lvars_in_lhs), so a variable whose contents are mutated does not
+# keep propagating its initial literal.
+- id: cp-container-store-write
+  pattern: f("abc")
+  message: mutated variable must not propagate its initial value
+  languages:
+    - js
+  severity: WARNING

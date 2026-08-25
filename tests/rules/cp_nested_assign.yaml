@@ -1,0 +1,28 @@
+rules:
+# Pins the nested-assignment write accounting introduced by dispatching
+# Assign/AssignOp children through self#visit_expr in Iter_with_context:
+# nested assigns now increment the lvalue count, flipping
+# is_assigned_just_once in both directions.
+- id: cp-nested-assign-global
+  patterns:
+    - pattern: f("v")
+  message: global assigned once via nested assignment propagates
+  languages:
+    - js
+  severity: WARNING
+- id: cp-nested-assign-reassigned
+  patterns:
+    - pattern: f("w")
+  message: nested reassignment defeats assigned-just-once propagation
+  languages:
+    - js
+  severity: WARNING
+# Pins the in_lvalue reset on the RHS of an assignment that itself sits in
+# lvalue position, e.g. (y = V_CONST).p = 1.
+- id: cp-lvalue-rhs-read
+  patterns:
+    - pattern: ($Y = "v").p = $B
+  message: RHS of assignment in lvalue position is a pure read
+  languages:
+    - js
+  severity: WARNING

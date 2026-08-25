@@ -1,0 +1,14 @@
+rules:
+- id: cp-string-metavar-const
+  patterns:
+    - pattern: |
+        $STRING = "$SQL"
+        ...
+        strings.Replace($STRING, $_, $EXPR, ...)
+    - metavariable-regex:
+        metavariable: $SQL
+        regex: (?i)^(?![\s\S]*\?)\s*(SELECT|DELETE|INSERT|UPDATE|CALL|REPLACE)\s.*
+  message: SQL query string rewritten with strings.Replace
+  languages:
+    - go
+  severity: WARNING
