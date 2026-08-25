@@ -321,6 +321,9 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
         | None -> Exit_code.fatal ~__LOC__
         | Some code -> code)
     | Error.Exit_code code -> code
+    (* coupling: CLI.safe_run maps this exception the same way *)
+    | Common.UnixExit i ->
+        Exit_code.of_int ~__LOC__ ~code:i ~description:"rogue UnixExit"
     | Failure msg ->
         Logs.err (fun m -> m "Error: %s%!" msg);
         Exit_code.fatal ~__LOC__
