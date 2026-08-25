@@ -455,6 +455,8 @@ rule st_in_scripting state = parse
       | "<<=" { T_SL_EQUAL(tokinfo lexbuf) }
       | ">>=" { T_SR_EQUAL(tokinfo lexbuf) }
       | ".="  { T_CONCAT_EQUAL(tokinfo lexbuf) }
+      | "**=" { T_POW_EQUAL(tokinfo lexbuf) }
+      | "??=" { T_NULL_COALESCE_EQUAL(tokinfo lexbuf) }
 
       | "=="  { T_IS_EQUAL(tokinfo lexbuf) }
       | "!="  { T_IS_NOT_EQUAL(tokinfo lexbuf) }

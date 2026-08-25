@@ -203,6 +203,7 @@ let str_of_info x = Tok.content_of_tok x
  (* now also used for types/generics, as in vector<int> *)
  TSMALLER "<" TGREATER ">"
  T_PLUS_EQUAL  T_MINUS_EQUAL  T_MUL_EQUAL  T_DIV_EQUAL
+ T_POW_EQUAL T_NULL_COALESCE_EQUAL
  T_CONCAT_EQUAL  T_MOD_EQUAL
  T_AND_EQUAL T_OR_EQUAL T_XOR_EQUAL T_SL_EQUAL T_SR_EQUAL
  T_INC    T_DEC
@@ -276,7 +277,7 @@ let str_of_info x = Tok.content_of_tok x
  * using %right but by rewriting the rule regarding TEQ to be
  * 'simple_expr TEQ expr' and not 'expr TEQ expr' (like in parser_cpp.mly).
  *)
-%left     TEQ  T_PLUS_EQUAL T_MINUS_EQUAL T_MUL_EQUAL T_DIV_EQUAL T_CONCAT_EQUAL T_MOD_EQUAL T_AND_EQUAL T_OR_EQUAL T_XOR_EQUAL T_SL_EQUAL T_SR_EQUAL
+%left     TEQ  T_PLUS_EQUAL T_MINUS_EQUAL T_MUL_EQUAL T_DIV_EQUAL T_CONCAT_EQUAL T_MOD_EQUAL T_AND_EQUAL T_OR_EQUAL T_XOR_EQUAL T_SL_EQUAL T_SR_EQUAL T_POW_EQUAL T_NULL_COALESCE_EQUAL
 
 %left      TQUESTION TCOLON
 %right     T_NULL_COALLESCING
@@ -1092,6 +1093,9 @@ expr:
  | simple_expr T_MUL_EQUAL    expr { AssignOp($1,(AssignOpArith Mul,$2),$3) }
  | simple_expr T_DIV_EQUAL    expr { AssignOp($1,(AssignOpArith Div,$2),$3) }
  | simple_expr T_MOD_EQUAL    expr { AssignOp($1,(AssignOpArith Mod,$2),$3) }
+ | simple_expr T_POW_EQUAL    expr { AssignOp($1,(AssignOpArith Pow,$2),$3) }
+ | simple_expr T_NULL_COALESCE_EQUAL expr
+     { AssignOp($1,(AssignOpArith Nullish,$2),$3) }
  | simple_expr T_AND_EQUAL    expr { AssignOp($1,(AssignOpArith And,$2),$3) }
  | simple_expr T_OR_EQUAL     expr { AssignOp($1,(AssignOpArith Or,$2),$3) }
  | simple_expr T_XOR_EQUAL    expr { AssignOp($1,(AssignOpArith Xor,$2),$3) }

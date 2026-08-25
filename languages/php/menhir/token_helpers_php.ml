@@ -182,6 +182,8 @@ let visitor_info_of_tok f = function
   | T_MUL_EQUAL ii -> T_MUL_EQUAL (f ii)
   | T_DIV_EQUAL ii -> T_DIV_EQUAL (f ii)
   | T_CONCAT_EQUAL ii -> T_CONCAT_EQUAL (f ii)
+  | T_POW_EQUAL ii -> T_POW_EQUAL (f ii)
+  | T_NULL_COALESCE_EQUAL ii -> T_NULL_COALESCE_EQUAL (f ii)
   | T_MOD_EQUAL ii -> T_MOD_EQUAL (f ii)
   | T_AND_EQUAL ii -> T_AND_EQUAL (f ii)
   | T_OR_EQUAL ii -> T_OR_EQUAL (f ii)
