@@ -1089,6 +1089,11 @@ and list_assign env x acc =
   match x with
   | ListVar lv -> lvalue env lv :: acc
   | ListRef (tok, lv) -> A.Ref (tok, lvalue env lv) :: acc
+  | ListArrow (k, tok, v) -> (
+      (* same shape as a keyed array element, see array_pair *)
+      match list_assign env v [] with
+      | [ v ] -> A.Arrow (expr env k, tok, v) :: acc
+      | _ -> acc)
   | ListList (_, (t1, la, t2)) ->
       let la = comma_list la in
       let la = List_.fold_right (list_assign env) la [] in

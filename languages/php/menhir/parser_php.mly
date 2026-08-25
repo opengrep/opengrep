@@ -1464,6 +1464,11 @@ assignment_list_element:
  | expr             { ListVar $1 }
  | TAND expr        { ListRef ($1, $2) }
  | T_LIST "(" assignment_list ")"   { ListList ($1, ($2, $3, $4)) }
+ (* keyed destructuring; the value may itself be a reference or a nested list *)
+ | expr "=>" expr        { ListArrow ($1, $2, ListVar $3) }
+ | expr "=>" TAND expr   { ListArrow ($1, $2, ListRef ($3, $4)) }
+ | expr "=>" T_LIST "(" assignment_list ")"
+     { ListArrow ($1, $2, ListList ($3, ($4, $5, $6))) }
  | (*empty*)            { ListEmpty }
 
 array_pair_list: array_pair_list_rev { List.rev $1 }

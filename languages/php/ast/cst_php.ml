@@ -392,6 +392,8 @@ and list_assign =
   | ListVar of lvalue
   (* assignment by reference, as in 'list(&$a, &$b) = $arr' *)
   | ListRef of tok (* & *) * lvalue
+  (* keyed destructuring, as in 'list("k" => $v) = $arr' *)
+  | ListArrow of expr * tok (* => *) * list_assign
   | ListList of tok * list_assign comma_list paren
   | ListEmpty
 
