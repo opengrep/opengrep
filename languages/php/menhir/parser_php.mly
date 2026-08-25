@@ -1025,6 +1025,14 @@ primary_type_php:
  | class_name { $1 }
  | T_SELF     { Hint (Self $1, None) }
  | T_PARENT   { Hint (Parent $1, None) }
+ (* 'true' and 'false' are types of their own, as in 'array|false'. They are
+  * not class_name because the lexer reads them as booleans; 'null' needs no
+  * case here since it stays an ordinary identifier.
+  * The name comes from the parsed value rather than the source text, so that
+  * 'FALSE' and 'false' give the same type, as T_ARRAY does for 'array'. *)
+ | T_BOOL     { let (b, tok) = $1 in
+                let s = if b then "true" else "false" in
+                Hint (XName [QI (Name (s, tok))], None) }
  (* hack-ext: hack extensions *)
  | "?" type_php
      { HintQuestion ($1, $2)  }
