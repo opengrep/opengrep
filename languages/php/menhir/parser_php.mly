@@ -482,9 +482,14 @@ match_case_list:
   | match_case {[$1]}
 
 match_case:
-    | expr T_ARROW expr {MCase([$1], $3)}  
-    
+    | match_conds T_ARROW expr {MCase($1, $3)}
+
     | T_DEFAULT T_ARROW expr { MDefault($1, $3)}
+
+(* an arm may list several conditions, as in '1, 2 => "a"' *)
+match_conds:
+    | expr { [$1] }
+    | expr "," match_conds { $1 :: $3 }
 
 mellipse: "..." {MEllipsis $1} 
 
