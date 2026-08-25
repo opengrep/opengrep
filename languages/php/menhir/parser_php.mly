@@ -764,35 +764,22 @@ unticked_class_declaration:
          c_enum_type = None;
        }
      }
-  (* in the following we assume that the cases of a statement appear before constants,  methods and use constructs.*)
-   | T_ENUM ident_class_name implements_list 
-    "{" enum_single* member_declaration* "}"
-  {let members = $5 @ $6 in  { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
-  c_implements = $3; c_body =  ($4, members, $7);
+   | T_ENUM ident_class_name implements_list
+    "{" member_declaration* "}"
+  { { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
+  c_implements = $3; c_body =  ($4, $5, $6);
          c_attrs = None;
          c_enum_type = None
        }
      }
-  | T_ENUM ident_class_name ":" type_php implements_list 
-    "{" backed_enum_single* member_declaration* "}"
-    {let members = $7 @ $8 in
+  | T_ENUM ident_class_name ":" type_php implements_list
+    "{" member_declaration* "}"
+    {
   { c_type = Enum $1; c_name = $2; c_extends = None; c_tparams = None;
-  c_implements = $5; c_body =  ($6, members, $9);
+  c_implements = $5; c_body =  ($6, $7, $8);
          c_attrs = None;
          c_enum_type  = Some { e_tok = $3; e_base = $4; e_constraint = None; }       }
      }
-
-  backed_enum_single:
-  | ioption(attributes) T_CASE ident TEQ static_scalar TSEMICOLON
-      { make_class_vars $1 (DName $3, Some ($4, $5), None) }
-  | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
-
-
-
-enum_single:
-    | ioption(attributes) T_CASE ident TSEMICOLON
-        { make_class_vars $1 (DName $3, None, None)  }
-    | "..." { Flag_parsing.sgrep_guard (DeclEllipsis $1) }
 
 
 
@@ -879,6 +866,17 @@ member_declaration:
 (* class methods *)
  | ioption(attributes) member_modifier* method_declaration
      { Method { $3 with f_attrs = $1; f_modifiers = $2 } }
+
+(* enum cases; an alternative here rather than a list of its own preceding
+ * the members, so that the parser does not have to commit to 'case' or to a
+ * member on seeing the '#[' of an attribute, which it cannot yet tell apart.
+ * A case is only meaningful in an enum, and a value only in a backed one;
+ * neither is checked here.
+ *)
+ | ioption(attributes) T_CASE ident ";"
+     { make_class_vars $1 (DName $3, None, None) }
+ | ioption(attributes) T_CASE ident TEQ static_scalar ";"
+     { make_class_vars $1 (DName $3, Some ($4, $5), None) }
 
 (* php 5.4 traits *)
  | T_USE class_name_list ";"
