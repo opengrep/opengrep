@@ -349,7 +349,7 @@ top_statement:
  | function_declaration       { [FuncDef $1] }
  | class_declaration          { [ClassDef $1] }
 
- | constant_declaration       { [ConstantDef $1] }
+ | constant_declaration       { List.map (fun c -> ConstantDef c) $1 }
  | type_declaration           { [TypeDef $1] }
  | namespace_declaration      { [$1] }
  | namespace_use_declaration  { $1 }
@@ -595,12 +595,24 @@ use_filename:
 (* PHP 5.3 *)
 (* PHP 8.5 allows attributes on constants, e.g. '#[\Deprecated] const X = 1;' *)
 constant_declaration: ioption(attributes) unticked_constant_declaration
-   { { $2 with cst_attrs = $1 } }
+   { List.map (fun c -> { c with cst_attrs = $1 }) $2 }
 
+(* One statement may declare several constants, as class constants already
+ * could. They share the 'const' keyword, the type and the ';', and each
+ * carries its own '='.
+ *)
 unticked_constant_declaration:
-  T_CONST ioption(type_php) ident_constant_name TEQ static_scalar ";"
-   { { cst_toks = ($1,$4,$6); cst_name = Name $3; cst_val = $5; cst_type = $2;
-       cst_attrs = None }}
+  T_CONST ioption(type_php) constant_declaration_elems ";"
+   { $3 |> List.map (fun (name, eqtok, v) ->
+       { cst_toks = ($1, eqtok, $4); cst_name = name; cst_val = v;
+         cst_type = $2; cst_attrs = None }) }
+
+constant_declaration_elems:
+ | constant_declaration_elem { [$1] }
+ | constant_declaration_elem "," constant_declaration_elems { $1 :: $3 }
+
+constant_declaration_elem:
+ | ident_constant_name TEQ static_scalar { (Name $1, $2, $3) }
 
 (*************************************************************************)
 (* Function declaration *)
