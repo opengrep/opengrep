@@ -1445,6 +1445,10 @@ static_scalar_primary:
   * PHP itself allows here.
   *)
  | T_NEW qualified_class_name arguments? { New ($1, Id $2, $3) }
+ (* self/parent/static are keywords, so they are not qualified_class_name *)
+ | T_NEW T_SELF arguments?   { New ($1, Id (Self $2), $3) }
+ | T_NEW T_PARENT arguments? { New ($1, Id (Parent $2), $3) }
+ | T_NEW T_STATIC arguments? { New ($1, Id (LateStatic $2), $3) }
  | T_NEW ioption(attributes) T_CLASS arguments? extends_from implements_list
    "{" member_declaration* "}"
      { let class_ =
