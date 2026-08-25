@@ -61,10 +61,12 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
       match env._SEMGREP_PR_ID with
       | Some _ as id -> id
       | None ->
-          (* the pull request url's last segment is the id *)
-          Opengrep_env.getenv_opt "CIRCLE_PULL_REQUEST"
-          |> Option.map (fun url ->
-                 match String.split_on_char '/' url with
-                 | [] -> url
-                 | segments -> List.nth segments (List.length segments - 1))
+          (* the pull request url's last nonempty segment is the id, so
+           * the id is found even when the url has a trailing slash *)
+          Option.bind
+            (Opengrep_env.getenv_opt "CIRCLE_PULL_REQUEST")
+            (fun url ->
+              String.split_on_char '/' url
+              |> List.rev
+              |> List.find_opt (fun segment -> not (String.equal segment "")))
   end

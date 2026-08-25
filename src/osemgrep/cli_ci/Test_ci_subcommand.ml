@@ -310,6 +310,36 @@ let test_github_branchoff_api_failure (caps : Ci_subcommand.caps) () =
           | _else_ -> Alcotest.fail "expected a commit merge base")
         ())
 
+(* the CircleCI pull request id is the url's last nonempty segment, found
+ * even when the url has a trailing slash *)
+let test_circleci_pr_id_trailing_slash (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "CIRCLE_PULL_REQUEST"
+    "https://github.com/org/repo/pull/17/" (fun () ->
+      let git_env : Git_metadata.env =
+        {
+          _SEMGREP_REPO_NAME = None;
+          _SEMGREP_REPO_DISPLAY_NAME = None;
+          _SEMGREP_REPO_URL = None;
+          _SEMGREP_COMMIT = None;
+          _SEMGREP_JOB_URL = None;
+          _SEMGREP_PR_ID = None;
+          _SEMGREP_PR_TITLE = None;
+          _SEMGREP_BRANCH = None;
+        }
+      in
+      let meta =
+        new Circleci_metadata.meta
+          (caps :> < Cap.exec >)
+          ~cli_baseline_ref:None git_env
+      in
+      Alcotest.(check (option string)) "pr id" (Some "17") meta#pr_id)
+
+let test_circleci_environment (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "CIRCLECI" "true" (fun () ->
+      Semgrep_envvars.with_envvar "CIRCLE_PULL_REQUEST"
+        "https://github.com/org/repo/pull/17/" (fun () ->
+          run_ci caps ~rule:blocking_rule_content ~target:clean_py_content ()))
+
 let test_gitlab_environment (caps : Ci_subcommand.caps) () =
   Semgrep_envvars.with_envvar "GITLAB_CI" "true" (fun () ->
       Semgrep_envvars.with_envvar "CI_PIPELINE_SOURCE" "merge_request_event"
@@ -373,6 +403,10 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "github merge-base API failure falls back to git"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
         (test_github_branchoff_api_failure caps);
+      t "circleci pr id survives a trailing slash"
+        (test_circleci_pr_id_trailing_slash caps);
+      t "circleci environment is detected" ~checked_output:(Testo.stdxxx ())
+        ~normalize (test_circleci_environment caps);
       t "gitlab environment is detected" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_gitlab_environment caps);
       t "github environment is detected" ~checked_output:(Testo.stdxxx ())
