@@ -1212,24 +1212,6 @@ expr:
  (* arrow functions, since PHP 7.4 *)
  | arrow_expr { $1 }
 
-(* named so that static_scalar can reuse it: PHP 8.5 allows a closure in a
- * constant expression *)
-closure_expr:
- | ioption(attributes) async_opt T_FUNCTION is_reference "(" parameter_list ")"
-   lexical_vars return_type?
-   "{" inner_statement* "}"
-   { validate_parameter_list $6;
-     let params = ($5, $6, $7) in
-       let body = ($10, $11, $12) in
-       Lambda ($8, { f_tok = $3;f_ref = $4;f_params = params; f_body = body;
-                     f_tparams = None;
-                     f_name = Name("__lambda__", $3);
-                     f_return_type = $9; f_type = FunctionLambda;
-                     f_modifiers = $2;
-                     f_attrs = $1;
-       })
-   }
-
  (* php-facebook-ext: in hphp.y yield are at the statement level
   * and are restricted to a few forms.
   * TODO: can't use expr_or_dots here
@@ -1256,6 +1238,26 @@ closure_expr:
 
  | T_LIST "(" assignment_list ")" TEQ expr
      { AssignList($1,($2,$3,$4),$5,$6) }
+
+(* PHP 5.3 closures. A nonterminal of its own, and defined after the last
+ * production of 'expr' rather than among them, so that static_scalar can
+ * reuse it: PHP 8.5 allows a closure in a constant expression.
+ *)
+closure_expr:
+ | ioption(attributes) async_opt T_FUNCTION is_reference "(" parameter_list ")"
+   lexical_vars return_type?
+   "{" inner_statement* "}"
+   { validate_parameter_list $6;
+     let params = ($5, $6, $7) in
+       let body = ($10, $11, $12) in
+       Lambda ($8, { f_tok = $3;f_ref = $4;f_params = params; f_body = body;
+                     f_tparams = None;
+                     f_name = Name("__lambda__", $3);
+                     f_return_type = $9; f_type = FunctionLambda;
+                     f_modifiers = $2;
+                     f_attrs = $1;
+       })
+   }
 
 (* inspired by parser_js.mly *)
 simple_expr:
