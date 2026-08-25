@@ -698,11 +698,9 @@ let o_taint_intrafile : bool Term.t =
 (* Configuration options ('scan' only, not reused in 'ci') *)
 (* ------------------------------------------------------------------ *)
 let o_config : string list Term.t =
-  let info =
-    Arg.info [ "c"; "f"; "config" ]
-      ~env:(Cmd.Env.info "SEMGREP_RULES")
-      ~doc:
-        {|YAML configuration file, directory of YAML files ending in
+  H.string_list_with_env [ "c"; "f"; "config" ] ~env:"SEMGREP_RULES"
+    ~doc:
+      {|YAML configuration file, directory of YAML files ending in
 .yml|.yaml, URL of a configuration file, remote git repository of rules, or
 Semgrep registry entry name.
 
@@ -718,12 +716,12 @@ your project URL will be used to log in to the Semgrep registry.
 To run multiple rule files simultaneously, use --config before every YAML,
 URL, or Semgrep registry entry name.
 For example `opengrep --config p/python --config myrules/myrule.yaml`
+May also be set with SEMGREP_RULES, a whitespace-separated list of rule
+sources.
 
 See https://semgrep.dev/docs/writing-rules/rule-syntax for information on
 configuration file format.
 |}
-  in
-  Arg.value (Arg.opt_all Arg.string [] info)
 
 let o_pattern : string option Term.t =
   let info =

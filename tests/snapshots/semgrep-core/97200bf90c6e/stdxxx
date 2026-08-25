@@ -1,0 +1,69 @@
+--- begin input files ---
+foo.py
+rules.yaml
+rules2.yaml
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 17 insertions(+)
+ create mode 100644 foo.py
+ create mode 100644 rules.yaml
+ create mode 100644 rules2.yaml
+
+
+┌────────────────┐
+│ Debugging Info │
+└────────────────┘
+
+  SCAN ENVIRONMENT
+  versions    - opengrep <MASKED>
+  environment - running in environment git, triggering event is unknown
+
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 3 files tracked by git with 2 Code rules:
+
+  Language   Rules   Files          Origin   Rules
+ ──────────────────────────        ────────────────
+  python         2       1          Custom       2
+
+
+
+┌──────────────────────────┐
+│ 2 Blocking Code Findings │
+└──────────────────────────┘
+
+    foo.py
+   ❯❯❱ return-stmt
+          return statement
+
+            3┆ return a + b == a + b
+
+   ❯❯❱ eqeq-bad
+          useless comparison
+
+            3┆ return a + b == a + b
+
+
+  BLOCKING CODE RULES FIRED:
+    eqeq-bad
+    return-stmt
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+CI scan completed successfully.
+  Found 2 findings (2 blocking) from 2 rules.
+  Has findings for blocking rules so exiting with code 1
+ASSERT exit code

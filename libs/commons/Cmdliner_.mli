@@ -24,6 +24,18 @@ val negatable_flag_with_env :
   string list ->
   bool Cmdliner.Term.t
 
+(* A repeatable string option whose environment variable holds a
+   whitespace-separated list. env is the variable's name: the helper reads
+   the variable itself, so that the value is split like the Python CLI
+   splits it and the OPENGREP_/SEMGREP_ alias is honoured (see the .ml).
+   Occurrences on the command line win over the environment. *)
+val string_list_with_env :
+  ?default:string list ->
+  env:string ->
+  doc:string ->
+  string list ->
+  string list Cmdliner.Term.t
+
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'
  *)

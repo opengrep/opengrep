@@ -72,15 +72,13 @@ let o_strict : bool Term.t =
 
 (* coupling: Scan_CLI.o_config *)
 let o_config : string list Term.t =
-  let info =
-    Arg.info [ "c"; "f"; "config" ]
-      ~env:(Cmd.Env.info "SEMGREP_RULES")
-      ~doc:
-        {|YAML configuration file, directory of YAML files ending in
+  H.string_list_with_env [ "c"; "f"; "config" ] ~env:"SEMGREP_RULES"
+    ~doc:
+      {|YAML configuration file, directory of YAML files ending in
 .yml|.yaml, URL of a configuration file, or Opengrep registry entry name.
+May also be set with SEMGREP_RULES, a whitespace-separated list of rule
+sources.
 |}
-  in
-  Arg.value (Arg.opt_all Arg.string [] info)
 
 (* osemgrep-only: brandon's experiment *)
 let o_matching_diagnosis : bool Term.t =

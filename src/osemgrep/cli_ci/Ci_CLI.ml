@@ -42,14 +42,11 @@ type conf = {
 (*************************************************************************)
 
 let o_audit_on : string list Term.t =
-  let info =
-    Arg.info [ "audit-on" ]
-      ~env:(Cmd.Env.info "SEMGREP_AUDIT_ON")
-      ~doc:
-        {|Exit with code 0 even with blocking findings when the CI event
-matches one of the given names (e.g., --audit-on push).|}
-  in
-  Arg.value (Arg.opt_all Arg.string [] info)
+  H.string_list_with_env [ "audit-on" ] ~env:"SEMGREP_AUDIT_ON"
+    ~doc:
+      {|Exit with code 0 even with blocking findings when the CI event
+matches one of the given names (e.g., --audit-on push). May also be set
+with SEMGREP_AUDIT_ON, a whitespace-separated list of event names.|}
 
 let o_suppress_errors : bool Term.t =
   H.negatable_flag_with_env [ "suppress-errors" ]

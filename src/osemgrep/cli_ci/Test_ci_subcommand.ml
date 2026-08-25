@@ -39,6 +39,18 @@ rules:
       dev.semgrep.actions: []
 |}
 
+(* a second rule file, for the SEMGREP_RULES list test; the pattern also
+ * fires on finding_py_content *)
+let second_rule_content =
+  {|
+rules:
+  - id: return-stmt
+    pattern: return $X
+    message: "return statement"
+    languages: [python]
+    severity: ERROR
+|}
+
 let clean_py_content = {|
 def foo(a, b):
     return a + b
@@ -70,23 +82,24 @@ let without_settings f =
 (* Run the ci subcommand in a throw-away git repo holding a rule file and
  * one target (under [target_dir] when given), and check the exit code. *)
 let run_ci (caps : Ci_subcommand.caps) ~(rule : string) ~(target : string)
-    ?(target_dir : string option) ?(extra_args : string list = [])
+    ?(target_dir : string option) ?(extra_files : F.t list = [])
+    ?(config_args : string list = [ "--config"; "rules.yaml" ])
+    ?(extra_args : string list = [])
     ?(check : Exit_code.t -> unit = Exit_code.Check.ok)
     ?(before_scan : unit -> string list = fun () -> []) () =
   let target_file = F.File ("foo.py", target) in
   let repo_files =
-    F.File ("rules.yaml", rule)
-    ::
-    (match target_dir with
-    | None -> [ target_file ]
-    | Some dir -> [ F.Dir (dir, [ target_file ]) ])
+    (F.File ("rules.yaml", rule) :: extra_files)
+    @ (match target_dir with
+      | None -> [ target_file ]
+      | Some dir -> [ F.Dir (dir, [ target_file ]) ])
   in
   Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
       let late_args = before_scan () in
       let argv =
         Array.of_list
-          ([ "opengrep-ci"; "--experimental"; "--config"; "rules.yaml" ]
-          @ extra_args @ late_args)
+          ([ "opengrep-ci"; "--experimental" ]
+          @ config_args @ extra_args @ late_args)
       in
       let exit_code =
         without_settings (fun () -> Ci_subcommand.main caps argv)
@@ -111,6 +124,13 @@ let test_audit_mode (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
     ~extra_args:[ "--audit-on"; "unknown" ] ()
 
+(* the environment variable holds a whitespace-separated list of event
+ * names; only the second one matches the "unknown" event, so a value
+ * taken as one name would not enable audit mode *)
+let test_audit_env_list (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "SEMGREP_AUDIT_ON" "push unknown" (fun () ->
+      run_ci caps ~rule:blocking_rule_content ~target:finding_py_content ())
+
 let test_subdir_outside_cwd_suppressed (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
     ~extra_args:[ "--subdir"; "/etc" ] ()
@@ -127,6 +147,15 @@ let test_suppress_errors_env_false (caps : Ci_subcommand.caps) () =
       run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
         ~extra_args:[ "--subdir"; "/etc" ]
         ~check:Exit_code.Check.fatal ())
+
+(* the environment variable holds a whitespace-separated list of rule
+ * sources; both files must be loaded and both rules fire *)
+let test_rules_env_list (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "SEMGREP_RULES" "rules.yaml rules2.yaml"
+    (fun () ->
+      run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+        ~extra_files:[ F.File ("rules2.yaml", second_rule_content) ]
+        ~config_args:[] ~check:Exit_code.Check.findings ())
 
 (* SEMGREP_COMMIT takes any git rev, not just a full commit id; the rev is
  * resolved to the commit it names and the scan proceeds *)
@@ -282,6 +311,10 @@ let tests (caps : < Ci_subcommand.caps >) =
         ~normalize (test_nonblocking_findings caps);
       t "audit mode exits ok despite findings"
         ~checked_output:(Testo.stdxxx ()) ~normalize (test_audit_mode caps);
+      t "SEMGREP_AUDIT_ON is a whitespace-separated list"
+        ~checked_output:(Testo.stdxxx ()) ~normalize (test_audit_env_list caps);
+      t "SEMGREP_RULES is a whitespace-separated list"
+        ~checked_output:(Testo.stdxxx ()) ~normalize (test_rules_env_list caps);
       t "subdir outside cwd is suppressed to ok"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_subdir_outside_cwd_suppressed caps);

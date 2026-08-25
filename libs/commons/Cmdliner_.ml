@@ -106,6 +106,25 @@ let negatable_flag_with_env ?(default = false) ?env ~neg_options ~doc options =
   in
   Term.(const combine $ flags)
 
+(* A repeatable string option whose environment variable holds a
+   whitespace-separated list (e.g. SEMGREP_RULES="p/default extra.yml").
+   Cmdliner's own env handling would turn the variable into a single
+   list element, so the variable is read here instead, through
+   Opengrep_env so the OPENGREP_/SEMGREP_ alias also counts and an empty
+   value means unset. Occurrences on the command line win over the
+   environment and are never split. *)
+let string_list_with_env ?(default = []) ~env ~doc options =
+  let values = Arg.(value (opt_all string [] (Arg.info options ~doc))) in
+  let combine (values : string list) =
+    match values with
+    | _ :: _ -> values
+    | [] -> (
+        match Opengrep_env.getenv_opt env with
+        | Some value -> String_.split ~sep:"[ \t\r\n]+" value
+        | None -> default)
+  in
+  Term.(const combine $ values)
+
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'
  *
