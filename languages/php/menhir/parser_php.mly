@@ -846,11 +846,11 @@ member_declaration:
      { ClassConstants($1, $2, $3, $4, $5, $6) }
 
 (* class variables (aka properties) *)
- | ioption(attributes) member_modifier* ioption(type_php)
+ | ioption(attributes) member_modifier* ioption(prop_type_php)
    listc(class_variable_simple) ";"
      { ClassVariables($1, VModifiers $2, $3, $4, $5)  }
  (* PHP 8.4: property with hooks - single variable, no semicolon *)
- | ioption(attributes) member_modifier* ioption(type_php) class_variable_hooked
+ | ioption(attributes) member_modifier* ioption(prop_type_php) class_variable_hooked
      { ClassVariables($1, VModifiers $2, $3, [Left $4], Tok.FakeTok(";", None)) }
  (* the old 'var $x;' form *)
  | T_VAR ioption(type_php) listc(class_variable_simple) ";"
@@ -1049,6 +1049,7 @@ type_arg_list:
  *)
 return_type:
  | ":" type_php     { $1, $2 }
+ | ":" bare_intersection_php { $1, $2 }
  | ":" T_STATIC     { $1, Hint (LateStatic $2, None) }
  | ":" "?" T_STATIC { $1, HintQuestion ($2, Hint (LateStatic $3, None)) }
 
@@ -1819,6 +1820,23 @@ non_empty_type_php_list:
 
 union_type_php_list:
  | list_sep(primary_type_php, "|") { $1 }
+
+(* PHP 8.1 intersection types written without parentheses, as in 'X&Y'.
+ * Only offered where a '&' cannot instead introduce a by-reference
+ * parameter: in 'f(X &$p)' the parser cannot tell which is meant until after
+ * the '&', so allowing it there would break by-reference parameters.
+ * Mixing '|' and '&' still needs the parenthesized DNF form, which
+ * primary_type_php already covers.
+ *)
+prop_type_php:
+ | type_php { $1 }
+ | bare_intersection_php { $1 }
+
+(* no parentheses to record here, so the '&' stands in for them;
+ * php_to_generic ignores those and folds on the real '&' tokens *)
+bare_intersection_php:
+ | class_name TAND intersection_type_php_list
+     { HintIntersection ($2, Left $1 :: Right $2 :: $3, $2) }
 
 (* PHP 8.1/8.2: intersection types use & separator, must have 2+ types *)
 intersection_type_php_list:
