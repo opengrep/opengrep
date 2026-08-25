@@ -1443,6 +1443,10 @@ static_scalar_primary:
  | T_ARRAY "(" array_pair_list ")"  { ArrayLong($1,($2,$3,$4)) }
  | "[" array_pair_list "]"          { ArrayShort($1,$2,$3) }
  | "(" static_scalar ")"            { ParenExpr($1,$2,$3) }
+ (* indexing is allowed in a constant expression, as in '"BAR"[0]' or
+  * '["a" => 1]["a"]' *)
+ | static_scalar_primary "[" static_scalar "]"
+     { ArrayGet($1, ($2, Some $3, $4)) }
  (* PHP 8.5: a constant expression may be a closure or a first-class
   * callable. PHP requires the closure to be static and forbids 'use', which
   * is not enforced here. *)
