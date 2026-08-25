@@ -155,19 +155,6 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     is_flag=True,
     hidden=True,
 )
-@click.option(
-    "--x-dump-rule-partitions",
-    "dump_n_rule_partitions",
-    type=int,
-    default=0,
-    hidden=True,
-)
-@click.option(
-    "--x-dump-rule-partitions-dir",
-    "dump_rule_partitions_dir",
-    type=click.Path(allow_dash=True, path_type=Path),
-    hidden=True,
-)
 @handle_command_errors
 def ci(
     ctx: click.Context,
@@ -217,8 +204,6 @@ def ci(
     use_git_ignore: bool,
     verbose: bool,
     allow_local_builds: bool,
-    dump_n_rule_partitions: Optional[int],
-    dump_rule_partitions_dir: Optional[Path],
     opengrep_ignore_pattern: Optional[str],
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
@@ -280,14 +265,6 @@ def ci(
         logger.info(
             "WARNING: `opengrep ci` is meant to be run from the root of a git repo.\nWhen `opengrep ci` is not run from a git repo, it will not be able to perform all operations.\nWhen `opengrep ci` is run from a git repo, but not the root, links in the uploaded findings may be broken.\n\nTo run `opengrep ci` on only a subdirectory of a git repo, see `--subdir`."
         )
-
-    if (dump_n_rule_partitions and not dump_rule_partitions_dir) or (
-        not dump_n_rule_partitions and dump_rule_partitions_dir
-    ):
-        logger.info(
-            "Both or none of --x-dump-rule-partitions and --x-dump-rule-partitions-dir must be specified."
-        )
-        sys.exit(FATAL_EXIT_CODE)
 
     if not config:
         config = (AUTO_CONFIG_KEY,)
@@ -422,8 +399,6 @@ def ci(
         "baseline_commit_is_mergebase": True,
         "capture_core_stderr": capture_core_stderr,
         "allow_local_builds": allow_local_builds,
-        "dump_n_rule_partitions": dump_n_rule_partitions,
-        "dump_rule_partitions_dir": dump_rule_partitions_dir,
         "prioritize_dependency_graph_generation": False,
     }
 
