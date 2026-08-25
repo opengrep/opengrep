@@ -2,11 +2,15 @@
     repository) of from semgrep-specific environment variables
 *)
 
+(* A commit named by the user: either already a full id, or a rev
+ * (short sha, branch, tag) that git must resolve. *)
+type commit_ref = Commit_sha of Digestif.SHA1.t | Commit_rev of string
+
 type env = {
   _SEMGREP_REPO_NAME : string option;
   _SEMGREP_REPO_DISPLAY_NAME : string option;
   _SEMGREP_REPO_URL : Uri.t option;
-  _SEMGREP_COMMIT : Digestif.SHA1.t option;
+  _SEMGREP_COMMIT : commit_ref option;
   _SEMGREP_JOB_URL : Uri.t option;
   _SEMGREP_PR_ID : string option;
   _SEMGREP_PR_TITLE : string option;
@@ -14,8 +18,7 @@ type env = {
 }
 
 (* Read via Opengrep_env: the OPENGREP_* alias of each variable wins over
- * the SEMGREP_* name, and empty values count as unset. Aborts when
- * SEMGREP_COMMIT is set but not a full commit id. *)
+ * the SEMGREP_* name, and empty values count as unset. *)
 val env_from_environment : unit -> env
 
 (* For the provider subclasses: the OPENGREP_*/SEMGREP_* override wins over
@@ -24,8 +27,16 @@ val env_from_environment : unit -> env
 val override_or_getenv : string option -> string -> string option
 val uri_override_or_getenv : Uri.t option -> string -> Uri.t option
 
+(* Full-commit-id reader for the provider's own variable (CI platforms set
+ * full ids there); a non-sha value is ignored with a warning, never
+ * resolved. *)
+val sha_getenv : string -> Digestif.SHA1.t option
+
+(* The SEMGREP_COMMIT override is resolved to the commit it names (an
+ * unresolvable rev is ignored with a warning); without it the provider's
+ * variable is read with sha_getenv. *)
 val sha_override_or_getenv :
-  Digestif.SHA1.t option -> string -> Digestif.SHA1.t option
+  < Cap.exec > -> commit_ref option -> string -> Digestif.SHA1.t option
 
 (* The surface shared by all the provider metadata classes; every method
  * is there to be overridden in the children.

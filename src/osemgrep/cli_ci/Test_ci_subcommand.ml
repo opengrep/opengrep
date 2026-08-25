@@ -128,6 +128,13 @@ let test_suppress_errors_env_false (caps : Ci_subcommand.caps) () =
         ~extra_args:[ "--subdir"; "/etc" ]
         ~check:Exit_code.Check.fatal ())
 
+(* SEMGREP_COMMIT takes any git rev, not just a full commit id; the rev is
+ * resolved to the commit it names and the scan proceeds *)
+let test_commit_rev (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "SEMGREP_COMMIT" "HEAD" (fun () ->
+      run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+        ~check:Exit_code.Check.findings ())
+
 let test_subdir_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
     ~target_dir:"sub"
@@ -284,6 +291,8 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "suppress-errors env var set to false"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_suppress_errors_env_false caps);
+      t "SEMGREP_COMMIT accepts any rev" ~checked_output:(Testo.stdxxx ())
+        ~normalize (test_commit_rev caps);
       t "baseline rev keeps only the new finding"
         ~checked_output:(Testo.stdxxx ()) ~normalize (test_baseline_rev caps);
       t "subdir restricts the scan and finds findings"

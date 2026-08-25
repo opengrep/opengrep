@@ -60,7 +60,7 @@ let env_from_environment () : env =
       (match get "GITHUB_SERVER_URL" with
       | Some url -> Uri.of_string url
       | None -> Uri.of_string "https://github.com");
-    _GITHUB_SHA = Git_metadata.sha_override_or_getenv None "GITHUB_SHA";
+    _GITHUB_SHA = Git_metadata.sha_getenv "GITHUB_SHA";
     _GITHUB_REF = get "GITHUB_REF";
     _GITHUB_HEAD_REF = get "GITHUB_HEAD_REF";
     _GITHUB_RUN_ID = get "GITHUB_RUN_ID";

@@ -55,7 +55,7 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
       uri_override_or_getenv env._SEMGREP_JOB_URL "CIRCLE_BUILD_URL"
 
     method! commit_sha =
-      sha_override_or_getenv env._SEMGREP_COMMIT "CIRCLE_SHA1"
+      sha_override_or_getenv caps env._SEMGREP_COMMIT "CIRCLE_SHA1"
 
     method! pr_id =
       match env._SEMGREP_PR_ID with

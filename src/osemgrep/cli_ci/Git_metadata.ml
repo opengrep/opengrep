@@ -13,11 +13,15 @@ open Common
 (* Types *)
 (*****************************************************************************)
 
+(* A commit named by the user: either already a full id, or a rev
+ * (short sha, branch, tag) that git must resolve. *)
+type commit_ref = Commit_sha of Digestif.SHA1.t | Commit_rev of string
+
 type env = {
   _SEMGREP_REPO_NAME : string option;
   _SEMGREP_REPO_DISPLAY_NAME : string option;
   _SEMGREP_REPO_URL : Uri.t option;
-  _SEMGREP_COMMIT : Digestif.SHA1.t option;
+  _SEMGREP_COMMIT : commit_ref option;
   _SEMGREP_JOB_URL : Uri.t option;
   _SEMGREP_PR_ID : string option;
   _SEMGREP_PR_TITLE : string option;
@@ -39,11 +43,11 @@ let env_from_environment () : env =
       | None -> None
       | Some str -> (
           match Digestif.SHA1.of_hex_opt str with
-          | Some _ as sha -> sha
-          (* aborting rather than falling back to HEAD: the fallback would
-             silently misattribute the findings to another commit *)
-          | None ->
-              Error.abort (spf "SEMGREP_COMMIT is not a full commit id: %s" str)));
+          | Some sha -> Some (Commit_sha sha)
+          (* a non-full value is kept as a rev; resolve_commit_ref later
+             turns it into the commit it names, so the findings are still
+             attributed to the commit the user meant *)
+          | None -> Some (Commit_rev str)));
     _SEMGREP_JOB_URL = Option.map Uri.of_string (get "SEMGREP_JOB_URL");
     _SEMGREP_PR_ID = get "SEMGREP_PR_ID";
     _SEMGREP_PR_TITLE = get "SEMGREP_PR_TITLE";
@@ -70,20 +74,42 @@ let uri_override_or_getenv (override : Uri.t option) (var : string) :
   | Some _ as v -> v
   | None -> Option.map Uri.of_string (Opengrep_env.getenv_opt var)
 
-let sha_override_or_getenv (override : Digestif.SHA1.t option) (var : string) :
+(* Commit_sha passes through; a rev is resolved to the commit it names.
+ * An unresolvable rev is ignored with a warning: the scan proceeds and
+ * the commit is detected as usual. *)
+let resolve_commit_ref (caps : < Cap.exec >) (cref : commit_ref) :
     Digestif.SHA1.t option =
-  match override with
-  | Some _ as v -> v
-  | None -> (
-      match Opengrep_env.getenv_opt var with
-      | None -> None
-      | Some str -> (
-          match Digestif.SHA1.of_hex_opt str with
-          | Some _ as sha -> sha
-          | None ->
-              Logs.warn (fun m ->
-                  m "%s is not a full commit id, ignoring it: %s" var str);
-              None))
+  match cref with
+  | Commit_sha sha -> Some sha
+  | Commit_rev rev -> (
+      let cmd =
+        ( Cmd.Name "git",
+          [ "rev-parse"; "--verify"; "--quiet"; rev ^ "^{commit}" ] )
+      in
+      match CapExec.string_of_run caps#exec ~trim:true cmd with
+      | Ok (str, (_, `Exited 0)) -> Digestif.SHA1.of_hex_opt str
+      | Ok _
+      | Error (`Msg _) ->
+          Logs.warn (fun m ->
+              m "SEMGREP_COMMIT does not name a commit, ignoring it: %s" rev);
+          None)
+
+let sha_getenv (var : string) : Digestif.SHA1.t option =
+  match Opengrep_env.getenv_opt var with
+  | None -> None
+  | Some str -> (
+      match Digestif.SHA1.of_hex_opt str with
+      | Some _ as sha -> sha
+      | None ->
+          Logs.warn (fun m ->
+              m "%s is not a full commit id, ignoring it: %s" var str);
+          None)
+
+let sha_override_or_getenv (caps : < Cap.exec >) (override : commit_ref option)
+    (var : string) : Digestif.SHA1.t option =
+  match Option.bind override (resolve_commit_ref caps) with
+  | Some _ as sha -> sha
+  | None -> sha_getenv var
 
 (*****************************************************************************)
 (* Entry point *)
@@ -215,8 +241,8 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
     method ci_job_url = env._SEMGREP_JOB_URL
 
     method commit_sha =
-      match env._SEMGREP_COMMIT with
-      | Some sha1 -> Some sha1
+      match Option.bind env._SEMGREP_COMMIT (resolve_commit_ref caps) with
+      | Some _ as sha -> sha
       | None -> (
           let cmd = (Cmd.Name "git", [ "rev-parse"; "HEAD" ]) in
           match CapExec.string_of_run caps#exec ~trim:true cmd with

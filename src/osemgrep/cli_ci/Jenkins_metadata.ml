@@ -56,5 +56,6 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
           | _else_ -> None)
 
     method! ci_job_url = uri_override_or_getenv env._SEMGREP_JOB_URL "BUILD_URL"
-    method! commit_sha = sha_override_or_getenv env._SEMGREP_COMMIT "GIT_COMMIT"
+    method! commit_sha =
+      sha_override_or_getenv caps env._SEMGREP_COMMIT "GIT_COMMIT"
   end

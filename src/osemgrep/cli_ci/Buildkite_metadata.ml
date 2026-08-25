@@ -75,7 +75,7 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
           | _else_ -> None)
 
     method! commit_sha =
-      sha_override_or_getenv env._SEMGREP_COMMIT "BUILDKITE_COMMIT"
+      sha_override_or_getenv caps env._SEMGREP_COMMIT "BUILDKITE_COMMIT"
 
     method! pr_id =
       match env._SEMGREP_PR_ID with

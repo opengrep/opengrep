@@ -91,7 +91,7 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
 
     method! commit_sha =
       match
-        sha_override_or_getenv env._SEMGREP_COMMIT
+        sha_override_or_getenv caps env._SEMGREP_COMMIT
           "SYSTEM_PULLREQUEST_SOURCECOMMITID"
       with
       | Some _ as sha -> sha

@@ -285,7 +285,8 @@ let man : Cmdliner.Manpage.block list =
        as; setting it per directory keeps the scans of one monorepo apart.";
     `P "$(b,SEMGREP_REPO_URL): override the detected repository URL.";
     `P
-      "$(b,SEMGREP_COMMIT): override the detected commit (a full commit id).";
+      "$(b,SEMGREP_COMMIT): override the detected commit (a commit id or any \
+       git rev, such as a short id, branch or tag).";
     `P "$(b,SEMGREP_BRANCH): override the detected branch.";
     `P
       "$(b,SEMGREP_PR_ID), $(b,SEMGREP_PR_TITLE): override the detected \

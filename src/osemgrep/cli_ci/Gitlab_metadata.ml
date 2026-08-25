@@ -109,7 +109,8 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
 
     method! commit_sha =
       match
-        Git_metadata.sha_override_or_getenv env._SEMGREP_COMMIT "CI_COMMIT_SHA"
+        Git_metadata.sha_override_or_getenv caps env._SEMGREP_COMMIT
+          "CI_COMMIT_SHA"
       with
       | Some _ as sha -> sha
       | None -> super#commit_sha

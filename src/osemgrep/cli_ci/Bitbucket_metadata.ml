@@ -65,7 +65,7 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
           | _else_ -> None)
 
     method! commit_sha =
-      sha_override_or_getenv env._SEMGREP_COMMIT "BITBUCKET_COMMIT"
+      sha_override_or_getenv caps env._SEMGREP_COMMIT "BITBUCKET_COMMIT"
 
     method! pr_id = override_or_getenv env._SEMGREP_PR_ID "BITBUCKET_PR_ID"
   end
