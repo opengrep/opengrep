@@ -191,6 +191,9 @@ let warn_ignored_flags (ci_conf : Ci_CLI.conf) : unit =
 let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
   let conf = ci_conf.scan_conf in
   warn_ignored_flags ci_conf;
+  (* post fallback, and inside the suppressed region: a bad destination is
+   * suppressed like any other error *)
+  Output.check_destinations conf.output_conf;
   match resolve_subdir ci_conf.subdir with
   | Error exit_code -> exit_code
   | Ok subdir -> (
@@ -358,9 +361,6 @@ let run_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
     ~level:conf.common.logging_level;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
-  (* only now that the fallback above has let us through: pysemgrep has its
-   * own handling of these destinations, and gets to keep it *)
-  Output.check_destinations conf.output_conf;
   Logs.debug (fun m -> m "conf = %s" (Ci_CLI.show_conf ci_conf));
   (* coupling: Scan_subcommand.run_conf dispatches show subconfs the same
    * way (-d/--dump-command-for-core turns the run into a show command) *)

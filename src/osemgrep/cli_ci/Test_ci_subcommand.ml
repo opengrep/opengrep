@@ -152,6 +152,19 @@ let test_subdir_nonexistent_fatal (caps : Ci_subcommand.caps) () =
     ~extra_args:[ "--subdir"; "no-such-dir"; "--no-suppress-errors" ]
     ~check:Exit_code.Check.fatal ()
 
+(* a bad output destination is an error like any other: suppressed by
+ * default, fatal with --no-suppress-errors *)
+let test_output_conflict_suppressed (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:[ "-o"; "out.json"; "--json-output=out.json" ]
+    ()
+
+let test_output_conflict_fatal (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:
+      [ "-o"; "out.json"; "--json-output=out.json"; "--no-suppress-errors" ]
+    ~check:Exit_code.Check.fatal ()
+
 (* an explicit false in the environment must turn suppression off, exactly
  * like the --no-suppress-errors flag *)
 let test_suppress_errors_env_false (caps : Ci_subcommand.caps) () =
@@ -339,6 +352,11 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "nonexistent subdir is fatal without suppression"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_subdir_nonexistent_fatal caps);
+      t "output conflict is suppressed to ok" ~checked_output:(Testo.stdxxx ())
+        ~normalize (test_output_conflict_suppressed caps);
+      t "output conflict is fatal without suppression"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_output_conflict_fatal caps);
       t "suppress-errors env var set to false"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_suppress_errors_env_false caps);
