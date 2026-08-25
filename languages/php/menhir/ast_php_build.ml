@@ -1088,6 +1088,7 @@ and static_var env (x, e) = (dname x, opt static_scalar_affect env e)
 and list_assign env x acc =
   match x with
   | ListVar lv -> lvalue env lv :: acc
+  | ListRef (tok, lv) -> A.Ref (tok, lvalue env lv) :: acc
   | ListList (_, (t1, la, t2)) ->
       let la = comma_list la in
       let la = List_.fold_right (list_assign env) la [] in

@@ -1462,6 +1462,7 @@ static_scalar_primary:
 
 assignment_list_element:
  | expr             { ListVar $1 }
+ | TAND expr        { ListRef ($1, $2) }
  | T_LIST "(" assignment_list ")"   { ListList ($1, ($2, $3, $4)) }
  | (*empty*)            { ListEmpty }
 

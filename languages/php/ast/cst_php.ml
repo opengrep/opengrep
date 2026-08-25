@@ -390,6 +390,8 @@ and castOp = ptype
 (* less: merge with foreach_pattern, list($k => $v) = ... is allowed no? *)
 and list_assign =
   | ListVar of lvalue
+  (* assignment by reference, as in 'list(&$a, &$b) = $arr' *)
+  | ListRef of tok (* & *) * lvalue
   | ListList of tok * list_assign comma_list paren
   | ListEmpty
 
