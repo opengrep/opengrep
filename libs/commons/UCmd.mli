@@ -10,6 +10,13 @@
 val string_of_run :
   trim:bool -> Cmd.t -> (string * Cmd.run_status, [> Rresult.R.msg ]) result
 
+(* The building blocks of string_of_run, for callers that must run the
+   command themselves: log the command at info level (redacted), and run a
+   function while capturing the process error output, logging it at info
+   level (redacted). *)
+val log_command : Cmd.t -> unit
+val capture_and_log_stderr : (unit -> 'a) -> 'a
+
 val string_of_run_with_stderr :
   trim:bool ->
   Cmd.t ->

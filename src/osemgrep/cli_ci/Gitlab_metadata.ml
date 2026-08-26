@@ -20,8 +20,9 @@
  *  Use Gitlab env vars to fetch target branch.
  *  By default gitlab pipelines do a shallow clone."
  *
- * The remote URL is the merge request's project URL with the job token
- * spliced in as credentials, like pyopengrep builds it with urlsplit.
+ * The fetch authenticates with the job token; on git 2.31 or newer it is
+ * passed as a header through the environment, on older git it is spliced
+ * into the URL as credentials, like pyopengrep builds it with urlsplit.
  *)
 let fetch_branch_get_merge_base (caps : < Cap.exec >) ~(branch_name : string)
     ~(head_sha : string) : Digestif.SHA1.t option =
@@ -29,12 +30,30 @@ let fetch_branch_get_merge_base (caps : < Cap.exec >) ~(branch_name : string)
     (Opengrep_env.getenv_opt "CI_MERGE_REQUEST_PROJECT_URL", Opengrep_env.getenv_opt "CI_JOB_TOKEN")
   with
   | Some project_url, Some job_token ->
-      let url =
-        Uri.of_string project_url
-        |> (fun uri -> Uri.with_userinfo uri (Some (Fmt.str "gitlab-ci-token:%s" job_token)))
-        |> Uri.to_string
+      let _ =
+        if Git_wrapper.supports_config_env caps then
+          (* the credentials go to this one child process as an
+           * Authorization header for the project url, and the command
+           * line carries the plain url *)
+          let header =
+            "Authorization: Basic "
+            ^ Base64.encode_string (Fmt.str "gitlab-ci-token:%s" job_token)
+          in
+          Git_wrapper.command_with_config caps
+            ~config:[ (Fmt.str "http.%s.extraHeader" project_url, header) ]
+            [ "fetch"; project_url; branch_name ]
+        else
+          (* older git ignores the GIT_CONFIG_* variables: splice the
+           * credentials into the url *)
+          let url =
+            Uri.of_string project_url
+            |> (fun uri ->
+                 Uri.with_userinfo uri
+                   (Some (Fmt.str "gitlab-ci-token:%s" job_token)))
+            |> Uri.to_string
+          in
+          Git_wrapper.command caps [ "fetch"; url; branch_name ]
       in
-      let _ = Git_wrapper.command caps [ "fetch"; url; branch_name ] in
       let out =
         Git_wrapper.command caps [ "merge-base"; "--all"; head_sha; "FETCH_HEAD" ]
       in

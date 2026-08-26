@@ -409,9 +409,54 @@ let test_circleci_environment (caps : Ci_subcommand.caps) () =
         "https://github.com/org/repo/pull/17/" (fun () ->
           run_ci caps ~rule:blocking_rule_content ~target:clean_py_content ()))
 
-(* the job token spliced into the merge-base fetch URL must not reach the
- * logs: the command is logged with the URL credentials redacted, at info
- * level (--verbose) and in the failure warning *)
+(* the merge-base fetch authenticates through the environment on current
+ * git; the computed merge base must be the branch-off commit *)
+let test_gitlab_merge_base_fetch (caps : Ci_subcommand.caps) () =
+  let caps_exec = (caps :> < Cap.exec >) in
+  let repo_files = [ F.File ("foo.py", clean_py_content) ] in
+  Testutil_git.with_git_repo ~verbose:true repo_files (fun cwd ->
+      let base = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      let _ = Git_wrapper.command caps_exec [ "checkout"; "-b"; "feature" ] in
+      UFile.write_file ~file:(Fpath.v "foo.py") finding_py_content;
+      let _ = Git_wrapper.command caps_exec [ "add"; "foo.py" ] in
+      let _ = Git_wrapper.command caps_exec [ "commit"; "-m"; "change" ] in
+      let _ =
+        Git_wrapper.command caps_exec
+          [ "clone"; Fpath.to_string cwd; "clone" ]
+      in
+      Testutil_files.with_chdir (Fpath.v "clone") @@ fun () ->
+      Semgrep_envvars.with_envvar "CI_MERGE_REQUEST_PROJECT_URL"
+        (Fpath.to_string cwd) (fun () ->
+          Semgrep_envvars.with_envvar "CI_JOB_TOKEN"
+            "fake-64_wFuiRFQk9t841JHKQnAT" (fun () ->
+              Semgrep_envvars.with_envvar "CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+                "main" (fun () ->
+                  let git_env : Git_metadata.env =
+                    {
+                      _SEMGREP_REPO_NAME = None;
+                      _SEMGREP_REPO_DISPLAY_NAME = None;
+                      _SEMGREP_REPO_URL = None;
+                      _SEMGREP_COMMIT = None;
+                      _SEMGREP_JOB_URL = None;
+                      _SEMGREP_PR_ID = None;
+                      _SEMGREP_PR_TITLE = None;
+                      _SEMGREP_BRANCH = None;
+                    }
+                  in
+                  let meta =
+                    new Gitlab_metadata.meta
+                      caps_exec ~cli_baseline_ref:None git_env
+                  in
+                  match meta#merge_base_ref with
+                  | Some (Find_targets.Commit sha) ->
+                      Alcotest.(check string)
+                        "merge base is the branch-off commit" base
+                        (Digestif.SHA1.to_hex sha)
+                  | _else_ -> Alcotest.fail "expected a commit merge base"))))
+
+(* the job token must not reach the logs: on current git the fetch
+ * command carries the plain project url (the token goes through the
+ * environment), so nothing in the verbose output names it *)
 let test_gitlab_fetch_token_redacted (caps : Ci_subcommand.caps) () =
   Semgrep_envvars.with_envvar "GITLAB_CI" "true" (fun () ->
       Semgrep_envvars.with_envvar "CI_PIPELINE_SOURCE" "merge_request_event"
@@ -545,6 +590,9 @@ let tests (caps : < Ci_subcommand.caps >) =
         (test_circleci_pr_id_trailing_slash caps);
       t "circleci environment is detected" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_circleci_environment caps);
+      t "gitlab merge base via authenticated fetch"
+        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
+        (test_gitlab_merge_base_fetch caps);
       t "gitlab fetch token is redacted in logs"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
         (test_gitlab_fetch_token_redacted caps);

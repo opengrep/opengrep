@@ -254,17 +254,11 @@ let blobs_by_commit objects commits =
 (* Entry points *)
 (*****************************************************************************)
 
-(* Similar to Sys.command, but specific to git *)
-let command (caps : < Cap.exec >) (args : Cmd.args) : string =
-  let cmd : Cmd.t = (git, args) in
-  match CapExec.string_of_run caps#exec ~trim:true cmd with
-  | Ok (str, (_, `Exited 0)) -> str
-  | Ok _
-  | Error (`Msg _) ->
-      (* nosemgrep: no-logs-in-library *)
-      Logs.warn (fun m ->
-          m
-            {|Command failed.
+let warn_and_fail (cmd : Cmd.t) : 'a =
+  (* nosemgrep: no-logs-in-library *)
+  Logs.warn (fun m ->
+      m
+        {|Command failed.
 -----
 Failed to run %s. Possible reasons:
 - the git binary is not available
@@ -275,8 +269,77 @@ Failed to run %s. Possible reasons:
   (fix with `git config --global --add safe.directory $(pwd)`)
 
 Try running the command yourself to debug the issue.|}
-            (Redact.redact_url_userinfo (Cmd.to_string cmd)));
-      raise (Error "Error when we run a git command")
+        (Redact.redact_url_userinfo (Cmd.to_string cmd)));
+  raise (Error "Error when we run a git command")
+
+(* Similar to Sys.command, but specific to git *)
+let command (caps : < Cap.exec >) (args : Cmd.args) : string =
+  let cmd : Cmd.t = (git, args) in
+  match CapExec.string_of_run caps#exec ~trim:true cmd with
+  | Ok (str, (_, `Exited 0)) -> str
+  | Ok _
+  | Error (`Msg _) ->
+      warn_and_fail cmd
+
+(* Like command, for a git command needing configuration entries whose
+ * values must stay out of the command line (e.g. credentials). The
+ * entries reach only this child process, through the GIT_CONFIG_*
+ * environment variables; git 2.31 or newer reads them, older git
+ * ignores them. *)
+let command_with_config (_caps : < Cap.exec >)
+    ~(config : (string * string) list) (args : Cmd.args) : string =
+  let cmd : Cmd.t = (git, args) in
+  let env =
+    let current =
+      match Bos.OS.Env.current () with
+      | Ok current -> current
+      | Error (`Msg _) -> Astring.String.Map.empty
+    in
+    config
+    |> List.mapi (fun i entry -> (i, entry))
+    |> List.fold_left
+         (fun acc (i, (key, value)) ->
+           acc
+           |> Astring.String.Map.add (Fmt.str "GIT_CONFIG_KEY_%d" i) key
+           |> Astring.String.Map.add (Fmt.str "GIT_CONFIG_VALUE_%d" i) value)
+         (Astring.String.Map.add "GIT_CONFIG_COUNT"
+            (string_of_int (List.length config))
+            current)
+  in
+  UCmd.log_command cmd;
+  let result =
+    UCmd.capture_and_log_stderr (fun () ->
+        (* nosemgrep: forbid-exec *)
+        let out = Cmd.bos_apply (Bos.OS.Cmd.run_out ~env) cmd in
+        (* nosemgrep: forbid-exec *)
+        Bos.OS.Cmd.out_string ~trim:true out)
+  in
+  match result with
+  | Ok (str, (_, `Exited 0)) -> str
+  | Ok _
+  | Error (`Msg _) ->
+      warn_and_fail cmd
+
+(* "git version 2.39.3 (Apple Git-146)" -> (2, 39) *)
+let parse_version (str : string) : (int * int) option =
+  match String_.split ~sep:{|[^0-9]+|} str with
+  | major :: minor :: _ -> (
+      match (int_of_string_opt major, int_of_string_opt minor) with
+      | Some major, Some minor -> Some (major, minor)
+      | _ -> None)
+  | _ -> None
+
+(* GIT_CONFIG_COUNT and friends exist since git 2.31; older git silently
+ * ignores them *)
+let supports_config_env (caps : < Cap.exec >) : bool =
+  match CapExec.string_of_run caps#exec ~trim:true (git, [ "--version" ]) with
+  | Ok (str, (_, `Exited 0)) -> (
+      match parse_version str with
+      | Some (major, minor) -> major > 2 || (major =|= 2 && minor >= 31)
+      | None -> false)
+  | Ok _
+  | Error (`Msg _) ->
+      false
 
 let commit_blobs_by_date objects =
   Log.info (fun m -> m "getting commits");

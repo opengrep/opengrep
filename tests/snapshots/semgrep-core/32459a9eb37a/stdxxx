@@ -1,0 +1,30 @@
+--- begin input files ---
+foo.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 1 file changed, 3 insertions(+)
+ create mode 100644 foo.py
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'rev-parse' 'HEAD'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'checkout' '-b' 'feature'
+[<MASKED TIMESTAMP>][INFO]: error output: Switched to a new branch 'feature'
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' 'foo.py'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'change'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'clone' '<TMP>/<MASKED>' 'clone'
+[<MASKED TIMESTAMP>][INFO]: error output: Cloning into 'clone'...
+done.
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'rev-parse' 'HEAD'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '--version'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' '<TMP>/<MASKED>' 'main'
+[<MASKED TIMESTAMP>][INFO]: error output: From <TMP>/<MASKED>
+ * branch            main       -> FETCH_HEAD
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'merge-base' '--all' '<HASH>' 'FETCH_HEAD'
+ASSERT merge base is the branch-off commit

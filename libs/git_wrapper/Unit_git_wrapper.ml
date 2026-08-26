@@ -98,10 +98,22 @@ let test_redact_url_userinfo () =
   (* '@' in a path does not count as credentials *)
   check ~expected:"https://example.com/a@b" "https://example.com/a@b"
 
+let test_parse_version () =
+  let check input expected =
+    Alcotest.(check (option (pair int int))) input expected
+      (Git_wrapper.parse_version input)
+  in
+  check "git version 2.39.3 (Apple Git-146)" (Some (2, 39));
+  check "git version 2.31.0" (Some (2, 31));
+  check "git version 2.31.0.windows.1" (Some (2, 31));
+  check "not a version" None;
+  check "2" None
+
 let tests =
   [
     t "user identity" test_user_identity;
     t "redact URL userinfo" test_redact_url_userinfo;
+    t "parse git version" test_parse_version;
     capture "ls-files from project root"
       (test_ls_files_relative
          ~mk_cwd:(fun ~project_root -> project_root)

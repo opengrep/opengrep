@@ -24,12 +24,13 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
   environment - running in environment gitlab-ci, triggering event is pull_request
 
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'rev-parse' 'HEAD'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' 'https://***@gitlab.invalid/org/repo' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '--version'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' 'https://gitlab.invalid/org/repo' 'main'
 [<MASKED TIMESTAMP>][INFO]: error output: fatal: unable to access 'https://gitlab.invalid/org/repo/': Could not resolve host: gitlab.invalid
 
 [<MASKED TIMESTAMP>][WARNING]: Command failed.
 -----
-Failed to run 'git' 'fetch' 'https://***@gitlab.invalid/org/repo' 'main'. Possible reasons:
+Failed to run 'git' 'fetch' 'https://gitlab.invalid/org/repo' 'main'. Possible reasons:
 - the git binary is not available
 - the current working directory is not a git repository
 - the baseline commit is not a parent of the current commit
