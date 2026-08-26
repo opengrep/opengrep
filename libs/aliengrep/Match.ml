@@ -3,11 +3,6 @@
 *)
 module Log = Log_aliengrep.Log
 
-(* Suppresses warnings about PCRE; there appear to be some issues when moving
-   this to use PCRE2 on some versions, e.g., 10.34 (Debian stable as of
-   2024-04-18). *)
-[@@@alert "-deprecated"]
-
 type loc = { start : int; length : int; substring : string } [@@deriving show]
 
 type match_ = {
@@ -20,14 +15,14 @@ type matches = match_ list [@@deriving show]
 
 let loc_of_substring target_str substrings capture_id =
   let start, end_ =
-    try Pcre.get_substring_ofs substrings capture_id with
+    try Pcre2.get_substring_ofs substrings capture_id with
     | Not_found ->
         (* bug! Did you introduce capturing groups by accident by inserting
            plain parentheses (XX) instead of (?:XX) ? *)
         (* "corresponding subpattern did not capture a substring" *)
         Log.err (fun m ->
             m "failed to extract capture %i. Captures are [%s]" capture_id
-              (Pcre.get_substrings substrings
+              (Pcre2.get_substrings substrings
               |> Array.to_list
               |> List_.map (Printf.sprintf "%S")
               |> String.concat ";"));
@@ -40,7 +35,7 @@ let loc_of_substring target_str substrings capture_id =
   { start; length; substring = String.sub target_str start length }
 
 let convert_match (pat : Pat_compile.t) target_str
-    (substrings : Pcre.substrings) =
+    (substrings : Pcre2.substrings) =
   let match_loc = loc_of_substring target_str substrings 0 in
   let captures =
     List_.map
@@ -56,6 +51,6 @@ let convert_match (pat : Pat_compile.t) target_str
   { match_loc; captures }
 
 let search (pat : Pat_compile.t) target_str : match_ list =
-  Pcre_.exec_all_noerr ~rex:pat.pcre target_str
+  Pcre2_.exec_all_noerr ~rex:pat.pcre target_str
   |> Array.to_list
   |> List_.map (convert_match pat target_str)

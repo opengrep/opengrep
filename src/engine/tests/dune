@@ -3,6 +3,7 @@
  (name semgrep_engine_tests)
  (wrapped false)
  (libraries
+   pcre2
    commons
    kcas_data
 

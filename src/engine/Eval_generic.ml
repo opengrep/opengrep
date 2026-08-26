@@ -229,9 +229,7 @@ let eval_regexp_matches ?(base_offset = 0) ~file ~regexp str =
      * alt: let s = value_to_string v in
      * to convert anything in a string before using regexps on it
   *)
-  Xpattern_match_regexp.regexp_matcher ~base_offset
-    Xpattern_match_regexp.pcre2_regex_functions str file regexp
-[@@alert "-deprecated"]
+  Xpattern_match_regexp.regexp_matcher ~base_offset str file regexp
 
 let eval_regexp_pattern_matches ?(base_offset = 0) ~file ~regexp str =
   let compiled = Pcre2_.regexp ~flags:[ `ANCHORED ] regexp in

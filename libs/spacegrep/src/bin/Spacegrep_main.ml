@@ -2,9 +2,6 @@
    Entrypoint for the 'spacegrep' command.
 *)
 
-(* for cmdliner >= 1.1.0 *)
-[@@@alert "-deprecated"]
-
 open Printf
 open Cmdliner
 open Spacegrep

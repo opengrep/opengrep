@@ -36,6 +36,15 @@ TREE_SITTER_LANGS="$2"
 
 >&2 echo "Generating linking flags for OS ${OS} (!!!in case of linking errors, adjust src/main/flags.sh!!!)"
 
+# Earlier libpcre2 releases (e.g. 10.34, Debian stable in 2024) cause
+# matching test failures; 10.43 is the oldest version known to pass.
+if command -v pkg-config > /dev/null 2>&1; then
+    if ! pkg-config --atleast-version=10.43 libpcre2-8; then
+        >&2 echo "error: libpcre2 >= 10.43 is required, found $(pkg-config --modversion libpcre2-8 2>/dev/null || echo none)"
+        exit 1
+    fi
+fi
+
 # Force the use of static linking in these scenarios:
 #
 # - the name of the opam switch refers to musl,
@@ -154,7 +163,6 @@ else
             "-lmirage_crypto_stubs"
             "-lmtime_clock_stubs"
             "-lmurmur3_stubs"
-            "-lpcre_stubs"
             "-lpcre2_stubs"
             "-lptime_clock_stubs"
             "-lstdc++"
@@ -168,7 +176,6 @@ else
             "-lzarith"
             "$(pkg-config gmp --variable libdir)/libgmp.a"
             "$(pkg-config tree-sitter --variable libdir)/libtree-sitter.a"
-            "$(pkg-config libpcre --variable libdir)/libpcre.a"
             "$(pkg-config libpcre2-8 --variable libdir)/libpcre2-8.a"
             "$(brew --prefix zstd)/lib/libzstd.a"
             # "-lpthread"
