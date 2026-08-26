@@ -43,7 +43,7 @@ let matches_of_aliengrep patterns lazy_contents (file : Fpath.t) origin =
   let init _ =
     (* TODO: ignore binary files like spacegrep? *)
     (* TODO: preprocess and remove comments like spacegrep does *)
-    Some (Lazy.force lazy_contents)
+    Some (Lazy_with_restart.force lazy_contents)
   in
   Xpattern_matcher.matches_of_matcher patterns
     { init; matcher = aliengrep_matcher }

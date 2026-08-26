@@ -831,8 +831,8 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
            Option.map
              (fun (p : Core_profiling.partial_profiling) ->
                 let p_file_size_bytes =
-                  if Lazy.is_val xtarget.lazy_content then
-                    Some (String.length (Lazy.force xtarget.lazy_content))
+                  if Lazy_with_restart.is_val xtarget.lazy_content then
+                    Some (String.length (Lazy_with_restart.force xtarget.lazy_content))
                   else None
                 in
                 {p with Core_profiling.p_file_size_bytes})
