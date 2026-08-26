@@ -56,6 +56,55 @@ let vars_to_pattern (l, xs, r) =
   let ys = xs |> List_.map (fun (id, ptype) -> var_to_pattern (id, ptype)) in
   PatTuple (l, ys, r)
 
+(* The scope-function desugaring below injects 'it = receiver' into the lambda
+ * body. The receiver must be a physically fresh copy: reusing the node that
+ * already sits in the call gives it two parents, and chained scope calls then
+ * share their whole prefix - 2^n traversal paths for every full-AST visitor
+ * (intrafile taint hung on large Kotlin files).
+ *
+ * The copy only needs to carry the receiver's taint, so it is simplified:
+ * scope calls collapse to their receiver ('r.let { x -> 3 }' copies as 'r')
+ * and lambda arguments are dropped. Copying a lambda would duplicate a
+ * function definition, and never copying one guarantees a copy contains no
+ * earlier injection, so copies stay linear across chain links.
+ *
+ * Known limitation: the copy carries no lambda-*result* taint, e.g.
+ * 'xs.map { source() }' copies as 'xs.map()'. Keeping a shared reference to
+ * the lambda instead would reintroduce exponential paths (nested lambdas
+ * contain injections of their own). Modelling callback-return taint belongs
+ * in the taint engine, not in this copy. *)
+let scope_function_names = [ "let"; "also"; "use"; "takeIf"; "takeUnless" ]
+
+let is_lambda_arg (arg : G.argument) : bool =
+  match arg with
+  | G.Arg { e = G.Lambda _; _ } -> true
+  | _ -> false
+
+class ['self] injection_expr_copy =
+  object (self : 'self)
+    inherit [_] G.map_legacy as super
+
+    method! visit_expr env e =
+      match e.G.e with
+      | G.Call
+          ( { e = G.DotAccess (recv, _, G.FN (G.Id ((name, _), _))); _ },
+            (_, [ arg ], _) )
+        when List.mem name scope_function_names && is_lambda_arg arg ->
+          self#visit_expr env recv
+      | G.Lambda _ -> G.L (G.Null (Tok.unsafe_fake_tok "null")) |> G.e
+      | _ -> super#visit_expr env e
+
+    method! visit_arguments env (l, args, r) =
+      let args = List.filter (fun a -> not (is_lambda_arg a)) args in
+      super#visit_arguments env (l, args, r)
+  end
+
+(* A fresh, taint-equivalent copy of [e]: scope calls collapsed to their
+   receiver, lambda arguments dropped. *)
+let copy_for_injection (e : G.expr) : G.expr =
+  let c = new injection_expr_copy in
+  c#visit_expr () e
+
 (*****************************************************************************)
 (* Constants *)
 (*****************************************************************************)
@@ -1776,16 +1825,18 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
         | G.DotAccess (receiver_g_expr, _, G.FN (G.Id ((name, _), _))),
           (l_paren, [ G.Arg ({ e = G.Lambda fdef; _ } as lambda_g_expr) ], r_paren) ->
             (
-              match name with
-              | "let" | "also" | "use" | "takeIf" | "takeUnless" -> 
+              if List.mem name scope_function_names then
                   (match Tok.unbracket fdef.fparams with
                   (* The lambda must have exactly one parameter (either explicit or our synthetic 'it'). *)
                   | [ G.Param { pname = Some param_id; pinfo = param_id_info; _ } ] ->
                       (
-                        (* Create a new 'Assign' expression node in the AST. *)
+                        (* Create a new 'Assign' expression node in the AST.
+                           The receiver must be copied (not referenced): see
+                           injection_expr_copy above. *)
                         let param_g_name = G.Id (param_id, param_id_info) in
                         let lhs_g_expr = G.e (G.N param_g_name) in
-                        let assign_g_expr = G.e (G.Assign (lhs_g_expr, (G.fake "="), receiver_g_expr)) in
+                        let injected_receiver = copy_for_injection receiver_g_expr in
+                        let assign_g_expr = G.e (G.Assign (lhs_g_expr, (G.fake "="), injected_receiver)) in
                         let new_assign_g_stmt = G.s (G.ExprStmt (assign_g_expr, (G.fake ";"))) in
 
                         (* Prepend the new assignment to the lambda's body. *)
@@ -1816,7 +1867,7 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
                       )
                   | _ -> (g_expr_v1, g_args_v2)
                   )
-              | _ -> (g_expr_v1, g_args_v2)
+              else (g_expr_v1, g_args_v2)
             )
         | _ -> (g_expr_v1, g_args_v2)
       with _ -> (g_expr_v1, g_args_v2)
