@@ -3,6 +3,7 @@ from textwrap import dedent
 import pytest
 
 from semgrep.config_resolver import parse_config_string
+from semgrep.rule import actions_block
 from semgrep.rule import Rule
 
 
@@ -102,3 +103,19 @@ def test_rule_full_hash_equivalency():
 def test_validator_rule_is_blocking(valid_action, expected):
     rule = create_validator_rule(valid_action=valid_action, action="block")
     assert rule.is_blocking == expected
+
+
+@pytest.mark.quick
+@pytest.mark.parametrize(
+    ("actions", "expected"),
+    [
+        ("block", True),
+        ("unblock", False),
+        ("comment", False),
+        (["block"], True),
+        (["comment"], False),
+        (["comment", "block"], True),
+    ],
+)
+def test_actions_block(actions, expected):
+    assert actions_block(actions) == expected

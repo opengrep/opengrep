@@ -22,6 +22,7 @@ import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep.constants import NOSEM_INLINE_COMMENT_RE
 from semgrep.constants import RuleScanSource
 from semgrep.external.pymmh3 import hash128  # type: ignore[attr-defined]
+from semgrep.rule import actions_block
 from semgrep.rule import Rule
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Direct
 from semgrep.semgrep_interfaces.semgrep_output_v1 import Position
@@ -430,7 +431,7 @@ class RuleMatch:
         validation_state_type = type(self.validation_state.value)
         if validation_state_type is out.NoValidator:
             # If there is no validator, we should rely on original dev.semgrep.actions
-            return "block" in self.metadata.get("dev.semgrep.actions", ["block"])
+            return actions_block(self.metadata.get("dev.semgrep.actions", ["block"]))
 
         action_map = {
             out.ConfirmedValid: "valid",
@@ -454,7 +455,7 @@ class RuleMatch:
         """
         Returns if this finding indicates it should block CI
         """
-        blocking = "block" in self.metadata.get("dev.semgrep.actions", ["block"])
+        blocking = actions_block(self.metadata.get("dev.semgrep.actions", ["block"]))
         if "sca_info" in self.extra:
             if (
                 self.is_always_reachable_sca_match

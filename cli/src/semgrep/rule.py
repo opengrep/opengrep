@@ -25,6 +25,14 @@ from semgrep.semgrep_types import Language
 from semgrep.semgrep_types import SEARCH_MODE
 
 
+def actions_block(actions: Any) -> bool:
+    """
+    Whether a "dev.semgrep.actions" metadata value asks for blocking.
+    On the scalar form a substring test would also match e.g. "unblock".
+    """
+    return actions == "block" if isinstance(actions, str) else "block" in actions
+
+
 class Rule:
     def __init__(
         self, raw: Dict[str, Any], yaml: Optional[YamlTree[YamlMap]] = None
@@ -157,7 +165,7 @@ class Rule:
         if validation_state_metadata:
             return "block" in validation_state_metadata.values()
 
-        return "block" in self.metadata.get("dev.semgrep.actions", ["block"])
+        return actions_block(self.metadata.get("dev.semgrep.actions", ["block"]))
 
     @property
     def severity(self) -> out.MatchSeverity:
