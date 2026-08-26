@@ -330,3 +330,65 @@ def test_get_url_from_sstp_url():
 
     for url, expected in tests:
         assert get_url_from_sstp_url(url) == expected
+
+
+@pytest.mark.quick
+def test_gitlab_fetch_token_via_config_env(monkeypatch):
+    """
+    On current git the merge-base fetch carries the plain project url; the
+    token goes to the child process as an Authorization header.
+    """
+    import base64
+
+    from semgrep.meta import GitlabMeta
+
+    calls = []
+    monkeypatch.setenv(
+        "CI_MERGE_REQUEST_PROJECT_URL", "https://gitlab.example/org/repo"
+    )
+    monkeypatch.setenv("CI_JOB_TOKEN", "fake-token")
+    monkeypatch.setattr("semgrep.meta.git_supports_config_env", lambda: True)
+    monkeypatch.setattr(
+        "semgrep.meta.git_check_output_with_config",
+        lambda cmd, config: calls.append((cmd, config)) or "",
+    )
+    monkeypatch.setattr("semgrep.meta.git_check_output", lambda cmd: "")
+
+    GitlabMeta._fetch_branch_get_merge_base("main", "headsha")
+
+    ((cmd, config),) = calls
+    assert cmd == ["git", "fetch", "https://gitlab.example/org/repo", "main"]
+    expected_header = "Authorization: Basic " + base64.b64encode(
+        b"gitlab-ci-token:fake-token"
+    ).decode()
+    assert config == {
+        "http.https://gitlab.example/org/repo.extraHeader": expected_header
+    }
+
+
+@pytest.mark.quick
+def test_gitlab_fetch_token_in_url_on_old_git(monkeypatch):
+    """
+    Older git ignores the GIT_CONFIG_* variables: the credentials are
+    spliced into the fetch url.
+    """
+    from semgrep.meta import GitlabMeta
+
+    calls = []
+    monkeypatch.setenv(
+        "CI_MERGE_REQUEST_PROJECT_URL", "https://gitlab.example/org/repo"
+    )
+    monkeypatch.setenv("CI_JOB_TOKEN", "fake-token")
+    monkeypatch.setattr("semgrep.meta.git_supports_config_env", lambda: False)
+    monkeypatch.setattr(
+        "semgrep.meta.git_check_output", lambda cmd: calls.append(cmd) or ""
+    )
+
+    GitlabMeta._fetch_branch_get_merge_base("main", "headsha")
+
+    assert calls[0] == [
+        "git",
+        "fetch",
+        "https://gitlab-ci-token:fake-token@gitlab.example/org/repo",
+        "main",
+    ]

@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import subprocess
@@ -20,6 +21,8 @@ import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep import __VERSION__
 from semgrep.external.git_url_parser import Parser
 from semgrep.git import git_check_output
+from semgrep.git import git_check_output_with_config
+from semgrep.git import git_supports_config_env
 from semgrep.state import get_state
 from semgrep.verbose_logging import getLogger
 
@@ -657,12 +660,28 @@ class GitlabMeta(GitMeta):
 
         Because this is mocked it is not well tested. Use caution when modifying
         """
-        parts = urllib.parse.urlsplit(os.environ["CI_MERGE_REQUEST_PROJECT_URL"])
-        parts = parts._replace(
-            netloc=f"gitlab-ci-token:{os.environ['CI_JOB_TOKEN']}@{parts.netloc}"
-        )
-        url = urllib.parse.urlunsplit(parts)
-        git_check_output(["git", "fetch", url, branch_name])
+        project_url = os.environ["CI_MERGE_REQUEST_PROJECT_URL"]
+        if git_supports_config_env():
+            # the credentials go to this one child process as an
+            # Authorization header for the project url, and the command
+            # line carries the plain url
+            token = f"gitlab-ci-token:{os.environ['CI_JOB_TOKEN']}"
+            header = "Authorization: Basic " + base64.b64encode(
+                token.encode()
+            ).decode()
+            git_check_output_with_config(
+                ["git", "fetch", project_url, branch_name],
+                {f"http.{project_url}.extraHeader": header},
+            )
+        else:
+            # older git ignores the GIT_CONFIG_* variables: splice the
+            # credentials into the url
+            parts = urllib.parse.urlsplit(project_url)
+            parts = parts._replace(
+                netloc=f"gitlab-ci-token:{os.environ['CI_JOB_TOKEN']}@{parts.netloc}"
+            )
+            url = urllib.parse.urlunsplit(parts)
+            git_check_output(["git", "fetch", url, branch_name])
 
         base_sha = git_check_output(
             ["git", "merge-base", "--all", head_sha, "FETCH_HEAD"]

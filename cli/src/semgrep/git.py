@@ -40,10 +40,11 @@ def redact_url_userinfo(text: str) -> str:
     return re.sub(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@", r"\1***@", text)
 
 
-def git_check_output(command: Sequence[str], cwd: Optional[str] = None) -> str:
-    """
-    Helper function to run a GIT command that prints out helpful debugging information
-    """
+def _git_check_output(
+    command: Sequence[str],
+    cwd: Optional[str],
+    child_env: Optional[Dict[str, str]],
+) -> str:
     # Avoiding circular imports
     from semgrep.error import SemgrepError
     from semgrep.state import get_state
@@ -60,6 +61,7 @@ def git_check_output(command: Sequence[str], cwd: Optional[str] = None) -> str:
             errors="replace",
             timeout=env.git_command_timeout,
             cwd=cwd,
+            env=child_env,
         ).strip()
     except subprocess.CalledProcessError as e:
         command_str = redact_url_userinfo(" ".join(command))
@@ -85,6 +87,48 @@ def git_check_output(command: Sequence[str], cwd: Optional[str] = None) -> str:
                 """
             ).strip()
         )
+
+
+def git_check_output(command: Sequence[str], cwd: Optional[str] = None) -> str:
+    """
+    Helper function to run a GIT command that prints out helpful debugging information
+    """
+    return _git_check_output(command, cwd, None)
+
+
+def git_check_output_with_config(
+    command: Sequence[str], config: Dict[str, str], cwd: Optional[str] = None
+) -> str:
+    """
+    Like git_check_output, for a git command needing configuration entries
+    whose values must stay out of the command line (e.g. credentials). The
+    entries reach only this child process, through the GIT_CONFIG_*
+    environment variables; git 2.31 or newer reads them, older git ignores
+    them.
+    """
+    child_env = {**os.environ, "GIT_CONFIG_COUNT": str(len(config))}
+    for i, (key, value) in enumerate(config.items()):
+        child_env[f"GIT_CONFIG_KEY_{i}"] = key
+        child_env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return _git_check_output(command, cwd, child_env)
+
+
+def git_supports_config_env() -> bool:
+    """
+    GIT_CONFIG_COUNT and friends exist since git 2.31; older git silently
+    ignores them.
+    """
+    # Avoiding circular imports
+    from semgrep.error import SemgrepError
+
+    try:
+        out = git_check_output(["git", "--version"])
+    except SemgrepError:
+        return False
+    match = re.search(r"(\d+)\.(\d+)", out)
+    if not match:
+        return False
+    return (int(match.group(1)), int(match.group(2))) >= (2, 31)
 
 
 def get_project_url() -> Optional[str]:
