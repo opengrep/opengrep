@@ -26,6 +26,31 @@ rules:
     severity: ERROR
 |}
 
+(* the scalar form of "dev.semgrep.actions" *)
+let scalar_blocking_rule_content =
+  {|
+rules:
+  - id: eqeq-bad
+    pattern: $X == $X
+    message: "useless comparison"
+    languages: [python]
+    severity: ERROR
+    metadata:
+      dev.semgrep.actions: block
+|}
+
+let scalar_nonblocking_rule_content =
+  {|
+rules:
+  - id: eqeq-bad
+    pattern: $X == $X
+    message: "useless comparison"
+    languages: [python]
+    severity: ERROR
+    metadata:
+      dev.semgrep.actions: comment
+|}
+
 (* "dev.semgrep.actions" without "block" makes the rule non-blocking *)
 let nonblocking_rule_content =
   {|
@@ -119,6 +144,14 @@ let test_blocking_findings (caps : Ci_subcommand.caps) () =
 
 let test_nonblocking_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:nonblocking_rule_content ~target:finding_py_content ()
+
+let test_scalar_blocking_findings (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:scalar_blocking_rule_content ~target:finding_py_content
+    ~check:Exit_code.Check.findings ()
+
+let test_scalar_nonblocking_findings (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:scalar_nonblocking_rule_content ~target:finding_py_content
+    ()
 
 let test_audit_mode (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
@@ -384,6 +417,11 @@ let tests (caps : < Ci_subcommand.caps >) =
         ~normalize (test_blocking_findings caps);
       t "non-blocking findings exit ok" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_nonblocking_findings caps);
+      t "scalar block action exits with findings"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_scalar_blocking_findings caps);
+      t "scalar non-block action exits ok" ~checked_output:(Testo.stdxxx ())
+        ~normalize (test_scalar_nonblocking_findings caps);
       t "audit mode exits ok despite findings"
         ~checked_output:(Testo.stdxxx ()) ~normalize (test_audit_mode caps);
       t "SEMGREP_AUDIT_ON is a whitespace-separated list"

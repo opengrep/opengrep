@@ -80,6 +80,8 @@ let is_blocking (json : Yojson.Basic.t) =
       |> List.exists (function
            | `String s -> String.equal s "block"
            | _else -> false)
+  (* the scalar form: dev.semgrep.actions: block *)
+  | `String s -> String.equal s "block"
   | `Null -> true
   | _else -> false
 
