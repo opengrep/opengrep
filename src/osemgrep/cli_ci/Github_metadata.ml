@@ -450,9 +450,13 @@ class meta (caps : < Cap.exec ; Cap.network >) ~cli_baseline_ref env gha_env =
       match super#ci_job_url with
       | Some _ as value -> value
       | None -> (
-          match (super#repo_url, gha_env._GITHUB_RUN_ID) with
+          match (self#repo_url, gha_env._GITHUB_RUN_ID) with
           | Some repo_url, Some value ->
-              Some (Uri.with_path repo_url (Fmt.str "/actions/runs/%s" value))
+              (* appended: Uri.with_path alone would replace the whole
+               * path, dropping the owner/repo part *)
+              Some
+                (Uri.with_path repo_url
+                   (Fmt.str "%s/actions/runs/%s" (Uri.path repo_url) value))
           | _ -> None)
 
     (* like pyopengrep GithubMeta.event_name: no fallback on the

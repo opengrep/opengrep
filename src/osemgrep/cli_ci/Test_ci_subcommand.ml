@@ -429,6 +429,47 @@ let test_gitlab_fetch_token_redacted (caps : Ci_subcommand.caps) () =
                         ~extra_args:[ "--verbose" ]
                         ())))))
 
+(* the run id is appended to the repository url's path; replacing the
+ * path would give https://github.com/actions/runs/123 *)
+let test_github_ci_job_url (caps : Ci_subcommand.caps) () =
+  let gha_env : Github_metadata.env =
+    {
+      _GITHUB_EVENT_JSON = `Null;
+      _GITHUB_REPOSITORY = Some "owner/repo";
+      _GITHUB_REPOSITORY_ID = None;
+      _GITHUB_REPOSITORY_OWNER_ID = None;
+      _GITHUB_API_URL = None;
+      _GITHUB_SERVER_URL = Uri.of_string "https://github.com";
+      _GITHUB_SHA = None;
+      _GITHUB_REF = None;
+      _GITHUB_HEAD_REF = None;
+      _GITHUB_RUN_ID = Some "123";
+      _GITHUB_EVENT_NAME = None;
+      _GH_TOKEN = None;
+    }
+  in
+  let git_env : Git_metadata.env =
+    {
+      _SEMGREP_REPO_NAME = None;
+      _SEMGREP_REPO_DISPLAY_NAME = None;
+      _SEMGREP_REPO_URL = None;
+      _SEMGREP_COMMIT = None;
+      _SEMGREP_JOB_URL = None;
+      _SEMGREP_PR_ID = None;
+      _SEMGREP_PR_TITLE = None;
+      _SEMGREP_BRANCH = None;
+    }
+  in
+  let meta =
+    new Github_metadata.meta
+      (caps :> < Cap.exec ; Cap.network >)
+      ~cli_baseline_ref:None git_env gha_env
+  in
+  Alcotest.(check (option string))
+    "job url"
+    (Some "https://github.com/owner/repo/actions/runs/123")
+    (Option.map Uri.to_string meta#ci_job_url)
+
 let test_gitlab_environment (caps : Ci_subcommand.caps) () =
   Semgrep_envvars.with_envvar "GITLAB_CI" "true" (fun () ->
       Semgrep_envvars.with_envvar "CI_PIPELINE_SOURCE" "merge_request_event"
@@ -511,4 +552,6 @@ let tests (caps : < Ci_subcommand.caps >) =
         ~normalize (test_gitlab_environment caps);
       t "github environment is detected" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_github_environment caps);
+      t "github job url keeps the repository path"
+        (test_github_ci_job_url caps);
     ]
