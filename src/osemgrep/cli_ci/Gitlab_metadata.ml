@@ -41,7 +41,7 @@ let fetch_branch_get_merge_base (caps : < Cap.exec >) ~(branch_name : string)
       (* 'merge-base --all' can print several commits, one per line;
        * pyopengrep passes its raw output along, we take the first *)
       (match String.split_on_char '\n' out with
-      | first :: _ -> Digestif.SHA1.of_hex_opt (String.trim first)
+      | first :: _ -> Digestif.SHA1.consistent_of_hex_opt (String.trim first)
       | [] -> None)
   | _else_ -> None
 
@@ -80,14 +80,14 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
         | Some (Find_targets.Commit sha) -> Some sha
         | Some (Find_targets.Rev rev)
         | Some (Find_targets.Merge_base_of rev) ->
-            Digestif.SHA1.of_hex_opt rev
+            Digestif.SHA1.consistent_of_hex_opt rev
         | None -> None
       in
       {
         (super#project_metadata) with
         branch = self#commit_ref;
         base_sha;
-        start_sha = Option.bind self#start_sha Digestif.SHA1.of_hex_opt;
+        start_sha = Option.bind self#start_sha Digestif.SHA1.consistent_of_hex_opt;
       }
 
     method! repo_name =

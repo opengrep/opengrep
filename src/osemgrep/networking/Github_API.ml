@@ -17,7 +17,7 @@ let find_branchoff_point_async caps ~gh_token ~api_url ~repo_name
         Option.bind
           Glom.(
             get_and_coerce_opt string body [ k "merge_base_commit"; k "sha" ])
-          Digestif.SHA1.of_hex_opt
+          Digestif.SHA1.consistent_of_hex_opt
       in
       Lwt.return commit
   | Ok { body = Error e; code; _ } ->

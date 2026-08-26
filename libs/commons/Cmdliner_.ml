@@ -32,7 +32,7 @@ let uri =
 
 let sha1 =
   let parser str =
-    match Digestif.SHA1.of_hex_opt str with
+    match Digestif.SHA1.consistent_of_hex_opt str with
     | Some sha1 -> Ok sha1
     | None -> Error (`Msg (Fmt.str "Invalid SHA1 value: %S" str))
   in

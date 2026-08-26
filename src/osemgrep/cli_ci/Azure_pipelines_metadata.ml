@@ -98,7 +98,7 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
       | None ->
           Option.bind
             (Opengrep_env.getenv_opt "BUILD_SOURCEVERSION")
-            Digestif.SHA1.of_hex_opt
+            Digestif.SHA1.consistent_of_hex_opt
 
     method! pr_id =
       override_or_getenv env._SEMGREP_PR_ID "SYSTEM_PULLREQUEST_PULLREQUESTNUMBER"

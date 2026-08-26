@@ -111,7 +111,7 @@ let shallow_fetch_commit (caps : < Cap.exec >) commit_hash =
 let get_latest_commit_hash_in_branch (caps : < Cap.exec >) branch_name =
   shallow_fetch_branch caps branch_name;
   Git_wrapper.command caps [ "rev-parse"; branch_name ]
-  |> Digestif.SHA1.of_hex_opt |> Option.get
+  |> Digestif.SHA1.consistent_of_hex_opt |> Option.get
 
 (* Ref name of the branch pull request if from. *)
 let get_head_branch_ref env =
@@ -130,7 +130,7 @@ let get_head_branch_hash (caps : < Cap.exec >) (env : env) :
       get_and_coerce_opt string env._GITHUB_EVENT_JSON
         [ k "pull_request"; k "head"; k "sha" ])
   in
-  let commit = Option.bind commit Digestif.SHA1.of_hex_opt in
+  let commit = Option.bind commit Digestif.SHA1.consistent_of_hex_opt in
   match (get_head_branch_ref env, commit) with
   | Some head_branch_name, Some commit ->
       Logs.debug (fun m ->
@@ -318,7 +318,7 @@ let find_branchoff_point (caps : < Cap.exec ; Cap.network >)
         in
         match CapExec.string_of_run caps#exec ~trim:true cmd with
         | Ok (merge_base, (_, `Exited 0)) ->
-            Digestif.SHA1.of_hex_opt merge_base
+            Digestif.SHA1.consistent_of_hex_opt merge_base
         | Ok (_, _) when attempt_count < _MAX_FETCH_ATTEMPT_COUNT ->
             attempt (succ attempt_count)
         | Ok (_, _) ->
@@ -399,7 +399,7 @@ class meta (caps : < Cap.exec ; Cap.network >) ~cli_baseline_ref env gha_env =
         Option.bind
           (Glom.get_and_coerce_opt Glom.string gha_env._GITHUB_EVENT_JSON
              Glom.[ k "pull_request"; k "head"; k "sha" ])
-          Digestif.SHA1.of_hex_opt
+          Digestif.SHA1.consistent_of_hex_opt
       else if event_name gha_env =*= "push" then gha_env._GITHUB_SHA
       else super#commit_sha
 

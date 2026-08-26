@@ -42,7 +42,7 @@ let env_from_environment () : env =
       (match get "SEMGREP_COMMIT" with
       | None -> None
       | Some str -> (
-          match Digestif.SHA1.of_hex_opt str with
+          match Digestif.SHA1.consistent_of_hex_opt str with
           | Some sha -> Some (Commit_sha sha)
           (* a non-full value is kept as a rev; resolve_commit_ref later
              turns it into the commit it names, so the findings are still
@@ -87,7 +87,7 @@ let resolve_commit_ref (caps : < Cap.exec >) (cref : commit_ref) :
           [ "rev-parse"; "--verify"; "--quiet"; rev ^ "^{commit}" ] )
       in
       match CapExec.string_of_run caps#exec ~trim:true cmd with
-      | Ok (str, (_, `Exited 0)) -> Digestif.SHA1.of_hex_opt str
+      | Ok (str, (_, `Exited 0)) -> Digestif.SHA1.consistent_of_hex_opt str
       | Ok _
       | Error (`Msg _) ->
           Logs.warn (fun m ->
@@ -98,7 +98,7 @@ let sha_getenv (var : string) : Digestif.SHA1.t option =
   match Opengrep_env.getenv_opt var with
   | None -> None
   | Some str -> (
-      match Digestif.SHA1.of_hex_opt str with
+      match Digestif.SHA1.consistent_of_hex_opt str with
       | Some _ as sha -> sha
       | None ->
           Logs.warn (fun m ->
@@ -246,7 +246,7 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
       | None -> (
           let cmd = (Cmd.Name "git", [ "rev-parse"; "HEAD" ]) in
           match CapExec.string_of_run caps#exec ~trim:true cmd with
-          | Ok (str, (_, `Exited 0)) -> Digestif.SHA1.of_hex_opt str
+          | Ok (str, (_, `Exited 0)) -> Digestif.SHA1.consistent_of_hex_opt str
           | Ok _
           | Error (`Msg _) ->
               None)

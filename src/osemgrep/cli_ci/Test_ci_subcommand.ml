@@ -215,6 +215,18 @@ let test_rules_env_list (caps : Ci_subcommand.caps) () =
         ~extra_files:[ F.File ("rules2.yaml", second_rule_content) ]
         ~config_args:[] ~check:Exit_code.Check.findings ())
 
+(* an even-length short sha must classify as a rev: the lenient hex parser
+ * would zero-pad it into a wrong full commit id *)
+let test_short_sha_is_a_rev () =
+  Semgrep_envvars.with_envvar "SEMGREP_COMMIT" "deadbeef" (fun () ->
+      let env = Git_metadata.env_from_environment () in
+      match env._SEMGREP_COMMIT with
+      | Some (Git_metadata.Commit_rev rev) ->
+          Alcotest.(check string) "rev" "deadbeef" rev
+      | Some (Git_metadata.Commit_sha _) ->
+          Alcotest.fail "short sha parsed as a full commit id"
+      | None -> Alcotest.fail "SEMGREP_COMMIT not read")
+
 (* SEMGREP_COMMIT takes any git rev, not just a full commit id; the rev is
  * resolved to the commit it names and the scan proceeds *)
 let test_commit_rev (caps : Ci_subcommand.caps) () =
@@ -448,6 +460,7 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "suppress-errors env var set to false"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_suppress_errors_env_false caps);
+      t "short SEMGREP_COMMIT is a rev" test_short_sha_is_a_rev;
       t "SEMGREP_COMMIT accepts any rev" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_commit_rev caps);
       t "baseline rev keeps only the new finding"
