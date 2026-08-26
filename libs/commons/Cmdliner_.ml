@@ -125,6 +125,18 @@ let string_list_with_env ?(default = []) ~env ~doc options =
   in
   Term.(const combine $ values)
 
+(* A single-valued option whose value can also come from one of several
+   environment variables (cmdliner supports only one per option). The
+   first set variable wins; the command line wins over the environment. *)
+let string_opt_with_envs ~envs ~doc options =
+  let value = Arg.(value (opt (some string) None (Arg.info options ~doc))) in
+  let combine (value : string option) =
+    match value with
+    | Some _ as v -> v
+    | None -> List.find_map Opengrep_env.getenv_opt envs
+  in
+  Term.(const combine $ value)
+
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'
  *

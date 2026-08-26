@@ -36,6 +36,15 @@ val string_list_with_env :
   string list ->
   string list Cmdliner.Term.t
 
+(* A single-valued option whose value can also come from one of several
+   environment variables (cmdliner supports only one per option). The
+   first set variable wins; the command line wins over the environment. *)
+val string_opt_with_envs :
+  envs:string list ->
+  doc:string ->
+  string list ->
+  string option Cmdliner.Term.t
+
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'
  *)

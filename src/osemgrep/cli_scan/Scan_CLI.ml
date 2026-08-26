@@ -280,18 +280,14 @@ Defaults to %b.
 
 (* alt: could be put in the Display options with nosem *)
 let o_baseline_commit : string option Term.t =
-  let info =
-    Arg.info [ "baseline-commit" ]
-      ~doc:
-        {|Only show results that are not found in this commit hash. Aborts run
+  H.string_opt_with_envs [ "baseline-commit" ]
+    ~envs:[ "SEMGREP_BASELINE_COMMIT"; "SEMGREP_BASELINE_REF" ]
+    ~doc:
+      {|Only show results that are not found in this commit hash. Aborts run
 if not currently in a git directory, there are unstaged changes, or
-given baseline hash doesn't exist.
+given baseline hash doesn't exist. May also be set with
+SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
 |}
-      ~env:(Cmd.Env.info "SEMGREP_BASELINE_COMMIT")
-    (* TOPORT: support also SEMGREP_BASELINE_REF; unfortunately cmdliner
-             supports only one environment variable per option *)
-  in
-  Arg.value (Arg.opt Arg.(some string) None info)
 
 (* ------------------------------------------------------------------ *)
 (* Performance and memory options *)

@@ -257,6 +257,30 @@ let test_baseline_rev (caps : Ci_subcommand.caps) () =
       [ "--baseline-commit"; baseline ])
     ()
 
+(* like test_baseline_rev, with the baseline coming from
+ * SEMGREP_BASELINE_REF instead of the flag *)
+let test_baseline_env_var (caps : Ci_subcommand.caps) () =
+  let caps_exec = (caps :> < Cap.exec >) in
+  let repo_files =
+    [
+      F.File ("rules.yaml", blocking_rule_content);
+      F.File ("foo.py", finding_py_content);
+    ]
+  in
+  Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+      let baseline = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      UFile.write_file ~file:(Fpath.v "foo.py")
+        (finding_py_content ^ "\ndef bar(c, d):\n    return c + d == c + d\n");
+      let _ = Git_wrapper.command caps_exec [ "add"; "foo.py" ] in
+      let _ =
+        Git_wrapper.command caps_exec [ "commit"; "-m"; "add a finding" ]
+      in
+      Semgrep_envvars.with_envvar "SEMGREP_BASELINE_REF" baseline (fun () ->
+          without_settings (fun () ->
+              Ci_subcommand.main caps
+                [| "opengrep-ci"; "--experimental"; "--config"; "rules.yaml" |])
+          |> Exit_code.Check.findings))
+
 (* same as test_baseline_rev but everything happens under --subdir *)
 let test_baseline_rev_in_subdir (caps : Ci_subcommand.caps) () =
   let caps_exec = (caps :> < Cap.exec >) in
@@ -465,6 +489,8 @@ let tests (caps : < Ci_subcommand.caps >) =
         ~normalize (test_commit_rev caps);
       t "baseline rev keeps only the new finding"
         ~checked_output:(Testo.stdxxx ()) ~normalize (test_baseline_rev caps);
+      t "baseline from SEMGREP_BASELINE_REF" ~checked_output:(Testo.stdxxx ())
+        ~normalize (test_baseline_env_var caps);
       t "subdir restricts the scan and finds findings"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_subdir_findings caps);
