@@ -16,10 +16,6 @@ exception Error of string
  *)
 val command : < Cap.exec > -> Cmd.args -> string
 
-(* Replace the userinfo part of any URL in the string with "***", so that
- * credentials spliced into a fetch URL do not reach the logs. *)
-val redact_url_userinfo : string -> string
-
 type ls_files_kind =
   (* --cached, the default:
    * Show all files cached in Git’s index, i.e. all tracked files

@@ -1,0 +1,43 @@
+--- begin input files ---
+foo.py
+rules.yaml
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 10 insertions(+)
+ create mode 100644 foo.py
+ create mode 100644 rules.yaml
+[<MASKED TIMESTAMP>][INFO]: Opengrep version: <MASKED>
+
+
+┌────────────────┐
+│ Debugging Info │
+└────────────────┘
+
+  SCAN ENVIRONMENT
+  versions    - opengrep <MASKED>
+  environment - running in environment gitlab-ci, triggering event is pull_request
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'rev-parse' 'HEAD'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' 'https://***@gitlab.invalid/org/repo' 'main'
+[<MASKED TIMESTAMP>][INFO]: error output: fatal: unable to access 'https://gitlab.invalid/org/repo/': Could not resolve host: gitlab.invalid
+
+[<MASKED TIMESTAMP>][WARNING]: Command failed.
+-----
+Failed to run 'git' 'fetch' 'https://***@gitlab.invalid/org/repo' 'main'. Possible reasons:
+- the git binary is not available
+- the current working directory is not a git repository
+- the baseline commit is not a parent of the current commit
+  (if you are running through semgrep-app, check if you are setting `SEMGREP_BRANCH` or `SEMGREP_BASELINE_COMMIT` properly)
+- the current working directory is not marked as safe
+  (fix with `git config --global --add safe.directory $(pwd)`)
+
+Try running the command yourself to debug the issue.
+[<MASKED TIMESTAMP>][ERROR]: Error when we run a git command
+[<MASKED TIMESTAMP>][ERROR]: There were errors during analysis but the scan will succeed because there were no blocking findings, use --no-suppress-errors if you want it to fail when there are errors.
+ASSERT exit code

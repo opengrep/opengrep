@@ -82,7 +82,7 @@ let test_redact_url_userinfo () =
   let check ~expected input =
     Alcotest.(check string)
       input expected
-      (Git_wrapper.redact_url_userinfo input)
+      (Redact.redact_url_userinfo input)
   in
   check
     ~expected:"fetch https://***@gitlab.com/group/project.git main"

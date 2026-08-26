@@ -22,11 +22,12 @@ open Common
 *)
 let log_command cmd =
   (* nosemgrep: no-logs-in-library *)
-  Logs.info (fun m -> m "Running external command: %s" (Cmd.to_string cmd))
+  Logs.info (fun m ->
+      m "Running external command: %s" (Redact.apply (Cmd.to_string cmd)))
 
 let log_shell_command cmd =
   (* nosemgrep: no-logs-in-library *)
-  Logs.info (fun m -> m "Running shell command: %s" cmd)
+  Logs.info (fun m -> m "Running shell command: %s" (Redact.apply cmd))
 
 (* Capture error output and log it at the same level as 'log_command' above.
 
@@ -38,7 +39,7 @@ let capture_and_log_stderr func =
   let res, err = Testo.with_capture UStdlib.stderr func in
   if err <> "" then
     (* nosemgrep: no-logs-in-library *)
-    Logs.info (fun m -> m "error output: %s" err);
+    Logs.info (fun m -> m "error output: %s" (Redact.apply err));
   res
 
 (*****************************************************************************)

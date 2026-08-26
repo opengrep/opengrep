@@ -204,6 +204,11 @@ let safe_run ~debug f : Exit_code.t =
         | None -> Exit_code.fatal ~__LOC__
         | Some code -> code)
     | Error.Exit_code code -> code
+    (* a failed git command is already explained by Git_wrapper's own
+     * warning; no backtrace needed *)
+    | Git_wrapper.Error msg ->
+        Logs.err (fun m -> m "%s" msg);
+        Exit_code.fatal ~__LOC__
     (* should never happen, you should prefer Error.Exit to Common.UnixExit
      * but just in case *)
     | Common.UnixExit i ->

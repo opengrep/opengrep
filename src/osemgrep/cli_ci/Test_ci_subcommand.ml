@@ -340,6 +340,26 @@ let test_circleci_environment (caps : Ci_subcommand.caps) () =
         "https://github.com/org/repo/pull/17/" (fun () ->
           run_ci caps ~rule:blocking_rule_content ~target:clean_py_content ()))
 
+(* the job token spliced into the merge-base fetch URL must not reach the
+ * logs: the command is logged with the URL credentials redacted, at info
+ * level (--verbose) and in the failure warning *)
+let test_gitlab_fetch_token_redacted (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "GITLAB_CI" "true" (fun () ->
+      Semgrep_envvars.with_envvar "CI_PIPELINE_SOURCE" "merge_request_event"
+        (fun () ->
+          Semgrep_envvars.with_envvar "CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+            "main" (fun () ->
+              (* .invalid is reserved (RFC 2606): the fetch fails at DNS
+                 resolution, nothing is contacted *)
+              Semgrep_envvars.with_envvar "CI_MERGE_REQUEST_PROJECT_URL"
+                "https://gitlab.invalid/org/repo" (fun () ->
+                  Semgrep_envvars.with_envvar "CI_JOB_TOKEN"
+                    "fake-64_wFuiRFQk9t841JHKQnAT" (fun () ->
+                      run_ci caps ~rule:blocking_rule_content
+                        ~target:clean_py_content
+                        ~extra_args:[ "--verbose" ]
+                        ())))))
+
 let test_gitlab_environment (caps : Ci_subcommand.caps) () =
   Semgrep_envvars.with_envvar "GITLAB_CI" "true" (fun () ->
       Semgrep_envvars.with_envvar "CI_PIPELINE_SOURCE" "merge_request_event"
@@ -407,6 +427,9 @@ let tests (caps : < Ci_subcommand.caps >) =
         (test_circleci_pr_id_trailing_slash caps);
       t "circleci environment is detected" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_circleci_environment caps);
+      t "gitlab fetch token is redacted in logs"
+        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
+        (test_gitlab_fetch_token_redacted caps);
       t "gitlab environment is detected" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_gitlab_environment caps);
       t "github environment is detected" ~checked_output:(Testo.stdxxx ())
