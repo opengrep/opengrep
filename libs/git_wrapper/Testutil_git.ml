@@ -32,6 +32,12 @@ let create_git_repo ?(honor_gitignore = true)
      versions. *)
   Git_wrapper.config_set "user.name" user_name;
   Git_wrapper.config_set "user.email" user_email;
+  (* git commit spawns a detached `git maintenance run --auto` (`gc --auto`
+     in older gits), which can still be writing under .git when
+     Testutil_files.remove tears the repository down, making its rmdir fail
+     with "Directory not empty". These settings prevent the spawn. *)
+  Git_wrapper.config_set "maintenance.auto" "false";
+  Git_wrapper.config_set "gc.auto" "0";
   Git_wrapper.add ~force:(not honor_gitignore) [ Fpath.v "." ];
   let msg =
     if honor_gitignore then "Add files"
