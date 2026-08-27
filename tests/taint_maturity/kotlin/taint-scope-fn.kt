@@ -72,3 +72,19 @@ my_source().also { scope_var ->
     // ruleid:taint-scope-fn
     my_sink(scope_var)
 }
+
+my_source().let { a -> a }.let { b ->
+    // ruleid:taint-scope-fn
+    my_sink(b)
+}
+
+val taintedVar = my_source()
+taintedVar.let { a -> a }.also { b -> b }.let { c ->
+    // ruleid:taint-scope-fn
+    my_sink(c)
+}
+
+ok_value().let { a -> a }.let { b ->
+    // ok:taint-scope-fn
+    my_sink(b)
+}

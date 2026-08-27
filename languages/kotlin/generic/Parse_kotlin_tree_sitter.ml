@@ -89,7 +89,8 @@ class ['self] injection_expr_copy =
       | G.Call
           ( { e = G.DotAccess (recv, _, G.FN (G.Id ((name, _), _))); _ },
             (_, [ arg ], _) )
-        when List.mem name scope_function_names && is_lambda_arg arg ->
+        when List.exists (String.equal name) scope_function_names
+             && is_lambda_arg arg ->
           self#visit_expr env recv
       | G.Lambda _ -> G.L (G.Null (Tok.unsafe_fake_tok "null")) |> G.e
       | _ -> super#visit_expr env e
@@ -1825,17 +1826,23 @@ and primary_expression (env : env) (x : CST.primary_expression) : expr =
         | G.DotAccess (receiver_g_expr, _, G.FN (G.Id ((name, _), _))),
           (l_paren, [ G.Arg ({ e = G.Lambda fdef; _ } as lambda_g_expr) ], r_paren) ->
             (
-              if List.mem name scope_function_names then
+              if List.exists (String.equal name) scope_function_names then
                   (match Tok.unbracket fdef.fparams with
                   (* The lambda must have exactly one parameter (either explicit or our synthetic 'it'). *)
                   | [ G.Param { pname = Some param_id; pinfo = param_id_info; _ } ] ->
                       (
                         (* Create a new 'Assign' expression node in the AST.
                            The receiver must be copied (not referenced): see
-                           injection_expr_copy above. *)
+                           injection_expr_copy above. In pattern mode the RHS
+                           is an ellipsis instead: a collapsed copy would fail
+                           metavariable equality against the target's full,
+                           uncollapsed receiver bound at the DotAccess. *)
                         let param_g_name = G.Id (param_id, param_id_info) in
                         let lhs_g_expr = G.e (G.N param_g_name) in
-                        let injected_receiver = copy_for_injection receiver_g_expr in
+                        let injected_receiver =
+                          if in_pattern env then G.Ellipsis (G.fake "...") |> G.e
+                          else copy_for_injection receiver_g_expr
+                        in
                         let assign_g_expr = G.e (G.Assign (lhs_g_expr, (G.fake "="), injected_receiver)) in
                         let new_assign_g_stmt = G.s (G.ExprStmt (assign_g_expr, (G.fake ";"))) in
 
