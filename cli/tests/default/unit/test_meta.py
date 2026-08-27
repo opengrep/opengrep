@@ -367,10 +367,10 @@ def test_gitlab_fetch_token_via_config_env(monkeypatch):
 
 
 @pytest.mark.quick
-def test_gitlab_fetch_token_in_url_on_old_git(monkeypatch):
+def test_gitlab_fetch_helper_on_old_git(monkeypatch):
     """
-    Older git ignores the GIT_CONFIG_* variables: the credentials are
-    spliced into the fetch url.
+    Older git ignores the GIT_CONFIG_* variables: an inline credential
+    helper supplies the token, and the command line never carries it.
     """
     from semgrep.meta import GitlabMeta
 
@@ -388,10 +388,14 @@ def test_gitlab_fetch_token_in_url_on_old_git(monkeypatch):
 
     assert calls[0] == [
         "git",
+        "-c",
+        "credential.helper=!f() { echo username=gitlab-ci-token; "
+        "echo password=$CI_JOB_TOKEN; }; f",
         "fetch",
-        "https://gitlab-ci-token:fake-token@gitlab.example/org/repo",
+        "https://gitlab.example/org/repo",
         "main",
     ]
+    assert "fake-token" not in " ".join(calls[0])
 
 
 @pytest.mark.quick

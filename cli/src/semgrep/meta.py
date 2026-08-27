@@ -3,7 +3,6 @@ import json
 import os
 import re
 import subprocess
-import urllib.parse
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -691,14 +690,16 @@ class GitlabMeta(GitMeta):
                 {f"http.{project_url}.extraHeader": header},
             )
         else:
-            # older git ignores the GIT_CONFIG_* variables: splice the
-            # credentials into the url
-            parts = urllib.parse.urlsplit(project_url)
-            parts = parts._replace(
-                netloc=f"gitlab-ci-token:{os.environ['CI_JOB_TOKEN']}@{parts.netloc}"
+            # older git ignores the GIT_CONFIG_* variables: an inline
+            # credential helper supplies the token when git asks for
+            # credentials. The command line carries only the variable
+            # name; the helper's shell reads the value from the
+            # environment
+            helper = (
+                "credential.helper=!f() { echo username=gitlab-ci-token; "
+                "echo password=$CI_JOB_TOKEN; }; f"
             )
-            url = urllib.parse.urlunsplit(parts)
-            git_check_output(["git", "fetch", url, branch_name])
+            git_check_output(["git", "-c", helper, "fetch", project_url, branch_name])
 
         base_sha = git_check_output(
             ["git", "merge-base", "--all", head_sha, "FETCH_HEAD"]
