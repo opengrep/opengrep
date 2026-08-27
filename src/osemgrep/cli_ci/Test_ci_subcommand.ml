@@ -379,6 +379,36 @@ let test_github_branchoff_api_failure (caps : Ci_subcommand.caps) () =
           | _else_ -> Alcotest.fail "expected a commit merge base")
         ())
 
+(* an unparseable commit author email is left out of the project metadata
+ * instead of raising *)
+let test_project_metadata_odd_author_email (caps : Ci_subcommand.caps) () =
+  let repo_files = [ F.File ("foo.py", clean_py_content) ] in
+  Testutil_git.with_git_repo ~verbose:true ~user_email:"not an email"
+    repo_files (fun _cwd ->
+      let git_env : Git_metadata.env =
+        {
+          _SEMGREP_REPO_NAME = None;
+          _SEMGREP_REPO_DISPLAY_NAME = None;
+          _SEMGREP_REPO_URL = None;
+          _SEMGREP_COMMIT = None;
+          _SEMGREP_JOB_URL = None;
+          _SEMGREP_PR_ID = None;
+          _SEMGREP_PR_TITLE = None;
+          _SEMGREP_BRANCH = None;
+        }
+      in
+      let meta =
+        new Git_metadata.meta
+          (caps :> < Cap.exec >)
+          ~scan_environment:"git" ~cli_baseline_ref:None git_env
+      in
+      let pm = meta#project_metadata in
+      Alcotest.(check (option string))
+        "author email" None pm.Semgrep_output_v1_t.commit_author_email;
+      Alcotest.(check bool)
+        "timestamp present" true
+        (Option.is_some pm.Semgrep_output_v1_t.commit_timestamp))
+
 (* the CircleCI pull request id is the url's last nonempty segment, found
  * even when the url has a trailing slash *)
 let test_circleci_pr_id_trailing_slash (caps : Ci_subcommand.caps) () =
@@ -586,6 +616,8 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "github merge-base API failure falls back to git"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
         (test_github_branchoff_api_failure caps);
+      t "unparseable author email is left out"
+        (test_project_metadata_odd_author_email caps);
       t "circleci pr id survives a trailing slash"
         (test_circleci_pr_id_trailing_slash caps);
       t "circleci environment is detected" ~checked_output:(Testo.stdxxx ())

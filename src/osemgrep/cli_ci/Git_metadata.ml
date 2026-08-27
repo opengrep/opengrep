@@ -146,17 +146,28 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
       let commit_title : string =
         Git_wrapper.command caps [ "show"; "-s"; "--format=%B" ]
       in
-      let commit_author_email : Emile.mailbox =
-        Git_wrapper.command caps [ "show"; "-s"; "--format=%ae" ]
-        |> Emile.of_string |> Result.get_ok
+      let commit_author_email : string option =
+        let str = Git_wrapper.command caps [ "show"; "-s"; "--format=%ae" ] in
+        match Emile.of_string str with
+        | Ok mailbox -> Some (Emile.to_string mailbox)
+        | Error _ ->
+            Logs.warn (fun m ->
+                m "the commit author email does not parse, leaving it out: %s"
+                  str);
+            None
       in
       let commit_author_name : string =
         Git_wrapper.command caps [ "show"; "-s"; "--format=%an" ]
       in
       (* Returns strict ISO 8601 time as str of head commit *)
-      let commit_timestamp : Timedesc.Timestamp.t =
-        Git_wrapper.command caps [ "show"; "-s"; "--format=%cI" ]
-        |> Timedesc.Timestamp.of_iso8601 |> Result.get_ok
+      let commit_timestamp : Timedesc.Timestamp.t option =
+        let str = Git_wrapper.command caps [ "show"; "-s"; "--format=%cI" ] in
+        match Timedesc.Timestamp.of_iso8601 str with
+        | Ok ts -> Some ts
+        | Error _ ->
+            Logs.warn (fun m ->
+                m "the commit timestamp does not parse, leaving it out: %s" str);
+            None
       in
       {
         semgrep_version = Version.version;
@@ -168,12 +179,12 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
         branch = self#branch;
         ci_job_url = self#ci_job_url;
         commit = self#commit_sha;
-        commit_author_email = Some (Emile.to_string commit_author_email);
+        commit_author_email;
         commit_author_name = Some commit_author_name;
         commit_author_username = None;
         commit_author_image_url = None;
         commit_title = Some commit_title;
-        commit_timestamp = Some commit_timestamp;
+        commit_timestamp;
         on = self#event_name;
         pull_request_author_username = None;
         pull_request_author_image_url = None;
