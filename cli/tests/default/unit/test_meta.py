@@ -392,3 +392,45 @@ def test_gitlab_fetch_token_in_url_on_old_git(monkeypatch):
         "https://gitlab-ci-token:fake-token@gitlab.example/org/repo",
         "main",
     ]
+
+
+@pytest.mark.quick
+def test_gitlab_baseline_rev_resolves_base_sha(tmp_path, monkeypatch):
+    """
+    A baseline rev reaches the project metadata's base_sha as the commit
+    it names; an unresolvable rev leaves it out.
+    """
+    import subprocess
+
+    import semgrep.semgrep_interfaces.semgrep_output_v1 as out
+    from semgrep.meta import GitlabMeta
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(repo)
+    subprocess.run(["git", "init", "-q"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "branch", "base"], check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+
+    assert GitlabMeta("base").to_project_metadata().base_sha == out.Sha1(head)
+    assert GitlabMeta("no-such-branch").to_project_metadata().base_sha is None

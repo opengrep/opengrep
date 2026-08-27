@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import subprocess
 import urllib.parse
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from glom.core import TType
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep import __VERSION__
+from semgrep.error import SemgrepError
 from semgrep.external.git_url_parser import Parser
 from semgrep.git import git_check_output
 from semgrep.git import git_check_output_with_config
@@ -41,6 +43,20 @@ def sha1_opt(x: Optional[str]) -> Optional[out.Sha1]:
         return None
     else:
         return out.Sha1(x)
+
+
+def resolve_rev_to_sha(rev: str) -> Optional[str]:
+    """A full commit id passes through; any other rev is resolved to the
+    commit it names; an unresolvable rev is dropped with a warning."""
+    if re.fullmatch(r"[0-9a-fA-F]{40}", rev):
+        return rev
+    try:
+        return git_check_output(
+            ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"]
+        )
+    except SemgrepError:
+        logger.warning(f"the baseline rev does not name a commit, ignoring it: {rev}")
+        return None
 
 
 def get_url_from_sstp_url(sstp_url: Optional[str]) -> Optional[str]:
@@ -146,6 +162,7 @@ class GitMeta:
                 logger.warn(
                     f"Unable to infer repo_url. Set SEMGREP_REPO_URL environment variable or run in a valid git project with remote origin defined"
                 )
+                return None
             repo_url = git_parse.stdout.strip()
 
         return get_url_from_sstp_url(repo_url)
@@ -779,7 +796,8 @@ class GitlabMeta(GitMeta):
     def to_project_metadata(self) -> out.ProjectMetadata:
         res = super().to_project_metadata()
         res.branch = self.commit_ref
-        res.base_sha = sha1_opt(self.merge_base_ref)
+        base_ref = self.merge_base_ref
+        res.base_sha = sha1_opt(resolve_rev_to_sha(base_ref) if base_ref else None)
         res.start_sha = sha1_opt(self.start_sha)
         return res
 
