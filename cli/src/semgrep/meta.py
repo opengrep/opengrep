@@ -1222,55 +1222,41 @@ class TravisMeta(GitMeta):
         return res
 
 
-@dataclass
-class SemgrepManagedScanMeta(GitMeta):
-    """Gather metadata from Semgrep Managed Scanning."""
-
-    environment: str = field(default="semgrep-managed-scan", init=False)
-
-    @property
-    def event_name(self) -> str:
-        return os.getenv("SEMGREP_MANAGED_SCAN_EVENT_NAME", super().event_name)
-
-
 def generate_meta_from_environment(
     baseline_ref: Optional[str], subdir: Optional[Path]
 ) -> GitMeta:
     # https://help.github.com/en/actions/configuring-and-managing-workflows/using-environment-variables
     if os.getenv("GITHUB_ACTIONS") == "true":
-        return GithubMeta(baseline_ref)
+        return GithubMeta(baseline_ref, subdir)
 
     # https://docs.gitlab.com/ee/ci/variables/predefined_variables.html
     elif os.getenv("GITLAB_CI") == "true":
-        return GitlabMeta(baseline_ref)
+        return GitlabMeta(baseline_ref, subdir)
 
     # https://circleci.com/docs/2.0/env-vars/#built-in-environment-variables
     elif os.getenv("CIRCLECI") == "true":
-        return CircleCIMeta(baseline_ref)
+        return CircleCIMeta(baseline_ref, subdir)
 
     # https://e.printstacktrace.blog/jenkins-pipeline-environment-variables-the-definitive-guide/
     elif os.getenv("JENKINS_URL") is not None:
-        return JenkinsMeta(baseline_ref)
+        return JenkinsMeta(baseline_ref, subdir)
 
     # https://support.atlassian.com/bitbucket-cloud/docs/variables-and-secrets/
     elif os.getenv("BITBUCKET_BUILD_NUMBER") is not None:
-        return BitbucketMeta(baseline_ref)
+        return BitbucketMeta(baseline_ref, subdir)
 
     # https://github.com/DataDog/dd-trace-py/blob/f583fec63c4392a0784b4199b0e20931f9aae9b5/ddtrace/ext/ci.py#L90
     # picked an env var that is only defined by Azure Pipelines
     elif os.getenv("BUILD_BUILDID") is not None:
-        return AzurePipelinesMeta(baseline_ref)
+        return AzurePipelinesMeta(baseline_ref, subdir)
 
     # https://buildkite.com/docs/pipelines/environment-variables#bk-env-vars-buildkite-build-author-email
     elif os.getenv("BUILDKITE") == "true":
-        return BuildkiteMeta(baseline_ref)
+        return BuildkiteMeta(baseline_ref, subdir)
 
     # https://docs.travis-ci.com/user/environment-variables/
     elif os.getenv("TRAVIS") == "true":
-        return TravisMeta(baseline_ref)
-
-    elif os.getenv("SEMGREP_MANAGED_SCAN") == "true":
-        return SemgrepManagedScanMeta(baseline_ref)
+        return TravisMeta(baseline_ref, subdir)
 
     else:
         return GitMeta(baseline_ref, subdir)

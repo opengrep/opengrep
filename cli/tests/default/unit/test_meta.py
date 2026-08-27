@@ -434,3 +434,18 @@ def test_gitlab_baseline_rev_resolves_base_sha(tmp_path, monkeypatch):
 
     assert GitlabMeta("base").to_project_metadata().base_sha == out.Sha1(head)
     assert GitlabMeta("no-such-branch").to_project_metadata().base_sha is None
+
+
+@pytest.mark.quick
+def test_provider_subdir_qualifies_display_name(monkeypatch):
+    """
+    --subdir keeps its display-name qualifier under a CI provider.
+    """
+    from pathlib import Path
+
+    from semgrep.meta import generate_meta_from_environment
+
+    monkeypatch.setenv("GITLAB_CI", "true")
+    monkeypatch.setenv("CI_PROJECT_PATH", "group/project")
+    meta = generate_meta_from_environment(None, Path("services/api"))
+    assert meta.repo_display_name == "group/project/services/api"
