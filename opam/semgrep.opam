@@ -54,7 +54,6 @@ depends: [
   "ppx_expect"
   "visitors" {= "20260520"}
   "re"
-  "pcre"
   "ocamlgraph"
   "semver"
   "timedesc" {>= "2.0.0"}

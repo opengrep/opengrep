@@ -1,13 +1,12 @@
 (*
    Compile a pattern into a regexp.
 
-   PCRE pattern reference:
-     https://www.pcre.org/original/doc/html/pcrepattern.html
+   PCRE2 pattern reference:
+     https://www.pcre.org/current/doc/html/pcre2pattern.html
 
    Dig into the test outputs to see what the generated PCRE code looks like
    e.g. cat ~/semgrep/_build/default/tests/_build/_tests/semgrep-core/aliengrep.014.output
 *)
-[@@@alert "-deprecated"]
 
 module Log = Log_aliengrep.Log
 open Printf
@@ -22,8 +21,8 @@ type metavariable = { kind : metavariable_kind; bare_name : string }
 [@@deriving show, eq]
 
 type t = {
-  pcre : Pcre_.t;
-      [@printer fun fmt (x : Pcre_.t) -> Format.fprintf fmt "{|%s|}" x.pattern]
+  pcre : Pcre2_.t;
+      [@printer fun fmt (x : Pcre2_.t) -> Format.fprintf fmt "{|%s|}" x.pattern]
   (*
      List of the PCRE capturing groups that we care about for extracting
      metavariable values.
@@ -43,17 +42,17 @@ type t = {
 
      Try this in utop:
 
-#require "pcre";;
+#require "pcre2";;
 
 let pat = {|
-(?(DEFINE) (?<word> [a-z]+))
+(?(DEFINE) (?<word> [a-z]++))
 (?(DEFINE) (?<whitespace> [[:space:]]* ))
 ((?&word)) (?&whitespace) \g{3}
 |}
 ;;
 
-let rex = Pcre_.regexp ~flags:[`EXTENDED] pat in
-Pcre_.extract_all ~rex {|xx ab ab xx|};;
+let rex = Pcre2_.regexp ~flags:[`EXTENDED] pat in
+Pcre2_.extract_all ~rex {|xx ab ab xx|};;
 - : string array array = [|[|"ab ab"; ""; ""; "ab"|]|]
 
      Note that you'd get more matches if the word pattern was inlined
@@ -122,8 +121,8 @@ let end_of_input_pat = {|\z|}
 
 (*
    For peace of mind, the following definitions are independent of whether
-   PCRE_MULTILINE is set.
-   Alternatively: set PCRE_MULTILINE and use '^' and '$'
+   PCRE2_MULTILINE is set.
+   Alternatively: set PCRE2_MULTILINE and use '^' and '$'
 *)
 let beginning_of_line_pat = {|(?:\A|(?<=\n))|}
 let end_of_line_pat = {|(?:\z|(?=\r?\n))|}
@@ -132,25 +131,28 @@ let end_of_line_pat = {|(?:\z|(?=\r?\n))|}
    ellipsis. It uses lazy quantifiers so as to favor shorter matches over
    longer matches ('?' -> '??', '*' -> '*?', '+' -> '+?').
 
-   Warning from PCRE: "All subroutine calls, whether recursive or not,
-   are always treated as atomic groups"
+   PCRE 8.x treated every subroutine call as an atomic group. PCRE2 dropped
+   that at release 10.30 (pcre2compat(3) item 10), so the lazy quantifiers
+   above can backtrack into a (?&node) call and force it to pick a different
+   alternative. An ellipsis then grows past the bracket it should have
+   stopped at, matching across whole blocks. (?>...) restores the 8.x fence.
 
-   Because of this limitation and because we need backtracking when matching
-   an ellipsis followed by a specific node, this pattern must remain inline.
+   The ellipsis pattern itself stays inline: matching an ellipsis followed by
+   a specific node needs the backtracking an atomic call would forbid.
 *)
 let ellipsis_pat_of_spacing_param ?(with_whitespace_padding = false)
     ~excluded_brace sp =
   let exclude_char =
     match excluded_brace with
     | None -> ""
-    | Some c -> sprintf {|(?!%s)|} (Pcre.quote (String.make 1 c))
+    | Some c -> sprintf {|(?!%s)|} (Pcre2.quote (String.make 1 c))
   in
   if with_whitespace_padding then
-    sprintf {|(?: %s %s (?: (?&%s) %s)*? )??|} sp.whitespace_pat exclude_char
+    sprintf {|(?: %s %s (?: (?>(?&%s)) %s)*? )??|} sp.whitespace_pat exclude_char
       sp.node_name sp.whitespace_pat
   else
-    sprintf {|(?: %s (?&%s) (?: %s %s (?&%s))*? )??|} exclude_char sp.node_name
-      sp.whitespace_pat exclude_char sp.node_name
+    sprintf {|(?: %s (?>(?&%s)) (?: %s %s (?>(?&%s)))*? )??|} exclude_char
+      sp.node_name sp.whitespace_pat exclude_char sp.node_name
 
 let ellipsis_pat ~excluded_brace param =
   ellipsis_pat_of_spacing_param ~excluded_brace param.ellipsis
@@ -443,7 +445,7 @@ let compile conf pattern_ast =
   let pcre_pattern, metavariable_groups = to_regexp conf pattern_ast in
   (* `EXTENDED = literal whitespace and comments are ignored *)
   let pcre =
-    try Pcre_.regexp ~flags:[ `EXTENDED ] pcre_pattern with
+    try Pcre2_.regexp ~flags:[ `EXTENDED ] pcre_pattern with
     | exn ->
         (* bug *)
         let e = Exception.catch exn in

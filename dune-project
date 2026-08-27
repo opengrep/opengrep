@@ -109,10 +109,11 @@ a few other projects developed at r2c.
     (logs (>= "0.7.0" ))
     (yojson (>= "1.7.0"))
     (re (>= "1.10.4"))
-    (pcre (>= "7.5.0" ))
     ; we're currently "vendoring" pcre2 in libs/pcre2
     ; so no need to get opam to install it
     ;(pcre2 (>= "7.5.3" ))
+    ; the C library it binds must be libpcre2 >= 10.43
+    ; (checked at build time by src/main/flags.sh)
     (ppxlib (= "0.38.0"))
     (ppx_deriving (>= "5.2.1"))
     (ppx_hash (>= "v0.14.0" ))
@@ -222,10 +223,12 @@ parsers, especially ocamlyacc/menhir based parsers.
 (package (name parser_crystal)
   (synopsis "XXX")
   (description "XXX")
+  (authors "Opengrep authors")
 )
 (package (name parser_apex)
   (synopsis "XXX")
   (description "XXX")
+  (authors "Opengrep authors")
 )
 (package (name parser_dart)
   (synopsis "XXX")
@@ -354,6 +357,7 @@ parsers, especially ocamlyacc/menhir based parsers.
 (package (name parser_vbnet)
   (synopsis "XXX")
   (description "XXX")
+  (authors "Opengrep authors")
 )
 (package (name parser_yaml)
   (synopsis "XXX")
@@ -497,10 +501,11 @@ For more information see https://opengrep.dev.
     (visitors (= 20260520))
     ; regexps
     re
-    pcre
     ; we're currently "vendoring" pcre2 in libs/pcre2
     ; so no need to get opam to install it
     ;(pcre2 (>= "7.5.3" ))
+    ; the C library it binds must be libpcre2 >= 10.43
+    ; (checked at build time by src/main/flags.sh)
     ; misc
     ocamlgraph
     semver
@@ -546,7 +551,7 @@ Uses indentation and standard braces to determine a crude parse tree
 "
   )
   (maintainers "martin@semgrep.com")
-  (authors "Semgrep authors")
+  (authors "Semgrep authors, Opengrep authors")
   (license "LGPL-2.1-only")
 
   (depends

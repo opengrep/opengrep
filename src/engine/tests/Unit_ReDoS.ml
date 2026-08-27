@@ -48,7 +48,7 @@ let ab = "abababababababababababababababababababababababab!"
    See
    https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
 
-   These are the expectations using PCRE. Other regexp libraries differ
+   These are the expectations using PCRE2. Other regexp libraries differ
    in where they succeed or blow up.
    To test a regexp with NodeJS, you can do this:
 
@@ -58,7 +58,7 @@ let ab = "abababababababababababababababababababababababab!"
 *)
 let pattern_expectations =
   [
-    (* pattern, input, PCRE result, NodeJS result, prediction *)
+    (* pattern, input, PCRE2 result, NodeJS result, prediction *)
     ("", aa, Succeeds, Succeeds, Succeeds);
     ("a+$", aa, Succeeds, Succeeds, Succeeds);
     ("(a+)+", aa, Succeeds, Succeeds, Succeeds);
@@ -142,10 +142,10 @@ let test_pcre_pattern_explosion ~pat ~input expected =
   let res =
     try
       (* nosemgrep: not-using-our-pcre-wrappers *)
-      Pcre.pmatch ~pat input |> ignore;
+      Pcre2.pmatch ~pat input |> ignore;
       Succeeds
     with
-    | Pcre.Error Pcre.MatchLimit -> Blows_up
+    | Pcre2.Error Pcre2.MatchLimit -> Blows_up
   in
   printf "pattern: '%s' %s\n%!" pat (string_of_result res);
   Alcotest.(check string)

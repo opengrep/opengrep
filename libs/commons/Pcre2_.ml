@@ -13,16 +13,15 @@
 *)
 
 (*
-   Shared settings for using the Pcre2 module (pcre-ocaml library).
+   Shared settings for using the Pcre2 module (pcre2-ocaml library).
 
-   This file is mostly a port of Pcre_.ml (and the previous Regexp_engine.ml)
-   for PCRE2.
+   This file is mostly a port of the former Pcre_.ml (and the previous
+   Regexp_engine.ml) for PCRE2.
 *)
 
 open Printf
 
-(* we reuse the one in Pcre_.ml, no need to differentiate *)
-let src = Pcre_.src [@@alert "-deprecated"]
+let src = Logs.Src.create "commons.pcre"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
@@ -66,20 +65,20 @@ let extra_flag = `UTF
    fail consistently across platforms (e.g. CI vs. local Mac).
    The default compile-time defaults are 10_000_000 for both
    'limit' and 'limit_recursion' but they can be overridden during
-   the installation of the pcre library. We protect ourselves
+   the installation of the pcre2 library. We protect ourselves
    from such custom installs.
 *)
 let regexp ?iflags ?(flags = []) ?chtables pat =
-  (* pcre doesn't mind if a flag is duplicated so we just append extra flags *)
+  (* pcre2 doesn't mind if a flag is duplicated so we just append extra flags *)
   let flags = extra_flag :: flags in
-  (* OCaml's Pcre library does not support setting timeouts, and since it's just
+  (* OCaml's Pcre2 library does not support setting timeouts, and since it's just
    * a wrapper for a C library `Common.set_timeout` doesn't work... So, we set a
    * lower `limit` and `limit_recursion` (default values are 10_000_000) to avoid
    * spending too much time on regex matching. See perf/input/semgrep_targets.txt
    * and perf/input/semgrep_targets.yaml for an example where Semgrep appeared to
    * hang (but it was just the Pcre2 engine taking way too much time). *)
   let regexp =
-    Pcre2.regexp ~limit:1_000_000 (* sets PCRE_EXTRA_MATCH_LIMIT *)
+    Pcre2.regexp ~limit:1_000_000 (* see `pcre2_set_match_limit(3)` *)
       ~depth_limit:1_000_000
         (* sets the backtracking depth limit field in a match context; see `pcre2_set_depth_limit(3)` *)
       ?iflags ~flags ?chtables pat

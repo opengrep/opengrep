@@ -5,7 +5,7 @@
  (name semgrep_parsing)
  (wrapped false)
  (libraries
-   pcre
+   pcre2
 
    base
    commons

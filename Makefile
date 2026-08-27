@@ -304,8 +304,7 @@ install-deps: install-deps-for-semgrep-core
 # Here is why we need those external packages to compile opengrep-core:
 # - pkgconf (name of pkg-config clone in arch): required by opam/dune
 #   so it can find the location of the other libs
-# - pcre: for ocaml-pcre now used in opengrep-core (used by spacegrep)
-# - pcre2: new version of pcre needed by Cooper
+# - pcre2: regex engine used in opengrep-core (libpcre2 >= 10.43)
 # - gmp: for opengrep-cli and its use of cohttp (LGPL since gmp 6)
 # - libev: ?? for Austin
 # - curl: for opentelemetry, which we use for tracing for Emma
@@ -314,8 +313,6 @@ install-deps: install-deps-for-semgrep-core
 # - openssl-libs-static: dependency of curl-static
 ALPINE_APK_DEPS_CORE=\
   pkgconf \
-  pcre-dev \
-  pcre-static \
   pcre2-dev \
   pcre2-static \
   gmp-dev \
@@ -326,10 +323,8 @@ ALPINE_APK_DEPS_CORE=\
 
 # Here is why we need those external packages:
 # - pkg-config?
-# NOTE: libpcre3 is actually libpcre
 UBUNTU_DEPS=\
   pkg-config \
-  libpcre3-dev \
   libpcre2-dev \
   libgmp-dev \
   libev-dev \
@@ -345,7 +340,6 @@ UBUNTU_DEPS=\
 # - gettext?
 BREW_DEPS=\
   pkg-config \
-  pcre \
   pcre2 \
   gmp \
   libev \
@@ -357,7 +351,6 @@ BREW_DEPS=\
 WINDOWS_OPAM_DEPEXT_DEPS=\
   conf-pkg-config \
   conf-gmp \
-  conf-libpcre \
   conf-libpcre2-8 \
 
 # -------------------------------------------------

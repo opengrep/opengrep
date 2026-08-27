@@ -14,7 +14,6 @@ cp artifacts/opengrep-core.exe artifacts/opengrep.exe
 cp $BASE/libstdc++-6.dll artifacts/
 cp $BASE/libgcc_s_seh-1.dll artifacts/
 cp $BASE/libwinpthread-1.dll artifacts/
-cp $BASE/libpcre-1.dll artifacts/
 cp $BASE/libgmp-10.dll artifacts/
 cp $BASE/libpcre2-8-0.dll artifacts/
 cp $BASE/libzstd-1.dll artifacts/
