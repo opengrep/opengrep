@@ -109,7 +109,10 @@ def with_color(
         return text
     return click.style(
         text,
-        fg=color.value,
+        # Colors.foreground means the terminal's default colour: pass no fg.
+        # Palette index 0 is the theme's black, not the default; click < 8.5.0
+        # silently dropped fg=0 and 8.5.0 started emitting it (click PR 3677).
+        fg=(None if color is Colors.foreground else color.value),
         bg=(bgcolor.value if bgcolor is not None else None),
         underline=underline,
         bold=bold,
