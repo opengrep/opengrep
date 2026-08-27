@@ -97,9 +97,22 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
       let base_sha =
         match self#merge_base_ref with
         | Some (Find_targets.Commit sha) -> Some sha
-        | Some (Find_targets.Rev rev)
-        | Some (Find_targets.Merge_base_of rev) ->
-            Digestif.SHA1.consistent_of_hex_opt rev
+        | Some (Find_targets.Rev rev) ->
+            Git_metadata.resolve_commit_ref caps ~origin:"the baseline rev"
+              (Git_metadata.Commit_rev rev)
+        | Some (Find_targets.Merge_base_of rev) -> (
+            let cmd = (Cmd.Name "git", [ "merge-base"; rev; "HEAD" ]) in
+            match CapExec.string_of_run caps#exec ~trim:true cmd with
+            | Ok (str, (_, `Exited 0)) ->
+                Digestif.SHA1.consistent_of_hex_opt str
+            | Ok _
+            | Error (`Msg _) ->
+                Logs.warn (fun m ->
+                    m
+                      "no merge base with the baseline rev, leaving out \
+                       base_sha: %s"
+                      rev);
+                None)
         | None -> None
       in
       {

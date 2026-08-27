@@ -409,6 +409,57 @@ let test_project_metadata_odd_author_email (caps : Ci_subcommand.caps) () =
         "timestamp present" true
         (Option.is_some pm.Semgrep_output_v1_t.commit_timestamp))
 
+(* on GitLab a baseline rev reaches project_metadata.base_sha as the
+ * commit it names, and an unresolvable rev leaves it out *)
+let test_gitlab_baseline_rev_base_sha (caps : Ci_subcommand.caps) () =
+  let caps_exec = (caps :> < Cap.exec >) in
+  let repo_files = [ F.File ("foo.py", clean_py_content) ] in
+  Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+      let head = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      let _ = Git_wrapper.command caps_exec [ "branch"; "base" ] in
+      let git_env : Git_metadata.env =
+        {
+          _SEMGREP_REPO_NAME = None;
+          _SEMGREP_REPO_DISPLAY_NAME = None;
+          _SEMGREP_REPO_URL = None;
+          _SEMGREP_COMMIT = None;
+          _SEMGREP_JOB_URL = None;
+          _SEMGREP_PR_ID = None;
+          _SEMGREP_PR_TITLE = None;
+          _SEMGREP_BRANCH = None;
+        }
+      in
+      let base_sha_of (cli_baseline_ref : string option) =
+        let meta = new Gitlab_metadata.meta caps_exec ~cli_baseline_ref git_env in
+        Option.map Digestif.SHA1.to_hex
+          meta#project_metadata.Semgrep_output_v1_t.base_sha
+      in
+      Alcotest.(check (option string))
+        "base_sha of the branch rev" (Some head)
+        (base_sha_of (Some "base"));
+      Alcotest.(check (option string))
+        "base_sha of an unresolvable rev" None
+        (base_sha_of (Some "no-such-branch"));
+      (* a Merge_base_of baseline yields the branch-off commit, not the
+       * branch head; only an override can produce it, gitlab's own
+       * merge_base_ref never does *)
+      let _ = Git_wrapper.command caps_exec [ "checkout"; "-q"; "-b"; "feature" ] in
+      UFile.write_file ~file:(Fpath.v "foo.py") "y == y\n";
+      let _ = Git_wrapper.command caps_exec [ "commit"; "-q"; "-a"; "-m"; "feature" ] in
+      let _ = Git_wrapper.command caps_exec [ "checkout"; "-q"; "-" ] in
+      UFile.write_file ~file:(Fpath.v "foo.py") "z == z\n";
+      let _ = Git_wrapper.command caps_exec [ "commit"; "-q"; "-a"; "-m"; "advance" ] in
+      let meta =
+        object
+          inherit Gitlab_metadata.meta caps_exec ~cli_baseline_ref:None git_env
+          method! merge_base_ref = Some (Find_targets.Merge_base_of "feature")
+        end
+      in
+      Alcotest.(check (option string))
+        "base_sha of a merge-base baseline" (Some head)
+        (Option.map Digestif.SHA1.to_hex
+           meta#project_metadata.Semgrep_output_v1_t.base_sha))
+
 (* the CircleCI pull request id is the url's last nonempty segment, found
  * even when the url has a trailing slash *)
 let test_circleci_pr_id_trailing_slash (caps : Ci_subcommand.caps) () =
@@ -618,6 +669,8 @@ let tests (caps : < Ci_subcommand.caps >) =
         (test_github_branchoff_api_failure caps);
       t "unparseable author email is left out"
         (test_project_metadata_odd_author_email caps);
+      t "gitlab baseline rev resolves to base_sha"
+        (test_gitlab_baseline_rev_base_sha caps);
       t "circleci pr id survives a trailing slash"
         (test_circleci_pr_id_trailing_slash caps);
       t "circleci environment is detected" ~checked_output:(Testo.stdxxx ())

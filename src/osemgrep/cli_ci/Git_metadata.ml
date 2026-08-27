@@ -75,10 +75,11 @@ let uri_override_or_getenv (override : Uri.t option) (var : string) :
   | None -> Option.map Uri.of_string (Opengrep_env.getenv_opt var)
 
 (* Commit_sha passes through; a rev is resolved to the commit it names.
- * An unresolvable rev is ignored with a warning: the scan proceeds and
- * the commit is detected as usual. *)
-let resolve_commit_ref (caps : < Cap.exec >) (cref : commit_ref) :
-    Digestif.SHA1.t option =
+ * An unresolvable rev is ignored with a warning naming the input that
+ * supplied it (origin): the scan proceeds and the commit is detected as
+ * usual. *)
+let resolve_commit_ref (caps : < Cap.exec >) ~(origin : string)
+    (cref : commit_ref) : Digestif.SHA1.t option =
   match cref with
   | Commit_sha sha -> Some sha
   | Commit_rev rev -> (
@@ -91,7 +92,7 @@ let resolve_commit_ref (caps : < Cap.exec >) (cref : commit_ref) :
       | Ok _
       | Error (`Msg _) ->
           Logs.warn (fun m ->
-              m "SEMGREP_COMMIT does not name a commit, ignoring it: %s" rev);
+              m "%s does not name a commit, ignoring it: %s" origin rev);
           None)
 
 let sha_getenv (var : string) : Digestif.SHA1.t option =
@@ -107,7 +108,9 @@ let sha_getenv (var : string) : Digestif.SHA1.t option =
 
 let sha_override_or_getenv (caps : < Cap.exec >) (override : commit_ref option)
     (var : string) : Digestif.SHA1.t option =
-  match Option.bind override (resolve_commit_ref caps) with
+  match
+    Option.bind override (resolve_commit_ref caps ~origin:"SEMGREP_COMMIT")
+  with
   | Some _ as sha -> sha
   | None -> sha_getenv var
 
@@ -252,7 +255,10 @@ class meta (caps : < Cap.exec >) ?(subdir : string option) ~scan_environment
     method ci_job_url = env._SEMGREP_JOB_URL
 
     method commit_sha =
-      match Option.bind env._SEMGREP_COMMIT (resolve_commit_ref caps) with
+      match
+        Option.bind env._SEMGREP_COMMIT
+          (resolve_commit_ref caps ~origin:"SEMGREP_COMMIT")
+      with
       | Some _ as sha -> sha
       | None -> (
           let cmd = (Cmd.Name "git", [ "rev-parse"; "HEAD" ]) in

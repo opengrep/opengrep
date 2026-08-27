@@ -32,6 +32,12 @@ val uri_override_or_getenv : Uri.t option -> string -> Uri.t option
  * resolved. *)
 val sha_getenv : string -> Digestif.SHA1.t option
 
+(* Commit_sha passes through; a rev is resolved to the commit it names.
+ * An unresolvable rev is ignored with a warning naming the input that
+ * supplied it (origin). *)
+val resolve_commit_ref :
+  < Cap.exec > -> origin:string -> commit_ref -> Digestif.SHA1.t option
+
 (* The SEMGREP_COMMIT override is resolved to the commit it names (an
  * unresolvable rev is ignored with a warning); without it the provider's
  * variable is read with sha_getenv. *)
