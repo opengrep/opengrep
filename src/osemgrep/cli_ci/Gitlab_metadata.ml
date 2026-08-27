@@ -21,20 +21,21 @@
  *  By default gitlab pipelines do a shallow clone."
  *
  * The fetch authenticates with the job token; on git 2.31 or newer it is
- * passed as a header through the environment, on older git it is spliced
- * into the URL as credentials, like pyopengrep builds it with urlsplit.
- *)
-let fetch_branch_get_merge_base (caps : < Cap.exec >) ~(branch_name : string)
+ * passed as a header through the environment, on older git an inline
+ * credential helper supplies it. Either way the command line carries the
+ * plain url and no token. supports_config_env is the result of the
+ * Git_wrapper probe, a parameter so tests can force the old-git path. *)
+let fetch_branch_get_merge_base (caps : < Cap.exec >)
+    ~(supports_config_env : bool) ~(branch_name : string)
     ~(head_sha : string) : Digestif.SHA1.t option =
   match
     (Opengrep_env.getenv_opt "CI_MERGE_REQUEST_PROJECT_URL", Opengrep_env.getenv_opt "CI_JOB_TOKEN")
   with
   | Some project_url, Some job_token ->
       let _ =
-        if Git_wrapper.supports_config_env caps then
+        if supports_config_env then
           (* the credentials go to this one child process as an
-           * Authorization header for the project url, and the command
-           * line carries the plain url *)
+           * Authorization header for the project url *)
           let header =
             "Authorization: Basic "
             ^ Base64.encode_string (Fmt.str "gitlab-ci-token:%s" job_token)
@@ -43,16 +44,17 @@ let fetch_branch_get_merge_base (caps : < Cap.exec >) ~(branch_name : string)
             ~config:[ (Fmt.str "http.%s.extraHeader" project_url, header) ]
             [ "fetch"; project_url; branch_name ]
         else
-          (* older git ignores the GIT_CONFIG_* variables: splice the
-           * credentials into the url *)
-          let url =
-            Uri.of_string project_url
-            |> (fun uri ->
-                 Uri.with_userinfo uri
-                   (Some (Fmt.str "gitlab-ci-token:%s" job_token)))
-            |> Uri.to_string
+          (* older git ignores the GIT_CONFIG_* variables: an inline
+           * credential helper supplies the token when git asks for
+           * credentials. The command line carries only the variable
+           * name; the helper's shell reads the value from the
+           * environment *)
+          let helper =
+            "credential.helper=!f() { echo username=gitlab-ci-token; echo \
+             password=$CI_JOB_TOKEN; }; f"
           in
-          Git_wrapper.command caps [ "fetch"; url; branch_name ]
+          Git_wrapper.command caps
+            [ "-c"; helper; "fetch"; project_url; branch_name ]
       in
       let out =
         Git_wrapper.command caps [ "merge-base"; "--all"; head_sha; "FETCH_HEAD" ]
@@ -81,8 +83,9 @@ class meta (caps : < Cap.exec >) ?subdir ~cli_baseline_ref env =
           | None -> None
           | Some target_branch ->
               let head_sha = Git_wrapper.command caps [ "rev-parse"; "HEAD" ] in
-              fetch_branch_get_merge_base caps ~branch_name:target_branch
-                ~head_sha
+              fetch_branch_get_merge_base caps
+                ~supports_config_env:(Git_wrapper.supports_config_env caps)
+                ~branch_name:target_branch ~head_sha
               |> Option.map (fun sha -> Find_targets.Commit sha)))
   in
   object (self)

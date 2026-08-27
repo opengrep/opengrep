@@ -558,6 +558,39 @@ let test_gitlab_merge_base_fetch (caps : Ci_subcommand.caps) () =
                         (Digestif.SHA1.to_hex sha)
                   | _else_ -> Alcotest.fail "expected a commit merge base"))))
 
+(* on old git the fetch authenticates through an inline credential
+ * helper: the fetch command carries the plain url and only the
+ * variable name, and the merge base is still found *)
+let test_gitlab_merge_base_fetch_old_git (caps : Ci_subcommand.caps) () =
+  let caps_exec = (caps :> < Cap.exec >) in
+  let repo_files = [ F.File ("foo.py", clean_py_content) ] in
+  Testutil_git.with_git_repo ~verbose:true repo_files (fun cwd ->
+      let base = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      let _ = Git_wrapper.command caps_exec [ "checkout"; "-b"; "feature" ] in
+      UFile.write_file ~file:(Fpath.v "foo.py") finding_py_content;
+      let _ = Git_wrapper.command caps_exec [ "add"; "foo.py" ] in
+      let _ = Git_wrapper.command caps_exec [ "commit"; "-m"; "change" ] in
+      let _ =
+        Git_wrapper.command caps_exec [ "clone"; Fpath.to_string cwd; "clone" ]
+      in
+      Testutil_files.with_chdir (Fpath.v "clone") @@ fun () ->
+      Semgrep_envvars.with_envvar "CI_MERGE_REQUEST_PROJECT_URL"
+        (Fpath.to_string cwd) (fun () ->
+          Semgrep_envvars.with_envvar "CI_JOB_TOKEN"
+            "fake-64_wFuiRFQk9t841JHKQnAT" (fun () ->
+              let head_sha =
+                Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ]
+              in
+              match
+                Gitlab_metadata.fetch_branch_get_merge_base caps_exec
+                  ~supports_config_env:false ~branch_name:"main" ~head_sha
+              with
+              | Some sha ->
+                  Alcotest.(check string)
+                    "merge base is the branch-off commit" base
+                    (Digestif.SHA1.to_hex sha)
+              | None -> Alcotest.fail "expected a merge base")))
+
 (* the job token must not reach the logs: on current git the fetch
  * command carries the plain project url (the token goes through the
  * environment), so nothing in the verbose output names it *)
@@ -703,6 +736,8 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "gitlab merge base via authenticated fetch"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
         (test_gitlab_merge_base_fetch caps);
+      t "gitlab merge base via credential helper on old git"
+        (test_gitlab_merge_base_fetch_old_git caps);
       t "gitlab fetch token is redacted in logs"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
         (test_gitlab_fetch_token_redacted caps);
