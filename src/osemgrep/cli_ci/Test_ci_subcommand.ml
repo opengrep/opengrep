@@ -460,6 +460,29 @@ let test_gitlab_baseline_rev_base_sha (caps : Ci_subcommand.caps) () =
         (Option.map Digestif.SHA1.to_hex
            meta#project_metadata.Semgrep_output_v1_t.base_sha))
 
+(* --subdir keeps its display-name qualifier under a CI provider *)
+let test_provider_subdir_display_name (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "CI_PROJECT_PATH" "group/project" (fun () ->
+      let git_env : Git_metadata.env =
+        {
+          _SEMGREP_REPO_NAME = None;
+          _SEMGREP_REPO_DISPLAY_NAME = None;
+          _SEMGREP_REPO_URL = None;
+          _SEMGREP_COMMIT = None;
+          _SEMGREP_JOB_URL = None;
+          _SEMGREP_PR_ID = None;
+          _SEMGREP_PR_TITLE = None;
+          _SEMGREP_BRANCH = None;
+        }
+      in
+      let meta =
+        new Gitlab_metadata.meta
+          (caps :> < Cap.exec >)
+          ~subdir:"services/api" ~cli_baseline_ref:None git_env
+      in
+      Alcotest.(check string)
+        "display name" "group/project/services/api" meta#repo_display_name)
+
 (* the CircleCI pull request id is the url's last nonempty segment, found
  * even when the url has a trailing slash *)
 let test_circleci_pr_id_trailing_slash (caps : Ci_subcommand.caps) () =
@@ -671,6 +694,8 @@ let tests (caps : < Ci_subcommand.caps >) =
         (test_project_metadata_odd_author_email caps);
       t "gitlab baseline rev resolves to base_sha"
         (test_gitlab_baseline_rev_base_sha caps);
+      t "provider subdir qualifies the display name"
+        (test_provider_subdir_display_name caps);
       t "circleci pr id survives a trailing slash"
         (test_circleci_pr_id_trailing_slash caps);
       t "circleci environment is detected" ~checked_output:(Testo.stdxxx ())

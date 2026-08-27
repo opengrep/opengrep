@@ -4,6 +4,7 @@
 
 class meta :
   < Cap.exec > ->
+  ?subdir:string ->
   cli_baseline_ref:string option ->
   Git_metadata.env ->
   Git_metadata.meta_t

@@ -14,11 +14,12 @@ open Git_metadata
 (* Entry point *)
 (*****************************************************************************)
 
-class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
+class meta (caps : < Cap.exec >) ?subdir ~cli_baseline_ref env =
   object (_self)
     inherit
       Git_metadata.meta
-        caps ~scan_environment:"jenkins" ~cli_baseline_ref env as super
+        caps ?subdir ~scan_environment:"jenkins" ~cli_baseline_ref env
+        as super
 
     method! repo_name =
       (* assumes the git url is in the github format *)

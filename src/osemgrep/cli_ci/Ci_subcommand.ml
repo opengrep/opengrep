@@ -55,22 +55,22 @@ let generate_meta_from_environment (caps : < Cap.exec ; Cap.network >)
   let caps_exec = (caps :> < Cap.exec >) in
   if is_true "GITHUB_ACTIONS" then
     new Github_metadata.meta
-      caps ~cli_baseline_ref env
+      caps ?subdir ~cli_baseline_ref env
       (Github_metadata.env_from_environment ())
   else if is_true "GITLAB_CI" then
-    new Gitlab_metadata.meta caps_exec ~cli_baseline_ref env
+    new Gitlab_metadata.meta caps_exec ?subdir ~cli_baseline_ref env
   else if is_true "CIRCLECI" then
-    new Circleci_metadata.meta caps_exec ~cli_baseline_ref env
+    new Circleci_metadata.meta caps_exec ?subdir ~cli_baseline_ref env
   else if Option.is_some (get "JENKINS_URL") then
-    new Jenkins_metadata.meta caps_exec ~cli_baseline_ref env
+    new Jenkins_metadata.meta caps_exec ?subdir ~cli_baseline_ref env
   else if Option.is_some (get "BITBUCKET_BUILD_NUMBER") then
-    new Bitbucket_metadata.meta caps_exec ~cli_baseline_ref env
+    new Bitbucket_metadata.meta caps_exec ?subdir ~cli_baseline_ref env
   else if Option.is_some (get "BUILD_BUILDID") then
-    new Azure_pipelines_metadata.meta caps_exec ~cli_baseline_ref env
+    new Azure_pipelines_metadata.meta caps_exec ?subdir ~cli_baseline_ref env
   else if is_true "BUILDKITE" then
-    new Buildkite_metadata.meta caps_exec ~cli_baseline_ref env
+    new Buildkite_metadata.meta caps_exec ?subdir ~cli_baseline_ref env
   else if is_true "TRAVIS" then
-    new Travis_metadata.meta caps_exec ~cli_baseline_ref env
+    new Travis_metadata.meta caps_exec ?subdir ~cli_baseline_ref env
   else
     new Git_metadata.meta
       caps_exec ?subdir ~scan_environment:"git" ~cli_baseline_ref env

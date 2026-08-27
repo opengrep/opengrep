@@ -14,11 +14,12 @@ open Git_metadata
 (* Entry point *)
 (*****************************************************************************)
 
-class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
+class meta (caps : < Cap.exec >) ?subdir ~cli_baseline_ref env =
   object (self)
     inherit
       Git_metadata.meta
-        caps ~scan_environment:"travis-ci" ~cli_baseline_ref env as super
+        caps ?subdir ~scan_environment:"travis-ci" ~cli_baseline_ref env
+        as super
 
     method! project_metadata =
       let base = super#project_metadata in

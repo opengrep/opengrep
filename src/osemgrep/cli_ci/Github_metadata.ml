@@ -335,7 +335,8 @@ let find_branchoff_point (caps : < Cap.exec ; Cap.network >)
 (* Entry point *)
 (*****************************************************************************)
 
-class meta (caps : < Cap.exec ; Cap.network >) ~cli_baseline_ref env gha_env =
+class meta (caps : < Cap.exec ; Cap.network >) ?subdir ~cli_baseline_ref env
+  gha_env =
   (* the lazy values mirror pyopengrep's cachedproperty: computed at most
      once per scan, as each computation implies git fetches *)
   let head_branch_hash =
@@ -359,7 +360,8 @@ class meta (caps : < Cap.exec ; Cap.network >) ~cli_baseline_ref env gha_env =
     inherit
       Git_metadata.meta
         (caps :> < Cap.exec >)
-        ~scan_environment:"github-actions" ~cli_baseline_ref env as super
+        ?subdir ~scan_environment:"github-actions" ~cli_baseline_ref env
+        as super
 
     method! project_metadata =
       {

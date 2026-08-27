@@ -68,7 +68,7 @@ let fetch_branch_get_merge_base (caps : < Cap.exec >) ~(branch_name : string)
 (* Entry point *)
 (*****************************************************************************)
 
-class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
+class meta (caps : < Cap.exec >) ?subdir ~cli_baseline_ref env =
   (* like pyopengrep GitlabMeta.merge_base_ref (a cachedproperty, hence the
      lazy): --baseline-commit wins; in merge-request context the base is
      the merge-base with the target branch *)
@@ -88,7 +88,8 @@ class meta (caps : < Cap.exec >) ~cli_baseline_ref env =
   object (self)
     inherit
       Git_metadata.meta
-        caps ~scan_environment:"gitlab-ci" ~cli_baseline_ref env as super
+        caps ?subdir ~scan_environment:"gitlab-ci" ~cli_baseline_ref env
+        as super
 
     method private commit_ref = Opengrep_env.getenv_opt "CI_COMMIT_REF_NAME"
     method private start_sha = Opengrep_env.getenv_opt "CI_MERGE_REQUEST_DIFF_BASE_SHA"

@@ -22,6 +22,7 @@ val env_from_environment : unit -> env
 (* network is for the merge-base shortcut through the GitHub API *)
 class meta :
   < Cap.exec ; Cap.network > ->
+  ?subdir:string ->
   cli_baseline_ref:string option ->
   Git_metadata.env ->
   env ->
