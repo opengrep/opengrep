@@ -287,7 +287,13 @@ def ci(
     console.print(Title("Scan Environment", order=2))
     console.print(debugging_table, markup=True)
 
-    fix_head_if_github_action(metadata)
+    # its git commands can fail; wrapper.py exits without printing a
+    # SemgrepError, so report the failure here
+    try:
+        fix_head_if_github_action(metadata)
+    except SemgrepError as e:
+        logger.error(e.format_for_terminal())
+        sys.exit(e.code)
 
     engine_type = EngineType.decide_engine_type()
 
@@ -354,6 +360,15 @@ def ci(
     if subdir:
         target += f"/{subdir}"
 
+    # evaluating merge_base_ref can run a git fetch; wrapper.py exits
+    # without printing a SemgrepError, so report the failure here
+    try:
+        baseline_commit = metadata.merge_base_ref
+    except SemgrepError as e:
+        output_handler.handle_semgrep_errors([e])
+        output_handler.output({}, all_targets=set(), filtered_rules=[])
+        sys.exit(e.code)
+
     # Base arguments for actually running the scan. This is done here so we can
     # re-use this in the event we need to perform a second scan. Currently the
     # only case for this is a separate "historical" scan, where we scan the git
@@ -395,7 +410,7 @@ def ci(
         "timeout_threshold": timeout_threshold,
         "skip_unknown_extensions": (not scan_unknown_extensions),
         "optimizations": optimizations,
-        "baseline_commit": metadata.merge_base_ref,
+        "baseline_commit": baseline_commit,
         "baseline_commit_is_mergebase": True,
         "capture_core_stderr": capture_core_stderr,
         "allow_local_builds": allow_local_builds,
