@@ -62,20 +62,25 @@ let negatable_flag ?(default = false) ~neg_options ~doc options =
   Arg.value (Arg.vflag default [ enable; disable ])
 
 (* same vocabulary as cmdliner's env_bool_parse, which is not exported *)
-let parse_env_bool (var : string) (value : string) : bool =
+let parse_env_bool (var : string) (value : string) :
+    (bool, [ `Msg of string ]) result =
   match String.lowercase_ascii value with
   | "false"
   | "no"
   | "n"
   | "0" ->
-      false
+      Ok false
   | "true"
   | "yes"
   | "y"
   | "1" ->
-      true
+      Ok true
   | _else_ ->
-      invalid_arg (Printf.sprintf "%s: invalid boolean value %S" var value)
+      Error
+        (`Msg
+          (Printf.sprintf
+             "environment variable %s: invalid value %S, expected a boolean"
+             var value))
 
 (* Cmdliner.Arg.vflag_all ignores environment variables (the one on the
    positive flag is attached only for the man page), so the variable is read
@@ -93,18 +98,20 @@ let negatable_flag_with_env ?(default = false) ?env ~neg_options ~doc options =
   let enable = (true, Arg.info options ~doc ?env:env_info) in
   let disable = (false, Arg.info neg_options ~doc:neg_doc) in
   let flags = Arg.(value (vflag_all [] [ enable; disable ])) in
-  let combine (values : bool list) =
+  (* a bad value is reported by cmdliner like a bad option value, not as
+     an exception *)
+  let combine (values : bool list) : (bool, [ `Msg of string ]) result =
     match List.rev values with
-    | last :: _ -> last
+    | last :: _ -> Ok last
     | [] -> (
         match env with
-        | None -> default
+        | None -> Ok default
         | Some var -> (
             match Opengrep_env.getenv_opt var with
             | Some value -> parse_env_bool var value
-            | None -> default))
+            | None -> Ok default))
   in
-  Term.(const combine $ flags)
+  Term.cli_parse_result Term.(const combine $ flags)
 
 (* A repeatable string option whose environment variable holds a
    whitespace-separated list (e.g. SEMGREP_RULES="p/default extra.yml").

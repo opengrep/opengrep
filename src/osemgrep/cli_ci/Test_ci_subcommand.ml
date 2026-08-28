@@ -126,8 +126,11 @@ let run_ci (caps : Ci_subcommand.caps) ~(rule : string) ~(target : string)
           ([ "opengrep-ci"; "--experimental" ]
           @ config_args @ extra_args @ late_args)
       in
+      (* a usage error leaves parse_argv as Error.Exit_code, which
+       * CLI.safe_run would turn into the exit code *)
       let exit_code =
-        without_settings (fun () -> Ci_subcommand.main caps argv)
+        without_settings (fun () ->
+            try Ci_subcommand.main caps argv with Error.Exit_code code -> code)
       in
       check exit_code)
 
@@ -204,6 +207,13 @@ let test_suppress_errors_env_false (caps : Ci_subcommand.caps) () =
   Semgrep_envvars.with_envvar "SEMGREP_SUPPRESS_ERRORS" "false" (fun () ->
       run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
         ~extra_args:[ "--subdir"; "/etc" ]
+        ~check:Exit_code.Check.fatal ())
+
+(* a value that is not a boolean is a usage error, reported like a bad
+ * option value and without a backtrace *)
+let test_suppress_errors_env_garbage (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "SEMGREP_SUPPRESS_ERRORS" "garbage" (fun () ->
+      run_ci caps ~rule:blocking_rule_content ~target:clean_py_content
         ~check:Exit_code.Check.fatal ())
 
 (* the environment variable holds a whitespace-separated list of rule
@@ -811,6 +821,9 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "suppress-errors env var set to false"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_suppress_errors_env_false caps);
+      t "garbage boolean env value is a usage error"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_suppress_errors_env_garbage caps);
       t "short SEMGREP_COMMIT is a rev" test_short_sha_is_a_rev;
       t "SEMGREP_COMMIT accepts any rev" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_commit_rev caps);
