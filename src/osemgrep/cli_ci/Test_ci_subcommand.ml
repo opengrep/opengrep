@@ -483,6 +483,92 @@ let test_provider_subdir_display_name (caps : Ci_subcommand.caps) () =
       Alcotest.(check string)
         "display name" "group/project/services/api" meta#repo_display_name)
 
+(* a shallow clone holds neither history: the search must fetch deeper
+ * until the branch-off commit is found *)
+let test_github_branchoff_deepening (caps : Ci_subcommand.caps) () =
+  let caps_exec = (caps :> < Cap.exec >) in
+  let repo_files = [ F.File ("foo.py", clean_py_content) ] in
+  Testutil_git.with_git_repo ~verbose:true repo_files (fun cwd ->
+      let base = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      (* the branch name goes into each tree: identical trees committed on
+       * both branches within the same second would be the same commit *)
+      let commit_n (branch : string) (n : int) : unit =
+        for i = 1 to n do
+          UFile.write_file ~file:(Fpath.v "foo.py")
+            (Printf.sprintf "%s%d == %s%d\n" branch i branch i);
+          ignore
+            (Git_wrapper.command caps_exec
+               [ "commit"; "-q"; "-a"; "-m"; Printf.sprintf "%s c%d" branch i ])
+        done
+      in
+      let _ = Git_wrapper.command caps_exec [ "checkout"; "-q"; "-b"; "feature" ] in
+      commit_n "feature" 6;
+      let head = Git_wrapper.command caps_exec [ "rev-parse"; "HEAD" ] in
+      let _ = Git_wrapper.command caps_exec [ "checkout"; "-q"; "main" ] in
+      commit_n "main" 6;
+      (* --depth is ignored on a plain path; file:// makes the clone shallow *)
+      let _ =
+        Git_wrapper.command caps_exec
+          [
+            "clone"; "-q"; "--depth"; "1"; "--branch"; "feature";
+            "file://" ^ Fpath.to_string cwd; "clone";
+          ]
+      in
+      Testutil_files.with_chdir (Fpath.v "clone") @@ fun () ->
+      let event : Yojson.Basic.t =
+        `Assoc
+          [
+            ( "pull_request",
+              `Assoc
+                [
+                  ("base", `Assoc [ ("ref", `String "main") ]);
+                  ( "head",
+                    `Assoc [ ("ref", `String "feature"); ("sha", `String head) ]
+                  );
+                ] );
+          ]
+      in
+      (* no token: the API shortcut is skipped, only git is used *)
+      let gha_env : Github_metadata.env =
+        {
+          _GITHUB_EVENT_JSON = event;
+          _GITHUB_REPOSITORY = Some "example/repo";
+          _GITHUB_REPOSITORY_ID = None;
+          _GITHUB_REPOSITORY_OWNER_ID = None;
+          _GITHUB_API_URL = None;
+          _GITHUB_SERVER_URL = Uri.of_string "https://github.com";
+          _GITHUB_SHA = None;
+          _GITHUB_REF = None;
+          _GITHUB_HEAD_REF = None;
+          _GITHUB_RUN_ID = None;
+          _GITHUB_EVENT_NAME = Some "pull_request";
+          _GH_TOKEN = None;
+        }
+      in
+      let git_env : Git_metadata.env =
+        {
+          _SEMGREP_REPO_NAME = None;
+          _SEMGREP_REPO_DISPLAY_NAME = None;
+          _SEMGREP_REPO_URL = None;
+          _SEMGREP_COMMIT = None;
+          _SEMGREP_JOB_URL = None;
+          _SEMGREP_PR_ID = None;
+          _SEMGREP_PR_TITLE = None;
+          _SEMGREP_BRANCH = None;
+        }
+      in
+      let meta =
+        new Github_metadata.meta
+          (caps :> < Cap.exec ; Cap.network >)
+          ~cli_baseline_ref:None git_env gha_env
+      in
+      match meta#merge_base_ref with
+      | Some (Find_targets.Commit sha) ->
+          Alcotest.(check string)
+            "merge base is the branch-off commit" base
+            (Digestif.SHA1.to_hex sha)
+      | _else_ -> Alcotest.fail "expected a commit merge base")
+
 (* the CircleCI pull request id is the url's last nonempty segment, found
  * even when the url has a trailing slash *)
 let test_circleci_pr_id_trailing_slash (caps : Ci_subcommand.caps) () =
@@ -723,6 +809,8 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "github merge-base API failure falls back to git"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
         (test_github_branchoff_api_failure caps);
+      t "github merge base found by fetching deeper"
+        (test_github_branchoff_deepening caps);
       t "unparseable author email is left out"
         (test_project_metadata_odd_author_email caps);
       t "gitlab baseline rev resolves to base_sha"

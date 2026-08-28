@@ -233,6 +233,19 @@ let find_branchoff_point_from_github_api (caps : < Cap.network ; Cap.exec >)
    when the local histories do not connect yet, fetch deeper
    (exponentially, all history past _MAX_FETCH_ATTEMPT_COUNT) and retry.
 *)
+(* whether the commit is in the local repository (git cat-file -e exits 0
+   for an existing object, non-zero otherwise) *)
+let commit_is_local (caps : < Cap.exec >) (sha : Digestif.SHA1.t) : bool =
+  let cmd =
+    ( Cmd.Name "git",
+      [ "cat-file"; "-e"; Digestif.SHA1.to_hex sha ^ "^{commit}" ] )
+  in
+  match CapExec.status_of_run caps#exec ~quiet:true cmd with
+  | Ok (`Exited 0) -> true
+  | Ok _
+  | Error (`Msg _) ->
+      false
+
 let find_branchoff_point (caps : < Cap.exec ; Cap.network >)
     ~(head_branch_hash : Digestif.SHA1.t) repo_name env :
     Digestif.SHA1.t option =
@@ -244,8 +257,9 @@ let find_branchoff_point (caps : < Cap.exec ; Cap.network >)
   let rec attempt attempt_count =
     let fetch_depth = 4. ** Float.of_int attempt_count |> Float.to_int in
     let fetch_depth = fetch_depth + !Semgrep_envvars.v.min_fetch_depth in
+    (* the last attempt fetches all commits *)
     let fetch_depth =
-      if attempt_count > _MAX_FETCH_ATTEMPT_COUNT then
+      if attempt_count >= _MAX_FETCH_ATTEMPT_COUNT then
         Float.to_int (2. ** 31.) - 1
       else fetch_depth
     in
@@ -316,18 +330,37 @@ let find_branchoff_point (caps : < Cap.exec ; Cap.network >)
               Digestif.SHA1.to_hex head_branch_hash;
             ] )
         in
-        match CapExec.string_of_run caps#exec ~trim:true cmd with
-        | Ok (merge_base, (_, `Exited 0)) ->
+        let caps_exec = (caps :> < Cap.exec >) in
+        (* exit 1 means git found no common ancestor in the local history,
+           and any other failure with a commit missing locally means it was
+           not fetched yet; both are fixed by fetching deeper. A failure with
+           both commits present is unexpected and final. *)
+        let not_found_yet (status : Bos.OS.Cmd.status) : bool =
+          match status with
+          | `Exited 1 -> true
+          | _else_ ->
+              not
+                (commit_is_local caps_exec base_branch_hash
+                && commit_is_local caps_exec head_branch_hash)
+        in
+        match CapExec.string_of_run_with_stderr caps#exec ~trim:true cmd with
+        | Ok (merge_base, (_, `Exited 0)), _ ->
             Digestif.SHA1.consistent_of_hex_opt merge_base
-        | Ok (_, _) when attempt_count < _MAX_FETCH_ATTEMPT_COUNT ->
+        | Ok (_, (_, status)), _
+          when not_found_yet status && attempt_count < _MAX_FETCH_ATTEMPT_COUNT
+          ->
             attempt (succ attempt_count)
-        | Ok (_, _) ->
-            Fmt.failwith
-              "Could not find branch-off point between the baseline tip %s@%a \
-               and current head %s@%a"
-              base_branch_name Digestif.SHA1.pp base_branch_hash
-              head_branch_name Digestif.SHA1.pp head_branch_hash
-        | Error (`Msg err) -> failwith err)
+        | Ok (_, (_, status)), _ when not_found_yet status ->
+            Error.abort
+              (Fmt.str
+                 "Could not find branch-off point between the baseline tip \
+                  %s@%a and current head %s@%a"
+                 base_branch_name Digestif.SHA1.pp base_branch_hash
+                 head_branch_name Digestif.SHA1.pp head_branch_hash)
+        | Ok (_, _), stderr ->
+            Error.abort
+              (Fmt.str "Unexpected git merge-base error: %s" (String.trim stderr))
+        | Error (`Msg err), _ -> Error.abort err)
   in
   attempt 0
 
