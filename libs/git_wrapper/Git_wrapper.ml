@@ -293,7 +293,8 @@ let command_with_config (_caps : < Cap.exec >)
     let current =
       match Bos.OS.Env.current () with
       | Ok current -> current
-      | Error (`Msg _) -> Astring.String.Map.empty
+      (* the fetch must not run if the environment cannot be obtained *)
+      | Error (`Msg msg) -> raise (Error msg)
     in
     config
     |> List.mapi (fun i entry -> (i, entry))
