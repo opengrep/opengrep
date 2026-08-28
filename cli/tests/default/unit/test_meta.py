@@ -440,6 +440,77 @@ def test_gitlab_baseline_rev_resolves_base_sha(tmp_path, monkeypatch):
     assert GitlabMeta("no-such-branch").to_project_metadata().base_sha is None
 
 
+def _branchoff_meta(monkeypatch, merge_base_returncode, commits_local):
+    """
+    A GithubMeta in PR context whose git merge-base always fails with the
+    given exit code; fetches are recorded, git cat-file -e reports the
+    commits as present or missing.
+    """
+    import subprocess
+
+    from semgrep.error import SemgrepError
+    from semgrep.meta import GithubMeta
+
+    fetch_depths = []
+
+    def fake_git_check_output(cmd):
+        if cmd[1] == "fetch":
+            fetch_depths.append(cmd[cmd.index("--depth") + 1])
+        elif cmd[1] == "cat-file" and not commits_local:
+            raise SemgrepError("missing")
+        return ""
+
+    def failing_merge_base(cmd, **kwargs):
+        raise subprocess.CalledProcessError(
+            merge_base_returncode, cmd, stderr="some git error"
+        )
+
+    monkeypatch.setattr("semgrep.meta.git_check_output", fake_git_check_output)
+    monkeypatch.setattr("semgrep.meta.subprocess.run", failing_merge_base)
+    monkeypatch.setattr(GithubMeta, "MAX_FETCH_ATTEMPT_COUNT", 1)
+    monkeypatch.setattr(GithubMeta, "_base_branch_ref", property(lambda _: "main"))
+    monkeypatch.setattr(GithubMeta, "_head_branch_ref", property(lambda _: "feat"))
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    meta = GithubMeta(None)
+    meta.__dict__["head_branch_hash"] = "a" * 40
+    meta.__dict__["base_branch_hash"] = "b" * 40
+    return meta, fetch_depths
+
+
+@pytest.mark.quick
+def test_github_branchoff_last_attempt_fetches_everything(monkeypatch):
+    """
+    No common ancestor (exit 1) fetches deeper, and the last attempt
+    fetches all commits before giving up.
+    """
+    meta, fetch_depths = _branchoff_meta(monkeypatch, 1, commits_local=True)
+    with pytest.raises(Exception, match="Could not find branch-off point"):
+        meta._find_branchoff_point()
+    assert fetch_depths == [str(2**31 - 1)] * 2
+
+
+@pytest.mark.quick
+def test_github_branchoff_missing_commit_fetches_deeper(monkeypatch):
+    """
+    Any other failure with a commit missing locally also fetches deeper.
+    """
+    meta, fetch_depths = _branchoff_meta(monkeypatch, 128, commits_local=False)
+    with pytest.raises(Exception, match="Could not find branch-off point"):
+        meta._find_branchoff_point()
+    assert len(fetch_depths) == 2
+
+
+@pytest.mark.quick
+def test_github_branchoff_unexpected_failure_is_final(monkeypatch):
+    """
+    A failure with both commits present raises at once, without fetching.
+    """
+    meta, fetch_depths = _branchoff_meta(monkeypatch, 128, commits_local=True)
+    with pytest.raises(Exception, match="Unexpected git merge-base error"):
+        meta._find_branchoff_point()
+    assert fetch_depths == []
+
+
 @pytest.mark.quick
 def test_provider_subdir_qualifies_display_name(monkeypatch):
     """

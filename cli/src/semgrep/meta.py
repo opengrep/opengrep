@@ -364,6 +364,18 @@ class GithubMeta(GitMeta):
             ]
         )
 
+    @staticmethod
+    def _commit_is_local(sha: str) -> bool:
+        """
+        Whether the commit is in the local repository (git cat-file -e
+        exits 0 for an existing object, non-zero otherwise)
+        """
+        try:
+            git_check_output(["git", "cat-file", "-e", f"{sha}^{{commit}}"])
+            return True
+        except SemgrepError:
+            return False
+
     def _get_latest_commit_hash_in_branch(self, branch_name: str) -> str:
         """
         Return sha hash of latest commit in a given branch
@@ -439,7 +451,7 @@ class GithubMeta(GitMeta):
         # fetch 0, 4, 16, 64, 256, 1024, ...
         fetch_depth = 4**attempt_count if attempt_count else 0
         fetch_depth += get_state().env.min_fetch_depth
-        if attempt_count > self.MAX_FETCH_ATTEMPT_COUNT:  # get all commits on last try
+        if attempt_count >= self.MAX_FETCH_ATTEMPT_COUNT:  # get all commits on last try
             fetch_depth = 2**31 - 1  # git expects a signed 32-bit integer
 
         logger.debug(
@@ -548,12 +560,18 @@ class GithubMeta(GitMeta):
                 timeout=env.git_command_timeout,
             )
         except subprocess.CalledProcessError as e:
-            output = e.stderr.strip()
-            if (
-                output  # output is empty when unable to find branch-off point
-                and "Not a valid " not in output  # the error when a ref is missing
-            ):
-                raise Exception(f"Unexpected git merge-base error message: ({output})")
+            # exit 1 means git found no common ancestor in the local history,
+            # and any other failure with a commit missing locally means it was
+            # not fetched yet; both are fixed by fetching deeper. A failure
+            # with both commits present is unexpected and final.
+            not_found_yet = e.returncode == 1 or not (
+                self._commit_is_local(self.base_branch_hash)
+                and self._commit_is_local(self.head_branch_hash)
+            )
+            if not not_found_yet:
+                raise Exception(
+                    f"Unexpected git merge-base error: {e.stderr.strip()}"
+                )
 
             if attempt_count >= self.MAX_FETCH_ATTEMPT_COUNT:
                 raise Exception(
