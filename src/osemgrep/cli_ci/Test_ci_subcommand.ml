@@ -697,6 +697,24 @@ let test_gitlab_fetch_token_redacted (caps : Ci_subcommand.caps) () =
                         ~extra_args:[ "--verbose" ]
                         ())))))
 
+(* in merge request context a missing job token stops the run before any
+ * fetch: the alternative would be a silent scan of the whole repository *)
+let test_gitlab_merge_request_without_token (caps : Ci_subcommand.caps) () =
+  Semgrep_envvars.with_envvar "GITLAB_CI" "true" (fun () ->
+      Semgrep_envvars.with_envvar "CI_PIPELINE_SOURCE" "merge_request_event"
+        (fun () ->
+          Semgrep_envvars.with_envvar "CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+            "main" (fun () ->
+              Semgrep_envvars.with_envvar "CI_MERGE_REQUEST_PROJECT_URL"
+                "https://gitlab.invalid/org/repo" (fun () ->
+                  (* an empty value counts as unset *)
+                  Semgrep_envvars.with_envvar "CI_JOB_TOKEN" "" (fun () ->
+                      Semgrep_envvars.with_envvar "SEMGREP_SUPPRESS_ERRORS"
+                        "false" (fun () ->
+                          run_ci caps ~rule:blocking_rule_content
+                            ~target:clean_py_content
+                            ~check:Exit_code.Check.fatal ()))))))
+
 (* the run id is appended to the repository url's path; replacing the
  * path would give https://github.com/actions/runs/123 *)
 let test_github_ci_job_url (caps : Ci_subcommand.caps) () =
@@ -829,6 +847,9 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "gitlab fetch token is redacted in logs"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
         (test_gitlab_fetch_token_redacted caps);
+      t "gitlab merge request without a job token"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_gitlab_merge_request_without_token caps);
       t "gitlab environment is detected" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_gitlab_environment caps);
       t "github environment is detected" ~checked_output:(Testo.stdxxx ())

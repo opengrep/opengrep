@@ -16,6 +16,13 @@
 (* Helpers *)
 (*****************************************************************************)
 
+let missing_variable (var : string) ~(branch_name : string) : 'a =
+  Error.abort
+    (Fmt.str
+       "%s is not set: the merge request target branch %s cannot be fetched \
+        to find the baseline"
+       var branch_name)
+
 (* "Return merge base of current head and head commit in branch_name.
  *  Use Gitlab env vars to fetch target branch.
  *  By default gitlab pipelines do a shallow clone."
@@ -64,7 +71,10 @@ let fetch_branch_get_merge_base (caps : < Cap.exec >)
       (match String.split_on_char '\n' out with
       | first :: _ -> Digestif.SHA1.consistent_of_hex_opt (String.trim first)
       | [] -> None)
-  | _else_ -> None
+  (* without the url or the token there is no baseline: stop rather than
+   * silently scan the whole repository *)
+  | None, _ -> missing_variable "CI_MERGE_REQUEST_PROJECT_URL" ~branch_name
+  | Some _, None -> missing_variable "CI_JOB_TOKEN" ~branch_name
 
 (*****************************************************************************)
 (* Entry point *)
