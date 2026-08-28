@@ -92,9 +92,13 @@ let fix_head_if_github_action (caps : < Cap.exec >)
         let _ =
           Git_wrapper.command caps [ "checkout"; Digestif.SHA1.to_hex head ]
         in
+        (* the hook runs at exit from whatever directory the process has
+         * then, so the restore names the directory of the checkout *)
+        let cwd = Sys.getcwd () in
         Hooks.exit :=
           (fun () ->
-            ignore (Git_wrapper.command caps [ "checkout"; stashed_rev ]))
+            ignore
+              (Git_wrapper.command caps [ "-C"; cwd; "checkout"; stashed_rev ]))
           :: !Hooks.exit
     | None ->
         (* pyopengrep dies on an assert here; a warning serves better *)
