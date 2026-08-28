@@ -51,6 +51,18 @@ rules:
       dev.semgrep.actions: comment
 |}
 
+(* an empty "metadata:" is read like no metadata: the rule blocks *)
+let empty_metadata_rule_content =
+  {|
+rules:
+  - id: eqeq-bad
+    pattern: $X == $X
+    message: "useless comparison"
+    languages: [python]
+    severity: ERROR
+    metadata:
+|}
+
 (* "dev.semgrep.actions" without "block" makes the rule non-blocking *)
 let nonblocking_rule_content =
   {|
@@ -155,6 +167,10 @@ let test_scalar_blocking_findings (caps : Ci_subcommand.caps) () =
 let test_scalar_nonblocking_findings (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:scalar_nonblocking_rule_content ~target:finding_py_content
     ()
+
+let test_empty_metadata_blocking (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:empty_metadata_rule_content ~target:finding_py_content
+    ~check:Exit_code.Check.findings ()
 
 let test_audit_mode (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
@@ -793,6 +809,9 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "scalar block action exits with findings"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_scalar_blocking_findings caps);
+      t "empty metadata keeps the rule blocking"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_empty_metadata_blocking caps);
       t "scalar non-block action exits ok" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_scalar_nonblocking_findings caps);
       t "audit mode exits ok despite findings"

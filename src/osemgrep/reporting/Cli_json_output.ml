@@ -291,10 +291,15 @@ let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
       in
       let check_id = rule_id in
       let metavars = Some metavars in
+      (* like pyopengrep's `self._raw.get("metadata") or {}`: an empty or
+       * scalar "metadata:" counts as no metadata, so every reader below
+       * can look up members without checking the shape first *)
       let metadata =
         match metadata with
-        | None -> `Assoc []
-        | Some json -> json
+        | Some (`Assoc _ as json) -> json
+        | Some _
+        | None ->
+            `Assoc []
       in
       (* LATER: this should be a variant in semgrep_output_v1.atd
        * and merged with Constants.rule_severity

@@ -75,13 +75,13 @@ let sort_by_groups als =
  * metadata is blocking *)
 let is_blocking (json : Yojson.Basic.t) =
   match Yojson.Basic.Util.member "dev.semgrep.actions" json with
-  | `List stuff ->
-      stuff
+  | `List actions ->
+      actions
       |> List.exists (function
-           | `String s -> String.equal s "block"
+           | `String action -> String.equal action "block"
            | _else -> false)
   (* the scalar form: dev.semgrep.actions: block *)
-  | `String s -> String.equal s "block"
+  | `String action -> String.equal action "block"
   | `Null -> true
   | _else -> false
 
