@@ -298,7 +298,9 @@ let man : Cmdliner.Manpage.block list =
     `P
       "$(b,SEMGREP_COMMIT): override the detected commit (a commit id or any \
        git rev, such as a short id, branch or tag).";
-    `P "$(b,SEMGREP_BRANCH): override the detected branch.";
+    `P
+      "$(b,SEMGREP_BRANCH): override the detected branch. Not applied on \
+       GitLab CI, where the branch is always $(b,CI_COMMIT_REF_NAME).";
     `P
       "$(b,SEMGREP_PR_ID), $(b,SEMGREP_PR_TITLE): override the detected \
        PR/MR id and title.";
