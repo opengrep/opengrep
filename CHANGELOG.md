@@ -1,8 +1,22 @@
 # Changelog
 
+## [1.29.0](https://github.com/opengrep/opengrep/releases/tag/v1.29.0) - 28-08-2026
+
+### Improvements
+
+* Migrate remaining PCRE1 uses to PCRE2, drop the pcre dependency by @dimitris-m in #807
+
+### Bug fixes
+
+* kotlin: fix AST sharing in scope-function taint desugaring by @corneliuhoffman in #806
+* Fix CI failures by @dimitris-m in #808
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.28.0...v1.29.0
+
+
 ## [1.28.0](https://github.com/opengrep/opengrep/releases/tag/v1.28.0) - 26-08-2026
 
-## Improvements
+### Improvements
 
 * Improve install scripts by @dimitris-m in #796
 * opengrep-cli: fix -o on Windows, check destinations early by @dimitris-m in #798
