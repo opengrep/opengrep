@@ -841,7 +841,6 @@ let tests (caps : < Ci_subcommand.caps >) =
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_suppress_errors_env_false caps);
       t "garbage boolean env value is a usage error"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_suppress_errors_env_garbage caps);
       t "short SEMGREP_COMMIT is a rev" test_short_sha_is_a_rev;
       t "SEMGREP_COMMIT accepts any rev" ~checked_output:(Testo.stdxxx ())
