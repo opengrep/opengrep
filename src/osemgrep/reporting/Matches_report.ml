@@ -71,10 +71,18 @@ let sort_by_groups als =
   let compare_group x y = group_order x - group_order y in
   als |> List.stable_sort (Common.on compare_group fst)
 
+(* a rule's metadata is any JSON; a value that is not an object has no
+ * members *)
+let metadata_member (key : string) (metadata : Yojson.Basic.t) :
+    Yojson.Basic.t =
+  match metadata with
+  | `Assoc _ -> Yojson.Basic.Util.member key metadata
+  | _else_ -> `Null
+
 (* like pyopengrep rule_match.py: a match with no "dev.semgrep.actions"
  * metadata is blocking *)
 let is_blocking (json : Yojson.Basic.t) =
-  match Yojson.Basic.Util.member "dev.semgrep.actions" json with
+  match metadata_member "dev.semgrep.actions" json with
   | `List actions ->
       actions
       |> List.exists (function
@@ -468,7 +476,7 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
                (indent_and_wrap_lines ~indent:detail_indent_size
                   ~max_width:(text_width - detail_indent_size)
                   cur.extra.message);
-           (match Yojson.Basic.Util.member "shortlink" cur.extra.metadata with
+           (match metadata_member "shortlink" cur.extra.metadata with
            | `String txt -> Fmt.pf ppf "%sDetails: %s@." detail_indent txt
            | _ -> ());
            Fmt.pf ppf "@.");

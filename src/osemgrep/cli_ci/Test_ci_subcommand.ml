@@ -63,6 +63,18 @@ rules:
     metadata:
 |}
 
+(* metadata is any JSON; a scalar has no "dev.semgrep.actions" *)
+let scalar_metadata_rule_content =
+  {|
+rules:
+  - id: eqeq-bad
+    pattern: $X == $X
+    message: "useless comparison"
+    languages: [python]
+    severity: ERROR
+    metadata: hello
+|}
+
 (* "dev.semgrep.actions" without "block" makes the rule non-blocking *)
 let nonblocking_rule_content =
   {|
@@ -171,6 +183,18 @@ let test_scalar_nonblocking_findings (caps : Ci_subcommand.caps) () =
 let test_empty_metadata_blocking (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:empty_metadata_rule_content ~target:finding_py_content
     ~check:Exit_code.Check.findings ()
+
+(* the match carries the rule's metadata as written, whatever its shape *)
+let test_scalar_metadata_in_json (caps : Ci_subcommand.caps) () =
+  let (), stdout_output =
+    Testo.with_capture stdout (fun () ->
+        run_ci caps ~rule:scalar_metadata_rule_content
+          ~target:finding_py_content ~extra_args:[ "--json" ]
+          ~check:Exit_code.Check.findings ())
+  in
+  Alcotest.(check bool)
+    "scalar metadata in the json output" true
+    (String_.contains ~term:{|"metadata":"hello"|} stdout_output)
 
 let test_audit_mode (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
@@ -812,6 +836,8 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "empty metadata keeps the rule blocking"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_empty_metadata_blocking caps);
+      t "scalar metadata reaches the json output"
+        (test_scalar_metadata_in_json caps);
       t "scalar non-block action exits ok" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_scalar_nonblocking_findings caps);
       t "audit mode exits ok despite findings"
