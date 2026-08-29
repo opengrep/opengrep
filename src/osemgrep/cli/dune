@@ -11,6 +11,7 @@
     ocolor
     commons
     cohttp-lwt-unix
+    git_wrapper
 
     ; Internal libraries
     osemgrep_cli_scan

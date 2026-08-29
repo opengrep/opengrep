@@ -21,7 +21,6 @@ type conf = {
    * directory or cloned git repo) instead of aborting the scan *)
   skip_invalid_configs : bool;
   matching_conf : Match_patterns.matching_conf;
-  engine_type : Engine_type.t;
   autofix : bool;
   (* Performance options *)
   core_runner_conf : Core_runner.conf;
@@ -68,20 +67,24 @@ val default : conf
 *)
 val parse_argv : < Cap.tmp > -> string array -> conf
 
-(* exported because used by Interactive_CLI.ml too (and some by Ci_CLI.ml) *)
 val o_lang : string option Cmdliner.Term.t
 val o_target_roots : string list Cmdliner.Term.t
 val o_include : string list Cmdliner.Term.t
 val o_exclude : string list Cmdliner.Term.t
-val o_secrets : bool Cmdliner.Term.t
 
 (* exported because used by Ci_CLI.ml *)
 val o_allow_local_builds : bool Cmdliner.Term.t
-val o_allow_untrusted_validators : bool Cmdliner.Term.t
+val o_allow_rule_timeout_control : bool Cmdliner.Term.t
+val o_apply_includes_excludes_to_files : bool Cmdliner.Term.t
+val o_config : string list Cmdliner.Term.t
+val o_dynamic_timeout : bool Cmdliner.Term.t
+val o_dynamic_timeout_max_multiplier : int Cmdliner.Term.t
+val o_dynamic_timeout_unit_kb : int Cmdliner.Term.t
+val o_max_match_per_file : int Cmdliner.Term.t
+val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
 val o_autofix : bool Cmdliner.Term.t
 val o_baseline_commit : string option Cmdliner.Term.t
 val o_dataflow_traces : bool Cmdliner.Term.t
-val o_diff_depth : int Cmdliner.Term.t
 val o_dryrun : bool Cmdliner.Term.t
 val o_dump_command_for_core : bool Cmdliner.Term.t
 val o_emacs : bool Cmdliner.Term.t
@@ -94,7 +97,6 @@ val o_gitlab_sast : bool Cmdliner.Term.t
 val o_gitlab_sast_outputs : string list Cmdliner.Term.t
 val o_gitlab_secrets : bool Cmdliner.Term.t
 val o_gitlab_secrets_outputs : string list Cmdliner.Term.t
-val o_historical_secrets : bool Cmdliner.Term.t
 val o_ignore_semgrepignore_files : bool Cmdliner.Term.t
 val o_incremental_output : bool Cmdliner.Term.t
 val o_incremental_output_postprocess : bool Cmdliner.Term.t
@@ -109,15 +111,11 @@ val o_max_log_list_entries : int Cmdliner.Term.t
 val o_max_memory_mb : int Cmdliner.Term.t
 val o_max_target_bytes : int Cmdliner.Term.t
 val o_num_jobs : int Cmdliner.Term.t
-val o_no_secrets_validation : bool Cmdliner.Term.t
 val o_nosem : bool Cmdliner.Term.t
 val o_optimizations : bool Cmdliner.Term.t
-val o_oss : bool Cmdliner.Term.t
 val o_output : string option Cmdliner.Term.t
 val o_output_enclosing_context : bool Cmdliner.Term.t
-val o_pro : bool Cmdliner.Term.t
 val o_taint_intrafile : bool Cmdliner.Term.t
-val o_pro_path_sensitive : bool Cmdliner.Term.t
 val o_rewrite_rule_ids : bool Cmdliner.Term.t
 val o_sarif : bool Cmdliner.Term.t
 val o_sarif_outputs : string list Cmdliner.Term.t
@@ -137,16 +135,6 @@ val o_use_git : bool Cmdliner.Term.t
 val o_version_check : bool Cmdliner.Term.t
 val o_vim : bool Cmdliner.Term.t
 val o_vim_outputs : string list Cmdliner.Term.t
-
-val engine_type_conf :
-  oss:bool ->
-  taint_intrafile:bool ->
-  pro:bool ->
-  secrets:bool ->
-  no_secrets_validation:bool ->
-  allow_untrusted_validators:bool ->
-  pro_path_sensitive:bool ->
-  Engine_type.t
 
 val output_format_conf :
   text:bool ->

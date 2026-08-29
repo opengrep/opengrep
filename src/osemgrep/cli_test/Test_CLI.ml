@@ -21,11 +21,6 @@ open Fpath_.Operators
  *)
 type conf = {
   target : target_kind;
-  (* LATER: separate pro_language: bool; pro_intrafile: bool.
-   * TODO: for now it just gives access to proprietary parsers in
-   * osemgrep-pro so one can run tests on semgrep-rules/elixir/
-   *)
-  pro : bool;
   (* ??? *)
   ignore_todo : bool;
   (* TODO? do we need those options? people use the JSON output?
@@ -67,18 +62,6 @@ let o_json : bool Term.t =
   let info = Arg.info [ "json" ] ~doc:{|Output results in JSON format.|} in
   Arg.value (Arg.flag info)
 
-(* coupling: similar to Scan_CLI.o_pro but currently has a different meaning
- * alt: move those options to CLI_common.ml at some point
- *)
-let o_pro : bool Term.t =
-  let info =
-    Arg.info [ "pro" ]
-      ~doc:
-        (" support pro languages (currently Apex and Elixir)"
-       ^ CLI_common.blurb_pro)
-  in
-  Arg.value (Arg.flag info)
-
 (* coupling: similar to Scan_CLI.o_strict? *)
 (* TODO: be stricter when parsing target files; reject files that partially
  * parse.
@@ -89,15 +72,13 @@ let o_strict : bool Term.t =
 
 (* coupling: Scan_CLI.o_config *)
 let o_config : string list Term.t =
-  let info =
-    Arg.info [ "c"; "f"; "config" ]
-      ~env:(Cmd.Env.info "SEMGREP_RULES")
-      ~doc:
-        {|YAML configuration file, directory of YAML files ending in
+  H.string_list_with_env [ "c"; "f"; "config" ] ~env:"SEMGREP_RULES"
+    ~doc:
+      {|YAML configuration file, directory of YAML files ending in
 .yml|.yaml, URL of a configuration file, or Opengrep registry entry name.
+May also be set with SEMGREP_RULES, a whitespace-separated list of rule
+sources.
 |}
-  in
-  Arg.value (Arg.opt_all Arg.string [] info)
 
 (* osemgrep-only: brandon's experiment *)
 let o_matching_diagnosis : bool Term.t =
@@ -160,14 +141,13 @@ let target_kind_of_roots_and_config target_roots config =
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common config json matching_diagnosis pro strict
+  let combine args common config json matching_diagnosis strict
       taint_intrafile test_ignore_todo =
     let target =
       target_kind_of_roots_and_config (Fpath_.of_strings args) config
     in
     {
       target;
-      pro;
       strict;
       json;
       ignore_todo = test_ignore_todo;
@@ -179,7 +159,7 @@ let cmdline_term : conf Term.t =
   in
   Term.(
     const combine $ o_args $ CLI_common.o_common $ o_config $ o_json
-    $ o_matching_diagnosis $ o_pro $ o_strict $ o_taint_intrafile
+    $ o_matching_diagnosis $ o_strict $ o_taint_intrafile
     $ o_test_ignore_todo)
 
 let doc = "testing the rules"

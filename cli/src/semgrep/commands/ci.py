@@ -140,11 +140,6 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     envvar="SEMGREP_RULES",
 )
 @click.option(
-    "--supply-chain",
-    is_flag=True,
-)
-@click.option("--code", is_flag=True, hidden=True)
-@click.option(
     "--suppress-errors/--no-suppress-errors",
     "suppress_errors",
     default=True,
@@ -160,31 +155,15 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     is_flag=True,
     hidden=True,
 )
-@click.option(
-    "--x-dump-rule-partitions",
-    "dump_n_rule_partitions",
-    type=int,
-    default=0,
-    hidden=True,
-)
-@click.option(
-    "--x-dump-rule-partitions-dir",
-    "dump_rule_partitions_dir",
-    type=click.Path(allow_dash=True, path_type=Path),
-    hidden=True,
-)
 @handle_command_errors
 def ci(
     ctx: click.Context,
     *,
     audit_on: Sequence[str],
-    autofix: bool,
     baseline_commit: Optional[str],
     internal_ci_scan_results: bool,
-    code: bool,
     config: Optional[Tuple[str, ...]],
     debug: bool,
-    diff_depth: int,
     dump_command_for_core: bool,
     enable_nosem: bool,
     enable_version_check: bool,
@@ -212,10 +191,8 @@ def ci(
     outputs_gitlab_secrets: List[str],
     outputs_junit_xml: List[str],
     outputs_sarif: List[str],
-    requested_engine: EngineType,
     quiet: bool,
     rewrite_rule_ids: bool,
-    supply_chain: bool, # NOTE: to be removed.
     scan_unknown_extensions: bool,
     subdir: Optional[Path],
     time_flag: bool,
@@ -227,8 +204,6 @@ def ci(
     use_git_ignore: bool,
     verbose: bool,
     allow_local_builds: bool,
-    dump_n_rule_partitions: Optional[int],
-    dump_rule_partitions_dir: Optional[Path],
     opengrep_ignore_pattern: Optional[str],
     bypass_includes_excludes_for_files: bool = True,
     inline_metavariables: bool = False,
@@ -261,7 +236,7 @@ def ci(
 
     # Maybe move this and the above to the scan-only params, since they are not
     # needed here.
-    if bypass_includes_excludes_for_files:
+    if not bypass_includes_excludes_for_files:
         logger.info(
             "WARNING: --force-exclude is set but will be ignored: "
             "no explicit targets are passed to the ci command"
@@ -291,14 +266,6 @@ def ci(
             "WARNING: `opengrep ci` is meant to be run from the root of a git repo.\nWhen `opengrep ci` is not run from a git repo, it will not be able to perform all operations.\nWhen `opengrep ci` is run from a git repo, but not the root, links in the uploaded findings may be broken.\n\nTo run `opengrep ci` on only a subdirectory of a git repo, see `--subdir`."
         )
 
-    if (dump_n_rule_partitions and not dump_rule_partitions_dir) or (
-        not dump_n_rule_partitions and dump_rule_partitions_dir
-    ):
-        logger.info(
-            "Both or none of --x-dump-rule-partitions and --x-dump-rule-partitions-dir must be specified."
-        )
-        sys.exit(FATAL_EXIT_CODE)
-
     if not config:
         config = (AUTO_CONFIG_KEY,)
 
@@ -320,12 +287,13 @@ def ci(
     console.print(Title("Scan Environment", order=2))
     console.print(debugging_table, markup=True)
 
-    fix_head_if_github_action(metadata)
-
-    if requested_engine is not None:
-        logger.info(
-            "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
-        )
+    # its git commands can fail; wrapper.py exits without printing a
+    # SemgrepError, so report the failure here
+    try:
+        fix_head_if_github_action(metadata)
+    except SemgrepError as e:
+        logger.error(e.format_for_terminal())
+        sys.exit(e.code)
 
     engine_type = EngineType.decide_engine_type()
 
@@ -392,6 +360,15 @@ def ci(
     if subdir:
         target += f"/{subdir}"
 
+    # evaluating merge_base_ref can run a git fetch; wrapper.py exits
+    # without printing a SemgrepError, so report the failure here
+    try:
+        baseline_commit = metadata.merge_base_ref
+    except SemgrepError as e:
+        output_handler.handle_semgrep_errors([e])
+        output_handler.output({}, all_targets=set(), filtered_rules=[])
+        sys.exit(e.code)
+
     # Base arguments for actually running the scan. This is done here so we can
     # re-use this in the event we need to perform a second scan. Currently the
     # only case for this is a separate "historical" scan, where we scan the git
@@ -433,13 +410,10 @@ def ci(
         "timeout_threshold": timeout_threshold,
         "skip_unknown_extensions": (not scan_unknown_extensions),
         "optimizations": optimizations,
-        "baseline_commit": metadata.merge_base_ref,
+        "baseline_commit": baseline_commit,
         "baseline_commit_is_mergebase": True,
-        "diff_depth": diff_depth,
         "capture_core_stderr": capture_core_stderr,
         "allow_local_builds": allow_local_builds,
-        "dump_n_rule_partitions": dump_n_rule_partitions,
-        "dump_rule_partitions_dir": dump_rule_partitions_dir,
         "prioritize_dependency_graph_generation": False,
     }
 

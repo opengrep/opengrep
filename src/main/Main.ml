@@ -84,30 +84,6 @@
 (* Helpers *)
 (*****************************************************************************)
 
-let first_hyphen_in_argv argv =
-  Array.find_index
-    (fun arg -> String.starts_with ~prefix:"-" arg)
-    argv
-
-let position_for_experimental_flag argv =
-  match first_hyphen_in_argv argv with
-  | None -> Array.length argv - 1
-  | Some i -> i
-
-(* TODO[Issue #131]: Add some expectation tests for such functions. *)
-let with_experimental_flag argv =
-  let len = position_for_experimental_flag argv in
-  Array.concat [
-    Array.sub argv 0 len;
-    [| "--experimental" |];
-    Array.sub argv len (Array.length argv - len);
-  ]
-
-(* let _ = assert (with_experimental_flag [| "opengrep"; "scan"; "--help" |]
-                   = [| "opengrep"; "scan"; "--experimental"; "--help" |])
-   let _ = assert (with_experimental_flag [| "opengrep"; "-c"; "rules"; "libs" |]
-                   = [| "opengrep"; "--experimental"; "-c"; "rules"; "libs" |]) *)
-
 let flags_that_require_experimental : string list =
   [ "--output-enclosing-context"; "--semgrepignore-filename" ]
 
@@ -158,9 +134,8 @@ let () =
                 (* adding --experimental so we don't default back to pysemgrep *)
                 CLI.main
                   (caps :> CLI.caps)
-                  (* XXX: Should be after "scan" or similar.
-                   * See line 161 in: src/osemgrep/cli/CLI.ml. *)
-                  (if experimental then argv else with_experimental_flag argv)
+                  (if experimental then argv
+                   else CLI.with_experimental_flag argv)
             | _else_ ->
                 check_experimental_flags argv;
                 CLI.main (caps :> CLI.caps) argv

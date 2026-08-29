@@ -15,24 +15,15 @@ type env = {
   _GH_TOKEN : string option;
 }
 
-val env : env Cmdliner.Term.t
+(* Read via Opengrep_env (empty values count as unset). Aborts when
+ * GITHUB_EVENT_PATH names a missing or invalid JSON file. *)
+val env_from_environment : unit -> env
 
+(* network is for the merge-base shortcut through the GitHub API *)
 class meta :
-  < Cap.exec > ->
-  baseline_ref:Digestif.SHA1.t option ->
+  < Cap.exec ; Cap.network > ->
+  ?subdir:string ->
+  cli_baseline_ref:string option ->
   Git_metadata.env ->
   env ->
-object
-  method project_metadata : Semgrep_output_v1_t.project_metadata
-  method branch : string option
-  method ci_job_url : Uri.t option
-  method commit_sha : Digestif.SHA1.t option
-  method event_name : string
-  method is_full_scan : bool
-  method pr_id : string option
-  method pr_title : string option
-  method repo_name : string
-  method repo_display_name : string
-  method repo_url : Uri.t option
-  method merge_base_ref : Digestif.SHA1.t option
-end
+  Git_metadata.meta_t

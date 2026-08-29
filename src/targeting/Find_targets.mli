@@ -3,12 +3,7 @@
    regardless of rules or languages.
  *)
 
-type project_root =
-  | Filesystem of Rfpath.t
-  (* currently used to optimize Semgrep query console *)
-  | Git_remote of git_remote
-
-and git_remote = { url : Uri.t } [@@deriving show]
+type project_root = Filesystem of Rfpath.t [@@deriving show]
 
 (*
    Abstract type designed for quickly determining whether a path is in the
@@ -26,6 +21,22 @@ module Explicit_targets : sig
   val mem : t -> Fpath.t -> bool
   val pp : Format.formatter -> t -> unit
 end
+
+(* What a differential scan diffs against. The constructors record what the
+ * producer knows about the ref:
+ * - Merge_base_of: any git rev; Diff_scan first computes
+ *   merge-base(HEAD, rev). This is 'opengrep scan --baseline-commit'.
+ * - Commit: a resolved commit that already is the wanted base, diffed
+ *   against directly. 'opengrep ci' produces these from its CI-provider
+ *   merge-base machinery (python: BaselineHandler is_mergebase).
+ * - Rev: a symbolic rev used directly as the base, no merge-base
+ *   computation. 'opengrep ci --baseline-commit main' is this.
+ *)
+type baseline_ref =
+  | Merge_base_of of string
+  | Commit of Digestif.SHA1.t
+  | Rev of string
+[@@deriving show]
 
 type conf = {
   (* global exclude list, passed via semgrep --exclude (a glob) *)
@@ -76,8 +87,7 @@ type conf = {
       max_target_bytes, default true *)
   exclude_minified_files : bool;
   (* TODO: not used for now *)
-  baseline_commit : string option;
-  diff_depth : int;
+  baseline_commit : baseline_ref option;
 }
 [@@deriving show]
 

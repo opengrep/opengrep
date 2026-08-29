@@ -119,12 +119,7 @@ module Log = Log_targeting.Log
 (* Types *)
 (*************************************************************************)
 
-type project_root =
-  | Filesystem of Rfpath.t
-  (* for Semgrep query console *)
-  | Git_remote of git_remote
-
-and git_remote = { url : Uri.t } [@@deriving show]
+type project_root = Filesystem of Rfpath.t [@@deriving show]
 
 (* Yet another file path related type ...
 
@@ -171,6 +166,22 @@ module Explicit_targets = struct
   let mem x path = Hashtbl.mem x.tbl path
 end
 
+(* What a differential scan diffs against. The constructors record what the
+ * producer knows about the ref:
+ * - Merge_base_of: any git rev; Diff_scan first computes
+ *   merge-base(HEAD, rev). This is 'opengrep scan --baseline-commit'.
+ * - Commit: a resolved commit that already is the wanted base, diffed
+ *   against directly. 'opengrep ci' produces these from its CI-provider
+ *   merge-base machinery (python: BaselineHandler is_mergebase).
+ * - Rev: a symbolic rev used directly as the base, no merge-base
+ *   computation. 'opengrep ci --baseline-commit main' is this.
+ *)
+type baseline_ref =
+  | Merge_base_of of string
+  | Commit of Digestif.SHA1.t
+  | Rev of string
+[@@deriving show]
+
 type conf = {
   (* global exclude list, passed via semgrep '--exclude'.
    * TODO? use Glob.Pattern.t instead? same for include_
@@ -206,8 +217,7 @@ type conf = {
   (* osemgrep-only option, exclude scanning minified files, default false *)
   exclude_minified_files : bool;
   (* TODO? remove it? This is now done in Diff_scan.ml instead? *)
-  baseline_commit : string option;
-  diff_depth : int;
+  baseline_commit : baseline_ref option;
 }
 [@@deriving show]
 
@@ -233,7 +243,6 @@ let default_conf : conf =
     explicit_targets = Explicit_targets.empty;
     exclude_minified_files = false;
     baseline_commit = None;
-    diff_depth = 2;
   }
 
 
@@ -686,7 +695,6 @@ let group_scanning_roots_by_project (conf : conf)
            why it's like this.
            TODO: make tests work without requiring --project-root? *)
         Some Project.{ kind = Project.Gitignore_project; root = proj_root }
-    | Some (Git_remote _)
     | None ->
         (* Usual case when scanning the local file system *)
         None
@@ -895,25 +903,6 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
   in
   { selected = selected_targets; skipped = skipped_targets; git_repo = is_git_repo }
 
-(* for semgrep query console *)
-let clone_if_remote_project_root conf =
-  match conf.force_project_root with
-  | Some (Git_remote { url }) ->
-      let cwd = Fpath.v (Unix.getcwd ()) in
-      Log.info (fun m ->
-          m "Sparse cloning %a into CWD: %a" Uri.pp url Fpath.pp cwd);
-      (match Git_wrapper.sparse_shallow_filtered_checkout url (Fpath.v ".") with
-      | Ok () -> ()
-      | Error msg ->
-          failwith
-            (spf "Error while sparse cloning %s into %s: %s" (Uri.to_string url)
-               (Fpath.to_string cwd) msg));
-      Git_wrapper.checkout ();
-      Log.info (fun m -> m "Sparse cloning done")
-  | Some (Filesystem _)
-  | None ->
-      ()
-
 (*************************************************************************)
 (* Entry point *)
 (*************************************************************************)
@@ -924,7 +913,6 @@ let clone_if_remote_project_root conf =
  * at least one root is a git repo. Should we be more precise and
  * display which roots are git repos? Maybe in verbose mode? *)
 let get_targets conf scanning_roots : Fppath.t targets =
-  clone_if_remote_project_root conf;
   let raw =
     List.fold_left
       (fun acc root ->

@@ -58,17 +58,7 @@ type func = {
     Core_result.result_or_exn;
 }
 
-type pro_conf = {
-  diff_config : Differential_scan_config.t;
-  roots : Scanning_root.t list;
-  engine_type : Engine_type.t;
-}
-
 val default_conf : conf
-
-(* Semgrep Pro hook for osemgrep *)
-val hook_mk_pro_core_run_for_osemgrep : (pro_conf -> func) option ref
-val hook_pro_git_remote_scan_setup : (func -> func) option ref
 
 (* builder *)
 val mk_result : ?inline:bool -> Rule.rule list -> Core_result.t -> result
@@ -86,12 +76,6 @@ val mk_result : ?inline:bool -> Rule.rule list -> Core_result.t -> result
 *)
 val mk_core_run_for_osemgrep : Core_scan.func -> func
 
-(* Helper used also in Steps_scan.ml *)
-val core_scan_config_of_conf : conf -> Core_scan_config.t
-
-(* reused in semgrep-server in pro and for Git_remote.ml in pro *)
-val split_jobs_by_language :
-  Find_targets.conf -> Rule.t list -> Fpath.t list -> Lang_job.t list
 
 (* Helper used in Test_subcommand.ml *)
 val targets_for_files_and_rules : Fpath.t list -> Rule.t list -> Target.t list

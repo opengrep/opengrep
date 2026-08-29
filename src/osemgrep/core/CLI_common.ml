@@ -22,10 +22,6 @@ type conf = {
 }
 [@@deriving show]
 
-let blurb_pro =
-  "Requires Semgrep Pro Engine. See https://semgrep.dev/products/pro-engine/ \
-   for more."
-
 (*************************************************************************)
 (* Verbosity options (mutually exclusive) *)
 (*************************************************************************)

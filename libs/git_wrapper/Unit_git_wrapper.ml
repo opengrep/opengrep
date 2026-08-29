@@ -78,9 +78,42 @@ let test_user_identity () =
       let nobody = Git_wrapper.config_get "user.name" in
       Alcotest.(check (option string)) "new user name" (Some "nobody") nobody)
 
+let test_redact_url_userinfo () =
+  let check ~expected input =
+    Alcotest.(check string)
+      input expected
+      (Redact.redact_url_userinfo input)
+  in
+  check
+    ~expected:"fetch https://***@gitlab.com/group/project.git main"
+    "fetch \
+     https://gitlab-ci-token:fake-64_x7kPq2mZ9RtVw3nY5aBc@gitlab.com/group/project.git \
+     main";
+  check ~expected:"https://***@example.com" "https://user@example.com";
+  check
+    ~expected:"fetch https://gitlab.com/group/project.git main"
+    "fetch https://gitlab.com/group/project.git main";
+  check ~expected:"merge-base --all HEAD FETCH_HEAD"
+    "merge-base --all HEAD FETCH_HEAD";
+  (* '@' in a path does not count as credentials *)
+  check ~expected:"https://example.com/a@b" "https://example.com/a@b"
+
+let test_parse_version () =
+  let check input expected =
+    Alcotest.(check (option (pair int int))) input expected
+      (Git_wrapper.parse_version input)
+  in
+  check "git version 2.39.3 (Apple Git-146)" (Some (2, 39));
+  check "git version 2.31.0" (Some (2, 31));
+  check "git version 2.31.0.windows.1" (Some (2, 31));
+  check "not a version" None;
+  check "2" None
+
 let tests =
   [
     t "user identity" test_user_identity;
+    t "redact URL userinfo" test_redact_url_userinfo;
+    t "parse git version" test_parse_version;
     capture "ls-files from project root"
       (test_ls_files_relative
          ~mk_cwd:(fun ~project_root -> project_root)

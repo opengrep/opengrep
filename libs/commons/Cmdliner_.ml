@@ -32,7 +32,7 @@ let uri =
 
 let sha1 =
   let parser str =
-    match Digestif.SHA1.of_hex_opt str with
+    match Digestif.SHA1.consistent_of_hex_opt str with
     | Some sha1 -> Ok sha1
     | None -> Error (`Msg (Fmt.str "Invalid SHA1 value: %S" str))
   in
@@ -61,26 +61,88 @@ let negatable_flag ?(default = false) ~neg_options ~doc options =
   let disable = (false, Arg.info neg_options ~doc:neg_doc) in
   Arg.value (Arg.vflag default [ enable; disable ])
 
-(* Cmdliner.Arg.vflag does not support environment variables, thus we use
-   Arg.value manually if we need supporting environment variables as well *)
+(* same vocabulary as cmdliner's env_bool_parse, which is not exported *)
+let parse_env_bool (var : string) (value : string) :
+    (bool, [ `Msg of string ]) result =
+  match String.lowercase_ascii value with
+  | "false"
+  | "no"
+  | "n"
+  | "0" ->
+      Ok false
+  | "true"
+  | "yes"
+  | "y"
+  | "1" ->
+      Ok true
+  | _else_ ->
+      Error
+        (`Msg
+          (Printf.sprintf
+             "environment variable %s: invalid value %S, expected a boolean"
+             var value))
+
+(* Cmdliner.Arg.vflag_all ignores environment variables (the one on the
+   positive flag is attached only for the man page), so the variable is read
+   here instead, through Opengrep_env so the OPENGREP_/SEMGREP_ alias also
+   counts, and an explicit false is distinguished from an unset variable.
+   vflag_all keeps the command-line order: with the flag and its negation
+   both given, the last one wins, and an explicit flag wins over the
+   environment. *)
 let negatable_flag_with_env ?(default = false) ?env ~neg_options ~doc options =
   let neg_doc =
     let options_str = add_option_dashes options |> String.concat "/" in
     Printf.sprintf "negates %s" options_str
   in
-  let enable = Arg.(value (flag (info options ~doc ?env))) in
-  let disable = Arg.(value (flag (info neg_options ~doc:neg_doc))) in
-  let combine yes no =
-    match (yes, no) with
-    | true, false -> true
-    | false, true -> false
-    | false, false -> default
-    | true, true ->
-        invalid_arg
-          ("mutually exclusive options: "
-          ^ String.concat ", " (options @ neg_options))
+  let env_info = Option.map Cmd.Env.info env in
+  let enable = (true, Arg.info options ~doc ?env:env_info) in
+  let disable = (false, Arg.info neg_options ~doc:neg_doc) in
+  let flags = Arg.(value (vflag_all [] [ enable; disable ])) in
+  (* a bad value is reported by cmdliner like a bad option value, not as
+     an exception *)
+  let combine (values : bool list) : (bool, [ `Msg of string ]) result =
+    match List.rev values with
+    | last :: _ -> Ok last
+    | [] -> (
+        match env with
+        | None -> Ok default
+        | Some var -> (
+            match Opengrep_env.getenv_opt var with
+            | Some value -> parse_env_bool var value
+            | None -> Ok default))
   in
-  Term.(const combine $ enable $ disable)
+  Term.cli_parse_result Term.(const combine $ flags)
+
+(* A repeatable string option whose environment variable holds a
+   whitespace-separated list (e.g. SEMGREP_RULES="p/default extra.yml").
+   Cmdliner's own env handling would turn the variable into a single
+   list element, so the variable is read here instead, through
+   Opengrep_env so the OPENGREP_/SEMGREP_ alias also counts and an empty
+   value means unset. Occurrences on the command line win over the
+   environment and are never split. *)
+let string_list_with_env ?(default = []) ~env ~doc options =
+  let values = Arg.(value (opt_all string [] (Arg.info options ~doc))) in
+  let combine (values : string list) =
+    match values with
+    | _ :: _ -> values
+    | [] -> (
+        match Opengrep_env.getenv_opt env with
+        | Some value -> String_.split ~sep:"[ \t\r\n]+" value
+        | None -> default)
+  in
+  Term.(const combine $ values)
+
+(* A single-valued option whose value can also come from one of several
+   environment variables (cmdliner supports only one per option). The
+   first set variable wins; the command line wins over the environment. *)
+let string_opt_with_envs ~envs ~doc options =
+  let value = Arg.(value (opt (some string) None (Arg.info options ~doc))) in
+  let combine (value : string option) =
+    match value with
+    | Some _ as v -> v
+    | None -> List.find_map Opengrep_env.getenv_opt envs
+  in
+  Term.(const combine $ value)
 
 (* Parse command-line arguments representing a number of bytes, such as
  * '5 mb' or '3.2GiB'

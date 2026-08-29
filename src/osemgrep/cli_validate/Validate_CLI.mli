@@ -8,7 +8,6 @@
  *)
 type conf = {
   rules_source : Rules_source.t;
-  pro : bool;
   core_runner_conf : Core_runner.conf;
   common : CLI_common.conf;
 }

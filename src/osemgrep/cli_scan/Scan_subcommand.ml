@@ -334,44 +334,9 @@ let display_rule_source ~(rule_source : Rules_source.t) : unit =
 (* Helpers *)
 (*************************************************************************)
 
-(* Select and execute the scan func based on the configured engine settings *)
-let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >)
-    (conf : Scan_CLI.conf) (diff_config : Differential_scan_config.t) :
+let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >) :
     Core_runner.func =
-  let core_run_for_osemgrep : Core_runner.func =
-    match conf.engine_type with
-    | OSS -> Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
-    | PRO _ -> (
-        match !Core_runner.hook_mk_pro_core_run_for_osemgrep with
-        | None ->
-            (* TODO: improve this error message depending on what the
-             * instructions should be *)
-            failwith
-              "You have requested running semgrep with a setting that requires \
-               the pro engine, but do not have the pro engine. You may need to \
-               acquire a different binary."
-        | Some pro_scan_func ->
-            pro_scan_func
-              {
-                roots = conf.target_roots;
-                diff_config;
-                engine_type = conf.engine_type;
-              })
-  in
-  let core_run_for_osemgrep : Core_runner.func =
-    match conf.targeting_conf.force_project_root with
-    | Some (Find_targets.Git_remote _) -> (
-        match !Core_runner.hook_pro_git_remote_scan_setup with
-        | None ->
-            failwith
-              "You have requested running semgrep with a setting that requires \
-               the pro engine, but do not have the pro engine. You may need to \
-               acquire a different binary."
-        | Some pro_git_remote_scan_setup ->
-            pro_git_remote_scan_setup core_run_for_osemgrep)
-    | _ -> core_run_for_osemgrep
-  in
-  core_run_for_osemgrep
+  Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
 
 let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
     ~strict caps rules_source =
@@ -445,7 +410,7 @@ let adjust_nosemgrep_and_autofix ~keep_ignored (res : Core_runner.result) :
 (* this is called also from Ci_subcommand.ml.
  * caps = topevel caps - Cap.network
  *)
-let check_targets_with_rules
+let check_targets_with_rules ?(print_summary = true)
     (caps :
       < Cap.stdout
       ; Cap.chdir
@@ -550,28 +515,24 @@ let check_targets_with_rules
         | None ->
             Profiler.record profiler ~name:"core_time" (fun () ->
                 let { run } : Core_runner.func =
-                  mk_core_run_for_osemgrep caps conf
-                    Differential_scan_config.WholeScan
+                  mk_core_run_for_osemgrep caps
                 in
                 run ?file_match_hook
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
                   (rules, invalid_rules) selected)
-        | Some baseline_commit ->
+        | Some baseline ->
             (* scan_baseline calls internally Profiler.record "head_core_time"  *)
             (* diff scan mode *)
             let diff_scan_func : Diff_scan.diff_scan_func =
-             fun ?(diff_config = Differential_scan_config.WholeScan) targets
-                 rules ->
-              let { run } : Core_runner.func =
-                mk_core_run_for_osemgrep caps conf diff_config
-              in
+             fun targets rules ->
+              let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
               run ?file_match_hook
                 conf.core_runner_conf conf.targeting_conf conf.matching_conf
                 (rules, invalid_rules) targets
             in
             Diff_scan.scan_baseline
               (caps :> < Cap.chdir ; Cap.tmp >)
-              conf profiler baseline_commit selected rules diff_scan_func
+              profiler baseline selected rules diff_scan_func
       in
       match result_or_exn with
       | Error exn ->
@@ -640,11 +601,14 @@ let check_targets_with_rules
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
                    ~skipped_groups)
                 ());
-          Logs.app (fun m ->
-              m "Ran %s on %s: %s."
-                (String_.unit_str (List.length valid_rules) "rule")
-                (String_.unit_str (List.length cli_output.paths.scanned) "file")
-                (String_.unit_str (List.length cli_output.results) "finding"));
+          (* python: the print_summary parameter of output(); 'opengrep ci'
+           * prints its own completion lines instead *)
+          if print_summary then
+            Logs.app (fun m ->
+                m "Ran %s on %s: %s."
+                  (String_.unit_str (List.length valid_rules) "rule")
+                  (String_.unit_str (List.length cli_output.paths.scanned) "file")
+                  (String_.unit_str (List.length cli_output.results) "finding"));
 
           (* step 6: apply autofixes *)
           (* this must happen posterior to reporting matches, or will report the
@@ -773,7 +737,7 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
        show =
          Some
            {
-             show_kind = Show_CLI.DumpEnginePath _ | Show_CLI.DumpCommandForCore;
+             show_kind = Show_CLI.DumpEnginePath | Show_CLI.DumpCommandForCore;
              _;
            };
        _;

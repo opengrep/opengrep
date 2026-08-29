@@ -8,7 +8,6 @@
  *)
 type conf = {
   target : target_kind;
-  pro : bool;
   ignore_todo : bool;
   json : bool;
   optimizations : bool;

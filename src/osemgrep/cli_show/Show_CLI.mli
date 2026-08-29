@@ -29,7 +29,7 @@ and show_kind =
   | DumpRule of Fpath.t
   | DumpRuleV2 of Fpath.t
   | DumpPatternsOfRule of Fpath.t
-  | DumpEnginePath of bool (* pro = true *)
+  | DumpEnginePath
   | DumpCommandForCore
   | DumpIntrafileGraph of Fpath.t * Lang.t
   | DumpTaintSignatures of Fpath.t * Fpath.t

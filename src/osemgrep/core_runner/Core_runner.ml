@@ -56,13 +56,6 @@ type conf = {
 }
 [@@deriving show]
 
-type pro_conf = {
-  diff_config : Differential_scan_config.t;
-  (* TODO: change to root: Fpath.t, like in Deep_scan_config.interfile_config *)
-  roots : Scanning_root.t list;
-  engine_type : Engine_type.t;
-}
-
 (* output *)
 (* LATER: ideally we should just return Core_result.t
    without the need for the intermediate Out.core_output.
@@ -134,32 +127,6 @@ let default_conf : conf =
     strict = false;
     engine_config = Engine_config.default;
   }
-
-(*****************************************************************************)
-(* To run a Pro scan (Deep scan and multistep scan) *)
-(*****************************************************************************)
-
-(* Semgrep Pro hook. Note that this is useful only for osemgrep. Indeed,
- * for pysemgrep the code path is instead to fork the
- * semgrep-core-proprietary program, which executes Pro_CLI_main.ml
- * which then calls Run.ml code which is mostly a copy-paste of Core_scan.ml
- * with the Pro scan specifities hard-coded (no need for hooks).
- * We could do the same for osemgrep, but that would require to copy-paste
- * lots of code, so simpler to use a hook instead.
- *
- * Note that Scan_subcommand.ml itself is linked in (o)semgrep-pro,
- * and executed by osemgrep-pro. When linked from osemgrep-pro, this
- * hook below will be set.
- *)
-let (hook_mk_pro_core_run_for_osemgrep : (pro_conf -> func) option ref) =
-  ref None
-
-(* This hooks into the proprietary part of Semgrep, in order to access a
- * function that helps us quickly checkout and scan a remote git repo.
- * If a repo is checked out sparsely, this will only checkout the files
- * that are needed for the scan.
- *)
-let (hook_pro_git_remote_scan_setup : (func -> func) option ref) = ref None
 
 (*************************************************************************)
 (* Metrics and reporting *)

@@ -1,7 +1,8 @@
+import base64
 import json
 import os
+import re
 import subprocess
-import urllib.parse
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -18,8 +19,11 @@ from glom.core import TType
 
 import semgrep.semgrep_interfaces.semgrep_output_v1 as out
 from semgrep import __VERSION__
+from semgrep.error import SemgrepError
 from semgrep.external.git_url_parser import Parser
 from semgrep.git import git_check_output
+from semgrep.git import git_check_output_with_config
+from semgrep.git import git_supports_config_env
 from semgrep.state import get_state
 from semgrep.verbose_logging import getLogger
 
@@ -38,6 +42,20 @@ def sha1_opt(x: Optional[str]) -> Optional[out.Sha1]:
         return None
     else:
         return out.Sha1(x)
+
+
+def resolve_rev_to_sha(rev: str) -> Optional[str]:
+    """A full commit id passes through; any other rev is resolved to the
+    commit it names; an unresolvable rev is dropped with a warning."""
+    if re.fullmatch(r"[0-9a-fA-F]{40}", rev):
+        return rev
+    try:
+        return git_check_output(
+            ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"]
+        )
+    except SemgrepError:
+        logger.warning(f"the baseline rev does not name a commit, ignoring it: {rev}")
+        return None
 
 
 def get_url_from_sstp_url(sstp_url: Optional[str]) -> Optional[str]:
@@ -143,6 +161,7 @@ class GitMeta:
                 logger.warn(
                     f"Unable to infer repo_url. Set SEMGREP_REPO_URL environment variable or run in a valid git project with remote origin defined"
                 )
+                return None
             repo_url = git_parse.stdout.strip()
 
         return get_url_from_sstp_url(repo_url)
@@ -345,6 +364,18 @@ class GithubMeta(GitMeta):
             ]
         )
 
+    @staticmethod
+    def _commit_is_local(sha: str) -> bool:
+        """
+        Whether the commit is in the local repository (git cat-file -e
+        exits 0 for an existing object, non-zero otherwise)
+        """
+        try:
+            git_check_output(["git", "cat-file", "-e", f"{sha}^{{commit}}"])
+            return True
+        except SemgrepError:
+            return False
+
     def _get_latest_commit_hash_in_branch(self, branch_name: str) -> str:
         """
         Return sha hash of latest commit in a given branch
@@ -420,7 +451,7 @@ class GithubMeta(GitMeta):
         # fetch 0, 4, 16, 64, 256, 1024, ...
         fetch_depth = 4**attempt_count if attempt_count else 0
         fetch_depth += get_state().env.min_fetch_depth
-        if attempt_count > self.MAX_FETCH_ATTEMPT_COUNT:  # get all commits on last try
+        if attempt_count >= self.MAX_FETCH_ATTEMPT_COUNT:  # get all commits on last try
             fetch_depth = 2**31 - 1  # git expects a signed 32-bit integer
 
         logger.debug(
@@ -529,12 +560,18 @@ class GithubMeta(GitMeta):
                 timeout=env.git_command_timeout,
             )
         except subprocess.CalledProcessError as e:
-            output = e.stderr.strip()
-            if (
-                output  # output is empty when unable to find branch-off point
-                and "Not a valid " not in output  # the error when a ref is missing
-            ):
-                raise Exception(f"Unexpected git merge-base error message: ({output})")
+            # exit 1 means git found no common ancestor in the local history,
+            # and any other failure with a commit missing locally means it was
+            # not fetched yet; both are fixed by fetching deeper. A failure
+            # with both commits present is unexpected and final.
+            not_found_yet = e.returncode == 1 or not (
+                self._commit_is_local(self.base_branch_hash)
+                and self._commit_is_local(self.head_branch_hash)
+            )
+            if not not_found_yet:
+                raise Exception(
+                    f"Unexpected git merge-base error: {e.stderr.strip()}"
+                )
 
             if attempt_count >= self.MAX_FETCH_ATTEMPT_COUNT:
                 raise Exception(
@@ -657,12 +694,30 @@ class GitlabMeta(GitMeta):
 
         Because this is mocked it is not well tested. Use caution when modifying
         """
-        parts = urllib.parse.urlsplit(os.environ["CI_MERGE_REQUEST_PROJECT_URL"])
-        parts = parts._replace(
-            netloc=f"gitlab-ci-token:{os.environ['CI_JOB_TOKEN']}@{parts.netloc}"
-        )
-        url = urllib.parse.urlunsplit(parts)
-        git_check_output(["git", "fetch", url, branch_name])
+        project_url = os.environ["CI_MERGE_REQUEST_PROJECT_URL"]
+        if git_supports_config_env():
+            # the credentials go to this one child process as an
+            # Authorization header for the project url, and the command
+            # line carries the plain url
+            token = f"gitlab-ci-token:{os.environ['CI_JOB_TOKEN']}"
+            header = "Authorization: Basic " + base64.b64encode(
+                token.encode()
+            ).decode()
+            git_check_output_with_config(
+                ["git", "fetch", project_url, branch_name],
+                {f"http.{project_url}.extraHeader": header},
+            )
+        else:
+            # older git ignores the GIT_CONFIG_* variables: an inline
+            # credential helper supplies the token when git asks for
+            # credentials. The command line carries only the variable
+            # name; the helper's shell reads the value from the
+            # environment
+            helper = (
+                "credential.helper=!f() { echo username=gitlab-ci-token; "
+                "echo password=$CI_JOB_TOKEN; }; f"
+            )
+            git_check_output(["git", "-c", helper, "fetch", project_url, branch_name])
 
         base_sha = git_check_output(
             ["git", "merge-base", "--all", head_sha, "FETCH_HEAD"]
@@ -760,7 +815,8 @@ class GitlabMeta(GitMeta):
     def to_project_metadata(self) -> out.ProjectMetadata:
         res = super().to_project_metadata()
         res.branch = self.commit_ref
-        res.base_sha = sha1_opt(self.merge_base_ref)
+        base_ref = self.merge_base_ref
+        res.base_sha = sha1_opt(resolve_rev_to_sha(base_ref) if base_ref else None)
         res.start_sha = sha1_opt(self.start_sha)
         return res
 
@@ -1185,55 +1241,41 @@ class TravisMeta(GitMeta):
         return res
 
 
-@dataclass
-class SemgrepManagedScanMeta(GitMeta):
-    """Gather metadata from Semgrep Managed Scanning."""
-
-    environment: str = field(default="semgrep-managed-scan", init=False)
-
-    @property
-    def event_name(self) -> str:
-        return os.getenv("SEMGREP_MANAGED_SCAN_EVENT_NAME", super().event_name)
-
-
 def generate_meta_from_environment(
     baseline_ref: Optional[str], subdir: Optional[Path]
 ) -> GitMeta:
     # https://help.github.com/en/actions/configuring-and-managing-workflows/using-environment-variables
     if os.getenv("GITHUB_ACTIONS") == "true":
-        return GithubMeta(baseline_ref)
+        return GithubMeta(baseline_ref, subdir)
 
     # https://docs.gitlab.com/ee/ci/variables/predefined_variables.html
     elif os.getenv("GITLAB_CI") == "true":
-        return GitlabMeta(baseline_ref)
+        return GitlabMeta(baseline_ref, subdir)
 
     # https://circleci.com/docs/2.0/env-vars/#built-in-environment-variables
     elif os.getenv("CIRCLECI") == "true":
-        return CircleCIMeta(baseline_ref)
+        return CircleCIMeta(baseline_ref, subdir)
 
     # https://e.printstacktrace.blog/jenkins-pipeline-environment-variables-the-definitive-guide/
     elif os.getenv("JENKINS_URL") is not None:
-        return JenkinsMeta(baseline_ref)
+        return JenkinsMeta(baseline_ref, subdir)
 
     # https://support.atlassian.com/bitbucket-cloud/docs/variables-and-secrets/
     elif os.getenv("BITBUCKET_BUILD_NUMBER") is not None:
-        return BitbucketMeta(baseline_ref)
+        return BitbucketMeta(baseline_ref, subdir)
 
     # https://github.com/DataDog/dd-trace-py/blob/f583fec63c4392a0784b4199b0e20931f9aae9b5/ddtrace/ext/ci.py#L90
     # picked an env var that is only defined by Azure Pipelines
     elif os.getenv("BUILD_BUILDID") is not None:
-        return AzurePipelinesMeta(baseline_ref)
+        return AzurePipelinesMeta(baseline_ref, subdir)
 
     # https://buildkite.com/docs/pipelines/environment-variables#bk-env-vars-buildkite-build-author-email
     elif os.getenv("BUILDKITE") == "true":
-        return BuildkiteMeta(baseline_ref)
+        return BuildkiteMeta(baseline_ref, subdir)
 
     # https://docs.travis-ci.com/user/environment-variables/
     elif os.getenv("TRAVIS") == "true":
-        return TravisMeta(baseline_ref)
-
-    elif os.getenv("SEMGREP_MANAGED_SCAN") == "true":
-        return SemgrepManagedScanMeta(baseline_ref)
+        return TravisMeta(baseline_ref, subdir)
 
     else:
         return GitMeta(baseline_ref, subdir)

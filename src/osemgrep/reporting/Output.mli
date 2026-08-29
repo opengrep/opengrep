@@ -28,6 +28,10 @@ type conf = {
    * in the log output.
    *)
   max_log_list_entries : int;
+  (* true for 'opengrep ci': the Text format then keeps blocking and
+   * non-blocking findings in separate groups and appends the
+   * "RULES FIRED" sections *)
+  is_ci_invocation : bool;
 }
 [@@deriving show]
 

@@ -23,7 +23,6 @@ from semgrep import __VERSION__
 from semgrep import bytesize
 from semgrep.commands.wrapper import handle_command_errors
 from semgrep.constants import Colors
-from semgrep.constants import DEFAULT_DIFF_DEPTH
 from semgrep.constants import DEFAULT_MAX_CHARS_PER_LINE
 from semgrep.constants import DEFAULT_MAX_LINES_PER_FINDING
 from semgrep.constants import DEFAULT_MAX_LOG_LIST_ENTRIES
@@ -55,13 +54,9 @@ logger = getLogger(__name__)
 
 
 # This subset of scan options is reused in ci.py
+# (--autofix is scan-only: ci never modifies the checkout)
 _scan_options: List[Callable] = [
     click.help_option("--help", "-h"),
-    click.option(
-        "-a",
-        "--autofix/--no-autofix",
-        is_flag=True,
-    ),
     click.option(
         "--baseline-commit",
         envvar=["SEMGREP_BASELINE_COMMIT", "SEMGREP_BASELINE_REF"],
@@ -339,20 +334,6 @@ _scan_options: List[Callable] = [
         "taint_intrafile",
         is_flag=True, default=False
     ),
-    # Accepted so existing invocations keep working; opengrep only ever runs
-    # the open source engine.
-    optgroup.option(
-        "--oss-only",
-        "requested_engine",
-        type=EngineType,
-        flag_value=EngineType.OSS,
-        hidden=True,
-    ),
-    optgroup.option(
-        "--diff-depth",
-        type=int,
-        default=DEFAULT_DIFF_DEPTH,
-    ),
     optgroup.option("--dump-command-for-core", "-d", is_flag=True, hidden=True),
     optgroup.option(
         "--allow-local-builds",
@@ -414,6 +395,11 @@ def scan_options(func: Callable) -> Callable:
 # Those are the scan-only options (not reused in ci.py)
 @click.command()
 @click.argument("targets", nargs=-1, type=click.Path(allow_dash=True))
+@click.option(
+    "-a",
+    "--autofix/--no-autofix",
+    is_flag=True,
+)
 @click.option(
     "--replacement",
 )
@@ -493,9 +479,7 @@ def scan(
     baseline_commit: Optional[str],
     config: Optional[Tuple[str, ...]],
     debug: bool,
-    diff_depth: int,
     dump_engine_path: bool,
-    requested_engine: Optional[EngineType],
     dryrun: bool,
     dump_command_for_core: bool,
     enable_nosem: bool,
@@ -562,11 +546,6 @@ def scan(
     if version:
         print(__VERSION__)
         return None
-
-    if requested_engine is not None:
-        logger.info(
-            "WARNING: --oss-only is set but will be ignored: opengrep only runs the open source engine."
-        )
 
     # Define engine_type for later use in the scan output messages
     engine_type: Optional[EngineType] = None
@@ -783,7 +762,6 @@ def scan(
                     missed_rule_count,
                     _all_subprojects,
                 ) = semgrep.run_scan.run_scan(
-                    diff_depth=diff_depth,
                     dump_command_for_core=dump_command_for_core,
                     time_flag=time_flag,
                     matching_explanations=matching_explanations,

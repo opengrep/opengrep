@@ -23,7 +23,7 @@
  * generate it manually, but anyway we want full control of the help
  * message so this isn't too bad.
  *
- * LATER: add 'interactive' and 'test' new osemgrep-only
+ * LATER: add 'test' new osemgrep-only
  * subcommands (not added yet to avoid regressions in
  * tests/default/e2e/test_help.py).
  *

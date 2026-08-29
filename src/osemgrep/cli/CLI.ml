@@ -51,16 +51,6 @@ type caps =
 let default_subcommand = "scan"
 
 (*****************************************************************************)
-(* Hooks *)
-(*****************************************************************************)
-(* alt: define our own Pro_CLI.ml in semgrep-pro
- * old: was Interactive_subcommand.main
- *)
-let hook_semgrep_interactive =
-  ref (fun _argv ->
-      failwith "semgrep interactive not available (requires --pro)")
-
-(*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
 
@@ -91,9 +81,34 @@ let known_subcommands =
     "show";
     "test";
     "validate";
-    (* pro-only and osemgrep-only *)
-    "interactive";
   ]
+
+(* Global flags that main below detects on the whole argv and that may
+ * legitimately precede the subcommand: typed by the user, or, for
+ * --experimental, inserted by Main.ml for the bare 'opengrep' binary. *)
+let global_flags = [ "--experimental"; "--debug"; "--profile" ]
+
+(* Insert --experimental after the subcommand when there is one, else right
+ * after argv0: the implicit 'scan' subcommand parses the flag wherever it
+ * is, and the scanning roots stay untouched.
+ * Used by Main.ml for the bare 'opengrep' binary. *)
+(* TODO[Issue #131]: Add some expectation tests for such functions. *)
+let with_experimental_flag (argv : string array) : string array =
+  let pos =
+    if Array.length argv >= 2 && List.mem argv.(1) known_subcommands then 2
+    else 1
+  in
+  Array.concat
+    [
+      Array.sub argv 0 pos;
+      [| "--experimental" |];
+      Array.sub argv pos (Array.length argv - pos);
+    ]
+
+(* let _ = assert (with_experimental_flag [| "opengrep"; "scan"; "--help" |]
+                   = [| "opengrep"; "scan"; "--experimental"; "--help" |])
+   let _ = assert (with_experimental_flag [| "opengrep"; "-c"; "rules"; "libs" |]
+                   = [| "opengrep"; "--experimental"; "-c"; "rules"; "libs" |]) *)
 
 let dispatch_subcommand (caps : caps) (argv : string array) =
   match Array.to_list argv with
@@ -118,15 +133,23 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
       Help.print_semgrep_dashdash_help caps#stdout;
       Exit_code.ok ~__LOC__
   | argv0 :: args -> (
+      (* the subcommand may be preceded by global flags, e.g.
+       * 'opengrep --experimental ci' (typed, or built by Main.ml) *)
+      let leading_flags, rest =
+        let rec split acc = function
+          | arg :: tl when List.mem arg global_flags -> split (arg :: acc) tl
+          | tl -> (List.rev acc, tl)
+        in
+        split [] args
+      in
       let subcmd, subcmd_args =
-        match args with
-        | [] -> (default_subcommand, [])
-        | arg1 :: other_args ->
-            if List.mem arg1 known_subcommands then (arg1, other_args)
-            else
-              (* No valid subcommand was found.
-                 Assume the 'scan' subcommand was omitted and insert it. *)
-              (default_subcommand, arg1 :: other_args)
+        match rest with
+        | arg1 :: other_args when List.mem arg1 known_subcommands ->
+            (arg1, leading_flags @ other_args)
+        | _else_ ->
+            (* No valid subcommand was found.
+               Assume the 'scan' subcommand was omitted and insert it. *)
+            (default_subcommand, args)
       in
       let subcmd_argv =
         let subcmd_argv0 = argv0 ^ "-" ^ subcmd in
@@ -144,12 +167,12 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
          *)
         (* partial support, still use Pysemgrep.Fallback in it *)
         | "scan" -> Scan_subcommand.main caps subcmd_argv
+        | "ci" -> Ci_subcommand.main caps subcmd_argv
         (* osemgrep-only: and by default! no need for experimental! *)
         | "lsp" -> Lsp_subcommand.main caps subcmd_argv
         (* | "logout" ->
                Logout_subcommand.main (caps :> < Cap.stdout >) subcmd_argv *)
         | "install-ci" -> Install_ci_subcommand.main caps subcmd_argv
-        | "interactive" -> !hook_semgrep_interactive subcmd_argv
         | "show" -> Show_subcommand.main caps subcmd_argv
         | "test" -> Test_subcommand.main caps subcmd_argv
         | "validate" -> Validate_subcommand.main caps subcmd_argv
@@ -181,6 +204,11 @@ let safe_run ~debug f : Exit_code.t =
         | None -> Exit_code.fatal ~__LOC__
         | Some code -> code)
     | Error.Exit_code code -> code
+    (* a failed git command is already explained by Git_wrapper's own
+     * warning; no backtrace needed *)
+    | Git_wrapper.Error msg ->
+        Logs.err (fun m -> m "%s" msg);
+        Exit_code.fatal ~__LOC__
     (* should never happen, you should prefer Error.Exit to Common.UnixExit
      * but just in case *)
     | Common.UnixExit i ->
