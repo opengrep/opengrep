@@ -1,6 +1,11 @@
 (* SPDX-License-Identifier: LGPL-2.1-only *)
 
-let t = Testo.create
+(* the tests may run on a CI runner whose own environment names a provider
+ * (GITHUB_ACTIONS on the macOS job); every test starts from none, an empty
+ * value counting as unset *)
+let t name ?checked_output ?normalize (func : unit -> unit) =
+  Testo.create name ?checked_output ?normalize (fun () ->
+      Semgrep_envvars.with_envvar "GITHUB_ACTIONS" "" func)
 
 module F = Testutil_files
 
