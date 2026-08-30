@@ -5,7 +5,6 @@ let t = Testo.create
 let check_argv msg ~expected (actual : string array) =
   Alcotest.(check (array string)) msg expected actual
 
-(* coupling: these two cases used to be commented-out asserts in CLI.ml *)
 let test_scan_help () =
   check_argv "opengrep scan --help"
     ~expected:[| "opengrep"; "scan"; "--experimental"; "--help" |]
