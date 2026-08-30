@@ -91,8 +91,8 @@ let global_flags = [ "--experimental"; "--debug"; "--profile" ]
 (* Insert --experimental after the subcommand when there is one, else right
  * after argv0: the implicit 'scan' subcommand parses the flag wherever it
  * is, and the scanning roots stay untouched.
- * Used by Main.ml for the bare 'opengrep' binary. *)
-(* TODO[Issue #131]: Add some expectation tests for such functions. *)
+ * Used by Main.ml for the bare 'opengrep' binary.
+ * Expectation tests: src/osemgrep/tests/Unit_CLI.ml. *)
 let with_experimental_flag (argv : string array) : string array =
   let pos =
     if Array.length argv >= 2 && List.mem argv.(1) known_subcommands then 2
@@ -104,11 +104,6 @@ let with_experimental_flag (argv : string array) : string array =
       [| "--experimental" |];
       Array.sub argv pos (Array.length argv - pos);
     ]
-
-(* let _ = assert (with_experimental_flag [| "opengrep"; "scan"; "--help" |]
-                   = [| "opengrep"; "scan"; "--experimental"; "--help" |])
-   let _ = assert (with_experimental_flag [| "opengrep"; "-c"; "rules"; "libs" |]
-                   = [| "opengrep"; "--experimental"; "-c"; "rules"; "libs" |]) *)
 
 let dispatch_subcommand (caps : caps) (argv : string array) =
   match Array.to_list argv with
