@@ -1340,15 +1340,6 @@ let compile_regexp_union xs =
 (* Strings *)
 (*****************************************************************************)
 
-(* strings take space in memory. Better when can share the space used by
-   similar strings *)
-(* TODO: Remove this, it seems unused. *)
-let _shareds : (string, string) Saturn.Htbl.t =
-  Saturn.Htbl.create ~hashed_type:(module String) ()
-
-let (shared_string : string -> string) =
- fun s -> Common.memoized _shareds s (fun () -> s)
-
 let chop = function
   | "" -> ""
   | s -> String.sub s 0 (String.length s - 1)
