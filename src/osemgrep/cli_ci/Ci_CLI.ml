@@ -158,7 +158,7 @@ let cmdline_term : conf Term.t =
         (* --inline-metavariables is accepted but ignored by ci *)
         inline_metavariables = false;
         matching_explanations;
-        taint_intrafile = taint_intrafile || taint_interfile;
+        taint_intrafile;
         effect_guards = false;
         taint_interfile;
         taint_interfile_depth;
