@@ -19,29 +19,6 @@ val parse_options :
 (* Another wrapper that does Arg.align automatically *)
 val usage : Arg.usage_msg -> cmdline_options -> unit
 
-(* Work with the options_with_title type way to organize a long
- * list of command line switches.
- *)
-val short_usage : Arg.usage_msg -> short_opt:cmdline_options -> unit
-
-val long_usage :
-  Arg.usage_msg ->
-  short_opt:cmdline_options ->
-  long_opt:cmdline_sections ->
-  unit
-
-(* With the options_with_title way, we don't want the default -help and --help
- * so need adapter of Arg module, not just wrapper.
- *)
-val arg_align2 : cmdline_options -> cmdline_options
-
-val arg_parse2 :
-  cmdline_options ->
-  Arg.usage_msg ->
-  (unit -> unit) ->
-  (* short_usage func *)
-  string list
-
 (* The action lib. Useful to debug subpart of your system. See some of
  * my Main.ml for example of use. *)
 type flag_spec = Arg.key * Arg.spec * Arg.doc
@@ -56,11 +33,6 @@ exception WrongNumberOfArguments
 val mk_action_0_arg : (unit -> unit) -> action_func
 val mk_action_1_arg : (string -> unit) -> action_func
 val mk_action_2_arg : (string -> string -> unit) -> action_func
-val mk_action_3_arg : (string -> string -> string -> unit) -> action_func
-
-val mk_action_4_arg :
-  (string -> string -> string -> string -> unit) -> action_func
-
 val mk_action_n_arg : (string list -> unit) -> action_func
 
 val options_of_actions :

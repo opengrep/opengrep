@@ -53,14 +53,6 @@ type cmdline_sections = options_with_title list
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
-let (lines : string -> string list) =
- fun s ->
-  let rec lines_aux = function
-    | [] -> []
-    | [ x ] -> if x = "" then [] else [ x ]
-    | x :: xs -> x :: lines_aux xs
-  in
-  Str.split_delim (Str.regexp "\n") s |> lines_aux
 
 (*****************************************************************************)
 (* Entry points *)
@@ -84,54 +76,6 @@ let parse_options options usage_msg argv =
       raise (UnixExit 0)
 
 let usage usage_msg options = Arg.usage (Arg.align options) usage_msg
-
-(* for coccinelle *)
-
-(* If you don't want the -help and --help that are appended by Arg.align *)
-let arg_align2 xs = Arg.align xs |> List.rev |> List_.drop 2 |> List.rev
-let short_usage usage_msg ~short_opt = usage usage_msg short_opt
-
-let pr_xxxxxxxxxxxxxxxxx () =
-  UCommon.pr
-    "-----------------------------------------------------------------------"
-
-let long_usage usage_msg ~short_opt ~long_opt =
-  UCommon.pr usage_msg;
-  UCommon.pr "";
-  let all_options_with_title = ("main options", "", short_opt) :: long_opt in
-  all_options_with_title
-  |> List.iter (fun (title, explanations, xs) ->
-         UCommon.pr title;
-         pr_xxxxxxxxxxxxxxxxx ();
-         if explanations <> "" then (
-           UCommon.pr explanations;
-           UCommon.pr "");
-         arg_align2 xs
-         |> List.iter (fun (key, _action, s) -> UCommon.pr ("  " ^ key ^ s));
-         UCommon.pr "");
-  ()
-
-(* copy paste of Arg.parse. Don't want the default -help msg *)
-let arg_parse2 l msg short_usage_fun =
-  let args = ref [] in
-  let f file = args := file :: !args in
-  let l = Arg.align l in
-  try
-    Arg.parse_argv USys.argv l f msg;
-    args := List.rev !args;
-    !args
-  with
-  | Arg.Bad msg ->
-      (* eprintf "%s" msg; exit 2; *)
-      let xs = lines msg in
-      (* take only head, it's where the error msg is *)
-      (* nosemgrep: no-logs-in-library *)
-      Logs.err (fun m -> m "%s" (List_.hd_exn "unexpected empty list" xs));
-      short_usage_fun ();
-      raise (UnixExit 2)
-  | Arg.Help _msg ->
-      (* printf "%s" msg; exit 0; *)
-      raise Impossible (* -help is specified in speclist *)
 
 (* ---------------------------------------------------------------------- *)
 
@@ -172,14 +116,6 @@ let mk_action_1_arg f = function
 
 let mk_action_2_arg f = function
   | [ file1; file2 ] -> f file1 file2
-  | _ -> raise WrongNumberOfArguments
-
-let mk_action_3_arg f = function
-  | [ file1; file2; file3 ] -> f file1 file2 file3
-  | _ -> raise WrongNumberOfArguments
-
-let mk_action_4_arg f = function
-  | [ file1; file2; file3; file4 ] -> f file1 file2 file3 file4
   | _ -> raise WrongNumberOfArguments
 
 let mk_action_n_arg f = f

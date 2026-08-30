@@ -67,16 +67,6 @@ let protect ~finally work =
 include Eq.Operators
 
 let phys_equal = Eq.phys_equal
-let phys_not_equal = Eq.phys_not_equal
-
-(* Used to give choice whether id_info fields should be checked in semgrep *)
-let equal_ref_option equal_f a b =
-  match (!a, !b) with
-  | None, None -> true
-  | Some a, Some b -> equal_f a b
-  | Some _, None
-  | None, Some _ ->
-      false
 
 (*****************************************************************************)
 (* Disable physical equality/inequality operators *)
@@ -91,10 +81,6 @@ let equal_ref_option equal_f a b =
 (*****************************************************************************)
 (* Debugging/logging *)
 (*****************************************************************************)
-(* to be used in pipe operations *)
-let before_return f v =
-  f v;
-  v
 
 (*****************************************************************************)
 (* Profiling *)
@@ -220,8 +206,6 @@ let flip f a b = f b a
 let curry f x y = f (x, y)
 let uncurry f (a, b) = f a b
 let const x _y = x
-let do_nothing () = ()
-let rec applyn n f o = if n =|= 0 then o else applyn (n - 1) f (f o)
 
 (* I think Brandon added that, not sure where it comes from *)
 let on g f x y = g (f x) (f y)

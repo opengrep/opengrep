@@ -76,7 +76,6 @@ let () = example "without"
 *)
 
 let db_of_filename file = (Filename.dirname file, Filename.basename file)
-let filename_of_db (basedir, file) = Filename.concat basedir file
 
 let dbe_of_filename file =
   (* raise Invalid_argument if no ext, so safe to use later the unsafe
@@ -90,16 +89,6 @@ let dbe_of_filename file =
 let filename_of_dbe (dir, base, ext) =
   if ext = "" then Filename.concat dir base
   else Filename.concat dir (base ^ "." ^ ext)
-
-let dbe_of_filename_safe file =
-  try Either.Left (dbe_of_filename file) with
-  | Invalid_argument _ ->
-      Either.Right (Filename.dirname file, Filename.basename file)
-
-let dbe_of_filename_nodot file =
-  let d, b, e = dbe_of_filename file in
-  let d = if d = "." then "" else d in
-  (d, b, e)
 
 (* old:
  * let re_be = Str.regexp "\\([^.]*\\)\\.\\(.*\\)"
