@@ -421,7 +421,7 @@ type bool3 = True3 | False3 | TrueFalsePb3 of string
 (* strings take space in memory. Better when can share the space used by
  * similar strings.
  *)
-val _shareds : (string, string) Kcas_data.Hashtbl.t
+val _shareds : (string, string) Saturn.Htbl.t
 val shared_string : string -> string
 val chop : string -> string
 val chop_dirsymbol : string -> string

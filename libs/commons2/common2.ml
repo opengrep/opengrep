@@ -214,8 +214,7 @@ let xxx_once f s =
   | _ when !UCommon.disable_pr2_once ->
       (* nosemgrep: no-pr2 *)
       UCommon.pr2 s
-  | _ when not (Kcas_data.Hashtbl.mem UCommon._already_printed s) ->
-      Kcas_data.Hashtbl.replace UCommon._already_printed s true;
+  | _ when Saturn.Htbl.try_add UCommon._already_printed s true ->
       f ("(ONCE) " ^ s)
   | _else_ -> ()
 
@@ -1344,14 +1343,11 @@ let compile_regexp_union xs =
 (* strings take space in memory. Better when can share the space used by
    similar strings *)
 (* TODO: Remove this, it seems unused. *)
-let _shareds = Kcas_data.Hashtbl.create () (* 100 *)
+let _shareds : (string, string) Saturn.Htbl.t =
+  Saturn.Htbl.create ~hashed_type:(module String) ()
 
 let (shared_string : string -> string) =
- fun s ->
-  try Kcas_data.Hashtbl.find _shareds s with
-  | Not_found ->
-      Kcas_data.Hashtbl.add _shareds s s;
-      s
+ fun s -> Common.memoized _shareds s (fun () -> s)
 
 let chop = function
   | "" -> ""

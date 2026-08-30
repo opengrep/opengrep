@@ -137,11 +137,13 @@ let range_of_tokens xs =
   | Tok.NoTokenLocation _ -> None
 
 (* XXX: This should probably be cleared for baseline scanning, after the head scan! *)
-let hmemo : (Fpath.t, string) Kcas_data.Hashtbl.t = Kcas_data.Hashtbl.create () (* 101 *)
+let hmemo : (Fpath.t, string) Saturn.Htbl.t =
+  Saturn.Htbl.create ~hashed_type:(module Fpath_.Hashed) ()
 
 let () =
   (* nosemgrep: forbid-tmp *)
-  UTmp.register_temp_file_cleanup_hook (fun file -> Kcas_data.Hashtbl.remove hmemo file)
+  UTmp.register_temp_file_cleanup_hook (fun file ->
+      ignore (Saturn.Htbl.try_remove hmemo file : bool))
 
 let content_at_range file r =
   let str = Common.memoized hmemo file (fun () -> UFile.read_file file) in

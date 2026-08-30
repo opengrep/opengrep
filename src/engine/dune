@@ -6,7 +6,7 @@
    alcotest
    calendar
    thread-local-storage
-   kcas_data
+   saturn
 
    commons
    pfff-lang_GENERIC-analyze

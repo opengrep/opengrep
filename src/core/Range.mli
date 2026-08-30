@@ -38,4 +38,4 @@ val range_of_tokens : Tok.t list -> t option
  *)
 val content_at_range : Fpath.t -> t -> string
 
-val hmemo : (Fpath.t, string) Kcas_data.Hashtbl.t
+val hmemo : (Fpath.t, string) Saturn.Htbl.t

@@ -162,16 +162,17 @@ let memoized ?(use_cache = true) h k f =
     (* NOTE: In a parallel scenario, we can of course run [f ()] more than once,
      * so it's better to make sure that any [f] passed has only tolerable side
      * effects (like reading a file we know should be there) and always returns
-     * the same result or raises the same exception. We could propably use a
-     * [Kcas] transaction if we wished to ensure that replacement of existing
-     * values does not happen, but I don't see the benefit for our purposes. *)
-    match Kcas_data.Hashtbl.find_opt h k with
+     * the same result or raises the same exception. [Saturn.Htbl.try_add]
+     * never replaces an existing value: if another domain stored a value for
+     * [k] before us, our [v] is discarded and the stored one is returned. *)
+    match Saturn.Htbl.find_opt h k with
     | Some v -> v
     | None ->
         let v = f () in
-        (* XXX: Thread Sanitizer still reports innocent (?) races with [Kcas]. *)
-        Kcas_data.Hashtbl.replace h k v;
-        v
+        if Saturn.Htbl.try_add h k v then v
+        else
+          (* Another domain bound [k] first; return its value so all callers share it. *)
+          Option.value (Saturn.Htbl.find_opt h k) ~default:v
 
 (* Because memoize does not create the hashtable itself, but uses an existing one,
  * when we have a domain-local hashtable, it will be safe to use in parallel. *)

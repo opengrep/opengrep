@@ -37,19 +37,15 @@ let pr2 s =
   UStdlib.prerr_string "\n";
   flush UStdlib.stderr
 
-(* TODO[Issue #130]: Get rid of that, not thread-safe. *)
-let _already_printed = Kcas_data.Hashtbl.create () (* 101 *)
+let _already_printed : (string, bool) Saturn.Htbl.t =
+  Saturn.Htbl.create ~hashed_type:(module String) ()
 (* TODO: Is this set anywhere? It may seem so but in fact it's not! *)
 let disable_pr2_once = ref false
 
 let xxx_once f s =
   if !disable_pr2_once then pr2 s
-  else if not (Kcas_data.Hashtbl.mem _already_printed s) then (
-    Kcas_data.Hashtbl.replace _already_printed s true;
-    f ("(ONCE) " ^ s))
+  else if Saturn.Htbl.try_add _already_printed s true then f ("(ONCE) " ^ s)
 
-(* TODO[Issue #130]: This is used in a couple of places and it's not
- * thread-safe, which is an issue when [Flag_parsing.verbose_lexing] is set. *)
 let pr2_once s = xxx_once pr2 s
 let pr2_gen x = pr2 (Dumper.dump x)
 

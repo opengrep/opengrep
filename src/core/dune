@@ -12,7 +12,7 @@
    uuidm
    yaml
    sexplib
-   kcas_data
+   saturn
 
    ; in libs/
    commons

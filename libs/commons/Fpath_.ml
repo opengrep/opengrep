@@ -85,6 +85,13 @@ let () =
 (*****************************************************************************)
 type t = Fpath.t [@@deriving show, eq, ord]
 
+module Hashed = struct
+  type t = Fpath.t
+
+  let equal = Fpath.equal
+  let hash (p : Fpath.t) : int = Hashtbl.hash p
+end
+
 let t_of_sexp (sexp : Sexplib.Sexp.t) : t =
   Fpath.v (Sexplib.Std.string_of_sexp sexp)
 

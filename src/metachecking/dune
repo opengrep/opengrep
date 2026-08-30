@@ -4,7 +4,6 @@
  (wrapped false)
  (libraries
    pfff-lang_GENERIC-analyze
-   kcas_data
 
    semgrep.core
    semgrep.core_scan

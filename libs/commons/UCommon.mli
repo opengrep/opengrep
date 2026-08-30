@@ -19,7 +19,7 @@ val pr2_gen : 'a -> unit
 val pr2_once : string -> unit
 
 (* forbid pr2_once to do the once "optimisation" *)
-val _already_printed : (string, bool) Kcas_data.Hashtbl.t
+val _already_printed : (string, bool) Saturn.Htbl.t
 val disable_pr2_once : bool ref
 
 (*****************************************************************************)
