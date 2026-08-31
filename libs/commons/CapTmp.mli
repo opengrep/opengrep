@@ -21,9 +21,6 @@ val with_temp_dir :
 
 val get_temp_dir_name : Cap.FS.tmp -> Fpath.t
 
-val new_temp_file :
-  ?prefix:string -> ?suffix:string -> ?temp_dir:Fpath.t -> Cap.FS.tmp -> Fpath.t
-
 val replace_named_pipe_by_regular_file_if_needed :
   Cap.FS.tmp -> ?prefix:string -> Fpath.t -> Fpath.t option
 

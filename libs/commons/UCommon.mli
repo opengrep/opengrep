@@ -19,24 +19,12 @@ val pr2_gen : 'a -> unit
 val pr2_once : string -> unit
 
 (* forbid pr2_once to do the once "optimisation" *)
-val _already_printed : (string, bool) Kcas_data.Hashtbl.t
+val _already_printed : (string, bool) Saturn.Htbl.t
 val disable_pr2_once : bool ref
 
 (*****************************************************************************)
 (* Profiling *)
 (*****************************************************************************)
-
-(*
-   Run a function and print how long it took to return or to raise an
-   exception. pr_time prints to stdout.
-*)
-val pr_time : string -> (unit -> 'a) -> 'a
-
-(*
-   Run a function and print how long it took to return or to raise an
-   exception. pr2_time prints to stderr.
-*)
-val pr2_time : string -> (unit -> 'a) -> 'a
 
 (*****************************************************************************)
 (* Misc *)

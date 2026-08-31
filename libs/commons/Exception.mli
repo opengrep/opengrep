@@ -88,10 +88,7 @@
 *)
 type t
 
-(* Catch any exception and capture a stack backtrace *)
-val catch_all : (unit -> 'a) -> ('a, t) Result.t
-
-(* Create a traced exception in case we can't use 'catch_all'.
+(* Create a traced exception.
    This records the stack backtrace which is the state of the call stack
    where the exception was raised. *)
 val catch : exn -> t

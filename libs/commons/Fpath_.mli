@@ -30,6 +30,9 @@ val of_yojson : Yojson.Safe.t -> (Fpath.t, string) result
 (* alias but with derived available *)
 type t = Fpath.t [@@deriving show, eq, ord, sexp]
 
+(* For hash tables keyed by path, e.g. [Saturn.Htbl.create ~hashed_type]. *)
+module Hashed : Hashtbl.HashedType with type t = Fpath.t
+
 (*
    Take a nonempty list of path segments and turn them in to relative path.
    Only the last segment may by empty, representing a trailing slash.

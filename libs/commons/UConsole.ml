@@ -13,11 +13,6 @@ let setup ?highlight_setting:(hs = (Auto : highlight_setting)) () =
   highlight_setting := hs;
   highlight := hl
 
-let with_highlight temp func =
-  let orig = get_highlight_setting () in
-  setup ~highlight_setting:temp ();
-  Common.finalize func (fun () -> setup ~highlight_setting:orig ())
-
 let print str = UPrintf.printf "%s\n%!" str
 let print_no_nl str = UPrintf.printf "%s%!" str
 let eprint str = UPrintf.eprintf "%s\n%!" str

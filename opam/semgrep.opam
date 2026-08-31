@@ -76,7 +76,7 @@ depends: [
   "memprof-limits" {= "dev"}
   "thread-local-storage"
   "domainslib"
-  "kcas_data"
+  "saturn" {>= "1.0.0"}
   "odoc" {with-doc}
 ]
 build: [

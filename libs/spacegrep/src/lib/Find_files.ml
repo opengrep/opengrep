@@ -11,8 +11,8 @@ type visit_tracker = {
   mark_visited : string -> unit;
 }
 
-let hmemo : (string, Unix.stats) Kcas_data.Hashtbl.t =
-  Kcas_data.Hashtbl.create () (* 101 *)
+let hmemo : (string, Unix.stats) Saturn.Htbl.t =
+  Saturn.Htbl.create ~hashed_type:(module String) ()
 
 (* Cache the results of the 'stat' syscall to speed things up.
    (due to calling it multiple times on the same path, and having

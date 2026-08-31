@@ -32,4 +32,4 @@ val line_col_of_charpos : Fpath.t -> int -> int * int
 val mval_of_string : string -> Tok.t -> Metavariable.mvalue
 val info_of_token_location : Tok.location -> Tok.t
 
-val hmemo : (Fpath.t, Pos.bytepos_linecol_converters) Kcas_data.Hashtbl.t
+val hmemo : (Fpath.t, Pos.bytepos_linecol_converters) Saturn.Htbl.t

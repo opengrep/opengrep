@@ -539,7 +539,7 @@ For more information see https://opengrep.dev.
                          ; fact there is a TLS module in there also; however, it's
                          ; not exposed in the public interface.
     domainslib
-    kcas_data ; lock-free data structures, also makes life easier for refactoring.
+    (saturn (>= "1.0.0")) ; Saturn.Htbl exists since 1.0.0.
   )
 )
 

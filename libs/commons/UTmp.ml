@@ -27,8 +27,8 @@ module Log = Log_commons.Log
 (* Globals *)
 (*****************************************************************************)
 
-let temp_files_created : (Fpath.t, unit) Kcas_data.Hashtbl.t =
-  Kcas_data.Hashtbl.create () (* 101 *)
+let temp_files_created : (Fpath.t, unit) Saturn.Htbl.t =
+  Saturn.Htbl.create ~hashed_type:(module Fpath_.Hashed) ()
 
 (* old: was in Common2.cmdline_flags_devel()
     ( "-keep_tmp_files",
@@ -40,16 +40,18 @@ let save_temp_files = ref false
 
 (* XXX: This is called outside of the domainslib loop, so it should be ok. *)
 let erase_temp_files () =
-  if not !save_temp_files then (
-    temp_files_created
-    |> Kcas_data.Hashtbl.iter (fun path () ->
+  if not !save_temp_files then
+    Saturn.Htbl.remove_all temp_files_created
+    |> Seq.iter (fun (path, ()) ->
            Log.info (fun m -> m "deleting: %s" !!path);
-           USys.remove !!path);
-    Kcas_data.Hashtbl.clear temp_files_created)
+           (* The file may already have been deleted; do not let one
+            * failure leak the remaining files. *)
+           try USys.remove !!path with
+           | Sys_error _ -> ())
 
 (* hooks for with_temp_file() *)
 (* TODO[Issue #128] This does not look like it's used in a single thread.
- * Use a [Kcas_data] stack? But it seems the hooks are only added at the
+ * Use a [Saturn.Stack]? But it seems the hooks are only added at the
  * top level only, in a couple of modules: core/Range.ml and engine/Xpattern_matcher. *)
 let temp_file_cleanup_hooks = ref []
 
@@ -95,13 +97,13 @@ let new_temp_file ?(prefix = default_temp_file_prefix) ?(suffix = "") ?temp_dir
    * At least for opengrep-cli (osemgrep). But it's used in other places like Autofix. *)
   (* ignore ( assert false ); *)
   Log.debug (fun m -> m "creating temp file %s" (Fpath.to_string temp_file));
-  Kcas_data.Hashtbl.replace (* because we don't need > 1 bindings per key *)
-    temp_files_created temp_file ();
+  if not (Saturn.Htbl.try_add temp_files_created temp_file ()) then
+    failwith (spf "temp file %s already registered" !!temp_file);
   temp_file
 
 let erase_this_temp_file f =
   if not !save_temp_files then (
-    Kcas_data.Hashtbl.remove temp_files_created f;
+    ignore (Saturn.Htbl.try_remove temp_files_created f : bool);
     Log.info (fun m -> m "deleting: %s" !!f);
     USys.remove !!f)
 

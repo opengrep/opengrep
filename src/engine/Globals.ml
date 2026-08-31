@@ -62,9 +62,9 @@ let reset () =
   TLS.set Match_patterns.last_matched_rule None; (* NEW, DONE *)
   Pro_hooks.reset_pro_hooks ();
   (* TODO: There is probably more places where we need to do that: *)
-  Kcas_data.Hashtbl.clear Xpattern_matcher.hmemo;
-  Kcas_data.Hashtbl.clear Range.hmemo;
-  Kcas_data.Hashtbl.clear Spacegrep.Find_files.hmemo;
+  let _ : _ Seq.t = Saturn.Htbl.remove_all Xpattern_matcher.hmemo in
+  let _ : _ Seq.t = Saturn.Htbl.remove_all Range.hmemo in
+  let _ : _ Seq.t = Saturn.Htbl.remove_all Spacegrep.Find_files.hmemo in
   (* TODO?
    * - the internal parser refs in Parsing_plugin.ml [TODO]
    * - Http_helpers.client_ref ? [TODO]

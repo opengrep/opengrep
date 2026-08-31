@@ -11,16 +11,9 @@ val fileprefix : string -> string
 
 (* db for dir, base *)
 val db_of_filename : string -> string * string
-val filename_of_db : string * string -> string
 
 (* dbe for dir, base, ext *)
 val dbe_of_filename : string -> string * string * string
-val dbe_of_filename_nodot : string -> string * string * string
-
-(* Left (d,b,e) | Right (d,b)  if file has no extension *)
-val dbe_of_filename_safe :
-  string -> (string * string * string, string * string) Either.t
-
 val dbe_of_filename_noext_ok : string -> string * string * string
 
 (* [dbe_of_filename_many_ext_opt filename] returns [Some (d,b,e)], where

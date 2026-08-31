@@ -67,16 +67,6 @@ let protect ~finally work =
 include Eq.Operators
 
 let phys_equal = Eq.phys_equal
-let phys_not_equal = Eq.phys_not_equal
-
-(* Used to give choice whether id_info fields should be checked in semgrep *)
-let equal_ref_option equal_f a b =
-  match (!a, !b) with
-  | None, None -> true
-  | Some a, Some b -> equal_f a b
-  | Some _, None
-  | None, Some _ ->
-      false
 
 (*****************************************************************************)
 (* Disable physical equality/inequality operators *)
@@ -91,10 +81,6 @@ let equal_ref_option equal_f a b =
 (*****************************************************************************)
 (* Debugging/logging *)
 (*****************************************************************************)
-(* to be used in pipe operations *)
-let before_return f v =
-  f v;
-  v
 
 (*****************************************************************************)
 (* Profiling *)
@@ -162,16 +148,17 @@ let memoized ?(use_cache = true) h k f =
     (* NOTE: In a parallel scenario, we can of course run [f ()] more than once,
      * so it's better to make sure that any [f] passed has only tolerable side
      * effects (like reading a file we know should be there) and always returns
-     * the same result or raises the same exception. We could propably use a
-     * [Kcas] transaction if we wished to ensure that replacement of existing
-     * values does not happen, but I don't see the benefit for our purposes. *)
-    match Kcas_data.Hashtbl.find_opt h k with
+     * the same result or raises the same exception. [Saturn.Htbl.try_add]
+     * never replaces an existing value: if another domain stored a value for
+     * [k] before us, our [v] is discarded and the stored one is returned. *)
+    match Saturn.Htbl.find_opt h k with
     | Some v -> v
     | None ->
         let v = f () in
-        (* XXX: Thread Sanitizer still reports innocent (?) races with [Kcas]. *)
-        Kcas_data.Hashtbl.replace h k v;
-        v
+        if Saturn.Htbl.try_add h k v then v
+        else
+          (* Another domain bound [k] first; return its value so all callers share it. *)
+          Option.value (Saturn.Htbl.find_opt h k) ~default:v
 
 (* Because memoize does not create the hashtable itself, but uses an existing one,
  * when we have a domain-local hashtable, it will be safe to use in parallel. *)
@@ -219,8 +206,6 @@ let flip f a b = f b a
 let curry f x y = f (x, y)
 let uncurry f (a, b) = f a b
 let const x _y = x
-let do_nothing () = ()
-let rec applyn n f o = if n =|= 0 then o else applyn (n - 1) f (f o)
 
 (* I think Brandon added that, not sure where it comes from *)
 let on g f x y = g (f x) (f y)
