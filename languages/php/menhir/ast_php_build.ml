@@ -561,6 +561,10 @@ and expr env = function
       A.Call
         ( A.Id [ (A.builtin "yield", wrap tok) ],
           fb tok [ A.Arg (array_pair env e) ] )
+  | YieldFrom (tok, tok2, e) ->
+      A.Call
+        ( A.Id [ (A.builtin "yield_from", wrap tok) ],
+          fb tok2 [ A.Arg (expr env e) ] )
   (* todo? merge in one yield_break? *)
   | YieldBreak (tok, tok2) ->
       A.Call

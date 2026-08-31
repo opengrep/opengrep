@@ -1220,12 +1220,11 @@ expr:
  (* php-facebook-ext: in hphp.y yield are at the statement level
   * and are restricted to a few forms.
   * TODO: can't use expr_or_dots here
-  * TODO: keep T_FROM in AST
   *)
  | T_YIELD                   { Yield ($1, None) }
  | T_YIELD expr              { Yield ($1, Some (ArrayExpr $2)) }
  | T_YIELD expr "=>" expr { Yield ($1, Some (ArrayArrowExpr ($2, $3, $4))) }
- | T_YIELD T_FROM expr              { Yield ($1, Some (ArrayExpr $3)) }
+ | T_YIELD T_FROM expr       { YieldFrom ($1, $2, $3) }
  | T_YIELD T_BREAK { YieldBreak ($1, $2) }
  (* php-facebook-ext: Just like yield, await is at the statement level *)
  | T_AWAIT expr { Await ($1, $2) }
