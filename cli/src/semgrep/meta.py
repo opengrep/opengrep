@@ -271,7 +271,7 @@ class GithubMeta(GitMeta):
     def event(self) -> Dict[str, Any]:
         value = os.getenv("GITHUB_EVENT_PATH")
         if value:
-            return json.loads(Path(value).read_text())  # type: ignore
+            return json.loads(Path(value).read_text(encoding="utf-8"))  # type: ignore
         return {}
 
     @property

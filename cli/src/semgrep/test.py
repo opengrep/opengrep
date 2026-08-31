@@ -185,7 +185,7 @@ def get_expected_and_reported_lines(
 
     for test_file in test_files:
         test_file_resolved = str(test_file.resolve())
-        all_lines = test_file.read_text().split("\n")
+        all_lines = test_file.read_text(encoding="utf-8").split("\n")
         for i, line in enumerate(all_lines):
             # +1 because we are 0 based and semgrep output is not, plus skip the comment line
             effective_line_num = i + 2
