@@ -199,7 +199,6 @@ let keyword_table = Hashtbl_.hash_of_list [
 
   (* recent PHP extensions (some were php-facebook-ext: before) *)
   "yield", (fun ii -> T_YIELD ii);
-  "from", (fun ii -> T_FROM ii);
 
   (* old: "__halt_compiler", (fun ii -> T_HALT_COMPILER ii); *)
 
@@ -363,8 +362,13 @@ let WHITESPACEOPT = [' ' '\n' '\r' '\t']*
 (* PHP identifiers are byte-based: any byte in 0x80-0xff is a valid identifier
  * character, which is how PHP supports non-ASCII (e.g. UTF-8) identifiers.
  * This mirrors the LABEL definition in Zend's zend_language_scanner.l. *)
-let LABEL =	['a'-'z''A'-'Z''_''\128'-'\255']['a'-'z''A'-'Z''0'-'9''_''\128'-'\255']*
+let LABEL_CHAR = ['a'-'z''A'-'Z''0'-'9''_''\128'-'\255']
+let LABEL =	['a'-'z''A'-'Z''_''\128'-'\255'] LABEL_CHAR*
 let BOOL = (['T''t']['R''r']['U''u']['E''e']) | (['F''f']['A''a']['L''l']['S''s']['E''e'])
+(* case-insensitive like every keyword, but needed as regexps because
+ * 'yield from' is recognised in a single match *)
+let YIELD = ['Y''y']['I''i']['E''e']['L''l']['D''d']
+let FROM = ['F''f']['R''r']['O''o']['M''m']
 (* the '_' of a numeric literal separator only ever sits between two digits,
  * as in '1_000' or '0x1_C'; leading, trailing and doubled ones are not
  * numbers. coupling: LNUM..ONUM in Zend's zend_language_scanner.l
@@ -639,6 +643,35 @@ rule st_in_scripting state = parse
      * but this is also ugly.
      *)
     | "async" { T_ASYNC (tokinfo lexbuf) }
+
+    (* 'from' is a reserved word only right after 'yield', so it is read here
+     * rather than in keyword_table. Zend has a single T_YIELD_FROM token for
+     * the pair; the grammar here wants two, and the trailing label characters
+     * are part of the match so that the 'from' of 'yield fromage' stays an
+     * identifier.
+     * coupling: the "yield"{WHITESPACE}"from" rule in Zend's
+     * zend_language_scanner.l
+     *)
+    | (YIELD as kwd) (WHITESPACE as white) ((FROM LABEL_CHAR*) as label) {
+        let info = tokinfo lexbuf in
+        let kwdinfo = Tok.rewrap_str kwd info in
+
+        let file = Tok.file_of_tok info in
+        let parse_info = Tok.unsafe_loc_of_tok info in
+        let pos_after_kwd = parse_info.Tok.pos.bytepos + String.length kwd in
+        let pos_after_white = pos_after_kwd + String.length white in
+
+        let whiteinfo = tokinfo_file_str_pos file white pos_after_kwd in
+        let lblinfo = tokinfo_file_str_pos file label pos_after_white in
+
+        push_token state
+          (if String.equal (String.lowercase_ascii label) "from"
+           then T_FROM lblinfo
+           else T_IDENT (case_str label, lblinfo));
+        push_token state (TSpaces whiteinfo);
+
+        T_YIELD kwdinfo
+      }
 
     | LABEL
         { let info = tokinfo lexbuf in

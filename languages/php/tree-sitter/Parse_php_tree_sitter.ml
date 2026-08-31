@@ -1312,21 +1312,16 @@ and map_expression (env : env) (x : CST.expression) : A.expr =
       let v4 = map_expression env v4 in
       let v4 = map_ref_expr env v3 v4 in
       A.Assign (v1, v2, v4)
-  | `Yield_exp (v1, v2) ->
+  | `Yield_exp (v1, v2) -> (
       let v1 = (* "yield" *) _str env v1 in
-      let v2 =
-        match v2 with
-        | Some x -> (
-            match x with
-            | `Array_elem_init x -> [ map_array_element_initializer env x ]
-            | `From_exp (v1, v2) ->
-                let v1 = (* "from" *) token env v1 in
-                (* TODO handle `yield from` *)
-                let v2 = map_expression env v2 in
-                [ v2 ])
-        | None -> []
-      in
-      fake_call_to_builtin env v1 v2
+      match v2 with
+      | Some (`From_exp (v2, v3)) ->
+          let v2 = (* "from" *) token env v2 in
+          let v3 = map_expression env v3 in
+          fake_call_to_builtin env ("yield_from", v2) [ v3 ]
+      | Some (`Array_elem_init x) ->
+          fake_call_to_builtin env v1 [ map_array_element_initializer env x ]
+      | None -> fake_call_to_builtin env v1 [])
   | `Un_exp x -> map_unary_expression env x
   | `Bin_exp x -> map_binary_expression env x
   | `Incl_exp (v1, v2) ->
