@@ -16,54 +16,6 @@
 open Common
 
 (*****************************************************************************)
-(* Prelude *)
-(*****************************************************************************)
-(* Concrete Syntax Tree (CST) for PHP.
- *
- * Currently, the CST supports mostly PHP 5.2 with
- * a few extensions from PHP 5.3 (e.g. closures, namespace, const) and
- * PHP 5.4 (e.g. traits) as well as support for many Facebook
- * extensions (XHP, generators, annotations, generics, collections,
- * type definitions, implicit fields via constructor parameters).
- *
- * Update: I removed many facebook extensions to simplify (e.g., XHP).
- * Moreover, this CST is mostly used for semgrep now, so we may
- * gradually transform it into ast_php.ml to avoid an extra intermediate
- * when converting from PHP to the generic AST.
- * For example, use Foo\Bar\{A, B} is not represented faithfully anymore
- * in this CST, and it's unsugared in use Foo\Bar\A and use Foo\Bar\B
- * (like in ast_php.ml).
- * The main requirement for this hybrid CST/AST
- * is to get the range of an expr/stmt/... correct so you must keep
- * the first and last token of an expr/stmt/... in the AST.
- *
- *
- * A CST is convenient in a refactoring context or code visualization
- * context, but if you need to do some heavy static analysis, consider
- * instead lang_php/analyze/foundation/pil.ml which defines a
- * PHP Intermediate Language a la CIL.
- *
- * todo:
- *  - unify toplevel statement vs statements? hmmm maybe not
- *  - maybe even in a refactoring context a PIL+comment
- *    (see pretty/ast_pp.ml) would make more sense.
- *
- * NOTE: data from this type are often marshalled in berkeley DB tables
- * which means that if you add a new constructor or field in the types below,
- * you must erase the berkeley DB databases otherwise pfff
- * will probably ends with a segfault (OCaml serialization is not
- * type-safe). A hacky solution is to add new constructors only at the end
- * of a type definition.
- *
- * COUPLING: some programs in other languages (e.g. Python) may
- * use some of the pfff binding, or json/sexp exporters, so if you
- * change the name of constructors in this file, don't forget
- * to regenerate the json/sexp exporters, but also to modify the
- * dependent programs !!!! An easier solution is to not change this
- * file, or to only add new constructors.
- *)
-
-(*****************************************************************************)
 (* Token (leaf) *)
 (*****************************************************************************)
 
