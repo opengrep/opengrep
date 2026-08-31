@@ -1318,7 +1318,9 @@ and map_expression (env : env) (x : CST.expression) : A.expr =
       | Some (`From_exp (v2, v3)) ->
           let v2 = (* "from" *) token env v2 in
           let v3 = map_expression env v3 in
-          fake_call_to_builtin env ("yield_from", v2) [ v3 ]
+          A.Call
+            ( A.Id [ (A.builtin "yield_from", snd v1) ],
+              Tok.fake_bracket v2 [ A.Arg v3 ] )
       | Some (`Array_elem_init x) ->
           fake_call_to_builtin env v1 [ map_array_element_initializer env x ]
       | None -> fake_call_to_builtin env v1 [])
