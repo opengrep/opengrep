@@ -365,12 +365,18 @@ let WHITESPACEOPT = [' ' '\n' '\r' '\t']*
  * This mirrors the LABEL definition in Zend's zend_language_scanner.l. *)
 let LABEL =	['a'-'z''A'-'Z''_''\128'-'\255']['a'-'z''A'-'Z''0'-'9''_''\128'-'\255']*
 let BOOL = (['T''t']['R''r']['U''u']['E''e']) | (['F''f']['A''a']['L''l']['S''s']['E''e'])
-let LNUM =	['0'-'9']+
-let DNUM =	(['0'-'9']*['.']['0'-'9']+) | (['0'-'9']+['.']['0'-'9']* )
+(* the '_' of a numeric literal separator only ever sits between two digits,
+ * as in '1_000' or '0x1_C'; leading, trailing and doubled ones are not
+ * numbers. coupling: LNUM..ONUM in Zend's zend_language_scanner.l
+ *)
+let LNUM =	['0'-'9']+ ('_' ['0'-'9']+)*
+let DNUM =	(LNUM? ['.'] LNUM) | (LNUM ['.'] LNUM?)
 
 let EXPONENT_DNUM =	((LNUM|DNUM)['e''E']['+''-']?LNUM)
-let HEXNUM =	("0x" | "0X")['0'-'9''a'-'f''A'-'F']+
-let BINNUM =	"0b"['0'-'1']+
+let HEXNUM =	("0x" | "0X")['0'-'9''a'-'f''A'-'F']+ ('_' ['0'-'9''a'-'f''A'-'F']+)*
+let BINNUM =	("0b" | "0B")['0'-'1']+ ('_' ['0'-'1']+)*
+(* PHP 8.1 explicit octal; the legacy '017' form is an LNUM *)
+let OCTNUM =	("0o" | "0O")['0'-'7']+ ('_' ['0'-'7']+)*
 (*/*
  * LITERAL_DOLLAR matches unescaped $ that aren't followed by a label character
  * or a { and therefore will be taken literally. The case of literal $ before
@@ -586,12 +592,27 @@ rule st_in_scripting state = parse
            * but bool_of_string only accepts "true" and "false" *)
           T_BOOL (bool_of_string (String.lowercase_ascii s), ii)
         }
-    | LNUM | BINNUM | HEXNUM
+    | LNUM | BINNUM | HEXNUM | OCTNUM
         {
           (* more? cf original lexer *)
           let s = tok lexbuf in
           let ii = tokinfo lexbuf in
-          T_LNUMBER (Parsed_int.parse (s, ii))
+          (* separators carry no value, so drop them before reading the
+           * number. A leading '0' then means base 8, as in '017' = 15; the
+           * 0x, 0b and 0o forms name their base in the prefix instead.
+           * coupling: the {LNUM} action in Zend's zend_language_scanner.l
+           *)
+          let digits = String.concat "" (String.split_on_char '_' s) in
+          let is_c_octal =
+            String.length digits > 1
+            && Char.equal digits.[0] '0'
+            && match digits.[1] with
+               | 'x' | 'X' | 'b' | 'B' | 'o' | 'O' -> false
+               | _ -> true
+          in
+          T_LNUMBER
+            (if is_c_octal then Parsed_int.parse_c_octal (digits, ii)
+             else Parsed_int.parse (digits, ii))
         }
     | DNUM | EXPONENT_DNUM
         { T_DNUMBER(float_of_string_opt ( tok lexbuf), tokinfo lexbuf) }
@@ -887,7 +908,7 @@ and st_looking_for_varname state = parse
 (*****************************************************************************)
 and st_var_offset state = parse
 
-  | LNUM | HEXNUM | BINNUM { (* /* Offset must be treated as a string */ *)
+  | LNUM | HEXNUM | BINNUM | OCTNUM { (* /* Offset must be treated as a string */ *)
     T_NUM_STRING (tok lexbuf, tokinfo lexbuf)
   }
 
