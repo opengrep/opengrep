@@ -1087,7 +1087,7 @@ return_type:
 (*************************************************************************)
 (* PHP 8 extension (was using << >> in HPHP) *)
 attributes:
-| "#[" listc(attribute) "]" { ($1, $2, $3) }
+| "#[" attribute_list "]" { ($1, $2, $3) }
 | attributes attributes {match ($1, $2) with ((lp,xs1,_),(_,xs2,rp)) -> (lp,xs1@xs2,rp)}
 
 attribute:
@@ -1858,10 +1858,15 @@ class_name_no_array: qualified_class_name type_arguments { Hint ($1, $2) }
 (* xxx_list, xxx_opt *)
 (*************************************************************************)
 
+(* both lists accept a trailing comma, as every other PHP argument list does *)
+attribute_list:
+ | listc(attribute)     { $1 }
+ | listc(attribute) "," { $1 @ [Right $2] }
+
 attribute_argument_list:
- | (*empty*) { [] }
- | attribute_argument { [Left $1] }
- | attribute_argument_list "," attribute_argument { $1@[Right $2; Left $3]}
+ | (*empty*)                     { [] }
+ | listc(attribute_argument)     { $1 }
+ | listc(attribute_argument) "," { $1 @ [Right $2] }
 
 (* less: should we allow the "..." only for the end? *)
 non_empty_type_php_or_dots_list:
