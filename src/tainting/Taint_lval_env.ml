@@ -79,25 +79,6 @@ type t = {
 
 type env = t
 
-type prop_fn =
-  taints_to_propagate:taints_to_propagate ->
-  pending_propagation_dests:pending_propagation_dests ->
-  env
-
-type add_fn = IL.lval -> T.taints -> env -> env
-
-let hook_propagate_to :
-    (Var_env.var ->
-    T.taints ->
-    taints_to_propagate:taints_to_propagate ->
-    pending_propagation_dests:pending_propagation_dests ->
-    prop:prop_fn ->
-    add:add_fn ->
-    t)
-    option
-    ref =
-  ref None
-
 let empty =
   {
     tainted = NameMap.empty;
@@ -275,14 +256,22 @@ let propagate_to lang prop_var taints env =
         taints_to_propagate = VarMap.add prop_var taints env.taints_to_propagate;
       }
     in
-    match !hook_propagate_to with
+    (* If the 'to' was visited before this 'from' (e.g. 'to' is the first
+     * argument of a call, as in strcpy($DST, $SRC)), it was queued as a
+     * pending destination. Flush it now by side-effect: subsequent uses
+     * of the destination l-value see the propagated taints. *)
+    match VarMap.find_opt prop_var env.pending_propagation_dests with
+    | Some lval ->
+        let env =
+          {
+            env with
+            taints_to_propagate = VarMap.remove prop_var env.taints_to_propagate;
+            pending_propagation_dests =
+              VarMap.remove prop_var env.pending_propagation_dests;
+          }
+        in
+        add_lval lang lval taints env
     | None -> env
-    | Some hook ->
-        hook prop_var taints ~taints_to_propagate:env.taints_to_propagate
-          ~pending_propagation_dests:env.pending_propagation_dests
-          ~prop:(fun ~taints_to_propagate ~pending_propagation_dests ->
-            { env with taints_to_propagate; pending_propagation_dests })
-          ~add:(add_lval lang)
 
 let find_var { tainted; _ } var = NameMap.find_opt var tainted
 

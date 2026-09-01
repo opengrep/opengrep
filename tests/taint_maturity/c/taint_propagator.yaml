@@ -1,0 +1,21 @@
+rules:
+  - id: taint-propagator
+    mode: taint
+    languages:
+      - c
+    message: |
+      Propagators must work regardless of the order in which the 'from' and
+      'to' arguments occur in the call.
+    pattern-sources:
+      - pattern: |
+          "tainted"
+    pattern-propagators:
+      - pattern: strcpy($DST, $SRC)
+        from: $SRC
+        to: $DST
+      - pattern: copy_into($SRC, $DST)
+        from: $SRC
+        to: $DST
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

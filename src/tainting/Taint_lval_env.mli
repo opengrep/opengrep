@@ -21,27 +21,6 @@ open Shape_and_sig.Shape
 
 type t
 type env = t
-type taints_to_propagate = Taint.taints Dataflow_var_env.VarMap.t
-type pending_propagation_dests = IL.lval Dataflow_var_env.VarMap.t
-
-type prop_fn =
-  taints_to_propagate:taints_to_propagate ->
-  pending_propagation_dests:pending_propagation_dests ->
-  env
-
-type add_fn = IL.lval -> Taint.taints -> env -> env
-
-val hook_propagate_to :
-  (Dataflow_var_env.var ->
-  Taint.taints ->
-  taints_to_propagate:taints_to_propagate ->
-  pending_propagation_dests:pending_propagation_dests ->
-  prop:prop_fn ->
-  add:add_fn ->
-  t)
-  option
-  ref
-(** Pro hook, this is a bit complicated to avoid exposing `t`s internals. *)
 
 val empty : env
 val empty_inout : env Dataflow_core.inout
@@ -62,8 +41,7 @@ val add_lval_shape : Lang.t -> IL.lval -> Taint.taints -> shape -> env -> env
 val add : IL.name -> Taint.offset list -> Taint.taints -> env -> env
 
 val add_lval : Lang.t -> IL.lval -> Taint.taints -> env -> env
-(** Assign a set of taints (but no specific shape) to an l-value.
-    [add_lval lang] is an [add_fn]. *)
+(** Assign a set of taints (but no specific shape) to an l-value. *)
 
 (* THINK: Perhaps keep propagators outside of this environment? *)
 val propagate_to : Lang.t -> Dataflow_var_env.var -> Taint.taints -> env -> env
