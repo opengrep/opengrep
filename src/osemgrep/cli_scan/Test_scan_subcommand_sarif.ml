@@ -9,12 +9,6 @@ open Test_scan_helpers
 (*****************************************************************************)
 (* End-to-end tests for the SARIF output of the scan subcommand.
  *
- * These were ported from cli/tests/default/e2e/test_output_sarif.py so that
- * the osemgrep-only code path is exercised on CI without depending on the
- * Python wrapper. The tests that Python marks [@osemfail] (taint labels,
- * --error exit behaviour, non-existent input files) are intentionally left
- * behind in Python for now.
- *
  * Where the output goes, rather than what a SARIF document contains, is
  * tested in Test_scan_subcommand_output.ml.
  *)
@@ -123,6 +117,9 @@ let basic_cases : (string * string * string) list =
     ("metavariable_type",
      "rules/metavariable_type.yaml",
      "targets/basic/stupid.py");
+    (* taint labels and requires; the matchBasedId/v1 is the fingerprint,
+     * see Test_scan_subcommand.test_fingerprints *)
+    ("taint labels", "rules/taint_trace.yaml", "targets/taint/taint_trace.cpp");
   ]
 
 let tests (caps : < Scan_subcommand.caps >) =

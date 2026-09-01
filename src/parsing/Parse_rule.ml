@@ -1059,6 +1059,8 @@ let parse_one_rule ~rewrite_rule_ids (i : int) (rule : G.expr) :
       R.id;
       min_version = Option.map fst min_version;
       max_version = Option.map fst max_version;
+      (* from the rule expression: the parsers above consumed the dict *)
+      formula_string = Formula_string.of_rule rule;
       message;
       target_selector;
       target_analyzer;
