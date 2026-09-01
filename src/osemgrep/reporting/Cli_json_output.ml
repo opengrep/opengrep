@@ -330,7 +330,7 @@ let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
             fix;
             is_ignored = Some is_ignored;
             fingerprint =
-              Semgrep_hashing_functions.match_based_id_partial rule rule_id
+              Semgrep_hashing_functions.Match_based_id.partial rule rule_id
                 metavars !!path;
             sca_info = sca_match;
             fixed_lines;

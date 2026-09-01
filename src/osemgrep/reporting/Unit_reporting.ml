@@ -29,13 +29,13 @@ let t = Testo.create
 (* Tests *)
 (*****************************************************************************)
 
-(* If you add an entry, double check pysemgrep returns similar things by
- * copy pasting the rule, write a target with a match, then
- * use --debug on the rule with a match and inspect the logs (we now log the
- * 'match_key=' in rule_match.py so just look at the logs).
- * coupling: see also test_match_based_id.py
+(* The expected strings follow the algorithm described in Formula_string.ml
+ * (every string under the pattern keys, sorted joins per level), with each
+ * metavariable name then replaced by its content in the listed order. They
+ * were checked against pysemgrep's rule.py formula_string() and
+ * rule_match.py get_match_based_key().
  *)
-let string_of_formulas_expectations =
+let match_based_id_formula_expectations =
   [
     (* e2e/rules/eqeq.yaml 1st rule *)
     ( "basic rule",
@@ -83,8 +83,9 @@ rules:
       \ self.a+b == self.a+b 1 == 1 assert(...) assertFalse(...) \
        assertTrue(...) def __eq__(...):\n\
       \    ...\n" );
-    (* e2e/rules/taint_trace.yaml TODO: wrong generation! *)
-    ( "taint with labels (WRONG TOFIX)",
+    (* e2e/rules/taint_trace.yaml: labels, requires and focus-metavariable
+     * count, the metavariables not bound by the match stay as they are *)
+    ( "taint with labels",
       {|
 rules:
   - id: taint-trace
@@ -116,17 +117,93 @@ rules:
           - focus-metavariable: $SRC
 |},
       [ ("$RHS", "res1"); ("$SRC", "res2") ],
-      (* TODO: this is wrong; osemgrep generate what is below but it should generate
-       * instead:
-       * "$LHS res1 $LHS + res1 SCALAR USER_CONTROLLED SOURCE() USER_CONTROLLED res2 SINK(<... res2 ...>) USER_CONTROLLED and SCALAR"
-       * to take into account the label/requore/focus-metavariable in the rule
-       *)
-      "$LHS + res1 SINK(<... res2 ...>) SOURCE()" );
+      "$LHS res1 $LHS + res1 SCALAR USER_CONTROLLED SOURCE() USER_CONTROLLED \
+       res2 SINK(<... res2 ...>) USER_CONTROLLED and SCALAR" );
+    (* e2e/rules/metavariable-regex/metavariable-regex.yaml: the condition's
+     * metavariable name and regex count *)
+    ( "metavariable-regex",
+      {|
+rules:
+  - id: metavar-test
+    patterns:
+      - pattern: "metavariable_regex_test($X)"
+      - metavariable-regex:
+          metavariable: "$X"
+          regex: '("test"|"example")'
+    message: "Metavariable regex test"
+    languages: [python]
+    severity: ERROR
+|},
+      [ ("$X", "\"test\"") ],
+      "\"test\" (\"test\"|\"example\") metavariable_regex_test(\"test\")" );
+    (* a boolean under a pattern key empties the whole string *)
+    ( "boolean under a pattern key",
+      {|
+rules:
+  - id: strip
+    patterns:
+      - pattern: foo($X)
+      - metavariable-comparison:
+          metavariable: $X
+          comparison: $X > 1
+          strip: true
+    message: m
+    languages: [python]
+    severity: ERROR
+|},
+      [ ("$X", "2") ],
+      "" );
+    ( "nested either with focus list",
+      {|
+rules:
+  - id: nested
+    patterns:
+      - pattern-either:
+          - pattern: a($X)
+          - patterns:
+              - pattern-inside: |
+                  def f(...):
+                    ...
+              - pattern: b($X, $Y)
+      - focus-metavariable:
+          - $Y
+          - $X
+      - pattern-not: c()
+    message: m
+    languages: [python]
+    severity: ERROR
+|},
+      [ ("$X", "1"); ("$Y", "2") ],
+      "1 2 a(1) b(1, 2) def f(...):\n  ...\n c()" );
+    ( "pattern-regex",
+      {|
+rules:
+  - id: rx
+    pattern-regex: (abc)+
+    message: m
+    languages: [generic]
+    severity: ERROR
+|},
+      [],
+      "(abc)+" );
+    (* the substitution is a plain replace in the order of the metavariables:
+     * $X inside $XY gets replaced too *)
+    ( "metavariable name prefix of another",
+      {|
+rules:
+  - id: prefix
+    pattern: foo($X, $XY)
+    message: m
+    languages: [python]
+    severity: ERROR
+|},
+      [ ("$X", "1"); ("$XY", "2") ],
+      "foo(1, 1Y)" );
   ]
 
-let test_string_of_formulas _caps =
-  Testo.categorize "string_of_formulas"
-    (string_of_formulas_expectations
+let test_match_based_id_formula _caps =
+  Testo.categorize "match-based id formula"
+    (match_based_id_formula_expectations
     |> List_.map (fun (title, rule, mvars, expected) ->
            t title (fun () ->
                UTmp.with_temp_file ~contents:rule (fun file ->
@@ -146,8 +223,8 @@ let test_string_of_formulas _caps =
                                     } ))
                        in
                        let res =
-                         Semgrep_hashing_functions
-                         .match_formula_interpolated_str rule (Some mvars)
+                         Semgrep_hashing_functions.Match_based_id.formula
+                           Pysemgrep rule (Some mvars)
                        in
                        Alcotest.(check string) __LOC__ expected res
                    | _ ->
@@ -160,4 +237,4 @@ let test_string_of_formulas _caps =
 (*****************************************************************************)
 
 let tests caps =
-  Testo.categorize_suites "Osemgrep reporting" [ test_string_of_formulas caps ]
+  Testo.categorize_suites "Osemgrep reporting" [ test_match_based_id_formula caps ]

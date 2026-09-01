@@ -709,6 +709,8 @@ type 'mode rule_info = {
    * is now done via Rule_options instead.
    *)
   metadata : JSON.t option;
+  (* the rule part of the match-based id, see Formula_string.ml *)
+  formula_string : string;
   (* Range of Semgrep versions supported by the rule.
    * Note that a rule with these fields may not even be parseable
    * in the current version of Semgrep and wouldn't even reach this point.
@@ -890,6 +892,11 @@ let rule_of_formula ?fix (xlang : Xlang.t) (formula : formula) : rule =
     fix_regexp = None;
     paths = None;
     metadata = None;
+    (* pysemgrep builds the -e rule as {pattern: <text>, ...} *)
+    formula_string =
+      (match formula with
+      | { f = P xpat; _ } -> fst xpat.Xpattern.pstr
+      | _ -> "");
     validators = None;
     product = `SAST;
     dependency_formula = None;

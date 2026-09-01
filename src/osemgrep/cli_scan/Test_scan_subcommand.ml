@@ -361,6 +361,416 @@ let test_truncated_terraform_block (caps : Scan_subcommand.caps) () =
           Exit_code.Check.ok exit_code))
 
 (*****************************************************************************)
+(* Fingerprints *)
+(*****************************************************************************)
+(* The match-based ids below are the ones the Python wrapper computed for
+ * these findings (cli/tests/default/e2e fixtures). The rule id and the
+ * relative path are part of the hash, so the fixture layout is reproduced.
+ * See Formula_string.ml. *)
+
+let metavariable_regex_rule_content =
+  {|
+rules:
+  - id: metavar-test
+    patterns:
+      - pattern: "metavariable_regex_test($X)"
+      - metavariable-regex:
+          metavariable: "$X"
+          regex: '("test"|"example")'
+    message: "Metavariable regex test"
+    languages: [python]
+    severity: ERROR
+|}
+
+let metavariable_regex_py_content =
+  {|metavariable_regex_test("test")
+metavariable_regex_test("example")
+metavariable_regex_test(7)
+|}
+
+let taint_labels_rule_content =
+  {|
+rules:
+  - id: taint-trace
+    message: found an error
+    languages:
+      - cpp
+      - c
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - label: USER_CONTROLLED
+        patterns:
+          - pattern: SOURCE()
+      - label: SCALAR
+        requires: USER_CONTROLLED
+        patterns:
+          - pattern-either:
+              - pattern: $LHS + $RHS
+          - focus-metavariable:
+              - $RHS
+              - $LHS
+    pattern-sinks:
+      - requires: USER_CONTROLLED and SCALAR
+        patterns:
+          - pattern-either:
+              - pattern: SINK(<... $SRC ...>)
+          - focus-metavariable: $SRC
+|}
+
+let taint_labels_cpp_content =
+  {|void foo() {
+  void* curBase;
+  size_t curLen;
+
+  while (curIov < count) {
+    ssize_t res1 = 0;
+    ssize_t res2 = 0;
+
+    if (isRead) {
+      res1 = SOURCE();
+    } else {
+      res2 = pass_the_taint(curBase);
+    }
+
+    curBase = (void*)((char*)curBase + res1);
+
+    SINK(res2);
+  }
+}
+|}
+
+let eqeq_is_bad_rule_content =
+  {|
+rules:
+  - id: eqeq-is-bad
+    patterns:
+      - pattern-not-inside: |
+          def __eq__(...):
+              ...
+      - pattern-not-inside: assert(...)
+      - pattern-not-inside: assertTrue(...)
+      - pattern-not-inside: assertFalse(...)
+      - pattern-either:
+          - pattern: $X == $X
+          - pattern: $X != $X
+          - patterns:
+              - pattern-inside: |
+                  def __init__(...):
+                      ...
+              - pattern: self.$X == self.$X
+      - pattern-not: 1 == 1
+    message: "useless comparison operation `$X == $X` or `$X != $X`"
+    languages: [python]
+    severity: ERROR
+|}
+
+let cwe_tag_rule_content =
+  {|
+rules:
+  - id: rule-with-cwe-tag
+    pattern: $X + $Y
+    message: Fake message.
+    metadata:
+      cwe:
+        - "CWE-99999999: Fake CWE"
+        - "CWE-99999999: Fake CWE"
+        - "CWE-88888888: Another fake CWE"
+    languages:
+      - python
+    severity: ERROR
+|}
+
+(* two rules with the same pattern: the index suffix counts per rule and
+ * per file *)
+let duplicates_rule_content =
+  {|
+rules:
+  - id: eqeq-bad
+    patterns:
+      - pattern: $X == $X
+    message: "useless comparison"
+    languages: [python]
+    severity: ERROR
+  - id: eqeq-bad-dup
+    patterns:
+      - pattern: $X == $X
+    message: "useless comparison"
+    languages: [python]
+    severity: ERROR
+|}
+
+let duplicates_py_content =
+  {|if 5 == 5:
+    print("True!")
+
+if 5 == 5:
+    print("False!")
+|}
+
+(* (path, line, fingerprint) of the findings of a --json scan of the
+ * targets, sorted *)
+let fingerprints_of_scan (caps : Scan_subcommand.caps) ~(rule_path : string)
+    ~(rule : string) ~(targets : (string * string) list) :
+    (string * int * string) list =
+  let rec tree (path : string list) (contents : string) : F.t =
+    match path with
+    | [ file ] -> F.File (file, contents)
+    | dir :: rest -> F.Dir (dir, [ tree rest contents ])
+    | [] -> assert false
+  in
+  let repo_files =
+    tree (String.split_on_char '/' rule_path) rule
+    :: List_.map
+         (fun ((path : string), (contents : string)) ->
+           tree (String.split_on_char '/' path) contents)
+         targets
+  in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                let exit_code =
+                  without_settings (fun () ->
+                      Scan_subcommand.main caps
+                        (Array.of_list
+                           ([
+                              "opengrep-scan";
+                              "--experimental";
+                              "--json";
+                              "--config";
+                              rule_path;
+                            ]
+                           @ List_.map fst targets)))
+                in
+                Exit_code.Check.ok exit_code)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          out.results
+          |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                 (Fpath.to_string m.path, m.start.line, m.extra.fingerprint))
+          |> List.sort compare))
+
+let test_fingerprints (caps : Scan_subcommand.caps) () =
+  let check name expected ~rule_path ~rule ~targets =
+    Alcotest.(check (list (triple string int string)))
+      name expected
+      (fingerprints_of_scan caps ~rule_path ~rule ~targets)
+  in
+  check "search rule" ~rule_path:"rules/eqeq.yaml" ~rule:eqeq_is_bad_rule_content
+    ~targets:[ ("targets/basic/stupid.py", stupid_py_content) ]
+    [
+      ( "targets/basic/stupid.py",
+        3,
+        "62b4a09c4569768898c43c09fa0a5b95b7e93257ef3a0911a5c379b6265b4d49fa4aecd5782461632e9aef4779af02d7cad4405b9a5318a0e5ffe9a5bd8daeae_0"
+      );
+    ];
+  check "two matches of one rule on one line" ~rule_path:"rules/cwe_tag.yaml"
+    ~rule:cwe_tag_rule_content
+    ~targets:[ ("targets/basic/stupid.py", stupid_py_content) ]
+    [
+      ( "targets/basic/stupid.py",
+        3,
+        "c14751d4f27243ab3fc24c8e9993358c58673b1f8cb907fc90f66a33826c9183a0386cc160cf4457cf7e175c9efb083d250a3b52fe3154a003fc9b9955802118_0"
+      );
+      ( "targets/basic/stupid.py",
+        3,
+        "c14751d4f27243ab3fc24c8e9993358c58673b1f8cb907fc90f66a33826c9183a0386cc160cf4457cf7e175c9efb083d250a3b52fe3154a003fc9b9955802118_1"
+      );
+    ];
+  check "metavariable-regex condition"
+    ~rule_path:"rules/metavariable-regex/metavariable-regex.yaml"
+    ~rule:metavariable_regex_rule_content
+    ~targets:
+      [ ("targets/basic/metavariable-regex.py", metavariable_regex_py_content) ]
+    [
+      ( "targets/basic/metavariable-regex.py",
+        1,
+        "6c1d60637645bb7356297820f59fc963e19fdcb7f1da555aedcf2a1c3bd5e7f9c867e98545763e8296b507e40e8bb6a606e19e1c885e95b15b688355e8c5be22_0"
+      );
+      ( "targets/basic/metavariable-regex.py",
+        2,
+        "603d26223512a912db15b1640ce11cb5d1f9de820739bcfe80e6374ca148282f14fab86f0d6a92f8d62817739c3ccc2be025d884abea7ba8c8b37f9633cfa14d_0"
+      );
+    ];
+  check "taint with labels" ~rule_path:"rules/taint_trace.yaml"
+    ~rule:taint_labels_rule_content
+    ~targets:[ ("targets/taint/taint_trace.cpp", taint_labels_cpp_content) ]
+    [
+      ( "targets/taint/taint_trace.cpp",
+        17,
+        "c103a760f6ce7176c2d5127a8c5afa47e83d41bef95586322d99febf0f148c2808bc6b168b31948e8fd10576f7f4edd69fb6d341c25ed9c259cde4e9164d7b96_0"
+      );
+    ];
+  check "duplicate matches indexed per rule and file"
+    ~rule_path:"rules/match_based_id/duplicates.yaml"
+    ~rule:duplicates_rule_content
+    ~targets:
+      [
+        ("targets/match_based_id/duplicates/duplicate1.py", duplicates_py_content);
+        ("targets/match_based_id/duplicates/duplicate2.py", duplicates_py_content);
+      ]
+    [
+      ( "targets/match_based_id/duplicates/duplicate1.py",
+        1,
+        "35c3c5253d3c06bda40ad1ba791b92585b9e5de07d9118cc4301f4e8cb955a1d6e510fe59341c04c6a8fb964918e1909590e37bd76511b7705d604438be156ca_0"
+      );
+      ( "targets/match_based_id/duplicates/duplicate1.py",
+        1,
+        "f0ff0732807b02ac1b1c69b85f9530b42e70ee5b9dcd8caab9c9238bb0c0768bf0a638f45379b4ce9d37ab209c712ee2ae1585ecf0bc2ea77b5fa55cce7371ec_0"
+      );
+      ( "targets/match_based_id/duplicates/duplicate1.py",
+        4,
+        "35c3c5253d3c06bda40ad1ba791b92585b9e5de07d9118cc4301f4e8cb955a1d6e510fe59341c04c6a8fb964918e1909590e37bd76511b7705d604438be156ca_1"
+      );
+      ( "targets/match_based_id/duplicates/duplicate1.py",
+        4,
+        "f0ff0732807b02ac1b1c69b85f9530b42e70ee5b9dcd8caab9c9238bb0c0768bf0a638f45379b4ce9d37ab209c712ee2ae1585ecf0bc2ea77b5fa55cce7371ec_1"
+      );
+      ( "targets/match_based_id/duplicates/duplicate2.py",
+        1,
+        "76ef6b1c1d5e528a4653a7700d0f8d3c6096fac1e5ae06cae9546f6eb4b3db95a9221562cb7ad517f2d5936284f6bc1439a4e1d4b4831820a946d5a6e618cb2e_0"
+      );
+      ( "targets/match_based_id/duplicates/duplicate2.py",
+        1,
+        "d3d094efc363029d2993f4b046b759137f3eb9fd4e950c3bc62256f104919f35ea8e7e07412c9514d682f0d83f84d40cd19fc3aa98c278dff16152a0d851d7fb_0"
+      );
+      ( "targets/match_based_id/duplicates/duplicate2.py",
+        4,
+        "76ef6b1c1d5e528a4653a7700d0f8d3c6096fac1e5ae06cae9546f6eb4b3db95a9221562cb7ad517f2d5936284f6bc1439a4e1d4b4831820a946d5a6e618cb2e_1"
+      );
+      ( "targets/match_based_id/duplicates/duplicate2.py",
+        4,
+        "d3d094efc363029d2993f4b046b759137f3eb9fd4e950c3bc62256f104919f35ea8e7e07412c9514d682f0d83f84d40cd19fc3aa98c278dff16152a0d851d7fb_1"
+      );
+    ]
+
+(* Match-based ids survive changes of formatting and of the code an
+ * ellipsis spans, and change with the matched code and the metavariable
+ * contents. Both versions of a target are scanned at the same path, as the
+ * path is part of the id. *)
+
+let formatting_change_rule_content =
+  {|
+rules:
+  - id: formatting-change
+    patterns:
+      - pattern: $X = 1+1;... $X = 2+2;
+    message: "useless comparison"
+    languages: [c]
+    severity: ERROR
+|}
+
+let operator_change_rule_content =
+  {|
+rules:
+  - id: operator-change
+    pattern-either:
+      - pattern: $Y = 1+1
+      - pattern: $X = 2+2
+    message: "useless"
+    languages: [c]
+    severity: ERROR
+|}
+
+let classic_taint_rule_content =
+  {|
+rules:
+  - id: classic
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+      - pattern: source1(...)
+    pattern-sinks:
+      - pattern: sink(...)
+      - pattern: sink1(...)
+      - pattern: eval(...)
+    pattern-sanitizers:
+      - pattern: sanitize(...)
+      - pattern: sanitize1(...)
+    message: A user input source() went into a dangerous sink()
+    languages: [python, javascript]
+    severity: WARNING
+|}
+
+(* (name, rule, target extension, before, after, the id changes) *)
+let id_change_cases =
+  [
+    ( "formatting",
+      formatting_change_rule_content,
+      "c",
+      "int main(){ int x = 0; x = 1+1; x = 2+2; }\n",
+      "int main() {\n  int x = 0;\n  x = 1 + 1;\n  x = 2 + 2;\n}\n",
+      false );
+    ( "code spanned by an ellipsis",
+      formatting_change_rule_content,
+      "c",
+      {|int main() {
+  int x = 0;
+  x = 1 + 1;
+  int useless_var = 1;
+  if(1==1){
+    //...
+  }
+  x = 2 + 2;
+}
+|},
+      {|int main() {
+  int x = 0;
+  x = 1 + 1;
+  int useless_var = 1;
+  if(1==1){
+    //...
+  }
+  if (1 == 1) {
+    if (1 == 1) {
+      //...
+      if (1 == 1) {
+        //...
+      }
+    }
+    //...
+  }
+  x = 2 + 2;
+}
+|},
+      false );
+    ( "other source and sink of the same taint rule",
+      classic_taint_rule_content,
+      "py",
+      "a = source()\nb = a\nsink(b)\n",
+      "a = source1()\nb = a\nsink1(b)\n",
+      false );
+    ( "other pattern of a pattern-either",
+      operator_change_rule_content,
+      "c",
+      "int main() {\n  int x = 0;\n  x = 1 + 1;\n}\n",
+      "int main() {\n  int x = 0;\n  x = 2 + 2;\n}\n",
+      true );
+    ( "metavariable content",
+      formatting_change_rule_content,
+      "c",
+      "int main() {\n  int x = 0;\n  x = 1 + 1;\n  x = 2 + 2;\n}\n",
+      "int main() {\n  int y = 0;\n  y = 1 + 1;\n  y = 2 + 2;\n}\n",
+      true );
+  ]
+
+let test_id_change (caps : Scan_subcommand.caps) () =
+  id_change_cases
+  |> List.iter (fun (name, rule, ext, before, after, changes) ->
+         let fingerprint (target : string) : string =
+           match
+             fingerprints_of_scan caps ~rule_path:"rules.yaml" ~rule
+               ~targets:[ ("targets/match_based_id." ^ ext, target) ]
+           with
+           | [ (_, _, fingerprint) ] -> fingerprint
+           | _ -> failwith (name ^ ": expected exactly one finding")
+         in
+         Alcotest.(check bool)
+           name changes
+           (not (String.equal (fingerprint before) (fingerprint after))))
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
@@ -395,4 +805,7 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_basic_output_max_match_in_rule caps);
       t "truncated terraform block does not abort scan"
         (test_truncated_terraform_block caps);
+      t "fingerprints equal the python wrapper's" (test_fingerprints caps);
+      t "fingerprints change with the match, not the formatting"
+        (test_id_change caps);
     ]
