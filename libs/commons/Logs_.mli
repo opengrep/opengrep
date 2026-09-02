@@ -70,6 +70,9 @@ val setup_basic : ?level:Logs.level option -> unit -> unit
    via 'require_one_of_these_tags'. This variable is "LOG_TAGS"
    by default.
 
+   'copy_to_file': a file, truncated, that receives the same messages as
+   stderr, without colours.
+
    'additional_reporters' is a list of additonal loggers that will be called
    after the default logger. Useful for writing the logs to multiple
    destinations, e.g. an opentelemetry collector, a log file, etc.
@@ -99,6 +102,7 @@ val setup_basic : ?level:Logs.level option -> unit -> unit
 val setup :
   ?highlight_setting:Console.highlight_setting ->
   ?log_to_file:Fpath.t ->
+  ?copy_to_file:Fpath.t ->
   ?additional_reporters:Logs.reporter list ->
   ?require_one_of_these_tags:string list ->
   ?read_level_from_env_vars:string list ->

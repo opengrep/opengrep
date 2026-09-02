@@ -89,7 +89,6 @@ type t = {
   src_directory : Fpath.t;
   user_home_dir : Fpath.t;
   user_dot_semgrep_dir : Fpath.t;
-  user_log_file : Fpath.t;
   no_color : bool;
   is_ci : bool;
   in_docker : bool;
@@ -145,8 +144,6 @@ let of_current_sys_env () : t =
     src_directory = env_or Fpath.v "SEMGREP_SRC_DIRECTORY" (Fpath.v "/src");
     user_home_dir;
     user_dot_semgrep_dir;
-    user_log_file =
-      env_or Fpath.v "SEMGREP_LOG_FILE" (user_dot_semgrep_dir / "semgrep.log");
     no_color = env_truthy "NO_COLOR" || env_truthy "SEMGREP_COLOR_NO_COLOR";
     is_ci = in_env "CI";
     in_docker = in_env "SEMGREP_IN_DOCKER";

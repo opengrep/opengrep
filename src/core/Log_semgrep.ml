@@ -28,8 +28,8 @@ https://www.notion.so/semgrep/Logging-in-semgrep-semgrep-core-osemgrep-67c9046fa
  * TODO: add some --semgrep-log-xxx flags in osemgrep CLI for the envvars so
  * they can be set also with CLI flags and will be part of the man page.
  *)
-let setup ?log_to_file ?require_one_of_these_tags
-    ~force_color ~level () =
+let setup ?log_to_file ?copy_to_file ?require_one_of_these_tags ~force_color
+    ~level () =
   UConsole.setup ~highlight_setting:(if force_color then On else Auto) ();
   (* We override the default use of LOG_XXX env var in Logs_.setup() with
    * SEMGREP_LOG_XXX env vars because Gitlab was reporting perf problems due
@@ -60,7 +60,7 @@ let setup ?log_to_file ?require_one_of_these_tags
   (* Datadog and other tools for viewing logs sent to otel make it easy to
      filter by log level, so maybe we should send all? But that'll be expensive
      ... *)
-  Logs_.setup ?log_to_file ?require_one_of_these_tags 
+  Logs_.setup ?log_to_file ?copy_to_file ?require_one_of_these_tags
     (* We accept both the OPENGREP_* names and the legacy SEMGREP_* ones, with
      * the OPENGREP_* name winning when both are set (the lists are consulted in
      * order of precedence). An empty (or, for the level, unrecognized) value is

@@ -1138,6 +1138,47 @@ let test_nosem_invalid_id_text (caps : Scan_subcommand.caps) () =
   Exit_code.Check.fatal exit_code
 
 (*****************************************************************************)
+(* Log file *)
+(*****************************************************************************)
+(* $OPENGREP_LOG_FILE (or $SEMGREP_LOG_FILE) gets a copy of the logs at the
+ * level of stderr; its directory is created. python: test_last_log_exists
+ *)
+let test_log_file (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", eqeq_basic_content);
+          F.File ("stupid.py", stupid_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo repo_files (fun cwd ->
+          let log_file = Fpath.(cwd / "logs" / "nested" / "opengrep.log") in
+          let scan (extra_args : string list) : unit =
+            let _exit_code, _stdout =
+              Testo.with_capture stdout (fun () ->
+                  without_settings (fun () ->
+                      Scan_subcommand.main caps
+                        (Array.of_list
+                           ([ "opengrep-scan"; "--experimental"; "--json"; "--config"; "rules.yml" ]
+                           @ extra_args @ [ "stupid.py" ]))))
+            in
+            ()
+          in
+          Semgrep_envvars.with_envvar "OPENGREP_LOG_FILE" (Fpath.to_string log_file) (fun () ->
+              scan [ "--verbose" ]);
+          let contents = UFile.read_file log_file in
+          Alcotest.(check bool) "info records with --verbose" true
+            (String_.contains ~term:"[INFO]" contents);
+          Alcotest.(check bool) "no debug records with --verbose" false
+            (String_.contains ~term:"[DEBUG]" contents);
+          (* the file is truncated by the next run, at the default level *)
+          Semgrep_envvars.with_envvar "SEMGREP_LOG_FILE" (Fpath.to_string log_file) (fun () ->
+              scan []);
+          let contents = UFile.read_file log_file in
+          Alcotest.(check bool) "no info records at the default level" false
+            (String_.contains ~term:"[INFO]" contents)))
+
+(*****************************************************************************)
 (* Missing scanning roots *)
 (*****************************************************************************)
 
@@ -1258,6 +1299,7 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "rule errors: type, code and exit code" (test_rule_errors caps);
       t "nosem with an invalid or unknown id: JSON warnings with --strict"
         (test_nosem_invalid_id_json caps);
+      t "log file: a copy of the logs at the level of stderr" (test_log_file caps);
       t "nosem with an invalid or unknown id: text output with --strict"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_nosem_invalid_id_text caps);
