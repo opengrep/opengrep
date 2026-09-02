@@ -38,7 +38,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ 2 Code Findings │
 └─────────────────┘
 
-    <TMP>/<MASKED>/sinks.py
+    sinks.py
    ❯❯❱ interfile-taint
           cross-file taint
 

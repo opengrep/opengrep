@@ -50,7 +50,7 @@ Removed 0 findings that were in baseline scan
 │ 1 Code Finding │
 └────────────────┘
 
-    <TMP>/<MASKED>/sinks.py
+    sinks.py
    ❯❯❱ interfile-taint
           cross-file taint
 

@@ -33,7 +33,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
   Scanning 3 files tracked by git with 1 Code rule:
   Scanning 3 files.
 
-    <TMP>/<MASKED>/sinks.py
+    sinks.py
    ❯❯❱ interfile-taint
           cross-file taint
 
