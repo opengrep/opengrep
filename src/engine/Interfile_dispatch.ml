@@ -903,6 +903,89 @@ let extract_signatures (rs : rule_state)
   in
   final_db
 
+(* Findings must report the path the scan was given, not the normalised
+   absolute form used internally for graph identity: the reported path is
+   hashed verbatim into the finding's fingerprint (match_based_id), so an
+   absolute path ties fingerprints to the checkout directory and breaks
+   cross-run comparison (e.g. between CI runners).  [target_root_map]
+   records each target's original anchor: [Some root] means the target was
+   given relative to [root] (restore that), [None] means it was given
+   absolute (keep it, matching what a per-target scan would report).
+   Non-target companion files stay absolute; they were never targets and
+   only appear inside taint traces. *)
+let rebase_file (target_root_map : Fpath.t option FpathMap.t)
+    (file : Fpath.t) : Fpath.t option =
+  match FpathMap.find_opt (Fpath.normalize file) target_root_map with
+  | Some (Some root) -> Fpath.relativize ~root file
+  | Some None
+  | None ->
+      None
+
+let rebase_loc (rebase : Fpath.t -> Fpath.t option) (loc : Tok.location)
+    : Tok.location =
+  match rebase loc.Tok.pos.Pos.file with
+  | Some file -> { loc with Tok.pos = { loc.Tok.pos with Pos.file = file } }
+  | None -> loc
+
+let rebase_tok (rebase : Fpath.t -> Fpath.t option) (tok : Tok.t) : Tok.t =
+  Tok.fix_location (rebase_loc rebase) tok
+
+let rec rebase_call_trace (rebase : Fpath.t -> Fpath.t option)
+    (ct : Taint_trace.call_trace) : Taint_trace.call_trace =
+  match ct with
+  | Taint_trace.Toks toks ->
+      Taint_trace.Toks (List_.map (rebase_tok rebase) toks)
+  | Taint_trace.Call { call_toks; intermediate_vars; call_trace } ->
+      Taint_trace.Call
+        {
+          call_toks = List_.map (rebase_tok rebase) call_toks;
+          intermediate_vars = List_.map (rebase_tok rebase) intermediate_vars;
+          call_trace = rebase_call_trace rebase call_trace;
+        }
+
+let rebase_trace (rebase : Fpath.t -> Fpath.t option) (trace : Taint_trace.t)
+    : Taint_trace.t =
+  List_.map
+    (fun (item : Taint_trace.item) ->
+      {
+        Taint_trace.source_trace = rebase_call_trace rebase item.source_trace;
+        tokens = List_.map (rebase_tok rebase) item.Taint_trace.tokens;
+        sink_trace = rebase_call_trace rebase item.Taint_trace.sink_trace;
+      })
+    trace
+
+let rebase_pm (target_root_map : Fpath.t option FpathMap.t) (pm : PM.t)
+    : PM.t =
+  let rebase = rebase_file target_root_map in
+  let path =
+    let internal_path_to_content =
+      match rebase pm.PM.path.Target.internal_path_to_content with
+      | Some p -> p
+      | None -> pm.PM.path.Target.internal_path_to_content
+    in
+    let origin =
+      match pm.PM.path.Target.origin with
+      | Origin.File f as orig -> (
+          match rebase f with
+          | Some p -> Origin.File p
+          | None -> orig)
+      | orig -> orig
+    in
+    { Target.internal_path_to_content; origin }
+  in
+  let min_loc, max_loc = pm.PM.range_loc in
+  let range_loc = (rebase_loc rebase min_loc, rebase_loc rebase max_loc) in
+  let taint_trace =
+    Option.map
+      (fun (lz : Taint_trace.t Lazy.t) ->
+        lazy (rebase_trace rebase (Lazy.force lz)))
+      pm.PM.taint_trace
+  in
+  let tokens =
+    lazy (List_.map (rebase_tok rebase) (Lazy.force pm.PM.tokens))
+  in
+  { pm with PM.path; range_loc; taint_trace; tokens }
+
 let run_rule (rs : rule_state) : PM.t list =
   (* The constructor-instance-vars table is domain-local and keyed only by
      [file:class]; without this reset it would carry a prior rule's
@@ -975,6 +1058,7 @@ let run_rule (rs : rule_state) : PM.t list =
   in
   List.rev_append glob_matches
     (List.rev_append topo_matches epilogue_matches)
+  |> List_.map (rebase_pm rs.target_root_map)
   |> PM.uniq
   |> PM.no_submatches
 
