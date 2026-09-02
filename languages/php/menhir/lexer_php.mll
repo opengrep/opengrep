@@ -517,6 +517,34 @@ rule st_in_scripting state = parse
     | "~"  { TTILDE(tokinfo lexbuf) }
     | ";"  { TSEMICOLON(tokinfo lexbuf) }
     | "!"  { TBANG(tokinfo lexbuf) }
+    (* The same treatment as '->' above: after '::' a word is a member name,
+     * so it must not be read as a keyword. Only a name can be matched here,
+     * as the '$' of 'C::$p' and the '{' of 'C::{$n}' are not label
+     * characters. 'class' keeps its own token, 'C::class' being a construct
+     * of its own.
+     * coupling: identifier in Zend's zend_language_parser.y, which is a
+     * T_STRING or any semi-reserved word
+     *)
+    | "::" (WHITESPACEOPT as white) (LABEL as label) {
+        let info = tokinfo lexbuf in
+        let syminfo = Tok.rewrap_str "::" info in
+
+        let file = Tok.file_of_tok info in
+        let parse_info = Tok.unsafe_loc_of_tok info in
+        let pos_after_sym = parse_info.Tok.pos.bytepos + 2 in
+        let pos_after_white = pos_after_sym + String.length white in
+
+        let whiteinfo = tokinfo_file_str_pos file white pos_after_sym in
+        let lblinfo = tokinfo_file_str_pos file label pos_after_white in
+
+        push_token state
+          (if String.equal (String.lowercase_ascii label) "class"
+           then T_CLASS lblinfo
+           else T_IDENT (case_str label, lblinfo));
+        push_token state (TSpaces whiteinfo);
+
+        TCOLCOL syminfo
+      }
     | "::" { TCOLCOL (tokinfo lexbuf) } (* was called T_PAAMAYIM_NEKUDOTAYIM *)
     | "\\" { TANTISLASH (tokinfo lexbuf) } (* was called T_NS_SEPARATOR *)
 
