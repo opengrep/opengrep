@@ -31,6 +31,8 @@ type skipped_targets_grouped = {
 (* Helpers *)
 (*****************************************************************************)
 
+(* one entry per file, whatever the number of its errors, as pysemgrep
+   counts the files partially analysed *)
 let errors_to_skipped (errors : OutJ.core_error list) : OutJ.skipped_target list
     =
   errors
@@ -44,6 +46,7 @@ let errors_to_skipped (errors : OutJ.core_error list) : OutJ.skipped_target list
                details = Some message;
                rule_id;
              })
+  |> List_.deduplicate_gen ~get_key:(fun (x : OutJ.skipped_target) -> x.path)
 
 let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
     =

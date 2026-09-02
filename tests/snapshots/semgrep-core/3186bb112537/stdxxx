@@ -1,7 +1,3 @@
---- begin input files ---
-code.py
-rules.yml
---- end input files ---
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
 Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
@@ -11,8 +7,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
 [main (root-commit) <MASKED>] Add files
- 2 files changed, 13 insertions(+)
- create mode 100644 code.py
+ 2 files changed, 20 insertions(+)
+ create mode 100644 nosem_invalid_id.js
  create mode 100644 rules.yml
 
 ┌──────────────┐
@@ -28,10 +24,26 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌─────────────┐
 │ Scan Status │
 └─────────────┘
-  Scanning 2 files tracked by git with 1 Code rule:
-  Scanning 2 files.
-[<MASKED TIMESTAMP>][WARNING]: too many matches on code.py, generating exn for it
-[<MASKED TIMESTAMP>][WARNING]: most offending rule: id = eqeq-bad, matches = 3, pattern = $X == $X
+  Scanning 1 file tracked by git with 1 Code rule:
+  Scanning 1 file.
+[<MASKED TIMESTAMP>][WARNING]: Invalid rule ID in nosem_invalid_id.js: '*/'
+[<MASKED TIMESTAMP>][WARNING]: Invalid rule ID in nosem_invalid_id.js: '*/'
+
+
+┌─────────────────┐
+│ 3 Code Findings │
+└─────────────────┘
+
+    nosem_invalid_id.js
+    ❯❱ test-nosem
+          test-nosem-message
+
+            2┆ test_nosem_func() // nosem: rules.test-nosem-invalid
+            ⋮┆----------------------------------------
+            6┆ test_nosem_func() /* nosem: */
+            ⋮┆----------------------------------------
+           12┆ test_nosem_func()
+
 
 
 ┌──────────────┐
@@ -41,5 +53,5 @@ Scan was limited to files tracked by git.
 Some files were skipped or only partially analyzed.
   Partially scanned: 1 files only partially analyzed due to a parsing or internal Opengrep error
 
-Ran 1 rule on 1 file: 0 findings.
+Ran 1 rule on 1 file: 3 findings.
 ASSERT exit code
