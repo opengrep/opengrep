@@ -320,7 +320,8 @@ let get_relevant_rules ({ params = { patterns; fix; lang; _ }; _ } as env : env)
   let langs_of_patterns =
     List_.map
       (fun { Request_params.positive = _; pattern } ->
-        Rule_fetching.langs_of_pattern (pattern, lang))
+        (* a pattern that does not parse in the given language has none *)
+        Rule_fetching.langs_of_pattern (pattern, lang) |> Result.value ~default:[])
       patterns
   in
   (* We want languages which are part of the languages known to the workspace,

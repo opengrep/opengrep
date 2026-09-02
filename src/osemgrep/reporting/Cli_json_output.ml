@@ -116,13 +116,16 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
   | LexicalError
   | PartialParsing _ ->
       Exit_code.invalid_code ~__LOC__
-  (* rule errors lead to `missing_config` *)
-  | InvalidYaml -> Exit_code.missing_config ~__LOC__
-  | OtherParseError
-  | AstBuilderError
+  (* rule errors: the code of the error, which is also the exit code of a
+     scan whose rules could not be loaded *)
+  | InvalidYaml -> Exit_code.unparseable_yaml ~__LOC__
   | RuleParseError
   | PatternParseError _
   | PatternParseError0
+  | InvalidRuleSchemaError ->
+      Exit_code.invalid_pattern ~__LOC__
+  | OtherParseError
+  | AstBuilderError
   | MatchingError
   | SemgrepMatchFound
   | TooManyMatches
@@ -136,7 +139,6 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
   | SemgrepWarning
   | SemgrepError ->
       Exit_code.fatal ~__LOC__
-  | InvalidRuleSchemaError -> Exit_code.invalid_pattern ~__LOC__
   | UnknownLanguageError -> Exit_code.invalid_language ~__LOC__
   | IncompatibleRule _
   | IncompatibleRule0

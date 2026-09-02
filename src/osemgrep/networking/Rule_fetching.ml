@@ -463,16 +463,17 @@ let rules_from_dashdash_config ?(skip_invalid_configs = false) ~rewrite_rule_ids
 (* Entry point *)
 (*****************************************************************************)
 
-let langs_of_pattern (pat, xlang_opt) : Xlang.t list =
+(* The languages the pattern parses in; with -l, the pattern parse error
+   is returned to be reported like the parse error of a rule file. *)
+let langs_of_pattern (pat, xlang_opt) : (Xlang.t list, Rule_error.t) result =
   let xlang_compatible_with_pat xlang =
     let/ _xpat = Parse_rule.parse_fake_xpattern xlang pat in
     Ok xlang
   in
   match xlang_opt with
   | Some xlang ->
-      (* TODO? capture also parse errors here? and transform the pattern
-         * parse error in invalid_rule_error to return in rules_and_origin? *)
-      [ xlang_compatible_with_pat xlang |> Result.get_ok ]
+      let/ xlang = xlang_compatible_with_pat xlang in
+      Ok [ xlang ]
   (* osemgrep-only: better: can use -e without -l! we try all languages *)
   | None ->
       (* We need uniq_by because Lang.assoc contain multiple times the
@@ -490,18 +491,19 @@ let langs_of_pattern (pat, xlang_opt) : Xlang.t list =
         *)
         |> List_.exclude (fun x -> x =*= Lang.Dart)
       in
-      all_langs
-      |> List_.filter_map (fun l ->
-             match
-               let xlang = Xlang.of_lang l |> xlang_compatible_with_pat in
-               Logs.debug (fun m ->
-                   m "language %s valid for the pattern" (Lang.show l));
-               xlang
-             with
-             | Ok xlang -> Some xlang
-             | Error _
-             | (exception Failure _) ->
-                 None)
+      Ok
+        (all_langs
+        |> List_.filter_map (fun l ->
+               match
+                 let xlang = Xlang.of_lang l |> xlang_compatible_with_pat in
+                 Logs.debug (fun m ->
+                     m "language %s valid for the pattern" (Lang.show l));
+                 xlang
+               with
+               | Ok xlang -> Some xlang
+               | Error _
+               | (exception Failure _) ->
+                   None))
 
 let rules_and_origin_of_rule ~(parse_time : float) rule =
   { rules = [ rule ]; invalid_rules = []; origin = CLI_argument; parse_time }
@@ -549,9 +551,26 @@ let rules_from_rules_source_async ?(skip_invalid_configs = false)
        * better: '-e foo -l generic' was not handled in semgrep-core
     *)
     | Pattern (pat, xlang_opt, fix) ->
-        let valid_langs = langs_of_pattern (pat, xlang_opt) in
+        let valid_langs, invalid_rules_and_origins, errors =
+          match langs_of_pattern (pat, xlang_opt) with
+          | Ok valid_langs -> (valid_langs, [], [])
+          (* reported like an invalid rule of a rule file *)
+          | Error { kind = InvalidRule invalid_rule; _ } ->
+              ( [],
+                [
+                  {
+                    rules = [];
+                    invalid_rules = [ invalid_rule ];
+                    origin = CLI_argument;
+                    parse_time = 0.;
+                  };
+                ],
+                [] )
+          | Error e -> ([], [], [ e ])
+        in
         let rules_and_origins =
-          valid_langs
+          invalid_rules_and_origins
+          @ (valid_langs
           |> List_.map (fun xlang ->
                  let rule, parse_time =
                    Common.with_time (fun () ->
@@ -564,7 +583,7 @@ let rules_from_rules_source_async ?(skip_invalid_configs = false)
                        in
                        Rule.rule_of_xpattern ?fix xlang xpat)
                  in
-                 rules_and_origin_of_rule ~parse_time rule)
+                 rules_and_origin_of_rule ~parse_time rule))
         in
         (* In run_scan.py, in the pattern case, we would do this:
            if real_config_errors and strict:
@@ -576,7 +595,7 @@ let rules_from_rules_source_async ?(skip_invalid_configs = false)
 
            THINK: this may be impossible now in `osemgrep`?
         *)
-        Lwt.return (rules_and_origins, [])
+        Lwt.return (rules_and_origins, errors)
   in
 
   Lwt.return (rules_and_origins, errors)

@@ -151,6 +151,7 @@ let error_of_invalid_rule ((kind, rule_id, pos) : Rule_error.invalid_rule) : t =
             max_version = Option.map Semver.to_string max_version;
           }
     | MissingPlugin _msg -> Out.MissingPlugin
+    | InvalidLanguage _ -> Out.UnknownLanguageError
     | _ -> Out.RuleParseError
   in
   mk_error_tok ~rule_id pos msg err
@@ -165,7 +166,8 @@ let error_of_rule_error (err : Rule_error.t) : t =
         rule_id = Some rule_id;
         typ = Out.PatternParseError yaml_path;
         (* TODO: Switch to using option and report better info for figuring out why the location is missing *)
-        loc = Some (Tok.unsafe_loc_of_tok pos);
+        (* no location for the pattern of -e *)
+        loc = Tok.loc_of_tok pos |> Result.to_option;
         msg =
           spf
             "Invalid pattern for %s:\n\
