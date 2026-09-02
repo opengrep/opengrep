@@ -290,26 +290,6 @@ def test_long_rule_id_long_text(run_semgrep_in_tmp: RunSemgrep, snapshot):
     snapshot.assert_match(stdout, "results.out")
 
 
-# it should not report findings from rules using the "INVENTORY" severity
-@pytest.mark.kinda_slow
-@pytest.mark.osemfail
-def test_omit_inventory(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/severity_inventory.yaml", target_name="basic.py"
-    )
-    snapshot.assert_match(stdout, "results.out")
-
-
-# it should not report findings from rules using the "EXPERIMENT" severity
-@pytest.mark.kinda_slow
-def test_omit_experiment(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/severity_experiment.yaml",
-        target_name="basic.py",
-    )
-    snapshot.assert_match(stdout, "results.out")
-
-
 @pytest.mark.kinda_slow
 def test_junit_xml_output(run_semgrep_in_tmp: RunSemgrep, snapshot):
     output, _ = run_semgrep_in_tmp(

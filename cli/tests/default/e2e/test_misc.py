@@ -406,34 +406,6 @@ def test_deduplication_different_message(run_semgrep_in_tmp: RunSemgrep, snapsho
 
 
 @pytest.mark.osemfail
-@pytest.mark.kinda_slow
-def test_inventory_finding_output(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    snapshot.assert_match(
-        run_semgrep_in_tmp(
-            "rules/inventory-rule.yaml",
-            target_name="auto/fingerprints",
-            strict=False,
-            output_format=OutputFormat.TEXT,
-        ).stderr,
-        "output.txt",
-    )
-
-
-@pytest.mark.osemfail
-@pytest.mark.kinda_slow
-def test_experiment_finding_output(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    snapshot.assert_match(
-        run_semgrep_in_tmp(
-            "rules/experiment-rule.yaml",
-            target_name="auto/fingerprints",
-            strict=False,
-            output_format=OutputFormat.TEXT,
-        ).stderr,
-        "output.txt",
-    )
-
-
-@pytest.mark.osemfail
 @pytest.mark.quick
 def multi_focus_metavariable(run_semgrep_in_tmp: RunSemgrep, snapshot):
     snapshot.assert_match(

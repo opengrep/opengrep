@@ -466,33 +466,9 @@ let check_targets_with_rules ?(print_summary = true)
               (Rule_ID.to_string (fst r.Rule.id))
               (Tok.stringpos_of_tok (snd r.Rule.id))))
   in
-  let too_many_entries = conf.output_conf.max_log_list_entries in
-  Logs.info (fun m ->
-      m "%a" (Rules_report.pp_rules ~too_many_entries) (conf.rules_source, rules));
-
   match rules with
   | [] ->
-      (* desired/legacy semgrep behavior: fail if no valid rule was found
-
-         Problem in case of all Apex rules being skipped by semgrep-core:
-         - actual pysemgrep behavior:
-           * doesn't count these rules as skipped, resulting in a successful exit
-           * reports Apex targets as scanned that weren't scanned
-         - osemgrep behavior:
-           * reports skipped rules and skipped/scanned targets correctly
-         How to fix this:
-         - pysemgrep should read the 'scanned' field reporting the targets that
-           were really scanned by semgrep-core instead of the current
-           implementation that assumes semgrep-core will scan all the targets it
-           receives.
-         Should we fix this?
-         - it's necessary to get the same output with pysemgrep and osemgrep
-         - it's a bit of an effort on the Python side for something that's
-           not very important
-         Suggestion:
-         - tolerate different output between pysemgrep and osemgrep
-           for tests that we would mark as such.
-      *)
+      (* fail if no valid rule was found *)
       (* Here, we output again, because we need to make sure that invalid rule errors
          are also surfaced to users who request --json or similar.
       *)
@@ -511,6 +487,11 @@ let check_targets_with_rules ?(print_summary = true)
          wrong with the configuration.
       *)
       let rules = Rule_filtering.filter_rules conf.rule_filtering_conf rules in
+      let too_many_entries = conf.output_conf.max_log_list_entries in
+      Logs.info (fun m ->
+          m "%a"
+            (Rules_report.pp_rules ~too_many_entries)
+            (conf.rules_source, rules));
       (* step 2: printing the skipped targets *)
       let selected = targets_and_skipped.Find_targets.selected
       and skipped = targets_and_skipped.Find_targets.skipped in
