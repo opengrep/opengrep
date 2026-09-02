@@ -56,6 +56,8 @@ let pairs : (string * string) list =
     ("add-metadata-hcl.yaml", "add-metadata-hcl.hcl");
     ("delete-partial-line.yaml", "delete-partial-line.py");
     ("utf-8.yaml", "utf-8.py");
+    ("order.yaml", "order.py");
+    ("reported-order.yaml", "reported-order.py");
   ]
 
 (*****************************************************************************)
