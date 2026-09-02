@@ -431,11 +431,9 @@ let cli_output_of_runner_result ~fixed_lines (core : Out.core_output)
    engine_requested = _;
   } ->
       (* TODO: not sure how it's sorted. Look at rule_match.py keys? *)
-      let matches =
-        matches
-        |> List.sort (fun (a : Out.core_match) (b : Out.core_match) ->
-               compare a.check_id b.check_id)
-      in
+      (* The fixed lines of overlapping fixes go to the first finding in
+         reported order, the one whose fix is applied. *)
+      let matches = Semgrep_output_utils.sort_core_matches_as_reported matches in
       (* TODO: not sure how it's sorted, but Set_.elements return
        * elements in OCaml compare order (=~ lexicographic for strings)
        * python: scanned=[str(path) for path in sorted(self.all_targets)]

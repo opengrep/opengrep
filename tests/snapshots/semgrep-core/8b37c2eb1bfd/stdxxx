@@ -1,6 +1,6 @@
 --- begin input files ---
-rules/exact-collision.yaml
-targets/collision.py
+rules/order.yaml
+targets/order.py
 --- end input files ---
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
 Initialized empty Git repository in <TMP>/<MASKED>/.git/
@@ -11,9 +11,9 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
 [main (root-commit) <MASKED>] Add files
- 2 files changed, 24 insertions(+)
- create mode 100644 rules/exact-collision.yaml
- create mode 100644 targets/collision.py
+ 2 files changed, 98 insertions(+)
+ create mode 100644 rules/order.yaml
+ create mode 100644 targets/order.py
 
 ┌──────────────┐
 │ Opengrep CLI │
@@ -28,30 +28,62 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌─────────────┐
 │ Scan Status │
 └─────────────┘
-  Scanning 1 file tracked by git with 2 Code rules:
+  Scanning 1 file tracked by git with 6 Code rules:
 
   Language   Rules   Files          Origin   Rules
  ──────────────────────────        ────────────────
-  python         2       1          Custom       2
+  python         6       1          Custom       6
 
 
 
 ┌─────────────────┐
-│ 2 Code Findings │
+│ 6 Code Findings │
 └─────────────────┘
 
-    targets/collision.py
-    ❯❱ rules.first-rule
-          Semgrep found a match
+    targets/order.py
+    ❯❱ rules.slice-ab
+          slice a-b matches
 
-          ▶▶┆ Autofix ▶ once
-            2┆ a = 1
+          ▶▶┆ Autofix ▶ replaced_lines_a_to_b_OK
+            5┆ a
+            6┆ b
 
-    ❯❱ rules.second-rule
-          Semgrep found a match
+    ❯❱ rules.a-slice-bc
+          slice b-c matches
 
-          ▶▶┆ Autofix ▶ twice
-            2┆ a = 1
+          ▶▶┆ Autofix ▶ replaced_lines_b_to_c_BAD
+            6┆ b
+            7┆ c
+
+    ❯❱ rules.z-slice-bc
+          slice b-c matches
+
+          ▶▶┆ Autofix ▶ replaced_lines_b_to_c_OK
+            6┆ b
+            7┆ c
+
+    ❯❱ rules.slice-df
+          slice d-f matches
+
+          ▶▶┆ Autofix ▶ replaced_lines_d_to_f_OK
+            8┆ d
+            9┆ e
+           10┆ f
+
+    ❯❱ rules.slice-eg
+          slice e-g matches
+
+          ▶▶┆ Autofix ▶ replaced_lines_e_to_g_BAD
+            9┆ e
+           10┆ f
+           11┆ g
+
+    ❯❱ rules.slice-gh
+          slice g-h matches
+
+          ▶▶┆ Autofix ▶ replaced_lines_g_to_h_OK
+           11┆ g
+           12┆ h
 
 
 
@@ -60,11 +92,15 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 └──────────────┘
 Scan was limited to files tracked by git.
 
-Ran 2 rules on 1 file: 2 findings.
---- targets/collision.py after the scan ---
+Ran 6 rules on 1 file: 6 findings.
+--- targets/order.py after the scan ---
+# Several findings will overlap in the following array. The autofixes
+# must be applied in the order in which the findings are discovered or
+# in which they are reported (which is it?).
 
-a = once
-b = 2
-c = 3
-d = 4
+replaced_lines_a_to_b_OK
+c
+replaced_lines_d_to_f_OK
+replaced_lines_g_to_h_OK
+
 ASSERT exit code

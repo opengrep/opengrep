@@ -205,6 +205,7 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
     let hrules = Rule.hrules_of_rules rules in
     let fixed_env = Fixed_lines.mk_env () in
     core_matches
+    |> Semgrep_output_utils.sort_core_matches_as_reported
     |> List_.map
          (Cli_json_output.cli_match_of_core_match
             ~fixed_lines:conf.output_conf.fixed_lines fixed_env hrules)
@@ -650,9 +651,13 @@ let check_targets_with_rules ?(print_summary = true)
           (* this must happen posterior to reporting matches, or will report the
              already-fixed file
           *)
+          (* overlapping fixes: the first finding in reported order wins,
+             as for the fixed_lines of a dry run *)
           if conf.autofix then
             Autofix.apply_fixes_of_core_matches
-              ~dryrun:conf.output_conf.fixed_lines res.core.results;
+              ~dryrun:conf.output_conf.fixed_lines
+              (Semgrep_output_utils.sort_core_matches_as_reported
+                 res.core.results);
 
           (* TOPORT? was in formater/base.py
              def keep_ignores(self) -> bool:

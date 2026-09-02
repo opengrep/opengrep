@@ -1,6 +1,6 @@
 --- begin input files ---
-rules/exact-collision.yaml
-targets/collision.py
+rules/reported-order.yaml
+targets/reported-order.py
 --- end input files ---
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
 Initialized empty Git repository in <TMP>/<MASKED>/.git/
@@ -11,9 +11,9 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
 [main (root-commit) <MASKED>] Add files
- 2 files changed, 24 insertions(+)
- create mode 100644 rules/exact-collision.yaml
- create mode 100644 targets/collision.py
+ 2 files changed, 33 insertions(+)
+ create mode 100644 rules/reported-order.yaml
+ create mode 100644 targets/reported-order.py
 
 ┌──────────────┐
 │ Opengrep CLI │
@@ -40,18 +40,20 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ 2 Code Findings │
 └─────────────────┘
 
-    targets/collision.py
-    ❯❱ rules.first-rule
-          Semgrep found a match
+    targets/reported-order.py
+    ❯❱ rules.slice-ab
+          slice a-b matches
 
-          ▶▶┆ Autofix ▶ once
-            2┆ a = 1
+          ▶▶┆ Autofix ▶ replaced_lines_a_to_b_OK
+            1┆ a
+            2┆ b
 
-    ❯❱ rules.second-rule
-          Semgrep found a match
+    ❯❱ rules.slice-bc
+          slice b-c matches
 
-          ▶▶┆ Autofix ▶ twice
-            2┆ a = 1
+          ▶▶┆ Autofix ▶ replaced_lines_b_to_c_BAD
+            2┆ b
+            3┆ c
 
 
 
@@ -61,10 +63,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 Scan was limited to files tracked by git.
 
 Ran 2 rules on 1 file: 2 findings.
---- targets/collision.py after the scan ---
+--- targets/reported-order.py after the scan ---
+replaced_lines_a_to_b_OK
+c
 
-a = once
-b = 2
-c = 3
-d = 4
 ASSERT exit code
