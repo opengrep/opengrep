@@ -773,6 +773,77 @@ let test_id_change (caps : Scan_subcommand.caps) () =
            (not (String.equal (fingerprint before) (fingerprint after))))
 
 (*****************************************************************************)
+(* Severities that never run *)
+(*****************************************************************************)
+
+let inventory_rule_content =
+  {|
+rules:
+  - id: inventory
+    pattern: print(...)
+    message: inventory
+    languages: [python]
+    severity: INVENTORY
+|}
+
+let mixed_severities_rule_content =
+  {|
+rules:
+  - id: shown
+    pattern: print(...)
+    message: shown
+    languages: [python]
+    severity: ERROR
+  - id: inventory
+    pattern: print(...)
+    message: inventory
+    languages: [python]
+    severity: INVENTORY
+  - id: experiment
+    pattern: print(...)
+    message: experiment
+    languages: [python]
+    severity: EXPERIMENT
+|}
+
+(* the check ids of the findings of a --json scan and its exit code *)
+let json_scan (caps : Scan_subcommand.caps) ~(rule : string) ~(target : string)
+    (extra_args : string list) : string list * Exit_code.t =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [ F.File ("rules.yml", rule); F.File ("target.py", target) ]
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let exit_code, stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      (Array.of_list
+                         ([ "opengrep-scan"; "--experimental"; "--json"; "--config"; "rules.yml" ]
+                         @ extra_args @ [ "target.py" ]))))
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          ( out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Rule_ID.to_string m.check_id),
+            exit_code )))
+
+let test_inventory_and_experiment_rules_never_run
+    (caps : Scan_subcommand.caps) () =
+  let target = "print(1)\n" in
+  let check_ids, exit_code =
+    json_scan caps ~rule:mixed_severities_rule_content ~target [ "--error" ]
+  in
+  Exit_code.Check.findings exit_code;
+  Alcotest.(check (list string)) "only the ERROR rule ran" [ "shown" ] check_ids;
+  (* a config made only of such rules is valid and scans nothing *)
+  let check_ids, exit_code =
+    json_scan caps ~rule:inventory_rule_content ~target [ "--error" ]
+  in
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check (list string)) "no findings" [] check_ids
+
+(*****************************************************************************)
 (* Missing scanning roots *)
 (*****************************************************************************)
 
@@ -870,6 +941,8 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "fingerprints equal the python wrapper's" (test_fingerprints caps);
       t "fingerprints change with the match, not the formatting"
         (test_id_change caps);
+      t "INVENTORY and EXPERIMENT rules never run"
+        (test_inventory_and_experiment_rules_never_run caps);
       t "missing scanning roots: fatal error reported in the JSON output"
         (test_missing_roots_json caps);
       t "missing scanning roots: fatal error with text output"
