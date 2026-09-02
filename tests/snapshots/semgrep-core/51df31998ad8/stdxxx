@@ -1,10 +1,13 @@
+--- begin input files ---
+rules/other_fix.yaml
+targets/test3.fixed.py
+targets/test3.py
+--- end input files ---
 1/1: ✓ All tests passed
 0/1: 1 fix tests did not pass:
 --------------------------------------------------------------------------------
-	✖ targets/fixtest/test3.fixed.py <> autofix applied to targets/fixtest/test3.py
+	✖ targets/test3.fixed.py <> autofix applied to targets/test3.py
 
-	---
-	+++
 	@@ -2 +2 @@
 	-sys.exit(1)
 	+somethingElse(1)
@@ -12,5 +15,4 @@
 	-sys.exit(2)
 	+somethingElse(1)
 
-
-
+[33mASSERT[0m exit code

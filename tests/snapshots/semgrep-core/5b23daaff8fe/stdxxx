@@ -1,0 +1,7 @@
+[<MASKED TIMESTAMP>][[33mWARNING[0m]: no fixtest for test targets/test2.py but the rule file rules/basic_fix.yaml uses autofix
+--- begin input files ---
+rules/basic_fix.yaml
+targets/test2.py
+--- end input files ---
+{"results":{"rules/basic_fix.yaml":{"checks":{"basic-fix":{"passed":true,"matches":{"<TMP>/<MASKED>/targets/test2.py":{"expected_lines":[2,5],"reported_lines":[2,5]}},"errors":[]}}}},"fixtest_results":{},"config_missing_tests":[],"config_missing_fixtests":["rules/basic_fix.yaml"],"config_with_errors":[]}
+[0m[33mASSERT[0m exit code

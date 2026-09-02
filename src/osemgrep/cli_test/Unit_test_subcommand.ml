@@ -125,7 +125,8 @@ rules:
     severity: ERROR
 |}
 
-let normalize = [ Testutil_logs.mask_time ]
+(* the test file path of a failed check is absolute *)
+let normalize = [ Testutil_logs.mask_time; Testutil.mask_temp_paths () ]
 
 (*****************************************************************************)
 (* Tests *)
@@ -196,10 +197,78 @@ let test_missing_targets (caps : Test_subcommand.caps) () =
            ]))
 
 (*****************************************************************************)
+(* Fixtests *)
+(*****************************************************************************)
+(* The rule and target pairs of tests/fixtest, in text and JSON output,
+ * with the target's .fixed file when there is one. The test file path of
+ * a failed check and the keys of the JSON matches are absolute, hence the
+ * temp path mask.
+ *)
+
+let fixtest_fixtures_root : Fpath.t = Fpath.v "tests/fixtest"
+
+(* (rule in rules/, target in targets/, expected exit code) *)
+let fixtest_cases : (string * string * (Exit_code.t -> unit)) list =
+  [
+    (* the fixtest passes *)
+    ("basic_fix.yaml", "test1.py", Exit_code.Check.ok);
+    (* no fixtest for a rule with a fix: config_missing_fixtests *)
+    ("basic_fix.yaml", "test2.py", Exit_code.Check.ok);
+    (* the fixtest fails: the diff is reported *)
+    ("other_fix.yaml", "test3.py", Exit_code.Check.findings);
+    (* the checks fail too: the missed lines are reported *)
+    ("other_pattern.yaml", "test4.py", Exit_code.Check.findings);
+    (* a fix-regex without fixtest: config_missing_fixtests *)
+    ("basic_fix_regex.yaml", "no_associated_fixed.py", Exit_code.Check.ok);
+    (* the trailing newlines of a fix: are not added to the fixed file *)
+    ("fix_trailing_newline.yaml", "basic.go", Exit_code.Check.ok);
+  ]
+
+let run_fixtest (caps : Test_subcommand.caps) ~(rule : string)
+    ~(target : string) ~(json : bool) ~(check : Exit_code.t -> unit) () =
+  let read (rel : string) : string =
+    UFile.read_file Fpath.(fixtest_fixtures_root // v rel)
+  in
+  let fixed : string =
+    let stem, ext = Fpath_.split_ext ~multi:true (Fpath.v target) in
+    Fpath.(to_string (add_ext (".fixed" ^ ext) stem))
+  in
+  let target_files : F.t list =
+    F.File (target, read ("targets/" ^ target))
+    ::
+    (if Sys.file_exists Fpath.(to_string (fixtest_fixtures_root / "targets" / fixed))
+     then [ F.File (fixed, read ("targets/" ^ fixed)) ]
+     else [])
+  in
+  let files : F.t list =
+    [
+      F.Dir ("rules", [ F.File (rule, read ("rules/" ^ rule)) ]);
+      F.Dir ("targets", target_files);
+    ]
+  in
+  Testutil_files.with_tempfiles ~verbose:true ~chdir:true files (fun _cwd ->
+      let argv : string list =
+        [ "opengrep-test"; "--config"; "rules/" ^ rule; "targets/" ^ target ]
+        @ if json then [ "--json" ] else []
+      in
+      check (Test_subcommand.main caps (Array.of_list argv)))
+
+let mk_fixtest_tests (caps : Test_subcommand.caps) : Testo.t list =
+  fixtest_cases
+  |> List.concat_map (fun ((rule : string), (target : string), check) ->
+         [ ("text", false); ("json", true) ]
+         |> List_.map (fun ((label : string), (json : bool)) ->
+                t
+                  (Printf.sprintf "fixtest: %s %s %s" rule target label)
+                  ~checked_output:(Testo.stdxxx ()) ~normalize
+                  (run_fixtest caps ~rule ~target ~json ~check)))
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
 let tests (caps : < Test_subcommand.caps >) =
   Testo.categorize "Osemgrep Test (e2e)"
     (mk_matching_explanation_tests caps
-    @ [ t "missing test targets abort the run" (test_missing_targets caps) ])
+    @ [ t "missing test targets abort the run" (test_missing_targets caps) ]
+    @ mk_fixtest_tests caps)

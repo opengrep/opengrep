@@ -603,10 +603,7 @@ let diff_pfff_tree_sitter xs =
          in
          let s1 = AST_generic.show_program ast1 in
          let s2 = AST_generic.show_program ast2 in
-         UTmp.with_temp_file ~contents:s1 ~suffix:".x" (fun file1 ->
-             UTmp.with_temp_file ~contents:s2 ~suffix:".x" (fun file2 ->
-                 let xs = Common2.unix_diff !!file1 !!file2 in
-                 xs |> List.iter UCommon.pr2)))
+         Unified_diff.lines ~old_:s1 ~new_:s2 |> List.iter UCommon.pr2)
 
 (*****************************************************************************)
 (* Rule parsing *)
