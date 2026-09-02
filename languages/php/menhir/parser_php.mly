@@ -1098,8 +1098,8 @@ attribute:
  * as in '#[\Deprecated(message: "...", since: "8.4")]'
  *)
 attribute_argument:
- | static_scalar           { Arg $1 }
- | ident ":" static_scalar { ArgLabel (Name $1, $2, $3) }
+ | static_scalar                      { Arg $1 }
+ | named_arg_label ":" static_scalar  { ArgLabel (Name $1, $2, $3) }
 
 (*************************************************************************)
 (* Expressions *)
@@ -1554,7 +1554,7 @@ function_call_argument:
  | TAND expr        { (ArgRef($1, $2)) }
  | "..." expr       { (ArgUnpack($1, $2)) }
  (* named argument; the label may be any identifier, incl. keywords *)
- | named_arg_label ":" expr { (ArgLabel (Name $1,$2,$3)) }
+ | named_arg_label ":" expr_or_dots { (ArgLabel (Name $1,$2,$3)) }
 
 (*----------------------------*)
 (* encaps *)
@@ -1757,9 +1757,12 @@ ident_method_name:
 (* used in constant definitions *)
 ident_constant_name: ident_method_name { $1 }
 
-(* identifier or any semi-reserved keyword (PHP named-arg labels) *)
+(* a named-argument label may be any identifier, including every keyword PHP
+ * calls semi-reserved. coupling: semi_reserved in Zend's zend_language_parser.y
+ *)
 named_arg_label:
  | ident { $1 }
+ | keyword_as_ident { $1 }
  | T_IF            { str_of_info $1, $1 }
  | T_ELSE          { str_of_info $1, $1 }
  | T_ELSEIF        { str_of_info $1, $1 }
@@ -1767,7 +1770,6 @@ named_arg_label:
  | T_DO            { str_of_info $1, $1 }
  | T_WHILE         { str_of_info $1, $1 }
  | T_ENDWHILE      { str_of_info $1, $1 }
- | T_FOR           { str_of_info $1, $1 }
  | T_ENDFOR        { str_of_info $1, $1 }
  | T_FOREACH       { str_of_info $1, $1 }
  | T_ENDFOREACH    { str_of_info $1, $1 }
@@ -1775,7 +1777,6 @@ named_arg_label:
  | T_SWITCH        { str_of_info $1, $1 }
  | T_ENDSWITCH     { str_of_info $1, $1 }
  | T_CASE          { str_of_info $1, $1 }
- | T_DEFAULT       { str_of_info $1, $1 }
  | T_BREAK         { str_of_info $1, $1 }
  | T_CONTINUE      { str_of_info $1, $1 }
  | T_RETURN        { str_of_info $1, $1 }
@@ -1787,21 +1788,17 @@ named_arg_label:
  | T_DECLARE       { str_of_info $1, $1 }
  | T_ENDDECLARE    { str_of_info $1, $1 }
  | T_USE           { str_of_info $1, $1 }
- | T_GLOBAL        { str_of_info $1, $1 }
- | T_AS            { str_of_info $1, $1 }
  | T_FUNCTION      { str_of_info $1, $1 }
  | T_FN            { str_of_info $1, $1 }
  | T_CONST         { str_of_info $1, $1 }
  | T_VAR           { str_of_info $1, $1 }
  | T_ECHO          { str_of_info $1, $1 }
  | T_PRINT         { str_of_info $1, $1 }
- | T_ASYNC         { str_of_info $1, $1 }
  | T_STATIC        { str_of_info $1, $1 }
  | T_ABSTRACT      { str_of_info $1, $1 }
  | T_FINAL         { str_of_info $1, $1 }
  | T_PRIVATE       { str_of_info $1, $1 }
  | T_PROTECTED     { str_of_info $1, $1 }
- | T_PUBLIC        { str_of_info $1, $1 }
  | T_READONLY      { str_of_info $1, $1 }
  | T_UNSET         { str_of_info $1, $1 }
  | T_ISSET         { str_of_info $1, $1 }
@@ -1813,8 +1810,6 @@ named_arg_label:
  | T_TRAIT         { str_of_info $1, $1 }
  | T_INSTEADOF     { str_of_info $1, $1 }
  | T_NAMESPACE     { str_of_info $1, $1 }
- | T_LIST          { str_of_info $1, $1 }
- | T_ARRAY         { str_of_info $1, $1 }
  | T_CLASS_C       { str_of_info $1, $1 }
  | T_METHOD_C      { str_of_info $1, $1 }
  | T_FUNC_C        { str_of_info $1, $1 }
@@ -1824,21 +1819,19 @@ named_arg_label:
  | T_TRAIT_C       { str_of_info $1, $1 }
  | T_NAMESPACE_C   { str_of_info $1, $1 }
  | T_LOGICAL_OR    { str_of_info $1, $1 }
- | T_LOGICAL_AND   { str_of_info $1, $1 }
  | T_LOGICAL_XOR   { str_of_info $1, $1 }
- | T_NEW           { str_of_info $1, $1 }
  | T_CLONE         { str_of_info $1, $1 }
- | T_INSTANCEOF    { str_of_info $1, $1 }
- | T_INCLUDE       { str_of_info $1, $1 }
  | T_INCLUDE_ONCE  { str_of_info $1, $1 }
  | T_REQUIRE       { str_of_info $1, $1 }
  | T_REQUIRE_ONCE  { str_of_info $1, $1 }
  | T_EVAL          { str_of_info $1, $1 }
- | T_SELF          { str_of_info $1, $1 }
- | T_PARENT        { str_of_info $1, $1 }
- | T_FROM          { str_of_info $1, $1 }
  | T_AWAIT         { str_of_info $1, $1 }
  | T_YIELD         { str_of_info $1, $1 }
+ | T_GOTO          { str_of_info $1, $1 }
+ (* 'true' and 'false' are ordinary identifiers in a label position, but the
+  * lexer has already read them as booleans, so recover the word from the token
+  *)
+ | T_BOOL          { let (_, tok) = $1 in str_of_info tok, tok }
 
 keyword_as_ident:
  | T_PARENT      { str_of_info $1, $1 }
@@ -1860,7 +1853,6 @@ keyword_as_ident_for_field:
  | T_LIST        { str_of_info $1, $1 }
  | T_LOGICAL_AND { str_of_info $1, $1 }
  | T_NEW         { str_of_info $1, $1 }
- | T_FROM        { str_of_info $1, $1 }
  | T_GLOBAL       { str_of_info $1, $1 }
  | T_AS       { str_of_info $1, $1 }
  | T_FOR       { str_of_info $1, $1 }
