@@ -496,7 +496,9 @@ and foreach_pattern =
   | ForeachList of tok (* list *) * list_assign comma_list paren
 
 and foreach_variable = is_ref * lvalue
-and catch = tok * (class_name * dname) paren * stmt_and_def list brace
+(* the class_name is a HintUnion for a multi-catch; the dname is absent in a
+ * non-capturing catch, as in 'catch (Exception) {}' *)
+and catch = tok * (class_name * dname option) paren * stmt_and_def list brace
 and finally = tok * stmt_and_def list brace
 and use_filename = UseDirect of string wrap | UseParen of string wrap paren
 and declare = ident * static_scalar_affect
