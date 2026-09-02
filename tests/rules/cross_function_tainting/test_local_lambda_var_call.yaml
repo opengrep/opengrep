@@ -1,0 +1,12 @@
+rules:
+  - id: test-local-lambda-var-call
+    languages: [python]
+    severity: ERROR
+    message: "Taint flows through local lambda var called with tainted arg"
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
