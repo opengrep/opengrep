@@ -1277,6 +1277,78 @@ let test_process_limits_text (caps : Scan_subcommand.caps) () =
   Exit_code.Check.ok exit_code
 
 (*****************************************************************************)
+(* YAML block scalars *)
+(*****************************************************************************)
+(* The findings of key: $VALUE on tests/yaml/target.yaml, whose values are
+ * block scalars: the lines of a finding end at its last non-blank
+ * character, the message is the metavariable content and the content
+ * spans exactly its offsets. python: test_yaml_metavariables and
+ * test_quiet_mode_has_empty_stderr
+ *)
+let scan_yaml_target (caps : Scan_subcommand.caps) (args : string list) :
+    Exit_code.t * string * string =
+  let read (rel : string) : string = UFile.read_file Fpath.(v "tests/yaml" / rel) in
+  let repo_files =
+    [
+      F.File ("yaml_key.yaml", read "yaml_key.yaml");
+      F.File ("target.yaml", read "target.yaml");
+    ]
+  in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let (exit_code, stdout_output), stderr_output =
+            Testo.with_capture stderr (fun () ->
+                Testo.with_capture stdout (fun () ->
+                    without_settings (fun () ->
+                        Scan_subcommand.main caps
+                          (Array.of_list
+                             ([ "opengrep-scan"; "--experimental"; "--json"; "--config"; "yaml_key.yaml" ]
+                             @ args @ [ "target.yaml" ])))))
+          in
+          (exit_code, stdout_output, stderr_output)))
+
+let test_yaml_block_scalars (caps : Scan_subcommand.caps) () =
+  let exit_code, stdout_output, _stderr = scan_yaml_target caps [] in
+  Exit_code.Check.ok exit_code;
+  let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+  Alcotest.(check (list string))
+    "the lines of each finding"
+    [
+      {|- key: "one"|};
+      {|- key: 'two'|};
+      "- key: |\n    three";
+      "- key: |\n   four";
+      "- key: |       \n    fi\n\n    ve";
+      "- key: |\n    si\n\n      x";
+      "- key: >\n    seven";
+      "- key: >\n    eig\n\n    ht";
+    ]
+    (out.results |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) -> m.extra.lines));
+  out.results
+  |> List.iter (fun (m : Semgrep_output_v1_t.cli_match) ->
+         let (value : Semgrep_output_v1_t.metavar_value) =
+           match m.extra.metavars with
+           | Some metavars -> List.assoc "$VALUE" metavars
+           | None -> Alcotest.fail "no metavariables in the finding"
+         in
+         let content = value.abstract_content in
+         Alcotest.(check string) "the message is the value" (content ^ "\n")
+           m.extra.message;
+         Alcotest.(check int) "the value spans its offsets"
+           (value.end_.offset - value.start.offset)
+           (String.length content))
+
+(* --quiet prints nothing on stderr, so that the JSON is usable where the
+   two streams are mixed *)
+let test_quiet_json (caps : Scan_subcommand.caps) () =
+  let exit_code, stdout_output, stderr_output =
+    scan_yaml_target caps [ "--quiet" ]
+  in
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check string) "empty stderr" "" stderr_output;
+  ignore (Semgrep_output_v1_j.cli_output_of_string stdout_output)
+
+(*****************************************************************************)
 (* Missing scanning roots *)
 (*****************************************************************************)
 
@@ -1398,6 +1470,9 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "nosem with an invalid or unknown id: JSON warnings with --strict"
         (test_nosem_invalid_id_json caps);
       t "log file: a copy of the logs at the level of stderr" (test_log_file caps);
+      t "yaml block scalars: lines, message and offsets of the findings"
+        (test_yaml_block_scalars caps);
+      t "--quiet: nothing on stderr with the JSON" (test_quiet_json caps);
       t "process limits: timeouts and memory limit in the JSON errors"
         (test_process_limits_json caps);
       t "process limits: timeout warnings in the text output"

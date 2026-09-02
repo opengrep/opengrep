@@ -114,53 +114,6 @@ def test_yaml_capturing(run_semgrep_in_tmp: RunSemgrep, snapshot):
     )
 
 
-# This test is just for making sure that our YAML parser interacts properly
-# with metavariables. We don't want to introduce regressions which might
-# mess this up.
-@pytest.mark.kinda_slow
-@pytest.mark.osemfail
-def test_yaml_metavariables(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/yaml_key.yaml",
-        target_name="yaml/target.yaml",
-        output_format=OutputFormat.JSON,
-    )
-    parsed_output = json.loads(stdout)
-    assert "results" in parsed_output
-
-    for result in parsed_output["results"]:
-        value = result["extra"]["metavars"]["$VALUE"]
-        content = value["abstract_content"]
-
-        # The message is newline-terminated, probably because
-        # of how we parse the "message" field in the rule.
-        assert content + "\n" == result["extra"]["message"]
-
-        # The metavariable content should be faithful to the actual
-        # given offset information.
-        assert len(content) == value["end"]["offset"] - value["start"]["offset"]
-
-    snapshot.assert_match(stdout, "report.json")
-
-
-@pytest.mark.kinda_slow
-def test_quiet_mode_has_empty_stderr(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    """
-    Test that quiet mode doesn't print anything to stderr.
-
-    This is because some contexts e.g. Kubernetes jobs force-mix stdout and stderr,
-    and --quiet is the only way to get valid JSON output in that case.
-    """
-    stdout, stderr = run_semgrep_in_tmp(
-        "rules/yaml_key.yaml",
-        target_name="yaml/target.yaml",
-        output_format=OutputFormat.JSON,
-        options=["--quiet"],
-    )
-    assert stderr == ""
-    json.loads(stdout)  # stdout must be parseable JSON
-
-
 # junit-xml is tested in a test_junit_xml_output due to ambiguous XML attribute ordering
 @pytest.mark.kinda_slow
 @pytest.mark.parametrize(
