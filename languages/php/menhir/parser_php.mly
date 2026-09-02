@@ -885,9 +885,9 @@ member_declaration:
  * A case is only meaningful in an enum, and a value only in a backed one;
  * neither is checked here.
  *)
- | ioption(attributes) T_CASE ident ";"
+ | ioption(attributes) T_CASE ident_semi_reserved ";"
      { make_class_vars $1 (DName $3, None, None) }
- | ioption(attributes) T_CASE ident TEQ static_scalar ";"
+ | ioption(attributes) T_CASE ident_semi_reserved TEQ static_scalar ";"
      { make_class_vars $1 (DName $3, Some ($4, $5), None) }
 
 (* php 5.4 traits *)
@@ -1106,7 +1106,7 @@ attribute:
  *)
 attribute_argument:
  | static_scalar                      { Arg $1 }
- | named_arg_label ":" static_scalar  { ArgLabel (Name $1, $2, $3) }
+ | ident_semi_reserved ":" static_scalar  { ArgLabel (Name $1, $2, $3) }
 
 (*************************************************************************)
 (* Expressions *)
@@ -1561,7 +1561,7 @@ function_call_argument:
  | TAND expr        { (ArgRef($1, $2)) }
  | "..." expr       { (ArgUnpack($1, $2)) }
  (* named argument; the label may be any identifier, incl. keywords *)
- | named_arg_label ":" expr_or_dots { (ArgLabel (Name $1,$2,$3)) }
+ | ident_semi_reserved ":" expr_or_dots { (ArgLabel (Name $1,$2,$3)) }
 
 (*----------------------------*)
 (* encaps *)
@@ -1755,19 +1755,16 @@ ident_class_name:
 
 (* used in method definitions *)
 ident_method_name:
- | ident { $1 }
- (* I would like to put all keywords, but some generate s/r conflicts, so
-  * for now I add them on-demand
-  *)
- | keyword_as_ident { $1 }
+ | ident_semi_reserved { $1 }
 
 (* used in constant definitions *)
 ident_constant_name: ident_method_name { $1 }
 
-(* a named-argument label may be any identifier, including every keyword PHP
- * calls semi-reserved. coupling: semi_reserved in Zend's zend_language_parser.y
+(* any identifier, including every keyword PHP calls semi-reserved. Legal as a
+ * named-argument label, an enum case name, a method name and a constant name.
+ * coupling: semi_reserved in Zend's zend_language_parser.y
  *)
-named_arg_label:
+ident_semi_reserved:
  | ident { $1 }
  | keyword_as_ident { $1 }
  | T_IF            { str_of_info $1, $1 }
