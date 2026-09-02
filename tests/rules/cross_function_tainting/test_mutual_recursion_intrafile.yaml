@@ -1,0 +1,12 @@
+rules:
+  - id: test-mutual-recursion-intrafile
+    languages: [python]
+    severity: ERROR
+    message: "Taint flows through mutually-recursive functions"
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
