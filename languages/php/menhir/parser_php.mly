@@ -197,6 +197,12 @@ let str_of_info x = Tok.content_of_tok x
  TPLUS TMINUS TMUL TDIV TMOD TPOW
  T_NULL_COALLESCING
  TAND TOR "|" TXOR
+(* '&' that is not followed by a variable or by '...'. Split off from TAND
+ * after lexing, the way php-src splits it in the lexer, so that 'X&Y' in a
+ * parameter can be told apart from the by-reference 'X &$y'.
+ * coupling: T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG in Zend
+ *)
+ TAND_NOT_VAR
  (* PHP 8.5 pipe operator *)
  T_PIPE_GT "|>"
  TEQ
@@ -285,7 +291,7 @@ let str_of_info x = Tok.content_of_tok x
 %left      T_BOOLEAN_AND
 %left      TOR
 %left      TXOR
-%left      TAND
+%left      TAND TAND_NOT_VAR
 %nonassoc  T_IS_EQUAL T_IS_NOT_EQUAL T_IS_IDENTICAL T_IS_NOT_IDENTICAL T_ROCKET
 %nonassoc  TSMALLER T_IS_SMALLER_OR_EQUAL TGREATER T_IS_GREATER_OR_EQUAL
 (* PHP 8.5 pipe operator: left-associative, binding tighter than the
@@ -470,7 +476,7 @@ for_expr:
  | listc(expr)   { $1 }
 
 (* can not factorize with a is_reference otherwise s/r conflict on LIST *)
-foreach_variable: ioption(TAND) expr  { $1, $2 }
+foreach_variable: ioption(tand_any) expr  { $1, $2 }
 
 foreach_pattern:
   | foreach_variable                      { ForeachVar $1 }
@@ -663,7 +669,7 @@ parameter_list:
 (* the trailing hooks are for PHP 8.4 constructor property promotion, as in
  * '__construct(public string $n { set => strtolower($value); })'
  *)
-parameter: attributes? ctor_modifier* ioption(type_php) parameter_bis
+parameter: attributes? ctor_modifier* ioption(param_type_php) parameter_bis
            property_hooks?
    { match $4 with
      | Left3 param ->
@@ -715,7 +721,20 @@ ctor_modifier:
  | T_FINAL { Final, $1 }
  | set_visibility_modifier { $1 }
 
-is_reference: TAND?  { $1 }
+(* never in a parameter, so either spelling is unambiguous here. A pattern
+ * names the function with a metavariable, as in 'function &$F()', which puts
+ * a '$' after the '&'.
+ *)
+is_reference: tand_any?  { $1 }
+
+(* php-src's 'ampersand': every use of '&' except a by-reference parameter
+ * and an intersection type takes either spelling, because the target of a
+ * reference need not start with '$' — '&self::$x' begins with a name.
+ *)
+%inline
+tand_any:
+ | TAND         { $1 }
+ | TAND_NOT_VAR { $1 }
 
 (* PHP 5.3 *)
 lexical_vars:
@@ -737,7 +756,7 @@ non_empty_lexical_var_list_bis:
  | non_empty_lexical_var_list_bis "," lexical_var
      { $1 @ [Right $2; Left $3] }
 
-lexical_var: TAND? variable  { ($1, DName $2) }
+lexical_var: tand_any? variable  { ($1, DName $2) }
 
 (*************************************************************************)
 (* Class declaration *)
@@ -1121,7 +1140,7 @@ expr:
   * force to have a 'simple_expr' on the left side.
   *)
  | simple_expr TEQ expr { Assign($1,$2, $3) }
- | simple_expr TEQ TAND expr   { AssignRef($1,$2,$3, $4) }
+ | simple_expr TEQ tand_any expr   { AssignRef($1,$2,$3, $4) }
 
  | simple_expr T_PLUS_EQUAL   expr { AssignOp($1,(AssignOpArith Plus,$2),$3) }
  | simple_expr T_MINUS_EQUAL  expr { AssignOp($1,(AssignOpArith Minus,$2),$3) }
@@ -1162,7 +1181,7 @@ expr:
  | expr TMOD expr   { Binary($1,(Arith Mod,$2),$3) }
  | expr TPOW expr   { Binary($1,(Arith Pow,$2),$3) }
 
- | expr TAND expr   { Binary($1,(Arith And,$2),$3) }
+ | expr tand_any expr   { Binary($1,(Arith And,$2),$3) }
  | expr "|" expr    { Binary($1,(Arith Or,$2),$3) }
  | expr TXOR expr   { Binary($1,(Arith Xor,$2),$3) }
  | expr T_SL expr   { Binary($1,(Arith DecLeft,$2),$3) }
@@ -1417,7 +1436,7 @@ static_scalar:
  | static_scalar TPOW static_scalar   { Binary($1,(Arith Pow,$2),$3) }
  | static_scalar "." static_scalar    { Binary($1,(BinaryConcat,$2),$3) }
  (* Bitwise *)
- | static_scalar TAND static_scalar   { Binary($1,(Arith And,$2),$3) }
+ | static_scalar tand_any static_scalar   { Binary($1,(Arith And,$2),$3) }
  | static_scalar "|" static_scalar    { Binary($1,(Arith Or,$2),$3) }
  | static_scalar TXOR static_scalar   { Binary($1,(Arith Xor,$2),$3) }
  | static_scalar T_SL static_scalar   { Binary($1,(Arith DecLeft,$2),$3) }
@@ -1530,11 +1549,11 @@ static_scalar_primary:
 
 assignment_list_element:
  | expr             { ListVar $1 }
- | TAND expr        { ListRef ($1, $2) }
+ | tand_any expr        { ListRef ($1, $2) }
  | T_LIST "(" assignment_list ")"   { ListList ($1, ($2, $3, $4)) }
  (* keyed destructuring; the value may itself be a reference or a nested list *)
  | expr "=>" expr        { ListArrow ($1, $2, ListVar $3) }
- | expr "=>" TAND expr   { ListArrow ($1, $2, ListRef ($3, $4)) }
+ | expr "=>" tand_any expr   { ListArrow ($1, $2, ListRef ($3, $4)) }
  | expr "=>" T_LIST "(" assignment_list ")"
      { ListArrow ($1, $2, ListList ($3, ($4, $5, $6))) }
  | (*empty*)            { ListEmpty }
@@ -1542,11 +1561,11 @@ assignment_list_element:
 array_pair_list: array_pair_list_rev { List.rev $1 }
 array_pair:
  | expr_or_dots                    { (ArrayExpr $1) }
- | TAND expr               { (ArrayRef ($1,$2)) }
+ | tand_any expr               { (ArrayRef ($1,$2)) }
  (* array unpacking *)
  | "..." expr              { (ArrayUnpack ($1,$2)) }
  | expr "=>" expr          { (ArrayArrowExpr($1,$2,$3)) }
- | expr "=>" TAND expr { (ArrayArrowRef($1,$2,$3,$4)) }
+ | expr "=>" tand_any expr { (ArrayArrowRef($1,$2,$3,$4)) }
 
 (*----------------------------*)
 (* Calls *)
@@ -1563,7 +1582,7 @@ expr_or_dots:
 
 function_call_argument:
  | expr_or_dots             { (Arg ($1)) }
- | TAND expr        { (ArgRef($1, $2)) }
+ | tand_any expr        { (ArgRef($1, $2)) }
  | "..." expr       { (ArgUnpack($1, $2)) }
  (* named argument; the label may be any identifier, incl. keywords *)
  | ident_semi_reserved ":" expr_or_dots { (ArgLabel (Name $1,$2,$3)) }
@@ -1976,15 +1995,33 @@ prop_type_php:
  | type_php { $1 }
  | bare_intersection_php { $1 }
 
+(* a parameter's type, where 'X&Y' is now told apart from 'X &$y' by the
+ * token the '&' was split into *)
+param_type_php:
+ | type_php { $1 }
+ | bare_intersection_param_php { $1 }
+
 (* no parentheses to record here, so the '&' stands in for them;
  * php_to_generic ignores those and folds on the real '&' tokens *)
 bare_intersection_php:
- | class_name TAND intersection_type_php_list
+ | class_name tand_any intersection_type_php_list
      { HintIntersection ($2, Left $1 :: Right $2 :: $3, $2) }
+
+(* the same, in the one position where a '&' could instead introduce a
+ * by-reference parameter. Only here must every '&' be the spelling that is
+ * not followed by a variable, which is also why 'A&$T $p' cannot be written
+ * in a pattern: '&$T' reads as the by-reference parameter it looks like.
+ *)
+bare_intersection_param_php:
+ | class_name TAND_NOT_VAR intersection_type_php_list_param
+     { HintIntersection ($2, Left $1 :: Right $2 :: $3, $2) }
+
+intersection_type_php_list_param:
+ | list_sep(class_name, TAND_NOT_VAR) { $1 }
 
 (* PHP 8.1/8.2: intersection types use & separator, must have 2+ types *)
 intersection_type_php_list:
- | list_sep(class_name, TAND) { $1 }
+ | list_sep(class_name, tand_any) { $1 }
 
 class_name_list: listc(class_name_no_array) { $1 }
 

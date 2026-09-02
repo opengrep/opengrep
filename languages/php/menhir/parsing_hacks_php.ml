@@ -189,6 +189,45 @@ let find_typehint toks =
   aux toks [] 0
 
 (*****************************************************************************)
+(* ampersands *)
+(*****************************************************************************)
+
+(* php-src decides in the lexer whether a '&' introduces a by-reference
+ * variable or joins two types, by looking at whether a '$' or a '...' comes
+ * next; intersection types accept only the latter spelling, by-reference
+ * parameters only the former, and bitwise and either. Without the split,
+ * 'f(X&Y $p)' and 'f(X &$p)' cannot be told apart until after the '&'.
+ * ocamllex cannot look ahead, so the split is done here instead.
+ * coupling: the "&" rules in Zend's zend_language_scanner.l
+ *)
+let split_ampersands xs =
+  let rec followed_by_var_or_vararg = function
+    | [] -> false
+    | x :: xs ->
+        if TH.is_comment x then followed_by_var_or_vararg xs
+        else (
+          match x with
+          | T_VARIABLE _
+          | T_METAVAR _
+          | TDOLLAR _
+          | TDOLLARDOLLAR _
+          | T_ELLIPSIS _ ->
+              true
+          | _ -> false)
+  in
+  let rec aux acc xs =
+    match xs with
+    | [] -> List.rev acc
+    | TAND ii :: rest ->
+        let tok =
+          if followed_by_var_or_vararg rest then TAND ii else TAND_NOT_VAR ii
+        in
+        aux (tok :: acc) rest
+    | x :: rest -> aux (x :: acc) rest
+  in
+  aux [] xs
+
+(*****************************************************************************)
 (* Fix tokens *)
 (*****************************************************************************)
 
@@ -293,5 +332,5 @@ let fix_tokens xs =
         in
         aux { env with stack } (x :: acc) xs
   in
-  aux { stack = [ Toplevel ]; misc = () } [] xs
+  aux { stack = [ Toplevel ]; misc = () } [] (split_ampersands xs)
 [@@profiling]
