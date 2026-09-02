@@ -108,7 +108,10 @@ let augment_with_file (file : Fpath.t) (error : t) : t = { error with file }
 (*****************************************************************************)
 
 let string_of_invalid_rule_kind = function
-  | InvalidLanguage language -> spf "invalid language %s" language
+  | InvalidLanguage language ->
+      (* python: LanguageDefinition.resolve *)
+      spf "unsupported language: %s. supported languages are: %s" language
+        (Xlang.keys |> List.sort String.compare |> String.concat ", ")
   | InvalidRegexp message -> spf "invalid regex %s" message
   (* coupling: this is actually intercepted in
    * Semgrep_error_code.exn_to_error to generate a PatternParseError instead

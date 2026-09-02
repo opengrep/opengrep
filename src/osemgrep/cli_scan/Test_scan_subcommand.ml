@@ -967,6 +967,95 @@ let test_inventory_and_experiment_rules_never_run
   Alcotest.(check (list string)) "no findings" [] check_ids
 
 (*****************************************************************************)
+(* Rule errors *)
+(*****************************************************************************)
+(* A rule that cannot be loaded is reported in the JSON errors with the
+ * type and code of the error, which is also the exit code of the scan.
+ *)
+
+let unknown_language_rule_content =
+  {|
+rules:
+  - id: arg-reassign
+    pattern: $X = 1
+    message: "$X is being assigned to one"
+    languages: [intercal]
+    severity: WARNING
+|}
+
+(* a 'pattern' has no semantic meaning for a regex-only rule *)
+let pattern_in_regex_rule_content =
+  {|
+rules:
+  - id: bad
+    message: cannot use 'pattern' with language 'regex'
+    languages: [regex]
+    severity: WARNING
+    patterns:
+      - pattern: $X
+|}
+
+let invalid_pattern_rule_content =
+  {|
+rules:
+  - id: bad-pat
+    pattern: "("
+    message: cannot be parsed
+    languages: [python]
+    severity: WARNING
+|}
+
+(* the (type, code, rule id) of the JSON errors of the scan and its exit
+ * code; the rule is passed with --config, or with -e when it is None *)
+let json_errors (caps : Scan_subcommand.caps) ~(rule : string option)
+    (extra_args : string list) : (string * int * string option) list * Exit_code.t
+    =
+  with_env_app_token (fun () ->
+      let rule_files, config_args =
+        match rule with
+        | Some rule -> ([ F.File ("rules.yml", rule) ], [ "--config"; "rules.yml" ])
+        | None -> ([], [])
+      in
+      let repo_files = rule_files @ [ F.File ("target.py", stupid_py_content) ] in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let exit_code, stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      (Array.of_list
+                         ([ "opengrep-scan"; "--experimental"; "--json" ]
+                         @ config_args @ extra_args @ [ "target.py" ]))))
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          ( out.errors
+            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                   ( Error.string_of_error_type e.type_,
+                     e.code,
+                     Option.map Rule_ID.to_string e.rule_id )),
+            exit_code )))
+
+let test_rule_errors (caps : Scan_subcommand.caps) () =
+  let check name ~rule extra_args expected_errors
+      (expected_exit : Exit_code.t -> unit) =
+    let errors, exit_code = json_errors caps ~rule extra_args in
+    Alcotest.(check (list (triple string int (option string))))
+      name expected_errors errors;
+    expected_exit exit_code
+  in
+  check "unknown language" ~rule:(Some unknown_language_rule_content) []
+    [ ("UnknownLanguageError", 8, Some "arg-reassign") ]
+    Exit_code.Check.invalid_language;
+  check "pattern in a regex rule" ~rule:(Some pattern_in_regex_rule_content) []
+    [ ("Rule parse error", 4, Some "bad") ]
+    Exit_code.Check.invalid_pattern;
+  check "invalid pattern in a rule" ~rule:(Some invalid_pattern_rule_content) []
+    [ ("Rule parse error", 4, Some "bad-pat") ]
+    Exit_code.Check.invalid_pattern;
+  check "invalid -e pattern" ~rule:None [ "-e"; "("; "-l"; "python" ]
+    [ ("Rule parse error", 4, Some "-") ]
+    Exit_code.Check.invalid_pattern
+
+(*****************************************************************************)
 (* Missing scanning roots *)
 (*****************************************************************************)
 
@@ -1084,6 +1173,7 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "--time: the times in the JSON output" (test_time_json caps);
       t "INVENTORY and EXPERIMENT rules never run"
         (test_inventory_and_experiment_rules_never_run caps);
+      t "rule errors: type, code and exit code" (test_rule_errors caps);
       t "missing scanning roots: fatal error reported in the JSON output"
         (test_missing_roots_json caps);
       t "missing scanning roots: fatal error with text output"

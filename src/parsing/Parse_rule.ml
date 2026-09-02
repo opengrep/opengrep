@@ -1233,7 +1233,8 @@ let parse_and_filter_invalid_rules ?rewrite_rule_ids (file : Fpath.t) :
 let parse_xpattern xlang (str, tok) =
   let env =
     {
-      id = Rule_ID.of_string_exn "anon-pattern";
+      (* the id of the rule made of the -e pattern, for its errors *)
+      id = Rule_ID.dash_e;
       target_analyzer = xlang;
       in_metavariable_pattern = false;
       path = [];

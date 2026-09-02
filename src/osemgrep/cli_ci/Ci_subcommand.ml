@@ -255,7 +255,6 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
             Scan_subcommand.core_errors_of_fatal_rule_errors fatal_errors
           in
           Scan_subcommand.output_and_exit_from_fatal_core_errors_exn
-            ~exit_code:(Exit_code.missing_config ~__LOC__)
             ~text_message:(Scan_subcommand.invalid_configs_message core_errors)
             (caps :> < Cap.stdout >)
             conf profiler core_errors

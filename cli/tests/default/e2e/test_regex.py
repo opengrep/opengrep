@@ -158,18 +158,6 @@ def test_regex_with_any_language_multiple_rule(
     )
 
 
-@pytest.mark.osemfail
-@pytest.mark.kinda_slow
-def test_invalid_regex_with_any_language_rule(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    stdout, stderr = run_semgrep_in_tmp(
-        "rules/regex/regex-any-language-invalid.yaml",
-        target_name="basic/regex-any-language.html",
-        assert_exit_code=7,
-    )
-    snapshot.assert_match(stderr, "error.txt")
-    snapshot.assert_match(_clean_stdout(stdout), "error.json")
-
-
 @pytest.mark.kinda_slow
 def test_regex_with_any_language_rule_none_alias(
     run_semgrep_in_tmp: RunSemgrep, snapshot

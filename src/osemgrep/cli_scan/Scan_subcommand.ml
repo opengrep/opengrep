@@ -101,9 +101,15 @@ let invalid_configs_message (errors : Core_error.t list) : string =
     (String.concat "\n" (List_.map Core_error.string_of_error errors))
 
 (* we require stdout here to give the proper output, such as with --json *)
-let output_and_exit_from_fatal_core_errors_exn ~exit_code
-    ~(text_message : string) (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
-    (profiler : Profiler.t) (errors : Core_error.t list) : Exit_code.t =
+let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
+    (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
+    (errors : Core_error.t list) : Exit_code.t =
+  (* the code of the error, as in the JSON output *)
+  let exit_code : Exit_code.t =
+    match errors with
+    | (e : Core_error.t) :: _ -> Cli_json_output.exit_code_of_error_type e.typ
+    | [] -> Exit_code.missing_config ~__LOC__
+  in
   match conf.output_conf.output_format with
   (* For textual output, it seems that we do not have a unified way to
      display errors, other than raising an exception and dispatching to the
@@ -149,7 +155,6 @@ let get_targets_or_exit (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
       in
       Error
         (output_and_exit_from_fatal_core_errors_exn
-           ~exit_code:(Exit_code.fatal ~__LOC__)
            ~text_message:
              (errors
              |> List_.map (fun (error : Core_error.t) -> error.msg)
@@ -478,7 +483,6 @@ let check_targets_with_rules ?(print_summary = true)
       in
       Error
         (output_and_exit_from_fatal_core_errors_exn
-           ~exit_code:(Exit_code.missing_config ~__LOC__)
            ~text_message:(invalid_configs_message core_errors)
            (caps :> < Cap.stdout >)
            conf profiler core_errors)
@@ -719,7 +723,6 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   | _ :: _ ->
       let core_errors = core_errors_of_fatal_rule_errors fatal_errors in
       output_and_exit_from_fatal_core_errors_exn
-        ~exit_code:(Exit_code.missing_config ~__LOC__)
         ~text_message:(invalid_configs_message core_errors)
         (caps :> < Cap.stdout >)
         conf profiler core_errors
