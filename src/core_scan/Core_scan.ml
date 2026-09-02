@@ -442,11 +442,17 @@ let log_critical_exn_and_last_rule () =
   (* TODO? why we use Match_patters.last_matched_rule here
      * and below Rule.last_matched_rule?
   *)
+  (* The rule id is the one of Rule.last_matched_rule: the id of the mini
+     rule of Match_patterns.last_matched_rule is the process-wide counter of
+     the patterns, which means nothing to the user. *)
+  (match TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule with
+  | None -> ()
+  | Some rule_id ->
+      Logs.warn (fun m ->
+          m "critical exn while matching rule %s" (Rule_ID.to_string rule_id)));
   match (TLS.get_default ~default:(fun () -> None) Match_patterns.last_matched_rule) with
   | None -> ()
   | Some rule ->
-      Logs.warn (fun m ->
-          m "critical exn while matching ruleid %s" (Rule_ID.to_string rule.id));
       Logs.debug (fun m -> m "full pattern is: %s" rule.MR.pattern_string);
       ()
 
@@ -456,7 +462,8 @@ let errors_of_timeout_or_memory_exn (exn : exn) (target : Target.t) : ESet.t =
   let loc = Tok.first_loc_of_file internal_path in
   match exn with
   | Match_rules.File_timeout rule_ids ->
-      Logs.warn (fun m -> m "Timeout on %s" (Origin.to_string origin));
+      (* the report of the scan states the timeouts *)
+      Logs.info (fun m -> m "Timeout on %s" (Origin.to_string origin));
       (* TODO what happened here is several rules
          timed out while trying to scan a file.
          Which heuristically indicates that the
@@ -545,6 +552,10 @@ let iter_targets_and_get_matches_and_exn_to_errors
                         * now timeout per rule, not per file since pysemgrep
                         * passed all the rules to semgrep-core.
                         *)
+                       (* an exception before any rule runs on this target,
+                          e.g. while parsing it, must not be attributed to
+                          the last rule of the previous target *)
+                       TLS.set Rule.last_matched_rule None;
                        let res, was_scanned = handle_target target in
                        (* old: This was to test -max_memory, to give a chance
                         * to Gc.create_alarm to run even if the program does

@@ -182,22 +182,14 @@ let detect_extract_languages all_rules =
 *)
 let group_rules_by_target_language (rules : Rule.t list) :
     (Xlang.t * Rule.t list) list =
-  (* target language -> rules *)
-  (* TODO: use Assoc.group_by *)
-  let tbl = Hashtbl.create 100 in
+  (* target language -> rules, in the order the rules were given so that
+     the scan runs them in that order (which --timeout-threshold depends on) *)
   rules
-  |> List.iter (fun (rule : Rule.t) ->
-         let pattern_lang = rule.target_analyzer in
-         let target_langs = Xlang.flatten pattern_lang in
-         target_langs
-         |> List.iter (fun lang ->
-                let rules =
-                  match Hashtbl.find_opt tbl lang with
-                  | None -> []
-                  | Some rules -> rules
-                in
-                Hashtbl.replace tbl lang (rule :: rules)));
-  Hashtbl.fold (fun lang rules acc -> (lang, rules) :: acc) tbl []
+  |> List.concat_map (fun (rule : Rule.t) ->
+         Xlang.flatten rule.target_analyzer
+         |> List_.map (fun (lang : Xlang.t) -> (lang, rule)))
+  |> Assoc.group_by fst
+  |> List_.map (fun (lang, lang_rules) -> (lang, List_.map snd lang_rules))
 
 (* If Javascript is one of the rule languages, we should also run on
    Typescript files. This implementation mimics the hack in `rule.py`.

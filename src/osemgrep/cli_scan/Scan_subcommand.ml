@@ -612,6 +612,19 @@ let check_targets_with_rules ?(print_summary = true)
           let cli_output =
             Output.output_result (caps :> < Cap.stdout >) output_conf profiler res
           in
+          (* python: the timeout warnings printed in text mode with the
+             results (not with --quiet, on either side) *)
+          (match output_format with
+          | Text ->
+              let warnings =
+                Fmt_.with_buffer_to_string (fun ppf ->
+                    Summary_report.pp_timeout_warnings
+                      ~timeout_threshold:conf.core_runner_conf.timeout_threshold
+                      ppf cli_output.errors)
+              in
+              if not (String.equal warnings "") then
+                Logs.warn (fun m -> m "%s" (String.trim warnings))
+          | _ -> ());
           Profiler.stop_ign profiler ~name:"total_time";
 
           (* We'll report the number of valid rules, not the number of

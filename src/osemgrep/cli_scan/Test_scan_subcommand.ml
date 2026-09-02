@@ -1179,6 +1179,104 @@ let test_log_file (caps : Scan_subcommand.caps) () =
             (String_.contains ~term:"[INFO]" contents)))
 
 (*****************************************************************************)
+(* Process limits *)
+(*****************************************************************************)
+(* --timeout, --timeout-threshold and --max-memory on the rules and targets
+ * of tests/process_limits, whose rules time out on open_redirect.py.
+ * python: test_process_limits.py
+ *)
+
+let process_limits_root : Fpath.t = Fpath.v "tests/process_limits"
+
+(* the scan of the files of tests/process_limits copied into a temp repo;
+ * the JSON errors (type, rule id) and the exit code when captured, else the
+ * output on stdxxx for a snapshot *)
+let scan_process_limits (caps : Scan_subcommand.caps) ~(capture_stdout : bool)
+    (args : string list) : (string * string option) list * Exit_code.t =
+  let read (rel : string) : string =
+    UFile.read_file Fpath.(process_limits_root // v rel)
+  in
+  let repo_files =
+    [
+      F.Dir
+        ( "rules",
+          [
+            F.File ("long.yaml", read "rules/long.yaml");
+            F.File ("multiple-long.yaml", read "rules/multiple-long.yaml");
+          ] );
+      F.Dir
+        ( "targets",
+          [
+            F.File ("open_redirect.py", read "targets/open_redirect.py");
+            F.File ("gnu-lgplv2.txt", read "targets/gnu-lgplv2.txt");
+          ] );
+    ]
+  in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let scan () : Exit_code.t =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  (Array.of_list ([ "opengrep-scan"; "--experimental"; "-j"; "1" ] @ args)))
+          in
+          if capture_stdout then
+            let exit_code, stdout_output = Testo.with_capture stdout scan in
+            let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+            ( out.errors
+              |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                     ( Error.string_of_error_type e.type_,
+                       Option.map Rule_ID.to_string e.rule_id )),
+              exit_code )
+          else ([], scan ())))
+
+let test_process_limits_json (caps : Scan_subcommand.caps) () =
+  let check name (args : string list) expected =
+    let errors, exit_code = scan_process_limits caps ~capture_stdout:true args in
+    Exit_code.Check.ok exit_code;
+    Alcotest.(check (list (pair string (option string)))) name expected errors
+  in
+  let multiple_long = [ "--json"; "--timeout"; "1"; "--config"; "rules/multiple-long.yaml"; "targets/open_redirect.py" ] in
+  (* the rules run in the order of the file: the threshold stops the file
+     after the first ones *)
+  check "timeout threshold 1"
+    ([ "--timeout-threshold"; "1" ] @ multiple_long)
+    [ ("Timeout", Some "rules.forcetimeout") ];
+  check "timeout threshold 2"
+    ([ "--timeout-threshold"; "2" ] @ multiple_long)
+    [ ("Timeout", Some "rules.forcetimeout"); ("Timeout", Some "rules.forcetimeout2") ];
+  check "spacegrep timeout"
+    [ "--json"; "--timeout"; "1"; "-l"; "generic"; "-e"; "$A ... $B ... $C ... Frob ... Yoyodyne"; "targets/gnu-lgplv2.txt" ]
+    [ ("Timeout", Some "-") ];
+  (* the limit strikes when memprof samples an allocation: during the
+     parsing of the target, with no rule to attribute the error to, or
+     while the rule runs *)
+  let errors, exit_code =
+    scan_process_limits caps ~capture_stdout:true
+      [ "--json"; "--max-memory"; "1"; "--config"; "rules/long.yaml"; "targets/open_redirect.py" ]
+  in
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check (list string)) "max memory: the error" [ "Out of memory" ]
+    (List_.map fst errors);
+  Alcotest.(check bool) "max memory: the rule, if any" true
+    (List.for_all
+       (fun (_type, rule_id) ->
+         match rule_id with
+         | None
+         | Some "rules.forcetimeout" ->
+             true
+         | Some _ -> false)
+       errors)
+
+(* the text output: the timeout warning, the stopped file and the verbose
+   listing of the partially analysed file with its rule *)
+let test_process_limits_text (caps : Scan_subcommand.caps) () =
+  let _no_errors, exit_code =
+    scan_process_limits caps ~capture_stdout:false
+      [ "--verbose"; "--timeout"; "1"; "--timeout-threshold"; "1"; "--config"; "rules/multiple-long.yaml"; "targets/open_redirect.py" ]
+  in
+  Exit_code.Check.ok exit_code
+
+(*****************************************************************************)
 (* Missing scanning roots *)
 (*****************************************************************************)
 
@@ -1300,6 +1398,11 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "nosem with an invalid or unknown id: JSON warnings with --strict"
         (test_nosem_invalid_id_json caps);
       t "log file: a copy of the logs at the level of stderr" (test_log_file caps);
+      t "process limits: timeouts and memory limit in the JSON errors"
+        (test_process_limits_json caps);
+      t "process limits: timeout warnings in the text output"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_process_limits_text caps);
       t "nosem with an invalid or unknown id: text output with --strict"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_nosem_invalid_id_text caps);
