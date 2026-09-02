@@ -247,7 +247,8 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
               (caps :> < Cap.network ; Cap.tmp >)
               ~skip_invalid_configs:conf.skip_invalid_configs
               ~rewrite_rule_ids:conf.rewrite_rule_ids
-              ~strict:conf.core_runner_conf.strict conf.rules_source)
+              ~strict:conf.core_runner_conf.strict
+              (Rule_fetching.classify conf.rules_source))
       in
       match fatal_errors with
       | _ :: _ ->
@@ -255,7 +256,7 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
             Scan_subcommand.core_errors_of_fatal_rule_errors fatal_errors
           in
           Scan_subcommand.output_and_exit_from_fatal_core_errors_exn
-            ~text_message:(Scan_subcommand.invalid_configs_message core_errors)
+            ~text_message:(Rule_errors_report.invalid_configs_message core_errors)
             (caps :> < Cap.stdout >)
             conf profiler core_errors
       | [] -> (

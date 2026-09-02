@@ -1,0 +1,54 @@
+--- begin input files ---
+rules/string-pattern-under-patterns.yaml
+target.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 rules/string-pattern-under-patterns.yaml
+ create mode 100644 target.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/string-pattern-under-patterns.yaml:4:5: Invalid rule schema in rule rules.eqeq
+  --> rules/string-pattern-under-patterns.yaml:4
+3 |   patterns:
+4 |     - "foo"
+  |     ^
+5 |   message: |
+Strings are not valid under `patterns`: did you mean to write `pattern: foo` instead?
+exit code: 4
+--- begin input files ---
+rules/string-pattern-under-patterns.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 rules/string-pattern-under-patterns.yaml
+ create mode 100644 target.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+{"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq","message":"Invalid rule schema at line rules/string-pattern-under-patterns.yaml:4:\n Strings are not valid under `patterns`: did you mean to write `pattern: foo` instead?","path":"rules/string-pattern-under-patterns.yaml","long_msg":"Strings are not valid under `patterns`: did you mean to write `pattern: foo` instead?","short_msg":"Invalid rule schema","spans":[{"file":"rules/string-pattern-under-patterns.yaml","start":{"line":4,"col":5,"offset":34},"end":{"line":4,"col":6,"offset":35}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 4

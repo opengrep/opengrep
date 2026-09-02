@@ -52,6 +52,23 @@ val partition_rules_and_invalid :
 val langs_of_pattern :
   string * Xlang.t option -> (Xlang.t list, Rule_error.t) result
 
+(* The --config arguments classified, once, for the message about them and
+   for the fetching; a config that cannot be found is an error reported like
+   a rule file that cannot be loaded. *)
+type source =
+  | Configs of Rules_config.t list * Rule_error.t list
+  | Pattern of string * Xlang.t option * string option
+
+val classify : Rules_source.t -> source
+
+val rules_from_source_async :
+  ?skip_invalid_configs:bool ->
+  rewrite_rule_ids:bool ->
+  strict:bool ->
+  < Cap.network ; Cap.tmp > ->
+  source ->
+  (rules_and_origin list * Rule_error.t list) Lwt.t
+
 (* [rules_from_rules_source] returns rules from --config or -e.
  * If [rewrite_rule_ids] is true, it will add the path of the config
  * file to the start of rule_ids.

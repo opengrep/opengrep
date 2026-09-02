@@ -1043,10 +1043,10 @@ let test_rule_errors (caps : Scan_subcommand.caps) () =
     expected_exit exit_code
   in
   check "unknown language" ~rule:(Some unknown_language_rule_content) []
-    [ ("UnknownLanguageError", 8, Some "arg-reassign") ]
+    [ ("Unknown language", 8, Some "arg-reassign") ]
     Exit_code.Check.invalid_language;
   check "pattern in a regex rule" ~rule:(Some pattern_in_regex_rule_content) []
-    [ ("Rule parse error", 4, Some "bad") ]
+    [ ("Invalid rule schema", 4, Some "bad") ]
     Exit_code.Check.invalid_pattern;
   check "invalid pattern in a rule" ~rule:(Some invalid_pattern_rule_content) []
     [ ("Rule parse error", 4, Some "bad-pat") ]

@@ -110,6 +110,7 @@ let mk_error ?rule_id ?(msg = "") ?(loc : Tok.location option)
     | SemgrepError
     | InvalidRuleSchemaError
     | UnknownLanguageError
+    | MissingConfig
     | MissingPlugin
     | DependencyResolutionError _ ->
         msg
@@ -152,7 +153,16 @@ let error_of_invalid_rule ((kind, rule_id, pos) : Rule_error.invalid_rule) : t =
           }
     | MissingPlugin _msg -> Out.MissingPlugin
     | InvalidLanguage _ -> Out.UnknownLanguageError
-    | _ -> Out.RuleParseError
+    (* the structure of the rule is wrong: what pysemgrep found with its
+       JSON schema of the rules *)
+    | DeprecatedFeature _
+    | MissingPositiveTermInAnd
+    | MisplacedNegation
+    | InvalidOther _ ->
+        Out.InvalidRuleSchemaError
+    | InvalidPattern _
+    | InvalidRegexp _ ->
+        Out.RuleParseError
   in
   mk_error_tok ~rule_id pos msg err
 
@@ -179,6 +189,8 @@ let error_of_rule_error (err : Rule_error.t) : t =
         details = None;
       }
   | InvalidRule err -> error_of_invalid_rule err
+  (* no file to locate the error in *)
+  | ConfigNotFound msg -> mk_error ?rule_id ~msg Out.MissingConfig
   | InvalidYaml (msg, pos) ->
       mk_error_tok ?rule_id ~file pos msg Out.InvalidYaml
   | DuplicateYamlKey (s, pos) ->
@@ -329,13 +341,15 @@ let severity_of_error (typ : Out.error_type) : Out.error_severity =
   | ParseError
   | PartialParsing _
   | OtherParseError
-  | InvalidYaml
   | Timeout
   | OutOfMemory
   | StackOverflow
   | SemgrepWarning ->
       `Warning
   (* Errors *)
+  (* a rule file that is not valid YAML cannot be loaded *)
+  | InvalidYaml
+  | MissingConfig
   | SemgrepMatchFound
   | AstBuilderError
   | RuleParseError

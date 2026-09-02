@@ -24,6 +24,8 @@ type rules_and_invalid = Rule.rules * invalid_rule list
 (* General errors *)
 type error_kind =
   | InvalidRule of invalid_rule
+  (* the configuration could not be found; the message *)
+  | ConfigNotFound of string
   | InvalidYaml of string * Tok.t
   | DuplicateYamlKey of string * Tok.t
   | UnparsableYamlException of string

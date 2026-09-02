@@ -118,10 +118,17 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
       rules_source
   in
   (* ex: missing toplevel 'rules:' (probably not a semgrep rule file) *)
+  let pp_rule_error (err : Core_error.t) : unit =
+    (* alt: Error.abort *)
+    Logs.warn (fun m ->
+        m "%s"
+          (Fmt_.with_buffer_to_string (fun ppf ->
+               Rule_errors_report.pp_errors ppf [ err ])
+          |> String.trim))
+  in
   fatal_errors
   |> List.iter (fun (err : Rule_error.t) ->
-         (* alt: Error.abort *)
-         Logs.warn (fun m -> m "%s" (Rule_error.string_of_error err)));
+         pp_rule_error (Core_error.error_of_rule_error err));
   let rules, invalid_rules =
     Rule_fetching.partition_rules_and_invalid rules_and_origin
   in
@@ -131,8 +138,7 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
          (* to get the "Missing semgrep extension ... install --pro" error *)
          (* alt: just warn *)
          | MissingPlugin s, _, _ -> Error.abort s
-         | _ ->
-             Logs.warn (fun m -> m "%s" (Rule_error.string_of_invalid_rule err)));
+         | _ -> pp_rule_error (Core_error.error_of_invalid_rule err));
   (* In a validate context, rules are actually targets of metarules.
    * alt: could also process Configs to compute the targets.
    *)
