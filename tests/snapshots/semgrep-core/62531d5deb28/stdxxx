@@ -1,0 +1,8 @@
+[<MASKED TIMESTAMP>][[33mWARNING[0m]: no fixtest for test targets/no_associated_fixed.py but the rule file rules/basic_fix_regex.yaml uses autofix
+--- begin input files ---
+rules/basic_fix_regex.yaml
+targets/no_associated_fixed.py
+--- end input files ---
+1/1: ✓ All tests passed
+No tests for fixes found.
+[0m[33mASSERT[0m exit code

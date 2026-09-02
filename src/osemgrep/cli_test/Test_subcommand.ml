@@ -82,7 +82,13 @@ type tests_result =
 and test_result = Rule_ID.t * Out.rule_result
 
 (* TODO? add diff between .fixed and actual for error management? *)
-and fixtest_result = Fpath.t (* target name *) * Out.fixtest_result
+and fixtest_result = {
+  target : Fpath.t;
+  fixtest : Fpath.t;
+  (* from the fixtest to the fixed target, empty when the fixtest passed *)
+  diff : string list;
+  result : Out.fixtest_result;
+}
 
 (* TODO: define clearly in semgrep_output_v1.atd config_with_errors type
  * and also the errors in rule_result.
@@ -203,44 +209,32 @@ let fixtest_of_target_opt (target : Fpath.t) : Fpath.t option =
   let fixtest = stem |> Fpath.add_ext (".fixed" ^ ext) in
   if Sys.file_exists !!fixtest then Some fixtest else None
 
-(* TODO use capability and cleanup Test_parsing.ml and remove
- * Common2.unix_diff
- *)
-let unix_diff (str1 : string) (str2 : string) : string list =
-  UTmp.with_temp_file ~contents:str1 ~suffix:".x" (fun file1 ->
-      UTmp.with_temp_file ~contents:str2 ~suffix:".x" (fun file2 ->
-          Common2.unix_diff !!file1 !!file2))
-
 let fixtest_result_for_target (_env : env) (target : Fpath.t)
-    (fixtest_target : Fpath.t) (pms : Core_match.t list) : fixtest_result =
-  Logs.info (fun m -> m "Using %s for fixtest" !!fixtest_target);
+    (fixtest : Fpath.t) (pms : Core_match.t list) : fixtest_result =
+  Logs.info (fun m -> m "Using %s for fixtest" !!fixtest);
   let (textedits : Textedit.t list) =
     pms |> List.concat_map (fun pm -> Autofix.render_fix pm |> Option.to_list)
   in
   (* stricter? *)
   if List_.null textedits then
-    Logs.warn (fun m -> m "no autofix generated for %s" !!target);
+    Logs.info (fun m -> m "no autofix generated for %s" !!target);
 
-  let expected_content = UFile.read_file fixtest_target in
+  let expected_content = UFile.read_file fixtest in
   let actual_res =
     Textedit.apply_edits_to_text target (UFile.read_file target) textedits
   in
-  let passed =
+  (* the diff is printed by the final report *)
+  let (diff : string list) =
     match actual_res with
     | Textedit.Success actual_content ->
-        let passed = expected_content = actual_content in
-        (if not passed then
-           let diff = unix_diff expected_content actual_content in
-           Logs.err (fun m ->
-               m "fixtest failed for %s, diff =\n%s" !!fixtest_target
-                 (String.concat "\n" diff)));
-        passed
+        if String.equal expected_content actual_content then []
+        else Unified_diff.lines ~old_:expected_content ~new_:actual_content
     | Overlap _ ->
         Logs.err (fun m -> m "fixes overlap for %s" !!target);
         (* TODO? return an error instead ?*)
-        false
+        [ "the fixes overlap" ]
   in
-  (target, Out.{ passed })
+  { target; fixtest; diff; result = Out.{ passed = List_.null diff } }
 
 (* LATER: still enough in steps mode? *)
 let rule_contain_fix_or_fix_regex (rule : Rule.t) : bool =
@@ -277,6 +271,13 @@ let report_diagnosis print (res : Out.tests_result) : unit =
 
 let tests_result_of_tests_result (results : tests_result) (errors : error list)
     : Out.tests_result =
+  let fixtest_results : (string * Out.fixtest_result) list =
+    results
+    |> List.concat_map (fun (_rule_file, _checks, fixtest_results) ->
+           fixtest_results
+           |> List_.map (fun (fixtest_result : fixtest_result) ->
+                  (!!(fixtest_result.target), fixtest_result.result)))
+  in
   Out.
     {
       results =
@@ -288,12 +289,7 @@ let tests_result_of_tests_result (results : tests_result) (errors : error list)
                      checks
                      |> List_.map (fun (id, xs) -> (Rule_ID.to_string id, xs));
                  } ));
-      fixtest_results =
-        results
-        |> List.concat_map (fun (_rule_file, _checks, fixtest_results) ->
-               fixtest_results
-               |> List_.map (fun (target_file, passed) ->
-                      (!!target_file, passed)));
+      fixtest_results;
       (* TODO: change the schema and use an enum instead of those fields *)
       config_missing_tests =
         errors
@@ -313,56 +309,96 @@ let tests_result_of_tests_result (results : tests_result) (errors : error list)
       config_with_errors = [];
     }
 
+(* python: _generate_check_output_line *)
+let pp_failed_check ppf ((rule_id : string), (rule_res : Out.rule_result)) :
+    unit =
+  let pp_lines ppf (lines : int list) =
+    Format.fprintf ppf "[%s]"
+      (lines |> List_.map Int.to_string |> String.concat ", ")
+  in
+  Format.fprintf ppf "\t✖ %s@\n" rule_id;
+  rule_res.matches
+  |> List.iter (fun (_file, (m : Out.expected_reported)) ->
+         let _common, missed, incorrect =
+           Common2.diff_set_eff m.expected_lines m.reported_lines
+         in
+         Format.fprintf ppf "\tmissed lines: %a, incorrect lines: %a@\n"
+           pp_lines missed pp_lines incorrect);
+  Format.fprintf ppf "\ttest file path: %s@\n"
+    (rule_res.matches |> List_.map fst |> String.concat " ")
+
+(* python: _generate_fixcheck_output_line *)
+let pp_failed_fixtest ppf (fixtest_result : fixtest_result) : unit =
+  Format.fprintf ppf "\t✖ %s <> autofix applied to %s@\n@\n"
+    !!(fixtest_result.fixtest) !!(fixtest_result.target);
+  fixtest_result.diff
+  |> List.iter (fun (line : string) -> Format.fprintf ppf "\t%s@\n" line)
+
 let report_tests_result (caps : < Cap.stdout >) ~matching_diagnosis ~json
-    (res : Out.tests_result) : unit =
+    (res : Out.tests_result) (fixtest_results : fixtest_result list) : unit =
   let print str = CapConsole.print caps#stdout str in
   if json then
     let s = Out.string_of_tests_result res in
     print s
   else
-    let passed = ref 0 in
-    let total = ref 0 in
-    let fixtest_passed = ref 0 in
-    let fixtest_total = ref 0 in
-    res.results
-    |> List.iter (fun (_rule_file, (checks : Out.checks)) ->
-           checks.checks
-           |> List.iter (fun (_rule_id, (rule_res : Out.rule_result)) ->
-                  incr total;
-                  if rule_res.passed then incr passed));
-    res.fixtest_results
-    |> List.iter (fun (_target_file, (fixtest_result : Out.fixtest_result)) ->
-           incr fixtest_total;
-           if fixtest_result.passed then incr fixtest_passed);
+    (* the failed checks, sorted by rule id within each rule file as in
+       pysemgrep *)
+    let failed_checks : (string * Out.rule_result) list =
+      res.results
+      |> List.concat_map (fun (_rule_file, (checks : Out.checks)) ->
+             checks.checks
+             |> List.filter (fun (_rule_id, (rule_res : Out.rule_result)) ->
+                    not rule_res.passed)
+             |> List.sort (fun (a, _) (b, _) -> String.compare a b))
+    in
+    let failed_fixtests =
+      fixtest_results
+      |> List.filter (fun (r : fixtest_result) -> not r.result.passed)
+    in
+    let total =
+      res.results
+      |> List_.map (fun (_rule_file, (checks : Out.checks)) ->
+             List.length checks.checks)
+      |> Common2.sum
+    in
+    let passed = total - List.length failed_checks in
+    let fixtest_total = List.length res.fixtest_results in
+    let fixtest_passed = fixtest_total - List.length failed_fixtests in
+    let print_failures : 'a. (Format.formatter -> 'a -> unit) -> 'a list -> unit
+        =
+     fun pp failures ->
+      print break_line;
+      (* the blocks separated by a blank line, and one after the last *)
+      failures
+      |> List_.map (fun failure ->
+             Fmt_.with_buffer_to_string (fun ppf -> pp ppf failure))
+      |> String.concat "\n" |> print
+    in
 
     (* "unit" tests *)
     (match () with
-    | _ when !total =|= 0 ->
+    | _ when total =|= 0 ->
         (* TODO: exit error code instead? *)
         print
           "No unit tests found. See \
            https://semgrep.dev/docs/writing-rules/testing-rules"
-    | _ when !passed =|= !total ->
-        print (spf "%d/%d: ✓ All tests passed" !passed !total)
+    | _ when passed =|= total ->
+        print (spf "%d/%d: ✓ All tests passed" passed total)
     | _else_ ->
         print
-          (spf "%d/%d: %d unit tests did not pass:" !passed !total
-             (!total - !passed));
-        print break_line;
-        print "TODO: print(check_output_lines)");
+          (spf "%d/%d: %d unit tests did not pass:" passed total
+             (total - passed));
+        print_failures pp_failed_check failed_checks);
     (* fix tests *)
     (match () with
-    | _ when List_.null res.fixtest_results -> print "No tests for fixes found."
-    | _ when !fixtest_passed =|= !fixtest_total ->
-        print
-          (spf "%d/%d: ✓ All fix tests passed" !fixtest_passed !fixtest_total)
+    | _ when fixtest_total =|= 0 -> print "No tests for fixes found."
+    | _ when fixtest_passed =|= fixtest_total ->
+        print (spf "%d/%d: ✓ All fix tests passed" fixtest_passed fixtest_total)
     | _else_ ->
         print
-          (spf "%d/%d: %d fix tests did not pass:" !fixtest_passed
-             !fixtest_total
-             (!fixtest_total - !fixtest_passed));
-        print break_line;
-        print "TODO: print(fixtest_file_diffs)");
+          (spf "%d/%d: %d fix tests did not pass:" fixtest_passed fixtest_total
+             (fixtest_total - fixtest_passed));
+        print_failures pp_failed_fixtest failed_fixtests);
     if matching_diagnosis then report_diagnosis print res;
     (* TODO: if config_with_errors_output: ... *)
     ()
@@ -532,7 +568,7 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
       (Rule_ID.t, (Fpath.t, Core_match.t list) Assoc.t) Assoc.t =
     if List_.null matches then
       (* stricter: *)
-      Logs.warn (fun m -> m "nothing matched for %s%s" !!(env.rule_file) xtra);
+      Logs.info (fun m -> m "nothing matched for %s%s" !!(env.rule_file) xtra);
     matches
     |> Assoc.group_by (fun (pm : Core_match.t) -> pm.rule_id.id)
     |> List_.map (fun (rule_id, pms) ->
@@ -602,8 +638,9 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                       |> List.sort_uniq Int.compare
                     in
                     let passed = reported_lines =*= expected_lines in
+                    (* the final report prints the failures *)
                     if not passed then
-                      Logs.err (fun m ->
+                      Logs.info (fun m ->
                           m "test failed for rule id %s on target %s%s (%s)"
                             (Rule_ID.to_string id) !!target xtra
                             (diff_findings reported_lines expected_lines));
@@ -816,7 +853,8 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
   (* final report *)
   report_tests_result
     (caps :> < Cap.stdout >)
-    ~matching_diagnosis ~json:conf.json res;
+    ~matching_diagnosis ~json:conf.json res
+    (result |> List.concat_map (fun (_rule_file, _checks, fixtests) -> fixtests));
 
   (* step4: compute the exit code *)
 

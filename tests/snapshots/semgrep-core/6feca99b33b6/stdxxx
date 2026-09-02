@@ -1,0 +1,7 @@
+[<MASKED TIMESTAMP>][[33mWARNING[0m]: no fixtest for test targets/no_associated_fixed.py but the rule file rules/basic_fix_regex.yaml uses autofix
+--- begin input files ---
+rules/basic_fix_regex.yaml
+targets/no_associated_fixed.py
+--- end input files ---
+{"results":{"rules/basic_fix_regex.yaml":{"checks":{"basic-fix":{"passed":true,"matches":{"<TMP>/<MASKED>/targets/no_associated_fixed.py":{"expected_lines":[2,5],"reported_lines":[2,5]}},"errors":[]}}}},"fixtest_results":{},"config_missing_tests":[],"config_missing_fixtests":["rules/basic_fix_regex.yaml"],"config_with_errors":[]}
+[0m[33mASSERT[0m exit code

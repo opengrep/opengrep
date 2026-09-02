@@ -1,0 +1,7 @@
+--- begin input files ---
+rules/other_fix.yaml
+targets/test3.fixed.py
+targets/test3.py
+--- end input files ---
+{"results":{"rules/other_fix.yaml":{"checks":{"other-fix":{"passed":true,"matches":{"<TMP>/<MASKED>/targets/test3.py":{"expected_lines":[2,5],"reported_lines":[2,5]}},"errors":[]}}}},"fixtest_results":{"targets/test3.py":{"passed":false}},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[]}
+[33mASSERT[0m exit code
