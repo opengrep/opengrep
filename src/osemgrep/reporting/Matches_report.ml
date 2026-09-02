@@ -13,7 +13,6 @@ module Log = Log_reporting.Log
 (* Helpers *)
 (*****************************************************************************)
 
-let ellipsis_string = " ... "
 let rule_leading_indent_size = 3
 
 let rule_indent_size =
@@ -188,6 +187,43 @@ let cut s idx1 idx2 =
     String.sub s idx1 (idx2 - idx1),
     Str.string_after s idx2 )
 
+(* The chunks (offset, length) of a line of code wrapped at width: at the
+   last space before the width when there is one, else at the width; the
+   space itself is dropped. *)
+let wrap_chunks ~(width : int) (line : string) : (int * int) list =
+  let len = String.length line in
+  let rec go (pos : int) (acc : (int * int) list) : (int * int) list =
+    if len - pos <= width then List.rev ((pos, len - pos) :: acc)
+    else
+      let cut, next =
+        match String.rindex_from_opt line (pos + width) ' ' with
+        | Some space when space > pos -> (space, space + 1)
+        | _ -> (pos + width, pos + width)
+      in
+      go next ((pos, cut - pos) :: acc)
+  in
+  if width <= 0 then [ (0, len) ] else go 0 []
+
+(* A line of code with its prefix (the line number, prefix_width columns),
+   wrapped, with the bold part [bold_start, bold_end) carried across the
+   wrapped chunks. The continuation lines are indented to the start of the
+   code. *)
+let pp_wrapped_code_line ppf ~(prefix : string) ~(prefix_width : int)
+    ~(width : int) ~(bold_start : int) ~(bold_end : int) (line : string) :
+    unit =
+  let continuation = String.make prefix_width ' ' in
+  wrap_chunks ~width line
+  |> List.iteri (fun (i : int) ((offset : int), (length : int)) ->
+         let chunk = String.sub line offset length in
+         let bold_from = max 0 (min length (bold_start - offset)) in
+         let bold_to = max bold_from (min length (bold_end - offset)) in
+         let a, b, c = cut chunk bold_from bold_to in
+         Fmt.pf ppf "%s%s%a%s@."
+           (if i = 0 then prefix else continuation)
+           a
+           Fmt.(styled `Bold string)
+           b c)
+
 let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
   (* Helper to print a location with bold highlighting *)
   (* NOTE: We need to consider that the location can span > 1 lines, which
@@ -305,66 +341,39 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
     else (List_.take keep lines, Some (ll - keep))
   in
   let start_line = m.start.line in
-  let stripped, _ =
-    lines
-    |> List.fold_left
-         (fun (stripped, line_number) line ->
-           let line, line_off, stripped' =
-             let ll = String.length line in
-             if max_chars_per_line > 0 && ll > max_chars_per_line then
-               if start_line = line_number then
-                 let start_col = m.start.col - 1 - dedented in
-                 let end_col = min (start_col + max_chars_per_line) ll in
-                 let data =
-                   String.sub line start_col (end_col - start_col - 1)
-                 in
-                 ( (if start_col > 0 then ellipsis_string else "")
-                   ^ data ^ ellipsis_string,
-                   m.start.col - 1,
-                   true )
-               else
-                 ( Str.first_chars line max_chars_per_line ^ ellipsis_string,
-                   0,
-                   true )
-             else (line, 0, false)
-           in
-           let line_number_str = string_of_int line_number in
-           let pad =
-             String.make
-               (findings_indent_size + 1 - String.length line_number_str)
-               ' '
-           in
-           let col c = max 0 (c - 1 - dedented - line_off) in
-           let ellipsis_len p =
-             if stripped' && p then String.length ellipsis_string else 0
-           in
-           let start_color =
-             if line_number > start_line then 0
-             else col m.start.col + ellipsis_len (line_off > 0)
-           in
-           let end_color =
-             max start_color
-               (if line_number >= m.end_.line then
-                  min
-                    (if m.start.line = m.end_.line then
-                       start_color + (m.end_.col - m.start.col)
-                     else col m.end_.col - ellipsis_len true)
-                    (String.length line - ellipsis_len true)
-                else String.length line)
-           in
-           let a, b, c = cut line start_color end_color in
-           (* TODO(secrets): Apply masking to b *)
-           Fmt.pf ppf "%s%s┆ %s%a%s@." pad line_number_str a
-             Fmt.(styled `Bold string)
-             b c;
-           (stripped' || stripped, succ line_number))
-         (false, start_line)
+  (* the line number takes findings_indent_size + 1 columns, then "┆ " *)
+  let prefix_width = findings_indent_size + 3 in
+  (* the code is wrapped at --max-chars-per-line, or at the terminal width *)
+  let width =
+    let available = text_width - prefix_width in
+    if max_chars_per_line > 0 then min max_chars_per_line available
+    else available
   in
-  if stripped then
-    Fmt.pf ppf
-      "%s[shortened a long line from output, adjust with \
-       --max-chars-per-line]@."
-      findings_indent;
+  lines
+  |> List.iteri (fun (i : int) (line : string) ->
+         let line_number = start_line + i in
+         let line_number_str = string_of_int line_number in
+         let prefix =
+           String.make
+             (findings_indent_size + 1 - String.length line_number_str)
+             ' '
+           ^ line_number_str ^ "┆ "
+         in
+         let col c = max 0 (c - 1 - dedented) in
+         let bold_start = if line_number > start_line then 0 else col m.start.col in
+         let bold_end =
+           max bold_start
+             (if line_number >= m.end_.line then
+                min
+                  (if m.start.line = m.end_.line then
+                     bold_start + (m.end_.col - m.start.col)
+                   else col m.end_.col)
+                  (String.length line)
+              else String.length line)
+         in
+         (* TODO(secrets): Apply masking to the bold part *)
+         pp_wrapped_code_line ppf ~prefix ~prefix_width ~width ~bold_start
+           ~bold_end line);
   (match m.extra.dataflow_trace with
   | Some trace -> if show_dataflow_traces then pp_dataflow_trace ppf trace else ()
   | None -> ());
@@ -425,22 +434,17 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
       | None -> true
       | Some m -> m.path <> cur.path
     in
+    (* the rule name and its message are printed together, for a match of
+       a new rule or with a different message (the message is derived from
+       a template of the rule) *)
     let must_print_rule =
-      (* must print rule name because it's a match for a new rule *)
       must_print_file
       ||
       match prev with
       | None -> true
-      | Some m -> not (Rule_ID.equal m.check_id cur.check_id)
-    in
-    let must_print_message =
-      (* must print message derived from template it's different from the
-         previous message *)
-      must_print_file
-      ||
-      match prev with
-      | None -> true
-      | Some m -> m.extra.message <> cur.extra.message
+      | Some m ->
+          (not (Rule_ID.equal m.check_id cur.check_id))
+          || not (String.equal m.extra.message cur.extra.message)
     in
     let has_rule_name = cur.check_id <> Rule_ID.dash_e in
     (if must_print_file then
@@ -451,7 +455,7 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
          else Fmt.any "  "
        in
        Fmt.pf ppf "  %a@." Fmt.(styled (`Fg `Cyan) (esc ++ string)) !!(cur.path));
-    (if must_print_rule || must_print_message then
+    (if must_print_rule then
        let no_color = !Semgrep_envvars.v.no_color in
        let rule_name_lines =
          if has_rule_name then (
@@ -470,17 +474,40 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
              (fun (indentation, txt) ->
                Fmt.pf ppf "%s%a@." indentation Fmt.(styled `Bold string) txt)
              rest;
-           if must_print_message then
-             List.iter
-               (fun (indentation, txt) -> Fmt.pf ppf "%s%s@." indentation txt)
-               (indent_and_wrap_lines ~indent:detail_indent_size
-                  ~max_width:(text_width - detail_indent_size)
-                  cur.extra.message);
+           List.iter
+             (fun (indentation, txt) -> Fmt.pf ppf "%s%s@." indentation txt)
+             (indent_and_wrap_lines ~indent:detail_indent_size
+                ~max_width:(text_width - detail_indent_size)
+                cur.extra.message);
            (match metadata_member "shortlink" cur.extra.metadata with
            | `String txt -> Fmt.pf ppf "%sDetails: %s@." detail_indent txt
            | _ -> ());
            Fmt.pf ppf "@.");
-    (* TODO autofix *)
+    (match cur.extra.fix with
+    | None -> ()
+    | Some fix ->
+        (* the fix on one line, wrapped after the tag; an empty fix deletes
+           the match *)
+        let autofix_tag = "▶▶┆ Autofix ▶ " in
+        (* columns, not bytes *)
+        let autofix_tag_width = 13 in
+        let fix_text =
+          fix |> String.split_on_char '\n' |> List_.map String.trim
+          |> List.filter (fun (s : string) -> not (String.equal s ""))
+          |> String.concat " "
+        in
+        Fmt.pf ppf "%s%a" detail_indent
+          Fmt.(styled (`Fg `Green) string)
+          autofix_tag;
+        if String.equal fix_text "" then
+          Fmt.pf ppf "%a@." Fmt.(styled (`Fg `Red) string) "delete"
+        else
+          indent_and_wrap_lines ~indent:(detail_indent_size + 4)
+            ~max_width:(text_width - autofix_tag_width)
+            fix_text
+          |> List.iteri (fun (i : int) ((indentation : string), (txt : string)) ->
+                 if i = 0 then Fmt.pf ppf "%s@." txt
+                 else Fmt.pf ppf "%s%s@." indentation txt));
     let same_file_next =
       match next with
       | None -> false
@@ -599,4 +626,8 @@ let pp_cli_output
              | None -> [])
       |> Set_.of_list |> Set_.elements |> List.sort String.compare
     in
-    pp_rules_fired ppf "BLOCKING SECRETS RULES FIRED:" secrets_ids)
+    pp_rules_fired ppf "BLOCKING SECRETS RULES FIRED:" secrets_ids);
+  (* the "time" field is there with --time *)
+  match cli_output.time with
+  | Some time -> Time_report.pp_time_summary ppf time cli_output.errors
+  | None -> ()

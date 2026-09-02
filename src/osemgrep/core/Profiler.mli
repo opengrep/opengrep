@@ -47,3 +47,7 @@ val record : t -> name:string -> (unit -> 'a) -> 'a
 
 val dump : t -> (string * float) list
 (** [dump profiler] returns all recorded metrics. *)
+
+val elapsed : t -> name:string -> float option
+(** [elapsed profiler ~name] is the time recorded for [name], or the time
+    spent so far when [name] is still being recorded. *)

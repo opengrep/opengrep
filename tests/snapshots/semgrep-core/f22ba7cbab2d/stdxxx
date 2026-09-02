@@ -1,0 +1,86 @@
+--- begin input files ---
+rules/three-autofixes.yaml
+targets/three-autofixes.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 39 insertions(+)
+ create mode 100644 rules/three-autofixes.yaml
+ create mode 100644 targets/three-autofixes.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Scanning 1 file.
+
+
+┌─────────────────┐
+│ 3 Code Findings │
+└─────────────────┘
+
+    targets/three-autofixes.py
+   ❯❯❱ rules.autofix-bugtest
+          This rule decreases the file in length and will be applied three times in this test.
+
+
+          ▶▶┆ Autofix ▶ requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+            4┆ return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+            ⋮┆----------------------------------------
+          ▶▶┆ Autofix ▶ requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+           12┆ return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+            ⋮┆----------------------------------------
+          ▶▶┆ Autofix ▶ requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+           20┆ return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+Ran 1 rule on 1 file: 3 findings.
+--- targets/three-autofixes.py after the scan ---
+import requests
+
+def _do_stuff():
+    return requests.post(
+        headers=auth_headers,
+        url=self.url,
+        endpoints="endpoint",
+    )
+
+
+def _do_other_stuff():
+    return requests.post(
+        headers=auth_headers,
+        url=self.url,
+        endpoints="endpoint",
+    )
+
+
+def _do_other_stuff2():
+    return requests.post(
+        headers=auth_headers,
+        url=self.url,
+        endpoints="endpoint"
+    )
+ASSERT exit code

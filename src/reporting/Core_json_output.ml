@@ -530,27 +530,21 @@ let profiling_to_profiling (profiling_data : Core_profiling.t) : Out.profile =
                       Some (rp.rule_id, rp.rule_match_time)
                     else None)
              in
-             (* Estimate parse time by subtracting all matching time from total time.
-              * run_time = parse_time + sum(match_times)
-              *
-              * This "parse_time" actually includes:
-              * - Prefiltering (typically enabled): reading file as string,
-              *   running regex checks.
-              * - AST parsing (conditional): only if rules pass prefiltering.
-              *
-              * Files with empty match_times[] spent time on prefiltering only. *)
-             let total_match_time : float =
+             (* The target is parsed once, by the first rule that needs its
+              * AST; the other rules record no parse time. The run time also
+              * covers what is neither parsing nor matching, such as the
+              * prefiltering. *)
+             let parse_time : float =
                rule_times
                |> List_.map (fun (rp : Core_profiling.rule_profiling) ->
-                    rp.rule_match_time)
+                    rp.rule_parse_time)
                |> List.fold_left ( +. ) 0.0
              in
-             let estimated_parse_time : float = run_time -. total_match_time in
              Out.
                {
                  path = target;
                  match_times;
-                 parse_time = estimated_parse_time;
+                 parse_time;
                  num_bytes = Option.value ~default:0 file_size_bytes;
                  run_time;
                });

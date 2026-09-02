@@ -106,10 +106,10 @@ let check_rule (rule : Rule.t) (xtarget : Lockfile_xtarget.t)
     (dependency_formula : Rule.sca_dependency_formula) :
     Core_profiling.rule_profiling Core_result.match_result =
   let _, parse_time =
-    Common.with_time (fun () -> Lazy.force xtarget.lazy_dependencies)
+    Core_profiling.with_time (fun () -> Lazy.force xtarget.lazy_dependencies)
   in
   let matches, match_time =
-    Common.with_time (fun () ->
+    Core_profiling.with_time (fun () ->
         match_dependency_formula xtarget dependency_formula)
   in
   Log.info (fun m -> m "found %d lockfile matches" (List.length matches));

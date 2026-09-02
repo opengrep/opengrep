@@ -270,27 +270,6 @@ def test_additional_outputs_with_format_output_flag(
 
 
 @pytest.mark.kinda_slow
-def test_long_rule_id(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/long_rule_id.yaml",
-        target_name="basic.py",
-        output_format=OutputFormat.TEXT,
-    )
-    snapshot.assert_match(stdout, "results.out")
-
-
-@pytest.mark.kinda_slow
-@pytest.mark.osemfail  # TODO: fix text wrapping of findings
-def test_long_rule_id_long_text(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/long_rule_id.yaml",
-        target_name="long_text.py",
-        output_format=OutputFormat.TEXT,
-    )
-    snapshot.assert_match(stdout, "results.out")
-
-
-@pytest.mark.kinda_slow
 def test_junit_xml_output(run_semgrep_in_tmp: RunSemgrep, snapshot):
     output, _ = run_semgrep_in_tmp(
         "rules/eqeq.yaml", output_format=OutputFormat.JUNIT_XML

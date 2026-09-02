@@ -151,6 +151,12 @@ let error_with_rule_id rule_id (error : Core_error.t) =
 
 let lazy_force x = Lazy.force x [@@profiling]
 
+(* The times of a nested formula (a metavariable-pattern, evaluated once
+   per binding in the match loop) are discarded, see
+   get_nested_formula_matches: they are not measured. *)
+let with_time (xconf : xconfig) (f : unit -> 'a) : 'a * float =
+  if xconf.nested_formula then (f (), 0.0) else Core_profiling.with_time f
+
 (* `fold_with_expls` is a left fold across a list of things, while
    accumulating an explanation for each item. it preserves the
    explanations in the same order, though.
@@ -270,10 +276,10 @@ let matches_of_patterns ~has_as_metavariable ?mvar_context ?range_filter rule
   match xlang with
   | Xlang.L (lang, _) ->
       let (ast, skipped_tokens), parse_time =
-        Common.with_time (fun () -> lazy_force lazy_ast_and_errors)
+        with_time xconf (fun () -> lazy_force lazy_ast_and_errors)
       in
       let matches, match_time =
-        Common.with_time (fun () ->
+        with_time xconf (fun () ->
             let mini_rules =
               patterns
               |> List_.map (function pat, b, c, d ->
@@ -1128,7 +1134,11 @@ and matches_of_formula xconf rule xtarget formula opt_context :
     }
   in
   Log.info (fun m -> m "evaluating the formula");
-  let final_ranges, expl = evaluate_formula env opt_context formula in
+  (* the evaluation (nested metavariable-pattern formulas, metavariable
+   * conditions, focus) is matching time too *)
+  let (final_ranges, expl), evaluation_time =
+    with_time xconf (fun () -> evaluate_formula env opt_context formula)
+  in
   Log.info (fun m -> m "found %d final ranges" (List.length final_ranges));
   let res' =
     {
@@ -1136,6 +1146,8 @@ and matches_of_formula xconf rule xtarget formula opt_context :
       RP.errors = E.ErrorSet.union res.RP.errors !(env.errors);
       explanations = Option.to_list expl;
     }
+    |> RP.map_profiling (fun (p : Core_profiling.rule_profiling) ->
+           { p with rule_match_time = p.rule_match_time +. evaluation_time })
   in
   (res', final_ranges)
 [@@profiling]

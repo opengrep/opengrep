@@ -71,3 +71,9 @@ let dump profiler =
       | Recorded time -> (name, time) :: acc
       | _ -> acc)
     profiler []
+
+let elapsed profiler ~name =
+  match Hashtbl.find_opt profiler name with
+  | Some (Recorded time) -> Some time
+  | Some (Start start_time) -> Some (Unix.gettimeofday () -. start_time)
+  | None -> None

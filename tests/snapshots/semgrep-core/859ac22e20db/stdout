@@ -1,0 +1,35 @@
+--- begin input files ---
+rules/flask-use-jsonify.yaml
+targets/flask-use-jsonify.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 42 insertions(+)
+ create mode 100644 rules/flask-use-jsonify.yaml
+ create mode 100644 targets/flask-use-jsonify.py
+{"version":"<MASKED>","results":[{"check_id":"rules.python.flask.best-practice.use-jsonify.use-jsonify","path":"targets/flask-use-jsonify.py","start":{"line":10,"col":12,"offset":188},"end":{"line":10,"col":33,"offset":209},"extra":{"metavars":{"$X":{"start":{"line":7,"col":5,"offset":95},"end":{"line":7,"col":9,"offset":99},"abstract_content":"user"}},"message":"flask.jsonify() is a Flask helper method which handles the correct settings for returning JSON from Flask routes","fix":"flask.jsonify(user_dict)","fixed_lines":["    return flask.jsonify(user_dict)"],"metadata":{},"severity":"ERROR","fingerprint":"60a8e3eec51a6db61012fe055df7f872089d00aa8f4cf36b1c7dea55382ea575cf269d57172ba4de3dce098d79f5b2a44fa773391483d35d2b4ab70da9503a49_0","lines":"    return json.dumps(user_dict)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.python.flask.best-practice.use-jsonify.use-jsonify","path":"targets/flask-use-jsonify.py","start":{"line":18,"col":12,"offset":352},"end":{"line":18,"col":28,"offset":368},"extra":{"metavars":{"$X":{"start":{"line":15,"col":5,"offset":259},"end":{"line":15,"col":9,"offset":263},"abstract_content":"user"}},"message":"flask.jsonify() is a Flask helper method which handles the correct settings for returning JSON from Flask routes","fix":"flask.jsonify(user_dict)","fixed_lines":["    return flask.jsonify(user_dict)"],"metadata":{},"severity":"ERROR","fingerprint":"60a8e3eec51a6db61012fe055df7f872089d00aa8f4cf36b1c7dea55382ea575cf269d57172ba4de3dce098d79f5b2a44fa773391483d35d2b4ab70da9503a49_1","lines":"    return dumps(user_dict)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/flask-use-jsonify.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/flask-use-jsonify.py after the scan ---
+## Normal import
+import flask
+import json
+app = flask.Flask(__name__)
+
+@app.route("/user")
+def user():
+    user_dict = get_user(request.args.get("id"))
+    # ruleid:use-jsonify
+    return json.dumps(user_dict)
+
+from json import dumps
+
+@app.route("/user")
+def user():
+    user_dict = get_user(request.args.get("id"))
+    # ruleid:use-jsonify
+    return dumps(user_dict)
+
+# should not catch the following
+def dumps():
+  pass
+def test_empty_dumps():
+    dumps()

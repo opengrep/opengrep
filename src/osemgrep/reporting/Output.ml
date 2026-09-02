@@ -386,10 +386,27 @@ let output_result (caps : < Cap.stdout >) (conf : conf)
    * it here.
    *)
   let (cli_output : Out.cli_output) =
-    Profiler.record profiler ~name:"ignores_times" (fun () ->
+    Profiler.record profiler ~name:"ignores_time" (fun () ->
         preprocess_result ~fixed_lines:conf.fixed_lines res)
   in
-  (* TODO: adjust conf.time *)
+  (* python: ProfileManager.dump_stats(), the times of the command itself
+   * next to the engine's *)
+  let cli_output =
+    {
+      cli_output with
+      time =
+        cli_output.time
+        |> Option.map (fun (time : Out.profile) ->
+               {
+                 time with
+                 profiling_times =
+                   [ "config_time"; "core_time"; "ignores_time"; "total_time" ]
+                   |> List_.filter_map (fun (name : string) ->
+                          Profiler.elapsed profiler ~name
+                          |> Option.map (fun (t : float) -> (name, t)));
+               });
+    }
+  in
   let cli_output =
     if not conf.skipped_files then
       {

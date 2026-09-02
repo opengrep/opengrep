@@ -355,8 +355,11 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
            matches := List.rev_append effect_pms !matches)
   in
   let (ast, skipped_tokens), parse_time =
-    Common.with_time (fun () -> lazy_force lazy_ast_and_errors)
+    Core_profiling.with_time (fun () -> lazy_force lazy_ast_and_errors)
   in
+  (* the matching time spans the taint spec, the per-function, class
+   * initialisation and top-level fixpoints, up to the report *)
+  let match_start = Core_profiling.now () in
   (* TODO: 'debug_taint' should just be part of 'res'
    * (i.e., add a "debugging" field to 'Report.match_result'). *)
   match
@@ -744,28 +747,26 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
        * In scripting languages it is not unusual to write code outside
        * function declarations and we want to check this too. We simply
        * treat the program itself as an anonymous function. *)
-      let (), match_time =
-        Common.with_time (fun () ->
-            let xs = AST_to_IL.stmt taint_inst.lang (G.stmt1 ast) in
-            let cfg, lambdas = CFG_build.cfg_of_stmts xs in
-            let top_level_name =
-              let fake_tok = Tok.unsafe_fake_tok "<top_level>" in
-              IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
-            in
-            let top_effects, _mapping =
-              Dataflow_tainting.fixpoint taint_inst ~name:top_level_name
-                ?signature_db:final_signature_db ?builtin_signature_db
-                ?call_graph:relevant_graph
-                IL.{ params = []; cfg; lambdas }
-            in
-            record_matches top_effects)
-      in
+      (let xs = AST_to_IL.stmt taint_inst.lang (G.stmt1 ast) in
+       let cfg, lambdas = CFG_build.cfg_of_stmts xs in
+       let top_level_name =
+         let fake_tok = Tok.unsafe_fake_tok "<top_level>" in
+         IL.{ ident = ("<top_level>", fake_tok); sid = G.SId.unsafe_default; id_info = G.empty_id_info () }
+       in
+       let top_effects, _mapping =
+         Dataflow_tainting.fixpoint taint_inst ~name:top_level_name
+           ?signature_db:final_signature_db ?builtin_signature_db
+           ?call_graph:relevant_graph
+           IL.{ params = []; cfg; lambdas }
+       in
+       record_matches top_effects);
       let matches =
         !matches
         (* same post-processing as for search-mode in Match_rules.ml *)
         |> PM.uniq
         |> PM.no_submatches (* see "Taint-tracking via ranges" *) |> match_hook
       in
+      let match_time = Core_profiling.since match_start in
 
       let errors = Parse_target.errors_from_skipped_tokens skipped_tokens in
       let report =

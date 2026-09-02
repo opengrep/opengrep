@@ -2,6 +2,8 @@ type rules_and_origin = {
   rules : Rule.rule list;
   invalid_rules : Rule_error.invalid_rule list;
   origin : origin;
+  (* the time spent parsing the rules (not fetching them), for --time *)
+  parse_time : float;
 }
 
 and origin =

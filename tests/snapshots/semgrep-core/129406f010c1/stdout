@@ -1,0 +1,19 @@
+--- begin input files ---
+rules/autofix.yaml
+targets/autofix.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/autofix.yaml
+ create mode 100644 targets/autofix.py
+{"version":"<MASKED>","results":[{"check_id":"rules.use-dict-get","path":"targets/autofix.py","start":{"line":5,"col":3,"offset":45},"end":{"line":5,"col":12,"offset":54},"extra":{"metavars":{"$DICT":{"start":{"line":5,"col":3,"offset":45},"end":{"line":5,"col":9,"offset":51},"abstract_content":"inputs"},"$KEY":{"start":{"line":5,"col":10,"offset":52},"end":{"line":5,"col":11,"offset":53},"abstract_content":"x"}},"message":"Use `.get()` method to avoid a KeyNotFound error","fix":"inputs.get(x)","fixed_lines":["  inputs.get(x) = 1"],"metadata":{},"severity":"ERROR","fingerprint":"62dc3b7ee43a185908225ea8b83d9f4ab77b47f83f38ffaf32e0796e8e37cae984b4b8d0266b9017430fd882b63f95135c77d5e7cb46b24fd10f9879151aaced_0","lines":"  inputs[x] = 1","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.use-dict-get","path":"targets/autofix.py","start":{"line":6,"col":6,"offset":64},"end":{"line":6,"col":19,"offset":77},"extra":{"metavars":{"$DICT":{"start":{"line":6,"col":6,"offset":64},"end":{"line":6,"col":12,"offset":70},"abstract_content":"inputs"},"$KEY":{"start":{"line":6,"col":13,"offset":71},"end":{"line":6,"col":18,"offset":76},"abstract_content":"x+1"}},"message":"Use `.get()` method to avoid a KeyNotFound error","fix":"inputs.get((x + 1))","fixed_lines":["  if inputs.get((x + 1)) == True:"],"metadata":{},"severity":"ERROR","fingerprint":"a097f66855a80ac1aeb67a7f5c764a656b408736a4685268ff19aa46c535b1ea117612bb34cb503d6b3fb1a644afbfedd81d0a737a6fd8a13c991ab1e32fe743_0","lines":"  if inputs[x + 1] == True:","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/autofix.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/autofix.py after the scan ---
+import sys
+
+inputs = {}
+for x in range(5):
+  inputs[x] = 1
+  if inputs[x + 1] == True:
+    exit(1)
+

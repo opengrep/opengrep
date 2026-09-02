@@ -1,0 +1,42 @@
+--- begin input files ---
+rules/defaulthttpclient.yaml
+targets/defaulthttpclient.java
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 47 insertions(+)
+ create mode 100644 rules/defaulthttpclient.yaml
+ create mode 100644 targets/defaulthttpclient.java
+{"version":"<MASKED>","results":[{"check_id":"rules.java.lang.security.audit.crypto.ssl.defaulthttpclient-is-deprecated.defaulthttpclient-is-deprecated","path":"targets/defaulthttpclient.java","start":{"line":15,"col":3,"offset":455},"end":{"line":15,"col":47,"offset":499},"extra":{"metavars":{},"message":"DefaultHttpClient is deprecated. Further, it does not support connections\nusing TLS1.2, which makes using DefaultHttpClient a security hazard.\nUse SystemDefaultHttpClient instead, which supports TLS1.2.\n","fix":"HttpClient client = new SystemDefaultHttpClient();","metadata":{"cwe":"CWE-326: Inadequate Encryption Strength","owasp":"A3: Sensitive Data Exposure","source-rule-url":"https://find-sec-bugs.github.io/bugs.htm#DEFAULT_HTTP_CLIENT"},"severity":"WARNING","fingerprint":"83cbc307cb0f43a4f3ddf348a49e4f32624b39e1b181c913565584831dc4476eeb2c7c953ad813f04488418c2731f96ce66a622965c1899c44a2e5295d194648_0","lines":"\t\tHttpClient client = new DefaultHttpClient();","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/defaulthttpclient.java"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/defaulthttpclient.java after the scan ---
+// cf. https://mkyong.com/java/the-type-defaulthttpclient-is-deprecated/
+
+package com.exampleweb.controller;
+
+import org.apache.http.Header;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.DefaultHttpClient;
+
+public class WebCrawler {
+
+	public void crawl(String[] args) throws Exception {
+        // ruleid: defaulthttpclient-is-deprecated
+		HttpClient client = new SystemDefaultHttpClient();
+		HttpGet request = new HttpGet("http://google.com");
+		HttpResponse response = client.execute(request);
+	}
+
+}
+
+public class SecureWebCrawler {
+
+	public void crawl(String[] args) throws Exception {
+        // ok
+		HttpClient client = new SystemDefaultHttpClient();
+		HttpGet request = new HttpGet("http://google.com");
+		HttpResponse response = client.execute(request);
+	}
+
+}
