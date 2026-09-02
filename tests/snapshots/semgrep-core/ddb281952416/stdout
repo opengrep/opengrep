@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/add-metadata-hcl.yaml
+targets/add-metadata-hcl.hcl
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 36 insertions(+)
+ create mode 100644 rules/add-metadata-hcl.yaml
+ create mode 100644 targets/add-metadata-hcl.hcl
+{"version":"<MASKED>","results":[{"check_id":"rules.ec2-instance-metadata-options","path":"targets/add-metadata-hcl.hcl","start":{"line":1,"col":1,"offset":0},"end":{"line":4,"col":2,"offset":109},"extra":{"metavars":{"$RESNAME":{"start":{"line":1,"col":26,"offset":25},"end":{"line":1,"col":34,"offset":33},"abstract_content":"example1"}},"message":"EC2 instance does not set metadata options","fix":"resource \"aws_instance\" \"example1\" {\n  ami           = \"ami-005e54dee72cc1d01\"\n  instance_type = \"t2.micro\"\n\n  metadata_options {\n    http_tokens = \"required\"\n  }\n}","fixed_lines":["resource \"aws_instance\" \"example1\" {","  ami           = \"ami-005e54dee72cc1d01\"","  instance_type = \"t2.micro\"","","  metadata_options {","    http_tokens = \"required\"","  }","}"],"metadata":{},"severity":"WARNING","fingerprint":"0458e19e589de6d045aefb9e909cdc2285c3c994bbf9be63fd9e493d4dfa56fbb3e03fdb1829a051c4f8b218fd389e3e5e1731af192155b64d0dfb1936706313_0","lines":"resource \"aws_instance\" \"example1\" {\n  ami           = \"ami-005e54dee72cc1d01\"\n  instance_type = \"t2.micro\"\n}","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.ec2-instance-metadata-options","path":"targets/add-metadata-hcl.hcl","start":{"line":6,"col":1,"offset":111},"end":{"line":9,"col":2,"offset":220},"extra":{"metavars":{"$RESNAME":{"start":{"line":6,"col":26,"offset":136},"end":{"line":6,"col":34,"offset":144},"abstract_content":"example2"}},"message":"EC2 instance does not set metadata options","fix":"resource \"aws_instance\" \"example2\" {\n  ami           = \"ami-005e54dee72cc1d02\"\n  instance_type = \"t2.micro\"\n\n  metadata_options {\n    http_tokens = \"required\"\n  }\n}","fixed_lines":["resource \"aws_instance\" \"example2\" {","  ami           = \"ami-005e54dee72cc1d02\"","  instance_type = \"t2.micro\"","","  metadata_options {","    http_tokens = \"required\"","  }","}"],"metadata":{},"severity":"WARNING","fingerprint":"c8ba845b91ef15745f42f01c3b6c4919d55eadccfea35e61cb8b3595284babea08c654fd10ecc1a9ba4ba747b323d4edcb5ec2efe41d4ad2978025a40ab490f6_0","lines":"resource \"aws_instance\" \"example2\" {\n  ami           = \"ami-005e54dee72cc1d02\"\n  instance_type = \"t2.micro\"\n}","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/add-metadata-hcl.hcl"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/add-metadata-hcl.hcl after the scan ---
+resource "aws_instance" "example1" {
+  ami           = "ami-005e54dee72cc1d01"
+  instance_type = "t2.micro"
+}
+
+resource "aws_instance" "example2" {
+  ami           = "ami-005e54dee72cc1d02"
+  instance_type = "t2.micro"
+}
+

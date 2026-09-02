@@ -64,14 +64,14 @@ let (matches_of_matcher :
   if xpatterns =*= [] then Core_result.empty_match_result
   else
     let target_content_opt, parse_time =
-      Common.with_time (fun () -> matcher.init internal_path)
+      Core_profiling.with_time (fun () -> matcher.init internal_path)
     in
     match target_content_opt with
     | None ->
         Core_result.empty_match_result (* less: could include parse_time *)
     | Some target_content ->
         let res, match_time =
-          Common.with_time (fun () ->
+          Core_profiling.with_time (fun () ->
               xpatterns
               |> List.concat_map (fun (xpat, id, pstr) ->
                      let xs =

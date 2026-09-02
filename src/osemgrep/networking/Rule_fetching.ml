@@ -40,6 +40,8 @@ type rules_and_origin = {
   rules : Rule.rule list;
   invalid_rules : Rule_error.invalid_rule list;
   origin : origin; (* used by Validate_subcommand *)
+  (* the time spent parsing the rules (not fetching them), for --time *)
+  parse_time : float;
 }
 
 (* TODO? more complex origin? Remote of Uri.t | Embedded of Fpath.t ?
@@ -329,10 +331,13 @@ let load_rules_from_file ~rewrite_rule_ids ~origin caps (file : Fpath.t) :
     (rules_and_origin, Rule_error.t) result =
   Logs.info (fun m -> m "loading local config from %s" !!file);
   if Sys.file_exists !!file then
-    match parse_rule ~rewrite_rule_ids ~origin caps file with
+    let rules_and_invalid, parse_time =
+      Common.with_time (fun () -> parse_rule ~rewrite_rule_ids ~origin caps file)
+    in
+    match rules_and_invalid with
     | Ok (rules, invalid_rules) ->
         Logs.info (fun m -> m "Done loading local config from %s" !!file);
-        Ok { rules; invalid_rules; origin = Local_file file }
+        Ok { rules; invalid_rules; origin = Local_file file; parse_time }
     | Error err -> Error err
   else
     (* This should never happen because Semgrep_dashdash_config only builds
@@ -498,8 +503,8 @@ let langs_of_pattern (pat, xlang_opt) : Xlang.t list =
              | (exception Failure _) ->
                  None)
 
-let rules_and_origin_of_rule rule =
-  { rules = [ rule ]; invalid_rules = []; origin = CLI_argument }
+let rules_and_origin_of_rule ~(parse_time : float) rule =
+  { rules = [ rule ]; invalid_rules = []; origin = CLI_argument; parse_time }
 
 (* python: mix of resolver_config.get_config() and get_rules() *)
 let rules_from_rules_source_async ?(skip_invalid_configs = false)
@@ -548,15 +553,18 @@ let rules_from_rules_source_async ?(skip_invalid_configs = false)
         let rules_and_origins =
           valid_langs
           |> List_.map (fun xlang ->
-                 let xpat =
-                   match Parse_rule.parse_fake_xpattern xlang pat with
-                   | Ok xpat -> xpat
-                   (* TODO: this shouldn't be any worse than the status quo but
-                      this should be more robust *)
-                   | Error e -> failwith (Rule_error.string_of_error e)
+                 let rule, parse_time =
+                   Common.with_time (fun () ->
+                       let xpat =
+                         match Parse_rule.parse_fake_xpattern xlang pat with
+                         | Ok xpat -> xpat
+                         (* TODO: this shouldn't be any worse than the status
+                            quo but this should be more robust *)
+                         | Error e -> failwith (Rule_error.string_of_error e)
+                       in
+                       Rule.rule_of_xpattern ?fix xlang xpat)
                  in
-                 let rule = Rule.rule_of_xpattern ?fix xlang xpat in
-                 rules_and_origin_of_rule rule)
+                 rules_and_origin_of_rule ~parse_time rule)
         in
         (* In run_scan.py, in the pattern case, we would do this:
            if real_config_errors and strict:

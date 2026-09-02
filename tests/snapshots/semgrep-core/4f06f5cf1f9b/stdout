@@ -67,4 +67,5 @@ rule.yml
      metadata = None; formula_string = "$X == $X"; min_version = None;
      max_version = None }
     ];
-  invalid_rules = []; origin = (Rule_fetching.Local_file rule.yml) }
+  invalid_rules = []; origin = (Rule_fetching.Local_file rule.yml);
+  parse_time = <MASKED> }

@@ -1,0 +1,73 @@
+--- begin input files ---
+rules/csv-writer.yaml
+targets/csv-writer.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 31 insertions(+)
+ create mode 100644 rules/csv-writer.yaml
+ create mode 100644 targets/csv-writer.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Scanning 1 file.
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/csv-writer.py
+   ❯❯❱ rules.python.lang.security.unquoted-csv-writer.unquoted-csv-writer
+          Found an unquoted CSV writer. This is susceptible to injection. Use 'quoting=csv.QUOTE_ALL'.
+
+          ▶▶┆ Autofix ▶ csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+            9┆ csv.writer(csvfile, delimiter=',', quotechar='"')
+            ⋮┆----------------------------------------
+          ▶▶┆ Autofix ▶ csv.writer(get_file(), delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+           12┆ csv.writer(get_file(), delimiter=',', quotechar='"')
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+Ran 1 rule on 1 file: 2 findings.
+--- targets/csv-writer.py after the scan ---
+import csv
+
+csvfile="/tmp/blah.csv"
+
+def get_file():
+    return csvfile
+
+# ruleid:unquoted-csv-writer
+csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+
+# ruleid:unquoted-csv-writer
+csv.writer(get_file(), delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+
+# ok
+csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+ASSERT exit code

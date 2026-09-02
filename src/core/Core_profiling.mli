@@ -1,6 +1,15 @@
 (* Should be set exactly once after the CLI arguments are read *)
 val profiling : bool ref
 
+(* Common.with_time when profiling, else the result with 0. and no clock
+ * read: the measurements of the engine go through this *)
+val with_time : (unit -> 'a) -> 'a * float
+
+(* the same for a span that does not fit in a closure: [since (now ())] is
+ * the elapsed time when profiling, else 0. without a clock read *)
+val now : unit -> float
+val since : float -> float
+
 type times = { parse_time : float; match_time : float }
 
 (* Save time information as we run each rule *)

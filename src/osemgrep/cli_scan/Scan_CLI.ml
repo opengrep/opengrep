@@ -465,7 +465,9 @@ a TTY; defaults to using the TTY status
 let o_max_chars_per_line : int Term.t =
   let info =
     Arg.info [ "max-chars-per-line" ]
-      ~doc:"Maximum number of characters to show per line."
+      ~doc:
+        "Width at which the lines of a finding are wrapped in the text \
+         output (at most the width of the terminal)."
   in
   Arg.value (Arg.opt Arg.int default.output_conf.max_chars_per_line info)
 

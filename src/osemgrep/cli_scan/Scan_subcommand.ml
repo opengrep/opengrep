@@ -556,6 +556,31 @@ let check_targets_with_rules ?(print_summary = true)
               rules
               result
           in
+          (* the rules were parsed when fetched, before the engine ran *)
+          let rules_parse_time : float =
+            rules_and_origins
+            |> List.fold_left
+                 (fun (acc : float) (r : Rule_fetching.rules_and_origin) ->
+                   acc +. r.parse_time)
+                 0.0
+          in
+          let (res : Core_runner.result) =
+            {
+              res with
+              core =
+                {
+                  res.core with
+                  time =
+                    res.core.time
+                    |> Option.map (fun (time : Out.profile) ->
+                           {
+                             time with
+                             rules_parse_time =
+                               time.rules_parse_time +. rules_parse_time;
+                           });
+                };
+            }
+          in
           let output_conf : Output.conf =
             { conf.output_conf with output_format }
           in
@@ -676,11 +701,12 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* Display a (possibly interactive) message to denote rule fetching *)
   display_rule_source ~rule_source:conf.rules_source;
   let rules_and_origins, fatal_errors =
-    rules_from_rules_source
-      (caps :> < Cap.network ; Cap.tmp >)
-      ~skip_invalid_configs:conf.skip_invalid_configs
-      ~rewrite_rule_ids:conf.rewrite_rule_ids
-      ~strict:conf.core_runner_conf.strict conf.rules_source
+    Profiler.record profiler ~name:"config_time" (fun () ->
+        rules_from_rules_source
+          (caps :> < Cap.network ; Cap.tmp >)
+          ~skip_invalid_configs:conf.skip_invalid_configs
+          ~rewrite_rule_ids:conf.rewrite_rule_ids
+          ~strict:conf.core_runner_conf.strict conf.rules_source)
   in
 
   match fatal_errors with

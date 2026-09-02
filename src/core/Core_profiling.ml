@@ -50,6 +50,18 @@
 let profiling = ref false
 let profiling_opt prof = if !profiling then Some prof else None
 
+(* Common.with_time when profiling, else no clock read at all: the engine
+ * calls this once per rule and file, and the time is discarded without
+ * --time anyway (see profiling_opt). *)
+let with_time (f : unit -> 'a) : 'a * float =
+  if !profiling then Common.with_time f else (f (), 0.0)
+
+(* the same for a span that does not fit in a closure *)
+let now () : float = if !profiling then Unix.gettimeofday () else 0.0
+
+let since (start : float) : float =
+  if !profiling then Unix.gettimeofday () -. start else 0.0
+
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)

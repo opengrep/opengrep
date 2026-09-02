@@ -1,0 +1,78 @@
+--- begin input files ---
+rules/utf-8.yaml
+targets/utf-8.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 27 insertions(+)
+ create mode 100644 rules/utf-8.yaml
+ create mode 100644 targets/utf-8.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Scanning 1 file.
+
+
+┌─────────────────┐
+│ 3 Code Findings │
+└─────────────────┘
+
+    targets/utf-8.py
+    ❯❱ rules.replace-with-smiley
+          Unnecessary parameter which matches the default
+
+          ▶▶┆ Autofix ▶ print('😊')
+           12┆ print('a')
+            ⋮┆----------------------------------------
+          ▶▶┆ Autofix ▶ print('😊')
+           16┆ y = '😊'; print('a'); print('a')
+            ⋮┆----------------------------------------
+          ▶▶┆ Autofix ▶ print('😊')
+           16┆ y = '😊'; print('a'); print('a')
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+Ran 1 rule on 1 file: 3 findings.
+--- targets/utf-8.py after the scan ---
+# Tests autofixes when non-ascii characters are present in the source file and
+# the fix.
+#
+# In Python, strings are sequences of characters. In OCaml, they are sequences
+# of bytes. Because of this, we need to be particularly careful that we do not
+# conflate bytes with characters.
+
+# U+1F60A. Has a 4 byte encoding in utf-8. This is here to throw off offsets
+# later in the file if we are computing them incorrectly.
+x = '😊'
+
+print('😊')
+
+# And this one is here at the beginning of a line to throw off columns later in
+# the line if we are computing them incorrectly.
+y = '😊'; print('😊'); print('😊')
+
+ASSERT exit code

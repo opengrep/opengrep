@@ -170,6 +170,7 @@ let test_basic_output
     ?(rules_content = eqeq_basic_content)
     ?(code_file = "stupid.py")
     ?(code_content = stupid_py_content)
+    ?(extra_args : string list = [])
     () =
   with_env_app_token (fun () ->
       let repo_files =
@@ -182,9 +183,9 @@ let test_basic_output
           let exit_code =
             without_settings (fun () ->
                 Scan_subcommand.main caps
-                  [|
-                    "opengrep-scan"; "--experimental"; "--config"; rules_file;
-                  |])
+                  (Array.of_list
+                     ([ "opengrep-scan"; "--experimental"; "--config"; rules_file ]
+                     @ extra_args)))
           in
           Exit_code.Check.ok exit_code))
 
@@ -773,6 +774,128 @@ let test_id_change (caps : Scan_subcommand.caps) () =
            (not (String.equal (fingerprint before) (fingerprint after))))
 
 (*****************************************************************************)
+(* Text output *)
+(*****************************************************************************)
+
+let two_rules_same_message_content =
+  {|
+rules:
+  - id: rule1
+    pattern: print(...)
+    message: Same message as other rule.
+    languages: [python]
+    severity: ERROR
+  - id: rule2
+    pattern: print(...)
+    message: Same message as other rule.
+    languages: [python]
+    severity: ERROR
+|}
+
+let autofix_rules_content =
+  {|
+rules:
+  - id: use-dict-get
+    patterns:
+      - pattern: $DICT[$KEY]
+    fix: |
+      $DICT.get(
+        $KEY)
+    message: Use `.get()` method to avoid a KeyNotFound error
+    languages: [python]
+    severity: ERROR
+  - id: no-debug
+    pattern: debug(...)
+    fix: ""
+    message: Remove the debug call
+    languages: [python]
+    severity: WARNING
+|}
+
+let autofix_py_content = {|inputs = {}
+x = inputs["key"]
+debug(x)
+|}
+
+(* longer than the width the text output wraps at *)
+let long_word = String.make 70 'a'
+
+let long_rule_id_content =
+  spf
+    {|
+rules:
+  - id: rule-%s
+    pattern: $X == $X
+    message: A message with a long word %s in it.
+    severity: WARNING
+    languages: [python]
+|}
+    long_word long_word
+
+let long_line_py_content =
+  spf {|print("id = 1 AND %s = TRUE" == "id = 1 AND %s = TRUE")
+|} long_word
+    long_word
+
+(* the times of the --time summary *)
+let mask_times =
+  Testo.mask_pcre_pattern ~replace:(fun _ -> "x.xxx") {|[0-9]+\.[0-9]+|}
+
+(* --time: the JSON carries the times of the command and of the rule
+   parsing next to the engine's *)
+let test_time_json (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", eqeq_basic_content);
+          F.File ("stupid.py", stupid_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let exit_code, stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--json"; "--time";
+                        "--config"; "rules.yml";
+                      |]))
+          in
+          Exit_code.Check.ok exit_code;
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          match out.time with
+          | None -> Alcotest.fail "no time field"
+          | Some time ->
+              Alcotest.(check (list string))
+                "the times of the command"
+                [ "config_time"; "core_time"; "ignores_time"; "total_time" ]
+                (List_.map fst time.profiling_times);
+              Alcotest.(check bool)
+                "the rules were parsed" true
+                (time.rules_parse_time > 0.0);
+              match time.targets with
+              | [ target ] ->
+                  Alcotest.(check string)
+                    "the target" "stupid.py"
+                    (Fpath.to_string target.path);
+                  Alcotest.(check (list string))
+                    "the rule that ran on it, with its matching time"
+                    [ "eqeq-bad" ]
+                    (target.match_times
+                    |> List_.filter_map
+                         (fun ((id : Rule_ID.t), (match_time : float)) ->
+                           if match_time > 0.0 then Some (Rule_ID.to_string id)
+                           else None));
+                  Alcotest.(check bool)
+                    "the target was parsed" true (target.parse_time > 0.0);
+                  Alcotest.(check bool)
+                    "the run covers parsing and matching" true
+                    (target.run_time >= target.parse_time)
+              | targets ->
+                  Alcotest.fail
+                    (spf "expected one target, got %d" (List.length targets))))
+
+(*****************************************************************************)
 (* Severities that never run *)
 (*****************************************************************************)
 
@@ -941,6 +1064,24 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "fingerprints equal the python wrapper's" (test_fingerprints caps);
       t "fingerprints change with the match, not the formatting"
         (test_id_change caps);
+      t "text output: two rules with the same message"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_basic_output caps ~rules_content:two_rules_same_message_content
+           ~code_content:"print(1 == 1)\n");
+      t "text output: the autofix line" ~checked_output:(Testo.stdxxx ())
+        ~normalize
+        (test_basic_output caps ~rules_content:autofix_rules_content
+           ~code_content:autofix_py_content);
+      t "text output: long rule ids, messages and lines are wrapped"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_basic_output caps ~rules_content:long_rule_id_content
+           ~code_content:long_line_py_content
+           ~extra_args:[ "--max-chars-per-line"; "60" ]);
+      t "--time: the summary of the text output"
+        ~checked_output:(Testo.stdxxx ())
+        ~normalize:(mask_times :: normalize)
+        (test_basic_output caps ~extra_args:[ "--time" ]);
+      t "--time: the times in the JSON output" (test_time_json caps);
       t "INVENTORY and EXPERIMENT rules never run"
         (test_inventory_and_experiment_rules_never_run caps);
       t "missing scanning roots: fatal error reported in the JSON output"

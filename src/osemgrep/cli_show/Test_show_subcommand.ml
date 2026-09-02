@@ -98,6 +98,7 @@ let test_dump_config (caps : caps) : Testo.t =
         (* because of the use of Xpattern.count global for pattern id *)
         Testo.mask_line ~after:"pid = " ~before:" }" ();
         Testo.mask_line ~after:"id_info_id = " ~before:" }" ();
+        Testo.mask_line ~after:"parse_time = " ~before:" }" ();
       ]
     __FUNCTION__
     (fun () ->

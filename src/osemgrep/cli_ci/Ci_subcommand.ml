@@ -242,11 +242,12 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
       Profiler.start profiler ~name:"total_time";
       Core_profiling.profiling := conf.core_runner_conf.time_flag;
       let rules_and_origins, fatal_errors =
-        Scan_subcommand.rules_from_rules_source
-          (caps :> < Cap.network ; Cap.tmp >)
-          ~skip_invalid_configs:conf.skip_invalid_configs
-          ~rewrite_rule_ids:conf.rewrite_rule_ids
-          ~strict:conf.core_runner_conf.strict conf.rules_source
+        Profiler.record profiler ~name:"config_time" (fun () ->
+            Scan_subcommand.rules_from_rules_source
+              (caps :> < Cap.network ; Cap.tmp >)
+              ~skip_invalid_configs:conf.skip_invalid_configs
+              ~rewrite_rule_ids:conf.rewrite_rule_ids
+              ~strict:conf.core_runner_conf.strict conf.rules_source)
       in
       match fatal_errors with
       | _ :: _ ->

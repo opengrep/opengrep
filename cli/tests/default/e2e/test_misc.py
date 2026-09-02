@@ -52,23 +52,6 @@ def test_verbose(run_semgrep_in_tmp: RunSemgrep, snapshot):
     )
 
 
-@pytest.mark.osemfail
-@pytest.mark.kinda_slow
-def test_time(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    results, _ = run_semgrep_in_tmp(
-        "rules/basic.yaml",
-        options=["--time"],
-        target_name="basic.py",
-        output_format=OutputFormat.TEXT,
-        force_color=True,
-    )
-
-    snapshot.assert_match(
-        mask_floats(results),
-        "results.txt",
-    )
-
-
 @pytest.mark.kinda_slow
 def test_show_supported_languages(run_semgrep_in_tmp: RunSemgrep, snapshot):
     results, _ = run_semgrep_in_tmp(
@@ -474,21 +457,6 @@ def test_sort_text_findings(run_semgrep_in_tmp: RunSemgrep, snapshot):
             output_format=OutputFormat.TEXT,
         ).stdout,
         "output.txt",
-    )
-
-
-@pytest.mark.kinda_slow
-@pytest.mark.osemfail
-def test_match_rules_same_message(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    results, _ = run_semgrep_in_tmp(
-        "rules/two_rules_same_message.yaml",
-        target_name="basic.py",
-        output_format=OutputFormat.TEXT,
-        force_color=True,
-    )
-    snapshot.assert_match(
-        results,
-        "results.txt",
     )
 
 

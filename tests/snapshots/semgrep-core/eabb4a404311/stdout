@@ -1,0 +1,18 @@
+--- begin input files ---
+rules/replace-field-yaml.yaml
+targets/replace-field-yaml.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 20 insertions(+)
+ create mode 100644 rules/replace-field-yaml.yaml
+ create mode 100644 targets/replace-field-yaml.yaml
+{"version":"<MASKED>","results":[{"check_id":"rules.yaml-excessive-capture","path":"targets/replace-field-yaml.yaml","start":{"line":3,"col":3,"offset":40},"end":{"line":4,"col":14,"offset":56},"extra":{"metavars":{"$X":{"start":{"line":3,"col":3,"offset":40},"end":{"line":3,"col":4,"offset":41},"abstract_content":"y"}},"message":"If semgrep is not smart enough, it will match beyond the specified pattern and capture all text until `z`. So the fix will result in `y: falsez: \"z\"`\n","fix":"y: false","fixed_lines":["  y: false"],"metadata":{"issue":"https://github.com/returntocorp/semgrep/issues/5698"},"severity":"ERROR","fingerprint":"19eae5d188c41956ff24ff39ec0d4dbcef3ff333bfa531ac995a0ec8fa45aadc1184a928f9525b3df1a08250f56147857ca42aafcba89fe32e3e2cdebef32467_0","lines":"  y:\n    foo: true","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/replace-field-yaml.yaml"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/replace-field-yaml.yaml after the scan ---
+x:
+  # ruleid: yaml-excessive-capture
+  y:
+    foo: true
+  # comment
+  z: "z"
+

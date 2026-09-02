@@ -533,7 +533,7 @@ let iter_targets_and_get_matches_and_exn_to_errors
             *)
 
            let (res, was_scanned), run_time =
-             Common.with_time (fun () ->
+             Core_profiling.with_time (fun () ->
                  try
                    Memory_limit.run_with_global_memory_limit
                      (caps :> < Cap.memory_limit >)

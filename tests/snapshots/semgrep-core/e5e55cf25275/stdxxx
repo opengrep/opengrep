@@ -1,0 +1,66 @@
+--- begin input files ---
+rules/python-assert-statement.yaml
+targets/python-assert-statement.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/python-assert-statement.yaml
+ create mode 100644 targets/python-assert-statement.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Scanning 1 file.
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/python-assert-statement.py
+     ❱ rules.assert_eq-true
+          Change assert_eq(True, x) to assert x
+
+          ▶▶┆ Autofix ▶ assert "a"
+            1┆ assert "a"
+            ⋮┆----------------------------------------
+          ▶▶┆ Autofix ▶ assert "b"
+            4┆ assert "b"
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+Ran 1 rule on 1 file: 2 findings.
+--- targets/python-assert-statement.py after the scan ---
+assert_eq(
+    True, "a"
+)
+assert_eq(
+    True, "b"
+)
+x = "abc"
+
+ASSERT exit code
