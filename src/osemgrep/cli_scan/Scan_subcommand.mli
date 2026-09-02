@@ -30,7 +30,7 @@ val rules_from_rules_source :
   rewrite_rule_ids:bool ->
   strict:bool ->
   < Cap.network ; Cap.tmp > ->
-  Rules_source.t ->
+  Rule_fetching.source ->
   Rule_fetching.rules_and_origin list * Rule_error.t list
 
 (* internal: also used in CI *)
@@ -46,8 +46,6 @@ val output_and_exit_from_fatal_core_errors_exn :
   Profiler.t ->
   Core_error.t list ->
   Exit_code.t
-
-val invalid_configs_message : Core_error.t list -> string
 
 (* internal: also used in CI. The targets of the scanning roots, or the exit
  * code after reporting the roots that do not exist. *)

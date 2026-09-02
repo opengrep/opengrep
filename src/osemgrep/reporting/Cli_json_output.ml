@@ -76,9 +76,10 @@ let error_message ~rule_id ~(location : Out.location option)
             | None -> ""
             | Some loc -> spf "at line %s:%d" !!(loc.path) loc.start.line)
       in
-      spf "%s %s:\n %s"
+      spf "%s%s:\n %s"
         (Error.string_of_error_type error_type)
-        error_context core_message)
+        (if String.equal error_context "" then "" else " " ^ error_context)
+        core_message)
 
 let error_spans ~(error_type : Out.error_type) ~(location : Out.location) =
   match error_type with
@@ -105,6 +106,8 @@ let error_spans ~(error_type : Out.error_type) ~(location : Out.location) =
       in
       Some [ span ]
   | PartialParsing locs -> Some (locs |> List_.map core_location_to_error_span)
+  (* the token of the rule file the error is about *)
+  | InvalidRuleSchemaError -> Some [ core_location_to_error_span location ]
   | _else_ -> None
 
 (* # TODO benchmarking code relies on error code value right now
@@ -140,6 +143,7 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
   | SemgrepError ->
       Exit_code.fatal ~__LOC__
   | UnknownLanguageError -> Exit_code.invalid_language ~__LOC__
+  | MissingConfig -> Exit_code.missing_config ~__LOC__
   | IncompatibleRule _
   | IncompatibleRule0
   | MissingPlugin
@@ -169,8 +173,11 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         | PartialParsing _
         | SemgrepWarning
         | SemgrepError
-        | InvalidRuleSchemaError ->
+        | MissingConfig ->
             None
+        (* pysemgrep's schema validator did not know the rule; our parser
+           does *)
+        | InvalidRuleSchemaError
         | OtherParseError
         | AstBuilderError
         | RuleParseError
@@ -219,6 +226,7 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         | OutOfMemoryDuringInterfile
         | SemgrepWarning
         | SemgrepError
+        | MissingConfig
         | IncompatibleRule _
         | IncompatibleRule0
         | MissingPlugin
@@ -243,9 +251,15 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         path;
         message;
         spans;
-        (* LATER *)
-        long_msg = None;
-        short_msg = None;
+        (* python: ErrorWithSpan, for the errors on the structure of a rule *)
+        long_msg =
+          (match error_type with
+          | InvalidRuleSchemaError -> Some core_message
+          | _ -> None);
+        short_msg =
+          (match error_type with
+          | InvalidRuleSchemaError -> Some "Invalid rule schema"
+          | _ -> None);
         help = None;
       }
 

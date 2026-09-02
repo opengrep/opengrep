@@ -1,0 +1,54 @@
+--- begin input files ---
+rules/bad15.yaml
+target.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 10 insertions(+)
+ create mode 100644 rules/bad15.yaml
+ create mode 100644 target.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/bad15.yaml:2:5: Invalid YAML
+  --> rules/bad15.yaml:2
+1 | rules:
+2 |   - id: too many
+  |     ^^
+3 |     message: Hi
+Expected a valid rule ID at id. Got too many
+exit code: 5
+--- begin input files ---
+rules/bad15.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 10 insertions(+)
+ create mode 100644 rules/bad15.yaml
+ create mode 100644 target.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+{"version":"1.29.0","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/bad15.yaml:2:\n Expected a valid rule ID at id. Got too many","path":"rules/bad15.yaml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 5

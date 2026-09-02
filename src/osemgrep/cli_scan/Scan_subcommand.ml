@@ -94,12 +94,6 @@ let core_errors_of_fatal_rule_errors (fatal_errors : Rule_error.t list) :
   fatal_errors
   |> List_.map (fun (e : Rule_error.t) -> Core_error.error_of_rule_error e)
 
-(* the text of the Semgrep_error raised for invalid rules in text mode *)
-let invalid_configs_message (errors : Core_error.t list) : string =
-  Common.spf "invalid configuration file found (%d configs were invalid)\n%s"
-    (List.length errors)
-    (String.concat "\n" (List_.map Core_error.string_of_error errors))
-
 (* we require stdout here to give the proper output, such as with --json *)
 let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
     (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
@@ -329,15 +323,10 @@ let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) 
     features;
   ()
 
-let display_rule_source ~(rule_source : Rules_source.t) : unit =
+let display_rule_source (source : Rule_fetching.source) : unit =
   let msg =
-    match rule_source with
-    | Configs xs -> (
-        let kinds =
-          List_.map
-            (fun str -> Rules_config.parse_config_string ~in_docker:false str)
-            xs
-        in
+    match source with
+    | Configs (configs, _not_found) -> (
         let has = function
           | `Registry ->
               List.exists
@@ -346,9 +335,9 @@ let display_rule_source ~(rule_source : Rules_source.t) : unit =
                   | C.R _ ->
                       true
                   | _ -> false)
-                kinds
+                configs
           | `Git ->
-              List.exists (function C.Git _ -> true | _ -> false) kinds
+              List.exists (function C.Git _ -> true | _ -> false) configs
         in
         match () with
         | _ when has `Registry ->
@@ -374,7 +363,7 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >) :
   Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
 
 let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
-    ~strict caps rules_source =
+    ~strict caps (source : Rule_fetching.source) =
   (* Create the wait hook for our progress indicator *)
   let spinner_ls =
     if Console_Spinner.should_show_spinner () then
@@ -383,10 +372,10 @@ let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
   in
   (* Fetch the rules *)
   let rules_and_origins =
-    Rule_fetching.rules_from_rules_source_async ~skip_invalid_configs
+    Rule_fetching.rules_from_source_async ~skip_invalid_configs
       ~rewrite_rule_ids ~strict
       (caps :> < Cap.network ; Cap.tmp >)
-      rules_source
+      source
   in
   Lwt_platform.run (Lwt.pick (rules_and_origins :: spinner_ls))
 [@@profiling]
@@ -481,7 +470,7 @@ let check_targets_with_rules ?(print_summary = true)
       in
       Error
         (output_and_exit_from_fatal_core_errors_exn
-           ~text_message:(invalid_configs_message core_errors)
+           ~text_message:(Rule_errors_report.invalid_configs_message core_errors)
            (caps :> < Cap.stdout >)
            conf profiler core_errors)
   | _ -> (
@@ -724,14 +713,15 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* step1: getting the rules *)
   Logs.info (fun m -> m "Getting the rules");
   (* Display a (possibly interactive) message to denote rule fetching *)
-  display_rule_source ~rule_source:conf.rules_source;
+  let source = Rule_fetching.classify conf.rules_source in
+  display_rule_source source;
   let rules_and_origins, fatal_errors =
     Profiler.record profiler ~name:"config_time" (fun () ->
         rules_from_rules_source
           (caps :> < Cap.network ; Cap.tmp >)
           ~skip_invalid_configs:conf.skip_invalid_configs
           ~rewrite_rule_ids:conf.rewrite_rule_ids
-          ~strict:conf.core_runner_conf.strict conf.rules_source)
+          ~strict:conf.core_runner_conf.strict source)
   in
 
   match fatal_errors with
@@ -739,7 +729,7 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   | _ :: _ ->
       let core_errors = core_errors_of_fatal_rule_errors fatal_errors in
       output_and_exit_from_fatal_core_errors_exn
-        ~text_message:(invalid_configs_message core_errors)
+        ~text_message:(Rule_errors_report.invalid_configs_message core_errors)
         (caps :> < Cap.stdout >)
         conf profiler core_errors
   (* but with no fatal rule errors, we can proceed with the scan! *)

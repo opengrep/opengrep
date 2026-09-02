@@ -33,7 +33,7 @@ jobs:
         run: git config --global fetch.parallel 50
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
       - run: |
           yum update -y
           yum install -y zip

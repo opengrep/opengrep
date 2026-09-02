@@ -508,18 +508,39 @@ let langs_of_pattern (pat, xlang_opt) : (Xlang.t list, Rule_error.t) result =
 let rules_and_origin_of_rule ~(parse_time : float) rule =
   { rules = [ rule ]; invalid_rules = []; origin = CLI_argument; parse_time }
 
+type source =
+  (* the configs of --config, and the errors of those that cannot be found *)
+  | Configs of Rules_config.t list * Rule_error.t list
+  | Pattern of string * Xlang.t option * string option
+
+(* A config that cannot be found is reported like a rule file that cannot
+   be loaded, in the output format asked for. *)
+let classify (src : Rules_source.t) : source =
+  match src with
+  | Pattern (pat, xlang_opt, fix) -> Pattern (pat, xlang_opt, fix)
+  | Configs xs ->
+      let in_docker = !Semgrep_envvars.v.in_docker in
+      let configs, not_found =
+        xs
+        |> List.partition_map (fun (str : string) ->
+               match Rules_config.parse_config_string ~in_docker str with
+               | exception Error.Semgrep_error (msg, Some exit_code)
+                 when Exit_code.Equal.missing_config exit_code ->
+                   Either.Right (Rule_error.mk_error (ConfigNotFound msg))
+               | config -> Either.Left config)
+      in
+      Configs (configs, not_found)
+
 (* python: mix of resolver_config.get_config() and get_rules() *)
-let rules_from_rules_source_async ?(skip_invalid_configs = false)
-    ~rewrite_rule_ids ~strict:_ caps (src : Rules_source.t) :
+let rules_from_source_async ?(skip_invalid_configs = false) ~rewrite_rule_ids
+    ~strict:_ caps (src : source) :
     (rules_and_origin list * Rule_error.t list) Lwt.t =
   let%lwt rules_and_origins, errors =
     match src with
-    | Configs xs ->
+    | Configs (configs, not_found) ->
         let%lwt pairs_list =
-          xs
-          |> Lwt_list.map_p (fun str ->
-                 let in_docker = !Semgrep_envvars.v.in_docker in
-                 let config = Rules_config.parse_config_string ~in_docker str in
+          configs
+          |> Lwt_list.map_p (fun config ->
                  rules_from_dashdash_config_async ~skip_invalid_configs
                    ~rewrite_rule_ids caps config)
         in
@@ -527,7 +548,8 @@ let rules_from_rules_source_async ?(skip_invalid_configs = false)
           Common2.unzip pairs_list
         in
         let rules_and_origins, errors =
-          (List_.flatten rules_and_origins_nested, List_.flatten errors_nested)
+          ( List_.flatten rules_and_origins_nested,
+            not_found @ List_.flatten errors_nested )
         in
 
         (* NOTE: We should default to config auto if no config was passed in an earlier step,
@@ -604,6 +626,12 @@ let rules_from_rules_source_async ?(skip_invalid_configs = false)
  * to use the _async variant above mixed with a spinner as in
  * Scan_subcommand.rules_from_rules_source()
  *)
+let rules_from_rules_source_async ?skip_invalid_configs ~rewrite_rule_ids
+    ~strict caps (src : Rules_source.t) :
+    (rules_and_origin list * Rule_error.t list) Lwt.t =
+  rules_from_source_async ?skip_invalid_configs ~rewrite_rule_ids ~strict caps
+    (classify src)
+
 let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
     ~strict caps (src : Rules_source.t) :
     rules_and_origin list * Rule_error.t list =

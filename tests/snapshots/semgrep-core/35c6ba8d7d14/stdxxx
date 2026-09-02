@@ -1,0 +1,58 @@
+--- begin input files ---
+rules/missing-field.yaml
+target.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/missing-field.yaml
+ create mode 100644 target.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/missing-field.yaml:8:19: Rule parse error in rule rules.flask-secure-set-cookie
+  --> rules/missing-field.yaml:8
+7  |           flask.response.set_cookie(..., httponly=True, secure=True,...)
+8  |       - pattern: |
+9  |           flask.response.set_cookie(....)
+10 |     message: |
+Invalid pattern for Python: Stdlib.Parsing.Parse_error
+----- pattern -----
+flask.response.set_cookie(....)
+
+----- end pattern -----
+exit code: 4
+--- begin input files ---
+rules/missing-field.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/missing-field.yaml
+ create mode 100644 target.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+{"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"Rule parse error","rule_id":"rules.flask-secure-set-cookie","message":"Rule parse error in rule rules.flask-secure-set-cookie:\n Invalid pattern for Python: Stdlib.Parsing.Parse_error\n----- pattern -----\nflask.response.set_cookie(....)\n\n----- end pattern -----\n"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 4

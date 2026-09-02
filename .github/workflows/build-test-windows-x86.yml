@@ -399,7 +399,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
           name: opengrep-core-and-dependent-libs-w64-artifact

@@ -1112,7 +1112,11 @@ let parse_generic_ast ?(error_recovery = false) ?rewrite_rule_ids
           | _ -> missing_rules_field ())
       | [] ->
           (* an empty rules file returns an empty list of rules *)
-          Ok []
+          (* python: "Empty configuration file", a mistake rather than a
+             configuration with no rules, which is 'rules: []' *)
+          yaml_error
+            (Tok.tok_of_loc (Tok.first_loc_of_file file))
+            "Empty configuration file"
       | _ -> assert false
       (* yaml_to_generic should always return a ExprStmt *)
     in

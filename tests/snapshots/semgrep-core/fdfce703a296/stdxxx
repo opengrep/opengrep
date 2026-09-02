@@ -1,0 +1,54 @@
+--- begin input files ---
+rules/invalid-patterns-key.yml
+target.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 26 insertions(+)
+ create mode 100644 rules/invalid-patterns-key.yml
+ create mode 100644 target.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/invalid-patterns-key.yml:8:22: Invalid YAML
+  --> rules/invalid-patterns-key.yml:8
+7 |               metavariable: $HASH
+8 |               regex: (?!sha256:)
+  |                      ^^^^^^^^^^^^
+9 |       - patterns:
+(approximate error location; error nearby after) error calling parser: did not find expected key character 0 position 0 returned: 0
+exit code: 5
+--- begin input files ---
+rules/invalid-patterns-key.yml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 26 insertions(+)
+ create mode 100644 rules/invalid-patterns-key.yml
+ create mode 100644 target.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+{"version":"1.29.0","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/invalid-patterns-key.yml:8:\n (approximate error location; error nearby after) error calling parser: did not find expected key character 0 position 0 returned: 0","path":"rules/invalid-patterns-key.yml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 5

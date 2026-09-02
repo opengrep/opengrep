@@ -66,6 +66,8 @@ type rules_and_invalid = rules * invalid_rule list
 type error_kind =
   | InvalidRule of invalid_rule
   (* we can't recover from those *)
+  (* the configuration could not be found; the message *)
+  | ConfigNotFound of string
   | InvalidYaml of string * Tok.t
   | DuplicateYamlKey of string * Tok.t
   | UnparsableYamlException of string
@@ -161,6 +163,7 @@ let string_of_invalid_rule ((kind, rule_id, pos) : invalid_rule) =
 let string_of_error (error : t) : string =
   match error.kind with
   | InvalidRule x -> string_of_invalid_rule x
+  | ConfigNotFound msg -> msg
   | InvalidYaml (msg, pos) ->
       spf "invalid YAML, %s: %s" (Tok.stringpos_of_tok pos) msg
   | DuplicateYamlKey (key, pos) ->

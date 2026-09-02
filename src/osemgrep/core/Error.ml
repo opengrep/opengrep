@@ -111,6 +111,10 @@ let rec string_of_error_type (error_type : OutJ.error_type) : string =
   | PatternParseError _ -> string_of_error_type PatternParseError0
   | IncompatibleRule _ -> string_of_error_type IncompatibleRule0
   | DependencyResolutionError _ -> "Dependency resolution error"
+  (* python: the short_msg of the ErrorWithSpan *)
+  | InvalidRuleSchemaError -> "Invalid rule schema"
+  | UnknownLanguageError -> "Unknown language"
+  | MissingConfig -> "Missing config"
   (* All the other cases don't have arguments in Semgrep_output_v1.atd
    * and have some <json name="..."> annotations to generate the right string
    * so we can mostly just call Out.string_of_error_type (and remove the
@@ -122,8 +126,6 @@ let rec string_of_error_type (error_type : OutJ.error_type) : string =
   | RuleParseError
   | SemgrepWarning
   | SemgrepError
-  | InvalidRuleSchemaError
-  | UnknownLanguageError
   | MissingPlugin
   | ParseError
   | OtherParseError
