@@ -17,6 +17,11 @@ type skipped_targets_grouped = {
 val errors_to_skipped :
   Semgrep_output_v1_t.core_error list -> Semgrep_output_v1_t.skipped_target list
 
+(* the files of the errors group, sorted, each with the ids of the rules
+   that failed on it *)
+val group_errors_by_file :
+  Semgrep_output_v1_t.skipped_target list -> (Fpath.t * Rule_ID.t list) list
+
 val group_skipped :
   Semgrep_output_v1_t.skipped_target list -> skipped_targets_grouped
 

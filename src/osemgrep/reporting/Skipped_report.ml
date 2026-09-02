@@ -31,8 +31,7 @@ type skipped_targets_grouped = {
 (* Helpers *)
 (*****************************************************************************)
 
-(* one entry per file, whatever the number of its errors, as pysemgrep
-   counts the files partially analysed *)
+(* one entry per error; the reports group them by file *)
 let errors_to_skipped (errors : OutJ.core_error list) : OutJ.skipped_target list
     =
   errors
@@ -46,7 +45,16 @@ let errors_to_skipped (errors : OutJ.core_error list) : OutJ.skipped_target list
                details = Some message;
                rule_id;
              })
-  |> List_.deduplicate_gen ~get_key:(fun (x : OutJ.skipped_target) -> x.path)
+
+(* the files partially analysed, each with the ids of the rules that failed
+   on it, in the order of the entries *)
+let group_errors_by_file (errors : OutJ.skipped_target list) :
+    (Fpath.t * Rule_ID.t list) list =
+  errors
+  |> Assoc.group_by (fun (x : OutJ.skipped_target) -> x.path)
+  |> List_.map (fun (path, entries) ->
+         (path, entries |> List_.filter_map (fun (x : OutJ.skipped_target) -> x.rule_id)))
+  |> List.sort (fun (a, _) (b, _) -> Fpath.compare a b)
 
 let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
     =
@@ -206,5 +214,19 @@ let pp_skipped ~too_many_entries ppf
   Fmt.pf ppf "  %a@.@."
     Fmt.(styled `Bold string)
     (esc ^ "Partially analyzed due to parsing or internal Opengrep errors");
-  pp_list errors;
+  (* python: yield_verbose_lines, one line per file with the failing rules *)
+  (match group_errors_by_file errors with
+  | [] -> Fmt.pf ppf "   • <none>@."
+  | files ->
+      files
+      |> List.iter (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->
+             let with_rules =
+               match rule_ids with
+               | [] -> ""
+               | [ rule_id ] -> spf " with rule %s" (Rule_ID.to_string rule_id)
+               | rule_id :: _ ->
+                   spf " with %d rules (e.g. %s)" (List.length rule_ids)
+                     (Rule_ID.to_string rule_id)
+             in
+             Fmt.pf ppf "   • %s%s@." !!path with_rules));
   Fmt.pf ppf "@."

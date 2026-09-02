@@ -75,7 +75,7 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
   let out_partial =
     opt_msg
       "files only partially analyzed due to a parsing or internal Opengrep error"
-      errors
+      (Skipped_report.group_errors_by_file errors)
   in
   match (out_skipped, out_partial, skipped_groups.ignored) with
   | [], None, [] -> ()
@@ -89,3 +89,37 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
           Fmt.pf ppf
             "  For a full list of skipped files, run opengrep with the \
              --verbose flag.@\n")
+
+(* python: OutputHandler._handle_semgrep_timeout_errors *)
+let pp_timeout_warnings ~(timeout_threshold : int) ppf
+    (errors : OutJ.cli_error list) : unit =
+  let timeouts_by_file : (Fpath.t * Rule_ID.t list) list =
+    errors
+    |> List_.filter_map (fun (e : OutJ.cli_error) ->
+           match (e.type_, e.path, e.rule_id) with
+           | OutJ.Timeout, Some path, Some rule_id -> Some (path, rule_id)
+           | _ -> None)
+    |> Assoc.group_by fst
+    |> List_.map (fun (path, xs) ->
+           (path, xs |> List_.map snd |> List.sort Rule_ID.compare))
+  in
+  timeouts_by_file
+  |> List.iter (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->
+         let num_errs = List.length rule_ids in
+         Fmt.pf ppf
+           "%d timeout error(s) in %s when running the following rules: [%s]@\n"
+           num_errs (Fpath.to_string path)
+           (rule_ids |> List_.map Rule_ID.to_string |> String.concat ", ");
+         if Int.equal num_errs timeout_threshold then
+           Fmt.pf ppf
+             "Opengrep stopped running rules on %s after %d timeout \
+              error(s). See `--timeout-threshold` for more info.@\n"
+             (Fpath.to_string path) num_errs);
+  if
+    Int.equal timeout_threshold 0
+    && timeouts_by_file
+       |> List.exists (fun (_path, rule_ids) -> List.length rule_ids > 5)
+  then
+    Fmt.pf ppf
+      "You can use the `--timeout-threshold` flag to set a number of \
+       timeouts after which a file will be skipped.@\n"
