@@ -68,22 +68,22 @@ let o_logging : Logs.level option Term.t =
   Term.(const combine $ o_debug $ o_quiet $ o_verbose)
 
 let setup_logging ~force_color ~level =
-  Log_semgrep.setup ~force_color ~level ();
+  (* The file of $OPENGREP_LOG_FILE (or $SEMGREP_LOG_FILE) gets a copy of
+   * the logs at the same level as stderr, so that it costs nothing unless
+   * --verbose or --debug is passed too. pysemgrep wrote its own logs there
+   * at the debug level whatever the console level, and to
+   * ~/.semgrep/semgrep.log when the variable was not set.
+   *)
+  let copy_to_file : Fpath.t option =
+    Opengrep_env.getenv_opt "SEMGREP_LOG_FILE" |> Option.map Fpath.v
+  in
+  copy_to_file
+  |> Option.iter (fun (file : Fpath.t) ->
+         UFile.make_directories (Fpath.parent file));
+  Log_semgrep.setup ?copy_to_file ~force_color ~level ();
   Logs.debug (fun m ->
       m "Logging setup for osemgrep: force_color=%B level=%s" force_color
         (Logs.level_to_string level));
-  (* TOPORT
-        # Setup file logging
-        # env.user_log_file dir must exist
-        env.user_log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(env.user_log_file, "w")
-        file_formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(file_formatter)
-        logger.addHandler(file_handler)
-  *)
   Logs.debug (fun m ->
       m "Executed as: %s" (Sys.argv |> Array.to_list |> String.concat " "))
 

@@ -23,8 +23,6 @@ type t = {
   user_home_dir : Fpath.t;
   (* user_home_dir/.semgrep *)
   user_dot_semgrep_dir : Fpath.t;
-  (* $SEMGREP_LOG_FILE or ~/.semgrep/semgrep.log  *)
-  user_log_file : Fpath.t;
   (* TODO: Reconcile $SEMGREP_FORCE_COLOR via o_force_color *)
   (* ($NO_COLOR | $SEMGREP_COLOR_NO_COLOR) *)
   no_color : bool;

@@ -251,6 +251,14 @@ To obtain SARIF output:
 }
 ```
 
+## Log file
+
+Set `OPENGREP_LOG_FILE` (or `SEMGREP_LOG_FILE`) to a path to get a copy of
+what Opengrep prints on stderr, at the same level: warnings and errors by
+default, more with `--verbose` or `--debug`. The file is truncated on each
+run and its directory is created. Nothing is written when the variable is
+not set.
+
 ## Documentation
 
 - [Wiki](https://github.com/opengrep/opengrep/wiki) - tutorials and language guides

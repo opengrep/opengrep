@@ -175,7 +175,7 @@ let create_formatter opt_file =
 let mk_reporter ?(additional_reporters : Logs.reporter list = []) ~dst
     ~require_one_of_these_tags ~read_tags_from_env_vars:(env_vars : string list)
     ~highlight () =
-  (* TODO: additional_reporters seems to be always empty. Confirm and remove. *)
+  (* additional_reporters: the copy of the logs to a file, see setup *)
   let require_one_of_these_tags =
     match read_comma_sep_strs_from_env_vars env_vars with
     | Some tags -> tags
@@ -293,12 +293,31 @@ let setup_basic ?(level = Some Logs.Warning) () =
        ~read_tags_from_env_vars:[] ~highlight:false ());
   ()
 
+(* A reporter writing the same messages as the main one, without colours,
+   to a file it truncates. *)
+let file_reporter ~require_one_of_these_tags ~read_tags_from_env_vars
+    (file : Fpath.t) : Logs.reporter =
+  let oc = UStdlib.open_out (Fpath.to_string file) in
+  let dst = UFormat.formatter_of_out_channel oc in
+  UStdlib.at_exit (fun () ->
+      Format.pp_print_flush dst ();
+      close_out oc);
+  mk_reporter ~dst ~require_one_of_these_tags ~read_tags_from_env_vars
+    ~highlight:false ()
+
 let setup ?(highlight_setting = Console.get_highlight_setting ())
-    ?log_to_file:opt_file ?(additional_reporters = [])
+    ?log_to_file:opt_file ?copy_to_file ?(additional_reporters = [])
     ?(require_one_of_these_tags = default_tags)
     ?(read_level_from_env_vars = [ "LOG_LEVEL" ])
     ?(read_srcs_from_env_vars = [ "LOG_SRCS" ])
     ?(read_tags_from_env_vars = [ "LOG_TAGS" ]) ~level () =
+  let additional_reporters =
+    match copy_to_file with
+    | None -> additional_reporters
+    | Some file ->
+        file_reporter ~require_one_of_these_tags ~read_tags_from_env_vars file
+        :: additional_reporters
+  in
   (* Override the log level if it's provided by an environment variable!
      This is for debugging a command that gets called by some wrapper. *)
   let level : Logs.level option =
