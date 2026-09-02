@@ -169,9 +169,37 @@ let mk_matching_explanation_tests (caps : Test_subcommand.caps) =
               Exit_code.Check.findings exit_code)))
     tests
 
+(* every test target that does not exist is reported, and the run aborts *)
+let test_missing_targets (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("test.yaml", unexpected_match_rule_content);
+      F.File ("test.py", unexpected_match_test_content);
+    ]
+  in
+  Testutil_files.with_tempfiles ~chdir:true files (fun _cwd ->
+      let run (argv : string list) : string =
+        match Test_subcommand.main caps (Array.of_list argv) with
+        | exception Error.Semgrep_error (msg, None) -> msg
+        | _ -> Alcotest.fail "expected the test run to abort"
+      in
+      Alcotest.(check string)
+        "a directory without --config" "File not found: nope"
+        (run [ "opengrep-test"; "nope" ]);
+      Alcotest.(check string)
+        "files with --config"
+        "File not found: nope.py\nFile not found: nope2.py"
+        (run
+           [
+             "opengrep-test"; "--config"; "test.yaml"; "test.py"; "nope.py";
+             "nope2.py";
+           ]))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
 let tests (caps : < Test_subcommand.caps >) =
-  Testo.categorize "Osemgrep Test (e2e)" (mk_matching_explanation_tests caps)
+  Testo.categorize "Osemgrep Test (e2e)"
+    (mk_matching_explanation_tests caps
+    @ [ t "missing test targets abort the run" (test_missing_targets caps) ])

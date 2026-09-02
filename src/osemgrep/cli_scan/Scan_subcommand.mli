@@ -36,14 +36,26 @@ val rules_from_rules_source :
 (* internal: also used in CI *)
 val core_errors_of_fatal_rule_errors : Rule_error.t list -> Core_error.t list
 
-(* internal: also used in CI *)
+(* internal: also used in CI. text_message is what text mode reports (it
+ * raises Semgrep_error with it); the other formats output the errors. *)
 val output_and_exit_from_fatal_core_errors_exn :
   exit_code:Exit_code.t ->
+  text_message:string ->
   < Cap.stdout > ->
   Scan_CLI.conf ->
   Profiler.t ->
   Core_error.t list ->
   Exit_code.t
+
+val invalid_configs_message : Core_error.t list -> string
+
+(* internal: also used in CI. The targets of the scanning roots, or the exit
+ * code after reporting the roots that do not exist. *)
+val get_targets_or_exit :
+  < Cap.stdout > ->
+  Scan_CLI.conf ->
+  Profiler.t ->
+  (Fpath.t Find_targets.targets, Exit_code.t) result
 
 (* internal: also used in CI.
  * print_summary is python's output(print_summary=...): 'opengrep ci' passes

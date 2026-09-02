@@ -12,6 +12,8 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the file
  * LICENSE for more details.
  *)
+open Common
+
 let t = Testo.create
 
 module F = Testutil_files
@@ -771,6 +773,66 @@ let test_id_change (caps : Scan_subcommand.caps) () =
            (not (String.equal (fingerprint before) (fingerprint after))))
 
 (*****************************************************************************)
+(* Missing scanning roots *)
+(*****************************************************************************)
+
+(* the scan of the roots, with a rule and one existing target; the JSON on
+ * stdout and the exit code *)
+let scan_roots (caps : Scan_subcommand.caps) ~(format_args : string list)
+    (roots : string list) : string * Exit_code.t =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", eqeq_basic_content);
+          F.File ("stupid.py", stupid_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let exit_code, stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      (Array.of_list
+                         ([ "opengrep-scan"; "--experimental"; "--config"; "rules.yml" ]
+                         @ format_args @ roots))))
+          in
+          (stdout_output, exit_code)))
+
+let test_missing_roots_json (caps : Scan_subcommand.caps) () =
+  let stdout_output, exit_code =
+    scan_roots caps ~format_args:[ "--json" ] [ "nope.py"; "stupid.py"; "nope/" ]
+  in
+  Exit_code.Check.fatal exit_code;
+  let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+  Alcotest.(check (list string))
+    "one fatal error per missing root"
+    [
+      "2 `Error Semgrep_output_v1_t.SemgrepError File not found: nope.py";
+      "2 `Error Semgrep_output_v1_t.SemgrepError File not found: nope/";
+    ]
+    (out.errors
+    |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+           spf "%d %s %s %s" e.code
+             (Semgrep_output_v1_t.show_error_severity e.level)
+             (Semgrep_output_v1_t.show_error_type e.type_)
+             (e.message ||| "<no message>")));
+  Alcotest.(check int) "no results" 0 (List.length out.results);
+  Alcotest.(check (list string)) "nothing scanned" [] (out.paths.scanned |> List_.map Fpath.to_string)
+
+let test_missing_roots_text (caps : Scan_subcommand.caps) () =
+  match scan_roots caps ~format_args:[] [ "nope.py"; "stupid.py" ] with
+  | exception Error.Semgrep_error (msg, Some exit_code) ->
+      Exit_code.Check.fatal exit_code;
+      Alcotest.(check string) "the error message" "File not found: nope.py" msg
+  | _ -> Alcotest.fail "expected the scan to abort"
+
+let test_missing_roots_test_mode (caps : Scan_subcommand.caps) () =
+  match scan_roots caps ~format_args:[ "--test" ] [ "stupid.py"; "nope.py" ] with
+  | exception Error.Semgrep_error (msg, None) ->
+      Alcotest.(check string) "the error message" "File not found: nope.py" msg
+  | _ -> Alcotest.fail "expected the test run to abort"
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
@@ -808,4 +870,10 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "fingerprints equal the python wrapper's" (test_fingerprints caps);
       t "fingerprints change with the match, not the formatting"
         (test_id_change caps);
+      t "missing scanning roots: fatal error reported in the JSON output"
+        (test_missing_roots_json caps);
+      t "missing scanning roots: fatal error with text output"
+        (test_missing_roots_text caps);
+      t "missing scanning roots: fatal error with --test"
+        (test_missing_roots_test_mode caps);
     ]
