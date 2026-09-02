@@ -323,7 +323,8 @@ let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
       let lines =
         Semgrep_output_utils.lines_of_file_at_range_exn (start, end_) path
       in
-      let lines = lines |> String.concat "\n" in
+      (* python: "".join(rule_match.lines).rstrip() *)
+      let lines = lines |> String.concat "\n" |> String_.rstrip in
       {
         check_id;
         path;
