@@ -323,10 +323,11 @@ and stmt =
 
 and case = Case of tok * expr * stmt list | Default of tok * stmt list | CaseEllipsis of (* ... *) tok 
 
-(* catch(Exception $exn) { ... } => ("Exception", "$exn", [...])
- * TODO: can now be a list of hint_type, Exn1 | Exn2 like in Java.
+(* catch(Exception $exn) { ... } => ("Exception", Some "$exn", [...]).
+ * 'Exn1 | Exn2' is a HintUnion, and the var is absent in a non-capturing
+ * catch.
  *)
-and catch = tok * hint_type * var * stmt
+and catch = tok * hint_type * var option * stmt
 and finally = tok * stmt
 
 (*****************************************************************************)

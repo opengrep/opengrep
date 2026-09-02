@@ -1047,14 +1047,18 @@ and map_catch_clause (env : env) ((v1, v2, v3, v4, v5, v6) : CST.catch_clause) :
   let v1 = (* pattern [cC][aA][tT][cC][hH] *) token env v1 in
   let v2 = (* "(" *) token env v2 in
   let v3 = map_type_list env v3 in
-  let v4 =
-    match v4 with
-    | Some x -> map_variable_name env x
-    | None -> ("", Tok.fake_tok v2 "")
-  in
+  let v4 = Option.map (map_variable_name env) v4 in
   let v5 = (* ")" *) token env v5 in
   let v6 = map_compound_statement env v6 in
-  let ht = A.HintTuple (v2, v3, v5) in
+  (* 'catch (Exn1 | Exn2 $e)' is a union of the two, as the menhir parser
+   * builds it; a lone type stands for itself *)
+  let ht =
+    match v3 with
+    | [ ty ] -> ty
+    | tys -> A.HintUnion (List_.hd_exn "empty catch type list" tys,
+                          List_.tl_exn "empty catch type list" tys
+                          |> List_.map (fun ty -> (Tok.fake_tok v2 "|", ty)))
+  in
   (v1, ht, v4, v6)
 
 and map_class_constant_access_expression (env : env)

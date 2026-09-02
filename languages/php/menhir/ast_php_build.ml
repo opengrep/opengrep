@@ -1114,7 +1114,7 @@ and foreach_pattern tok env pat =
 and catch env (t, (_, (fq, dn), _), (lb, stdl, rb)) =
   let stdl = A.Block (lb, List_.fold_right (stmt_and_def env) stdl [], rb) in
   let fq = hint_type env fq in
-  let dn = dname dn in
+  let dn = Option.map dname dn in
   (t, fq, dn, stdl)
 
 and finally env (t, (lb, stdl, rb)) =

@@ -2971,12 +2971,61 @@ and m_catch a b =
       m_tok at bt >>= fun () ->
       m_catch_exn a1 b1 >>= fun () -> m_stmt a2 b2
 
+(* the types of a union, left to right; a lone type is a union of one *)
+and union_members ty =
+  match ty.G.t with
+  | G.TyOr (t1, _, t2) -> union_members t1 @ union_members t2
+  | _ -> [ ty ]
+
+and is_union_type ty =
+  match ty.G.t with
+  | G.TyOr _ -> true
+  | _ -> false
+
+(* a lone '$T' stands for the whole union, so it needs no per-type pass *)
+and is_metavar_type ty =
+  match ty.G.t with
+  | G.TyN (G.Id ((s, _), _)) -> Mvar.is_metavar_name s
+  | _ -> false
+
 and m_catch_exn a b =
   match (a, b) with
   (* dots: *)
   | G.CatchPattern (G.PatEllipsis _), _ -> return ()
   (* boilerplate *)
   | G.CatchPattern a, CatchPattern b -> m_pattern a b
+  (* a multi-catch such as PHP's 'catch (Exn1 | Exn2 $e)' catches every one of
+   * its types, so it matches a pattern naming any of them: one type, or
+   * several in any order. Trying the union whole first lets a metavariable
+   * still bind to it in full.
+   *)
+  | G.CatchParam a, B.CatchParam ({ B.ptype = Some bty; _ } as b)
+    when is_union_type bty ->
+      let caught = union_members bty in
+      let named =
+        match a.G.ptype with
+        | Some aty when not (is_metavar_type aty) -> union_members aty
+        | _ -> []
+      in
+      m_parameter_classic a b
+      >||>
+      (match named with
+      | [] -> fail ()
+      | _ ->
+          (* every type the pattern names has to be one the clause catches *)
+          named
+          |> List.fold_left
+               (fun acc aty ->
+                 acc >>= fun () ->
+                 caught
+                 |> List.fold_left
+                      (fun acc bty -> acc >||> m_type_ aty bty)
+                      (fail ()))
+               (return ())
+          >>= fun () ->
+          m_parameter_classic
+            { a with G.ptype = None }
+            { b with B.ptype = None })
   | G.CatchParam a, B.CatchParam b -> m_parameter_classic a b
   | G.OtherCatch (a0, a1), B.OtherCatch (b0, b1) ->
       let* () = m_todo_kind a0 b0 in

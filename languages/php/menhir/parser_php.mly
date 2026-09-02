@@ -418,13 +418,13 @@ statement:
  | T_RETURN expr_or_dots? ";"  { Return ($1, $2, $3)}
 
  | T_TRY   "{" inner_statement* "}"
-   T_CATCH "(" list_sep2(class_name, "|")  variable ")"
+   T_CATCH "(" catch_type_list variable? ")"
      "{" inner_statement* "}"
      additional_catch* finally_clause?
      { let try_block = ($2,$3,$4) in
        let catch_block = ($10, $11, $12) in
-       let t = List_.hd_exn "unexpected empty list" $7 in (* TODO: return a list of types *)
-       let catch = ($5, ($6, (t, DName $8), $9), catch_block) in
+       let catch = ($5, ($6, ($7, Option.map (fun v -> DName v) $8), $9),
+                    catch_block) in
        Try($1, try_block, [catch] @ $13, o2l $14)
      }
  | T_TRY "{" inner_statement* "}" finally_clause
@@ -564,11 +564,18 @@ new_else_single:
 
 
 additional_catch:
- | T_CATCH "(" class_name variable ")" "{" inner_statement* "}"
+ | T_CATCH "(" catch_type_list variable? ")" "{" inner_statement* "}"
      { let catch_block = ($6, $7, $8) in
-       let catch = ($1, ($2, ($3, DName $4), $5), catch_block) in
+       let catch =
+         ($1, ($2, ($3, Option.map (fun v -> DName v) $4), $5), catch_block) in
        catch
      }
+
+(* PHP 7.1 multi-catch: 'catch (Exn1 | Exn2 $e)'. Same shape as a union type,
+ * so a rule written for either exception matches the clause *)
+catch_type_list:
+ | list_sep(class_name, "|")
+     { match $1 with | [Left v] -> v | xs -> HintUnion xs }
 
 finally_clause: T_FINALLY "{" inner_statement* "}"  { ($1, ($2, $3, $4)) }
 

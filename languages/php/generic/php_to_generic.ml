@@ -241,8 +241,8 @@ and case = function
   | CaseEllipsis tok -> G.CaseEllipsis tok
 
 and catch (t, v1, v2, v3) =
-  let v1 = hint_type v1 and v2 = var v2 and v3 = stmt v3 in
-  let exn = G.CatchParam (G.param_of_type v1 ~pname:v2) in
+  let v1 = hint_type v1 and v2 = option var v2 and v3 = stmt v3 in
+  let exn = G.CatchParam (G.param_of_type v1 ?pname:v2) in
   (t, exn, v3)
 
 (* a list of finally??? php ... *)
