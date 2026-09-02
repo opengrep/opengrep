@@ -393,8 +393,6 @@ let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
 
 let adjust_skipped (skipped : Out.skipped_target list)
     (res : Core_runner.result) : Core_runner.result =
-  let errors_skipped = Skipped_report.errors_to_skipped res.core.errors in
-  let skipped = skipped @ errors_skipped in
   (* TODO: what is in core.skipped_targets? should we add them to
    * skipped above too?
    *)
@@ -601,6 +599,11 @@ let check_targets_with_rules ?(print_summary = true)
           let res = adjust_nosemgrep_and_autofix ~keep_ignored res in
 
           (* step 4: adjust the skipped_targets *)
+          (* the targets with an error count as partially analysed, in the
+             JSON and in the summary below *)
+          let skipped =
+            skipped @ Skipped_report.errors_to_skipped res.core.errors
+          in
           let res = adjust_skipped skipped res in
 
           (* step 5: report the matches *)

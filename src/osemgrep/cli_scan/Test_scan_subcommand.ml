@@ -1056,6 +1056,88 @@ let test_rule_errors (caps : Scan_subcommand.caps) () =
     Exit_code.Check.invalid_pattern
 
 (*****************************************************************************)
+(* nosem with an invalid or unknown rule id *)
+(*****************************************************************************)
+(* A 'nosem' comment whose id is not a valid rule id, or matches no rule,
+ * suppresses nothing. Under --strict, each such comment is a warning in the
+ * errors and the file counts as partially analysed; without it, the scan
+ * reports nothing about them. python: test_nosem_rule__invalid_id
+ *)
+
+let nosem_rule_content =
+  {|
+rules:
+  - id: test-nosem
+    message: test-nosem-message
+    severity: WARNING
+    languages: [javascript]
+    pattern: test_nosem_func(...)
+|}
+
+(* the scan of tests/nosemgrep/nosem_invalid_id.js: its exit code, and its
+ * stdout when captured (for the JSON), "" otherwise (for a snapshot) *)
+let scan_nosem_invalid_id (caps : Scan_subcommand.caps) ~(capture_stdout : bool)
+    (format_args : string list) : Exit_code.t * string =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", nosem_rule_content);
+          F.File
+            ( "nosem_invalid_id.js",
+              UFile.read_file (Fpath.v "tests/nosemgrep/nosem_invalid_id.js") );
+        ]
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let scan () : Exit_code.t =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  (Array.of_list
+                     ([ "opengrep-scan"; "--experimental"; "--config"; "rules.yml" ]
+                     @ format_args @ [ "nosem_invalid_id.js" ])))
+          in
+          if capture_stdout then Testo.with_capture stdout scan
+          else (scan (), "")))
+
+let test_nosem_invalid_id_json (caps : Scan_subcommand.caps) () =
+  let errors_of (format_args : string list) :
+      (string * Fpath.t option) list * string list * Exit_code.t =
+    let exit_code, stdout_output =
+      scan_nosem_invalid_id caps ~capture_stdout:true format_args
+    in
+    let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+    ( out.errors
+      |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+             (Error.string_of_error_type e.type_, e.path)),
+      out.results
+      |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+             Int.to_string m.start.line),
+      exit_code )
+  in
+  let path = Some (Fpath.v "nosem_invalid_id.js") in
+  let errors, lines, exit_code = errors_of [ "--json"; "--strict" ] in
+  Exit_code.Check.fatal exit_code;
+  Alcotest.(check (list string)) "the findings, none suppressed"
+    [ "2"; "6"; "12" ] lines;
+  Alcotest.(check (list (pair string (option (testable Fpath.pp Fpath.equal)))))
+    "one warning per unknown or invalid id with --strict"
+    [
+      ("SemgrepWarning", path); ("SemgrepWarning", path); ("SemgrepWarning", path);
+    ]
+    errors;
+  let errors, lines, exit_code = errors_of [ "--json" ] in
+  (* WARNING findings do not fail the scan without --error *)
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check (list string)) "the same findings" [ "2"; "6"; "12" ] lines;
+  Alcotest.(check int) "no warning without --strict" 0 (List.length errors)
+
+(* the text output with --strict, with the partially analysed summary line *)
+let test_nosem_invalid_id_text (caps : Scan_subcommand.caps) () =
+  let exit_code, _no_stdout =
+    scan_nosem_invalid_id caps ~capture_stdout:false [ "--strict" ]
+  in
+  Exit_code.Check.fatal exit_code
+
+(*****************************************************************************)
 (* Missing scanning roots *)
 (*****************************************************************************)
 
@@ -1174,6 +1256,11 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "INVENTORY and EXPERIMENT rules never run"
         (test_inventory_and_experiment_rules_never_run caps);
       t "rule errors: type, code and exit code" (test_rule_errors caps);
+      t "nosem with an invalid or unknown id: JSON warnings with --strict"
+        (test_nosem_invalid_id_json caps);
+      t "nosem with an invalid or unknown id: text output with --strict"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_nosem_invalid_id_text caps);
       t "missing scanning roots: fatal error reported in the JSON output"
         (test_missing_roots_json caps);
       t "missing scanning roots: fatal error with text output"
