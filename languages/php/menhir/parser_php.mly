@@ -1451,6 +1451,11 @@ static_scalar:
 static_scalar_primary:
  | constant { Sc (C $1) }
  | qualified_class_name { Id $1 }
+ (* a heredoc or nowdoc is a constant expression, as in
+  * "const T = <<<EOT ... EOT;". PHP allows one that interpolates to be
+  * parsed here too and rejects it later, which is what encaps* does.
+  *)
+ | T_START_HEREDOC encaps* T_END_HEREDOC { Sc (HereDoc ($1, $2, $3)) }
  | T_ARRAY "(" array_pair_list ")"  { ArrayLong($1,($2,$3,$4)) }
  | "[" array_pair_list "]"          { ArrayShort($1,$2,$3) }
  | "(" static_scalar ")"            { ParenExpr($1,$2,$3) }
