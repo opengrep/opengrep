@@ -44,33 +44,41 @@ let core_location_to_error_span (loc : Out.location) : Out.error_span =
 (* Generate error message exposed to user *)
 let error_message ~rule_id ~(location : Out.location option)
     ~(error_type : Out.error_type) ~core_message : string =
-  let rule_id_str_opt = Option.map Rule_ID.to_string rule_id in
-  let error_context =
-    match (rule_id_str_opt, error_type) with
-    (* For rule errors, the path is a temporary JSON file containing
-       the broken rule(s). *)
-    | Some id, (RuleParseError | PatternParseError _) -> spf "in rule %s" id
-    | ( Some id,
-        ( PartialParsing _ | ParseError | OtherParseError | AstBuilderError
-        | InvalidYaml | MatchingError | SemgrepMatchFound | TooManyMatches
-        | FatalError | Timeout | OutOfMemory | TimeoutDuringInterfile
-        | OutOfMemoryDuringInterfile ) ) ->
-        let suffix =
-          match location with
-          | None -> ""
-          | Some loc -> spf " on %s" !!(loc.path)
-        in
-        spf "when running %s%s" id suffix
-    | Some id, IncompatibleRule _ -> id
-    | Some id, MissingPlugin -> spf "for rule %s" id
-    | _ -> (
-        match location with
-        | None -> ""
-        | Some loc -> spf "at line %s:%d" !!(loc.path) loc.start.line)
-  in
-  spf "%s %s:\n %s"
-    (Error.string_of_error_type error_type)
-    error_context core_message
+  match error_type with
+  (* an error of the command itself (e.g. a scanning root that does not
+   * exist), not of the scan engine: the message is already complete, as
+   * with pysemgrep's SemgrepError *)
+  | SemgrepError -> core_message
+  | _ -> (
+      let rule_id_str_opt = Option.map Rule_ID.to_string rule_id in
+      let error_context =
+        match (rule_id_str_opt, error_type) with
+        (* For rule errors, the path is a temporary JSON file containing
+           the broken rule(s). *)
+        | Some id, (RuleParseError | PatternParseError _) ->
+            spf "in rule %s" id
+        | ( Some id,
+            ( PartialParsing _ | ParseError | OtherParseError
+            | AstBuilderError | InvalidYaml | MatchingError
+            | SemgrepMatchFound | TooManyMatches | FatalError | Timeout
+            | OutOfMemory | TimeoutDuringInterfile
+            | OutOfMemoryDuringInterfile ) ) ->
+            let suffix =
+              match location with
+              | None -> ""
+              | Some loc -> spf " on %s" !!(loc.path)
+            in
+            spf "when running %s%s" id suffix
+        | Some id, IncompatibleRule _ -> id
+        | Some id, MissingPlugin -> spf "for rule %s" id
+        | _ -> (
+            match location with
+            | None -> ""
+            | Some loc -> spf "at line %s:%d" !!(loc.path) loc.start.line)
+      in
+      spf "%s %s:\n %s"
+        (Error.string_of_error_type error_type)
+        error_context core_message)
 
 let error_spans ~(error_type : Out.error_type) ~(location : Out.location) =
   match error_type with

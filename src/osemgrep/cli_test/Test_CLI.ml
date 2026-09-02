@@ -119,10 +119,21 @@ let o_taint_intrafile : bool Term.t =
 (* Command-line parsing: turn argv into conf *)
 (*************************************************************************)
 let target_kind_of_roots_and_config target_roots config =
+  (* a target that does not exist is an error, as for 'scan' *)
+  (match
+     target_roots
+     |> List.filter (fun (root : Fpath.t) -> not (Sys.file_exists !!root))
+   with
+  | [] -> ()
+  | missing_roots ->
+      Error.abort
+        (missing_roots
+        |> List_.map (fun (root : Fpath.t) ->
+               Printf.sprintf "File not found: %s" !!root)
+        |> String.concat "\n"));
   match (target_roots, config) with
   | [ file ], [ config ] ->
-      if Sys.file_exists !!file && Sys.is_directory !!file then
-        Dir (file, Some config)
+      if Sys.is_directory !!file then Dir (file, Some config)
       else Files ([file], config)
   | [ file ], [] ->
       if Sys.is_directory !!file then Dir (file, None)

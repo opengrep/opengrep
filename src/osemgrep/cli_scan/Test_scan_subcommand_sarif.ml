@@ -101,6 +101,13 @@ let test_sarif_output_file_keeps_json_clean (caps : Scan_subcommand.caps) () =
 
 (* SARIF keeps the suppressed findings so it can report them, but they are
  * suppressed, so --error must not fail a scan that found nothing else. *)
+(* A scanning root that does not exist is a fatal error: the SARIF document
+ * carries it as a tool execution notification, exit code 2. *)
+let test_sarif_missing_root (caps : Scan_subcommand.caps) () =
+  run_scan caps ~rule:"rules/eqeq.yaml" ~targets:[]
+    ~extra_args:[ "targets/basic/inexistent.py" ]
+    ~check:Exit_code.Check.fatal ()
+
 let test_sarif_error_only_suppressed (caps : Scan_subcommand.caps) () =
   run_scan caps ~rule:"rules/regex/regex-nosemgrep.yaml"
     ~targets:[ "targets/basic/regex-all-noopengrep.txt" ]
@@ -167,4 +174,7 @@ let tests (caps : < Scan_subcommand.caps >) =
          t "SARIF: --error ignores noopengrep-suppressed findings"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_sarif_error_only_suppressed caps);
+         t "SARIF: missing scanning root, fatal error in the document"
+           ~checked_output:(Testo.stdout ()) ~normalize:normalise
+           (test_sarif_missing_root caps);
        ])

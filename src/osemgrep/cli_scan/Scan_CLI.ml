@@ -1012,7 +1012,9 @@ let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
                  Fpath.v "/dev/stdin"
            | str ->
                let orig_path = Fpath.v str in
-               if experimental then (
+               (* a path that does not exist is left to the scan, which
+                * reports it as a fatal "File not found" error *)
+               if experimental && Sys.file_exists str then (
                  match
                    CapTmp.replace_named_pipe_by_regular_file_if_needed caps#tmp
                      ~prefix:"osemgrep-named-pipe-" (Fpath.v str)

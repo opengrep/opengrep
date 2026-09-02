@@ -250,63 +250,70 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
       in
       match fatal_errors with
       | _ :: _ ->
+          let core_errors =
+            Scan_subcommand.core_errors_of_fatal_rule_errors fatal_errors
+          in
           Scan_subcommand.output_and_exit_from_fatal_core_errors_exn
             ~exit_code:(Exit_code.missing_config ~__LOC__)
+            ~text_message:(Scan_subcommand.invalid_configs_message core_errors)
             (caps :> < Cap.stdout >)
-            conf profiler
-            (Scan_subcommand.core_errors_of_fatal_rule_errors fatal_errors)
+            conf profiler core_errors
       | [] -> (
-          let targets_and_skipped =
-            Find_targets.get_target_fpaths conf.targeting_conf
-              conf.target_roots
-          in
-          let res =
-            Scan_subcommand.check_targets_with_rules ~print_summary:false
-              (caps
-                :> < Cap.stdout
-                   ; Cap.chdir
-                   ; Cap.tmp
-                   ; Cap.fork
-                   ; Cap.time_limit
-                   ; Cap.memory_limit >)
-              conf profiler rules_and_origins targets_and_skipped
-          in
-          match res with
-          | Error exit_code ->
-              Logs.app (fun m -> m "Encountered error when running rules");
-              exit_code
-          | Ok (rules, _res, cli_output) ->
-              let num_blocking_findings =
-                cli_output.results
-                |> List.filter (fun (m : Out.cli_match) ->
-                       Matches_report.is_blocking m.extra.metadata)
-                |> List.length
+          match
+            Scan_subcommand.get_targets_or_exit
+              (caps :> < Cap.stdout >)
+              conf profiler
+          with
+          | Error exit_code -> exit_code
+          | Ok targets_and_skipped -> (
+              let res =
+                Scan_subcommand.check_targets_with_rules ~print_summary:false
+                  (caps
+                    :> < Cap.stdout
+                       ; Cap.chdir
+                       ; Cap.tmp
+                       ; Cap.fork
+                       ; Cap.time_limit
+                       ; Cap.memory_limit >)
+                  conf profiler rules_and_origins targets_and_skipped
               in
-              Logs.app (fun m -> m "CI scan completed successfully.");
-              Logs.app (fun m ->
-                  m "  Found %s (%d blocking) from %s."
-                    (String_.unit_str
-                       (List.length cli_output.results)
-                       "finding")
-                    num_blocking_findings
-                    (String_.unit_str (List.length rules) "rule"));
-              if num_blocking_findings > 0 then
-                if List.mem meta#event_name ci_conf.audit_on then (
+              match res with
+              | Error exit_code ->
+                  Logs.app (fun m -> m "Encountered error when running rules");
+                  exit_code
+              | Ok (rules, _res, cli_output) ->
+                  let num_blocking_findings =
+                    cli_output.results
+                    |> List.filter (fun (m : Out.cli_match) ->
+                           Matches_report.is_blocking m.extra.metadata)
+                    |> List.length
+                  in
+                  Logs.app (fun m -> m "CI scan completed successfully.");
                   Logs.app (fun m ->
-                      m
-                        "  Audit mode is on for %s, so exiting with code 0 \
-                         even if matches found"
-                        meta#event_name);
-                  Exit_code.ok ~__LOC__)
-                else (
-                  Logs.app (fun m ->
-                      m "  Has findings for blocking rules so exiting with \
-                         code 1");
-                  Exit_code.findings ~__LOC__)
-              else (
-                Logs.app (fun m ->
-                    m "  No blocking findings so exiting with code 0");
-                Exit_code.ok ~__LOC__)))
+                      m "  Found %s (%d blocking) from %s."
+                        (String_.unit_str
+                           (List.length cli_output.results)
+                           "finding")
+                        num_blocking_findings
+                        (String_.unit_str (List.length rules) "rule"));
+                  if num_blocking_findings > 0 then
+                    if List.mem meta#event_name ci_conf.audit_on then (
+                      Logs.app (fun m ->
+                          m
+                            "  Audit mode is on for %s, so exiting with code \
+                             0 even if matches found"
+                            meta#event_name);
+                      Exit_code.ok ~__LOC__)
+                    else (
+                      Logs.app (fun m ->
+                          m
+                            "  Has findings for blocking rules so exiting \
+                             with code 1");
+                      Exit_code.findings ~__LOC__)
+                  else (
+                    Logs.app (fun m ->
+                        m "  No blocking findings so exiting with code 0");
+                    Exit_code.ok ~__LOC__))))
 
 (*****************************************************************************)
 (* Error suppression *)

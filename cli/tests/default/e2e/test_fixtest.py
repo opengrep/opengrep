@@ -150,41 +150,6 @@ def test_fixtest_test4_json(run_semgrep_in_tmp: RunSemgrep, snapshot):
     )
 
 
-# It should report when a rule does not have a corresponding test file.
-# TODO: rename test_no_test_or_fixtest_found_text_output
-# TODO? pysemgrep test should really report an error actually when run
-# with an inexistent file
-@pytest.mark.kinda_slow
-@pytest.mark.osemfail
-def test_fixtest_test5_no_json(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    results, _ = run_semgrep_in_tmp(
-        "rules/fixtest/basic_fix.yaml",
-        target_name="fixtest/inexistent.py",
-        options=["--test"],
-        output_format=OutputFormat.TEXT,
-    )
-
-    snapshot.assert_match(
-        results,
-        "output.txt",
-    )
-
-
-# It should remove a config_missing_tests and config_missing_fixtests
-# in the JSON output.
-# TODO: rename test_no_test_or_fixtest_found_json_output
-@pytest.mark.kinda_slow
-@pytest.mark.osemfail
-def test_fixtest_test5_json(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/fixtest/basic_fix.yaml",
-        target_name="fixtest/inexistent.py",
-        options=["--test"],
-        output_format=OutputFormat.JSON,
-    )
-    snapshot.assert_match(stdout, "test-results.json")
-
-
 # It should report config_missing_fixtest for rules containing a fix-regex:
 # at whatever position (not just the first rule), and without an associated
 # target.fixed.ext file.

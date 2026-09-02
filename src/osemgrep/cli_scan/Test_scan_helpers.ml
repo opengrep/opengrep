@@ -56,11 +56,13 @@ let normalise : (string -> string) list =
  * output_files are dumped on stdout after the scan so that they become part
  * of the snapshot, together with whatever the scan printed there.
  * expect_abort makes the abort the expected outcome and prints its message.
+ * check is the expected exit code of a scan that did not abort.
  *)
 let run_scan (caps : Scan_subcommand.caps) ~(rule : string)
     ~(targets : string list) ?(format_args : string list = [ "--sarif" ])
     ?(extra_args : string list = []) ?(extra_files : F.t list = [])
-    ?(output_files : string list = []) ?(expect_abort : bool = false) () =
+    ?(output_files : string list = []) ?(expect_abort : bool = false)
+    ?(check : Exit_code.t -> unit = Exit_code.Check.ok) () =
   let rule_content : string = read_fixture rule in
   let rule_file : string = Filename.basename rule in
   let target_entries : (string * string) list =
@@ -100,5 +102,5 @@ let run_scan (caps : Scan_subcommand.caps) ~(rule : string)
                  UCommon.pr (Printf.sprintf "--- content of %s ---" path);
                  UCommon.pr (UFile.read_file (Fpath.v path)));
           match exit_code with
-          | Some exit_code -> Exit_code.Check.ok exit_code
+          | Some exit_code -> check exit_code
           | None -> ()))
