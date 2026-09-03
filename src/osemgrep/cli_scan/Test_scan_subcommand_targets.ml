@@ -109,6 +109,37 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~root ~format_args:[ "--json" ]
            ~rule:"rules/eqeq-basic.yaml" ~targets:[] ~extra_files:ignores_files
            ~extra_args:ignores_args);
+      (* The ignore files of the repo, without other options.
+         python: test_semgrepignore *)
+      t "ignore files: JSON" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-basic.yaml" ~targets:[] ~extra_files:ignores_files
+           ~extra_args:[ "targets/ignores" ]);
+      (* An ignore file under another name, given with the flag, replaces
+         the .semgrepignore of the repo: its 'ok/' is skipped, and what the
+         .semgrepignore ignores is scanned.
+         python: test_internal_explicit_semgrepignore, through an
+         environment variable of the wrapper *)
+      t "ignore file given by name" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+           ~extra_files:
+             (ignores_files @ [ F.File (".semgrepignore_explicit", "ok/\n") ])
+           ~extra_args:
+             [
+               "--semgrepignore-filename"; ".semgrepignore_explicit";
+               "targets/ignores";
+             ]);
+      (* Without a .semgrepignore, the default patterns still apply: only
+         find.js is scanned. python: test_default_semgrepignore *)
+      t "default semgrepignore patterns" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+           ~extra_files:[ F.dir "targets" [ target_dir "ignores_default" ] ]
+           ~extra_args:[ "targets/ignores_default" ]);
       (* A file without extension is scanned when named on the command line
          with --scan-unknown-extensions and a language given with -e.
          python: test_noextension_with_explicit_lang *)
