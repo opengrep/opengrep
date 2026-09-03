@@ -1,0 +1,10 @@
+Test name: without git > absolute scanning root above the working directory
+--- Files not added to git ---
+c.c
+dir/a.c
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected <TMP>/<MASKED>/c.c
+selected <TMP>/<MASKED>/dir/a.c
+--- Skipped targets ---
