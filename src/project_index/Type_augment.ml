@@ -177,8 +177,9 @@ let build_export_class_indexes ~(lang : Lang.t)
     ~(type_state : Type_state.t)
     (file_infos : file_info list)
   : (string, G.name) Hashtbl.t * (string * string, G.name) Hashtbl.t =
-  let default_h = Hashtbl.create 1024 in
-  let named_h = Hashtbl.create 4096 in
+  (* At most one default export per file; named exports are unbounded. *)
+  let default_h = Hashtbl.create (List.length file_infos) in
+  let named_h = Hashtbl.create (4 * List.length file_infos) in
   if not (Lang.equal lang Lang.Ts || Lang.equal lang Lang.Js) then (default_h, named_h)
   else begin
     List.iter (fun fi ->

@@ -319,11 +319,11 @@ let build_same_file_funcs_by_name
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
     ~(fi_file_str : string)
   : (string, Func_info.t list) Hashtbl.t =
-  let tbl = Hashtbl.create 64 in
   let same_file_list =
     Option.value (Hashtbl.find_opt file_funcs_index fi_file_str)
       ~default:[]
   in
+  let tbl = Hashtbl.create (List.length same_file_list) in
   List.iter (fun (func : Func_info.t) ->
     match List_.init_and_last_opt func.Func_info.fn_id with
     | Some (_, Some leaf) ->

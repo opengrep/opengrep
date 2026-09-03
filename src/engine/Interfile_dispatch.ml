@@ -99,7 +99,8 @@ let interfile_taint_rule_ids
   ) valid_rules
 
 let interfile_file_set (graph : Call_graph.G.t) : (Fpath.t, bool) Hashtbl.t =
-  let tbl = Hashtbl.create 256 in
+  (* The vertex count bounds the file count. *)
+  let tbl = Hashtbl.create (Call_graph.G.nb_vertex graph) in
   Call_graph.G.iter_vertex (fun (vertex : Function_id.t) ->
     match Function_id.file_of vertex with
     | Some fp -> Hashtbl.replace tbl fp true
@@ -1541,7 +1542,11 @@ let build_rule_states
       spec_pairs
   in
   let target_contents : (Fpath.t, string) Hashtbl.t =
-    Hashtbl.create 4096
+    Hashtbl.create
+      (List.fold_left
+         (fun acc (lc : lang_context) ->
+            acc + List.length lc.lc_matching_targets)
+         0 lang_contexts)
   in
   if Array.exists Option.is_some rule_prefilters then
     List.iter (fun (lc : lang_context) ->
