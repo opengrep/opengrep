@@ -22,6 +22,13 @@ val errors_to_skipped :
 val group_errors_by_file :
   Semgrep_output_v1_t.skipped_target list -> (Fpath.t * Rule_ID.t list) list
 
+(* the entries on directories, on files some rule of these languages would
+   scan, and on the files that failed while being scanned *)
+val for_languages :
+  Xlang.t list ->
+  Semgrep_output_v1_t.skipped_target list ->
+  Semgrep_output_v1_t.skipped_target list
+
 val group_skipped :
   Semgrep_output_v1_t.skipped_target list -> skipped_targets_grouped
 

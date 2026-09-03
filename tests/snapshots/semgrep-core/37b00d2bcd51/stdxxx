@@ -1,0 +1,34 @@
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
+
+  Loading rules from local config...
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 4 Code rules:
+
+  Language   Rules   Files          Origin   Rules
+ ──────────────────────────        ────────────────
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Some files were skipped or only partially analyzed.
+  Scan skipped: 1 files matching --exclude patterns.
+  For a full list of skipped files, run opengrep with the --verbose flag.
+
+Ran 4 rules on 0 files: 0 findings.
+--- begin input files ---
+eqeq.yaml
+stupid.py
+--- end input files ---
+ASSERT exit code

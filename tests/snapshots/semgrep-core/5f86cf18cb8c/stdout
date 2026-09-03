@@ -1,0 +1,13 @@
+Test name: without git > scanning root under a symlinked folder
+--- Files not added to git ---
+dir/sub/.semgrepignore
+dir/sub/b.c
+dir/sub/x/a.c
+link
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected link/sub/.semgrepignore
+selected link/sub/b.c
+--- Skipped targets ---
+ignored link/sub/x [Semgrep_output_v1_t.Semgrepignore_patterns_match]

@@ -118,8 +118,8 @@ let tests_with_or_without_git ~with_git =
     test_find_targets ~with_git ~scanning_root:"a.py"
       "scanning root as a symlink to a missing regular file"
       [ F.Symlink ("a.py", "b.py") ];
-    test_find_targets ~expected_outcome:(Should_fail "TODO") ~with_git
-      ~scanning_root:"link-to-src" "scanning root as a symlink to a folder"
+    test_find_targets ~with_git ~scanning_root:"link-to-src"
+      "scanning root as a symlink to a folder"
       [ F.dir "src" [ F.file "a.py" ]; F.Symlink ("link-to-src", "src") ];
     (*
        Test that the '--include' filter takes place after all the other
@@ -138,6 +138,28 @@ let tests_with_or_without_git ~with_git =
        (.semgrepignore, --include, --exclude) *)
     test_find_targets ~with_git ~scanning_root:"a.py" "scan explicit target"
       [ F.file "a.py"; F.File (".semgrepignore", "a.py\n") ];
+    (* The folder is reported once, not each file under it. *)
+    test_find_targets ~with_git "semgrepignored folder is reported once"
+      [
+        F.File (".semgrepignore", "dir/\n");
+        F.dir "dir" [ F.file "a.c"; F.file "b.c" ];
+        F.file "c.c";
+      ];
+    (* The paths keep the scanning root as typed, through the symlink. *)
+    test_find_targets ~with_git ~scanning_root:"link/sub"
+      "scanning root under a symlinked folder"
+      [
+        F.dir "dir"
+          [
+            F.dir "sub"
+              [
+                F.File (".semgrepignore", "x/\n");
+                F.dir "x" [ F.file "a.c" ];
+                F.file "b.c";
+              ];
+          ];
+        F.Symlink ("link", "dir");
+      ];
   ]
 
 (*
@@ -162,6 +184,14 @@ let tests_with_git_only =
       ];
     test_find_targets ~with_git "symlinks from git are filtered too"
       [ F.Symlink ("lnk", "missing"); F.File ("a", "some content") ];
+    (* The ignored folder is above the scanning root: its files are
+       reported, not the folder. *)
+    test_find_targets ~with_git ~scanning_root:"dir/sub"
+      "scanning root under a semgrepignored folder"
+      [
+        F.File (".semgrepignore", "dir/\n");
+        F.dir "dir" [ F.dir "sub" [ F.file "a.c" ] ];
+      ];
   ]
 
 let tests =

@@ -1,0 +1,45 @@
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
+
+  Loading rules from local config...
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 2 files tracked by git with 4 Code rules:
+
+  Language   Rules   Files          Origin   Rules
+ ──────────────────────────        ────────────────
+  python         3       1          Custom       3
+
+--- begin input files ---
+eqeq.yaml
+stupid.py
+--- end input files ---
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    stupid.py
+   ❯❯❱ eqeq-is-bad
+          useless comparison operation `a + b == a + b` or `a + b != a + b`
+          Details: https://sg.run/xyz1
+
+            3┆ return a + b == a + b
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+
+Ran 4 rules on 1 file: 1 finding.
+ASSERT exit code

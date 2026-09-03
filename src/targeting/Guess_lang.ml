@@ -67,9 +67,6 @@ let has_extension extensions =
 
 let has_lang_extension lang = has_extension (Lang.ext_of_lang lang)
 
-let has_excluded_lang_extension lang =
-  has_extension (Lang.excluded_exts_of_lang lang)
-
 let has_an_extension =
   let f path = Filename.extension !!path <> "" in
   Test_path f
@@ -205,9 +202,9 @@ let is_executable_script cmd_names =
                       ^^^^
 *)
 let matches_lang lang =
-  let has_ext =
-    And (has_lang_extension lang, Not (has_excluded_lang_extension lang))
-  in
+  (* the extensions never scanned, like '.min.js', are left to targeting,
+     which reports them; here a minified file is JavaScript *)
+  let has_ext = has_lang_extension lang in
   match Lang.shebangs_of_lang lang with
   | [] -> has_ext
   (* Prefer extensions over shebangs *)
