@@ -621,7 +621,8 @@ let check_targets_with_rules ?(print_summary = true)
         | Some baseline ->
             (* scan_baseline calls internally Profiler.record "head_core_time"  *)
             (* diff scan mode *)
-            let diff_scan_func : Diff_scan.diff_scan_func =
+            let mk_diff_scan_func ?file_match_hook () : Diff_scan.diff_scan_func
+                =
              fun ?explicit_targets targets rules ->
               let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
               (* the baseline scan names its targets relative to the current
@@ -641,12 +642,16 @@ let check_targets_with_rules ?(print_summary = true)
                 conf.core_runner_conf targeting_conf conf.matching_conf
                 (rules, invalid_rules) targets
             in
+            (* The baseline replay exists only to build the dedup set: its
+               matches must never stream through the incremental-output hook,
+               or pre-existing (baseline) findings get printed as output. *)
             let result_or_exn =
               Diff_scan.scan_baseline
                 (caps :> < Cap.chdir ; Cap.tmp >)
                 conf profiler baseline selected rules
                 ~explicit_targets:conf.targeting_conf.explicit_targets
-                diff_scan_func
+                ~head_scan_func:(mk_diff_scan_func ?file_match_hook ())
+                ~baseline_scan_func:(mk_diff_scan_func ())
             in
             (* python: run_scan.py saves core_time right after the scan of
                the head, before the baseline worktree is scanned, so the
