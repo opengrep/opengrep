@@ -235,7 +235,7 @@ let inherit_into_type_state
       chosen_head :: c3_merge (remove_head chosen_head seqs)
   in
   let lin_cache : (Function_id.t, class_info list) Hashtbl.t =
-    Hashtbl.create 256
+    Hashtbl.create n_classes
   in
   let rec linearize (active : Function_id.t list) (ci : class_info)
     : class_info list =

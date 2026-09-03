@@ -184,7 +184,10 @@ let discover_excludes ~(project_root : Fpath.t) : string list =
    file-path depth. *)
 let build_path_suffix_index ~(max_suffix_segs : int) (file_paths : string list)
   : (string, string list) Hashtbl.t =
-  let index : (string, string list) Hashtbl.t = Hashtbl.create 16384 in
+  (* At most [max_suffix_segs] entries per file. *)
+  let index : (string, string list) Hashtbl.t =
+    Hashtbl.create (List.length file_paths * max_suffix_segs)
+  in
   let strip_ext (path : Fpath.t) : Fpath.t =
     if Fpath.mem_ext [ ".tsx"; ".ts"; ".jsx"; ".js" ] path
     then Fpath.rem_ext path

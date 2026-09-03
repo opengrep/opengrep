@@ -219,15 +219,21 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               (* Build the signatures HERE, still inside the worktree that
                  produced these matches: an interfile match's path is absolute
                  into this worktree, and it is removed as soon as we return. *)
-              let sigs = Hashtbl.create 10 in
               let root = Fpath.v (Sys.getcwd ()) in
-              (match res with
-               | Ok (baseline_r : Core_result.t) ->
-                 List.iter
-                   (fun ({ pm; _ } : Core_result.processed_match) ->
-                      Hashtbl.replace sigs (extract_sig ~root None pm) true)
-                   baseline_r.processed_matches
-               | Error _ -> ());
+              let sigs =
+                match res with
+                | Ok (baseline_r : Core_result.t) ->
+                  let tbl =
+                    Hashtbl.create
+                      (List.length baseline_r.processed_matches)
+                  in
+                  List.iter
+                    (fun ({ pm; _ } : Core_result.processed_match) ->
+                       Hashtbl.replace tbl (extract_sig ~root None pm) true)
+                    baseline_r.processed_matches;
+                  tbl
+                | Error _ -> Hashtbl.create 0
+              in
               (res, sigs)))
     in
     match baseline_result with

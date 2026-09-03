@@ -668,7 +668,7 @@ let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
     end)
   in
   let range_table : (Range.t, FnIdSet.t * (fn_id * int) list) Hashtbl.t =
-    Hashtbl.create 10
+    Hashtbl.create (List.length ranges)
   in
   List.iter (fun range ->
     Hashtbl.add range_table range (FnIdSet.empty, [])
