@@ -230,8 +230,8 @@ let o_use_git : bool Term.t =
   H.negatable_flag [ "use-git-ignore" ] ~neg_options:[ "no-git-ignore" ]
     ~default:default.targeting_conf.respect_gitignore
     ~doc:
-      {|'--no-git-ignore' causes opengrep to not call 'git' and not consult
-        '.gitignore' files to determine which files opengrep should scan.
+      {|'--no-git-ignore' causes opengrep to not consult '.gitignore' files
+        to determine which files opengrep should scan.
         As a result of '--no-git-ignore', gitignored files and git submodules
         will be scanned.
         This flag has no effect if the scanning root is not
