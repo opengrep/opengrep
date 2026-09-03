@@ -1,0 +1,10 @@
+--- begin input files ---
+nested-patterns.js
+nested-patterns.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 18 insertions(+)
+ create mode 100644 nested-patterns.js
+ create mode 100644 nested-patterns.yaml
+{"version":"<MASKED>","results":[{"check_id":"test","path":"nested-patterns.js","start":{"line":2,"col":5,"offset":22},"end":{"line":2,"col":35,"offset":52},"extra":{"metavars":{"$X":{"start":{"line":2,"col":26,"offset":43},"end":{"line":2,"col":31,"offset":48},"abstract_content":"'foo'"}},"message":"test","metadata":{},"severity":"WARNING","fingerprint":"f7723a108c2b2c3de8e4cdb1f171d15e8ccffaebe799d44b7d48dee00bc91aba3fc3a7452bc8af507ab5193d257db257e198753df86b403b7104c8b8a7defec5_0","lines":"    nested_patterns_func('foo', 1)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"test","path":"nested-patterns.js","start":{"line":3,"col":5,"offset":57},"end":{"line":3,"col":35,"offset":87},"extra":{"metavars":{"$X":{"start":{"line":3,"col":26,"offset":78},"end":{"line":3,"col":31,"offset":83},"abstract_content":"'bar'"}},"message":"test","metadata":{},"severity":"WARNING","fingerprint":"8001ca7debcf57f7535de37051e0b143bdf1ad3dadb56610548b2b90a4f7bbea5bbdd01853eefd7c911bd4fceb42835426cd8b95c6008b7ee8b7d7633acaa62f_0","lines":"    nested_patterns_func('bar', 2)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["nested-patterns.js"]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -13,7 +13,6 @@
  * LICENSE for more details.
  *)
 
-open Printf
 open Fpath_.Operators
 
 (*****************************************************************************)
@@ -124,50 +123,10 @@ let test_ci_dump_command_for_core (caps : CLI.caps) () =
             |]
           |> Exit_code.Check.fatal))
 
-let random_init = lazy (Random.self_init ())
-
-let create_named_pipe () =
-  Lazy.force random_init;
-  let path =
-    Filename.concat
-      (Filename.get_temp_dir_name ())
-      (sprintf "semgrep-test-%x.py" (Random.bits ()))
-  in
-  Unix.mkfifo path 0o644;
-  Fpath.v path
-
-(*
-   This probably doesn't work on Windows due to the reliance on a shell
-   command but could be ported (it doesn't need 'fork').
-   TODO: switch to OCaml 5 and use parallelism.
-*)
-let with_read_from_named_pipe ~data func =
-  let pipe_path = create_named_pipe () in
-  Common.protect
-    (fun () ->
-      (* Start another process to write to the pipe in parallel *)
-      UTmp.with_temp_file (fun reg_file ->
-          (* We go through a regular file so as to avoid quoting issues. *)
-          UFile.write_file ~file:reg_file data;
-          let writer_command =
-            (* Copy the data from the regular file into the named pipe *)
-            sprintf "cat '%s' >> '%s'" !!reg_file !!pipe_path
-          in
-          (* Launch the process that feeds the pipe *)
-          let writer = Unix.open_process_out writer_command in
-          Common.protect
-            (fun () ->
-              (* This function can read the payload from the named pipe *)
-              func pipe_path)
-            ~finally:(fun () ->
-              (* Close the helper process *)
-              close_out_noerr writer)))
-    ~finally:(fun () -> Sys.remove !!pipe_path)
-
 let test_named_pipe (caps : Scan_subcommand.caps) =
   let func () =
     (* Search for pattern "hello" in a named pipe containing "hello" *)
-    with_read_from_named_pipe ~data:"hello\n" (fun pipe_path ->
+    Test_scan_helpers.with_read_from_named_pipe ~data:"hello\n" (fun pipe_path ->
         Scan_subcommand.main caps
           [|
             "opengrep-scan";

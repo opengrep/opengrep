@@ -1,0 +1,10 @@
+--- begin input files ---
+targets/basic/simple_python_no_extension
+targets/basic/stupid_no_extension
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 13 insertions(+)
+ create mode 100644 targets/basic/simple_python_no_extension
+ create mode 100644 targets/basic/stupid_no_extension
+{"version":"<MASKED>","results":[{"check_id":"-","path":"targets/basic/simple_python_no_extension","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":6,"offset":5},"extra":{"metavars":{},"message":"hello","metadata":{},"severity":"ERROR","fingerprint":"c71a3f00d820b90713e91df9c9810682ec08b0b3add271d39f5ebe5169cd6fd8c5799d827fa8fea0e5c52f29668506e7ac8b0600ab98443a527df3b2197beb59_0","lines":"hello","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/basic/simple_python_no_extension"]},"interfile_languages_used":[],"skipped_rules":[]}

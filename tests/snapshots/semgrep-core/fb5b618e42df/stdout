@@ -1,0 +1,20 @@
+--- begin input files ---
+rules/duplicate-rule.yaml
+rules/eqeq-python.yaml
+rules/eqeq.yaml
+rules/hidden/.hidden/eqeq.yaml
+rules/nested-pattern-either.yaml
+rules/nested-patterns.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 7 files changed, 213 insertions(+)
+ create mode 100644 rules/duplicate-rule.yaml
+ create mode 100644 rules/eqeq-python.yaml
+ create mode 100644 rules/eqeq.yaml
+ create mode 100644 rules/hidden/.hidden/eqeq.yaml
+ create mode 100644 rules/nested-pattern-either.yaml
+ create mode 100644 rules/nested-patterns.yaml
+ create mode 100644 stupid.py
+{"version":"<MASKED>","results":[{"check_id":"rules....rules.eqeq-is-bad","path":"stupid.py","start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":26,"offset":69},"extra":{"metavars":{"$X":{"start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":17,"offset":60},"abstract_content":"a+b"}},"message":"useless comparison operation `a + b == a + b` or `a + b != a + b`","metadata":{"shortlink":"https://sg.run/xyz1","source":"https://semgrep.dev/r/eqeq-bad"},"severity":"ERROR","fingerprint":"25ccc70821554d1f2d526bdde336443f4182d6af3f35b592ace9e26aed8ec49a45fb038e651f115e56a6514efe6bcce428ddbf0d0fca33fb308822d89a50d0ed_0","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}

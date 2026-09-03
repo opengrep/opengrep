@@ -1007,7 +1007,7 @@ let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
                  (* consumes stdin, preventing command-line forwarding to
                     pysemgrep or another osemgrep! *)
                  CapTmp.replace_stdin_by_regular_file caps#tmp
-                   ~prefix:"osemgrep-stdin-" ()
+                   ~prefix:"opengrep-stdin-" ()
                else
                  (* remove this hack when no longer forward the command line
                     to another program *)
@@ -1019,7 +1019,7 @@ let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
                if experimental && Sys.file_exists str then (
                  match
                    CapTmp.replace_named_pipe_by_regular_file_if_needed caps#tmp
-                     ~prefix:"osemgrep-named-pipe-" (Fpath.v str)
+                     ~prefix:"opengrep-named-pipe-" (Fpath.v str)
                  with
                  | None -> orig_path
                  | Some new_path ->

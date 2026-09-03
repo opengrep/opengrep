@@ -1,6 +1,7 @@
 (* SPDX-License-Identifier: LGPL-2.1-only *)
 
 module F = Testutil_files
+open Fpath_.Operators
 
 (*****************************************************************************)
 (* Prelude *)
@@ -19,8 +20,8 @@ module F = Testutil_files
 
 let fixtures_root : Fpath.t = Fpath.v "tests/sarif"
 
-let read_fixture (rel : string) : string =
-  UFile.read_file Fpath.(fixtures_root // v rel)
+let read_fixture ?(root : Fpath.t = fixtures_root) (rel : string) : string =
+  UFile.read_file Fpath.(root // v rel)
 
 let dummy_app_token : string = "FAKETESTINGAUTHTOKEN"
 
@@ -46,6 +47,69 @@ let normalise : (string -> string) list =
   ]
 
 (*****************************************************************************)
+(* Targets that are not files *)
+(*****************************************************************************)
+
+let random_init = lazy (Random.self_init ())
+
+let create_named_pipe () : Fpath.t =
+  Lazy.force random_init;
+  let path =
+    Filename.concat
+      (Filename.get_temp_dir_name ())
+      (Printf.sprintf "opengrep-test-%x.py" (Random.bits ()))
+  in
+  Unix.mkfifo path 0o644;
+  Fpath.v path
+
+(* Run [func] on a named pipe that another process feeds with [data].
+   This probably doesn't work on Windows due to the reliance on a shell
+   command but could be ported (it doesn't need 'fork').
+   TODO: switch to OCaml 5 and use parallelism. *)
+let with_read_from_named_pipe ~(data : string) (func : Fpath.t -> 'a) : 'a =
+  let pipe_path = create_named_pipe () in
+  Common.protect
+    (fun () ->
+      (* Start another process to write to the pipe in parallel *)
+      UTmp.with_temp_file (fun reg_file ->
+          (* We go through a regular file so as to avoid quoting issues. *)
+          UFile.write_file ~file:reg_file data;
+          let writer_command =
+            (* Copy the data from the regular file into the named pipe *)
+            Printf.sprintf "cat '%s' >> '%s'" !!reg_file !!pipe_path
+          in
+          (* Launch the process that feeds the pipe *)
+          let writer = Unix.open_process_out writer_command in
+          Common.protect
+            (fun () ->
+              (* This function can read the payload from the named pipe *)
+              func pipe_path)
+            ~finally:(fun () ->
+              (* Close the helper process *)
+              close_out_noerr writer)))
+    ~finally:(fun () -> Sys.remove !!pipe_path)
+
+(* Run [func] with the standard input reading [data]. *)
+let with_stdin_from ~(data : string) (func : unit -> 'a) : 'a =
+  let saved_stdin = Unix.dup Unix.stdin in
+  let reader, writer = Unix.pipe () in
+  let (_ : int) = Unix.write_substring writer data 0 (String.length data) in
+  Unix.close writer;
+  Unix.dup2 reader Unix.stdin;
+  Unix.close reader;
+  Common.protect func ~finally:(fun () ->
+      Unix.dup2 saved_stdin Unix.stdin;
+      Unix.close saved_stdin)
+
+(* The paths of such targets are temporary files with random names. *)
+let mask_temp_targets : (string -> string) list =
+  [
+    Testo.mask_pcre_pattern
+      {|opengrep-(?:stdin|named-pipe)-[0-9a-f]+(?:-[0-9]+)?|};
+    Testo.mask_pcre_pattern {|"fingerprint":"([0-9a-f_]+)"|};
+  ]
+
+(*****************************************************************************)
 (* Running a scan *)
 (*****************************************************************************)
 
@@ -58,32 +122,43 @@ let normalise : (string -> string) list =
  * expect_abort makes the abort the expected outcome and prints its message.
  * check is the expected exit code of a scan that did not abort.
  *)
-let run_scan (caps : Scan_subcommand.caps) ~(rule : string)
-    ~(targets : string list) ?(format_args : string list = [ "--sarif" ])
+let run_scan (caps : Scan_subcommand.caps) ?(root : Fpath.t = fixtures_root)
+    ?(rule : string option) ~(targets : string list)
+    ?(format_args : string list = [ "--sarif" ])
     ?(extra_args : string list = []) ?(extra_files : F.t list = [])
     ?(output_files : string list = []) ?(expect_abort : bool = false)
     ?(check : Exit_code.t -> unit = Exit_code.Check.ok) ?(git : bool = true) ()
     =
-  let rule_content : string = read_fixture rule in
-  let rule_file : string = Filename.basename rule in
+  (* the rule file copied into the repo and named on the command line;
+     none when the scan gets its rules another way, with -e *)
+  let rule_file : (string * string) option =
+    Option.map
+      (fun (rule : string) -> (Filename.basename rule, read_fixture ~root rule))
+      rule
+  in
   let target_entries : (string * string) list =
-    List.map (fun (t : string) -> (Filename.basename t, read_fixture t)) targets
+    List.map
+      (fun (t : string) -> (Filename.basename t, read_fixture ~root t))
+      targets
   in
   with_env_app_token (fun () ->
       let repo_files : F.t list =
-        (F.File (rule_file, rule_content)
-        :: List.map
-             (fun ((name : string), (contents : string)) ->
-               F.File (name, contents))
-             target_entries)
+        List.map
+          (fun ((name : string), (contents : string)) -> F.File (name, contents))
+          (Option.to_list rule_file @ target_entries)
         @ extra_files
       in
       Testutil_git.with_git_repo ~verbose:true ~really_create_git_repo:git
         repo_files (fun _cwd ->
+          let config_args : string list =
+            match rule_file with
+            | Some ((name : string), _) -> [ "--config"; name ]
+            | None -> []
+          in
           let argv : string array =
             Array.of_list
-              ([ "opengrep-scan"; "--experimental"; "--config"; rule_file ]
-              @ format_args @ extra_args)
+              ([ "opengrep-scan"; "--experimental" ]
+              @ config_args @ format_args @ extra_args)
           in
           let run () =
             without_settings (fun () -> Scan_subcommand.main caps argv)

@@ -44,6 +44,8 @@
 type t =
   | Dir of string (* name *) * t list
   | File of string (* name *) * string (* contents *)
+  (* a file with the executable bits, like a script *)
+  | Executable of string (* name *) * string (* contents *)
   | Symlink of string (* name *) * string (* destination path *)
 
 (* if you prefer a curried syntax to build the tree *)

@@ -1,0 +1,12 @@
+--- begin input files ---
+language-filtering.yaml
+targets/language-filtering/call-f.js
+targets/language-filtering/call-f.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 16 insertions(+)
+ create mode 100644 language-filtering.yaml
+ create mode 100644 targets/language-filtering/call-f.js
+ create mode 100644 targets/language-filtering/call-f.py
+{"version":"<MASKED>","results":[{"check_id":"example-javascript","path":"targets/language-filtering/call-f.js","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":4,"offset":3},"extra":{"metavars":{},"message":"It's a JavaScript finding.\n","metadata":{},"severity":"WARNING","fingerprint":"b93fad5c9a2f6eaa98ff581bca59a669e0f3ad1e21015518fcefe92b50c24d4898388db7f2387cad4392c31eda9dc1ed1fe42ea2f1614291c393297d83031dbf_0","lines":"f()","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"example-python","path":"targets/language-filtering/call-f.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":4,"offset":3},"extra":{"metavars":{},"message":"It's a Python finding.\n","metadata":{},"severity":"WARNING","fingerprint":"de4e2d188bb8b944a66c3da6d6ed48e5d04771aaf1651d8d68d1ea8e24aa1407a95a8e18e659b3d98791fbd3d3e8cc9ee3ace2305ec707e4a1bacbb20818ac35_0","lines":"f()","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/language-filtering/call-f.js","targets/language-filtering/call-f.py"]},"interfile_languages_used":[],"skipped_rules":[]}
