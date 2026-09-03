@@ -1,0 +1,55 @@
+--- begin input files ---
+app/rules.yml
+app/sinks.py
+main.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main <MASKED>] Add files
+ 3 files changed, 21 insertions(+)
+ create mode 100644 app/rules.yml
+ create mode 100644 app/sinks.py
+ create mode 100644 main.py
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Touch the sink file'
+[main <MASKED>] Touch the sink file
+ 1 file changed, 2 insertions(+)
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+[32m✔[39m [1mOpengrep OSS[0m
+  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+
+[1m  Loading rules from local config...[0m
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 1 file tracked by git with 1 Code rule:
+  Scanning 1 file.
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 2 files tracked by git with 1 Code rule:
+  Scanning 2 files.
+Removed 1 finding that were in baseline scan
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+Ran 1 rule on 0 files: 0 findings.
+ASSERT exit code
