@@ -1,14 +1,10 @@
-import collections
 import json
 import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict
-from xml.etree import cElementTree
 
 import pytest
-from tests.conftest import mask_variable_text
 from tests.conftest import RULES_PATH
 from tests.conftest import TARGETS_PATH
 from tests.fixtures import RunSemgrep
@@ -17,155 +13,6 @@ from semgrep.constants import OutputFormat
 
 # coupling: also in test_ci.py
 REPO_DIR_NAME = "project_name"
-
-
-# https://stackoverflow.com/a/10077069
-@pytest.mark.kinda_slow
-def _etree_to_dict(t):
-    """
-    A simple and sufficient XML -> dict conversion function. This function is
-    used to perform basic XML test data comparisons.
-    """
-    d: Dict[str, Dict] = {t.tag: {}}
-    children = list(t)
-    if children:
-        dd = collections.defaultdict(list)
-        for dc in map(_etree_to_dict, children):
-            for k, v in dc.items():
-                dd[k].append(v)
-        d = {t.tag: {k: v[0] if len(v) == 1 else v for k, v in dd.items()}}
-    if t.attrib:
-        d[t.tag].update(("@" + k, v) for k, v in t.attrib.items())
-    if t.text:
-        text = t.text.strip()
-        if children or t.attrib:
-            if text:
-                d[t.tag]["#text"] = text
-        else:
-            d[t.tag] = text
-    return d
-
-
-@pytest.mark.kinda_slow
-@pytest.mark.osemfail
-def test_additional_outputs(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/eqeq.yaml",
-        target_name="basic/stupid.py",
-        options=[
-            "--json-output=one.json",
-            "--json-output=two.json",
-            "--emacs-output=emacs.txt",
-            "--vim-output=vim.txt",
-            "--sarif-output=sarif.json",
-            "--gitlab-sast-output=gitlab_sast.json",
-            "--gitlab-secrets-output=gitlab_secrets.json",
-        ],
-        output_format=OutputFormat.TEXT,
-    )
-
-    snapshot.assert_match(stdout, "text.expected")
-    with open("one.json") as one_json:
-        snapshot.assert_match(mask_variable_text(one_json.read()), "one.json.expected")
-    with open("two.json") as two_json:
-        snapshot.assert_match(mask_variable_text(two_json.read()), "two.json.expected")
-    with open("emacs.txt") as emacs_txt:
-        snapshot.assert_match(
-            mask_variable_text(emacs_txt.read()), "emacs.txt.expected"
-        )
-    with open("vim.txt") as vim_txt:
-        snapshot.assert_match(mask_variable_text(vim_txt.read()), "vim.txt.expected")
-    with open("gitlab_sast.json") as gitlab_sast_json:
-        snapshot.assert_match(
-            mask_variable_text(gitlab_sast_json.read()), "gitlab_sast.json.expected"
-        )
-    with open("gitlab_secrets.json") as gitlab_secrets_json:
-        snapshot.assert_match(
-            mask_variable_text(gitlab_secrets_json.read()),
-            "gitlab_secrets.json.expected",
-        )
-
-
-@pytest.mark.kinda_slow
-@pytest.mark.parametrize(
-    "format",
-    ["--json", "--emacs", "--vim", "--sarif", "--gitlab-sast", "--gitlab-secrets"],
-)
-@pytest.mark.osemfail
-def test_additional_outputs_with_format_flag(
-    run_semgrep_in_tmp: RunSemgrep, snapshot, format
-):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/eqeq.yaml",
-        target_name="basic/stupid.py",
-        options=[
-            format,
-            "--json-output=result.json",
-        ],
-        output_format=OutputFormat.TEXT,
-    )
-
-    snapshot.assert_match(stdout, "result.expected")
-    with open("result.json") as result_json:
-        snapshot.assert_match(
-            mask_variable_text(result_json.read()), "result.json.expected"
-        )
-
-
-@pytest.mark.kinda_slow
-@pytest.mark.parametrize(
-    "format",
-    ["--json", "--emacs", "--vim", "--sarif", "--gitlab-sast", "--gitlab-secrets"],
-)
-@pytest.mark.osemfail
-def test_additional_outputs_with_format_output_flag(
-    run_semgrep_in_tmp: RunSemgrep, snapshot, format
-):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/eqeq.yaml",
-        target_name="basic/stupid.py",
-        options=[format, "--sarif-output=sarif.json", "--output=result.out"],
-        output_format=OutputFormat.TEXT,  # disables json parsing
-    )
-
-    with open("sarif.json") as sarif_json:
-        snapshot.assert_match(
-            mask_variable_text(sarif_json.read()), "sarif.json.expected"
-        )
-    with open("result.out") as result_out:
-        snapshot.assert_match(
-            mask_variable_text(result_out.read()), "result.out.expected"
-        )
-
-
-@pytest.mark.kinda_slow
-def test_junit_xml_output(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    output, _ = run_semgrep_in_tmp(
-        "rules/eqeq.yaml", output_format=OutputFormat.JUNIT_XML
-    )
-    result = _etree_to_dict(cElementTree.XML(output))
-
-    filename = snapshot.snapshot_dir / "results.xml"
-    expected = _etree_to_dict(cElementTree.XML(filename.read_text()))
-
-    assert result == expected
-
-
-@pytest.mark.kinda_slow
-@pytest.mark.osemfail
-def test_junit_xml_output_flag(
-    run_semgrep_in_tmp: RunSemgrep,
-    snapshot,
-):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/eqeq.yaml",
-        target_name="basic/stupid.py",
-        options=["--junit-xml-output=result.xml"],
-        output_format=OutputFormat.TEXT,  # disables json parsing
-    )
-
-    with open("result.xml") as xml:
-        snapshot.assert_match(mask_variable_text(xml.read()), "expected.xml")
 
 
 @pytest.mark.kinda_slow

@@ -119,6 +119,40 @@ let test_output_destination_is_symlink (caps : Scan_subcommand.caps) () =
     ~extra_args:[ "--sarif-output"; "findings.sarif" ]
     ~output_files:[ "pointed_at.txt" ] ~expect_abort:true ()
 
+(* Every --<format>-output flag at once, one of them twice: text on stdout
+   and each file written with its own format. python: test_additional_outputs
+   and test_junit_xml_output_flag *)
+let test_every_format_output_flag (caps : Scan_subcommand.caps) () =
+  let outputs : (string * string) list =
+    [
+      ("--json-output", "one.json");
+      ("--json-output", "two.json");
+      ("--emacs-output", "emacs.txt");
+      ("--vim-output", "vim.txt");
+      ("--sarif-output", "sarif.json");
+      ("--gitlab-sast-output", "gitlab_sast.json");
+      ("--gitlab-secrets-output", "gitlab_secrets.json");
+      ("--junit-xml-output", "junit.xml");
+    ]
+  in
+  run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
+    ~targets:[ "targets/basic/stupid.py" ]
+    ~extra_args:
+      (List.concat_map
+         (fun ((flag : string), (file : string)) -> [ flag; file ])
+         outputs)
+    ~output_files:(List.map snd outputs) ()
+
+(* -o next to a --<format>-output flag: the primary format goes to its file,
+   nothing to stdout. python: test_additional_outputs_with_format_output_flag *)
+let test_primary_output_to_file_with_format_output_flag
+    (caps : Scan_subcommand.caps) () =
+  run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
+    ~targets:[ "targets/basic/stupid.py" ]
+    ~extra_args:
+      [ "--json"; "-o"; "result.out"; "--sarif-output"; "sarif.json" ]
+    ~output_files:[ "result.out"; "sarif.json" ] ()
+
 (*****************************************************************************)
 (* Entry point                                                                *)
 (*****************************************************************************)
@@ -162,4 +196,10 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "output destination is a symlink" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (test_output_destination_is_symlink caps);
+      t "every --<format>-output flag at once" ~checked_output:(Testo.stdout ())
+        ~normalize:Test_scan_subcommand_formats.normalise_gitlab
+        (test_every_format_output_flag caps);
+      t "-o file next to a --<format>-output file"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (test_primary_output_to_file_with_format_output_flag caps);
     ]
