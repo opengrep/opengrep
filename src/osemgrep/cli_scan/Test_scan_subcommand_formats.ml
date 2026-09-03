@@ -8,9 +8,9 @@ open Test_scan_helpers
 (* Prelude *)
 (*****************************************************************************)
 (* End-to-end tests of the output formats other than text and SARIF, on the
- * same fixture: the JSON, emacs, vim, GitLab SAST and GitLab secrets
- * documents that a scan of rules/eqeq.yaml over targets/basic/stupid.py
- * prints on stdout. python: test_output_format
+ * same fixture: the JSON, emacs, vim, GitLab SAST, GitLab secrets and JUnit
+ * XML documents that a scan of rules/eqeq.yaml over targets/basic/stupid.py
+ * prints on stdout. python: test_output_format, test_junit_xml_output
  *
  * SARIF has Test_scan_subcommand_sarif.ml and where the output goes has
  * Test_scan_subcommand_output.ml.
@@ -38,6 +38,7 @@ let formats : (string * string * (string -> string) list) list =
     ("vim", "--vim", normalise);
     ("GitLab SAST", "--gitlab-sast", normalise_gitlab);
     ("GitLab secrets", "--gitlab-secrets", normalise_gitlab);
+    ("JUnit XML", "--junit-xml", normalise);
   ]
 
 (*****************************************************************************)
