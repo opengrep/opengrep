@@ -49,6 +49,22 @@ let error s =
  * is not exactly the same than yyless(), so I use yyback() instead.
  * http://my.safaribooksonline.com/book/programming/flex/9780596805418/a-reference-for-flex-specifications/yyless
  *)
+(* the offset at which the body rule of a heredoc would stop, i.e. the first
+ * character that starts an interpolation or an escape *)
+let heredoc_text_len s =
+  let n = String.length s in
+  let rec aux i =
+    if i >= n then n
+    else
+      match s.[i] with
+      | '$'
+      | '{'
+      | '\\' ->
+          i
+      | _ -> aux (i + 1)
+  in
+  aux 0
+
 let yyback n lexbuf =
   lexbuf.Lexing.lex_curr_pos <- lexbuf.Lexing.lex_curr_pos - n;
   let currp = lexbuf.Lexing.lex_curr_p in
@@ -278,13 +294,26 @@ type state = {
    * Used for XHP.
    *)
   pending_tokens: Parser_php.token list ref;
+  (* whether the next token of a heredoc body starts a line, which is the
+   * only place its closing marker can be *)
+  at_line_start: bool ref;
 }
+
+(* whether the next token starts a line, which is where a heredoc's closing
+ * marker must be. Set from the text just read, since a rule may take a
+ * newline with it, as '\\' does when it escapes one.
+ *)
+let set_bol state str =
+  let n = String.length str in
+  state.at_line_start :=
+    n > 0 && (Char.equal str.[n - 1] '\n' || Char.equal str.[n - 1] '\r')
 
 let create () = {
   mode = ref [default_state];
   last_non_whitespace_like_token = ref None;
   (* todo: now that I have yyback, maybe I should revisit this code. *)
   pending_tokens = ref [];
+  at_line_start = ref false;
 }
 
 let current_mode state =
@@ -782,11 +811,13 @@ rule st_in_scripting state = parse
       }
     | 'b'? "<<<" TABS_AND_SPACES (LABEL as s) NEWLINE {
         set_mode state (ST_START_HEREDOC s);
+        set_bol state (tok lexbuf);
         T_START_HEREDOC (tokinfo lexbuf)
       }
 
     | 'b'? "<<<" TABS_AND_SPACES "'" (LABEL as s) "'" NEWLINE {
         set_mode state (ST_START_NOWDOC s);
+        set_bol state (tok lexbuf);
         (* could use another token, but simpler to reuse *)
         T_START_HEREDOC (tokinfo lexbuf)
       }
@@ -1094,40 +1125,58 @@ and st_backquote state = parse
  *)
 and st_start_heredoc state stopdoc = parse
 
-  | (LABEL as s) (";"? as semi) (['\n' '\r'] as space) {
+  (* The closing marker may be indented and may be followed by anything, not
+   * only by ';' and a newline (PHP 7.3). Matching the rest of the line makes
+   * this the longest match for any line starting with a name, so the label
+   * can be compared against the one that opened the document; whatever
+   * follows it is put back either way, to be read as code after the marker
+   * or as the rest of the body after a name that is not the marker.
+   * coupling: the {LABEL} rules of ST_END_HEREDOC in Zend's
+   * zend_language_scanner.l
+   *)
+  | ([' ' '\t']* as ws) (LABEL as s) ([^ '\n' '\r']* as rest) {
       let info = tokinfo lexbuf in
-
-      let lbl_info = Tok.rewrap_str s info in
-
       let file = Tok.file_of_tok info in
       let pos = Tok.bytepos_of_tok info in
-      let pos_after_label = pos + String.length s in
-      let pos_after_semi = pos_after_label + String.length semi in
-
-      let colon_info =
-        tokinfo_file_str_pos file semi pos_after_label in
-      let space_info =
-        tokinfo_file_str_pos file (Common2.string_of_char space) pos_after_semi in
-
-      if s = stopdoc
+      (* only a line of its own can hold the marker: coming back from an
+       * interpolation leaves the cursor inside a line, where a name equal to
+       * the marker is body text, as in 'hello {$name} EOT more' *)
+      let at_line_start = !(state.at_line_start) in
+      set_bol state (tok lexbuf);
+      if s = stopdoc && at_line_start
       then begin
+        (* give back what follows the marker, to be read as code *)
+        yyback (String.length rest) lexbuf;
         set_mode state ST_IN_SCRIPTING;
-        push_token state (TNewline space_info);
-        if semi = ";"
-        then push_token state (TSEMICOLON colon_info);
-
-        T_END_HEREDOC(lbl_info)
-      end else
-        T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf)
+        T_END_HEREDOC (tokinfo_file_str_pos file s (pos + String.length ws))
+      end
+      else begin
+        (* not the marker, so give back only what the body rule below would
+         * not have taken, and hand over the same text it would have *)
+        let taken = heredoc_text_len rest in
+        yyback (String.length rest - taken) lexbuf;
+        let text = ws ^ s ^ String.sub rest 0 taken in
+        T_ENCAPSED_AND_WHITESPACE (text, Tok.rewrap_str text info)
+      end
     }
 
   | [^ '\n' '\r' '$' '{' '\\']+ {
-      T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf)
+      set_bol state (tok lexbuf); T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf)
     }
-  | "\\" ANY_CHAR { T_ENCAPSED_AND_WHITESPACE (tok lexbuf, tokinfo lexbuf) }
+  (* a backslash before a line break is not an escape in PHP, which keeps the
+   * backslash and the break. Reading them apart leaves the line boundary
+   * standing, which is what the marker's indentation is taken off.
+   *)
+  | "\\" ['\n' '\r'] {
+      yyback 1 lexbuf;
+      set_bol state "\\";
+      T_ENCAPSED_AND_WHITESPACE ("\\", Tok.rewrap_str "\\" (tokinfo lexbuf))
+    }
+  | "\\" ANY_CHAR { set_bol state (tok lexbuf); T_ENCAPSED_AND_WHITESPACE (tok lexbuf, tokinfo lexbuf) }
 
-    | "$" (LABEL as s)     { t_variable_or_metavar s (tokinfo lexbuf) }
+    | "$" (LABEL as s)     { set_bol state (tok lexbuf); t_variable_or_metavar s (tokinfo lexbuf) }
     | "$" (LABEL as s) "[" {
+          set_bol state (tok lexbuf);
           let info = tokinfo lexbuf in
 
           let file = Tok.file_of_tok info in
@@ -1141,17 +1190,19 @@ and st_start_heredoc state stopdoc = parse
           T_VARIABLE(case_str s, varinfo)
       }
     (* bugfix: can have strings like "$$foo$", or {{$foo}} *)
-    | "$" { T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf) }
-    | "{" { T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf) }
+    | "$" { set_bol state (tok lexbuf); T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf) }
+    | "{" { set_bol state (tok lexbuf); T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf) }
 
-  | ['\n' '\r'] { TNewline (tokinfo lexbuf) }
+  | ['\n' '\r'] { set_bol state (tok lexbuf); TNewline (tokinfo lexbuf) }
 
     | "{$" {
+        set_bol state (tok lexbuf);
         yyback 1 lexbuf;
         push_mode state ST_IN_SCRIPTING;
         T_CURLY_OPEN(tokinfo lexbuf);
       }
     | "${" {
+        set_bol state (tok lexbuf);
         push_mode state ST_LOOKING_FOR_VARNAME;
         T_DOLLAR_OPEN_CURLY_BRACES(tokinfo lexbuf);
       }
@@ -1168,37 +1219,36 @@ and st_start_heredoc state stopdoc = parse
  *)
 and st_start_nowdoc state stopdoc = parse
 
-  | (LABEL as s) (";"? as semi) (['\n' '\r'] as space) {
+  (* same as for a heredoc above *)
+  | ([' ' '\t']* as ws) (LABEL as s) ([^ '\n' '\r']* as rest) {
       let info = tokinfo lexbuf in
-
-      let lbl_info = Tok.rewrap_str s info in
-
       let file = Tok.file_of_tok info in
       let pos = Tok.bytepos_of_tok info in
-      let pos_after_label = pos + String.length s in
-      let pos_after_semi = pos_after_label + String.length semi in
-
-      let colon_info =
-        tokinfo_file_str_pos file semi pos_after_label in
-      let space_info =
-        tokinfo_file_str_pos file (Common2.string_of_char space) pos_after_semi in
-
-      if s = stopdoc
+      (* only a line of its own can hold the marker: coming back from an
+       * interpolation leaves the cursor inside a line, where a name equal to
+       * the marker is body text, as in 'hello {$name} EOT more' *)
+      let at_line_start = !(state.at_line_start) in
+      set_bol state (tok lexbuf);
+      if s = stopdoc && at_line_start
       then begin
+        yyback (String.length rest) lexbuf;
         set_mode state ST_IN_SCRIPTING;
-        push_token state (TNewline space_info);
-        if semi = ";"
-        then push_token state (TSEMICOLON colon_info);
         (* reuse same token than for heredocs *)
-        T_END_HEREDOC(lbl_info)
-      end else
-        T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf)
+        T_END_HEREDOC (tokinfo_file_str_pos file s (pos + String.length ws))
+      end
+      else begin
+        (* a nowdoc does not interpolate, so its body rule takes the line whole *)
+        let text = ws ^ s ^ rest in
+        T_ENCAPSED_AND_WHITESPACE (text, Tok.rewrap_str text info)
+      end
     }
   | [^ '\n' '\r']+ {
+      set_bol state (tok lexbuf);
       T_ENCAPSED_AND_WHITESPACE(tok lexbuf, tokinfo lexbuf)
     }
 
   | ['\n' '\r'] {
+      set_bol state (tok lexbuf);
       TNewline (tokinfo lexbuf)
     }
 
