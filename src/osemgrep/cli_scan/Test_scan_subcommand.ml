@@ -1434,7 +1434,6 @@ let tests (caps : < Scan_subcommand.caps >) =
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_basic_output_nosem_incremental_disabled caps);
       t "basic verbose output"
-        ~skipped:"captured output depends on which tests run before it"
         ~checked_output:(Testo.stdxxx ()) ~normalize
         (test_basic_verbose_output caps);
       t "precise range for parenthesized expression" ~checked_output:(Testo.stdxxx ()) ~normalize

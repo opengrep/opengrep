@@ -61,4 +61,11 @@ let tests (caps : < Scan_subcommand.caps >) =
           (run_scan caps ~format_args:[ "--json" ]
              ~extra_args:[ "--dataflow-traces" ] ~rule:"rules/taint_trace.yaml"
              ~targets:[ "targets/taint/taint_trace.cpp" ]);
+        (* python: test_output_matching_explanations *)
+        t "JSON output with --matching-explanations"
+          ~checked_output:(Testo.stdout ()) ~normalize:normalise
+          (run_scan caps ~format_args:[ "--json" ]
+             ~extra_args:[ "--matching-explanations" ]
+             ~rule:"rules/eqeq-basic.yaml"
+             ~targets:[ "targets/basic/stupid.js" ]);
       ])

@@ -14,38 +14,17 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 11 insertions(+)
  create mode 100644 rules.yml
  create mode 100644 stupid.py
-[<MASKED TIMESTAMP>][INFO]: Semgrep version: <MASKED>
+[<MASKED TIMESTAMP>][INFO]: Opengrep version: <MASKED>
 
-┌──── [32m○○○[39m ────┐
-│ Semgrep CLI │
-└─────────────┘
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
 
-[<MASKED TIMESTAMP>][INFO]: Checking for API token in environment variables
-[<MASKED TIMESTAMP>][INFO]: Found API token in environment variables
-[<MASKED TIMESTAMP>][INFO]: Loading settings from nosettings.yaml
-[<MASKED TIMESTAMP>][INFO]: Settings file 'nosettings.yaml' does not exist or is not a regular file
-[<MASKED TIMESTAMP>][INFO]: No settings file found, using default settings
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'ls-remote' '--get-url'
-[<MASKED TIMESTAMP>][INFO]: error output: fatal: No remote configured to list refs from.
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
 
-[32m✔[39m [1mSemgrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
-
-[32m✔[39m [1mSemgrep Code (SAST)[0m
-  [32m✔[39m Find and fix vulnerabilities in the code you write with advanced scanning and expert security rules.
-
-[31m✘[39m [1mSemgrep Secrets[0m
-  [31m✘[39m Detect and validate potential secrets in your code.
-
-METRICS: Using configs from the Registry (like --config=p/ci) reports pseudonymous rule metrics to semgrep.dev.
-To disable Registry rule metrics, use "--metrics=off".
-Using configs only from local files (like --config=xyz.yml) does not enable metrics.
-
-More information: https://semgrep.dev/docs/metrics
-
-[<MASKED TIMESTAMP>][INFO]: Saved the settings in nosettings.yaml
 [<MASKED TIMESTAMP>][INFO]: Getting the rules
-[1m  Loading rules from local config...[0m
+  Loading rules from local config...
 [<MASKED TIMESTAMP>][INFO]: loading local config from rules.yml
 [<MASKED TIMESTAMP>][INFO]: Done loading local config from rules.yml
 [<MASKED TIMESTAMP>][INFO]: Computing the targets
@@ -55,21 +34,17 @@ More information: https://semgrep.dev/docs/metrics
 Rules:
 - eqeq-bad
 
-[<MASKED TIMESTAMP>][INFO]: scan subcommand: 1 valid rules, 0 invalid rules, 3 targets
-[<MASKED TIMESTAMP>][INFO]: running the semgrep engine
+[<MASKED TIMESTAMP>][INFO]: scan subcommand: 1 valid rules, 0 invalid rules, 2 targets
+[<MASKED TIMESTAMP>][INFO]: running the opengrep engine
 
 
 ┌─────────────┐
 │ Scan Status │
 └─────────────┘
-  Scanning 3 files tracked by git with 1 Code rule:
-  Scanning 3 files.
+  Scanning 2 files tracked by git with 1 Code rule:
+  Scanning 1 file.
 [<MASKED TIMESTAMP>][INFO]: scan: processing 1 files (skipping 0), with 1 rules (skipping 0 )
 [<MASKED TIMESTAMP>][INFO]: reporting matches if any
-[<MASKED TIMESTAMP>][INFO]: Checking for API token in environment variables
-[<MASKED TIMESTAMP>][INFO]: Found API token in environment variables
-[<MASKED TIMESTAMP>][INFO]: Loading settings from nosettings.yaml
-[<MASKED TIMESTAMP>][INFO]: Settings file found, using settings from file
 
 
 ┌────────────────┐
@@ -87,7 +62,7 @@ Rules:
 Files skipped:
 ========================================
 
-  Always skipped by Semgrep:
+  Always skipped by Opengrep:
 
    • <none>
 
@@ -114,7 +89,7 @@ Files skipped:
 
    • <none>
 
-  Partially analyzed due to parsing or internal Semgrep errors
+  Partially analyzed due to parsing or internal Opengrep errors
 
    • <none>
 
@@ -124,8 +99,7 @@ Files skipped:
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Some files were skipped or only partially analyzed.
-  Scan was limited to files tracked by git.
+Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 1 finding.
 ASSERT exit code

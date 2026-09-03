@@ -29,12 +29,16 @@ let origin rule =
 (* Entry point *)
 (*****************************************************************************)
 
-let pp_status ~num_rules ~num_targets ~respect_gitignore lang_jobs ppf =
+(* The first line counts the files found by targeting and the rules
+   loaded; the rest counts what the jobs pair up: a file some rule scans,
+   a rule with a file. *)
+let pp_status ~(rules : Rule.t list) ~num_targets ~tracked_by_git
+    (lang_jobs : Lang_job.t list) ppf =
+  let num_rules = List.length rules in
   Fmt_.pp_heading ppf "Scan Status";
   Fmt.pf ppf "  Scanning %s%s with %s"
     (String_.unit_str num_targets "file")
-    (* TODO: validate if target is actually within a git repo *)
-    (if respect_gitignore then " tracked by git" else "")
+    (if tracked_by_git then " tracked by git" else "")
     (String_.unit_str num_rules "Code rule");
 
   (* TODO if sca_rules ...
@@ -46,15 +50,18 @@ let pp_status ~num_rules ~num_targets ~respect_gitignore lang_jobs ppf =
          summary_line += f", {unit_str(pro_rule_count, 'Pro rule')}"
   *)
   Fmt.pf ppf ":@.";
-  if num_rules = 0 then Fmt.pf ppf "  Nothing to scan."
+  let num_files_with_a_rule =
+    lang_jobs
+    |> List.concat_map (fun (job : Lang_job.t) -> job.targets)
+    |> List_.deduplicate |> List.length
+  in
+  if num_rules = 0 || num_files_with_a_rule = 0 then
+    Fmt.pf ppf "  Nothing to scan."
   else if num_rules = 1 then
-    Fmt.pf ppf "  Scanning %s." (String_.unit_str num_targets "file")
+    Fmt.pf ppf "  Scanning %s." (String_.unit_str num_files_with_a_rule "file")
   else
     let rule_origins =
-      lang_jobs
-      |> List.fold_left
-           (fun acc Lang_job.{ rules; _ } -> List_.map origin rules @ acc)
-           []
+      rules |> List_.map origin
       |> Assoc.group_by Fun.id
       |> List_.map (fun (src, xs) ->
              (String.capitalize_ascii src, [ List.length xs ]))

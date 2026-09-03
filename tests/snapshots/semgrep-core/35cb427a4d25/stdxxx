@@ -1,0 +1,51 @@
+--- begin input files ---
+filecount.yaml
+multilangproj/code.js
+multilangproj/math.ml
+multilangproj/script.py
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 47 insertions(+)
+ create mode 100644 filecount.yaml
+ create mode 100644 multilangproj/code.js
+ create mode 100644 multilangproj/math.ml
+ create mode 100644 multilangproj/script.py
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
+
+  Loading rules from local config...
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 3 files tracked by git with 6 Code rules:
+
+  Language      Rules   Files          Origin   Rules
+ ─────────────────────────────        ────────────────
+  <multilang>       3       3          Custom       6
+  python            2       1
+  js                1       1
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+Ran 6 rules on 3 files: 0 findings.
+ASSERT exit code

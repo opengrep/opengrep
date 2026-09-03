@@ -518,6 +518,7 @@ let check_targets_with_rules ?(print_summary = true)
                   mk_core_run_for_osemgrep caps
                 in
                 run ?file_match_hook
+                  ~git_repo:targets_and_skipped.Find_targets.git_repo
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
                   (rules, invalid_rules) selected)
         | Some baseline ->
@@ -527,6 +528,7 @@ let check_targets_with_rules ?(print_summary = true)
              fun targets rules ->
               let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
               run ?file_match_hook
+                ~git_repo:targets_and_skipped.Find_targets.git_repo
                 conf.core_runner_conf conf.targeting_conf conf.matching_conf
                 (rules, invalid_rules) targets
             in
@@ -620,15 +622,13 @@ let check_targets_with_rules ?(print_summary = true)
           | _ -> ());
           Profiler.stop_ign profiler ~name:"total_time";
 
-          (* We'll report the number of valid rules, not the number of
-             rules applicable to our target files. *)
-          let valid_rules =
-            match result_or_exn with
-            | Ok r ->
-                r.valid_rules
-                |> List_.map (fun (rv : Rule.rule) ->
-                       Rule_ID.to_string (fst rv.id))
-            | Error _ -> []
+          (* The rules that ran are those with a target file, as the Python
+             wrapper counts them; a rule of several languages is in the
+             job of each. *)
+          let rules_ran : string list =
+            result.rules_with_targets
+            |> List_.map (fun (rv : Rule.rule) -> Rule_ID.to_string (fst rv.id))
+            |> List_.deduplicate
           in
 
           let skipped_groups = Skipped_report.group_skipped skipped in
@@ -656,7 +656,7 @@ let check_targets_with_rules ?(print_summary = true)
           if print_summary then
             Logs.app (fun m ->
                 m "Ran %s on %s: %s."
-                  (String_.unit_str (List.length valid_rules) "rule")
+                  (String_.unit_str (List.length rules_ran) "rule")
                   (String_.unit_str (List.length cli_output.paths.scanned) "file")
                   (String_.unit_str (List.length cli_output.results) "finding"));
 

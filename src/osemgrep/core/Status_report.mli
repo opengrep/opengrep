@@ -1,7 +1,7 @@
 val pp_status :
-  num_rules:int ->
+  rules:Rule.t list ->
   num_targets:int ->
-  respect_gitignore:bool ->
+  tracked_by_git:bool ->
   Lang_job.t list ->
   Format.formatter ->
   unit

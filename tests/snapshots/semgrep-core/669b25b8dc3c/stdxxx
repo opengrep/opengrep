@@ -30,7 +30,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Scan Status │
 └─────────────┘
   Scanning 1 file tracked by git with 1 Code rule:
-  Scanning 1 file.
+  Nothing to scan.
 
 
 ┌──────────────┐
@@ -38,7 +38,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 └──────────────┘
 Scan was limited to files tracked by git.
 
-Ran 1 rule on 0 files: 0 findings.
+Ran 0 rules on 0 files: 0 findings.
 exit code: 0
 --- begin input files ---
 rules/extra_field.yaml
@@ -65,7 +65,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Scan Status │
 └─────────────┘
   Scanning 1 file tracked by git with 1 Code rule:
-  Scanning 1 file.
+  Nothing to scan.
 {"version":"1.29.0","results":[],"errors":[],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 
 
@@ -74,5 +74,5 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 └──────────────┘
 Scan was limited to files tracked by git.
 
-Ran 1 rule on 0 files: 0 findings.
+Ran 0 rules on 0 files: 0 findings.
 exit code: 0

@@ -1,0 +1,54 @@
+--- begin input files ---
+exclude_include/excluded/excluded.js
+exclude_include/excluded/included.js
+exclude_include/included/excluded.js
+exclude_include/included/included.js
+exclude_include/included/included.vue
+filecount.yaml
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 6 files changed, 56 insertions(+)
+ create mode 100644 exclude_include/excluded/excluded.js
+ create mode 100644 exclude_include/excluded/included.js
+ create mode 100644 exclude_include/included/excluded.js
+ create mode 100644 exclude_include/included/included.js
+ create mode 100644 exclude_include/included/included.vue
+ create mode 100644 filecount.yaml
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
+
+  Loading rules from local config...
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 5 files tracked by git with 6 Code rules:
+
+  Language      Rules   Files          Origin   Rules
+ ─────────────────────────────        ────────────────
+  <multilang>       3       5          Custom       6
+  js                1       4
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+Ran 4 rules on 5 files: 0 findings.
+ASSERT exit code

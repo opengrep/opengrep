@@ -43,13 +43,29 @@ let ignores_args : string list =
     "targets/ignores";
   ]
 
+(* Directories of files in several languages, scanned with rules/filecount.yaml
+   whose rules are for python, js, regex and generic: the status and the
+   summary count the files and the rules that had one.
+   python: test_file_count_multifile *)
+let filecount_root : Fpath.t = Fpath.v "tests/filecount"
+let filecount_dirs : string list =
+  [ "multilangproj"; "language-filtering"; "exclude_include" ]
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
 let tests (caps : < Scan_subcommand.caps >) =
   Testo.categorize "Osemgrep Scan skipped (e2e)"
-    [
+    ((filecount_dirs
+     |> List.map (fun (dir : string) ->
+            t (Printf.sprintf "file count: %s" dir)
+              ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+              (run_scan caps ~format_args:[] ~rule:"rules/filecount.yaml"
+                 ~targets:[]
+                 ~extra_files:[ F.dir dir (F.read Fpath.(filecount_root / dir)) ]
+                 ~extra_args:[ dir ])))
+    @ [
       (* outside a git repository: no line about git, and no block when
          nothing was skipped *)
       t "summary: no git repository, nothing skipped"
@@ -71,4 +87,4 @@ let tests (caps : < Scan_subcommand.caps >) =
         ~normalize:normalise
         (run_scan caps ~format_args:[ "--json" ] ~rule:"rules/eqeq-basic.yaml"
            ~targets:[] ~extra_files:ignores_files ~extra_args:ignores_args);
-    ]
+    ])
