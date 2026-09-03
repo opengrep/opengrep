@@ -1,0 +1,23 @@
+Test name: with git > symlink inside the project keeps its name
+--- Files added before 'git add' ---
+.semgrepignore
+dir/a.c
+dir/b.c
+link
+--- begin input files ---
+.semgrepignore
+dir/a.c
+dir/b.c
+link
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 2 insertions(+)
+ create mode 100644 .semgrepignore
+ create mode 100644 dir/a.c
+ create mode 100644 dir/b.c
+ create mode 120000 link
+--- Selected targets ---
+selected link/a.c
+--- Skipped targets ---
+ignored link/b.c [Semgrep_output_v1_t.Semgrepignore_patterns_match]

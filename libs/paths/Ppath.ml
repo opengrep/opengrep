@@ -302,36 +302,51 @@ let cwd () =
   else capitalize_drive_letter cwd
 
 (*
-   Make a path absolute, using getcwd() if needed.
+   The path made absolute as typed, using getcwd() if needed: a symlink on
+   the way stays a name, as git and the ignore files see it.
    I hesitated to put this into Fpath_ since Fpath is purely syntactic.
 *)
-let make_absolute path =
-  let path = if Fpath.is_rel path then Fpath.(v (cwd ()) // path) else path in
-  (* Here, we must make a syscall, because we are making an unnormalized path absolute
-     so that we can compare it to a normalized path.
-     However, in the presence of symlinks, certain relationships like prefixes and
-     naive string operations do not work properly, because they are not cognizant of
-     how certain paths are actually related on the filesystem.
-     For instance, on Mac systems, `/var/` is actually the same as `/private/var`, so
-     our absolute form for `/var/` would prefer to be `/private/var`.
-     So we turn our path into an rpath, relative paths included: the project
-     root is also found from the real path. *)
-  match Rpath.of_fpath path with
-  | Ok path -> Rpath.to_fpath path
-  | Error err ->
-      failwith (Common.spf "Failed to make path %s absolute: %s" !!path err)
+let absolute_as_typed path =
+  if Fpath.is_rel path then Fpath.(v (cwd ()) // path) else path
+
+(*
+   Here, we must make a syscall, because we are making an unnormalized path absolute
+   so that we can compare it to a normalized path.
+   However, in the presence of symlinks, certain relationships like prefixes and
+   naive string operations do not work properly, because they are not cognizant of
+   how certain paths are actually related on the filesystem.
+   For instance, on Mac systems, `/var/` is actually the same as `/private/var`, so
+   our absolute form for `/var/` would prefer to be `/private/var`.
+   So we turn our path into an rpath.
+*)
+let absolute_resolved path =
+  match Rpath.of_fpath (absolute_as_typed path) with
+  | Ok path -> Some (Rpath.to_fpath path)
+  | Error _ -> None
 
 let of_relative_fpath (fpath : Fpath.t) =
   if Fpath.is_rel fpath then create ("" :: Fpath.segs fpath)
   else invalid_arg ("Ppath.of_relative_fpath: " ^ !!fpath)
 
 (*
+   A path is in the project when the path as typed lies under the project
+   root, or else when the resolved path does: the root may have been found
+   by resolving a symlink of the path. As typed comes first, so that a
+   symlink inside the project stays a name in the project path.
+
    This assumes the input paths are normalized. We use this
    in tests to avoid having to create actual files.
 *)
 let in_project_unsafe_for_tests ~(phys_root : Fpath.t) (path : Fpath.t) =
-  let abs_path = make_absolute path in
-  match remove_prefix phys_root abs_path with
+  let rel_path =
+    match remove_prefix phys_root (absolute_as_typed path) with
+    | Some rel_path -> Some rel_path
+    | None -> (
+        match absolute_resolved path with
+        | Some abs_path -> remove_prefix phys_root abs_path
+        | None -> None)
+  in
+  match rel_path with
   | None ->
       Error
         (Common.spf

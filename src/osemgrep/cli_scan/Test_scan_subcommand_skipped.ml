@@ -3,6 +3,7 @@
 let t = Testo.create
 
 module F = Testutil_files
+open Fpath_.Operators
 open Test_scan_helpers
 
 (*****************************************************************************)
@@ -51,6 +52,12 @@ let filecount_root : Fpath.t = Fpath.v "tests/filecount"
 let filecount_dirs : string list =
   [ "multilangproj"; "language-filtering"; "exclude_include" ]
 
+(* The fixtures directory, symlinked into the repo as the Python harness
+   does with its targets; absolute, as the harness runs from the project
+   root. *)
+let symlinked_targets : F.t list =
+  [ F.Symlink ("targets", !!(Fpath.v (Sys.getcwd ()) // fixtures_root / "targets")) ]
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -77,6 +84,13 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~git:false ~format_args:[] ~rule:"rules/eqeq.yaml"
            ~targets:[ "targets/basic/stupid.py" ]
            ~extra_args:[ "--exclude=stupid.py" ]);
+      (* --project-root with a scanning root under a symlink that leaves
+         the project: the paths are taken as typed *)
+      t "forced project root with symlinked targets"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml"
+           ~targets:[] ~extra_files:symlinked_targets
+           ~extra_args:[ "--project-root"; "."; "targets/basic" ]);
       (* python: test_semgrepignore_ignore_log_report *)
       t "ignore log report: text" ~checked_output:(Testo.stdxxx ())
         ~normalize:normalise

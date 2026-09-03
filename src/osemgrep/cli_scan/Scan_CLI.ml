@@ -1374,7 +1374,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       | nonempty -> Some nonempty
     in
     let respect_gitignore = use_git in
-    let force_novcs_project = force_project_root <> None || not use_git in
+    let force_novcs_project = not use_git in
     let targeting_conf : Find_targets.conf =
       {
         force_project_root;
