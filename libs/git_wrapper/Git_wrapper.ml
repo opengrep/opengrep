@@ -617,7 +617,7 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
   let rand_dir () =
     let rand = Stdlib.Random.State.make_self_init () in
     let uuid = Uuidm.v4_gen rand () in
-    let dir_name = "semgrep_git_worktree_" ^ Uuidm.to_string uuid in
+    let dir_name = "opengrep_git_worktree_" ^ Uuidm.to_string uuid in
     let dir = CapTmp.get_temp_dir_name caps#tmp / dir_name in
     UUnix.mkdir !!dir 0o777;
     dir
@@ -638,7 +638,11 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
       in
       let cleanup () =
         cwd |> Fpath.to_string |> CapSys.chdir caps#chdir;
-        let cmd = (git, [ "worktree"; "remove"; !!temp_dir ]) in
+        (* A fresh checkout can look modified without any modification,
+           when a .gitattributes normalises line endings that the blobs
+           do not have; git then refuses to remove the worktree unless
+           forced. It is a throwaway directory, so forcing is safe. *)
+        let cmd = (git, [ "worktree"; "remove"; "--force"; !!temp_dir ]) in
         match UCmd.status_of_run ~quiet:true cmd with
         | Ok (`Exited 0) ->
             Log.info (fun m -> m "Finished cleaning up git worktree")
