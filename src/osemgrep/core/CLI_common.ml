@@ -80,7 +80,15 @@ let setup_logging ~force_color ~level =
   copy_to_file
   |> Option.iter (fun (file : Fpath.t) ->
          UFile.make_directories (Fpath.parent file));
-  Log_semgrep.setup ?copy_to_file ~force_color ~level ();
+  (* Colour is decided once for every output: --force-color (or
+   * $SEMGREP_FORCE_COLOR) wins, then $NO_COLOR or $SEMGREP_FORCE_NO_COLOR
+   * turns all styling off, otherwise the tty decides. Same precedence as
+   * pysemgrep, which however applied it per piece of output.
+   *)
+  let highlight_setting : Console.highlight_setting =
+    if force_color then On else if !Semgrep_envvars.v.no_color then Off else Auto
+  in
+  Log_semgrep.setup ?copy_to_file ~highlight_setting ~level ();
   Logs.debug (fun m ->
       m "Logging setup for osemgrep: force_color=%B level=%s" force_color
         (Logs.level_to_string level));

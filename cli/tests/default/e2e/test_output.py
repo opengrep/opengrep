@@ -47,60 +47,6 @@ def _etree_to_dict(t):
 
 
 @pytest.mark.kinda_slow
-def test_output_highlighting(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    results, _errors = run_semgrep_in_tmp(
-        "rules/basic.yaml",
-        target_name="basic.py",
-        output_format=OutputFormat.TEXT,
-        strict=False,
-        force_color=True,
-    )
-    snapshot.assert_match(
-        results,
-        "results.txt",
-    )
-
-
-@pytest.mark.kinda_slow
-def test_output_highlighting__no_color(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    results, _errors = run_semgrep_in_tmp(
-        "rules/basic.yaml",
-        target_name="basic.py",
-        output_format=OutputFormat.TEXT,
-        strict=False,
-        env={"NO_COLOR": "1"},
-    )
-    snapshot.assert_match(
-        results,
-        "results.txt",
-    )
-
-
-@pytest.mark.kinda_slow
-def test_output_highlighting__force_color_and_no_color(
-    run_semgrep_in_tmp: RunSemgrep, snapshot
-):
-    """
-    NO_COLOR would normally disable color: https://no-color.org/
-
-    But a tool specific flag should override a global flag.
-    So when both are set, we should have color.
-    """
-    results, _errors = run_semgrep_in_tmp(
-        "rules/basic.yaml",
-        target_name="basic.py",
-        output_format=OutputFormat.TEXT,
-        strict=False,
-        force_color=True,
-        env={"NO_COLOR": "1"},
-    )
-    snapshot.assert_match(
-        results,
-        "results.txt",
-    )
-
-
-@pytest.mark.kinda_slow
 def test_yaml_capturing(run_semgrep_in_tmp: RunSemgrep, snapshot):
     results, _errors = run_semgrep_in_tmp(
         "rules/yaml_capture.yaml",

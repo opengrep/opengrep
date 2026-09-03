@@ -270,8 +270,7 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
 
 let print_logo () : unit =
   let logo =
-    Ocolor_format.asprintf
-      {|
+    {|
 ┌──────────────┐
 │ Opengrep CLI │
 └──────────────┘
@@ -280,9 +279,14 @@ let print_logo () : unit =
   Logs.app (fun m -> m "%s" logo);
   ()
 
+(* These strings go to stderr through Logs.app, so they are styled with the
+   renderer of stderr, which follows --force-color, $NO_COLOR and the tty
+   like every other output (see CLI_common.setup_logging). *)
+let styled (style : Fmt.style) (text : string) : string =
+  Fmt.str_like Fmt.stderr "%a" Fmt.(styled style string) text
+
 let feature_status ~(enabled : bool) : string =
-  if enabled then Ocolor_format.asprintf {|@{<green>✔@}|}
-  else Ocolor_format.asprintf {|@{<red>✘@}|}
+  if enabled then styled (`Fg `Green) "✔" else styled (`Fg `Red) "✘"
 
 let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) *) () :
     unit =
@@ -315,9 +319,7 @@ let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) 
   List.iter
     (fun (feature_name, desc, is_enabled) ->
       Logs.app (fun m ->
-          m "%s %s"
-            (feature_status ~enabled:is_enabled)
-            (Ocolor_format.asprintf {|@{<bold>%s@}|} feature_name));
+          m "%s %s" (feature_status ~enabled:is_enabled) (styled `Bold feature_name));
       Logs.app (fun m ->
           m "  %s %s\n" (feature_status ~enabled:is_enabled) desc))
     features;
@@ -340,16 +342,11 @@ let display_rule_source (source : Rule_fetching.source) : unit =
               List.exists (function C.Git _ -> true | _ -> false) configs
         in
         match () with
-        | _ when has `Registry ->
-            Ocolor_format.asprintf {|@{<bold>  %s@}|}
-              "Loading rules from registry..."
+        | _ when has `Registry -> styled `Bold "  Loading rules from registry..."
         | _ when has `Git ->
-            Ocolor_format.asprintf {|@{<bold>  %s@}|}
-              "Loading rules from git repository..."
-        | _ ->
-            Ocolor_format.asprintf {|@{<bold>  %s@}|}
-              "Loading rules from local config...")
-    | Pattern _ -> Ocolor_format.asprintf {|@{  %s@}|} "Using custom pattern."
+            styled `Bold "  Loading rules from git repository..."
+        | _ -> styled `Bold "  Loading rules from local config...")
+    | Pattern _ -> "  Using custom pattern."
   in
   Logs.app (fun m -> m "%s" msg);
   ()
@@ -701,10 +698,7 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   *)
   (match conf.rules_source with
   | Pattern _ ->
-      Logs.app (fun m ->
-          m "%s"
-            (Ocolor_format.asprintf {|@{<bold>  %s@}|}
-               "Code scanning.\n"))
+      Logs.app (fun m -> m "%s" (styled `Bold "  Code scanning.\n"))
   | _ ->
       print_feature_section
         (* ~includes_token:(settings.api_token <> None) *)

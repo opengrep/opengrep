@@ -387,30 +387,24 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
         Fmt.pf ppf "%s⋮┆%s" findings_indent (String.make fill_count '-')
 
 (* TODO: factorize more this code, just the color and >>> change below *)
-let pp_styled_severity ppf ~no_color (severity : OutJ.match_severity) =
+let pp_styled_severity ppf (severity : OutJ.match_severity) =
   match severity with
   | `Critical ->
       Fmt.pf ppf "%s%a" rule_leading_indent
-        (if no_color then Fmt.(styled `None string)
-         else Fmt.(styled (`Fg `Magenta) string))
+        Fmt.(styled (`Fg `Magenta) string)
         "❯❯❯❱"
   | `Error
   | `High ->
-      Fmt.pf ppf "%s%a" rule_leading_indent
-        (if no_color then Fmt.(styled `None string)
-         else Fmt.(styled (`Fg `Red) string))
-        "❯❯❱"
+      Fmt.pf ppf "%s%a" rule_leading_indent Fmt.(styled (`Fg `Red) string) "❯❯❱"
   | `Warning
   | `Medium ->
       Fmt.pf ppf "%s%a" rule_leading_indent
-        (if no_color then Fmt.(styled `None string)
-         else Fmt.(styled (`Fg `Yellow) string))
+        Fmt.(styled (`Fg `Yellow) string)
         " ❯❱"
   | `Info
   | `Low ->
       Fmt.pf ppf "%s%a" rule_leading_indent
-        (if no_color then Fmt.(styled `None string)
-         else Fmt.(styled (`Fg `Green) string))
+        Fmt.(styled (`Fg `Green) string)
         "  ❱"
   | `Inventory
   | `Experiment ->
@@ -456,10 +450,9 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
        in
        Fmt.pf ppf "  %a@." Fmt.(styled (`Fg `Cyan) (esc ++ string)) !!(cur.path));
     (if must_print_rule then
-       let no_color = !Semgrep_envvars.v.no_color in
        let rule_name_lines =
          if has_rule_name then (
-           pp_styled_severity ppf ~no_color cur.extra.severity;
+           pp_styled_severity ppf cur.extra.severity;
            indent_and_wrap_lines ~indent:rule_indent_size ~max_width:text_width
              (Rule_ID.to_string cur.check_id))
          else []

@@ -453,8 +453,8 @@ to 3 hours.|}
 let o_force_color : bool Term.t =
   H.negatable_flag_with_env [ "force-color" ] ~neg_options:[ "no-force-color" ]
     ~default:default.output_conf.force_color
-      (* TOPORT? need handle SEMGREP_COLOR_NO_COLOR or NO_COLOR
-       * # https://no-color.org/
+      (* NO_COLOR (https://no-color.org/) and SEMGREP_FORCE_NO_COLOR are
+       * handled in CLI_common.setup_logging; forcing colour wins.
        *)
     ~env:"SEMGREP_FORCE_COLOR"
     ~doc:

@@ -19,10 +19,10 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Opengrep CLI │
 └──────────────┘
 
-[32m✔[39m [1mOpengrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
 
-[1m  Loading rules from local config...[0m
+  Loading rules from local config...
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/bad8.yaml:2:5: Invalid rule schema in rule rules.arg-reassign
   --> rules/bad8.yaml:2
@@ -46,9 +46,9 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Opengrep CLI │
 └──────────────┘
 
-[32m✔[39m [1mOpengrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
 
-[1m  Loading rules from local config...[0m
+  Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.arg-reassign","message":"Invalid rule schema at line rules/bad8.yaml:2:\n Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.","path":"rules/bad8.yaml","long_msg":"Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad8.yaml","start":{"line":2,"col":5,"offset":11},"end":{"line":2,"col":6,"offset":12}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 exit code: 4

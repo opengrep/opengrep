@@ -19,10 +19,10 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Opengrep CLI │
 └──────────────┘
 
-[32m✔[39m [1mOpengrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
 
-[1m  Loading rules from local config...[0m
+  Loading rules from local config...
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/invalid-metavariable-regex.yml:7:31: Invalid YAML
   --> rules/invalid-metavariable-regex.yml:7
@@ -46,9 +46,9 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Opengrep CLI │
 └──────────────┘
 
-[32m✔[39m [1mOpengrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
 
-[1m  Loading rules from local config...[0m
+  Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/invalid-metavariable-regex.yml:7:\n (approximate error location; error nearby after) error calling parser: did not find expected '-' indicator character 0 position 0 returned: 0","path":"rules/invalid-metavariable-regex.yml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 exit code: 5

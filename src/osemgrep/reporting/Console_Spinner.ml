@@ -45,7 +45,13 @@ let spinner_async () : 'a Lwt.t =
       ANSITerminal.move_cursor 0 (-1);
       jump_y := false)
     else ();
-    ANSITerminal.printf [ ANSITerminal.green ] "%s" spinner;
+    (* the glyph's colour follows $NO_COLOR like every other output *)
+    let style =
+      match Console.get_highlight () with
+      | On -> [ ANSITerminal.green ]
+      | Off -> []
+    in
+    ANSITerminal.printf style "%s" spinner;
     Lwt.return ()
   in
   (* create a cancellable promise *)

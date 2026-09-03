@@ -336,12 +336,12 @@ let setup ?(highlight_setting = Console.get_highlight_setting ())
     | Off -> false
     | Auto -> isatty
   in
-  let style_renderer =
-    match highlight with
-    | true -> Some `Ansi_tty
-    | false -> None
+  (* an absent renderer would make Fmt_tty detect the tty on its own and
+     ignore the decision above *)
+  let style_renderer : Fmt.style_renderer =
+    if highlight then `Ansi_tty else `None
   in
-  Fmt_tty.setup_std_outputs ?style_renderer ();
+  Fmt_tty.setup_std_outputs ~style_renderer ();
   Logs.set_level ~all:true level;
   Logs.set_reporter
     (mk_reporter ~additional_reporters ~dst ~require_one_of_these_tags

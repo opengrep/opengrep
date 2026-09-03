@@ -57,7 +57,7 @@ let default_subcommand = "scan"
 (* Placeholder for adaptation of pysemgrep state.terminal.init_for_cli() *)
 (* TOPORT:
      1. GITHUB_ACTIONS specific output requirements
-     2. Any NO_COLOR / SEMGREP_FORCE_NO_COLOR behavior
+   NO_COLOR / SEMGREP_FORCE_NO_COLOR are handled in CLI_common.setup_logging.
 *)
 (* let init_for_cli () : unit =
    ()
