@@ -138,6 +138,10 @@ let tests_with_or_without_git ~with_git =
        (.semgrepignore, --include, --exclude) *)
     test_find_targets ~with_git ~scanning_root:"a.py" "scan explicit target"
       [ F.file "a.py"; F.File (".semgrepignore", "a.py\n") ];
+    (* An ignored folder given as the scanning root is not scanned. *)
+    test_find_targets ~with_git ~scanning_root:"dir"
+      "scanning root is a semgrepignored folder"
+      [ F.File (".semgrepignore", "dir/\n"); F.dir "dir" [ F.file "a.c" ] ];
     (* The folder is reported once, not each file under it. *)
     test_find_targets ~with_git "semgrepignored folder is reported once"
       [
@@ -184,8 +188,8 @@ let tests_with_git_only =
       ];
     test_find_targets ~with_git "symlinks from git are filtered too"
       [ F.Symlink ("lnk", "missing"); F.File ("a", "some content") ];
-    (* The ignored folder is above the scanning root: its files are
-       reported, not the folder. *)
+    (* The ignored folder is above the scanning root, which is reported
+       itself. *)
     test_find_targets ~with_git ~scanning_root:"dir/sub"
       "scanning root under a semgrepignored folder"
       [

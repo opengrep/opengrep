@@ -881,12 +881,14 @@ let setup_path_filters conf (project_roots : Project.roots) :
   (semgrepignore_filter, include_filter)
 
 (* Work from a list of target paths obtained with git *)
-let filter_targets conf project_roots (all_files : Fppath.t list) =
-  let ign = setup_path_filters conf project_roots in
-  filter_paths ign project_roots.scanning_roots all_files
+let filter_targets
+    (filters : Gitignore.filter * Include_filter.t option)
+    (project_roots : Project.roots) (all_files : Fppath.t list) =
+  filter_paths filters project_roots.scanning_roots all_files
 
-let get_targets_from_filesystem conf (project_roots : Project.roots) =
-  let ign, include_filter = setup_path_filters conf project_roots in
+let get_targets_from_filesystem
+    ((ign, include_filter) : Gitignore.filter * Include_filter.t option)
+    conf (project_roots : Project.roots) =
   List.fold_left
     (fun (selected, skipped) (scan_root : Fppath.t) ->
       (* better: Note that we use Unix.stat below, not Unix.lstat, so
@@ -973,8 +975,37 @@ let force_select_scanning_roots
       Typically, the sets of files produced by (2) and (3) overlap vastly.
    4. Take the union of (2) and (3).
 *)
+(* A directory given as a scanning root that the ignore rules exclude is
+   not listed at all. The walk tests the entries of a directory, never the
+   directory it starts from, and git would list everything under it. *)
+let ignored_scanning_root (ign : Gitignore.filter) (root : Fppath.t) :
+    Out.skipped_target option =
+  if not (UFile.is_dir ~follow_symlinks:true root.fpath) then None
+  else
+    (* the trailing slash makes directory-only patterns apply *)
+    let status, selection_events =
+      Gitignore_filter.select ign (Ppath.add_seg root.ppath "")
+    in
+    match status with
+    | Not_ignored -> None
+    | Ignored ->
+        Log.warn (fun m ->
+            m "the scanning root %s is skipped, nothing under it is scanned:\n%s"
+              !!(root.fpath)
+              (Gitignore.show_selection_events selection_events));
+        Some (skipped_of_ignored selection_events root.fpath)
+
 let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targets =
   Log.debug (fun m -> m "Find_target.get_targets_for_project");
+  let ((ign, _) as filters) = setup_path_filters conf project_roots in
+  let skipped_roots, scanning_roots =
+    project_roots.scanning_roots
+    |> List.partition_map (fun (root : Fppath.t) ->
+           match ignored_scanning_root ign root with
+           | Some skipped -> Left skipped
+           | None -> Right root)
+  in
+  let project_roots = { project_roots with scanning_roots } in
   (* Obtain the list of files from git if possible because it does it
      faster than what we can do by scanning the filesystem: *)
   let git_tracked = git_list_tracked_files project_roots in
@@ -990,12 +1021,13 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
             m "target file candidates from git: tracked: %i, untracked: %i"
               (List.length tracked)
               (List.length untracked));
-        filter_targets conf project_roots (List.rev_append tracked untracked)
+        filter_targets filters project_roots (List.rev_append tracked untracked)
     (* Non-Git projects *)
     | None, _
     | _, None ->
-        get_targets_from_filesystem conf project_roots
+        get_targets_from_filesystem filters conf project_roots
   in
+  let skipped_targets = List.rev_append skipped_roots skipped_targets in
   let is_git_repo = Option.is_some git_tracked in
   let selected_targets, skipped_targets =
     force_select_scanning_roots
