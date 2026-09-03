@@ -1,0 +1,10 @@
+--- begin input files ---
+taint_trace.cpp
+taint_trace.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 47 insertions(+)
+ create mode 100644 taint_trace.cpp
+ create mode 100644 taint_trace.yaml
+{"version":"<MASKED>","results":[{"check_id":"taint-trace","path":"taint_trace.cpp","start":{"line":17,"col":10,"offset":518},"end":{"line":17,"col":14,"offset":522},"extra":{"metavars":{"$RHS":{"start":{"line":15,"col":40,"offset":455},"end":{"line":15,"col":44,"offset":459},"abstract_content":"res1"},"$SRC":{"start":{"line":17,"col":10,"offset":518},"end":{"line":17,"col":14,"offset":522},"abstract_content":"res2"}},"message":"found an error","metadata":{"interfile":true},"severity":"WARNING","fingerprint":"3ef3edcde806d4e7adfbc69185dccd3c8ae67fec09a9bc86b38f2f9ce62f9c8d46109b2250ba4473475259d3ad3b2b75821bc803590835e0a2e8f5849ee8a56e_0","lines":"    SINK(res2);                               // (5) sink res2","is_ignored":false,"validation_state":"NO_VALIDATOR","dataflow_trace":{"taint_source":["CliLoc",[{"path":"taint_trace.cpp","start":{"line":10,"col":14,"offset":226},"end":{"line":10,"col":22,"offset":234}},"SOURCE()"]],"intermediate_vars":[{"location":{"path":"taint_trace.cpp","start":{"line":10,"col":7,"offset":219},"end":{"line":10,"col":11,"offset":223}},"content":"res1"},{"location":{"path":"taint_trace.cpp","start":{"line":15,"col":5,"offset":420},"end":{"line":15,"col":12,"offset":427}},"content":"curBase"},{"location":{"path":"taint_trace.cpp","start":{"line":12,"col":7,"offset":307},"end":{"line":12,"col":11,"offset":311}},"content":"res2"}],"taint_sink":["CliLoc",[{"path":"taint_trace.cpp","start":{"line":17,"col":10,"offset":518},"end":{"line":17,"col":14,"offset":522}},"res2"]]},"engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["taint_trace.cpp"]},"interfile_languages_used":[],"skipped_rules":[]}

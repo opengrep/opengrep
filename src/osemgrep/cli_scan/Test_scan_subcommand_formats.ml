@@ -47,10 +47,18 @@ let formats : (string * string * (string -> string) list) list =
 
 let tests (caps : < Scan_subcommand.caps >) =
   Testo.categorize "Osemgrep Scan formats (e2e)"
-    (formats
-    |> List.map
-         (fun ((label : string), (flag : string), (normalize : (string -> string) list)) ->
-           t (Printf.sprintf "%s output of a basic scan" label)
-             ~checked_output:(Testo.stdout ()) ~normalize
-             (run_scan caps ~format_args:[ flag ] ~rule:"rules/eqeq.yaml"
-                ~targets:[ "targets/basic/stupid.py" ])))
+    ((formats
+     |> List.map
+          (fun ((label : string), (flag : string), (normalize : (string -> string) list)) ->
+            t (Printf.sprintf "%s output of a basic scan" label)
+              ~checked_output:(Testo.stdout ()) ~normalize
+              (run_scan caps ~format_args:[ flag ] ~rule:"rules/eqeq.yaml"
+                 ~targets:[ "targets/basic/stupid.py" ])))
+    @ [
+        (* python: test_json_output_with_dataflow_traces *)
+        t "JSON output with --dataflow-traces" ~checked_output:(Testo.stdout ())
+          ~normalize:normalise
+          (run_scan caps ~format_args:[ "--json" ]
+             ~extra_args:[ "--dataflow-traces" ] ~rule:"rules/taint_trace.yaml"
+             ~targets:[ "targets/taint/taint_trace.cpp" ]);
+      ])

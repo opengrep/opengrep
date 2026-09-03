@@ -15,19 +15,6 @@ from semgrep.constants import OutputFormat
 REPO_DIR_NAME = "project_name"
 
 
-@pytest.mark.kinda_slow
-def test_json_output_with_dataflow_traces(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    snapshot.assert_match(
-        run_semgrep_in_tmp(
-            "rules/taint_trace.yaml",
-            target_name="taint/taint_trace.cpp",
-            output_format=OutputFormat.JSON,
-            options=["--dataflow-traces"],
-        ).stdout,
-        "results.json",
-    )
-
-
 IGNORE_LOG_REPORT_FIRST_LINE = "Some files were skipped or only partially analyzed."
 IGNORE_LOG_REPORT_LAST_LINE = (
     "  For a full list of skipped files, run opengrep with the --verbose flag.\n"
