@@ -64,7 +64,10 @@ let absolutify_fid (project_root : Fpath.t option) (fid : Function_id.t)
   | None -> fid
 
 let files_of_graph (graph : Call_graph.G.t) : Fpath.t list =
-  let tbl : (string, Fpath.t) Hashtbl.t = Hashtbl.create 64 in
+  (* The vertex count bounds the file count. *)
+  let tbl : (string, Fpath.t) Hashtbl.t =
+    Hashtbl.create (Call_graph.G.nb_vertex graph)
+  in
   Call_graph.G.iter_vertex (fun (vertex : Function_id.t) ->
     match Function_id.file_of vertex with
     | Some fp -> Hashtbl.replace tbl (Fpath.to_string fp) fp
