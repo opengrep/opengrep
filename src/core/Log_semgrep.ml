@@ -28,9 +28,9 @@ https://www.notion.so/semgrep/Logging-in-semgrep-semgrep-core-osemgrep-67c9046fa
  * TODO: add some --semgrep-log-xxx flags in osemgrep CLI for the envvars so
  * they can be set also with CLI flags and will be part of the man page.
  *)
-let setup ?log_to_file ?copy_to_file ?require_one_of_these_tags ~force_color
-    ~level () =
-  UConsole.setup ~highlight_setting:(if force_color then On else Auto) ();
+let setup ?log_to_file ?copy_to_file ?require_one_of_these_tags
+    ~(highlight_setting : Console.highlight_setting) ~level () =
+  UConsole.setup ~highlight_setting ();
   (* We override the default use of LOG_XXX env var in Logs_.setup() with
    * SEMGREP_LOG_XXX env vars because Gitlab was reporting perf problems due
    * to all the logging produced by Semgrep. Indeed, Gitlab CI itself is running

@@ -19,10 +19,10 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Opengrep CLI │
 └──────────────┘
 
-[32m✔[39m [1mOpengrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
 
-[1m  Loading rules from local config...[0m
+  Loading rules from local config...
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/bad6.yaml:5:9: Invalid rule schema in rule rules.arg-reassign
   --> rules/bad6.yaml:5
@@ -46,9 +46,9 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Opengrep CLI │
 └──────────────┘
 
-[32m✔[39m [1mOpengrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
 
-[1m  Loading rules from local config...[0m
+  Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.arg-reassign","message":"Invalid rule schema at line rules/bad6.yaml:5:\n Expected a list for pattern-either","path":"rules/bad6.yaml","long_msg":"Expected a list for pattern-either","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad6.yaml","start":{"line":5,"col":9,"offset":90},"end":{"line":5,"col":23,"offset":104}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 exit code: 4

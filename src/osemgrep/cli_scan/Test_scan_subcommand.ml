@@ -160,6 +160,8 @@ let without_settings f =
 let with_env_app_token ?(token = dummy_app_token) f =
   Semgrep_envvars.with_envvar "SEMGREP_APP_TOKEN" token f
 
+let with_no_color f = Semgrep_envvars.with_envvar "NO_COLOR" "1" f
+
 (*****************************************************************************)
 (* Tests *)
 (*****************************************************************************)
@@ -1463,6 +1465,17 @@ let tests (caps : < Scan_subcommand.caps >) =
         ~checked_output:(Testo.stdxxx ())
         ~normalize:(mask_times :: normalize)
         (test_basic_output caps ~extra_args:[ "--time" ]);
+      (* the captured output is not a tty, so colour only appears when forced *)
+      t "colour: --force-color styles the text output"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_basic_output caps ~extra_args:[ "--force-color" ]);
+      t "colour: NO_COLOR gives plain output" ~checked_output:(Testo.stdxxx ())
+        ~normalize
+        (fun () -> with_no_color (test_basic_output caps));
+      t "colour: --force-color wins over NO_COLOR"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (fun () ->
+          with_no_color (test_basic_output caps ~extra_args:[ "--force-color" ]));
       t "--time: the times in the JSON output" (test_time_json caps);
       t "INVENTORY and EXPERIMENT rules never run"
         (test_inventory_and_experiment_rules_never_run caps);

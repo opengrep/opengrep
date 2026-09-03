@@ -144,7 +144,7 @@ let of_current_sys_env () : t =
     src_directory = env_or Fpath.v "SEMGREP_SRC_DIRECTORY" (Fpath.v "/src");
     user_home_dir;
     user_dot_semgrep_dir;
-    no_color = env_truthy "NO_COLOR" || env_truthy "SEMGREP_COLOR_NO_COLOR";
+    no_color = env_truthy "NO_COLOR" || env_truthy "SEMGREP_FORCE_NO_COLOR";
     is_ci = in_env "CI";
     in_docker = in_env "SEMGREP_IN_DOCKER";
     in_gh_action = in_env "GITHUB_WORKSPACE";

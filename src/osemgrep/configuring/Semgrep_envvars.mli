@@ -23,8 +23,8 @@ type t = {
   user_home_dir : Fpath.t;
   (* user_home_dir/.semgrep *)
   user_dot_semgrep_dir : Fpath.t;
-  (* TODO: Reconcile $SEMGREP_FORCE_COLOR via o_force_color *)
-  (* ($NO_COLOR | $SEMGREP_COLOR_NO_COLOR) *)
+  (* ($NO_COLOR | $SEMGREP_FORCE_NO_COLOR); overridden by --force-color
+   * (or $SEMGREP_FORCE_COLOR) in CLI_common.setup_logging *)
   no_color : bool;
   is_ci : bool;
   in_docker : bool;

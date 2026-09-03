@@ -18,11 +18,11 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Opengrep CLI │
 └──────────────┘
 
-[32m✔[39m [1mOpengrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
 
 [<MASKED TIMESTAMP>][INFO]: Getting the rules
-[1m  Loading rules from local config...[0m
+  Loading rules from local config...
 [<MASKED TIMESTAMP>][INFO]: loading local config from rules/multiple-long.yaml
 [<MASKED TIMESTAMP>][INFO]: Done loading local config from rules/multiple-long.yaml
 [<MASKED TIMESTAMP>][INFO]: Computing the targets
