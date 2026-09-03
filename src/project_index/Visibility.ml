@@ -24,8 +24,9 @@ let build_dir_index
     ~(cfg : Index_lang_rules.t)
     (file_infos : Types.file_info list)
   : (string, (string, unit) Hashtbl.t) Hashtbl.t =
+  (* One entry per scope key; the file count bounds it. *)
   let dir_index : (string, (string, unit) Hashtbl.t) Hashtbl.t =
-    Hashtbl.create 1024
+    Hashtbl.create (List.length file_infos)
   in
   let scope_key_opt (fi : Types.file_info) : string option =
     match cfg.Index_lang_rules.unqualified_scope with
