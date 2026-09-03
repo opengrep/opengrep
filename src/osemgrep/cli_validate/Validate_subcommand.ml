@@ -209,7 +209,7 @@ let check_targets_rules (caps : < caps ; .. >) targets_rules
     Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
   in
   let result_or_exn =
-    core_run_func.run core_runner_conf
+    core_run_func.run ~git_repo:false core_runner_conf
       (* These two configs are irrelevant to the "validate" subcommand *)
       Find_targets.default_conf Match_patterns.default_matching_conf
       (metarules, []) targets_rules

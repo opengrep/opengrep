@@ -12,11 +12,11 @@
 ┌─────────────┐
 │ Scan Status │
 └─────────────┘
-  Scanning 2 files tracked by git with 4 Code rules:
+  Scanning 2 files with 4 Code rules:
 
   Language   Rules   Files          Origin   Rules
  ──────────────────────────        ────────────────
-  python         3       1          Custom       3
+  python         3       1          Custom       4
 
 --- begin input files ---
 eqeq.yaml
@@ -41,5 +41,5 @@ stupid.py
 │ Scan Summary │
 └──────────────┘
 
-Ran 4 rules on 1 file: 1 finding.
+Ran 3 rules on 1 file: 1 finding.
 ASSERT exit code

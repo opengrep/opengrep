@@ -88,10 +88,11 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
           Core_runner.mk_core_run_for_osemgrep (Core_scan.scan session.caps)
         in
         Logs.debug (fun m ->
-            m "Running Semgrep with %d rules" (List.length rules));
+            m "Running Opengrep with %d rules" (List.length rules));
         let res_or_exn =
           (fun () ->
-            core_run_func.run runner_conf
+            (* the session's targets do not say whether git listed them *)
+            core_run_func.run ~git_repo:false runner_conf
               (* TODO: when running with LSP, could the config of matching be needed? *)
               Find_targets.default_conf Match_patterns.default_matching_conf
               (rules, []) targets)

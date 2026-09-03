@@ -46,10 +46,12 @@ type result = {
  * The list of targets below are final targets (not scanning roots).
  * no further scanning of the filesystem shall be performed.
  * The Find_targets.conf argument is for explicit target management.
+ * git_repo says whether the targets came from git, for the scan status.
  *)
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
+    git_repo:bool ->
     conf ->
     Find_targets.conf ->
     Match_patterns.matching_conf ->
