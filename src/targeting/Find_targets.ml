@@ -636,20 +636,6 @@ let git_list_files ~exclude_standard
                  let canon_scanning_root_path =
                    Rpath.canonical_exn sc_root.fpath
                  in
-                 (* Best effort to get a relative scanning root path
-                    (will fail in file systems with multiple roots) *)
-                 let rel_scanning_root_path_or_absolute =
-                   if Fpath.is_rel canon_scanning_root_path then
-                     canon_scanning_root_path
-                   else
-                     match
-                       Fpath.relativize ~root:cwd canon_scanning_root_path
-                     with
-                     | Some rel_scanning_root -> rel_scanning_root
-                     | None ->
-                         (* absolute, on another volume than cwd *)
-                         canon_scanning_root_path
-                 in
                  (* We can't just cd into the scanning root to obtain paths
                     relative to it because the scanning root may be a regular
                     file. It could also be the root of the file system, so we
@@ -673,14 +659,13 @@ let git_list_files ~exclude_standard
                         *)
                         let target_fpath =
                           match
-                            (* 'root' must be a folder. We relativize against
-                               the canonicalised root and cwd, so on Windows
-                               this no longer emits a '..' walk-up; the clean
-                               remainder is then prefixed with the typed root
-                               below. *)
-                            Fpath.relativize
-                              ~root:rel_scanning_root_path_or_absolute
-                              target_relative_to_cwd_or_absolute
+                            (* Both absolute and normalised: relative to
+                               cwd, the typed root and the path listed by
+                               git can spell one directory two ways, '../sub'
+                               and '.', and never match. *)
+                            Fpath.relativize ~root:canon_scanning_root_path
+                              (Fpath.normalize
+                                 (cwd // target_relative_to_cwd_or_absolute))
                           with
                           | Some target_relative_to_scan_root ->
                               Fpath_.append_no_dot orig_scanning_root_path

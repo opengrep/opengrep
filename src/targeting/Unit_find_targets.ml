@@ -29,10 +29,12 @@ module Out = Semgrep_output_v1_t
    with_git: make this a git repository
    non_git_files: extra files that must be created but won't be git-added
                   (only relevant if with_git is true)
+   cwd: a folder of the workspace to run from, instead of its root
+   scanning_root: may start with "<root>", the absolute path of the workspace
 *)
 let test_find_targets ?expected_outcome ?includes ?(excludes = [])
-    ?(non_git_files : F.t list = []) ~with_git ?(scanning_root = ".") name
-    (files : F.t list) =
+    ?(non_git_files : F.t list = []) ~with_git ?(cwd = ".")
+    ?(scanning_root = ".") name (files : F.t list) =
   let category = if with_git then "with git" else "without git" in
   let test_func () =
     printf "Test name: %s > %s\n" category name;
@@ -62,9 +64,18 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
             exclude = excludes;
           }
         in
+        let scanning_root =
+          let placeholder = "<root>" in
+          if String.starts_with ~prefix:placeholder scanning_root then
+            !!root
+            ^ String.sub scanning_root (String.length placeholder)
+                (String.length scanning_root - String.length placeholder)
+          else scanning_root
+        in
         let targets =
-          Find_targets.get_target_fpaths conf
-            [ Scanning_root.of_fpath (Fpath.v scanning_root) ]
+          F.with_chdir (Fpath.v cwd) (fun () ->
+              Find_targets.get_target_fpaths conf
+                [ Scanning_root.of_fpath (Fpath.v scanning_root) ])
         in
         (match includes with
         | None -> ()
@@ -138,6 +149,20 @@ let tests_with_or_without_git ~with_git =
        (.semgrepignore, --include, --exclude) *)
     test_find_targets ~with_git ~scanning_root:"a.py" "scan explicit target"
       [ F.file "a.py"; F.File (".semgrepignore", "a.py\n") ];
+    (* The paths keep the scanning root as typed, whatever its spelling
+       and wherever the command runs. *)
+    test_find_targets ~with_git ~cwd:"dir" ~scanning_root:".."
+      "scanning root above the working directory"
+      [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
+    test_find_targets ~with_git ~cwd:"dir" ~scanning_root:"../dir"
+      "scanning root spelled through the parent"
+      [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
+    test_find_targets ~with_git ~cwd:"dir" ~scanning_root:"<root>"
+      "absolute scanning root above the working directory"
+      [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
+    test_find_targets ~with_git ~scanning_root:"<root>/dir"
+      "absolute scanning root below the working directory"
+      [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
     (* The ignore file of the working directory applies to a root under it,
        with its patterns anchored there. *)
     test_find_targets ~with_git ~scanning_root:"dir"
