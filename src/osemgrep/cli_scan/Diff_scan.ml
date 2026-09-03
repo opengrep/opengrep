@@ -46,11 +46,12 @@ type diff_scan_func =
    baseline commit scan. Matches are considered identical if the
    tuples containing the rule ID, file path, and matched code snippet
    are equal. *)
-(* The path component is taken relative to the scan root.  Per-target matches
-   carry the (relative) target path, but an interfile match carries a path
-   absolutised against its scan's root — the baseline worktree for the baseline
-   scan, the real checkout for the head one — so comparing them raw would never
-   match and no interfile finding could ever be deduplicated. *)
+(* The path component is taken relative to the scan root.  Matches normally
+   carry the target path as given (relative), but a match on an absolute
+   target carries an absolute path — into the baseline worktree for the
+   baseline scan, into the real checkout for the head one — so those must be
+   relativized against each scan's own root or they could never compare
+   equal and such findings could never be deduplicated. *)
 let extract_sig ~(root : Fpath.t) renamed (m : Core_match.t) =
   let rule_id = m.rule_id in
   let abs_path = m.path.internal_path_to_content in
@@ -164,12 +165,10 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                        !!(pm.path.internal_path_to_content))
                 |> prepare_targets
               in
-              (* Baseline targets carry [project_root = None]: interfile
-                 dispatch falls back to [cwd], which is the baseline worktree
-                 checkout root, so projidx still builds a whole-project graph
-                 and the reproduced interfile findings are removed by the
-                 signature-based diff.  Multi-root scans where the intended
-                 root differs from [cwd] would use the wrong baseline root. *)
+              (* Per-target replay targets carry [project_root = None]: the
+                 per-target engine does not consult it.  Interfile replay
+                 targets get real roots below instead — see
+                 [baseline_targets]. *)
               let wrap_as_targets (fpaths : Fpath.t list)
                   : Target_and_root.t list =
                 List_.map
@@ -198,11 +197,22 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                      is no help either, since a diff scan already narrowed the
                      head to the changed files, so take the baseline's own full
                      target set. *)
+                  (* Rediscover targets AND project roots inside the baseline
+                     worktree, exactly as the head scan discovered them in the
+                     real checkout.  Rebuilding targets from bare paths with
+                     [project_root = None] would make interfile dispatch fall
+                     back to [cwd] as the root — and [run_with_worktree] enters
+                     the worktree at the subdirectory matching the launch cwd,
+                     so a scan launched from a repo subdirectory would build
+                     the baseline graph without the companion files outside
+                     that subdirectory, resurrecting pre-existing cross-file
+                     findings as "new".  Multi-root scans lose their per-target
+                     roots the same way. *)
                   let { Find_targets.selected = all_in_baseline; _ } =
-                    Find_targets.get_target_fpaths conf.targeting_conf
-                      conf.target_roots
+                    Find_targets.get_target_fpaths_with_project_roots
+                      conf.targeting_conf conf.target_roots
                   in
-                  wrap_as_targets all_in_baseline
+                  all_in_baseline
                 else wrap_as_targets paths_in_match
               in
               let res = core baseline_targets baseline_rules in
@@ -232,7 +242,9 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
     (profiler : Profiler.t) (baseline : Find_targets.baseline_ref)
     (targets : Target_and_root.t list)
-    (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
+    (rules : Rule.rules)
+    ~(head_scan_func : diff_scan_func)
+    ~(baseline_scan_func : diff_scan_func) :
     Core_result.result_or_exn =
   Logs.info (fun m ->
       m "running differential scan on baseline %s"
@@ -306,7 +318,7 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
   in
   let (head_scan_result : Core_result.result_or_exn) =
     Profiler.record profiler ~name:"head_core_time" (fun () ->
-        diff_scan_func targets rules)
+        head_scan_func targets rules)
   in
   scan_baseline_and_remove_duplicates caps conf profiler head_scan_result rules
-    commit status diff_scan_func
+    commit status baseline_scan_func
