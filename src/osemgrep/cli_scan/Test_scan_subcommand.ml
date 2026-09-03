@@ -145,6 +145,16 @@ def leak(v):
 # unrelated trailing comment added by this commit
 |}
 
+(* Caller at the repo ROOT, importing the helper from the app/ package: the
+   companion supplying the taint sits outside the directory the scan is
+   launched from in the subdirectory tests. *)
+let interfile_caller_pkg_py_content = {|
+from app.sinks import leak
+
+def go():
+    leak(source())
+|}
+
 (* coupling: similar to cli/tests/.../targets/basic/stupid.py *)
 let stupid_py_content = {|
 def foo(a, b):
@@ -619,6 +629,76 @@ let test_interfile_diff_scan_preexisting (caps : Scan_subcommand.caps) () =
                     "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
                     "--taint-interfile"; "--baseline-commit"; "HEAD~1";
                   |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* A plain interfile scan launched from a repo SUBDIRECTORY: the index is
+   built from the project root discovered by walking up from the targets, so
+   the caller outside the launch directory must still be indexed and supply
+   the taint.  Discovery used to return cwd-relative paths that consumers
+   resolved against the project root — the two agree only when the scan runs
+   from the root, so from a subdirectory every file failed to read and the
+   index came out empty, silently downgrading the rule to intrafile. *)
+let test_interfile_scan_from_subdir (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("main.py", interfile_caller_pkg_py_content);
+          F.Dir
+            ( "app",
+              [
+                F.File ("rules.yml", taint_interfile_content);
+                F.File ("sinks.py", interfile_sink_py_content);
+              ] );
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            F.with_chdir (Fpath.v "app") (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile";
+                      |]))
+          in
+          Exit_code.Check.ok exit_code))
+
+(* The diff-scan shape of the test above: the flow pre-exists and this commit
+   only appends a comment, so the diff must report NOTHING.  The baseline
+   replay must rediscover targets and project roots inside its worktree the
+   same way the head scan discovered them in the real checkout — replaying
+   bare paths with the launch cwd as the root builds the baseline graph
+   without the out-of-subdirectory caller, fails to reproduce the
+   pre-existing finding, and misreports it as newly introduced. *)
+let test_interfile_diff_scan_subdir (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("main.py", interfile_caller_pkg_py_content);
+          F.Dir
+            ( "app",
+              [
+                F.File ("rules.yml", taint_interfile_content);
+                F.File ("sinks.py", interfile_sink_py_content);
+              ] );
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          UFile.write_file
+            ~file:(Fpath.v "app/sinks.py")
+            interfile_sink_py_touched_content;
+          Git_wrapper.add [ Fpath.v "." ];
+          Git_wrapper.commit "Touch the sink file";
+          let exit_code =
+            F.with_chdir (Fpath.v "app") (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile"; "--baseline-commit";
+                        "HEAD~1";
+                      |]))
           in
           Exit_code.Check.ok exit_code))
 
@@ -1929,6 +2009,12 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "interfile pre-existing findings are not reported by a diff scan"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_multi_commit
         (test_interfile_diff_scan_preexisting caps);
+      t "interfile findings when scanning from a subdirectory"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_interfile_scan_from_subdir caps);
+      t "interfile diff scan from a subdirectory reports nothing pre-existing"
+        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_multi_commit
+        (test_interfile_diff_scan_subdir caps);
       t "interfile findings in a diff scan"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_multi_commit
         (test_interfile_diff_scan caps);

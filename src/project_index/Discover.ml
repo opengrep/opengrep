@@ -98,6 +98,17 @@ let discover_files ~(targeting_conf : Find_targets.conf)
   let { Find_targets.selected; _ } =
     Find_targets.get_target_fpaths targeting_conf roots
   in
+  (* [Find_targets] emits paths relative to the process cwd, but every
+     consumer resolves them against [project_root] — module-path
+     derivation, the parse workers, [make_paths_absolute].  The two
+     conventions only coincide when the scan is launched from the project
+     root; from a subdirectory the files fail to read and the index comes
+     out empty.  Return absolute paths so no consumer has to guess. *)
+  let cwd = Fpath.v (Sys.getcwd ()) in
+  let selected =
+    List_.map (fun (file : Fpath.t) -> fst (Fpath_.absolutify ~cwd file))
+      selected
+  in
   let lang_files = List.filter (lang_matches lang) selected in
   apply_include_exclude ~project_root
     ~includes:residual_includes ~excludes lang_files

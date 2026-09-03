@@ -609,7 +609,8 @@ let check_targets_with_rules ?(print_summary = true)
         | Some baseline ->
             (* scan_baseline calls internally Profiler.record "head_core_time"  *)
             (* diff scan mode *)
-            let diff_scan_func : Diff_scan.diff_scan_func =
+            let mk_diff_scan_func ?file_match_hook () : Diff_scan.diff_scan_func
+                =
              fun targets rules ->
               let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
               run ?file_match_hook
@@ -617,9 +618,14 @@ let check_targets_with_rules ?(print_summary = true)
                 conf.core_runner_conf conf.targeting_conf conf.matching_conf
                 (rules, invalid_rules) targets
             in
+            (* The baseline replay exists only to build the dedup set: its
+               matches must never stream through the incremental-output hook,
+               or pre-existing (baseline) findings get printed as output. *)
             Diff_scan.scan_baseline
               (caps :> < Cap.chdir ; Cap.tmp >)
-              conf profiler baseline selected rules diff_scan_func
+              conf profiler baseline selected rules
+              ~head_scan_func:(mk_diff_scan_func ?file_match_hook ())
+              ~baseline_scan_func:(mk_diff_scan_func ())
       in
       match result_or_exn with
       | Error exn ->
