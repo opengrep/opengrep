@@ -163,6 +163,8 @@ let tests (caps : Cap.all_caps) =
       Test_scan_subcommand_formats.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_targets.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_config.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_baseline.tests
+        (caps :> Test_scan_subcommand_baseline.caps);
       Test_scan_subcommand_autofix.tests (caps :> Scan_subcommand.caps);
       Test_ci_subcommand.tests (caps :> Ci_subcommand.caps);
       Unit_test_subcommand.tests (caps :> Test_subcommand.caps);
