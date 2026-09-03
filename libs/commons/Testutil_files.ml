@@ -30,6 +30,7 @@ open Common
 type t =
   | Dir of string * t list
   | File of string * string
+  | Executable of string * string
   | Symlink of string * string
 
 (* if you prefer a curried syntax *)
@@ -44,6 +45,7 @@ let symlink name dest : t = Symlink (name, dest)
 let get_name = function
   | Dir (name, _)
   | File (name, _)
+  | Executable (name, _)
   | Symlink (name, _) ->
       name
 
@@ -55,6 +57,7 @@ and sort_one x =
   match x with
   | Dir (name, xs) -> Dir (name, sort xs)
   | File _
+  | Executable _
   | Symlink _ ->
       x
 
@@ -177,7 +180,8 @@ let flatten ?(root = Fpath.v ".") ?(include_dirs = false) files =
         let acc = if include_dirs then path :: acc else acc in
         let acc, _last_dir = flatten (acc, path) entries in
         (acc, dir)
-    | File (name, _contents) ->
+    | File (name, _contents)
+    | Executable (name, _contents) ->
         let file = dir / name in
         (file :: acc, dir)
     | Symlink (name, _dest) ->
@@ -203,6 +207,10 @@ and write_one root file =
   | File (name, contents) ->
       let path = root / name in
       UFile.write_file ~file:path contents
+  | Executable (name, contents) ->
+      let path = root / name in
+      UFile.write_file ~file:path contents;
+      UUnix.chmod !!path 0o755
   | Symlink (name, dest) ->
       let path = !!(root / name) in
       UUnix.symlink dest path
@@ -210,10 +218,13 @@ and write_one root file =
 let read root =
   let rec read path =
     let name = Fpath.basename path in
-    match (UUnix.lstat !!path).st_kind with
+    let st = UUnix.lstat !!path in
+    match st.st_kind with
     | S_DIR ->
         let names = get_dir_entries path in
         Dir (name, List_.map (fun name -> read (path / name)) names)
+    | S_REG when st.st_perm land 0o111 <> 0 ->
+        Executable (name, UFile.read_file path)
     | S_REG -> File (name, UFile.read_file path)
     | S_LNK -> Symlink (name, UUnix.readlink !!path)
     | _other ->

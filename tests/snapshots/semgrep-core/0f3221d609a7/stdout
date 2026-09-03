@@ -1,0 +1,10 @@
+--- begin input files ---
+deduplication.py
+duplication-same-message.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 7 insertions(+)
+ create mode 100644 deduplication.py
+ create mode 100644 duplication-same-message.yaml
+{"version":"<MASKED>","results":[{"check_id":"duplicate","path":"deduplication.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":9,"offset":8},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":4,"offset":3},"abstract_content":"foo"},"$Y":{"start":{"line":1,"col":5,"offset":4},"end":{"line":1,"col":6,"offset":5},"abstract_content":"1"}},"message":"Some error message with only one metavar foo","metadata":{},"severity":"ERROR","fingerprint":"d3f2175695b0e6b234594fbec0eeddfc67f024a7322e3d890544815297802ae620f79f2bbe8f82599c5ff2caf93578d962b44855ab5cebd98fdcfeaafa6025d0_0","lines":"foo(1,2)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["deduplication.py"]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -162,6 +162,11 @@ let with_env_app_token ?(token = dummy_app_token) f =
 
 let with_no_color f = Semgrep_envvars.with_envvar "NO_COLOR" "1" f
 
+(* The basic targets of the fixtures, scanned as a directory: files of
+   several languages, without extension, binary, and a README. *)
+let basic_targets_dir : F.t =
+  F.dir "basic" (F.read Fpath.(Test_scan_helpers.fixtures_root / "targets" / "basic"))
+
 (*****************************************************************************)
 (* Tests *)
 (*****************************************************************************)
@@ -1509,4 +1514,38 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_missing_roots_text caps);
       t "missing scanning roots: fatal error with --test"
         (test_missing_roots_test_mode caps);
+      (* The text output of a scan of a directory, with colour.
+         python: test_terminal_output *)
+      t "text output of a directory scan" ~checked_output:(Testo.stdxxx ())
+        ~normalize
+        (Test_scan_helpers.run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
+           ~targets:[]
+           ~extra_files:[ F.dir "targets" [ basic_targets_dir ] ]
+           ~extra_args:[ "--force-color"; "targets/basic" ]);
+      (* python: test_terminal_output_quiet *)
+      t "text output of a directory scan with --quiet"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (Test_scan_helpers.run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
+           ~targets:[]
+           ~extra_files:[ F.dir "targets" [ basic_targets_dir ] ]
+           ~extra_args:[ "--force-color"; "--quiet"; "targets/basic" ]);
+      (* python: test_verbose *)
+      t "verbose text output of a file scan" ~checked_output:(Testo.stdxxx ())
+        ~normalize
+        (Test_scan_helpers.run_scan caps ~format_args:[]
+           ~rule:"rules/basic.yaml" ~targets:[ "targets/basic.py" ]
+           ~extra_args:[ "--force-color"; "--verbose" ]);
+      (* python: test_show_supported_languages *)
+      t "--show-supported-languages" ~checked_output:(Testo.stdxxx ())
+        ~normalize
+        (Test_scan_helpers.run_scan caps ~format_args:[]
+           ~rule:"rules/basic.yaml" ~targets:[ "targets/basic.py" ]
+           ~extra_args:[ "--show-supported-languages" ]);
+      (* python: test_sort_text_findings *)
+      t "text output: the findings sorted" ~checked_output:(Testo.stdxxx ())
+        ~normalize
+        (Test_scan_helpers.run_scan caps ~format_args:[]
+           ~rule:"rules/sort-findings.yaml" ~targets:[]
+           ~extra_files:[ Test_scan_subcommand_formats.sort_findings_dir ]
+           ~extra_args:[ "sort-findings" ]);
     ]

@@ -1,0 +1,10 @@
+--- begin input files ---
+eqeq-python.yaml
+targets/script/bad
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 36 insertions(+)
+ create mode 100644 eqeq-python.yaml
+ create mode 100755 targets/script/bad
+{"version":"<MASKED>","results":[{"check_id":"eqeq-is-bad","path":"targets/script/bad","start":{"line":3,"col":1,"offset":20},"end":{"line":3,"col":7,"offset":26},"extra":{"metavars":{"$X":{"start":{"line":3,"col":1,"offset":20},"end":{"line":3,"col":2,"offset":21},"abstract_content":"4"}},"message":"useless comparison operation `4 == 4` or `4 != 4`","metadata":{"shortlink":"https://sg.run/xyz1"},"severity":"ERROR","fingerprint":"35ca91a5ff819f655da621ce115c419fa4699c90b9ab97145f763d205adbfb1ecab4eefaf3769d3ed6381bbeb4fd45511cb8cf41377c268efbd3ba9b2229364e_0","lines":"4 == 4","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/script/bad"]},"interfile_languages_used":[],"skipped_rules":[]}
