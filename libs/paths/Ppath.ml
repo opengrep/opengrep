@@ -306,20 +306,20 @@ let cwd () =
    I hesitated to put this into Fpath_ since Fpath is purely syntactic.
 *)
 let make_absolute path =
-  if Fpath.is_rel path then Fpath.(v (cwd ()) // path)
-  else
-    (* Here, we must make a syscall, because we are making an unnormalized path absolute
-       so that we can compare it to a normalized path.
-       However, in the presence of symlinks, certain relationships like prefixes and
-       naive string operations do not work properly, because they are not cognizant of
-       how certain paths are actually related on the filesystem.
-       For instance, on Mac systems, `/var/` is actually the same as `/private/var`, so
-       our absolute form for `/var/` would prefer to be `/private/var`.
-       So we turn our path into an rpath. *)
-    match Rpath.of_fpath path with
-    | Ok path -> Rpath.to_fpath path
-    | Error err ->
-        failwith (Common.spf "Failed to make path %s absolute: %s" !!path err)
+  let path = if Fpath.is_rel path then Fpath.(v (cwd ()) // path) else path in
+  (* Here, we must make a syscall, because we are making an unnormalized path absolute
+     so that we can compare it to a normalized path.
+     However, in the presence of symlinks, certain relationships like prefixes and
+     naive string operations do not work properly, because they are not cognizant of
+     how certain paths are actually related on the filesystem.
+     For instance, on Mac systems, `/var/` is actually the same as `/private/var`, so
+     our absolute form for `/var/` would prefer to be `/private/var`.
+     So we turn our path into an rpath, relative paths included: the project
+     root is also found from the real path. *)
+  match Rpath.of_fpath path with
+  | Ok path -> Rpath.to_fpath path
+  | Error err ->
+      failwith (Common.spf "Failed to make path %s absolute: %s" !!path err)
 
 let of_relative_fpath (fpath : Fpath.t) =
   if Fpath.is_rel fpath then create ("" :: Fpath.segs fpath)

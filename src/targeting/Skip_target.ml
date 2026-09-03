@@ -6,6 +6,29 @@ open Fpath_.Operators
 module Out = Semgrep_output_v1_t
 
 (****************************************************************************)
+(* Extensions never scanned *)
+(****************************************************************************)
+
+(* The extensions always excluded, whatever the flags and ignore files:
+   minified JavaScript and TypeScript declarations, from lang.json. *)
+let excluded_extensions : string list Lazy.t =
+  lazy
+    (Lang.assoc
+    |> List.concat_map (fun ((_ : string), (lang : Lang.t)) ->
+           Lang.excluded_exts_of_lang lang)
+    |> List_.deduplicate)
+
+let has_excluded_extension (path : Fpath.t) :
+    (Fpath.t, Out.skipped_target) result =
+  if
+    List.exists
+      (fun (ext : string) -> String.ends_with ~suffix:ext !!path)
+      (Lazy.force excluded_extensions)
+  then
+    Error { Out.path; reason = Always_skipped; details = None; rule_id = None }
+  else Ok path
+
+(****************************************************************************)
 (* Minified files detection (via whitespace stats) *)
 (****************************************************************************)
 

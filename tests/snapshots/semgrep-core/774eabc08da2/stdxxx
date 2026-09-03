@@ -1,0 +1,134 @@
+--- begin input files ---
+.gitignore
+.semgrepignore
+eqeq-basic.yaml
+targets/ignores/.gitignore
+targets/ignores/.semgrepignore
+targets/ignores/find.js
+targets/ignores/ignore.min.js
+targets/ignores/ignore_test.js
+targets/ignores/ok/find.js
+targets/ignores/tests/ignore.js
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 10 files changed, 62 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 .semgrepignore
+ create mode 100644 eqeq-basic.yaml
+ create mode 100644 targets/ignores/.gitignore
+ create mode 100644 targets/ignores/.semgrepignore
+ create mode 100644 targets/ignores/find.js
+ create mode 100644 targets/ignores/ignore.min.js
+ create mode 100644 targets/ignores/ignore_test.js
+ create mode 100644 targets/ignores/ok/find.js
+ create mode 100644 targets/ignores/tests/ignore.js
+[<MASKED TIMESTAMP>][WARNING]: Paths that match both --include and --exclude will be skipped by Opengrep.
+[<MASKED TIMESTAMP>][INFO]: Opengrep version: 1.29.0
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
+
+[<MASKED TIMESTAMP>][INFO]: Getting the rules
+  Loading rules from local config...
+[<MASKED TIMESTAMP>][INFO]: loading local config from eqeq-basic.yaml
+[<MASKED TIMESTAMP>][INFO]: Done loading local config from eqeq-basic.yaml
+[<MASKED TIMESTAMP>][INFO]: Computing the targets
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--cached' '<TMP>/<MASKED>/targets/ignores'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--others' '--exclude-standard' '<TMP>/<MASKED>/targets/ignores'
+[<MASKED TIMESTAMP>][WARNING]: Deprecated include directive ':include .gitignore' in semgrepignore file '<TMP>/<MASKED>/.semgrepignore'
+[<MASKED TIMESTAMP>][WARNING]: Deprecated include directive ':include .gitignore' in semgrepignore file '<TMP>/<MASKED>/targets/ignores/.semgrepignore'
+[<MASKED TIMESTAMP>][INFO]: running 1 rules from 1 config eqeq-basic.yaml
+Rules:
+- eqeq-bad
+
+[<MASKED TIMESTAMP>][INFO]: scan subcommand: 1 valid rules, 0 invalid rules, 2 targets
+[<MASKED TIMESTAMP>][INFO]: running the opengrep engine
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 2 files tracked by git with 1 Code rule:
+  Scanning 2 files.
+[<MASKED TIMESTAMP>][INFO]: scan: processing 2 files (skipping 0), with 1 rules (skipping 0 )
+[<MASKED TIMESTAMP>][INFO]: reporting matches if any
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/ignores/find.js
+   ❯❯❱ eqeq-bad
+          useless comparison
+
+            1┆ var x = 0 == 0
+
+    targets/ignores/ok/find.js
+   ❯❯❱ eqeq-bad
+          useless comparison
+
+            1┆ var x = 0 == 0
+
+[<MASKED TIMESTAMP>][INFO]: 
+========================================
+Files skipped:
+========================================
+
+  Always skipped by Opengrep:
+
+   • <none>
+
+  Skipped by .gitignore:
+  (Disable by passing --no-git-ignore)
+
+   • <all files not listed by `git ls-files` were skipped>
+
+  Skipped by .semgrepignore:
+  (See: https://semgrep.dev/docs/ignoring-files-folders-code/#understand-semgrep-defaults)
+
+   • targets/ignores/ignore_test.js
+   • targets/ignores/tests
+
+  Skipped by --include patterns:
+
+   • <none>
+
+  Skipped by --exclude patterns:
+
+   • targets/ignores/ignore.min.js
+
+  Skipped by limiting to files smaller than 100 bytes:
+  (Adjust with the --max-target-bytes flag)
+
+   • <none>
+
+  Partially analyzed due to parsing or internal Opengrep errors
+
+   • <none>
+
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan skipped: 1 files matching --exclude patterns, 1 files and 1 directories matching .semgrepignore patterns.
+  For a full list of skipped files, run opengrep with the --verbose flag.
+
+Ran 1 rule on 2 files: 2 findings.
+ASSERT exit code

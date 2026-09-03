@@ -62,7 +62,8 @@ let run_scan (caps : Scan_subcommand.caps) ~(rule : string)
     ~(targets : string list) ?(format_args : string list = [ "--sarif" ])
     ?(extra_args : string list = []) ?(extra_files : F.t list = [])
     ?(output_files : string list = []) ?(expect_abort : bool = false)
-    ?(check : Exit_code.t -> unit = Exit_code.Check.ok) () =
+    ?(check : Exit_code.t -> unit = Exit_code.Check.ok) ?(git : bool = true) ()
+    =
   let rule_content : string = read_fixture rule in
   let rule_file : string = Filename.basename rule in
   let target_entries : (string * string) list =
@@ -77,7 +78,8 @@ let run_scan (caps : Scan_subcommand.caps) ~(rule : string)
              target_entries)
         @ extra_files
       in
-      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+      Testutil_git.with_git_repo ~verbose:true ~really_create_git_repo:git
+        repo_files (fun _cwd ->
           let argv : string array =
             Array.of_list
               ([ "opengrep-scan"; "--experimental"; "--config"; rule_file ]

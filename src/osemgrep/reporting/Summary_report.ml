@@ -22,7 +22,7 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
     include_ = include_ignored;
     exclude = exclude_ignored;
     size = file_size_ignored;
-    always = _always_ignored;
+    always = always_ignored;
     other = other_ignored;
     errors;
   } =
@@ -36,6 +36,8 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
                 "Scan was limited to files changed since baseline commit."
             )
   *)
+  (* Printed on its own: whether git left a file out is not known, so it
+     stays apart from the counts below. *)
   if respect_gitignore && is_git_repo then
       (* # Each target could be a git repo, and we respect the git ignore
          # of each target, so to be accurate with this print statement we
@@ -56,14 +58,29 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
     | [] -> None
     | xs -> Some (string_of_int (List.length xs) ^ " " ^ msg)
   in
+  (* the ignored directories, reported once each, count apart *)
+  let semgrepignored =
+    let dirs, files =
+      List.partition
+        (fun (x : OutJ.skipped_target) -> UFile.is_dir ~follow_symlinks:true x.path)
+        semgrep_ignored
+    in
+    match
+      List_.filter_map Fun.id [ opt_msg "files" files; opt_msg "directories" dirs ]
+    with
+    | [] -> None
+    | counts ->
+        Some (String.concat " and " counts ^ " matching .semgrepignore patterns")
+  in
   let out_skipped =
     let mb = string_of_int Stdlib.(max_target_bytes / 1000 / 1000) in
     List_.filter_map Fun.id
       [
         opt_msg "files not matching --include patterns" include_ignored;
         opt_msg "files matching --exclude patterns" exclude_ignored;
+        opt_msg "files never scanned by Opengrep" always_ignored;
         opt_msg ("files larger than " ^ mb ^ " MB") file_size_ignored;
-        opt_msg "files matching .semgrepignore patterns" semgrep_ignored;
+        semgrepignored;
         (match maturity with
         | Develop -> opt_msg "other files ignored" other_ignored
         | Default
@@ -77,9 +94,9 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
       "files only partially analyzed due to a parsing or internal Opengrep error"
       (Skipped_report.group_errors_by_file errors)
   in
-  match (out_skipped, out_partial, skipped_groups.ignored) with
-  | [], None, [] -> ()
-  | xs, parts, _ignored -> (
+  match (out_skipped, out_partial) with
+  | [], None -> ()
+  | xs, parts -> (
       Fmt.pf ppf "Some files were skipped or only partially analyzed.@\n";
       Option.iter (fun txt -> Fmt.pf ppf "  Partially scanned: %s@\n" txt) parts;
       match xs with

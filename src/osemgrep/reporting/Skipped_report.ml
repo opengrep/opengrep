@@ -108,6 +108,24 @@ let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
       | Not_found -> []);
   }
 
+(* A file no rule would scan is not reported as skipped. Directories are,
+   and so are the failures on the files that were scanned. *)
+let for_languages (xlangs : Xlang.t list) (skipped : OutJ.skipped_target list)
+    : OutJ.skipped_target list =
+  let scannable (path : Fpath.t) : bool =
+    UFile.is_dir ~follow_symlinks:true path
+    || List.exists
+         (fun (xlang : Xlang.t) -> Filter_target.filter_target_for_xlang xlang path)
+         xlangs
+  in
+  skipped
+  |> List.filter (fun (x : OutJ.skipped_target) ->
+         match x.reason with
+         | Analysis_failed_parser_or_internal_error
+         | Insufficient_permissions ->
+             true
+         | _ -> scannable x.path)
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)

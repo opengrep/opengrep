@@ -586,9 +586,16 @@ let check_targets_with_rules ?(print_summary = true)
 
           (* step 4: adjust the skipped_targets *)
           (* the targets with an error count as partially analysed, in the
-             JSON and in the summary below *)
+             JSON and in the summary below; the files no rule would have
+             scanned are not reported *)
+          let xlangs =
+            rules
+            |> List_.map (fun (r : Rule.t) -> r.target_analyzer)
+            |> List_.deduplicate
+          in
           let skipped =
             skipped @ Skipped_report.errors_to_skipped res.core.errors
+            |> Skipped_report.for_languages xlangs
           in
           let res = adjust_skipped skipped res in
 
