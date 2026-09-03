@@ -171,15 +171,36 @@ let tests (caps : < Scan_subcommand.caps >) =
           with_read_from_named_pipe ~data:"a\n" (fun pipe ->
               run_scan caps ~git:false ~format_args:[ "--json" ] ~targets:[]
                 ~extra_args:[ "-e"; "a"; "--lang"; "js"; !!pipe ] ()));
-      (* python: test_multi_subshell_input *)
-      t "targets from two named pipes" ~checked_output:(Testo.stdout ())
-        ~normalize:(normalise @ mask_temp_targets)
-        (fun () ->
+      (* Both pipes are scanned. Their temporary names are random and the
+         results are sorted by path, so the matched lines are checked as a
+         sorted list rather than as a snapshot.
+         python: test_multi_subshell_input *)
+      t "targets from two named pipes" (fun () ->
           with_read_from_named_pipe ~data:"a\n" (fun pipe1 ->
               with_read_from_named_pipe ~data:"b + a\n" (fun pipe2 ->
-                  run_scan caps ~git:false ~format_args:[ "--json" ] ~targets:[]
-                    ~extra_args:[ "-e"; "a"; "--lang"; "js"; !!pipe1; !!pipe2 ]
-                    ())));
+                  let (), stdout_output =
+                    Testo.with_capture stdout (fun () ->
+                        run_scan caps ~git:false ~format_args:[ "--json" ]
+                          ~targets:[]
+                          ~extra_args:
+                            [ "-e"; "a"; "--lang"; "js"; !!pipe1; !!pipe2 ]
+                          ())
+                  in
+                  (* the JSON comes after the listing of the repo's files *)
+                  let json_line =
+                    String.split_on_char '\n' stdout_output
+                    |> List.find (String.starts_with ~prefix:"{")
+                  in
+                  let out = Semgrep_output_v1_j.cli_output_of_string json_line in
+                  Alcotest.(check int)
+                    "both pipes scanned" 2
+                    (List.length out.paths.scanned);
+                  Alcotest.(check (list string))
+                    "the matched lines" [ "a"; "b + a" ]
+                    (out.results
+                    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                           m.extra.lines)
+                    |> List.sort String.compare))));
       (* The 'paths' of a rule select its files. python: test_per_rule_include *)
       t "per-rule include" ~checked_output:(Testo.stdout ())
         ~normalize:normalise

@@ -1,10 +1,10 @@
 --- begin input files ---
-foo.py
+foo/a.py
 --- end input files ---
 Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [main (root-commit) <MASKED>] Add files
  1 file changed, 1 insertion(+)
- create mode 100644 foo.py
+ create mode 100644 foo/a.py
 --- scan with the baseline ---
 
 
@@ -12,6 +12,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ 1 Code Finding │
 └────────────────┘
 
-    foo.py
-            2┆ y = 23478921
+    foo/a.py
+            2┆ x = 23478921
 

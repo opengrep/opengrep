@@ -1,0 +1,19 @@
+--- begin input files ---
+README
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 1 file changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 README
+--- scan with the baseline ---
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    bar.py
+           15┆ bar = 23478921
+            ⋮┆----------------------------------------
+           17┆ bar = 23478921
+
