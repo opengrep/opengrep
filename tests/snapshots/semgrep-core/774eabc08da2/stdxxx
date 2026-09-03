@@ -45,10 +45,10 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [<MASKED TIMESTAMP>][INFO]: loading local config from eqeq-basic.yaml
 [<MASKED TIMESTAMP>][INFO]: Done loading local config from eqeq-basic.yaml
 [<MASKED TIMESTAMP>][INFO]: Computing the targets
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--cached' '<TMP>/<MASKED>/targets/ignores'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--others' '--exclude-standard' '<TMP>/<MASKED>/targets/ignores'
 [<MASKED TIMESTAMP>][WARNING]: Deprecated include directive ':include .gitignore' in semgrepignore file '<TMP>/<MASKED>/.semgrepignore'
 [<MASKED TIMESTAMP>][WARNING]: Deprecated include directive ':include .gitignore' in semgrepignore file '<TMP>/<MASKED>/targets/ignores/.semgrepignore'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--cached' '<TMP>/<MASKED>/targets/ignores'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--others' '--exclude-standard' '<TMP>/<MASKED>/targets/ignores'
 [<MASKED TIMESTAMP>][INFO]: running 1 rules from 1 config eqeq-basic.yaml
 Rules:
 - eqeq-bad
