@@ -1287,13 +1287,17 @@ let test_process_limits_text (caps : Scan_subcommand.caps) () =
  * spans exactly its offsets. python: test_yaml_metavariables and
  * test_quiet_mode_has_empty_stderr
  *)
+let yaml_fixtures_root : Fpath.t = Fpath.v "tests/yaml"
+
+let read_yaml_fixture (rel : string) : string =
+  UFile.read_file Fpath.(yaml_fixtures_root / rel)
+
 let scan_yaml_target (caps : Scan_subcommand.caps) (args : string list) :
     Exit_code.t * string * string =
-  let read (rel : string) : string = UFile.read_file Fpath.(v "tests/yaml" / rel) in
   let repo_files =
     [
-      F.File ("yaml_key.yaml", read "yaml_key.yaml");
-      F.File ("target.yaml", read "target.yaml");
+      F.File ("yaml_key.yaml", read_yaml_fixture "yaml_key.yaml");
+      F.File ("target.yaml", read_yaml_fixture "target.yaml");
     ]
   in
   with_env_app_token (fun () ->
@@ -1483,6 +1487,12 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "nosem with an invalid or unknown id: JSON warnings with --strict"
         (test_nosem_invalid_id_json caps);
       t "log file: a copy of the logs at the level of stderr" (test_log_file caps);
+      t "yaml: the lines of a match on a block" ~checked_output:(Testo.stdxxx ())
+        ~normalize
+        (test_basic_output caps ~rules_file:"yaml_capture.yaml"
+           ~rules_content:(read_yaml_fixture "yaml_capture.yaml")
+           ~code_file:"yaml_capture_target.yaml"
+           ~code_content:(read_yaml_fixture "yaml_capture_target.yaml"));
       t "yaml block scalars: lines, message and offsets of the findings"
         (test_yaml_block_scalars caps);
       t "--quiet: nothing on stderr with the JSON" (test_quiet_json caps);

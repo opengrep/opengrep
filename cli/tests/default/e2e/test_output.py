@@ -47,36 +47,6 @@ def _etree_to_dict(t):
 
 
 @pytest.mark.kinda_slow
-def test_yaml_capturing(run_semgrep_in_tmp: RunSemgrep, snapshot):
-    results, _errors = run_semgrep_in_tmp(
-        "rules/yaml_capture.yaml",
-        target_name="yaml/yaml_capture.yaml",
-        output_format=OutputFormat.TEXT,
-        strict=False,
-    )
-    snapshot.assert_match(
-        results,
-        "results.txt",
-    )
-
-
-# junit-xml is tested in a test_junit_xml_output due to ambiguous XML attribute ordering
-@pytest.mark.kinda_slow
-@pytest.mark.parametrize(
-    "format",
-    ["--json", "--emacs", "--vim", "--sarif", "--gitlab-sast", "--gitlab-secrets"],
-)
-def test_output_format(run_semgrep_in_tmp: RunSemgrep, snapshot, format):
-    stdout, _ = run_semgrep_in_tmp(
-        "rules/eqeq.yaml",
-        target_name="basic/stupid.py",
-        options=[format],
-        output_format=OutputFormat.TEXT,  # Not the real output format; just disables JSON parsing
-    )
-    snapshot.assert_match(stdout, "results.out")
-
-
-@pytest.mark.kinda_slow
 @pytest.mark.osemfail
 def test_additional_outputs(run_semgrep_in_tmp: RunSemgrep, snapshot):
     stdout, _ = run_semgrep_in_tmp(

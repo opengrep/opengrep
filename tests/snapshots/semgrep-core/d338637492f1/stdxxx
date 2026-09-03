@@ -1,0 +1,63 @@
+--- begin input files ---
+yaml_capture.yaml
+yaml_capture_target.yaml
+--- end input files ---
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 32 insertions(+)
+ create mode 100644 yaml_capture.yaml
+ create mode 100644 yaml_capture_target.yaml
+
+┌──────────────┐
+│ Opengrep CLI │
+└──────────────┘
+
+✔ Opengrep OSS
+  ✔ Basic security coverage for first-party code vulnerabilities.
+
+  Loading rules from local config...
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 2 files tracked by git with 1 Code rule:
+  Scanning 2 files.
+
+
+┌─────────────────┐
+│ 4 Code Findings │
+└─────────────────┘
+
+    yaml_capture_target.yaml
+   ❯❯❱ foo
+          example
+
+            3┆ importantKey:
+            4┆   prop1: true
+            ⋮┆----------------------------------------
+            9┆ importantKey:
+           10┆   - idk: true
+            ⋮┆----------------------------------------
+           15┆ importantKey:
+           16┆   prop1: true
+            ⋮┆----------------------------------------
+           21┆ importantKey:
+           22┆   - idk: true
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Scan was limited to files tracked by git.
+
+Ran 1 rule on 2 files: 4 findings.
+ASSERT exit code

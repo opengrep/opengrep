@@ -1,0 +1,10 @@
+--- begin input files ---
+eqeq.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 59 insertions(+)
+ create mode 100644 eqeq.yaml
+ create mode 100644 stupid.py
+{"version":"<MASKED>","results":[{"check_id":"eqeq-is-bad","path":"stupid.py","start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":26,"offset":69},"extra":{"metavars":{"$X":{"start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":17,"offset":60},"abstract_content":"a+b"}},"message":"useless comparison operation `a + b == a + b` or `a + b != a + b`","metadata":{"shortlink":"https://sg.run/xyz1","source":"https://semgrep.dev/r/eqeq-bad"},"severity":"ERROR","fingerprint":"ae928abfc53f04d87fc640932d98096c64e7add5b264ce2045d5456a453e17fb15fee0aa5baa3cc8884d03ba8e1f2e95a3d1d213294a55ad886aff6b16ef819f_0","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}
