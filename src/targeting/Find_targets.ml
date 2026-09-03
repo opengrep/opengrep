@@ -657,49 +657,39 @@ let git_list_files ~exclude_standard
                            The only exception is if the scanning root is '.',
                            in which case we don't produce './foo' but 'foo'.
                         *)
-                        let target_fpath =
-                          match
-                            (* Both absolute and normalised: relative to
-                               cwd, the typed root and the path listed by
-                               git can spell one directory two ways, '../sub'
-                               and '.', and never match. *)
-                            Fpath.relativize ~root:canon_scanning_root_path
-                              (Fpath.normalize
-                                 (cwd // target_relative_to_cwd_or_absolute))
-                          with
-                          | Some target_relative_to_scan_root ->
-                              Fpath_.append_no_dot orig_scanning_root_path
-                                target_relative_to_scan_root
-                          | None -> target_relative_to_cwd_or_absolute
-                        in
-                        (* Obtain a path relative to the project root *)
-                        let target_ppath =
-                          match
-                            Fpath.relativize
-                              ~root:(Rpath.to_fpath project_root)
-                              (cwd // target_relative_to_cwd_or_absolute)
-                          with
-                          | None ->
-                              (* TODO: return an Error instead and let the
-                                 caller decide instead of assert false
-                              *)
-                              (* nosemgrep: no-logs-in-library *)
-                              Logs.err (fun m ->
-                                  m
-                                    "Internal error: cannot obtain path \
-                                     relative to project root from \
-                                     project_root=%s, cwd=%S, \
-                                     path_relative_to_cwd=%S"
-                                    !!(Rpath.to_fpath project_root)
-                                    !!cwd
-                                    !!target_relative_to_cwd_or_absolute);
-                              assert false
-                          | Some fpath_relative_to_project_root ->
-                              Ppath.of_relative_fpath
-                                fpath_relative_to_project_root
-                        in
-                        ({ fpath = target_fpath; ppath = target_ppath }
-                          : Fppath.t)))
+                        match
+                          (* Both absolute and normalised: relative to
+                             cwd, the typed root and the path listed by
+                             git can spell one directory two ways, '../sub'
+                             and '.', and never match. *)
+                          Fpath.relativize ~root:canon_scanning_root_path
+                            (Fpath.normalize
+                               (cwd // target_relative_to_cwd_or_absolute))
+                        with
+                        | Some target_relative_to_scan_root ->
+                            (* The segments below the root extend both the
+                               root as typed and its ppath, so that the
+                               file and its root are in one frame even
+                               when the root goes through a symlink. *)
+                            ({
+                               fpath =
+                                 Fpath_.append_no_dot orig_scanning_root_path
+                                   target_relative_to_scan_root;
+                               ppath =
+                                 Ppath.append_fpath sc_root.ppath
+                                   target_relative_to_scan_root;
+                             }
+                              : Fppath.t)
+                        | None ->
+                            (* cannot happen with a correct root: the scan
+                               aborts rather than report a wrong path *)
+                            failwith
+                              (spf
+                                 "internal error: git listed a path outside \
+                                  the scanning root: root=%s, cwd=%s, \
+                                  path=%s"
+                                 !!canon_scanning_root_path !!cwd
+                                 !!target_relative_to_cwd_or_absolute)))
                else (
                  (* scanning root is neither a file nor a folder *)
                  Log.warn (fun m ->
@@ -795,7 +785,7 @@ let group_scanning_roots_by_project (conf : conf)
            for some tests to pass within our semgrep repo but it's not clear
            why it's like this.
            TODO: make tests work without requiring --project-root? *)
-        Some Project.{ kind = Project.Gitignore_project; root = proj_root }
+        Some Project.{ kind = Project.No_VCS_project; root = proj_root }
     | None ->
         (* Usual case when scanning the local file system *)
         None

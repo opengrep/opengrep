@@ -230,7 +230,10 @@ let main (caps : Cap.all_caps) : unit =
            output can or should change these settings. *)
         UConsole.setup ~highlight_setting:On ();
         (* TODO? use Log_semgrep.setup? *)
-        Logs_.setup_basic ~level:(Some Logs.Debug) ()
+        Logs_.setup_basic ~level:(Some Logs.Debug) ();
+        (* The file contents and positions cached by path: two tests can
+           put different files under one relative path. *)
+        Globals.reset ()
       in
       (* Show log messages produced when building the list of tests *)
       reset ();

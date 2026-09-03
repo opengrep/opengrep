@@ -31,10 +31,12 @@ module Out = Semgrep_output_v1_t
                   (only relevant if with_git is true)
    cwd: a folder of the workspace to run from, instead of its root
    scanning_root: may start with "<root>", the absolute path of the workspace
+   project_root: a folder of the workspace forced as the project root,
+                 like --project-root
 *)
 let test_find_targets ?expected_outcome ?includes ?(excludes = [])
     ?(non_git_files : F.t list = []) ~with_git ?(cwd = ".")
-    ?(scanning_root = ".") name (files : F.t list) =
+    ?(scanning_root = ".") ?project_root name (files : F.t list) =
   let category = if with_git then "with git" else "without git" in
   let test_func () =
     printf "Test name: %s > %s\n" category name;
@@ -62,6 +64,11 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
             Find_targets.default_conf with
             include_ = includes;
             exclude = excludes;
+            force_project_root =
+              Option.map
+                (fun (dir : string) ->
+                  Find_targets.Filesystem (Rfpath.of_fpath_exn (root / dir)))
+                project_root;
           }
         in
         let scanning_root =
@@ -163,6 +170,23 @@ let tests_with_or_without_git ~with_git =
     test_find_targets ~with_git ~scanning_root:"<root>/dir"
       "absolute scanning root below the working directory"
       [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
+    (* A forced project root takes the scanning root as typed: the symlink
+       leaves the folder but its name is inside it. *)
+    test_find_targets ~with_git ~project_root:"dir" ~scanning_root:"dir/link"
+      "forced project root with a symlink leaving it"
+      [
+        F.dir "dir" [ F.Symlink ("link", "../other") ];
+        F.dir "other" [ F.file "a.c" ];
+      ];
+    (* A symlink inside the project stays a name in the project path: the
+       ignore file is anchored on the name, not on the folder it points to. *)
+    test_find_targets ~with_git ~scanning_root:"link"
+      "symlink inside the project keeps its name"
+      [
+        F.File (".semgrepignore", "link/b.c\n");
+        F.dir "dir" [ F.file "a.c"; F.file "b.c" ];
+        F.Symlink ("link", "dir");
+      ];
     (* The ignore file of the working directory applies to a root under it,
        with its patterns anchored there. *)
     test_find_targets ~with_git ~scanning_root:"dir"

@@ -1,0 +1,10 @@
+--- begin input files ---
+eqeq.yaml
+targets
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 48 insertions(+)
+ create mode 100644 eqeq.yaml
+ create mode 120000 targets
+{"version":"<MASKED>","results":[{"check_id":"javascript-basic-eqeq-bad","path":"targets/basic/stupid.js","start":{"line":3,"col":13,"offset":61},"end":{"line":3,"col":19,"offset":67},"extra":{"metavars":{"$X":{"start":{"line":3,"col":13,"offset":61},"end":{"line":3,"col":14,"offset":62},"abstract_content":"x","propagated_value":{"svalue_start":{"line":1,"col":9,"offset":8},"svalue_end":{"line":1,"col":24,"offset":23},"svalue_abstract_content":"window.prompt()"}}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"60644341949be8dd097e16f59e31c653da411a05e1ed5f33c31bf164969452dd442c67d3cdaab44f03a914394271b4c7d6423a6215e8d1a70993d4aa449eb0d0_0","lines":"console.log(x == x)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"eqeq-is-bad","path":"targets/basic/stupid.py","start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":26,"offset":69},"extra":{"metavars":{"$X":{"start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":17,"offset":60},"abstract_content":"a+b"}},"message":"useless comparison operation `a + b == a + b` or `a + b != a + b`","metadata":{"shortlink":"https://sg.run/xyz1","source":"https://semgrep.dev/r/eqeq-bad"},"severity":"ERROR","fingerprint":"026a731e0cd4640a3b16962928c390cefedf53f61b4365da85a4a4451e2d067b7918883ba6eb36c95a23f87a1bdcd1e3951335b059f4119602bf19a9a70ebcac_0","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/basic/stupid.js","targets/basic/stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}
