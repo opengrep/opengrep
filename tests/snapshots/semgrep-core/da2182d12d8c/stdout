@@ -1,0 +1,11 @@
+Test name: without git > semgrepignore of the working directory applies under it
+--- Files not added to git ---
+.semgrepignore
+dir/a
+dir/b
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected dir/a
+--- Skipped targets ---
+ignored dir/b [Semgrep_output_v1_t.Semgrepignore_patterns_match]

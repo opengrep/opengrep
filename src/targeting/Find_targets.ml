@@ -756,8 +756,21 @@ let scanning_root_by_project ~(force_root : Project.t option)
     ~(force_novcs : bool) (scanning_root : Scanning_root.t) :
     Project.t * Fppath.t =
   let scanning_root_fpath = Scanning_root.to_fpath scanning_root in
+  (* Outside any VCS, the working directory is the project when the root
+     is under it, so that its ignore files apply, as the Python wrapper
+     reads the .semgrepignore of the working directory. *)
+  let fallback_root : Rfpath.t option =
+    let cwd = Rpath.getcwd () in
+    match Rpath.of_fpath scanning_root_fpath with
+    | Ok root when Fpath.is_prefix (Rpath.to_fpath cwd) (Rpath.to_fpath root)
+      ->
+        Some (Rfpath.of_fpath_exn (Rpath.to_fpath cwd))
+    | Ok _
+    | Error _ ->
+        None
+  in
   let kind, scanning_root_info =
-    Project.find_any_project_root ~fallback_root:None ~force_novcs ~force_root
+    Project.find_any_project_root ~fallback_root ~force_novcs ~force_root
       scanning_root_fpath
   in
   let project : Project.t = { kind; root = scanning_root_info.project_root } in

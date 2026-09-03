@@ -5,5 +5,5 @@ dir/a.c
 --- begin input files ---
 --- end input files ---
 --- Selected targets ---
-selected dir/a.c
 --- Skipped targets ---
+ignored dir [Semgrep_output_v1_t.Semgrepignore_patterns_match]

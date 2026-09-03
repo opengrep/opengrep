@@ -138,6 +138,11 @@ let tests_with_or_without_git ~with_git =
        (.semgrepignore, --include, --exclude) *)
     test_find_targets ~with_git ~scanning_root:"a.py" "scan explicit target"
       [ F.file "a.py"; F.File (".semgrepignore", "a.py\n") ];
+    (* The ignore file of the working directory applies to a root under it,
+       with its patterns anchored there. *)
+    test_find_targets ~with_git ~scanning_root:"dir"
+      "semgrepignore of the working directory applies under it"
+      [ F.File (".semgrepignore", "dir/b\n"); F.dir "dir" [ F.file "a"; F.file "b" ] ];
     (* An ignored folder given as the scanning root is not scanned. *)
     test_find_targets ~with_git ~scanning_root:"dir"
       "scanning root is a semgrepignored folder"
