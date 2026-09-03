@@ -1529,19 +1529,16 @@ static_scalar_primary:
  | T_PARENT "::" T_CLASS             { ClassGet(Id (Parent $1),$2,Id (XName [QI (Name ("class",$3))])) }
  | qualified_class_name "::" ident   { ClassGet(Id $1,$2,Id (XName [QI (Name $3)])) }
  | qualified_class_name "::" T_CLASS { ClassGet(Id $1,$2,Id (XName [QI (Name ("class",$3))])) }
- (* reading a property off a class constant, which is how an enum case's name
-  * or value is used in a constant expression: 'Suit::Hearts->value'.
+ (* PHP 8.3: a property may be read in a constant expression, which is how an
+  * enum case's name or value is used there: 'Suit::Hearts->value'. The
+  * operand is any constant expression, as in '(new A)->prop'; PHP rejects
+  * the ones that are not objects when the constant is evaluated.
   * '?->' lexes as the same token, so it is covered too.
   *)
- | qualified_class_name "::" ident "->" ident
-     { ObjGet(ClassGet(Id $1, $2, Id (XName [QI (Name $3)])), $4,
-              Id (XName [QI (Name $5)])) }
- | T_SELF "::" ident "->" ident
-     { ObjGet(ClassGet(Id (Self $1), $2, Id (XName [QI (Name $3)])), $4,
-              Id (XName [QI (Name $5)])) }
- | T_PARENT "::" ident "->" ident
-     { ObjGet(ClassGet(Id (Parent $1), $2, Id (XName [QI (Name $3)])), $4,
-              Id (XName [QI (Name $5)])) }
+ | static_scalar_primary "->" ident
+     { ObjGet($1, $2, Id (XName [QI (Name $3)])) }
+ | static_scalar_primary "->" "{" static_scalar "}"
+     { ObjGet($1, $2, BraceIdent ($3, $4, $5)) }
 
 (*----------------------------*)
 (* list/array *)
