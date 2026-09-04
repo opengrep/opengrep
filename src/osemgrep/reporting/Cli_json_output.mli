@@ -15,6 +15,9 @@ val cli_output_of_runner_result :
 (* internals used in Scan_subcommant.ml *)
 val exit_code_of_error_type : Out.error_type -> Exit_code.t
 
+(* used by the test subcommand for the errors of a rule file *)
+val cli_error_of_core_error : Out.core_error -> Out.cli_error
+
 (* internals used also for incremental display of matches. The Fixed_lines.env is
  * used for deciding whether a fixed_lines elements is included in the
  * cli_match. This depends on whether an overlapping fix was already included in

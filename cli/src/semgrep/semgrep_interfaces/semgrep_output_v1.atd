@@ -1002,7 +1002,8 @@ type rule_result = {
   (* would like to use fpath *)
   matches: (string (* target filename *) * expected_reported) list
     <json repr="object">;
-  errors: todo list;
+  (* the errors the engine reported for the rule file *)
+  errors: cli_error list;
    (* NEW: since 1.79 *)
   ?diagnosis: matching_diagnosis option;
 }
@@ -1015,8 +1016,6 @@ type expected_reported = {
 type fixtest_result = {
     passed: bool;
 }
-
-type todo = int
 
 (* ----------------------------- *)
 (* Matching diagnosis (Brandon's stuff) *)
