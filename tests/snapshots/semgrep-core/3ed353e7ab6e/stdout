@@ -1,0 +1,10 @@
+--- begin input files ---
+propagated-constant.yaml
+propagated_constant.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 18 insertions(+)
+ create mode 100644 propagated-constant.yaml
+ create mode 100644 propagated_constant.py
+{"version":"<MASKED>","results":[{"check_id":"test_rule_id","path":"propagated_constant.py","start":{"line":4,"col":15,"offset":51},"end":{"line":4,"col":21,"offset":57},"extra":{"metavars":{"$CLASS":{"start":{"line":1,"col":7,"offset":6},"end":{"line":1,"col":8,"offset":7},"abstract_content":"A"},"$X":{"start":{"line":4,"col":15,"offset":51},"end":{"line":4,"col":16,"offset":52},"abstract_content":"x","propagated_value":{"svalue_start":{"line":3,"col":12,"offset":35},"svalue_end":{"line":3,"col":13,"offset":36},"svalue_abstract_content":"0"}}},"message":"equal comparison of x (0) in A","metadata":{},"severity":"INFO","fingerprint":"6bd431f36a29d1d9277d79a93da86ee72776d607fc06a90d1fc18e3e52d4f09d3909414b40025c15e81885b2dfe94c4fee135d19df09c2d363bb1fb55faa6f16_0","lines":"       return x == 0","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"test_rule_id","path":"propagated_constant.py","start":{"line":7,"col":15,"offset":86},"end":{"line":7,"col":21,"offset":92},"extra":{"metavars":{"$CLASS":{"start":{"line":1,"col":7,"offset":6},"end":{"line":1,"col":8,"offset":7},"abstract_content":"A"},"$X":{"start":{"line":7,"col":15,"offset":86},"end":{"line":7,"col":16,"offset":87},"abstract_content":"0"}},"message":"equal comparison of 0 (0) in A","metadata":{},"severity":"INFO","fingerprint":"6760ea29ce6e5c80ba93276768c37b66a7361b5a3e472f99c271ff2ccee8009aeb1326fc764a6bc5d4790857b108f937034a157f2866b7e51a442ac68607eb5a_0","lines":"       return 0 == 0","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["propagated_constant.py"]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -1,0 +1,10 @@
+--- begin input files ---
+issue2465.requirements.txt
+issue2465.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 13 insertions(+)
+ create mode 100644 issue2465.requirements.txt
+ create mode 100644 issue2465.yaml
+{"version":"<MASKED>","results":[{"check_id":"pattern-not-regex-bug","path":"issue2465.requirements.txt","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":4,"offset":3},"extra":{"metavars":{},"message":"Found $TAG","metadata":{},"severity":"ERROR","fingerprint":"d6d15857b3655d45ae67355cd360eeea3a349adee4e0042dc37a56fc9bf628f8290f8e2b71360e6afe569c866b762e84d70d37f60479addbcdd800df6d8a9662_0","lines":"Foo==1.1.1","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["issue2465.requirements.txt"]},"interfile_languages_used":[],"skipped_rules":[]}

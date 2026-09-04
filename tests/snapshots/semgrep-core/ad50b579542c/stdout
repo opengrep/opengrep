@@ -1,0 +1,10 @@
+--- begin input files ---
+long-match.txt
+long-match.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 44 insertions(+)
+ create mode 100644 long-match.txt
+ create mode 100644 long-match.yaml
+{"version":"<MASKED>","results":[{"check_id":"begin-end","path":"long-match.txt","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":18,"offset":17},"extra":{"metavars":{},"message":"found something","metadata":{},"severity":"WARNING","fingerprint":"f588699a4a4199c065886fd4987cb936cb2bc0c0876a56b6a1d03e6c70b762306813f6b417c9922e8897a383c7823393af8c5e79657921ae27a3c6264ec46e5d_0","lines":"begin find me end","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"begin-end","path":"long-match.txt","start":{"line":5,"col":1,"offset":106},"end":{"line":36,"col":4,"offset":178},"extra":{"metavars":{},"message":"found something","metadata":{},"severity":"WARNING","fingerprint":"f588699a4a4199c065886fd4987cb936cb2bc0c0876a56b6a1d03e6c70b762306813f6b417c9922e8897a383c7823393af8c5e79657921ae27a3c6264ec46e5d_1","lines":"begin\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\nend","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["long-match.txt"]},"interfile_languages_used":[],"skipped_rules":[]}

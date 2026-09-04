@@ -1,0 +1,10 @@
+--- begin input files ---
+regex-any-language.html
+regex-any-language.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 36 insertions(+)
+ create mode 100644 regex-any-language.html
+ create mode 100644 regex-any-language.yaml
+{"version":"<MASKED>","results":[{"check_id":"template-autoescape-off","path":"regex-any-language.html","start":{"line":9,"col":5,"offset":210},"end":{"line":9,"col":25,"offset":230},"extra":{"metavars":{},"message":"Detected a segment of a Flask template where autoescaping is explicitly\ndisabled with '{% autoescape off %}'. This allows rendering of raw HTML\nin this segment. Ensure no user data is rendered here, otherwise this\nis a cross-site scripting (XSS) vulnerability.\n","metadata":{"cwe":"CWE-79: Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')","owasp":"A7: Cross-site Scripting (XSS)","references":["https://flask.palletsprojects.com/en/1.1.x/templating/#jinja-setup"]},"severity":"WARNING","fingerprint":"a39199362cbf133d4f2112bd91757facce10a8de82b1b5d258c22770d63a37c6da2c98cd4b3046aef8f025017807af2035bb0c0206eed237d2ce36deda6e24ea_0","lines":"    {% autoescape off %}","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["regex-any-language.html"]},"interfile_languages_used":[],"skipped_rules":[]}

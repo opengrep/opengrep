@@ -1,0 +1,58 @@
+--- begin input files ---
+basic/README.md
+basic/bento.png
+basic/inside.py
+basic/metavariable-comparison-bad-content.py
+basic/metavariable-comparison-base.py
+basic/metavariable-comparison-strip.py
+basic/metavariable-comparison.py
+basic/metavariable-regex-multi-regex.py
+basic/metavariable-regex-multi-rule.py
+basic/metavariable-regex.py
+basic/nested-patterns.js
+basic/nosem.c
+basic/nosem.go
+basic/nosem.java
+basic/nosem.js
+basic/nosem.py
+basic/regex-all-noopengrep.txt
+basic/regex-any-language.html
+basic/regex-nosemgrep.txt
+basic/regex-utf8.txt
+basic/regex.py
+basic/simple_python_no_extension
+basic/stupid.js
+basic/stupid.py
+basic/stupid_no_extension
+rules/nosem.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 26 files changed, 172 insertions(+)
+ create mode 100644 basic/README.md
+ create mode 100644 basic/bento.png
+ create mode 100644 basic/inside.py
+ create mode 100644 basic/metavariable-comparison-bad-content.py
+ create mode 100644 basic/metavariable-comparison-base.py
+ create mode 100644 basic/metavariable-comparison-strip.py
+ create mode 100644 basic/metavariable-comparison.py
+ create mode 100644 basic/metavariable-regex-multi-regex.py
+ create mode 100644 basic/metavariable-regex-multi-rule.py
+ create mode 100644 basic/metavariable-regex.py
+ create mode 100644 basic/nested-patterns.js
+ create mode 100644 basic/nosem.c
+ create mode 100644 basic/nosem.go
+ create mode 100644 basic/nosem.java
+ create mode 100644 basic/nosem.js
+ create mode 100644 basic/nosem.py
+ create mode 100644 basic/regex-all-noopengrep.txt
+ create mode 100644 basic/regex-any-language.html
+ create mode 100644 basic/regex-nosemgrep.txt
+ create mode 100644 basic/regex-utf8.txt
+ create mode 100644 basic/regex.py
+ create mode 100644 basic/simple_python_no_extension
+ create mode 100644 basic/stupid.js
+ create mode 100644 basic/stupid.py
+ create mode 100644 basic/stupid_no_extension
+ create mode 100644 rules/nosem.yaml
+{"version":"<MASKED>","results":[{"check_id":"rules.test-nosem","path":"basic/nosem.c","start":{"line":5,"col":5,"offset":121},"end":{"line":5,"col":22,"offset":138},"extra":{"metavars":{},"message":"test-nosem-message","metadata":{},"severity":"WARNING","fingerprint":"32892b8a57f234ba1afeda3035d24bfe4731449c00dc5580142a6249983745733059bc8ed7233b7bbfc998ffc2807c82ec4e10cdeb1a98a300ccd815c4ff0fe2_0","lines":"    test_nosem_func();","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.test-nosem","path":"basic/nosem.go","start":{"line":5,"col":2,"offset":75},"end":{"line":5,"col":19,"offset":92},"extra":{"metavars":{},"message":"test-nosem-message","metadata":{},"severity":"WARNING","fingerprint":"a2688a983f1d9ea158f732698d55b922f51705ee4531594e8398f45ed91425ccb3f866e09a4beb614a988946543a60c98037e76debf0ed2146601f7f6ead4793_0","lines":"\ttest_nosem_func()","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.test-nosem","path":"basic/nosem.java","start":{"line":6,"col":9,"offset":183},"end":{"line":6,"col":26,"offset":200},"extra":{"metavars":{},"message":"test-nosem-message","metadata":{},"severity":"WARNING","fingerprint":"753d5b2c4c67c36f2d2463a12023f244f118729f1cd1010385cbd32cb87c838e4612774b64b52ec217feca49be9f47de6bf00d495330faf181078334964d45fd_0","lines":"        test_nosem_func();","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.test-nosem","path":"basic/nosem.js","start":{"line":5,"col":1,"offset":118},"end":{"line":7,"col":2,"offset":180},"extra":{"metavars":{},"message":"test-nosem-message","metadata":{},"severity":"WARNING","fingerprint":"59d4b290442776de66bdf1f15e61d5025b64817cf79c2dfe1e0965457fec64bac7fe215e2c22e803884f43ee58ea58df7ed38accd17c47a80fa448bb1b48ee10_0","lines":"test_nosem_func(\n    invalid_line // nosem: rules.test-nosem\n)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.test-nosem","path":"basic/nosem.js","start":{"line":18,"col":1,"offset":302},"end":{"line":21,"col":2,"offset":364},"extra":{"metavars":{},"message":"test-nosem-message","metadata":{},"severity":"WARNING","fingerprint":"59d4b290442776de66bdf1f15e61d5025b64817cf79c2dfe1e0965457fec64bac7fe215e2c22e803884f43ee58ea58df7ed38accd17c47a80fa448bb1b48ee10_1","lines":"test_nosem_func(\n  // nosem: rules.test-nosem\n  invalid_line\n)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.test-nosem","path":"basic/nosem.js","start":{"line":23,"col":1,"offset":366},"end":{"line":23,"col":18,"offset":383},"extra":{"metavars":{},"message":"test-nosem-message","metadata":{},"severity":"WARNING","fingerprint":"59d4b290442776de66bdf1f15e61d5025b64817cf79c2dfe1e0965457fec64bac7fe215e2c22e803884f43ee58ea58df7ed38accd17c47a80fa448bb1b48ee10_2","lines":"test_nosem_func()","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.test-nosem","path":"basic/nosem.py","start":{"line":22,"col":1,"offset":439},"end":{"line":22,"col":18,"offset":456},"extra":{"metavars":{},"message":"test-nosem-message","metadata":{},"severity":"WARNING","fingerprint":"cc2358b809438a7eb66635fa9ad41de5fd58fad1030c42d4a21473bcea68d99f997bbbfbda9ac1b2c79674965cdf15c844a8fb92aff36f13b820bbb075f405c9_0","lines":"test_nosem_func()","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["basic/inside.py","basic/metavariable-comparison-bad-content.py","basic/metavariable-comparison-base.py","basic/metavariable-comparison-strip.py","basic/metavariable-comparison.py","basic/metavariable-regex-multi-regex.py","basic/metavariable-regex-multi-rule.py","basic/metavariable-regex.py","basic/nested-patterns.js","basic/nosem.c","basic/nosem.go","basic/nosem.java","basic/nosem.js","basic/nosem.py","basic/regex.py","basic/stupid.js","basic/stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}

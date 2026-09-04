@@ -1546,6 +1546,6 @@ let tests (caps : < Scan_subcommand.caps >) =
         ~normalize
         (Test_scan_helpers.run_scan caps ~format_args:[]
            ~rule:"rules/sort-findings.yaml" ~targets:[]
-           ~extra_files:[ Test_scan_subcommand_formats.sort_findings_dir ]
+           ~extra_files:[ Test_scan_subcommand_findings.sort_findings_dir ]
            ~extra_args:[ "sort-findings" ]);
     ]
