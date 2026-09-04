@@ -786,30 +786,12 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
                   res.core.errors))
 
 (*****************************************************************************)
-(* Run 'scan' or 'test' or 'validate' or 'show' (or fallback to pysemgrep) *)
+(* Run 'scan' or 'test' or 'validate' or 'show' *)
 (*****************************************************************************)
 
 (* All the business logic after command-line parsing. Return the desired
    exit code. *)
 let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
-  (* coupling: if you modify the pysemgrep fallback code below, you
-   * probably also need to modify it in Ci_subcommand.ml
-   *)
-  (match conf.common.maturity with
-  | Maturity.Default -> (
-      (* TODO: handle more confs, or fallback to pysemgrep further down *)
-      match conf with
-      | { show = Some _; _ } -> ()
-      | _else_ -> raise Pysemgrep.Fallback)
-  (* this should never happen because --legacy is handled in cli/bin/semgrep *)
-  | Maturity.Legacy -> raise Pysemgrep.Fallback
-  (* ok the user explicitely requested --experimental (or --develop),
-   * let's keep going with osemgrep then
-   *)
-  | Maturity.Experimental
-  | Maturity.Develop ->
-      ());
-
   (* Note that basic logging (Logs_.setup_basic()) was done in CLI.ml before, but
    * in CLI_common.setup_logging() we do the full setup (Logs_.setup()) now
    * that we have a conf object.
@@ -818,8 +800,6 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
     ~level:conf.common.logging_level;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 
-  (* only now that the fallback above has let us through: pysemgrep has its
-   * own handling of these destinations, and gets to keep it *)
   Output.check_destinations conf.output_conf;
 
   let conf =

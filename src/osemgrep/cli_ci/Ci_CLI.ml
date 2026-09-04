@@ -194,10 +194,8 @@ let cmdline_term : conf Term.t =
     let matching_conf : Match_patterns.matching_conf =
       { Match_patterns.track_enclosing_context = false }
     in
-    (* coupling: Scan_CLI; not on the default maturity, where the run falls
-       back to pyopengrep, which prints no such warning for ci *)
-    if include_ <> None && exclude_ <> [] && common.maturity <> Maturity.Default
-    then
+    (* coupling: Scan_CLI *)
+    if include_ <> None && exclude_ <> [] then
       Logs.warn (fun m ->
           m
             "Paths that match both --include and --exclude will be skipped by \

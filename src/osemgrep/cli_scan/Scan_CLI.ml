@@ -257,7 +257,7 @@ let o_semgrepignore_filename : string option Term.t =
     Arg.info ~docv:"FILENAME"
       [ "semgrepignore-filename" ]
       ~doc:
-        {|Use the file $(docv) instead of the default .semgrepignore to specify targets skipped during the scan. REQUIRES --experimental|}
+        {|Use the file $(docv) instead of the default .semgrepignore to specify targets skipped during the scan.|}
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
@@ -974,12 +974,11 @@ CHANGE OR DISAPPEAR WITHOUT NOTICE.
    The bool indicates that some paths were converted to temporary files without
    a particular file name or extension.
 
-   experimental = we're sure that we won't invoke pysemgrep later with the
-   same argv; allows us to consume stdin and named pipes.
+   No other program is run on the same argv, so stdin and named pipes can be
+   consumed here.
 *)
 let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
-    ~(experimental : bool) (target_roots : string list) :
-    Scanning_root.t list * bool =
+    (target_roots : string list) : Scanning_root.t list * bool =
   let imply_always_select_explicit_targets = ref false in
   let target_roots =
     target_roots
@@ -987,20 +986,13 @@ let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
            match str with
            | "-" ->
                imply_always_select_explicit_targets := true;
-               if experimental then
-                 (* consumes stdin, preventing command-line forwarding to
-                    pysemgrep or another osemgrep! *)
-                 CapTmp.replace_stdin_by_regular_file caps#tmp
-                   ~prefix:"opengrep-stdin-" ()
-               else
-                 (* remove this hack when no longer forward the command line
-                    to another program *)
-                 Fpath.v "/dev/stdin"
+               CapTmp.replace_stdin_by_regular_file caps#tmp
+                 ~prefix:"opengrep-stdin-" ()
            | str ->
                let orig_path = Fpath.v str in
                (* a path that does not exist is left to the scan, which
                 * reports it as a fatal "File not found" error *)
-               if experimental && Sys.file_exists str then (
+               if Sys.file_exists str then (
                  match
                    CapTmp.replace_named_pipe_by_regular_file_if_needed caps#tmp
                      ~prefix:"opengrep-named-pipe-" (Fpath.v str)
@@ -1284,9 +1276,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           m
             "The --output-enclosing-context option has no effect without --json.");
     let target_roots, imply_always_select_explicit_targets =
-      replace_target_roots_by_regular_files_where_needed caps
-        ~experimental:(common.CLI_common.maturity =*= Maturity.Experimental)
-        target_roots
+      replace_target_roots_by_regular_files_where_needed caps target_roots
     in
     let force_project_root = project_root_conf ~project_root in
     let explicit_targets =
@@ -1318,7 +1308,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         strict;
         fixed_lines = dryrun;
         skipped_files =
-          (match common.logging_level with
+          (match common.CLI_common.logging_level with
           | Some (Info | Debug) -> true
           | _else_ -> false);
         max_log_list_entries;
@@ -1421,13 +1411,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         ~test_ignore_todo ~strict ~taint_intrafile ~timeout ~timeout_threshold
         ~max_memory_mb ~common
     in
-    (* warnings.
-     * ugly: TODO: remove the Default guard once we get the warning message
-     * in osemgrep equal to the one in pysemgrep or when we remove
-     * this sanity checks in pysemgrep and just rely on osemgrep to do it.
-     *)
-    if include_ <> None && exclude_ <> [] && common.maturity <> Maturity.Default
-    then
+    (* warnings *)
+    if include_ <> None && exclude_ <> [] then
       Logs.warn (fun m ->
           m
             "Paths that match both --include and --exclude will be skipped by \

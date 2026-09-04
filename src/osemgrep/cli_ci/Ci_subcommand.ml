@@ -195,8 +195,8 @@ let warn_ignored_flags (ci_conf : Ci_CLI.conf) : unit =
 let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
   let conf = ci_conf.scan_conf in
   warn_ignored_flags ci_conf;
-  (* post fallback, and inside the suppressed region: a bad destination is
-   * suppressed like any other error *)
+  (* inside the suppressed region: a bad destination is suppressed like any
+   * other error *)
   Output.check_destinations conf.output_conf;
   match resolve_subdir ci_conf.subdir with
   | Error exit_code -> exit_code
@@ -370,14 +370,6 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
 
 let run_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
   let conf = ci_conf.scan_conf in
-  (* coupling: the pysemgrep fallback logic of Scan_subcommand.run_conf *)
-  (match conf.common.maturity with
-  | Maturity.Default -> raise Pysemgrep.Fallback
-  (* this should never happen because --legacy is handled in the entrypoint *)
-  | Maturity.Legacy -> raise Pysemgrep.Fallback
-  | Maturity.Experimental
-  | Maturity.Develop ->
-      ());
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
     ~level:conf.common.logging_level;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
