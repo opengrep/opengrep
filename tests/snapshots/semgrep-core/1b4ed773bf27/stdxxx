@@ -31,7 +31,7 @@ rules/additional-invalid-pattern-operator.yaml:4:5: Invalid rule schema in rule 
   |     ^
 5 |     foo: bar
 Expected exactly one key of `pattern`, `all`, `any`, `regex`, `not`, or `inside`
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/additional-invalid-pattern-operator.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq","message":"Invalid rule schema at line rules/additional-invalid-pattern-operator.yaml:4:\n Expected exactly one key of `pattern`, `all`, `any`, `regex`, `not`, or `inside`","path":"rules/additional-invalid-pattern-operator.yaml","long_msg":"Expected exactly one key of `pattern`, `all`, `any`, `regex`, `not`, or `inside`","short_msg":"Invalid rule schema","spans":[{"file":"rules/additional-invalid-pattern-operator.yaml","start":{"line":4,"col":5,"offset":31},"end":{"line":4,"col":6,"offset":32}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

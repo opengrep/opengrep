@@ -184,6 +184,12 @@ let format
                  in
                  String.concat ":" parts)
 
+(* a match a 'nosemgrep' comment did not suppress *)
+let not_ignored (m : Out.cli_match) : bool =
+  match m.extra.is_ignored with
+  | Some true -> false
+  | _ -> true
+
 (* true when any of the requested outputs wants the nosem-ignored matches;
  * only SARIF does, as it labels them as suppressed rather than hiding them *)
 let keeps_ignores (conf : conf) : bool =
@@ -201,13 +207,7 @@ let keeps_ignores (conf : conf) : bool =
 let for_output_format (conf : conf) (kind : Output_format.t)
     (cli_output : Out.cli_output) : Out.cli_output =
   if Output_format.keep_ignores kind || not (keeps_ignores conf) then cli_output
-  else
-    let not_ignored (m : Out.cli_match) : bool =
-      match m.extra.is_ignored with
-      | Some true -> false
-      | _ -> true
-    in
-    { cli_output with results = List.filter not_ignored cli_output.results }
+  else { cli_output with results = List.filter not_ignored cli_output.results }
 
 (* Render any output format to a string (without trailing newline).
  * Used for the file destinations of -o/--output and --<format>-output;
@@ -362,7 +362,8 @@ let dispatch_output_format
  * by filtering out nosem, setting messages, adding fingerprinting etc.
  * TODO? remove this intermediate?
  *)
-let preprocess_result ~fixed_lines (res : Core_runner.result) : Out.cli_output =
+let preprocess_result ~fixed_lines ~keep_ignored (res : Core_runner.result) :
+    Out.cli_output =
   let cli_output : Out.cli_output =
     Cli_json_output.cli_output_of_runner_result ~fixed_lines res.core res.hrules
       res.scanned
@@ -371,13 +372,19 @@ let preprocess_result ~fixed_lines (res : Core_runner.result) : Out.cli_output =
   {
     results with
     (* TODO? why not do that in cli_output_of_core_results? *)
-    results = Cli_json_output.index_match_based_ids results.results;
+    (* The index of a match-based id counts the nosem-ignored matches, as
+       pysemgrep's RuleMatchSet.add assigned it before any suppression, so
+       the ignored ones are dropped only after the indexing. *)
+    results =
+      Cli_json_output.index_match_based_ids results.results
+      |> List.filter (fun (m : Out.cli_match) ->
+             keep_ignored || not_ignored m);
   }
 
 (* python: mix of output.OutputSettings(), output.OutputHandler(), and
  * output.output() all at once.
  *)
-let output_result (caps : < Cap.stdout >) (conf : conf)
+let output_result ~(keep_ignored : bool) (caps : < Cap.stdout >) (conf : conf)
     (profiler : Profiler.t)
     (res : Core_runner.result) : Out.cli_output =
   (* In theory, we should build the JSON CLI output only for the
@@ -387,7 +394,7 @@ let output_result (caps : < Cap.stdout >) (conf : conf)
    *)
   let (cli_output : Out.cli_output) =
     Profiler.record profiler ~name:"ignores_time" (fun () ->
-        preprocess_result ~fixed_lines:conf.fixed_lines res)
+        preprocess_result ~fixed_lines:conf.fixed_lines ~keep_ignored res)
   in
   (* python: ProfileManager.dump_stats(), the times of the command itself
    * next to the engine's *)

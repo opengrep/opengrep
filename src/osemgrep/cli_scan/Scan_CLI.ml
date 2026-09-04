@@ -304,8 +304,12 @@ parallel. Defaults to the number of cores detected on the system
   in
   Arg.value (Arg.opt Arg.int default.core_runner_conf.num_jobs info)
 
-let o_max_memory_mb : int Term.t =
-  let default = default.core_runner_conf.max_memory_mb in
+(* The three engine limits below are options so that a value equal to the
+ * default can be told from the absence of the flag, which 'scan --test'
+ * needs (see test_CLI_conf); the default itself is applied in
+ * core_runner_conf.
+ *)
+let o_max_memory_mb : int option Term.t =
   let info =
     Arg.info [ "max-memory" ]
       ~doc:
@@ -315,7 +319,7 @@ not have memory limit. Defaults to 0. For CI scans that use the Pro Engine,
 defaults to 5000 MiB.
 |}
   in
-  Arg.value (Arg.opt Arg.int default info)
+  Arg.value (Arg.opt (Arg.some Arg.int) None info)
 
 let o_max_match_per_file : int Term.t =
   let default = default.core_runner_conf.max_match_per_file in
@@ -352,7 +356,7 @@ Use 'none' to turn all optimizations off.
   in
   Arg.value (Arg.opt converter default.core_runner_conf.optimizations info)
 
-let o_timeout : float Term.t =
+let o_timeout : float option Term.t =
   let default = default.core_runner_conf.timeout in
   let info =
     Arg.info [ "timeout" ]
@@ -364,7 +368,7 @@ seconds. If set to 0 will not have time limit. Defaults to %.1f s.
            default)
   in
   (*TOPORT: envvar="SEMGREP_TIMEOUT" *)
-  Arg.value (Arg.opt Arg.float default info)
+  Arg.value (Arg.opt (Arg.some Arg.float) None info)
 
 let o_allow_rule_timeout_control : bool Term.t =
   let info =
@@ -418,7 +422,7 @@ dynamic timeout will never exceed 10 times the given timeout passed in the cli. 
   in
   Arg.value (Arg.opt Arg.int default info)
 
-let o_timeout_threshold : int Term.t =
+let o_timeout_threshold : int option Term.t =
   let default = default.core_runner_conf.timeout_threshold in
   let info =
     Arg.info [ "timeout-threshold" ]
@@ -429,7 +433,7 @@ the file is skipped. If set to 0 will not have limit. Defaults to %d.
 |}
            default)
   in
-  Arg.value (Arg.opt Arg.int default info)
+  Arg.value (Arg.opt (Arg.some Arg.int) None info)
 
 (* TODO: currently just used in pysemgrep and semgrep-core-proprietary *)
 let o_timeout_interfile : int Term.t =
@@ -1170,7 +1174,7 @@ let show_CLI_conf ~dump_ast ~show_supported_languages ~target_roots ~pattern
       Some { Show.show_kind = Show.SupportedLanguages; json; html = false; common }
   | _else_ -> None
 
-let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common :
+let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json ~common :
     Validate_CLI.conf option =
   if validate then
     match rules_source with
@@ -1181,7 +1185,7 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common :
            a rule"
     | Configs (_ :: _)
     | Pattern _ ->
-        Some { rules_source; core_runner_conf; common }
+        Some { rules_source; core_runner_conf; json; common }
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
@@ -1193,9 +1197,9 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
         (List_.map Scanning_root.to_fpath target_roots)
         config
     in
-    (* those flags carry a default, and cmdliner does not tell a default
-     * apart from the same value given on the command line, so a value that
-     * differs from the default is taken as given by the user
+    (* those three flags are options in the scan CLI too, so the test run
+     * gets the value the user typed, whatever it is, and None when the flag
+     * is absent
      *)
     Some
       Test_CLI.
@@ -1208,19 +1212,9 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
           common;
           matching_diagnosis = false;
           taint_intrafile;
-          timeout =
-            (if Float.equal timeout default.core_runner_conf.timeout then None
-             else Some timeout);
-          timeout_threshold =
-            (if
-               Int.equal timeout_threshold
-                 default.core_runner_conf.timeout_threshold
-             then None
-             else Some timeout_threshold);
-          max_memory_mb =
-            (if Int.equal max_memory_mb default.core_runner_conf.max_memory_mb
-             then None
-             else Some max_memory_mb);
+          timeout;
+          timeout_threshold;
+          max_memory_mb;
         }
   else None
 
@@ -1334,13 +1328,15 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       {
         Core_runner.num_jobs;
         optimizations;
-        timeout;
+        timeout = timeout ||| default.core_runner_conf.timeout;
         dynamic_timeout;
         dynamic_timeout_max_multiplier;
         dynamic_timeout_unit_kb;
         allow_rule_timeout_control;
-        timeout_threshold;
-        max_memory_mb;
+        timeout_threshold =
+          timeout_threshold ||| default.core_runner_conf.timeout_threshold;
+        max_memory_mb =
+          max_memory_mb ||| default.core_runner_conf.max_memory_mb;
         max_match_per_file;
         dataflow_traces;
         nosem;
@@ -1401,7 +1397,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
      * alt: we could move this code in a Validate_subcommand.cli_args()
      *)
     let validate : Validate_CLI.conf option =
-      validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common
+      validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json ~common
     in
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =

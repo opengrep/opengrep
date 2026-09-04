@@ -109,6 +109,12 @@ let mk_rewrite_rule_ids (origin : origin) : Rule_ID.t -> Rule_ID.t =
 (* Helpers *)
 (*****************************************************************************)
 
+(* python: config_resolver.py, when no config gives any rule *)
+let no_config_given_message : string =
+  "No config given. Run with `--config auto` or see \
+   https://semgrep.dev/docs/running-rules/ for instructions on running with a \
+   specific config"
+
 let partition_rules_and_invalid (xs : rules_and_origin list) :
     Rule_error.rules_and_invalid =
   let (rules : Rule.rules) = xs |> List.concat_map (fun x -> x.rules) in
@@ -562,9 +568,7 @@ let rules_from_source_async ?(skip_invalid_configs = false) ~rewrite_rule_ids
         if rules_and_origins =*= [] && errors =*= [] then
           raise
             (Error.Semgrep_error
-               ( "No config given. Run with `--config auto` or see \
-                  https://semgrep.dev/docs/running-rules/ for instructions on \
-                  running with a specific config",
+               ( no_config_given_message,
                  Some (Exit_code.missing_config ~__LOC__) ));
 
         Lwt.return (rules_and_origins, errors)

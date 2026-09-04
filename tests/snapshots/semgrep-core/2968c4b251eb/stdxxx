@@ -31,7 +31,7 @@ rules/bad-three-layers.yaml:2:9: Invalid rule schema in rule rules.eqeq-is-bad
   |         ^^^^^^^^^^^
 3 |     pattern-either:
 missing languages
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/bad-three-layers.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq-is-bad","message":"Invalid rule schema at line rules/bad-three-layers.yaml:2:\n missing languages","path":"rules/bad-three-layers.yaml","long_msg":"missing languages","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad-three-layers.yaml","start":{"line":2,"col":9,"offset":15},"end":{"line":2,"col":20,"offset":26}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

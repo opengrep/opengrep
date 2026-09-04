@@ -31,7 +31,7 @@ rules/bad5.yaml:5:7: Invalid rule schema in rule rules.arg-reassign
   |       ^
 6 |     message: "$X is being reassigned"
 Strings are not valid under `patterns`: did you mean to write `pattern: 4` instead?
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/bad5.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.arg-reassign","message":"Invalid rule schema at line rules/bad5.yaml:5:\n Strings are not valid under `patterns`: did you mean to write `pattern: 4` instead?","path":"rules/bad5.yaml","long_msg":"Strings are not valid under `patterns`: did you mean to write `pattern: 4` instead?","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad5.yaml","start":{"line":5,"col":7,"offset":87},"end":{"line":5,"col":8,"offset":88}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

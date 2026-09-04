@@ -1,3 +1,4 @@
+open Common
 module Arg = Cmdliner.Arg
 module Cmd = Cmdliner.Cmd
 module Term = Cmdliner.Term
@@ -137,13 +138,16 @@ let cmdline_term : conf Term.t =
       {
         Core_runner.num_jobs;
         optimizations;
-        timeout;
+        (* the scan CLI parses those three as options, so that 'scan --test'
+           can tell the absence of the flag from its default value *)
+        timeout = timeout ||| Core_runner.default_conf.timeout;
         dynamic_timeout;
         dynamic_timeout_max_multiplier;
         dynamic_timeout_unit_kb;
         allow_rule_timeout_control;
-        timeout_threshold;
-        max_memory_mb;
+        timeout_threshold =
+          timeout_threshold ||| Core_runner.default_conf.timeout_threshold;
+        max_memory_mb = max_memory_mb ||| Core_runner.default_conf.max_memory_mb;
         max_match_per_file;
         dataflow_traces;
         (* --enable-nosem; the engine still annotates the matches, and the

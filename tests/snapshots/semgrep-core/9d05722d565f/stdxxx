@@ -31,7 +31,7 @@ rules/bad7.yaml:3:5: Invalid YAML
   |     ^^
 4 |     pattern-either:
 Expected a string value for id
-exit code: 5
+exit code: 7
 --- begin input files ---
 rules/bad7.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/bad7.yaml:3:\n Expected a string value for id","path":"rules/bad7.yaml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 5
+exit code: 7

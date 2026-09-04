@@ -31,7 +31,7 @@ rules/string-pattern.yaml:4:7: Invalid rule schema in rule rules.eqeq
   |       ^^^^^
 5 |   message: |
 Strings not allowed at this position, maybe try `pattern: foo`
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/string-pattern.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq","message":"Invalid rule schema at line rules/string-pattern.yaml:4:\n Strings not allowed at this position, maybe try `pattern: foo`","path":"rules/string-pattern.yaml","long_msg":"Strings not allowed at this position, maybe try `pattern: foo`","short_msg":"Invalid rule schema","spans":[{"file":"rules/string-pattern.yaml","start":{"line":4,"col":7,"offset":42},"end":{"line":4,"col":12,"offset":47}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

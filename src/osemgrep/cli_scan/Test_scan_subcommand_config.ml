@@ -175,9 +175,9 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~config_args:[ "--config"; "rules/rule_id/@npm-style"; "hello.txt" ]
            ~targets:[]);
       (* Two configs, one of which holds a rule without an id: the scan
-         stops on it rather than running the other config.
-         differs from the Python wrapper: it ends with exit code 7,
-         "missing configuration", opengrep with 5, "unparseable YAML"
+         stops on it rather than running the other config, with the exit
+         code of a configuration that could not be loaded, as the Python
+         wrapper had.
          python: test_multi_config_fail *)
       t "config: two configs, one of them broken"
         (run_scan caps ~root ~format_args:[ "--json" ]
@@ -190,12 +190,13 @@ let tests (caps : < Scan_subcommand.caps >) =
              ]
            ~extra_args:[ "--config"; "no_error.yaml" ]
            ~targets:[ "targets/basic/stupid.py" ]
-           ~check:Exit_code.Check.unparseable_yaml);
+           ~check:Exit_code.Check.missing_config);
       (* A rule whose pattern does not parse: the JSON carries the rule
          parse error and nothing is scanned.
          differs from the Python wrapper: it ends with exit code 2 and
-         reports the error with code 2, opengrep with exit code 4 and
-         code 4, and it lists the target as scanned and the rule as a
+         reports the error with code 2, opengrep aborts on the
+         configuration with exit code 7 and reports the error with code 4,
+         and the wrapper lists the target as scanned and the rule as a
          skipped path, where opengrep lists neither
          python: test_rule_parser__failure__error_messages *)
       t "config: a rule pattern that does not parse"
@@ -204,7 +205,17 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"bad-java-rule.yaml"
            ~targets:[ "targets/bad/basic_java.java" ]
            ~extra_args:[ "--verbose"; "--strict"; "basic_java.java" ]
-           ~check:Exit_code.Check.invalid_pattern);
+           ~check:Exit_code.Check.missing_config);
+      (* A config that parses but holds no rule: the "No config given" error
+         of the Python wrapper, with the exit code of a missing
+         configuration. *)
+      t "config: a file with an empty rules list"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~extra_files:[ F.File ("emptyrules.yaml", "rules: []\n") ]
+           ~extra_args:[ "--config"; "emptyrules.yaml" ]
+           ~targets:[ "targets/basic/stupid.py" ]
+           ~check:Exit_code.Check.missing_config);
       (* --version prints the version and nothing else. It changes at every
          release, so it is matched rather than snapshotted.
          python: test_version *)

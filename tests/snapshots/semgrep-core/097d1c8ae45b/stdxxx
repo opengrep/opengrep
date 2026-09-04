@@ -31,7 +31,7 @@ rules/invalid-pattern-child.yaml:9:13: Invalid rule schema in rule rules.blah
    |             ^^^^^^^^^^^
 10 | 
 you can only negate directly inside `patterns:` or `all:`
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/invalid-pattern-child.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.blah","message":"Invalid rule schema at line rules/invalid-pattern-child.yaml:9:\n you can only negate directly inside `patterns:` or `all:`","path":"rules/invalid-pattern-child.yaml","long_msg":"you can only negate directly inside `patterns:` or `all:`","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-pattern-child.yaml","start":{"line":9,"col":13,"offset":161},"end":{"line":9,"col":24,"offset":172}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

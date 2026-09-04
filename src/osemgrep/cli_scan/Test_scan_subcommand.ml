@@ -1058,18 +1058,20 @@ let test_rule_errors (caps : Scan_subcommand.caps) () =
       name expected_errors errors;
     expected_exit exit_code
   in
+  (* the run aborts on the configuration, so the exit code is the same for
+     every kind of error; the code of each entry still names the kind *)
   check "unknown language" ~rule:(Some unknown_language_rule_content) []
     [ ("Unknown language", 8, Some "arg-reassign") ]
-    Exit_code.Check.invalid_language;
+    Exit_code.Check.missing_config;
   check "pattern in a regex rule" ~rule:(Some pattern_in_regex_rule_content) []
     [ ("Invalid rule schema", 4, Some "bad") ]
-    Exit_code.Check.invalid_pattern;
+    Exit_code.Check.missing_config;
   check "invalid pattern in a rule" ~rule:(Some invalid_pattern_rule_content) []
     [ ("Rule parse error", 4, Some "bad-pat") ]
-    Exit_code.Check.invalid_pattern;
+    Exit_code.Check.missing_config;
   check "invalid -e pattern" ~rule:None [ "-e"; "("; "-l"; "python" ]
     [ ("Rule parse error", 4, Some "-") ]
-    Exit_code.Check.invalid_pattern
+    Exit_code.Check.missing_config
 
 (*****************************************************************************)
 (* nosem with an invalid or unknown rule id *)

@@ -31,7 +31,7 @@ rules/bad4.yaml:3:5: Invalid rule schema in rule rules.arg-reassign
   |     ^^^^^^^^
 4 |       pattern-inside: |
 Expected a list for patterns
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/bad4.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.arg-reassign","message":"Invalid rule schema at line rules/bad4.yaml:3:\n Expected a list for patterns","path":"rules/bad4.yaml","long_msg":"Expected a list for patterns","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad4.yaml","start":{"line":3,"col":5,"offset":32},"end":{"line":3,"col":13,"offset":40}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

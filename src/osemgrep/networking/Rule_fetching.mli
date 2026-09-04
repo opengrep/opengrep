@@ -43,6 +43,9 @@ and origin =
   | Git_repo of Uri.t
 [@@deriving show]
 
+(* what a run whose configs give no rule at all reports *)
+val no_config_given_message : string
+
 val partition_rules_and_invalid :
   rules_and_origin list -> Rule_error.rules_and_invalid
 

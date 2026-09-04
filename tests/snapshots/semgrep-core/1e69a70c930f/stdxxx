@@ -31,7 +31,7 @@ rules/bad15.yaml:2:5: Invalid YAML
   |     ^^
 3 |     message: Hi
 Expected a valid rule ID at id. Got too many
-exit code: 5
+exit code: 7
 --- begin input files ---
 rules/bad15.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/bad15.yaml:2:\n Expected a valid rule ID at id. Got too many","path":"rules/bad15.yaml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 5
+exit code: 7

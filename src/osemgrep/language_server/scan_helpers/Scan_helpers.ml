@@ -118,7 +118,7 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
       in
       (* Do reporting *)
       let (cli_output : Out.cli_output) =
-        Output.preprocess_result ~fixed_lines:false res
+        Output.preprocess_result ~fixed_lines:false ~keep_ignored:true res
       in
       let errors =
         cli_output.errors

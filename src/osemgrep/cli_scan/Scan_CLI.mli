@@ -107,7 +107,7 @@ val o_matching_explanations : bool Cmdliner.Term.t
 val o_max_chars_per_line : int Cmdliner.Term.t
 val o_max_lines_per_finding : int Cmdliner.Term.t
 val o_max_log_list_entries : int Cmdliner.Term.t
-val o_max_memory_mb : int Cmdliner.Term.t
+val o_max_memory_mb : int option Cmdliner.Term.t
 val o_max_target_bytes : int Cmdliner.Term.t
 val o_num_jobs : int Cmdliner.Term.t
 val o_nosem : bool Cmdliner.Term.t
@@ -124,9 +124,9 @@ val o_test : bool Cmdliner.Term.t
 val o_text : bool Cmdliner.Term.t
 val o_text_outputs : string list Cmdliner.Term.t
 val o_time : bool Cmdliner.Term.t
-val o_timeout : float Cmdliner.Term.t
+val o_timeout : float option Cmdliner.Term.t
 val o_timeout_interfile : int Cmdliner.Term.t
-val o_timeout_threshold : int Cmdliner.Term.t
+val o_timeout_threshold : int option Cmdliner.Term.t
 val o_inline_metavariables : bool Cmdliner.Term.t
 (* val o_trace : bool Cmdliner.Term.t
    val o_trace_endpoint : string option Cmdliner.Term.t *)

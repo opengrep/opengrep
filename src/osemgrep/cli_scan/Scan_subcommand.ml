@@ -96,14 +96,8 @@ let core_errors_of_fatal_rule_errors (fatal_errors : Rule_error.t list) :
 
 (* we require stdout here to give the proper output, such as with --json *)
 let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
-    (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
-    (errors : Core_error.t list) : Exit_code.t =
-  (* the code of the error, as in the JSON output *)
-  let exit_code : Exit_code.t =
-    match errors with
-    | (e : Core_error.t) :: _ -> Cli_json_output.exit_code_of_error_type e.typ
-    | [] -> Exit_code.missing_config ~__LOC__
-  in
+    ~(exit_code : Exit_code.t) (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
+    (profiler : Profiler.t) (errors : Core_error.t list) : Exit_code.t =
   match conf.output_conf.output_format with
   (* For textual output, it seems that we do not have a unified way to
      display errors, other than raising an exception and dispatching to the
@@ -118,12 +112,35 @@ let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
         Core_runner.mk_result [] (Core_result.mk_result_with_just_errors errors)
       in
 
-      Output.output_result
+      Output.output_result ~keep_ignored:false
         (caps :> < Cap.stdout >)
         (* TODO: choose output conf? *)
         conf.output_conf profiler res
       |> ignore;
       exit_code
+
+(* A configuration that cannot be loaded aborts the run with the
+ * "invalid configuration" exit code, whatever the kinds of the errors:
+ * pysemgrep raised a final SemgrepError with MISSING_CONFIG_EXIT_CODE on
+ * top of the per-error codes (run_scan.py), which the entries of the JSON
+ * keep. *)
+let output_and_exit_from_invalid_config_exn ~(text_message : string)
+    (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
+    (errors : Core_error.t list) : Exit_code.t =
+  output_and_exit_from_fatal_core_errors_exn ~text_message
+    ~exit_code:(Exit_code.missing_config ~__LOC__)
+    caps conf profiler errors
+
+(* A fatal error of the command itself (a git failure, a config that cannot
+ * be downloaded, an option we cannot read): the document of the format
+ * asked for still carries it, as pysemgrep's output handler ran in a
+ * 'finally' clause (output.py handle_semgrep_errors). *)
+let output_and_exit_from_fatal_exn ~(msg : string) ~(exit_code : Exit_code.t)
+    (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t) :
+    Exit_code.t =
+  output_and_exit_from_fatal_core_errors_exn ~text_message:msg ~exit_code caps
+    conf profiler
+    [ Core_error.mk_error ~msg Out.SemgrepError ]
 
 (* A scanning root that does not exist aborts the scan, as pysemgrep's
  * FilesNotFoundError does: one fatal error per missing root, reported in
@@ -153,6 +170,7 @@ let get_targets_or_exit (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
              (errors
              |> List_.map (fun (error : Core_error.t) -> error.msg)
              |> String.concat "\n")
+           ~exit_code:(Exit_code.fatal ~__LOC__)
            caps conf profiler errors)
 
 (*****************************************************************************)
@@ -414,14 +432,13 @@ let trim_core_match_fix (r : Out.core_match) =
   let extra = { r.extra with fix } in
   { r with extra }
 
-let adjust_nosemgrep_and_autofix ~keep_ignored (res : Core_runner.result) :
+(* The nosem-ignored matches stay in the results here: Output drops them
+   once the match-based ids are indexed, which counts them as pysemgrep
+   did. *)
+let adjust_nosemgrep_and_autofix (res : Core_runner.result) :
     Core_runner.result =
-  let filtered_matches =
-    res.core.results
-    |> List_.map trim_core_match_fix
-    |> Nosemgrep.filter_ignored ~keep_ignored
-  in
-  { res with core = { res.core with results = filtered_matches } }
+  let matches = res.core.results |> List_.map trim_core_match_fix in
+  { res with core = { res.core with results = matches } }
 
 (*****************************************************************************)
 (* Yet another check targets with rules *)
@@ -462,12 +479,26 @@ let check_targets_with_rules ?(print_summary = true)
       (* Here, we output again, because we need to make sure that invalid rule errors
          are also surfaced to users who request --json or similar.
       *)
-      let core_errors =
-        List_.map Core_error.error_of_invalid_rule invalid_rules
+      let core_errors, text_message =
+        match invalid_rules with
+        (* a config that holds no rule at all (e.g. 'rules: []'): there is
+           no invalid rule to report, so we report the missing config as
+           pysemgrep's config_resolver did *)
+        | [] ->
+            ( [
+                Core_error.mk_error
+                  ~msg:Rule_fetching.no_config_given_message Out.SemgrepError;
+              ],
+              Rule_fetching.no_config_given_message )
+        | _ :: _ ->
+            let core_errors =
+              List_.map Core_error.error_of_invalid_rule invalid_rules
+            in
+            ( core_errors,
+              Rule_errors_report.invalid_configs_message core_errors )
       in
       Error
-        (output_and_exit_from_fatal_core_errors_exn
-           ~text_message:(Rule_errors_report.invalid_configs_message core_errors)
+        (output_and_exit_from_invalid_config_exn ~text_message
            (caps :> < Cap.stdout >)
            conf profiler core_errors)
   | _ -> (
@@ -575,7 +606,8 @@ let check_targets_with_rules ?(print_summary = true)
           let output_conf : Output.conf =
             { conf.output_conf with output_format }
           in
-          (* step 3'': adjust the matches, filter via nosemgrep and part1 autofix *)
+          (* step 3'': adjust the matches and part1 autofix; the nosemgrep
+             filtering itself happens in Output, after the ids are indexed *)
           let keep_ignored =
             (not conf.core_runner_conf.nosem)
             (* --disable-nosem *)
@@ -584,7 +616,7 @@ let check_targets_with_rules ?(print_summary = true)
                the suppressed matches it reports *)
             || Output.keeps_ignores output_conf
           in
-          let res = adjust_nosemgrep_and_autofix ~keep_ignored res in
+          let res = adjust_nosemgrep_and_autofix res in
 
           (* step 4: adjust the skipped_targets *)
           (* the targets with an error count as partially analysed, in the
@@ -618,7 +650,9 @@ let check_targets_with_rules ?(print_summary = true)
           Logs.info (fun m -> m "reporting matches if any");
           (* outputting the result on stdout! in JSON/Text/... depending on conf *)
           let cli_output =
-            Output.output_result (caps :> < Cap.stdout >) output_conf profiler res
+            Output.output_result ~keep_ignored
+              (caps :> < Cap.stdout >)
+              output_conf profiler res
           in
           (* python: the timeout warnings printed in text mode with the
              results (not with --quiet, on either side) *)
@@ -683,7 +717,7 @@ let check_targets_with_rules ?(print_summary = true)
             Autofix.apply_fixes_of_core_matches
               ~dryrun:conf.output_conf.fixed_lines
               (Semgrep_output_utils.sort_core_matches_as_reported
-                 res.core.results);
+                 (Nosemgrep.filter_ignored ~keep_ignored res.core.results));
 
           (* TOPORT? was in formater/base.py
              def keep_ignores(self) -> bool:
@@ -699,6 +733,39 @@ let check_targets_with_rules ?(print_summary = true)
 (*****************************************************************************)
 (* Run the real 'scan' subcommand *)
 (*****************************************************************************)
+
+(* An error that aborts the run before any result is printed (a config that
+ * cannot be downloaded, an option we cannot read, a git command that fails,
+ * ...) still gets a document in the machine formats. The text format keeps
+ * raising: CLI.safe_run prints the message on stderr, as before.
+ *)
+let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
+    (f : unit -> Exit_code.t) : Exit_code.t =
+  match conf.output_conf.output_format with
+  | Output_format.Text -> f ()
+  | _ -> (
+      let report (msg : string) (exit_code : Exit_code.t) : Exit_code.t =
+        (* the error is on stderr as well, as CLI.safe_run reports it for
+           the text format *)
+        Logs.err (fun m -> m "%s" msg);
+        (* the times of the run are of no interest for an aborted one *)
+        output_and_exit_from_fatal_exn ~msg ~exit_code caps conf
+          (Profiler.make ())
+      in
+      try f () with
+      (* not errors: the ways a subcommand asks for an exit code *)
+      | (Error.Exit_code _ | Common.UnixExit _) as exn ->
+          Exception.catch_and_reraise exn
+      | Error.Semgrep_error (msg, opt_exit_code) ->
+          report msg (opt_exit_code ||| Exit_code.fatal ~__LOC__)
+      | Git_wrapper.Error msg -> report msg (Exit_code.fatal ~__LOC__)
+      | Failure msg -> report (spf "Error: %s" msg) (Exit_code.fatal ~__LOC__)
+      | e ->
+          let trace = Printexc.get_backtrace () in
+          Logs.debug (fun m -> m "%s" trace);
+          report
+            (spf "Error: exception %s" (Printexc.to_string e))
+            (Exit_code.fatal ~__LOC__))
 
 let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
@@ -742,7 +809,7 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* if there are fatal errors, we must exit :( *)
   | _ :: _ ->
       let core_errors = core_errors_of_fatal_rule_errors fatal_errors in
-      output_and_exit_from_fatal_core_errors_exn
+      output_and_exit_from_invalid_config_exn
         ~text_message:(Rule_errors_report.invalid_configs_message core_errors)
         (caps :> < Cap.stdout >)
         conf profiler core_errors
@@ -859,7 +926,10 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
       (* --------------------------------------------------------- *)
       (* Let's go, this is an actual scan subcommand *)
       (* --------------------------------------------------------- *)
-      run_scan_conf caps conf
+      with_fatal_error_output
+        (caps :> < Cap.stdout >)
+        conf
+        (fun () -> run_scan_conf caps conf)
 
 (*****************************************************************************)
 (* Entry point *)
