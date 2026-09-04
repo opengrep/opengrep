@@ -2199,7 +2199,11 @@ and map_expression_term (env : env) (x : CST.expression_term) =
           in
           let v5 = (* ")" *) token env v5 in
           let all_exprs = expr :: exprs in
-          G.Seq all_exprs |> G.e (*todo is this right?*)
+          let e = G.Seq all_exprs |> G.e in
+          (* Keep the enclosing parens in the range so an outer operator spans
+             them, while the inner expressions keep their own tight range. *)
+          H2.set_e_range v1 v5 e;
+          e
       | `Anno_exp (v1, v2, v3, v4, v5) ->
           let v1 = (* "(" *) token env v1 in
           let expr = map_expression env v2 in

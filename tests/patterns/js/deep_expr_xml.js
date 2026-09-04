@@ -1,6 +1,7 @@
 export default function TestComponent4({assets, children, title}) {
-    //ERROR: match
-    return (
+    // The parenthesized JSX below keeps its own tight range, so the match
+    // starts at the element, not at the wrapping "(".
+    return ( //ERROR: match
       <html lang="en">
         <head>
           <meta charSet="utf-8" />
