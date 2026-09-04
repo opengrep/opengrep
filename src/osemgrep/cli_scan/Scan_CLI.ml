@@ -1216,13 +1216,18 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common :
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-    ~test_ignore_todo ~strict ~taint_intrafile ~common : Test_CLI.conf option =
+    ~test_ignore_todo ~strict ~taint_intrafile ~timeout ~timeout_threshold
+    ~max_memory_mb ~common : Test_CLI.conf option =
   if test then
     let target =
       Test_CLI.target_kind_of_roots_and_config
         (List_.map Scanning_root.to_fpath target_roots)
         config
     in
+    (* those flags carry a default, and cmdliner does not tell a default
+     * apart from the same value given on the command line, so a value that
+     * differs from the default is taken as given by the user
+     *)
     Some
       Test_CLI.
         {
@@ -1234,6 +1239,19 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
           common;
           matching_diagnosis = false;
           taint_intrafile;
+          timeout =
+            (if Float.equal timeout default.core_runner_conf.timeout then None
+             else Some timeout);
+          timeout_threshold =
+            (if
+               Int.equal timeout_threshold
+                 default.core_runner_conf.timeout_threshold
+             then None
+             else Some timeout_threshold);
+          max_memory_mb =
+            (if Int.equal max_memory_mb default.core_runner_conf.max_memory_mb
+             then None
+             else Some max_memory_mb);
         }
   else None
 
@@ -1421,7 +1439,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =
       test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-        ~test_ignore_todo ~strict ~taint_intrafile ~common
+        ~test_ignore_todo ~strict ~taint_intrafile ~timeout ~timeout_threshold
+        ~max_memory_mb ~common
     in
     (* warnings.
      * ugly: TODO: remove the Default guard once we get the warning message

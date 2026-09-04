@@ -1,0 +1,6 @@
+--- begin input files ---
+rules/rule_that_timeout.yaml
+targets/long.py
+--- end input files ---
+{"results":{"rules/rule_that_timeout.yaml":{"checks":{"open-redirect":{"passed":false,"matches":{"<TMP>/<MASKED>/targets/long.py":{"expected_lines":[9,14,19,24,31,49],"reported_lines":[]}},"errors":[]}}}},"fixtest_results":{},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[]}
+[33mASSERT[0m exit code
