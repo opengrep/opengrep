@@ -73,13 +73,18 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
         Some (String.concat " and " counts ^ " matching .semgrepignore patterns")
   in
   let out_skipped =
-    let mb = string_of_int Stdlib.(max_target_bytes / 1000 / 1000) in
+    (* in bytes below one megabyte, so that a small limit reads plainly *)
+    let size : string =
+      if max_target_bytes < 1_000_000 then
+        String_.unit_str max_target_bytes "byte"
+      else Printf.sprintf "%g MB" (float_of_int max_target_bytes /. 1e6)
+    in
     List_.filter_map Fun.id
       [
         opt_msg "files not matching --include patterns" include_ignored;
         opt_msg "files matching --exclude patterns" exclude_ignored;
         opt_msg "files never scanned by Opengrep" always_ignored;
-        opt_msg ("files larger than " ^ mb ^ " MB") file_size_ignored;
+        opt_msg ("files larger than " ^ size) file_size_ignored;
         semgrepignored;
         (match maturity with
         | Develop -> opt_msg "other files ignored" other_ignored
