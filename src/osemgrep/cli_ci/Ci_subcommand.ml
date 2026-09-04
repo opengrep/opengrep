@@ -382,12 +382,7 @@ let run_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
     ~level:conf.common.logging_level;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
   Logs.debug (fun m -> m "conf = %s" (Ci_CLI.show_conf ci_conf));
-  (* coupling: Scan_subcommand.run_conf dispatches show subconfs the same
-   * way (-d/--dump-command-for-core turns the run into a show command) *)
-  match conf.show with
-  | Some show ->
-      Show_subcommand.run_conf (caps :> < Cap.stdout ; Cap.network ; Cap.tmp >) show
-  | None -> run_and_suppress_errors caps ci_conf
+  run_and_suppress_errors caps ci_conf
 
 let main (caps : < caps ; .. >) (argv : string array) : Exit_code.t =
   let conf = Ci_CLI.parse_argv argv in

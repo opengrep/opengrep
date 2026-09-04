@@ -51,14 +51,6 @@ and show_kind =
   | DumpRule of Fpath.t
   | DumpRuleV2 of Fpath.t
   | DumpPatternsOfRule of Fpath.t
-  (* 'semgrep show ???'
-   * accessible also as 'semgrep scan --dump-engine-path
-   * LATER: get rid of it? *)
-  | DumpEnginePath
-  (* 'semgrep show ???'
-   * accessible also as 'semgrep scan --dump-command-for-core' (or just '-d')
-   * LATER: get rid of it *)
-  | DumpCommandForCore
   (* 'semgrep show dump-intrafile-graph' *)
   | DumpIntrafileGraph of Fpath.t * Lang.t
   (* 'semgrep show dump-taint-signatures' *)

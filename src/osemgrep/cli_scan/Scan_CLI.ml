@@ -868,22 +868,6 @@ and then exit (can use --json).
   in
   Arg.value (Arg.flag info)
 
-(* ugly: this should be a separate subcommand, not a flag of semgrep scan.
- * python: Click offer the hidden=True flag to not show it in --help
- * but cmdliner does not have an equivalent I think. Anyway this
- * command should soon disappear anyway.
- *)
-let o_dump_engine_path : bool Term.t =
-  let info = Arg.info [ "dump-engine-path" ] ~doc:{|<internal, do not use>|} in
-  Arg.value (Arg.flag info)
-
-(* LATER: this should not be needed *)
-let o_dump_command_for_core : bool Term.t =
-  let info =
-    Arg.info [ "d"; "dump-command-for-core" ] ~doc:{|<internal, do not use>|}
-  in
-  Arg.value (Arg.flag info)
-
 (* This is just intended to be around temporarily while we roll out and test the feature. Once we
    are confident that the lockfileless
    approach will not cause failures for customers, we should remove this flag and replace it with
@@ -1155,9 +1139,8 @@ let outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
 (* Alternate subcommand subconf *)
 (*****************************************************************************)
 
-let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
-    ~show_supported_languages ~target_roots ~pattern ~lang ~json ~common :
-    Show_CLI.conf option =
+let show_CLI_conf ~dump_ast ~show_supported_languages ~target_roots ~pattern
+    ~lang ~json ~common : Show_CLI.conf option =
   match () with
   | _ when dump_ast -> (
       let target_roots =
@@ -1193,10 +1176,6 @@ let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
       (* stricter: *)
       | Some _, _, _ :: _ ->
           Error.abort "Can't specify both -e and a target for --dump-ast")
-  | _ when dump_engine_path ->
-      Some { Show.show_kind = Show.DumpEnginePath; json; html = false; common }
-  | _ when dump_command_for_core ->
-      Some { Show.show_kind = Show.DumpCommandForCore; json; html = false; common }
   | _ when show_supported_languages ->
       Some { Show.show_kind = Show.SupportedLanguages; json; html = false; common }
   | _else_ -> None
@@ -1269,7 +1248,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   let combine
       allow_local_builds allow_rule_timeout_control
       apply_includes_excludes_to_files inline_metavariables autofix baseline_commit common config
-      dataflow_traces dryrun dump_ast dump_command_for_core dump_engine_path
+      dataflow_traces dryrun dump_ast
       dynamic_timeout dynamic_timeout_max_multiplier dynamic_timeout_unit_kb
       emacs emacs_outputs error exclude_ exclude_minified_files exclude_rule_ids files_with_matches
       force_color gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
@@ -1356,8 +1335,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
        * this ugly special case returning an empty Configs.
        *)
       | [], None
-        when dump_ast || dump_engine_path || validate || test || version
-             || show_supported_languages ->
+        when dump_ast || validate || test || version || show_supported_languages
+        ->
           Rules_source.Configs []
       | _ ->
           rule_source_conf ~config ~pattern ~lang ~replacement
@@ -1427,8 +1406,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
      * alt: we could move this code in a Dump_subcommand.validate_cli_args()
      *)
     let show : Show_CLI.conf option =
-      show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
-        ~show_supported_languages ~target_roots ~pattern ~lang ~json ~common
+      show_CLI_conf ~dump_ast ~show_supported_languages ~target_roots ~pattern
+        ~lang ~json ~common
     in
     (* ugly: validate should be a separate subcommand.
      * alt: we could move this code in a Validate_subcommand.cli_args()
@@ -1504,7 +1483,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_apply_includes_excludes_to_files $ o_inline_metavariables
     $ o_autofix $ o_baseline_commit $ CLI_common.o_common $ o_config
     $ o_dataflow_traces $ o_dryrun $ o_dump_ast
-    $ o_dump_command_for_core $ o_dump_engine_path
     $ o_dynamic_timeout $ o_dynamic_timeout_max_multiplier $ o_dynamic_timeout_unit_kb
     $ o_emacs $ o_emacs_outputs
     $ o_error $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
