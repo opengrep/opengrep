@@ -37,9 +37,19 @@ val rules_from_rules_source :
 val core_errors_of_fatal_rule_errors : Rule_error.t list -> Core_error.t list
 
 (* internal: also used in CI. text_message is what text mode reports (it
- * raises Semgrep_error with it); the other formats output the errors.
- * The exit code is the code of the first error. *)
+ * raises Semgrep_error with it); the other formats output the errors. *)
 val output_and_exit_from_fatal_core_errors_exn :
+  text_message:string ->
+  exit_code:Exit_code.t ->
+  < Cap.stdout > ->
+  Scan_CLI.conf ->
+  Profiler.t ->
+  Core_error.t list ->
+  Exit_code.t
+
+(* internal: also used in CI. As above, with the exit code of a
+ * configuration that could not be loaded. *)
+val output_and_exit_from_invalid_config_exn :
   text_message:string ->
   < Cap.stdout > ->
   Scan_CLI.conf ->

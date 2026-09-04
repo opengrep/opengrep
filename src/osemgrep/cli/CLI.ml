@@ -23,8 +23,8 @@ module Env = Semgrep_envvars
 
    This module determines the subcommand invoked on the command line
    and has another module handle it as if it was an independent command.
-   Exceptions are caught and turned into an appropriate exit code
-   (unless you used --debug).
+   Exceptions are caught and turned into an appropriate exit code,
+   with --debug adding their backtrace to the log.
 
    alt: we don't use Cmdliner to dispatch subcommands because it's too
    complicated and anyway we want full control on the main help message.
@@ -158,35 +158,44 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
 
 (* Wrapper that catches exceptions and turns them into an exit code
  * TOPORT? "Enforces that exit code 1 is only for findings"
+ *
+ * --debug is the run a user is asked for when reporting a problem, so it
+ * must not change the message or the exit code: the backtrace is logged in
+ * addition to the normal handling, not instead of it.
  *)
-let safe_run ~debug f : Exit_code.t =
-  if debug then f ()
-  else
-    try f () with
-    | Error.Semgrep_error (s, opt_exit_code) -> (
-        Logs.err (fun m -> m "%s" s);
-        match opt_exit_code with
-        | None -> Exit_code.fatal ~__LOC__
-        | Some code -> code)
-    | Error.Exit_code code -> code
-    (* a failed git command is already explained by Git_wrapper's own
-     * warning; no backtrace needed *)
-    | Git_wrapper.Error msg ->
-        Logs.err (fun m -> m "%s" msg);
-        Exit_code.fatal ~__LOC__
-    (* should never happen, you should prefer Error.Exit to Common.UnixExit
-     * but just in case *)
-    | Common.UnixExit i ->
-        Exit_code.of_int ~__LOC__ ~code:i ~description:"rogue UnixExit"
-    (* TOPORT: PLEASE_FILE_ISSUE_TEXT for unexpected exn *)
-    | Failure msg ->
-        Logs.err (fun m -> m "Error: %s%!" msg);
-        Exit_code.fatal ~__LOC__
-    | e ->
-        let trace = Printexc.get_backtrace () in
-        Logs.err (fun m ->
-            m "Error: exception %s\n%s%!" (Printexc.to_string e) trace);
-        Exit_code.fatal ~__LOC__
+let safe_run f : Exit_code.t =
+  (* only shown with --debug, which sets the Debug log level *)
+  let log_backtrace () : unit =
+    Logs.debug (fun m -> m "%s" (Printexc.get_backtrace ()))
+  in
+  try f () with
+  | Error.Semgrep_error (s, opt_exit_code) -> (
+      Logs.err (fun m -> m "%s" s);
+      log_backtrace ();
+      match opt_exit_code with
+      | None -> Exit_code.fatal ~__LOC__
+      | Some code -> code)
+  | Error.Exit_code code -> code
+  (* a failed git command is already explained by Git_wrapper's own
+   * warning; no backtrace needed *)
+  | Git_wrapper.Error msg ->
+      Logs.err (fun m -> m "%s" msg);
+      log_backtrace ();
+      Exit_code.fatal ~__LOC__
+  (* should never happen, you should prefer Error.Exit to Common.UnixExit
+   * but just in case *)
+  | Common.UnixExit i ->
+      Exit_code.of_int ~__LOC__ ~code:i ~description:"rogue UnixExit"
+  (* TOPORT: PLEASE_FILE_ISSUE_TEXT for unexpected exn *)
+  | Failure msg ->
+      Logs.err (fun m -> m "Error: %s%!" msg);
+      log_backtrace ();
+      Exit_code.fatal ~__LOC__
+  | e ->
+      let trace = Printexc.get_backtrace () in
+      Logs.err (fun m ->
+          m "Error: exception %s\n%s%!" (Printexc.to_string e) trace);
+      Exit_code.fatal ~__LOC__
 
 let before_exit ~profile caps : unit =
   (* alt: could be done in Main.ml instead, just before the call to exit() *)
@@ -207,7 +216,6 @@ let before_exit ~profile caps : unit =
  *)
 let main (caps : caps) (argv : string array) : Exit_code.t =
   Printexc.record_backtrace true;
-  let debug = Array.mem "--debug" argv in
   let profile = Array.mem "--profile" argv in
 
   (* LATER: move this function from Core_CLI to here at some point.
@@ -264,7 +272,7 @@ let main (caps : caps) (argv : string array) : Exit_code.t =
   (* TOADAPT? adapt more of Common.boilerplate? *)
 
   (* !The main call! dispatching a subcommand *)
-  let exit_code = safe_run ~debug (fun () -> dispatch_subcommand caps argv) in
+  let exit_code = safe_run (fun () -> dispatch_subcommand caps argv) in
 
   before_exit ~profile (caps :> < Cap.tmp >);
   exit_code

@@ -1,0 +1,11 @@
+--- begin input files ---
+rules/missing-field.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/missing-field.yaml
+ create mode 100644 target.py
+{"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"Rule parse error","rule_id":"rules.flask-secure-set-cookie","message":"Rule parse error in rule rules.flask-secure-set-cookie:\n Invalid pattern for Python: Stdlib.Parsing.Parse_error\n----- pattern -----\nflask.response.set_cookie(....)\n\n----- end pattern -----\n"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 4

@@ -35,7 +35,7 @@ Invalid pattern for Python: Stdlib.Parsing.Parse_error
 flask.response.set_cookie(....)
 
 ----- end pattern -----
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/missing-field.yaml
 target.py
@@ -55,4 +55,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"Rule parse error","rule_id":"rules.flask-secure-set-cookie","message":"Rule parse error in rule rules.flask-secure-set-cookie:\n Invalid pattern for Python: Stdlib.Parsing.Parse_error\n----- pattern -----\nflask.response.set_cookie(....)\n\n----- end pattern -----\n"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

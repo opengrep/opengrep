@@ -31,7 +31,7 @@ rules/bad14.yaml:10:9: Invalid rule schema in rule rules.tainty
    |         ^^
 11 |     # Can't use pattern in taint
 each pattern-sourceslist item should be a dictionary
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/bad14.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.tainty","message":"Invalid rule schema at line rules/bad14.yaml:10:\n each pattern-sourceslist item should be a dictionary","path":"rules/bad14.yaml","long_msg":"each pattern-sourceslist item should be a dictionary","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad14.yaml","start":{"line":10,"col":9,"offset":159},"end":{"line":10,"col":11,"offset":161}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

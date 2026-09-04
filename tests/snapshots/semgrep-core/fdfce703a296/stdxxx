@@ -31,7 +31,7 @@ rules/invalid-patterns-key.yml:8:22: Invalid YAML
   |                      ^^^^^^^^^^^^
 9 |       - patterns:
 (approximate error location; error nearby after) error calling parser: did not find expected key character 0 position 0 returned: 0
-exit code: 5
+exit code: 7
 --- begin input files ---
 rules/invalid-patterns-key.yml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/invalid-patterns-key.yml:8:\n (approximate error location; error nearby after) error calling parser: did not find expected key character 0 position 0 returned: 0","path":"rules/invalid-patterns-key.yml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 5
+exit code: 7

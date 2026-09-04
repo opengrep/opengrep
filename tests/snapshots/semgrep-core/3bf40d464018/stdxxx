@@ -31,7 +31,7 @@ rules/invalid-key-name.yml:4:9: Invalid rule schema in rule rules.dockerfile-sou
   |         ^^^^^^^^^^^^^^^
 5 |           - patterns:
 unexpected key patterns-either
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/invalid-key-name.yml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.dockerfile-source-not-pinned","message":"Invalid rule schema at line rules/invalid-key-name.yml:4:\n unexpected key patterns-either","path":"rules/invalid-key-name.yml","long_msg":"unexpected key patterns-either","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-key-name.yml","start":{"line":4,"col":9,"offset":66},"end":{"line":4,"col":24,"offset":81}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

@@ -28,6 +28,9 @@ type conf = {
   rules_source : Rules_source.t;
   (* TODO? really needed? *)
   core_runner_conf : Core_runner.conf;
+  (* --json: the errors of the validation are then reported as the cli
+   * output document, as they are for a scan *)
+  json : bool;
   common : CLI_common.conf;
 }
 [@@deriving show]
@@ -61,7 +64,9 @@ let cmdline_term : conf Term.t =
       | xs -> Rules_source.Configs xs
     in
     let core_runner_conf = Core_runner.default_conf in
-    { rules_source; core_runner_conf; common }
+    (* the 'validate' subcommand has no output flag of its own; only
+       'scan --validate --json' asks for the document *)
+    { rules_source; core_runner_conf; json = false; common }
   in
   Term.(const combine $ o_args $ CLI_common.o_common)
 

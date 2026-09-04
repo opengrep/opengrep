@@ -68,6 +68,37 @@ let run_cli (caps : CLI.caps) ~(dir : string) ~(rule : string)
           UCommon.pr (spf "exit code: %d" (Exit_code.to_int exit_code))))
 
 (*****************************************************************************)
+(* Validating rules *)
+(*****************************************************************************)
+
+(* 'validate' runs the metarules of a registry pack over the rule files, which
+   a test must not fetch: this pack is served instead, and matches nothing
+   (the metarules run on the rule files, which are YAML). *)
+let metarules_content : string =
+  {|rules:
+  - id: metacheck-nothing
+    pattern: $X == $X
+    message: no metacheck in the tests
+    languages: [python]
+    severity: ERROR
+|}
+
+let with_metarules (f : unit -> unit) : unit -> unit =
+  Http_mock_client.with_testing_client
+    (fun (_req : Cohttp.Request.t) (_body : Cohttp_lwt.Body.t) ->
+      Lwt.return
+        (Http_mock_client.basic_response
+           (Cohttp_lwt.Body.of_string metarules_content)))
+    f
+
+(* the rule file of the fixtures validated, printing the exit code; the
+   arguments spell the subcommand, so that both 'validate' and the legacy
+   'scan --validate' are covered *)
+let validate_rule_file (caps : CLI.caps) ~(dir : string) ~(rule : string)
+    (args : string list) : unit -> unit =
+  with_metarules (fun () -> run_cli caps ~dir ~rule args)
+
+(*****************************************************************************)
 (* Tests *)
 (*****************************************************************************)
 
@@ -126,4 +157,29 @@ let tests (caps : CLI.caps) =
           ~checked_output:(Testo.stdxxx ()) ~normalize
           (test_extra_field_valid caps);
         t "rule errors: missing config file" (test_missing_config_file caps);
+        (* a configuration the report calls invalid fails the run, whether it
+           is validated by the subcommand or by the legacy scan flag *)
+        t "rule errors: validate a file that does not parse"
+          ~checked_output:(Testo.stdout ()) ~normalize
+          (validate_rule_file caps ~dir:"syntax" ~rule:"missing-toplevel.yaml"
+             [ "validate"; "rules/missing-toplevel.yaml" ]);
+        t "rule errors: validate a rule that does not satisfy the schema"
+          ~checked_output:(Testo.stdout ()) ~normalize
+          (validate_rule_file caps ~dir:"invalid-rules"
+             ~rule:"missing-pattern.yaml"
+             [ "validate"; "rules/missing-pattern.yaml" ]);
+        (* --validate --json prints the document of the errors, as a scan
+           does *)
+        t "rule errors: scan --validate --json"
+          ~checked_output:(Testo.stdout ()) ~normalize
+          (validate_rule_file caps ~dir:"syntax" ~rule:"missing-field.yaml"
+             [
+               "scan"; "--validate"; "--json"; "--config";
+               "rules/missing-field.yaml";
+             ]);
+        (* a valid rule file validates and exits 0 *)
+        t "rule errors: validate a good rule file"
+          ~checked_output:(Testo.stdout ()) ~normalize
+          (validate_rule_file caps ~dir:"syntax" ~rule:"good.yaml"
+             [ "validate"; "rules/good.yaml" ]);
       ])

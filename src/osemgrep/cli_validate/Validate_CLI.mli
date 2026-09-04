@@ -9,6 +9,7 @@
 type conf = {
   rules_source : Rules_source.t;
   core_runner_conf : Core_runner.conf;
+  json : bool;
   common : CLI_common.conf;
 }
 [@@deriving show]

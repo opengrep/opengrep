@@ -31,7 +31,7 @@ rules/bad10.yaml:2:5: Invalid rule schema in rule rules.rule-with-null-keys
   |     ^
 3 |     message: This rule has a null value
 Expected only one of `pattern`, `pattern-either`, `patterns`, or `pattern-regex`
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/bad10.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.rule-with-null-keys","message":"Invalid rule schema at line rules/bad10.yaml:2:\n Expected only one of `pattern`, `pattern-either`, `patterns`, or `pattern-regex`","path":"rules/bad10.yaml","long_msg":"Expected only one of `pattern`, `pattern-either`, `patterns`, or `pattern-regex`","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad10.yaml","start":{"line":2,"col":5,"offset":11},"end":{"line":2,"col":6,"offset":12}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

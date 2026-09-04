@@ -31,7 +31,7 @@ rules/missing-pattern.yaml:2:3: Invalid rule schema in rule rules.eqeq
   |   ^
 3 |   message: |
 Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/missing-pattern.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq","message":"Invalid rule schema at line rules/missing-pattern.yaml:2:\n Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.","path":"rules/missing-pattern.yaml","long_msg":"Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.","short_msg":"Invalid rule schema","spans":[{"file":"rules/missing-pattern.yaml","start":{"line":2,"col":3,"offset":9},"end":{"line":2,"col":4,"offset":10}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7

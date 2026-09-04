@@ -277,7 +277,7 @@ let test_suppress_errors_env_garbage (caps : Ci_subcommand.caps) () =
 let test_invalid_rule_fatal (caps : Ci_subcommand.caps) () =
   run_ci caps ~rule:bad_rule_content ~target:clean_py_content
     ~extra_args:[ "--no-suppress-errors" ]
-    ~check:Exit_code.Check.invalid_pattern ()
+    ~check:Exit_code.Check.missing_config ()
 
 (* the same rule error is suppressed by default: the run ends ok *)
 let test_invalid_rule_suppressed (caps : Ci_subcommand.caps) () =

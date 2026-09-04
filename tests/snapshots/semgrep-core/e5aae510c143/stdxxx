@@ -31,7 +31,7 @@ rules/invalid-missing-top-item.yaml:2:5: Invalid rule schema in rule rules.blah
   |     ^
 3 |     message: blah
 Missing required field severity
-exit code: 4
+exit code: 7
 --- begin input files ---
 rules/invalid-missing-top-item.yaml
 target.py
@@ -51,4 +51,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
   Loading rules from local config...
 {"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.blah","message":"Invalid rule schema at line rules/invalid-missing-top-item.yaml:2:\n Missing required field severity","path":"rules/invalid-missing-top-item.yaml","long_msg":"Missing required field severity","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-missing-top-item.yaml","start":{"line":2,"col":5,"offset":11},"end":{"line":2,"col":6,"offset":12}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
-exit code: 4
+exit code: 7
