@@ -601,6 +601,19 @@ let check_targets_with_rules ?(print_summary = true)
           in
           let res = adjust_skipped skipped res in
 
+          (* python: OutputHandler.handle_semgrep_errors, the errors of the
+             scan as lines of the text output, before the findings *)
+          (match output_format with
+          | Text ->
+              res.core.errors
+              |> List_.map Cli_json_output.cli_error_of_core_error
+              |> Summary_report.cli_errors_to_report
+                   ~verbose:conf.output_conf.skipped_files
+              |> List.iter (fun (error : Out.cli_error) ->
+                     Logs.app (fun m ->
+                         m "%a" Summary_report.pp_cli_error error))
+          | _ -> ());
+
           (* step 5: report the matches *)
           Logs.info (fun m -> m "reporting matches if any");
           (* outputting the result on stdout! in JSON/Text/... depending on conf *)

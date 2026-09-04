@@ -51,6 +51,8 @@ Rules:
   js             2       1          Custom       2
 
 [<MASKED TIMESTAMP>][[34mINFO[0m]: scan: processing 1 files (skipping 0), with 2 rules (skipping 0 )
+[33m[WARN][0m Syntax error at line invalid_javascript.js:5:
+ `key:` was unexpected
 [<MASKED TIMESTAMP>][[34mINFO[0m]: reporting matches if any
 
 
@@ -92,6 +94,10 @@ Files skipped:
    • <none>
 
   [1m[24mSkipped by --exclude patterns:[0m
+
+   • <none>
+
+  [1m[24mFiles skipped due to insufficient read permissions:[0m
 
    • <none>
 

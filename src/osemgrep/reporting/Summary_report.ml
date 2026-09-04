@@ -15,6 +15,44 @@ module OutJ = Semgrep_output_v1_t
 (* Entry point *)
 (*****************************************************************************)
 
+(* python: SemgrepError.format_for_terminal in error.py: the level label,
+   then the message with its location. The label takes the colour the rest
+   of the text output gives that severity. *)
+let pp_cli_error ppf (error : OutJ.cli_error) : unit =
+  let (label : string), (style : Fmt.style) =
+    match error.level with
+    | `Error -> ("[ERROR]", `Fg `Red)
+    | `Warning -> ("[WARN]", `Fg `Yellow)
+    | `Info -> ("[INFO]", `Fg `Green)
+  in
+  Fmt.pf ppf "%a %s"
+    Fmt.(styled style string)
+    label
+    (Option.value ~default:"" error.message)
+
+(* python: OutputHandler.handle_semgrep_errors, which reports a warning
+   only with --verbose and leaves the timeouts and the rules needing a
+   missing plugin to their own summary lines *)
+let cli_errors_to_report ~(verbose : bool) (errors : OutJ.cli_error list) :
+    OutJ.cli_error list =
+  let has_own_line (error : OutJ.cli_error) : bool =
+    match error.type_ with
+    | Timeout
+    | MissingPlugin ->
+        true
+    | _else_ -> false
+  in
+  let is_reported (error : OutJ.cli_error) : bool =
+    match error.level with
+    | `Warning -> verbose
+    | `Error
+    | `Info ->
+        true
+  in
+  errors
+  |> List.filter (fun (error : OutJ.cli_error) ->
+         (not (has_own_line error)) && is_reported error)
+
 let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_target_bytes
     ~skipped_groups ppf () : unit =
   let {
@@ -23,6 +61,7 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
     exclude = exclude_ignored;
     size = file_size_ignored;
     always = always_ignored;
+    permissions = permissions_ignored;
     other = other_ignored;
     errors;
   } =
@@ -83,6 +122,7 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
       [
         opt_msg "files not matching --include patterns" include_ignored;
         opt_msg "files matching --exclude patterns" exclude_ignored;
+        opt_msg "files without read permission" permissions_ignored;
         opt_msg "files never scanned by Opengrep" always_ignored;
         opt_msg ("files larger than " ^ size) file_size_ignored;
         semgrepignored;

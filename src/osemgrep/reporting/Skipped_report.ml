@@ -20,6 +20,7 @@ type skipped_targets_grouped = {
   include_ : Semgrep_output_v1_t.skipped_target list;
   exclude : Semgrep_output_v1_t.skipped_target list;
   always : Semgrep_output_v1_t.skipped_target list;
+  permissions : Semgrep_output_v1_t.skipped_target list;
   other : Semgrep_output_v1_t.skipped_target list;
   (* targets possibly skipped because there was a parsing/matching/...
    * error while running the engine on it.
@@ -72,6 +73,7 @@ let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
         | Cli_exclude_flags_match -> `Exclude
         | Analysis_failed_parser_or_internal_error -> `Error
         | Always_skipped -> `Always
+        | Insufficient_permissions -> `Permissions
         | Excluded_by_config
         | Wrong_language
         | Minified
@@ -79,8 +81,7 @@ let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
         | Dotfile
         | Nonexistent_file
         | Irrelevant_rule
-        | Too_many_matches
-        | Insufficient_permissions ->
+        | Too_many_matches ->
             `Other)
       skipped
   in
@@ -99,6 +100,9 @@ let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
       | Not_found -> []);
     always =
       (try List.assoc `Always groups with
+      | Not_found -> []);
+    permissions =
+      (try List.assoc `Permissions groups with
       | Not_found -> []);
     other =
       (try List.assoc `Other groups with
@@ -138,6 +142,7 @@ let pp_skipped ~too_many_entries ppf
     exclude = exclude_ignored;
     size = file_size_ignored;
     always = always_ignored;
+    permissions = permissions_ignored;
     other = other_ignored;
     errors;
   } =
@@ -208,6 +213,12 @@ let pp_skipped ~too_many_entries ppf
   if too_many_entries > 0 && List.length exclude_ignored > too_many_entries then
     Fmt.pf ppf "   • %s@." Output.too_much_data
   else pp_list exclude_ignored;
+  Fmt.pf ppf "@.";
+
+  Fmt.pf ppf "  %a@.@."
+    Fmt.(styled `Bold string)
+    (esc ^ "Files skipped due to insufficient read permissions:");
+  pp_list permissions_ignored;
   Fmt.pf ppf "@.";
 
   Fmt.pf ppf "  %a@.  %a@.@."

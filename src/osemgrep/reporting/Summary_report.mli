@@ -1,3 +1,14 @@
+(* One error of the scan as a line of the text output: the level label, the
+   message and its location. Printed on stderr, before the findings. *)
+val pp_cli_error : Format.formatter -> Semgrep_output_v1_t.cli_error -> unit
+
+(* The errors the text output reports: a warning only with --verbose, and
+   never a timeout or a missing plugin, which have their own lines. *)
+val cli_errors_to_report :
+  verbose:bool ->
+  Semgrep_output_v1_t.cli_error list ->
+  Semgrep_output_v1_t.cli_error list
+
 val pp_summary :
   respect_gitignore:bool ->
   is_git_repo:bool ->
