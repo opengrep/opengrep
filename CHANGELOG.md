@@ -1,5 +1,51 @@
 # Changelog
 
+## [1.30.0](https://github.com/opengrep/opengrep/releases/tag/v1.30.0) - 05-09-2026
+
+### New features
+
+* `opengrep ci` reimplemented in OCaml behind `--experimental`, with metadata for all eight CI providers by @dimitris-m in #802
+
+### Language support
+
+* PHP: lex numeric literals as php-src does, covering `1_000` separators, `0o17` octal and `0B1010` by @maciejpirog in #814
+* PHP: a legacy octal literal such as `017` now has the value 15, not 17 by @maciejpirog in #814
+* PHP: `from` is a keyword only directly after `yield`, and an ordinary identifier everywhere else by @maciejpirog in #816
+* PHP: accept a trailing comma in an attribute's arguments, as in `#[Route("/a", name: "a",)]` by @maciejpirog in #817
+* PHP: accept a reserved keyword as a named-argument label, as in `implode(separator: ',', array: $x)` by @mcdruid in #819
+* PHP: extend keyword named-argument labels to attribute arguments and to `goto`, `true` and `false` by @maciejpirog in #821
+* PHP: allow `...` as a named argument's value, so `implode(separator: ..., array: ...)` works as a pattern by @maciejpirog in #821
+* PHP: accept several exception types in every `catch` of a `try`, not only the first one by @maciejpirog in #822
+* PHP: parse a variable-less `catch (Exception) {}` (PHP 8.0) by @maciejpirog in #822
+* PHP: keep every type of a multi-catch as a union, and match the clause from a pattern naming any one of them by @maciejpirog in #822
+* PHP: declare and use a semi-reserved keyword as an enum case, method or class constant name by @maciejpirog in #823
+* PHP: `C::static`, `C::self`, `C::__CLASS__` and `C::array()` parse as member accesses, not as the construct they spell by @maciejpirog in #823
+* PHP: allow a heredoc or nowdoc in a constant expression, as a const, property, parameter default or enum case value by @maciejpirog in #824
+* PHP: parse PHP 7.3 flexible heredocs, with an indented closing marker, and keep the body's own newlines in the value by @maciejpirog in #824
+* PHP: parse an intersection type on a parameter, as in `f(X&Y $p)`, apart from a by-reference `f(X &$p)` by @maciejpirog in #824
+* PHP: allow a property fetch on any constant expression (PHP 8.3), as in `const P = (new A)->prop` by @maciejpirog in #824
+
+### Improvements
+
+* Remove `--oss-only`, `--diff-depth`, `--x-dump-rule-partitions`, ci's `--supply-chain`/`--code` and `interactive` by @dimitris-m in #802
+* Replace the `Kcas_data` lock-free hashtable with `Saturn.Htbl` and drop the `kcas_data` dependency by @dimitris-m in #813
+* Remove unused functions from `libs/commons` and `libs/commons2`, including the `Cache_disk` module by @dimitris-m in #813
+
+### Bug fixes
+
+* taint: deliver propagator taints when the `to` l-value is visited before the `from` by @corneliuhoffman in #809
+* ci: retry a deeper fetch for the GitHub merge base only while the branch-off point is missing, ending in a full-history fetch by @dimitris-m in #802
+* ci: pass the GitLab job token through the environment rather than the git command line, and redact URL userinfo in logs by @dimitris-m in #802
+* ci: report a git failure before the scan instead of exiting silently by @dimitris-m in #802
+
+### New Contributors
+
+* @JAugusto42 made their first contribution in #801
+* @mcdruid made their first contribution in #819
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.29.0...v1.30.0
+
+
 ## [1.29.0](https://github.com/opengrep/opengrep/releases/tag/v1.29.0) - 28-08-2026
 
 ### Improvements
