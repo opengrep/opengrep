@@ -110,6 +110,10 @@ Files skipped:
 
    • targets/ignores/ignore.min.js
 
+  Files skipped due to insufficient read permissions:
+
+   • <none>
+
   Skipped by limiting to files smaller than 100 bytes:
   (Adjust with the --max-target-bytes flag)
 

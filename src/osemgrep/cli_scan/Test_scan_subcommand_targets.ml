@@ -232,6 +232,13 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[ "--json" ]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "--verbose"; "targets/permissions" ]);
+      (* the same scan in text mode: the unreadable file and directory are
+         listed in the verbose block and counted in the summary *)
+      t "permissions: text with --verbose" ~checked_output:(Testo.stdxxx ())
+        ~normalize:normalise
+        (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
+           ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
+           ~extra_args:[ "--verbose"; "targets/permissions" ]);
       (* python: test_permissions_scan_full_lax *)
       t "permissions: JSON" ~checked_output:(Testo.stdout ())
         ~normalize:normalise

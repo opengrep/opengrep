@@ -1574,8 +1574,8 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~check:Exit_code.Check.fatal);
       (* A file that does not parse is reported once even though two rules
          run over it.
-         differs from the Python wrapper: it also prints the syntax error
-         as a WARN line and counts the skipped lines next to the file name
+         differs from the Python wrapper: it counts the skipped lines next
+         to the file name
          python: test_parse_errors *)
       t "text output: a target parse error reported once"
         ~checked_output:(Testo.stdxxx ()) ~normalize

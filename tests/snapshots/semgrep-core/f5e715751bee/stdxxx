@@ -30,6 +30,12 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 └─────────────┘
   Scanning 1 file tracked by git with 1 Code rule:
   Scanning 1 file.
+[ERROR] Rule parse error in rule rules.print:
+ Invalid pattern for Python: Stdlib.Parsing.Parse_error
+----- pattern -----
+print..);
+----- end pattern -----
+
 
 
 ┌────────────────┐
