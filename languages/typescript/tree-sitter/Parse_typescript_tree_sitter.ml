@@ -2534,7 +2534,11 @@ and anon_choice_export_stmt_f90d83f (env : env)
       let v2 = kwd_attr_opt_to_list env Static v2 in
       let v2bis = kwd_attr_opt_to_list env Override v2bis in
       let v3 = kwd_attr_opt_to_list env Readonly v3 in
-      let v4 = property_name env v4 in
+      let v4 =
+        match v4 with
+        | `Prop_name x -> property_name env x
+        | `New tok -> PN ("new", token env tok)
+      in
       let v5 =
         match v5 with
         | Some tok -> [ (Optional, token env tok) ] (* "?" *)
