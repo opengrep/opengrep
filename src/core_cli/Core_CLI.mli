@@ -1,4 +1,4 @@
-(* entry point of semgrep-core *)
+(* entry point of the low-level engine CLI, i.e. `opengrep --core` *)
 val main : Cap.all_caps -> string array -> unit
 
 (* internals used also in semgrep-core-proprietary *)

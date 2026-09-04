@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eux
 
-# Setup the environment under MacOS to build and release opengrep-core.
+# Setup the environment under MacOS to build and release opengrep.
 
 # history: there used to be a separate osx-m1-release.sh script
 # that was mostly a copy of this file, but now the
@@ -29,7 +29,7 @@ brew uninstall --force tree-sitter
 
 SWITCH_NAME="${1:-5.5.0}"
 
-#coupling: this should be the same version than in our Dockerfile
+#coupling: this should be the same version as ocaml_version in .github/workflows/build-test-osx.yml
 if opam switch "${SWITCH_NAME}" 2>/dev/null; then
     # This happens because the self-hosted CI runners do not
     # cleanup things between each run.

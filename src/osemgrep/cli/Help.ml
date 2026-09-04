@@ -72,6 +72,7 @@ let print_semgrep_dashdash_help (stdout : Cap.Console.stdout) =
 
 @{<ul>Options@}:
   -h, --help  Show this message and exit.
+  --core      Run the low-level engine CLI; its own options are shown by @{<cyan>`opengrep --core -help`@}
 
 @{<ul>Commands@}:
   @{<cyan>lsp@}                  Start the Opengrep LSP server (useful for IDEs)

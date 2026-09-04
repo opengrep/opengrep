@@ -40,9 +40,9 @@ $ make             # routine build
 $ make test        # test everything
 ```
 
-`make core` builds `bin/opengrep`, `bin/opengrep-cli` and `bin/opengrep-core`,
-which are the same executable under three names; `opengrep-core` is the
-low-level core CLI. There is nothing to install: run the build in place.
+`make core` builds `bin/opengrep`, the single executable; the low-level
+engine CLI is reachable through `opengrep --core`. There is nothing to
+install: run the build in place.
 
 ```
 $ ./bin/opengrep --help

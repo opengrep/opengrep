@@ -18,7 +18,7 @@
 #     $ make install-deps
 #
 # to install the dependencies proper to opengrep (e.g., the necessary OPAM
-# packages used by opengrep-core).
+# packages used by the opengrep engine).
 #
 # Then to compile opengrep simply type:
 #
@@ -27,8 +27,7 @@
 # See INSTALL.md for more information
 
 # Most of the targets in this Makefile should work equally under
-# Linux (Alpine, Ubuntu, Arch), macOS (x86 and arm64), Windows (WSL, Cygwin),
-# and from a Dockerfile.
+# Linux (Alpine, Ubuntu, Arch), macOS (x86 and arm64), and Windows (WSL, Cygwin).
 # The main exceptions are the install-deps-XXX-yyy targets below.
 
 # If you really have to use platform-specific commands or flags, try to use
@@ -62,7 +61,7 @@ endif
 # This file is created by ocaml-tree-sitter-core's configure script.
 #
 # Because of these required environment variables, we can't call dune directly
-# to build opengrep-core, unless you manually execute first
+# to build opengrep, unless you manually execute first
 #  `source src/ocaml-tree-sitter-core/tree-sitter-config.sh`
 #
 # I use '-include' and not 'include' because before 'make setup' this file does
@@ -84,22 +83,18 @@ all:
 core:
 	$(MAKE) minimal-build
 
-# Minimal build of the opengrep-core executable.
+# Minimal build of the opengrep executable, which also provides the
+# low-level engine CLI as 'opengrep --core'.
 # If you need other binaries, look at the build-xxx rules below.
-# We do not use .../bin/{opengrep-core,opengrep-cli,opengrep} below to
-# factorize because make under Alpine uses busybox/ash for /bin/sh which
-# does not support this bash feature.
 .PHONY: minimal-build
 minimal-build:
-	dune build $(BUILD)/install/default/bin/opengrep-core$(EXE)
-	dune build $(BUILD)/install/default/bin/opengrep-cli$(EXE)
 	dune build $(BUILD)/install/default/bin/opengrep$(EXE)
 # Remove all symbols with GNU strip. It saves 10-25% on the executable
 # size and it doesn't seem to reduce the functionality or
 # debuggability of OCaml executables.
 # See discussion at https://github.com/semgrep/semgrep/pull/9471
-	chmod +w bin/opengrep-core$(EXE)
-	strip bin/opengrep-core$(EXE)
+	chmod +w bin/opengrep$(EXE)
+	strip bin/opengrep$(EXE)
 
 .PHONY: opengrep-diff
 opengrep-diff:
@@ -244,7 +239,7 @@ install-opam-deps:
 opam/semgrep.opam: dune-project
 	dune build $@
 # Foolproofing
-	chmod a-w semgrep.opam
+	chmod a-w $@
 
 install-deps: install-deps-for-semgrep-core
 
@@ -262,11 +257,11 @@ install-deps: install-deps-for-semgrep-core
 # support also Windows!
 # So we should generalize our use of WINDOWS_OPAM_DEPEXT_DEPS to all platforms.
 
-# Here is why we need those external packages to compile opengrep-core:
+# Here is why we need those external packages to compile opengrep:
 # - pkgconf (name of pkg-config clone in arch): required by opam/dune
 #   so it can find the location of the other libs
-# - pcre2: regex engine used in opengrep-core (libpcre2 >= 10.43)
-# - gmp: for opengrep-cli and its use of cohttp (LGPL since gmp 6)
+# - pcre2: regex engine used in the opengrep engine (libpcre2 >= 10.43)
+# - gmp: for opengrep and its use of cohttp (LGPL since gmp 6)
 # - libev: ?? for Austin
 # - curl: for opentelemetry, which we use for tracing for Emma
 # - openssl: ??
@@ -385,8 +380,8 @@ shell:
 nix-osemgrep:
 	nix build ".?submodules=1#osemgrep"
 
-nix-semgrep-core:
-	nix build ".?submodules=1#semgrep-core"
+nix-opengrep:
+	nix build ".?submodules=1#opengrep"
 
 nix-semgrep:
 	nix build ".?submodules=1#semgrep"
@@ -459,7 +454,7 @@ gitclean:
 release:
 	./scripts/release/bump
 
-# Run utop with all the opengrep-core libraries loaded.
+# Run utop with all the opengrep libraries loaded.
 .PHONY: utop
 utop:
 	dune utop
@@ -477,11 +472,10 @@ dump:
 
 # for ocamldebug
 core-bc:
-	dune build $(BUILD)/install/default/bin/opengrep-core.bc
-	dune build $(BUILD)/install/default/bin/opengrep-cli.bc
+	dune build $(BUILD)/install/default/bin/opengrep.bc
 test-bc:
 	dune build $(BUILD_DEFAULT)/src/tests/test.bc
-# The bytecode version of opengrep-core needs dlls for tree-sitter
+# The bytecode version of opengrep needs dlls for tree-sitter
 # stubs installed into ~/.opam/<switch>/lib/stublibs to be able to run.
 install-deps-for-semgrep-core-bc: install-deps-for-semgrep-core
 	dune build @install # Generate the treesitter stubs for below
@@ -503,10 +497,10 @@ SEMGREP_ARGS=--experimental --config semgrep.jsonnet --error --strict --exclude 
 
 .PHONY: check
 check:
-	./bin/opengrep-cli$(EXE) $(SEMGREP_ARGS)
+	./bin/opengrep$(EXE) $(SEMGREP_ARGS)
 
 check_for_emacs:
-	./bin/opengrep-cli$(EXE) $(SEMGREP_ARGS) --emacs --quiet
+	./bin/opengrep$(EXE) $(SEMGREP_ARGS) --emacs --quiet
 
 ###############################################################################
 # Martin's targets

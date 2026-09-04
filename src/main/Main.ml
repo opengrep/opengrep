@@ -13,8 +13,8 @@
 (* A SEMantic GREP.
  * See https://semgrep.dev/ for more information.
  *
- * This is the entry point of the opengrep-core program, of the opengrep
- * command-line interface, and of opengrep for windows.
+ * This is the entry point of the opengrep command-line interface and of
+ * the low-level engine CLI reachable through 'opengrep --core'.
  *
  * Related work using code patterns (from oldest to newest):
  *  - Structural Search and Replace (SSR) in Jetbrains IDEs
@@ -80,35 +80,28 @@
 (* Entry point *)
 (*****************************************************************************)
 
-(* We currently use the same binary for semgrep-core and osemgrep (and now
- * also for semgrep for windows). See 'make core' and './dune' install section.
- * We use the argv[0] trick below to decide whether the user wants the
- * semgrep-core or osemgrep (or semgrep) behavior.
+(* We use the same binary for the opengrep CLI and for the low-level engine
+ * CLI (historically called semgrep-core, then opengrep-core).
+ * See 'make core' and './dune' install section.
  *
- * 'opengrep-core' without --experimental runs the core CLI; everything else
- * runs the OCaml CLI.
+ * The dispatch does not look at argv[0] anymore: the binary always runs the
+ * opengrep CLI, whatever name it was installed or downloaded under, except
+ * when its first argument is '--core', in which case the low-level engine
+ * CLI runs with '--core' removed from the command line.
  *)
 let () =
   Cap.main (fun (caps : Cap.all_caps) ->
       let argv = CapSys.argv caps#argv in
-      let argv0 =
-        (* remove the possible ".exe" extension for Windows and ".bc" *)
-        Fpath.v argv.(0) |> Fpath.base |> Fpath.rem_ext |> Fpath.to_string
-      in
-      let experimental =
-        Array.mem "--experimental" argv
-      in
-      match argv0, experimental with
-      (* opengrep-cli a.k.a. osemgrep *)
-      | "opengrep-cli", _
-      | "opengrep", _
-      | _, true ->
+      match Array.to_list argv with
+      (* the low-level engine CLI, whose options are shown by
+       * 'opengrep --core -help' *)
+      | argv0 :: "--core" :: args ->
+          Core_CLI.main caps (Array.of_list (argv0 :: args))
+      | _else_ ->
           let exit_code = CLI.main (caps :> CLI.caps) argv in
           if not (Exit_code.Equal.ok exit_code) then
             Logs.info (fun m ->
                 m "Error: %s\nExiting with error status %i: %s\n%!"
                   exit_code.description exit_code.code
                   (String.concat " " (Array.to_list argv)));
-          CapStdlib.exit caps#exit exit_code.code
-      (* legacy opengrep-core a.k.a. semgrep-core *)
-      | _else_ -> Core_CLI.main caps argv)
+          CapStdlib.exit caps#exit exit_code.code)

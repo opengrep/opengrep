@@ -92,7 +92,7 @@
 # `libev`, `libcurl`, `tree-sitter` etc. This means that if someone wants to
 # build and contribute to Opengrep, they must install these dependencies, and
 # hope that their versions is compatible. For example if you install the OCaml
-# packages needed for opengrep-cli, and then install libev, things won't work, since
+# packages needed for opengrep, and then install libev, things won't work, since
 # the lwt package needs libev when its initially installed. If you're on mac,
 # you also have to tell opam where libev is before installing lwt. So our OCaml
 # is correct, but only if you can build it, and only if you build it with the
@@ -151,7 +151,7 @@
 
 # If you want to just build opengrep and run it you can do `nix run
 # ".?submodules=1#"` for opengrep or `nix run ".?submodules=1#<target>"` where
-# target is opengrep, opengrep-cli, or opengrep-core.
+# target is opengrep.
 
 # ## What's the catch?
 #
@@ -271,7 +271,7 @@
         hasSubmodules = !builtins.hasAttr "submodules" self || self.submodules;
       in let
 
-        # opengrep-cli/opengrep-core inputs
+        # opengrep inputs
         opengrepCliInputs = with pkgs; [ pcre2 tree-sitter ];
         devOpamPackagesQuery = {
           # You can add "development" ocaml packages here. They will get added
@@ -329,11 +329,11 @@
         devOpamPackages = builtins.attrValues
           (pkgs.lib.getAttrs (builtins.attrNames devOpamPackagesQuery) scope');
 
-        # opengrep-cli/opengrep-core
+        # opengrep
         # package with all opam deps but nothing else
         baseOpamPackage = scope'.${package}; # Packages from devPackagesQuery
 
-        # Special environment variables for opengrep-cli for linking stuff
+        # Special environment variables for opengrep for linking stuff
         opengrepCliEnvDarwin = {
           # all the dune files of opengrep treesitter <LANG> are missing the
           # :standard field. Basically all compilers autodetect if something is c
@@ -349,11 +349,11 @@
           SEMGREP_NIX_BUILD = "1";
         } // lib.optionalAttrs (isDarwin) opengrepCliEnvDarwin;
         #
-        # opengrep-cli
+        # opengrep
         #
 
-        opengrep-cli = baseOpamPackage.overrideAttrs (prev: rec {
-          pname = "opengrep-cli";
+        opengrep = baseOpamPackage.overrideAttrs (prev: rec {
+          pname = "opengrep";
           env = opengrepCliEnv;
           buildInputs = prev.buildInputs ++ opengrepCliInputs;
           buildPhase' = ''
@@ -370,9 +370,9 @@
           # make sure we have submodules
           # See https://github.com/NixOS/nix/pull/7862
           buildPhase = if hasSubmodules then
-            opengrep-cli.buildPhase'
+            opengrep.buildPhase'
           else
-            opengrep-cli.buildPhaseFail;
+            opengrep.buildPhaseFail;
           nativeCheckInputs = (with pkgs; [ cacert git ]);
           # git init is needed so tests work successfully since many rely on git root existing
           checkPhase = ''
@@ -408,8 +408,8 @@
         #   nix run github:DeterminateSystems/flake-checker
         # to run DeterminateSystem's
         # cool flake checker, without ever needing to install it or anything! Or
-        # other nix users who want to try opengrep-cli can run
-        #   nix run github:opengrep/opengrep?submodules=1#opengrep-cli
+        # other nix users who want to try opengrep can run
+        #   nix run github:opengrep/opengrep?submodules=1#opengrep
         #
         # See: https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake.html#types
         # for more on flake refs
@@ -421,37 +421,28 @@
         # builds the below package leaving it empty builds the default. The
         # output will be linked into the cwd in a folder called "result". Also
         # exports packages for other nix packages to use
-        packages.opengrep-cli = opengrep-cli;
-        packages.opengrep = opengrep-cli;
-        packages.default = opengrep-cli;
+        packages.opengrep = opengrep;
+        packages.default = opengrep;
 
         #   nix run ".?submodules=1#<PKG_NAME>"
         # builds and runs the package specified, without linking the output
         # result into the cwd. You can try other nixpkgs similarly by running
         # `nix run nixpkgs#<PKG_NAME>` like `nix run nixpkgs#hello_world`.
         apps = {
-          opengrep-cli = {
-            type = "app";
-            program = "${opengrep-cli}/bin/opengrep-cli";
-          };
-          opengrep-core = {
-            type = "app";
-            program = "${opengrep-cli}/bin/opengrep-core";
-          };
           opengrep = {
             type = "app";
-            program = "${opengrep-cli}/bin/opengrep";
+            program = "${opengrep}/bin/opengrep";
           };
           default = {
             type = "app";
-            program = "${opengrep-cli}/bin/opengrep";
+            program = "${opengrep}/bin/opengrep";
           };
         };
         #   nix flake check ".?submodules=1#"
         # makes sure the flake is a valid structure, all the derivations are
         # valid, and runs anyting put in checks
         checks = {
-          opengrep-cli = opengrep-cli.overrideAttrs (prev: {
+          opengrep = opengrep.overrideAttrs (prev: {
             # We don't want to force people to run the test suite everytime they
             # build opengrep, but we do want to run it here
             doCheck = true;
@@ -465,12 +456,12 @@
         #   nix develop -c $SHELL
         # runs this shell which has all dependencies needed to make opengrep
         devShells.default = pkgs.mkShell {
-          # See comment above opengrep-cli.buildPhase for why we need this
+          # See comment above opengrep.buildPhase for why we need this
           # This doesnt work there because idk
           env = {
             # add env vars here
           } // opengrepCliEnv;
-          inputsFrom = [ opengrep-cli ];
+          inputsFrom = [ opengrep ];
           buildInputs = devOpamPackages ++ (with pkgs; [
             pre-commit
             yq-go # for GHA workflows
