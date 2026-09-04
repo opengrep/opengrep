@@ -60,6 +60,14 @@ repos:
   # ----------------------------------------------------------
   # Extra hooks with repositories defining their own hooks
   # ----------------------------------------------------------
+  # Lint the Python scripts left in the repo (perf/, scripts/, stats/, js/)
+  - repo: https://github.com/PyCQA/flake8
+    rev: 6.1.0 # PLEASE DO NOT CHANGE
+    hooks:
+      - id: flake8
+        additional_dependencies: ["flake8-bugbear==22.1.11"]
+        args: ["--select=B,E9,F4,F63,F7,F82"]
+
   # Reformat YAML, JSON, and Markdown files
   # NOTE: There is a bug in the current version of the hook (see fix here: https://github.com/prettier/prettier/issues/15742#issuecomment-1838040082)
   - repo: https://github.com/pre-commit/mirrors-prettier
