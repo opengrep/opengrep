@@ -60,7 +60,7 @@ repos:
   # ----------------------------------------------------------
   # Extra hooks with repositories defining their own hooks
   # ----------------------------------------------------------
-  # Lint the Python scripts left in the repo (perf/, scripts/, stats/, js/)
+  # Lint the Python scripts left in the repo (perf/, scripts/, stats/)
   - repo: https://github.com/PyCQA/flake8
     rev: 6.1.0 # PLEASE DO NOT CHANGE
     hooks:
@@ -112,7 +112,6 @@ repos:
         language: docker_image
         types:
           - dockerfile
-        exclude: "^scripts/release/linuxbrew[.]Dockerfile$"
         entry: hadolint/hadolint:v2.8.0-alpine hadolint
         args: ["--ignore", "DL3008", "--ignore", "DL3018"]
 
@@ -139,7 +138,8 @@ repos:
     hooks:
       - id: semgrep
         name: Semgrep Jsonnet
-        # This uses the Python "hook" in .pre-commit-hooks.yaml.
+        # This uses the Python "hook" defined by the repo: above, not the
+        # one in our own .pre-commit-hooks.yaml.
         # alt: use 'repo: local', and 'language: docker', which can use
         # the very latest docker image, which is nice, but is far slower.
         language: python

@@ -1,6 +1,3 @@
-# coupling: if you modify this file from the pro repo, you'll have
-# to also update .dockerignore
-
 # dune
 _build/
 # starting from dune 2.8.2, those are actually not generated anymore
