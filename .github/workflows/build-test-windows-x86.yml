@@ -402,6 +402,34 @@ jobs:
 
           tar czvf opengrep-cli.tgz opengrep-cli
 
+      # The checks below run with the build's PATH, which holds the mingw
+      # directory the DLLs were copied from, so they would not notice one
+      # missing from the package. Every DLL that does not come from System32
+      # must be next to the exe.
+      - name: test packaged DLLs
+        env:
+          BASH_ENV: ${{ github.workspace }}/bash_env.sh
+        shell: bash
+        run: |
+          export CYGWIN_MINGW_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
+          export PATH="${CYGWIN_MINGW_BIN}:${PATH}"
+
+          ldd opengrep-cli/opengrep.exe
+
+          missing=""
+          while read -r dll arrow path _; do
+            [ "$arrow" = "=>" ] || continue
+            case "$(echo "$path" | tr 'A-Z' 'a-z')" in
+              /cygdrive/c/windows/*) continue ;;
+            esac
+            [ -f "opengrep-cli/$dll" ] || missing="$missing $dll"
+          done < <(ldd opengrep-cli/opengrep.exe)
+
+          if [ -n "$missing" ]; then
+            echo "DLLs needed by opengrep.exe and absent from opengrep-cli/:$missing"
+            exit 1
+          fi
+
       # Run from the package, so that a missing DLL fails the job.
       - name: test version output
         env:
