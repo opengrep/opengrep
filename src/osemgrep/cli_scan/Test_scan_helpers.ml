@@ -6,10 +6,11 @@ open Fpath_.Operators
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* Shared scaffolding for the end-to-end tests of the scan subcommand, used
- * by Test_scan_subcommand_sarif.ml and Test_scan_subcommand_output.ml.
+(* Shared scaffolding for the end-to-end tests of the scan subcommand, the
+ * Test_scan_subcommand*.ml modules.
  *
- * Fixture rules and targets live under tests/sarif/. The OCaml test harness
+ * Fixture rules and targets live under tests/scan/, and the modules whose
+ * fixtures live elsewhere pass their root. The OCaml test harness
  * runs from the project root (see scripts/run-core-test), so relative paths
  * resolve before we descend into the temporary git repo.
  *)
@@ -18,7 +19,7 @@ open Fpath_.Operators
 (* Fixtures and the environment *)
 (*****************************************************************************)
 
-let fixtures_root : Fpath.t = Fpath.v "tests/sarif"
+let fixtures_root : Fpath.t = Fpath.v "tests/scan"
 
 let read_fixture ?(root : Fpath.t = fixtures_root) (rel : string) : string =
   UFile.read_file Fpath.(root // v rel)
