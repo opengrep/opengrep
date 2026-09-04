@@ -1,0 +1,10 @@
+--- begin input files ---
+eqeq-python.yaml
+invalid_python.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 34 insertions(+)
+ create mode 100644 eqeq-python.yaml
+ create mode 100644 invalid_python.py
+{"version":"<MASKED>","results":[],"errors":[{"code":3,"level":"warn","type":["PartialParsing",[{"path":"invalid_python.py","start":{"line":1,"col":1,"offset":0},"end":{"line":3,"col":26,"offset":85}}]],"message":"Syntax error at line invalid_python.py:1:\n `def foo(a)\n    tree = ElementTree.parse('country_data.xml')\n    root = tree.getroot()` was unexpected","path":"invalid_python.py","spans":[{"file":"invalid_python.py","start":{"line":1,"col":1,"offset":0},"end":{"line":3,"col":26,"offset":85}}]}],"paths":{"scanned":["invalid_python.py"],"skipped":[{"path":"invalid_python.py","reason":"analysis_failed_parser_or_internal_error","details":"`def foo(a)\n    tree = ElementTree.parse('country_data.xml')\n    root = tree.getroot()` was unexpected"}]},"interfile_languages_used":[],"skipped_rules":[]}

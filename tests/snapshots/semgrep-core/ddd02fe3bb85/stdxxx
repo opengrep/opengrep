@@ -1,0 +1,6 @@
+--- begin input files ---
+rules/yaml_language/yaml_language.yaml
+targets/yaml_language/yaml_language.test.yaml
+--- end input files ---
+{"results":{"rules/yaml_language/yaml_language.yaml":{"checks":{"yaml-language":{"passed":true,"matches":{"<TMP>/<MASKED>/targets/yaml_language/yaml_language.test.yaml":{"expected_lines":[2],"reported_lines":[2]}},"errors":[]}}}},"fixtest_results":{},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[]}
+[33mASSERT[0m exit code

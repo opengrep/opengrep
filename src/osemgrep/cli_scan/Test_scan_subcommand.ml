@@ -167,6 +167,15 @@ let with_no_color f = Semgrep_envvars.with_envvar "NO_COLOR" "1" f
 let basic_targets_dir : F.t =
   F.dir "basic" (F.read Fpath.(Test_scan_helpers.fixtures_root / "targets" / "basic"))
 
+(* Two rules under rules/two_rules, so that their ids take the same prefix
+   from the config path as in the Python test. *)
+let two_rules_dir : F.t =
+  F.dir "rules"
+    [
+      F.dir "two_rules"
+        (F.read Fpath.(Test_scan_helpers.fixtures_root / "rules" / "two_rules"));
+    ]
+
 (*****************************************************************************)
 (* Tests *)
 (*****************************************************************************)
@@ -1548,4 +1557,40 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"rules/sort-findings.yaml" ~targets:[]
            ~extra_files:[ Test_scan_subcommand_findings.sort_findings_dir ]
            ~extra_args:[ "sort-findings" ]);
+      (* An error the engine attaches to a file does not fail the scan.
+         python: test_exit_code_warning_error *)
+      t "target error: the scan still ends with 0"
+        (Test_scan_helpers.run_scan caps ~format_args:[]
+           ~rule:"rules/stuff_stmt.yaml"
+           ~targets:[ "targets/error_management/r2c_was_fatal.py" ]
+           ~extra_args:[ "--verbose" ]);
+      (* ... but --strict turns it into a fatal error.
+         python: test_exit_code_with_strict *)
+      t "target error: --strict makes it fatal"
+        (Test_scan_helpers.run_scan caps ~format_args:[]
+           ~rule:"rules/stuff_stmt.yaml"
+           ~targets:[ "targets/error_management/r2c_was_fatal.py" ]
+           ~extra_args:[ "--verbose"; "--strict" ]
+           ~check:Exit_code.Check.fatal);
+      (* A file that does not parse is reported once even though two rules
+         run over it.
+         differs from the Python wrapper: it also prints the syntax error
+         as a WARN line and counts the skipped lines next to the file name
+         python: test_parse_errors *)
+      t "text output: a target parse error reported once"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (Test_scan_helpers.run_scan caps ~format_args:[] ~targets:[]
+           ~extra_files:
+             [
+               two_rules_dir;
+               F.File
+                 ( "invalid_javascript.js",
+                   Test_scan_helpers.read_fixture
+                     "targets/bad/invalid_javascript.js" );
+             ]
+           ~extra_args:
+             [
+               "--config"; "rules/two_rules/"; "--force-color"; "--verbose";
+               "invalid_javascript.js";
+             ]);
     ]

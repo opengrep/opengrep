@@ -264,6 +264,87 @@ let mk_fixtest_tests (caps : Test_subcommand.caps) : Testo.t list =
                   (run_fixtest caps ~rule ~target ~json ~check)))
 
 (*****************************************************************************)
+(* Checks *)
+(*****************************************************************************)
+(* The rule and target pairs of tests/test_subcommand, run the way the
+ * Python tests ran them: the config and the target are named on the command
+ * line, and the checks are reported in JSON or in text.
+ *)
+
+let checks_fixtures_root : Fpath.t = Fpath.v "tests/test_subcommand"
+
+(* A rule or a target of those fixtures, a file or a directory, copied into
+   the temporary directory under its own name. *)
+let fixture_entry (kind : string) (name : string) : F.t =
+  let path : Fpath.t = Fpath.(checks_fixtures_root / kind / name) in
+  if Sys.is_directory (Fpath.to_string path) then
+    F.dir name (Testutil_files.read path)
+  else F.File (name, UFile.read_file path)
+
+let run_checks (caps : Test_subcommand.caps) ~(rule : string)
+    ~(target : string) ~(json : bool) () =
+  let files : F.t list =
+    [
+      F.dir "rules" [ fixture_entry "rules" rule ];
+      F.dir "targets" [ fixture_entry "targets" target ];
+    ]
+  in
+  Testutil_files.with_tempfiles ~verbose:true ~chdir:true files (fun _cwd ->
+      let argv : string list =
+        [ "opengrep-test"; "--config"; "rules/" ^ rule; "targets/" ^ target ]
+        @ if json then [ "--json" ] else []
+      in
+      Exit_code.Check.ok (Test_subcommand.main caps (Array.of_list argv)))
+
+(* (test name, rule in rules/, target in targets/, JSON output) *)
+let checks_cases : (string * string * string * bool) list =
+  [
+    (* python: test_cli_test_basic *)
+    ("a rule file over a target file, JSON", "basic.yaml", "basic.py", true);
+    (* the same pair in text, which the Python test ran through the
+       installed entry point. python: test_cli_test_from_entrypoint *)
+    ("a rule file over a target file, text", "basic.yaml", "basic.py", false);
+    (* a directory of rules over a directory of targets.
+       python: test_cli_test_directory *)
+    ("a rule directory over a target directory, JSON", "directory", "directory",
+      true);
+    (* the test file of a rule about YAML is named .test.yaml, since the rule
+       file already takes the .yaml name.
+       python: test_cli_test_yaml_language *)
+    ("a YAML rule and its .test.yaml target, JSON", "yaml_language",
+      "yaml_language", true);
+    (* a rule file name made of several suffixes, this.that.check.yaml, pairs
+       with this.that.check.py. python: test_cli_test_suffixes *)
+    ("a rule file name with several suffixes, JSON", "suffixes", "suffixes",
+      true);
+    (* one annotation line naming two rule ids.
+       python: test_cli_test_multiple_annotations *)
+    ("several rule ids on one annotation line, text", "overlapping_rules.yaml",
+      "multiple_annotations.py", false);
+    (* the 'paths: include:' of the rule is ignored, so the rule runs on a
+       test file whose name does not satisfy it.
+       python: test_cli_test_ignore_rule_paths *)
+    ("the rule's paths include is ignored, JSON",
+      "rule_with_paths_include_bar_xml.yaml", "foo.xml", true);
+    (* a match annotated with todook: is not reported.
+       python: test_cli_todook_filtering *)
+    ("a todook annotation is not reported, JSON", "basic.yaml", "todook.py",
+      true);
+  ]
+
+let mk_checks_tests (caps : Test_subcommand.caps) : Testo.t list =
+  checks_cases
+  |> List_.map
+       (fun
+           ( (name : string),
+             (rule : string),
+             (target : string),
+             (json : bool) )
+         ->
+         t ("checks: " ^ name) ~checked_output:(Testo.stdxxx ()) ~normalize
+           (run_checks caps ~rule ~target ~json))
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
@@ -271,4 +352,5 @@ let tests (caps : < Test_subcommand.caps >) =
   Testo.categorize "Osemgrep Test (e2e)"
     (mk_matching_explanation_tests caps
     @ [ t "missing test targets abort the run" (test_missing_targets caps) ]
-    @ mk_fixtest_tests caps)
+    @ mk_fixtest_tests caps
+    @ mk_checks_tests caps)

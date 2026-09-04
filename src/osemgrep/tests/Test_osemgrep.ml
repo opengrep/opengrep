@@ -123,6 +123,12 @@ let test_ci_dump_command_for_core (caps : CLI.caps) () =
             |]
           |> Exit_code.Check.fatal))
 
+(* '--help' and '-h' print the text of Help.ml, which the tool writes
+   itself rather than letting cmdliner generate it, so it is snapshotted.
+   python: test_help_text *)
+let test_help (caps : CLI.caps) (flag : string) () =
+  CLI.main caps [| "opengrep"; flag |] |> Exit_code.Check.ok
+
 let test_named_pipe (caps : Scan_subcommand.caps) =
   let func () =
     (* Search for pattern "hello" in a named pipe containing "hello" *)
@@ -148,7 +154,7 @@ let test_named_pipe (caps : Scan_subcommand.caps) =
 let tests (caps : CLI.caps) =
   let scan_caps = (caps :> Scan_subcommand.caps) in
   Testo.categorize "Osemgrep multi subcommands (e2e)"
-    [
+    ([
       test_scan_config_registry_no_token caps;
       Testo.create "subcommand after global flag"
         (test_subcommand_after_global_flag caps);
@@ -164,3 +170,9 @@ let tests (caps : CLI.caps) =
       test_absolute_target_path scan_caps;
       test_named_pipe scan_caps;
     ]
+    @ ([ "--help"; "-h" ]
+       |> List_.map (fun (flag : string) ->
+              Testo.create
+                (Printf.sprintf "help text of %s" flag)
+                ~checked_output:(Testo.stdout ())
+                (test_help caps flag))))

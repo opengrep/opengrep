@@ -152,6 +152,20 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~extra_args:[ "--config"; "no_error.yaml" ]
            ~targets:[ "targets/basic/stupid.py" ]
            ~check:Exit_code.Check.unparseable_yaml);
+      (* A rule whose pattern does not parse: the JSON carries the rule
+         parse error and nothing is scanned.
+         differs from the Python wrapper: it ends with exit code 2 and
+         reports the error with code 2, opengrep with exit code 4 and
+         code 4, and it lists the target as scanned and the rule as a
+         skipped path, where opengrep lists neither
+         python: test_rule_parser__failure__error_messages *)
+      t "config: a rule pattern that does not parse"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"bad-java-rule.yaml"
+           ~targets:[ "targets/bad/basic_java.java" ]
+           ~extra_args:[ "--verbose"; "--strict"; "basic_java.java" ]
+           ~check:Exit_code.Check.invalid_pattern);
       (* --version prints the version and nothing else. It changes at every
          release, so it is matched rather than snapshotted.
          python: test_version *)
