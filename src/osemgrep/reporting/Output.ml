@@ -96,7 +96,7 @@ let start_time_from_profiler_opt (profiler : Profiler.t) : Timedesc.Timestamp.t 
 
 (* called also from RPC_return.ml *)
 let format
-    (* XXX: This is only passed in --experimental mode. *)
+    (* The scan and ci paths always pass this; RPC_return.ml does not. *)
     ?(profiler : Profiler.t option)
     (kind : Output_format.t)
     (cli_output : Out.cli_output) : string list =
