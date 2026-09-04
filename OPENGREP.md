@@ -22,7 +22,7 @@
 
 - Improvements in many **existing languages** such as C, C#, C++, Dart, Elixir, Java, Javascript, Kotlin, Php, Ruby, Rust, Scala.
 
-- **Self-contained binaries** for multiple architectures, built using **Nuitka** for fast and self-contained executables. This is a departure from Semgrep, which is typically distributed using python wheels or homebrew. Now user environments do not need to have python installed, and the performance is comparable to the python wheel.
+- **Self-contained binaries** for multiple architectures, compiled from OCaml. This is a departure from Semgrep, which is typically distributed using python wheels or homebrew. User environments do not need to have python installed. On Windows the package holds `opengrep.exe` and the DLLs it needs, which are to be kept together in the installed directory.
 
 - **Install script** for macOS and Linux.
 

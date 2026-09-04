@@ -45,8 +45,16 @@ See the [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/
 - **Improved**: Clojure (tainting support), PHP 8.4, C# 14
 
 **Distribution:**
-- Self-contained binaries via Nuitka (no Python required)
+- Self-contained binaries compiled from OCaml (no Python required)
 - Signed releases with Cosign
+
+From the next major version, the CLI is that compiled binary alone; the Python
+wrapper is gone. Dependency-aware (SCA) rules, `mode: join` rules and the
+secrets validators were implemented in the wrapper and are not available, and
+lockfiles are not parsed. `--legacy`, `--dump-engine-path`,
+`--dump-command-for-core` and `-d` are gone, while `--experimental` is still
+accepted and does nothing. No Python wheel is built, and the Python API
+`semgrep.run_scan_and_return_json` no longer exists.
 
 See [OPENGREP.md](OPENGREP.md) for the full list of improvements since the fork.
 
@@ -89,6 +97,9 @@ Or with a specific version:
 ### Manual Install
 
 Binaries are available on the [releases page](https://github.com/opengrep/opengrep/releases).
+
+On Windows, the package holds `opengrep.exe` and the DLLs it needs; keep them
+together in the directory you install them to.
 
 ## Getting started
 

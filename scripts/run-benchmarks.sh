@@ -7,17 +7,29 @@
 
 set -e
 
-# the benchmarks run the 'opengrep' of the PATH
-export PATH=$PWD/bin:$PATH
-
 config_path=perf/configs/ci_small_repos.yaml
 echo $config_path
 
+# The baseline is the latest released opengrep. install.sh installs it under
+# $HOME/.opengrep/cli, so HOME points at a directory of the run and the
+# release is on the PATH of the baseline runs only.
+baseline_home=$PWD/baseline-install
+mkdir -p "$baseline_home"
+HOME="$baseline_home" ./install.sh
+baseline_bin=$baseline_home/.opengrep/cli/latest
+
 # Run timing benchmark
-python3 perf/run-benchmarks --config $config_path --std-only --save-to baseline_timing1.json --no-time
-jq . baseline_timing1.json
-python3 perf/run-benchmarks --config $config_path --std-only --save-to baseline_timing2.json --no-time
-jq . baseline_timing2.json
+(
+  export PATH=$baseline_bin:$PATH
+  opengrep --version
+  python3 perf/run-benchmarks --config $config_path --std-only --save-to baseline_timing1.json --no-time
+  jq . baseline_timing1.json
+  python3 perf/run-benchmarks --config $config_path --std-only --save-to baseline_timing2.json --no-time
+  jq . baseline_timing2.json
+)
+
+# the latest benchmarks run the 'opengrep' of bin/
+export PATH=$PWD/bin:$PATH
 
 # Run latest timing benchmark
 opengrep --version
@@ -38,3 +50,4 @@ rm baseline_timing2.json
 rm ci_small_repos_findings.json
 rm timing1.json
 rm timing2.json
+rm -r "$baseline_home"
