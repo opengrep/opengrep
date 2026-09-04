@@ -46,6 +46,10 @@ type t =
   | File of string (* name *) * string (* contents *)
   (* a file with the executable bits, like a script *)
   | Executable of string (* name *) * string (* contents *)
+  (* a file and a directory without any permission, to test what a scan
+     does with what it cannot read. 'remove' below deletes them. *)
+  | Unreadable of string (* name *) * string (* contents *)
+  | Unreadable_dir of string (* name *) * t list
   | Symlink of string (* name *) * string (* destination path *)
 
 (* if you prefer a curried syntax to build the tree *)

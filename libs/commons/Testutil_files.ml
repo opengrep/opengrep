@@ -31,6 +31,9 @@ type t =
   | Dir of string * t list
   | File of string * string
   | Executable of string * string
+  (* a file, and a directory, without any permission *)
+  | Unreadable of string * string
+  | Unreadable_dir of string * t list
   | Symlink of string * string
 
 (* if you prefer a curried syntax *)
@@ -46,6 +49,8 @@ let get_name = function
   | Dir (name, _)
   | File (name, _)
   | Executable (name, _)
+  | Unreadable (name, _)
+  | Unreadable_dir (name, _)
   | Symlink (name, _) ->
       name
 
@@ -56,8 +61,10 @@ let rec sort xs =
 and sort_one x =
   match x with
   | Dir (name, xs) -> Dir (name, sort xs)
+  | Unreadable_dir (name, xs) -> Unreadable_dir (name, sort xs)
   | File _
   | Executable _
+  | Unreadable _
   | Symlink _ ->
       x
 
@@ -126,7 +133,10 @@ let remove path =
        background maintenance removing a lock file under .git. An
        already-absent entry is nothing to remove. *)
     | exception UUnix.Unix_error (Unix.ENOENT, _, _) -> ()
-    | { st_kind = S_DIR; _ } ->
+    | { st_kind = S_DIR; st_perm; _ } ->
+        (* an unreadable directory must be made readable before it can be
+           emptied *)
+        if st_perm land 0o700 <> 0o700 then UUnix.chmod !!path 0o700;
         let names = get_dir_entries path in
         List.iter (fun name -> remove (path / name)) names;
         UUnix.rmdir !!path
@@ -175,13 +185,15 @@ let flatten ?(root = Fpath.v ".") ?(include_dirs = false) files =
   let rec flatten acc files = List.fold_left flatten_one acc files
   and flatten_one (acc, dir) file =
     match file with
-    | Dir (name, entries) ->
+    | Dir (name, entries)
+    | Unreadable_dir (name, entries) ->
         let path = dir / name in
         let acc = if include_dirs then path :: acc else acc in
         let acc, _last_dir = flatten (acc, path) entries in
         (acc, dir)
     | File (name, _contents)
-    | Executable (name, _contents) ->
+    | Executable (name, _contents)
+    | Unreadable (name, _contents) ->
         let file = dir / name in
         (file :: acc, dir)
     | Symlink (name, _dest) ->
@@ -211,6 +223,16 @@ and write_one root file =
       let path = root / name in
       UFile.write_file ~file:path contents;
       UUnix.chmod !!path 0o755
+  | Unreadable (name, contents) ->
+      let path = root / name in
+      UFile.write_file ~file:path contents;
+      UUnix.chmod !!path 0o000
+  | Unreadable_dir (name, entries) ->
+      let dir = root / name in
+      if not (USys.file_exists !!dir) then UUnix.mkdir !!dir 0o777;
+      (* write the entries before taking the permissions away *)
+      write dir entries;
+      UUnix.chmod !!dir 0o000
   | Symlink (name, dest) ->
       let path = !!(root / name) in
       UUnix.symlink dest path
