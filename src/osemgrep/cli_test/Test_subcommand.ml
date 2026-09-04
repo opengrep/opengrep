@@ -93,13 +93,16 @@ and fixtest_result = {
 (* TODO: define clearly in semgrep_output_v1.atd config_with_errors type
  * and also the errors in rule_result.
  * type config_with_error_output = ...
- * alt: add a | UnparsableRule of Fpath.t, but simpler to just raise early.
+ * The config_error type of the .atd has no message field, so UnparsableRule
+ * below keeps the message of the rule loader for the text report.
  *)
 type error =
   (* there is a rule but there is no target file *)
   | MissingTest of Fpath.t (* rule file *)
   (* the rule when applied produces fixes, but there is no .fixed file *)
   | MissingFixtest of Fpath.t (* rule file *)
+  (* the rule file could not be loaded, with the message of the loader *)
+  | UnparsableRule of Fpath.t (* rule file *) * string (* error message *)
 
 (* to avoid having functions with lots of parameters *)
 type env = {
@@ -306,7 +309,14 @@ let tests_result_of_tests_result (results : tests_result) (errors : error list)
       (* TODO: rename to just 'errors' and put the missing_tests and missing
        * fixtests here as a kind of error.
        *)
-      config_with_errors = [];
+      config_with_errors =
+        errors
+        |> List_.filter_map (function
+             | UnparsableRule (rule_file, _msg) -> Some rule_file
+             | _else_ -> None)
+        |> List.sort Fpath.compare
+        |> List_.map (fun (file : Fpath.t) ->
+               { Out.file; reason = `UnparsableRule });
     }
 
 (* python: _generate_check_output_line *)
@@ -335,7 +345,8 @@ let pp_failed_fixtest ppf (fixtest_result : fixtest_result) : unit =
   |> List.iter (fun (line : string) -> Format.fprintf ppf "\t%s@\n" line)
 
 let report_tests_result (caps : < Cap.stdout >) ~matching_diagnosis ~json
-    (res : Out.tests_result) (fixtest_results : fixtest_result list) : unit =
+    ~(config_errors : (Fpath.t * string) list) (res : Out.tests_result)
+    (fixtest_results : fixtest_result list) : unit =
   let print str = CapConsole.print caps#stdout str in
   if json then
     let s = Out.string_of_tests_result res in
@@ -400,8 +411,18 @@ let report_tests_result (caps : < Cap.stdout >) ~matching_diagnosis ~json
              (fixtest_total - fixtest_passed));
         print_failures pp_failed_fixtest failed_fixtests);
     if matching_diagnosis then report_diagnosis print res;
-    (* TODO: if config_with_errors_output: ... *)
-    ()
+    (* the rule files that could not be loaded, as in pysemgrep *)
+    match config_errors with
+    | [] -> ()
+    | _ :: _ ->
+        print break_line;
+        print "The following config files produced errors:";
+        print
+          ("\t"
+          ^ (config_errors
+            |> List_.map (fun ((rule_file : Fpath.t), (msg : string)) ->
+                   spf "%s: %s" !!rule_file msg)
+            |> String.concat "\n\t"))
 
 (*****************************************************************************)
 (* Calling the engine *)
@@ -801,8 +822,16 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
     (Fpath.t (* rule file *) * test_result list * fixtest_result list) list =
   (* LATER: in theory we could use Parmap here *)
   tests
-  |> List_.map (fun (rule_file, target_files) ->
+  |> List_.filter_map (fun (rule_file, target_files) ->
          Logs.info (fun m -> m "processing rule file %s" !!rule_file);
+         (* as in pysemgrep: the run goes on with the other rule files and
+          * the file is reported in config_with_errors
+          *)
+         let unparsable (msg : string) =
+           Logs.warn (fun m -> m "could not load %s: %s" !!rule_file msg);
+           Stack_.push (UnparsableRule (rule_file, msg)) errors;
+           None
+         in
          (* TODO? sanity check? call metachecker Check_rule.check()? *)
          match Parse_rule.parse_and_filter_invalid_rules rule_file with
          | Ok (rules, []) ->
@@ -812,7 +841,7 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
              let checks, fixtest =
                run_test caps conf rule_file rules target_files errors
              in
-             (rule_file, checks, fixtest)
+             Some (rule_file, checks, fixtest)
          (* capture 's' and return it in the error so the user will see something
           * like "Missing semgrep extenstion needed for parsing X. Try --pro"
           *)
@@ -821,16 +850,9 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
              (* alt: could Stack_.push (MissingPlugin rule_file) errors *)
              raise
                (Error.Semgrep_error (s, Some (Exit_code.missing_config ~__LOC__)))
-         | Ok (_, _ :: _)
-         | Error _ ->
-             (* alt: use List_.filter_map above and be more fault tolerant
-              * with a Stack_.push (UnparsableRule rule_file) errors;
-              * but simpler to raise errors early for now
-              *)
-             raise
-               (Error.Semgrep_error
-                  ( spf "invalid configuration found in %s" !!rule_file,
-                    Some (Exit_code.missing_config ~__LOC__) ))
+         | Ok (_, invalid_rule :: _) ->
+             unparsable (Rule_error.string_of_invalid_rule invalid_rule)
+         | Error err -> unparsable (Rule_error.string_of_error err)
          | (exception Parsing_error.Syntax_error _)
          | (exception Parsing_error.Other_error _) ->
              failwith "impossible: Parse_rule should not raise exns anymore")
@@ -855,6 +877,14 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
 
   (* step3: report the test results *)
   let res : Out.tests_result = tests_result_of_tests_result result !errors in
+  (* the message of the loader, which the JSON config_with_errors cannot hold *)
+  let config_errors : (Fpath.t * string) list =
+    !errors
+    |> List_.filter_map (function
+         | UnparsableRule (rule_file, msg) -> Some (rule_file, msg)
+         | _else_ -> None)
+    |> List.sort (fun (a, _) (b, _) -> Fpath.compare a b)
+  in
   (* pysemgrep is reporting some "successfully modified 1 file."
    * before the final report, but actually it reports that even on failing
    * fixtests, so better to not imitate for now.
@@ -862,15 +892,12 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
   (* final report *)
   report_tests_result
     (caps :> < Cap.stdout >)
-    ~matching_diagnosis ~json:conf.json res
+    ~matching_diagnosis ~json:conf.json ~config_errors res
     (result |> List.concat_map (fun (_rule_file, _checks, fixtests) -> fixtests));
 
   (* step4: compute the exit code *)
 
-  (* as in pysemgrep: --strict makes a config error fail the run. Note that
-   * run_tests currently raises on a rule file it cannot load, so
-   * config_with_errors is still always empty.
-   *)
+  (* as in pysemgrep: --strict makes a config error fail the run *)
   let strict_error = conf.strict && not (List_.null res.config_with_errors) in
   let any_failures =
     res.results

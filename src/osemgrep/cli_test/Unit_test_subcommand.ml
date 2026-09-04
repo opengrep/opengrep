@@ -332,6 +332,10 @@ let checks_cases : (string * string * string * bool) list =
        python: test_cli_todook_filtering *)
     ("a todook annotation is not reported, JSON", "basic.yaml", "todook.py",
       true);
+    (* a rule file the loader rejects is reported in config_with_errors and
+       the run goes on, so without --strict the exit code is 0 *)
+    ("a rule file that does not load, JSON", "no_pattern.yaml", "no_pattern.py",
+      true);
   ]
 
 let mk_checks_tests (caps : Test_subcommand.caps) : Testo.t list =
@@ -354,6 +358,12 @@ let mk_checks_tests (caps : Test_subcommand.caps) : Testo.t list =
         (run_checks caps ~extra_flags:[ "--timeout"; "1" ]
            ~check:Exit_code.Check.findings ~rule:"rule_that_timeout.yaml"
            ~target:"long.py" ~json:true);
+      (* --strict makes the rule file the loader rejects fail the run *)
+      t "checks: a rule file that does not load with --strict, text"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (run_checks caps ~extra_flags:[ "--strict" ]
+           ~check:Exit_code.Check.findings ~rule:"no_pattern.yaml"
+           ~target:"no_pattern.py" ~json:false);
     ]
 
 (*****************************************************************************)
