@@ -1,0 +1,20 @@
+--- begin input files ---
+rules/duplicate-rule.yaml
+rules/eqeq-python.yaml
+rules/eqeq.yaml
+rules/hidden/.hidden/eqeq.yaml
+rules/nested-pattern-either.yaml
+rules/nested-patterns.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 7 files changed, 213 insertions(+)
+ create mode 100644 rules/duplicate-rule.yaml
+ create mode 100644 rules/eqeq-python.yaml
+ create mode 100644 rules/eqeq.yaml
+ create mode 100644 rules/hidden/.hidden/eqeq.yaml
+ create mode 100644 rules/nested-pattern-either.yaml
+ create mode 100644 rules/nested-patterns.yaml
+ create mode 100644 stupid.py
+{"version":"<MASKED>","results":[{"check_id":"eqeq-is-bad","path":"stupid.py","start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":26,"offset":69},"extra":{"metavars":{"$X":{"start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":17,"offset":60},"abstract_content":"a+b"}},"message":"a + b == a + b is a useless equality check","metadata":{},"severity":"ERROR","fingerprint":"b86a2faea2e06d69c37d5795630fd6f3bbe684a054c59f9d501924ff4b2dc8c326c7a46025b96d5ce0a249bb1ea8b30e83b6cdee27d7e94d3b6e305f3593ace6_0","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.eqeq-is-bad","path":"stupid.py","start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":26,"offset":69},"extra":{"metavars":{"$X":{"start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":17,"offset":60},"abstract_content":"a+b"}},"message":"useless comparison operation `a + b == a + b` or `a + b != a + b`","metadata":{"shortlink":"https://sg.run/xyz1","source":"https://semgrep.dev/r/eqeq-bad"},"severity":"ERROR","fingerprint":"8c153070f5f563c17800d904719b8df8f53377580573f5917809dc5e1e5e60665c9c9013b0388f1fed99beb833b687d68d50a39651a1d6b933d40ce7f9272280_0","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"eqeq-is-bad","path":"stupid.py","start":{"line":8,"col":5,"offset":168},"end":{"line":8,"col":11,"offset":174},"extra":{"metavars":{"$X":{"start":{"line":8,"col":5,"offset":168},"end":{"line":8,"col":6,"offset":169},"abstract_content":"x"}},"message":"x == x is a useless equality check","metadata":{},"severity":"ERROR","fingerprint":"5181e52339b9f52c4d7eaf45d116d48280262ae69cde51db77672a9668fb025f67308e54138de5d8d18a52d7cd7d3f1c328bd73945adc95a50ca47e16fce4007_0","lines":"    x == x","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"eqeq-is-bad","path":"stupid.py","start":{"line":12,"col":12,"offset":260},"end":{"line":12,"col":18,"offset":266},"extra":{"metavars":{"$X":{"start":{"line":12,"col":12,"offset":260},"end":{"line":12,"col":13,"offset":261},"abstract_content":"x"}},"message":"x == x is a useless equality check","metadata":{},"severity":"ERROR","fingerprint":"5181e52339b9f52c4d7eaf45d116d48280262ae69cde51db77672a9668fb025f67308e54138de5d8d18a52d7cd7d3f1c328bd73945adc95a50ca47e16fce4007_1","lines":"assertTrue(x == x)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}

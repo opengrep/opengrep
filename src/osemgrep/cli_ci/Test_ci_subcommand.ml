@@ -105,6 +105,16 @@ rules:
     severity: ERROR
 |}
 
+(* a rule without a pattern: the rule file does not load *)
+let bad_rule_content =
+  {|
+rules:
+  - id: no-pattern-here
+    message: "this rule has no pattern"
+    languages: [python]
+    severity: ERROR
+|}
+
 let clean_py_content = {|
 def foo(a, b):
     return a + b
@@ -260,6 +270,18 @@ let test_suppress_errors_env_garbage (caps : Ci_subcommand.caps) () =
   Semgrep_envvars.with_envvar "SEMGREP_SUPPRESS_ERRORS" "garbage" (fun () ->
       run_ci caps ~rule:blocking_rule_content ~target:clean_py_content
         ~check:Exit_code.Check.fatal ())
+
+(* a rule that does not load is reported and ends the run with a non-zero
+ * exit code
+ * python: test_ci_reports_an_invalid_rule *)
+let test_invalid_rule_fatal (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:bad_rule_content ~target:clean_py_content
+    ~extra_args:[ "--no-suppress-errors" ]
+    ~check:Exit_code.Check.invalid_pattern ()
+
+(* the same rule error is suppressed by default: the run ends ok *)
+let test_invalid_rule_suppressed (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:bad_rule_content ~target:clean_py_content ()
 
 (* the environment variable holds a whitespace-separated list of rule
  * sources; both files must be loaded and both rules fire *)
@@ -873,6 +895,11 @@ let tests (caps : < Ci_subcommand.caps >) =
         (test_suppress_errors_env_false caps);
       t "garbage boolean env value is a usage error"
         (test_suppress_errors_env_garbage caps);
+      t "invalid rule is fatal without suppression"
+        ~checked_output:(Testo.stdxxx ()) ~normalize
+        (test_invalid_rule_fatal caps);
+      t "invalid rule is suppressed to ok" ~checked_output:(Testo.stdxxx ())
+        ~normalize (test_invalid_rule_suppressed caps);
       t "short SEMGREP_COMMIT is a rev" test_short_sha_is_a_rev;
       t "SEMGREP_COMMIT accepts any rev" ~checked_output:(Testo.stdxxx ())
         ~normalize (test_commit_rev caps);

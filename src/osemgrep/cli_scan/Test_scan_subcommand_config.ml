@@ -52,6 +52,28 @@ let rule_id_target : F.t =
    project root. *)
 let absolute_eqeq : string = !!(Fpath.v (Sys.getcwd ()) // root / "rules" / "eqeq.yaml")
 
+(* The remote rule of the Python tests. Nothing is fetched: the fixture
+   below is served in its place. *)
+let template_url : string =
+  "https://raw.githubusercontent.com/returntocorp/semgrep-rules/develop/template.yaml"
+
+(* Read from the project root, before a test descends into its repo. *)
+let url_rule_content : string = read_fixture ~root "url-template.yaml"
+
+let with_url_rule (f : unit -> unit) : unit -> unit =
+  Http_mock_client.with_testing_client
+    (fun (req : Cohttp.Request.t) (_body : Cohttp_lwt.Body.t) ->
+      (* the request the mock client hands over carries no scheme *)
+      let url : string =
+        Uri.to_string (Uri.with_scheme (Cohttp.Request.uri req) (Some "https"))
+      in
+      if not (String.equal url template_url) then
+        Alcotest.failf "unexpected request: %s" url;
+      Lwt.return
+        (Http_mock_client.basic_response
+           (Cohttp_lwt.Body.of_string url_rule_content)))
+    f
+
 let json_scan (caps : Scan_subcommand.caps) ?rule ?(extra_files = [])
     ~(config_args : string list) ~(targets : string list) () =
   run_scan caps ~root ?rule ~format_args:[ "--json" ] ~targets ~extra_files
@@ -100,6 +122,23 @@ let tests (caps : < Scan_subcommand.caps >) =
         (json_scan caps ~rule:"rules/eqeq.yaml" ~extra_files:[ rules_dir ]
            ~config_args:[ "--config"; "rules/eqeq-python.yaml" ]
            ~targets:[ "targets/basic/stupid.py" ]);
+      (* A rule loaded from a URL keeps its bare id.
+         python: test_url_rule *)
+      t "config: a rule from a URL" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (with_url_rule
+           (json_scan caps ~config_args:[ "--config"; template_url ]
+              ~targets:[ "targets/basic/stupid.py" ]));
+      (* The rule from the local file takes a 'rules.' prefix from its
+         path, the one from the URL keeps its bare id.
+         python: test_multiple_configs_different_origins *)
+      t "config: a local file and a URL" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (with_url_rule
+           (json_scan caps ~extra_files:[ rules_dir ]
+              ~config_args:
+                [ "--config"; "rules/eqeq.yaml"; "--config"; template_url ]
+              ~targets:[ "targets/basic/stupid.py" ]));
       (* A rule given twice, differing only in its metadata, runs once.
          python: test_deduplication *)
       t "config: a duplicated rule runs once" ~checked_output:(Testo.stdout ())
