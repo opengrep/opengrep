@@ -5,10 +5,10 @@
 # Usage:
 #   $ ./scripts/generate-cheatsheet
 #
-# or more explicitly:
-#   $ cd cli
-#   $ pipenv run ../scripts/generate_cheatsheet.py --json --directory \
-#     ../tests --output-file cheatsheet.json
+# or more explicitly, from the repository root (the script runs 'opengrep'
+# on each example, so bin/ must be on PATH):
+#   $ PATH=$PWD/bin:$PATH python3 scripts/generate_cheatsheet.py --json \
+#     --directory tests/patterns --output-file cheatsheet.json
 #
 #
 # If you add support for a new language, you may need to update

@@ -1,7 +1,8 @@
 semgrep-core tests
 ==
 This folder contains mostly tests related to the semgrep-core program.
-For the (py)semgrep tests see the cli/tests/ folder instead.
+For the tests of the command-line interface see the scan/, targeting/,
+configs/, test_subcommand/ and ls/ folders instead.
 
 Running the tests
 --
