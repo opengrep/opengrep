@@ -3,9 +3,10 @@ open Common
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* End-to-end (e2e) testing of the semgrep-core CLI program
+(* End-to-end (e2e) testing of the low-level engine CLI, i.e.
+ * 'opengrep --core'
  *
- * See also tests for the semgrep-core -generate_ast_json in
+ * See also tests for the 'opengrep --core -generate_ast_json' in
  * in semgrep-interfaces/tests/test-ast run from make core-test-e2 run
  * itself from .github/workflow/test.yml
  *)
@@ -25,13 +26,13 @@ let run_main (caps : Cap.all_caps) (cmd : string) : (unit, exn_res) result =
    * tests; simpler to just fork.
    * NOTE: Cannot fork once domains are spawned, so moving to create_process. 
    *)
-  print_string (spf "executing: opengrep-core %s\n" cmd);
+  print_string (spf "executing: opengrep --core %s\n" cmd);
   let extension = if Sys.win32 then ".exe" else "" in
-  let executable = Fpath.(v "bin" / ("opengrep-core" ^ extension))
+  let executable = Fpath.(v "bin" / ("opengrep" ^ extension))
                    |> Fpath.to_string in
   let input, output = Unix.pipe () in
   let pid = CapUnix.create_process caps#exec
-      executable (Array.of_list ("opengrep-core" :: args))
+      executable (Array.of_list ("opengrep" :: "--core" :: args))
       Unix.stdin
       output
       (* Unix.stdout *)

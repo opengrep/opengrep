@@ -63,21 +63,21 @@ jobs:
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: opengrep-core-aarch64
+          name: opengrep-build-linux-aarch64
           path: artifacts.tgz
 
       # A tarball rather than a bare file, so that the executable bit survives
       # the upload.
       - name: Make artifact for ./bin/opengrep
         run: |
-          mkdir opengrep-cli
-          cp ./bin/opengrep opengrep-cli/
-          tar czf opengrep-cli.tgz opengrep-cli
+          mkdir opengrep
+          cp ./bin/opengrep opengrep/
+          tar czf opengrep.tgz opengrep
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: opengrep-cli-linux-aarch64
-          path: opengrep-cli.tgz
+          name: opengrep-linux-aarch64
+          path: opengrep.tgz
 
   build-test-manylinux-aarch64:
     needs:

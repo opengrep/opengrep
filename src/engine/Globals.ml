@@ -28,19 +28,19 @@
  * can eliminate them.
  *
  * To find candidates for those "dangerous" globals, you can start with:
- *  $ ./bin/opengrep-cli --experimental -e 'val $V: $T ref' -l ocaml src/ libs/
- *  $ ./bin/opengrep-cli --experimental -e 'let $V: $T = ref $X' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'val $V: $T ref' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'let $V: $T = ref $X' -l ocaml src/ libs/
  *
  * We also need to look for things like hash tables and [Lazy.t] and [Str], which are
  * not thread-safe: 
- *  $ ./bin/opengrep-cli --experimental -e 'let $H = Hashtbl.create $I' -l ocaml src/ libs/
- *  $ ./bin/opengrep-cli --experimental -e 'Lazy.force $L' -l ocaml src/ libs/
- *  $ ./bin/opengrep-cli --experimental -e 'Str.$F' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'let $H = Hashtbl.create $I' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'Lazy.force $L' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'Str.$F' -l ocaml src/ libs/
  *  NOTE: Some [Str] functions have been improved to work with less issues in Domains. 
  *
  * And to check use of Lwt which may have issues with memprof-limits cancellation: 
- *  $ ./bin/opengrep-cli -e 'Lwt_platform.$F' -l ocaml src/ libs/
- *  $ ./bin/opengrep-cli -e 'Lwt.$F' -l ocaml src/ libs/
+ *  $ ./bin/opengrep -e 'Lwt_platform.$F' -l ocaml src/ libs/
+ *  $ ./bin/opengrep -e 'Lwt.$F' -l ocaml src/ libs/
  *)
 
 (*****************************************************************************)

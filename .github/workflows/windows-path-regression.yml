@@ -14,7 +14,7 @@ on:
 jobs:
   # Reuse the existing Windows build (it already declares workflow_call) so we
   # don't duplicate the opam/cygwin/dune setup. It uploads
-  # 'opengrep-core-and-dependent-libs-w64-artifact' (opengrep-core.exe + DLLs).
+  # 'opengrep-and-dependent-libs-w64-artifact' (opengrep.exe + DLLs).
   build:
     uses: ./.github/workflows/build-test-windows-x86.yml
 
@@ -27,19 +27,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
-          name: opengrep-core-and-dependent-libs-w64-artifact
+          name: opengrep-and-dependent-libs-w64-artifact
       - name: unpack binary + dlls
         run: tar xvfz artifacts.tgz
       - name: case-insensitive path regression (native osemgrep)
         run: |
           set -eu
-          # 'scan' is dispatched by argv[0]: copy opengrep-core.exe to
-          # opengrep-cli.exe (same bytes, DLLs alongside) so it runs the osemgrep
-          # CLI, and pass --experimental to force native osemgrep (Find_targets)
-          # instead of delegating to pyopengrep -- otherwise the buggy discovery
-          # code never runs.
-          cp artifacts/opengrep-core.exe artifacts/opengrep-cli.exe
-          CLI="$PWD/artifacts/opengrep-cli.exe"
+          # The binary always runs the opengrep CLI; we still pass
+          # --experimental to force native osemgrep (Find_targets) -- otherwise
+          # the buggy discovery code never runs.
+          CLI="$PWD/artifacts/opengrep.exe"
           base="$(mktemp -d)"
           mkdir -p "$base/MixedRepo/sub"
           ( cd "$base/MixedRepo" \

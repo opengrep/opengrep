@@ -1,7 +1,8 @@
 #! /usr/bin/env python3
 #
-# Run semgrep-core on a series of pairs (target, pattern) and report the
-# time it takes. Optionally upload the results to the semgrep dashboard.
+# Run the low-level engine CLI on a series of pairs (target, pattern) and
+# report the time it takes. Optionally upload the results to the semgrep
+# dashboard.
 import argparse
 import json
 import os
@@ -11,7 +12,7 @@ from typing import List
 
 
 # This script assumes it's run from the current directory
-SEMGREP_CORE = "../../bin/opengrep-core"
+SEMGREP_CORE = ["../../bin/opengrep", "--core"]
 
 
 class Test:
@@ -119,7 +120,7 @@ def run_tests(
 
         t1 = time.time()
         args = [
-            SEMGREP_CORE,
+            *SEMGREP_CORE,
             "-lang",
             test.lang,
             "-rules",

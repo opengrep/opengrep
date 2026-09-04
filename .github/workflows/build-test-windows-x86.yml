@@ -318,7 +318,7 @@ jobs:
           path: ${{ env.OPAMROOT }} # C:\Users\runneradmin\AppData\Local\opam
           key: ${{ steps.cache-opamroot-win32-64.outputs.cache-primary-key }}
           
-      - name: Build opengrep-core
+      - name: Build opengrep
         env:
           BASH_ENV: ${{ github.workspace }}/bash_env.sh
         shell: bash
@@ -339,7 +339,7 @@ jobs:
           # Else one gets weird linking errors, because of the length of the
           # argument list. And `opam exec` will always re-arrange the path and
           # make this fail to compile.
-          PATH="${CYGWIN_ROOT_BIN}:$(opam exec -- printenv PATH)" dune build _build/install/default/bin/opengrep-core.exe
+          PATH="${CYGWIN_ROOT_BIN}:$(opam exec -- printenv PATH)" dune build _build/install/default/bin/opengrep.exe
 
       - name: Trim Dune cache
         env:
@@ -348,7 +348,7 @@ jobs:
         run: |
           opam exec -- dune cache trim --size=1000MB
 
-      - name: Test opengrep-core
+      - name: Test opengrep
         env:
           BASH_ENV: ${{ github.workspace }}/bash_env.sh
         shell: bash
@@ -356,22 +356,22 @@ jobs:
           export CYGWIN_MINGW_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
           export PATH="${CYGWIN_MINGW_BIN}:${PATH}"
           
-          ldd _build/install/default/bin/opengrep-core.exe
+          ldd _build/install/default/bin/opengrep.exe
 
-          _build/install/default/bin/opengrep-core.exe -version
-          _build/install/default/bin/opengrep-core.exe -l python -rules tests/windows/rules.yml -json tests/windows/test.py
+          _build/install/default/bin/opengrep.exe --core -version
+          _build/install/default/bin/opengrep.exe --core -l python -rules tests/windows/rules.yml -json tests/windows/test.py
 
-      - name: Package opengrep-core
+      - name: Package opengrep and its DLLs
         env:
           BASH_ENV: ${{ github.workspace }}/bash_env.sh
         shell: bash
         run: |
           mkdir artifacts
-          cp _build/install/default/bin/opengrep-core.exe artifacts/
+          cp _build/install/default/bin/opengrep.exe artifacts/
 
-          # The mingw runtime, plus the native libraries opengrep-core links
+          # The mingw runtime, plus the native libraries opengrep links
           # against. Keep in sync with the ldd output printed by the
-          # opengrep-core test step; everything else it needs comes from
+          # opengrep test step; everything else it needs comes from
           # System32.
           cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libstdc++-6.dll artifacts/
           cp d:/cygwin/usr/x86_64-w64-mingw32/sys-root/mingw/bin/libgcc_s_seh-1.dll artifacts/
@@ -386,7 +386,7 @@ jobs:
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: opengrep-core-and-dependent-libs-w64-artifact
+          name: opengrep-and-dependent-libs-w64-artifact
           path: artifacts.tgz
 
       - name: Package opengrep
@@ -394,13 +394,12 @@ jobs:
           BASH_ENV: ${{ github.workspace }}/bash_env.sh
         shell: bash
         run: |
-          # The same executable under the name that runs the opengrep CLI,
-          # with the DLLs of the opengrep-core package.
-          mkdir opengrep-cli
-          cp _build/install/default/bin/opengrep-core.exe opengrep-cli/opengrep.exe
-          cp artifacts/*.dll opengrep-cli/
+          # The executable with the DLLs packaged in the step above.
+          mkdir opengrep
+          cp _build/install/default/bin/opengrep.exe opengrep/
+          cp artifacts/*.dll opengrep/
 
-          tar czvf opengrep-cli.tgz opengrep-cli
+          tar czvf opengrep.tgz opengrep
 
       # The checks below run with the build's PATH, which holds the mingw
       # directory the DLLs were copied from, so they would not notice one
@@ -414,7 +413,7 @@ jobs:
           export CYGWIN_MINGW_BIN=/usr/x86_64-w64-mingw32/sys-root/mingw/bin
           export PATH="${CYGWIN_MINGW_BIN}:${PATH}"
 
-          ldd opengrep-cli/opengrep.exe
+          ldd opengrep/opengrep.exe
 
           missing=""
           while read -r dll arrow path _; do
@@ -422,11 +421,11 @@ jobs:
             case "$(echo "$path" | tr 'A-Z' 'a-z')" in
               /cygdrive/c/windows/*) continue ;;
             esac
-            [ -f "opengrep-cli/$dll" ] || missing="$missing $dll"
-          done < <(ldd opengrep-cli/opengrep.exe)
+            [ -f "opengrep/$dll" ] || missing="$missing $dll"
+          done < <(ldd opengrep/opengrep.exe)
 
           if [ -n "$missing" ]; then
-            echo "DLLs needed by opengrep.exe and absent from opengrep-cli/:$missing"
+            echo "DLLs needed by opengrep.exe and absent from opengrep/:$missing"
             exit 1
           fi
 
@@ -435,22 +434,22 @@ jobs:
         env:
           BASH_ENV: ${{ github.workspace }}/bash_env.sh
         shell: bash
-        run: opengrep-cli/opengrep.exe --version
+        run: opengrep/opengrep.exe --version
 
       # Test SARIF output which previously failed on Windows only:
       - name: include paths test
         env:
           BASH_ENV: ${{ github.workspace }}/bash_env.sh
         shell: bash
-        run: opengrep-cli/opengrep.exe scan -f tests/windows/rules.yml tests/windows/test.py
+        run: opengrep/opengrep.exe scan -f tests/windows/rules.yml tests/windows/test.py
 
       - name: sarif output test
         env:
           BASH_ENV: ${{ github.workspace }}/bash_env.sh
         shell: bash
-        run: opengrep-cli/opengrep.exe scan --sarif -f tests/windows/rules.yml tests/windows/test.py
+        run: opengrep/opengrep.exe scan --sarif -f tests/windows/rules.yml tests/windows/test.py
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: opengrep-cli-windows-x86
-          path: opengrep-cli.tgz
+          name: opengrep-windows-x86
+          path: opengrep.tgz

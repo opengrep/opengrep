@@ -18,9 +18,9 @@ module Out = Semgrep_output_v1_j
 (*****************************************************************************)
 (* This module contains the main command-line parsing logic of semgrep-core.
  *
- * It is packaged as a library so it can be used both for the stand-alone
- * semgrep-core binary as well as the semgrep-core-proprietary one.
- * history: the code here used to be in Main.ml.
+ * It is packaged as a library and is reached through 'opengrep --core'.
+ * history: the code here used to be in Main.ml; it was also used for the
+ * stand-alone semgrep-core binary and the semgrep-core-proprietary one.
  *
  * DEPRECATED: semgrep-core used to recognize lots of options (e.g., -e/-f) and
  * is still used extensively by PA for many things. It was doing its own file
@@ -67,9 +67,9 @@ let rule_source = ref None
 (* TODO: Check if this needs to be in TLS. *)
 let target_file : Fpath.t option ref = ref None
 
-(* used for `semgrep-core -l <lang> <single file>` instead of
- * `semgrep-core -targets`. It is also used for semgrep-core "actions" as in
- * `semgrep-core -l <lang> -dump_ast <file`
+(* used for `opengrep --core -l <lang> <single file>` instead of
+ * `opengrep --core -targets`. It is also used for core "actions" as in
+ * `opengrep --core -l <lang> -dump_ast <file`
  * less: we could infer it from basename argv(0) ?
  *)
 let lang = ref None
@@ -698,7 +698,7 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
       ( "-version",
         Arg.Unit
           (fun () ->
-            let version = spf "opengrep-core version: %s" Version.version in
+            let version = spf "opengrep --core version: %s" Version.version in
             CapConsole.print caps#stdout version;
             Core_exit_code.(exit_semgrep caps#exit Success)),
         "  guess what" );
@@ -787,9 +787,10 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
    *)
   if Sys.unix then CapSys.set_signal caps#signal Sys.sigxfsz Sys.Signal_ignore;
 
+  (* the core CLI is only reachable through 'opengrep --core', so argv.(0)
+   * (the name the binary was invoked under) is not what the user must type *)
   let usage_msg =
-    spf "Usage: %s [options] -rules <file> -targets <file>\nOptions:"
-      (Filename.basename argv.(0))
+    "Usage: opengrep --core [options] -rules <file> -targets <file>\nOptions:"
   in
 
   (* --------------------------------------------------------- *)
@@ -865,9 +866,9 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
                  *)
                 failwith
                   "this combination of targets and flags is not supported; \
-                   opengrep-core supports either the use of -targets, or -lang \
-                   and a single target file; if you need more complex file \
-                   targeting use opengrep"
+                   opengrep --core supports either the use of -targets, or \
+                   -lang and a single target file; if you need more complex \
+                   file targeting use opengrep"
           in
           let engine_config =
             Engine_config.{ custom_ignore_pattern = !Flag.opengrep_ignore_pattern; taint_intrafile = None }
@@ -885,6 +886,9 @@ let main_exn (caps : Cap.all_caps) (argv : string array) : unit =
 let with_exception_trace f =
   Printexc.record_backtrace true;
   try f () with
+  (* UnixExit is control flow, not a failure: -help, -version and the other
+   * early exits must propagate their status without printing a trace *)
+  | UnixExit _ as exn -> raise exn
   | exn ->
       let e = Exception.catch exn in
       Printf.eprintf "Exception: %s\n%!" (Exception.to_string e);

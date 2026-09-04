@@ -33,7 +33,7 @@ export PATH=$PWD/bin:$PATH
 
 # Run latest timing benchmark
 opengrep --version
-opengrep-core -version
+opengrep --core -version
 python3 perf/run-benchmarks --config $config_path --std-only --save-to timing1.json
 jq . timing1.json
 python3 perf/run-benchmarks --config $config_path --std-only --trace --save-to timing2.json --save-findings-to ci_small_repos_findings.json

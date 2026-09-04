@@ -25,10 +25,11 @@ rules:
               ...
               [@@action]
     message: you should not print anything on stdout as it may interfere with
-      the JSON output of opengrep-core, or it may interfere with the output of
-      opengrep-cli.
+      the JSON output of 'opengrep --core', or it may interfere with the
+      output of opengrep.
       Use Logs.debug() for debugging, UConsole.print() for actual valid output
-      in opengrep-core, or Logs.app() and CapConsole.print() in opengrep-cli.
+      in the core CLI, or Logs.app() and CapConsole.print() in the opengrep
+      CLI.
     languages: [ocaml]
     severity: ERROR
     paths:

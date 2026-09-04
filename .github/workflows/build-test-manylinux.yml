@@ -40,15 +40,15 @@ jobs:
         run: git config --global --add safe.directory "$(pwd)"
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
-          name: opengrep-cli-linux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}
-      - run: tar xzf opengrep-cli.tgz
+          name: opengrep-linux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}
+      - run: tar xzf opengrep.tgz
       - name: test version output
-        run: ./opengrep-cli/opengrep --version
+        run: ./opengrep/opengrep --version
       - name: scan a fixture of this repository
         # --error is what turns findings into an exit code of 1
         run: |
           set +e
-          ./opengrep-cli/opengrep scan --error --json \
+          ./opengrep/opengrep scan --error --json \
             -f tests/scan/rules/eqeq.yaml tests/scan/targets/basic/stupid.py \
             > findings.json
           status=$?
