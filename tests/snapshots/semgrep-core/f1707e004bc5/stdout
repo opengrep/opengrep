@@ -1,0 +1,10 @@
+--- begin input files ---
+eqeq-basic.yaml
+invalid_go.go
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 18 insertions(+)
+ create mode 100644 eqeq-basic.yaml
+ create mode 100644 invalid_go.go
+{"version":"<MASKED>","results":[],"errors":[{"code":3,"level":"warn","type":["PartialParsing",[{"path":"invalid_go.go","start":{"line":9,"col":10,"offset":0},"end":{"line":9,"col":13,"offset":3}},{"path":"invalid_go.go","start":{"line":10,"col":13,"offset":0},"end":{"line":10,"col":14,"offset":1}}]],"message":"Syntax error at line invalid_go.go:9:\n `str` was unexpected","path":"invalid_go.go","spans":[{"file":"invalid_go.go","start":{"line":9,"col":10,"offset":0},"end":{"line":9,"col":13,"offset":3}},{"file":"invalid_go.go","start":{"line":10,"col":13,"offset":0},"end":{"line":10,"col":14,"offset":1}}]}],"paths":{"scanned":["invalid_go.go"],"skipped":[{"path":"invalid_go.go","reason":"analysis_failed_parser_or_internal_error","details":"`str` was unexpected"}]},"interfile_languages_used":[],"skipped_rules":[]}

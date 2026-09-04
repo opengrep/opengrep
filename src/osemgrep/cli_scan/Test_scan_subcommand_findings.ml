@@ -419,6 +419,27 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"rules/spacegrep/nosem-html.yaml"
            ~targets:[ "targets/spacegrep/nosem.html" ]
            ~extra_args:[ "--no-rewrite-rule-ids"; "nosem.html" ]);
+      (* A target that does not parse: the JSON carries the syntax error,
+         the spans it covers and the skipped path, and with --strict the
+         scan ends with the exit code of invalid target code.
+         differs from the Python wrapper: the skipped path also carries a
+         "details" field with the unexpected text
+         python: test_file_parser__failure__error_messages, invalid_go.go *)
+      t "findings: a Go target that does not parse"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~format_args:[ "--json" ] ~rule:"rules/eqeq-basic.yaml"
+           ~targets:[ "targets/bad/invalid_go.go" ]
+           ~extra_args:[ "--verbose"; "--strict"; "invalid_go.go" ]
+           ~check:Exit_code.Check.invalid_code);
+      (* differs from the Python wrapper: the same extra "details" field
+         python: test_file_parser__failure__error_messages,
+         invalid_python.py *)
+      t "findings: a Python target that does not parse"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~format_args:[ "--json" ] ~rule:"rules/eqeq-python.yaml"
+           ~targets:[ "targets/bad/invalid_python.py" ]
+           ~extra_args:[ "--verbose"; "--strict"; "invalid_python.py" ]
+           ~check:Exit_code.Check.invalid_code);
       (* A metavariable of the message keeps its own value, so a message
          that already holds one is not interpolated twice.
          python: test_no_double_interpolation *)

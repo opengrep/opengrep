@@ -1,0 +1,10 @@
+--- begin input files ---
+bad-java-rule.yaml
+basic_java.java
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 14 insertions(+)
+ create mode 100644 bad-java-rule.yaml
+ create mode 100644 basic_java.java
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"Rule parse error","rule_id":"broken-rule","message":"Rule parse error in rule broken-rule:\n Invalid pattern for Java: Stdlib.Parsing.Parse_error\n----- pattern -----\n@$HTTP_METHOD\npublic $RET $FUNC(..., @Auth $REQ, ...) { ... }\n\n----- end pattern -----\n"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}

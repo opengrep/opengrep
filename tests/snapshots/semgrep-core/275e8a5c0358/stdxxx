@@ -1,0 +1,7 @@
+--- begin input files ---
+rules/overlapping_rules.yaml
+targets/multiple_annotations.py
+--- end input files ---
+2/2: ✓ All tests passed
+No tests for fixes found.
+[33mASSERT[0m exit code
