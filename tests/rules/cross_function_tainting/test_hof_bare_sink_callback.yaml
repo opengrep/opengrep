@@ -1,8 +1,8 @@
 rules:
-  - id: test-direct-alias-sink
+  - id: test-hof-bare-sink-callback
     languages: [python]
     severity: ERROR
-    message: "Taint flows through direct function-value alias"
+    message: "Bare sink function passed as callback reaches the sink"
     mode: taint
     options:
       taint_intrafile: true

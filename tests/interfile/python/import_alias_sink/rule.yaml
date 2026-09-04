@@ -1,0 +1,20 @@
+rules:
+  - id: import-alias-sink
+    languages: [python]
+    severity: ERROR
+    message: >
+      Cross-file function-value alias (gap A of issue #499 across files):
+      xlib.py binds `f = sink` at module level, caller.py imports and
+      calls it.  Naming stamps the alias inside xlib only; projidx
+      publishes the module-level bare-name alias onto the importing
+      file's uses (Pipeline.stamp_import_value_aliases), and the
+      dispatch-to-extraction svalue mirror lets spec extraction match
+      the sink through the import.
+    mode: taint
+    options:
+      taint_interfile: true
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
