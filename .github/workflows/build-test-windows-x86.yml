@@ -389,56 +389,40 @@ jobs:
           name: opengrep-core-and-dependent-libs-w64-artifact
           path: artifacts.tgz
 
-  build-wheels:
-    defaults:
-      run:
+      - name: Package opengrep
+        env:
+          BASH_ENV: ${{ github.workspace }}/bash_env.sh
         shell: bash
-    needs:
-      - build-core
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
-        with:
-          submodules: false
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
-        with:
-          name: opengrep-core-and-dependent-libs-w64-artifact
-      - run: |
-          tar xvfz artifacts.tgz
-          cp artifacts/* cli/src/semgrep/bin
-          ./scripts/build-wheels.sh --plat-name win_amd64
+        run: |
+          # The same executable under the name that runs the opengrep CLI,
+          # with the DLLs of the opengrep-core package.
+          mkdir opengrep-cli
+          cp _build/install/default/bin/opengrep-core.exe opengrep-cli/opengrep.exe
+          cp artifacts/*.dll opengrep-cli/
+
+          tar czvf opengrep-cli.tgz opengrep-cli
+
+      # Run from the package, so that a missing DLL fails the job.
+      - name: test version output
+        env:
+          BASH_ENV: ${{ github.workspace }}/bash_env.sh
+        shell: bash
+        run: opengrep-cli/opengrep.exe --version
+
+      # Test SARIF output which previously failed on Windows only:
+      - name: include paths test
+        env:
+          BASH_ENV: ${{ github.workspace }}/bash_env.sh
+        shell: bash
+        run: opengrep-cli/opengrep.exe scan -f tests/windows/rules.yml tests/windows/test.py
+
+      - name: sarif output test
+        env:
+          BASH_ENV: ${{ github.workspace }}/bash_env.sh
+        shell: bash
+        run: opengrep-cli/opengrep.exe scan --sarif -f tests/windows/rules.yml tests/windows/test.py
+
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: windows-x86-wheel
-          path: cli/dist.tgz
-
-  test-wheels:
-    defaults:
-      run:
-        shell: bash
-    needs:
-      - build-wheels
-    runs-on: windows-2022
-    steps:
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
-        with:
-          name: windows-x86-wheel
-      - run: tar xzvf dist.tgz
-      - name: install package
-        run: pip3 install dist/*.whl
-      - name: test version output
-        run: opengrep --version
-      - name: test help output
-        run: opengrep --help
-      - name: e2e opengrep-core test
-        run: >-
-          export PYTHONIOENCODING=utf-8;
-          echo '1 == 1' | opengrep -l python -e '$X == $X' -
-      # Test SARIF output which previously failed on Windows only:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
-        with:
-          submodules: false
-      - name: include paths test
-        run: PYTHONIOENCODING=utf-8 opengrep scan -f tests/windows/rules.yml tests/windows/test.py
-      - name: sarif output test
-        run: PYTHONIOENCODING=utf-8 opengrep scan --sarif -f tests/windows/rules.yml tests/windows/test.py
+          name: opengrep-cli-windows-x86
+          path: opengrep-cli.tgz
