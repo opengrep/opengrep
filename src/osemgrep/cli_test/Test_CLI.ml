@@ -97,9 +97,9 @@ why a rule did or did not match.|}
   in
   Arg.value (Arg.flag info)
 
-(* The engine limits below have no default here: without the flag we keep
- * the Core_scan_config defaults, which set no limit, as pysemgrep did for
- * its test mode.
+(* The engine limits below are options: without the flag the test run keeps
+ * the limits of a scan (see Test_subcommand.core_scan_config), which the
+ * help text below spells out.
  *)
 
 (* coupling: Scan_CLI.o_timeout *)
@@ -107,9 +107,11 @@ let o_timeout : float option Term.t =
   let info =
     Arg.info [ "timeout" ]
       ~doc:
-        {|Maximum time to spend running a rule on a single file in
-seconds. If set to 0 will not have time limit. Defaults to 0.0 s.
+        (Common.spf
+           {|Maximum time to spend running a rule on a single file in
+seconds. If set to 0 will not have time limit. Defaults to %.1f s.
 |}
+           Core_runner.default_conf.timeout)
   in
   Arg.value (Arg.opt (Arg.some Arg.float) None info)
 
@@ -118,9 +120,11 @@ let o_timeout_threshold : int option Term.t =
   let info =
     Arg.info [ "timeout-threshold" ]
       ~doc:
-        {|Maximum number of rules that can time out on a file before
-the file is skipped. If set to 0 will not have limit. Defaults to 0.
+        (Common.spf
+           {|Maximum number of rules that can time out on a file before
+the file is skipped. If set to 0 will not have limit. Defaults to %d.
 |}
+           Core_runner.default_conf.timeout_threshold)
   in
   Arg.value (Arg.opt (Arg.some Arg.int) None info)
 
@@ -129,10 +133,12 @@ let o_max_memory_mb : int option Term.t =
   let info =
     Arg.info [ "max-memory" ]
       ~doc:
-        {|Maximum system memory in MiB to use during the interfile pre-processing
+        (Common.spf
+           {|Maximum system memory in MiB to use during the interfile pre-processing
 phase, or when running a rule on a single file. If set to 0, will
-not have memory limit. Defaults to 0.
+not have memory limit. Defaults to %d.
 |}
+           Core_runner.default_conf.max_memory_mb)
   in
   Arg.value (Arg.opt (Arg.some Arg.int) None info)
 

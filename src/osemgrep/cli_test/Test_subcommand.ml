@@ -327,6 +327,19 @@ let pp_failed_check ppf ((rule_id : string), (rule_res : Out.rule_result)) :
       (lines |> List_.map Int.to_string |> String.concat ", ")
   in
   Format.fprintf ppf "\t✖ %s@\n" rule_id;
+  (* python: the soft errors of the check, which are tolerated by a scan but
+     fatal here, so that a timeout or a target that does not parse is not
+     reported as empty line lists *)
+  (match rule_res.errors with
+  | [] -> ()
+  | errors ->
+      let json =
+        errors
+        |> List_.map Semgrep_output_v1_j.string_of_cli_error
+        |> String.concat ","
+        |> fun (s : string) -> Yojson.Safe.prettify (spf "[%s]" s)
+      in
+      Format.fprintf ppf "\terrors: %s@\n" json);
   rule_res.matches
   |> List.iter (fun (_file, (m : Out.expected_reported)) ->
          let _common, missed, incorrect =
@@ -483,15 +496,16 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
      *)
     respect_rule_paths = false;
     taint_intrafile = conf.taint_intrafile;
-    (* without the flags we keep the defaults, which set no limit *)
+    (* without the flags we run the limits of a scan, so that a rule that
+     * never finishes fails the test instead of hanging *)
     timeout =
-      Option.value conf.timeout ~default:Core_scan_config.default.timeout;
+      Option.value conf.timeout ~default:Core_runner.default_conf.timeout;
     timeout_threshold =
       Option.value conf.timeout_threshold
-        ~default:Core_scan_config.default.timeout_threshold;
+        ~default:Core_runner.default_conf.timeout_threshold;
     max_memory_mb =
       Option.value conf.max_memory_mb
-        ~default:Core_scan_config.default.max_memory_mb;
+        ~default:Core_runner.default_conf.max_memory_mb;
     effect_guards = false
   }
 
@@ -906,8 +920,12 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
 
   (* step4: compute the exit code *)
 
-  (* as in pysemgrep: --strict makes a config error fail the run *)
-  let strict_error = conf.strict && not (List_.null res.config_with_errors) in
+  (* A rule file that does not load fails the run, with or without --strict:
+   * our loader rejects a pattern or a regex that does not compile, which
+   * pysemgrep only found at scan time, where it failed the checks of that
+   * file. The file is still reported and the other files are still tested.
+   *)
+  let config_error = not (List_.null res.config_with_errors) in
   let any_failures =
     res.results
     |> List.exists (fun (_rule_file, (checks : Out.checks)) ->
@@ -920,7 +938,7 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
     |> List.exists (fun (_target_file, (res : Out.fixtest_result)) ->
            not res.passed)
   in
-  if strict_error || any_failures || any_fixtest_failures then
+  if config_error || any_failures || any_fixtest_failures then
     Exit_code.findings ~__LOC__
   else Exit_code.ok ~__LOC__
 
