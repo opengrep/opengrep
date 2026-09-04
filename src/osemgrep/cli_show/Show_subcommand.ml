@@ -236,9 +236,6 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
   | DumpPatternsOfRule file ->
       Core_CLI.dump_patterns_of_rule file;
       Exit_code.ok ~__LOC__
-  | DumpEnginePath -> failwith "TODO: dump-engine-path not implemented yet"
-  | DumpCommandForCore ->
-      failwith "TODO: dump-command-for-core not implemented yet"
   | DumpIntrafileGraph (file, lang) ->
       let ast = Parse_target.parse_and_resolve_name_warn_if_partial lang file in
       let graph = Graph_from_AST.build_call_graph ~lang ast in

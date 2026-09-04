@@ -799,16 +799,6 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   | Maturity.Default -> (
       (* TODO: handle more confs, or fallback to pysemgrep further down *)
       match conf with
-      | {
-       show =
-         Some
-           {
-             show_kind = Show_CLI.DumpEnginePath | Show_CLI.DumpCommandForCore;
-             _;
-           };
-       _;
-      } ->
-          raise Pysemgrep.Fallback
       | { show = Some _; _ } -> ()
       | _else_ -> raise Pysemgrep.Fallback)
   (* this should never happen because --legacy is handled in cli/bin/semgrep *)
