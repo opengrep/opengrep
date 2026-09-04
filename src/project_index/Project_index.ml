@@ -421,6 +421,7 @@ let build_project_call_graph (caps : < Cap.fork >)
       resolve_ts_specifier =
         (fun ~path_suffix_index ~current_file specifier ->
           Ts_modules.resolve_specifier ~path_suffix_index ~current_file specifier);
+      value_alias_index = Pipeline.build_value_alias_index file_infos;
     }
   in
   let edges_for_file fi = Pipeline.edges_for_file pipeline_ctx fi in

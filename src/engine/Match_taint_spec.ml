@@ -220,6 +220,19 @@ let spec_matches_of_taint_rule ~per_file_formula_cache xconf file ast_and_errors
   let file = Fpath.v file in
   let formula_cache = per_file_formula_cache in
   let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
+  (* Issue #499 gap B, same-file half: [apply_fn(sink, source())] never
+     matches [sink(...)] because the binding [fn = sink] exists in no AST.
+     When every same-file call site agrees on a parameter's bare-name
+     value, stamp it as a [Sym] svalue — naming's alias stamping extended
+     one call hop — so the formula matching below can see through it.
+     Only meaningful under cross-function taint with [symbolic_propagation]
+     (without the option the matcher ignores [Sym] and the stamp is inert). *)
+  (if
+     xconf.config.symbolic_propagation
+     && (xconf.config.taint_intrafile || xconf.config.taint_interfile)
+   then
+     let ast, _skipped_tokens = ast_and_errors in
+     Callback_svalue.stamp_program ast);
   let lazy_ast_and_errors = lazy ast_and_errors in
   (* TODO: should this function just take a target, rather than a file? *)
   let xtarget : Xtarget.t =

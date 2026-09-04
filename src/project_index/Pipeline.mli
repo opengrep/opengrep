@@ -34,7 +34,16 @@ type ctx = {
   resolve_ts_specifier :
     path_suffix_index:(string, string list) Hashtbl.t option ->
     current_file:Fpath.t -> string -> string list;
+  (* (module qn string, exported name) -> module-level bare-name alias
+     value; see [build_value_alias_index]. *)
+  value_alias_index : (string * string, AST_generic.expr) Hashtbl.t;
 }
+
+(* Module-level bare-name value aliases ([f = sink] at module top level),
+   for import-value svalue stamping (issue #499, cross-file alias).
+   Conflicting or non-bare-name assignments are dropped. *)
+val build_value_alias_index :
+  Types.file_info list -> (string * string, AST_generic.expr) Hashtbl.t
 
 val edges_for_file :
   ctx -> file_info ->
