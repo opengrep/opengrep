@@ -151,6 +151,7 @@ let extract_specs_for_rule
     ~(xconf : Match_env.xconfig)
     ~prefilter
     ~(contents : (Fpath.t, string) Hashtbl.t)
+    ~(stamped_files : (Fpath.t, unit) Hashtbl.t)
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
     ~(matching_targets : interfile_target list)
     (rule : R.taint_rule)
@@ -166,6 +167,10 @@ let extract_specs_for_rule
      shared across every (rule, chunk) item. A file with no cached
      content is kept (conservative). *)
   let file_is_relevant (path : Fpath.t) : bool =
+    (* A stamped file can match through a [Sym] value whose name its raw
+       text never mentions, so the content prefilter cannot rule it out. *)
+    Hashtbl.mem stamped_files path
+    ||
     match prefilter with
     | None -> true
     | Some (_formula, func) -> (
@@ -1485,6 +1490,52 @@ let build_rule_states
       target_batches
   in
   let extraction_ast_lookup = build_ast_lookup extraction_results in
+  (* Issue #499 gap B, cross-file half: compute argument-to-parameter
+     symbolic stamps over each language's dispatch ASTs — whose
+     [id_resolved] links (naming same-file, projidx cross-file) connect
+     call sites to defs — and apply them to BOTH flavors: sids are
+     positional, so decisions from the dispatch parse hold for the fresh
+     extraction parse of the same bytes. Extraction then finds the sink
+     match inside the callee body (seeding the subgraph), and dispatch's
+     [is_sink] agrees on the range. Stamps are inert for rules without
+     [symbolic_propagation]. *)
+  (* Files whose extraction AST received stamps: their raw text need not
+     contain the stamped value's name, so the content prefilter in
+     [extract_specs_for_rule] must not skip them. *)
+  let stamped_files : (Fpath.t, unit) Hashtbl.t = Hashtbl.create 4 in
+  List.iter
+    (fun (lc : lang_context) ->
+      let dispatch_tbl = ast_table_for_lang target_ast_lookup lc.lc_lang in
+      let extraction_tbl =
+        ast_table_for_lang extraction_ast_lookup lc.lc_lang
+      in
+      let asts =
+        Hashtbl.fold (fun _ ast acc -> ast :: acc) dispatch_tbl []
+      in
+      (* Argument-to-parameter stamps, valid project-wide. *)
+      let param_stamps = Callback_svalue.collect_stamps asts in
+      if param_stamps <> [] then
+        Hashtbl.iter
+          (fun _ ast ->
+            ignore (Callback_svalue.apply_stamps param_stamps ast))
+          dispatch_tbl;
+      (* Extraction parses additionally need the dispatch AST's own [Sym]
+         svalues mirrored: projidx publishes import-value aliases there
+         (see [Pipeline.stamp_import_value_aliases]), and the fresh
+         Naming-only extraction parse never sees projidx payloads. *)
+      Hashtbl.iter
+        (fun file ast ->
+          let mirrored =
+            match Hashtbl.find_opt dispatch_tbl file with
+            | Some dispatch_ast ->
+                Callback_svalue.collect_sym_stamps dispatch_ast
+            | None -> []
+          in
+          if
+            Callback_svalue.apply_stamps (mirrored @ param_stamps) ast > 0
+          then Hashtbl.replace stamped_files file ())
+        extraction_tbl)
+    lang_contexts;
   (* A failed parse batch leaves its files with no dispatch AST and/or no
      extraction AST: they can neither be dispatched nor seed the subgraph,
      so without intervention their findings would silently vanish (the
@@ -1575,7 +1626,7 @@ let build_rule_states
         let specs =
           extract_specs_for_rule ~lang:lc.lc_lang ~xconf
             ~prefilter:rule_prefilters.(i)
-            ~contents:target_contents
+            ~contents:target_contents ~stamped_files
             ~ast_table:(ast_table_for_lang extraction_ast_lookup lc.lc_lang)
             ~matching_targets:chunk rule
         in
