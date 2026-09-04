@@ -7,7 +7,6 @@
 # used for Opengrep development:
 #  - for OCaml: 'ocamlc' and 'ocamlopt' (currently 5.5.0), 'dune', 'opam'
 #  - for C: 'gcc', 'ld', 'pkgconfig', but also some C libs like PCRE, gmp
-#  - for Python: 'python3', 'pip', 'pipenv'
 #
 # You will also need obviously 'make', but also 'git', and many other
 # common dev tools (e.g., 'docker', 'bash').
@@ -80,20 +79,10 @@ default: core
 all:
 # OCaml compilation
 	$(MAKE) core
-	$(MAKE) copy-core-for-cli
-# Python setup
-	cd cli && pipenv install --dev
-	$(MAKE) -C cli build
 
 .PHONY: core
 core:
 	$(MAKE) minimal-build
-
-# Make binaries available to pysemgrep
-.PHONY: copy-core-for-cli
-copy-core-for-cli:
-	rm -f cli/src/semgrep/bin/opengrep-core$(EXE)
-	cp bin/opengrep-core$(EXE) cli/src/semgrep/bin/
 
 # Minimal build of the opengrep-core executable.
 # If you need other binaries, look at the build-xxx rules below.
@@ -151,24 +140,6 @@ clean:
 # Disabled: there are no longer any .opam files at the root, they live in
 # opam/, and this pathspec matches at any depth rather than just the root.
 #	git clean -fX *.opam
-	-$(MAKE) -C cli clean
-
-###############################################################################
-# Install targets
-###############################################################################
-
-# Install opengrep on a developer's machine with pip and opam installed.
-# This should *not* install the open-source libraries that we maintain
-# as part of the opengrep project.
-.PHONY: install
-install:
-	$(MAKE) copy-core-for-cli
-# Install opengrep and opengrep-core in a place known to pip.
-	python3 -m pip install ./cli
-
-.PHONY: uninstall
-uninstall:
-	-python3 -m pip uninstall --yes opengrep
 
 ###############################################################################
 # Test target
@@ -188,8 +159,6 @@ retest:
 .PHONY: test-all
 test-all:
 	$(MAKE) core-test
-	$(MAKE) -C cli test
-	$(MAKE) -C cli osempass
 
 #coupling: this is run by .github/workflow/tests.yml
 .PHONY: core-test
@@ -277,8 +246,6 @@ opam/semgrep.opam: dune-project
 # Foolproofing
 	chmod a-w semgrep.opam
 
-# We could also add python dependencies at some point
-# and an 'install-deps-for-semgrep-cli' target
 install-deps: install-deps-for-semgrep-core
 
 # **************************************************
@@ -424,7 +391,7 @@ nix-semgrep-core:
 nix-semgrep:
 	nix build ".?submodules=1#semgrep"
 
-# Build + run tests (doesn't run python tests yet)
+# Build + run tests
 nix-check:
 	nix flake check ".?submodules=1#"
 
@@ -545,14 +512,11 @@ check_for_emacs:
 # Martin's targets
 ###############################################################################
 # Build executables and place them where opengrep expects them.
-# These are normally copied by '/cli/setup.py' but it doesn't happen if we
-# run only 'dune build'.
 #
 # Usage:
 #  $ make dev
-#  $ PIPENV_PIPFILE=~/opengrep/cli/Pipfile pipenv run opengrep ...
+#  $ ./bin/opengrep ...
 .PHONY: dev
 dev:
 	$(MAKE) core
-	$(MAKE) copy-core-for-cli
 
