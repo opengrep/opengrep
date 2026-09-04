@@ -130,57 +130,14 @@ jobs:
         with:
           name: opengrep-osx-${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}
           path: artifacts.tgz
-
-  build-wheels:
-    needs:
-      - build-core
-    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
-    steps:
-      - uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
-        with:
-          python-version: "3.11"
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
-        with:
-          submodules: false
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
-        with:
-          name: opengrep-osx-${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}
-      - name: Set PLAT_NAME based on inputs.arch
-        env:
-          ARCH: ${{ inputs.arch }}
+      # A tarball rather than a bare file, so that the executable bit survives
+      # the upload.
+      - name: Make artifact for ./bin/opengrep
         run: |
-          if [ "$ARCH" = "x86_64" ]; then
-            echo "PLAT_NAME=macosx_10_9_x86_64" >> $GITHUB_ENV
-          else
-            echo "PLAT_NAME=macosx_11_0_arm64" >> $GITHUB_ENV
-          fi
-      - name: Build wheels
-        run: |
-          tar xvfz artifacts.tgz
-          cp artifacts/* cli/src/semgrep/bin
-
-          ./scripts/build-wheels.sh --plat-name ${{ env.PLAT_NAME }}
-
+          mkdir opengrep-cli
+          cp ./bin/opengrep opengrep-cli/
+          tar czf opengrep-cli.tgz opengrep-cli
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: osx-${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}-wheel
-          path: cli/dist.zip
-
-  test-wheels:
-    needs:
-      - build-wheels
-    runs-on: ${{ inputs.arch == 'x86_64' && 'macos-14-large' || 'macos-14-xlarge' }}
-    steps:
-      - uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236 # ratchet:actions/setup-python@v4
-        with:
-          python-version: "3.11"
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
-        with:
-          name: osx-${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}-wheel
-      - run: unzip dist.zip
-      - name: install package
-        run: pip3 install dist/*.whl
-      - run: opengrep --version
-      - name: e2e opengrep-core test
-        run: echo '1 == 1' | opengrep -l python -e '$X == $X' -
-        shell: bash {0}
+          name: opengrep-cli-osx-${{ inputs.arch == 'x86_64' && 'x86' || 'arm64' }}
+          path: opengrep-cli.tgz
