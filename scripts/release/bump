@@ -93,7 +93,7 @@ fi
 
 bump
 
-if git status -s | grep -vq 'src/core/Version.ml\|dune-project'; then
+if git status -s | grep -vq 'src/core/Version.ml\|dune-project\|opam/semgrep.opam'; then
   error <<EOF
 The release branch contains unexpected changes, cancelling release.
 EOF
