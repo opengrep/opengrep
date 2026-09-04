@@ -33,7 +33,110 @@ type ctx = {
   resolve_ts_specifier :
     path_suffix_index:(string, string list) Hashtbl.t option ->
     current_file:Fpath.t -> string -> string list;
+  (* (module qn string, exported name) -> module-level bare-name alias
+     value, for import-value svalue stamping. See
+     [build_value_alias_index]. *)
+  value_alias_index : (string * string, G.expr) Hashtbl.t;
 }
+
+(* Module-level bare-name value aliases ([f = sink] / [const f = sink] at
+   the top level of a module): (module qn string, exported name) -> the
+   aliased value expression. A name assigned more than once, or to
+   anything but a bare non-local name, is dropped — the alias must be a
+   static fact for the stamp to be sound. Feeds
+   [stamp_import_value_aliases] (issue #499, cross-file alias). *)
+let build_value_alias_index (file_infos : file_info list)
+  : (string * string, G.expr) Hashtbl.t =
+  let acceptable (e : G.expr) : G.expr option =
+    match e.G.e with
+    | G.N (G.Id (_, ainfo)) -> (
+        match !(ainfo.G.id_resolved) with
+        | Some ((G.LocalVar | G.Parameter | G.EnclosedVar), _) -> None
+        | Some _
+        | None -> Some e)
+    | _ -> None
+  in
+  (* [None] = conflicting/unacceptable: poisoned, never stamped. *)
+  let tbl : (string * string, G.expr option) Hashtbl.t = Hashtbl.create 16 in
+  let record key rhs =
+    match Hashtbl.find_opt tbl key with
+    | Some _ -> Hashtbl.replace tbl key None
+    | None -> Hashtbl.replace tbl key (acceptable rhs)
+  in
+  List.iter (fun (fi : file_info) ->
+    let module_str = Names.Module_qn.to_string fi.fi_module_path in
+    (* Module level only: the program's top-level statements. *)
+    List.iter (fun (stmt : G.stmt) ->
+      match stmt.G.s with
+      | G.ExprStmt
+          ({ e = G.Assign ({ e = G.N (G.Id ((name, _), _)); _ }, _, rhs);
+             _ }, _) ->
+        record (module_str, name) rhs
+      | G.DefStmt
+          ({ G.name = G.EN (G.Id ((name, _), _)); _ },
+           G.VarDef { G.vinit = Some rhs; _ }) ->
+        record (module_str, name) rhs
+      | _ -> ())
+      fi.fi_ast)
+    file_infos;
+  let out = Hashtbl.create 16 in
+  Hashtbl.iter (fun k v ->
+    match v with
+    | Some e -> Hashtbl.replace out k e
+    | None -> ()) tbl;
+  out
+
+(* Issue #499, cross-file alias: [xlib.py: f = sink] gives [f] a [Sym]
+   svalue in xlib itself via naming, but an importing file's [f] is a
+   fresh binding naming knows nothing about. Stamp the importing file's
+   uses of a from-imported name whose target module exports it as a
+   module-level bare-name alias; matching with [symbolic_propagation]
+   then sees through the import exactly as through a local alias. Only
+   empty svalue slots on [ImportedEntity]-resolved ids are written, so
+   shadowing locals are untouched. *)
+let stamp_import_value_aliases
+    ~(value_alias_index : (string * string, G.expr) Hashtbl.t)
+    (fi : file_info) : unit =
+  if Hashtbl.length value_alias_index = 0 then ()
+  else begin
+    let by_local : (string, G.expr) Hashtbl.t = Hashtbl.create 4 in
+    List.iter (fun ((local, target_qn) : string * Names.Module_qn.t) ->
+      (* From-imports record the full entity path (module ++ name). *)
+      match List.rev (Names.Module_qn.parts target_qn) with
+      | name :: (_ :: _ as rev_module) -> (
+          let module_str =
+            Names.Module_qn.of_parts (List.rev rev_module)
+            |> Names.Module_qn.to_string
+          in
+          match Hashtbl.find_opt value_alias_index (module_str, name) with
+          | Some value when not (Hashtbl.mem by_local local) ->
+            Hashtbl.replace by_local local value
+          | _ -> ())
+      | _ -> ())
+      fi.fi_imports;
+    if Hashtbl.length by_local > 0 then begin
+      let visitor =
+        object
+          inherit [_] G.iter as super
+
+          method! visit_expr () e =
+            (match e.G.e with
+            | G.N (G.Id ((s, _), info)) -> (
+                match
+                  (Hashtbl.find_opt by_local s,
+                   !(info.G.id_resolved),
+                   !(info.G.id_svalue))
+                with
+                | Some value, Some (G.ImportedEntity _, _), None ->
+                  info.G.id_svalue := Some (G.Sym value)
+                | _ -> ())
+            | _ -> ());
+            super#visit_expr () e
+        end
+      in
+      visitor#visit_program () fi.fi_ast
+    end
+  end
 
 (* Detect ctor/import-derived var classes and stamp them onto [id_type].
    Side effect on [visible]: extends it with discovered class names so
@@ -489,7 +592,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         default_export_class; named_export_classes; default_export_fn;
         path_suffix_index; slice_element_of_field;
         top_level_node_for; visible_names_for_file;
-        stamp_var_types; resolve_ts_specifier } = ctx in
+        stamp_var_types; resolve_ts_specifier; value_alias_index } = ctx in
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
   in
@@ -511,6 +614,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     stamp_base_var_types ~lang ~project_class_names
       ~default_export_class ~named_export_classes
       ~path_suffix_index ~resolve_ts_specifier ~visible fi;
+    stamp_import_value_aliases ~value_alias_index fi;
     let alias_to_module_qn = build_alias_to_module_qn ~cfg fi in
     let funcs_by_module_qn
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
