@@ -1,3 +1,0 @@
-metavariable_comparison_test(25)
-metavariable_comparison_test(100)
-metavariable_comparison_test(200)

@@ -1,6 +1,0 @@
-rules:
-  - id: any-template-var
-    languages: [generic]
-    severity: INFO
-    message: ""
-    pattern: "{{ $...EXPR }}"
