@@ -570,7 +570,7 @@ let o_json : bool Term.t =
 let o_incremental_output : bool Term.t =
   let info =
     Arg.info [ "incremental-output" ]
-      ~doc:{|Output results incrementally. REQUIRES --experimental|}
+      ~doc:{|Output results incrementally.|}
   in
   Arg.value (Arg.flag info)
 
@@ -586,8 +586,7 @@ let o_files_with_matches : bool Term.t =
   let info =
     Arg.info [ "files-with-matches" ]
       ~doc:
-        {|Output only the names of files containing matches.
-REQUIRES --experimental|}
+        {|Output only the names of files containing matches.|}
   in
   Arg.value (Arg.flag info)
 
@@ -677,7 +676,7 @@ let o_effect_guards : bool Term.t =
         ("Attach branch-condition guards to taint effects and evaluate them \
           at call sites, dropping effects whose guard is false. Without this \
           flag only Clojure keeps the arity guards that implement \
-          multi-arity dispatch. REQUIRES --experimental")
+          multi-arity dispatch.")
   in
   Arg.value (Arg.flag info)
 
@@ -706,7 +705,6 @@ A remote git repository of rules is given as `git+<url>`; it is cloned and
 scanned as a directory of rules. Append `#<branch-or-tag>` to pin a ref, e.g.
 `--config git+https://github.com/org/rules#v1.2.0`. Cloning uses git's own
 credentials (ssh-agent, credential helpers, ...) and runs non-interactively.
-REQUIRES --experimental
 
 Use --config auto to automatically obtain rules tailored to this project;
 your project URL will be used to log in to the Semgrep registry.
@@ -918,7 +916,7 @@ let o_project_root : string option Term.t =
           and assumes a local project without version control (novcs).
           This option is useful to ensure the '.semgrepignore' file that
           may exist at the project root is consulted when the scanning root
-          is not the current folder '.'. REQUIRES --experimental|}
+          is not the current folder '.'.|}
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
@@ -930,7 +928,7 @@ let o_skip_invalid_configs : bool Term.t =
         (git+<url>), skip files that fail to parse as a rule config, such as
         unrelated YAML files (e.g. GitHub workflows), emitting a warning for
         each instead of aborting the scan. Explicitly named config files still
-        cause an error if invalid. REQUIRES --experimental|}
+        cause an error if invalid.|}
   in
   Arg.value (Arg.flag info)
 

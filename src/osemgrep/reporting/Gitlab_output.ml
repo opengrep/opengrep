@@ -207,7 +207,8 @@ let output ?(start_time: Timedesc.Timestamp.t option) f (matches : Out.cli_match
       ]
   in
   let now = Timedesc.Timestamp.now () in
-  (* NOTE: This only really works for --experimental mode. *)
+  (* NOTE: Callers with no profiler pass no start time; the scan is then
+   * reported as starting now. *)
   let start_time = Option.value start_time ~default:now in
   let end_time = now in
   (* bugfix: gitlab does not use the RFC 3339 date format but instead a
