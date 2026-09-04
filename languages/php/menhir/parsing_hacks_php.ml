@@ -189,6 +189,156 @@ let find_typehint toks =
   aux toks [] 0
 
 (*****************************************************************************)
+(* ampersands *)
+(*****************************************************************************)
+
+(* php-src decides in the lexer whether a '&' introduces a by-reference
+ * variable or joins two types, by looking at whether a '$' or a '...' comes
+ * next; intersection types accept only the latter spelling, by-reference
+ * parameters only the former, and bitwise and either. Without the split,
+ * 'f(X&Y $p)' and 'f(X &$p)' cannot be told apart until after the '&'.
+ * ocamllex cannot look ahead, so the split is done here instead.
+ * coupling: the "&" rules in Zend's zend_language_scanner.l
+ *)
+let split_ampersands xs =
+  let rec followed_by_var_or_vararg = function
+    | [] -> false
+    | x :: xs ->
+        if TH.is_comment x then followed_by_var_or_vararg xs
+        else (
+          match x with
+          | T_VARIABLE _
+          | T_METAVAR _
+          | TDOLLAR _
+          | TDOLLARDOLLAR _
+          | T_ELLIPSIS _ ->
+              true
+          | _ -> false)
+  in
+  let rec aux acc xs =
+    match xs with
+    | [] -> List.rev acc
+    | TAND ii :: rest ->
+        let tok =
+          if followed_by_var_or_vararg rest then TAND ii else TAND_NOT_VAR ii
+        in
+        aux (tok :: acc) rest
+    | x :: rest -> aux (x :: acc) rest
+  in
+  aux [] xs
+
+(*****************************************************************************)
+(* heredocs *)
+(*****************************************************************************)
+
+(* Two things about a heredoc body are decided by its closing marker, which
+ * the lexer only reaches once the body has been read:
+ *
+ *  - the newline before the marker is not part of the string;
+ *  - since PHP 7.3 the marker may be indented, and that indentation comes off
+ *    every line of the body.
+ *
+ * The body's own newlines are content rather than whitespace, so they are
+ * turned into text here; the lexer emits them as TNewline, which the parser
+ * would otherwise skip like any other newline.
+ *)
+let rec fix_heredocs xs =
+  let shift n str ii =
+    match ii with
+    | Tok.OriginTok t ->
+        Tok.OriginTok
+          {
+            Tok.str;
+            pos =
+              {
+                t.Tok.pos with
+                bytepos = t.Tok.pos.bytepos + n;
+                column = t.Tok.pos.column + n;
+              };
+          }
+    | _ -> Tok.rewrap_str str ii
+  in
+  (* how much of the marker's indentation this line actually has *)
+  let strip_indent indent (str, ii) =
+    let n = ref 0 in
+    while
+      !n < indent && !n < String.length str
+      && (Char.equal str.[!n] ' ' || Char.equal str.[!n] '\t')
+    do
+      incr n
+    done;
+    let n = !n in
+    if n =|= 0 then T_ENCAPSED_AND_WHITESPACE (str, ii)
+    else
+      let str' = String.sub str n (String.length str - n) in
+      T_ENCAPSED_AND_WHITESPACE (str', shift n str' ii)
+  in
+  let indent_of_marker ii =
+    match ii with
+    | Tok.OriginTok t -> t.Tok.pos.column
+    | _ -> 0
+  in
+  (* the body up to its own marker: a heredoc may be nested in a '{...}' of
+   * this one, and its marker is not ours *)
+  let rec body acc depth = function
+    | T_END_HEREDOC ii :: rest when depth =|= 0 -> Some (List.rev acc, ii, rest)
+    | (T_END_HEREDOC _ as x) :: rest -> body (x :: acc) (depth - 1) rest
+    | (T_START_HEREDOC _ as x) :: rest -> body (x :: acc) (depth + 1) rest
+    | [] -> None
+    | x :: rest -> body (x :: acc) depth rest
+  in
+  (* the tokens of a '{...}' interpolation are code: a newline in one of them
+   * is not part of the string, and nothing there is a line of the body *)
+  let brace_depth depth x =
+    match x with
+    | T_CURLY_OPEN _
+    | T_DOLLAR_OPEN_CURLY_BRACES _
+    | TOBRACE _ ->
+        depth + 1
+    | TCBRACE _ -> depth - 1
+    | _ -> depth
+  in
+  let rewrite indent toks =
+    (* drop the line terminator that closes the last line: it precedes the
+     * marker and is not part of the string. The body rule reads one
+     * character at a time, so a CRLF arrives as two tokens.
+     *)
+    let is_nl ii str = String.equal (Tok.content_of_tok ii) str in
+    let toks =
+      match List.rev toks with
+      | TNewline lf :: TNewline cr :: tl when is_nl lf "\n" && is_nl cr "\r" ->
+          List.rev tl
+      | TNewline _ :: tl -> List.rev tl
+      | _ -> toks
+    in
+    let rec aux at_line_start depth acc = function
+      | [] -> List.rev acc
+      | TNewline ii :: tl when depth =|= 0 ->
+          let str = Tok.content_of_tok ii in
+          aux true depth (T_ENCAPSED_AND_WHITESPACE (str, ii) :: acc) tl
+      | T_ENCAPSED_AND_WHITESPACE (str, ii) :: tl when depth =|= 0 && at_line_start
+        ->
+          aux false depth (strip_indent indent (str, ii) :: acc) tl
+      | x :: tl -> aux false (brace_depth depth x) (x :: acc) tl
+    in
+    aux true 0 [] toks
+  in
+  let rec aux acc = function
+    | [] -> List.rev acc
+    | (T_START_HEREDOC _ as start) :: rest -> (
+        match body [] 0 rest with
+        | None -> List.rev_append (start :: acc) rest
+        | Some (toks, marker_ii, rest) ->
+            (* a heredoc nested in an interpolation is corrected on its own *)
+            let toks = rewrite (indent_of_marker marker_ii) (fix_heredocs toks) in
+            aux
+              (T_END_HEREDOC marker_ii :: List.rev_append toks (start :: acc))
+              rest)
+    | x :: rest -> aux (x :: acc) rest
+  in
+  aux [] xs
+
+(*****************************************************************************)
 (* Fix tokens *)
 (*****************************************************************************)
 
@@ -293,5 +443,5 @@ let fix_tokens xs =
         in
         aux { env with stack } (x :: acc) xs
   in
-  aux { stack = [ Toplevel ]; misc = () } [] xs
+  aux { stack = [ Toplevel ]; misc = () } [] (fix_heredocs (split_ampersands xs))
 [@@profiling]
