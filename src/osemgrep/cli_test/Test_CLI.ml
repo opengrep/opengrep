@@ -32,6 +32,12 @@ type conf = {
   strict : bool;
   matching_diagnosis : bool;
   taint_intrafile : bool;
+  (* None when the flag was not given, in which case the engine defaults
+   * apply, and those set no limit
+   *)
+  timeout : float option;
+  timeout_threshold : int option;
+  max_memory_mb : int option;
   common : CLI_common.conf;
 }
 
@@ -90,6 +96,45 @@ test annotation cases and matching explanations to determine
 why a rule did or did not match.|}
   in
   Arg.value (Arg.flag info)
+
+(* The engine limits below have no default here: without the flag we keep
+ * the Core_scan_config defaults, which set no limit, as pysemgrep did for
+ * its test mode.
+ *)
+
+(* coupling: Scan_CLI.o_timeout *)
+let o_timeout : float option Term.t =
+  let info =
+    Arg.info [ "timeout" ]
+      ~doc:
+        {|Maximum time to spend running a rule on a single file in
+seconds. If set to 0 will not have time limit. Defaults to 0.0 s.
+|}
+  in
+  Arg.value (Arg.opt (Arg.some Arg.float) None info)
+
+(* coupling: Scan_CLI.o_timeout_threshold *)
+let o_timeout_threshold : int option Term.t =
+  let info =
+    Arg.info [ "timeout-threshold" ]
+      ~doc:
+        {|Maximum number of rules that can time out on a file before
+the file is skipped. If set to 0 will not have limit. Defaults to 0.
+|}
+  in
+  Arg.value (Arg.opt (Arg.some Arg.int) None info)
+
+(* coupling: Scan_CLI.o_max_memory_mb *)
+let o_max_memory_mb : int option Term.t =
+  let info =
+    Arg.info [ "max-memory" ]
+      ~doc:
+        {|Maximum system memory in MiB to use during the interfile pre-processing
+phase, or when running a rule on a single file. If set to 0, will
+not have memory limit. Defaults to 0.
+|}
+  in
+  Arg.value (Arg.opt (Arg.some Arg.int) None info)
 
 (* ------------------------------------------------------------------ *)
 (* Positional arguments *)
@@ -152,8 +197,8 @@ let target_kind_of_roots_and_config target_roots config =
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common config json matching_diagnosis strict
-      taint_intrafile test_ignore_todo =
+  let combine args common config json matching_diagnosis max_memory_mb strict
+      taint_intrafile test_ignore_todo timeout timeout_threshold =
     let target =
       target_kind_of_roots_and_config (Fpath_.of_strings args) config
     in
@@ -166,12 +211,15 @@ let cmdline_term : conf Term.t =
       optimizations = true;
       matching_diagnosis;
       taint_intrafile;
+      timeout;
+      timeout_threshold;
+      max_memory_mb;
     }
   in
   Term.(
     const combine $ o_args $ CLI_common.o_common $ o_config $ o_json
-    $ o_matching_diagnosis $ o_strict $ o_taint_intrafile
-    $ o_test_ignore_todo)
+    $ o_matching_diagnosis $ o_max_memory_mb $ o_strict $ o_taint_intrafile
+    $ o_test_ignore_todo $ o_timeout $ o_timeout_threshold)
 
 let doc = "testing the rules"
 

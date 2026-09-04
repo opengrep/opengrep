@@ -462,6 +462,15 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
      *)
     respect_rule_paths = false;
     taint_intrafile = conf.taint_intrafile;
+    (* without the flags we keep the defaults, which set no limit *)
+    timeout =
+      Option.value conf.timeout ~default:Core_scan_config.default.timeout;
+    timeout_threshold =
+      Option.value conf.timeout_threshold
+        ~default:Core_scan_config.default.timeout_threshold;
+    max_memory_mb =
+      Option.value conf.max_memory_mb
+        ~default:Core_scan_config.default.max_memory_mb;
     effect_guards = false
   }
 
@@ -858,8 +867,11 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
 
   (* step4: compute the exit code *)
 
-  (* TODO: and bool(config_with_errors_output) *)
-  let strict_error = conf.strict && false in
+  (* as in pysemgrep: --strict makes a config error fail the run. Note that
+   * run_tests currently raises on a rule file it cannot load, so
+   * config_with_errors is still always empty.
+   *)
+  let strict_error = conf.strict && not (List_.null res.config_with_errors) in
   let any_failures =
     res.results
     |> List.exists (fun (_rule_file, (checks : Out.checks)) ->

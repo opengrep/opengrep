@@ -281,7 +281,8 @@ let fixture_entry (kind : string) (name : string) : F.t =
     F.dir name (Testutil_files.read path)
   else F.File (name, UFile.read_file path)
 
-let run_checks (caps : Test_subcommand.caps) ~(rule : string)
+let run_checks (caps : Test_subcommand.caps) ?(extra_flags : string list = [])
+    ?(check : Exit_code.t -> unit = Exit_code.Check.ok) ~(rule : string)
     ~(target : string) ~(json : bool) () =
   let files : F.t list =
     [
@@ -292,9 +293,10 @@ let run_checks (caps : Test_subcommand.caps) ~(rule : string)
   Testutil_files.with_tempfiles ~verbose:true ~chdir:true files (fun _cwd ->
       let argv : string list =
         [ "opengrep-test"; "--config"; "rules/" ^ rule; "targets/" ^ target ]
+        @ extra_flags
         @ if json then [ "--json" ] else []
       in
-      Exit_code.Check.ok (Test_subcommand.main caps (Array.of_list argv)))
+      check (Test_subcommand.main caps (Array.of_list argv)))
 
 (* (test name, rule in rules/, target in targets/, JSON output) *)
 let checks_cases : (string * string * string * bool) list =
@@ -333,7 +335,7 @@ let checks_cases : (string * string * string * bool) list =
   ]
 
 let mk_checks_tests (caps : Test_subcommand.caps) : Testo.t list =
-  checks_cases
+  (checks_cases
   |> List_.map
        (fun
            ( (name : string),
@@ -342,7 +344,17 @@ let mk_checks_tests (caps : Test_subcommand.caps) : Testo.t list =
              (json : bool) )
          ->
          t ("checks: " ^ name) ~checked_output:(Testo.stdxxx ()) ~normalize
-           (run_checks caps ~rule ~target ~json))
+           (run_checks caps ~rule ~target ~json)))
+  @ [
+      (* the rule never finishes, so --timeout is needed: the test subcommand
+         runs with no time limit by default. The rule then reports nothing and
+         the annotated lines are missed. python: test_timeout *)
+      t "checks: a rule that times out, JSON" ~checked_output:(Testo.stdxxx ())
+        ~normalize
+        (run_checks caps ~extra_flags:[ "--timeout"; "1" ]
+           ~check:Exit_code.Check.findings ~rule:"rule_that_timeout.yaml"
+           ~target:"long.py" ~json:true);
+    ]
 
 (*****************************************************************************)
 (* Entry point *)

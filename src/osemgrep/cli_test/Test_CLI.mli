@@ -18,6 +18,12 @@ type conf = {
   *)
   matching_diagnosis : bool;
   taint_intrafile : bool;
+  (* None when the flag was not given, in which case the engine defaults
+     apply, and those set no limit
+  *)
+  timeout : float option;
+  timeout_threshold : int option;
+  max_memory_mb : int option;
   common : CLI_common.conf;
 }
 
