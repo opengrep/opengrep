@@ -47,8 +47,6 @@ languages/typescript/tree-sitter/CST_tree_sitter_typescript.ml
 /LICENSE
 
 # big test files
-/cli/tests/default/e2e/rules/long_message.yaml
-/cli/tests/performance/
 /tests/perf/
 /tests/precommit_dogfooding/
 /tests/patterns/java/perf_fields.java
@@ -56,12 +54,6 @@ languages/typescript/tree-sitter/CST_tree_sitter_typescript.ml
 /perf/perf-matching/
 /perf/r2c-rules/
 /perf/rules/
-
-# test snapshots
-/cli/tests/default/e2e/snapshots
-
-# mypy stuff
-/cli/stubs
 
 # pypi
 *.lock

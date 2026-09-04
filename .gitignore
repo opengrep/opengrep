@@ -27,6 +27,11 @@ _coverage/
 # codegraph serialized database
 *.marshall
 
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
 # C extensions
 *.so
 
@@ -138,6 +143,11 @@ venv.bak/
 
 # mkdocs documentation
 /site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
 # Pyre type checker
 .pyre/
