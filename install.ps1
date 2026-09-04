@@ -120,6 +120,13 @@ function Test-VersionFormat {
     }
 }
 
+# coupling: is_2_or_later in install.sh
+function Test-Is2OrLater {
+    param([string]$Version)
+
+    return ([int]($Version.TrimStart('v').Split('.')[0]) -ge 2)
+}
+
 function Throw-FetchFailed {
     param([string]$Reason)
 
@@ -217,7 +224,10 @@ function Get-CosignMajorVersion {
 }
 
 function Validate-Signature {
-    param([string]$InstallPath)
+    param(
+        [string]$InstallPath,
+        [string]$SignedFile
+    )
 
     if ($script:HasCosign) {
         Write-Host "Verifying signatures for $InstallPath\opengrep.cert"
@@ -232,7 +242,7 @@ function Validate-Signature {
                 --signature "$InstallPath\opengrep.sig" `
                 --certificate-identity-regexp "https://github.com/opengrep/opengrep.+" `
                 --certificate-oidc-issuer "https://token.actions.githubusercontent.com" `
-                "$InstallPath\opengrep.exe" 2>&1
+                "$SignedFile" 2>&1
         } | Out-String
 
         if ($LASTEXITCODE -eq 0) {
@@ -257,6 +267,8 @@ function Cleanup-OnFailure {
     Remove-Item -Path "$InstallPath\opengrep.exe.download" -ErrorAction SilentlyContinue
     Remove-Item -Path "$InstallPath\opengrep.sig" -ErrorAction SilentlyContinue
     Remove-Item -Path "$InstallPath\opengrep.cert" -ErrorAction SilentlyContinue
+    Remove-Item -Path "$InstallPath\*.dll" -ErrorAction SilentlyContinue
+    Remove-Item -Path "$InstallPath\opengrep_windows_x86.zip*" -ErrorAction SilentlyContinue
     Remove-Item -Path $InstallPath -ErrorAction SilentlyContinue
 }
 
@@ -305,14 +317,14 @@ function Main {
 
     # Determine distribution name
     # Currently only x86_64 Windows builds are available
-    if ($arch -eq "AMD64" -or $arch -eq "x86_64") {
-        $dist = "opengrep_windows_x86.exe"
-    }
-    elseif ($arch -eq "ARM64") {
+    # From 2.0.0 the asset is an archive holding opengrep.exe and its DLLs;
+    # before that, a single self-extracting executable.
+    $isArchive = Test-Is2OrLater -Version $VersionToInstall
+    $dist = if ($isArchive) { "opengrep_windows_x86.zip" } else { "opengrep_windows_x86.exe" }
+    if ($arch -eq "ARM64") {
         Write-Host "Warning: ARM64 Windows builds are not yet available. Installing x86_64 build (runs under emulation)." -ForegroundColor Yellow
-        $dist = "opengrep_windows_x86.exe"
     }
-    else {
+    elseif ($arch -ne "AMD64" -and $arch -ne "x86_64") {
         throw "Architecture '$arch' is unsupported."
     }
 
@@ -338,14 +350,17 @@ function Main {
         }
 
         try {
-            # Download the binary
+            # Download the asset
             Write-Host "Downloading $url..."
             $progressPreference = 'SilentlyContinue'  # Speeds up Invoke-WebRequest
             # The download also validates the version, avoiding the rate-limited
             # GitHub API: a 404 means the tag does not exist or has no asset for
             # this platform. A temporary name, renamed only on success, so an
             # interrupted download is never mistaken for an installed binary.
-            $downloadPath = "$binaryPath.download"
+            # The archive is kept under its asset name: it is the file the
+            # signature covers, and Expand-Archive requires a .zip extension.
+            $assetPath = if ($isArchive) { Join-Path $inst $dist } else { $binaryPath }
+            $downloadPath = "$assetPath.download"
             try {
                 Invoke-WebRequest -Uri $url -OutFile $downloadPath -UseBasicParsing
             }
@@ -358,7 +373,7 @@ function Main {
                 }
                 throw "Failed to download $url`: $_"
             }
-            Move-Item -Force -Path $downloadPath -Destination $binaryPath
+            Move-Item -Force -Path $downloadPath -Destination $assetPath
 
             $sigExists = $true
 
@@ -399,7 +414,7 @@ function Main {
 
             # Check signature if it exists
             if ($sigExists) {
-                Validate-Signature -InstallPath $inst
+                Validate-Signature -InstallPath $inst -SignedFile $assetPath
             }
             else {
                 if ($DoVerifySignatures) {
@@ -411,6 +426,12 @@ function Main {
                     Write-Host "Warning: No signature / certificate found for $VersionToInstall. Skipping signature verification." -ForegroundColor Yellow
                     Write-Host "Warning: The package will still be installed. It is likely that signature verification was added after this version."
                 }
+            }
+
+            # The archive is unpacked only once its signature has been checked.
+            if ($isArchive) {
+                Expand-Archive -Path $assetPath -DestinationPath $inst -Force
+                Remove-Item -Force -Path $assetPath
             }
 
             # Verify the binary exists
