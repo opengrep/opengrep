@@ -991,13 +991,19 @@ let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
                CapTmp.replace_stdin_by_regular_file caps#tmp
                  ~prefix:"opengrep-stdin-" ()
            | str ->
-               let orig_path = Fpath.v str in
+               (* A leading './' and a trailing '/' name no part of the
+                * path: pyopengrep's Path dropped them, in the reported
+                * paths and in the message for a root that does not exist,
+                * and a file spelled 'a.py/' was the file 'a.py'. *)
+               let orig_path =
+                 Fpath_.strip_leading_dot_and_trailing_slash (Fpath.v str)
+               in
                (* a path that does not exist is left to the scan, which
                 * reports it as a fatal "File not found" error *)
-               if Sys.file_exists str then (
+               if Sys.file_exists (Fpath.to_string orig_path) then (
                  match
                    CapTmp.replace_named_pipe_by_regular_file_if_needed caps#tmp
-                     ~prefix:"opengrep-named-pipe-" (Fpath.v str)
+                     ~prefix:"opengrep-named-pipe-" orig_path
                  with
                  | None -> orig_path
                  | Some new_path ->

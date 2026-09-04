@@ -1406,7 +1406,9 @@ let test_missing_roots_json (caps : Scan_subcommand.caps) () =
     "one fatal error per missing root"
     [
       "2 `Error Semgrep_output_v1_t.SemgrepError File not found: nope.py";
-      "2 `Error Semgrep_output_v1_t.SemgrepError File not found: nope/";
+      (* the trailing slash of the root is not part of the path, and the
+         Python wrapper dropped it from this message too *)
+      "2 `Error Semgrep_output_v1_t.SemgrepError File not found: nope";
     ]
     (out.errors
     |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->

@@ -52,6 +52,11 @@ val ( !! ) : Fpath.t -> string
    equals 'Fpath.v "a"' rather than 'Fpath.v "./a"'. *)
 val append_no_dot : Fpath.t -> Fpath.t -> Fpath.t
 
+(* Drop the leading './' and the trailing '/' of a path, which name no
+   part of it: './src/' becomes 'src' and './.' becomes '.'. The rest is
+   kept as typed, so 'a/../b' and 'a/./b' keep their spelling. *)
+val strip_leading_dot_and_trailing_slash : Fpath.t -> Fpath.t
+
 (*
    Operators on files or file paths or anything related to files.
    This is module is meant to be opened:
