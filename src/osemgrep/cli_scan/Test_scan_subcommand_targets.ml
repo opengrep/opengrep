@@ -28,6 +28,10 @@ let targets_root : Fpath.t = root / "targets"
 (* A directory of the fixtures, copied into the repo under the same name. *)
 let target_dir (name : string) : F.t = F.dir name (F.read (targets_root / name))
 
+(* The same, for a directory of the SARIF fixtures. *)
+let sarif_target_dir (name : string) : F.t =
+  F.dir name (F.read (fixtures_root / "targets" / name))
+
 (* A tree with something for most reasons to skip a file, copied into the
    repo under targets/ignores, with its ignore files also at the root as
    the scan reads them from there. *)
@@ -61,6 +65,53 @@ let ignores_args : string list =
 let filecount_dirs : string list =
   [ "multilangproj"; "language-filtering"; "exclude_include" ]
 
+(* The option sets that --exclude and --include are tried with, over a tree
+   whose directories and files are named "excluded" and "included": the scan
+   only lists the files it would take.
+   python: test_exclude_include *)
+let exclude_include_options : string list list =
+  [
+    [ "--exclude"; "excluded.*" ];
+    [ "--include"; "included.*" ];
+    [ "--exclude"; "excluded" ];
+    [ "--include"; "included" ];
+    [ "--include"; "included"; "--exclude"; "excluded.*" ];
+    [ "--exclude"; "excluded"; "--include"; "included.*" ];
+    [ "--exclude"; "excluded.*"; "--exclude"; "included.*" ];
+    [ "--exclude"; "excluded"; "--exclude"; "included" ];
+    [ "--include"; "excluded.*"; "--include"; "included.*" ];
+    [ "--include"; "excluded"; "--include"; "included" ];
+    [ "--include"; "included.vue" ];
+    [ "--include"; "included.vue"; "--skip-unknown-extensions" ];
+    [ "--exclude"; "*.*" ];
+    [ "--include"; "*.*" ];
+  ]
+
+(* A file and a directory the scan cannot read, next to one it can. Only
+   the README of these is a fixture; the Python test creates the rest when
+   it runs, since git does not keep permissions of this kind.
+   python: prepare_workspace of test_permissions.py *)
+let permissions_files : F.t list =
+  [
+    F.dir "targets"
+      [
+        F.dir "permissions"
+          (F.read (targets_root / "permissions")
+          @ [
+              F.File ("readable_file.py", "a == a\n");
+              F.Unreadable ("unreadable_file.py", "secret content\n");
+              F.Unreadable_dir
+                ("unreadable_subdir", [ F.File ("file.py", "b == b\n") ]);
+            ]);
+      ];
+  ]
+
+(* Byte counts that --max-target-bytes is tried with over targets/basic:
+   1MB keeps every file, 100B and 1B skip the bigger ones.
+   python: test_max_target_bytes_results, test_max_target_bytes_output,
+   test_max_target_bytes_output_pysemfail *)
+let max_target_bytes : string list = [ "1MB"; "100B"; "1B" ]
+
 (* The SARIF fixtures directory, symlinked into the repo as the Python
    harness does with its targets; absolute, as the harness runs from the
    project root. *)
@@ -79,7 +130,52 @@ let tests (caps : < Scan_subcommand.caps >) =
               ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
               (run_scan caps ~root ~format_args:[] ~rule:"rules/filecount.yaml"
                  ~targets:[] ~extra_files:[ target_dir dir ] ~extra_args:[ dir ])))
+    @ (exclude_include_options
+      |> List.map (fun (options : string list) ->
+             t
+               (Printf.sprintf "exclude and include: %s"
+                  (String.concat " " options))
+               ~checked_output:(Testo.stdout ()) ~normalize:normalise
+               (run_scan caps ~root ~format_args:[] ~rule:"rules/eqeq-basic.yaml"
+                  ~targets:[]
+                  ~extra_files:[ F.dir "targets" [ target_dir "exclude_include" ] ]
+                  ~extra_args:
+                    (("--x-ls" :: options) @ [ "targets/exclude_include" ]))))
+    (* differs from the Python wrapper: the status counts the files kept,
+       where it counts the files found *)
+    @ (max_target_bytes
+      |> List.concat_map (fun (bytes : string) ->
+             let scan (format_args : string list) : unit -> unit =
+               run_scan caps ~format_args ~rule:"rules/eqeq.yaml" ~targets:[]
+                 ~extra_files:[ F.dir "targets" [ sarif_target_dir "basic" ] ]
+                 ~extra_args:[ "--max-target-bytes"; bytes; "targets/basic" ]
+             in
+             [
+               t
+                 (Printf.sprintf "max target bytes: %s, JSON" bytes)
+                 ~checked_output:(Testo.stdout ()) ~normalize:normalise
+                 (scan [ "--json" ]);
+               t
+                 (Printf.sprintf "max target bytes: %s, text" bytes)
+                 ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+                 (scan []);
+             ]))
     @ [
+      (* "R" is not a unit the byte count converter knows. The command line
+         is read before the scan, so it raises rather than returning an exit
+         code, and cmdliner writes the message, which it styles from the
+         TERM of the process, so only the exit code is checked.
+         python: test_max_target_bytes_results and
+         test_max_target_bytes_output, parameter 1.3R *)
+      t "max target bytes: unparseable count" (fun () ->
+          try
+            run_scan caps ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml"
+              ~targets:[]
+              ~extra_files:[ F.dir "targets" [ sarif_target_dir "basic" ] ]
+              ~extra_args:[ "--max-target-bytes"; "1.3R"; "targets/basic" ] ();
+            failwith "expected the command line to be rejected"
+          with
+          | Error.Exit_code (code : Exit_code.t) -> Exit_code.Check.fatal code);
       (* outside a git repository: no line about git, and no block when
          nothing was skipped *)
       t "summary: no git repository, nothing skipped"
@@ -98,6 +194,47 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml"
            ~targets:[] ~extra_files:symlinked_targets
            ~extra_args:[ "--project-root"; "."; "targets/basic" ]);
+      (* Every file is excluded: the verbose listing of the skipped files.
+         python: test_exclude_include_verbose_sorted_1 *)
+      (* differs from the Python wrapper: "Scanning 0 files" and "Ran 0
+         rules" where it says "Scanning 5 files" and "Ran 4 rules" *)
+      t "verbose listing: everything excluded by name"
+        ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+        (run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml" ~targets:[]
+           ~extra_files:[ F.dir "targets" [ target_dir "exclude_include" ] ]
+           ~extra_args:
+             [
+               "--exclude"; "excluded.*"; "--exclude"; "included.*"; "--verbose";
+               "targets/exclude_include";
+             ]);
+      (* The same over files of several languages, excluded by extension.
+         python: test_exclude_include_verbose_sorted_2 *)
+      t "verbose listing: everything excluded by extension"
+        ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+        (run_scan caps ~format_args:[] ~rule:"rules/nosem.yaml" ~targets:[]
+           ~extra_files:[ F.dir "targets" [ sarif_target_dir "basic" ] ]
+           ~extra_args:[ "--exclude"; "*.*"; "--verbose"; "targets/basic" ]);
+      (* The scan lists what it would take, leaving out what it cannot read.
+         There is no git repository, as the Python harness copies the files
+         instead of committing them.
+         python: test_permissions_ls *)
+      t "permissions: the file list" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~git:false ~format_args:[] ~rule:"rules/eqeq.yaml"
+           ~targets:[] ~extra_files:permissions_files
+           ~extra_args:[ "--x-ls"; "targets/permissions" ]);
+      (* python: test_permissions_scan_full_strict *)
+      t "permissions: JSON with --verbose" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~git:false ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
+           ~extra_args:[ "--verbose"; "targets/permissions" ]);
+      (* python: test_permissions_scan_full_lax *)
+      t "permissions: JSON" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~git:false ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
+           ~extra_args:[ "targets/permissions" ]);
       (* python: test_semgrepignore_ignore_log_report *)
       t "ignore log report: text" ~checked_output:(Testo.stdxxx ())
         ~normalize:normalise
@@ -232,6 +369,14 @@ let tests (caps : < Scan_subcommand.caps >) =
                     |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
                            m.extra.lines)
                     |> List.sort String.compare))));
+      (* Eight rules whose 'paths' include or exclude a file name, a
+         directory or a path. python: test_paths *)
+      t "per-rule paths: include and exclude" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ] ~rule:"rules/paths.yaml"
+           ~targets:[]
+           ~extra_files:[ F.dir "targets" [ target_dir "exclude_include" ] ]
+           ~extra_args:[ "targets/exclude_include" ]);
       (* The 'paths' of a rule select its files. python: test_per_rule_include *)
       t "per-rule include" ~checked_output:(Testo.stdout ())
         ~normalize:normalise

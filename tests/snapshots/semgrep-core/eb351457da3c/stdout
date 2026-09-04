@@ -1,0 +1,10 @@
+--- begin input files ---
+httpresponse.txt
+httpresponse.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 20 insertions(+)
+ create mode 100644 httpresponse.txt
+ create mode 100644 httpresponse.yaml
+{"version":"<MASKED>","results":[{"check_id":"content-type-text-html","path":"httpresponse.txt","start":{"line":6,"col":1,"offset":146},"end":{"line":6,"col":24,"offset":169},"extra":{"metavars":{"$STATUS":{"start":{"line":1,"col":10,"offset":9},"end":{"line":1,"col":13,"offset":12},"abstract_content":"200"},"$READABLE":{"start":{"line":1,"col":14,"offset":13},"end":{"line":1,"col":16,"offset":15},"abstract_content":"OK"}},"message":"Detected text/html","metadata":{},"severity":"INFO","fingerprint":"8d62794681b289d7bbb739b9c3bd685261ca436ef8f9bb131834ba60b0c6958eb51f4ba010f6589f34e8444e9a141b7577fbb560ff54a2aad276d1a15059398f_0","lines":"Content-Type: text/html","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["httpresponse.txt"]},"interfile_languages_used":[],"skipped_rules":[]}

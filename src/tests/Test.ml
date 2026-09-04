@@ -161,6 +161,7 @@ let tests (caps : Cap.all_caps) =
       Test_scan_subcommand_sarif.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_output.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_formats.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_findings.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_targets.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_config.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_baseline.tests

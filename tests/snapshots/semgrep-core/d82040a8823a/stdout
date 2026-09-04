@@ -1,0 +1,10 @@
+--- begin input files ---
+begin-end.log
+begin-end.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 18 insertions(+)
+ create mode 100644 begin-end.log
+ create mode 100644 begin-end.yaml
+{"version":"<MASKED>","results":[{"check_id":"begin-end","path":"begin-end.log","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":18,"offset":17},"extra":{"metavars":{},"message":"found something","metadata":{},"severity":"WARNING","fingerprint":"a72f6062ed532edb8fffdf29b188e1fe6c913164e9eb2d09f0730fef9c419a712d2aac0037c551edffa968da2200f94cfd7684f1ca4d2de6d3fe4e7c2ac35603_0","lines":"begin find me end","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"begin-end","path":"begin-end.log","start":{"line":3,"col":7,"offset":25},"end":{"line":3,"col":28,"offset":46},"extra":{"metavars":{},"message":"found something","metadata":{},"severity":"WARNING","fingerprint":"a72f6062ed532edb8fffdf29b188e1fe6c913164e9eb2d09f0730fef9c419a712d2aac0037c551edffa968da2200f94cfd7684f1ca4d2de6d3fe4e7c2ac35603_1","lines":"hello begin find me too end.","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["begin-end.log"]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -1,0 +1,10 @@
+--- begin input files ---
+terraform.tf
+terraform.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 27 insertions(+)
+ create mode 100644 terraform.tf
+ create mode 100644 terraform.yaml
+{"version":"<MASKED>","results":[{"check_id":"all-origins-allowed","path":"terraform.tf","start":{"line":9,"col":5,"offset":218},"end":{"line":9,"col":28,"offset":241},"extra":{"metavars":{},"message":"CORS rule on bucket permits any origin","metadata":{},"severity":"WARNING","fingerprint":"136f51dd47498e7027c9c23c80e7fb803b22cea0930346a6f9b9b2494d1eced95618192164655c39452668e4244cbb5a4be35645810eb0b80884746183e77c45_0","lines":"    allowed_origins = [\"*\"]","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["terraform.tf"]},"interfile_languages_used":[],"skipped_rules":[]}
