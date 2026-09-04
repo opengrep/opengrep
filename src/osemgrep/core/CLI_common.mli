@@ -9,7 +9,7 @@ type conf = {
   (* mix of --debug, --quiet, --verbose *)
   logging_level : Logs.level option;
   profile : bool;
-  (* mix of --experimental, --legacy, --develop *)
+  (* mix of --experimental, --develop *)
   maturity : Maturity.t;
 }
 [@@deriving show]

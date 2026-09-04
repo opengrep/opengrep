@@ -84,26 +84,8 @@ let known_subcommands =
   ]
 
 (* Global flags that main below detects on the whole argv and that may
- * legitimately precede the subcommand: typed by the user, or, for
- * --experimental, inserted by Main.ml for the bare 'opengrep' binary. *)
+ * legitimately precede the subcommand. *)
 let global_flags = [ "--experimental"; "--debug"; "--profile" ]
-
-(* Insert --experimental after the subcommand when there is one, else right
- * after argv0: the implicit 'scan' subcommand parses the flag wherever it
- * is, and the scanning roots stay untouched.
- * Used by Main.ml for the bare 'opengrep' binary.
- * Expectation tests: src/osemgrep/tests/Unit_CLI.ml. *)
-let with_experimental_flag (argv : string array) : string array =
-  let pos =
-    if Array.length argv >= 2 && List.mem argv.(1) known_subcommands then 2
-    else 1
-  in
-  Array.concat
-    [
-      Array.sub argv 0 pos;
-      [| "--experimental" |];
-      Array.sub argv pos (Array.length argv - pos);
-    ]
 
 let dispatch_subcommand (caps : caps) (argv : string array) =
   match Array.to_list argv with
@@ -127,9 +109,9 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
   | [ _; "--experimental"; ("-h" | "--help") ] ->
       Help.print_semgrep_dashdash_help caps#stdout;
       Exit_code.ok ~__LOC__
-  | argv0 :: args -> (
+  | argv0 :: args ->
       (* the subcommand may be preceded by global flags, e.g.
-       * 'opengrep --experimental ci' (typed, or built by Main.ml) *)
+       * 'opengrep --experimental ci' *)
       let leading_flags, rest =
         let rec split acc = function
           | arg :: tl when List.mem arg global_flags -> split (arg :: acc) tl
@@ -150,36 +132,24 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
         let subcmd_argv0 = argv0 ^ "-" ^ subcmd in
         subcmd_argv0 :: subcmd_args |> Array.of_list
       in
-      let experimental = Array.mem "--experimental" argv in
       (* coupling: with known_subcommands if you add an entry below.
        * coupling: with Help.ml if you add an entry below.
        *)
-      try
-        match subcmd with
-        (* TODO: gradually remove those 'when experimental' guards as
-         * we progress in osemgrep port (or use Pysemgrep.Fallback further
-         * down when we know we don't handle certain kind of arguments).
-         *)
-        (* partial support, still use Pysemgrep.Fallback in it *)
-        | "scan" -> Scan_subcommand.main caps subcmd_argv
-        | "ci" -> Ci_subcommand.main caps subcmd_argv
-        (* osemgrep-only: and by default! no need for experimental! *)
-        | "lsp" -> Lsp_subcommand.main caps subcmd_argv
-        (* | "logout" ->
-               Logout_subcommand.main (caps :> < Cap.stdout >) subcmd_argv *)
-        | "install-ci" -> Install_ci_subcommand.main caps subcmd_argv
-        | "show" -> Show_subcommand.main caps subcmd_argv
-        | "test" -> Test_subcommand.main caps subcmd_argv
-        | "validate" -> Validate_subcommand.main caps subcmd_argv
-        | _ ->
-            if experimental then
-              (* this should never happen because we default to 'scan',
-               * but better to be safe than sorry.
-               *)
-              Error.abort (Printf.sprintf "unknown opengrep command: %s" subcmd)
-            else raise Pysemgrep.Fallback
-      with
-      | Pysemgrep.Fallback -> Pysemgrep.pysemgrep (caps :> < Cap.exec >) argv)
+      match subcmd with
+      | "scan" -> Scan_subcommand.main caps subcmd_argv
+      | "ci" -> Ci_subcommand.main caps subcmd_argv
+      | "lsp" -> Lsp_subcommand.main caps subcmd_argv
+      (* | "logout" ->
+             Logout_subcommand.main (caps :> < Cap.stdout >) subcmd_argv *)
+      | "install-ci" -> Install_ci_subcommand.main caps subcmd_argv
+      | "show" -> Show_subcommand.main caps subcmd_argv
+      | "test" -> Test_subcommand.main caps subcmd_argv
+      | "validate" -> Validate_subcommand.main caps subcmd_argv
+      | _ ->
+          (* this should never happen because we default to 'scan',
+           * but better to be safe than sorry.
+           *)
+          Error.abort (Printf.sprintf "unknown opengrep command: %s" subcmd)
 [@@profiling]
 
 (*****************************************************************************)

@@ -17,7 +17,7 @@ type conf = {
   logging_level : Logs.level option;
   (* osemgrep-only: pad poor's man profiling info for now *)
   profile : bool;
-  (* osemgrep-only: mix of --experimental, --legacy, --develop *)
+  (* osemgrep-only: mix of --experimental, --develop *)
   maturity : Maturity.t;
 }
 [@@deriving show]

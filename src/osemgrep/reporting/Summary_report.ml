@@ -129,7 +129,6 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
         (match maturity with
         | Develop -> opt_msg "other files ignored" other_ignored
         | Default
-        | Legacy
         | Experimental ->
             None);
       ]
