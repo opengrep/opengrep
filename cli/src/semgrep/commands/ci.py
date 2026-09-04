@@ -149,19 +149,12 @@ def fix_head_if_github_action(metadata: GitMeta) -> None:
     "--subdir",
     type=click.Path(allow_dash=True, path_type=Path),
 )
-@click.option(
-    "--internal-ci-scan-results",
-    "internal_ci_scan_results",
-    is_flag=True,
-    hidden=True,
-)
 @handle_command_errors
 def ci(
     ctx: click.Context,
     *,
     audit_on: Sequence[str],
     baseline_commit: Optional[str],
-    internal_ci_scan_results: bool,
     config: Optional[Tuple[str, ...]],
     debug: bool,
     dump_command_for_core: bool,
@@ -514,19 +507,18 @@ def ci(
     # the cli depends on the apps response to compute its own exit code!
     cli_suggested_exit_code = 1 if num_blocking_findings > 0 else 0
 
-    if not internal_ci_scan_results:
-        output_handler.output(
-            non_cai_matches_by_rule,
-            all_targets=output_extra.all_targets,
-            engine_type=engine_type,
-            ignore_log=ignore_log,
-            profiler=profiler,
-            filtered_rules=filtered_rules,
-            extra=output_extra,
-            severities=shown_severities,
-            is_ci_invocation=True,
-            print_summary=False,
-        )
+    output_handler.output(
+        non_cai_matches_by_rule,
+        all_targets=output_extra.all_targets,
+        engine_type=engine_type,
+        ignore_log=ignore_log,
+        profiler=profiler,
+        filtered_rules=filtered_rules,
+        extra=output_extra,
+        severities=shown_severities,
+        is_ci_invocation=True,
+        print_summary=False,
+    )
 
     logger.info("CI scan completed successfully.")
     logger.info(
