@@ -28,8 +28,8 @@ let targets_root : Fpath.t = root / "targets"
 (* A directory of the fixtures, copied into the repo under the same name. *)
 let target_dir (name : string) : F.t = F.dir name (F.read (targets_root / name))
 
-(* The same, for a directory of the SARIF fixtures. *)
-let sarif_target_dir (name : string) : F.t =
+(* The same, for a directory of the general scan fixtures. *)
+let scan_target_dir (name : string) : F.t =
   F.dir name (F.read (fixtures_root / "targets" / name))
 
 (* A tree with something for most reasons to skip a file, copied into the
@@ -112,7 +112,7 @@ let permissions_files : F.t list =
    test_max_target_bytes_output_pysemfail *)
 let max_target_bytes : string list = [ "1MB"; "100B"; "1B" ]
 
-(* The SARIF fixtures directory, symlinked into the repo as the Python
+(* The general scan fixtures, symlinked into the repo as the Python
    harness does with its targets; absolute, as the harness runs from the
    project root. *)
 let symlinked_targets : F.t list =
@@ -146,8 +146,9 @@ let tests (caps : < Scan_subcommand.caps >) =
     @ (max_target_bytes
       |> List.concat_map (fun (bytes : string) ->
              let scan (format_args : string list) : unit -> unit =
-               run_scan caps ~format_args ~rule:"rules/eqeq.yaml" ~targets:[]
-                 ~extra_files:[ F.dir "targets" [ sarif_target_dir "basic" ] ]
+               run_scan caps ~root:fixtures_root ~format_args
+                 ~rule:"rules/eqeq.yaml" ~targets:[]
+                 ~extra_files:[ F.dir "targets" [ scan_target_dir "basic" ] ]
                  ~extra_args:[ "--max-target-bytes"; bytes; "targets/basic" ]
              in
              [
@@ -169,9 +170,9 @@ let tests (caps : < Scan_subcommand.caps >) =
          test_max_target_bytes_output, parameter 1.3R *)
       t "max target bytes: unparseable count" (fun () ->
           try
-            run_scan caps ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml"
-              ~targets:[]
-              ~extra_files:[ F.dir "targets" [ sarif_target_dir "basic" ] ]
+            run_scan caps ~root:fixtures_root ~format_args:[ "--json" ]
+              ~rule:"rules/eqeq.yaml" ~targets:[]
+              ~extra_files:[ F.dir "targets" [ scan_target_dir "basic" ] ]
               ~extra_args:[ "--max-target-bytes"; "1.3R"; "targets/basic" ] ();
             failwith "expected the command line to be rejected"
           with
@@ -180,19 +181,19 @@ let tests (caps : < Scan_subcommand.caps >) =
          nothing was skipped *)
       t "summary: no git repository, nothing skipped"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
-        (run_scan caps ~git:false ~format_args:[] ~rule:"rules/eqeq.yaml"
-           ~targets:[ "targets/basic/stupid.py" ]);
+        (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
+           ~rule:"rules/eqeq.yaml" ~targets:[ "targets/basic/stupid.py" ]);
       t "summary: no git repository, a skipped file"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
-        (run_scan caps ~git:false ~format_args:[] ~rule:"rules/eqeq.yaml"
-           ~targets:[ "targets/basic/stupid.py" ]
+        (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
+           ~rule:"rules/eqeq.yaml" ~targets:[ "targets/basic/stupid.py" ]
            ~extra_args:[ "--exclude=stupid.py" ]);
       (* --project-root with a scanning root under a symlink that leaves
          the project: the paths are taken as typed *)
       t "forced project root with symlinked targets"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
-        (run_scan caps ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml"
-           ~targets:[] ~extra_files:symlinked_targets
+        (run_scan caps ~root:fixtures_root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:symlinked_targets
            ~extra_args:[ "--project-root"; "."; "targets/basic" ]);
       (* Every file is excluded: the verbose listing of the skipped files.
          python: test_exclude_include_verbose_sorted_1 *)
@@ -200,7 +201,8 @@ let tests (caps : < Scan_subcommand.caps >) =
          rules" where it says "Scanning 5 files" and "Ran 4 rules" *)
       t "verbose listing: everything excluded by name"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
-        (run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml" ~targets:[]
+        (run_scan caps ~root:fixtures_root ~format_args:[]
+           ~rule:"rules/eqeq.yaml" ~targets:[]
            ~extra_files:[ F.dir "targets" [ target_dir "exclude_include" ] ]
            ~extra_args:
              [
@@ -211,8 +213,9 @@ let tests (caps : < Scan_subcommand.caps >) =
          python: test_exclude_include_verbose_sorted_2 *)
       t "verbose listing: everything excluded by extension"
         ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
-        (run_scan caps ~format_args:[] ~rule:"rules/nosem.yaml" ~targets:[]
-           ~extra_files:[ F.dir "targets" [ sarif_target_dir "basic" ] ]
+        (run_scan caps ~root:fixtures_root ~format_args:[]
+           ~rule:"rules/nosem.yaml" ~targets:[]
+           ~extra_files:[ F.dir "targets" [ scan_target_dir "basic" ] ]
            ~extra_args:[ "--exclude"; "*.*"; "--verbose"; "targets/basic" ]);
       (* The scan lists what it would take, leaving out what it cannot read.
          There is no git repository, as the Python harness copies the files
@@ -220,19 +223,19 @@ let tests (caps : < Scan_subcommand.caps >) =
          python: test_permissions_ls *)
       t "permissions: the file list" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
-        (run_scan caps ~git:false ~format_args:[] ~rule:"rules/eqeq.yaml"
-           ~targets:[] ~extra_files:permissions_files
+        (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
+           ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "--x-ls"; "targets/permissions" ]);
       (* python: test_permissions_scan_full_strict *)
       t "permissions: JSON with --verbose" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
-        (run_scan caps ~git:false ~format_args:[ "--json" ]
+        (run_scan caps ~root:fixtures_root ~git:false ~format_args:[ "--json" ]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "--verbose"; "targets/permissions" ]);
       (* python: test_permissions_scan_full_lax *)
       t "permissions: JSON" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
-        (run_scan caps ~git:false ~format_args:[ "--json" ]
+        (run_scan caps ~root:fixtures_root ~git:false ~format_args:[ "--json" ]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "targets/permissions" ]);
       (* python: test_semgrepignore_ignore_log_report *)
