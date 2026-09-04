@@ -574,7 +574,8 @@ let diff_findings (actual : int list) (expected : int list) : string =
  *)
 let compare_actual_to_expected (env : env) (matches : Core_match.t list)
     (annots : (Fpath.t * A.annotations) list)
-    (explanations : Matching_explanation.t list option) : test_result list =
+    (explanations : Matching_explanation.t list option)
+    ~(errors : Out.cli_error list) : test_result list =
 
   (* cf. src/reporting/Core_json_output.ml, function [process_matches_with_rule_options]. *)
   let rule_opts =
@@ -708,7 +709,9 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
            let (rule_result : Out.rule_result) =
              Out.
                {
-                 passed = res |> List_.map fst |> Common2.and_list;
+                 passed =
+                   res |> List_.map fst |> Common2.and_list
+                   && List_.null errors;
                  matches =
                    res
                    |> List_.map (fun (_passed, (target, expected_reported)) ->
@@ -718,8 +721,9 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                            *)
                           let filename = Unix.realpath !!target in
                           (filename, expected_reported));
-                 (* TODO: error from the engine ? *)
-                 errors = [];
+                 (* like pysemgrep, the errors of the rule file's run are
+                  * attached to each of its checks *)
+                 errors;
                  diagnosis;
                }
            in
@@ -783,6 +787,11 @@ let run_engine (caps : < scan_caps ; .. >) (env : env) (rules : Rule.t list)
   in
   let checks =
     compare_actual_to_expected env matches expected res.explanations
+      ~errors:
+        (res.errors
+        |> List_.map (fun (err : Core_error.t) ->
+               Cli_json_output.cli_error_of_core_error
+                 (Core_json_output.error_to_error err)))
   in
   let fixtest =
     (* optional fixtest *)
