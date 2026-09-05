@@ -473,10 +473,11 @@ let gather_all_taints_in_shape = gather_all_taints_in_shape_acc Taints.empty
  * cell's own taint (see the 'x.a.v' example in INVARIANT(cell)'s doc), so
  * reachability of the deep taints is preserved at the price of offset
  * precision. [`Clean] markers below the cutoff are dropped (conservative
- * towards taint). [Fun] shapes are left untouched: truncating one would
+ * towards taint). [Fun] shapes are left untouched here: truncating one would
  * drop its effects (real false negatives), they don't participate in the
  * tree-builder ascending chain bounded here, and their inner shapes were
- * already truncated when the lambda's own signature was stored.
+ * already truncated when the lambda's own signature was stored. Their own
+ * nesting is bounded separately by [bound_fun_shape].
  *
  * Returns [None] when the truncated cell carries no information
  * ([`None]/[Bot]), so obj entries can be dropped and INVARIANT(cell) is
@@ -548,35 +549,78 @@ let truncate_shape ~max_depth shape =
           in
           if Fields.is_empty obj' then Bot else Obj obj'
 
-(* Identity-preserving: returns [eff] itself when no shape was truncated
- * ([truncate_shape]'s fast path returns the shape physically unchanged when
- * it is within budget), so [Effects.map] in [truncate_signature] can keep
- * the original set without re-inserting structurally-equal effects. *)
-let truncate_effect ~max_depth (eff : Shape_and_sig.Effect.t) :
-    Shape_and_sig.Effect.t =
+(* Widen the shapes an effect stores: [Obj] nesting by [truncate_shape],
+ * [Fun] nesting by [bound_fun_shape]. Identity-preserving: returns [eff] itself
+ * when no shape changed (both widenings return a shape physically unchanged
+ * when it is within budget), so [Effects.map] in [truncate_signature] can
+ * keep the original set without re-inserting structurally-equal effects. *)
+let rec map_effect_shapes ~(widen : shape -> shape)
+    (eff : Shape_and_sig.Effect.t) : Shape_and_sig.Effect.t =
   match eff with
   | Shape_and_sig.Effect.ToReturn tr ->
-      let data_shape = truncate_shape ~max_depth tr.data_shape in
+      let data_shape = widen tr.data_shape in
       if phys_equal data_shape tr.data_shape then eff
       else Shape_and_sig.Effect.ToReturn { tr with data_shape }
   | Shape_and_sig.Effect.ToSinkInCall r ->
-      let truncate_arg arg =
+      let widen_arg arg =
         match arg with
         | IL.Unnamed (taints, shape) ->
-            let shape' = truncate_shape ~max_depth shape in
+            let shape' = widen shape in
             if phys_equal shape' shape then arg
             else IL.Unnamed (taints, shape')
         | IL.Named (ident, (taints, shape)) ->
-            let shape' = truncate_shape ~max_depth shape in
+            let shape' = widen shape in
             if phys_equal shape' shape then arg
             else IL.Named (ident, (taints, shape'))
       in
-      let args_taints = List_.map truncate_arg r.args_taints in
+      let args_taints = List_.map widen_arg r.args_taints in
       if List.for_all2 phys_equal args_taints r.args_taints then eff
       else Shape_and_sig.Effect.ToSinkInCall { r with args_taints }
   | Shape_and_sig.Effect.ToSink _
   | Shape_and_sig.Effect.ToLval _ ->
       eff
+
+(* Bound the nesting of [Fun] shapes to [levels] below this point; see
+ * [Limits_semgrep.taint_MAX_SIG_FUN_DEPTH] for why a stored signature
+ * otherwise grows without bound. A [Fun] past the budget collapses to
+ * [Bot]; within it, the same bound applies one level down to the shapes
+ * its own effects store. Identity-preserving like [truncate_shape]. *)
+and bound_fun_shape ~levels (shape : shape) : shape =
+  match shape with
+  | Bot
+  | Arg _ ->
+      shape
+  | Fun sig_ ->
+      if levels <= 0 then Bot
+      else
+        let effects =
+          Effects.map
+            (map_effect_shapes ~widen:(bound_fun_shape ~levels:(levels - 1)))
+            sig_.Signature.effects
+        in
+        if phys_equal effects sig_.Signature.effects then shape
+        else Fun { sig_ with Signature.effects }
+  | Obj obj ->
+      let changed = ref false in
+      let obj' =
+        Fields.map
+          (fun (Cell (xtaint, inner) as cell) ->
+            let inner' = bound_fun_shape ~levels inner in
+            if phys_equal inner' inner then cell
+            else (
+              changed := true;
+              Cell (xtaint, inner')))
+          obj
+      in
+      if !changed then Obj obj' else shape
+
+let truncate_effect ~max_depth (eff : Shape_and_sig.Effect.t) :
+    Shape_and_sig.Effect.t =
+  let widen shape =
+    truncate_shape ~max_depth shape
+    |> bound_fun_shape ~levels:Limits_semgrep.taint_MAX_SIG_FUN_DEPTH
+  in
+  map_effect_shapes ~widen eff
 
 (* Widen every shape stored in a signature's effects; the entry point used
  * by the interfile fold when a signature is (re-)stored. [Effects.map]
