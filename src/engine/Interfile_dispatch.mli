@@ -25,13 +25,12 @@ val interfile_taint_rule_ids :
 
 (** Why the interfile graph of a language could not be built within the
     scan's limits; its interfile rules then run per target. *)
-type build_limit = Build_timeout | Build_out_of_memory
+type build_limit = Build_out_of_memory
 
 val build_rule_states :
   < Cap.fork ; Cap.time_limit ; Cap.memory_limit > ->
   ncores:int ->
   taint_interfile:bool ->
-  graph_timeout:int ->
   max_memory_mb:int ->
   valid_rules:Rule.t list ->
   targets:Target.t list ->
@@ -43,5 +42,4 @@ val build_rule_states :
     dispatch doesn't cover (to run in per-target intrafile mode),
     per-file index build failures — files whose functions/edges are missing
     from the interfile graph, which [Core_scan] surfaces as scan errors —
-    and the rules whose graph build hit [graph_timeout] (seconds, 0 for
-    none) or [max_memory_mb] (0 for none). *)
+    and the rules whose graph build hit [max_memory_mb] (0 for none). *)
