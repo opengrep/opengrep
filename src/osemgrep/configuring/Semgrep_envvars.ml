@@ -64,15 +64,6 @@ let env_or conv var default =
 
 let in_env var = env_opt var <> None
 
-let env_truthy var =
-  env_opt var |> Option.value ~default:"" |> String.lowercase_ascii |> function
-  | "true"
-  | "1"
-  | "yes"
-  | "y" ->
-      true
-  | _ -> false
-
 (*****************************************************************************)
 (* Types and constants *)
 (*****************************************************************************)
@@ -144,7 +135,9 @@ let of_current_sys_env () : t =
     src_directory = env_or Fpath.v "SEMGREP_SRC_DIRECTORY" (Fpath.v "/src");
     user_home_dir;
     user_dot_semgrep_dir;
-    no_color = env_truthy "NO_COLOR" || env_truthy "SEMGREP_FORCE_NO_COLOR";
+    (* https://no-color.org/ and pysemgrep's terminal.py: the variable
+       disables colour by being set, whatever its value *)
+    no_color = in_env "NO_COLOR" || in_env "SEMGREP_FORCE_NO_COLOR";
     is_ci = in_env "CI";
     in_docker = in_env "SEMGREP_IN_DOCKER";
     in_gh_action = in_env "GITHUB_WORKSPACE";

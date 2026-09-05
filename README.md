@@ -45,16 +45,8 @@ See the [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/
 - **Improved**: Clojure (tainting support), PHP 8.4, C# 14
 
 **Distribution:**
-- Self-contained binaries compiled from OCaml (no Python required)
+- Self-contained binaries compiled from OCaml
 - Signed releases with Cosign
-
-From the next major version, the CLI is that compiled binary alone; the Python
-wrapper is gone. Dependency-aware (SCA) rules, `mode: join` rules and the
-secrets validators were implemented in the wrapper and are not available, and
-lockfiles are not parsed. `--legacy`, `--dump-engine-path`,
-`--dump-command-for-core` and `-d` are gone, while `--experimental` is still
-accepted and does nothing. No Python wheel is built, and the Python API
-`semgrep.run_scan_and_return_json` no longer exists.
 
 See [OPENGREP.md](OPENGREP.md) for the full list of improvements since the fork.
 
@@ -268,7 +260,13 @@ Set `OPENGREP_LOG_FILE` (or `SEMGREP_LOG_FILE`) to a path to get a copy of
 what Opengrep prints on stderr, at the same level: warnings and errors by
 default, more with `--verbose` or `--debug`. The file is truncated on each
 run and its directory is created. Nothing is written when the variable is
-not set.
+not set. A path that cannot be written produces a warning and the run
+continues without the copy.
+
+## Colour
+
+Colour is on when stderr is a terminal. `NO_COLOR` turns it off;
+`--force-color` turns it on.
 
 ## Documentation
 

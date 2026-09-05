@@ -11,6 +11,8 @@
   --core      Run the low-level engine CLI; its own options are shown by [36m`opengrep --core -help`[39m
 
 [4mCommands[24m:
+  [36mci[39m                   Run Opengrep on a git diff (for use in CI)
+  [36minstall-ci[39m           Add an Opengrep workflow to a git repository
   [36mlsp[39m                  Start the Opengrep LSP server (useful for IDEs)
   [36mscan[39m                 Run Opengrep rules on local folders or files
   [36mshow[39m                 Show various types of information

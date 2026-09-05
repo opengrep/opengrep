@@ -51,8 +51,6 @@ type conf = {
   output_conf : Output.conf;
   incremental_output : bool;
   incremental_output_postprocess : bool;
-  (* Networking options *)
-  version_check : bool;
   (* Debugging/logging/profiling options *)
   common : CLI_common.conf;
   (* trace : bool;
@@ -102,8 +100,6 @@ let default : conf =
     rewrite_rule_ids = true;
     skip_invalid_configs = false;
     matching_conf = Match_patterns.default_matching_conf;
-    (* will send metrics only if the user uses the registry or the app *)
-    version_check = true;
     (* ugly: should be separate subcommands *)
     version = false;
     show = None;
@@ -124,14 +120,18 @@ let default : conf =
 (* ------------------------------------------------------------------ *)
 
 (* alt: was in "Performance and memory options" before *)
+(* Opengrep never contacts a server to compare versions, so this flag has no
+ * effect, here or in 'ci' (where it was already inert in ci.py); it is kept
+ * so that command lines written for pysemgrep still run. It declares no
+ * environment variable either: $SEMGREP_ENABLE_VERSION_CHECK and
+ * $OPENGREP_ENABLE_VERSION_CHECK are ignored, whatever they hold.
+ *)
 let o_version_check : bool Term.t =
-  H.negatable_flag_with_env [ "enable-version-check" ]
-    ~neg_options:[ "disable-version-check" ]
-    ~default:default.version_check
-    ~env:"OPENGREP_ENABLE_VERSION_CHECK"
+  H.negatable_flag [ "enable-version-check" ]
+    ~neg_options:[ "disable-version-check" ] ~default:true
     ~doc:
-      {|Checks Opengrep servers to see if the latest version is run; disabling
- this may reduce exit time after returning results.
+      {|Accepted for compatibility; Opengrep does not check whether a newer
+ version exists.
 |}
 
 (* ------------------------------------------------------------------ *)
@@ -246,7 +246,7 @@ let o_ignore_semgrepignore_files : bool Term.t =
         {|[INTERNAL] Ignore all '.semgrepignore' files found in the project
 tree for the purpose of selecting target files to be scanned by opengrep.
 Other filters may still apply.
-THIS OPTION IS NOT PART OF THE SEMGREP API AND MAY
+THIS OPTION IS NOT PART OF THE OPENGREP API AND MAY
 CHANGE OR DISAPPEAR WITHOUT NOTICE.
 |}
   in
@@ -280,14 +280,24 @@ Defaults to %b.
 
 (* alt: could be put in the Display options with nosem *)
 let o_baseline_commit : string option Term.t =
-  H.string_opt_with_envs [ "baseline-commit" ]
-    ~envs:[ "SEMGREP_BASELINE_COMMIT"; "SEMGREP_BASELINE_REF" ]
-    ~doc:
-      {|Only show results that are not found in this commit hash. Aborts run
+  (* An empty value means "no baseline", as it already does for the two
+   * environment variables and as pysemgrep did: a CI template whose
+   * base-commit variable is unset (--baseline-commit "$BASE_SHA") must still
+   * scan everything rather than fail the job. *)
+  let no_baseline_if_empty (rev : string option) : string option =
+    Option.bind rev (fun (rev : string) ->
+        if String.equal rev "" then None else Some rev)
+  in
+  Term.(
+    const no_baseline_if_empty
+    $ H.string_opt_with_envs [ "baseline-commit" ]
+        ~envs:[ "SEMGREP_BASELINE_COMMIT"; "SEMGREP_BASELINE_REF" ]
+        ~doc:
+          {|Only show results that are not found in this commit hash. Aborts run
 if not currently in a git directory, there are unstaged changes, or
-given baseline hash doesn't exist. May also be set with
-SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
-|}
+given baseline hash doesn't exist. An empty value means no baseline.
+May also be set with SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
+|})
 
 (* ------------------------------------------------------------------ *)
 (* Performance and memory options *)
@@ -298,8 +308,7 @@ let o_num_jobs : int Term.t =
     Arg.info [ "j"; "jobs" ]
       ~doc:
         {|Number of cores to use to run checks in
-parallel. Defaults to the number of cores detected on the system
-(1 if using --pro).
+parallel. Defaults to the number of cores detected on the system.
 |}
   in
   Arg.value (Arg.opt Arg.int default.core_runner_conf.num_jobs info)
@@ -315,8 +324,7 @@ let o_max_memory_mb : int option Term.t =
       ~doc:
         {|Maximum system memory in MiB to use during the interfile pre-processing
 phase, or when running a rule on a single file. If set to 0, will
-not have memory limit. Defaults to 0. For CI scans that use the Pro Engine,
-defaults to 5000 MiB.
+not have memory limit. Defaults to 0.
 |}
   in
   Arg.value (Arg.opt (Arg.some Arg.int) None info)
@@ -358,17 +366,14 @@ Use 'none' to turn all optimizations off.
 
 let o_timeout : float option Term.t =
   let default = default.core_runner_conf.timeout in
-  let info =
-    Arg.info [ "timeout" ]
-      ~doc:
-        (spf
-           {|Maximum time to spend running a rule on a single file in
+  H.float_opt_with_env [ "timeout" ] ~env:"SEMGREP_TIMEOUT"
+    ~doc:
+      (spf
+         {|Maximum time to spend running a rule on a single file in
 seconds. If set to 0 will not have time limit. Defaults to %.1f s.
+May also be set with OPENGREP_TIMEOUT or SEMGREP_TIMEOUT.
 |}
-           default)
-  in
-  (*TOPORT: envvar="SEMGREP_TIMEOUT" *)
-  Arg.value (Arg.opt (Arg.some Arg.float) None info)
+         default)
 
 let o_allow_rule_timeout_control : bool Term.t =
   let info =
@@ -451,20 +456,10 @@ to 3 hours.|}
 (* Display options *)
 (* ------------------------------------------------------------------ *)
 
-(* alt: could use Fmt_cli.style_renderer, which supports --color=xxx but
- * better be backward compatible with how semgrep was doing it before
- *)
+(* the flag is shared with the other subcommands, which apply the same
+ * colour precedence *)
 let o_force_color : bool Term.t =
-  H.negatable_flag_with_env [ "force-color" ] ~neg_options:[ "no-force-color" ]
-    ~default:default.output_conf.force_color
-      (* NO_COLOR (https://no-color.org/) and SEMGREP_FORCE_NO_COLOR are
-       * handled in CLI_common.setup_logging; forcing colour wins.
-       *)
-    ~env:"SEMGREP_FORCE_COLOR"
-    ~doc:
-      {|Always include ANSI color in the output, even if not writing to
-a TTY; defaults to using the TTY status
-|}
+  CLI_common.o_force_color ~default:default.output_conf.force_color
 
 let o_max_chars_per_line : int Term.t =
   let info =
@@ -530,7 +525,7 @@ let o_time : bool Term.t =
     ~default:default.core_runner_conf.time_flag
     ~doc:
       {|Include a timing summary with the results. If output format is json,
- provides times for each pair (rule, target). This feature is meant for internal use and may be changed or removed without warning. At the current moment, --trace is better supported.
+ provides times for each pair (rule, target). This feature is meant for internal use and may be changed or removed without warning.
 |}
 
 let o_nosem : bool Term.t =
@@ -711,7 +706,7 @@ scanned as a directory of rules. Append `#<branch-or-tag>` to pin a ref, e.g.
 credentials (ssh-agent, credential helpers, ...) and runs non-interactively.
 
 Use --config auto to automatically obtain rules tailored to this project;
-your project URL will be used to log in to the Semgrep registry.
+your project URL is sent to the Semgrep Registry to select rules.
 
 To run multiple rule files simultaneously, use --config before every YAML,
 URL, or Semgrep registry entry name.
@@ -947,7 +942,7 @@ let o_ls : bool Term.t =
         {|[INTERNAL] List the selected target files
 before any rule-specific or language-specific filtering. Then exit.
 The default output format is one path per line.
-THIS OPTION IS NOT PART OF THE SEMGREP API AND MAY
+THIS OPTION IS NOT PART OF THE OPENGREP API AND MAY
 CHANGE OR DISAPPEAR WITHOUT NOTICE.
 |}
   in
@@ -960,7 +955,7 @@ let o_ls_long : bool Term.t =
         {|[INTERNAL] Show selected targets and skipped targets with reasons why
 they were skipped, using an unspecified output format.
 Implies --x-ls.
-THIS OPTION IS NOT PART OF THE SEMGREP API AND MAY
+THIS OPTION IS NOT PART OF THE OPENGREP API AND MAY
 CHANGE OR DISAPPEAR WITHOUT NOTICE.
 |}
   in
@@ -1180,8 +1175,8 @@ let show_CLI_conf ~dump_ast ~show_supported_languages ~target_roots ~pattern
       Some { Show.show_kind = Show.SupportedLanguages; json; html = false; common }
   | _else_ -> None
 
-let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json ~common :
-    Validate_CLI.conf option =
+let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
+    ~force_color ~common : Validate_CLI.conf option =
   if validate then
     match rules_source with
     | Rules_source.Configs [] ->
@@ -1191,10 +1186,10 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json ~common :
            a rule"
     | Configs (_ :: _)
     | Pattern _ ->
-        Some { rules_source; core_runner_conf; json; common }
+        Some { rules_source; core_runner_conf; json; force_color; common }
   else None
 
-let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
+let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
     ~test_ignore_todo ~strict ~taint_intrafile ~timeout ~timeout_threshold
     ~max_memory_mb ~common : Test_CLI.conf option =
   if test then
@@ -1213,6 +1208,7 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
           target;
           strict;
           json;
+          force_color;
           optimizations;
           ignore_todo = test_ignore_todo;
           common;
@@ -1252,7 +1248,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       skip_invalid_configs
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
       _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
-      validate version version_check vim vim_outputs
+      validate version _version_check vim vim_outputs
       x_ignore_semgrepignore_files x_ls x_ls_long =
     (* Print a warning if any of the internal or experimental options.
        We don't want users to start relying on these. *)
@@ -1403,13 +1399,14 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
      * alt: we could move this code in a Validate_subcommand.cli_args()
      *)
     let validate : Validate_CLI.conf option =
-      validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json ~common
+      validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
+        ~force_color ~common
     in
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =
-      test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-        ~test_ignore_todo ~strict ~taint_intrafile ~timeout ~timeout_threshold
-        ~max_memory_mb ~common
+      test_CLI_conf ~test ~target_roots ~config ~json ~force_color
+        ~optimizations ~test_ignore_todo ~strict ~taint_intrafile ~timeout
+        ~timeout_threshold ~max_memory_mb ~common
     in
     (* warnings *)
     if include_ <> None && exclude_ <> [] then
@@ -1440,7 +1437,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       core_runner_conf;
       error_on_findings = error;
       autofix;
-      version_check;
       output_conf;
       incremental_output;
       incremental_output_postprocess;
@@ -1509,7 +1505,7 @@ let man : Cmdliner.Manpage.block list =
   ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep scan" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep scan" ~doc ~man ~exits:CLI_common.exits_scan
 
 (*****************************************************************************)
 (* Entry point *)

@@ -132,6 +132,48 @@ let string_list_with_env ?(default = []) ~env ~doc options =
   in
   Term.(const combine $ values)
 
+(* Read a variable given by its legacy SEMGREP_* name, preferring its
+   OPENGREP_* alias as everywhere else, and return the name the value came
+   from. When both names are set the user gets one warning saying which of the
+   two was used. *)
+let getenv_with_conflict_warning (var : string) : (string * string) option =
+  match Opengrep_env.getenv_with_name_opt var with
+  | None -> None
+  | Some ((name : string), (value : string)) ->
+      if
+        (not (String.equal name var))
+        && Option.is_some (Opengrep_env.getenv_nonempty var)
+      then
+        Logs.warn (fun m ->
+            m "both $%s and $%s are set; using $%s" name var name);
+      Some (name, value)
+
+(* A single-valued float option that can also be set by an environment
+   variable, read as above so that the OPENGREP_* alias counts. The command
+   line wins over the environment, and a variable that does not hold a number
+   is reported the way a bad option value is. *)
+let float_opt_with_env ~env ~doc options =
+  let value = Arg.(value (opt (some float) None (Arg.info options ~doc))) in
+  let combine (value : float option) :
+      (float option, [ `Msg of string ]) result =
+    match value with
+    | Some _ -> Ok value
+    | None -> (
+        match getenv_with_conflict_warning env with
+        | None -> Ok None
+        | Some ((name : string), (str : string)) -> (
+            match float_of_string_opt str with
+            | Some (f : float) -> Ok (Some f)
+            | None ->
+                Error
+                  (`Msg
+                    (spf
+                       "environment variable %s: invalid value %S, expected a \
+                        number"
+                       name str))))
+  in
+  Term.cli_parse_result Term.(const combine $ value)
+
 (* A single-valued option whose value can also come from one of several
    environment variables (cmdliner supports only one per option). The
    first set variable wins; the command line wins over the environment. *)
