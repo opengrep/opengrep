@@ -1565,6 +1565,20 @@ let build_rule_states
      contain the stamped value's name, so the content prefilter in
      [extract_specs_for_rule] must not skip them. *)
   let stamped_files : (Fpath.t, unit) Hashtbl.t = Hashtbl.create 4 in
+  (* This loop runs on the coordinator, outside the parmap wrapper that
+     contains a failure to its item elsewhere in this function, so a file
+     whose walk overflows the stack or exhausts memory is contained here:
+     it leaves both AST tables and runs per target, with a scan error, the
+     way a file whose parse failed does below. A timeout propagates. *)
+  let failed_stamp_files : (Lang.t * Fpath.t * string) list ref = ref [] in
+  let per_file (lang : Lang.t) (file : Fpath.t) (stamp : unit -> unit)
+      : unit =
+    try stamp () with
+    | Time_limit.Timeout _ as exn -> Exception.catch_and_reraise exn
+    | (Out_of_memory | Stack_overflow) as exn ->
+        failed_stamp_files :=
+          (lang, file, Printexc.to_string exn) :: !failed_stamp_files
+  in
   List.iter
     (fun (lc : lang_context) ->
       let dispatch_tbl = ast_table_for_lang target_ast_lookup lc.lc_lang in
@@ -1574,12 +1588,24 @@ let build_rule_states
       let asts =
         Hashtbl.fold (fun _ ast acc -> ast :: acc) dispatch_tbl []
       in
-      (* Argument-to-parameter stamps, valid project-wide. *)
-      let param_stamps = Callback_svalue.collect_stamps asts in
+      (* Argument-to-parameter stamps, valid project-wide. Collected over
+         every file of the language at once, so a failure here has no file
+         to drop: the language loses its stamps and keeps its files. *)
+      let param_stamps =
+        try Callback_svalue.collect_stamps asts with
+        | Time_limit.Timeout _ as exn -> Exception.catch_and_reraise exn
+        | (Out_of_memory | Stack_overflow) as exn ->
+            Logs.warn (fun m ->
+                m "interfile stamping: %s collecting the %s callback \
+                   stamps, none applied"
+                  (Printexc.to_string exn) (Lang.to_string lc.lc_lang));
+            []
+      in
       if param_stamps <> [] then
         Hashtbl.iter
-          (fun _ ast ->
-            ignore (Callback_svalue.apply_stamps param_stamps ast))
+          (fun file ast ->
+            per_file lc.lc_lang file (fun () ->
+                ignore (Callback_svalue.apply_stamps param_stamps ast)))
           dispatch_tbl;
       (* Extraction parses additionally need the dispatch AST's own [Sym]
          svalues mirrored: projidx publishes import-value aliases there
@@ -1587,37 +1613,58 @@ let build_rule_states
          Naming-only extraction parse never sees projidx payloads. *)
       Hashtbl.iter
         (fun file ast ->
-          let mirrored =
-            match Hashtbl.find_opt dispatch_tbl file with
-            | Some dispatch_ast ->
-                Callback_svalue.collect_sym_stamps dispatch_ast
-            | None -> []
-          in
-          if
-            Callback_svalue.apply_stamps (mirrored @ param_stamps) ast > 0
-          then Hashtbl.replace stamped_files file ())
-        extraction_tbl)
+          per_file lc.lc_lang file (fun () ->
+              let mirrored =
+                match Hashtbl.find_opt dispatch_tbl file with
+                | Some dispatch_ast ->
+                    Callback_svalue.collect_sym_stamps dispatch_ast
+                | None -> []
+              in
+              if
+                Callback_svalue.apply_stamps (mirrored @ param_stamps) ast > 0
+              then Hashtbl.replace stamped_files file ()))
+        extraction_tbl;
+      List.iter
+        (fun ((_, file, _) : Lang.t * Fpath.t * string) ->
+          Hashtbl.remove dispatch_tbl file;
+          Hashtbl.remove extraction_tbl file)
+        !failed_stamp_files)
     lang_contexts;
   (* A failed parse batch leaves its files with no dispatch AST and/or no
-     extraction AST: they can neither be dispatched nor seed the subgraph,
-     so without intervention their findings would silently vanish (the
+     extraction AST, and a failed stamping walk removes its file from both:
+     such a file can neither be dispatched nor seed the subgraph,
+     so without intervention its findings would silently vanish (the
      per-target gate blocks interfile rules on non-fallback paths).  Run
      them per-target intrafile instead, and surface one scan error per
      file.  The fallback key's root component is ignored by its consumer
      (it matches on lang alone), so [cwd] serves as the key root. *)
   let failed_parse_files : (Lang.t * Fpath.t * string) list =
     let seen = Hashtbl.create 16 in
+    let per_file
+        (files : (Lang.t * Fpath.t * string) list) =
+      List_.filter_map
+        (fun ((lang, file, msg) : Lang.t * Fpath.t * string) ->
+           if Hashtbl.mem seen file then None
+           else begin
+             Hashtbl.replace seen file true;
+             Some (lang, file, msg)
+           end)
+        files
+    in
     (failed_target_batches @ failed_extraction_batches)
     |> List.concat_map
          (fun ((lang, batch, msg) : Lang.t * Fpath.t list * string) ->
-            List_.filter_map
-              (fun (file : Fpath.t) ->
-                 if Hashtbl.mem seen file then None
-                 else begin
-                   Hashtbl.replace seen file true;
-                   Some (lang, file, msg)
-                 end)
-              batch)
+            per_file
+              (List_.map
+                 (fun (file : Fpath.t) ->
+                    (lang, file, "interfile parse failed: " ^ msg))
+                 batch))
+    |> List.append
+         (per_file
+            (List_.map
+               (fun ((lang, file, msg) : Lang.t * Fpath.t * string) ->
+                  (lang, file, "interfile stamping failed: " ^ msg))
+               !failed_stamp_files))
   in
   List.iter
     (fun ((lang, file, _msg) : Lang.t * Fpath.t * string) ->
@@ -1626,9 +1673,7 @@ let build_rule_states
   let parse_failures : (Fpath.t * string) list =
     List_.map
       (fun ((lang, file, msg) : Lang.t * Fpath.t * string) ->
-         (file,
-          Printf.sprintf "%s: interfile parse failed: %s"
-            (Lang.to_string lang) msg))
+         (file, Printf.sprintf "%s: %s" (Lang.to_string lang) msg))
       failed_parse_files
   in
   (* (rule, chunk) pairs in one parmap so an expensive-to-match rule
