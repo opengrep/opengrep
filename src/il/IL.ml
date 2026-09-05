@@ -111,7 +111,11 @@ type ident = G.ident [@@deriving show, eq, ord]
 type name = { ident : ident; sid : G.sid; id_info : G.id_info }
 [@@deriving show,eq]
 
-let str_of_name name = Common.spf "%s:%s" (fst name.ident) (G.SId.show name.sid)
+(* [SId.to_string], not the derived [show]: this string keys the constant
+   propagation environment on every variable access, and the derived
+   printer goes through [Format]. *)
+let str_of_name name =
+  Common.spf "%s:%s" (fst name.ident) (G.SId.to_string name.sid)
 
 let compare_name name1 name2 =
   let { ident = str1, _tok1; sid = sid1; id_info = _ } = name1 in
