@@ -1,0 +1,14 @@
+rules:
+  - id: depth-unbounded
+    languages: [python]
+    severity: ERROR
+    message: >
+      The same rule without a depth of its own, for the scan's depth to
+      decide.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

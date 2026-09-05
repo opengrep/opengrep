@@ -85,6 +85,9 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       dynamic_timeout_unit_kb = settings.dynamic_timeout_unit_kb;
       allow_rule_timeout_control = settings.allow_rule_timeout_control;
       timeout_threshold = settings.timeout_threshold;
+      interfile_timeout = Core_runner.default_conf.interfile_timeout;
+      interfile_graph_timeout =
+        Core_runner.default_conf.interfile_graph_timeout;
       dataflow_traces = false;
       nosem = true;
       strict = false;
@@ -93,5 +96,7 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       inline_metavariables = false;
       taint_intrafile = settings.taint_intrafile || settings.pro_intrafile;
       effect_guards = false;
+      taint_interfile = false;
+      taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
       engine_config = Engine_config.default;
     }

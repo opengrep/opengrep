@@ -1,0 +1,12 @@
+rules:
+  - id: test-cross-ns-defn
+    languages: [clojure]
+    message: Tainted data flows through a defn imported from another namespace
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: (source)
+    pattern-sinks:
+      - pattern: (sink $X)

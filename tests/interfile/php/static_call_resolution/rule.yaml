@@ -1,0 +1,20 @@
+rules:
+  - id: static-call-resolution
+    languages: [php]
+    severity: ERROR
+    message: >
+      User input flows from main.php through Db::query (a static
+      method) to a SQL sink.  A homonym instance method
+      Model::query exists in model.php but must NOT be matched by
+      the resolver — static calls require class-qualifier-aware
+      resolution, not a bare-name project-wide fallback.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $_GET[$KEY]
+    pattern-sinks:
+      - patterns:
+          - pattern: mysqli_query($DB, $QUERY)
+          - focus-metavariable: $QUERY

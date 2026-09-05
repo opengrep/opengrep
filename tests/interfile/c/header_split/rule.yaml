@@ -1,0 +1,12 @@
+rules:
+  - id: test-header-split
+    languages: [c]
+    message: Tainted data flows through a function declared in a header
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

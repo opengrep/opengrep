@@ -59,7 +59,7 @@ let parmap _caps ?(chunksize=1) ~num_domains ~exception_handler f xs =
              * even with [chunk_size] equal to 1. Because it may be the same
              * thread that runs > 1 task, in sequence since [chunk_size = 1],
              * as they are fed into each domain. *)
-            ~chunk_size:chunksize 
+            ~chunk_size:chunksize
             ~body:(fun i -> res_array.(i) <- Some (f' xs_array.(i)))));
   Array.map Option.get res_array |> Array.to_list
 

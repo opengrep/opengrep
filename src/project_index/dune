@@ -1,0 +1,27 @@
+; projidx: builds a project-wide call graph and type index.  Consumed
+; in-process by the engine via [Project_index.collect_resolved]
+; (src/engine/Interfile_graph.ml).  The diagnostic CLI lives in
+; tools/opengrep-interfile-graph ([index] subcommand).
+(library
+ (name opengrep_project_index)
+ (public_name semgrep.opengrep_project_index)
+ (modules Project_index Type_augment Symbols Imports Ts_modules Index_lang_rules Fixpoint Edge_emitter Discover Types Pipeline Nonfatal Go_inheritance Go_modules Mro Ts_class_aliases Structural_dispatch Reexports Func_index Cjs_exports Visibility Log_projidx)
+ (libraries
+   commons
+   fpath
+   logs
+   otoml
+   paths
+   ast_generic
+   semgrep_configuring
+   semgrep_core
+   semgrep.il
+   pfff-lang_GENERIC-analyze
+   semgrep.parsing_languages
+   semgrep.targeting
+   semgrep.tainting
+   call_graph
+   parallelism
+   process_limits
+   TCB
+ ))

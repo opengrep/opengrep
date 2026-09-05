@@ -859,6 +859,25 @@ let semgrep_rules_repo_tests () : Testo.t list =
                   | _ -> test)
            |> Testo.categorize group))
 
+(* The Go module manifest shares the [.mod] extension with Go source files
+   and must not reach the Go parser. *)
+let lang_classification_tests () =
+  let assert_classified_as ~(label : string) (fname : string)
+      (expected : Lang.t list) () =
+    let got = Lang.langs_of_filename (Fpath.v fname) in
+    Alcotest.(check (list string)) label
+      (List.map Lang.to_string expected)
+      (List.map Lang.to_string got)
+  in
+  [
+    t "go.mod is not classified as a source language"
+      (assert_classified_as ~label:"go.mod" "go.mod" []);
+    t ".go files still classify as Go"
+      (assert_classified_as ~label:"foo.go" "foo.go" [ Lang.Go ]);
+    t ".mod files other than go.mod still classify as Go"
+      (assert_classified_as ~label:"foo.mod" "foo.mod" [ Lang.Go ]);
+  ]
+
 (*****************************************************************************)
 (* All tests *)
 (*****************************************************************************)
@@ -877,4 +896,5 @@ let tests () =
       full_rule_regression_tests ();
       semgrep_rules_repo_tests ();
       lang_tainting_tests ();
+      lang_classification_tests ();
     ]

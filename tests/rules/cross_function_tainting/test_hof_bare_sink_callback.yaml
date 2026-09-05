@@ -1,0 +1,13 @@
+rules:
+  - id: test-hof-bare-sink-callback
+    languages: [python]
+    severity: ERROR
+    message: "Bare sink function passed as callback reaches the sink"
+    mode: taint
+    options:
+      taint_intrafile: true
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

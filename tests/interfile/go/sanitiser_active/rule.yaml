@@ -1,0 +1,14 @@
+rules:
+  - id: sanitiser-interfile-test
+    languages: [go]
+    severity: WARNING
+    message: Tainted data flows to sink
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-sanitizers:
+      - pattern: sanitize(...)

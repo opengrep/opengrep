@@ -540,6 +540,7 @@ For more information see https://opengrep.dev.
                          ; not exposed in the public interface.
     domainslib
     (saturn (>= "1.0.0")) ; Saturn.Htbl exists since 1.0.0.
+    otoml ; pyproject.toml include/exclude parsing in projidx
   )
 )
 

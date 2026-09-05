@@ -230,6 +230,13 @@ let lookup_nonlocal_scope id scopes =
       let _ = error tok "no outerscope" in
       None
 
+(* for a PHP closure [use]: the variable of the scope enclosing the closure,
+ * the file's variables when the closure is at the top level *)
+let lookup_enclosing_scope (s, _) scopes =
+  match !(scopes.blocks) with
+  | _ :: xxs -> lookup s (xxs @ [ !(scopes.global) ])
+  | [] -> None
+
 let has_block_scope (lang : Lang.t) =
   match lang with
   (* These languages don't have block scope *)
@@ -256,18 +263,39 @@ type env = {
    * handle also basic typing information now for Java/Go.
    *)
   names : scopes;
+  (* Inside a PHP function body, the number of enclosing block scopes it
+   * hides: it sees no enclosing local and no file variable, only what a
+   * [global] directive or a closure [use] plants in it. None outside any
+   * function body, where the file scope is visible. *)
+  hidden_blocks : int option ref;
   in_lvalue : bool ref;
   in_type : bool ref;
   lang : Lang.t;
+  (* The real file being resolved.  A resolved name's sid carries its
+     definition token's place within this file (see [AST_generic.SId]);
+     naming processes a single file, so the token's file and this one
+     coincide. *)
+  file : string;
+  (* The next binding number of this file; bindings are counted in
+     traversal order, so two parses of the same bytes agree. *)
+  next_binding : int ref;
 }
 
-let default_env lang =
+let fresh_binding (env : env) : int =
+  let binding = !(env.next_binding) in
+  env.next_binding := binding + 1;
+  binding
+
+let default_env lang file =
   {
     ctx = ref [ AtToplevel ];
     names = default_scopes ();
+    hidden_blocks = ref None;
     in_lvalue = ref false;
     in_type = ref false;
     lang;
+    file;
+    next_binding = ref 1;
   }
 
 (*****************************************************************************)
@@ -299,6 +327,15 @@ let set_resolved env id_info x =
    *)
   if not !(env.in_type) then id_info.id_type := x.enttype
 
+(* the block scopes a lookup may see, innermost first *)
+let visible_blocks env =
+  let blocks = !(env.names.blocks) in
+  match !(env.hidden_blocks) with
+  | None -> blocks
+  | Some hidden ->
+      let visible = List.length blocks - hidden in
+      List.filteri (fun (i : int) (_ : scope) -> i < visible) blocks
+
 (* accessors *)
 let lookup_scope_opt ?(class_attr = false) (s, _) env =
   let scopes = env.names in
@@ -314,13 +351,80 @@ let lookup_scope_opt ?(class_attr = false) (s, _) env =
               (* just look current scope! no access to nested scopes or global *)
             then [ xs; !(scopes.imported) ]
             else [ xs ] @ xxs @ [ !(scopes.global); !(scopes.imported) ]
-        (* | Lang.Php ->
-             (* just look current scope! no access to nested scopes or global *)
-             [xs;                            !(scopes.imported)]
-        *)
+        | Lang.Php ->
+            (* just look current scope! no access to nested scopes or global:
+             * a function body sees its own locals, what a [global] directive
+             * or a closure [use] planted in it, the file's functions and
+             * constants (no [$] sigil), not the file's variables; an arrow
+             * function sees the scopes enclosing it, the file's variables
+             * included when no function body is in between *)
+            let file_scope =
+              if
+                Option.is_none !(env.hidden_blocks)
+                || not (String.starts_with ~prefix:"$" s)
+              then [ !(scopes.global) ]
+              else []
+            in
+            visible_blocks env @ file_scope @ [ !(scopes.imported) ]
         | _ -> [ xs ] @ xxs @ [ !(scopes.global); !(scopes.imported) ])
   in
   lookup ~class_attr s actual_scopes
+
+(* Decides whether an implicit assignment [x = e] rebinds an existing
+ * variable (Some _) or declares a new one (None).
+ *
+ * Python: assignment makes a name function-local unless a [global] /
+ * [nonlocal] directive binds it — and directives plant their resolution
+ * in the current block scope (see the UseOuterDecl case) — so only the
+ * current block scope (parameters, prior locals, directive entries)
+ * suppresses the implicit declaration. A name that merely resolves in an
+ * enclosing / global / imported scope is shadowed by the assignment
+ * (e.g. a function-local [query = ...] under a module-level [def query]).
+ * Exception: the rules ecosystem relies on flow-insensitive naming for
+ * imports ([import pdb as db] then [db = "a string"] with later [db.Pdb]
+ * uses still expected to match, cf. python/lang/correctness/pdb.yaml in
+ * semgrep-rules), so an Imported* resolution anywhere on the chain still
+ * suppresses the declaration.
+ *
+ * PHP: a function body sees nothing from enclosing scopes except what a
+ * [global $x;] directive binds (planted in the current block scope by
+ * the UseOuterDecl case) or a closure [use] captures, so only the
+ * current block scope suppresses the declaration. Variables carry their
+ * [$] sigil so they can never collide with function/import names; no
+ * import exception is needed.
+ *
+ * Ruby / Crystal: blocks and procs close over enclosing locals, so an
+ * assignment anywhere on the block chain rebinds them; top-level locals
+ * live in the global scope and stay visible (script-style code). What
+ * assignment does shadow is a same-named top-level [def]: defs live in
+ * the imported scope, which is excluded here.
+ *
+ * Other implicit-declaration languages keep the full-chain lookup: a JS
+ * bare assignment genuinely mutates the outer binding.
+ *)
+let lookup_for_implicit_assign_opt id env =
+  let s, _ = id in
+  match (env.lang, !(env.names.blocks)) with
+  | Lang.Python, current_block :: _ -> (
+      match lookup s [ current_block ] with
+      | Some _ as resolved -> resolved
+      | None -> (
+          match lookup_scope_opt id env with
+          | Some { entname = (ImportedEntity _ | ImportedModule _), _; _ } as
+            resolved ->
+              resolved
+          | Some _
+          | None ->
+              None))
+  | Lang.Php, current_block :: _ -> lookup s [ current_block ]
+  | (Lang.Ruby | Lang.Crystal), blocks ->
+      (* Blocks close over enclosing locals, and top-level locals stay
+         visible; [blocks] is empty at the top level, where the chain is
+         just the global scope.  The imported scope — where top-level
+         [def]s live — is excluded either way: that is what assignment
+         shadows (locals and methods are separate namespaces). *)
+      lookup s (blocks @ [ !(env.names.global) ])
+  | _ -> lookup_scope_opt id env
 
 (*****************************************************************************)
 (* Error management *)
@@ -484,7 +588,7 @@ let params_of_parameters env params : scope =
   params |> Tok.unbracket
   |> List_.filter_map (function
        | Param { pname = Some id; pinfo = id_info; ptype = typ; _ } ->
-           let sid = SId.mk () in
+           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -496,7 +600,7 @@ let params_of_parameters env params : scope =
         * [visit_function_definition] iterates [x.fparams] inside the
         * function scope and visits each pattern. *)
        | ParamPattern (_pat, { pname = Some id; pinfo = id_info; ptype = typ; _ }) ->
-           let sid = SId.mk () in
+           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -514,7 +618,7 @@ let params_of_parameters env params : scope =
          when (match env.lang with
                | Lang.Ruby | Lang.Php -> true
                | _ -> false) ->
-           let sid = SId.mk () in
+           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -545,7 +649,7 @@ let js_get_angular_constructor_args env attrs defs =
 
 let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
     ~explicit vinit vtype =
-  let sid = SId.mk () in
+  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
   (* for the type, we use the (optional) type in vtype, or, if we can infer
    * the type of the expression vinit (literal or id), we use that as a type
    * useful when the type is not given, e.g. in Go: `var x = 2` *)
@@ -610,6 +714,19 @@ class ['self] resolve_visitor env lang =
        * (no need to declarare prototype and forward decls as in C).
        *)
       let new_params = params_of_parameters env x.fparams in
+      (* A PHP function or closure body sees no enclosing local; a method
+         body sees its class's scope, for the class constants; an arrow
+         function sees everything. *)
+      let hidden_blocks =
+        let enclosing = List.length !(env.names.blocks) in
+        match (lang, fst x.fkind) with
+        | Lang.Php, (Function | LambdaKind | BlockCases) -> Some enclosing
+        | Lang.Php, Method -> Some (max 0 (enclosing - 1))
+        | Lang.Php, Arrow
+        | _ ->
+            !(env.hidden_blocks)
+      in
+      Common.save_excursion_unsafe env.hidden_blocks hidden_blocks (fun () ->
       with_new_context InFunction env (fun () ->
           with_new_function_scope new_params env.names (fun () ->
               (* Each [ParamPattern]'s synthetic implicit binder was just
@@ -629,7 +746,7 @@ class ['self] resolve_visitor env lang =
                * without the new_params (this would also prevent cycle if
                * a parameter name is the same than type name used in ptype
                * (see tests/naming/python/shadow_name_type.py) *)
-              super#visit_function_definition venv x))
+              super#visit_function_definition venv x)))
 
     method! visit_definition venv x =
       match x with
@@ -668,7 +785,7 @@ class ['self] resolve_visitor env lang =
               _;
             } )
         when lang =*= Lang.Js || lang =*= Lang.Ts ->
-          let sid = SId.mk () in
+          let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
           let canonical = dotted_to_canonical [ file ] in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
@@ -722,7 +839,7 @@ class ['self] resolve_visitor env lang =
                             } );
                     _;
                   } ->
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd local_id) in
                   let canonical = dotted_to_canonical [ file; imported_id ] in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -769,47 +886,65 @@ class ['self] resolve_visitor env lang =
           self#visit_pattern venv pat
       | { name = EN (Id (id, id_info)); _ }, FuncDef _
         when is_resolvable_name_ctx env lang ->
-          (match lang with
-          (* We restrict function-name resolution to JS/TS.
+          (* A function definition resolves to a sid that carries the def's
+           * site, [(name, file, line, col)], the key [Function_id] uses, so
+           * a call resolving to this name reaches the def's signature
+           * (interprocedural analysis).
            *
-           * Note that this causes problems with Python rule/test:
+           * Scope: every function, method and nested function definition
+           * resolves, in every language (the interprocedural feature JS/TS
+           * users requested first, see
+           *
+           *     https://github.com/semgrep/semgrep/issues/2787).
+           *
+           * Resolving class methods once regressed interprocedural taint —
+           * a helper method sanitizing its argument stopped being recognized
+           * (the Java XXE rules, which have a duplicated [setFeatures]
+           * helper); those rules guard this now.
+           * Top-level functions are what name-based rules need, e.g.
            *
            *     semgrep-rules/python/flask/correctness/same-handler-name.yaml
            *
            * This rule tries to match two different functions using the same
-           * meta-variable. This works when the function names are not resolved,
-           * but breaks when each function gets a unique sid.
+           * meta-variable. This works when the function names are not
+           * resolved, and breaks when each function gets a unique sid; two
+           * definitions of one name in one scope share their binding.
            *
-           * Function-name resolution is useful for interprocedural analysis,
-           * feature that was requested by JS/TS users, see:
-           *
-           *     https://github.com/semgrep/semgrep/issues/2787.
-           *)
-          | Lang.Js
-          | Lang.Ts ->
-              let sid = SId.mk () in
-              let resolved = untyped_ent (resolved_name_kind env lang, sid) in
-              (* Previously we tried using add_ident_current_scope, but this
-               * shadowed imported function names which are added to the
-               * "imported" scope (globals/block scope is looked up first)
-               * even when the import statement comes after...
-               * This broke the following test:
-               *
-               *     semgrep-rules/python/django/security/audit/raw-query.py
-               *
-               * For now we add function names also to the "imported" scope...
-               * but do we need a special scope for imported functions?
-               *)
-              add_ident_imported_scope id resolved env.names;
-              set_resolved env id_info resolved
-          | ___else___ -> ());
+           * We add the name to the "imported" scope (not current scope):
+           * current scope shadowed imported function names even when the
+           * import came later, breaking
+           *   semgrep-rules/python/django/security/audit/raw-query.py.
+           * But do we need a special scope for imported functions? *)
+          if is_resolvable_name_ctx env lang then (
+            (* The scope a definition binds its name in: the file's imported
+               scope at the top level (see above), else the enclosing block,
+               a function's for a nested function, a class's for a method.
+               A definition of a name that scope already binds rebinds it:
+               the same identity, at its own site. *)
+            let scope, add_to_scope =
+              match !(env.names.blocks) with
+              | [] -> (!(env.names.imported), add_ident_imported_scope)
+              | current :: _ -> (current, add_ident_current_scope)
+            in
+            let binding =
+              match lookup (fst id) [ scope ] with
+              | Some { entname = _, bound; _ } -> SId.to_int bound
+              | None -> fresh_binding env
+            in
+            let sid = SId.of_tok ~binding ~file:env.file (snd id) in
+            let resolved = untyped_ent (resolved_name_kind env lang, sid) in
+            add_to_scope id resolved env.names;
+            set_resolved env id_info resolved);
           super#visit_definition venv x
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
-          let s = Tok.content_of_tok tok in
+          (* PHP keywords are case-insensitive *)
+          let s = String.lowercase_ascii (Tok.content_of_tok tok) in
           let flookup =
             match s with
             | "global" -> lookup_global_scope
             | "nonlocal" -> lookup_nonlocal_scope
+            (* a PHP closure [use ($x)] *)
+            | "use" -> lookup_enclosing_scope
             | _ ->
                 error tok (spf "unrecognized UseOuterDecl directive: %s" s);
                 lookup_global_scope
@@ -818,6 +953,14 @@ class ['self] resolve_visitor env lang =
           | Some resolved ->
               set_resolved env id_info resolved;
               add_ident_current_scope id resolved env.names
+          | None when String.equal s "global" ->
+              (* the directive creates the global when the file has not
+                 assigned it yet, as the language does *)
+              declare_var env lang id id_info ~force_global:true
+                ~explicit:false None None;
+              lookup_global_scope id env.names
+              |> Option.iter (fun resolved ->
+                     add_ident_current_scope id resolved env.names)
           | None ->
               error tok
                 (spf "could not find '%s' for directive %s"
@@ -827,7 +970,7 @@ class ['self] resolve_visitor env lang =
       | ( { name = EN (Id (id, id_info)); _ },
           ModuleDef { mbody = ModuleAlias xs } ) ->
           (* similar to the ImportAs case *)
-          let sid = SId.mk () in
+          let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
           let canonical = dotted_to_canonical xs in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
@@ -850,7 +993,7 @@ class ['self] resolve_visitor env lang =
             (function
               | id, Some (alias, id_info) ->
                   (* for python *)
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
                   let canonical = dotted_to_canonical (xs @ [ id ]) in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -859,7 +1002,7 @@ class ['self] resolve_visitor env lang =
                   add_ident_imported_scope alias resolved env.names
               | id, None ->
                   (* for python *)
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
                   let canonical = dotted_to_canonical (xs @ [ id ]) in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -875,7 +1018,7 @@ class ['self] resolve_visitor env lang =
                    * Note that we guard this code with is_js lang, because Python
                    * uses also Filename in 'from ...conf import x'.
                    *)
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
                   let _, b, _ = Filename_.dbe_of_filename_noext_ok s in
                   let base = (b, tok) in
                   let canonical = dotted_to_canonical [ base; id ] in
@@ -886,7 +1029,7 @@ class ['self] resolve_visitor env lang =
               | id, Some (alias, id_info)
                 when Lang.is_js lang && fst id <> Ast_js.default_entity ->
                   (* for JS *)
-                  let sid = SId.mk () in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
                   let _, b, _ = Filename_.dbe_of_filename_noext_ok s in
                   let base = (b, tok) in
                   let canonical = dotted_to_canonical [ base; id ] in
@@ -899,14 +1042,14 @@ class ['self] resolve_visitor env lang =
             imported_names
       | ImportAs (_, DottedName xs, Some (alias, id_info)) ->
           (* for python *)
-          let sid = SId.mk () in
+          let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
           let canonical = dotted_to_canonical xs in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
           add_ident_imported_scope alias resolved env.names
       | ImportAs (_, FileName (s, tok), Some (alias, id_info)) ->
           (* for Go *)
-          let sid = SId.mk () in
+          let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
           let pkgname = go_package_alias s in
           let base = (pkgname, tok) in
           let canonical = dotted_to_canonical [ base ] in
@@ -1028,8 +1171,9 @@ class ['self] resolve_visitor env lang =
                  because that is the only one that could be
                  imported *)
               | Some { entname = ImportedEntity xs, _sidm; _ } ->
-                  (* The entity is fully qualified, no need for sid *)
-                  let sid = SId.unsafe_default in
+                  (* Fully qualified — identity is the canonical name, not the
+                     sid; still anchor the sid at the name's real place. *)
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
                   let rest_of_middle = List_.map fst rest_of_middle in
                   let canonical =
                     xs @ dotted_to_canonical (rest_of_middle @ [ id ])
@@ -1066,7 +1210,7 @@ class ['self] resolve_visitor env lang =
           declare_var env lang id id_info ~explicit:true (Some e2) None;
           recurse := false
       | Assign ({ e = N (Id (id, id_info)); _ }, _, e2)
-        when Option.is_none (lookup_scope_opt id env)
+        when Option.is_none (lookup_for_implicit_assign_opt id env)
              && assign_implicitly_declares lang
              && is_resolvable_name_ctx env lang ->
           (* Need to visit the RHS first so that type is populated *)
@@ -1096,16 +1240,26 @@ class ['self] resolve_visitor env lang =
           recurse := false
       (* specialized kname case when in expr context *)
       | N (Id (id, id_info)) ->
-          (match lookup_scope_opt id env with
+          (* A write target uses the same shadow-aware lookup as the
+             single-name [Assign] case above: destructuring targets,
+             augmented-assignment targets and (Ruby) top-level assignments
+             all reach the name through here, and must declare a local
+             rather than bind a same-named definition from an outer scope. *)
+          let implicit_declaration =
+            !(env.in_lvalue)
+            && assign_implicitly_declares lang
+            && is_resolvable_name_ctx env lang
+          in
+          let resolved =
+            if implicit_declaration then lookup_for_implicit_assign_opt id env
+            else lookup_scope_opt id env
+          in
+          (match resolved with
           | Some resolved ->
               (* name resolution *)
               set_resolved env id_info resolved
           | None ->
-              if
-                !(env.in_lvalue)
-                && assign_implicitly_declares lang
-                && is_resolvable_name_ctx env lang
-              then
+              if implicit_declaration then
                 (* first use of a variable can be a VarDef in some languages *)
                 declare_var env lang id id_info ~explicit:false None None
               else
@@ -1141,7 +1295,17 @@ class ['self] resolve_visitor env lang =
            * as ArrayAccess above. *)
           Common.save_excursion_unsafe env.in_lvalue false (fun () ->
               self#visit_expr venv e1);
-          self#visit_field_name venv fname;
+          (* A field or method leaf names a member of the receiver, never a
+           * binding in scope: a member that shares the name of a function
+           * in scope is not a reference to that function. Leaving it
+           * unresolved keeps the call graph and the taint signatures free
+           * of self-references; the project index resolves method leaves
+           * by receiver type. *)
+          (match fname with
+           | FN (Id _) -> ()
+           | FN (IdQualified _)
+           | FDynamic _ ->
+               self#visit_field_name venv fname);
           recurse := false
       | Comprehension (_op, (_l, (e, xs), _r)) ->
           (* Actually in Python2, no new scope was created, so iterator vars
@@ -1252,7 +1416,14 @@ class ['self] resolve_visitor env lang =
   end
   
 let resolve lang prog =
-  let env = default_env lang in
+  (* The real file of the program, read off its first real token; used to
+     stamp every resolved-name sid with its genuine source path. *)
+  let file =
+    match AST_generic_helpers.range_of_any_opt (Pr prog) with
+    | Some (loc, _) -> Fpath.to_string (Fpath.normalize loc.Tok.pos.file)
+    | None -> ""
+  in
+  let env = default_env lang file in
 
   (* coupling: we do similar things in Constant_propagation.ml so if you
    * add a feature here, you might want to add a similar thing over there too.

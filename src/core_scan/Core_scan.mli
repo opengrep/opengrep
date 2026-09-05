@@ -96,6 +96,11 @@ val filter_files_with_too_many_matches_and_transform_as_timeout :
 
 val parse_equivalences : Fpath.t option -> Equivalence.equivalences
 
+val interfile_xconfig :
+  Core_scan_config.t ->
+  equivs:Equivalence.equivalences ->
+  Match_env.xconfig
+
 (* small wrapper around Parse_target.parse_and_resolve_name *)
 val parse_and_resolve_name :
   Lang.t -> Fpath.t -> AST_generic.program * Tok.location list

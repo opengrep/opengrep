@@ -55,6 +55,11 @@ type conf = {
   (* Whether to respect or ignore the '.semgrepignore' files found
      in the project. *)
   respect_semgrepignore_files : bool;
+  (* Built-in semgrepignore patterns applied on top of project '.semgrepignore'
+     files.  [Semgrep_scan_legacy] (the default) excludes common test-paths,
+     package-manager folders, etc.; [Empty] opts out (e.g. for the projidx
+     file discovery, which wants raw targeting). *)
+  default_semgrepignore_patterns : Semgrepignore.default_semgrepignore_patterns;
   (* Custom semgrepignore filename to use instead of '.semgrepignore' *)
   semgrepignore_filename : string option;
   (* Language-specific filtering: CLI option '--scan-unknown-extensions'
@@ -125,6 +130,13 @@ val get_target_fpaths :
   conf ->
   Scanning_root.t list ->
   Fpath.t targets
+
+(* Like [get_target_fpaths] but also returns the absolute project root
+   for each target, threaded from the scanning root discovery phase. *)
+val get_target_fpaths_with_project_roots :
+  conf ->
+  Scanning_root.t list ->
+  Target_and_root.t targets
 
 (* internals used also in Find_targets_old.ml *)
 val get_reason_for_exclusion :

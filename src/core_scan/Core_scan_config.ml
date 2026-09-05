@@ -57,6 +57,8 @@ type t = {
   matching_explanations : bool;
   taint_intrafile : bool;
   effect_guards : bool;
+  taint_interfile : bool;
+  taint_interfile_depth : int;
   strict : bool;
   matching_conf : Match_patterns.matching_conf;
   (* respect or not the paths: directive in a rule. Useful to set to false
@@ -78,12 +80,20 @@ type t = {
   (* maximum number of rules that can timeout on a file *)
   timeout_threshold : int;
   max_memory_mb : int;
+  (* maximum time to spend on the interfile analysis of a rule *)
+  interfile_timeout : int;
+  (* maximum time to spend building the interfile graph of a language *)
+  interfile_graph_timeout : int;
   max_match_per_file : int;
   ncores : int;
   (* a.k.a -fast (on by default) *)
   filter_irrelevant_rules : bool;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
+  (* The targeting conf used to discover targets, passed verbatim to
+     [Opengrep_project_index] so its file universe matches Semgrep's target
+     selection.  osemgrep's [Core_runner] overrides the default at scan time. *)
+  targeting_conf : Find_targets.conf;
 }
 [@@deriving show]
 
@@ -111,6 +121,8 @@ let default =
     matching_explanations = false;
     taint_intrafile = false;
     effect_guards = false;
+    taint_interfile = false;
+    taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH;
     strict = false;
     matching_conf = Match_patterns.default_matching_conf;
     respect_rule_paths = true;
@@ -125,10 +137,15 @@ let default =
     (* maximum number of rules that can timeout on a file *)
     timeout_threshold = 0;
     max_memory_mb = 0;
+    (* maximum time to spend on the interfile analysis of a rule *)
+    interfile_timeout = 0;
+    (* maximum time to spend building the interfile graph of a language *)
+    interfile_graph_timeout = 0;
     max_match_per_file = 10_000;
     ncores = 1;
     (* a.k.a -fast, on by default *)
     filter_irrelevant_rules = true;
     (* Engine configuration *)
     engine_config = Engine_config.default;
+    targeting_conf = Find_targets.default_conf;
   }

@@ -68,10 +68,9 @@ type t = {
 [@@deriving show, sexp]
 
 let compare (pos1 : t) (pos2 : t) : int =
-  let cmp_bpos = Int.compare pos1.bytepos pos2.bytepos in
-  if Int.equal cmp_bpos 0
-    then Fpath_.compare pos1.file pos2.file
-    else cmp_bpos
+  match Fpath_.compare pos1.file pos2.file with
+  | 0 -> Int.compare pos1.bytepos pos2.bytepos
+  | other -> other
 
 let equal (pos1 : t) (pos2 : t) : bool =
   pos1.bytepos =|= pos2.bytepos &&

@@ -1,0 +1,2 @@
+function sink(s)
+end

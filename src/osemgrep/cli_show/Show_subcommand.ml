@@ -20,8 +20,9 @@ module G = AST_generic
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
-(* we need the network for the 'semgrep show identity/deployment' *)
-type caps = < Cap.stdout ; Cap.network ; Cap.tmp >
+(* we need the network for the 'semgrep show identity/deployment', and
+   fork for the projidx build behind 'show interfile-graph' *)
+type caps = < Cap.stdout ; Cap.network ; Cap.tmp ; Cap.fork >
 
 (*****************************************************************************)
 (* Helpers *)
@@ -240,6 +241,43 @@ let run_conf (caps : < caps ; .. >) (conf : Show_CLI.conf) : Exit_code.t =
       let ast = Parse_target.parse_and_resolve_name_warn_if_partial lang file in
       let graph = Graph_from_AST.build_call_graph ~lang ast in
       Call_graph.Dot.output_graph stdout graph;
+      Exit_code.ok ~__LOC__
+  | DumpInterfileGraph (project_root, lang) ->
+      (* Standalone [opengrep show] doesn't carry the user's scan
+         [Find_targets.conf]; use projidx's standalone default. *)
+      let targeting_conf =
+        Opengrep_project_index.Discover.projidx_default_targeting_conf
+      in
+      (match
+         Interfile_graph.load_interfile_graph (caps :> < Cap.fork >)
+           ~targeting_conf lang project_root
+       with
+       | None ->
+         Error.abort
+           (spf "failed to build interfile graph for %s in %s"
+              (Lang.to_string lang) (Fpath.to_string project_root))
+       | Some g ->
+         print (spf "Interfile graph: %d vertices, %d edges"
+           (Call_graph.G.nb_vertex g) (Call_graph.G.nb_edges g));
+         print "Vertices:";
+         Call_graph.G.iter_vertex (fun v ->
+           print (spf "  %s" (Function_id.show_debug v))
+         ) g;
+         print "Edges (callee <- caller @ call_site, kind):";
+         Call_graph.G.iter_edges_e (fun edge ->
+           let src = Call_graph.G.E.src edge in
+           let dst = Call_graph.G.E.dst edge in
+           let label = Call_graph.G.E.label edge in
+           let cs = label.Call_graph.call_site in
+           let kind = match label.Call_graph.kind with
+             | Call_graph.Call -> "Call"
+             | Call_graph.Dispatch -> "Dispatch"
+           in
+           print (spf "  %s <- %s @ %s:%d:%d  [%s]"
+             (Function_id.show_debug src)
+             (Function_id.show_debug dst)
+             (Fpath.to_string cs.Pos.file) cs.Pos.line cs.Pos.column kind)
+         ) g);
       Exit_code.ok ~__LOC__
   | DumpTaintSignatures (rule_file, target_file) ->
       let lang = Lang.lang_of_filename_exn target_file in

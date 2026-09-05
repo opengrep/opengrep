@@ -148,6 +148,7 @@ let tests (caps : Cap.all_caps) =
       Unit_engine.tests ();
       Unit_jsonnet.tests (caps :> < Cap.time_limit >);
       Unit_metachecking.tests (caps :> Core_scan.caps);
+      Unit_interfile.tests (caps :> Core_scan.caps);
       (* osemgrep unit tests *)
       Unit_LS.tests (caps :> Session.caps);
       (* Unit_Login.tests caps; *)

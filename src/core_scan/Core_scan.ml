@@ -502,6 +502,83 @@ let errors_of_timeout_or_memory_exn (exn : exn) (target : Target.t) : ESet.t =
 (* Iteration helpers *)
 (*****************************************************************************)
 
+let handle_target_with_protection
+    (caps : < Cap.memory_limit ; .. >)
+    (config : Core_scan_config.t)
+    (handle_target : target_handler)
+    (target : Target.t)
+    : Core_profiling.file_profiling Core_result.match_result * Target.t option =
+  let internal_path = Target.internal_path target in
+  let noprof = Core_profiling.empty_partial_profiling internal_path in
+  Logs.debug (fun m ->
+      m "Core_scan analyzing %a" Target.pp_debug target);
+  let (res, was_scanned), run_time =
+    Core_profiling.with_time (fun () ->
+        try
+          Memory_limit.run_with_global_memory_limit
+            (caps :> < Cap.memory_limit >)
+            ~get_context:(get_context_for_memory_limit target)
+            ~mem_limit_mb:config.max_memory_mb
+            (fun () ->
+              (* we used to call Time_limit.set_timeout() here, but
+               * this is now done in Match_rules.check() because we
+               * now timeout per rule, not per file since pysemgrep
+               * passed all the rules to semgrep-core.
+               *)
+              (* an exception before any rule runs on this target,
+                 e.g. while parsing it, must not be attributed to
+                 the last rule of the previous target *)
+              TLS.set Rule.last_matched_rule None;
+              let res, was_scanned = handle_target target in
+              (* old: This was to test -max_memory, to give a chance
+               * to Gc.create_alarm to run even if the program does
+               * not even need to run the Gc. However, this has a
+               * slow perf penality on small programs, which is why
+               * it's better to keep guarded when you're
+               * not testing -max_memory.
+               * if config.test then Gc.full_major ();
+               *)
+              (res, was_scanned))
+        with
+        (* note that exn_to_error called further below already handles
+         * Timeout and would generate a TimeoutError code for it,
+         * but we intercept Timeout here to give a better diagnostic.
+         *)
+        | (Match_rules.File_timeout _ | Out_of_memory | Stack_overflow
+          | Memory_limit.ExceededMemoryLimit _) as exn ->
+            log_critical_exn_and_last_rule ();
+            let errors = errors_of_timeout_or_memory_exn exn target in
+            (* we got an exn on the target so definitely we tried to
+             * process the target
+             *)
+            (Core_result.mk_match_result [] errors noprof, true)
+        | Time_limit.Timeout _ ->
+            (* converted in Main_timeout in timeout_function() *)
+            (* FIXME:
+                 Actually, I managed to get this assert to trigger by
+                 running semgrep -c p/default-v2 on elasticsearch with
+                 -timeout 0.01 !
+            *)
+            failwith
+              "Time limit exceeded (this shouldn't happen, FIXME)"
+        (* convert all other exns (e.g., a parse error in a target file)
+         * in an empty match result with errors, so that one error in
+         * one target file does not abort the whole scan and the
+         * semgrep-core program.
+         *)
+        | exn when not !Flag_semgrep.fail_fast ->
+            Logs.err (fun m ->
+                m "exception on %s (%s)" !!internal_path
+                  (Printexc.to_string exn));
+            let e = Exception.catch exn in
+            let errors =
+              ESet.singleton (E.exn_to_error ~file:internal_path e)
+            in
+            (Core_result.mk_match_result [] errors noprof, true))
+  in
+  let scanned_target = if was_scanned then Some target else None in
+  (Core_result.add_run_time run_time res, scanned_target)
+
 (* Returns a list of match results and a separate list of scanned targets *)
 let iter_targets_and_get_matches_and_exn_to_errors
     (caps : < Cap.fork ; Cap.memory_limit ; .. >) (config : Core_scan_config.t)
@@ -520,93 +597,8 @@ let iter_targets_and_get_matches_and_exn_to_errors
          (caps :> < Cap.fork >)
          config.ncores
          (fun (target : Target.t) ->
-           let internal_path = Target.internal_path target in
-           let noprof = Core_profiling.empty_partial_profiling internal_path in
-           Logs.debug (fun m ->
-               m "Core_scan analyzing %a" Target.pp_debug target);
-
-           (* Coupling: if you update handle_target_maybe_with_trace here
-            * it's very likely you'd need to update the same in Deep_scan.ml
-            *
-            * Sadly we need to disable tracing when we are using more than 1
-            * cores.
-            *
-            * The reason is that parmap forks new processes, and we occasionally
-            * run into a deadlock where the scan just freezes when we use
-            * tracing and multiprocesses together.
-            *
-            * Hopefully, Ocaml5 with multithread support will resolve this issue.
-            * For now, just turn off tracing when we use more than 1 core.
-            *)
-
-           let (res, was_scanned), run_time =
-             Core_profiling.with_time (fun () ->
-                 try
-                   Memory_limit.run_with_global_memory_limit
-                     (caps :> < Cap.memory_limit >)
-                     ~get_context:(get_context_for_memory_limit target)
-                     ~mem_limit_mb:config.max_memory_mb
-                     (fun () ->
-                       (* we used to call Time_limit.set_timeout() here, but
-                        * this is now done in Match_rules.check() because we
-                        * now timeout per rule, not per file since pysemgrep
-                        * passed all the rules to semgrep-core.
-                        *)
-                       (* an exception before any rule runs on this target,
-                          e.g. while parsing it, must not be attributed to
-                          the last rule of the previous target *)
-                       TLS.set Rule.last_matched_rule None;
-                       let res, was_scanned = handle_target target in
-                       (* old: This was to test -max_memory, to give a chance
-                        * to Gc.create_alarm to run even if the program does
-                        * not even need to run the Gc. However, this has a
-                        * slow perf penality on small programs, which is why
-                        * it's better to keep guarded when you're
-                        * not testing -max_memory.
-                        * if config.test then Gc.full_major ();
-                        *)
-                       (res, was_scanned))
-                 with
-                 (* note that exn_to_error called further below already handles
-                  * Timeout and would generate a TimeoutError code for it,
-                  * but we intercept Timeout here to give a better diagnostic.
-                  *)
-                 | (Match_rules.File_timeout _ | Out_of_memory | Stack_overflow | Memory_limit.ExceededMemoryLimit _)
-                   as exn ->
-                     log_critical_exn_and_last_rule ();
-                     let errors = errors_of_timeout_or_memory_exn exn target in
-                     (* we got an exn on the target so definitely we tried to
-                      * process the target
-                      *)
-                     let scanned = true in
-                     (Core_result.mk_match_result [] errors noprof, scanned)
-                 | Time_limit.Timeout _ ->
-                     (* converted in Main_timeout in timeout_function() *)
-                     (* FIXME:
-                          Actually, I managed to get this assert to trigger by
-                          running semgrep -c p/default-v2 on elasticsearch with
-                          -timeout 0.01 !
-                     *)
-                     failwith
-                       "Time limit exceeded (this shouldn't happen, FIXME)"
-                 (* convert all other exns (e.g., a parse error in a target file)
-                  * in an empty match result with errors, so that one error in
-                  * one target file does not abort the whole scan and the
-                  * semgrep-core program.
-                  *)
-                 | exn when not !Flag_semgrep.fail_fast ->
-                     (* TODO? repeat Parmap_targets.core_error_of_path_exc() *)
-                     Logs.err (fun m ->
-                         m "exception on %s (%s)" !!internal_path
-                           (Printexc.to_string exn));
-                     let e = Exception.catch exn in
-                     let errors =
-                       ESet.singleton (E.exn_to_error ~file:internal_path e)
-                     in
-                     (Core_result.mk_match_result [] errors noprof, true))
-           in
-           let scanned_target = if was_scanned then Some target else None in
-           (Core_result.add_run_time run_time res, scanned_target))
+           handle_target_with_protection
+             (caps :> < Cap.memory_limit >) config handle_target target)
   in
   let xs =
     xs
@@ -760,6 +752,22 @@ let sca_rules_filtering (target : Target.regular) (rules : Rule.t list) :
   let rules = rules_with_dep_matches |> List_.map fst in
   (rules, dependency_match_table)
 
+let interfile_xconfig (config : Core_scan_config.t)
+    ~(equivs : Equivalence.equivalences)
+    : Match_env.xconfig =
+  { Match_env.config =
+      { Rule_options.default with
+        taint_intrafile = config.taint_intrafile;
+        effect_guards = config.effect_guards;
+        taint_interfile = config.taint_interfile;
+        taint_interfile_depth = Some config.taint_interfile_depth };
+    equivs;
+    nested_formula = false;
+    matching_conf = config.matching_conf;
+    matching_explanations = false;
+    filter_irrelevant_rules = NoPrefiltering;
+  }
+
 (*****************************************************************************)
 (* a "core" scan *)
 (*****************************************************************************)
@@ -767,6 +775,8 @@ let sca_rules_filtering (target : Target.regular) (rules : Rule.t list) :
 (* build the callback for iter_targets_and_get_matches_and_exn_to_errors *)
 let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
     (valid_rules : Rule.t list)
+    ?(rule_runs_on_target : (Rule.t -> Target.t -> bool) = fun _ _ -> true)
+    ~equivs
     (prefilter_cache_opt : Match_env.prefilter_config) : target_handler =
   function
   | Lockfile ({ path; kind } as lockfile) ->
@@ -776,6 +786,8 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
        *)
       let lockfile_xtarget = lockfile_xtarget_resolve None lockfile in
       let origin = Origin.File path in
+      (* only rules with a dependency formula run here, so a dispatched
+         interfile rule is never matched against a lockfile *)
       let rules =
         supply_chain_rules ~lockfile_kind:kind ~origin
           ~respect_rule_paths:config.respect_rule_paths valid_rules
@@ -795,11 +807,17 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
          path = { origin; internal_path_to_content = file };
          _;
        } as target) ->
-      let rules =
+      let pre_gate_rules =
         rules_for_target ~analyzer ~products ~origin
           ~respect_rule_paths:config.respect_rule_paths valid_rules
       in
-      let was_scanned = not (List_.null rules) in
+      let rules =
+        pre_gate_rules
+        |> List.filter (fun r -> rule_runs_on_target r (Regular target))
+      in
+      (* Use pre-gate rules: a target counts as scanned even when its only
+         applicable rules go through interfile dispatch. *)
+      let was_scanned = not (List_.null pre_gate_rules) in
 
       (* TODO: can we skip all of this if there are no applicable
          rules? In particular, can we skip print_cli_progress? *)
@@ -807,8 +825,13 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
       let match_hook _ = () in
       let xconf =
         {
-          Match_env.config = { Rule_options.default with taint_intrafile = config.taint_intrafile; effect_guards = config.effect_guards };
-          equivs = parse_equivalences config.equivalences_file;
+          Match_env.config = { Rule_options.default with
+            taint_intrafile = config.taint_intrafile;
+            effect_guards = config.effect_guards;
+            taint_interfile = config.taint_interfile;
+            taint_interfile_depth = Some config.taint_interfile_depth;
+          };
+          equivs;
           nested_formula = false;
           matching_conf = config.matching_conf;
           matching_explanations = config.matching_explanations;
@@ -835,20 +858,6 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
         Match_rules.check ~match_hook ~timeout ~dependency_match_table xconf
           rules xtarget
       in
-      (* Add file size when profiling is on. *)
-      let matches =
-        {matches with
-         profiling =
-           Option.map
-             (fun (p : Core_profiling.partial_profiling) ->
-                let p_file_size_bytes =
-                  if Lazy.is_val xtarget.lazy_content then
-                    Some (String.length (Lazy.force xtarget.lazy_content))
-                  else None
-                in
-                {p with Core_profiling.p_file_size_bytes})
-             matches.profiling}
-      in
       (* So we can display matches incrementally in osemgrep!
        * Note that this is run in one of the domains, so the hook should
        * not rely on shared memory unless if done in a thread-safe way.
@@ -858,6 +867,200 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
       (matches, was_scanned)
 
 module DLS = Domain.DLS
+
+(* A target carries the size the scheduling took for it: that is the byte
+   count --time reports, without a system call of its own. *)
+type scan_work_item =
+  | Per_target of Target.t * int (* size in bytes *)
+  | Interfile_rule of Interfile_dispatch.rule_state
+
+type scan_work_result =
+  | Target_result of
+      Core_profiling.file_profiling Core_result.match_result * Target.t option
+  | Interfile_result of PM.t list
+
+type scan_work_error =
+  | Target_error of Target.t * Core_error.t
+  | Interfile_error of Rule_ID.t * Core_error.t
+
+let handle_work_item
+    (caps : < Cap.memory_limit ; Cap.time_limit ; .. >)
+    (config : Core_scan_config.t)
+    (target_handler : target_handler)
+    (item : scan_work_item) : scan_work_result =
+  match item with
+  | Per_target (target, file_size) ->
+    let result, target_opt =
+      handle_target_with_protection caps config target_handler target
+    in
+    let result =
+      Core_result.map_profiling
+        (fun (p : Core_profiling.file_profiling) ->
+          { p with file_size_bytes = Some file_size })
+        result
+    in
+    Target_result (result, target_opt)
+  | Interfile_rule rs ->
+    (* Run under the global memory limit so [--max-memory] applies to
+       interfile dispatch too, and under [--interfile-timeout], which bounds
+       the dispatch of one rule; the per-target [--timeout] does not apply
+       here. *)
+    let rule_id = Interfile_dispatch.rule_id_of rs in
+    let time_limit =
+      if config.interfile_timeout > 0 then
+        Some
+          (float_of_int config.interfile_timeout,
+           (caps :> < Cap.time_limit >))
+      else None
+    in
+    let matches =
+      Memory_limit.run_with_global_memory_limit
+        (caps :> < Cap.memory_limit >)
+        ~get_context:(fun () ->
+          spf "interfile rule %s" (Rule_ID.to_string rule_id))
+        ~mem_limit_mb:config.max_memory_mb
+        (fun () ->
+          match
+            Time_limit.set_timeout_opt
+              ~name:"Core_scan.interfile_timeout_function" time_limit
+              (fun () -> Interfile_dispatch.run_rule rs)
+          with
+          | Some matches -> matches
+          | None ->
+            (* [Time_limit] returns None rather than raising, so re-raise the
+               timeout: [unified_exception_handler] then reports it as an
+               Out.Timeout error carrying the rule id, the way an exceeded
+               memory limit is reported as an Out.OutOfMemory one.  The
+               constructor is spelled [Exception.Timeout] because
+               [Time_limit.Timeout] keeps its argument type abstract. *)
+            raise
+              (Exception.Timeout
+                 {
+                   Exception.name = "interfile analysis";
+                   max_duration = float_of_int config.interfile_timeout;
+                 }))
+    in
+    (* Stream these like per-target matches.  [Output_format.Incremental] skips
+       the final render on the assumption everything was already emitted through
+       this hook, so an interfile match that never reaches it is counted in the
+       totals and the exit code but never printed.  Grouped by file because the
+       hook is documented per-file, even though the emitting rule spans several. *)
+    config.file_match_hook
+    |> Option.iter (fun hook ->
+        matches
+        |> Assoc.group_by (fun (pm : PM.t) ->
+             pm.PM.path.Target.internal_path_to_content)
+        |> List.iter (fun (file, pms) ->
+            hook file
+              (Core_result.mk_match_result pms ESet.empty
+                 (Core_profiling.empty_partial_profiling file))));
+    Interfile_result matches
+
+let unified_exception_handler (item : scan_work_item) (e : Exception.t)
+    : scan_work_error =
+  match item with
+  | Per_target (target, _size) ->
+    let internal_path = Target.internal_path target in
+    let exn = Exception.get_exn e in
+    Logs.err (fun m ->
+        m "exception on %s (%s)" !!internal_path
+          (Printexc.to_string exn));
+    Target_error (target, E.exn_to_error ~file:internal_path e)
+  | Interfile_rule rs ->
+    let rule_id = Interfile_dispatch.rule_id_of rs in
+    Logs.err (fun m ->
+        m "interfile dispatch: exception on rule %s: %s"
+          (Rule_ID.to_string rule_id)
+          (Exception.to_string e));
+    let base_err = E.exn_to_error e in
+    Interfile_error (rule_id, { base_err with E.rule_id = Some rule_id })
+
+let iter_unified_and_get_matches_and_exn_to_errors
+    (caps : < Cap.fork ; Cap.memory_limit ; Cap.time_limit ; .. >)
+    (config : Core_scan_config.t)
+    (target_handler : target_handler)
+    ~(interfile_rule_states : Interfile_dispatch.rule_state list)
+    (targets : Target.t list)
+    : Core_profiling.file_profiling Core_result.match_result list
+      * Target.t list
+      * PM.t list =
+  (* Interfile tasks first (heaviest), then targets by decreasing size
+     for greedy scheduling. *)
+  let work_items =
+    let interfile_items =
+      List.map (fun (rs : Interfile_dispatch.rule_state) ->
+        Interfile_rule rs)
+        interfile_rule_states
+    in
+    let target_items =
+      targets
+      |> List_.map (fun (target : Target.t) ->
+             (target, UFile.filesize (Target.internal_path target)))
+      |> List_.sort_by_key snd (Fun.flip Int.compare)
+      |> List_.map (fun ((target : Target.t), (size : int)) ->
+             Per_target (target, size))
+    in
+    interfile_items @ target_items
+  in
+  let work_results =
+    Parallel_targets.map_work_items
+      (caps :> < Cap.fork >)
+      config.ncores
+      ~exception_handler:unified_exception_handler
+      (handle_work_item
+         (caps :> < Cap.memory_limit ; Cap.time_limit >) config target_handler)
+      work_items
+  in
+  let file_results, scanned_targets, interfile_matches =
+    List.fold_left
+      (fun ((files :
+               Core_profiling.file_profiling Core_result.match_result list),
+            (scanned : Target.t list),
+            (interfile : PM.t list))
+        (result : (scan_work_result, scan_work_error) result) ->
+        match result with
+        | Ok (Target_result (res, target_opt)) ->
+          let scanned' =
+            match target_opt with
+            | Some t -> t :: scanned
+            | None -> scanned
+          in
+          (res :: files, scanned', interfile)
+        | Ok (Interfile_result matches) ->
+          (files, scanned, List.rev_append matches interfile)
+        | Error (Target_error (target, e)) ->
+          let internal_path = Target.internal_path target in
+          let noprof =
+            Core_profiling.empty_partial_profiling internal_path
+          in
+          let errors = ESet.singleton e in
+          let match_result =
+            Core_result.mk_match_result [] errors noprof
+          in
+          (Core_result.add_run_time 0.0 match_result :: files,
+           target :: scanned, interfile)
+        | Error (Interfile_error (rule_id, err)) ->
+          (* Surface the failure as an error rather than silently dropping
+             findings; attribute it to a synthetic path since there's no
+             single target file to point at. *)
+          Logs.warn (fun m ->
+              m "interfile: rule %s failed; surfacing as error"
+                (Rule_ID.to_string rule_id));
+          let synth_path =
+            Fpath.v (spf "<interfile-dispatch/%s>"
+                       (Rule_ID.to_string rule_id))
+          in
+          let noprof = Core_profiling.empty_partial_profiling synth_path in
+          let errors = ESet.singleton err in
+          let match_result =
+            Core_result.mk_match_result [] errors noprof
+          in
+          (Core_result.add_run_time 0.0 match_result :: files,
+           scanned, interfile))
+      ([], [], [])
+      work_results
+  in
+  (List.rev file_results, List.rev scanned_targets, interfile_matches)
 
 (* coupling: with Deep_scan.scan_aux() *)
 let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
@@ -893,33 +1096,133 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       end
     else NoPrefiltering
   in
-  let file_results, scanned_targets =
-    targets
-    |> iter_targets_and_get_matches_and_exn_to_errors
-         (caps :> < Cap.fork ; Cap.memory_limit >)
-         config
-         (mk_target_handler
-            (caps :> < Cap.time_limit >)
-            config valid_rules prefilter_cache_opt)
+  let equivs = parse_equivalences config.equivalences_file in
+  let interfile_rule_states, interfile_languages_used,
+      interfile_fallback_rule_target_paths, interfile_index_failures,
+      interfile_build_limit_failures =
+    Interfile_dispatch.build_rule_states
+      (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
+      ~ncores:config.ncores
+      ~taint_interfile:config.taint_interfile
+      ~graph_timeout:config.interfile_graph_timeout
+      ~max_memory_mb:config.max_memory_mb
+      ~valid_rules ~targets
+      ~targeting_conf:config.targeting_conf
+      ~xconf:(interfile_xconfig config ~equivs)
+  in
+  (* A file the index build failed on has no functions or call edges in the
+     interfile graph — findings through it are silently missing — so each
+     failure is surfaced as a (warning-severity) scan error, like a partial
+     parse, rather than left as a debug log line. *)
+  let interfile_index_errors : E.t list =
+    List_.map (fun ((file : Fpath.t), (msg : string)) ->
+        E.mk_error
+          ~msg:(spf "interfile index build failed for this file \
+                     (cross-file findings through it may be missing): %s" msg)
+          ~loc:(Tok.first_loc_of_file file)
+          Out.SemgrepWarning)
+      interfile_index_failures
+    @ List_.map
+        (fun ((rule_id : Rule_ID.t), (limit : Interfile_dispatch.build_limit)) ->
+          let msg, error_type =
+            match limit with
+            | Build_timeout ->
+                ( "the interfile graph build hit --interfile-graph-timeout; \
+                   this rule ran on single files",
+                  Out.Timeout )
+            | Build_out_of_memory ->
+                ( "the interfile graph build hit --max-memory; this rule ran \
+                   on single files",
+                  Out.OutOfMemory )
+          in
+          E.mk_error ~rule_id ~msg error_type)
+        interfile_build_limit_failures
+  in
+  let interfile_rule_ids =
+    Interfile_dispatch.interfile_taint_rule_ids
+      ~taint_interfile:config.taint_interfile valid_rules
+  in
+  (* The per-target handler receives every valid rule, so that a target
+     whose only applicable rule is dispatched interfile still counts as
+     scanned; rule_runs_on_target below is the one place that keeps a
+     dispatched rule out of per-target matching. An interfile rule with a
+     graph-build failure runs only on its fallback target paths; the rest
+     go through dispatch, so running them here would double-count. *)
+  let fallback_paths_by_rule : (Rule_ID.t, (string, unit) Hashtbl.t) Hashtbl.t =
+    Hashtbl.create 4
+  in
+  (* A rule can contribute several path lists (graph-coverage gaps plus one
+     per failed rule subgraph) — union them; replacing would silently drop
+     the earlier lists' targets from both dispatch and the per-target run. *)
+  List.iter (fun (rid, paths) ->
+    let set =
+      match Hashtbl.find_opt fallback_paths_by_rule rid with
+      | Some set -> set
+      | None ->
+          let set = Hashtbl.create (List.length paths) in
+          Hashtbl.replace fallback_paths_by_rule rid set;
+          set
+    in
+    List.iter (fun p ->
+      Hashtbl.replace set (Fpath.to_string (Fpath.normalize p)) ())
+      paths)
+    interfile_fallback_rule_target_paths;
+  let cwd = Fpath.v (Sys.getcwd ()) in
+  let rule_runs_on_target (rule : R.t) (target : Target.t) : bool =
+    let rid = fst rule.id in
+    let is_interfile =
+      List.exists (fun (i : Rule_ID.t) -> Rule_ID.equal i rid)
+        interfile_rule_ids
+    in
+    if not is_interfile then true
+    else
+      match Hashtbl.find_opt fallback_paths_by_rule rid with
+      | None ->
+        (* Interfile rule with full coverage — dispatch handles every
+           target; never runs in per-target. *)
+        false
+      | Some fallback_set ->
+        (match Target.abs_path ~cwd target with
+         | None -> true  (* Lockfile / no abs_path: be conservative *)
+         | Some p ->
+           Hashtbl.mem fallback_set (Fpath.to_string p))
+  in
+  let file_results, scanned_targets, interfile_matches =
+    iter_unified_and_get_matches_and_exn_to_errors
+      (caps :> < Cap.fork ; Cap.memory_limit ; Cap.time_limit >)
+      config
+      (mk_target_handler
+         (caps :> < Cap.time_limit >)
+         config valid_rules
+         ~rule_runs_on_target
+         ~equivs
+         prefilter_cache_opt)
+      ~interfile_rule_states
+      targets
   in
 
   (* TODO: Delete any lockfile-only findings whose rule produced a code+lockfile
      finding in that lockfile in scanned_targets?
   *)
 
-  (* the OSS engine was invoked so no interfile langs *)
-  let interfile_languages_used = [] in
   let (res : Core_result.t) =
     Core_result.mk_result file_results
       (List_.map (fun r -> (r, `OSS)) valid_rules)
       invalid_rules scanned_targets interfile_languages_used ~rules_parse_time
   in
+  let all_processed_matches =
+    let interfile_processed =
+      List_.map Core_result.mk_processed_match interfile_matches
+    in
+    interfile_processed @ res.processed_matches
+  in
   let processed_matches, new_errors, new_skipped =
     filter_files_with_too_many_matches_and_transform_as_timeout
-      config.max_match_per_file res.processed_matches
+      config.max_match_per_file all_processed_matches
   in
   (* concatenate all errors *)
-  let errors = rule_errors @ new_errors @ res.errors in
+  let errors =
+    interfile_index_errors @ rule_errors @ new_errors @ res.errors in
   (* Concatenate all the skipped targets *)
   let skipped_targets = skipped @ new_skipped @ res.skipped_targets in
 
@@ -945,6 +1248,15 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
 (* NOTE: Where new and old cli meet, to invoke scan. *)
 let scan (caps : < caps ; .. >) (config : Core_scan_config.t) :
     Core_result.result_or_exn =
+  (* taint_interfile implies taint_intrafile: interfile builds on the
+     intrafile per-function dataflow, and signature-db lookups gate on
+     taint_intrafile — without this, interfile dispatch would run but
+     instantiate nothing.  Enforced here so no caller can construct a scan
+     with interfile enabled and intrafile off. *)
+  let config =
+    { config with
+      taint_intrafile = config.taint_intrafile || config.taint_interfile }
+  in
   try
     let timed_rules =
       Common.with_time (fun () ->

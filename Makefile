@@ -96,9 +96,14 @@ minimal-build:
 	chmod +w bin/opengrep$(EXE)
 	strip bin/opengrep$(EXE)
 
+.PHONY: opengrep-interfile-graph
+opengrep-interfile-graph:
+	dune build $(BUILD)/install/default/bin/opengrep-interfile-graph
+
 .PHONY: opengrep-diff
 opengrep-diff:
 	dune build $(BUILD)/install/default/bin/opengrep-diff
+
 # Run performance benchmarks. Prepares repos/rules then runs hyperfine.
 # Results are saved to perf/opengrep-scripts/bench_results/<timestamp>/.
 # See perf/opengrep-scripts/README.md for details.

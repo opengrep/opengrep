@@ -322,9 +322,9 @@ let o_max_memory_mb : int option Term.t =
   let info =
     Arg.info [ "max-memory" ]
       ~doc:
-        {|Maximum system memory in MiB to use during the interfile pre-processing
-phase, or when running a rule on a single file. If set to 0, will
-not have memory limit. Defaults to 0.
+        {|Maximum system memory in MiB to use during the interfile analysis
+or when running a rule on a single file. If set to 0, will not have memory
+limit. Defaults to 0.
 |}
   in
   Arg.value (Arg.opt (Arg.some Arg.int) None info)
@@ -440,15 +440,26 @@ the file is skipped. If set to 0 will not have limit. Defaults to %d.
   in
   Arg.value (Arg.opt (Arg.some Arg.int) None info)
 
-(* TODO: currently just used in pysemgrep and semgrep-core-proprietary *)
 let o_timeout_interfile : int Term.t =
-  let default = 0 in
+  let default = default.core_runner_conf.interfile_timeout in
   let info =
     Arg.info [ "interfile-timeout" ]
       ~doc:
-        {|Maximum time to spend on interfile analysis. If set to 0 will not
-have time limit. Defaults to 0 s for all CLI scans. For CI scans, it defaults
-to 3 hours.|}
+        {|Maximum time in seconds to spend on the interfile analysis of a rule.
+If set to 0 will not have time limit. Defaults to 0.
+|}
+  in
+  Arg.value (Arg.opt Arg.int default info)
+
+let o_timeout_interfile_graph : int Term.t =
+  let default = default.core_runner_conf.interfile_graph_timeout in
+  let info =
+    Arg.info [ "interfile-graph-timeout" ]
+      ~doc:
+        {|Maximum time in seconds to spend building the interfile call graph
+of a language; past it, its interfile rules run on single files. If set to 0
+will not have time limit. Defaults to 0.
+|}
   in
   Arg.value (Arg.opt Arg.int default info)
 
@@ -679,6 +690,26 @@ let o_taint_intrafile : bool Term.t =
           Other languages will fall back to intraprocedural analysis only.")
   in
   Arg.value (Arg.flag info)
+
+let o_taint_interfile : bool Term.t =
+  let info =
+    Arg.info [ "taint-interfile" ]
+      ~doc:
+        ("Enable cross-file taint analysis. \
+          When a file has sources but no sinks (or vice versa), companion \
+          files are discovered from the project-wide interfile call graph, \
+          parsed, and analysed together. Implies --taint-intrafile behaviour.")
+  in
+  Arg.value (Arg.flag info)
+
+let o_taint_interfile_depth : int Term.t =
+  let info =
+    Arg.info [ "taint-interfile-depth" ]
+      ~doc:
+        ("Maximum call chain depth for companion file discovery in \
+          cross-file taint analysis. Default is 3.")
+  in
+  Arg.value (Arg.opt Arg.int 3 info)
 
 (* TODO: Remove this, or adapt to Opengrep. *)
 (* ------------------------------------------------------------------ *)
@@ -1232,14 +1263,17 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       force_color gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       include_ incremental_output incremental_output_postprocess
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
-      max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
+      max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb
+      max_target_bytes
       num_jobs nosem opengrep_ignore_pattern optimizations
-      output output_enclosing_context pattern project_root taint_intrafile
+      output output_enclosing_context pattern project_root taint_interfile
+      taint_interfile_depth taint_intrafile
       effect_guards replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions semgrepignore_filename severity show_supported_languages
       skip_invalid_configs
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
-      _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
+      timeout_interfile timeout_interfile_graph timeout_threshold
+      (*  trace trace_endpoint *) use_git
       validate version _version_check vim vim_outputs
       x_ignore_semgrepignore_files x_ls x_ls_long =
     (* Print a warning if any of the internal or experimental options.
@@ -1254,7 +1288,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     (* Create engine configuration *)
     let engine_config = {
       Engine_config.custom_ignore_pattern = opengrep_ignore_pattern;
-      taint_intrafile = Some taint_intrafile;
     } in
 
     if output_enclosing_context && not json then
@@ -1331,6 +1364,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           timeout_threshold ||| default.core_runner_conf.timeout_threshold;
         max_memory_mb =
           max_memory_mb ||| default.core_runner_conf.max_memory_mb;
+        interfile_timeout = timeout_interfile;
+        interfile_graph_timeout = timeout_interfile_graph;
         max_match_per_file;
         dataflow_traces;
         nosem;
@@ -1338,8 +1373,12 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         time_flag;
         inline_metavariables;
         matching_explanations;
+        (* taint_interfile implies taint_intrafile; enforced in
+           Core_scan.scan. *)
         taint_intrafile;
         effect_guards;
+        taint_interfile;
+        taint_interfile_depth;
         engine_config;
       }
     in
@@ -1367,6 +1406,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         explicit_targets;
         respect_gitignore;
         respect_semgrepignore_files = not x_ignore_semgrepignore_files;
+        default_semgrepignore_patterns = Semgrepignore.Semgrep_scan_legacy;
         semgrepignore_filename;
         exclude_minified_files;
       }
@@ -1465,11 +1505,12 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_include $ o_incremental_output $ o_incremental_output_postprocess
     $ o_json $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
-    $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes
+    $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb
+    $ o_max_target_bytes
     $ o_num_jobs $ o_nosem $ CLI_common.o_opengrep_ignore_pattern
     $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root
-    $ o_taint_intrafile
+    $ o_taint_interfile $ o_taint_interfile_depth $ o_taint_intrafile
     $ o_effect_guards
     $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
@@ -1477,6 +1518,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_skip_invalid_configs $ o_strict
     $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
+    $ o_timeout_interfile_graph
     $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate
     $ o_version $ o_version_check $ o_vim $ o_vim_outputs
     $ o_ignore_semgrepignore_files $ o_ls $ o_ls_long)

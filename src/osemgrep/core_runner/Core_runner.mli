@@ -16,7 +16,11 @@ type conf = {
   dynamic_timeout_max_multiplier : int;
   dynamic_timeout_unit_kb : int;
   allow_rule_timeout_control : bool;
-  timeout_threshold : int; (* output flags *)
+  timeout_threshold : int;
+  (* time limits of the interfile analysis of a rule and of the interfile
+     graph build of a language *)
+  interfile_timeout : int;
+  interfile_graph_timeout : int;
   (* features *)
   nosem : bool;
   strict : bool;
@@ -27,6 +31,8 @@ type conf = {
   dataflow_traces : bool;
   taint_intrafile : bool;
   effect_guards : bool;
+  taint_interfile : bool;
+  taint_interfile_depth : int;
   (* Engine configuration for various features *)
   engine_config : Engine_config.t;
 }
@@ -56,14 +62,15 @@ type func = {
     Find_targets.conf ->
     Match_patterns.matching_conf ->
     Rule_error.rules_and_invalid ->
-    Fpath.t list ->
+    Target_and_root.t list ->
     Core_result.result_or_exn;
 }
 
 val default_conf : conf
 
 (* builder *)
-val mk_result : ?inline:bool -> Rule.rule list -> Core_result.t -> result
+val mk_result :
+  ?inline:bool -> ?taint_interfile:bool -> Rule.rule list -> Core_result.t -> result
 
 (* Core_scan.func adapter to be used in osemgrep.
 
@@ -86,4 +93,4 @@ val targets_and_rules_for_files :
 
 (* the targets of each language of the rules *)
 val split_jobs_by_language :
-  Find_targets.conf -> Rule.t list -> Fpath.t list -> Lang_job.t list
+  Find_targets.conf -> Rule.t list -> Target_and_root.t list -> Lang_job.t list

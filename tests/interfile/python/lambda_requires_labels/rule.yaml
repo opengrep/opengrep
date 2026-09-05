@@ -1,0 +1,16 @@
+rules:
+  - id: lambda-requires-labels
+    options:
+      taint_interfile: true
+    message: taint reaches sink with all required labels
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    pattern-sources:
+      - label: A
+        pattern: source_a()
+      - label: B
+        pattern: source_b()
+    pattern-sinks:
+      - requires: A and B
+        pattern: sink(...)

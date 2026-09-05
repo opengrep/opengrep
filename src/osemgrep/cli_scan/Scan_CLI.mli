@@ -111,6 +111,8 @@ val o_nosem : bool Cmdliner.Term.t
 val o_optimizations : bool Cmdliner.Term.t
 val o_output : string option Cmdliner.Term.t
 val o_output_enclosing_context : bool Cmdliner.Term.t
+val o_taint_interfile : bool Cmdliner.Term.t
+val o_taint_interfile_depth : int Cmdliner.Term.t
 val o_taint_intrafile : bool Cmdliner.Term.t
 val o_rewrite_rule_ids : bool Cmdliner.Term.t
 val o_sarif : bool Cmdliner.Term.t
@@ -123,6 +125,7 @@ val o_text_outputs : string list Cmdliner.Term.t
 val o_time : bool Cmdliner.Term.t
 val o_timeout : float option Cmdliner.Term.t
 val o_timeout_interfile : int Cmdliner.Term.t
+val o_timeout_interfile_graph : int Cmdliner.Term.t
 val o_timeout_threshold : int option Cmdliner.Term.t
 val o_inline_metavariables : bool Cmdliner.Term.t
 (* val o_trace : bool Cmdliner.Term.t

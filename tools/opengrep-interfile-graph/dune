@@ -1,0 +1,26 @@
+(executables
+ (names Main)
+ (libraries
+   ast_generic
+   semgrep.parsing
+   cmdliner
+   commons
+   call_graph
+   opengrep_project_index
+   parallelism
+   TCB
+   semgrep.core_scan
+   semgrep.targeting
+   semgrep.core_runner
+   semgrep.parsing_languages
+   semgrep.tainting
+   fpath
+ )
+ (modes native)
+)
+
+(install
+ (package semgrep)
+ (section bin)
+ (files (Main.exe as opengrep-interfile-graph))
+)

@@ -502,10 +502,7 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
     taint_intrafile = conf.taint_intrafile;
     (* the ignore annotations of a scan apply to a test run too *)
     engine_config =
-      {
-        Engine_config.default with
-        custom_ignore_pattern = conf.opengrep_ignore_pattern;
-      };
+      { Engine_config.custom_ignore_pattern = conf.opengrep_ignore_pattern };
     (* without the flags we run the limits of a scan, so that a rule that
      * never finishes fails the test instead of hanging *)
     timeout =
@@ -516,7 +513,9 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
     max_memory_mb =
       Option.value conf.max_memory_mb
         ~default:Core_runner.default_conf.max_memory_mb;
-    effect_guards = false
+    effect_guards = false;
+    taint_interfile = false;
+    taint_interfile_depth = 3;
   }
 
 let run_rules_against_targets caps (env : env) (rules : Rule.t list)

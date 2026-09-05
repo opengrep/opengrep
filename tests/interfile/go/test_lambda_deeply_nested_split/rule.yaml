@@ -1,0 +1,13 @@
+rules:
+  - id: test-lambda-deeply-nested
+    options:
+      taint_interfile: true
+    message: Tainted data flows to sink through deeply nested lambdas
+    languages:
+      - go
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink($X)

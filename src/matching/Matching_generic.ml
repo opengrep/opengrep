@@ -269,6 +269,11 @@ let rec equal_ast_bound_code (config : Rule_options.t) (a : MV.mvalue)
         | None, _ ->
             true
         | Some i1, Some i2 ->
+            (* The names are already established equal above (first conjunct).
+               The strict sid comparison keeps same-named locals in different
+               scopes apart; two definitions of one name in one scope share
+               their binding, so a rule like 'def $R ... def $R' unifies
+               them under one metavar. *)
             (not config.unify_ids_strictly) || G.equal_id_info i1 i2
         | Some _, None -> false)
     (* In Ruby, they use atoms for metaprogramming to generate fields

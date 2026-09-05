@@ -215,7 +215,11 @@ let check_targets_rules (caps : < caps ; .. >) targets_rules
     core_run_func.run ~git_repo:false core_runner_conf
       (* These two configs are irrelevant to the "validate" subcommand *)
       Find_targets.default_conf Match_patterns.default_matching_conf
-      (metarules, []) targets_rules
+      (metarules, [])
+      (List_.map
+        (fun (fpath : Fpath.t) : Target_and_root.t ->
+          { target_fpath = fpath; project_root = None })
+        targets_rules)
   in
 
   let results =

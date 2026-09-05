@@ -35,7 +35,7 @@ module SS = Set.Make (String)
 (* Types *)
 (*****************************************************************************)
 type diff_scan_func =
-  Fpath.t list -> Rule.rules -> Core_result.result_or_exn
+  Target_and_root.t list -> Rule.rules -> Core_result.result_or_exn
 
 (*****************************************************************************)
 (* Helpers *)
@@ -46,34 +46,42 @@ type diff_scan_func =
    baseline commit scan. Matches are considered identical if the
    tuples containing the rule ID, file path, and matched code snippet
    are equal. *)
-let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
-    (head : Core_result.t)
-    (renamed : (string (* filename *) * string (* filename *)) list) =
-  let extract_sig renamed (m : Core_match.t) =
-    let rule_id = m.rule_id in
-    let path =
-      !!(m.path.internal_path_to_content) |> fun p ->
-      Option.bind renamed
-        (List_.find_some_opt (fun (before, after) ->
-             if String.equal after p then Some before else None))
-      |> Option.value ~default:p
-    in
-    let start_range, end_range = m.range_loc in
-    (* TODO: what if we get an exn? *)
-    let syntactic_ctx =
-      UFile.lines_of_file_exn
-        (start_range.pos.line, end_range.pos.line)
-        m.path.internal_path_to_content
-    in
-    (rule_id, path, syntactic_ctx)
+(* The path component is taken relative to the scan root.  Matches normally
+   carry the target path as given (relative), but a match on an absolute
+   target carries an absolute path — into the baseline worktree for the
+   baseline scan, into the real checkout for the head one — so those must be
+   relativized against each scan's own root or they could never compare
+   equal and such findings could never be deduplicated. *)
+let extract_sig ~(root : Fpath.t) renamed (m : Core_match.t) =
+  let rule_id = m.rule_id in
+  let abs_path = m.path.internal_path_to_content in
+  let rel_path =
+    match Fpath.relativize ~root abs_path with
+    | Some rel -> rel
+    | None -> abs_path
   in
-  let sigs = Hashtbl.create 10 in
-  Git_wrapper.run_with_worktree caps ~commit (fun () ->
-      Globals.reset ();
-      List.iter
-        (fun ({ pm; _ } : Core_result.processed_match) ->
-          pm |> extract_sig None |> fun x -> Hashtbl.add sigs x true)
-        baseline.processed_matches);
+  let path =
+    !!rel_path |> fun p ->
+    Option.bind renamed
+      (List_.find_some_opt (fun (before, after) ->
+           if String.equal after p then Some before else None))
+    |> Option.value ~default:p
+  in
+  let start_range, end_range = m.range_loc in
+  (* TODO: what if we get an exn? *)
+  let syntactic_ctx =
+    UFile.lines_of_file_exn (start_range.pos.line, end_range.pos.line) abs_path
+  in
+  (rule_id, path, syntactic_ctx)
+
+(* [baseline_sigs] must have been built inside the worktree that produced the
+   baseline matches: reading a match's lines needs its file, and an interfile
+   match's path is absolute into that worktree, which is gone by the time we
+   get here. *)
+let remove_matches_in_baseline sigs (head : Core_result.t)
+    (renamed : (string (* filename *) * string (* filename *)) list) =
+  let root = Fpath.v (Sys.getcwd ()) in
+  let extract_sig renamed m = extract_sig ~root renamed m in
   let removed = ref 0 in
   let processed_matches =
     List_.filter_map
@@ -109,7 +117,7 @@ let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
    scan. Subsequently, eliminate any previously identified matches
    from the results of the head checkout scan. *)
 let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
-    (profiler : Profiler.t)
+    (conf : Scan_CLI.conf) (profiler : Profiler.t)
     (result_or_exn : Core_result.result_or_exn) (rules : Rule.rules)
     (commit : string) (status : Git_wrapper.status)
     (core : diff_scan_func) : Core_result.result_or_exn =
@@ -157,21 +165,94 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                        !!(pm.path.internal_path_to_content))
                 |> prepare_targets
               in
-              core paths_in_match baseline_rules))
+              (* Per-target replay targets carry [project_root = None]: the
+                 per-target engine does not consult it.  Interfile replay
+                 targets get real roots below instead — see
+                 [baseline_targets]. *)
+              let wrap_as_targets (fpaths : Fpath.t list)
+                  : Target_and_root.t list =
+                List_.map
+                  (fun (fpath : Fpath.t) : Target_and_root.t ->
+                    { target_fpath = fpath; project_root = None })
+                  fpaths
+              in
+              (* A rule can turn interfile on by itself, so the CLI flag alone
+                 does not decide this. *)
+              let interfile_in_play =
+                conf.core_runner_conf.taint_interfile
+                || List.exists
+                     (fun (rule : Rule.rule) ->
+                        match rule.Rule.options with
+                        | Some opts -> opts.taint_interfile
+                        | None -> false)
+                     rules
+              in
+              let baseline_targets =
+                if interfile_in_play then
+                  (* An interfile match depends on files that carry no match of
+                     their own — the caller supplying the taint — so replaying
+                     only [paths_in_match] cannot reproduce it: the baseline
+                     comes up empty and every pre-existing cross-file finding
+                     gets reported as newly introduced.  The head's scanned set
+                     is no help either, since a diff scan already narrowed the
+                     head to the changed files, so take the baseline's own full
+                     target set. *)
+                  (* Rediscover targets AND project roots inside the baseline
+                     worktree, exactly as the head scan discovered them in the
+                     real checkout.  Rebuilding targets from bare paths with
+                     [project_root = None] would make interfile dispatch fall
+                     back to [cwd] as the root — and [run_with_worktree] enters
+                     the worktree at the subdirectory matching the launch cwd,
+                     so a scan launched from a repo subdirectory would build
+                     the baseline graph without the companion files outside
+                     that subdirectory, resurrecting pre-existing cross-file
+                     findings as "new".  Multi-root scans lose their per-target
+                     roots the same way. *)
+                  let { Find_targets.selected = all_in_baseline; _ } =
+                    Find_targets.get_target_fpaths_with_project_roots
+                      conf.targeting_conf conf.target_roots
+                  in
+                  all_in_baseline
+                else wrap_as_targets paths_in_match
+              in
+              let res = core baseline_targets baseline_rules in
+              (* Build the signatures HERE, still inside the worktree that
+                 produced these matches: an interfile match's path is absolute
+                 into this worktree, and it is removed as soon as we return. *)
+              let root = Fpath.v (Sys.getcwd ()) in
+              let sigs =
+                match res with
+                | Ok (baseline_r : Core_result.t) ->
+                  let tbl =
+                    Hashtbl.create
+                      (List.length baseline_r.processed_matches)
+                  in
+                  (* one binding per baseline occurrence: identical findings
+                     at several places of a file each remove one head finding *)
+                  List.iter
+                    (fun ({ pm; _ } : Core_result.processed_match) ->
+                       Hashtbl.add tbl (extract_sig ~root None pm) true)
+                    baseline_r.processed_matches;
+                  tbl
+                | Error _ -> Hashtbl.create 0
+              in
+              (res, sigs)))
     in
     match baseline_result with
-    | Error _exn -> baseline_result
-    | Ok baseline_r ->
-        Ok (remove_matches_in_baseline caps commit baseline_r r status.renamed)
+    | res, _sigs when Result.is_error res -> res
+    | _res, sigs -> Ok (remove_matches_in_baseline sigs r status.renamed)
   else Ok r
 
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
-let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
-    (baseline : Find_targets.baseline_ref) (targets : Fpath.t list)
-    (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
+let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
+    (profiler : Profiler.t) (baseline : Find_targets.baseline_ref)
+    (targets : Target_and_root.t list)
+    (rules : Rule.rules)
+    ~(head_scan_func : diff_scan_func)
+    ~(baseline_scan_func : diff_scan_func) :
     Core_result.result_or_exn =
   Logs.info (fun m ->
       m "running differential scan on baseline %s"
@@ -227,17 +308,25 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
   in
   (* git reports plain relative paths; a "./"-prefixed scanning root would
      otherwise never match them *)
-  let targets = List_.map relative_to_cwd targets in
+  let targets =
+    List_.map
+      (fun (t : Target_and_root.t) ->
+        { t with target_fpath = relative_to_cwd t.target_fpath })
+      targets
+  in
   let targets =
     let added_or_modified =
       status.added @ status.modified |> List_.map Fpath.v
     in
     let added_or_modified_set = Fpath.Set.of_list added_or_modified in
-    List.filter (fun p -> Fpath.Set.mem p added_or_modified_set) targets
+    List.filter
+      (fun ({ Target_and_root.target_fpath; _ }) ->
+        Fpath.Set.mem target_fpath added_or_modified_set)
+      targets
   in
   let (head_scan_result : Core_result.result_or_exn) =
     Profiler.record profiler ~name:"head_core_time" (fun () ->
-        diff_scan_func targets rules)
+        head_scan_func targets rules)
   in
-  scan_baseline_and_remove_duplicates caps profiler head_scan_result rules
-    commit status diff_scan_func
+  scan_baseline_and_remove_duplicates caps conf profiler head_scan_result rules
+    commit status baseline_scan_func

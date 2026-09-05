@@ -1,0 +1,12 @@
+rules:
+  - id: test-inheritance-intrafile
+    languages: [python]
+    severity: ERROR
+    message: "Taint flows through inherited method override"
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

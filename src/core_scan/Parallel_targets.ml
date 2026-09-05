@@ -41,8 +41,28 @@ let core_error_of_path_exc (internal_path : Fpath.t) (e : Exception.t) :
 (* Entry point *)
 (*****************************************************************************)
 
+(* Run jobs in parallel on a pre-ordered list of work items; the caller
+   orders [items] and supplies an [exception_handler]. *)
+let map_work_items (caps : < Cap.fork >) (ncores : int)
+    ~(exception_handler : 'a -> Exception.t -> 'err)
+    (f : 'a -> 'b) (items : 'a list) : ('b, 'err) result list =
+  if ncores <= 1 then
+    items
+    |> List_.map (fun (x : 'a) ->
+         Domainslib_.wrap_result f ~exception_handler x)
+  else (
+    Logs.debug (fun m ->
+        m "running in parallel with %d cores on %d work items" ncores
+          (List.length items));
+    Domainslib_.parmap caps
+      ~num_domains:ncores
+      ~chunksize:1
+      ~exception_handler
+      f
+      items)
+
 (* Run jobs in parallel, using number of cores specified with -j *)
-let map_targets caps (ncores : int)
+let map_targets (caps : < Cap.fork >) (ncores : int)
     (f : Target.t -> 'a) (targets : Target.t list) :
     ('a, Target.t * Core_error.t) result list =
   (*
@@ -57,30 +77,9 @@ let map_targets caps (ncores : int)
      the two modes, we always sort the target queue in the same way.
   *)
   let targets = sort_targets_by_decreasing_size targets in
-
-  (* Default to core_error and the target here since that's what's most
-     usefule in Core_scan. Maybe we should instead pass this as a parameter? *)
   let exception_handler (x : Target.t) (e : Exception.t) :
       Target.t * Core_error.t =
     let internal_path = Target.internal_path x in
     (x, core_error_of_path_exc internal_path e)
   in
-
-  (* old:
-   *    if ncores <= 1 then List_.map (fun x -> Ok (f x)) targets else ( ... )
-   * But this was wrong because 'f' can throw exns and so we would
-   * get a different semantic when ncores > 1 where we capture exns hence
-   * the use of wrap_result below.
-   *)
-  if ncores <= 1 then
-    targets |> List_.map (fun x -> Domainslib_.wrap_result f ~exception_handler x)
-  else (
-    Logs.debug (fun m ->
-        m "running in parallel with %d cores on %d targets" ncores
-          (List.length targets));
-    Domainslib_.parmap caps
-      ~num_domains:ncores
-      ~chunksize:1
-      ~exception_handler
-      f
-      targets)
+  map_work_items caps ncores ~exception_handler f targets

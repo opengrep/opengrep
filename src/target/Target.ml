@@ -37,6 +37,7 @@ type regular = {
    * this code was unused at that point.
    *)
   lockfile : Lockfile.t option;
+  project_root : Fpath.t option;
 }
 [@@deriving show]
 
@@ -95,14 +96,14 @@ let path_of_origin (origin : Origin.t) : path =
 (* Builders *)
 (*****************************************************************************)
 
-let mk_regular ?lockfile analyzer products (origin : Origin.t) : regular =
-  { path = path_of_origin origin; analyzer; products; lockfile }
+let mk_regular ?lockfile ?project_root analyzer products (origin : Origin.t) : regular =
+  { path = path_of_origin origin; analyzer; products; lockfile; project_root }
 
-let mk_target (xlang : Xlang.t) (file : Fpath.t) : t =
+let mk_target ?(project_root : Fpath.t option) (xlang : Xlang.t) (file : Fpath.t) : t =
   let all = Product.all in
   (* TODO: should do the check in the other mk_xxx ? *)
   assert (UFile.is_reg ~follow_symlinks:true file);
-  Regular (mk_regular xlang all (Origin.File file))
+  Regular (mk_regular ?project_root xlang all (Origin.File file))
 
 (*****************************************************************************)
 (* Semgrep_output_v1.target -> Target.t *)
@@ -128,6 +129,15 @@ let internal_path (target : t) : Fpath.t =
   | Regular { path = { internal_path_to_content; _ }; _ } ->
       internal_path_to_content
   | Lockfile { path; _ } -> path
+
+(* Normalised absolute content path of a regular target (None for
+   lockfiles).  Relative paths are relative to [cwd], not the project
+   root. *)
+let abs_path ~(cwd : Fpath.t) (target : t) : Fpath.t option =
+  match target with
+  | Regular { path = { internal_path_to_content; _ }; _ } ->
+      Some (fst (Fpath_.absolutify ~cwd internal_path_to_content))
+  | Lockfile _ -> None
 
 let origin (target : t) : Origin.t =
   match target with

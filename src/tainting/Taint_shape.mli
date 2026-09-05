@@ -6,8 +6,20 @@ val taints_and_shape_are_relevant : Taint.taints -> shape -> bool
 (** [true] iff the union of [taints] and [gather_all_taints_in_shape shape]
  * is non-empty, or if [shape] contains a cleaned offset. *)
 
+val max_poly_offset : Lang.t -> int
+(** Poly-taint offset length bound; longer only where a language's
+    destructuring needs it to stay field-sensitive (see
+    [Limits_semgrep.taint_MAX_POLY_OFFSET]). *)
+
+val compose_offset :
+  lang:Lang.t -> Taint.offset list -> Taint.offset list -> Taint.offset list
+(** [compose_offset ~lang base offset] appends [offset]'s segments to [base]
+    one at a time, stopping at the first segment already present (cycle
+    guard) or at [max_poly_offset lang] segments total.  [base] is kept
+    as-is; only extensions are guarded. *)
+
 val fix_poly_taint_with_offset :
-  Taint.offset list -> Taint.taints -> Taint.taints
+  lang:Lang.t -> Taint.offset list -> Taint.taints -> Taint.taints
 (** Fix taints with an offset. It just attaches the offset to each polymorphic
     taint variable (see 'Taint.Var') in the set.
 
@@ -41,6 +53,7 @@ val gather_all_taints_in_shape : shape -> Taint.taints
 (** Gather and union all taints reachable through a shape. *)
 
 val find_in_cell :
+  lang:Lang.t ->
   Taint.offset list ->
   cell ->
   [ `Found of cell
@@ -76,7 +89,10 @@ val find_in_cell :
   *)
 
 val find_in_cell_poly :
-  Taint.offset list -> cell -> (Taint.taints * shape) option
+  lang:Lang.t ->
+  Taint.offset list ->
+  cell ->
+  (Taint.taints * shape) option
 (** Find an offset in a cell, BUT if the full offset cannot be found, then
     it returns the taints of the offset prefix that was found; and if those
     taints are polymorphic, then it adds to them the remaining offset.
@@ -90,6 +106,7 @@ val find_in_cell_poly :
     FEATURE(field-sensitivity) *)
 
 val find_in_shape_poly :
+  lang:Lang.t ->
   taints:Taint.taints ->
   Taint.offset list ->
   shape ->
@@ -112,6 +129,23 @@ val update_offset_and_unify :
 
 val clean_cell : Taint.offset list -> cell -> cell
 (** [clean_cell offset cell] marks the 'offset' in 'cell' as clean.  *)
+
+val truncate_shape : max_depth:int -> shape -> shape
+(** Widen a shape to at most [max_depth] levels of ['Obj'] nesting. Subtrees
+ * below the cutoff collapse into the cutoff cell's taints (so their taints
+ * remain reachable, with less offset precision); ['Clean] markers below the
+ * cutoff are dropped; ['Fun'] shapes are left untouched. Bounds the
+ * ascending shape chain of self-recursive tree-builders, which have no
+ * fixpoint in the shape domain. *)
+
+val truncate_effect :
+  max_depth:int -> Shape_and_sig.Effect.t -> Shape_and_sig.Effect.t
+(** [truncate_shape] applied to every shape in one effect (a ['ToReturn']
+ * data shape, or ['ToSinkInCall'] argument shapes). *)
+
+val truncate_signature :
+  max_depth:int -> Shape_and_sig.Signature.t -> Shape_and_sig.Signature.t
+(** [truncate_effect] applied to every effect of a signature. *)
 
 val enum_in_cell : cell -> (Taint.offset list * Taint.taints) Seq.t
 (**

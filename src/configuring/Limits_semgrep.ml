@@ -46,6 +46,10 @@ let svalue_prop_MAX_VISIT_SYM_IN_CYCLE_CHECK = 1000
  * So e.g. we limit the amount of time that Pro will spend inferring taint signatures.
  * Note that 'Time_limit.set_timeout' cannot be nested. *)
 let taint_FIXPOINT_TIMEOUT = 0.2
+
+(* Maximum call chain depth followed by interfile taint when neither the
+ * scan nor the rule sets one; negative is unbounded. *)
+let taint_INTERFILE_DEPTH = 3
 (* this replaces the taint FIXPOINT_TIMEOUT in the config file, in a fixpoint if a node
  * is visted more often than this the assumption is that it is a cycle and so the
  * fixpoint stops *)
@@ -71,21 +75,55 @@ let taint_MAX_TAINT_SET_SIZE = 25
 
 (** Bounds the length of the offsets we can track per arg/poly-taint.
  *
- * Previously [1] as a perf guard against long dotted chains (see
- * [fix_poly_taint_with_offset] comment). Bumped to [2] so destructures
- * that go through a Switch case — e.g. Clojure's arity-dispatched
- * [PatList([PatConstructor(:keys, [PatKeyVal …])])] — can still
- * address [arg[0].:field] at full length without truncating to
- * [arg[0]] (which conflates all fields and breaks field-sensitivity).
- * Direct [ParamPattern] destructures (Elixir, JS, Rust, …) only need
- * length 1 and are unaffected. *)
+ * [4] keeps field-sensitivity for nested destructuring / callback /
+ * library-access patterns (Clojure, Elixir, Python, Ruby all have
+ * cross-function tests that need it).
+ *
+ * Poly-taint set WIDTH grows combinatorially with this bound, though
+ * (each extra level multiplies reachable fields × indexes), so on a
+ * language with deep struct nesting over a large codebase it makes the
+ * interfile fixpoint explode — grafana Go crawled for minutes at [4].
+ * [Taint_shape.max_poly_offset] lowers such languages to
+ * [taint_MAX_POLY_OFFSET_FLAT]. *)
 let taint_MAX_POLY_OFFSET = 4
+let taint_MAX_POLY_OFFSET_FLAT = 1
 
 (** Maximum depth for shape equality comparison to prevent infinite recursion
  * in pathological patterns like obj[key] = [obj[key], item] that create
  * unbounded recursive structures. When both shapes exceed this depth, we
  * consider them equal (widening approximation) to force fixpoint convergence. *)
 let taint_MAX_SHAPE_DEPTH = 50
+
+(** Maximum [Obj] nesting depth for shapes STORED in a signature database
+ * during the interfile SCC fixpoint (see [Taint_shape.truncate_signature]).
+ *
+ * [taint_MAX_SHAPE_DEPTH] above only widens the equality test: it stops the
+ * iteration after shapes approaching depth 50 have already been built and
+ * instantiated, whose cost is astronomically out of reach for a
+ * self-recursive tree-builder (a function that wraps its own recursive
+ * result in a fresh container, e.g. a JSON-schema transformer). Such a
+ * function has no fixpoint in the shape domain — each SCC round nests its
+ * return shape one level deeper, and branch unification can double the node
+ * count per round. This limit widens where the cost is incurred: subtrees
+ * below the cutoff collapse into the cutoff cell's taints, in the spirit of
+ * (and consistent with) [taint_MAX_POLY_OFFSET]. With branch unification
+ * doubling nodes per level the worst-case shape is ~2^depth nodes, so keep
+ * this in the single digits. *)
+let taint_MAX_SIG_SHAPE_DEPTH = 8
+
+(** Maximum nesting of [Fun] shapes stored in a signature database (see
+ * [Taint_shape.bound_fun_shape]).
+ *
+ * A call on an unknown callee, such as a parameter's method, is stored in
+ * the signature as an effect with the shapes of its arguments. When an
+ * argument is a function of the same SCC, its shape is that function's
+ * signature, and that signature contains the same call effect. Each
+ * fixpoint round then stores the previous round's signature inside the new
+ * one, so the signature never stabilises and its size doubles or more per
+ * round. A [Fun] shape nested deeper than this collapses to [Bot]: the
+ * callback's own effects are kept, a callback it passes on to another
+ * unknown callee is dropped. *)
+let taint_MAX_SIG_FUN_DEPTH = 2
 
 (** Maximum number of outer fixpoint passes for the self-sig convergence
  * loop in [Dataflow_tainting.fixpoint_aux]. Each pass re-runs the
@@ -119,3 +157,14 @@ let taint_MAX_GUARD_COND_NODES = 512
  * as the atom cap. Lowering this trades guard precision for speed; near
  * zero it degenerates to arity-only guards. *)
 let taint_MAX_GUARD_CLAUSES = 64
+
+(*****************************************************************************)
+(* Project index (interfile call graph) *)
+(*****************************************************************************)
+
+(* Iteration caps on the projidx type-augmentation fixpoints; the passes are
+ * monotone, the caps only bound how deep return-type / field-type chains
+ * propagate. See 'src/project_index/Main.ml'. *)
+let projidx_RETURN_TYPES_MAX_ITERS = 4
+let projidx_OBJECT_MAPPINGS_MAX_ITERS = 5
+let projidx_CALL_GRAPH_MAX_PASSES = 5
