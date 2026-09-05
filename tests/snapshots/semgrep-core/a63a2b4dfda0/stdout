@@ -1,0 +1,18 @@
+--- begin input files ---
+main.py
+rules.yml
+sinks.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 21 insertions(+)
+ create mode 100644 main.py
+ create mode 100644 rules.yml
+ create mode 100644 sinks.py
+
+    sinks.py
+   ❯❯❱ interfile-taint
+          cross-file taint
+
+            3┆ sink(v)
+

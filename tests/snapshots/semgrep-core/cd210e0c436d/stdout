@@ -1,0 +1,49 @@
+--- begin input files ---
+main.py
+rules.yml
+sinks.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 24 insertions(+)
+ create mode 100644 main.py
+ create mode 100644 rules.yml
+ create mode 100644 sinks.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    sinks.py
+   ❯❯❱ interfile-taint
+          cross-file taint
+
+            3┆ sink(v)
+
+             Taint comes from:
+               5┆     leak(source())
+
+             This is how taint reaches the sink:
+               5┆     leak(source())
+
+             Taint flows through these intermediate variables:
+               2┆ def leak(v):
+
+             then reaches:
+               3┆     sink(v)
+            ⋮┆----------------------------------------
+            3┆ sink(v)
+
+             Taint comes from:
+               8┆     leak(source())
+
+             This is how taint reaches the sink:
+               8┆     leak(source())
+
+             Taint flows through these intermediate variables:
+               2┆ def leak(v):
+
+             then reaches:
+               3┆     sink(v)
+

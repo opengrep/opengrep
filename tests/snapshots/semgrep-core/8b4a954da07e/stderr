@@ -1,34 +1,12 @@
---- begin input files ---
-main.py
-rules.yml
-sinks.py
---- end input files ---
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
-Initialized empty Git repository in <TMP>/<MASKED>/.git/
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
-[main <MASKED>] Add files
- 3 files changed, 21 insertions(+)
- create mode 100644 main.py
- create mode 100644 rules.yml
- create mode 100644 sinks.py
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
-[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add the sink'
-[main <MASKED>] Add the sink
- 1 file changed, 1 insertion(+), 1 deletion(-)
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-[32m✔[39m [1mOpengrep OSS[0m
-  [32m✔[39m Basic security coverage for first-party code vulnerabilities.
-
-[1m  Loading rules from local config...[0m
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Touch the sink file'
 
 
 ┌─────────────┐
@@ -42,26 +20,15 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Scan Status │
 └─────────────┘
   Scanning 3 files tracked by git with 1 Code rule:
-  Scanning 3 files.
-Removed 0 findings that were in baseline scan
-
-
-┌────────────────┐
-│ 1 Code Finding │
-└────────────────┘
-
-    sinks.py
-   ❯❯❱ interfile-taint
-          cross-file taint
-
-            3┆ sink(v)
-
+  Scanning 2 files.
+Removed 1 finding that were in baseline scan
 
 
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files changed since baseline commit.
 
-Ran 1 rule on 0 files: 1 finding.
+Ran 1 rule on 0 files: 0 findings.
 ASSERT exit code
