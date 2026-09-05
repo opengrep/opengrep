@@ -919,22 +919,32 @@ class ['self] resolve_visitor env lang =
             | Lang.Js
             | Lang.Ts ->
                 true
-            | _ -> ( match top_context env with AtToplevel -> true | _ -> false)
+            | _ -> (
+                match top_context env with
+                | AtToplevel
+                | InFunction ->
+                    true
+                | _ -> false)
           in
           if resolve then (
-            (* A top-level definition of a name the file already binds
-               rebinds it: the same identity, at its own site. *)
+            (* The scope a definition binds its name in: the enclosing
+               function's block for a nested function, the file's imported
+               scope otherwise (see above). A definition of a name that
+               scope already binds rebinds it: the same identity, at its
+               own site. *)
+            let scope, add_to_scope =
+              match (top_context env, !(env.names.blocks)) with
+              | InFunction, current :: _ -> (current, add_ident_current_scope)
+              | _ -> (!(env.names.imported), add_ident_imported_scope)
+            in
             let binding =
-              match top_context env with
-              | AtToplevel -> (
-                  match lookup (fst id) [ !(env.names.imported) ] with
-                  | Some { entname = _, bound; _ } -> SId.to_int bound
-                  | None -> fresh_binding env)
-              | _ -> fresh_binding env
+              match lookup (fst id) [ scope ] with
+              | Some { entname = _, bound; _ } -> SId.to_int bound
+              | None -> fresh_binding env
             in
             let sid = SId.of_tok ~binding ~file:env.file (snd id) in
             let resolved = untyped_ent (resolved_name_kind env lang, sid) in
-            add_ident_imported_scope id resolved env.names;
+            add_to_scope id resolved env.names;
             set_resolved env id_info resolved;
             (* Mark the name as a function definition so the matcher can still
                unify two same-named defs — which now resolve to distinct
