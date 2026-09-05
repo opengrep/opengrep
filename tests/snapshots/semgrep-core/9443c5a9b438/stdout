@@ -7,4 +7,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 13 insertions(+)
  create mode 100644 emptyrules.yaml
  create mode 100644 stupid.py
-{"version":"<MASKED>","results":[],"errors":[{"code":2,"level":"error","type":"SemgrepError","message":"No config given. Run with `--config auto` or see https://semgrep.dev/docs/running-rules/ for instructions on running with a specific config"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"<MASKED>","results":[],"errors":[{"code":7,"level":"error","type":"Missing config","message":"No config given. Run with `--config auto` or see https://semgrep.dev/docs/running-rules/ for instructions on running with a specific config"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}

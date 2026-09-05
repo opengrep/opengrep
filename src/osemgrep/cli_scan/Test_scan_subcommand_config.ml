@@ -52,6 +52,16 @@ let rule_id_target : F.t =
    project root. *)
 let absolute_eqeq : string = !!(Fpath.v (Sys.getcwd ()) // root / "rules" / "eqeq.yaml")
 
+(* An absolute --config path outside the scanned directory prefixes the rule
+   ids with its own directories, as pysemgrep's convert_config_id_to_prefix
+   did, so both the rule id and the fingerprint depend on where the checkout
+   lives. *)
+let mask_absolute_config_prefix : (string -> string) list =
+  [
+    Testo.mask_pcre_pattern {|"check_id":"([^"]*)tests\.configs\.rules\.|};
+    Testo.mask_pcre_pattern {|"fingerprint":"([0-9a-f]+)_|};
+  ]
+
 (* The remote rule of the Python tests. Nothing is fetched: the fixture
    below is served in its place. *)
 let template_url : string =
@@ -99,7 +109,7 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~targets:[ "targets/basic/stupid.py" ]);
       (* python: test_basic_rule__absolute *)
       t "config: an absolute path" ~checked_output:(Testo.stdout ())
-        ~normalize:normalise
+        ~normalize:(normalise @ mask_absolute_config_prefix)
         (json_scan caps ~config_args:[ "--config"; absolute_eqeq ]
            ~targets:[ "targets/basic/stupid.py" ]);
       (* A hidden directory of rules, named explicitly.

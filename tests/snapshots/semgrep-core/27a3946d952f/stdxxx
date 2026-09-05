@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/add-metadata-hcl.yaml
  create mode 100644 targets/add-metadata-hcl.hcl
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -40,23 +31,23 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
     ❯❱ rules.ec2-instance-metadata-options
           EC2 instance does not set metadata options
 
-          ▶▶┆ Autofix ▶ resource "aws_instance" "example1" { ami           = "ami-005e54dee72cc1d01" instance_type =
+           ▶▶┆ Autofix ▶ resource "aws_instance" "example1" { ami           = "ami-005e54dee72cc1d01" instance_type =
               "t2.micro" metadata_options { http_tokens = "required" } }
             1┆ resource "aws_instance" "example1" {
             2┆   ami           = "ami-005e54dee72cc1d01"
             3┆   instance_type = "t2.micro"
-            4┆ 
+            4┆
             5┆   metadata_options {
             6┆     http_tokens = "required"
             7┆   }
             8┆ }
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ resource "aws_instance" "example2" { ami           = "ami-005e54dee72cc1d02" instance_type =
+           ▶▶┆ Autofix ▶ resource "aws_instance" "example2" { ami           = "ami-005e54dee72cc1d02" instance_type =
               "t2.micro" metadata_options { http_tokens = "required" } }
             6┆ resource "aws_instance" "example2" {
             7┆   ami           = "ami-005e54dee72cc1d02"
             8┆   instance_type = "t2.micro"
-            9┆ 
+            9┆
            10┆   metadata_options {
            11┆     http_tokens = "required"
            12┆   }
@@ -67,7 +58,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 2 findings.
 --- targets/add-metadata-hcl.hcl after the scan ---

@@ -12,6 +12,7 @@ val cli_errors_to_report :
 val pp_summary :
   respect_gitignore:bool ->
   is_git_repo:bool ->
+  is_baseline_scan:bool ->
   maturity:Maturity.t ->
   max_target_bytes:int ->
   skipped_groups:Skipped_report.skipped_targets_grouped ->

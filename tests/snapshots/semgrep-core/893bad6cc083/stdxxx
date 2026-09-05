@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/requests-use-timeout.yaml
  create mode 100644 targets/requests-use-timeout.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -38,26 +29,23 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
     targets/requests-use-timeout.py
     ❯❱ rules.python.requests.best-practice.use-timeout.use-timeout
-          'requests' calls default to waiting until the connection is closed.
-This means a 'requests' call
-          without a timeout will hang the program
-if a response is never received. Consider setting a timeout
-          for all
-'requests'.
+          'requests' calls default to waiting until the connection is closed. This means a 'requests' call
+          without a timeout will hang the program if a response is never received. Consider setting a timeout
+          for all 'requests'.
 
-          ▶▶┆ Autofix ▶ requests.get(url, timeout=30)
+           ▶▶┆ Autofix ▶ requests.get(url, timeout=30)
             6┆ r = requests.get(url, timeout=30)
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ requests.post(url, timeout=30)
+           ▶▶┆ Autofix ▶ requests.post(url, timeout=30)
             9┆ r = requests.post(url, timeout=30)
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ requests.request("GET", url, timeout=30)
+           ▶▶┆ Autofix ▶ requests.request("GET", url, timeout=30)
            12┆ r = requests.request("GET", url, timeout=30)
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ requests.request("GET", return_url(), timeout=30)
+           ▶▶┆ Autofix ▶ requests.request("GET", return_url(), timeout=30)
            18┆ r = requests.request("GET", return_url(), timeout=30)
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ post(url, timeout=30)
+           ▶▶┆ Autofix ▶ post(url, timeout=30)
            29┆ r = post(url, timeout=30)
 
 
@@ -65,7 +53,8 @@ if a response is never received. Consider setting a timeout
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 5 findings.
 --- targets/requests-use-timeout.py after the scan ---

@@ -13,16 +13,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 targets/gnu-lgplv2.txt
  create mode 100644 targets/open_redirect.py
 [<MASKED TIMESTAMP>][INFO]: Opengrep version: <MASKED>
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
 [<MASKED TIMESTAMP>][INFO]: Getting the rules
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][INFO]: loading local config from rules/multiple-long.yaml
 [<MASKED TIMESTAMP>][INFO]: Done loading local config from rules/multiple-long.yaml
 [<MASKED TIMESTAMP>][INFO]: Computing the targets
@@ -40,11 +31,7 @@ Rules:
 │ Scan Status │
 └─────────────┘
   Scanning 1 file tracked by git with 3 Code rules:
-
-  Language   Rules   Files          Origin   Rules
- ──────────────────────────        ────────────────
-  python         3       1          Custom       3
-
+  Scanning 1 file with 3 python rules.
 [<MASKED TIMESTAMP>][INFO]: scan: processing 1 files (skipping 0), with 3 rules (skipping 0 )
 [<MASKED TIMESTAMP>][WARNING]: critical exn while matching rule rules.forcetimeout
 [<MASKED TIMESTAMP>][INFO]: Timeout on targets/open_redirect.py
@@ -97,8 +84,8 @@ Files skipped:
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
 Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
   Partially scanned: 1 files only partially analyzed due to a parsing or internal Opengrep error
 
 Ran 3 rules on 1 file: 0 findings.

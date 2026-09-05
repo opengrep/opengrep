@@ -88,6 +88,28 @@ let exit_code_of_errors ~strict (errors : Out.core_error list) : Exit_code.t =
           exit_code
       | _ -> Exit_code.ok ~__LOC__)
 
+(* A target the user named that the scan could not read is an error of the
+ * run: pysemgrep rejected it on its command line with
+ * "Path 'x' is not readable" and exit code 2. Here the scan goes on, so
+ * the file is also reported among the skipped targets and counted in the
+ * summary, and the error makes the run exit 2.
+ *)
+let unreadable_scanning_root_errors (conf : Scan_CLI.conf)
+    (skipped : Out.skipped_target list) : Core_error.t list =
+  let roots : Fpath.t list =
+    conf.target_roots |> List_.map Scanning_root.to_fpath
+  in
+  skipped
+  |> List.filter (fun (x : Out.skipped_target) ->
+         match x.reason with
+         | Out.Insufficient_permissions ->
+             List.exists (Fpath.equal x.path) roots
+         | _ -> false)
+  |> List_.map (fun (x : Out.skipped_target) ->
+         Core_error.mk_error
+           ~msg:(spf "Path '%s' is not readable" !!(x.path))
+           Out.SemgrepError)
+
 (* Core errors are easier to report. *)
 let core_errors_of_fatal_rule_errors (fatal_errors : Rule_error.t list) :
     Core_error.t list =
@@ -286,6 +308,17 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
 (* Printing stuff for CLI UX *)
 (*****************************************************************************)
 
+(* python: main.py conditional_welcome(), which printed the banner only
+ * when stdout was a terminal, so that a log of a scan does not gain the
+ * lines below; it printed none of it for the alternate modes either, and
+ * the pattern mode ('-e/--pattern', '-l/--lang') is one of them. *)
+let print_banner (rules_source : Rules_source.t) : bool =
+  !ANSITerminal.isatty Unix.stdout
+  &&
+  match rules_source with
+  | Rules_source.Pattern _ -> false
+  | Configs _ -> true
+
 let print_logo () : unit =
   let logo =
     {|
@@ -351,9 +384,7 @@ let display_rule_source (source : Rule_fetching.source) : unit =
           | `Registry ->
               List.exists
                 (function
-                  | C.A _
-                  | C.R _ ->
-                      true
+                  | C.R _ -> true
                   | _ -> false)
                 configs
           | `Git ->
@@ -487,7 +518,7 @@ let check_targets_with_rules ?(print_summary = true)
         | [] ->
             ( [
                 Core_error.mk_error
-                  ~msg:Rule_fetching.no_config_given_message Out.SemgrepError;
+                  ~msg:Rule_fetching.no_config_given_message Out.MissingConfig;
               ],
               Rule_fetching.no_config_given_message )
         | _ :: _ ->
@@ -572,6 +603,17 @@ let check_targets_with_rules ?(print_summary = true)
           (* TOADAPT? Runner_exit.exit_semgrep (Unknown_exception e) instead *)
           Exception.reraise exn
       | Ok result ->
+          (* the errors come last so that the exit code of the run is
+             theirs: a target the user named and the scan could not read
+             makes the run fail *)
+          let result : Core_result.t =
+            {
+              result with
+              Core_result.errors =
+                result.Core_result.errors
+                @ unreadable_scanning_root_errors conf skipped;
+            }
+          in
           let (res : Core_runner.result) =
             Core_runner.mk_result
               ~inline:conf.core_runner_conf.inline_metavariables
@@ -671,11 +713,18 @@ let check_targets_with_rules ?(print_summary = true)
 
           (* The rules that ran are those with a target file, as the Python
              wrapper counts them; a rule of several languages is in the
-             job of each. *)
-          let rules_ran : string list =
-            result.rules_with_targets
-            |> List_.map (fun (rv : Rule.rule) -> Rule_ID.to_string (fst rv.id))
-            |> List_.deduplicate
+             job of each. When no rule has a target, the wrapper falls back
+             to the rules it loaded (output.py: executed_rule_count or
+             len(filtered_rules)). *)
+          let num_rules_ran : int =
+            match
+              result.rules_with_targets
+              |> List_.map (fun (rv : Rule.rule) ->
+                     Rule_ID.to_string (fst rv.id))
+              |> List_.deduplicate
+            with
+            | [] -> List.length rules
+            | ids -> List.length ids
           in
 
           let skipped_groups = Skipped_report.group_skipped skipped in
@@ -694,6 +743,8 @@ let check_targets_with_rules ?(print_summary = true)
                 (Summary_report.pp_summary
                    ~respect_gitignore:conf.targeting_conf.respect_gitignore
                    ~is_git_repo:targets_and_skipped.Find_targets.git_repo
+                   ~is_baseline_scan:
+                     (conf.targeting_conf.baseline_commit <> None)
                    ~maturity:conf.common.maturity
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
                    ~skipped_groups)
@@ -703,7 +754,7 @@ let check_targets_with_rules ?(print_summary = true)
           if print_summary then
             Logs.app (fun m ->
                 m "Ran %s on %s: %s."
-                  (String_.unit_str (List.length rules_ran) "rule")
+                  (String_.unit_str num_rules_ran "rule")
                   (String_.unit_str (List.length cli_output.paths.scanned) "file")
                   (String_.unit_str (List.length cli_output.results) "finding"));
 
@@ -745,9 +796,10 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
   | Output_format.Text -> f ()
   | _ -> (
       let report (msg : string) (exit_code : Exit_code.t) : Exit_code.t =
-        (* the error is on stderr as well, as CLI.safe_run reports it for
-           the text format *)
-        Logs.err (fun m -> m "%s" msg);
+        (* the document carries the error and nothing goes to stderr: that
+           is what the other aborted machine-format runs do (a rule file
+           that does not load, a scanning root that does not exist) and what
+           pysemgrep did *)
         (* the times of the run are of no interest for an aborted one *)
         output_and_exit_from_fatal_exn ~msg ~exit_code caps conf
           (Profiler.make ())
@@ -756,6 +808,9 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
       (* not errors: the ways a subcommand asks for an exit code *)
       | (Error.Exit_code _ | Common.UnixExit _) as exn ->
           Exception.catch_and_reraise exn
+      (* no error document can reach a closed pipe; CLI.safe_run turns it
+         into a quiet exit *)
+      | exn when Error.is_broken_pipe exn -> Exception.catch_and_reraise exn
       | Error.Semgrep_error (msg, opt_exit_code) ->
           report msg (opt_exit_code ||| Exit_code.fatal ~__LOC__)
       | Git_wrapper.Error msg -> report msg (Exit_code.fatal ~__LOC__)
@@ -769,8 +824,9 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
 
 let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
+  let banner = print_banner conf.rules_source in
   (* Print The logo ASAP to minimize time to first meaningful content paint *)
-  print_logo ();
+  if banner then print_logo ();
 
   (* imitate pysemgrep for backward compatible profiling metrics ? *)
   let profiler = Profiler.make () in
@@ -783,19 +839,20 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
      Ideally, pattern mode should be a different subcommand, but for now we will
      conditionally print the feature section.
   *)
-  (match conf.rules_source with
-  | Pattern _ ->
-      Logs.app (fun m -> m "%s" (styled `Bold "  Code scanning.\n"))
-  | _ ->
-      print_feature_section
-        (* ~includes_token:(settings.api_token <> None) *)
-        (* ~engine:conf.engine_type) *) ());
+  if banner then
+    (match conf.rules_source with
+    | Pattern _ ->
+        Logs.app (fun m -> m "%s" (styled `Bold "  Code scanning.\n"))
+    | _ ->
+        print_feature_section
+          (* ~includes_token:(settings.api_token <> None) *)
+          (* ~engine:conf.engine_type) *) ());
 
   (* step1: getting the rules *)
   Logs.info (fun m -> m "Getting the rules");
   (* Display a (possibly interactive) message to denote rule fetching *)
   let source = Rule_fetching.classify conf.rules_source in
-  display_rule_source source;
+  if banner then display_rule_source source;
   let rules_and_origins, fatal_errors =
     Profiler.record profiler ~name:"config_time" (fun () ->
         rules_from_rules_source
@@ -894,7 +951,8 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
    *)
   | _ when conf.version ->
       CapConsole.print caps#stdout Version.version;
-      (* TOPORT: if enable_version_check: version_check() *)
+      (* pysemgrep called version_check() here; Opengrep has none, and
+       * --enable-version-check is only accepted for compatibility. *)
       Exit_code.ok ~__LOC__
   | _ when conf.test <> None ->
       Test_subcommand.run_conf

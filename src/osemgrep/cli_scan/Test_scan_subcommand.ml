@@ -529,9 +529,12 @@ if 5 == 5:
 
 (* (path, line, fingerprint) of the findings of a --json scan of the
  * targets, sorted *)
-let fingerprints_of_scan (caps : Scan_subcommand.caps) ~(rule_path : string)
-    ~(rule : string) ~(targets : (string * string) list) :
-    (string * int * string) list =
+let fingerprints_of_scan (caps : Scan_subcommand.caps)
+    ?(config : string option) ~(rule_path : string) ~(rule : string)
+    ~(targets : (string * string) list) () : (string * int * string) list =
+  (* the spelling of --config, which the rule ids and so the fingerprints
+     depend on; the rule file itself is always written at rule_path *)
+  let config : string = Option.value config ~default:rule_path in
   let rec tree (path : string list) (contents : string) : F.t =
     match path with
     | [ file ] -> F.File (file, contents)
@@ -558,7 +561,7 @@ let fingerprints_of_scan (caps : Scan_subcommand.caps) ~(rule_path : string)
                               "--experimental";
                               "--json";
                               "--config";
-                              rule_path;
+                              config;
                             ]
                            @ List_.map fst targets)))
                 in
@@ -571,12 +574,24 @@ let fingerprints_of_scan (caps : Scan_subcommand.caps) ~(rule_path : string)
           |> List.sort compare))
 
 let test_fingerprints (caps : Scan_subcommand.caps) () =
-  let check name expected ~rule_path ~rule ~targets =
+  let check name ?config expected ~rule_path ~rule ~targets =
     Alcotest.(check (list (triple string int string)))
       name expected
-      (fingerprints_of_scan caps ~rule_path ~rule ~targets)
+      (fingerprints_of_scan caps ?config ~rule_path ~rule ~targets ())
   in
   check "search rule" ~rule_path:"rules/eqeq.yaml" ~rule:eqeq_is_bad_rule_content
+    ~targets:[ ("targets/basic/stupid.py", stupid_py_content) ]
+    [
+      ( "targets/basic/stupid.py",
+        3,
+        "62b4a09c4569768898c43c09fa0a5b95b7e93257ef3a0911a5c379b6265b4d49fa4aecd5782461632e9aef4779af02d7cad4405b9a5318a0e5ffe9a5bd8daeae_0"
+      );
+    ];
+  (* the './' of a config path is not a directory of the rule id, so the
+     fingerprint is the one the plain spelling gives; python:
+     convert_config_id_to_prefix strips the leading '.' and '/' *)
+  check "config path spelled with './'" ~config:"./rules/eqeq.yaml"
+    ~rule_path:"rules/eqeq.yaml" ~rule:eqeq_is_bad_rule_content
     ~targets:[ ("targets/basic/stupid.py", stupid_py_content) ]
     [
       ( "targets/basic/stupid.py",
@@ -781,6 +796,7 @@ let test_id_change (caps : Scan_subcommand.caps) () =
            match
              fingerprints_of_scan caps ~rule_path:"rules.yaml" ~rule
                ~targets:[ ("targets/match_based_id." ^ ext, target) ]
+               ()
            with
            | [ (_, _, fingerprint) ] -> fingerprint
            | _ -> failwith (name ^ ": expected exactly one finding")
@@ -910,6 +926,137 @@ let test_time_json (caps : Scan_subcommand.caps) () =
               | targets ->
                   Alcotest.fail
                     (spf "expected one target, got %d" (List.length targets))))
+
+(* --time reports the times of a scan that found nothing, as the Python
+ * wrapper did: the field is about the run, not about the findings. *)
+let test_time_json_no_findings (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", eqeq_basic_content);
+          F.File ("nothing.py", "x = 1\n");
+        ]
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let exit_code, stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--json"; "--time";
+                        "--config"; "rules.yml";
+                      |]))
+          in
+          Exit_code.Check.ok exit_code;
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check int) "no finding" 0 (List.length out.results);
+          match out.time with
+          | None -> Alcotest.fail "no time field"
+          | Some time ->
+              Alcotest.(check (list string))
+                "the times of the command"
+                [ "config_time"; "core_time"; "ignores_time"; "total_time" ]
+                (List_.map fst time.profiling_times)))
+
+(*****************************************************************************)
+(* Text taken from a target that is not UTF-8 *)
+(*****************************************************************************)
+(* Nothing makes a target UTF-8, but every output format has to be: the
+ * bytes that cannot be decoded become U+FFFD, as they did in pysemgrep,
+ * which read its targets with errors="replace".
+ *)
+let latin1_rule_content =
+  {|
+rules:
+  - id: find-eval
+    pattern: eval($X)
+    fix: safe_eval($X)
+    message: found
+    languages: [python]
+    severity: WARNING
+|}
+
+(* 0xff, 0xfe and 0xe9 are not valid UTF-8; each becomes one U+FFFD *)
+let latin1_py_content : string = "eval(\"\xff\xfe caf\xe9\") # bad\n"
+let replacement : string = "\xef\xbf\xbd"
+
+let test_invalid_utf8 (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", latin1_rule_content);
+          F.File ("badline.py", latin1_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let exit_code, stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--json";
+                        "--config"; "rules.yml"; "badline.py";
+                      |]))
+          in
+          Exit_code.Check.ok exit_code;
+          Alcotest.(check string)
+            "the output is valid UTF-8" stdout_output
+            (String_.sanitize_utf8 stdout_output);
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          match out.results with
+          | [ m ] ->
+              Alcotest.(check string)
+                "the matched line"
+                (spf "eval(\"%s%s caf%s\") # bad" replacement replacement
+                   replacement)
+                m.extra.lines;
+              Alcotest.(check (option string))
+                "the autofix"
+                (Some
+                   (spf "safe_eval(\"%s%s caf%s\")" replacement replacement
+                      replacement))
+                m.extra.fix
+          | results ->
+              Alcotest.fail
+                (spf "expected one finding, got %d" (List.length results))))
+
+(* An error entry quotes text of the target too: a parse error names what it
+ * choked on, and the whole document is undecodable when those bytes reach
+ * it raw. *)
+let latin1_syntax_error_content : string = "x = '\xff\xfe'\nbad_\xff == bad_\xff\n"
+
+let test_invalid_utf8_in_error (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", latin1_rule_content);
+          F.File ("badsyntax.py", latin1_syntax_error_content);
+        ]
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let (_ : Exit_code.t), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--json";
+                        "--config"; "rules.yml"; "badsyntax.py";
+                      |]))
+          in
+          Alcotest.(check string)
+            "the output is valid UTF-8" stdout_output
+            (String_.sanitize_utf8 stdout_output);
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          match out.errors with
+          | [ e ] ->
+              Alcotest.(check bool)
+                "the parse error quotes replacement characters" true
+                (String_.contains
+                   ~term:(spf "bad_%s == bad_%s" replacement replacement)
+                   (Option.value ~default:"" e.message))
+          | errors ->
+              Alcotest.fail
+                (spf "expected one error, got %d" (List.length errors))))
 
 (*****************************************************************************)
 (* Severities that never run *)
@@ -1161,7 +1308,25 @@ let test_nosem_invalid_id_text (caps : Scan_subcommand.caps) () =
 (* $OPENGREP_LOG_FILE (or $SEMGREP_LOG_FILE) gets a copy of the logs at the
  * level of stderr; its directory is created. python: test_last_log_exists
  *)
-let test_log_file (caps : Scan_subcommand.caps) () =
+let scan_for_log_file (caps : Scan_subcommand.caps) (extra_args : string list) :
+    Exit_code.t =
+  let exit_code, _stdout =
+    Testo.with_capture stdout (fun () ->
+        without_settings (fun () ->
+            Scan_subcommand.main caps
+              (Array.of_list
+                 ([
+                    "opengrep-scan";
+                    "--experimental";
+                    "--json";
+                    "--config";
+                    "rules.yml";
+                  ]
+                 @ extra_args @ [ "stupid.py" ]))))
+  in
+  exit_code
+
+let with_log_file_repo (f : Fpath.t -> unit) : unit =
   with_env_app_token (fun () ->
       let repo_files =
         [
@@ -1169,32 +1334,42 @@ let test_log_file (caps : Scan_subcommand.caps) () =
           F.File ("stupid.py", stupid_py_content);
         ]
       in
-      Testutil_git.with_git_repo repo_files (fun cwd ->
-          let log_file = Fpath.(cwd / "logs" / "nested" / "opengrep.log") in
-          let scan (extra_args : string list) : unit =
-            let _exit_code, _stdout =
-              Testo.with_capture stdout (fun () ->
-                  without_settings (fun () ->
-                      Scan_subcommand.main caps
-                        (Array.of_list
-                           ([ "opengrep-scan"; "--experimental"; "--json"; "--config"; "rules.yml" ]
-                           @ extra_args @ [ "stupid.py" ]))))
-            in
-            ()
-          in
-          Semgrep_envvars.with_envvar "OPENGREP_LOG_FILE" (Fpath.to_string log_file) (fun () ->
-              scan [ "--verbose" ]);
-          let contents = UFile.read_file log_file in
-          Alcotest.(check bool) "info records with --verbose" true
-            (String_.contains ~term:"[INFO]" contents);
-          Alcotest.(check bool) "no debug records with --verbose" false
-            (String_.contains ~term:"[DEBUG]" contents);
-          (* the file is truncated by the next run, at the default level *)
-          Semgrep_envvars.with_envvar "SEMGREP_LOG_FILE" (Fpath.to_string log_file) (fun () ->
-              scan []);
-          let contents = UFile.read_file log_file in
-          Alcotest.(check bool) "no info records at the default level" false
-            (String_.contains ~term:"[INFO]" contents)))
+      Testutil_git.with_git_repo repo_files f)
+
+let test_log_file (caps : Scan_subcommand.caps) () =
+  with_log_file_repo (fun (cwd : Fpath.t) ->
+      let log_file = Fpath.(cwd / "logs" / "nested" / "opengrep.log") in
+      Semgrep_envvars.with_envvar "OPENGREP_LOG_FILE"
+        (Fpath.to_string log_file)
+        (fun () -> ignore (scan_for_log_file caps [ "--verbose" ]));
+      let contents = UFile.read_file log_file in
+      Alcotest.(check bool)
+        "info records with --verbose" true
+        (String_.contains ~term:"[INFO]" contents);
+      Alcotest.(check bool)
+        "no debug records with --verbose" false
+        (String_.contains ~term:"[DEBUG]" contents);
+      (* the file is truncated by the next run, at the default level *)
+      Semgrep_envvars.with_envvar "SEMGREP_LOG_FILE" (Fpath.to_string log_file)
+        (fun () -> ignore (scan_for_log_file caps []));
+      let contents = UFile.read_file log_file in
+      Alcotest.(check bool)
+        "no info records at the default level" false
+        (String_.contains ~term:"[INFO]" contents))
+
+(* A log file that cannot be created is a diagnostic that is lost, not a scan
+ * that fails. *)
+let test_log_file_unwritable (caps : Scan_subcommand.caps) () =
+  with_log_file_repo (fun (cwd : Fpath.t) ->
+      (* stupid.py is a regular file, so it cannot hold a directory *)
+      let log_file = Fpath.(cwd / "stupid.py" / "opengrep.log") in
+      Semgrep_envvars.with_envvar "OPENGREP_LOG_FILE"
+        (Fpath.to_string log_file)
+        (fun () -> Exit_code.Check.ok (scan_for_log_file caps []));
+      Alcotest.(check bool)
+        "no log file was created" false
+        (Sys.file_exists (Fpath.to_string log_file)))
+
 
 (*****************************************************************************)
 (* Process limits *)
@@ -1284,6 +1459,55 @@ let test_process_limits_json (caps : Scan_subcommand.caps) () =
              true
          | Some _ -> false)
        errors)
+
+(* $SEMGREP_TIMEOUT and its $OPENGREP_TIMEOUT alias set --timeout; the flag
+ * wins over both, and the alias wins over the legacy name.
+ * python: scan.py declared envvar="SEMGREP_TIMEOUT" on --timeout.
+ * The spacegrep pattern below needs about forty seconds on this target, so a
+ * one-second limit that was honoured reports a timeout at once, and a limit
+ * that was not honoured shows up as the absence of the error.
+ *)
+let test_timeout_env (caps : Scan_subcommand.caps) () =
+  let slow_scan (args : string list) : string list =
+    let errors, exit_code =
+      scan_process_limits caps ~capture_stdout:true
+        ([
+           "--json"; "-l"; "generic"; "-e";
+           "$A ... $B ... $C ... Frob ... Yoyodyne";
+         ]
+        @ args
+        @ [ "targets/gnu-lgplv2.txt" ])
+    in
+    Exit_code.Check.ok exit_code;
+    List_.map fst errors
+  in
+  let check (name : string) (vars : (string * string) list)
+      (args : string list) : unit =
+    let run () =
+      Alcotest.(check (list string)) name [ "Timeout" ] (slow_scan args)
+    in
+    List.fold_right
+      (fun ((var : string), (value : string)) (k : unit -> unit) () ->
+        Semgrep_envvars.with_envvar var value k)
+      vars run ()
+  in
+  check "SEMGREP_TIMEOUT is honoured" [ ("SEMGREP_TIMEOUT", "1") ] [];
+  check "OPENGREP_TIMEOUT is honoured" [ ("OPENGREP_TIMEOUT", "1") ] [];
+  check "--timeout wins over the variable"
+    [ ("SEMGREP_TIMEOUT", "600") ]
+    [ "--timeout"; "1" ];
+  check "OPENGREP_TIMEOUT wins over SEMGREP_TIMEOUT"
+    [ ("SEMGREP_TIMEOUT", "600"); ("OPENGREP_TIMEOUT", "1") ]
+    []
+
+(* Opengrep has no version check, so the variable pysemgrep validated is
+ * ignored rather than failing the scan on a value it cannot read. *)
+let test_version_check_env_ignored (caps : Scan_subcommand.caps) () =
+  with_log_file_repo (fun (_cwd : Fpath.t) ->
+      [ "SEMGREP_ENABLE_VERSION_CHECK"; "OPENGREP_ENABLE_VERSION_CHECK" ]
+      |> List.iter (fun (var : string) ->
+             Semgrep_envvars.with_envvar var "notabool" (fun () ->
+                 Exit_code.Check.ok (scan_for_log_file caps []))))
 
 (* the text output: the timeout warning, the stopped file and the verbose
    listing of the partially analysed file with its rule *)
@@ -1498,12 +1722,26 @@ let tests (caps : < Scan_subcommand.caps >) =
         (fun () ->
           with_no_color (test_basic_output caps ~extra_args:[ "--force-color" ]));
       t "--time: the times in the JSON output" (test_time_json caps);
+      t "--time: the times of a scan without a finding"
+        (test_time_json_no_findings caps);
+      t "a target that is not UTF-8 is reported with replacement characters"
+        (test_invalid_utf8 caps);
+      t "a parse error of a target that is not UTF-8 is reported with \
+         replacement characters"
+        (test_invalid_utf8_in_error caps);
+      t "$SEMGREP_TIMEOUT and $OPENGREP_TIMEOUT set the timeout"
+        (test_timeout_env caps);
+      t "$SEMGREP_ENABLE_VERSION_CHECK is ignored"
+        (test_version_check_env_ignored caps);
       t "INVENTORY and EXPERIMENT rules never run"
         (test_inventory_and_experiment_rules_never_run caps);
       t "rule errors: type, code and exit code" (test_rule_errors caps);
       t "nosem with an invalid or unknown id: JSON warnings with --strict"
         (test_nosem_invalid_id_json caps);
-      t "log file: a copy of the logs at the level of stderr" (test_log_file caps);
+      t "log file: a copy of the logs at the level of stderr"
+        (test_log_file caps);
+      t "log file: an unwritable path warns and the scan carries on"
+        (test_log_file_unwritable caps);
       t "yaml: the lines of a match on a block" ~checked_output:(Testo.stdxxx ())
         ~normalize
         (test_basic_output caps ~rules_file:"yaml_capture.yaml"

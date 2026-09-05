@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/csv-writer.yaml
  create mode 100644 targets/csv-writer.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -40,10 +31,10 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
    ❯❯❱ rules.python.lang.security.unquoted-csv-writer.unquoted-csv-writer
           Found an unquoted CSV writer. This is susceptible to injection. Use 'quoting=csv.QUOTE_ALL'.
 
-          ▶▶┆ Autofix ▶ csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+           ▶▶┆ Autofix ▶ csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
             9┆ csv.writer(csvfile, delimiter=',', quotechar='"')
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ csv.writer(get_file(), delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+           ▶▶┆ Autofix ▶ csv.writer(get_file(), delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
            12┆ csv.writer(get_file(), delimiter=',', quotechar='"')
 
 
@@ -51,7 +42,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 2 findings.
 --- targets/csv-writer.py after the scan ---

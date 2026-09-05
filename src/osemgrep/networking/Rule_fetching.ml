@@ -64,12 +64,33 @@ and origin =
 (* Rewrite rule ids *)
 (*****************************************************************************)
 
+(* python: rule_lang.py convert_config_id_to_prefix, which joins the directory
+ * segments of the config path with dots and then strips the leading '.' and
+ * '/' characters ('.'.join(at_path.parts[:-1]).lstrip("./").lstrip(".")). So
+ * '--config ./rules/x.yaml' gives the prefix "rules." like 'rules/x.yaml',
+ * and '--config ../x.yaml' gives no prefix at all.
+ *)
+let strip_leading_dots_and_slashes (str : string) : string =
+  let len = String.length str in
+  let rec first_kept (i : int) : int =
+    if i < len && (Char.equal str.[i] '.' || Char.equal str.[i] '/') then
+      first_kept (i + 1)
+    else i
+  in
+  let start = first_kept 0 in
+  String.sub str start (len - start)
+
 let prefix_for_fpath_opt (fpath : Fpath.t) : string option =
   assert (Fpath.is_file_path fpath);
-  let* rel_path =
-    if Fpath.is_rel fpath then Some fpath
-      (* python: paths had no common prefix; not possible to relativize *)
-    else Fpath.rem_prefix (Fpath.v (Sys.getcwd ())) fpath
+  let rel_path =
+    if Fpath.is_rel fpath then fpath
+    else
+      (* python: safe_relative_to keeps the path as it is when it is not under
+       * the current directory ("paths had no common prefix; not possible to
+       * relativize"), so an absolute config path outside the project still
+       * prefixes the rule ids with its directories. *)
+      Fpath.rem_prefix (Fpath.v (Sys.getcwd ())) fpath
+      |> Option.value ~default:fpath
   in
   (* LATER: we should use Fpath.normalize first, but pysemgrep
    * doesn't as shown by
@@ -84,9 +105,9 @@ let prefix_for_fpath_opt (fpath : Fpath.t) : string option =
   | [ _file ] -> None
   | _file :: dirs ->
       let prefix =
-        dirs |> List.rev |> List_.map (fun s -> s ^ ".") |> String.concat ""
+        dirs |> List.rev |> String.concat "." |> strip_leading_dots_and_slashes
       in
-      Some prefix
+      if String.equal prefix "" then None else Some (prefix ^ ".")
 
 let mk_rewrite_rule_ids (origin : origin) : Rule_ID.t -> Rule_ID.t =
  fun (rule_id : Rule_ID.t) ->
@@ -199,7 +220,6 @@ let mk_import_callback (caps : < Cap.network ; Cap.tmp ; .. >) base str =
           let in_docker = !Semgrep_envvars.v.in_docker in
           let kind = Rules_config.parse_config_string ~in_docker s in
           match kind with
-          | C.A _ -> failwith "TODO: app_config in jsonnet not handled"
           | C.R rkind ->
               let url = Semgrep_Registry.url_of_registry_config_kind rkind in
               Some url
@@ -450,13 +470,6 @@ let rules_from_dashdash_config_async ?(skip_invalid_configs = false)
       CapTmp.with_temp_file caps#tmp ~contents ~suffix:".yaml" (fun file ->
           [ load_rules_from_file ~rewrite_rule_ids ~origin:Registry caps file ])
       |> Result_.partition Fun.id |> Lwt.return
-  | C.A Policy ->
-    Error.abort
-      (spf
-         "Cannot to download rules from policy without authorization \
-          token")
-  | C.A SupplyChain ->
-      failwith "TODO: SupplyChain not handled yet"
 
 let rules_from_dashdash_config ?(skip_invalid_configs = false) ~rewrite_rule_ids
     caps kind : rules_and_origin list * Rule_error.t list =

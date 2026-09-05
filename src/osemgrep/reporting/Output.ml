@@ -163,13 +163,15 @@ let format
                    (* ugly: redoing the work done in cli_match_of_core_match.
                     * we can't use m.extra.lines because this field actually
                     * contains a string, not a string list.
+                    * Reading the file again also means sanitising it again;
+                    * see Cli_json_output.sanitize_cli_match.
                     *)
                    match
                      Semgrep_output_utils.lines_of_file_at_range_exn
                        (start, end_) path
                    with
                    | [] -> ""
-                   | x :: _ -> x (* TOPORT rstrip? *)
+                   | x :: _ -> String_.sanitize_utf8 x (* TOPORT rstrip? *)
                  in
                  let parts =
                    [

@@ -53,3 +53,9 @@ val rstrip : string -> string
  * line. See unit tests for examples. *)
 val lines_of_range : int * int -> string -> string list
 val is_capitalized : string -> bool
+
+(* Replace every byte that is not part of a valid UTF-8 sequence by U+FFFD,
+ * the replacement character, and return the string unchanged when it is
+ * already valid UTF-8. This is what Python does when a file is read with
+ * errors="replace". *)
+val sanitize_utf8 : string -> string

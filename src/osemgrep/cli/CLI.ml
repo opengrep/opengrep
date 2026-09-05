@@ -169,6 +169,10 @@ let safe_run f : Exit_code.t =
     Logs.debug (fun m -> m "%s" (Printexc.get_backtrace ()))
   in
   try f () with
+  (* say nothing and return the conventional code for a closed pipe *)
+  | exn when Error.is_broken_pipe exn ->
+      Error.drop_buffered_stdout ();
+      Exit_code.broken_pipe ~__LOC__
   | Error.Semgrep_error (s, opt_exit_code) -> (
       Logs.err (fun m -> m "%s" s);
       log_backtrace ();

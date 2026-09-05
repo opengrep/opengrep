@@ -14,15 +14,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 6 insertions(+)
  create mode 100644 rules/invalid-missing-top-item.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/invalid-missing-top-item.yaml:2:5: Invalid rule schema in rule rules.blah
   --> rules/invalid-missing-top-item.yaml:2
@@ -41,14 +32,5 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 6 insertions(+)
  create mode 100644 rules/invalid-missing-top-item.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-{"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.blah","message":"Invalid rule schema at line rules/invalid-missing-top-item.yaml:2:\n Missing required field severity","path":"rules/invalid-missing-top-item.yaml","long_msg":"Missing required field severity","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-missing-top-item.yaml","start":{"line":2,"col":5,"offset":11},"end":{"line":2,"col":6,"offset":12}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.blah","message":"Invalid rule schema at line rules/invalid-missing-top-item.yaml:2:\n Missing required field severity","path":"rules/invalid-missing-top-item.yaml","long_msg":"Missing required field severity","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-missing-top-item.yaml","start":{"line":2,"col":5,"offset":11},"end":{"line":2,"col":6,"offset":12}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 exit code: 7

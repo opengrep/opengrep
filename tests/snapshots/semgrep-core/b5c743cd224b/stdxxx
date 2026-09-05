@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/utf-8.yaml
  create mode 100644 targets/utf-8.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -40,13 +31,13 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
     ❯❱ rules.replace-with-smiley
           Unnecessary parameter which matches the default
 
-          ▶▶┆ Autofix ▶ print('😊')
+           ▶▶┆ Autofix ▶ print('😊')
            12┆ print('😊')
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ print('😊')
+           ▶▶┆ Autofix ▶ print('😊')
            16┆ y = '😊'; print('😊'); print('a')
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ print('😊')
+           ▶▶┆ Autofix ▶ print('😊')
            16┆ y = '😊'; print('a'); print('😊')
 
 
@@ -54,7 +45,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 3 findings.
 --- targets/utf-8.py after the scan ---

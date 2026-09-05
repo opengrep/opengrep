@@ -333,6 +333,10 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
         | None -> Exit_code.fatal ~__LOC__
         | Some code -> code)
     | Error.Exit_code code -> code
+    (* say nothing and return the conventional code for a closed pipe *)
+    | exn when Error.is_broken_pipe exn ->
+        Error.drop_buffered_stdout ();
+        Exit_code.broken_pipe ~__LOC__
     (* coupling: CLI.safe_run maps the two exceptions below the same way *)
     (* a failed git command is already explained by Git_wrapper's own
      * warning; no backtrace needed *)
@@ -354,6 +358,9 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
   | 0
   | 1 ->
       exit_code
+  (* a closed pipe is not an error of the analysis, and there is nothing to
+     say about it *)
+  | _ when Exit_code.Equal.broken_pipe exit_code -> exit_code
   | _ when ci_conf.suppress_errors ->
       Logs.err (fun m ->
           m

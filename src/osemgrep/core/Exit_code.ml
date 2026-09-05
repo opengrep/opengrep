@@ -43,7 +43,11 @@ module Value = struct
   (* let too_many_matches = 12 "too many matches" *)
   let invalid_api_key = create 13 "invalid API key"
   let scan_fail = create 14 "scan failure"
-  let not_implemented_in_osemgrep = create 99 "not implemented in osemgrep"
+
+  (* 128 + SIGPIPE, what a shell reports for a process killed by a closed
+     pipe; nothing is printed in that case. *)
+  let broken_pipe = create 141 "output pipe closed"
+  let not_implemented_in_osemgrep = create 99 "not implemented in opengrep"
 end
 
 (*
@@ -70,6 +74,7 @@ let missing_config ~__LOC__:loc = with_log loc Value.missing_config
 let invalid_language ~__LOC__:loc = with_log loc Value.invalid_language
 let invalid_api_key ~__LOC__:loc = with_log loc Value.invalid_api_key
 let scan_fail ~__LOC__:loc = with_log loc Value.scan_fail
+let broken_pipe ~__LOC__:loc = with_log loc Value.broken_pipe
 
 (* Temporary until either osemgrep dies or replaces semgrep. *)
 let not_implemented_in_osemgrep ~__LOC__:loc =
@@ -88,6 +93,7 @@ module Equal = struct
   let invalid_language = equal Value.invalid_language
   let invalid_api_key = equal Value.invalid_api_key
   let scan_fail = equal Value.scan_fail
+  let broken_pipe = equal Value.broken_pipe
   let not_implemented_in_osemgrep = equal Value.not_implemented_in_osemgrep
 end
 
@@ -108,5 +114,6 @@ module Check = struct
   let invalid_language = check Value.invalid_language
   let invalid_api_key = check Value.invalid_api_key
   let scan_fail = check Value.scan_fail
+  let broken_pipe = check Value.broken_pipe
   let not_implemented_in_osemgrep = check Value.not_implemented_in_osemgrep
 end

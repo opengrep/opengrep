@@ -34,7 +34,6 @@ type t =
    * like a Dir. *)
   | Git of git_config
   | R of registry_config_kind
-  | A of app_config_kind
 
 (* the config string after the 'git+' prefix, split into the clone URL and
  * an optional branch/tag given as a '#'-fragment (e.g. '...#v1.2.0'). *)
@@ -59,9 +58,7 @@ and registry_config_kind =
   | Auto
   (* "p/r2c" *)
   | R2c
-
-(* Semgrep App shortcuts *)
-and app_config_kind = Policy | SupplyChain [@@deriving show]
+[@@deriving show]
 
 (*****************************************************************************)
 (* Helpers *)
@@ -70,8 +67,6 @@ let parse_config_string ~in_docker (config_str : config_string) : t =
   match config_str with
   | "auto" -> R Auto
   | "r2c" -> R R2c
-  | "policy" -> A Policy
-  | "supply-chain" -> A SupplyChain
   | s when s =~ "^r/\\(.*\\)" -> R (Registry (Common.matched1 s))
   | s when s =~ "^p/\\(.*\\)" -> R (Pack (Common.matched1 s))
   | s when s =~ "^s/\\(.*\\)" -> R (Snippet (Common.matched1 s))

@@ -102,6 +102,37 @@ let with_stdin_from ~(data : string) (func : unit -> 'a) : 'a =
       Unix.dup2 saved_stdin Unix.stdin;
       Unix.close saved_stdin)
 
+(* Run [func] with the standard output on a pipe whose reader is closed, as
+   'opengrep ... | head' leaves it once head has had its line. SIGPIPE is
+   ignored so that the write raises EPIPE instead of killing the test
+   process.
+
+   Everything the run leaves behind is undone: the standard formatter, which
+   the broken-pipe handler redirects to a sink, and the buffered output,
+   which is emptied into the null device while the descriptor is still ours
+   so that it cannot resurface in a later test. *)
+let with_stdout_to_closed_pipe (func : unit -> 'a) : 'a =
+  let saved_stdout = Unix.dup Unix.stdout in
+  let saved_sigpipe = Sys.signal Sys.sigpipe Sys.Signal_ignore in
+  let saved_out_functions =
+    Format.pp_get_formatter_out_functions Format.std_formatter ()
+  in
+  let reader, writer = Unix.pipe () in
+  Unix.close reader;
+  Unix.dup2 writer Unix.stdout;
+  Unix.close writer;
+  Common.protect func ~finally:(fun () ->
+      let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0o666 in
+      Unix.dup2 null Unix.stdout;
+      Unix.close null;
+      (try flush stdout with
+      | Sys_error _ -> ());
+      Format.pp_set_formatter_out_functions Format.std_formatter
+        saved_out_functions;
+      Unix.dup2 saved_stdout Unix.stdout;
+      Unix.close saved_stdout;
+      Sys.set_signal Sys.sigpipe saved_sigpipe)
+
 (* The paths of such targets are temporary files with random names. *)
 let mask_temp_targets : (string -> string) list =
   [

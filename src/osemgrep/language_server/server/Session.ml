@@ -204,8 +204,10 @@ let fetch_rules session =
         let config = Rules_config.parse_config_string ~in_docker source in
         (* TODO: registry_caching is not anymore in semgrep-OSS! *)
         Rule_fetching.rules_from_dashdash_config_async
-          ~rewrite_rule_ids:true (* default *)
-          session.caps config)
+          (* The language server keeps the rule ids as the rule files write
+           * them, which is what its diagnostic codes have always been; it
+           * does not apply the path-based prefix the CLI adds. *)
+          ~rewrite_rule_ids:false session.caps config)
       rules_source
   in
 
