@@ -1,0 +1,3 @@
+function $A(...) { function $F(...) { ... } ... }
+...
+function $B(...) { function $F(...) { ... } ... }
