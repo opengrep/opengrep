@@ -1,0 +1,31 @@
+--- begin input files ---
+yaml_capture.yaml
+yaml_capture_target.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 32 insertions(+)
+ create mode 100644 yaml_capture.yaml
+ create mode 100644 yaml_capture_target.yaml
+
+
+┌─────────────────┐
+│ 4 Code Findings │
+└─────────────────┘
+
+    yaml_capture_target.yaml
+   ❯❯❱ foo
+          example
+
+            3┆ importantKey:
+            4┆   prop1: true
+            ⋮┆----------------------------------------
+            9┆ importantKey:
+           10┆   - idk: true
+            ⋮┆----------------------------------------
+           15┆ importantKey:
+           16┆   prop1: true
+            ⋮┆----------------------------------------
+           21┆ importantKey:
+           22┆   - idk: true
+

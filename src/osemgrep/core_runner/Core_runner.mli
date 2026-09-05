@@ -81,3 +81,7 @@ val mk_core_run_for_osemgrep : Core_scan.func -> func
 
 (* Helper used in Test_subcommand.ml *)
 val targets_for_files_and_rules : Fpath.t list -> Rule.t list -> Target.t list
+
+(* the targets of each language of the rules *)
+val split_jobs_by_language :
+  Find_targets.conf -> Rule.t list -> Fpath.t list -> Lang_job.t list

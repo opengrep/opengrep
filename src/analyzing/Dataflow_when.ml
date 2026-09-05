@@ -57,9 +57,8 @@ type ctx = facts list
 (* Helpers *)
 (*****************************************************************************)
 
-(* if the -path_sensitive flag is enabled, the ref below will be set to
- * true. the functions in this file will only execute if both
- * -deep_intra_file and -path_sensitive are enabled.
+(* The functions in this file execute only when the ref below is set to
+ * true; nothing sets it yet, a flag for path sensitivity is to come.
  *)
 let hook_path_sensitive = ref false
 

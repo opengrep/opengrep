@@ -115,7 +115,7 @@ let scan_tests (caps : CLI.caps) (dir : string) : Testo.t list =
   rule_files dir
   |> List_.map (fun (rule : string) ->
          t (spf "rule errors: scan %s/%s" dir rule)
-           ~checked_output:(Testo.stdxxx ()) ~normalize (fun () ->
+           ~checked_output:(Testo.split_stdout_stderr ()) ~normalize (fun () ->
              scan_rule_file caps ~dir rule))
 
 (* an unknown field of a rule is not an error *)
@@ -153,7 +153,7 @@ let tests (caps : CLI.caps) =
     (scan_tests caps "syntax" @ scan_tests caps "invalid-rules"
     @ [
         t "rule errors: scan extra_field.yaml"
-          ~checked_output:(Testo.stdxxx ()) ~normalize
+          ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
           (test_extra_field_valid caps);
         t "rule errors: missing config file" (test_missing_config_file caps);
         (* a configuration the report calls invalid fails the run, whether it
@@ -176,9 +176,13 @@ let tests (caps : CLI.caps) =
                "scan"; "--validate"; "--json"; "--config";
                "rules/missing-field.yaml";
              ]);
-        (* a valid rule file validates and exits 0 *)
+        (* a valid rule file validates and exits 0, in text and in JSON *)
         t "rule errors: validate a good rule file"
           ~checked_output:(Testo.stdout ()) ~normalize
           (validate_rule_file caps ~dir:"syntax" ~rule:"good.yaml"
              [ "validate"; "rules/good.yaml" ]);
+        t "rule errors: validate a good rule file, JSON"
+          ~checked_output:(Testo.stdout ()) ~normalize
+          (validate_rule_file caps ~dir:"syntax" ~rule:"good.yaml"
+             [ "validate"; "--json"; "rules/good.yaml" ]);
       ])

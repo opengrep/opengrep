@@ -194,20 +194,32 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
      spelled from the current directory here. Without this they match none
      of git's paths and the scan silently reports no finding at all. *)
   let cwd = Rpath.getcwd () |> Rpath.to_fpath |> Fpath.to_dir_path in
+  (* the current directory above is free of symbolic links and a root the
+     user spelled through one is not ('/tmp' on macOS, a junction on
+     Windows); the two forms cannot be relativized against each other.
+     Only the directory is resolved, so a target that is itself a symlink
+     keeps the name git lists it under. The targets share a few directories,
+     each resolved once. *)
+  let resolved_dirs : (Fpath.t, Fpath.t) Hashtbl.t = Hashtbl.create 16 in
+  let resolve_dir (dir : Fpath.t) : Fpath.t =
+    match Hashtbl.find_opt resolved_dirs dir with
+    | Some real -> real
+    | None ->
+        let real =
+          match Rpath.of_fpath dir with
+          | Ok real -> Rpath.to_fpath real
+          | Error (_ : string) -> dir
+        in
+        Hashtbl.add resolved_dirs dir real;
+        real
+  in
   let relative_to_cwd (path : Fpath.t) : Fpath.t =
     let absolute =
       Fpath.normalize (if Fpath.is_abs path then path else Fpath.(cwd // path))
     in
-    (* the current directory above is free of symbolic links and a root the
-       user spelled through one is not ('/tmp' on macOS, a junction on
-       Windows); the two forms cannot be relativized against each other.
-       Only the directory is resolved, so a target that is itself a symlink
-       keeps the name git lists it under. *)
     let resolved =
       let dir, last_segment = Fpath.split_base absolute in
-      match Rpath.of_fpath dir with
-      | Ok real -> Fpath.(Rpath.to_fpath real // last_segment)
-      | Error (_ : string) -> absolute
+      Fpath.(resolve_dir dir // last_segment)
     in
     match Fpath.relativize ~root:cwd resolved with
     | Some rel -> Fpath.normalize rel

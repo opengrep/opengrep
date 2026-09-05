@@ -7,10 +7,10 @@ exception Exit_code of Exit_code.t
 
 (* [is_broken_pipe exn] holds when a reader closed the pipe opengrep writes
    to; that is a normal end of output, to be reported by no one. Use
-   [drop_buffered_stdout] before exiting so that the flush Stdlib does from
-   at_exit does not raise the same error again. *)
+   [silence_std_formatter] before exiting so that the flush Stdlib does
+   from at_exit does not raise the same error again. *)
 val is_broken_pipe : exn -> bool
-val drop_buffered_stdout : unit -> unit
+val silence_std_formatter : unit -> unit
 
 (* shortcut *)
 val abort : string -> 'a

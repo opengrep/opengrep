@@ -77,7 +77,3 @@ val output_result :
 val preprocess_result :
   fixed_lines:bool -> keep_ignored:bool -> Core_runner.result -> Out.cli_output
 
-(* renders Vim/Emacs/Junit_xml/Gitlab_xxx for now *)
-val format :
-  ?profiler : Profiler.t ->
-  Output_format.t -> Out.cli_output -> string list

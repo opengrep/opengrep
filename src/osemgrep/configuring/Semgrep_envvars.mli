@@ -4,8 +4,8 @@
 
 (* Most (typed) fields below correspond directly to an uppercase environment
  * metavariable with the SEMGREP_ prefix.
- * For example, [in_docker] will contain the content of
- * SEMGREP_IN_DOCKER in the environment (or a default value if
+ * For example, [min_fetch_depth] holds the value of
+ * SEMGREP_GHA_MIN_FETCH_DEPTH in the environment (or a default value if
  * it's not in the environment).
  *)
 type t = {

@@ -1,0 +1,21 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 20 insertions(+)
+ create mode 100644 nosem_invalid_id.js
+ create mode 100644 rules.yml
+
+
+┌─────────────────┐
+│ 3 Code Findings │
+└─────────────────┘
+
+    nosem_invalid_id.js
+    ❯❱ test-nosem
+          test-nosem-message
+
+            2┆ test_nosem_func() // nosem: rules.test-nosem-invalid
+            ⋮┆----------------------------------------
+            6┆ test_nosem_func() /* nosem: */
+            ⋮┆----------------------------------------
+           12┆ test_nosem_func()
+

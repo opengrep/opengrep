@@ -1,0 +1,21 @@
+--- begin input files ---
+rules.yml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 11 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 stupid.py
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    stupid.py
+   ❯❯❱ eqeq-bad
+          useless comparison
+
+            3┆ return a + b == a + b
+

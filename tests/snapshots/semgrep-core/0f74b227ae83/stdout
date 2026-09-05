@@ -1,0 +1,9 @@
+--- begin input files ---
+foo.py
+rules.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 foo.py
+ create mode 100644 rules.yaml

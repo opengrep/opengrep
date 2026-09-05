@@ -851,70 +851,70 @@ let test_github_environment (caps : Ci_subcommand.caps) () =
 let tests (caps : < Ci_subcommand.caps >) =
   Testo.categorize "Osemgrep Ci (e2e)"
     [
-      t "no findings exits ok" ~checked_output:(Testo.stdxxx ()) ~normalize
+      t "no findings exits ok" ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_no_findings caps);
-      t "blocking findings exit with findings" ~checked_output:(Testo.stdxxx ())
+      t "blocking findings exit with findings" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_blocking_findings caps);
-      t "non-blocking findings exit ok" ~checked_output:(Testo.stdxxx ())
+      t "non-blocking findings exit ok" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_nonblocking_findings caps);
       t "scalar block action exits with findings"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_scalar_blocking_findings caps);
       t "empty metadata keeps the rule blocking"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_empty_metadata_blocking caps);
       t "scalar metadata reaches the json output"
         (test_scalar_metadata_in_json caps);
-      t "scalar non-block action exits ok" ~checked_output:(Testo.stdxxx ())
+      t "scalar non-block action exits ok" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_scalar_nonblocking_findings caps);
       t "audit mode exits ok despite findings"
-        ~checked_output:(Testo.stdxxx ()) ~normalize (test_audit_mode caps);
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize (test_audit_mode caps);
       t "SEMGREP_AUDIT_ON is a whitespace-separated list"
-        ~checked_output:(Testo.stdxxx ()) ~normalize (test_audit_env_list caps);
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize (test_audit_env_list caps);
       t "SEMGREP_RULES is a whitespace-separated list"
-        ~checked_output:(Testo.stdxxx ()) ~normalize (test_rules_env_list caps);
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize (test_rules_env_list caps);
       t "subdir outside cwd is suppressed to ok"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_subdir_outside_cwd_suppressed caps);
       t "subdir outside cwd is fatal without suppression"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_subdir_outside_cwd_fatal caps);
       t "nonexistent subdir is reported as not found"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_subdir_nonexistent_suppressed caps);
       t "nonexistent subdir is fatal without suppression"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_subdir_nonexistent_fatal caps);
-      t "output conflict is suppressed to ok" ~checked_output:(Testo.stdxxx ())
+      t "output conflict is suppressed to ok" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_output_conflict_suppressed caps);
       t "output conflict is fatal without suppression"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_output_conflict_fatal caps);
       t "suppress-errors env var set to false"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_suppress_errors_env_false caps);
       t "garbage boolean env value is a usage error"
         (test_suppress_errors_env_garbage caps);
       t "invalid rule is fatal without suppression"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_invalid_rule_fatal caps);
-      t "invalid rule is suppressed to ok" ~checked_output:(Testo.stdxxx ())
+      t "invalid rule is suppressed to ok" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_invalid_rule_suppressed caps);
       t "short SEMGREP_COMMIT is a rev" test_short_sha_is_a_rev;
-      t "SEMGREP_COMMIT accepts any rev" ~checked_output:(Testo.stdxxx ())
+      t "SEMGREP_COMMIT accepts any rev" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_commit_rev caps);
       t "baseline rev keeps only the new finding"
-        ~checked_output:(Testo.stdxxx ()) ~normalize (test_baseline_rev caps);
-      t "baseline from SEMGREP_BASELINE_REF" ~checked_output:(Testo.stdxxx ())
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize (test_baseline_rev caps);
+      t "baseline from SEMGREP_BASELINE_REF" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_baseline_env_var caps);
       t "subdir restricts the scan and finds findings"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_subdir_findings caps);
       t "baseline rev in subdir keeps only the new finding"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_baseline_rev_in_subdir caps);
       t "github merge-base API failure falls back to git"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_commit_hashes
         (test_github_branchoff_api_failure caps);
       t "github merge base found by fetching deeper"
         (test_github_branchoff_deepening caps);
@@ -926,22 +926,22 @@ let tests (caps : < Ci_subcommand.caps >) =
         (test_provider_subdir_display_name caps);
       t "circleci pr id survives a trailing slash"
         (test_circleci_pr_id_trailing_slash caps);
-      t "circleci environment is detected" ~checked_output:(Testo.stdxxx ())
+      t "circleci environment is detected" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_circleci_environment caps);
       t "gitlab merge base via authenticated fetch"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_commit_hashes
         (test_gitlab_merge_base_fetch caps);
       t "gitlab merge base via credential helper on old git"
         (test_gitlab_merge_base_fetch_old_git caps);
       t "gitlab fetch token is redacted in logs"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_commit_hashes
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_commit_hashes
         (test_gitlab_fetch_token_redacted caps);
       t "gitlab merge request without a job token"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_gitlab_merge_request_without_token caps);
-      t "gitlab environment is detected" ~checked_output:(Testo.stdxxx ())
+      t "gitlab environment is detected" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_gitlab_environment caps);
-      t "github environment is detected" ~checked_output:(Testo.stdxxx ())
+      t "github environment is detected" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize (test_github_environment caps);
       t "github job url keeps the repository path"
         (test_github_ci_job_url caps);

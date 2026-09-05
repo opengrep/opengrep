@@ -36,6 +36,22 @@ val invalid_api_key : __LOC__:string -> t
 val scan_fail : __LOC__:string -> t
 val broken_pipe : __LOC__:string -> t
 
+(* The codes themselves, to document them; nothing is logged. To exit, use
+   the functions above. *)
+module Value : sig
+  val ok : t
+  val findings : t
+  val fatal : t
+  val invalid_code : t
+  val invalid_pattern : t
+  val unparseable_yaml : t
+  val missing_config : t
+  val invalid_language : t
+  val invalid_api_key : t
+  val scan_fail : t
+  val broken_pipe : t
+end
+
 (*
    Test for equality without creating a new exit code that would get logged.
 *)

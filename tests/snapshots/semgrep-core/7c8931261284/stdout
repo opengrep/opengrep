@@ -1,0 +1,6 @@
+--- begin input files ---
+rules/fix_trailing_newline.yaml
+targets/basic.fixed.go
+targets/basic.go
+--- end input files ---
+{"results":{"rules/fix_trailing_newline.yaml":{"checks":{"basic-fix":{"passed":true,"matches":{"<TMP>/<MASKED>/targets/basic.go":{"expected_lines":[3],"reported_lines":[3]}},"errors":[]}}}},"fixtest_results":{"targets/basic.go":{"passed":true}},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[]}

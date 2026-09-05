@@ -1,0 +1,56 @@
+--- begin input files ---
+rules/three-autofixes.yaml
+targets/three-autofixes.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 39 insertions(+)
+ create mode 100644 rules/three-autofixes.yaml
+ create mode 100644 targets/three-autofixes.py
+
+
+┌─────────────────┐
+│ 3 Code Findings │
+└─────────────────┘
+
+    targets/three-autofixes.py
+   ❯❯❱ rules.autofix-bugtest
+          This rule decreases the file in length and will be applied three times in this test.
+
+           ▶▶┆ Autofix ▶ requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+            4┆ return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint",
+               _injected=True)
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+           12┆ return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint",
+               _injected=True)
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+           20┆ return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint",
+               _injected=True)
+
+--- targets/three-autofixes.py after the scan ---
+import requests
+
+def _do_stuff():
+    return requests.post(
+        headers=auth_headers,
+        url=self.url,
+        endpoints="endpoint",
+    )
+
+
+def _do_other_stuff():
+    return requests.post(
+        headers=auth_headers,
+        url=self.url,
+        endpoints="endpoint",
+    )
+
+
+def _do_other_stuff2():
+    return requests.post(
+        headers=auth_headers,
+        url=self.url,
+        endpoints="endpoint"
+    )

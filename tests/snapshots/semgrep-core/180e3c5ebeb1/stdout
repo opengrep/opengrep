@@ -1,0 +1,34 @@
+--- begin input files ---
+rules/autofix.yaml
+targets/autofix.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/autofix.yaml
+ create mode 100644 targets/autofix.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/autofix.py
+   ❯❯❱ rules.use-dict-get
+          Use `.get()` method to avoid a KeyNotFound error
+
+           ▶▶┆ Autofix ▶ inputs.get(x)
+            5┆ inputs[x] = 1
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ inputs.get((x + 1))
+            6┆ if inputs[x + 1] == True:
+
+--- targets/autofix.py after the scan ---
+import sys
+
+inputs = {}
+for x in range(5):
+  inputs.get(x) = 1
+  if inputs.get((x + 1)) == True:
+    exit(1)
+

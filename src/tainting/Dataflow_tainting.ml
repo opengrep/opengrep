@@ -1275,20 +1275,17 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
               Hashtbl.find_opt env.taint_inst.java_props_cache (prop_str, sid)
           with
           | Some prop_name -> prop_name
-          | None -> (
-              let mk_default_prop_name () =
-                  let prop_name =
-                  {
-                      ident = (prop_str, method_tok);
-                      sid = G.SId.unsafe_default;
-                      id_info = G.empty_id_info ();
-                  }
-                  in
-                  Hashtbl.add env.taint_inst.java_props_cache (prop_str, sid)
-                  prop_name;
-                  prop_name
+          | None ->
+              let prop_name =
+                {
+                  ident = (prop_str, method_tok);
+                  sid = G.SId.unsafe_default;
+                  id_info = G.empty_id_info ();
+                }
               in
-              mk_default_prop_name ())
+              Hashtbl.add env.taint_inst.java_props_cache (prop_str, sid)
+                prop_name;
+              prop_name
           in
           { lval with rev_offset = [ { o = Dot prop_name; oorig = NoOrig } ] }
         in

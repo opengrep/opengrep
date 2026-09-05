@@ -25,23 +25,7 @@ open Test_scan_helpers
 
 (* the width of a rendered line, in code points: the wrapper counted the
    characters of a line, not its bytes *)
-let width (line : string) : int =
-  let rec go (i : int) (acc : int) : int =
-    if i >= String.length line then acc
-    else
-      let d = String.get_utf_8_uchar line i in
-      go (i + Uchar.utf_decode_length d) (acc + 1)
-  in
-  go 0 0
-
-let is_valid_utf8 (line : string) : bool =
-  let rec go (i : int) : bool =
-    if i >= String.length line then true
-    else
-      let d = String.get_utf_8_uchar line i in
-      Uchar.utf_decode_is_valid d && go (i + Uchar.utf_decode_length d)
-  in
-  go 0
+let width : string -> int = Utf8.length
 
 let has_escapes (output : string) : bool =
   String_.contains ~term:"\027[" output
@@ -193,7 +177,7 @@ let test_wrapping (caps : Scan_subcommand.caps) () =
     (fun (line : string) ->
       Alcotest.(check bool)
         (spf "no character was cut in half in %S" line)
-        true (is_valid_utf8 line);
+        true (Utf8.is_valid line);
       Alcotest.(check bool)
         (spf "%S is at most 42 columns" line)
         true
@@ -426,18 +410,12 @@ rules:
       (scan_output caps ~channel:stderr ~rule:one_rule_and_a_warning
          ~target:stupid_py extra_args)
   in
-  List.iter
-    (fun (mode : string list) ->
-      let what = if List_.null mode then "scan" else String.concat " " mode in
-      Alcotest.(check bool)
-        (spf "no colour off a terminal for %s" what)
-        false
-        (has_escapes (run mode));
-      Alcotest.(check bool)
-        (spf "colour with --force-color for %s" what)
-        true
-        (has_escapes (run ("--force-color" :: mode))))
-    [ [] ];
+  Alcotest.(check bool)
+    "no colour off a terminal" false
+    (has_escapes (run []));
+  Alcotest.(check bool)
+    "colour with --force-color" true
+    (has_escapes (run [ "--force-color" ]));
   (* 'validate' and 'test' take the flag rather than forcing colour on *)
   List.iter
     (fun ((argv : string array), (forced : bool)) ->
@@ -477,6 +455,34 @@ let test_no_color_any_value () =
 (* Entry point *)
 (*****************************************************************************)
 
+(* A config of INVENTORY rules only: the target is scanned by no rule, and
+   the summary says so. python: test_inventory_finding_output *)
+let test_inventory_rule_text (caps : Scan_subcommand.caps) () =
+  let inventory_rule =
+    {|
+rules:
+  - id: inventory
+    pattern: $X == $X
+    message: inventory
+    languages: [python]
+    severity: INVENTORY
+|}
+  in
+  let lines =
+    scan_output caps ~channel:stderr ~rule:inventory_rule ~target:stupid_py
+      [ "--verbose"; fst stupid_py ]
+  in
+  Alcotest.(check string)
+    "the rule not run" "1 rule of severity INVENTORY or EXPERIMENT not run"
+    (line_containing "not run" lines |> String.trim
+    |> Str.replace_first (Str.regexp "^.*INFO\\]: ") "");
+  Alcotest.(check string)
+    "the status line" "Scanning 1 file tracked by git with 0 Code rules:"
+    (String.trim (line_containing "Scanning" lines));
+  Alcotest.(check string)
+    "the summary" "Ran 0 rules on 1 file: 0 findings."
+    (String.trim (line_containing "Ran " lines))
+
 let tests (caps : < Scan_subcommand.caps >) =
   Testo.categorize "Osemgrep Scan text output (e2e)"
     [
@@ -500,4 +506,6 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "colour precedence, for validate and test too"
         (test_colour_precedence (caps :> Scan_subcommand.caps));
       t "NO_COLOR turns colour off whatever its value" test_no_color_any_value;
+      t "INVENTORY rules only: the target is scanned by no rule"
+        (test_inventory_rule_text (caps :> Scan_subcommand.caps));
     ]

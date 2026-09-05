@@ -1,8 +1,0 @@
-[<MASKED TIMESTAMP>][WARNING]: no fixtest for test targets/test2.py but the rule file rules/basic_fix.yaml uses autofix
---- begin input files ---
-rules/basic_fix.yaml
-targets/test2.py
---- end input files ---
-1/1: ✓ All tests passed
-No tests for fixes found.
-ASSERT exit code

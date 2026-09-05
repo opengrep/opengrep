@@ -156,7 +156,7 @@ let mk_matching_explanation_tests (caps : Test_subcommand.caps) =
   in
   List_.map
     (fun (test_name, rule, test_content) ->
-      t ~checked_output:(Testo.stdxxx ()) ~normalize test_name (fun () ->
+      t ~checked_output:(Testo.split_stdout_stderr ()) ~normalize test_name (fun () ->
           Logs.app (fun m -> m "Snapshot for %s" test_name);
           let files =
             [ F.File ("test.yaml", rule); F.File ("test.py", test_content) ]
@@ -260,7 +260,7 @@ let mk_fixtest_tests (caps : Test_subcommand.caps) : Testo.t list =
          |> List_.map (fun ((label : string), (json : bool)) ->
                 t
                   (Printf.sprintf "fixtest: %s %s %s" rule target label)
-                  ~checked_output:(Testo.stdxxx ()) ~normalize
+                  ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
                   (run_fixtest caps ~rule ~target ~json ~check)))
 
 (*****************************************************************************)
@@ -343,13 +343,13 @@ let mk_checks_tests (caps : Test_subcommand.caps) : Testo.t list =
              (target : string),
              (json : bool) )
          ->
-         t ("checks: " ^ name) ~checked_output:(Testo.stdxxx ()) ~normalize
+         t ("checks: " ^ name) ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
            (run_checks caps ~rule ~target ~json)))
   @ [
       (* the rule never finishes within the default time limit, and a shorter
          one keeps the test quick. The rule then reports nothing and the
          annotated lines are missed. python: test_timeout *)
-      t "checks: a rule that times out, JSON" ~checked_output:(Testo.stdxxx ())
+      t "checks: a rule that times out, JSON" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (run_checks caps ~extra_flags:[ "--timeout"; "1" ]
            ~check:Exit_code.Check.findings ~rule:"rule_that_timeout.yaml"
@@ -357,12 +357,12 @@ let mk_checks_tests (caps : Test_subcommand.caps) : Testo.t list =
       (* a rule file the loader rejects is reported in config_with_errors and
          the run goes on with the other files, but it fails the run *)
       t "checks: a rule file that does not load, JSON"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (run_checks caps ~check:Exit_code.Check.findings
            ~rule:"no_pattern.yaml" ~target:"no_pattern.py" ~json:true);
       (* --strict does not change that verdict *)
       t "checks: a rule file that does not load with --strict, text"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (run_checks caps ~extra_flags:[ "--strict" ]
            ~check:Exit_code.Check.findings ~rule:"no_pattern.yaml"
            ~target:"no_pattern.py" ~json:false);
@@ -440,7 +440,7 @@ let test_rules_and_targets_directories (caps : Test_subcommand.caps) () =
                 (fun
                   ((rule_id : string), (r : Semgrep_output_v1_t.rule_result))
                 -> (rule_id, r.passed)))
-    |> List.sort compare
+    |> List.sort (fun ((a : string), _) ((b : string), _) -> String.compare a b)
   in
   let expected = [ ("eqeq-is-bad", true); ("no-print", true) ] in
   Alcotest.(check (list (pair string bool)))
@@ -574,7 +574,12 @@ let test_todo_annotations_are_per_rule_id (caps : Test_subcommand.caps) () =
   let files =
     [
       F.File ("both.yaml", eqeq_and_print_rule_content);
-      F.File ("both.py", "# todook: no-print\nx == x\n");
+      (* the todook: names no-print only; both rules match its line, and
+         eqeq-is-bad is annotated further down so that every rule that
+         matches is named in the file *)
+      F.File
+        ( "both.py",
+          "# todook: no-print\nprint(x == x)\n# ruleid: eqeq-is-bad\nx == x\n" );
     ]
   in
   let exit_code, res =
@@ -600,7 +605,7 @@ let test_todo_annotations_are_per_rule_id (caps : Test_subcommand.caps) () =
   in
   Alcotest.(check (list (triple string bool (list int))))
     "the todook: of one rule does not hide the match of the other"
-    [ ("eqeq-is-bad", false, [ 2 ]); ("no-print", true, []) ]
+    [ ("eqeq-is-bad", false, [ 2; 4 ]); ("no-print", true, []) ]
     checks
 
 (* a match on a line with the ignore annotation is not reported *)
@@ -658,6 +663,24 @@ let test_two_target_directories (caps : Test_subcommand.caps) () =
             "only one target directory is allowed, got: a b" msg
       | _ -> Alcotest.fail "expected the test run to abort")
 
+(* python: check_rule_id_mismatch. The annotations of a file must name the
+   rules that matched in it, no more and no fewer; otherwise the run exits
+   2 before any report. *)
+let test_rule_id_mismatch (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("both.yaml", eqeq_and_print_rule_content);
+      (* no-print matches the second line, which carries no annotation *)
+      F.File ("both.py", "# ruleid: eqeq-is-bad\nx == x\nprint(1)\n");
+    ]
+  in
+  Testutil_files.with_tempfiles ~chdir:true files (fun _cwd ->
+      let exit_code =
+        Test_subcommand.main caps
+          [| "opengrep-test"; "--config"; "both.yaml"; "both.py" |]
+      in
+      Exit_code.Check.fatal exit_code)
+
 (* a rule file listed under '.' is reported without the './' prefix *)
 let test_rule_file_keys_of_a_dot_root (caps : Test_subcommand.caps) () =
   let files =
@@ -704,6 +727,8 @@ let tests (caps : < Test_subcommand.caps >) =
           (test_two_target_directories caps);
         t "the rule file keys of a '.' root carry no './'"
           (test_rule_file_keys_of_a_dot_root caps);
+        t "a rule that matches without an annotation fails the run"
+          (test_rule_id_mismatch caps);
       ]
     @ mk_fixtest_tests caps
     @ mk_checks_tests caps)

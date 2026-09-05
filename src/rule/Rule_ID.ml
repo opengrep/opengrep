@@ -65,6 +65,7 @@ let of_string_opt x = if validate x then Some x else None
 let to_string_list x = x
 let of_string_list x = x
 let compare = String.compare
+let equal = String.equal
 
 let last_elt_opt x =
   let xs = x |> Str.split (Str.regexp_string ".") |> List.rev in

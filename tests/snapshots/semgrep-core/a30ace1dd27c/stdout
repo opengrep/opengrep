@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/good.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 rules/good.yaml
+ create mode 100644 target.py
+exit code: 0
+--- begin input files ---
+rules/good.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 rules/good.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[],"paths":{"scanned":["target.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 0

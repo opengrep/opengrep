@@ -1,0 +1,36 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'rev-parse' 'HEAD'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'checkout' '-b' 'feature'
+[<MASKED TIMESTAMP>][INFO]: error output: Switched to a new branch 'feature'
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' 'foo.py'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'change'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'rev-parse' 'HEAD'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'clone' '<TMP>/<MASKED>' 'clone'
+[<MASKED TIMESTAMP>][INFO]: error output: Cloning into 'clone'...
+done.
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' 'origin' '--force' '--depth=1' '<HASH>'
+[<MASKED TIMESTAMP>][INFO]: error output: From <TMP>/<MASKED>
+ * branch            <HASH> -> FETCH_HEAD
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' 'origin' '--depth=1' '--force' '--update-head-ok' 'main:main'
+[<MASKED TIMESTAMP>][INFO]: error output: From <TMP>/<MASKED>
+ * [new branch]      main       -> main
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'rev-parse' 'main'
+[<MASKED TIMESTAMP>][INFO](networking.http): GET on https://api.github.example/repos/example/repo/compare/<HASH>...<HASH>
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'merge-base' '<HASH>' '<HASH>'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' 'origin' '--force' '--update-head-ok' '--depth' '4' 'main:main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' 'origin' '--force' '--update-head-ok' '--depth' '4' '<HASH>'
+[<MASKED TIMESTAMP>][INFO]: error output: From <TMP>/<MASKED>
+ * branch            <HASH> -> FETCH_HEAD
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'merge-base' '<HASH>' '<HASH>'
+ASSERT merge base is the branch-off commit

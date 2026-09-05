@@ -33,6 +33,7 @@ val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
 
 (* gather all the common flags under one term *)
 val o_common : conf Cmdliner.Term.t
+
 (* the exit codes a subcommand can return, to document in its man page;
    pass them to Cmdliner.Cmd.info ~exits, otherwise cmdliner documents its
    own defaults *)

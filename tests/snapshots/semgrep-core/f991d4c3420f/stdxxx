@@ -1,7 +1,0 @@
---- begin input files ---
-rules/basic.yaml
-targets/basic.py
---- end input files ---
-1/1: ✓ All tests passed
-No tests for fixes found.
-ASSERT exit code

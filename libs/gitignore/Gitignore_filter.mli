@@ -1,15 +1,12 @@
 (*
    Create a gitignore filter meant to be reused to filter many target paths.
-
-   gitignore_filenames: set this option to consult other files than
-                        '.gitignore'.
-
+   The cache names the project root and the ignore files to consult in
+   each folder (see Gitignore_cache.create).
 *)
 val create :
-  ?gitignore_filenames:Gitignore.gitignore_filename list ->
   ?higher_priority_levels:Gitignore.level list ->
   ?lower_priority_levels:Gitignore.level list ->
-  project_root:Fpath.t ->
+  gitignore_file_cache:Gitignore.gitignores_cache ->
   unit ->
   Gitignore.filter
 

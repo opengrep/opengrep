@@ -1,0 +1,2 @@
+[<MASKED TIMESTAMP>][WARNING]: no fixtest for test targets/no_associated_fixed.py but the rule file rules/basic_fix_regex.yaml uses autofix
+ASSERT exit code

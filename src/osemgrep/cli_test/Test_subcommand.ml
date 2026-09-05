@@ -103,6 +103,9 @@ type error =
   | MissingFixtest of Fpath.t (* rule file *)
   (* the rule file could not be loaded, with the message of the loader *)
   | UnparsableRule of Fpath.t (* rule file *) * string (* error message *)
+  (* the rule ids the annotations of a test file name are not the ones that
+     matched in it *)
+  | RuleIdMismatch of Fpath.t (* test file *) * Rule_ID.t list (* unmatched *)
 
 (* to avoid having functions with lots of parameters *)
 type env = {
@@ -668,7 +671,7 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                     let file_annots =
                       Assoc.find_opt target annots |> List_.optlist_to_list
                       |> List.filter (fun (((annot : A.t), _line) : A.t * A.linenb) ->
-                             Int.equal (Rule_ID.compare annot.id id) 0)
+                             Rule_ID.equal annot.id id)
                     in
                     let reported_lines =
                       A.filter_todo file_annots reported_lines
@@ -784,6 +787,42 @@ let run_engine (caps : < scan_caps ; .. >) (env : env) (rules : Rule.t list)
     |> List_.exclude (fun (x : Core_result.processed_match) -> x.is_ignored)
     |> List_.map (fun (x : Core_result.processed_match) -> x.pm)
   in
+  (* python: check_rule_id_mismatch. The rule ids the annotations of a file
+   * name must be the ones that matched in it: a misspelt id, or a rule that
+   * matched without any annotation, fails the run. *)
+  if not (List_.null matches) then
+    files_and_annots
+    |> List.iter (fun ((file : Fpath.t), (annots : A.annotations)) ->
+           let ids (xs : Rule_ID.t list) : Rule_ID.t list =
+             List.sort_uniq Rule_ID.compare xs
+           in
+           let annotated =
+             ids (annots |> List_.map (fun ((a : A.t), (_ : A.linenb)) -> a.id))
+           in
+           let reported =
+             matches
+             |> List.filter (fun (pm : Core_match.t) ->
+                    Fpath.equal
+                      (Fpath.normalize pm.path.internal_path_to_content)
+                      (Fpath.normalize file))
+             |> List_.map (fun (pm : Core_match.t) -> pm.rule_id.id)
+             |> ids
+           in
+           if not (List.equal Rule_ID.equal annotated reported) then (
+             let unmatched =
+               List.filter
+                 (fun (id : Rule_ID.t) ->
+                   not (List.exists (Rule_ID.equal id) reported))
+                 annotated
+             in
+             Logs.err (fun m ->
+                 m
+                   "Found rule id mismatch - file=%s 'ruleid' annotation with \
+                    no YAML rule=%s"
+                   !!file
+                   (unmatched |> List_.map Rule_ID.to_string
+                  |> String.concat ", "));
+             Stack_.push (RuleIdMismatch (file, unmatched)) env.errors));
   let checks =
     compare_actual_to_expected env matches expected res.explanations
       ~errors:
@@ -871,7 +910,20 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
 
   (* step2: run the tests *)
   let result : tests_result = run_tests caps conf tests errors in
-
+  (* python: check_rule_id_mismatch exits before any report *)
+  if
+    !errors
+    |> List.exists (function
+         | RuleIdMismatch _ -> true
+         | _ -> false)
+  then (
+    Logs.err (fun m ->
+        m
+          "Failing due to rule id mismatch. There is a test denoted with \
+           'ruleid: <rule name>' where the rule name does not exist or is not \
+           expected in the test file.");
+    Exit_code.fatal ~__LOC__)
+  else
   (* step3: report the test results *)
   let res : Out.tests_result = tests_result_of_tests_result result !errors in
   (* the message of the loader, which the JSON config_with_errors cannot hold *)

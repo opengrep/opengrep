@@ -1,0 +1,7 @@
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 645 insertions(+)
+ create mode 100644 rules/long.yaml
+ create mode 100644 rules/multiple-long.yaml
+ create mode 100644 targets/gnu-lgplv2.txt
+ create mode 100644 targets/open_redirect.py

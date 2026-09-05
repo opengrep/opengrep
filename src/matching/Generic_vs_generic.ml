@@ -429,16 +429,6 @@ let rec m_name_inner a b =
      the inner m_name function.
   *)
   let m_name = m_name_inner in
-  let try_parents _dotted =
-    let parents = [] in
-    (* less: use a fold *)
-    let rec aux xs =
-      match xs with
-      | [] -> fail ()
-      | x :: xs -> m_name a x >||> aux xs
-    in
-    aux parents
-  in
   let try_alternate_names idb resolved =
     let _, tidb = idb in
     match resolved with
@@ -474,26 +464,7 @@ let rec m_name_inner a b =
           (m_name a (B.Id (idb, { infob with B.id_resolved = ref None }))
           >||> try_alternate_names idb resolved
           (* Try the resolved entity *)
-          >||> m_name a (H.name_of_ids dotted)
-          >||>
-          (* Try the resolved entity and parents *)
-          match a with
-          (* > If we're matching against a metavariable, don't bother checking
-           * > the resolved entity or parents. It will only cause duplicate matches
-           * > that can't be deduped, since the captured metavariable will be
-           * > different.
-           *
-           * FIXME:
-           * This is actually not the correct way of dealing with the problem,
-           * because there could be `metavariable-xyz` operators filtering the
-           * potential values of the metavariable. See DeepSemgrep commit
-           *
-           *     5b2766ee30e "test: Tests for matching metavariable patterns against resolved names"
-           *)
-          | G.Id ((str, _tok), _info) when Mvar.is_metavar_name str -> fail ()
-          | _ ->
-              (* Try matching against parent classes *)
-              try_parents dotted)
+          >||> m_name a (H.name_of_ids dotted))
     | __else__ -> fail ()
   in
   match (a, b) with
@@ -531,8 +502,7 @@ let rec m_name_inner a b =
       let dotted = G.canonical_to_dotted (snd idb) canonical in
       (* coupling: resolved names with wildcards *)
       wipe_wildcard_imports
-        (try_parents dotted
-        >||> try_alternate_names idb resolved
+        (try_alternate_names idb resolved
         (* try without resolving anything *)
         >||> m_name a
                (B.IdQualified { nameinfo with name_info = static_empty_id_info })
@@ -580,21 +550,18 @@ let rec m_name_inner a b =
                  {
                    contents =
                      Some
-                       ( (( B.ImportedEntity canonical
-                          | B.ImportedModule canonical
-                          | B.GlobalName (canonical, _) ) as resolved),
+                       ( (( B.ImportedEntity _
+                          | B.ImportedModule _
+                          | B.GlobalName _ ) as resolved),
                          _sid );
                  };
                _;
              };
            _;
          } as b1) ) ->
-      (* TODO? use all the tokens in the name? not just idb? *)
-      let dotted = G.canonical_to_dotted (snd idb) canonical in
       (* coupling: resolved names with wildcards *)
       wipe_wildcard_imports
-        (try_parents dotted
-        >||> try_alternate_names idb resolved
+        (try_alternate_names idb resolved
         >||>
         match a with
         | IdQualified a1 -> m_name_info a1 b1
@@ -3706,12 +3673,12 @@ and m_list__m_class_parent (xsa : G.class_parent list)
       if
         lang =*= Lang.Kotlin
         (* in Kotlin the order in cextends does not matter *)
-      then m_list_in_any_order ~less_is_ok:true m_class_parent xsa xsb
+      then m_list_in_any_order ~less_is_ok:true m_class_parent_basic xsa xsb
       else
         (* we could generalize to other languages, but we currently get
          * regressions for python where the order does seem to matter
          *)
-        m_list_with_dots m_class_parent
+        m_list_with_dots m_class_parent_basic
           (function
             | { G.t = G.TyEllipsis _; _ }, None -> true
             (* dots: '...', this is very Python Specific I think *)
@@ -3725,8 +3692,6 @@ and m_class_parent_basic (a1, a2) (b1, b2) =
   (* less: m_option_none_can_match_some? *)
   let* () = m_option m_arguments a2 b2 in
   return ()
-
-and m_class_parent a b = m_class_parent_basic a b
 
 (* ------------------------------------------------------------------------- *)
 (* Class definition *)

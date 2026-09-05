@@ -171,7 +171,7 @@ let safe_run f : Exit_code.t =
   try f () with
   (* say nothing and return the conventional code for a closed pipe *)
   | exn when Error.is_broken_pipe exn ->
-      Error.drop_buffered_stdout ();
+      Error.silence_std_formatter ();
       Exit_code.broken_pipe ~__LOC__
   | Error.Semgrep_error (s, opt_exit_code) -> (
       Logs.err (fun m -> m "%s" s);

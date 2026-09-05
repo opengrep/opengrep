@@ -1001,7 +1001,7 @@ let test_invalid_utf8 (caps : Scan_subcommand.caps) () =
           Exit_code.Check.ok exit_code;
           Alcotest.(check string)
             "the output is valid UTF-8" stdout_output
-            (String_.sanitize_utf8 stdout_output);
+            (Utf8.sanitize stdout_output);
           let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
           match out.results with
           | [ m ] ->
@@ -1045,7 +1045,7 @@ let test_invalid_utf8_in_error (caps : Scan_subcommand.caps) () =
           in
           Alcotest.(check string)
             "the output is valid UTF-8" stdout_output
-            (String_.sanitize_utf8 stdout_output);
+            (Utf8.sanitize stdout_output);
           let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
           match out.errors with
           | [ e ] ->
@@ -1093,8 +1093,10 @@ rules:
 |}
 
 (* the check ids of the findings of a --json scan and its exit code *)
-let json_scan (caps : Scan_subcommand.caps) ~(rule : string) ~(target : string)
-    (extra_args : string list) : string list * Exit_code.t =
+(* the JSON document of a scan of target.py with the rules given *)
+let json_scan_output (caps : Scan_subcommand.caps) ~(rule : string)
+    ~(target : string) (extra_args : string list) :
+    Semgrep_output_v1_t.cli_output * Exit_code.t =
   with_env_app_token (fun () ->
       let repo_files =
         [ F.File ("rules.yml", rule); F.File ("target.py", target) ]
@@ -1108,11 +1110,16 @@ let json_scan (caps : Scan_subcommand.caps) ~(rule : string) ~(target : string)
                          ([ "opengrep-scan"; "--experimental"; "--json"; "--config"; "rules.yml" ]
                          @ extra_args @ [ "target.py" ]))))
           in
-          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
-          ( out.results
-            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
-                   Rule_ID.to_string m.check_id),
-            exit_code )))
+          (Semgrep_output_v1_j.cli_output_of_string stdout_output, exit_code)))
+
+(* the ids of the findings of such a scan *)
+let json_scan (caps : Scan_subcommand.caps) ~(rule : string) ~(target : string)
+    (extra_args : string list) : string list * Exit_code.t =
+  let out, exit_code = json_scan_output caps ~rule ~target extra_args in
+  ( out.results
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           Rule_ID.to_string m.check_id),
+    exit_code )
 
 let test_inventory_and_experiment_rules_never_run
     (caps : Scan_subcommand.caps) () =
@@ -1122,12 +1129,16 @@ let test_inventory_and_experiment_rules_never_run
   in
   Exit_code.Check.findings exit_code;
   Alcotest.(check (list string)) "only the ERROR rule ran" [ "shown" ] check_ids;
-  (* a config made only of such rules is valid and scans nothing *)
-  let check_ids, exit_code =
-    json_scan caps ~rule:inventory_rule_content ~target [ "--error" ]
+  (* a config made only of such rules is valid, finds nothing, and its
+     target is still listed as scanned; python: test_omit_inventory *)
+  let out, exit_code =
+    json_scan_output caps ~rule:inventory_rule_content ~target [ "--error" ]
   in
   Exit_code.Check.ok exit_code;
-  Alcotest.(check (list string)) "no findings" [] check_ids
+  Alcotest.(check (list string)) "no findings" [] (out.results |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) -> Rule_ID.to_string m.check_id));
+  Alcotest.(check (list string))
+    "the target was scanned" [ "target.py" ]
+    (out.paths.scanned |> List_.map Fpath.to_string)
 
 (*****************************************************************************)
 (* Rule errors *)
@@ -1383,7 +1394,7 @@ let process_limits_root : Fpath.t = Fpath.v "tests/process_limits"
 
 (* the scan of the files of tests/process_limits copied into a temp repo;
  * the JSON errors (type, rule id) and the exit code when captured, else the
- * output on stdxxx for a snapshot *)
+ * output on stdout and stderr for a snapshot *)
 let scan_process_limits (caps : Scan_subcommand.caps) ~(capture_stdout : bool)
     (args : string list) : (string * string option) list * Exit_code.t =
   let read (rel : string) : string =
@@ -1663,30 +1674,30 @@ let test_missing_roots_test_mode (caps : Scan_subcommand.caps) () =
 let tests (caps : < Scan_subcommand.caps >) =
   Testo.categorize "Osemgrep Scan (e2e)"
     [
-      t "basic output" ~checked_output:(Testo.stdxxx ()) ~normalize
+      t "basic output" ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output caps);
-      t "basic output with --output-enclosing-context" ~checked_output:(Testo.stdxxx ()) ~normalize
+      t "basic output with --output-enclosing-context" ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_enclosing_context caps);
-      t "basic output with --opengrep-ignore-pattern" ~checked_output:(Testo.stdxxx ()) ~normalize
+      t "basic output with --opengrep-ignore-pattern" ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_ignore_pattern caps);
       t "incremental output with --incremental-output-postprocess"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental_disabled caps);
       t "basic verbose output"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_verbose_output caps);
-      t "precise range for parenthesized expression" ~checked_output:(Testo.stdxxx ()) ~normalize
+      t "precise range for parenthesized expression" ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output caps
            ~rules_file:"java_arg_paren.yaml"
            ~rules_content:java_arg_paren_yaml_content
            ~code_file:"java_arg_paren.java"
            ~code_content:java_arg_paren_java_content);
-      t "basic output with --max-match-per-file" ~checked_output:(Testo.stdxxx ()) ~normalize
+      t "basic output with --max-match-per-file" ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_max_match caps);
-      t "basic output with max-match-per-file rule option" ~checked_output:(Testo.stdxxx ()) ~normalize
+      t "basic output with max-match-per-file rule option" ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_max_match_in_rule caps);
       t "truncated terraform block does not abort scan"
         (test_truncated_terraform_block caps);
@@ -1694,31 +1705,31 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "fingerprints change with the match, not the formatting"
         (test_id_change caps);
       t "text output: two rules with the same message"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output caps ~rules_content:two_rules_same_message_content
            ~code_content:"print(1 == 1)\n");
-      t "text output: the autofix line" ~checked_output:(Testo.stdxxx ())
+      t "text output: the autofix line" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (test_basic_output caps ~rules_content:autofix_rules_content
            ~code_content:autofix_py_content);
       t "text output: long rule ids, messages and lines are wrapped"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output caps ~rules_content:long_rule_id_content
            ~code_content:long_line_py_content
            ~extra_args:[ "--max-chars-per-line"; "60" ]);
       t "--time: the summary of the text output"
-        ~checked_output:(Testo.stdxxx ())
+        ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize:(mask_times :: normalize)
         (test_basic_output caps ~extra_args:[ "--time" ]);
       (* the captured output is not a tty, so colour only appears when forced *)
       t "colour: --force-color styles the text output"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output caps ~extra_args:[ "--force-color" ]);
-      t "colour: NO_COLOR gives plain output" ~checked_output:(Testo.stdxxx ())
+      t "colour: NO_COLOR gives plain output" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (fun () -> with_no_color (test_basic_output caps));
       t "colour: --force-color wins over NO_COLOR"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (fun () ->
           with_no_color (test_basic_output caps ~extra_args:[ "--force-color" ]));
       t "--time: the times in the JSON output" (test_time_json caps);
@@ -1742,7 +1753,7 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_log_file caps);
       t "log file: an unwritable path warns and the scan carries on"
         (test_log_file_unwritable caps);
-      t "yaml: the lines of a match on a block" ~checked_output:(Testo.stdxxx ())
+      t "yaml: the lines of a match on a block" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (test_basic_output caps ~rules_file:"yaml_capture.yaml"
            ~rules_content:(read_yaml_fixture "yaml_capture.yaml")
@@ -1754,10 +1765,10 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "process limits: timeouts and memory limit in the JSON errors"
         (test_process_limits_json caps);
       t "process limits: timeout warnings in the text output"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_process_limits_text caps);
       t "nosem with an invalid or unknown id: text output with --strict"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_nosem_invalid_id_text caps);
       t "missing scanning roots: fatal error reported in the JSON output"
         (test_missing_roots_json caps);
@@ -1767,7 +1778,7 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_missing_roots_test_mode caps);
       (* The text output of a scan of a directory, with colour.
          python: test_terminal_output *)
-      t "text output of a directory scan" ~checked_output:(Testo.stdxxx ())
+      t "text output of a directory scan" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (Test_scan_helpers.run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
            ~targets:[]
@@ -1775,25 +1786,25 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~extra_args:[ "--force-color"; "targets/basic" ]);
       (* python: test_terminal_output_quiet *)
       t "text output of a directory scan with --quiet"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (Test_scan_helpers.run_scan caps ~format_args:[] ~rule:"rules/eqeq.yaml"
            ~targets:[]
            ~extra_files:[ F.dir "targets" [ basic_targets_dir ] ]
            ~extra_args:[ "--force-color"; "--quiet"; "targets/basic" ]);
       (* python: test_verbose *)
-      t "verbose text output of a file scan" ~checked_output:(Testo.stdxxx ())
+      t "verbose text output of a file scan" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (Test_scan_helpers.run_scan caps ~format_args:[]
            ~rule:"rules/basic.yaml" ~targets:[ "targets/basic.py" ]
            ~extra_args:[ "--force-color"; "--verbose" ]);
       (* python: test_show_supported_languages *)
-      t "--show-supported-languages" ~checked_output:(Testo.stdxxx ())
+      t "--show-supported-languages" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (Test_scan_helpers.run_scan caps ~format_args:[]
            ~rule:"rules/basic.yaml" ~targets:[ "targets/basic.py" ]
            ~extra_args:[ "--show-supported-languages" ]);
       (* python: test_sort_text_findings *)
-      t "text output: the findings sorted" ~checked_output:(Testo.stdxxx ())
+      t "text output: the findings sorted" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize
         (Test_scan_helpers.run_scan caps ~format_args:[]
            ~rule:"rules/sort-findings.yaml" ~targets:[]
@@ -1820,7 +1831,7 @@ let tests (caps : < Scan_subcommand.caps >) =
          to the file name
          python: test_parse_errors *)
       t "text output: a target parse error reported once"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (Test_scan_helpers.run_scan caps ~format_args:[] ~targets:[]
            ~extra_files:
              [

@@ -1,8 +1,0 @@
---- begin input files ---
-rules/basic_fix.yaml
-targets/test1.fixed.py
-targets/test1.py
---- end input files ---
-1/1: ✓ All tests passed
-1/1: ✓ All fix tests passed
-ASSERT exit code

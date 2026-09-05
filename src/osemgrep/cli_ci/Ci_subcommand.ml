@@ -335,7 +335,7 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
     | Error.Exit_code code -> code
     (* say nothing and return the conventional code for a closed pipe *)
     | exn when Error.is_broken_pipe exn ->
-        Error.drop_buffered_stdout ();
+        Error.silence_std_formatter ();
         Exit_code.broken_pipe ~__LOC__
     (* coupling: CLI.safe_run maps the two exceptions below the same way *)
     (* a failed git command is already explained by Git_wrapper's own

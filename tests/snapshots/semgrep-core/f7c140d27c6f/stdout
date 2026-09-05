@@ -7,5 +7,5 @@ Initialized empty Git repository in<MASKED>
  2 files changed, 1 insertion(+)
  create mode 100644 .gitignore
  create mode 100644 a
-RUN semgrep scan --experimental --x-ls .
+RUN opengrep scan --experimental --x-ls .
 .gitignore

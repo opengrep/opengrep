@@ -147,7 +147,8 @@ let test_dump_ast (caps : caps) : Testo.t =
       Exit_code.Check.ok exit_code)
 
 let test_dump_ast_when_error (caps : caps) : Testo.t =
-  t ~checked_output:(Testo.stdxxx ()) ~normalize:[ Testutil_logs.mask_time ]
+  t ~checked_output:(Testo.split_stdout_stderr ())
+    ~normalize:[ Testutil_logs.mask_time ]
     __FUNCTION__ (fun () ->
       let files = [ F.File ("error.js", "function (") ] in
       let exit_code =

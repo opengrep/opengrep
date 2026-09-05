@@ -1,0 +1,33 @@
+--- begin input files ---
+rules.yml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 11 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 stupid.py
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    stupid.py
+   ❯❯❱ eqeq-bad
+          useless comparison
+
+            3┆ return a + b == a + b
+
+  ============================[ summary ]============================
+  Total time: x.xxxs Config time: x.xxxs Core time: x.xxxs
+
+  Engine time:
+  Total CPU time: x.xxxs  File parse time: x.xxxs  Rule parse time: x.xxxs  Match time: x.xxxs
+  Slowest 5/1 files
+  stupid.py                                          (  0B):  x.xxxs (x.xxxs to parse)
+  Slowest 5 rules to match
+  eqeq-bad:                                                   x.xxxs
+  Analyzed: 1 python files (  0B in x.xxx seconds)
+  Errors:   0 files with errors
+

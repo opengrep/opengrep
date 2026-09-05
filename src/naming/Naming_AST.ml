@@ -347,85 +347,85 @@ let rec get_resolved_type lang (vinit, vtype) =
   match vtype with
   | None
   | Some { t = TyAny _; _ } -> (
-          (* Currently these vary between languages *)
-          (* Alternative is to define a TyInt, TyBool, etc. in the generic AST *)
-          (* so this would be more portable across languages *)
-          match vinit with
-          | Some { e = L (Bool (_, tok)); _ } -> make_type "bool" tok
-          | Some { e = L (Int (_, tok)); _ } -> make_type "int" tok
-          | Some { e = L (Float (_, tok)); _ } -> make_type "float" tok
-          | Some { e = L (Char (_, tok)); _ } -> make_type "char" tok
-          | Some { e = L (String (_, (_, tok), _)); _ } ->
-              let string_str =
-                match lang with
-                | Lang.Go -> "str"
-                | Lang.Js
-                | Lang.Ts ->
-                    "string"
-                | _ -> "string"
-              in
-              make_type string_str tok
-          | Some { e = L (Regexp ((_, (_, tok), _), _)); _ } ->
-              make_type "regexp" tok
-          | Some { e = RegexpTemplate ((l, _fragments, _r), _); _ } ->
-              (* TODO: need proper location instead of just the opening '/'? *)
-              make_type "regexp" l
-          | Some { e = L (Unit tok); _ } -> make_type "unit" tok
-          | Some { e = L (Null tok); _ } -> make_type "null" tok
-          | Some { e = L (Imag (_, tok)); _ } -> make_type "imag" tok
-          (* alt: lookup id in env to get its type, which would be cleaner *)
-          | Some { e = N (Id (_, { id_type; _ })); _ } -> !id_type
-          | Some { e = New (_, tp, _, (_, _, _)); _ } -> Some tp
-          (* Scala companion-object apply: [Map(...)],
-           * [mutable.Map[K, V]()], [HashMap[K, V]()]. The head of
-           * the callee gives the type; when the call is
-           * parameterised, we preserve the type arguments as
-           * [TyApply]. Scala-gated so other languages' inference
-           * paths are untouched; non-Map capitalised heads (e.g.
-           * [List(...)]) are harmless — the library-call
-           * recognisers gate against the Map family list. *)
-          | Some { e = Call (callee, _); _ } when lang =*= Lang.Scala ->
-              let name_of_simple_expr (e : expr) =
-                match e.e with
-                | N (Id (id, _)) -> Some id
-                | N (IdQualified { name_last = id, _; _ }) -> Some id
-                | DotAccess (_, _, FN (Id (id, _))) -> Some id
-                | DotAccess
-                    (_, _, FN (IdQualified { name_last = id, _; _ })) ->
-                    Some id
-                | _ -> None
-              in
-              let head_name_and_targs (e : expr) =
-                match e.e with
-                | OtherExpr (("InstanciatedExpr", _), E inner :: rest) ->
-                    let targs =
-                      List.filter_map
-                        (function T t -> Some t | _ -> None)
-                        rest
-                    in
-                    Option.map
-                      (fun id -> (id, targs))
-                      (name_of_simple_expr inner)
-                | _ ->
-                    Option.map (fun id -> (id, [])) (name_of_simple_expr e)
-              in
-              (match head_name_and_targs callee with
-               | Some ((s, tok), []) when String_.is_capitalized s ->
-                   make_type s tok
-               | Some ((s, tok), targs) when String_.is_capitalized s ->
-                   let head_ty =
-                     TyN (Id ((s, tok), empty_id_info ())) |> AST_generic.t
-                   in
-                   let args =
-                     Tok.unsafe_fake_bracket (List.map (fun t -> TA t) targs)
-                   in
-                   Some (TyApply (head_ty, args) |> AST_generic.t)
-               | _ -> None)
-          | Some { e = Ref (tok, exp); _ } ->
-              Option.bind
-                (get_resolved_type lang (Some exp, None))
-                (fun x -> Some (t @@ TyPointer (tok, x)))
-          | _ -> None)
+      (* Currently these vary between languages *)
+      (* Alternative is to define a TyInt, TyBool, etc. in the generic AST *)
+      (* so this would be more portable across languages *)
+      match vinit with
+      | Some { e = L (Bool (_, tok)); _ } -> make_type "bool" tok
+      | Some { e = L (Int (_, tok)); _ } -> make_type "int" tok
+      | Some { e = L (Float (_, tok)); _ } -> make_type "float" tok
+      | Some { e = L (Char (_, tok)); _ } -> make_type "char" tok
+      | Some { e = L (String (_, (_, tok), _)); _ } ->
+          let string_str =
+            match lang with
+            | Lang.Go -> "str"
+            | Lang.Js
+            | Lang.Ts ->
+                "string"
+            | _ -> "string"
+          in
+          make_type string_str tok
+      | Some { e = L (Regexp ((_, (_, tok), _), _)); _ } ->
+          make_type "regexp" tok
+      | Some { e = RegexpTemplate ((l, _fragments, _r), _); _ } ->
+          (* TODO: need proper location instead of just the opening '/'? *)
+          make_type "regexp" l
+      | Some { e = L (Unit tok); _ } -> make_type "unit" tok
+      | Some { e = L (Null tok); _ } -> make_type "null" tok
+      | Some { e = L (Imag (_, tok)); _ } -> make_type "imag" tok
+      (* alt: lookup id in env to get its type, which would be cleaner *)
+      | Some { e = N (Id (_, { id_type; _ })); _ } -> !id_type
+      | Some { e = New (_, tp, _, (_, _, _)); _ } -> Some tp
+      (* Scala companion-object apply: [Map(...)],
+       * [mutable.Map[K, V]()], [HashMap[K, V]()]. The head of
+       * the callee gives the type; when the call is
+       * parameterised, we preserve the type arguments as
+       * [TyApply]. Scala-gated so other languages' inference
+       * paths are untouched; non-Map capitalised heads (e.g.
+       * [List(...)]) are harmless — the library-call
+       * recognisers gate against the Map family list. *)
+      | Some { e = Call (callee, _); _ } when lang =*= Lang.Scala ->
+          let name_of_simple_expr (e : expr) =
+            match e.e with
+            | N (Id (id, _)) -> Some id
+            | N (IdQualified { name_last = id, _; _ }) -> Some id
+            | DotAccess (_, _, FN (Id (id, _))) -> Some id
+            | DotAccess
+                (_, _, FN (IdQualified { name_last = id, _; _ })) ->
+                Some id
+            | _ -> None
+          in
+          let head_name_and_targs (e : expr) =
+            match e.e with
+            | OtherExpr (("InstanciatedExpr", _), E inner :: rest) ->
+                let targs =
+                  List.filter_map
+                    (function T t -> Some t | _ -> None)
+                    rest
+                in
+                Option.map
+                  (fun id -> (id, targs))
+                  (name_of_simple_expr inner)
+            | _ ->
+                Option.map (fun id -> (id, [])) (name_of_simple_expr e)
+          in
+          (match head_name_and_targs callee with
+           | Some ((s, tok), []) when String_.is_capitalized s ->
+               make_type s tok
+           | Some ((s, tok), targs) when String_.is_capitalized s ->
+               let head_ty =
+                 TyN (Id ((s, tok), empty_id_info ())) |> AST_generic.t
+               in
+               let args =
+                 Tok.unsafe_fake_bracket (List.map (fun t -> TA t) targs)
+               in
+               Some (TyApply (head_ty, args) |> AST_generic.t)
+           | _ -> None)
+      | Some { e = Ref (tok, exp); _ } ->
+          Option.bind
+            (get_resolved_type lang (Some exp, None))
+            (fun x -> Some (t @@ TyPointer (tok, x)))
+      | _ -> None)
   | Some _ -> vtype
 
 (*****************************************************************************)

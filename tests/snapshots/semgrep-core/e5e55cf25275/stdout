@@ -1,0 +1,34 @@
+--- begin input files ---
+rules/python-assert-statement.yaml
+targets/python-assert-statement.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/python-assert-statement.yaml
+ create mode 100644 targets/python-assert-statement.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/python-assert-statement.py
+     ❱ rules.assert_eq-true
+          Change assert_eq(True, x) to assert x
+
+           ▶▶┆ Autofix ▶ assert "a"
+            1┆ assert "a"
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ assert "b"
+            4┆ assert "b"
+
+--- targets/python-assert-statement.py after the scan ---
+assert_eq(
+    True, "a"
+)
+assert_eq(
+    True, "b"
+)
+x = "abc"
+

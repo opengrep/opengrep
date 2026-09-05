@@ -158,8 +158,7 @@ let is_big max_bytes path =
     Error
       {
         Out.path;
-        (* the reason pyopengrep reported for '--max-target-bytes';
-           'too_big' is what the core engine reports for its own limit *)
+        (* the reason pysemgrep reported for '--max-target-bytes' *)
         reason = Exceeded_size_limit;
         details =
           Some

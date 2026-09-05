@@ -284,9 +284,9 @@ let o_baseline_commit : string option Term.t =
    * environment variables and as pysemgrep did: a CI template whose
    * base-commit variable is unset (--baseline-commit "$BASE_SHA") must still
    * scan everything rather than fail the job. *)
-  let no_baseline_if_empty (rev : string option) : string option =
-    Option.bind rev (fun (rev : string) ->
-        if String.equal rev "" then None else Some rev)
+  let no_baseline_if_empty : string option -> string option = function
+    | Some "" -> None
+    | rev -> rev
   in
   Term.(
     const no_baseline_if_empty

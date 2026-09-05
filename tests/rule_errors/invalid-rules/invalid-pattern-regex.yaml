@@ -1,0 +1,6 @@
+rules:
+  - id: invalid-pattern-regex
+    pattern-regex: "(unclosed"
+    message: the regex does not compile
+    languages: [python]
+    severity: WARNING

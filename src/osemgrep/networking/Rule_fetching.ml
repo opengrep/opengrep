@@ -69,15 +69,8 @@ and origin =
  * '--config ./rules/x.yaml' gives the prefix "rules." like 'rules/x.yaml',
  * and '--config ../x.yaml' gives no prefix at all.
  *)
-let strip_leading_dots_and_slashes (str : string) : string =
-  let len = String.length str in
-  let rec first_kept (i : int) : int =
-    if i < len && (Char.equal str.[i] '.' || Char.equal str.[i] '/') then
-      first_kept (i + 1)
-    else i
-  in
-  let start = first_kept 0 in
-  String.sub str start (len - start)
+let strip_leading_dots_and_slashes : string -> string =
+  String_.lstrip_while (fun (c : char) -> Char.equal c '.' || Char.equal c '/')
 
 let prefix_for_fpath_opt (fpath : Fpath.t) : string option =
   assert (Fpath.is_file_path fpath);

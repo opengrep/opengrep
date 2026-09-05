@@ -1,0 +1,24 @@
+--- begin input files ---
+foo.py
+rules.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 10 insertions(+)
+ create mode 100644 foo.py
+ create mode 100644 rules.yaml
+
+
+┌─────────────────────────┐
+│ 1 Blocking Code Finding │
+└─────────────────────────┘
+
+    foo.py
+   ❯❯❱ eqeq-bad
+          useless comparison
+
+            3┆ return a + b == a + b
+
+
+  BLOCKING CODE RULES FIRED:
+    eqeq-bad

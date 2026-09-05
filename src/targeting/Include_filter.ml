@@ -35,15 +35,6 @@ let create ~project_root patterns =
   in
   { project_root; glob_matchers; no_match_loc }
 
-(* map + find_opt, stopping as early as possible *)
-let rec find_first func xs =
-  match xs with
-  | [] -> None
-  | x :: xs -> (
-      match func x with
-      | None -> find_first func xs
-      | Some _ as res -> res)
-
 (*
    Command line options look like this:
 
@@ -82,11 +73,11 @@ let select t (full_git_path : Ppath.t) =
   let path = Ppath.to_string_fast full_git_path in
   match
     t.glob_matchers
-    |> find_first (fun matcher ->
-           if Glob.Match.run matcher path then Some (Glob.Match.source matcher)
-           else None)
+    |> List.find_opt (fun (matcher : Glob.Match.compiled_pattern) ->
+           Glob.Match.run matcher path)
   with
   | None -> (Gitignore.Ignored, [ Gitignore.Selected t.no_match_loc ])
-  | Some loc ->
+  | Some matcher ->
       (* !! Deselected for gitignore = not ignored !! *)
-      (Gitignore.Not_ignored, [ Gitignore.Deselected loc ])
+      ( Gitignore.Not_ignored,
+        [ Gitignore.Deselected (Glob.Match.source matcher) ] )

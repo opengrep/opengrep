@@ -181,7 +181,7 @@ let tests (caps : < Scan_subcommand.caps >) =
     ((filecount_dirs
      |> List.map (fun (dir : string) ->
             t (Printf.sprintf "file count: %s" dir)
-              ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+              ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalise
               (run_scan caps ~root ~format_args:[] ~rule:"rules/filecount.yaml"
                  ~targets:[] ~extra_files:[ target_dir dir ] ~extra_args:[ dir ])))
     @ (exclude_include_options
@@ -222,7 +222,7 @@ let tests (caps : < Scan_subcommand.caps >) =
                  (scan [ "--json" ]);
                t
                  (Printf.sprintf "max target bytes: %s, text" bytes)
-                 ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+                 ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalise
                  (scan []);
              ]))
     @ [
@@ -244,11 +244,11 @@ let tests (caps : < Scan_subcommand.caps >) =
       (* outside a git repository: no line about git, and no block when
          nothing was skipped *)
       t "summary: no git repository, nothing skipped"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
            ~rule:"rules/eqeq.yaml" ~targets:[ "targets/basic/stupid.py" ]);
       t "summary: no git repository, a skipped file"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
            ~rule:"rules/eqeq.yaml" ~targets:[ "targets/basic/stupid.py" ]
            ~extra_args:[ "--exclude=stupid.py" ]);
@@ -264,7 +264,7 @@ let tests (caps : < Scan_subcommand.caps >) =
       (* differs from the Python wrapper: "Scanning 0 files" and "Ran 0
          rules" where it says "Scanning 5 files" and "Ran 4 rules" *)
       t "verbose listing: everything excluded by name"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~format_args:[]
            ~rule:"rules/eqeq.yaml" ~targets:[]
            ~extra_files:[ F.dir "targets" [ target_dir "exclude_include" ] ]
@@ -276,7 +276,7 @@ let tests (caps : < Scan_subcommand.caps >) =
       (* The same over files of several languages, excluded by extension.
          python: test_exclude_include_verbose_sorted_2 *)
       t "verbose listing: everything excluded by extension"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalise
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~format_args:[]
            ~rule:"rules/nosem.yaml" ~targets:[]
            ~extra_files:[ F.dir "targets" [ scan_target_dir "basic" ] ]
@@ -298,7 +298,7 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~extra_args:[ "--verbose"; "targets/permissions" ]);
       (* the same scan in text mode: the unreadable file and directory are
          listed in the verbose block and counted in the summary *)
-      t "permissions: text with --verbose" ~checked_output:(Testo.stdxxx ())
+      t "permissions: text with --verbose" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
@@ -453,7 +453,7 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~extra_files:[ F.dir "targets" [ target_dir "nested_paths" ] ]
            ~extra_args:[ "--no-git-ignore"; "--verbose"; "." ]);
       (* python: test_semgrepignore_ignore_log_report *)
-      t "ignore log report: text" ~checked_output:(Testo.stdxxx ())
+      t "ignore log report: text" ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize:normalise
         (run_scan caps ~root ~format_args:[] ~rule:"rules/eqeq-basic.yaml"
            ~targets:[] ~extra_files:ignores_files ~extra_args:ignores_args);

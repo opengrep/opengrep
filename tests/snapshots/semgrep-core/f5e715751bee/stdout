@@ -1,0 +1,33 @@
+--- begin input files ---
+rules/invalid-pattern.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 12 insertions(+)
+ create mode 100644 rules/invalid-pattern.yaml
+ create mode 100644 target.py
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    target.py
+    ❯❱ rules.eqeq
+          Useless comparison
+
+            1┆ x == x
+
+exit code: 4
+--- begin input files ---
+rules/invalid-pattern.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 12 insertions(+)
+ create mode 100644 rules/invalid-pattern.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[{"check_id":"rules.eqeq","path":"target.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"x"}},"message":"Useless comparison","metadata":{},"severity":"WARNING","fingerprint":"b7ffc19b8045e157a881bcc044cafbb8da5874340014463c816f7f968094b6cbdeb0376b71ec1e623792585b7b684aaf9fd18038d65b1d8fab74a9c6e6207450_0","lines":"x == x","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[{"code":4,"level":"error","type":"Rule parse error","rule_id":"rules.print","message":"Rule parse error in rule rules.print:\n Invalid pattern for Python: Stdlib.Parsing.Parse_error\n----- pattern -----\nprint..);\n----- end pattern -----\n"}],"paths":{"scanned":["target.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 4

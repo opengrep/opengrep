@@ -1,0 +1,26 @@
+--- begin input files ---
+rules.yml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 8 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 stupid.py
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    stupid.py
+    ❯❱ rule-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          A message with a long word aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa in
+          it.
+
+            1┆ print("id = 1 AND aaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+               aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =
+               TRUE" == "id = 1 AND aaaaaaaaaaaaaaaaaaaaaaaaaa
+               aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =
+               TRUE")
+

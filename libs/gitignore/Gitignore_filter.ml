@@ -4,13 +4,12 @@
 open Gitignore
 open Ppath.Operators
 
-let create ?gitignore_filenames ?(higher_priority_levels = [])
-    ?(lower_priority_levels = []) ~project_root () =
+let create ?(higher_priority_levels = []) ?(lower_priority_levels = [])
+    ~(gitignore_file_cache : Gitignore.gitignores_cache) () =
   {
-    project_root;
+    project_root = gitignore_file_cache.project_root;
     higher_priority_levels;
-    gitignore_file_cache =
-      Gitignore_cache.create ?gitignore_filenames ~project_root ();
+    gitignore_file_cache;
     lower_priority_levels;
   }
 

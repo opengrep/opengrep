@@ -1,0 +1,75 @@
+--- begin input files ---
+rules/requests-use-timeout.yaml
+targets/requests-use-timeout.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 61 insertions(+)
+ create mode 100644 rules/requests-use-timeout.yaml
+ create mode 100644 targets/requests-use-timeout.py
+
+
+┌─────────────────┐
+│ 5 Code Findings │
+└─────────────────┘
+
+    targets/requests-use-timeout.py
+    ❯❱ rules.python.requests.best-practice.use-timeout.use-timeout
+          'requests' calls default to waiting until the connection is closed. This means a 'requests' call
+          without a timeout will hang the program if a response is never received. Consider setting a timeout
+          for all 'requests'.
+
+           ▶▶┆ Autofix ▶ requests.get(url, timeout=30)
+            6┆ r = requests.get(url)
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ requests.post(url, timeout=30)
+            9┆ r = requests.post(url)
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ requests.request("GET", url, timeout=30)
+           12┆ r = requests.request("GET", url)
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ requests.request("GET", return_url(), timeout=30)
+           18┆ r = requests.request("GET", return_url())
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ post(url, timeout=30)
+           29┆ r = post(url)
+
+--- targets/requests-use-timeout.py after the scan ---
+import requests
+
+url = "www.github.com"
+
+# ruleid: use-timeout
+r = requests.get(url, timeout=30)
+
+# ruleid: use-timeout
+r = requests.post(url, timeout=30)
+
+# ruleid: use-timeout
+r = requests.request("GET", url, timeout=30)
+
+def return_url():
+    return url
+
+# ruleid: use-timeout
+r = requests.request("GET", return_url(), timeout=30)
+
+# ok
+r = requests.get(url, timeout=50)
+
+def from_import_test1(url):
+    from requests import get, post
+    # ok
+    r = get(url, timeout=3)
+
+    # ruleid: use-timeout
+    r = post(url, timeout=30)
+
+def test2():
+    """Perform a requests.get and default headers set"""
+    headers = {**_get_default_headers(), **headers}
+    # ok
+    r = requests.get(
+        url, headers=headers, params=params, **{"timeout": TIMEOUT, **kwargs}
+    )
+    return r
