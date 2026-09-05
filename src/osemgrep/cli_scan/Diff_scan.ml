@@ -227,9 +227,11 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                     Hashtbl.create
                       (List.length baseline_r.processed_matches)
                   in
+                  (* one binding per baseline occurrence: identical findings
+                     at several places of a file each remove one head finding *)
                   List.iter
                     (fun ({ pm; _ } : Core_result.processed_match) ->
-                       Hashtbl.replace tbl (extract_sig ~root None pm) true)
+                       Hashtbl.add tbl (extract_sig ~root None pm) true)
                     baseline_r.processed_matches;
                   tbl
                 | Error _ -> Hashtbl.create 0
