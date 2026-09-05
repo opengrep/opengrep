@@ -114,6 +114,9 @@ let max_memory_mb = ref Core_scan_config.default.max_memory_mb (* in MiB *)
 (* limits of the interfile analysis of a rule; 0 means no limit *)
 let interfile_timeout = ref Core_scan_config.default.interfile_timeout
 
+let interfile_graph_timeout =
+  ref Core_scan_config.default.interfile_graph_timeout
+
 (* arbitrary limit *)
 let max_match_per_file = ref Core_scan_config.default.max_match_per_file
 
@@ -353,6 +356,7 @@ let mk_config () : Core_scan_config.t =
     timeout_threshold = !timeout_threshold;
     max_memory_mb = !max_memory_mb;
     interfile_timeout = !interfile_timeout;
+    interfile_graph_timeout = !interfile_graph_timeout;
     max_match_per_file = !max_match_per_file;
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
@@ -659,6 +663,10 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
       Arg.Set_int interfile_timeout,
       " <int> maximum time to spend on the interfile analysis of a rule (in \
        seconds); 0 disables it (default is 0)" );
+    ( "-interfile_graph_timeout",
+      Arg.Set_int interfile_graph_timeout,
+      " <int> maximum time to spend building the interfile graph of a \
+       language (in seconds); 0 disables it (default is 0)" );
     ( "-max_tainted_vars",
       Arg.Set_int Flag_semgrep.max_tainted_vars,
       "<int> maximum number of vars to store. This is mostly for internal use \

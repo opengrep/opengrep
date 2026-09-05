@@ -1098,11 +1098,14 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   in
   let equivs = parse_equivalences config.equivalences_file in
   let interfile_rule_states, interfile_languages_used,
-      interfile_fallback_rule_target_paths, interfile_index_failures =
+      interfile_fallback_rule_target_paths, interfile_index_failures,
+      interfile_build_limit_failures =
     Interfile_dispatch.build_rule_states
-      (caps :> < Cap.fork >)
+      (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
       ~ncores:config.ncores
       ~taint_interfile:config.taint_interfile
+      ~graph_timeout:config.interfile_graph_timeout
+      ~max_memory_mb:config.max_memory_mb
       ~valid_rules ~targets
       ~targeting_conf:config.targeting_conf
       ~xconf:(interfile_xconfig config ~equivs)
@@ -1119,6 +1122,21 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
           ~loc:(Tok.first_loc_of_file file)
           Out.SemgrepWarning)
       interfile_index_failures
+    @ List_.map
+        (fun ((rule_id : Rule_ID.t), (limit : Interfile_dispatch.build_limit)) ->
+          let msg, error_type =
+            match limit with
+            | Build_timeout ->
+                ( "the interfile graph build hit --interfile-graph-timeout; \
+                   this rule ran on single files",
+                  Out.Timeout )
+            | Build_out_of_memory ->
+                ( "the interfile graph build hit --max-memory; this rule ran \
+                   on single files",
+                  Out.OutOfMemory )
+          in
+          E.mk_error ~rule_id ~msg error_type)
+        interfile_build_limit_failures
   in
   let interfile_rule_ids =
     Interfile_dispatch.interfile_taint_rule_ids

@@ -125,6 +125,7 @@ val o_text_outputs : string list Cmdliner.Term.t
 val o_time : bool Cmdliner.Term.t
 val o_timeout : float option Cmdliner.Term.t
 val o_timeout_interfile : int Cmdliner.Term.t
+val o_timeout_interfile_graph : int Cmdliner.Term.t
 val o_timeout_threshold : int option Cmdliner.Term.t
 val o_inline_metavariables : bool Cmdliner.Term.t
 (* val o_trace : bool Cmdliner.Term.t

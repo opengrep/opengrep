@@ -86,6 +86,8 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       allow_rule_timeout_control = settings.allow_rule_timeout_control;
       timeout_threshold = settings.timeout_threshold;
       interfile_timeout = Core_runner.default_conf.interfile_timeout;
+      interfile_graph_timeout =
+        Core_runner.default_conf.interfile_graph_timeout;
       dataflow_traces = false;
       nosem = true;
       strict = false;
