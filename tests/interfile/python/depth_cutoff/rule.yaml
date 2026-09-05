@@ -1,0 +1,14 @@
+rules:
+  - id: depth-cutoff
+    languages: [python]
+    severity: ERROR
+    message: >
+      The source reaches the sink through four cross-file call hops, one
+      more than the default interfile depth follows.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
