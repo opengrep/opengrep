@@ -496,6 +496,13 @@ let build_project_call_graph (caps : < Cap.fork >)
   if n_override > 0 then
     Log.debug (fun m -> m "Override dispatch: emitted %d Dispatch edges"
       n_override);
+  (* Same-arity overloads of one scope: see [Structural_dispatch]. *)
+  let n_overload =
+    Structural_dispatch.emit_overload_edges ~lang ~graph all_funcs
+  in
+  if n_overload > 0 then
+    Log.debug (fun m -> m "Overload dispatch: emitted %d Dispatch edges"
+      n_overload);
   (graph, inherited_by_class, phase1_failures @ phase2_failures)
 
 let project_root_abs_of (project_root : Fpath.t) : Fpath.t =
