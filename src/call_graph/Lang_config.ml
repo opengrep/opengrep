@@ -449,6 +449,22 @@ let get (lang : Lang.t) : t =
   | Lang.Vb -> vb
   | _ -> empty
 
+(* Languages where one scope holds several concrete functions of one name
+   and arity told apart by parameter types. Elsewhere such definitions are
+   pattern clauses (Elixir, Clojure) or redefinitions, never a group. *)
+let overloads_by_type (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Java
+  | Lang.Kotlin
+  | Lang.Scala
+  | Lang.Csharp
+  | Lang.Swift
+  | Lang.Cpp
+  | Lang.Dart
+  | Lang.Apex ->
+      true
+  | _ -> false
+
 let hof_method_names (lang : Lang.t) : string list =
   (get lang).hof_configs |> List.concat_map (function
     | MethodHOF { methods; _ }

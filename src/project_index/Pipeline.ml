@@ -672,6 +672,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           (Option.map Func_lookup.alias_index_of_hashtbl alias_to_module_qn)
         ~same_file_funcs_by_name:
           (Func_lookup.leaf_index_of_hashtbl same_file_funcs_by_name)
+        ~overload_groups:(Lang_config.overloads_by_type lang)
         ?funcs_by_package:
           (Option.map Func_lookup.leaf_index_of_hashtbl file_funcs_by_package)
         ~file_module_qn:
@@ -830,6 +831,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       let toplevel_func_lookup =
         Func_lookup.create
           ~funcs_by_name:(Func_lookup.leaf_index_of_hashtbl merged_funcs_by_name)
+          ~overload_groups:(Lang_config.overloads_by_type lang)
           ()
       in
       FA.extract_toplevel_hof_callbacks ~lang ~all_funcs
