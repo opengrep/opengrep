@@ -591,6 +591,136 @@ let test_interfile_paths_scanned (caps : Scan_subcommand.caps) () =
                    (spf "%s has a byte count" (Fpath.to_string t.path))
                    true (t.num_bytes > 0))))
 
+(* The interfile fixture scanned with the given arguments; the captured
+   stdout and the exit code. *)
+let interfile_scan_stdout (caps : Scan_subcommand.caps)
+    ?(extra_files : F.t list = []) ?(rules = taint_interfile_content)
+    (args : string list) : Exit_code.t * string =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", rules);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+        @ extra_files
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          Testo.with_capture stdout (fun () ->
+              without_settings (fun () ->
+                  Scan_subcommand.main caps
+                    (Array.of_list
+                       ([ "opengrep-scan"; "--experimental"; "--config"; "rules.yml" ]
+                       @ args))))))
+
+(* The JSON output of an interfile scan: the finding's path, and a
+   fingerprint that two runs agree on. *)
+let test_interfile_json_output (caps : Scan_subcommand.caps) () =
+  let scan () : Semgrep_output_v1_t.cli_match list =
+    let exit_code, stdout_output =
+      interfile_scan_stdout caps [ "--json"; "--taint-interfile" ]
+    in
+    Exit_code.Check.ok exit_code;
+    (Semgrep_output_v1_j.cli_output_of_string stdout_output).results
+  in
+  let first = scan () in
+  Alcotest.(check (list string)) "the finding's path" [ "sinks.py" ]
+    (first
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           Fpath.to_string m.path));
+  let fingerprints (results : Semgrep_output_v1_t.cli_match list) =
+    results
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) -> m.extra.fingerprint)
+  in
+  Alcotest.(check bool) "a fingerprint" true
+    (List.for_all (fun (f : string) -> not (String.equal f "")) (fingerprints first));
+  Alcotest.(check (list string)) "the same fingerprint on a second run"
+    (fingerprints first) (fingerprints (scan ()))
+
+(* The SARIF output of an interfile scan locates the finding in the sink
+   file. *)
+let test_interfile_sarif_output (caps : Scan_subcommand.caps) () =
+  let exit_code, stdout_output =
+    interfile_scan_stdout caps [ "--sarif"; "--taint-interfile" ]
+  in
+  Exit_code.Check.ok exit_code;
+  let open Yojson.Safe.Util in
+  let results =
+    Yojson.Safe.from_string stdout_output
+    |> member "runs" |> index 0 |> member "results" |> to_list
+  in
+  Alcotest.(check int) "one result" 1 (List.length results);
+  let uri =
+    List.hd results |> member "locations" |> index 0
+    |> member "physicalLocation" |> member "artifactLocation" |> member "uri"
+    |> to_string
+  in
+  Alcotest.(check string) "located in the sink file" "sinks.py" uri
+
+(* A caller excluded by .semgrepignore supplies no taint: the index uses
+   the scan's own target selection, so the flow is not reported and the
+   file is not scanned. *)
+let test_interfile_ignored_caller (caps : Scan_subcommand.caps) () =
+  let exit_code, stdout_output =
+    interfile_scan_stdout caps
+      ~extra_files:[ F.File (".semgrepignore", "main.py\n") ]
+      [ "--json"; "--taint-interfile" ]
+  in
+  Exit_code.Check.ok exit_code;
+  let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+  Alcotest.(check int) "no finding" 0 (List.length out.results);
+  Alcotest.(check (list string)) "the caller is not scanned" [ "sinks.py" ]
+    (out.paths.scanned |> List_.map Fpath.to_string)
+
+(* An interfile rule (by its own option, no CLI flag), a search rule and an
+   intrafile taint rule over the same targets: each reports its own
+   findings once, the intrafile rule sees no cross-file flow, and every
+   target is scanned. *)
+let mixed_rules_content =
+  {|
+rules:
+  - id: interfile-taint
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "cross-file taint"
+    languages: [python]
+    severity: ERROR
+  - id: plain-sink
+    pattern: sink(...)
+    message: "a sink call"
+    languages: [python]
+    severity: WARNING
+  - id: intrafile-taint
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "intrafile taint"
+    languages: [python]
+    severity: ERROR
+|}
+
+let test_interfile_mixed_rules (caps : Scan_subcommand.caps) () =
+  let exit_code, stdout_output =
+    interfile_scan_stdout caps ~rules:mixed_rules_content [ "--json" ]
+  in
+  Exit_code.Check.ok exit_code;
+  let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+  Alcotest.(check (list string)) "one finding per rule that applies"
+    [ "interfile-taint"; "plain-sink" ]
+    (out.results
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           Rule_ID.to_string m.check_id)
+    |> List_.sort);
+  Alcotest.(check (list string)) "both targets scanned" [ "main.py"; "sinks.py" ]
+    (out.paths.scanned |> List_.map Fpath.to_string |> List_.sort)
+
 (* The process-wide [--max-memory] bounds the interfile graph build and
    dispatch too: exceeding it aborts the analysis of a rule, reported as an
    out-of-memory error against that rule; the rule then runs per target,
@@ -2110,6 +2240,11 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_interfile_source_sink_dedup caps);
       t "interfile targets are scanned targets"
         (test_interfile_paths_scanned caps);
+      t "interfile JSON output" (test_interfile_json_output caps);
+      t "interfile SARIF output" (test_interfile_sarif_output caps);
+      t "interfile ignored caller" (test_interfile_ignored_caller caps);
+      t "interfile with search and intrafile rules"
+        (test_interfile_mixed_rules caps);
       t "interfile limits: memory" (test_interfile_limits caps);
       t "intrafile same-sink findings dedup to one"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
