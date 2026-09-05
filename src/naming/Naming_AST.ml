@@ -1297,12 +1297,21 @@ class ['self] resolve_visitor env lang =
               self#visit_expr venv e1);
           (* A field or method leaf names a member of the receiver, never a
            * binding in scope: a member that shares the name of a function
-           * in scope is not a reference to that function. Leaving it
-           * unresolved keeps the call graph and the taint signatures free
-           * of self-references; the project index resolves method leaves
-           * by receiver type. *)
+           * in scope is not a reference to that function, so the leaf gets
+           * no [id_resolved] here (the project index resolves method leaves
+           * by receiver type). A same-named typed binding still types the
+           * leaf: struct field declarations reach the file scope as typed
+           * globals, and typed metavariables read the type from the leaf. *)
           (match fname with
-           | FN (Id _) -> ()
+           | FN (Id (id, id_info)) -> (
+               match lookup_scope_opt id env with
+               | Some { enttype = Some ({ t = TyFun _; _ }); _ }
+               | Some { enttype = None; _ }
+               | None ->
+                   ()
+               | Some { enttype = Some ty; _ } ->
+                   if Option.is_none !(id_info.id_type) && not !(env.in_type)
+                   then id_info.id_type := Some ty)
            | FN (IdQualified _)
            | FDynamic _ ->
                self#visit_field_name venv fname);
