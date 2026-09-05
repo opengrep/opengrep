@@ -1,0 +1,16 @@
+rules:
+  - id: propagator-cross-file-go
+    languages: [go]
+    severity: ERROR
+    message: taint reaches the sink through a container filled in another file
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-propagators:
+      - pattern: $BOX.Add($V)
+        from: $V
+        to: $BOX
