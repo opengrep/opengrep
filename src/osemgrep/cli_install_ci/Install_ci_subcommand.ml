@@ -433,7 +433,7 @@ let add_semgrep_workflow caps (* ~(token : Auth.token) *) (conf : Install_ci_CLI
     ->
       Logs.info (fun m -> m "Opengrep workflow already present, skipping")
   | _else_ ->
-      Logs.info (fun m -> m "Preparing Opegrep workflow for %s" !!repo);
+      Logs.info (fun m -> m "Preparing Opengrep workflow for %s" !!repo);
       let dir = prep_repo caps repo in
       write_workflow_file caps ~git_dir:dir;
       (* if

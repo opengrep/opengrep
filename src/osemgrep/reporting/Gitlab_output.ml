@@ -61,7 +61,7 @@ let format_cli_match (cli_match : Out.cli_match) : (string * JSON.yojson) list =
               `Assoc
                 [
                   ("type", `String "flagged-as-likely-false-positive");
-                  ("origin", `String "Semgrep");
+                  ("origin", `String "Opengrep");
                   ( "description",
                     `String "This finding is from a low confidence rule." );
                 ];
@@ -90,10 +90,10 @@ let format_cli_match (cli_match : Out.cli_match) : (string * JSON.yojson) list =
                 `Assoc
                   [
                     ("type", `String "flagged-as-likely-false-positive");
-                    ("origin", `String "Semgrep Supply Chain");
+                    ("origin", `String "Opengrep");
                     ( "description",
                       `String
-                        "Semgrep found no way to reach this vulnerability \
+                        "Opengrep found no way to reach this vulnerability \
                          while scanning your code." );
                   ];
               ]
@@ -132,9 +132,9 @@ let format_cli_match (cli_match : Out.cli_match) : (string * JSON.yojson) list =
       ( "scanner",
         `Assoc
           [
-            ("id", `String "semgrep");
-            ("name", `String "Semgrep");
-            ("vendor", `Assoc [ ("name", `String "Semgrep") ]);
+            ("id", `String "opengrep");
+            ("name", `String "Opengrep");
+            ("vendor", `Assoc [ ("name", `String "Opengrep") ]);
           ] );
       ( "location",
         `Assoc
@@ -149,9 +149,9 @@ let format_cli_match (cli_match : Out.cli_match) : (string * JSON.yojson) list =
           [
             `Assoc
               [
-                ("type", `String "semgrep_type");
+                ("type", `String "opengrep_type");
                 ( "name",
-                  `String ("Semgrep - " ^ Rule_ID.to_string cli_match.check_id)
+                  `String ("Opengrep - " ^ Rule_ID.to_string cli_match.check_id)
                 );
                 ("value", `String (Rule_ID.to_string cli_match.check_id));
                 ("url", `String source);

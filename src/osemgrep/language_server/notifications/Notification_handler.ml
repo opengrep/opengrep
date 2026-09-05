@@ -137,7 +137,7 @@ let on_notification (server : RPC_server.t) notification =
               Some
                 (Reply.now
                    (notify_show_message ~kind:MessageType.Warning
-                      "The Semgrep Extension is still loading rules. Please \
+                      "The Opengrep extension is still loading rules. Please \
                        wait a moment and try again.")) )
         | true ->
             let full =

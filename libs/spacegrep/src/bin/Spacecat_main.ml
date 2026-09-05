@@ -63,7 +63,7 @@ let man =
     `S Manpage.s_authors;
     `P "Martin Jambon <martin@semgrep.com>";
     `S Manpage.s_bugs;
-    `P "Check out bug reports at https://github.com/semgrep/semgrep/issues.";
+    `P "Check out bug reports at https://github.com/opengrep/opengrep/issues.";
     `S Manpage.s_see_also;
     `P "spacegrep(1)";
   ]

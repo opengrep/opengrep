@@ -387,7 +387,7 @@ and parse_pair_old env ((key, value) : key * G.expr) :
         | __else__ ->
             error_at_expr env.id x
               "Expected object with only one entry -- did you forget a hyphen?")
-    | _ -> error_at_expr env.id x "Received invalid Semgrep pattern"
+    | _ -> error_at_expr env.id x "Received invalid Opengrep pattern"
   in
   let get_nested_formula_in_list env i x =
     let env = { env with path = string_of_int i :: env.path } in

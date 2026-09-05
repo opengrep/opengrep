@@ -6,13 +6,13 @@ let help_msg =
   {|
 If you want to show the logs of a particular library
 (e.g., the semgrep targeting library), you'll need to adjust the
-SEMGREP_LOG_SRCS environment variable as in
+OPENGREP_LOG_SRCS environment variable as in
 
-  SEMGREP_LOG_SRCS="semgrep.targeting" semgrep ... --debug
+  OPENGREP_LOG_SRCS="semgrep.targeting" opengrep ... --debug
 
-or for osemgrep you can use it with any log level as in
+or with any other log level as in
 
-  SEMGREP_LOG_SRCS="semgrep.targeting" ./bin/osemgrep ... --verbose
+  OPENGREP_LOG_SRCS="semgrep.targeting" opengrep ... --verbose
 
 You can see the list of possible libraries above in this log as in
 ...
@@ -20,8 +20,6 @@ You can see the list of possible libraries above in this log as in
 ...
 [00.04][DEBUG](default): Skipping logs for commons.pcre
 ...
-For more information, See
-https://www.notion.so/semgrep/Logging-in-semgrep-semgrep-core-osemgrep-67c9046fa53744728d9d725a5a244f64
 |}
 
 (* Small wrapper around Logs_.setup() (itself a wrapper around Logs.set_xxx)
