@@ -46,6 +46,10 @@ let svalue_prop_MAX_VISIT_SYM_IN_CYCLE_CHECK = 1000
  * So e.g. we limit the amount of time that Pro will spend inferring taint signatures.
  * Note that 'Time_limit.set_timeout' cannot be nested. *)
 let taint_FIXPOINT_TIMEOUT = 0.2
+
+(* Maximum call chain depth followed by interfile taint when neither the
+ * scan nor the rule sets one; negative is unbounded. *)
+let taint_INTERFILE_DEPTH = 3
 (* this replaces the taint FIXPOINT_TIMEOUT in the config file, in a fixpoint if a node
  * is visted more often than this the assumption is that it is a cycle and so the
  * fixpoint stops *)

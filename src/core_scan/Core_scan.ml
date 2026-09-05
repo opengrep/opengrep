@@ -760,7 +760,7 @@ let interfile_xconfig (config : Core_scan_config.t)
         taint_intrafile = config.taint_intrafile;
         effect_guards = config.effect_guards;
         taint_interfile = config.taint_interfile;
-        taint_interfile_depth = config.taint_interfile_depth };
+        taint_interfile_depth = Some config.taint_interfile_depth };
     equivs;
     nested_formula = false;
     matching_conf = config.matching_conf;
@@ -827,7 +827,7 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
             taint_intrafile = config.taint_intrafile;
             effect_guards = config.effect_guards;
             taint_interfile = config.taint_interfile;
-            taint_interfile_depth = config.taint_interfile_depth;
+            taint_interfile_depth = Some config.taint_interfile_depth;
           };
           equivs;
           nested_formula = false;

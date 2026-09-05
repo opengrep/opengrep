@@ -1,0 +1,15 @@
+rules:
+  - id: depth-unbounded
+    languages: [python]
+    severity: ERROR
+    message: >
+      The source reaches the sink through four cross-file call hops; the
+      rule's negative depth means unbounded and wins over the scan's depth.
+    mode: taint
+    options:
+      taint_interfile: true
+      taint_interfile_depth: -1
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
