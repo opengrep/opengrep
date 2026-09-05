@@ -1,6 +1,11 @@
 (* Index types wrap [Hashtbl.t]s (no snapshot): do not mutate after wrapping. *)
 
-type leaf_index = (string, Func_info.t list) Hashtbl.t
+(* [Layered (front, back)] answers a leaf with [front]'s functions followed
+   by [back]'s: a file's visible functions over the project's, without
+   copying the project table per file. *)
+type leaf_index =
+  | Table of (string, Func_info.t list) Hashtbl.t
+  | Layered of leaf_index * leaf_index
 type module_index = (Names.Module_qn.t, Func_info.t list) Hashtbl.t
 type alias_index = (string, Names.Module_qn.t) Hashtbl.t
 type file_module_index = (string, Names.Module_qn.t) Hashtbl.t
@@ -11,7 +16,18 @@ type name_set = (string, unit) Hashtbl.t
    what tells two same-named imported classes apart. *)
 type class_alias_index = (string, string * name_set) Hashtbl.t
 
-let leaf_index_of_hashtbl tbl = tbl
+let leaf_index_of_hashtbl tbl = Table tbl
+let leaf_index_layered ~front ~back = Layered (front, back)
+
+let rec find_leaf (idx : leaf_index) (leaf : string) : Func_info.t list =
+  match idx with
+  | Table tbl -> Option.value (Hashtbl.find_opt tbl leaf) ~default:[]
+  | Layered (front, back) -> (
+      match (find_leaf front leaf, find_leaf back leaf) with
+      | xs, [] -> xs
+      | [], ys -> ys
+      | xs, ys -> xs @ ys)
+
 let module_index_of_hashtbl tbl = tbl
 let alias_index_of_hashtbl tbl = tbl
 let file_module_index_of_hashtbl tbl = tbl
@@ -84,7 +100,7 @@ let is_locally_imported t name =
 
 let funcs_with_leaf t ~all_funcs leaf =
   match t.project_funcs_by_name with
-  | Some idx -> (Option.value (Hashtbl.find_opt idx leaf) ~default:[])
+  | Some idx -> find_leaf idx leaf
   | None ->
     List.filter (fun (func : Func_info.t) ->
       match List_.init_and_last_opt func.fn_id with
@@ -95,12 +111,12 @@ let funcs_with_leaf t ~all_funcs leaf =
 let narrow_candidates_by_leaf t leaf =
   match t.funcs_by_name with
   | Some idx ->
-    Some (Option.value (Hashtbl.find_opt idx leaf) ~default:[])
+    Some (find_leaf idx leaf)
   | None -> None
 
 let nested_in_same_file t leaf =
   match t.same_file_funcs_by_name with
-  | Some idx -> (Option.value (Hashtbl.find_opt idx leaf) ~default:[])
+  | Some idx -> find_leaf idx leaf
   | None -> []
 
 let resolve_alias t name =
@@ -124,5 +140,5 @@ let funcs_in_module t qn =
 
 let funcs_in_package t pkg =
   match t.funcs_by_package with
-  | Some idx -> (Option.value (Hashtbl.find_opt idx pkg) ~default:[])
+  | Some idx -> find_leaf idx pkg
   | None -> []

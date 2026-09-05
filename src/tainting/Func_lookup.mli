@@ -15,6 +15,7 @@ type name_set
    export it; [import { C as Alias }] names its origin exactly. *)
 type class_alias_index
 
+val leaf_index_layered : front:leaf_index -> back:leaf_index -> leaf_index
 val leaf_index_of_hashtbl :
   (string, Func_info.t list) Hashtbl.t -> leaf_index
 val module_index_of_hashtbl :
