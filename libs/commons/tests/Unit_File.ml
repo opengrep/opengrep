@@ -269,5 +269,10 @@ let tests =
       t "is_dir_or_lnk" test_is_dir_or_lnk;
       t "is_lnk_or_reg" test_is_lnk_or_reg;
       t "is_dir_or_lnk_or_reg" test_is_dir_or_lnk_or_reg;
-      t "read a tree with unreadable entries" test_read_unreadable;
+      t "read a tree with unreadable entries"
+        ?skipped:
+          (* nothing is unreadable to root *)
+          (if Int.equal (Unix.geteuid ()) 0 then Some "root reads every file"
+           else None)
+        test_read_unreadable;
     ]
