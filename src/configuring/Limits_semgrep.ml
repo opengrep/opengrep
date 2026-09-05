@@ -111,6 +111,20 @@ let taint_MAX_SHAPE_DEPTH = 50
  * this in the single digits. *)
 let taint_MAX_SIG_SHAPE_DEPTH = 8
 
+(** Maximum nesting of [Fun] shapes stored in a signature database (see
+ * [Taint_shape.bound_fun_shape]).
+ *
+ * A call on an unknown callee, such as a parameter's method, is stored in
+ * the signature as an effect with the shapes of its arguments. When an
+ * argument is a function of the same SCC, its shape is that function's
+ * signature, and that signature contains the same call effect. Each
+ * fixpoint round then stores the previous round's signature inside the new
+ * one, so the signature never stabilises and its size doubles or more per
+ * round. A [Fun] shape nested deeper than this collapses to [Bot]: the
+ * callback's own effects are kept, a callback it passes on to another
+ * unknown callee is dropped. *)
+let taint_MAX_SIG_FUN_DEPTH = 2
+
 (** Maximum number of outer fixpoint passes for the self-sig convergence
  * loop in [Dataflow_tainting.fixpoint_aux]. Each pass re-runs the
  * inner dataflow fixpoint while a direct self-recursive call has
