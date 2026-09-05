@@ -109,7 +109,6 @@ type env = {
   (* currently processed rule and targets files *)
   rule_file : Fpath.t;
   target_files : Fpath.t list;
-  engine : A.engine;
   (* use a ref so easy to store all the errors returned by different functions.
    * alt: get each functions returning different kind of errors
    *)
@@ -147,6 +146,8 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
       let rule_files =
         [ dir ] |> UFile.files_of_dirs_or_files_no_vcs_nofilter
         |> List.filter Rule_file.is_valid_rule_filename
+        (* a rule file listed under '.' is reported without the './' prefix *)
+        |> List_.map Fpath_.strip_leading_dot_and_trailing_slash
       in
       rule_files
       |> List_.filter_map (fun (rule_file : Fpath.t) ->
@@ -496,6 +497,12 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
      *)
     respect_rule_paths = false;
     taint_intrafile = conf.taint_intrafile;
+    (* the ignore annotations of a scan apply to a test run too *)
+    engine_config =
+      {
+        Engine_config.default with
+        custom_ignore_pattern = conf.opengrep_ignore_pattern;
+      };
     (* without the flags we run the limits of a scan, so that a rule that
      * never finishes fails the test instead of hanging *)
     timeout =
@@ -509,7 +516,7 @@ let core_scan_config (conf : Test_CLI.conf) (rules : Rule.t list)
     effect_guards = false
   }
 
-let run_rules_against_targets_for_engine caps (env : env) (rules : Rule.t list)
+let run_rules_against_targets caps (env : env) (rules : Rule.t list)
     (targets : Target.t list) : Core_result.t =
   (* old:
    * let xtarget = Test_engine.xtarget_of_file xlang target in
@@ -517,55 +524,27 @@ let run_rules_against_targets_for_engine caps (env : env) (rules : Rule.t list)
    * Match_rules.check ~match_hook:(fun _ ->()) ~timeout:None xconf rules xtarget
    *)
   let config = core_scan_config env.conf rules targets in
-  let res_or_exn : Core_result.result_or_exn =
-    match env.engine with
-    | A.OSS -> Core_scan.scan caps config
-    | A.Pro
-    | A.Deep ->
-        (* the annotations still parse, but no such test run is constructed *)
-        failwith "pro/deep test runs do not exist in opengrep"
-  in
-  match res_or_exn with
+  match Core_scan.scan caps config with
   | Error exn -> Exception.reraise exn
   (* TODO? fail early or add a kind of error in the json output?
      | Ok { errors = _x::_; _} -> failwith "TODO"
   *)
   | Ok res -> res
 
-(* Annotations have also a few implicit rules to avoid having to annotate
- * too much:
- *  - ruleid => proruleid => deepruleid,
- *    so if you have a ruleid:, no need to annotate too with proruleid:
- *    or deepruleid:, it is implicit. However if some ruleid: are actually
- *    not found by ProScan or DeepScan you'll need to add further annotations
- *    such as prook: or deeptodoruleid:
- *  - prook => deepok, because if the intrafile engine is able to detect
- *    some FPs compared to CoreScan, then the interfile engine should too.
- *    If it's not the case it's probably a bug in DeepScan (probably a
- *    naming bug as DeepScan use Naming_SAST.ml instead of Naming_AST.ml)
- *    in which case it's good to annotate it with a deeptodook
+(* The annotations that take part in the comparison: an 'ok:' line expects
+ * nothing. Todoruleid is kept so that the comparison below can drop the
+ * lines it annotates from both the expected and the reported set, as
+ * test.py does.
  *)
-let filter_annots_for_engine (running_engine : A.engine)
-    (annots : A.annotations) : A.annotations =
+let expected_annots (annots : A.annotations) : A.annotations =
   annots
-  |> List.filter (fun (A.{ kind; engine; others; _ }, _) ->
-         match (running_engine, kind, engine) with
-         | Pro, _, _ when List.mem (A.Ok, A.Pro) others -> false
-         | Pro, _, _ when List.mem (A.Todoruleid, A.Pro) others -> false
-         | Deep, _, _ when List.mem (A.Ok, A.Deep) others -> false
-         | Deep, _, _ when List.mem (A.Todoruleid, A.Deep) others -> false
-         (* prook => deepok (TODO? protodoruleid => deeptodoruleid? *)
-         | Deep, _, _ when List.mem (A.Ok, A.Pro) others -> false
-         (* ruleid => proruleid => deepruleid
-          * (and todok => protodok => deeptodook)
-          *)
-         (* Todoruleid is kept so that the comparison below can drop the
-          * lines it annotates from both the expected and the reported set,
-          * as test.py does *)
-         | OSS, (Ruleid | Todook | Todoruleid), OSS -> true
-         | Pro, (Ruleid | Todook | Todoruleid), (OSS | Pro) -> true
-         | Deep, (Ruleid | Todook | Todoruleid), (OSS | Pro | Deep) -> true
-         | _ -> false)
+  |> List.filter (fun ((annot : A.t), (_ : A.linenb)) ->
+         match annot.kind with
+         | Ruleid
+         | Todook
+         | Todoruleid ->
+             true
+         | Ok -> false)
 
 (*****************************************************************************)
 (* Comparing *)
@@ -605,18 +584,12 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
       List_.take (max limit 0) matches (* pre: already sorted *)
     | _ -> matches
   in
-  let xtra =
-    match env.engine with
-    | OSS -> ""
-    | Pro -> " (with pro engine)"
-    | Deep -> " (with deep engine)"
-  in
   (* actual matches *)
   let matches_by_ruleid_and_file :
       (Rule_ID.t, (Fpath.t, Core_match.t list) Assoc.t) Assoc.t =
     if List_.null matches then
       (* stricter: *)
-      Logs.info (fun m -> m "nothing matched for %s%s" !!(env.rule_file) xtra);
+      Logs.info (fun m -> m "nothing matched for %s" !!(env.rule_file));
     matches
     |> Assoc.group_by (fun (pm : Core_match.t) -> pm.rule_id.id)
     |> List_.map (fun (rule_id, pms) ->
@@ -689,10 +662,13 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                      * out of both sets and compares what is left, so a line
                      * whose annotation says "do not judge me" cannot fail the
                      * check, whichever way it went. The same two sets are what
-                     * the JSON reports.
+                     * the JSON reports; only the annotations of the rule
+                     * being compared apply.
                      *)
                     let file_annots =
                       Assoc.find_opt target annots |> List_.optlist_to_list
+                      |> List.filter (fun (((annot : A.t), _line) : A.t * A.linenb) ->
+                             Int.equal (Rule_ID.compare annot.id id) 0)
                     in
                     let reported_lines =
                       A.filter_todo file_annots reported_lines
@@ -704,8 +680,8 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                     (* the final report prints the failures *)
                     if not passed then
                       Logs.info (fun m ->
-                          m "test failed for rule id %s on target %s%s (%s)"
-                            (Rule_ID.to_string id) !!target xtra
+                          m "test failed for rule id %s on target %s (%s)"
+                            (Rule_ID.to_string id) !!target
                             (diff_findings reported_lines expected_lines));
                     let expected_reported =
                       { Out.reported_lines; expected_lines }
@@ -795,17 +771,17 @@ let run_engine (caps : < scan_caps ; .. >) (env : env) (rules : Rule.t list)
     (targets : Target.t list)
     (files_and_annots : (Fpath.t * A.annotations) list) :
     test_result list * fixtest_result list =
-  let res : Core_result.t =
-    run_rules_against_targets_for_engine caps env rules targets
-  in
+  let res : Core_result.t = run_rules_against_targets caps env rules targets in
   let expected : (Fpath.t * A.annotations) list =
     files_and_annots
-    |> List_.map (fun (file, annots) ->
-           let annots = filter_annots_for_engine env.engine annots in
-           (file, annots))
+    |> List_.map (fun ((file : Fpath.t), (annots : A.annotations)) ->
+           (file, expected_annots annots))
   in
   let matches =
     res.processed_matches
+    (* python: a match on a line with a nosem annotation, or with the one of
+     * --opengrep-ignore-pattern, is not reported, as in a scan *)
+    |> List_.exclude (fun (x : Core_result.processed_match) -> x.is_ignored)
     |> List_.map (fun (x : Core_result.processed_match) -> x.pm)
   in
   let checks =
@@ -816,23 +792,11 @@ let run_engine (caps : < scan_caps ; .. >) (env : env) (rules : Rule.t list)
                Cli_json_output.cli_error_of_core_error
                  (Core_json_output.error_to_error err)))
   in
-  let fixtest =
-    (* optional fixtest *)
-    match env.engine with
-    | OSS -> compare_for_autofix env rules matches
-    (* TODO? we do not run the autofix for ProScan and DeepScan because
-     * the matches might differ which could require some .pro.fixed
-     * (or .deep.fixed) to separate them from the OSS one.
-     * TODO? should we fix semgrep-rules-pro/paid/python/ which have weird
-     * fixtest results when using --pro?
-     *)
-    | Pro
-    | Deep ->
-        []
-  in
+  (* optional fixtest *)
+  let fixtest = compare_for_autofix env rules matches in
   (checks, fixtest)
 
-(* run one test using the different engines if --pro *)
+(* run the tests of one rule file *)
 let run_test (caps : < scan_caps ; .. >) (conf : Test_CLI.conf)
     (rule_file : Fpath.t) (rules : Rule.t list) (target_files : Fpath.t list)
     (errors : error list ref) : test_result list * fixtest_result list =
@@ -846,7 +810,7 @@ let run_test (caps : < scan_caps ; .. >) (conf : Test_CLI.conf)
     target_files |> List_.map (fun file -> (file, A.annotations file))
   in
 
-  let env = { rule_file; target_files; engine = A.OSS; conf; errors } in
+  let env = { rule_file; target_files; conf; errors } in
   run_engine caps env rules targets files_and_annots
 
 let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)

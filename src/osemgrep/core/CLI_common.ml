@@ -147,6 +147,20 @@ let o_profile : bool Term.t =
   Arg.value (Arg.flag info)
 
 (*************************************************************************)
+(* Nosemgrep options *)
+(*************************************************************************)
+
+(* shared by scan, ci and test; Test_CLI cannot depend on Scan_CLI *)
+let o_opengrep_ignore_pattern : string option Term.t =
+  let info =
+    Arg.info [ "opengrep-ignore-pattern" ]
+      ~doc:
+        {|Add a custom prefix for comments to be ignored by opengrep, alongside the default 'nosem', 'nosemgrep' and 'noopengrep'.
+          For example, '--opengrep-ignore-pattern=noscan' makes opengrep recognize lines with 'noscan' comments as well as the default ones.|}
+  in
+  Arg.value (Arg.opt Arg.(some string) None info)
+
+(*************************************************************************)
 (* Term for all common CLI flags *)
 (*************************************************************************)
 

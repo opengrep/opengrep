@@ -31,11 +31,8 @@ let location_of_core_error (err : Core_error.t) =
   | None -> (Fpath_.fake_file, -1)
 
 let (expected_error_lines_of_files :
-      ?regexp:string ->
-      ?ok_regexp:string ->
-      Fpath.t list ->
-      (Fpath.t * int) (* line *) list) =
- fun ?(regexp = default_error_regexp) ?ok_regexp test_files ->
+      ?regexp:string -> Fpath.t list -> (Fpath.t * int) (* line *) list) =
+ fun ?(regexp = default_error_regexp) test_files ->
   test_files
   |> List.concat_map (fun file ->
          UFile.cat file |> List_.index_list_1
@@ -44,14 +41,7 @@ let (expected_error_lines_of_files :
                  * don't check if they match. We are just happy to check for
                  * correct lines error reporting.
                  *)
-                if
-                  s =~ regexp
-                  (* This is so that we can mark a line differently for OSS/Pro,
-                     e.g. `ruleid: deepok: example_rule_id` *)
-                  && Option.fold ~none:true
-                       ~some:(fun ok_regexp -> not (s =~ ok_regexp))
-                       ok_regexp
-                  (* + 1 because the comment is one line before *)
+                if s =~ regexp (* + 1 because the comment is one line before *)
                 then Some (file, idx + 1)
                 else None))
 

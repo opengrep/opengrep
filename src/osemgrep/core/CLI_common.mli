@@ -28,6 +28,9 @@ val setup_logging : force_color:bool -> level:Logs.level option -> unit
 (* for --profile *)
 val o_profile : bool Cmdliner.Term.t
 
+(* for --opengrep-ignore-pattern, shared by 'scan', 'ci' and 'test' *)
+val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
+
 (* gather all the common flags under one term *)
 val o_common : conf Cmdliner.Term.t
 (* the exit codes a subcommand can return, to document in its man page;

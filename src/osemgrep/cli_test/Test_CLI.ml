@@ -34,6 +34,8 @@ type conf = {
   strict : bool;
   matching_diagnosis : bool;
   taint_intrafile : bool;
+  (* the ignore annotations of a scan apply to a test run too *)
+  opengrep_ignore_pattern : string option;
   (* None when the flag was not given, in which case the engine defaults
    * apply, and those set no limit
    *)
@@ -151,7 +153,10 @@ not have memory limit. Defaults to %d.
 (* TODO: we accept just one elt here, so why not use just Arg.pos? *)
 let o_args : string list Term.t =
   let info =
-    Arg.info [] ~docv:"STRINGS" ~doc:{|Directory or file containing tests.|}
+    Arg.info [] ~docv:"STRINGS"
+      ~doc:
+        {|Directory or file containing tests. Defaults to the current
+directory.|}
   in
   Arg.value (Arg.pos_all Arg.string [] info)
 
@@ -172,6 +177,12 @@ let o_taint_intrafile : bool Term.t =
 (* Command-line parsing: turn argv into conf *)
 (*************************************************************************)
 let target_kind_of_roots_and_config target_roots config =
+  (* python: test.py defaults to the current directory *)
+  let target_roots =
+    match target_roots with
+    | [] -> [ Fpath.v "." ]
+    | roots -> roots
+  in
   (* a target that does not exist is an error, as for 'scan' *)
   (match
      target_roots
@@ -193,21 +204,28 @@ let target_kind_of_roots_and_config target_roots config =
       else
         (* was raise Exception but cleaner abort I think *)
         Error.abort "--config is required when running a test on single file"
-  | [], _ -> Error.abort "at least one target required for tests"
-  | files, [ config ] ->
-      Files (files, config)
+  | files, [ config ] -> (
+      (* several targets must all be files *)
+      match
+        files |> List.filter (fun (file : Fpath.t) -> Sys.is_directory !!file)
+      with
+      | [] -> Files (files, config)
+      | dirs ->
+          Error.abort
+            (Printf.sprintf "only one target directory is allowed, got: %s"
+               (dirs |> Fpath_.to_strings |> String.concat " ")))
   | _, _ :: _ :: _ ->
       (* stricter: removed 'config directory' *)
       Error.abort "only one config allowed for tests"
-  | _ :: _, [] ->
+  | _, [] ->
       Error.abort "--config required when running a test on multiple files"
 
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
   let combine args common config force_color json matching_diagnosis
-      max_memory_mb strict taint_intrafile test_ignore_todo timeout
-      timeout_threshold =
+      max_memory_mb opengrep_ignore_pattern strict taint_intrafile
+      test_ignore_todo timeout timeout_threshold =
     let target =
       target_kind_of_roots_and_config (Fpath_.of_strings args) config
     in
@@ -221,6 +239,7 @@ let cmdline_term : conf Term.t =
       optimizations = true;
       matching_diagnosis;
       taint_intrafile;
+      opengrep_ignore_pattern;
       timeout;
       timeout_threshold;
       max_memory_mb;
@@ -230,7 +249,8 @@ let cmdline_term : conf Term.t =
     const combine $ o_args $ CLI_common.o_common $ o_config
     $ CLI_common.o_force_color ~default:Output.default.force_color
     $ o_json $ o_matching_diagnosis
-    $ o_max_memory_mb $ o_strict $ o_taint_intrafile $ o_test_ignore_todo
+    $ o_max_memory_mb $ CLI_common.o_opengrep_ignore_pattern $ o_strict
+    $ o_taint_intrafile $ o_test_ignore_todo
     $ o_timeout $ o_timeout_threshold)
 
 let doc = "testing the rules"

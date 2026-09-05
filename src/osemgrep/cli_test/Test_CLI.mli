@@ -20,6 +20,8 @@ type conf = {
   *)
   matching_diagnosis : bool;
   taint_intrafile : bool;
+  (* the ignore annotations of a scan apply to a test run too *)
+  opengrep_ignore_pattern : string option;
   (* None when the flag was not given, in which case the engine defaults
      apply, and those set no limit
   *)
