@@ -121,7 +121,7 @@ let log_fixme kind gany : unit =
       log_warning ?tok
         "Unsupported construct(s) may affect the accuracy of dataflow analyses"
   | Sgrep_construct ->
-      log_error ?tok "Cannot translate Semgrep construct(s) into IL"
+      log_error ?tok "Cannot translate Opengrep construct(s) into IL"
   | Impossible ->
       log_error ?tok "Impossible happened during AST-to-IL translation"
 

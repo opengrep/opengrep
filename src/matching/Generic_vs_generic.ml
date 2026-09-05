@@ -382,7 +382,7 @@ let m_with_symbolic_propagation ~is_root f b tin =
     else (
       Log.warn (fun m ->
           m
-            "Aborting symbolic propagation: a bug in Semgrep may be causing an \
+            "Aborting symbolic propagation: a bug in Opengrep may be causing an \
              infinite loop");
       fail () tin)
   else fail () tin

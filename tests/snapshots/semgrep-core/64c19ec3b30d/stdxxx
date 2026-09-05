@@ -36,7 +36,7 @@ Failed to run 'git' 'fetch' 'https://gitlab.invalid/org/repo' 'main'. Possible r
 - the git binary is not available
 - the current working directory is not a git repository
 - the baseline commit is not a parent of the current commit
-  (if you are running through semgrep-app, check if you are setting `SEMGREP_BRANCH` or `SEMGREP_BASELINE_COMMIT` properly)
+  (in CI, check that `OPENGREP_BRANCH` / `SEMGREP_BRANCH` and `OPENGREP_BASELINE_COMMIT` / `SEMGREP_BASELINE_COMMIT` are set correctly)
 - the current working directory is not marked as safe
   (fix with `git config --global --add safe.directory $(pwd)`)
 

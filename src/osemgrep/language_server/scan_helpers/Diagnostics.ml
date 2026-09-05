@@ -9,7 +9,7 @@ let diagnostic_of_match is_intellij (m : OutJ.cli_match) =
   let check_id_str = Rule_ID.to_string m.check_id in
   let message =
     if String.equal message "" then
-      Printf.sprintf "Semgrep found: %s" check_id_str
+      Printf.sprintf "Opengrep found: %s" check_id_str
     else message
   in
   let code = `String check_id_str in
@@ -27,7 +27,7 @@ let diagnostic_of_match is_intellij (m : OutJ.cli_match) =
     (* IntelliJ doesn't display code descriptions:/ so we must insert them here *)
     | Some s when is_intellij ->
         message
-        ^ Printf.sprintf "\nSemgrep(<a href=\"%s\">%s</a>)" s check_id_str
+        ^ Printf.sprintf "\nOpengrep(<a href=\"%s\">%s</a>)" s check_id_str
     | _ -> message
   in
   let codeDescription =

@@ -125,9 +125,9 @@ let run_semgrep ?(targets : Fpath.t list option) ?rules ?git_ref
         |> List_.filter_map (fun (e : Out.cli_error) -> e.message)
         |> String.concat "\n"
       in
-      Logs.app (fun m -> m "Semgrep errors: %s" errors);
+      Logs.app (fun m -> m "Opengrep errors: %s" errors);
       Logs.app (fun m ->
-          m "Semgrep skipped %d rules" (List.length cli_output.skipped_rules));
+          m "Opengrep skipped %d rules" (List.length cli_output.skipped_rules));
       Logs.app (fun m -> m "Scanned %d files" (List.length scanned));
       Logs.app (fun m -> m "Found %d matches" (List.length matches));
       (matches, scanned)
@@ -194,7 +194,7 @@ let scan_something ?targets session =
 let scan_workspace session =
   Logs.app (fun m -> m "Scanning workspace");
   let packets, token =
-    create_progress "Semgrep Scan in Progress" "Scanning Workspace"
+    create_progress "Opengrep Scan in Progress" "Scanning Workspace"
   in
   Reply.Later
     (fun send ->
@@ -212,7 +212,7 @@ let scan_open_documents (session : Session.t) =
     List.filter (fun doc -> List.mem doc open_documents) session_targets
   in
   let packets, token =
-    create_progress "Semgrep Scan in Progress" "Scanning Open Documents"
+    create_progress "Opengrep Scan in Progress" "Scanning Open Documents"
   in
   Reply.Later
     (fun send ->
@@ -264,7 +264,7 @@ let scan_file session uri =
 
 let refresh_rules session =
   Reply.later (fun send ->
-      let packets, token = create_progress "Semgrep" "Refreshing Rules" in
+      let packets, token = create_progress "Opengrep" "Refreshing Rules" in
       let%lwt () = Lwt_list.iter_s send packets in
       Logs.app (fun m -> m "Refreshing rules");
       let%lwt () = Session.cache_session session in

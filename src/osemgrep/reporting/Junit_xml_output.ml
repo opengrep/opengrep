@@ -119,7 +119,7 @@ let junit_xml_output (cli_output : OutT.cli_output) : string =
           (("", "disabled"), "0");
           (("", "errors"), "0");
           (("", "failures"), string_of_int num_results);
-          (("", "name"), "semgrep results");
+          (("", "name"), "opengrep results");
           (("", "skipped"), "0");
           (("", "tests"), string_of_int num_results);
           (* XXX(reynir): due to python quirk this is an integer *)
