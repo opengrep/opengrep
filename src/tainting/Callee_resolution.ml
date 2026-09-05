@@ -147,8 +147,45 @@ let prefer_concrete (matches : func_info list) : func_info list =
   | [] -> matches
   | _ -> concrete
 
-let pick_by_arity ~(lang : Lang.t) (call_arity : int option)
+(* The callee for a tie between same-arity overloads of one scope: the
+   earliest by position, whose signature interfile dispatch widens to the
+   union over the group (see [Structural_dispatch.emit_overload_edges]).
+   None when the tie spans scopes, when the language has no overloads by
+   type, or when no union is built, as in a single-file graph: giving up
+   is then the conservative answer. *)
+let overload_representative ~(lang : Lang.t) ~(overload_groups : bool)
     (matches : func_info list) : fn_id option =
+  let scope (f : func_info) : (string option * string option) =
+    ( Option.map (fun (cls : IL.name) -> fst cls.IL.ident)
+        (Func_info.enclosing_class f.fn_id),
+      Option.map Fpath.to_string (Func_info.def_file_opt f) )
+  in
+  match matches with
+  | [] -> None
+  | _ when not (overload_groups && Lang_config.overloads_by_type lang) -> None
+  | first :: rest ->
+      let same_scope =
+        List.for_all
+          (fun (f : func_info) ->
+            let cls1, file1 = scope first and cls2, file2 = scope f in
+            Option.equal String.equal cls1 cls2
+            && Option.equal String.equal file1 file2)
+          rest
+      in
+      if not same_scope then None
+      else
+        matches
+        |> List.filter_map (fun (f : func_info) ->
+               Option.map
+                 (fun (leaf : IL.name) -> (Function_id.of_il_name leaf, f))
+                 (Func_info.leaf_name f.fn_id))
+        |> List.sort (fun ((a : Function_id.t), _) ((b : Function_id.t), _) ->
+               Function_id.compare a b)
+        |> List_.hd_opt
+        |> Option.map (fun (_, (f : func_info)) -> f.fn_id)
+
+let pick_by_arity ?(overload_groups = false) ~(lang : Lang.t)
+    (call_arity : int option) (matches : func_info list) : fn_id option =
   let matches = prefer_concrete matches in
   (* Reject a body-less synth candidate (Ruby [attr_reader]: [FBNothing]
      with an empty param list) against a positional-arg call.  A body-less
@@ -181,13 +218,18 @@ let pick_by_arity ~(lang : Lang.t) (call_arity : int option)
                 m "PICK_BY_ARITY: %d candidates, none with arity %d; giving up"
                   (List.length matches) arity);
               None
-          | _ ->
-              (* Should not fire: requires two functions sharing both name
-                 and arity, with the same class/module scope; defensive. *)
-              Log.debug (fun m ->
-                m "PICK_BY_ARITY: %d candidates, %d still match arity %d; giving up"
-                  (List.length matches) (List.length arity_matches) arity);
-              None)
+          | _ -> (
+              (* Overloads by parameter type, or homonyms across scopes. *)
+              match
+                overload_representative ~lang ~overload_groups arity_matches
+              with
+              | Some _ as representative -> representative
+              | None ->
+                  Log.debug (fun m ->
+                    m "PICK_BY_ARITY: %d candidates, %d still match arity %d \
+                       across scopes; giving up"
+                      (List.length matches) (List.length arity_matches) arity);
+                  None))
       | None ->
           Log.debug (fun m ->
             m "PICK_BY_ARITY: %d candidates, no arity info; giving up"
@@ -262,6 +304,13 @@ let rec identify_callee ~(lang : Lang.t)
     ?(allow_constructor = true) (callee : G.expr) : fn_id option =
   let is_locally_imported (name : string) : bool =
     Func_lookup.is_locally_imported func_lookup name
+  in
+  (* every arity tie-break below knows whether overload groups exist *)
+  let pick_by_arity ~(lang : Lang.t) (call_arity : int option)
+      (matches : func_info list) : fn_id option =
+    pick_by_arity
+      ~overload_groups:(Func_lookup.overload_groups func_lookup)
+      ~lang call_arity matches
   in
   let rec collect_dotted_chain (e : G.expr) : (string * string list) option =
     match e.G.e with

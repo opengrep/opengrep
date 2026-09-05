@@ -30,7 +30,14 @@ type t = {
   file_module_qn : file_module_index option;
   local_imports : name_set option;
   class_aliases : class_alias_index option;
+  (* The project index widens an overload group's representative to the
+     union of the group (see [Structural_dispatch.emit_overload_edges]),
+     so a same-arity tie resolves to it; a single-file graph has no such
+     union and gives up on the tie. *)
+  overload_groups : bool;
 }
+
+let overload_groups (t : t) : bool = t.overload_groups
 
 let empty = {
   funcs_by_name = None;
@@ -42,13 +49,14 @@ let empty = {
   file_module_qn = None;
   local_imports = None;
   class_aliases = None;
+  overload_groups = false;
 }
 
 let create
     ?funcs_by_name ?project_funcs_by_name
     ?funcs_by_module_qn ?alias_to_module_qn
     ?same_file_funcs_by_name ?funcs_by_package ?file_module_qn
-    ?local_imports ?class_aliases () =
+    ?local_imports ?class_aliases ?(overload_groups = false) () =
   { funcs_by_name;
     project_funcs_by_name;
     funcs_by_module_qn;
@@ -57,7 +65,8 @@ let create
     funcs_by_package;
     file_module_qn;
     local_imports;
-    class_aliases }
+    class_aliases;
+    overload_groups }
 
 (* [None] when the name is not an import alias for a class. *)
 let resolve_class_alias t name =

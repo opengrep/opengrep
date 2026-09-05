@@ -40,7 +40,12 @@ val create :
   ?file_module_qn : file_module_index ->
   ?local_imports : name_set ->
   ?class_aliases : class_alias_index ->
+  ?overload_groups : bool ->
   unit -> t
+
+(* Whether the index widened overload groups to their union, so that a
+   same-arity tie resolves to the group's representative. *)
+val overload_groups : t -> bool
 
 (* [None] when the name is not an import alias bound to a class. *)
 val resolve_class_alias : t -> string -> (string * name_set) option
