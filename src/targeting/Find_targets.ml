@@ -317,19 +317,35 @@ let apply_include_filter status selection_events include_filter ppath =
       | None -> (status, selection_events)
       | Some include_filter -> Include_filter.select include_filter ppath)
 
+(* Never scanned and never reported, as pysemgrep's PATHS_ALWAYS_SKIPPED
+   (target_manager.py), which held '**/.git' and '**/.git/**': the folder
+   git keeps its data in, and everything under it, whatever the ignore
+   files of the project say. *)
+let is_always_skipped (ppath : Ppath.t) : bool =
+  Ppath.segments ppath |> List.exists (String.equal ".git")
+
 (* Note that include_filter applies only to the paths of regular files. They're
  * applied last, after the exclude/gitignore/semgrepignore filters.
  *)
-let filter_path (ign : Gitignore.filter)
+let filter_path ?(kind : Unix.file_kind option) (ign : Gitignore.filter)
     (include_filter : Include_filter.t option) (fppath : Fppath.t) :
     filter_result =
   let { fpath; ppath } : Fppath.t = fppath in
+  if is_always_skipped ppath then Ignore_silently
+  else
   let status, selection_events = Gitignore_filter.select ign ppath in
   match status with
   | Ignored -> ignore_path selection_events fpath
   | Not_ignored -> (
       (* TODO: check read permission too? *)
-      match (Unix.lstat !!fpath).st_kind with
+      (* [kind] is what a caller that has already stat'ed the path knows: a
+         scanning root is followed with Unix.stat, so it is filtered as the
+         file it leads to rather than skipped as a symlink. *)
+      match
+        match kind with
+        | Some (kind : Unix.file_kind) -> kind
+        | None -> (Unix.lstat !!fpath).st_kind
+      with
       (* skipping symlinks *)
       | S_LNK -> Ignore_silently
       | S_REG -> (
@@ -449,11 +465,25 @@ let filter_paths
     loop Ppath.root (Hashtbl.mem roots Ppath.root) segments
       (List.length segments)
   in
+  (* A scanning root that is a symlink to a file is the file the user
+     named: git lists it like any other, but it is followed here as it is
+     when the walk starts from it, instead of being dropped for being a
+     symlink. *)
+  let kind_of_scanning_root (fppath : Fppath.t) : Unix.file_kind option =
+    if
+      Hashtbl.mem roots (root_ppath fppath)
+      && UFile.is_reg ~follow_symlinks:true fppath.fpath
+    then Some Unix.S_REG
+    else None
+  in
   target_files
   |> List.iter (fun fppath ->
          if under_ignored_dir fppath then ()
          else
-         match filter_path ign include_filter fppath with
+         match
+           filter_path ?kind:(kind_of_scanning_root fppath) ign include_filter
+             fppath
+         with
          | Keep -> (
              (* This section is similar to what we have in
                 'walk_skip_and_collect' but the rest is sufficiently different
@@ -472,23 +502,31 @@ let filter_paths
 (* Note: throughout this file we use List.rev_append instead of (@) for
  * concatenating file lists, since it is tail-recursive. The order does not
  * matter because we sort and deduplicate at the end in get_targets. *)
-let filter_extension_size_and_minified max_target_bytes exclude_minified_files
+(* [keep_any_extension] holds for the files the default extension
+   exclusions must not apply to, [keep_any_size] for those the size limit
+   must not apply to. *)
+let filter_extension_size_and_minified ~(keep_any_extension : Fppath.t -> bool)
+    ~(keep_any_size : Fppath.t -> bool) max_target_bytes exclude_minified_files
     paths =
   (* by extension first, as it reads nothing *)
   let selected_fppaths, skipped_extension =
     Result_.partition
       (fun (fppath : Fppath.t) ->
-        Result.map
-          (fun _ -> fppath)
-          (Skip_target.has_excluded_extension fppath.fpath))
+        if keep_any_extension fppath then Ok fppath
+        else
+          Result.map
+            (fun _ -> fppath)
+            (Skip_target.has_excluded_extension fppath.fpath))
       paths
   in
   let selected_fppaths, skipped_size =
     Result_.partition
       (fun (fppath : Fppath.t) ->
-        Result.map
-          (fun _ -> fppath)
-          (Skip_target.is_big max_target_bytes fppath.fpath))
+        if keep_any_size fppath then Ok fppath
+        else
+          Result.map
+            (fun _ -> fppath)
+            (Skip_target.is_big max_target_bytes fppath.fpath))
       selected_fppaths
   in
   let selected_fppaths, skipped_minified =
@@ -853,8 +891,17 @@ let setup_path_filters conf (project_roots : Project.roots) :
    * We would still need to intialize at the beginning with
    * the .gitignore of all the parents of the scan_root.
    *)
+  (* The ignore file of the working directory applies wherever the scanning
+     roots are, as it did for the Python wrapper. When the working
+     directory is the project root it is already read as the project's own,
+     with its patterns anchored there. *)
+  let working_directory : Fpath.t option =
+    let cwd = Rpath.to_fpath (Rpath.getcwd ()) in
+    if Fpath.equal cwd (Rpath.to_fpath (Rfpath.to_rpath project_root)) then None
+    else Some cwd
+  in
   let semgrepignore_filter =
-    Semgrepignore.create ~cli_patterns:conf.exclude
+    Semgrepignore.create ~cli_patterns:conf.exclude ?working_directory
       ?semgrepignore_filename:conf.semgrepignore_filename
       ~default_semgrepignore_patterns:Semgrep_scan_legacy
       ~exclusion_mechanism
@@ -891,10 +938,29 @@ let get_targets_from_filesystem
         match (Unix.stat !!(scan_root.fpath)).st_kind with
         (* TOPORT? make sure has right permissions (readable) *)
         | S_REG ->
+          let keep_if_readable () =
+            match Skip_target.filter_file_access_permissions scan_root.fpath with
+            | Ok _path -> ([ scan_root ], [])
+            | Error skipped -> ([], [ skipped ])
+          in
           if not conf.apply_includes_excludes_to_file_targets then
-            ([ scan_root ], [])
+            (* a file the user named is taken whatever the filters, but it
+               still has to be readable *)
+            keep_if_readable ()
           else
-            walk_skip_and_collect ign include_filter scan_root
+            (* '--force-exclude': the filters apply to the file the user
+               named as they do to any other file. Walking it is not an
+               option: the walk tests the read and execute permissions of
+               what it starts from, which a regular file rarely has. The
+               kind comes from the Unix.stat above, so a root that is a
+               symlink to a file is filtered as that file and not dropped
+               for being a symlink. *)
+            (match filter_path ~kind:Unix.S_REG ign include_filter scan_root with
+            | Keep -> keep_if_readable ()
+            | Skip skipped -> ([], [ skipped ])
+            | Dir
+            | Ignore_silently ->
+                ([], []))
         | S_DIR -> walk_skip_and_collect ign include_filter scan_root
         | S_LNK ->
             (* already dereferenced by Unix.stat *)
@@ -916,6 +982,8 @@ let get_targets_from_filesystem
    files regardless of filters (gitignore, semgrepignore, --include,
    --exclude, ...).
    If they already occur in the list of skipped targets, they will be removed.
+   A file the scan cannot read is not selected: it is reported as skipped,
+   and the caller turns that into an error of the run.
 *)
 let force_select_scanning_roots
     ?(apply_includes_excludes_to_files = false)
@@ -923,13 +991,17 @@ let force_select_scanning_roots
     (selected_targets : Fppath.t list)
     (skipped_targets : Out.skipped_target list) :
     Fppath.t list * Out.skipped_target list =
-  let regular_files_to_add =
+  let regular_files_to_add, unreadable_files =
     if not apply_includes_excludes_to_files then
       (* default behaviour: *)
       project_roots.scanning_roots
       |> List.filter (fun (sc_root : Fppath.t) ->
           UFile.is_reg ~follow_symlinks:true sc_root.fpath)
-    else []
+      |> List.partition_map (fun (sc_root : Fppath.t) ->
+             match Skip_target.filter_file_access_permissions sc_root.fpath with
+             | Ok _path -> Left sc_root
+             | Error skipped -> Right skipped)
+    else ([], [])
   in
   let skipped_targets =
     let regular_files_to_add =
@@ -942,7 +1014,7 @@ let force_select_scanning_roots
            not (Set_.mem skipped.path regular_files_to_add))
   in
   let selected_targets = List.rev_append selected_targets regular_files_to_add in
-  (selected_targets, skipped_targets)
+  (selected_targets, List.rev_append unreadable_files skipped_targets)
 
 (*
    Target files are identified by following these steps:
@@ -1030,12 +1102,28 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
 (* Entry point *)
 (*************************************************************************)
 
+(* The files the user named on the command line. The default exclusions by
+   extension and the size limit apply to what walking a directory root
+   turns up, not to these: pysemgrep added them back after filtering
+   (bypass_includes_excludes_for_files of target_manager.py). *)
+let explicit_file_targets (scanning_roots : Scanning_root.t list) :
+    Fpath.t Set_.t =
+  scanning_roots
+  |> List_.map Scanning_root.to_fpath
+  |> List.filter (fun (fpath : Fpath.t) ->
+         UFile.is_reg ~follow_symlinks:true fpath)
+  |> Set_.of_list
+
 (* TODO: The 'git_repo' field is needed to print out a warning to the
  * user, because some files in a git repo can be ignored. When multiple
  * roots are specified, we display this warning to the user when
  * at least one root is a git repo. Should we be more precise and
  * display which roots are git repos? Maybe in verbose mode? *)
 let get_targets conf scanning_roots : Fppath.t targets =
+  let explicit_files : Fpath.t Set_.t =
+    if conf.apply_includes_excludes_to_file_targets then Set_.empty
+    else explicit_file_targets scanning_roots
+  in
   let raw =
     List.fold_left
       (fun acc root ->
@@ -1046,10 +1134,18 @@ let get_targets conf scanning_roots : Fppath.t targets =
       { selected = []; skipped = []; git_repo = false }
       (group_scanning_roots_by_project conf scanning_roots)
   in
+  let is_explicit_file (fppath : Fppath.t) : bool =
+    Set_.mem fppath.fpath explicit_files
+  in
   let selected, skipped_files =
     raw.selected
     |> List.sort_uniq Fppath.compare
-    |> filter_extension_size_and_minified conf.max_target_bytes
+    |> filter_extension_size_and_minified
+         ~keep_any_extension:(fun (fppath : Fppath.t) ->
+           (* a file kept by a '--include' pattern of the user was asked
+              for as much as one named on the command line *)
+           Option.is_some conf.include_ || is_explicit_file fppath)
+         ~keep_any_size:is_explicit_file conf.max_target_bytes
          conf.exclude_minified_files
   in
   let skipped =

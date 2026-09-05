@@ -1,0 +1,16 @@
+--- begin input files ---
+.semgrepignore
+eqeq-js-ts.yaml
+targets/excluded_extensions/min.min.js
+targets/excluded_extensions/plain.js
+targets/excluded_extensions/t.d.ts
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 5 files changed, 11 insertions(+)
+ create mode 100644 .semgrepignore
+ create mode 100644 eqeq-js-ts.yaml
+ create mode 100644 targets/excluded_extensions/min.min.js
+ create mode 100644 targets/excluded_extensions/plain.js
+ create mode 100644 targets/excluded_extensions/t.d.ts
+{"version":"<MASKED>","results":[{"check_id":"eqeq-bad","path":"targets/excluded_extensions/plain.js","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"a"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"1126d66c6b338ebd065841a856c6d711215102295116884c64b924f90810d2e93721c7ec0159a4b00d172ad1e00b6203ae0757d9d404d9a3e9eaedebe16738d7_0","lines":"a == a","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/excluded_extensions/plain.js"],"skipped":[{"path":"targets/excluded_extensions/min.min.js","reason":"always_skipped"},{"path":"targets/excluded_extensions/t.d.ts","reason":"always_skipped"}]},"interfile_languages_used":[],"skipped_rules":[]}

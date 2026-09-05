@@ -19,15 +19,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 multilangproj/math.ml
  create mode 100644 multilangproj/script.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -45,7 +36,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 6 rules on 3 files: 0 findings.
 ASSERT exit code

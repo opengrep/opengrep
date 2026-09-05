@@ -192,6 +192,19 @@ let tests_with_or_without_git ~with_git =
     test_find_targets ~with_git ~scanning_root:"dir"
       "semgrepignore of the working directory applies under it"
       [ F.File (".semgrepignore", "dir/b\n"); F.dir "dir" [ F.file "a"; F.file "b" ] ];
+    (* It also applies to a root outside it, with only the patterns that
+       are not anchored to it, as the Python wrapper's did. *)
+    test_find_targets ~with_git ~cwd:"here" ~scanning_root:"../there"
+      "semgrepignore of the working directory applies outside it"
+      [
+        F.dir "here" [ F.File (".semgrepignore", "deep/\n/anchored/\n") ];
+        F.dir "there"
+          [
+            F.file "a.c";
+            F.dir "deep" [ F.file "b.c" ];
+            F.dir "anchored" [ F.file "c.c" ];
+          ];
+      ];
     (* An ignored folder given as the scanning root is not scanned. *)
     test_find_targets ~with_git ~scanning_root:"dir"
       "scanning root is a semgrepignored folder"

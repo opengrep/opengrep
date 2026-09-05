@@ -1,0 +1,12 @@
+--- begin input files ---
+eqeq-python.yaml
+link.py
+real.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 33 insertions(+)
+ create mode 100644 eqeq-python.yaml
+ create mode 120000 link.py
+ create mode 100644 real.py
+{"version":"<MASKED>","results":[],"errors":[],"paths":{"scanned":[],"skipped":[{"path":"link.py","reason":"cli_exclude_flags_match"}]},"interfile_languages_used":[],"skipped_rules":[]}

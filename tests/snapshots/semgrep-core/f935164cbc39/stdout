@@ -1,0 +1,12 @@
+--- begin input files ---
+eqeq-python.yaml
+targets/size/big.py
+targets/size/small.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 34 insertions(+)
+ create mode 100644 eqeq-python.yaml
+ create mode 100644 targets/size/big.py
+ create mode 100644 targets/size/small.py
+{"version":"<MASKED>","results":[],"errors":[],"paths":{"scanned":[],"skipped":[{"path":"targets/size/big.py","reason":"exceeded_size_limit","details":"target file size exceeds 100 bytes at 208 bytes"}]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -32,9 +32,14 @@ type exclusion_mechanism = {
 
    Use Git_project.find_project_root to determine the root of the
    git project.
+
+   working_directory is the folder the command runs from, when it is not
+   the project root: the patterns of its ignore file that match at any
+   depth apply to the paths outside it, as they did for pysemgrep.
 *)
 val create :
   ?cli_patterns:string list ->
+  ?working_directory:Fpath.t ->
   ?semgrepignore_filename:string ->
   default_semgrepignore_patterns:default_semgrepignore_patterns ->
   exclusion_mechanism:exclusion_mechanism ->

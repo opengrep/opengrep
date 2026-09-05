@@ -1,0 +1,22 @@
+--- begin input files ---
+eqeq-basic.yaml
+targets/nested_paths/app/src/d.js
+targets/nested_paths/src/a.js
+targets/nested_paths/src/lib/b.js
+targets/nested_paths/src/util/c.js
+targets/nested_paths/top.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 6 files changed, 12 insertions(+)
+ create mode 100644 eqeq-basic.yaml
+ create mode 100644 targets/nested_paths/app/src/d.js
+ create mode 100644 targets/nested_paths/src/a.js
+ create mode 100644 targets/nested_paths/src/lib/b.js
+ create mode 100644 targets/nested_paths/src/util/c.js
+ create mode 100644 targets/nested_paths/top.js
+selected targets/nested_paths/src/lib/b.js
+ignored targets/nested_paths/app/src/d.js [cli_include_flags_do_not_match]
+ignored targets/nested_paths/src/a.js [cli_include_flags_do_not_match]
+ignored targets/nested_paths/src/util/c.js [cli_include_flags_do_not_match]
+ignored targets/nested_paths/top.js [cli_include_flags_do_not_match]

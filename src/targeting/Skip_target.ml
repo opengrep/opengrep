@@ -158,7 +158,9 @@ let is_big max_bytes path =
     Error
       {
         Out.path;
-        reason = Too_big;
+        (* the reason pyopengrep reported for '--max-target-bytes';
+           'too_big' is what the core engine reports for its own limit *)
+        reason = Exceeded_size_limit;
         details =
           Some
             (spf "target file size exceeds %i bytes at %i bytes" max_bytes size);

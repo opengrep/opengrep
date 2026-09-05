@@ -88,8 +88,9 @@ val flatten : ?root:Fpath.t -> ?include_dirs:bool -> t list -> Fpath.t list
 
 (*
    Read the file tree starting from a root folder. Don't follow symlinks.
-   Fail with an exception if we can't read the files or if they're of an
-   exotic kind.
+   Fail with an exception if the root is not a folder or if an entry is of an
+   exotic kind. An entry that cannot be read comes back as Unreadable or
+   Unreadable_dir, with no contents and no entries.
 *)
 val read : Fpath.t -> t list
 
