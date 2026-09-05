@@ -322,9 +322,9 @@ let o_max_memory_mb : int option Term.t =
   let info =
     Arg.info [ "max-memory" ]
       ~doc:
-        {|Maximum system memory in MiB to use during the interfile pre-processing
-phase, or when running a rule on a single file. If set to 0, will
-not have memory limit. Defaults to 0.
+        {|Maximum system memory in MiB to use during the interfile analysis
+or when running a rule on a single file. If set to 0, will not have memory
+limit. Defaults to 0.
 |}
   in
   Arg.value (Arg.opt (Arg.some Arg.int) None info)
@@ -440,15 +440,14 @@ the file is skipped. If set to 0 will not have limit. Defaults to %d.
   in
   Arg.value (Arg.opt (Arg.some Arg.int) None info)
 
-(* TODO: currently just used in pysemgrep and semgrep-core-proprietary *)
 let o_timeout_interfile : int Term.t =
-  let default = 0 in
+  let default = default.core_runner_conf.interfile_timeout in
   let info =
     Arg.info [ "interfile-timeout" ]
       ~doc:
-        {|Maximum time to spend on interfile analysis. If set to 0 will not
-have time limit. Defaults to 0 s for all CLI scans. For CI scans, it defaults
-to 3 hours.|}
+        {|Maximum time in seconds to spend on the interfile analysis of a rule.
+If set to 0 will not have time limit. Defaults to 0.
+|}
   in
   Arg.value (Arg.opt Arg.int default info)
 
@@ -1252,7 +1251,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       force_color gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       include_ incremental_output incremental_output_postprocess
       json json_outputs junit_xml junit_xml_outputs lang matching_explanations max_chars_per_line
-      max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb max_target_bytes
+      max_lines_per_finding max_log_list_entries max_match_per_file max_memory_mb
+      max_target_bytes
       num_jobs nosem opengrep_ignore_pattern optimizations
       output output_enclosing_context pattern project_root taint_interfile
       taint_interfile_depth taint_intrafile
@@ -1260,7 +1260,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       scan_unknown_extensions semgrepignore_filename severity show_supported_languages
       skip_invalid_configs
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
-      _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
+      timeout_interfile timeout_threshold (*  trace trace_endpoint *) use_git
       validate version _version_check vim vim_outputs
       x_ignore_semgrepignore_files x_ls x_ls_long =
     (* Print a warning if any of the internal or experimental options.
@@ -1351,6 +1351,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           timeout_threshold ||| default.core_runner_conf.timeout_threshold;
         max_memory_mb =
           max_memory_mb ||| default.core_runner_conf.max_memory_mb;
+        interfile_timeout = timeout_interfile;
         max_match_per_file;
         dataflow_traces;
         nosem;
@@ -1490,7 +1491,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_include $ o_incremental_output $ o_incremental_output_postprocess
     $ o_json $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
-    $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes
+    $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb
+    $ o_max_target_bytes
     $ o_num_jobs $ o_nosem $ CLI_common.o_opengrep_ignore_pattern
     $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root

@@ -87,11 +87,12 @@ let cmdline_term : conf Term.t =
       include_ inline_metavariables json json_outputs junit_xml
       junit_xml_outputs matching_explanations max_chars_per_line
       max_lines_per_finding max_log_list_entries max_match_per_file
-      max_memory_mb max_target_bytes nosem num_jobs opengrep_ignore_pattern
+      max_memory_mb max_target_bytes nosem num_jobs
+      opengrep_ignore_pattern
       optimizations output rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions subdir suppress_errors taint_interfile
       taint_interfile_depth taint_intrafile text text_outputs time_flag timeout
-      _timeout_interfileTODO timeout_threshold use_git _version_check vim
+      timeout_interfile timeout_threshold use_git _version_check vim
       vim_outputs =
     let output_format : Output_format.t =
       SC.output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
@@ -148,6 +149,7 @@ let cmdline_term : conf Term.t =
         timeout_threshold =
           timeout_threshold ||| Core_runner.default_conf.timeout_threshold;
         max_memory_mb = max_memory_mb ||| Core_runner.default_conf.max_memory_mb;
+        interfile_timeout = timeout_interfile;
         max_match_per_file;
         dataflow_traces;
         (* --enable-nosem; the engine still annotates the matches, and the

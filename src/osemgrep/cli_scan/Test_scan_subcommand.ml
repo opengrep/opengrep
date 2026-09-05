@@ -590,6 +590,44 @@ let test_interfile_paths_scanned (caps : Scan_subcommand.caps) () =
                  Alcotest.(check bool)
                    (spf "%s has a byte count" (Fpath.to_string t.path))
                    true (t.num_bytes > 0))))
+
+(* The process-wide [--max-memory] bounds interfile dispatch too: exceeding
+   it aborts the analysis of a rule, reported as an out-of-memory error
+   against that rule. *)
+let test_interfile_limits (caps : Scan_subcommand.caps) () =
+  let scan (args : string list) : Semgrep_output_v1_t.cli_output * Exit_code.t =
+    with_env_app_token (fun () ->
+        let repo_files =
+          [
+            F.File ("rules.yml", taint_interfile_content);
+            F.File ("main.py", interfile_caller_py_content);
+            F.File ("sinks.py", interfile_sink_py_content);
+          ]
+        in
+        Testutil_git.with_git_repo repo_files (fun _cwd ->
+            let exit_code, stdout_output =
+              Testo.with_capture stdout (fun () ->
+                  without_settings (fun () ->
+                      Scan_subcommand.main caps
+                        (Array.of_list
+                           ([
+                              "opengrep-scan"; "--experimental"; "--json";
+                              "--config"; "rules.yml"; "--taint-interfile";
+                            ]
+                           @ args))))
+            in
+            (Semgrep_output_v1_j.cli_output_of_string stdout_output, exit_code)))
+  in
+  let out, exit_code = scan [ "--max-memory"; "1" ] in
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check (list (pair string (option string))))
+    "the memory limit is reported against the rule"
+    [ ("Out of memory", Some "interfile-taint") ]
+    (out.errors
+    |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+           ( Error.string_of_error_type e.type_,
+             Option.map Rule_ID.to_string e.rule_id )))
+
 (* The intrafile counterpart of the test above: without interfile, the dedup
    key omits the source, so the same two flows collapse into one finding. *)
 let test_intrafile_same_sink_dedup (caps : Scan_subcommand.caps) () =
@@ -2064,6 +2102,7 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_interfile_source_sink_dedup caps);
       t "interfile targets are scanned targets"
         (test_interfile_paths_scanned caps);
+      t "interfile limits: memory" (test_interfile_limits caps);
       t "intrafile same-sink findings dedup to one"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_intrafile_same_sink_dedup caps);
