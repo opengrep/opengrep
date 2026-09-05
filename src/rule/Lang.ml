@@ -132,15 +132,7 @@ let keys = Common2.hkeys lang_map
 let supported_langs : string = String.concat ", " keys
 
 (* TODO: move file identification to lang.json *)
-(* Manifests that share an extension with a real language ([.mod] maps to Go),
-   so [go.mod] / [go.sum] would otherwise reach the Go parser and crash. *)
-let is_lang_manifest_noise filename =
-  match Fpath.filename filename with
-  | "go.mod" | "go.sum" -> true
-  | _ -> false
-
 let langs_of_filename filename =
-  if is_lang_manifest_noise filename then [] else
   let typ = File_type.file_type_of_file filename in
   match typ with
   | FT.PL (FT.Web FT.Js) -> [ Js ] (* Add TypeScript too? *)
