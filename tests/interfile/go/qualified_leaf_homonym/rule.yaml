@@ -1,0 +1,15 @@
+rules:
+  - id: qualified-leaf-homonym
+    mode: taint
+    languages:
+      - go
+    message: "Tainted data flows to sink without sanitization"
+    severity: ERROR
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-sanitizers:
+      - pattern: sanitize(...)

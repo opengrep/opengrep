@@ -1295,7 +1295,17 @@ class ['self] resolve_visitor env lang =
            * as ArrayAccess above. *)
           Common.save_excursion_unsafe env.in_lvalue false (fun () ->
               self#visit_expr venv e1);
-          self#visit_field_name venv fname;
+          (* A field or method leaf names a member of the receiver, never a
+           * binding in scope: a member that shares the name of a function
+           * in scope is not a reference to that function. Leaving it
+           * unresolved keeps the call graph and the taint signatures free
+           * of self-references; the project index resolves method leaves
+           * by receiver type. *)
+          (match fname with
+           | FN (Id _) -> ()
+           | FN (IdQualified _)
+           | FDynamic _ ->
+               self#visit_field_name venv fname);
           recurse := false
       | Comprehension (_op, (_l, (e, xs), _r)) ->
           (* Actually in Python2, no new scope was created, so iterator vars

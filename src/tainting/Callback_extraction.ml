@@ -12,15 +12,57 @@ open Callee_resolution
      - List/Tuple/Array/Set [handler, ...] — recurse into each element
      - Variable aliasing a record/container via [id_svalue]
        (set by [Dataflow_svalue] during parsing) — recurse into the svalue
-   Returns a list of (callback_name, tok, shortlambda_tmp_opt).
+   Returns a list of (callback_name, tok, shortlambda_tmp_opt, scope).
    - shortlambda_tmp_opt is Some IL.name for the _tmp wrapper node when this
      is an Elixir ShortLambda.
+   - scope confines the lookup of a dotted name, see [callback_scope].
    Over-approximates on purpose: any function-ref nested anywhere in the
    argument is treated as a potential callback. Precision at per-offset
    granularity is handled later by Sig_inst's offset-walk. *)
+
+(* Where a callback name may be looked up. A bare name or a [self.x] form
+   searches the caller's scope, class and the project's free functions; a
+   dotted name is confined to its receiver: the functions of the module it
+   names, or the methods of the class the receiver is declared as. A dotted
+   leaf never denotes a free function of the current package: a constant or
+   field that happens to share the name of the enclosing function must not
+   become a reference to that function, a self-edge whose signature then
+   embeds itself without bound. *)
+type callback_scope =
+  | Unscoped
+  | In_module of Names.Module_qn.t
+  | Method_of of string
+
+let is_self_receiver (s : string) : bool =
+  match s with
+  | "self" | "this" | "cls" | "$this" -> true
+  | _ -> false
+
+(* The scope of a [recv.leaf] argument, [None] when the receiver is a value
+   of unknown type: such a leaf is a field or a method value we cannot
+   resolve by name. *)
+let scope_of_receiver ~(func_lookup : Func_lookup.t)
+    ((recv, recv_info) : G.ident * G.id_info) : callback_scope option =
+  if is_self_receiver (fst recv) then Some Unscoped
+  else
+    match Func_lookup.resolve_alias func_lookup (fst recv) with
+    | Some qn -> Some (In_module qn)
+    | None -> (
+        match !(recv_info.G.id_resolved) with
+        | Some (G.ImportedModule parts, _) ->
+            Some (In_module (Names.Module_qn.of_parts parts))
+        | _ -> (
+            match
+              Option.bind
+                (Type_infer.declared_class_of_name (G.Id (recv, recv_info)))
+                Ty_leaf.leaf_of_name
+            with
+            | Some cls -> Some (Method_of cls)
+            | None -> None))
+
 let rec extract_callbacks_from_arg ~(lang : Lang.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty) (arg_expr : G.expr) :
-    (IL.name * Tok.t * IL.name option) list =
+    (IL.name * Tok.t * IL.name option * callback_scope) list =
   match arg_expr.G.e with
   (* Plain identifier: foo — may be a function name directly, OR a variable
      whose id_svalue wraps a record/container we should walk through. We
@@ -44,7 +86,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
       in
       let direct =
         if is_bound_value then []
-        else [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
+        else [ (AST_to_IL.var_of_id_info id id_info, snd id, None, Unscoped) ]
       in
       let via_svalue =
         match !(id_info.id_svalue) with
@@ -55,13 +97,18 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
       direct @ via_svalue
   (* Address-of operator: &foo (C/C++ function pointers) *)
   | G.Ref (_, { e = G.N (G.Id (id, id_info)); _ }) ->
-      [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
+      [ (AST_to_IL.var_of_id_info id id_info, snd id, None, Unscoped) ]
   (* Qualified identifier: Module.foo *)
   | G.N (G.IdQualified { name_last = id, _; name_info; _ }) ->
-      [ (AST_to_IL.var_of_id_info id name_info, snd id, None) ]
-  (* DotAccess: module.func or obj.method - common in Python/JS *)
-  | G.DotAccess (_, _, G.FN (G.Id (id, id_info))) ->
-      [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
+      [ (AST_to_IL.var_of_id_info id name_info, snd id, None, Unscoped) ]
+  (* DotAccess: module.func, self.method or obj.method — confined to the
+     receiver's scope, see [scope_of_receiver]. *)
+  | G.DotAccess
+      ({ e = G.N (G.Id (recv, recv_info)); _ }, _, G.FN (G.Id (id, id_info))) -> (
+      match scope_of_receiver ~func_lookup (recv, recv_info) with
+      | Some scope ->
+          [ (AST_to_IL.var_of_id_info id id_info, snd id, None, scope) ]
+      | None -> [])
   (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
      named (local or remote) function. Structure:
      OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
@@ -83,7 +130,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
           let tmp_name =
             Visit_function_defs.synth_lambda_il_name_of_tok shortlambda_tok
           in
-          [ (callback_name, snd id, Some tmp_name) ]
+          [ (callback_name, snd id, Some tmp_name, Unscoped) ]
       | _ -> [])
   (* Record literal: recurse into each field's value *)
   | G.Record (_, fields, _) ->
@@ -128,15 +175,29 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
             id_info = G.empty_id_info ();
           }
       in
-      [ (synthetic_name, snd atom_ident, None) ]
+      [ (synthetic_name, snd atom_ident, None, Unscoped) ]
   | _ -> []
 
 
 (* Helper to identify a callback fn_id, checking nested functions in same scope first *)
 let identify_callback ?(all_funcs = [])
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
-    ?(caller_parent_path = []) (callback_name : IL.name) : fn_id option =
+    ?(caller_parent_path = []) ?(scope = Unscoped)
+    (callback_name : IL.name) : fn_id option =
   let callback_name_str = fst callback_name.IL.ident in
+  match scope with
+  | In_module qn ->
+      Func_lookup.funcs_in_module func_lookup qn
+      |> List.find_opt (fun (f : func_info) ->
+             is_free_named f callback_name_str)
+      |> Option.map (fun (f : func_info) -> f.fn_id)
+  | Method_of cls ->
+      all_funcs
+      |> List.find_opt (fun (f : func_info) ->
+             Func_info.is_method_of ~class_name:cls
+               ~method_name:callback_name_str f.fn_id)
+      |> Option.map (fun (f : func_info) -> f.fn_id)
+  | Unscoped ->
   let current_class_for_narrow =
     Option.map (fun (c : IL.name) -> fst c.IL.ident)
       (Func_info.enclosing_class caller_parent_path)
@@ -297,15 +358,16 @@ let try_identify_callback_args ~lang ~all_funcs
           ( { e = G.IdSpecial ((G.This | G.Self), _); _ },
             _,
             G.FN (G.Id (id, id_info)) ) ->
-          [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
+          [ (AST_to_IL.var_of_id_info id id_info, snd id, None, Unscoped) ]
       | _ -> []
     in
     let candidates =
       direct_this @ extract_callbacks_from_arg ~lang ~func_lookup expr
     in
     List.filter_map
-      (fun (callback_name, tok, tmp_opt) ->
-        identify_callback ~all_funcs ~func_lookup ~caller_parent_path callback_name
+      (fun (callback_name, tok, tmp_opt, scope) ->
+        identify_callback ~all_funcs ~func_lookup ~caller_parent_path ~scope
+          callback_name
         |> Option.map (fun fn_id ->
             set_id_resolved_to_def ~allow_located_fake:true
               callback_name.IL.id_info fn_id;
