@@ -63,13 +63,10 @@ let run_cli (caps : CLI.caps) ~(dir : string) ~(rule : string)
     ]
   in
   Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
-      Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml"
-        (fun () ->
-          let exit_code =
-            CLI.main caps
-              (Array.of_list ([ "opengrep"; "--experimental" ] @ args))
-          in
-          UCommon.pr (spf "exit code: %d" (Exit_code.to_int exit_code))))
+      let exit_code =
+        CLI.main caps (Array.of_list ([ "opengrep"; "--experimental" ] @ args))
+      in
+      UCommon.pr (spf "exit code: %d" (Exit_code.to_int exit_code)))
 
 (*****************************************************************************)
 (* Validating rules *)
@@ -130,24 +127,22 @@ let test_extra_field_valid (caps : CLI.caps) () =
 let test_missing_config_file (caps : CLI.caps) () =
   let repo_files = [ F.File ("target.py", "x == x\n") ] in
   Testutil_git.with_git_repo repo_files (fun _cwd ->
-      Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml"
-        (fun () ->
-          let scan (args : string list) : Exit_code.t =
-            CLI.main caps
-              (Array.of_list
-                 ([ "opengrep"; "--experimental"; "scan"; "--config"; "does_not_exist.yaml" ]
-                 @ args @ [ "target.py" ]))
-          in
-          Exit_code.Check.missing_config (scan []);
-          let exit_code, stdout_output = Testo.with_capture stdout (fun () -> scan [ "--json" ]) in
-          Exit_code.Check.missing_config exit_code;
-          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
-          Alcotest.(check (list (pair string int)))
-            "one error, with the exit code"
-            [ ("Missing config", 7) ]
-            (out.errors
-            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
-                   (Error.string_of_error_type e.type_, e.code)))))
+      let scan (args : string list) : Exit_code.t =
+        CLI.main caps
+          (Array.of_list
+             ([ "opengrep"; "--experimental"; "scan"; "--config"; "does_not_exist.yaml" ]
+             @ args @ [ "target.py" ]))
+      in
+      Exit_code.Check.missing_config (scan []);
+      let exit_code, stdout_output = Testo.with_capture stdout (fun () -> scan [ "--json" ]) in
+      Exit_code.Check.missing_config exit_code;
+      let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+      Alcotest.(check (list (pair string int)))
+        "one error, with the exit code"
+        [ ("Missing config", 7) ]
+        (out.errors
+        |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+               (Error.string_of_error_type e.type_, e.code))))
 
 (*****************************************************************************)
 (* Entry point *)

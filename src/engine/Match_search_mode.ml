@@ -683,14 +683,6 @@ let mk_expls_after_formula_kind ~formula_kind_expls ~filter_expls ~focus_expls
 (* Metavariable condition evaluation *)
 (*****************************************************************************)
 
-let hook_pro_entropy_analysis :
-    (mode:Rule.entropy_analysis_mode -> string -> bool) option ref =
-  ref None
-
-let hook_pro_metavariable_name :
-    (G.expr -> Rule.metavar_cond_name -> bool) option ref =
-  ref None
-
 let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
     (cond : R.metavar_cond) : (RM.t * MV.bindings list) list =
   let file = env.xtarget.path.internal_path_to_content in
@@ -753,14 +745,11 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
                    (spf "couldn't find metavar %s in the match results." mvar);
                  None)
          | R.CondName ({ mvar; _ } as cond) -> (
-             let find_name env e cond =
-               match !hook_pro_metavariable_name with
-               | None ->
-                   error env
-                     "semgrep-internal-metavariable-name operator is only \
-                      supported in the Pro engine";
-                   false
-               | Some f -> f e cond
+             let find_name env _e _cond =
+               error env
+                 "semgrep-internal-metavariable-name operator is only \
+                  supported in the Pro engine";
+               false
              in
              let* mval = List.assoc_opt mvar bindings in
              match Metavariable.mvalue_to_expr mval with
@@ -795,24 +784,17 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
               *)
              | Some capture_bindings -> Some (r, capture_bindings @ new_bindings)
              )
-         | R.CondAnalysis (mvar, CondEntropyV2 mode) -> (
-             match !hook_pro_entropy_analysis with
-             | None ->
-                 (* TODO - nice UX handling of this for pysemgrep - tell the user
-                  * that they ran a rule in OSS w/o Pro hook and so their rule
-                  * didn't do anything
-                  *)
-                 (* nosemgrep: no-logs-in-library *)
-                 Logs.err (fun m ->
-                     m
-                       "EntropyV2 rule encountered without loading proprietary \
-                        plugin");
-                 None
-             | Some f ->
-                 let bindings = r.mvars in
-                 Metavariable_analysis.analyze_string_metavar env bindings mvar
-                   (f ~mode)
-                 |> map_bool r)
+         | R.CondAnalysis (_mvar, CondEntropyV2 _mode) ->
+             (* TODO - nice UX handling of this for pysemgrep - tell the user
+              * that they ran a rule in OSS w/o Pro hook and so their rule
+              * didn't do anything
+              *)
+             (* nosemgrep: no-logs-in-library *)
+             Logs.err (fun m ->
+                 m
+                   "EntropyV2 rule encountered without loading proprietary \
+                    plugin");
+             None
          | R.CondAnalysis (mvar, CondEntropy) ->
              let bindings = r.mvars in
              Metavariable_analysis.analyze_string_metavar env bindings mvar

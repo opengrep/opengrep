@@ -47,7 +47,6 @@ module Value = struct
   (* 128 + SIGPIPE, what a shell reports for a process killed by a closed
      pipe; nothing is printed in that case. *)
   let broken_pipe = create 141 "output pipe closed"
-  let not_implemented_in_osemgrep = create 99 "not implemented in opengrep"
 end
 
 (*
@@ -75,11 +74,6 @@ let invalid_language ~__LOC__:loc = with_log loc Value.invalid_language
 let invalid_api_key ~__LOC__:loc = with_log loc Value.invalid_api_key
 let scan_fail ~__LOC__:loc = with_log loc Value.scan_fail
 let broken_pipe ~__LOC__:loc = with_log loc Value.broken_pipe
-
-(* Temporary until either osemgrep dies or replaces semgrep. *)
-let not_implemented_in_osemgrep ~__LOC__:loc =
-  with_log loc Value.not_implemented_in_osemgrep
-
 let equal a b = Int.equal a.code b.code
 
 module Equal = struct
@@ -94,7 +88,6 @@ module Equal = struct
   let invalid_api_key = equal Value.invalid_api_key
   let scan_fail = equal Value.scan_fail
   let broken_pipe = equal Value.broken_pipe
-  let not_implemented_in_osemgrep = equal Value.not_implemented_in_osemgrep
 end
 
 let testable : t Alcotest.testable =
@@ -115,5 +108,4 @@ module Check = struct
   let invalid_api_key = check Value.invalid_api_key
   let scan_fail = check Value.scan_fail
   let broken_pipe = check Value.broken_pipe
-  let not_implemented_in_osemgrep = check Value.not_implemented_in_osemgrep
 end

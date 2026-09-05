@@ -150,13 +150,6 @@ let to_string = function
   | LSpacegrep -> "spacegrep"
   | LAliengrep -> "aliengrep"
 
-let is_proprietary = function
-  | L (lang, _) -> Lang.is_proprietary lang
-  | LRegex
-  | LSpacegrep
-  | LAliengrep ->
-      false
-
 let wrap str = of_string str
 let unwrap xlang = to_string xlang
 

@@ -136,10 +136,6 @@ let error_report = false
  *    in better 'name' type and 'kname' hook.
  *)
 
-(* Performing normalization of types e.g. A | B => Union[A, B] in
-   Python. This hook will be linked to Type_aliasing.ml *)
-let pro_hook_normalize_ast_generic_type = ref None
-
 (*****************************************************************************)
 (* Scope *)
 (*****************************************************************************)
@@ -291,11 +287,6 @@ let set_resolved env id_info x =
    * lang-specific resolved found?
    *)
   id_info.id_resolved := Some x.entname;
-  let normalize_type =
-    match !pro_hook_normalize_ast_generic_type with
-    | Some f -> f
-    | None -> fun _ x -> x
-  in
   (* This is defensive programming against the possibility of introducing
    * cycles in the AST.
    * Indeed, when we are inside a type, especially in  (OtherType (OT_Expr)),
@@ -306,8 +297,7 @@ let set_resolved env id_info x =
    * See tests/naming/python/shadow_name_type.py for a pathological example
    * See also tests/rust/parsing/misc_recursion.rs for another example.
    *)
-  if not !(env.in_type) then
-    id_info.id_type := x.enttype |> Option.map (normalize_type env.lang)
+  if not !(env.in_type) then id_info.id_type := x.enttype
 
 (* accessors *)
 let lookup_scope_opt ?(class_attr = false) (s, _) env =
@@ -357,20 +347,6 @@ let rec get_resolved_type lang (vinit, vtype) =
   match vtype with
   | None
   | Some { t = TyAny _; _ } -> (
-      (* Use proprietary type inference, if applicable.
-         This needs to be here while we still use `Naming_AST` for intrafile
-         scans, as opposed to `Naming_SAST`.
-      *)
-      let pro_type =
-        match (!Typing.pro_hook_type_of_expr, vinit) with
-        | Some f, Some e ->
-            let* type_ = f lang e in
-            Type.to_ast_generic_type_ lang (fun name _alts -> name) type_
-        | _ -> None
-      in
-      match pro_type with
-      | Some x -> Some x
-      | None -> (
           (* Currently these vary between languages *)
           (* Alternative is to define a TyInt, TyBool, etc. in the generic AST *)
           (* so this would be more portable across languages *)
@@ -449,7 +425,7 @@ let rec get_resolved_type lang (vinit, vtype) =
               Option.bind
                 (get_resolved_type lang (Some exp, None))
                 (fun x -> Some (t @@ TyPointer (tok, x)))
-          | _ -> None))
+          | _ -> None)
   | Some _ -> vtype
 
 (*****************************************************************************)

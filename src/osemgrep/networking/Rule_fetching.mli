@@ -30,11 +30,6 @@ and origin =
    * alt: of Uri.t or registry_config_kind?
    *)
   | Registry
-  (* For rules which are fetched from the app. These are specific to a cloud
-   * platform configuration, so additional information need not be tracked here
-   * TODO: maybe it does? since policy/supply_chain/code/secrets?
-   *)
-  | App
   (* For rules which come from other remote URIs. Rules from other sources may
    * not be able to use all features (e.g., secrets validators) without
    * additional flags to opt-in, due to security considerations.

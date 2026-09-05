@@ -60,7 +60,6 @@ let reset () =
   (* TODO: Better to just get rid of global state, this is tricky with domains. *)
   TLS.set Rule.last_matched_rule None; (* DONE *)
   TLS.set Match_patterns.last_matched_rule None; (* NEW, DONE *)
-  Pro_hooks.reset_pro_hooks ();
   (* TODO: There is probably more places where we need to do that: *)
   let _ : _ Seq.t = Saturn.Htbl.remove_all Xpattern_matcher.hmemo in
   let _ : _ Seq.t = Saturn.Htbl.remove_all Range.hmemo in
@@ -74,7 +73,6 @@ let reset () =
    * - GenSym.MkId for AST_generic.SId and AST_generic.IdInfoId [DONE]
    * - Tracing.ml active_endpoint [Ignore for now, seems OK since tracing is disabled]
    * - Parmap_targets.ml parmap_child_top_level_span [Does not exist]
-   * - Session.ml scan_config_parser_ref [Reference which is not set anywhere, in OSS at least]
    * - many more [So true...]
    *)
   ()

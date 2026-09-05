@@ -212,15 +212,6 @@ val parse_variant :
 val parse_rule_id :
   env -> key -> AST_generic.expr -> (Rule_ID.t * Tok.t, Rule_error.t) Result.t
 
-val parse_http_method :
-  env ->
-  key ->
-  AST_generic.expr ->
-  ([> `DELETE | `GET | `HEAD | `POST | `PUT ], Rule_error.t) Result.t
-
-val parse_auth :
-  env -> key -> AST_generic.expr -> (Rule.auth, Rule_error.t) Result.t
-
 val parse_str_or_dict :
   env ->
   AST_generic.expr ->

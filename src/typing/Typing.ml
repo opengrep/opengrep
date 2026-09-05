@@ -17,23 +17,10 @@ open Common
 module G = AST_generic
 module H = AST_generic_helpers
 
-(* hook to allow pro-only type inference for expressions *)
-let pro_hook_type_of_expr :
-    (Lang.t -> G.expr -> G.name Type.t option) option ref =
-  ref None
-
 (* returns possibly the inferred type of the expression,
  * as well as an ident option that can then be used to query LSP to get the
  * type of the ident. *)
 let rec type_of_expr lang e : G.name Type.t * G.ident option =
-  let pro_type =
-    match !pro_hook_type_of_expr with
-    | None -> None
-    | Some f -> f lang e
-  in
-  match pro_type with
-  | Some ty -> (ty, None)
-  | None -> (
       match e.G.e with
       | G.L lit ->
           let t = type_of_lit lang lit in
@@ -149,7 +136,7 @@ let rec type_of_expr lang e : G.name Type.t * G.ident option =
             | None, None -> None
           in
           (t, idopt)
-      | _else_ -> (Type.NoType, None))
+      | _else_ -> (Type.NoType, None)
 
 and type_of_lit lang = function
   (* NB: We could infer Type.Number for JS int/float literals, but we can

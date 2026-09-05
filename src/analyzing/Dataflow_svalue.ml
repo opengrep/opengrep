@@ -42,13 +42,6 @@ module DataflowX = Dataflow_core.Make (struct
 end)
 
 (*****************************************************************************)
-(* Hooks *)
-(*****************************************************************************)
-
-let hook_constness_of_function = ref None
-let hook_transfer_of_assume = ref None
-
-(*****************************************************************************)
 (* Constness *)
 (*****************************************************************************)
 
@@ -107,16 +100,6 @@ let result_of_function_call_constant lang f args =
       },
       [ (G.Lit (G.String _) | G.Cst G.Cstr) ] ) ->
       Some (G.Cst G.Cstr)
-  (* Pro/Interfile: Look up inferred constness of the function *)
-  | _lang, { e = Fetch _; eorig = SameAs eorig }, _args -> (
-      match !hook_constness_of_function with
-      | Some constness_of_func -> (
-          match constness_of_func eorig with
-          | Some G.NotCst
-          | None ->
-              None
-          | Some svalue -> Some svalue)
-      | None -> None)
   | __else__ -> None
 
 (*****************************************************************************)
@@ -370,13 +353,6 @@ let invalidate_container_args (env : G.svalue Var_env.t)
       | _ -> env)
     env args
 
-(* Semgrep Pro *)
-let transfer_of_assume (assume : bool) (cond : IL.exp_kind)
-    (inp : G.svalue Var_env.t) : G.svalue Var_env.t =
-  match !hook_transfer_of_assume with
-  | None -> inp
-  | Some hook -> hook assume cond inp
-
 let rec transfer :
     lang:Lang.t ->
     enter_env:G.svalue Var_env.t ->
@@ -401,10 +377,10 @@ let rec transfer :
     | NReturn _
     | NThrow _
     | NOther _
-    | NTodo _ ->
+    | NTodo _
+    | TrueNode _
+    | FalseNode _ ->
         inp'
-    | TrueNode cond -> transfer_of_assume true cond.e inp'
-    | FalseNode cond -> transfer_of_assume false cond.e inp'
     | NInstr instr -> (
         let eval_env = Eval.mk_env lang inp' in
 

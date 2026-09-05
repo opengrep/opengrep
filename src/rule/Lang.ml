@@ -89,15 +89,6 @@ type t = Language.t =
   | Yaml
 [@@deriving show { with_path = false }, eq, hash, yojson]
 
-let has_tag tag_name =
-  let tbl = Hashtbl.create 50 in
-  Language.list
-  |> List.iter (fun (x : Language.info) ->
-         if List.mem tag_name x.tags then Hashtbl.add tbl x.id ());
-  fun lang -> Hashtbl.mem tbl lang
-
-let is_proprietary = has_tag "is_proprietary"
-
 let is_js lang =
   match lang with
   | Js | Ts -> true

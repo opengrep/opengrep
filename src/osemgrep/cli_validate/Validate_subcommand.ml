@@ -163,7 +163,6 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
            | Local_file path -> Some path
            | CLI_argument
            | Registry
-           | App
            | Untrusted_remote _
            | Git_repo _ ->
                (* These origins don't provide a local rule file to run the
