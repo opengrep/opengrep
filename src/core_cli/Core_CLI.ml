@@ -111,6 +111,9 @@ let timeout_threshold = ref Core_scan_config.default.timeout_threshold
 let inline_metavariables = ref false
 let max_memory_mb = ref Core_scan_config.default.max_memory_mb (* in MiB *)
 
+(* limits of the interfile analysis of a rule; 0 means no limit *)
+let interfile_timeout = ref Core_scan_config.default.interfile_timeout
+
 (* arbitrary limit *)
 let max_match_per_file = ref Core_scan_config.default.max_match_per_file
 
@@ -349,6 +352,7 @@ let mk_config () : Core_scan_config.t =
     allow_rule_timeout_control = !allow_rule_timeout_control;
     timeout_threshold = !timeout_threshold;
     max_memory_mb = !max_memory_mb;
+    interfile_timeout = !interfile_timeout;
     max_match_per_file = !max_match_per_file;
     ncores = !ncores;
     filter_irrelevant_rules = !filter_irrelevant_rules;
@@ -651,6 +655,10 @@ let options caps (actions : unit -> Arg_.cmdline_actions) =
        when running out of memory. This value should be less than the actual \
        memory available because the limit will be exceeded before it gets \
        detected. Try 5% less or 15000 if you have 16 GB." );
+    ( "-interfile_timeout",
+      Arg.Set_int interfile_timeout,
+      " <int> maximum time to spend on the interfile analysis of a rule (in \
+       seconds); 0 disables it (default is 0)" );
     ( "-max_tainted_vars",
       Arg.Set_int Flag_semgrep.max_tainted_vars,
       "<int> maximum number of vars to store. This is mostly for internal use \

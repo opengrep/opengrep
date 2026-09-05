@@ -16,7 +16,9 @@ type conf = {
   dynamic_timeout_max_multiplier : int;
   dynamic_timeout_unit_kb : int;
   allow_rule_timeout_control : bool;
-  timeout_threshold : int; (* output flags *)
+  timeout_threshold : int;
+  (* time limit of the interfile analysis of a rule *)
+  interfile_timeout : int;
   (* features *)
   nosem : bool;
   strict : bool;

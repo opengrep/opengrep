@@ -32,7 +32,9 @@ type conf = {
   dynamic_timeout_max_multiplier : int;
   dynamic_timeout_unit_kb : int;
   allow_rule_timeout_control: bool;
-  timeout_threshold : int; (* output flags *)
+  timeout_threshold : int;
+  (* time limit of the interfile analysis of a rule *)
+  interfile_timeout : int;
   (* features *)
   (* TODO: move nosem in Scan_CLI.conf and handled it Scan_subcommand.ml.
    * Core_scan does not use nosem anymore, or more precisely it always
@@ -116,6 +118,7 @@ let default_conf : conf =
     (* ^ seconds, keep up-to-date with User_settings.ml and constants.py *)
     timeout_threshold = 3;
     max_memory_mb = 0;
+    interfile_timeout = Core_scan_config.default.interfile_timeout;
     max_match_per_file = Core_scan_config.default.max_match_per_file;
     optimizations = true;
     dataflow_traces = false;
@@ -362,6 +365,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
    allow_rule_timeout_control;
    timeout_threshold;
    max_memory_mb;
+   interfile_timeout;
    max_match_per_file;
    optimizations;
    matching_explanations;
@@ -391,6 +395,7 @@ let core_scan_config_of_conf (conf : conf) : Core_scan_config.t =
         allow_rule_timeout_control;
         timeout_threshold;
         max_memory_mb;
+        interfile_timeout;
         filter_irrelevant_rules;
         matching_explanations;
         taint_intrafile;

@@ -80,6 +80,8 @@ type t = {
   (* maximum number of rules that can timeout on a file *)
   timeout_threshold : int;
   max_memory_mb : int;
+  (* maximum time to spend on the interfile analysis of a rule *)
+  interfile_timeout : int;
   max_match_per_file : int;
   ncores : int;
   (* a.k.a -fast (on by default) *)
@@ -133,6 +135,8 @@ let default =
     (* maximum number of rules that can timeout on a file *)
     timeout_threshold = 0;
     max_memory_mb = 0;
+    (* maximum time to spend on the interfile analysis of a rule *)
+    interfile_timeout = 0;
     max_match_per_file = 10_000;
     ncores = 1;
     (* a.k.a -fast, on by default *)

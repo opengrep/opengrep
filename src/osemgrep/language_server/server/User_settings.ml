@@ -85,6 +85,7 @@ let core_runner_conf_of_t settings : Core_runner.conf =
       dynamic_timeout_unit_kb = settings.dynamic_timeout_unit_kb;
       allow_rule_timeout_control = settings.allow_rule_timeout_control;
       timeout_threshold = settings.timeout_threshold;
+      interfile_timeout = Core_runner.default_conf.interfile_timeout;
       dataflow_traces = false;
       nosem = true;
       strict = false;
