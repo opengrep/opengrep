@@ -786,6 +786,8 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
        *)
       let lockfile_xtarget = lockfile_xtarget_resolve None lockfile in
       let origin = Origin.File path in
+      (* only rules with a dependency formula run here, so a dispatched
+         interfile rule is never matched against a lockfile *)
       let rules =
         supply_chain_rules ~lockfile_kind:kind ~origin
           ~respect_rule_paths:config.respect_rule_paths valid_rules
@@ -856,20 +858,6 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
         Match_rules.check ~match_hook ~timeout ~dependency_match_table xconf
           rules xtarget
       in
-      (* Add file size when profiling is on. *)
-      let matches =
-        {matches with
-         profiling =
-           Option.map
-             (fun (p : Core_profiling.partial_profiling) ->
-                let p_file_size_bytes =
-                  if Lazy.is_val xtarget.lazy_content then
-                    Some (String.length (Lazy.force xtarget.lazy_content))
-                  else None
-                in
-                {p with Core_profiling.p_file_size_bytes})
-             matches.profiling}
-      in
       (* So we can display matches incrementally in osemgrep!
        * Note that this is run in one of the domains, so the hook should
        * not rely on shared memory unless if done in a thread-safe way.
@@ -880,8 +868,10 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
 
 module DLS = Domain.DLS
 
+(* A target carries the size the scheduling took for it: that is the byte
+   count --time reports, without a system call of its own. *)
 type scan_work_item =
-  | Per_target of Target.t
+  | Per_target of Target.t * int (* size in bytes *)
   | Interfile_rule of Interfile_dispatch.rule_state
 
 type scan_work_result =
@@ -899,9 +889,15 @@ let handle_work_item
     (target_handler : target_handler)
     (item : scan_work_item) : scan_work_result =
   match item with
-  | Per_target target ->
+  | Per_target (target, file_size) ->
     let result, target_opt =
       handle_target_with_protection caps config target_handler target
+    in
+    let result =
+      Core_result.map_profiling
+        (fun (p : Core_profiling.file_profiling) ->
+          { p with file_size_bytes = Some file_size })
+        result
     in
     Target_result (result, target_opt)
   | Interfile_rule rs ->
@@ -935,7 +931,7 @@ let handle_work_item
 let unified_exception_handler (item : scan_work_item) (e : Exception.t)
     : scan_work_error =
   match item with
-  | Per_target target ->
+  | Per_target (target, _size) ->
     let internal_path = Target.internal_path target in
     let exn = Exception.get_exn e in
     Logs.err (fun m ->
@@ -968,15 +964,13 @@ let iter_unified_and_get_matches_and_exn_to_errors
         Interfile_rule rs)
         interfile_rule_states
     in
-    let sorted_targets =
-      targets
-      |> List_.sort_by_key
-           (fun (target : Target.t) ->
-             UFile.filesize (Target.internal_path target))
-           (Fun.flip Int.compare)
-    in
     let target_items =
-      List.map (fun (t : Target.t) -> Per_target t) sorted_targets
+      targets
+      |> List_.map (fun (target : Target.t) ->
+             (target, UFile.filesize (Target.internal_path target)))
+      |> List_.sort_by_key snd (Fun.flip Int.compare)
+      |> List_.map (fun ((target : Target.t), (size : int)) ->
+             Per_target (target, size))
     in
     interfile_items @ target_items
   in
@@ -1102,25 +1096,12 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
     Interfile_dispatch.interfile_taint_rule_ids
       ~taint_interfile:config.taint_interfile valid_rules
   in
-  (* Keep non-interfile rules, plus interfile rules with a graph-build
-     failure (they need a per-target fallback); fully-dispatched rules are
-     dropped here to avoid double-counting. *)
-  let per_target_rules =
-    let has_any_fallback rid =
-      List.exists (fun (i, _) -> Rule_ID.equal i rid)
-        interfile_fallback_rule_target_paths
-    in
-    List.filter (fun (rule : R.t) ->
-      let rid = fst rule.id in
-      let is_interfile =
-        List.exists (fun (i : Rule_ID.t) -> Rule_ID.equal i rid)
-          interfile_rule_ids
-      in
-      not is_interfile || has_any_fallback rid)
-      valid_rules
-  in
-  (* A kept interfile rule runs only on its fallback target paths; the
-     rest go through dispatch, so running them here would double-count. *)
+  (* The per-target handler receives every valid rule, so that a target
+     whose only applicable rule is dispatched interfile still counts as
+     scanned; rule_runs_on_target below is the one place that keeps a
+     dispatched rule out of per-target matching. An interfile rule with a
+     graph-build failure runs only on its fallback target paths; the rest
+     go through dispatch, so running them here would double-count. *)
   let fallback_paths_by_rule : (Rule_ID.t, (string, unit) Hashtbl.t) Hashtbl.t =
     Hashtbl.create 4
   in
@@ -1166,7 +1147,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       config
       (mk_target_handler
          (caps :> < Cap.time_limit >)
-         config per_target_rules
+         config valid_rules
          ~rule_runs_on_target
          ~equivs
          prefilter_cache_opt)
