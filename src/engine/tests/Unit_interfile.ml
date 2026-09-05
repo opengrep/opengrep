@@ -93,8 +93,17 @@ let run_test ?(taint_interfile = true) ?(taint_intrafile = true)
               positive control or an explicit negative marker"
              !!test_dir);
       let regexp = ".*\\b\\(ruleid\\|todook\\):.*" in
+      (* The scanning root is absolute, so the targets and the findings are
+         reported absolute; both sides are compared relative to it. *)
+      let relative_to_cwd (file : Fpath.t) : Fpath.t =
+        match Fpath.rem_prefix cwd file with
+        | Some rel -> rel
+        | None -> file
+      in
       let expected =
         TCM.expected_error_lines_of_files ~regexp pl_files
+        |> List_.map (fun ((file : Fpath.t), (line : int)) ->
+               (relative_to_cwd file, line))
       in
 
       let config =
@@ -120,12 +129,7 @@ let run_test ?(taint_interfile = true) ?(taint_intrafile = true)
         result.RP.processed_matches
         |> List_.map (fun (pm : RP.processed_match) ->
                let (file, line) = TCM.location_of_pm pm.RP.pm in
-               let rel_file =
-                 match Fpath.rem_prefix cwd file with
-                 | Some rel -> rel
-                 | None -> file
-               in
-               (rel_file, line))
+               (relative_to_cwd file, line))
       in
       (* Reset globals (even on failure) so cases stay isolated. *)
       Fun.protect
