@@ -21,7 +21,15 @@
  * on projidx-stamped ASTs, and both must agree on the added matches.
  *
  * Stamps are only written where [id_svalue] is [None], and are inert
- * unless a rule enables [symbolic_propagation]. *)
+ * unless a rule enables [symbolic_propagation].
+ *
+ * No walk here enters [id_info] payloads.  A stamp value is a subtree of
+ * the AST it was collected from (the dispatch AST, when mirrored onto the
+ * extraction parse), and it holds occurrences of the stamped sid: a walk
+ * that followed the stamp it had just written would reach such an
+ * occurrence and stamp it with a value containing itself, and every later
+ * traversal of the payload would loop.  [var l []T; l = append(l, x)] is
+ * enough. *)
 
 module G = AST_generic
 module Log = Log_tainting.Log
@@ -58,7 +66,7 @@ let callee_positions_of_body (param_sids : G.SId.t option array)
   let positions = Hashtbl.create 4 in
   let visitor =
     object
-      inherit [_] G.iter as super
+      inherit [_] G.iter_no_id_info as super
 
       method! visit_expr () e =
         (match e.G.e with
@@ -97,7 +105,7 @@ let collect_stamps (asts : G.program list) : (G.SId.t * G.expr) list =
   let defs : (G.SId.t, def_entry) Hashtbl.t = Hashtbl.create 64 in
   let def_visitor =
     object
-      inherit [_] G.iter as super
+      inherit [_] G.iter_no_id_info as super
 
       method! visit_definition () ((ent, dkind) as def) =
         (match (ent.G.name, dkind) with
@@ -139,7 +147,7 @@ let collect_stamps (asts : G.program list) : (G.SId.t * G.expr) list =
     in
     let call_visitor =
       object
-        inherit [_] G.iter as super
+        inherit [_] G.iter_no_id_info as super
 
         method! visit_expr () e =
           (match e.G.e with
@@ -200,14 +208,13 @@ let collect_sym_stamps (ast : G.program) : (G.SId.t * G.expr) list =
   let acc : (G.SId.t, G.expr) Hashtbl.t = Hashtbl.create 8 in
   let visitor =
     object
-      inherit [_] G.iter as super
+      inherit [_] G.iter_no_id_info
 
       method! visit_id_info () (info : G.id_info) =
         (match (!(info.G.id_resolved), !(info.G.id_svalue)) with
         | Some (_, sid), Some (G.Sym value) ->
             if not (Hashtbl.mem acc sid) then Hashtbl.replace acc sid value
-        | _ -> ());
-        super#visit_id_info () info
+        | _ -> ())
     end
   in
   visitor#visit_program () ast;
@@ -227,7 +234,7 @@ let apply_stamps (stamps : (G.SId.t * G.expr) list) (ast : G.program) : int =
       let stamped = ref 0 in
       let visitor =
         object
-          inherit [_] G.iter as super
+          inherit [_] G.iter_no_id_info
 
           method! visit_id_info () (info : G.id_info) =
             (match (sid_of_id_info info, !(info.G.id_svalue)) with
@@ -237,8 +244,7 @@ let apply_stamps (stamps : (G.SId.t * G.expr) list) (ast : G.program) : int =
                     info.G.id_svalue := Some (G.Sym value);
                     incr stamped
                 | None -> ())
-            | _ -> ());
-            super#visit_id_info () info
+            | _ -> ())
         end
       in
       visitor#visit_program () ast;
