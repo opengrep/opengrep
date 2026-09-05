@@ -1,0 +1,14 @@
+rules:
+  - id: hof-nested-callback
+    languages: [python]
+    severity: ERROR
+    message: >
+      A nested function passed as a callback across files reaches the sink
+      when the higher-order function calls it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
