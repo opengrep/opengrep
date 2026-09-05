@@ -817,20 +817,23 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       ) [] toplevel_calls
     in
     let toplevel_callbacks =
+      (* The file's visible functions ahead of the project's, layered
+         rather than merged: a merge copied the project table once per
+         file. *)
+      let project_index =
+        Func_lookup.leaf_index_of_hashtbl project_funcs_by_name
+      in
       let merged_funcs_by_name =
         match funcs_by_name with
-        | None -> project_funcs_by_name
+        | None -> project_index
         | Some pf ->
-          let merged = Hashtbl.copy project_funcs_by_name in
-          Hashtbl.iter (fun name fs ->
-            let cur = Option.value (Hashtbl.find_opt merged name) ~default:[] in
-            Hashtbl.replace merged name (fs @ cur)
-          ) pf;
-          merged
+          Func_lookup.leaf_index_layered
+            ~front:(Func_lookup.leaf_index_of_hashtbl pf)
+            ~back:project_index
       in
       let toplevel_func_lookup =
         Func_lookup.create
-          ~funcs_by_name:(Func_lookup.leaf_index_of_hashtbl merged_funcs_by_name)
+          ~funcs_by_name:merged_funcs_by_name
           ~overload_groups:(Lang_config.overloads_by_type lang)
           ()
       in
