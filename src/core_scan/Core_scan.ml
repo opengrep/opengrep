@@ -1104,7 +1104,6 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
       ~ncores:config.ncores
       ~taint_interfile:config.taint_interfile
-      ~graph_timeout:config.interfile_graph_timeout
       ~max_memory_mb:config.max_memory_mb
       ~valid_rules ~targets
       ~targeting_conf:config.targeting_conf
@@ -1126,10 +1125,6 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
         (fun ((rule_id : Rule_ID.t), (limit : Interfile_dispatch.build_limit)) ->
           let msg, error_type =
             match limit with
-            | Build_timeout ->
-                ( "the interfile graph build hit --interfile-graph-timeout; \
-                   this rule ran on single files",
-                  Out.Timeout )
             | Build_out_of_memory ->
                 ( "the interfile graph build hit --max-memory; this rule ran \
                    on single files",
