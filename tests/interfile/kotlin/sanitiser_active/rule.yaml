@@ -1,0 +1,14 @@
+rules:
+  - id: sanitiser-active-kotlin
+    languages: [kotlin]
+    severity: ERROR
+    message: taint reaches the sink
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    pattern-sanitizers:
+      - pattern: sanitize(...)
