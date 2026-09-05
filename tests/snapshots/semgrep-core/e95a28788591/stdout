@@ -1,0 +1,17 @@
+--- begin input files ---
+exclude_include/excluded/excluded.js
+exclude_include/excluded/included.js
+exclude_include/included/excluded.js
+exclude_include/included/included.js
+exclude_include/included/included.vue
+filecount.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 6 files changed, 56 insertions(+)
+ create mode 100644 exclude_include/excluded/excluded.js
+ create mode 100644 exclude_include/excluded/included.js
+ create mode 100644 exclude_include/included/excluded.js
+ create mode 100644 exclude_include/included/included.js
+ create mode 100644 exclude_include/included/included.vue
+ create mode 100644 filecount.yaml

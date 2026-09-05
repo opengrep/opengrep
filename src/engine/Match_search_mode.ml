@@ -695,7 +695,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
              let env =
                Eval_generic.bindings_to_env env.xconf.config ~file bindings
              in
-             Eval_generic.eval_bool env e r.origin.facts bindings |> map_bool r
+             Eval_generic.eval_bool env e |> map_bool r
          | R.CondNestedFormula (mvar, opt_lang, formula) -> (
              (* TODO: could return expl for nested matching! *)
              match
@@ -744,16 +744,14 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
                  error env
                    (spf "couldn't find metavar %s in the match results." mvar);
                  None)
-         | R.CondName ({ mvar; _ } as cond) -> (
-             let find_name env _e _cond =
-               error env
-                 "semgrep-internal-metavariable-name operator is only \
-                  supported in the Pro engine";
-               false
-             in
+         | R.CondName { mvar; _ } -> (
              let* mval = List.assoc_opt mvar bindings in
              match Metavariable.mvalue_to_expr mval with
-             | Some e -> find_name env e cond |> map_bool r
+             | Some _ ->
+                 error env
+                   "the semgrep-internal-metavariable-name operator is not \
+                    supported";
+                 None
              | None ->
                  error env
                    (spf "couldn't find metavar %s in the match results." mvar);
@@ -785,15 +783,9 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
              | Some capture_bindings -> Some (r, capture_bindings @ new_bindings)
              )
          | R.CondAnalysis (_mvar, CondEntropyV2 _mode) ->
-             (* TODO - nice UX handling of this for pysemgrep - tell the user
-              * that they ran a rule in OSS w/o Pro hook and so their rule
-              * didn't do anything
-              *)
              (* nosemgrep: no-logs-in-library *)
              Logs.err (fun m ->
-                 m
-                   "EntropyV2 rule encountered without loading proprietary \
-                    plugin");
+                 m "the entropy_v2 analysis is not supported; the rule matches nothing");
              None
          | R.CondAnalysis (mvar, CondEntropy) ->
              let bindings = r.mvars in

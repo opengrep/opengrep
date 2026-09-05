@@ -31,24 +31,20 @@ let text_width =
   let max_text_width = 120 and min_text_width = 40 in
   let columns_env : int option =
     match
-      Option.bind
-        (Option.map String.trim (Opengrep_env.getenv_opt "COLUMNS"))
-        int_of_string_opt
+      Opengrep_env.getenv_opt "COLUMNS"
+      |> Option.map String.trim
+      |> Fun.flip Option.bind int_of_string_opt
     with
     | Some w when w > 0 -> Some w
-    | Some _
-    | None ->
-        None
+    | _ -> None
   in
   let columns : int option =
     match columns_env with
-    | Some _ as w -> w
+    | Some _ -> columns_env
     | None -> Terminal_size.get_columns ()
   in
-  match columns with
-  | Some w when w > min_text_width -> min w max_text_width
-  | Some _ -> min_text_width
-  | None -> max_text_width
+  Option.fold columns ~none:max_text_width ~some:(fun (w : int) ->
+      Int.min max_text_width (Int.max min_text_width w))
 
 (* python: text.py, the columns rich adds to every line of the findings
    block, and the widths derived from the width of the console:
@@ -174,20 +170,6 @@ let dedent_lines (lines : string list) =
       lines,
     longest_prefix )
 
-(* The byte offset of every code point of [s], with the length of [s] as a
-   last element, so that the code points [i, j) are the bytes
-   [offsets.(i), offsets.(j)). A byte that is not a valid UTF-8 sequence
-   counts as one code point of its own. *)
-let code_point_offsets (s : string) : int array =
-  let len = String.length s in
-  let rec go (i : int) (acc : int list) : int list =
-    if i >= len then List.rev (len :: acc)
-    else
-      let d = String.get_utf_8_uchar s i in
-      go (i + Uchar.utf_decode_length d) (i :: acc)
-  in
-  go 0 [] |> Array.of_list
-
 (* python: the width of a tab stop, str.expandtabs()'s default *)
 let tab_size = 8
 
@@ -233,7 +215,7 @@ let expand_tabs (s : string) : string * int array =
    that the wrapping never sees them. A newline never reaches here: the
    callers split on it first. The translation keeps the byte offsets, so
    the array of expand_tabs still maps the text given here to the result. *)
-let munge_whitespace (s : string) : string * int array =
+let munge_whitespace_with_offsets (s : string) : string * int array =
   let expanded, offsets = expand_tabs s in
   ( String.map
       (fun (c : char) ->
@@ -245,6 +227,17 @@ let munge_whitespace (s : string) : string * int array =
         | (_ : char) -> c)
       expanded,
     offsets )
+
+let munge_whitespace (s : string) : string =
+  fst (munge_whitespace_with_offsets s)
+
+(* the indentation of the [i]th line of a filled text, after the columns
+   the console adds *)
+let chunk_indentation ~(initial_indent : int) ~(subsequent_indent : int)
+    (i : int) : string =
+  String.make
+    (console_indent_size + if i = 0 then initial_indent else subsequent_indent)
+    ' '
 
 (* python: the two fillers a finding went through. click.wrap_text
    overrides TextWrapper._handle_long_word: a word too long for a line is
@@ -278,7 +271,7 @@ type filler =
 *)
 let fill_chunks ~(filler : filler) ~(width : int) ~(initial_indent : int)
     ~(subsequent_indent : int) (s : string) : (int * int) list =
-  let offsets = code_point_offsets s in
+  let offsets = Utf8.code_point_offsets s in
   let n = Array.length offsets - 1 in
   let char_at (i : int) : char = s.[offsets.(i)] in
   let is_space (i : int) : bool = i < n && Char.equal (char_at i) ' ' in
@@ -365,15 +358,17 @@ let fill_chunks ~(filler : filler) ~(width : int) ~(initial_indent : int)
               in
               let cut =
                 let plain = min j (stop + space_left) in
-                (* the hyphen must have a character of its own before it *)
+                (* the hyphen must have a character of its own before it:
+                   the first one after the leading hyphens of the word *)
+                let rec first_non_hyphen (p : int) : int =
+                  if p < j && Char.equal (char_at p) '-' then
+                    first_non_hyphen (p + 1)
+                  else p
+                in
+                let non_hyphen = first_non_hyphen i in
                 let rec last_hyphen (k : int) : int option =
-                  if k - 1 <= i then None
-                  else if
-                    Char.equal (char_at (k - 1)) '-'
-                    && List.exists
-                         (fun (p : int) -> not (Char.equal (char_at p) '-'))
-                         (List.init (k - 1 - i) (fun (p : int) -> i + p))
-                  then Some k
+                  if k - 1 <= non_hyphen then None
+                  else if Char.equal (char_at (k - 1)) '-' then Some k
                   else last_hyphen (k - 1)
                 in
                 match filler with
@@ -407,12 +402,8 @@ let wrap_lines ~(filler : filler) ~(width : int) ~(initial_indent : int)
   Log.debug (fun m ->
       m "wrap width=%d initial_indent=%d subsequent_indent=%d s=%s" width
         initial_indent subsequent_indent txt);
-  let txt, (_ : int array) = munge_whitespace txt in
-  let indentation (i : int) : string =
-    String.make
-      (console_indent_size + if i = 0 then initial_indent else subsequent_indent)
-      ' '
-  in
+  let txt = munge_whitespace txt in
+  let indentation = chunk_indentation ~initial_indent ~subsequent_indent in
   match fill_chunks ~filler ~width ~initial_indent ~subsequent_indent txt with
   | [] -> [ (indentation 0, "") ]
   | chunks ->
@@ -489,11 +480,15 @@ let pp_wrapped_code_line ppf ~(line_number : int) ~(width : int)
   let shift = String.length prefix in
   (* the tabs are expanded from the start of the line, its number
      included, so the bold range moves with the text *)
-  let text, offset_of = munge_whitespace typed in
+  let text, offset_of = munge_whitespace_with_offsets typed in
   let moved (i : int) : int =
     offset_of.(max 0 (min (String.length typed) (i + shift)))
   in
   let bold_start = moved bold_start and bold_end = moved bold_end in
+  let indentation =
+    chunk_indentation ~initial_indent:line_number_indent_size
+      ~subsequent_indent:code_indent_size
+  in
   fill_chunks ~filler:Textwrap ~width ~initial_indent:line_number_indent_size
     ~subsequent_indent:code_indent_size text
   |> List.iteri (fun (i : int) ((offset : int), (length : int)) ->
@@ -501,12 +496,7 @@ let pp_wrapped_code_line ppf ~(line_number : int) ~(width : int)
          let bold_from = max 0 (min length (bold_start - offset)) in
          let bold_to = max bold_from (min length (bold_end - offset)) in
          let a, b, c = cut chunk bold_from bold_to in
-         Fmt.pf ppf "%s%s%a%s@."
-           (String.make
-              (console_indent_size
-              + if i = 0 then line_number_indent_size else code_indent_size)
-              ' ')
-           a
+         Fmt.pf ppf "%s%s%a%s@." (indentation i) a
            Fmt.(styled `Bold string)
            b c)
 

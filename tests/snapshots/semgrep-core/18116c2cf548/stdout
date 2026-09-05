@@ -1,0 +1,100 @@
+--- begin input files ---
+sort-findings/b.py
+sort-findings/c.py
+sort-findings/z/a.py
+sort-findings.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 22 insertions(+)
+ create mode 100644 sort-findings.yaml
+ create mode 100644 sort-findings/b.py
+ create mode 100644 sort-findings/c.py
+ create mode 100644 sort-findings/z/a.py
+
+
+┌──────────────────┐
+│ 15 Code Findings │
+└──────────────────┘
+
+    sort-findings/b.py
+   ❯❯❱ sort-findings-2
+          found something (2)
+
+            1┆ f()
+
+   ❯❯❱ sort-findings-1
+          found something (1)
+
+            1┆ f()
+            2┆ f()
+            ⋮┆----------------------------------------
+            1┆ f()
+            2┆ f()
+            3┆ f()
+
+   ❯❯❱ sort-findings-2
+          found something (2)
+
+            2┆ f()
+
+   ❯❯❱ sort-findings-1
+          found something (1)
+
+            2┆ f()
+            3┆ f()
+
+   ❯❯❱ sort-findings-2
+          found something (2)
+
+            3┆ f()
+
+    sort-findings/c.py
+   ❯❯❱ sort-findings-2
+          found something (2)
+
+            1┆ f()
+
+   ❯❯❱ sort-findings-1
+          found something (1)
+
+            1┆ f()
+            2┆ f()
+            ⋮┆----------------------------------------
+            1┆ f()
+            2┆ f()
+            3┆ f()
+
+   ❯❯❱ sort-findings-2
+          found something (2)
+
+            2┆ f()
+
+   ❯❯❱ sort-findings-1
+          found something (1)
+
+            2┆ f()
+            3┆ f()
+
+   ❯❯❱ sort-findings-2
+          found something (2)
+
+            3┆ f()
+
+    sort-findings/z/a.py
+   ❯❯❱ sort-findings-2
+          found something (2)
+
+            1┆ f()
+
+   ❯❯❱ sort-findings-1
+          found something (1)
+
+            1┆ f()
+            2┆ f()
+
+   ❯❯❱ sort-findings-2
+          found something (2)
+
+            2┆ f()
+

@@ -43,11 +43,23 @@ let scanned_severities (requested : Rule.severity list) : Rule.severity list =
   | [] -> [ `Info; `Low; `Warning; `Medium; `Error; `High; `Critical ]
   | severities -> severities
 
-let filter_rules (conf : conf) (rules : Rule.rules) : Rule.rules =
-  let severities = scanned_severities conf.severity in
+let has_scanned_severity (conf : conf) (r : Rule.t) : bool =
+  List.exists (Rule.equal_severity r.severity) (scanned_severities conf.severity)
+
+(* the rules that never run: INVENTORY and EXPERIMENT, unless asked for *)
+let rules_not_run (conf : conf) (rules : Rule.rules) : Rule.rules =
   rules
   |> List.filter (fun (r : Rule.t) ->
-         List.exists (Rule.equal_severity r.severity) severities)
+         (match r.severity with
+         | `Inventory
+         | `Experiment ->
+             true
+         | _ -> false)
+         && not (has_scanned_severity conf r))
+
+let filter_rules (conf : conf) (rules : Rule.rules) : Rule.rules =
+  rules
+  |> List.filter (has_scanned_severity conf)
   |> List_.exclude (fun r -> List.mem (fst r.Rule.id) conf.exclude_rule_ids)
   |> List_.exclude (fun r ->
          List.mem (get_rule_product_from_metadata r) conf.exclude_products)

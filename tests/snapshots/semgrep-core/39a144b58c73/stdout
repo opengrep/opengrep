@@ -1,0 +1,5 @@
+--- begin input files ---
+rules/no_pattern.yaml
+targets/no_pattern.py
+--- end input files ---
+{"results":{},"fixtest_results":{},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[{"file":"rules/no_pattern.yaml","reason":"unparsable_rule"}]}

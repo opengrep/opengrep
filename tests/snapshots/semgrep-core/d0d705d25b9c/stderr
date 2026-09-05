@@ -1,0 +1,15 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/invalid-pattern-regex.yaml:3:20: Rule parse error in rule rules.invalid-pattern-regex
+  --> rules/invalid-pattern-regex.yaml:3
+2 |   - id: invalid-pattern-regex
+3 |     pattern-regex: "(unclosed"
+  |                    ^^^^^^^^^^^
+4 |     message: the regex does not compile
+invalid regex '(unclosed': missing closing parenthesis at position 9

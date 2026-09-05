@@ -157,7 +157,7 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
  * sanitised for the same reason (see 'sanitize_cli_match' below).
  *)
 let sanitize_cli_error (e : Out.cli_error) : Out.cli_error =
-  let sanitize = Option.map String_.sanitize_utf8 in
+  let sanitize = Option.map Utf8.sanitize in
   {
     e with
     message = sanitize e.message;
@@ -301,7 +301,7 @@ let make_fixed_lines fixes_env fix path (start : Out.position)
  * same to the strings a match takes from its target file, once, here.
  *)
 let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
-  let sanitize = String_.sanitize_utf8 in
+  let sanitize = Utf8.sanitize in
   let sanitize_metavar_value (mval : Out.metavar_value) : Out.metavar_value =
     {
       mval with

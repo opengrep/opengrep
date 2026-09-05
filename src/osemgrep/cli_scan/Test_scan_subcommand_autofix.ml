@@ -107,7 +107,7 @@ let tests (caps : < Scan_subcommand.caps >) =
            (* the JSON goes to stdout; the text output and its stderr *)
            [
              ("json", [ "--json" ], Testo.stdout ());
-             ("text", [], Testo.stdxxx ());
+             ("text", [], Testo.split_stdout_stderr ());
            ]
            |> List.concat_map
                 (fun ( (label : string),

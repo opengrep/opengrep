@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/bad13.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 rules/bad13.yaml
+ create mode 100644 target.py
+exit code: 7
+--- begin input files ---
+rules/bad13.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 rules/bad13.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.tainty","message":"Invalid rule schema at line rules/bad13.yaml:2:\n Missing required field pattern-sources","path":"rules/bad13.yaml","long_msg":"Missing required field pattern-sources","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad13.yaml","start":{"line":2,"col":5,"offset":11},"end":{"line":2,"col":6,"offset":12}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 7

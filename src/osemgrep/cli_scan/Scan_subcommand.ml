@@ -96,14 +96,19 @@ let exit_code_of_errors ~strict (errors : Out.core_error list) : Exit_code.t =
  *)
 let unreadable_scanning_root_errors (conf : Scan_CLI.conf)
     (skipped : Out.skipped_target list) : Core_error.t list =
-  let roots : Fpath.t list =
-    conf.target_roots |> List_.map Scanning_root.to_fpath
+  (* the roots as the user spelled them ('./x', an absolute path) against
+     the paths the targeting reports *)
+  let roots : Fpath.Set.t =
+    conf.target_roots
+    |> List_.map (fun (root : Scanning_root.t) ->
+           Fpath.normalize (Scanning_root.to_fpath root))
+    |> Fpath.Set.of_list
   in
   skipped
   |> List.filter (fun (x : Out.skipped_target) ->
          match x.reason with
          | Out.Insufficient_permissions ->
-             List.exists (Fpath.equal x.path) roots
+             Fpath.Set.mem (Fpath.normalize x.path) roots
          | _ -> false)
   |> List_.map (fun (x : Out.skipped_target) ->
          Core_error.mk_error
@@ -130,6 +135,10 @@ let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
   *)
   | Output_format.Text -> raise (Error.Semgrep_error (text_message, Some exit_code))
   | _ ->
+      (* the document carries the errors; when it goes to a file, stderr is
+         where the user sees them *)
+      if Option.is_some conf.output_conf.output then
+        Logs.err (fun m -> m "%s" text_message);
       let res =
         Core_runner.mk_result [] (Core_result.mk_result_with_just_errors errors)
       in
@@ -312,7 +321,7 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
  * when stdout was a terminal, so that a log of a scan does not gain the
  * lines below; it printed none of it for the alternate modes either, and
  * the pattern mode ('-e/--pattern', '-l/--lang') is one of them. *)
-let print_banner (rules_source : Rules_source.t) : bool =
+let show_banner (rules_source : Rules_source.t) : bool =
   !ANSITerminal.isatty Unix.stdout
   &&
   match rules_source with
@@ -537,6 +546,13 @@ let check_targets_with_rules ?(print_summary = true)
          Otherwise, if we filter to have 0 rules, we will signal that there is something
          wrong with the configuration.
       *)
+      let rules_not_run =
+        Rule_filtering.rules_not_run conf.rule_filtering_conf rules
+      in
+      if not (List_.null rules_not_run) then
+        Logs.info (fun m ->
+            m "%s of severity INVENTORY or EXPERIMENT not run"
+              (String_.unit_str (List.length rules_not_run) "rule"));
       let rules = Rule_filtering.filter_rules conf.rule_filtering_conf rules in
       let too_many_entries = conf.output_conf.max_log_list_entries in
       Logs.info (fun m ->
@@ -619,6 +635,17 @@ let check_targets_with_rules ?(print_summary = true)
               ~inline:conf.core_runner_conf.inline_metavariables
               rules
               result
+          in
+          (* python: the files of the rules not run were scanned by the
+             wrapper, which dropped their findings afterwards; they are
+             listed as scanned here too *)
+          let (res : Core_runner.result) =
+            let scanned_by_no_rule : Fpath.t list =
+              Core_runner.split_jobs_by_language conf.targeting_conf
+                rules_not_run selected
+              |> List.concat_map (fun (job : Lang_job.t) -> job.targets)
+            in
+            { res with scanned = Set_.union res.scanned (Set_.of_list scanned_by_no_rule) }
           in
           (* the rules were parsed when fetched, before the engine ran *)
           let rules_parse_time : float =
@@ -719,9 +746,8 @@ let check_targets_with_rules ?(print_summary = true)
           let num_rules_ran : int =
             match
               result.rules_with_targets
-              |> List_.map (fun (rv : Rule.rule) ->
-                     Rule_ID.to_string (fst rv.id))
-              |> List_.deduplicate
+              |> List_.map (fun (rv : Rule.rule) -> fst rv.id)
+              |> List.sort_uniq Rule_ID.compare
             with
             | [] -> List.length rules
             | ids -> List.length ids
@@ -744,7 +770,7 @@ let check_targets_with_rules ?(print_summary = true)
                    ~respect_gitignore:conf.targeting_conf.respect_gitignore
                    ~is_git_repo:targets_and_skipped.Find_targets.git_repo
                    ~is_baseline_scan:
-                     (conf.targeting_conf.baseline_commit <> None)
+                     (Option.is_some conf.targeting_conf.baseline_commit)
                    ~maturity:conf.common.maturity
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
                    ~skipped_groups)
@@ -796,10 +822,9 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
   | Output_format.Text -> f ()
   | _ -> (
       let report (msg : string) (exit_code : Exit_code.t) : Exit_code.t =
-        (* the document carries the error and nothing goes to stderr: that
-           is what the other aborted machine-format runs do (a rule file
-           that does not load, a scanning root that does not exist) and what
-           pysemgrep did *)
+        (* the document carries the error, as for the other aborted
+           machine-format runs (a rule file that does not load, a scanning
+           root that does not exist) and as pysemgrep did *)
         (* the times of the run are of no interest for an aborted one *)
         output_and_exit_from_fatal_exn ~msg ~exit_code caps conf
           (Profiler.make ())
@@ -824,7 +849,7 @@ let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
 
 let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
-  let banner = print_banner conf.rules_source in
+  let banner = show_banner conf.rules_source in
   (* Print The logo ASAP to minimize time to first meaningful content paint *)
   if banner then print_logo ();
 

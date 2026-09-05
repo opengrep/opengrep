@@ -57,6 +57,14 @@ let strip_wrapping_char (c : char) (s : string) : string =
   in
   s |> String.trim |> drop_prefix |> String.trim |> drop_suffix |> String.trim
 
+let lstrip_while (drop : char -> bool) (s : string) : string =
+  let len = String.length s in
+  let rec first_kept (i : int) : int =
+    if i < len && drop s.[i] then first_kept (i + 1) else i
+  in
+  let start = first_kept 0 in
+  String.sub s start (len - start)
+
 let rstrip (s : string) : string =
   let is_space (c : char) : bool =
     Char.equal c ' ' || Char.equal c '\t' || Char.equal c '\r'
@@ -117,24 +125,3 @@ let is_capitalized s =
   (* https://ocaml.org/manual/5.2/patterns.html#sss:pat-range *)
   | 'A' .. 'Z' -> true
   | _ -> false
-
-let sanitize_utf8 (str : string) : string =
-  let len = String.length str in
-  let rec is_valid (i : int) : bool =
-    i >= len
-    ||
-    let dec = String.get_utf_8_uchar str i in
-    Uchar.utf_decode_is_valid dec && is_valid (i + Uchar.utf_decode_length dec)
-  in
-  if is_valid 0 then str
-  else
-    let buf = Buffer.create len in
-    let rec add (i : int) : unit =
-      if i < len then (
-        let dec = String.get_utf_8_uchar str i in
-        (* an invalid decode yields Uchar.rep, i.e. U+FFFD *)
-        Buffer.add_utf_8_uchar buf (Uchar.utf_decode_uchar dec);
-        add (i + Uchar.utf_decode_length dec))
-    in
-    add 0;
-    Buffer.contents buf

@@ -1,0 +1,20 @@
+--- begin input files ---
+eqeq.yaml
+targets/permissions/README
+targets/permissions/readable_file.py
+targets/permissions/unreadable_file.py
+targets/permissions/unreadable_subdir/file.py
+--- end input files ---
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    targets/permissions/readable_file.py
+   ❯❯❱ eqeq-is-bad
+          useless comparison operation `a == a` or `a != a`
+          Details: https://sg.run/xyz1
+
+            1┆ a == a
+

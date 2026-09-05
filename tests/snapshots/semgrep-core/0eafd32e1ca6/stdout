@@ -1,0 +1,34 @@
+--- begin input files ---
+rules/reported-order.yaml
+targets/reported-order.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 33 insertions(+)
+ create mode 100644 rules/reported-order.yaml
+ create mode 100644 targets/reported-order.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/reported-order.py
+    ❯❱ rules.slice-ab
+          slice a-b matches
+
+           ▶▶┆ Autofix ▶ replaced_lines_a_to_b_OK
+            1┆ replaced_lines_a_to_b_OK
+
+    ❯❱ rules.slice-bc
+          slice b-c matches
+
+           ▶▶┆ Autofix ▶ replaced_lines_b_to_c_BAD
+            2┆ b
+            3┆ c
+
+--- targets/reported-order.py after the scan ---
+a
+b
+c
+

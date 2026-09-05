@@ -508,25 +508,23 @@ let filter_paths
 let filter_extension_size_and_minified ~(keep_any_extension : Fppath.t -> bool)
     ~(keep_any_size : Fppath.t -> bool) max_target_bytes exclude_minified_files
     paths =
-  (* by extension first, as it reads nothing *)
-  let selected_fppaths, skipped_extension =
+  let partition ~(exempt : Fppath.t -> bool)
+      (check : Fpath.t -> (Fpath.t, Out.skipped_target) result)
+      (fppaths : Fppath.t list) : Fppath.t list * Out.skipped_target list =
     Result_.partition
       (fun (fppath : Fppath.t) ->
-        if keep_any_extension fppath then Ok fppath
-        else
-          Result.map
-            (fun _ -> fppath)
-            (Skip_target.has_excluded_extension fppath.fpath))
+        if exempt fppath then Ok fppath
+        else Result.map (fun (_ : Fpath.t) -> fppath) (check fppath.fpath))
+      fppaths
+  in
+  (* by extension first, as it reads nothing *)
+  let selected_fppaths, skipped_extension =
+    partition ~exempt:keep_any_extension Skip_target.has_excluded_extension
       paths
   in
   let selected_fppaths, skipped_size =
-    Result_.partition
-      (fun (fppath : Fppath.t) ->
-        if keep_any_size fppath then Ok fppath
-        else
-          Result.map
-            (fun _ -> fppath)
-            (Skip_target.is_big max_target_bytes fppath.fpath))
+    partition ~exempt:keep_any_size
+      (Skip_target.is_big max_target_bytes)
       selected_fppaths
   in
   let selected_fppaths, skipped_minified =
@@ -1102,28 +1100,12 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
 (* Entry point *)
 (*************************************************************************)
 
-(* The files the user named on the command line. The default exclusions by
-   extension and the size limit apply to what walking a directory root
-   turns up, not to these: pysemgrep added them back after filtering
-   (bypass_includes_excludes_for_files of target_manager.py). *)
-let explicit_file_targets (scanning_roots : Scanning_root.t list) :
-    Fpath.t Set_.t =
-  scanning_roots
-  |> List_.map Scanning_root.to_fpath
-  |> List.filter (fun (fpath : Fpath.t) ->
-         UFile.is_reg ~follow_symlinks:true fpath)
-  |> Set_.of_list
-
 (* TODO: The 'git_repo' field is needed to print out a warning to the
  * user, because some files in a git repo can be ignored. When multiple
  * roots are specified, we display this warning to the user when
  * at least one root is a git repo. Should we be more precise and
  * display which roots are git repos? Maybe in verbose mode? *)
 let get_targets conf scanning_roots : Fppath.t targets =
-  let explicit_files : Fpath.t Set_.t =
-    if conf.apply_includes_excludes_to_file_targets then Set_.empty
-    else explicit_file_targets scanning_roots
-  in
   let raw =
     List.fold_left
       (fun acc root ->
@@ -1134,16 +1116,21 @@ let get_targets conf scanning_roots : Fppath.t targets =
       { selected = []; skipped = []; git_repo = false }
       (group_scanning_roots_by_project conf scanning_roots)
   in
+  (* The default exclusions by extension and the size limit apply to what
+     walking a directory root turns up, not to a file the user named on the
+     command line: pysemgrep added those back after filtering
+     (bypass_includes_excludes_for_files of target_manager.py). *)
   let is_explicit_file (fppath : Fppath.t) : bool =
-    Set_.mem fppath.fpath explicit_files
+    (not conf.apply_includes_excludes_to_file_targets)
+    && Explicit_targets.mem conf.explicit_targets fppath.fpath
   in
   let selected, skipped_files =
     raw.selected
     |> List.sort_uniq Fppath.compare
     |> filter_extension_size_and_minified
          ~keep_any_extension:(fun (fppath : Fppath.t) ->
-           (* a file kept by a '--include' pattern of the user was asked
-              for as much as one named on the command line *)
+           (* an --include pattern already narrows the selection, so the
+              default exclusions by extension are dropped with it *)
            Option.is_some conf.include_ || is_explicit_file fppath)
          ~keep_any_size:is_explicit_file conf.max_target_bytes
          conf.exclude_minified_files

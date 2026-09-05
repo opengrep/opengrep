@@ -116,7 +116,7 @@ let of_current_sys_env () : t =
     user_home_dir;
     user_dot_semgrep_dir;
     (* https://no-color.org/ and pysemgrep's terminal.py: the variable
-       disables colour by being set, whatever its value *)
+       disables colour by being set to a non-empty value *)
     no_color = in_env "NO_COLOR" || in_env "SEMGREP_FORCE_NO_COLOR";
     in_docker = in_env "SEMGREP_IN_DOCKER";
     min_fetch_depth = env_or int_of_string "SEMGREP_GHA_MIN_FETCH_DEPTH" 0;

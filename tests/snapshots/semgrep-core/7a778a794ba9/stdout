@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/string-pattern.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 rules/string-pattern.yaml
+ create mode 100644 target.py
+exit code: 7
+--- begin input files ---
+rules/string-pattern.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 9 insertions(+)
+ create mode 100644 rules/string-pattern.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq","message":"Invalid rule schema at line rules/string-pattern.yaml:4:\n Strings not allowed at this position, maybe try `pattern: foo`","path":"rules/string-pattern.yaml","long_msg":"Strings not allowed at this position, maybe try `pattern: foo`","short_msg":"Invalid rule schema","spans":[{"file":"rules/string-pattern.yaml","start":{"line":4,"col":7,"offset":42},"end":{"line":4,"col":12,"offset":47}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 7

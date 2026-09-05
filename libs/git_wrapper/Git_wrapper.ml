@@ -254,14 +254,11 @@ let blobs_by_commit objects commits =
 (* Entry points *)
 (*****************************************************************************)
 
-let warn_and_fail (cmd : Cmd.t) : 'a =
-  (* nosemgrep: no-logs-in-library *)
-  Logs.warn (fun m ->
-      m
-        {|Command failed.
------
-Failed to run %s. Possible reasons:
-- the git binary is not available
+(* The reasons pysemgrep listed whenever a git command failed
+ * (git.py _git_check_output). They are the ones users actually hit, and a
+ * message naming only the command sends them looking in the wrong place. *)
+let possible_reasons : string =
+  {|- the git binary is not available
 - the current working directory is not a git repository
 - the baseline commit is not a parent of the current commit
   (in CI, check that `OPENGREP_BRANCH` / `SEMGREP_BRANCH` and `OPENGREP_BASELINE_COMMIT` / `SEMGREP_BASELINE_COMMIT` are set correctly)
@@ -269,7 +266,16 @@ Failed to run %s. Possible reasons:
   (fix with `git config --global --add safe.directory $(pwd)`)
 
 Try running the command yourself to debug the issue.|}
-        (Redact.redact_url_userinfo (Cmd.to_string cmd)));
+
+let warn_and_fail (cmd : Cmd.t) : 'a =
+  (* nosemgrep: no-logs-in-library *)
+  Logs.warn (fun m ->
+      m {|Command failed.
+-----
+Failed to run %s. Possible reasons:
+%s|}
+        (Redact.redact_url_userinfo (Cmd.to_string cmd))
+        possible_reasons);
   raise (Error "Error when we run a git command")
 
 (* Similar to Sys.command, but specific to git *)
@@ -605,16 +611,11 @@ let failed_git_command_msg ~(exit_code : int option) ~(output : string)
      Command failed with output:\n\
      %s\n\n\
      Failed to run 'git %s'. Possible reasons:\n\n\
-     - the git binary is not available\n\
-     - the current working directory is not a git repository\n\
-     - the baseline commit is not a parent of the current commit\n\
-     - the current working directory is not marked as safe\n\
-    \    (fix with `git config --global --add safe.directory $(pwd)`)\n\n\
-     Try running the command yourself to debug the issue."
+     %s"
     (match exit_code with
     | Some code -> string_of_int code
     | None -> "unknown")
-    output (String.concat " " args)
+    output (String.concat " " args) possible_reasons
 
 (* TODO: use better types? sha1? *)
 let merge_base (commit : string) : string =

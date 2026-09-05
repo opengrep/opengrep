@@ -1,0 +1,21 @@
+--- begin input files ---
+java_arg_paren.java
+java_arg_paren.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 14 insertions(+)
+ create mode 100644 java_arg_paren.java
+ create mode 100644 java_arg_paren.yaml
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    java_arg_paren.java
+   ❯❯❱ function-param
+          argument is: (2+3)*(3+4)
+
+            4┆ foo((2+3)*(3+4));
+

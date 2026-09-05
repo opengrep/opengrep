@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/invalid-key-name.yml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 27 insertions(+)
+ create mode 100644 rules/invalid-key-name.yml
+ create mode 100644 target.py
+exit code: 7
+--- begin input files ---
+rules/invalid-key-name.yml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 27 insertions(+)
+ create mode 100644 rules/invalid-key-name.yml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.dockerfile-source-not-pinned","message":"Invalid rule schema at line rules/invalid-key-name.yml:4:\n unexpected key patterns-either","path":"rules/invalid-key-name.yml","long_msg":"unexpected key patterns-either","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-key-name.yml","start":{"line":4,"col":9,"offset":66},"end":{"line":4,"col":24,"offset":81}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 7

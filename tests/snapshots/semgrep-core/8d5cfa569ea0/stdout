@@ -1,0 +1,56 @@
+--- begin input files ---
+rules/delete-partial-line.yaml
+targets/delete-partial-line.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 50 insertions(+)
+ create mode 100644 rules/delete-partial-line.yaml
+ create mode 100644 targets/delete-partial-line.py
+
+
+┌─────────────────┐
+│ 4 Code Findings │
+└─────────────────┘
+
+    targets/delete-partial-line.py
+    ❯❱ rules.delete-default
+          Unnecessary parameter which matches the default
+
+           ▶▶┆ Autofix ▶ delete
+           14┆ foo()
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ delete
+           16┆ )
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ delete
+           17┆ foo(
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ delete
+           22┆ 42
+
+--- targets/delete-partial-line.py after the scan ---
+def foo(x=42):
+    print(x)
+
+# No autofix
+foo()
+foo(
+)
+foo(43)
+foo(
+43
+)
+
+# Autofix of a partial line
+foo(42)
+foo(
+42)
+foo(42
+)
+
+# Autofix of an entire line
+foo(
+42
+)
+

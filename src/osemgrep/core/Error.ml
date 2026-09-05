@@ -34,16 +34,16 @@ exception Exit_code of Exit_code.t
  *)
 let is_broken_pipe (exn : exn) : bool =
   match exn with
-  | Sys_error "Broken pipe"
-  | Unix.Unix_error (Unix.EPIPE, _, _) ->
-      true
+  (* the text of a channel error is what strerror gives for EPIPE *)
+  | Sys_error msg -> String_.contains ~term:"Broken pipe" msg
+  | Unix.Unix_error (Unix.EPIPE, _, _) -> true
   | _ -> false
 
 (* The standard formatters are flushed again by Stdlib from at_exit, which
  * would raise the broken pipe a second time, outside any handler. Sending
  * what they still hold to a sink that cannot fail keeps that flush quiet.
  *)
-let drop_buffered_stdout () : unit =
+let silence_std_formatter () : unit =
   Format.pp_set_formatter_out_functions Format.std_formatter
     {
       out_string = (fun _ _ _ -> ());

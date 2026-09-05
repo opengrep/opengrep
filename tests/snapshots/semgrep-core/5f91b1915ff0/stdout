@@ -1,0 +1,34 @@
+--- begin input files ---
+rules/two-autofixes.yaml
+targets/two-autofixes.txt
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 19 insertions(+)
+ create mode 100644 rules/two-autofixes.yaml
+ create mode 100644 targets/two-autofixes.txt
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/two-autofixes.txt
+   ❯❯❱ rules.remove-two
+          This rule changes the line numbers for the other rule's match
+
+           ▶▶┆ Autofix ▶ one
+            1┆ one
+
+   ❯❯❱ rules.remove-four
+          If semgrep is not smart enough, the match of this rule will be out of range
+
+           ▶▶┆ Autofix ▶ four
+            3┆ four
+
+--- targets/two-autofixes.txt after the scan ---
+one
+two
+three
+four
+

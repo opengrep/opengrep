@@ -53,7 +53,7 @@ let cli_errors_to_report ~(verbose : bool) (errors : OutJ.cli_error list) :
   |> List.filter (fun (error : OutJ.cli_error) ->
          (not (has_own_line error)) && is_reported error)
 
-let pp_summary ~respect_gitignore ~is_git_repo ~is_baseline_scan
+let pp_summary ~respect_gitignore ~is_git_repo ~(is_baseline_scan : bool)
     ~(maturity : Maturity.t) ~max_target_bytes ~skipped_groups ppf () : unit =
   let {
     Skipped_report.ignored = semgrep_ignored;

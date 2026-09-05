@@ -1,0 +1,41 @@
+--- begin input files ---
+rules/csv-writer.yaml
+targets/csv-writer.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 31 insertions(+)
+ create mode 100644 rules/csv-writer.yaml
+ create mode 100644 targets/csv-writer.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/csv-writer.py
+   ❯❯❱ rules.python.lang.security.unquoted-csv-writer.unquoted-csv-writer
+          Found an unquoted CSV writer. This is susceptible to injection. Use 'quoting=csv.QUOTE_ALL'.
+
+           ▶▶┆ Autofix ▶ csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+            9┆ csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ csv.writer(get_file(), delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+           12┆ csv.writer(get_file(), delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)
+
+--- targets/csv-writer.py after the scan ---
+import csv
+
+csvfile="/tmp/blah.csv"
+
+def get_file():
+    return csvfile
+
+# ruleid:unquoted-csv-writer
+csv.writer(csvfile, delimiter=',', quotechar='"')
+
+# ruleid:unquoted-csv-writer
+csv.writer(get_file(), delimiter=',', quotechar='"')
+
+# ok
+csv.writer(csvfile, delimiter=',', quotechar='"', quoting=csv.QUOTE_ALL)

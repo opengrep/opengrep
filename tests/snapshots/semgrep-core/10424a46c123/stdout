@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/empty.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 1 insertion(+)
+ create mode 100644 rules/empty.yaml
+ create mode 100644 target.py
+exit code: 7
+--- begin input files ---
+rules/empty.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 1 insertion(+)
+ create mode 100644 rules/empty.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/empty.yaml:1:\n Empty configuration file","path":"rules/empty.yaml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 7

@@ -1,7 +1,0 @@
-[<MASKED TIMESTAMP>][WARNING]: could not load rules/no_pattern.yaml: invalid rule no-pattern-here, rules/no_pattern.yaml:2:4: Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.
---- begin input files ---
-rules/no_pattern.yaml
-targets/no_pattern.py
---- end input files ---
-{"results":{},"fixtest_results":{},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[{"file":"rules/no_pattern.yaml","reason":"unparsable_rule"}]}
-ASSERT exit code

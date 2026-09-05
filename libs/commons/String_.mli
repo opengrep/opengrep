@@ -44,6 +44,10 @@ val trim_cr : string -> string
  * form onto the bare name. *)
 val strip_wrapping_char : char -> string -> string
 
+(* [lstrip_while drop s] removes the leading characters of [s] for which
+ * [drop] holds, as Python's str.lstrip does with a set of characters. *)
+val lstrip_while : (char -> bool) -> string -> string
+
 (* Remove the trailing whitespace (spaces, tabs, CR, LF), as Python's
  * str.rstrip does; the leading whitespace is kept, unlike String.trim. *)
 val rstrip : string -> string
@@ -53,9 +57,3 @@ val rstrip : string -> string
  * line. See unit tests for examples. *)
 val lines_of_range : int * int -> string -> string list
 val is_capitalized : string -> bool
-
-(* Replace every byte that is not part of a valid UTF-8 sequence by U+FFFD,
- * the replacement character, and return the string unchanged when it is
- * already valid UTF-8. This is what Python does when a file is read with
- * errors="replace". *)
-val sanitize_utf8 : string -> string

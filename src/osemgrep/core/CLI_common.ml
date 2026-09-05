@@ -91,7 +91,7 @@ a TTY; defaults to using the TTY status
 (* Writing the logs to a side file is a diagnostic convenience: when the path
  * cannot be created or opened we warn and carry on rather than stop the scan.
  *)
-let openable_log_file (file : Fpath.t) : (unit, string) result =
+let create_log_file (file : Fpath.t) : (unit, string) result =
   try
     UFile.make_directories (Fpath.parent file);
     UFile.write_file ~file "";
@@ -113,7 +113,7 @@ let setup_logging ~force_color ~level =
     | None -> (None, None)
     | Some ((var : string), (value : string)) -> (
         let file = Fpath.v value in
-        match openable_log_file file with
+        match create_log_file file with
         | Ok () -> (Some file, None)
         | Error (msg : string) -> (None, Some (var, msg)))
   in
@@ -176,35 +176,46 @@ let o_common : conf Term.t =
 
 (* The exit codes opengrep really returns. Without them cmdliner documents its
  * own defaults (123, 124, 125), which no code path here ever produces.
- * coupling: Exit_code.ml and Cli_json_output.exit_code_of_error_type
+ * coupling: Cli_json_output.exit_code_of_error_type
  *)
-let exit_ok = Cmd.Exit.info ~doc:"on success, with nothing to report." 0
+let exit_info (code : Exit_code.t) ~(doc : string) : Cmd.Exit.info =
+  Cmd.Exit.info ~doc (Exit_code.to_int code)
+
+let exit_ok =
+  exit_info Exit_code.Value.ok ~doc:"on success, with nothing to report."
 
 let exit_findings =
-  Cmd.Exit.info ~doc:"when findings are reported as errors, see $(b,--error)." 1
+  exit_info Exit_code.Value.findings
+    ~doc:"when findings are reported as errors, see $(b,--error)."
 
 let exit_fatal =
-  Cmd.Exit.info ~doc:"on a fatal error, including an error on the command line."
-    2
+  exit_info Exit_code.Value.fatal
+    ~doc:"on a fatal error, including an error on the command line."
 
 let exit_invalid_code =
-  Cmd.Exit.info ~doc:"when a target file could not be parsed." 3
+  exit_info Exit_code.Value.invalid_code
+    ~doc:"when a target file could not be parsed."
 
 let exit_invalid_pattern =
-  Cmd.Exit.info ~doc:"when a rule pattern could not be parsed." 4
+  exit_info Exit_code.Value.invalid_pattern
+    ~doc:"when a rule pattern could not be parsed."
 
 let exit_unparseable_yaml =
-  Cmd.Exit.info ~doc:"when a rule file is not valid YAML." 5
+  exit_info Exit_code.Value.unparseable_yaml
+    ~doc:"when a rule file is not valid YAML."
 
 let exit_missing_config =
-  Cmd.Exit.info ~doc:"when no valid configuration could be loaded." 7
+  exit_info Exit_code.Value.missing_config
+    ~doc:"when no valid configuration could be loaded."
 
 let exit_invalid_language =
-  Cmd.Exit.info ~doc:"when a rule names a language that is not supported." 8
+  exit_info Exit_code.Value.invalid_language
+    ~doc:"when a rule names a language that is not supported."
 
-(* only for a subcommand that writes to stdout *)
+(* CLI.safe_run gives it to every subcommand *)
 let exit_broken_pipe =
-  Cmd.Exit.info ~doc:"when the reader of the output closed the pipe." 141
+  exit_info Exit_code.Value.broken_pipe
+    ~doc:"when the reader of the output closed the pipe."
 
 (* The rules the subcommand could not load: Core_error.error_of_rule_error
  * gives each one a type and Cli_json_output.exit_code_of_error_type its
@@ -223,20 +234,21 @@ let exits_scan : Cmd.Exit.info list =
   @ exits_of_invalid_rules
   @ [ exit_broken_pipe ]
 
-(* 'ci' takes its code from the findings; a rule it cannot load makes the
- * configuration missing *)
-let exits_ci : Cmd.Exit.info list =
-  [ exit_ok; exit_findings; exit_fatal; exit_missing_config; exit_broken_pipe ]
+(* 'ci' returns the code of its scan; with --suppress-errors, the default,
+ * any code other than 0 and 1 becomes 0 *)
+let exits_ci : Cmd.Exit.info list = exits_scan
 
 (* a failed check is a finding; a rule file that does not load makes the
  * configuration missing *)
 let exits_test : Cmd.Exit.info list =
   [ exit_ok; exit_findings; exit_fatal; exit_missing_config; exit_broken_pipe ]
 
-(* 'validate' has no target to parse: only the rules and the matches of the
- * metachecking rules, which are fatal *)
+(* 'validate' parses its rules, as YAML and as targets of the metachecking
+ * rules, whose matches are fatal *)
 let exits_validate : Cmd.Exit.info list =
-  [ exit_ok; exit_fatal ] @ exits_of_invalid_rules @ [ exit_broken_pipe ]
+  [ exit_ok; exit_fatal; exit_invalid_code ]
+  @ exits_of_invalid_rules
+  @ [ exit_broken_pipe ]
 
 let exits_show : Cmd.Exit.info list =
   [
@@ -250,8 +262,8 @@ let exits_show : Cmd.Exit.info list =
 
 let exits_lsp : Cmd.Exit.info list = [ exit_ok; exit_fatal; exit_broken_pipe ]
 
-(* 'install-ci' writes nothing to stdout *)
-let exits_install_ci : Cmd.Exit.info list = [ exit_ok; exit_fatal ]
+let exits_install_ci : Cmd.Exit.info list =
+  [ exit_ok; exit_fatal; exit_broken_pipe ]
 
 let help_page_bottom =
   [

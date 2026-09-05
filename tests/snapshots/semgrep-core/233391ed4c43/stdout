@@ -1,0 +1,5 @@
+--- begin input files ---
+rules/rule_with_paths_include_bar_xml.yaml
+targets/foo.xml
+--- end input files ---
+{"results":{"rules/rule_with_paths_include_bar_xml.yaml":{"checks":{"bar-inside-foo-element":{"passed":true,"matches":{"<TMP>/<MASKED>/targets/foo.xml":{"expected_lines":[5],"reported_lines":[5]}},"errors":[]}}}},"fixtest_results":{},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[]}

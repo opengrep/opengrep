@@ -62,13 +62,14 @@ let lang_of_path (path : Fpath.t) : string =
 let sum (xs : float list) : float = List.fold_left ( +. ) 0.0 xs
 
 (* python: the two columns the console added to every line it printed *)
-let pp_line ppf (line : string) : unit = Fmt.pf ppf "  %s@." line
+let console_indent = "  "
+let pp_line ppf (line : string) : unit = Fmt.pf ppf "%s%s@." console_indent line
 
 let profiling_time (time : Out.profile) (name : string) : float =
   List.assoc_opt name time.profiling_times |> Option.value ~default:0.0
 
-(* the slowest first, at most items_to_show *)
-let slowest (compare_key : 'k -> 'k -> int) (by_key : ('a * 'k) list) :
+(* the items_to_show first items in the order [compare_key] gives *)
+let top_by (compare_key : 'k -> 'k -> int) (by_key : ('a * 'k) list) :
     ('a * 'k) list =
   by_key
   |> List.stable_sort (fun (_, (a : 'k)) (_, (b : 'k)) -> compare_key a b)
@@ -126,23 +127,23 @@ let pp_time_summary ppf (time : Out.profile) (errors : Out.cli_error list) :
     (spf "Slowest %d/%d files" items_to_show (List.length file_timings));
   (* python: the slowest by parse time, then by run time *)
   file_timings
-  |> slowest (fun ((a_parse : float), (a_run : float)) (b_parse, b_run) ->
+  |> top_by (fun ((a_parse : float), (a_run : float)) (b_parse, b_run) ->
          match Float.compare b_parse a_parse with
          | 0 -> Float.compare b_run a_run
          | cmp -> cmp)
   |> List.iter
        (fun ((t : Out.target_times), ((parse_time : float), (run_time : float)))
        ->
-         Fmt.pf ppf "  %a %-8s %.3fs (%.3fs to parse)@."
+         Fmt.pf ppf "%s%a %-8s %.3fs (%.3fs to parse)@." console_indent
            Fmt.(styled (`Fg `Green) string)
            (spf "%-50s" (truncate (Fpath.to_string t.path)))
            (spf "(%s):" (format_bytes t.num_bytes))
            run_time parse_time);
   pp_line ppf (spf "Slowest %d rules to match" items_to_show);
   rule_match_times
-  |> slowest (fun (a : float) (b : float) -> Float.compare b a)
+  |> top_by (fun (a : float) (b : float) -> Float.compare b a)
   |> List.iter (fun ((rule_id : Rule_ID.t), (match_time : float)) ->
-         Fmt.pf ppf "  %a %.3fs@."
+         Fmt.pf ppf "%s%a %.3fs@." console_indent
            Fmt.(styled (`Fg `Yellow) string)
            (spf "%-59s" (truncate (Rule_ID.to_string rule_id) ^ ":"))
            match_time);

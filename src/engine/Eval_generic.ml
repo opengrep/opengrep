@@ -603,7 +603,7 @@ let eval_opt env e =
       Log.err (fun m -> m "NotHandled: %s" (G.show_expr e));
       None
 
-let eval_bool env e _facts _bindings =
+let eval_bool env e =
   let res = eval_opt env e in
   match res with
   | Some (Bool b) -> b

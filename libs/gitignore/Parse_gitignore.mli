@@ -6,11 +6,13 @@
    The default selection mode is Ignore.
 *)
 
-val from_file :
+(* the patterns of an ignore file, given its path and its contents *)
+val from_file_contents :
   anchor:Glob.Pattern.t ->
   format:Gitignore.format ->
   source_kind:string ->
   Fpath.t ->
+  string ->
   Gitignore.path_selectors
 
 val from_string :

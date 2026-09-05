@@ -136,7 +136,8 @@ let test_broken_pipe (caps : CLI.caps) () =
             |])
       |> Exit_code.Check.broken_pipe)
 
-(* Every exit code opengrep can return, from Exit_code.ml *)
+(* the exit codes of Exit_code.ml that a subcommand documents; 13 and 14 are
+   declared there and returned by no subcommand *)
 let documented_exit_codes : string list =
   [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]
 
@@ -207,13 +208,13 @@ let tests (caps : CLI.caps) =
         (test_broken_pipe caps);
     ]
     @ ([
-         ("ci", [ "0"; "1"; "2"; "7"; "141" ]);
-         ("install-ci", [ "0"; "2" ]);
+         ("ci", [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);
+         ("install-ci", [ "0"; "2"; "141" ]);
          ("lsp", [ "0"; "2"; "141" ]);
          ("scan", [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);
          ("show", [ "0"; "2"; "3"; "4"; "7"; "141" ]);
          ("test", [ "0"; "1"; "2"; "7"; "141" ]);
-         ("validate", [ "0"; "2"; "4"; "5"; "7"; "8"; "141" ]);
+         ("validate", [ "0"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);
        ]
        |> List_.map (fun ((subcommand : string), (codes : string list)) ->
               Testo.create

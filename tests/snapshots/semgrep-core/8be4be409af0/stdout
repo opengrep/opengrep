@@ -1,0 +1,8 @@
+--- begin input files ---
+foo.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 1 file changed, 3 insertions(+)
+ create mode 100644 foo.py
+github API merge-base request received

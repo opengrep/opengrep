@@ -148,14 +148,9 @@ let compile_gitignore_pattern ~anchor ~source (str : string) :
     M.compiled_pattern list =
   [ parse_pattern ~source ~anchor str ]
 
-let compile_cli_pattern ~anchor ~source (str : string) :
-    M.compiled_pattern list =
-  parse_cli_pattern ~source ~anchor str
-
 (* A line whose pattern is not anchored to the folder of its file matches
    at any depth, so it still means something for a path outside that
-   folder. Comments and blank lines are kept so that the line numbers of
-   the remaining patterns are the ones of the file. *)
+   folder. Comments and blank lines hold no pattern to parse. *)
 let is_unanchored_line (line : string) : bool =
   is_ignored_line line
   ||
@@ -201,7 +196,10 @@ let rec expand_includes ~orig_semgrepignore_path lines =
   in
   List.concat_map expand_line lines
 
-and from_lines ~compile ~allow_include ~name ~source_kind ~source_path lines =
+(* [keep_line] leaves a line out after the lines are numbered, so that the
+   line numbers of the patterns kept are the ones of the file *)
+and from_lines ?(keep_line : string -> bool = fun (_ : string) -> true)
+    ~compile ~allow_include ~name ~source_kind ~source_path lines =
   let lines =
     (* Don't allow ':include' when reading exclusion patterns from the
        command line (or not from a file in general) *)
@@ -216,7 +214,9 @@ and from_lines ~compile ~allow_include ~name ~source_kind ~source_path lines =
   List_.mapi
     (fun i contents ->
       let linenum = i + 1 in
-      parse_line_gen ~compile name source_kind linenum contents)
+      if keep_line contents then
+        parse_line_gen ~compile name source_kind linenum contents
+      else None)
     lines
   |> List_.filter_map (fun x -> x)
 
@@ -236,7 +236,7 @@ and from_string ~anchor ~name ~source_kind str =
 
 and cli_patterns_from_string ~anchor ~name ~source_kind str =
   from_string_gen
-    ~compile:(compile_cli_pattern ~anchor)
+    ~compile:(parse_cli_pattern ~anchor)
     ~allow_include:false ~name ~source_path:None ~source_kind str
 
 and unanchored_from_string ~anchor ~name ~source_kind ~source_path str =
@@ -249,15 +249,13 @@ and unanchored_from_string ~anchor ~name ~source_kind ~source_path str =
         expand_includes ~orig_semgrepignore_path lines
     | None -> lines
   in
-  from_lines
+  from_lines ~keep_line:is_unanchored_line
     ~compile:(compile_gitignore_pattern ~anchor)
-    ~allow_include:false ~name ~source_path:None ~source_kind
-    (lines |> List.filter is_unanchored_line)
+    ~allow_include:false ~name ~source_path:None ~source_kind lines
 
-and from_file ~anchor ~format ~source_kind path =
-  path |> UFile.read_file
-  |> from_string_gen
-       ~compile:(compile_gitignore_pattern ~anchor)
-       ~allow_include:(format = Legacy_semgrepignore)
-       ~name:(Fpath.to_string path) ~source_path:(Some path) ~source_kind
+and from_file_contents ~anchor ~format ~source_kind path contents =
+  from_string_gen
+    ~compile:(compile_gitignore_pattern ~anchor)
+    ~allow_include:(format = Legacy_semgrepignore)
+    ~name:(Fpath.to_string path) ~source_path:(Some path) ~source_kind contents
 [@@profiling]

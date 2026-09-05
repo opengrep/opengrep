@@ -1,0 +1,86 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][WARNING]: Paths that match both --include and --exclude will be skipped by Opengrep.
+[<MASKED TIMESTAMP>][INFO]: Opengrep version: 1.29.0
+[<MASKED TIMESTAMP>][INFO]: Getting the rules
+[<MASKED TIMESTAMP>][INFO]: loading local config from eqeq-basic.yaml
+[<MASKED TIMESTAMP>][INFO]: Done loading local config from eqeq-basic.yaml
+[<MASKED TIMESTAMP>][INFO]: Computing the targets
+[<MASKED TIMESTAMP>][WARNING]: Deprecated include directive ':include .gitignore' in semgrepignore file '<TMP>/<MASKED>/.semgrepignore'
+[<MASKED TIMESTAMP>][WARNING]: Deprecated include directive ':include .gitignore' in semgrepignore file '<TMP>/<MASKED>/targets/ignores/.semgrepignore'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--cached' '<TMP>/<MASKED>/targets/ignores'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '-C' '<TMP>/<MASKED>' 'ls-files' '-z' '--others' '--exclude-standard' '<TMP>/<MASKED>/targets/ignores'
+[<MASKED TIMESTAMP>][INFO]: running 1 rules from 1 config eqeq-basic.yaml
+Rules:
+- eqeq-bad
+
+[<MASKED TIMESTAMP>][INFO]: scan subcommand: 1 valid rules, 0 invalid rules, 2 targets
+[<MASKED TIMESTAMP>][INFO]: running the opengrep engine
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 2 files tracked by git with 1 Code rule:
+  Scanning 2 files.
+[<MASKED TIMESTAMP>][INFO]: scan: processing 2 files (skipping 0), with 1 rules (skipping 0 )
+[<MASKED TIMESTAMP>][INFO]: reporting matches if any
+[<MASKED TIMESTAMP>][INFO]: 
+========================================
+Files skipped:
+========================================
+
+  Always skipped by Opengrep:
+
+   • <none>
+
+  Skipped by .gitignore:
+  (Disable by passing --no-git-ignore)
+
+   • <all files not listed by `git ls-files` were skipped>
+
+  Skipped by .semgrepignore:
+  (See: https://semgrep.dev/docs/ignoring-files-folders-code/#understand-semgrep-defaults)
+
+   • targets/ignores/ignore_test.js
+   • targets/ignores/tests
+
+  Skipped by --include patterns:
+
+   • <none>
+
+  Skipped by --exclude patterns:
+
+   • targets/ignores/ignore.min.js
+
+  Files skipped due to insufficient read permissions:
+
+   • <none>
+
+  Skipped by limiting to files smaller than 100 bytes:
+  (Adjust with the --max-target-bytes flag)
+
+   • <none>
+
+  Partially analyzed due to parsing or internal Opengrep errors
+
+   • <none>
+
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
+  Scan skipped: 1 files matching --exclude patterns, 1 files and 1 directories matching .semgrepignore patterns
+  For a full list of skipped files, run opengrep with the --verbose flag.
+
+Ran 1 rule on 2 files: 2 findings.
+ASSERT exit code

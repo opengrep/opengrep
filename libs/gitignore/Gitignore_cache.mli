@@ -1,10 +1,11 @@
-(* An ignore file that cannot be read as a file is reported once, whichever
-   reader meets it first: the '.semgrepignore' of the working directory is
-   read both as its own level and by the walk that enters that directory.
-   [forget_warnings] starts a new run; [warn_unreadable] is what the other
-   reader reports through. *)
-val forget_warnings : unit -> unit
-val warn_unreadable : Fpath.t -> string (* reason *) -> unit
+(* The path of the ignore file of a folder, or the file itself when the
+   name given on the command line is an absolute path. *)
+val ignore_file_path : filename:string -> Fpath.t -> Fpath.t
+
+(* The contents of an ignore file, or None when there is no such file or
+   when it cannot be read as a file. The latter is reported with a warning,
+   once per file for the life of the cache. *)
+val read_ignore_file_opt : Gitignore.gitignores_cache -> Fpath.t -> string option
 
 (* Initialize the cache for a project defined by the project root folder.
    See the doc in Gitignore.ml about gitignore_filenames for more information

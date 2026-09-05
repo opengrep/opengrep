@@ -33,7 +33,11 @@ let test_filter (files : F.t list) () =
       let files2 = F.read root |> F.sort in
       assert (files2 = files);
       printf "--- Filtered files ---\n";
-      let filter = Gitignore_filter.create ~project_root:root () in
+      let filter =
+        Gitignore_filter.create
+          ~gitignore_file_cache:(Gitignore_cache.create ~project_root:root ())
+          ()
+      in
       files |> F.flatten
       |> List.iter (fun path ->
              assert (Fpath.is_rel path);

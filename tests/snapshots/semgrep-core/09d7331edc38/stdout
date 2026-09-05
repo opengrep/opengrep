@@ -1,0 +1,34 @@
+--- begin input files ---
+rules/exact-collision.yaml
+targets/collision.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 24 insertions(+)
+ create mode 100644 rules/exact-collision.yaml
+ create mode 100644 targets/collision.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/collision.py
+    ❯❱ rules.first-rule
+          Semgrep found a match
+
+           ▶▶┆ Autofix ▶ once
+            2┆ a = 1
+
+    ❯❱ rules.second-rule
+          Semgrep found a match
+
+           ▶▶┆ Autofix ▶ twice
+            2┆ a = 1
+
+--- targets/collision.py after the scan ---
+
+a = once
+b = 2
+c = 3
+d = 4

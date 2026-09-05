@@ -1,0 +1,21 @@
+--- begin input files ---
+basic.py
+basic.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 8 insertions(+)
+ create mode 100644 basic.py
+ create mode 100644 basic.yaml
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+  [36m[22m[24m  basic.py[0m
+   [31m❯❯❱[0m [1mbasic-test[0m
+          Basic test
+
+            2┆ print([1m1 == 1[0m)
+

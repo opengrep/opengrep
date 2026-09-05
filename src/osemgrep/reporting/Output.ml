@@ -94,10 +94,7 @@ let start_time_from_profiler_opt (profiler : Profiler.t) : Timedesc.Timestamp.t 
 (* Format dispatcher *)
 (*****************************************************************************)
 
-let format
-    (* The scan and ci paths always pass this. *)
-    ?(profiler : Profiler.t option)
-    (kind : Output_format.t)
+let format ~(profiler : Profiler.t) (kind : Output_format.t)
     (cli_output : Out.cli_output) : string list =
   match kind with
   | Text
@@ -109,11 +106,11 @@ let format
       [ Out.string_of_cli_output cli_output ]
   | Junit_xml -> [ Junit_xml_output.junit_xml_output cli_output ]
   | Gitlab_sast ->
-      let start_time = Option.map start_time_from_profiler_opt profiler |> Option.join in
+      let start_time = start_time_from_profiler_opt profiler in
       let gitlab_sast_json = Gitlab_output.sast_output ?start_time cli_output.results in
       [ Yojson.Basic.to_string gitlab_sast_json ]
   | Gitlab_secrets ->
-      let start_time = Option.map start_time_from_profiler_opt profiler |> Option.join in
+      let start_time = start_time_from_profiler_opt profiler in
       let gitlab_secrets_json =
         Gitlab_output.secrets_output ?start_time cli_output.results
       in
@@ -170,7 +167,7 @@ let format
                        (start, end_) path
                    with
                    | [] -> ""
-                   | x :: _ -> String_.sanitize_utf8 x (* TOPORT rstrip? *)
+                   | x :: _ -> Utf8.sanitize x (* TOPORT rstrip? *)
                  in
                  let parts =
                    [

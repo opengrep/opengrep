@@ -45,6 +45,8 @@ let normalise : (string -> string) list =
     Testutil_git.mask_temp_git_hash;
     Testo.mask_pcre_pattern {|"semanticVersion":"[^"]*"|};
     Testo.mask_pcre_pattern {|\{"version":"([^"]*)","results"|};
+    (* the engine version an incompatible rule is reported against *)
+    Testo.mask_pcre_pattern {|"this_version":"([^"]*)"|};
   ]
 
 (*****************************************************************************)

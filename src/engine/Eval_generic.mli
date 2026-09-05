@@ -44,8 +44,7 @@ val eval_regexp_pattern_matches :
  (* This function will swallow exns and always return a bool.
  * This is the function called by Match_rules.ml
  *)
-val eval_bool :
-  env -> code -> AST_generic.facts -> Metavariable.bindings -> bool
+val eval_bool : env -> code -> bool
 
 (* for -test_eval *)
 val test_eval : string (* filename *) -> unit

@@ -1937,13 +1937,8 @@ type code_target <ocaml attr="deriving show"> = {
 type targets <ocaml attr="deriving show"> = target list
 
 (*****************************************************************************)
-(* Python -> OCaml RPC typedefs *)
+(* Edits, output formats and dependency sources *)
 (*****************************************************************************)
-(* See src/rpc/README.txt in the Semgrep repository. *)
-
-(* ----------------------------- *)
-(* argument call types *)
-(* ----------------------------- *)
 
 (* coupling: Textedit.ml *)
 type edit <python decorator="dataclass(frozen=True)"> = {
@@ -1951,48 +1946,6 @@ type edit <python decorator="dataclass(frozen=True)"> = {
   start_offset: int;
   end_offset: int;
   replacement_text: string;
-}
-
-type apply_fixes_params <python decorator="dataclass(frozen=True)"> = {
-  dryrun: bool;
-  edits: edit list;
-}
-
-type apply_fixes_return <python decorator="dataclass(frozen=True)"> = {
-  (* Number of files modified *)
-  modified_file_count: int;
-  (* Each item is a pair, where the first item is the index of the associated
-  edit in the input list and the second item is the list of fixed lines
-  associated with that edit. *)
-  fixed_lines: (int * string list) list;
-}
-
-(* TODO: remove many fields so that CallSarifFormat gets close to CallFormatter.
- * I think we just need the 'rules: fpath' as it can't be reconstructed
- * from cli_output.
- *)
-type sarif_format_params <python decorator="dataclass(frozen=True)"> = {
-  (* Path the the rules file *)
-  rules: fpath;
-
-  (* TODO: remove, just use cli_output *)
-  cli_matches: cli_match list;
-  cli_errors: cli_error list;
-  (* TODO: remove, should be able to derive this from format_context *)
-  engine_label: string;
-  show_dataflow_traces: bool;
-}
-
-(* TODO: remove, reuse RetFormatter *)
-type sarif_format_return <python decorator="dataclass(frozen=True)"> = {
-  (* The formatted output. *)
-  output: string;
-  (* Time (in seconds) it took to format the output.
-   * This helps tracking how much actual formatting time is needed
-   * compared to the whole RPC call, so we can profile and improve
-   * performace when needed.
-   *)
-  format_time_seconds: float;
 }
 
 type output_format
@@ -2020,12 +1973,6 @@ type format_context
      <python decorator="dataclass(frozen=True)"> =
 {
    is_ci_invocation: bool;
-}
-
-type dump_rule_partitions_params = {
-  rules: raw_json;
-  n_partitions: int;
-  output_dir: fpath;
 }
 
 (* ----------------------------- *)
@@ -2136,6 +2083,7 @@ type dependency_source
   | ManifestLockfileDependencySource of (manifest * lockfile)
 ] <ocaml repr="classic">
 
+(* the payload of the DependencyResolutionError error type *)
 type resolution_error
     <ocaml attr="deriving show">
     <python decorator="dataclass(frozen=True)"> =
@@ -2153,60 +2101,6 @@ type resolution_cmd_failed
     command: string;
     message: string;
 }
-
-(* Resolution can either succeed or fail, but in either case errors can be
- * produced (e.g. one resolution method might fail while a worse one succeeds,
- * lockfile parsing might partially fail but recover and still produce results)
-*)
-type resolution_result = [
-  | ResolutionOk of (found_dependency list * resolution_error list)
-  | ResolutionError of resolution_error list
-]
-
-(* ----------------------------- *)
-(* The call *)
-(* ----------------------------- *)
-
-type function_call <python decorator="dataclass(frozen=True)"> = [
-  | CallContributions
-  | CallApplyFixes of apply_fixes_params
-  (* TODO: merge with CallFormatter at some point *)
-  | CallSarifFormat of (format_context * sarif_format_params)
-  | CallFormatter of (output_format * format_context * cli_output)
-  (* NOTE: fpath is most likely a temporary file that contains all the rules in
-     JSON format. In the future, we could send the rules via a big string through
-     the RPC pipe.
-  *)
-  | CallValidate of fpath
-  | CallResolveDependencies of dependency_source list
-  | CallDumpRulePartitions of dump_rule_partitions_params
-]
-
-(* ----------------------------- *)
-(* The return *)
-(* ----------------------------- *)
-
-type function_return <python decorator="dataclass(frozen=True)"> = [
-  | RetError of string
-  | RetApplyFixes of apply_fixes_return
-  | RetContributions of contributions
-  (* TODO: remove and use RetFormatter for the return of CallSarifFormat too *)
-  | RetSarifFormat of sarif_format_return
-  | RetFormatter of string
-  | RetValidate of bool
-  | RetResolveDependencies of (dependency_source * resolution_result) list
-  | RetDumpRulePartitions of bool
-]
-
-(*****************************************************************************)
-(* Misc *)
-(*****************************************************************************)
-
-(* Partial scans. Experimental and for internal use only. *)
-type partial_scan_result <python decorator="dataclass(frozen=True)"> = [
-  | PartialScanOk of (ci_scan_results * ci_scan_complete)
-  | PartialScanError of ci_scan_failure
-]
 
 (* Synthesizing from diffs (see locate_patched_functions in Synthesizing.mli) *)
 (* was in Input_to_core.atd before *)

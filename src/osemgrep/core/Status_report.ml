@@ -84,8 +84,9 @@ let pp_status ~(rules : Rule.t list) ~num_targets ~tracked_by_git
            match job.targets with
            | [] -> []
            | _ :: _ -> job.rules)
-    |> List_.map (fun (rule : Rule.t) -> Rule_ID.to_string (fst rule.id))
-    |> List_.deduplicate |> List.length
+    |> List_.map (fun (rule : Rule.t) -> fst rule.id)
+    |> List.sort_uniq Rule_ID.compare
+    |> List.length
   in
   if num_rules_with_a_target = 0 || num_files_with_a_rule = 0 then
     Fmt.pf ppf "  Nothing to scan."
