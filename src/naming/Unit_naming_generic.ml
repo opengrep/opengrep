@@ -70,6 +70,26 @@ let def_sid_of_name ast name =
   visitor#visit_program () ast;
   !acc
 
+(* The sids of every definition (def/class entity) named [name], in order. *)
+let def_sids_of_name ast name =
+  let acc = ref [] in
+  let visitor =
+    object
+      inherit [_] AST_generic.iter_no_id_info as super
+
+      method! visit_definition venv ((ent, _) as def) =
+        (match ent.AST_generic.name with
+        | AST_generic.EN (AST_generic.Id ((s, _), id_info)) when s = name -> (
+            match !(id_info.AST_generic.id_resolved) with
+            | Some (_, sid) -> acc := sid :: !acc
+            | None -> ())
+        | _ -> ());
+        super#visit_definition venv def
+    end
+  in
+  visitor#visit_program () ast;
+  List.rev !acc
+
 (* No expression use of [name] binds the definition of that same name: an
    assignment target declares a variable, whatever scope it sits in (a
    top-level binding is still reported as [Global], so the resolution
@@ -92,14 +112,14 @@ let check_single_binding ast name =
   let sids =
     resolutions_of_name ast name
     |> List.filter_map (Option.map (fun (_kind, sid) -> sid))
-    |> List.map AST_generic.SId.show
+    |> List.map AST_generic.SId.to_int
   in
   match sids with
   | [] -> Alcotest.failf "no resolved uses of '%s'" name
   | first :: rest ->
       rest
-      |> List.iter (fun sid ->
-             Alcotest.(check string)
+      |> List.iter (fun (sid : int) ->
+             Alcotest.(check int)
                (spf "all uses of '%s' share one binding" name)
                first sid)
 
@@ -138,6 +158,34 @@ let tests parse_program =
                  with
                  | Parsing_error.Syntax_error _ ->
                      Alcotest.failf "it should correctly parse %s" !!file));
+      t "python redefinition rebinds the same name" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/python/redefined_def.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Two module-level definitions of [handler] are one binding,
+             each at its own site; both calls refer to that binding. *)
+          (match def_sids_of_name ast "handler" with
+          | [ first; second ] ->
+              Alcotest.(check bool) "one binding" true
+                (AST_generic.SId.equal first second);
+              Alcotest.(check bool) "two sites" false
+                (Stdlib.( = )
+                   (AST_generic.SId.to_loc first)
+                   (AST_generic.SId.to_loc second))
+          | sids ->
+              Alcotest.failf "expected two definitions of handler, found %d"
+                (List.length sids));
+          check_single_binding ast "handler";
+          (* the same bytes parsed twice get the same bindings *)
+          let ast2 = parse_program file in
+          Naming_AST.resolve Lang.Python ast2;
+          Alcotest.(check (list int)) "deterministic bindings"
+            (resolutions_of_name ast "handler"
+            |> List.filter_map (Option.map (fun (_, sid) -> AST_generic.SId.to_int sid)))
+            (resolutions_of_name ast2 "handler"
+            |> List.filter_map (Option.map (fun (_, sid) -> AST_generic.SId.to_int sid))));
       t "python local shadows module function" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/python/shadow_global_fn.py")

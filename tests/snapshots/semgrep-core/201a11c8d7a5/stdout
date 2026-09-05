@@ -7,8 +7,8 @@ Pr(
        name=EN(
               Id(("foo", ()),
                 {id_flags=Ref(16); id_resolved_alternative=Ref([]); 
-                 id_resolved=Ref(Some((Global, "foo@foo.py:2:4"))); 
-                 id_type=Ref(None); id_svalue=Ref(None); }));
+                 id_resolved=Ref(Some((Global, 1))); id_type=Ref(None); 
+                 id_svalue=Ref(None); }));
        attrs=[]; tparams=None; },
       FuncDef(
         {fkind=(Function, ()); fparams=[]; frettype=None; 

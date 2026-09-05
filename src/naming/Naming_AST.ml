@@ -271,11 +271,20 @@ type env = {
   in_lvalue : bool ref;
   in_type : bool ref;
   lang : Lang.t;
-  (* The real file being resolved.  A resolved name's sid is its definition
-     token's place within this file (see [AST_generic.SId]); naming processes
-     a single file, so the token's file and this one coincide. *)
+  (* The real file being resolved.  A resolved name's sid carries its
+     definition token's place within this file (see [AST_generic.SId]);
+     naming processes a single file, so the token's file and this one
+     coincide. *)
   file : string;
+  (* The next binding number of this file; bindings are counted in
+     traversal order, so two parses of the same bytes agree. *)
+  next_binding : int ref;
 }
+
+let fresh_binding (env : env) : int =
+  let binding = !(env.next_binding) in
+  env.next_binding := binding + 1;
+  binding
 
 let default_env lang file =
   {
@@ -286,6 +295,7 @@ let default_env lang file =
     in_type = ref false;
     lang;
     file;
+    next_binding = ref 1;
   }
 
 (*****************************************************************************)
@@ -578,7 +588,7 @@ let params_of_parameters env params : scope =
   params |> Tok.unbracket
   |> List_.filter_map (function
        | Param { pname = Some id; pinfo = id_info; ptype = typ; _ } ->
-           let sid = SId.of_tok ~file:env.file (snd id) in
+           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -590,7 +600,7 @@ let params_of_parameters env params : scope =
         * [visit_function_definition] iterates [x.fparams] inside the
         * function scope and visits each pattern. *)
        | ParamPattern (_pat, { pname = Some id; pinfo = id_info; ptype = typ; _ }) ->
-           let sid = SId.of_tok ~file:env.file (snd id) in
+           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -608,7 +618,7 @@ let params_of_parameters env params : scope =
          when (match env.lang with
                | Lang.Ruby | Lang.Php -> true
                | _ -> false) ->
-           let sid = SId.of_tok ~file:env.file (snd id) in
+           let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
            Some (H.str_of_ident id, resolved)
@@ -639,7 +649,7 @@ let js_get_angular_constructor_args env attrs defs =
 
 let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
     ~explicit vinit vtype =
-  let sid = SId.of_tok ~file:env.file (snd id) in
+  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
   (* for the type, we use the (optional) type in vtype, or, if we can infer
    * the type of the expression vinit (literal or id), we use that as a type
    * useful when the type is not given, e.g. in Go: `var x = 2` *)
@@ -775,7 +785,7 @@ class ['self] resolve_visitor env lang =
               _;
             } )
         when lang =*= Lang.Js || lang =*= Lang.Ts ->
-          let sid = SId.of_tok ~file:env.file (snd id) in
+          let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
           let canonical = dotted_to_canonical [ file ] in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
@@ -829,7 +839,7 @@ class ['self] resolve_visitor env lang =
                             } );
                     _;
                   } ->
-                  let sid = SId.of_tok ~file:env.file (snd local_id) in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd local_id) in
                   let canonical = dotted_to_canonical [ file; imported_id ] in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -876,10 +886,10 @@ class ['self] resolve_visitor env lang =
           self#visit_pattern venv pat
       | { name = EN (Id (id, id_info)); _ }, FuncDef _
         when is_resolvable_name_ctx env lang ->
-          (* A function definition resolves to a positional sid via [of_tok] —
-           * its identity is then [(name, file, line, col)], the same key
-           * [Function_id] uses, so a call resolving to this name carries the
-           * def's identity (interprocedural analysis).
+          (* A function definition resolves to a sid that carries the def's
+           * site, [(name, file, line, col)], the key [Function_id] uses, so
+           * a call resolving to this name reaches the def's signature
+           * (interprocedural analysis).
            *
            * Scope: JS/TS resolve function names in any context (the
            * interprocedural feature those users requested, see
@@ -912,7 +922,17 @@ class ['self] resolve_visitor env lang =
             | _ -> ( match top_context env with AtToplevel -> true | _ -> false)
           in
           if resolve then (
-            let sid = SId.of_tok ~file:env.file (snd id) in
+            (* A top-level definition of a name the file already binds
+               rebinds it: the same identity, at its own site. *)
+            let binding =
+              match top_context env with
+              | AtToplevel -> (
+                  match lookup (fst id) [ !(env.names.imported) ] with
+                  | Some { entname = _, bound; _ } -> SId.to_int bound
+                  | None -> fresh_binding env)
+              | _ -> fresh_binding env
+            in
+            let sid = SId.of_tok ~binding ~file:env.file (snd id) in
             let resolved = untyped_ent (resolved_name_kind env lang, sid) in
             add_ident_imported_scope id resolved env.names;
             set_resolved env id_info resolved;
@@ -955,7 +975,7 @@ class ['self] resolve_visitor env lang =
       | ( { name = EN (Id (id, id_info)); _ },
           ModuleDef { mbody = ModuleAlias xs } ) ->
           (* similar to the ImportAs case *)
-          let sid = SId.of_tok ~file:env.file (snd id) in
+          let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
           let canonical = dotted_to_canonical xs in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
@@ -978,7 +998,7 @@ class ['self] resolve_visitor env lang =
             (function
               | id, Some (alias, id_info) ->
                   (* for python *)
-                  let sid = SId.of_tok ~file:env.file (snd alias) in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
                   let canonical = dotted_to_canonical (xs @ [ id ]) in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -987,7 +1007,7 @@ class ['self] resolve_visitor env lang =
                   add_ident_imported_scope alias resolved env.names
               | id, None ->
                   (* for python *)
-                  let sid = SId.of_tok ~file:env.file (snd id) in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
                   let canonical = dotted_to_canonical (xs @ [ id ]) in
                   let resolved =
                     untyped_ent (ImportedEntity canonical, sid)
@@ -1003,7 +1023,7 @@ class ['self] resolve_visitor env lang =
                    * Note that we guard this code with is_js lang, because Python
                    * uses also Filename in 'from ...conf import x'.
                    *)
-                  let sid = SId.of_tok ~file:env.file (snd id) in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
                   let _, b, _ = Filename_.dbe_of_filename_noext_ok s in
                   let base = (b, tok) in
                   let canonical = dotted_to_canonical [ base; id ] in
@@ -1014,7 +1034,7 @@ class ['self] resolve_visitor env lang =
               | id, Some (alias, id_info)
                 when Lang.is_js lang && fst id <> Ast_js.default_entity ->
                   (* for JS *)
-                  let sid = SId.of_tok ~file:env.file (snd alias) in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
                   let _, b, _ = Filename_.dbe_of_filename_noext_ok s in
                   let base = (b, tok) in
                   let canonical = dotted_to_canonical [ base; id ] in
@@ -1027,14 +1047,14 @@ class ['self] resolve_visitor env lang =
             imported_names
       | ImportAs (_, DottedName xs, Some (alias, id_info)) ->
           (* for python *)
-          let sid = SId.of_tok ~file:env.file (snd alias) in
+          let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
           let canonical = dotted_to_canonical xs in
           let resolved = untyped_ent (ImportedModule canonical, sid) in
           set_resolved env id_info resolved;
           add_ident_imported_scope alias resolved env.names
       | ImportAs (_, FileName (s, tok), Some (alias, id_info)) ->
           (* for Go *)
-          let sid = SId.of_tok ~file:env.file (snd alias) in
+          let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd alias) in
           let pkgname = go_package_alias s in
           let base = (pkgname, tok) in
           let canonical = dotted_to_canonical [ base ] in
@@ -1158,7 +1178,7 @@ class ['self] resolve_visitor env lang =
               | Some { entname = ImportedEntity xs, _sidm; _ } ->
                   (* Fully qualified — identity is the canonical name, not the
                      sid; still anchor the sid at the name's real place. *)
-                  let sid = SId.of_tok ~file:env.file (snd id) in
+                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
                   let rest_of_middle = List_.map fst rest_of_middle in
                   let canonical =
                     xs @ dotted_to_canonical (rest_of_middle @ [ id ])

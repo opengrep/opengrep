@@ -14,8 +14,9 @@
  *
  * The same collection works same-file (naming links the call's callee to
  * the local def) and cross-file (projidx writes [id_resolved] links onto
- * the dispatch ASTs). [G.SId.t] is positional (name, file, line, col), so
- * stamps computed on one parse apply to any other parse of the same bytes
+ * the dispatch ASTs). [G.SId.t] is a binding counted in traversal order
+ * within its file, or a definition's site, so stamps computed on one
+ * parse apply to any other parse of the same bytes
  * — interfile matches specs on fresh Naming-only parses but runs dataflow
  * on projidx-stamped ASTs, and both must agree on the added matches.
  *
