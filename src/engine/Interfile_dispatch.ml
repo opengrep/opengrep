@@ -822,7 +822,13 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
           in
           if not has_impls then db
           else dispatch_merge_fbdecl rs fid fid_arity (extract_replace fid info db)
-        | _ -> extract_replace fid info db)
+        | _ ->
+          (* An overload group's representative carries the union of its
+             members' signatures on top of its own; nothing else has
+             dispatch predecessors. *)
+          let db = extract_replace fid info db in
+          if List_.null (dispatch_impls rs fid) then db
+          else dispatch_merge_fbdecl rs fid (fid_arity_of rs info) db)
   in
   (* [SCC.scc_list] returns components in an order where callers precede
      callees for our callee->caller edges; reverse for callees-first. *)
