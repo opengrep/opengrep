@@ -23,4 +23,4 @@ Maybe the match was supposed to be filtered out by one of these patterns?
           all:
           - pattern: foo(...)
           - not: foo(goood)
-[33mASSERT[0m exit code
+ASSERT exit code

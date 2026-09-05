@@ -30,4 +30,4 @@ Maybe the match was supposed to be filtered out by one of these patterns?
               - not: bar(goood)
   line 9:
             - all:
-[33mASSERT[0m exit code
+ASSERT exit code

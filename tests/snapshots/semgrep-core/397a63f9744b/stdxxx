@@ -4,4 +4,4 @@ targets/test4.fixed.py
 targets/test4.py
 --- end input files ---
 {"results":{"rules/other_pattern.yaml":{"checks":{"other-pattern":{"passed":false,"matches":{"<TMP>/<MASKED>/targets/test4.py":{"expected_lines":[2,5],"reported_lines":[]}},"errors":[]}}}},"fixtest_results":{"targets/test4.py":{"passed":false}},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[]}
-[33mASSERT[0m exit code
+ASSERT exit code

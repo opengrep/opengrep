@@ -317,17 +317,18 @@ let group_by_rule_id (annots : annotations) : (Rule_ID.t, linenb list) Assoc.t =
            (* should not be needed given how annotations work but safer *)
            |> List.sort_uniq Int.compare ))
 
-let filter_todook (annots : annotations) (xs : linenb list) : linenb list =
-  let (todooks : linenb Set_.t) =
+let filter_todo (annots : annotations) (xs : linenb list) : linenb list =
+  let (todos : linenb Set_.t) =
     annots
     |> List_.filter_map (fun ({ kind; _ }, line) ->
            match kind with
            (* + 1 because the expected/reported is the line after the annotation *)
-           | Todook -> Some (line + 1)
-           | Ruleid
-           | Ok
+           | Todook
            | Todoruleid ->
+               Some (line + 1)
+           | Ruleid
+           | Ok ->
                None)
     |> Set_.of_list
   in
-  xs |> List_.exclude (fun line -> Set_.mem line todooks)
+  xs |> List_.exclude (fun line -> Set_.mem line todos)

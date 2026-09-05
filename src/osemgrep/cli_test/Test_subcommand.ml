@@ -168,8 +168,7 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
       | Dir _
       | URL _
       | Git _
-      | R _
-      | A _ ->
+      | R _ ->
           (* stricter: *)
           failwith "the config must be a local file")
   (* this is to allow to have the rules in a different directories than
@@ -197,8 +196,7 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
       | File _
       | URL _
       | Git _
-      | R _
-      | A _ ->
+      | R _ ->
           (* stricter: *)
           failwith "the config must be a local directory")
 
@@ -305,7 +303,9 @@ let tests_result_of_tests_result (results : tests_result) (errors : error list)
         |> List_.filter_map (function
              | MissingFixtest rule_file -> Some rule_file
              | _else_ -> None)
-        |> List.sort Fpath.compare;
+        (* a rule file with several test targets pushes one MissingFixtest per
+         * target; python: test.py lists each rule file once *)
+        |> List.sort_uniq Fpath.compare;
       (* TODO: rename to just 'errors' and put the missing_tests and missing
        * fixtests here as a kind of error.
        *)
@@ -559,9 +559,12 @@ let filter_annots_for_engine (running_engine : A.engine)
          (* ruleid => proruleid => deepruleid
           * (and todok => protodok => deeptodook)
           *)
-         | OSS, (Ruleid | Todook), OSS -> true
-         | Pro, (Ruleid | Todook), (OSS | Pro) -> true
-         | Deep, (Ruleid | Todook), (OSS | Pro | Deep) -> true
+         (* Todoruleid is kept so that the comparison below can drop the
+          * lines it annotates from both the expected and the reported set,
+          * as test.py does *)
+         | OSS, (Ruleid | Todook | Todoruleid), OSS -> true
+         | Pro, (Ruleid | Todook | Todoruleid), (OSS | Pro) -> true
+         | Deep, (Ruleid | Todook | Todoruleid), (OSS | Pro | Deep) -> true
          | _ -> false)
 
 (*****************************************************************************)
@@ -682,6 +685,21 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                       expected |> Assoc.find_opt target |> List_.optlist_to_list
                       |> List.sort_uniq Int.compare
                     in
+                    (* python: test.py takes the todook: and todoruleid: lines
+                     * out of both sets and compares what is left, so a line
+                     * whose annotation says "do not judge me" cannot fail the
+                     * check, whichever way it went. The same two sets are what
+                     * the JSON reports.
+                     *)
+                    let file_annots =
+                      Assoc.find_opt target annots |> List_.optlist_to_list
+                    in
+                    let reported_lines =
+                      A.filter_todo file_annots reported_lines
+                    in
+                    let expected_lines =
+                      A.filter_todo file_annots expected_lines
+                    in
                     let passed = reported_lines =*= expected_lines in
                     (* the final report prints the failures *)
                     if not passed then
@@ -689,24 +707,7 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                           m "test failed for rule id %s on target %s%s (%s)"
                             (Rule_ID.to_string id) !!target xtra
                             (diff_findings reported_lines expected_lines));
-                    (* TODO: not sure why pysemgrep does not report the real
-                     * reported_lines (and expected_lines) and filter those
-                     * 'todook:'. It's actually very confusing because sometimes
-                     * a test will be marked as 'passed: false' even though
-                     * in the --json the reported and expected match, but because
-                     * there are some hidden differences with the matching of
-                     * todook:.
-                     *)
-                    let file_annots =
-                      Assoc.find_opt target annots |> List_.optlist_to_list
-                    in
                     let expected_reported =
-                      let reported_lines =
-                        A.filter_todook file_annots reported_lines
-                      in
-                      let expected_lines =
-                        A.filter_todook file_annots expected_lines
-                      in
                       { Out.reported_lines; expected_lines }
                     in
                     (passed, (target, expected_reported)))
@@ -718,7 +719,15 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
                  Some
                    (Diagnosis.diagnose ~target ~rule_file:env.rule_file
                       expected_reported explanations)
-             | _ -> failwith "diagnosis for multiple targets not supported"
+             (* a rule with several test targets (e.g. a .js and a .ts one)
+              * is ordinary; the diagnosis has no way to attribute the
+              * explanations to one of them, so it gives none rather than
+              * stopping the run *)
+             | _ ->
+                 Logs.info (fun m ->
+                     m "no matching diagnosis for %s: %d test targets"
+                       (Rule_ID.to_string id) (List.length res));
+                 None
            in
            let (rule_result : Out.rule_result) =
              Out.
@@ -884,7 +893,8 @@ let run_tests (caps : < scan_caps ; .. >) (conf : Test_CLI.conf) (tests : tests)
 (* Run the conf *)
 (*****************************************************************************)
 let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
-  CLI_common.setup_logging ~force_color:true ~level:conf.common.logging_level;
+  CLI_common.setup_logging ~force_color:conf.force_color
+    ~level:conf.common.logging_level;
   Logs.debug (fun m -> m "conf = %s" (Test_CLI.show_conf conf));
   let matching_diagnosis = conf.matching_diagnosis in
   let errors = ref [] in

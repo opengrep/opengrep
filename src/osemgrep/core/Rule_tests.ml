@@ -136,13 +136,18 @@ let get_config_filenames original_config =
 *)
 
 let get_config_test_filenames ~original_config ~configs ~original_target =
-  if
-    UFile.is_reg ~follow_symlinks:true original_config
-    && UFile.is_reg ~follow_symlinks:true original_target
+  (* python: original_target_is_file_not_directory = original_target.is_file()
+   * A file is one on the file system, not one whose spelling has no trailing
+   * slash: with 'test --config rules targets' the syntactic test held for
+   * every path and paired every rule with every target. *)
+  let original_target_is_file =
+    UFile.is_reg ~follow_symlinks:true original_target
+  in
+  if UFile.is_reg ~follow_symlinks:true original_config && original_target_is_file
   then [ (original_config, [ original_target ]) ]
   else
     let targets =
-      (if UFile.is_reg ~follow_symlinks:true original_target then
+      (if original_target_is_file then
          Common2.glob (Common.spf "%s/**" !!(Fpath.parent original_target))
        else Common2.glob (Common.spf "%s/**" !!original_target))
       |> List_.map Fpath.v
@@ -153,9 +158,10 @@ let get_config_test_filenames ~original_config ~configs ~original_target =
         (is_config_test_suffix target || not (is_config_suffix target))
         && not (is_config_fixtest_suffix target)
       in
-      (Fpath.is_file_path original_target
+      (original_target_is_file
       || relatively_eq original_target target original_config config)
-      && Fpath.is_file_path target && correct_suffix
+      && UFile.is_reg ~follow_symlinks:true target
+      && correct_suffix
     in
 
     List_.map
