@@ -92,7 +92,8 @@ let cmdline_term : conf Term.t =
       optimizations output rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions subdir suppress_errors taint_interfile
       taint_interfile_depth taint_intrafile text text_outputs time_flag timeout
-      timeout_interfile timeout_threshold use_git _version_check vim
+      timeout_interfile timeout_interfile_graph timeout_threshold use_git
+      _version_check vim
       vim_outputs =
     let output_format : Output_format.t =
       SC.output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
@@ -150,6 +151,7 @@ let cmdline_term : conf Term.t =
           timeout_threshold ||| Core_runner.default_conf.timeout_threshold;
         max_memory_mb = max_memory_mb ||| Core_runner.default_conf.max_memory_mb;
         interfile_timeout = timeout_interfile;
+        interfile_graph_timeout = timeout_interfile_graph;
         max_match_per_file;
         dataflow_traces;
         (* --enable-nosem; the engine still annotates the matches, and the
@@ -270,6 +272,7 @@ let cmdline_term : conf Term.t =
     $ o_suppress_errors $ SC.o_taint_interfile $ SC.o_taint_interfile_depth
     $ SC.o_taint_intrafile $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile
+    $ SC.o_timeout_interfile_graph
     $ SC.o_timeout_threshold $ SC.o_use_git $ SC.o_version_check $ SC.o_vim
     $ SC.o_vim_outputs)
 
