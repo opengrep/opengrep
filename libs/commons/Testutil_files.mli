@@ -44,6 +44,12 @@
 type t =
   | Dir of string (* name *) * t list
   | File of string (* name *) * string (* contents *)
+  (* a file with the executable bits, like a script *)
+  | Executable of string (* name *) * string (* contents *)
+  (* a file and a directory without any permission, to test what a scan
+     does with what it cannot read. 'remove' below deletes them. *)
+  | Unreadable of string (* name *) * string (* contents *)
+  | Unreadable_dir of string (* name *) * t list
   | Symlink of string (* name *) * string (* destination path *)
 
 (* if you prefer a curried syntax to build the tree *)
@@ -82,8 +88,9 @@ val flatten : ?root:Fpath.t -> ?include_dirs:bool -> t list -> Fpath.t list
 
 (*
    Read the file tree starting from a root folder. Don't follow symlinks.
-   Fail with an exception if we can't read the files or if they're of an
-   exotic kind.
+   Fail with an exception if the root is not a folder or if an entry is of an
+   exotic kind. An entry that cannot be read comes back as Unreadable or
+   Unreadable_dir, with no contents and no entries.
 *)
 val read : Fpath.t -> t list
 

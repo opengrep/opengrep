@@ -45,7 +45,7 @@ See the [Intrafile Tainting Tutorial](https://github.com/opengrep/opengrep/wiki/
 - **Improved**: Clojure (tainting support), PHP 8.4, C# 14
 
 **Distribution:**
-- Self-contained binaries via Nuitka (no Python required)
+- Self-contained binaries compiled from OCaml
 - Signed releases with Cosign
 
 See [OPENGREP.md](OPENGREP.md) for the full list of improvements since the fork.
@@ -89,6 +89,9 @@ Or with a specific version:
 ### Manual Install
 
 Binaries are available on the [releases page](https://github.com/opengrep/opengrep/releases).
+
+On Windows, the package holds `opengrep.exe` and the DLLs it needs; keep them
+together in the directory you install them to.
 
 ## Getting started
 
@@ -250,6 +253,20 @@ To obtain SARIF output:
   "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json"
 }
 ```
+
+## Log file
+
+Set `OPENGREP_LOG_FILE` (or `SEMGREP_LOG_FILE`) to a path to get a copy of
+what Opengrep prints on stderr, at the same level: warnings and errors by
+default, more with `--verbose` or `--debug`. The file is truncated on each
+run and its directory is created. Nothing is written when the variable is
+not set. A path that cannot be written produces a warning and the run
+continues without the copy.
+
+## Colour
+
+Colour is on when stderr is a terminal. `NO_COLOR` turns it off;
+`--force-color` turns it on.
 
 ## Documentation
 

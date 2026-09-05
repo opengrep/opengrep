@@ -1,0 +1,10 @@
+--- begin input files ---
+metavariable-comparison-propagation.py
+metavariable-comparison-propagation.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 29 insertions(+)
+ create mode 100644 metavariable-comparison-propagation.py
+ create mode 100644 metavariable-comparison-propagation.yaml
+{"version":"<MASKED>","results":[{"check_id":"my_pattern_id","path":"metavariable-comparison-propagation.py","start":{"line":8,"col":5,"offset":71},"end":{"line":8,"col":11,"offset":77},"extra":{"metavars":{"$INT":{"start":{"line":7,"col":9,"offset":65},"end":{"line":7,"col":10,"offset":66},"abstract_content":"2"}},"message":"Semgrep found a match 2\n","metadata":{},"severity":"WARNING","fingerprint":"788ca9eedd3ee22232fdb01329a638a696cb7829215e2bedfa64607e0dacd8cea160a0fa0f28cc3526b011879024db0e224337136ea64fb0e92eac4d01f0b350_0","lines":"    b = 10","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"my_pattern_id","path":"metavariable-comparison-propagation.py","start":{"line":13,"col":5,"offset":117},"end":{"line":13,"col":11,"offset":123},"extra":{"metavars":{"$INT":{"start":{"line":12,"col":9,"offset":111},"end":{"line":12,"col":10,"offset":112},"abstract_content":"3"}},"message":"Semgrep found a match 3\n","metadata":{},"severity":"WARNING","fingerprint":"3554092f156cb68feecb4b124b912f5eee2cbf5a83b641ef6cabc0831f7b8b899bf9d345d639fa19ac2036d4d227f2c9ca076a0098056fdc0cad90680c8c54eb_0","lines":"    b = 10","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["metavariable-comparison-propagation.py"]},"interfile_languages_used":[],"skipped_rules":[]}

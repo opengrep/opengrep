@@ -1,0 +1,37 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][INFO]: Opengrep version: <MASKED>
+
+
+┌────────────────┐
+│ Debugging Info │
+└────────────────┘
+
+  SCAN ENVIRONMENT
+  versions    - opengrep <MASKED>
+  environment - running in environment gitlab-ci, triggering event is pull_request
+
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'rev-parse' 'HEAD'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' '--version'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'fetch' 'https://gitlab.invalid/org/repo' 'main'
+[<MASKED TIMESTAMP>][INFO]: error output: fatal: unable to access 'https://gitlab.invalid/org/repo/': Could not resolve host: gitlab.invalid
+
+[<MASKED TIMESTAMP>][WARNING]: Command failed.
+-----
+Failed to run 'git' 'fetch' 'https://gitlab.invalid/org/repo' 'main'. Possible reasons:
+- the git binary is not available
+- the current working directory is not a git repository
+- the baseline commit is not a parent of the current commit
+  (in CI, check that `OPENGREP_BRANCH` / `SEMGREP_BRANCH` and `OPENGREP_BASELINE_COMMIT` / `SEMGREP_BASELINE_COMMIT` are set correctly)
+- the current working directory is not marked as safe
+  (fix with `git config --global --add safe.directory $(pwd)`)
+
+Try running the command yourself to debug the issue.
+[<MASKED TIMESTAMP>][ERROR]: Error when we run a git command
+[<MASKED TIMESTAMP>][ERROR]: There were errors during analysis but the scan will succeed because there were no blocking findings, use --no-suppress-errors if you want it to fail when there are errors.
+ASSERT exit code

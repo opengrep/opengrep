@@ -1,0 +1,24 @@
+Test name: with git > scanning root under a symlinked folder
+--- Files added before 'git add' ---
+dir/sub/.semgrepignore
+dir/sub/b.c
+dir/sub/x/a.c
+link
+--- begin input files ---
+dir/sub/.semgrepignore
+dir/sub/b.c
+dir/sub/x/a.c
+link
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 2 insertions(+)
+ create mode 100644 dir/sub/.semgrepignore
+ create mode 100644 dir/sub/b.c
+ create mode 100644 dir/sub/x/a.c
+ create mode 120000 link
+--- Selected targets ---
+selected link/sub/.semgrepignore
+selected link/sub/b.c
+--- Skipped targets ---
+ignored link/sub/x [Semgrep_output_v1_t.Semgrepignore_patterns_match]

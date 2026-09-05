@@ -1,0 +1,9 @@
+--- begin input files ---
+eqeq.yaml
+targets/permissions/README
+targets/permissions/readable_file.py
+targets/permissions/unreadable_file.py
+targets/permissions/unreadable_subdir/file.py
+--- end input files ---
+targets/permissions/README
+targets/permissions/readable_file.py

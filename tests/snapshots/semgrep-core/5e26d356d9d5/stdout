@@ -1,0 +1,20 @@
+--- begin input files ---
+foo/a.py
+--- end input files ---
+--- scan with the baseline ---
+aborted: Command failed with exit code: 128
+-----
+Command failed with output:
+fatal: not a git repository (or any of the parent directories): .git
+
+
+Failed to run 'git merge-base 12345 HEAD'. Possible reasons:
+
+- the git binary is not available
+- the current working directory is not a git repository
+- the baseline commit is not a parent of the current commit
+  (in CI, check that `OPENGREP_BRANCH` / `SEMGREP_BRANCH` and `OPENGREP_BASELINE_COMMIT` / `SEMGREP_BASELINE_COMMIT` are set correctly)
+- the current working directory is not marked as safe
+  (fix with `git config --global --add safe.directory $(pwd)`)
+
+Try running the command yourself to debug the issue.

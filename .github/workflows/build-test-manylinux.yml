@@ -25,123 +25,40 @@ on:
 
 jobs:
 
-  build-wheels:
-    container: ${{ inputs.arch == 'x86_64' && 'quay.io/pypa/manylinux_2_28_x86_64' || 'quay.io/pypa/manylinux_2_28_aarch64' }} 
+  # The Linux binary is built against musl in an alpine container; this checks
+  # that the static executable also runs on glibc.
+  test-binary:
+    container: ${{ inputs.arch == 'x86_64' && 'quay.io/pypa/manylinux_2_28_x86_64' || 'quay.io/pypa/manylinux_2_28_aarch64' }}
     runs-on: ${{ inputs.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
     steps:
       - name: Make checkout speedy
         run: git config --global fetch.parallel 50
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
-          submodules: true
-      - run: |
-          yum update -y
-          yum install -y zip
-          echo /opt/python/cp310-cp310/bin >> "$GITHUB_PATH"
+          submodules: false
+      - name: Configure git safedir properly
+        run: git config --global --add safe.directory "$(pwd)"
       - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
         with:
-          name: opengrep-core-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}
-      - run: |
-          tar xf artifacts.tgz
-          cp artifacts/opengrep-core cli/src/semgrep/bin
-          ./scripts/build-wheels.sh
-      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
-        with:
-          name: manylinux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}-wheel
-          path: cli/dist.zip
-      - name: install the test dependencies and the wheel
-        if: inputs.arch == 'x86_64'
-        working-directory: cli
+          name: opengrep-linux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}
+      - run: tar xzf opengrep.tgz
+      - name: test version output
+        run: ./opengrep/opengrep --version
+      - name: scan a fixture of this repository
+        # --error is what turns findings into an exit code of 1
         run: |
-          python3 -m pip install --upgrade pipenv
-          pipenv install --categories=dev-packages
-          # pytest needs exceptiongroup on python 3.10, and the lockfile has it
-          # under [packages] rather than [dev-packages]
-          pipenv run pip install exceptiongroup dist/*.whl
-      - name: run the python test suite
-        if: inputs.arch == 'x86_64'
-        # the test snapshots assume opengrep is not itself running in CI,
-        # that git accepts the checkout despite the container uid mismatch,
-        # and that a capable terminal drives the CLI's styled error output
-        run: |
-          unset CI
-          unset "${!GITHUB_@}"
-          git config --global --add safe.directory "$(pwd)"
-          export TERM=xterm-256color
-          make -C cli ci-test
-
-  test-wheels:
-    container: ${{ inputs.arch == 'x86_64' && 'quay.io/pypa/manylinux_2_28_x86_64' || 'quay.io/pypa/manylinux_2_28_aarch64' }} 
-    needs:
-      - build-wheels
-    runs-on: ${{ inputs.arch == 'x86_64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
-    steps:
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
-        with:
-          name: manylinux-${{ inputs.arch == 'x86_64' && 'x86' || 'aarch64' }}-wheel
-      - run: unzip dist.zip
-      - name: install package
-        run: /opt/python/cp310-cp310/bin/pip install dist/*.whl
-      - name: test package
-        run: |
-          export PATH=/opt/python/cp310-cp310/bin:$PATH
-          opengrep --version
-      - name: e2e opengrep-core test
-        run: |
-          export PATH=/opt/python/cp310-cp310/bin:$PATH
-          echo '1 == 1' | opengrep -l python -e '$X == $X' -
-
-  test-wheels-venv:
-    if: inputs.arch == 'x86_64' 
-    container: quay.io/pypa/manylinux_2_28_x86_64
-    needs:
-      - build-wheels
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
-        with:
-          name: manylinux-x86-wheel
-      - run: unzip dist.zip
-      - name: create venv
-        run: /opt/python/cp310-cp310/bin/python3 -m venv env
-      - name: install package
-        run: env/bin/pip install dist/*.whl
-      - name: test package
-        run: |
-          env/bin/opengrep --version
-      - name: e2e opengrep-core test
-        run: |
-          echo '1 == 1' | env/bin/opengrep -l python -e '$X == $X' -
-
-  test-wheels-wsl:
-    if: inputs.arch == 'x86_64' 
-    needs:
-      - build-wheels
-    runs-on: windows-latest
-    steps:
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
-        with:
-          name: manylinux-x86-wheel
-      - run: unzip dist.zip
-      - uses: Vampire/setup-wsl@3b46b44374d5d0ae94654c45d114a3ed7a0e07a8 # ratchet:Vampire/setup-wsl@v5.0.1
-        with:
-          distribution: Ubuntu-22.04
-      - name: Install Python
-        run: |
-          sudo sed -i '/bullseye-backports/d' /etc/apt/sources.list
-          sudo apt update -y
-          sudo apt install -y make python3 python3-pip
-          sudo ln -s /usr/bin/python3 /usr/bin/python
-        shell: wsl-bash {0}
-      - name: install package
-        run: python3 -m pip install dist/*.whl
-        shell: wsl-bash {0}
-      - name: test package
-        run: |
-          opengrep --version
-        shell: wsl-bash {0}
-      - name: e2e opengrep-core test
-        run: |
-          echo '1 == 1' | opengrep -l python -e '$X == $X' -
-        shell: wsl-bash {0}
+          set +e
+          ./opengrep/opengrep scan --error --json \
+            -f tests/scan/rules/eqeq.yaml tests/scan/targets/basic/stupid.py \
+            > findings.json
+          status=$?
+          set -e
+          if [ "$status" -ne 1 ]; then
+            echo "Expected an exit code of 1 for a scan with findings, got $status" 1>&2
+            exit 1
+          fi
+          grep -Eq '"results": *\[ *\{' findings.json || {
+            echo "Expected a non-empty results array" 1>&2
+            exit 1
+          }
 

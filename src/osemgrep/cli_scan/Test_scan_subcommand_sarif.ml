@@ -9,12 +9,6 @@ open Test_scan_helpers
 (*****************************************************************************)
 (* End-to-end tests for the SARIF output of the scan subcommand.
  *
- * These were ported from cli/tests/default/e2e/test_output_sarif.py so that
- * the osemgrep-only code path is exercised on CI without depending on the
- * Python wrapper. The tests that Python marks [@osemfail] (taint labels,
- * --error exit behaviour, non-existent input files) are intentionally left
- * behind in Python for now.
- *
  * Where the output goes, rather than what a SARIF document contains, is
  * tested in Test_scan_subcommand_output.ml.
  *)
@@ -107,6 +101,13 @@ let test_sarif_output_file_keeps_json_clean (caps : Scan_subcommand.caps) () =
 
 (* SARIF keeps the suppressed findings so it can report them, but they are
  * suppressed, so --error must not fail a scan that found nothing else. *)
+(* A scanning root that does not exist is a fatal error: the SARIF document
+ * carries it as a tool execution notification, exit code 2. *)
+let test_sarif_missing_root (caps : Scan_subcommand.caps) () =
+  run_scan caps ~rule:"rules/eqeq.yaml" ~targets:[]
+    ~extra_args:[ "targets/basic/inexistent.py" ]
+    ~check:Exit_code.Check.fatal ()
+
 let test_sarif_error_only_suppressed (caps : Scan_subcommand.caps) () =
   run_scan caps ~rule:"rules/regex/regex-nosemgrep.yaml"
     ~targets:[ "targets/basic/regex-all-noopengrep.txt" ]
@@ -123,6 +124,9 @@ let basic_cases : (string * string * string) list =
     ("metavariable_type",
      "rules/metavariable_type.yaml",
      "targets/basic/stupid.py");
+    (* taint labels and requires; the matchBasedId/v1 is the fingerprint,
+     * see Test_scan_subcommand.test_fingerprints *)
+    ("taint labels", "rules/taint_trace.yaml", "targets/taint/taint_trace.cpp");
   ]
 
 let tests (caps : < Scan_subcommand.caps >) =
@@ -170,4 +174,7 @@ let tests (caps : < Scan_subcommand.caps >) =
          t "SARIF: --error ignores noopengrep-suppressed findings"
            ~checked_output:(Testo.stdout ()) ~normalize:normalise
            (test_sarif_error_only_suppressed caps);
+         t "SARIF: missing scanning root, fatal error in the document"
+           ~checked_output:(Testo.stdout ()) ~normalize:normalise
+           (test_sarif_missing_root caps);
        ])

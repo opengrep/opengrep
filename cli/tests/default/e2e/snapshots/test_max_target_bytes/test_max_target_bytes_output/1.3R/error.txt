@@ -1,3 +1,0 @@
-Usage: [01mopengrep scan[m [[01m--help[m] [[04mOPTION[m]… [[04mTARGETS[m]…
-opengrep scan: option [01m--max-target-bytes[m: Invalid representation for a number
-               of bytes: 1.3R

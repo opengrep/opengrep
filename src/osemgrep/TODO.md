@@ -44,8 +44,9 @@ by Martin:
   based on Python-compatible glob patterns. Maybe this could be done
   with the Glob module of the ocaml-re library, or maybe we need to
   write our own parser to be fully backward-compatible.
-- End-to-end/QA tests are run from `/cli/semgrep` using `make osemgrep-e2e` or `osemgrep-qa`. The latter takes longer. I suggest
-  focusing on the former initially. See inside the makefile for more info.
+- End-to-end tests are run from the repository root with `make core-test`.
+  The ported fixtures live under `tests/scan`, `tests/targeting`,
+  `tests/configs`, `tests/test_subcommand` and `tests/ls`.
 - The `osemgrep-util/` source folder is a mixed bag. I wasn't sure which
   code was needed just for `semgrep scan` and what would be used by
   the other subcommands.

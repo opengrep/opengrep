@@ -1,0 +1,28 @@
+--- begin input files ---
+.gitignore
+.semgrepignore
+.semgrepignore_explicit
+eqeq-basic.yaml
+targets/ignores/.gitignore
+targets/ignores/.semgrepignore
+targets/ignores/find.js
+targets/ignores/ignore.min.js
+targets/ignores/ignore_test.js
+targets/ignores/ok/find.js
+targets/ignores/tests/ignore.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 11 files changed, 63 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 .semgrepignore
+ create mode 100644 .semgrepignore_explicit
+ create mode 100644 eqeq-basic.yaml
+ create mode 100644 targets/ignores/.gitignore
+ create mode 100644 targets/ignores/.semgrepignore
+ create mode 100644 targets/ignores/find.js
+ create mode 100644 targets/ignores/ignore.min.js
+ create mode 100644 targets/ignores/ignore_test.js
+ create mode 100644 targets/ignores/ok/find.js
+ create mode 100644 targets/ignores/tests/ignore.js
+{"version":"<MASKED>","results":[{"check_id":"eqeq-bad","path":"targets/ignores/find.js","start":{"line":1,"col":9,"offset":8},"end":{"line":1,"col":15,"offset":14},"extra":{"metavars":{"$X":{"start":{"line":1,"col":9,"offset":8},"end":{"line":1,"col":10,"offset":9},"abstract_content":"0"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"809138afafdc8b4879bd009bc81a79066ca4f56a02c652f1e23639ca6fb58353b8590f0652b4fa86abceea3d0a63d8f249db5adc153a4d45d0656d4427eeca33_0","lines":"var x = 0 == 0","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"eqeq-bad","path":"targets/ignores/ignore_test.js","start":{"line":1,"col":9,"offset":8},"end":{"line":1,"col":15,"offset":14},"extra":{"metavars":{"$X":{"start":{"line":1,"col":9,"offset":8},"end":{"line":1,"col":10,"offset":9},"abstract_content":"0"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"cb714ae23e482170a7ee390b0eb88c0d4f0189d303efa0a6ba0df05fff36690208050cf8de32f5674cec8d20120ad743495918c75cb101110843bd0cfca3d45a_0","lines":"var x = 0 == 0","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"eqeq-bad","path":"targets/ignores/tests/ignore.js","start":{"line":1,"col":9,"offset":8},"end":{"line":1,"col":15,"offset":14},"extra":{"metavars":{"$X":{"start":{"line":1,"col":9,"offset":8},"end":{"line":1,"col":10,"offset":9},"abstract_content":"0"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"2f90eb4b93cc189124fa7648a6e5146eac393be8a22395c45ac6aa555731c3a7926ce7ff3893a079315d0ca9874185bc622811df34e730aeb9a429924ff658bb_0","lines":"var x = 0 == 0","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/ignores/find.js","targets/ignores/ignore_test.js","targets/ignores/tests/ignore.js"]},"interfile_languages_used":[],"skipped_rules":[]}

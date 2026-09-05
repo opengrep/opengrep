@@ -1,0 +1,12 @@
+--- begin input files ---
+per-rule-include.yaml
+targets/per-rule-include/dont-scan-me.py
+targets/per-rule-include/scan-me.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 12 insertions(+)
+ create mode 100644 per-rule-include.yaml
+ create mode 100644 targets/per-rule-include/dont-scan-me.py
+ create mode 100644 targets/per-rule-include/scan-me.py
+{"version":"<MASKED>","results":[{"check_id":"example-python","path":"targets/per-rule-include/scan-me.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":4,"offset":3},"extra":{"metavars":{},"message":"Found something\n","metadata":{},"severity":"WARNING","fingerprint":"b97e6aee2dccc6b1d9eb195cbcdccb35d6983ee007e8450ca0e9bc4d3b06d5b0f6541b4406fdd2fc092609dd7d93cdc1a719c4b50aeca44d2ded28476a57de3f_0","lines":"f()","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/per-rule-include/scan-me.py"]},"interfile_languages_used":[],"skipped_rules":[]}

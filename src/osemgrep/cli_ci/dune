@@ -14,8 +14,6 @@
     osemgrep_networking
     semgrep.targeting
     osemgrep_cli_scan ; reusing the same flags and most of the code
-    osemgrep_cli_show ; for the dump-command-for-core dispatch
-    osemgrep_distributed_scan_stub
     networking.http_mock_client ; for Test_ci_subcommand.ml
   )
  (preprocess

@@ -18,21 +18,8 @@ open Fpath_.Operators
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* Module to represent and parse semgrep test annotations.
+(* Module to represent and parse the test annotations of a rule's test file.
  * See https://semgrep.dev/docs/writing-rules/testing-rules/ for more info.
- *
- * Note that our docs currently mention just the OSS test annotations but not
- * the pro one (e.g., 'proruleid:', 'deepruleid:').
- * See tests/intrafile/README for more info on the pro/deep annotations.
- *
- * Note that if a finding is expected in OSS but not in Pro, you may need to
- * combine two annotations, e.g. `ruleid: prook: test` would mean that the
- * finding is expected in OSS but in Pro we expect no finding, which could be
- * due to inter-procedural analysis being able to spot sanitization via a
- * third-function.
- *
- * TODO: update https://semgrep.dev/docs/writing-rules/testing-rules and add
- * doc for the pro/deep test annotations and remove tests/intrafile/README.
  *)
 
 (*****************************************************************************)
@@ -48,37 +35,14 @@ type kind =
   | Todook
   (* Those should *not* be reported (TN)
    * The 'ok:' is not that useful (it's mostly a comment) and actually
-   * complicates some code during parsing (see the _no_ok regexps below), but
-   * the `prook:` and `deepok:` are useful to "negate" a preceding ruleid: when
-   * a legitimate finding in semgrep OSS is actually considered a FP for the
-   * pro engine and should not be reported.
+   * complicates some code during parsing (see the _no_ok regexps below).
    *)
   | Ok
 [@@deriving show]
 
-(* Here we follow the conventions used in the annotations themselves with
- * proruleid: and deepruleid: (see tests/intrafile/README).
- * alt: CoreScan | ProScan | DeepScan
- * less: factorize with the other engine types
- *)
-type engine = OSS | Pro | Deep [@@deriving show]
-
-(* ex: "#ruleid: lang.ocaml.do-not-use-lisp-map"
- * but also "ruleid: prook: lang.ocaml.do-not-use-lisp-map".
- *
- * Note that 'ruleid:' implies 'proruleid:' and 'deepruleid:' so you don't need
- * to repeat those annotations. You usually need multiple kind/engine
- * prefix when one engine TP would be another engine TN (e.g., 'ruleid: prook:')
- * See Test_subcommand.filter_annots_for_engine comment for more about those
- * implications.
- *)
+(* ex: "#ruleid: lang.ocaml.do-not-use-lisp-map" *)
 type t = {
   kind : kind;
-  engine : engine;
-  (* e.g., a ruleid: prook: x
-   * alt: call the field negators?
-   *)
-  others : (kind * engine) list;
   (* alt: ids: Rule_ID.t list; (instead we return a list of annots) *)
   id : Rule_ID.t;
 }
@@ -88,7 +52,8 @@ type t = {
 type linenb = int
 type annotations = (t * linenb) list
 
-let prefilter_annotation_regexp = ".*\\(ruleid\\|ok\\|todoruleid\\|todook\\):.*"
+let annotation_keywords = "\\(ruleid\\|ok\\|todoruleid\\|todook\\):"
+let prefilter_annotation_regexp = ".*" ^ annotation_keywords ^ ".*"
 
 (* removing ok as it could be valid code (as in `ok: foo` in JS)
  * alt: choose an annotation for ok: that would be less ambiguous
@@ -97,7 +62,7 @@ let prefilter_annotation_regexp = ".*\\(ruleid\\|ok\\|todoruleid\\|todook\\):.*"
 let prefilter_annotation_regexp_no_ok =
   ".*\\(ruleid\\|todoruleid\\|todook\\):.*"
 
-let annotation_regexp = "^\\(ruleid\\|ok\\|todoruleid\\|todook\\):\\(.*\\)"
+let annotation_regexp = "^" ^ annotation_keywords ^ "\\(.*\\)"
 
 let (comment_syntaxes : (string * string option) list) =
   [
@@ -128,28 +93,51 @@ let kind_of_string (str : string) : kind =
   | "todook" -> Todook
   | s -> failwith (spf "not a valid annotation: %s" s)
 
+(* "ruleid: foo, bar" -> (Ruleid, "foo, bar") *)
+let parse_kind_opt (s : string) : (kind * string) option =
+  if s =~ annotation_regexp then
+    let kind_str, s = Common.matched2 s in
+    Some (kind_of_string kind_str, String.trim s)
+  else None
+
+(* matches a comment opener followed by an annotation keyword, anywhere in the
+ * line *)
+let annotated_comment_regexp : Str.regexp =
+  let openers =
+    comment_syntaxes
+    |> List_.map (fun ((prefix, _) : string * string option) -> Str.quote prefix)
+    |> String.concat "\\|"
+  in
+  Str.regexp ("\\(" ^ openers ^ "\\)[ \t]*" ^ annotation_keywords)
+
+(* The text of the comment. The annotation may follow code on the same line
+ * ('x = 1  # ruleid: foo'), as in pysemgrep, which looked for a comment
+ * opener followed by the keyword anywhere in the line. A comment without an
+ * annotation must open the line.
+ *)
 let remove_enclosing_comment_opt (str : string) : string option =
-  comment_syntaxes
-  |> List.find_map (fun (prefix, suffixopt) ->
-         (* stricter: pysemgrep allows code before the comment, but this
-          * was used only once in semgrep-rules/ and it can be ambiguous as
-          * <some code> # ruleid: xxx might make you think the finding is
-          * on this line instead of the line after. Forcing the annotation
-          * to be alone on its line before the finding is clearer.
-          *)
-         if String.starts_with ~prefix str then
-           let str = Str.string_after str (String.length prefix) in
-           match suffixopt with
-           | None -> Some str
-           | Some suffix ->
-               if String.ends_with ~suffix str then
-                 let before = String.length str - String.length suffix in
-                 Some (Str.string_before str before)
-               else (
-                 Logs.warn (fun m ->
-                     m "could not find end comment %s in %s" suffix str);
-                 Some str)
-         else None)
+  let text_after ((prefix, suffixopt) : string * string option) (pos : int) :
+      string =
+    let text = Str.string_after str (pos + String.length prefix) in
+    match suffixopt with
+    | Some suffix when String.ends_with ~suffix text ->
+        Str.string_before text (String.length text - String.length suffix)
+    | Some suffix ->
+        Logs.warn (fun m -> m "could not find end comment %s in %s" suffix text);
+        text
+    | None -> text
+  in
+  let syntax_of (prefix : string) : string * string option =
+    comment_syntaxes
+    |> List.find (fun ((p, _) : string * string option) -> String.equal p prefix)
+  in
+  match Str.search_forward annotated_comment_regexp str 0 with
+  | pos -> Some (text_after (syntax_of (Str.matched_group 1 str)) pos)
+  | exception Not_found ->
+      comment_syntaxes
+      |> List.find_opt (fun ((prefix, _) : string * string option) ->
+             String.starts_with ~prefix str)
+      |> Option.map (fun (syntax : string * string option) -> text_after syntax 0)
 
 let () =
   Testo.test "Test_subcommand.remove_enclosing_comment_opt" (fun () ->
@@ -165,44 +153,12 @@ let () =
       test_remove "<!-- foobar -->" (Some " foobar ");
       ())
 
-(* returns the rest of the string too *)
-let parse_kind_and_engine_opt (s : string) : (kind * engine * string) option =
-  let engine, s =
-    match s with
-    | _ when s =~ "^pro\\(.*\\)" -> (Pro, Common.matched1 s)
-    | _ when s =~ "^deep\\(.*\\)" -> (Deep, Common.matched1 s)
-    | _ -> (OSS, s)
-  in
-  if s =~ annotation_regexp then
-    let kind_str, s = Common.matched2 s in
-    let kind = kind_of_string kind_str in
-    let s = String.trim s in
-    Some (kind, engine, s)
-  else None
-
-(* TODO: could check for bad combinations such as
- * - ruleid: deepruleid: proruleid:  (redundant)
- * - todoruleid: deepruleid: (probably just need deepruleid:)
- *)
-let parse_kinds_and_engines_opt (s : string) :
-    (kind * engine * (kind * engine) list * string) option =
-  let* kind, engine, s = parse_kind_and_engine_opt s in
-  let rec aux annots s =
-    match parse_kind_and_engine_opt s with
-    | None -> Some (kind, engine, List.rev annots, s)
-    | Some (kind2, engine2, s) -> aux ((kind2, engine2) :: annots) s
-  in
-  aux [] s
-
 (*****************************************************************************)
 (* Parsing *)
 (*****************************************************************************)
 
 (* This does a few things:
  *  - check comments: #, //, ( *, <--
- *  - support pro/deep annotations
- *  - support possible deepok: or prook: following the ruleid: (to negate
- *    the ruleid when running a ProScan or DeepScan)
  *  - support multiple ruleids separated by commas
  * alt: use parser combinators instead of those regexps/trims/Str.string_xxx
  *)
@@ -231,8 +187,8 @@ let annotations_of_string (orig_str : string) (file : Fpath.t) (idx : linenb) :
         (* " ruleid: foo.bar " *)
         let s = String.trim s in
         (* "ruleid: foo.bar" *)
-        match parse_kinds_and_engines_opt s with
-        | Some (kind, engine, others, s) ->
+        match parse_kind_opt s with
+        | Some (kind, s) ->
             let xs =
               Str.split_delim (Str.regexp "[ \t]*,[ \t]*") s
               |> List_.map String.trim
@@ -240,7 +196,7 @@ let annotations_of_string (orig_str : string) (file : Fpath.t) (idx : linenb) :
             xs
             |> List_.filter_map (fun id_str ->
                    match Rule_ID.of_string_opt id_str with
-                   | Some id -> Some ({ kind; engine; others; id }, idx)
+                   | Some id -> Some ({ kind; id }, idx)
                    | None ->
                        Logs.warn (fun m ->
                            m
@@ -278,26 +234,17 @@ let () =
                (Dumper.dump xs) (Dumper.dump expected))
       in
       let rule_id s = Rule_ID.of_string_exn s in
-      test "// ruleid: foo"
-        [ { kind = Ruleid; engine = OSS; others = []; id = rule_id "foo" } ];
+      test "// ruleid: foo" [ { kind = Ruleid; id = rule_id "foo" } ];
       test "// ruleid: foo, bar"
         [
-          { kind = Ruleid; engine = OSS; others = []; id = rule_id "foo" };
-          { kind = Ruleid; engine = OSS; others = []; id = rule_id "bar" };
+          { kind = Ruleid; id = rule_id "foo" };
+          { kind = Ruleid; id = rule_id "bar" };
         ];
-      test "<!-- ruleid: foo-bar -->"
-        [ { kind = Ruleid; engine = OSS; others = []; id = rule_id "foo-bar" } ];
+      test "<!-- ruleid: foo-bar -->" [ { kind = Ruleid; id = rule_id "foo-bar" } ];
       (* the ok: does not mean it's an annot; it's regular (JS) code *)
       test "return res.send({ok: true})" [];
-      test "// ruleid: deepok: foo"
-        [
-          {
-            kind = Ruleid;
-            engine = OSS;
-            others = [ (Ok, Deep) ];
-            id = rule_id "foo";
-          };
-        ];
+      (* the annotation may follow code on the same line *)
+      test "x = 1 # todook: foo" [ { kind = Todook; id = rule_id "foo" } ];
       ())
 
 (*****************************************************************************)
@@ -317,17 +264,18 @@ let group_by_rule_id (annots : annotations) : (Rule_ID.t, linenb list) Assoc.t =
            (* should not be needed given how annotations work but safer *)
            |> List.sort_uniq Int.compare ))
 
-let filter_todook (annots : annotations) (xs : linenb list) : linenb list =
-  let (todooks : linenb Set_.t) =
+let filter_todo (annots : annotations) (xs : linenb list) : linenb list =
+  let (todos : linenb Set_.t) =
     annots
     |> List_.filter_map (fun ({ kind; _ }, line) ->
            match kind with
            (* + 1 because the expected/reported is the line after the annotation *)
-           | Todook -> Some (line + 1)
-           | Ruleid
-           | Ok
+           | Todook
            | Todoruleid ->
+               Some (line + 1)
+           | Ruleid
+           | Ok ->
                None)
     |> Set_.of_list
   in
-  xs |> List_.exclude (fun line -> Set_.mem line todooks)
+  xs |> List_.exclude (fun line -> Set_.mem line todos)

@@ -25,7 +25,3 @@ type caps =
    (unless you used --debug).
 *)
 val main : caps -> string array -> Exit_code.t
-
-(* Insert --experimental into argv, after the subcommand when there is one.
-   Used by Main.ml for the bare 'opengrep' binary. *)
-val with_experimental_flag : string array -> string array

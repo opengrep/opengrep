@@ -1,0 +1,27 @@
+--- begin input files ---
+invalid_javascript.js
+rules/two_rules/eqeq.yaml
+rules/two_rules/func.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 24 insertions(+)
+ create mode 100644 invalid_javascript.js
+ create mode 100644 rules/two_rules/eqeq.yaml
+ create mode 100644 rules/two_rules/func.yaml
+
+
+┌─────────────────┐
+│ 3 Code Findings │
+└─────────────────┘
+
+  [36m[22m[24m  invalid_javascript.js[0m
+   [31m❯❯❱[0m [1mrules.two_rules.func[0m
+          Called a function
+
+            3┆ var constants = [1mrequire('crypto')[0m;
+            ⋮┆----------------------------------------
+            5┆ key: [1mfs.readFileSync('/etc/ssl/private/private.key')[0m,
+            ⋮┆----------------------------------------
+            9┆ [1mhttps.createServer(sslOptions)[0m;
+

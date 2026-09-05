@@ -24,6 +24,36 @@ module OutJ = Semgrep_output_v1_j
 exception Semgrep_error of string * Exit_code.t option
 exception Exit_code of Exit_code.t
 
+(*****************************************************************************)
+(* Broken pipe *)
+(*****************************************************************************)
+
+(* A reader that closed the pipe ('opengrep ... | head') ends the output
+ * normally: nothing is reported and no error document can be written, since
+ * there is nowhere left to write it.
+ *)
+let is_broken_pipe (exn : exn) : bool =
+  match exn with
+  (* the text of a channel error is what strerror gives for EPIPE *)
+  | Sys_error msg -> String_.contains ~term:"Broken pipe" msg
+  | Unix.Unix_error (Unix.EPIPE, _, _) -> true
+  | _ -> false
+
+(* The standard formatters are flushed again by Stdlib from at_exit, which
+ * would raise the broken pipe a second time, outside any handler. Sending
+ * what they still hold to a sink that cannot fail keeps that flush quiet.
+ *)
+let silence_std_formatter () : unit =
+  Format.pp_set_formatter_out_functions Format.std_formatter
+    {
+      out_string = (fun _ _ _ -> ());
+      out_flush = (fun () -> ());
+      out_newline = (fun () -> ());
+      out_spaces = (fun _ -> ());
+      out_indent = (fun _ -> ());
+      out_width = (fun _ ~pos:_ ~len:_ -> 0);
+    }
+
 (* TOPORT?
    (*
       python: class ErrorWithSpan(SemgrepError)
@@ -111,6 +141,10 @@ let rec string_of_error_type (error_type : OutJ.error_type) : string =
   | PatternParseError _ -> string_of_error_type PatternParseError0
   | IncompatibleRule _ -> string_of_error_type IncompatibleRule0
   | DependencyResolutionError _ -> "Dependency resolution error"
+  (* python: the short_msg of the ErrorWithSpan *)
+  | InvalidRuleSchemaError -> "Invalid rule schema"
+  | UnknownLanguageError -> "Unknown language"
+  | MissingConfig -> "Missing config"
   (* All the other cases don't have arguments in Semgrep_output_v1.atd
    * and have some <json name="..."> annotations to generate the right string
    * so we can mostly just call Out.string_of_error_type (and remove the
@@ -122,8 +156,6 @@ let rec string_of_error_type (error_type : OutJ.error_type) : string =
   | RuleParseError
   | SemgrepWarning
   | SemgrepError
-  | InvalidRuleSchemaError
-  | UnknownLanguageError
   | MissingPlugin
   | ParseError
   | OtherParseError

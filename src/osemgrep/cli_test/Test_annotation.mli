@@ -9,23 +9,8 @@ type kind =
   | Ok
 [@@deriving show]
 
-type engine = OSS | Pro | Deep [@@deriving show]
-
-(* ex: "#ruleid: lang.ocaml.do-not-use-lisp-map"
- * but also "ruleid: prook: lang.ocaml.do-not-use-lisp-map".
- *
- * Note that 'ruleid:' implies 'proruleid:' and 'deepruleid:' so you don't need
- * to repeat those annotations. You usually need multiple kind/engine
- * prefix when one engine TP would be another engine FP (e.g., 'ruleid: prook:')
- *)
-type t = {
-  kind : kind;
-  engine : engine;
-  (* e.g., to deal with multiple annots as in 'ruleid: prook: x' *)
-  others : (kind * engine) list;
-  id : Rule_ID.t;
-}
-[@@deriving show]
+(* ex: "#ruleid: lang.ocaml.do-not-use-lisp-map" *)
+type t = { kind : kind; id : Rule_ID.t } [@@deriving show]
 
 (* starts at 1 *)
 type linenb = int
@@ -33,4 +18,8 @@ type annotations = (t * linenb) list
 
 val annotations : Fpath.t -> annotations
 val group_by_rule_id : annotations -> (Rule_ID.t, linenb list) Assoc.t
-val filter_todook : annotations -> linenb list -> linenb list
+(* Drop the lines carrying a 'todook:' or a 'todoruleid:' annotation.
+ * python: test.py subtracts todo_ok_lines and todo_ruleid_lines from both the
+ * expected and the reported lines before comparing them, which is what makes
+ * those annotations mean "do not judge this line". *)
+val filter_todo : annotations -> linenb list -> linenb list

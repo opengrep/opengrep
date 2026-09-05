@@ -88,7 +88,6 @@ val supported_xlangs : string
 *)
 val of_string : ?rule_id:string -> string -> t
 val to_string : t -> string
-val is_proprietary : t -> bool
 
 (* of_string/to_string for ATD e.g.
    type xlang = string wrap <ocaml module="Xlang">

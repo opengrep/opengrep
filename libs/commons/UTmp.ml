@@ -94,7 +94,7 @@ let new_temp_file ?(prefix = default_temp_file_prefix) ?(suffix = "") ?temp_dir
     |> Fpath.v
   in
   (* NOTE: Scan works with the statement below uncommented...! So this is not used?
-   * At least for opengrep-cli (osemgrep). But it's used in other places like Autofix. *)
+   * At least for the opengrep CLI (osemgrep). But it's used in other places like Autofix. *)
   (* ignore ( assert false ); *)
   Log.debug (fun m -> m "creating temp file %s" (Fpath.to_string temp_file));
   if not (Saturn.Htbl.try_add temp_files_created temp_file ()) then

@@ -81,6 +81,7 @@ type result = {
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
+    git_repo:bool ->
     conf ->
     (* TODO alt: pass a bool alongside each target path that indicates whether
        the target is explicit i.e. occurs directly on the command line *)
@@ -131,16 +132,15 @@ let default_conf : conf =
 (*************************************************************************)
 (* Metrics and reporting *)
 (*************************************************************************)
-let report_status ~respect_gitignore
-    (lang_jobs : Lang_job.t list) (rules : Rule.t list) (targets : Fpath.t list)
-    =
+(* the targets are those tracked by git only when git listed them and its
+   exclusions were respected *)
+let report_status ~(tracked_by_git : bool) (lang_jobs : Lang_job.t list)
+    (rules : Rule.t list) (targets : Fpath.t list) =
   Logs.app (fun m ->
       m "%a"
         (fun ppf () ->
-          (* TODO: validate if target is actually within a git repo and
-             perhaps set respect_git_ignore to false otherwise *)
-          Status_report.pp_status ~num_rules:(List.length rules)
-            ~num_targets:(List.length targets) ~respect_gitignore lang_jobs ppf)
+          Status_report.pp_status ~rules ~num_targets:(List.length targets)
+            ~tracked_by_git lang_jobs ppf)
         ())
 
 (*************************************************************************)
@@ -182,22 +182,14 @@ let detect_extract_languages all_rules =
 *)
 let group_rules_by_target_language (rules : Rule.t list) :
     (Xlang.t * Rule.t list) list =
-  (* target language -> rules *)
-  (* TODO: use Assoc.group_by *)
-  let tbl = Hashtbl.create 100 in
+  (* target language -> rules, in the order the rules were given so that
+     the scan runs them in that order (which --timeout-threshold depends on) *)
   rules
-  |> List.iter (fun (rule : Rule.t) ->
-         let pattern_lang = rule.target_analyzer in
-         let target_langs = Xlang.flatten pattern_lang in
-         target_langs
-         |> List.iter (fun lang ->
-                let rules =
-                  match Hashtbl.find_opt tbl lang with
-                  | None -> []
-                  | Some rules -> rules
-                in
-                Hashtbl.replace tbl lang (rule :: rules)));
-  Hashtbl.fold (fun lang rules acc -> (lang, rules) :: acc) tbl []
+  |> List.concat_map (fun (rule : Rule.t) ->
+         Xlang.flatten rule.target_analyzer
+         |> List_.map (fun (lang : Xlang.t) -> (lang, rule)))
+  |> Assoc.group_by fst
+  |> List_.map (fun (lang, lang_rules) -> (lang, List_.map snd lang_rules))
 
 (* If Javascript is one of the rule languages, we should also run on
    Typescript files. This implementation mimics the hack in `rule.py`.
@@ -264,11 +256,28 @@ let targets_and_rules_of_lang_jobs (lang_jobs : Lang_job.t list) :
   (targets, rules)
 
 (* used only in Test_subcommand.ml *)
-let targets_for_files_and_rules (files : Fpath.t list) (rules : Rule.t list) :
-    Target.t list =
-  let conf = Find_targets.default_conf in
-  let lang_jobs = split_jobs_by_language conf rules files in
-  lang_jobs |> List.concat_map targets_of_lang_job
+let targets_and_rules_for_files (files : Fpath.t list) (rules : Rule.t list) :
+    Target.t list * Rule.t list =
+  (* Test targets are explicit, like the files named on the command line of
+   * a scan, and the rules are the ones a scan runs, a JavaScript rule taking
+   * TypeScript targets too. A target whose extension belongs to no language
+   * of the rules is analysed by every rule.
+   *)
+  let has_a_rule_language_extension (file : Fpath.t) : bool =
+    add_typescript_to_javascript_rules_hack rules
+    |> List.exists (fun (rule : Rule.t) ->
+           Filter_target.filter_target_for_xlang rule.target_analyzer file)
+  in
+  let conf =
+    {
+      Find_targets.default_conf with
+      always_select_explicit_targets = true;
+      explicit_targets =
+        files |> List_.exclude has_a_rule_language_extension
+        |> Find_targets.Explicit_targets.of_list;
+    }
+  in
+  targets_and_rules_of_lang_jobs (split_jobs_by_language conf rules files)
 
 (*************************************************************************)
 (* SCA targeting *)
@@ -410,7 +419,8 @@ let mk_result ?(inline = false) (all_rules : Rule.rule list) (res : Core_result.
 
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
-  let run ?file_match_hook (conf : conf) (targeting_conf : Find_targets.conf)
+  let run ?file_match_hook ~(git_repo : bool) (conf : conf)
+      (targeting_conf : Find_targets.conf)
       (matching_conf : Match_patterns.matching_conf)
       (rules_and_invalid : Rule_error.rules_and_invalid)
       (targets : Fpath.t list) : Core_result.result_or_exn =
@@ -444,8 +454,8 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
     *)
     let lang_jobs = split_jobs_by_language targeting_conf valid_rules targets in
     report_status
-      ~respect_gitignore:targeting_conf.respect_gitignore lang_jobs valid_rules
-      targets;
+      ~tracked_by_git:(targeting_conf.respect_gitignore && git_repo)
+      lang_jobs valid_rules targets;
     let code_targets, applicable_rules =
       targets_and_rules_of_lang_jobs lang_jobs
     in

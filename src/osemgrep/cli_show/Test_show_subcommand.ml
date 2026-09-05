@@ -98,6 +98,7 @@ let test_dump_config (caps : caps) : Testo.t =
         (* because of the use of Xpattern.count global for pattern id *)
         Testo.mask_line ~after:"pid = " ~before:" }" ();
         Testo.mask_line ~after:"id_info_id = " ~before:" }" ();
+        Testo.mask_line ~after:"parse_time = " ~before:" }" ();
       ]
     __FUNCTION__
     (fun () ->
@@ -146,7 +147,8 @@ let test_dump_ast (caps : caps) : Testo.t =
       Exit_code.Check.ok exit_code)
 
 let test_dump_ast_when_error (caps : caps) : Testo.t =
-  t ~checked_output:(Testo.stdxxx ()) ~normalize:[ Testutil_logs.mask_time ]
+  t ~checked_output:(Testo.split_stdout_stderr ())
+    ~normalize:[ Testutil_logs.mask_time ]
     __FUNCTION__ (fun () ->
       let files = [ F.File ("error.js", "function (") ] in
       let exit_code =

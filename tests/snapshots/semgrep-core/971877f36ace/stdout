@@ -1,0 +1,10 @@
+--- begin input files ---
+dockerfile
+dockerfile.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 23 insertions(+)
+ create mode 100644 dockerfile
+ create mode 100644 dockerfile.yaml
+{"version":"<MASKED>","results":[{"check_id":"double-root","path":"dockerfile","start":{"line":3,"col":1,"offset":34},"end":{"line":3,"col":10,"offset":43},"extra":{"metavars":{"$ROOT":{"start":{"line":3,"col":6,"offset":39},"end":{"line":3,"col":10,"offset":43},"abstract_content":"root"}},"message":"'USER' is specified twice\n","metadata":{},"severity":"ERROR","fingerprint":"cb83d8514fe999f369750e149dc27f2cf7bd7237daecd8e3c15d382398680d42addb3dd2c4c5d288fb840c1214bd7903bacf072acc62baf21532d0e92ae0678a_0","lines":"USER root","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"double-root","path":"dockerfile","start":{"line":7,"col":1,"offset":102},"end":{"line":7,"col":10,"offset":111},"extra":{"metavars":{"$ROOT":{"start":{"line":7,"col":6,"offset":107},"end":{"line":7,"col":10,"offset":111},"abstract_content":"root"}},"message":"'USER' is specified twice\n","metadata":{},"severity":"ERROR","fingerprint":"cb83d8514fe999f369750e149dc27f2cf7bd7237daecd8e3c15d382398680d42addb3dd2c4c5d288fb840c1214bd7903bacf072acc62baf21532d0e92ae0678a_1","lines":"USER root","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["dockerfile"]},"interfile_languages_used":[],"skipped_rules":[]}

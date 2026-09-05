@@ -9,7 +9,7 @@
 # This config defines also 2 "jobs" with the `stages: [manual]` directive
 # which are only exercised in CI (see .github/workflows/lint.yml).
 
-exclude: "^tests|^cli/tests/default/e2e.*/(targets|snapshots|rules/syntax)|^cli/tests/performance/targets_perf_sca|^cli/src/(semgrep|semdep)/external|^cli/bin|\\binvalid\\b|^libs/ocaml-tree-sitter-core|^libs/testo|^libs/pcre2|^cli/src/semgrep/semgrep_interfaces|languages/.*/semgrep-.*|tests/semgrep-rules"
+exclude: "^tests|\\binvalid\\b|^libs/ocaml-tree-sitter-core|^libs/testo|^libs/pcre2|languages/.*/semgrep-.*|tests/semgrep-rules"
 
 default_stages: [commit]
 
@@ -60,75 +60,9 @@ repos:
   # ----------------------------------------------------------
   # Extra hooks with repositories defining their own hooks
   # ----------------------------------------------------------
-  - repo: https://github.com/myint/autoflake
-    rev: v2.2.1 # PLEASE DO NOT CHANGE [see NOTE "Python"]
-    hooks:
-      - id: autoflake
-        args:
-          - --in-place
-          - --remove-unused-variables
-          - --remove-duplicate-keys
-          - --remove-all-unused-imports
-          - --ignore-init-module-imports
-          - --exclude=/cli/src/semgrep/output_from_core.py
-
-  # Black is a Python code formatter
-  # Note that you need at least pre-commit 3.2.0 to use black
-  # See https://github.com/psf/black/issues/4065
-  - repo: https://github.com/psf/black
-    rev: 23.10.1 # PLEASE DO NOT CHANGE [see NOTE "Python"]
-    hooks:
-      - id: black
-        args: [--exclude=/cli/src/semgrep/output_from_core.py]
-
-  - repo: https://github.com/asottile/reorder_python_imports
-    rev: v3.12.0 # PLEASE DO NOT CHANGE [see NOTE "Python"]
-    hooks:
-      - id: reorder-python-imports
-        args: ["--application-directories=cli/src", --py37-plus]
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.7.1 # PLEASE DO NOT CHANGE [see NOTE "Python"]
-    hooks:
-      - id: mypy
-        exclude: ^cli/tests/.+$|^setup.py$|^cli/src/semdep/external/packaging/.*$|^cli/src/semgrep/console_scripts/.*$|^cli/src/semdep/external/parsy/.*$|^cli/scripts/.*$|^scripts/.+$|^stats/parsing-stats/.+$|^perf/.+$|^js/language_server/targets/.+$
-        args: [--config, mypy.ini, --show-error-codes, --python-version, "3.11"]
-        additional_dependencies: &mypy-deps
-          # versions must be manually synced:
-          # - cli/setup.py lists dependencies
-          # - cli/Pipfile lists type hint packages for dev env
-          # - .pre-commit-config.yaml's mypy hooks also list type hint packages
-
-          # some packages ship with type definitions
-          - attrs~=21.3
-          # click 8.1.4's new decorator type hints don't seem to work well
-          - click<8.1.4
-          - defusedxml~=0.7.1
-          - packaging~=21.0
-          - requests~=2.22
-          - rich~=13.5.2
-          - tomli~=2.0.1
-          - opentelemetry-api~=1.25.0
-          - opentelemetry-sdk~=1.25.0
-          - opentelemetry-exporter-otlp-proto-http~=1.25.0
-          - opentelemetry-instrumentation-requests~=0.46b0
-          # other packages have separate typings published
-          - types-colorama~=0.4.0
-          - types-freezegun
-          - types-Jinja2
-          - types-jsonschema~=4.6.0
-          - types-python-dateutil
-          - types-requests
-          - types-setuptools
-      - id: mypy
-        alias: mypy-test
-        name: mypy (test files)
-        files: ^cli/tests/.+$
-        args: [--config, mypy-tests.ini, --show-error-codes]
-        additional_dependencies: *mypy-deps
-
+  # Lint the Python scripts left in the repo (perf/, scripts/, stats/)
   - repo: https://github.com/PyCQA/flake8
-    rev: 6.1.0 # PLEASE DO NOT CHANGE [see NOTE "Python"]
+    rev: 6.1.0 # PLEASE DO NOT CHANGE
     hooks:
       - id: flake8
         additional_dependencies: ["flake8-bugbear==22.1.11"]
@@ -178,7 +112,6 @@ repos:
         language: docker_image
         types:
           - dockerfile
-        exclude: "^scripts/release/linuxbrew[.]Dockerfile$"
         entry: hadolint/hadolint:v2.8.0-alpine hadolint
         args: ["--ignore", "DL3008", "--ignore", "DL3018"]
 
@@ -205,7 +138,8 @@ repos:
     hooks:
       - id: semgrep
         name: Semgrep Jsonnet
-        # This uses the Python "hook" in .pre-commit-hooks.yaml and setup.py.
+        # This uses the Python "hook" defined by the repo: above, not the
+        # one in our own .pre-commit-hooks.yaml.
         # alt: use 'repo: local', and 'language: docker', which can use
         # the very latest docker image, which is nice, but is far slower.
         language: python
@@ -251,7 +185,7 @@ repos:
             # This is implemented via the exclude: above (see the comment
             # further above to understand why)
           ]
-  # Dogfooding .pre-commit-hooks.yml and setup.py
+  # Dogfooding .pre-commit-hooks.yml
   # Use a fixed version of p/python and p/bandit to not get new findings
   # We run `semgrep ci` for our main rulesets
   - repo: https://github.com/semgrep/pre-commit
@@ -260,12 +194,12 @@ repos:
       - id: semgrep
         name: Semgrep Python
         types: [python]
-        exclude: "^cli/tests/.+$|^scripts/.+$|^cli/setup.py$"
+        exclude: "^scripts/.+$"
         args: ["--config", "tests/precommit_dogfooding/python.yml", "--error"]
       - id: semgrep
         name: Semgrep Bandit
         types: [python]
-        exclude: "^cli/tests/.+$|^scripts/.+$|^cli/setup.py$"
+        exclude: "^scripts/.+$"
         args: ["--config", "tests/precommit_dogfooding/bandit.yml", "--error"]
 
   # Run Semgrep Docker images. Only used in CI since it's slower for local developmemt.
@@ -283,12 +217,12 @@ repos:
       - id: semgrep-docker-develop
         name: Semgrep Develop Python
         types: [python]
-        exclude: "^cli/tests/.+$|^scripts/.+$|^cli/setup.py$"
+        exclude: "^scripts/.+$"
         args: ["--config", "tests/precommit_dogfooding/python.yml", "--error"]
         stages: [manual]
       - id: semgrep-docker-develop
         name: Semgrep Develop Bandit
         types: [python]
-        exclude: "^cli/tests/.+$|^scripts/.+$|^cli/setup.py$"
+        exclude: "^scripts/.+$"
         args: ["--config", "tests/precommit_dogfooding/bandit.yml", "--error"]
         stages: [manual]

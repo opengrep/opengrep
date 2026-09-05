@@ -28,6 +28,11 @@ type conf = {
   rules_source : Rules_source.t;
   (* TODO? really needed? *)
   core_runner_conf : Core_runner.conf;
+  (* --json: the errors of the validation are then reported as the cli
+   * output document, as they are for a scan *)
+  json : bool;
+  (* --force-color, which wins over $NO_COLOR like it does for a scan *)
+  force_color : bool;
   common : CLI_common.conf;
 }
 [@@deriving show]
@@ -54,16 +59,20 @@ let o_args : string list Term.t =
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common =
+  let combine args common force_color =
     let rules_source =
       match args with
       | [] -> Error.abort "Nothing to validate, pass a directory or rule file"
       | xs -> Rules_source.Configs xs
     in
     let core_runner_conf = Core_runner.default_conf in
-    { rules_source; core_runner_conf; common }
+    (* the 'validate' subcommand has no output flag of its own; only
+       'scan --validate --json' asks for the document *)
+    { rules_source; core_runner_conf; json = false; force_color; common }
   in
-  Term.(const combine $ o_args $ CLI_common.o_common)
+  Term.(
+    const combine $ o_args $ CLI_common.o_common
+    $ CLI_common.o_force_color ~default:Output.default.force_color)
 
 let doc = "validating the rules"
 
@@ -76,7 +85,7 @@ let man : Cmdliner.Manpage.block list =
   ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep validate" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep validate" ~doc ~man ~exits:CLI_common.exits_validate
 
 (*****************************************************************************)
 (* Entry point *)

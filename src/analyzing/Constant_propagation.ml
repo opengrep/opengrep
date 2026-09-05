@@ -425,14 +425,6 @@ let add_special_constants env lang prog =
 (* Entry point *)
 (*****************************************************************************)
 
-type propagate_basic_visitor_funcs = {
-  visit_definition :
-    Eval.env * Iter_with_context.context -> AST_generic.definition -> unit;
-}
-
-let hook_propagate_basic_visitor : propagate_basic_visitor_funcs option ref =
-  ref None
-
 class ['self] propagate_basic_visitor lang stats =
   object (_self : 'self)
     inherit [_] Iter_with_context.iter_with_context as super
@@ -506,13 +498,8 @@ class ['self] propagate_basic_visitor lang stats =
           super#visit_definition (env, ctx) x
       | entity, ClassDef c ->
           let x' = entity, ClassDef (H.reorder_fields_in_class_definition c) in
-          !hook_propagate_basic_visitor
-          |> Option.iter (fun v -> v.visit_definition (env, ctx) x');
           super#visit_definition (env, ctx) x'
-      | _ ->
-          !hook_propagate_basic_visitor
-          |> Option.iter (fun v -> v.visit_definition (env, ctx) x);
-          super#visit_definition (env, ctx) x
+      | _ -> super#visit_definition (env, ctx) x
 
     (* THINK: Should we just visit every single name ? *)
     method! visit_NamedAttr (env, ctx) tok name args =
@@ -660,15 +647,6 @@ let propagate_dataflow lang ast =
       ast
       |> Visit_function_defs.visit (fun _ent fdef ->
              let fun_cfg = CFG_build.cfg_of_gfdef lang fdef in
-             (* when/ pattern when is not constant propagation but is related in the sense
-              * that it also finds extra info by analyzing the cfg. we are reusing the cfg
-              * created here to annotate facts for the pattern when feature.
-              *
-              * TODO: refactor this code if we don't incorporate when into svalue analysis.
-              *)
-             (match !Dataflow_when.hook_annotate_facts with
-             | None -> ()
-             | Some annotate_facts -> annotate_facts fun_cfg.cfg);
              propagate_dataflow_one_function lang fun_cfg);
 
       (* We consider the top-level function the interior of a degenerate function,

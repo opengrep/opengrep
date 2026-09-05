@@ -1,0 +1,10 @@
+--- begin input files ---
+pattern-inside.yaml
+pattern_inside_basic.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 18 insertions(+)
+ create mode 100644 pattern-inside.yaml
+ create mode 100644 pattern_inside_basic.py
+{"version":"<MASKED>","results":[{"check_id":"test_rule_id","path":"pattern_inside_basic.py","start":{"line":2,"col":5,"offset":15},"end":{"line":3,"col":21,"offset":44},"extra":{"metavars":{"$CLASS":{"start":{"line":1,"col":7,"offset":6},"end":{"line":1,"col":8,"offset":7},"abstract_content":"A"},"$FUNC":{"start":{"line":2,"col":9,"offset":19},"end":{"line":2,"col":10,"offset":20},"abstract_content":"B"}},"message":"method B is in A","metadata":{},"severity":"INFO","fingerprint":"d2573006078454d582a22ea4ecef99e2bf167833a99a279299870c457b4d8f05e2651adf945a936bd85553cbb43523c992b830202a4d0de975696ef1d2d4c82b_0","lines":"    def B():\n        print(\"hey\")","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"test_rule_id","path":"pattern_inside_basic.py","start":{"line":5,"col":5,"offset":50},"end":{"line":6,"col":21,"offset":79},"extra":{"metavars":{"$CLASS":{"start":{"line":1,"col":7,"offset":6},"end":{"line":1,"col":8,"offset":7},"abstract_content":"A"},"$FUNC":{"start":{"line":5,"col":9,"offset":54},"end":{"line":5,"col":10,"offset":55},"abstract_content":"C"}},"message":"method C is in A","metadata":{},"severity":"INFO","fingerprint":"bbded53a4eb11f2021b9af30387d0c29daeda77142d52f72d4b22103a20e610191c3d25d9d0aecdf82c489edc1344479727e4e5aab825c9bb4a507718fa58694_0","lines":"    def C():\n        print(\"yeh\")","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["pattern_inside_basic.py"]},"interfile_languages_used":[],"skipped_rules":[]}

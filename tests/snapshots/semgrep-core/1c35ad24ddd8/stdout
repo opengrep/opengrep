@@ -1,0 +1,33 @@
+--- begin input files ---
+rules/python-delete-import.yaml
+targets/python-delete-import.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/python-delete-import.yaml
+ create mode 100644 targets/python-delete-import.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/python-delete-import.py
+   ❯❯❱ rules.python-typing-osemgrep
+          found one
+
+           ▶▶┆ Autofix ▶ delete
+            2┆ from typing import Dict
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ delete
+            3┆ from typing import List
+
+--- targets/python-delete-import.py after the scan ---
+import sys
+
+def hello():
+    print("hello world")
+
+hello()
+

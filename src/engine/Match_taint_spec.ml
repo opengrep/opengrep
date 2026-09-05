@@ -79,12 +79,6 @@ type spec_matches = {
 }
 
 (*****************************************************************************)
-(* Hooks *)
-(*****************************************************************************)
-
-let hook_mk_taint_spec_match_preds = ref None
-
-(*****************************************************************************)
 (* Finding matches for taint specs *)
 (*****************************************************************************)
 
@@ -413,27 +407,24 @@ let any_is_in_propagators_matches_OSS rule matches any :
              @ [])
 
 let mk_taint_spec_match_preds rule matches =
-  match !hook_mk_taint_spec_match_preds with
-  | None ->
-      Taint_rule_inst.
-        {
-          is_source =
-            (fun any ->
-              any_is_in_matches_OSS rule matches.sources any
-                ~get_id:(fun (ts : R.taint_source) -> ts.source_id));
-          is_propagator =
-            (fun any ->
-              any_is_in_propagators_matches_OSS rule matches.propagators any);
-          is_sanitizer =
-            (fun any ->
-              any_is_in_matches_OSS rule matches.sanitizers any
-                ~get_id:(fun (ts : R.taint_sanitizer) -> ts.sanitizer_id));
-          is_sink =
-            (fun any ->
-              any_is_in_matches_OSS rule matches.sinks any
-                ~get_id:(fun (ts : R.taint_sink) -> ts.sink_id));
-        }
-  | Some hook -> hook rule matches
+  Taint_rule_inst.
+    {
+      is_source =
+        (fun any ->
+          any_is_in_matches_OSS rule matches.sources any
+            ~get_id:(fun (ts : R.taint_source) -> ts.source_id));
+      is_propagator =
+        (fun any ->
+          any_is_in_propagators_matches_OSS rule matches.propagators any);
+      is_sanitizer =
+        (fun any ->
+          any_is_in_matches_OSS rule matches.sanitizers any
+            ~get_id:(fun (ts : R.taint_sanitizer) -> ts.sanitizer_id));
+      is_sink =
+        (fun any ->
+          any_is_in_matches_OSS rule matches.sinks any
+            ~get_id:(fun (ts : R.taint_sink) -> ts.sink_id));
+    }
 
 (*****************************************************************************)
 (* Entry point *)

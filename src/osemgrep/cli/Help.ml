@@ -23,9 +23,9 @@
  * generate it manually, but anyway we want full control of the help
  * message so this isn't too bad.
  *
- * LATER: add 'test' new osemgrep-only
- * subcommands (not added yet to avoid regressions in
- * tests/default/e2e/test_help.py).
+ * The list below must name every subcommand of CLI.known_subcommands; it
+ * used to leave the opengrep-only ones out to keep the pytest help snapshots
+ * unchanged, which no longer exist.
  *
  * coupling: with https://semgrep.dev/docs/cli-reference#semgrep-commands
  * updated automatically by update-help-command.yml in the semgrep-docs repo
@@ -72,8 +72,11 @@ let print_semgrep_dashdash_help (stdout : Cap.Console.stdout) =
 
 @{<ul>Options@}:
   -h, --help  Show this message and exit.
+  --core      Run the low-level engine CLI; its own options are shown by @{<cyan>`opengrep --core -help`@}
 
 @{<ul>Commands@}:
+  @{<cyan>ci@}                   Run Opengrep on a git diff (for use in CI)
+  @{<cyan>install-ci@}           Add an Opengrep workflow to a git repository
   @{<cyan>lsp@}                  Start the Opengrep LSP server (useful for IDEs)
   @{<cyan>scan@}                 Run Opengrep rules on local folders or files
   @{<cyan>show@}                 Show various types of information

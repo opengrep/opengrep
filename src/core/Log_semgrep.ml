@@ -6,13 +6,13 @@ let help_msg =
   {|
 If you want to show the logs of a particular library
 (e.g., the semgrep targeting library), you'll need to adjust the
-SEMGREP_LOG_SRCS environment variable as in
+OPENGREP_LOG_SRCS environment variable as in
 
-  SEMGREP_LOG_SRCS="semgrep.targeting" semgrep ... --debug
+  OPENGREP_LOG_SRCS="semgrep.targeting" opengrep ... --debug
 
-or for osemgrep you can use it with any log level as in
+or with any other log level as in
 
-  SEMGREP_LOG_SRCS="semgrep.targeting" ./bin/osemgrep ... --verbose
+  OPENGREP_LOG_SRCS="semgrep.targeting" opengrep ... --verbose
 
 You can see the list of possible libraries above in this log as in
 ...
@@ -20,17 +20,15 @@ You can see the list of possible libraries above in this log as in
 ...
 [00.04][DEBUG](default): Skipping logs for commons.pcre
 ...
-For more information, See
-https://www.notion.so/semgrep/Logging-in-semgrep-semgrep-core-osemgrep-67c9046fa53744728d9d725a5a244f64
 |}
 
 (* Small wrapper around Logs_.setup() (itself a wrapper around Logs.set_xxx)
  * TODO: add some --semgrep-log-xxx flags in osemgrep CLI for the envvars so
  * they can be set also with CLI flags and will be part of the man page.
  *)
-let setup ?log_to_file ?require_one_of_these_tags
-    ~force_color ~level () =
-  UConsole.setup ~highlight_setting:(if force_color then On else Auto) ();
+let setup ?log_to_file ?copy_to_file ?require_one_of_these_tags
+    ~(highlight_setting : Console.highlight_setting) ~level () =
+  UConsole.setup ~highlight_setting ();
   (* We override the default use of LOG_XXX env var in Logs_.setup() with
    * SEMGREP_LOG_XXX env vars because Gitlab was reporting perf problems due
    * to all the logging produced by Semgrep. Indeed, Gitlab CI itself is running
@@ -60,7 +58,7 @@ let setup ?log_to_file ?require_one_of_these_tags
   (* Datadog and other tools for viewing logs sent to otel make it easy to
      filter by log level, so maybe we should send all? But that'll be expensive
      ... *)
-  Logs_.setup ?log_to_file ?require_one_of_these_tags 
+  Logs_.setup ?log_to_file ?copy_to_file ?require_one_of_these_tags
     (* We accept both the OPENGREP_* names and the legacy SEMGREP_* ones, with
      * the OPENGREP_* name winning when both are set (the lists are consulted in
      * order of precedence). An empty (or, for the level, unrecognized) value is

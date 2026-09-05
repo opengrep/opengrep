@@ -1,0 +1,58 @@
+--- begin input files ---
+basic/README.md
+basic/bento.png
+basic/inside.py
+basic/metavariable-comparison-bad-content.py
+basic/metavariable-comparison-base.py
+basic/metavariable-comparison-strip.py
+basic/metavariable-comparison.py
+basic/metavariable-regex-multi-regex.py
+basic/metavariable-regex-multi-rule.py
+basic/metavariable-regex.py
+basic/nested-patterns.js
+basic/nosem.c
+basic/nosem.go
+basic/nosem.java
+basic/nosem.js
+basic/nosem.py
+basic/regex-all-noopengrep.txt
+basic/regex-any-language.html
+basic/regex-nosemgrep.txt
+basic/regex-utf8.txt
+basic/regex.py
+basic/simple_python_no_extension
+basic/stupid.js
+basic/stupid.py
+basic/stupid_no_extension
+metavariable-regex-multi-regex.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 26 files changed, 179 insertions(+)
+ create mode 100644 basic/README.md
+ create mode 100644 basic/bento.png
+ create mode 100644 basic/inside.py
+ create mode 100644 basic/metavariable-comparison-bad-content.py
+ create mode 100644 basic/metavariable-comparison-base.py
+ create mode 100644 basic/metavariable-comparison-strip.py
+ create mode 100644 basic/metavariable-comparison.py
+ create mode 100644 basic/metavariable-regex-multi-regex.py
+ create mode 100644 basic/metavariable-regex-multi-rule.py
+ create mode 100644 basic/metavariable-regex.py
+ create mode 100644 basic/nested-patterns.js
+ create mode 100644 basic/nosem.c
+ create mode 100644 basic/nosem.go
+ create mode 100644 basic/nosem.java
+ create mode 100644 basic/nosem.js
+ create mode 100644 basic/nosem.py
+ create mode 100644 basic/regex-all-noopengrep.txt
+ create mode 100644 basic/regex-any-language.html
+ create mode 100644 basic/regex-nosemgrep.txt
+ create mode 100644 basic/regex-utf8.txt
+ create mode 100644 basic/regex.py
+ create mode 100644 basic/simple_python_no_extension
+ create mode 100644 basic/stupid.js
+ create mode 100644 basic/stupid.py
+ create mode 100644 basic/stupid_no_extension
+ create mode 100644 metavariable-regex-multi-regex.yaml
+{"version":"<MASKED>","results":[{"check_id":"metavar-test-multi-regex","path":"basic/metavariable-regex-multi-regex.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":38,"offset":37},"extra":{"metavars":{"$X":{"start":{"line":1,"col":25,"offset":24},"end":{"line":1,"col":32,"offset":31},"abstract_content":"method1"},"$Y":{"start":{"line":1,"col":33,"offset":32},"end":{"line":1,"col":37,"offset":36},"abstract_content":"arg1"}},"message":"Metavariable regex test multi regex","metadata":{},"severity":"ERROR","fingerprint":"449120a04606078cd7ce76c872cbaaf313ec2161417d38b736f9a59d5581e588c3216c24685a0d3af9494b052d59f1598dd7d803df85f2640456da52de7a0049_0","lines":"metavariable_regex_test.method1(arg1)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["basic/inside.py","basic/metavariable-comparison-bad-content.py","basic/metavariable-comparison-base.py","basic/metavariable-comparison-strip.py","basic/metavariable-comparison.py","basic/metavariable-regex-multi-regex.py","basic/metavariable-regex-multi-rule.py","basic/metavariable-regex.py","basic/nosem.py","basic/regex.py","basic/stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}

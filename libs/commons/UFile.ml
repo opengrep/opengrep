@@ -77,21 +77,13 @@ module Legacy = struct
    unclear.
 *)
   let read_file ?(max_len = max_int) path =
-    let buf_len = 4096 in
-    let extbuf = Buffer.create 4096 in
-    let buf = Bytes.create buf_len in
-    let rec loop fd =
-      match Unix.read fd buf 0 buf_len with
-      | 0 -> Buffer.contents extbuf
-      | num_bytes ->
-          assert (num_bytes > 0);
-          assert (num_bytes <= buf_len);
-          Buffer.add_subbytes extbuf buf 0 num_bytes;
-          if Buffer.length extbuf >= max_len then Buffer.sub extbuf 0 max_len
-          else loop fd
+    let chan = UStdlib.open_in_bin path in
+    let contents =
+      Common.protect ~finally:(fun () -> close_in chan) (fun () ->
+          In_channel.input_all chan)
     in
-    let fd = UUnix.openfile path [ Unix.O_RDONLY ] 0 in
-    Common.protect ~finally:(fun () -> Unix.close fd) (fun () -> loop fd)
+    if String.length contents > max_len then String.sub contents 0 max_len
+    else contents
 
   let write_file ~file s =
     let chan = UStdlib.open_out_bin file in
@@ -299,17 +291,16 @@ let lines_of_file_exn (start_line, end_line) file : string list =
      EOF (e.g. a '}' closing a truncated block), and we must not read past
      the array. The [try/with] below still guards any other bad index. *)
   let end_line = min end_line (Array.length arr - 1) in
-  let lines = List_.enum start_line end_line in
-  match arr with
-  (* This is the case of the empty file. *)
-  | [| "" |] -> []
-  | _ ->
-      lines
-      |> List_.map (fun i ->
-             try arr.(i) with
-             | Invalid_argument s ->
-                 let exn =
-                   Common.ErrorOnFile
-                     (spf "lines_of_file(): %s on index %d" s i, file)
-                 in
-                 Exception.catch_and_reraise exn)
+  (* This is the case of the empty file, whose only entry is the padding at
+     index 0, and of a range that starts past the last line. *)
+  if start_line > end_line then []
+  else
+    List_.enum start_line end_line
+    |> List_.map (fun i ->
+           try arr.(i) with
+           | Invalid_argument s ->
+               let exn =
+                 Common.ErrorOnFile
+                   (spf "lines_of_file(): %s on index %d" s i, file)
+               in
+               Exception.catch_and_reraise exn)

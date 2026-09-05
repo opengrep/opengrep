@@ -99,7 +99,8 @@ let metarules_pack = "p/semgrep-rule-lints"
 (* Targeting (finding the semgrep yaml files to validate) *)
 (*****************************************************************************)
 let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
-    (rules_source : Rules_source.t) : Fpath.t list * int * int * int =
+    (rules_source : Rules_source.t) :
+    Fpath.t list * int * Core_error.t list * Core_error.t list =
   (* Checking (1) and (2). Parsing the rules is already a form of validation.
    * Before running metachecks on those rules, we make sure we can parse them.
    * TODO: report not only Rule.invalid_rule_errors but all Rule.Error.t for (1)
@@ -118,21 +119,33 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
       rules_source
   in
   (* ex: missing toplevel 'rules:' (probably not a semgrep rule file) *)
-  fatal_errors
-  |> List.iter (fun (err : Rule_error.t) ->
-         (* alt: Error.abort *)
-         Logs.warn (fun m -> m "%s" (Rule_error.string_of_error err)));
+  let pp_rule_error (err : Core_error.t) : unit =
+    (* alt: Error.abort *)
+    Logs.warn (fun m ->
+        m "%s"
+          (Fmt_.with_buffer_to_string (fun ppf ->
+               Rule_errors_report.pp_errors ppf [ err ])
+          |> String.trim))
+  in
+  let fatal_core_errors =
+    fatal_errors |> List_.map Core_error.error_of_rule_error
+  in
+  fatal_core_errors |> List.iter pp_rule_error;
   let rules, invalid_rules =
     Rule_fetching.partition_rules_and_invalid rules_and_origin
   in
-  invalid_rules
-  |> List.iter (fun (err : Rule_error.invalid_rule) ->
-         match err with
-         (* to get the "Missing semgrep extension ... install --pro" error *)
-         (* alt: just warn *)
-         | MissingPlugin s, _, _ -> Error.abort s
-         | _ ->
-             Logs.warn (fun m -> m "%s" (Rule_error.string_of_invalid_rule err)));
+  let invalid_rule_errors =
+    invalid_rules
+    |> List_.map (fun (err : Rule_error.invalid_rule) ->
+           match err with
+           (* to get the "Missing semgrep extension ... install --pro" error *)
+           (* alt: just warn *)
+           | MissingPlugin s, _, _ -> Error.abort s
+           | _ ->
+               let core_error = Core_error.error_of_invalid_rule err in
+               pp_rule_error core_error;
+               core_error)
+  in
   (* In a validate context, rules are actually targets of metarules.
    * alt: could also process Configs to compute the targets.
    *)
@@ -150,7 +163,6 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
            | Local_file path -> Some path
            | CLI_argument
            | Registry
-           | App
            | Untrusted_remote _
            | Git_repo _ ->
                (* These origins don't provide a local rule file to run the
@@ -169,10 +181,7 @@ let find_targets_rules (caps : < caps ; .. >) ~(strict : bool)
           "no rules were metachecked: none of the given configs is a local \
            file or directory (registry, URL and git+ configs are parsed but \
            not metachecked)");
-  ( targets,
-    List.length rules,
-    List.length fatal_errors,
-    List.length invalid_rules )
+  (targets, List.length rules, fatal_core_errors, invalid_rule_errors)
 
 (*****************************************************************************)
 (* Checking the rules *)
@@ -203,7 +212,7 @@ let check_targets_rules (caps : < caps ; .. >) targets_rules
     Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
   in
   let result_or_exn =
-    core_run_func.run core_runner_conf
+    core_run_func.run ~git_repo:false core_runner_conf
       (* These two configs are irrelevant to the "validate" subcommand *)
       Find_targets.default_conf Match_patterns.default_matching_conf
       (metarules, []) targets_rules
@@ -250,6 +259,24 @@ let check_targets_rules (caps : < caps ; .. >) targets_rules
 (* Reporting *)
 (*****************************************************************************)
 
+(* the error of a metacheck match, as pysemgrep reported it in the errors of
+ * its output.
+ * coupling: with Check_rule.error and use of SemgrepMatchFound *)
+let core_error_of_metacheck_error (x : Out.cli_match) : Core_error.t =
+  let loc : Tok.location =
+    {
+      str = "";
+      pos =
+        {
+          bytepos = x.start.offset;
+          line = x.start.line;
+          column = x.start.col - 1;
+          file = x.path;
+        };
+    }
+  in
+  Core_error.mk_error ~msg:x.extra.message ~loc Out.SemgrepMatchFound
+
 (* TODO: use CapConsole not Logs.app ? *)
 let report_errors (_caps : < Cap.stdout >) ~metacheck_errors ~num_errors
     ~num_fatal_errors ~num_rules =
@@ -273,11 +300,12 @@ let report_errors (_caps : < Cap.stdout >) ~metacheck_errors ~num_errors
 (*****************************************************************************)
 
 let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
-  CLI_common.setup_logging ~force_color:true ~level:conf.common.logging_level;
+  CLI_common.setup_logging ~force_color:conf.force_color
+    ~level:conf.common.logging_level;
   Logs.debug (fun m -> m "conf = %s" (Validate_CLI.show_conf conf));
 
   (* step1: getting the targets (which contain rules) *)
-  let targets_rules, num_rules, num_fatal_errors, num_invalid_rules =
+  let targets_rules, num_rules, fatal_errors, invalid_rule_errors =
     find_targets_rules caps ~strict:conf.core_runner_conf.strict
       conf.rules_source
   in
@@ -288,18 +316,38 @@ let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
   in
 
   (* step3: summarizing findings (errors) *)
-  (* alt? care about fatal_errors? usually because not semgrep rule file *)
-  let num_errors = num_invalid_rules + List.length metacheck_errors in
+  (* the fatal errors, usually a file that is not a rule file, count too:
+   * the report calls such a configuration invalid, so the run must fail *)
+  let num_errors =
+    List.length invalid_rule_errors + List.length metacheck_errors
+  in
+  let num_fatal_errors = List.length fatal_errors in
   report_errors
     (caps :> < Cap.stdout >)
     ~metacheck_errors ~num_errors ~num_fatal_errors ~num_rules;
 
-  (* step4: exit code *)
-  match num_errors with
-  | 0 -> Exit_code.ok ~__LOC__
-  | _else_ ->
+  (* step3': the same errors as the document of the format asked for, as
+   * pysemgrep's output handler emitted them for 'scan --validate --json' *)
+  let errors : Core_error.t list =
+    fatal_errors @ invalid_rule_errors
+    @ List_.map core_error_of_metacheck_error metacheck_errors
+  in
+  if conf.json then
+    Output.output_result ~keep_ignored:false
+      (caps :> < Cap.stdout >)
+      { Output.default with output_format = Output_format.Json }
+      (Profiler.make ())
+      (Core_runner.mk_result [] (Core_result.mk_result_with_just_errors errors))
+    |> ignore;
+
+  (* step4: exit code. A configuration the report calls invalid always fails,
+   * with the code of the last error as pysemgrep's _final_raise gave it. *)
+  match List.rev errors with
+  | [] -> Exit_code.ok ~__LOC__
+  | (last : Core_error.t) :: _ ->
       (* was a raise SemgrepError originally *)
-      Error.abort "Please fix the above errors and try again."
+      Logs.err (fun m -> m "Please fix the above errors and try again.");
+      Cli_json_output.exit_code_of_error_type last.typ
 
 (*****************************************************************************)
 (* Entry point *)

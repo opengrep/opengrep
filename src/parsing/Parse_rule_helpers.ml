@@ -444,32 +444,6 @@ let parse_rule_id env (key : key) x : (Rule_ID.t * Tok.t, Rule_error.t) Result.t
   | None ->
       error_at_key env.id key ("Expected a valid rule ID. Instead got " ^ str)
 
-let parse_http_method env (key : key) x =
-  let/ meth = parse_string env key x in
-  match meth with
-  | "DELETE" -> Ok `DELETE
-  | "GET" -> Ok `GET
-  | "HEAD" -> Ok `HEAD
-  | "POST" -> Ok `POST
-  | "PUT" -> Ok `PUT
-  | _ -> error_at_key env.id key ("non-supported HTTP method: " ^ meth)
-
-let parse_auth env (key : key) x : (Rule.auth, Rule_error.t) Result.t =
-  let/ auth = parse_dict env key x in
-  let/ type_ = take_key auth env parse_string "type" in
-  match type_ with
-  | "sigv4" ->
-      let/ secret_access_key =
-        take_key auth env parse_string "secret_access_key"
-      in
-      let/ access_key_id = take_key auth env parse_string "access_key_id" in
-      let/ region = take_key auth env parse_string "region" in
-      let/ service = take_key auth env parse_string "service" in
-      Ok (R.AWS_SIGV4 { secret_access_key; access_key_id; region; service })
-  | auth_ty ->
-      error_at_key env.id key
-        ("Unknown authorization type requested to be added: " ^ auth_ty)
-
 let parse_str_or_dict env (value : G.expr) :
     ((G.ident, dict) Either.t, Rule_error.t) Result.t =
   match value.G.e with

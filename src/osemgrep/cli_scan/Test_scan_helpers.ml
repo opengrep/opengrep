@@ -1,14 +1,16 @@
 (* SPDX-License-Identifier: LGPL-2.1-only *)
 
 module F = Testutil_files
+open Fpath_.Operators
 
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* Shared scaffolding for the end-to-end tests of the scan subcommand, used
- * by Test_scan_subcommand_sarif.ml and Test_scan_subcommand_output.ml.
+(* Shared scaffolding for the end-to-end tests of the scan subcommand, the
+ * Test_scan_subcommand*.ml modules.
  *
- * Fixture rules and targets live under tests/sarif/. The OCaml test harness
+ * Fixture rules and targets live under tests/scan/, and the modules whose
+ * fixtures live elsewhere pass their root. The OCaml test harness
  * runs from the project root (see scripts/run-core-test), so relative paths
  * resolve before we descend into the temporary git repo.
  *)
@@ -17,10 +19,10 @@ module F = Testutil_files
 (* Fixtures and the environment *)
 (*****************************************************************************)
 
-let fixtures_root : Fpath.t = Fpath.v "tests/sarif"
+let fixtures_root : Fpath.t = Fpath.v "tests/scan"
 
-let read_fixture (rel : string) : string =
-  UFile.read_file Fpath.(fixtures_root // v rel)
+let read_fixture ?(root : Fpath.t = fixtures_root) (rel : string) : string =
+  UFile.read_file Fpath.(root // v rel)
 
 let dummy_app_token : string = "FAKETESTINGAUTHTOKEN"
 
@@ -36,13 +38,131 @@ let with_env_app_token ?(token : string = dummy_app_token) (f : unit -> 'a) : 'a
  * would the "version" that opens the JSON output, recognisable by the
  * "results" following it. The root-level "version" of SARIF is the spec
  * version (stable, followed by "runs") and must NOT be masked. *)
+(* The directories, named pipes and stdin copies the tests and the scan
+   create under the system's temporary directory, and nothing else there: a
+   fixture may name /tmp itself. Both the directory as configured and its
+   physical path. *)
+let mask_test_temp_paths () : string -> string =
+  let temp_dirs =
+    let configured = Filename.get_temp_dir_name () in
+    List.sort_uniq String.compare [ configured; Unix.realpath configured ]
+    |> List_.map (fun (dir : string) ->
+           Re.Pcre.quote (Fpath.to_string (Fpath.rem_empty_seg (Fpath.v dir))))
+  in
+  Testo.mask_pcre_pattern
+    ~replace:(fun (_ : string) -> "<TMP>/<MASKED>")
+    (Printf.sprintf
+       {|(?:%s)[/\\]+(?:test-[0-9a-f]+|[A-Za-z0-9._-]*opengrep-[A-Za-z0-9._-]*)|}
+       (String.concat "|" temp_dirs))
+
+(* A test that needs a file nobody can read cannot run as root. *)
+let unless_root : string option =
+  if Int.equal (Unix.geteuid ()) 0 then Some "root reads every file"
+  else None
+
 let normalise : (string -> string) list =
   [
     Testutil_logs.mask_time;
-    Testutil.mask_temp_paths ();
+    mask_test_temp_paths ();
     Testutil_git.mask_temp_git_hash;
     Testo.mask_pcre_pattern {|"semanticVersion":"[^"]*"|};
     Testo.mask_pcre_pattern {|\{"version":"([^"]*)","results"|};
+    (* the engine version an incompatible rule is reported against *)
+    Testo.mask_pcre_pattern {|"this_version":"([^"]*)"|};
+  ]
+
+(*****************************************************************************)
+(* Targets that are not files *)
+(*****************************************************************************)
+
+let random_init = lazy (Random.self_init ())
+
+let create_named_pipe () : Fpath.t =
+  Lazy.force random_init;
+  let path =
+    Filename.concat
+      (Filename.get_temp_dir_name ())
+      (Printf.sprintf "opengrep-test-%x.py" (Random.bits ()))
+  in
+  Unix.mkfifo path 0o644;
+  Fpath.v path
+
+(* Run [func] on a named pipe that another process feeds with [data].
+   This probably doesn't work on Windows due to the reliance on a shell
+   command but could be ported (it doesn't need 'fork').
+   TODO: switch to OCaml 5 and use parallelism. *)
+let with_read_from_named_pipe ~(data : string) (func : Fpath.t -> 'a) : 'a =
+  let pipe_path = create_named_pipe () in
+  Common.protect
+    (fun () ->
+      (* Start another process to write to the pipe in parallel *)
+      UTmp.with_temp_file (fun reg_file ->
+          (* We go through a regular file so as to avoid quoting issues. *)
+          UFile.write_file ~file:reg_file data;
+          let writer_command =
+            (* Copy the data from the regular file into the named pipe *)
+            Printf.sprintf "cat '%s' >> '%s'" !!reg_file !!pipe_path
+          in
+          (* Launch the process that feeds the pipe *)
+          let writer = Unix.open_process_out writer_command in
+          Common.protect
+            (fun () ->
+              (* This function can read the payload from the named pipe *)
+              func pipe_path)
+            ~finally:(fun () ->
+              (* Close the helper process *)
+              close_out_noerr writer)))
+    ~finally:(fun () -> Sys.remove !!pipe_path)
+
+(* Run [func] with the standard input reading [data]. *)
+let with_stdin_from ~(data : string) (func : unit -> 'a) : 'a =
+  let saved_stdin = Unix.dup Unix.stdin in
+  let reader, writer = Unix.pipe () in
+  let (_ : int) = Unix.write_substring writer data 0 (String.length data) in
+  Unix.close writer;
+  Unix.dup2 reader Unix.stdin;
+  Unix.close reader;
+  Common.protect func ~finally:(fun () ->
+      Unix.dup2 saved_stdin Unix.stdin;
+      Unix.close saved_stdin)
+
+(* Run [func] with the standard output on a pipe whose reader is closed, as
+   'opengrep ... | head' leaves it once head has had its line. SIGPIPE is
+   ignored so that the write raises EPIPE instead of killing the test
+   process.
+
+   Everything the run leaves behind is undone: the standard formatter, which
+   the broken-pipe handler redirects to a sink, and the buffered output,
+   which is emptied into the null device while the descriptor is still ours
+   so that it cannot resurface in a later test. *)
+let with_stdout_to_closed_pipe (func : unit -> 'a) : 'a =
+  let saved_stdout = Unix.dup Unix.stdout in
+  let saved_sigpipe = Sys.signal Sys.sigpipe Sys.Signal_ignore in
+  let saved_out_functions =
+    Format.pp_get_formatter_out_functions Format.std_formatter ()
+  in
+  let reader, writer = Unix.pipe () in
+  Unix.close reader;
+  Unix.dup2 writer Unix.stdout;
+  Unix.close writer;
+  Common.protect func ~finally:(fun () ->
+      let null = Unix.openfile Filename.null [ Unix.O_WRONLY ] 0o666 in
+      Unix.dup2 null Unix.stdout;
+      Unix.close null;
+      (try flush stdout with
+      | Sys_error _ -> ());
+      Format.pp_set_formatter_out_functions Format.std_formatter
+        saved_out_functions;
+      Unix.dup2 saved_stdout Unix.stdout;
+      Unix.close saved_stdout;
+      Sys.set_signal Sys.sigpipe saved_sigpipe)
+
+(* The paths of such targets are temporary files with random names. *)
+let mask_temp_targets : (string -> string) list =
+  [
+    Testo.mask_pcre_pattern
+      {|opengrep-(?:stdin|named-pipe)-[0-9a-f]+(?:-[0-9]+)?|};
+    Testo.mask_pcre_pattern {|"fingerprint":"([0-9a-f_]+)"|};
   ]
 
 (*****************************************************************************)
@@ -56,30 +176,45 @@ let normalise : (string -> string) list =
  * output_files are dumped on stdout after the scan so that they become part
  * of the snapshot, together with whatever the scan printed there.
  * expect_abort makes the abort the expected outcome and prints its message.
+ * check is the expected exit code of a scan that did not abort.
  *)
-let run_scan (caps : Scan_subcommand.caps) ~(rule : string)
-    ~(targets : string list) ?(format_args : string list = [ "--sarif" ])
+let run_scan (caps : Scan_subcommand.caps) ?(root : Fpath.t = fixtures_root)
+    ?(rule : string option) ~(targets : string list)
+    ?(format_args : string list = [ "--sarif" ])
     ?(extra_args : string list = []) ?(extra_files : F.t list = [])
-    ?(output_files : string list = []) ?(expect_abort : bool = false) () =
-  let rule_content : string = read_fixture rule in
-  let rule_file : string = Filename.basename rule in
+    ?(output_files : string list = []) ?(expect_abort : bool = false)
+    ?(check : Exit_code.t -> unit = Exit_code.Check.ok) ?(git : bool = true) ()
+    =
+  (* the rule file copied into the repo and named on the command line;
+     none when the scan gets its rules another way, with -e *)
+  let rule_file : (string * string) option =
+    Option.map
+      (fun (rule : string) -> (Filename.basename rule, read_fixture ~root rule))
+      rule
+  in
   let target_entries : (string * string) list =
-    List.map (fun (t : string) -> (Filename.basename t, read_fixture t)) targets
+    List.map
+      (fun (t : string) -> (Filename.basename t, read_fixture ~root t))
+      targets
   in
   with_env_app_token (fun () ->
       let repo_files : F.t list =
-        (F.File (rule_file, rule_content)
-        :: List.map
-             (fun ((name : string), (contents : string)) ->
-               F.File (name, contents))
-             target_entries)
+        List.map
+          (fun ((name : string), (contents : string)) -> F.File (name, contents))
+          (Option.to_list rule_file @ target_entries)
         @ extra_files
       in
-      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+      Testutil_git.with_git_repo ~verbose:true ~really_create_git_repo:git
+        repo_files (fun _cwd ->
+          let config_args : string list =
+            match rule_file with
+            | Some ((name : string), _) -> [ "--config"; name ]
+            | None -> []
+          in
           let argv : string array =
             Array.of_list
-              ([ "opengrep-scan"; "--experimental"; "--config"; rule_file ]
-              @ format_args @ extra_args)
+              ([ "opengrep-scan"; "--experimental" ]
+              @ config_args @ format_args @ extra_args)
           in
           let run () =
             without_settings (fun () -> Scan_subcommand.main caps argv)
@@ -100,5 +235,5 @@ let run_scan (caps : Scan_subcommand.caps) ~(rule : string)
                  UCommon.pr (Printf.sprintf "--- content of %s ---" path);
                  UCommon.pr (UFile.read_file (Fpath.v path)));
           match exit_code with
-          | Some exit_code -> Exit_code.Check.ok exit_code
+          | Some exit_code -> check exit_code
           | None -> ()))

@@ -1,10 +1,6 @@
 open Lsp
 open Types
 
-val scan_config_parser : (string -> Semgrep_output_v1_t.scan_config)
-(** [scan_config_parser] is a global function that parses a scan
-    config from a string *)
-
 (* =~ Core_scan.caps + random + network + tmp *)
 type caps =
   < Cap.random
@@ -17,21 +13,15 @@ type caps =
 type session_cache = {
   mutable rules : Rule.t list;
   (* Rules can take a long time to fetch + load, so we want to minimize it *)
-  mutable skipped_app_fingerprints : string list;
-  (* Skipped fingerprints need to be fetched from the app, so we only want to do
-     this every so often. * These come from the same place ci rules do, so we
-     fetch them at the same time as the above rules *)
   mutable open_documents : Fpath.t list;
   (* Files open in the session *)
   mutable initialized : bool;
       (* keep track of if the cache is initialized so we can let users know if they
          try to do something that need the rules downloaded like a full workspace
          scan *)
-  mutable deployment_id : int option;
-  (* Deployment id for the session *)
   lock : Lwt_mutex.t;
 }
-(** Cache of rules that will be run, and skipped fingerprints. Protected by
+(** Cache of rules that will be run. Protected by
     mutex as [cache_session] below * can be called asynchronously, and so this
     cache needs to be safe
 *)
@@ -62,8 +52,8 @@ val load_local_skipped_fingerprints : t -> t
 (** [load_local_skipped_fingerprints t] loads the skipped fingerprints in the session from disk *)
 
 val cache_session : t -> unit Lwt.t
-(** [cache_session t] caches the rules and skipped fingerprints for the session. Fetches rules from any configured source
-    as in [t.user_settings], and CI if an api token is available. This is an asynchronous operation,
+(** [cache_session t] caches the rules for the session. Fetches rules from any configured source
+    as in [t.user_settings]. This is an asynchronous operation,
     and so the rules are stored in a [session_cache] *)
 
 val cache_workspace_targets : t -> unit
@@ -81,8 +71,8 @@ val runner_conf : t -> Core_runner.conf
     [t.user_settings] *)
 
 val skipped_fingerprints : t -> string list
-(** [skipped_fingerprints t] returns the list of skipped fingerprints for the session. This is
-    a list of fingerprints in [t.skipped_local_fingerprints] and [t.cached_session.skipped_fingerprints] *)
+(** [skipped_fingerprints t] returns the list of skipped fingerprints for the session,
+    i.e. the fingerprints in [t.skipped_local_fingerprints] *)
 
 val scanned_files : t -> Fpath.t list
 (** [scanned_files t] returns the list of files that have been scanned in the session *)

@@ -1,0 +1,76 @@
+[<MASKED TIMESTAMP>][INFO]: Opengrep version: 1.29.0
+[<MASKED TIMESTAMP>][INFO]: Getting the rules
+[<MASKED TIMESTAMP>][INFO]: loading local config from eqeq.yaml
+[<MASKED TIMESTAMP>][INFO]: Done loading local config from eqeq.yaml
+[<MASKED TIMESTAMP>][INFO]: Computing the targets
+[<MASKED TIMESTAMP>][INFO]: running 4 rules from 1 config eqeq.yaml
+Rules:
+- assert-eqeq-is-ok
+- eqeq-is-bad
+- javascript-basic-eqeq-bad
+- python37-compatability-os-module
+
+[<MASKED TIMESTAMP>][INFO]: scan subcommand: 4 valid rules, 0 invalid rules, 2 targets
+[<MASKED TIMESTAMP>][INFO]: running the opengrep engine
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 2 files with 4 Code rules:
+  Scanning 1 file with 3 python rules.
+[<MASKED TIMESTAMP>][INFO]: scan: processing 1 files (skipping 0), with 3 rules (skipping 0 )
+[<MASKED TIMESTAMP>][INFO]: reporting matches if any
+[<MASKED TIMESTAMP>][INFO]: 
+========================================
+Files skipped:
+========================================
+
+  Always skipped by Opengrep:
+
+   • <none>
+
+  Skipped by .gitignore:
+  (Disable by passing --no-git-ignore)
+
+   • <all files not listed by `git ls-files` were skipped>
+
+  Skipped by .semgrepignore:
+  (See: https://semgrep.dev/docs/ignoring-files-folders-code/#understand-semgrep-defaults)
+
+   • <none>
+
+  Skipped by --include patterns:
+
+   • <none>
+
+  Skipped by --exclude patterns:
+
+   • <none>
+
+  Files skipped due to insufficient read permissions:
+
+   • targets/permissions/unreadable_file.py
+   • targets/permissions/unreadable_subdir
+
+  Skipped by limiting to files smaller than 1000000 bytes:
+  (Adjust with the --max-target-bytes flag)
+
+   • <none>
+
+  Partially analyzed due to parsing or internal Opengrep errors
+
+   • <none>
+
+
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Some files were skipped or only partially analyzed.
+  Scan skipped: 2 files without read permission
+  For a full list of skipped files, run opengrep with the --verbose flag.
+
+Ran 3 rules on 1 file: 1 finding.
+ASSERT exit code

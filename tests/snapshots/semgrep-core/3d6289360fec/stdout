@@ -9,6 +9,6 @@ Initialized empty Git repository in<MASKED>
  create mode 100644 .gitignore
  create mode 100644 bin/ignore-me
  create mode 100644 bin/ignore-me-not
-RUN semgrep scan --experimental --x-ls .
+RUN opengrep scan --experimental --x-ls .
 .gitignore
 bin/ignore-me-not

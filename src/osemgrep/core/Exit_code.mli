@@ -34,9 +34,23 @@ val missing_config : __LOC__:string -> t
 val invalid_language : __LOC__:string -> t
 val invalid_api_key : __LOC__:string -> t
 val scan_fail : __LOC__:string -> t
+val broken_pipe : __LOC__:string -> t
 
-(* to remove at some point *)
-val not_implemented_in_osemgrep : __LOC__:string -> t
+(* The codes themselves, to document them; nothing is logged. To exit, use
+   the functions above. *)
+module Value : sig
+  val ok : t
+  val findings : t
+  val fatal : t
+  val invalid_code : t
+  val invalid_pattern : t
+  val unparseable_yaml : t
+  val missing_config : t
+  val invalid_language : t
+  val invalid_api_key : t
+  val scan_fail : t
+  val broken_pipe : t
+end
 
 (*
    Test for equality without creating a new exit code that would get logged.
@@ -52,7 +66,7 @@ module Equal : sig
   val invalid_language : t -> bool
   val invalid_api_key : t -> bool
   val scan_fail : t -> bool
-  val not_implemented_in_osemgrep : t -> bool
+  val broken_pipe : t -> bool
 end
 
 (*
@@ -79,5 +93,5 @@ module Check : sig
   val invalid_language : t -> unit
   val invalid_api_key : t -> unit
   val scan_fail : t -> unit
-  val not_implemented_in_osemgrep : t -> unit
+  val broken_pipe : t -> unit
 end

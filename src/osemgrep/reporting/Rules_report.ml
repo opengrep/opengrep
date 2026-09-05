@@ -1,5 +1,3 @@
-open Common
-
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -18,6 +16,7 @@ let pp_rule_sources ppf = function
 (* Entry point *)
 (*****************************************************************************)
 
+(* the rules that run, see Rule_filtering.filter_rules *)
 let pp_rules ~too_many_entries ppf (rules_source, filtered_rules) =
   Fmt.pf ppf "running %d rules from %a@."
     (List.length filtered_rules)
@@ -25,25 +24,11 @@ let pp_rules ~too_many_entries ppf (rules_source, filtered_rules) =
   (* TODO should output whether .semgrepignore is found and used
      (as done in semgrep_main.py get_file_ignore()) *)
   Fmt.pf ppf "Rules:@.";
-  let exp, normal =
-    filtered_rules
-    |> List.partition (fun (rule : Rule.t) -> rule.severity =*= `Experiment)
-  in
-
   let rule_id r = fst r.Rule.id in
-  let sorted =
-    List.sort (fun r1 r2 -> Rule_ID.compare (rule_id r1) (rule_id r2))
-  in
-  if too_many_entries > 0 && List.length normal > too_many_entries then
-    Fmt.pf ppf "%s" Output.too_much_data
+  if too_many_entries > 0 && List.length filtered_rules > too_many_entries
+  then Fmt.pf ppf "%s" Output.too_much_data
   else
-    sorted normal
+    filtered_rules
+    |> List.sort (fun r1 r2 -> Rule_ID.compare (rule_id r1) (rule_id r2))
     |> List.iter (fun rule ->
-           Fmt.pf ppf "- %s@." (Rule_ID.to_string (rule_id rule)));
-  match exp with
-  | [] -> ()
-  | __non_empty__ ->
-      Fmt.pf ppf "Experimental rules:@.";
-      sorted exp
-      |> List.iter (fun rule ->
-             Fmt.pf ppf "- %s@." (Rule_ID.to_string (rule_id rule)))
+           Fmt.pf ppf "- %s@." (Rule_ID.to_string (rule_id rule)))

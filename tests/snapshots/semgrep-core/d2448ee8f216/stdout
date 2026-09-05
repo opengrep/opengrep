@@ -1,0 +1,10 @@
+--- begin input files ---
+pattern-regex-empty-file.yaml
+totally_empty_file
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 7 insertions(+)
+ create mode 100644 pattern-regex-empty-file.yaml
+ create mode 100644 totally_empty_file
+{"version":"<MASKED>","results":[{"check_id":"any-file","path":"totally_empty_file","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":1,"offset":0},"extra":{"metavars":{},"message":"Match any file","metadata":{},"severity":"INFO","fingerprint":"40edce15998f34b5ce1a5c55525fd9c9f73303b58bdd6b5161d90824091d256d3970cba70360a91f692e8918fe0174f9188f343fc8d771d75fb35679cf5481c4_0","lines":"","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["totally_empty_file"]},"interfile_languages_used":[],"skipped_rules":[]}

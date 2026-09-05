@@ -197,6 +197,21 @@ let parse_rule_xpattern env (str, tok) =
  * Parse_info.adjust_info_wrt_base t
  *)
 
+(* A 'pattern' has no semantic meaning for a regex-only rule, which would
+ * silently read it as a regex (python: Rule._validate_none_language_rule).
+ *)
+let check_pattern_clause_allowed env (key : key) : (unit, Rule_error.t) result
+    =
+  match env.target_analyzer with
+  | Xlang.LRegex ->
+      error_at_key env.id key
+        (spf
+           "invalid pattern clause 'pattern' with regex-only rules in rule: \
+            %s; use only patterns, pattern-either, pattern-regex, or \
+            pattern-not-regex with regex-only rules"
+           (Rule_ID.to_string env.id))
+  | _ -> Ok ()
+
 let parse_xpattern_expr env e =
   let/ s, t =
     match read_string_wrap e.G.e with
@@ -372,7 +387,7 @@ and parse_pair_old env ((key, value) : key * G.expr) :
         | __else__ ->
             error_at_expr env.id x
               "Expected object with only one entry -- did you forget a hyphen?")
-    | _ -> error_at_expr env.id x "Received invalid Semgrep pattern"
+    | _ -> error_at_expr env.id x "Received invalid Opengrep pattern"
   in
   let get_nested_formula_in_list env i x =
     let env = { env with path = string_of_int i :: env.path } in
@@ -381,6 +396,7 @@ and parse_pair_old env ((key, value) : key * G.expr) :
   let s, t = key in
   match s with
   | "pattern" ->
+      let/ () = check_pattern_clause_allowed env key in
       let+ pat = get_pattern value in
       R.P pat |> R.f
   | "pattern-not" ->
@@ -939,6 +955,7 @@ and parse_pair env ((key, value) : key * G.expr) :
   let s, t = key in
   match s with
   | "pattern" ->
+      let/ () = check_pattern_clause_allowed env key in
       let+ pattern = get_string_pattern value in
       R.P pattern |> R.f
   | "not" ->

@@ -1,0 +1,24 @@
+Test name: with git > semgrepignore of the working directory applies outside it
+--- Files added before 'git add' ---
+here/.semgrepignore
+there/a.c
+there/anchored/c.c
+there/deep/b.c
+--- begin input files ---
+here/.semgrepignore
+there/a.c
+there/anchored/c.c
+there/deep/b.c
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 2 insertions(+)
+ create mode 100644 here/.semgrepignore
+ create mode 100644 there/a.c
+ create mode 100644 there/anchored/c.c
+ create mode 100644 there/deep/b.c
+--- Selected targets ---
+selected ../there/a.c
+selected ../there/anchored/c.c
+--- Skipped targets ---
+ignored ../there/deep [Semgrep_output_v1_t.Semgrepignore_patterns_match]

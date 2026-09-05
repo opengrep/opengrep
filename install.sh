@@ -111,6 +111,15 @@ validate_version_format() {
     fi
 }
 
+# Releases before 2.0.0 ship one self-extracting executable per platform,
+# with separate glibc and musl builds. From 2.0.0 the asset is the static
+# binary itself, one per architecture. The tag has already been checked
+# against RELEASE_TAG_REGEX, so the major component is an integer.
+is_2_or_later() {
+    local V="${1#v}"
+    [ "${V%%.*}" -ge 2 ]
+}
+
 # pre: $SIG_EXISTS == "true"
 validate_signature() {
     local P="$1"
@@ -163,7 +172,13 @@ main() {
 
     # check and set "os_arch"
     if [ "$OS" = "Linux" ]; then
-        if ldd /bin/sh 2>&1 | grep -qi musl; then
+        if is_2_or_later "$VERSION"; then
+            if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
+                DIST="opengrep_linux_x86"
+            elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+                DIST="opengrep_linux_aarch64"
+            fi
+        elif ldd /bin/sh 2>&1 | grep -qi musl; then
             if [ "$ARCH" = "x86_64" ] || [ "$ARCH" = "amd64" ]; then
                 DIST="opengrep_musllinux_x86"
             elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then

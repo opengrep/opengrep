@@ -1,0 +1,10 @@
+--- begin input files ---
+regex-not.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 20 insertions(+)
+ create mode 100644 regex-not.yaml
+ create mode 100644 stupid.py
+{"version":"<MASKED>","results":[{"check_id":"test-regex","path":"stupid.py","start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":26,"offset":69},"extra":{"metavars":{"$X":{"start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":17,"offset":60},"abstract_content":"a+b"}},"message":"test regex message","metadata":{},"severity":"ERROR","fingerprint":"72654cf86e180c419d9c367fc2339e9884efea54e1c85857f19dad9e4acf5f68fd844f8d7fc5b50207c606957424f02b12712eff5a508369fdddff7c351a7082_0","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}

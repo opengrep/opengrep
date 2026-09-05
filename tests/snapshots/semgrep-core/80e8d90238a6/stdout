@@ -1,0 +1,17 @@
+--- begin input files ---
+eqeq.yaml
+stupid.py
+--- end input files ---
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    stupid.py
+   ❯❯❱ eqeq-is-bad
+          useless comparison operation `a + b == a + b` or `a + b != a + b`
+          Details: https://sg.run/xyz1
+
+            3┆ return a + b == a + b
+

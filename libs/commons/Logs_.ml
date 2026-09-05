@@ -175,7 +175,7 @@ let create_formatter opt_file =
 let mk_reporter ?(additional_reporters : Logs.reporter list = []) ~dst
     ~require_one_of_these_tags ~read_tags_from_env_vars:(env_vars : string list)
     ~highlight () =
-  (* TODO: additional_reporters seems to be always empty. Confirm and remove. *)
+  (* additional_reporters: the copy of the logs to a file, see setup *)
   let require_one_of_these_tags =
     match read_comma_sep_strs_from_env_vars env_vars with
     | Some tags -> tags
@@ -293,12 +293,44 @@ let setup_basic ?(level = Some Logs.Warning) () =
        ~read_tags_from_env_vars:[] ~highlight:false ());
   ()
 
+(* The destination of the last file reporter. A process may call [setup] more
+   than once (the test binary, the language server), so we close the previous
+   channel instead of accumulating one per call. *)
+let log_file_dst : (Format.formatter * out_channel) option ref = ref None
+
+let close_log_file () : unit =
+  !log_file_dst
+  |> Option.iter (fun ((dst : Format.formatter), (oc : out_channel)) ->
+         Format.pp_print_flush dst ();
+         close_out_noerr oc);
+  log_file_dst := None
+
+let () = UStdlib.at_exit close_log_file
+
+(* A reporter writing the same messages as the main one, without colours,
+   to a file it truncates. *)
+let file_reporter ~require_one_of_these_tags ~read_tags_from_env_vars
+    (file : Fpath.t) : Logs.reporter =
+  close_log_file ();
+  let oc = UStdlib.open_out (Fpath.to_string file) in
+  let dst = UFormat.formatter_of_out_channel oc in
+  log_file_dst := Some (dst, oc);
+  mk_reporter ~dst ~require_one_of_these_tags ~read_tags_from_env_vars
+    ~highlight:false ()
+
 let setup ?(highlight_setting = Console.get_highlight_setting ())
-    ?log_to_file:opt_file ?(additional_reporters = [])
+    ?log_to_file:opt_file ?copy_to_file ?(additional_reporters = [])
     ?(require_one_of_these_tags = default_tags)
     ?(read_level_from_env_vars = [ "LOG_LEVEL" ])
     ?(read_srcs_from_env_vars = [ "LOG_SRCS" ])
     ?(read_tags_from_env_vars = [ "LOG_TAGS" ]) ~level () =
+  let additional_reporters =
+    match copy_to_file with
+    | None -> additional_reporters
+    | Some file ->
+        file_reporter ~require_one_of_these_tags ~read_tags_from_env_vars file
+        :: additional_reporters
+  in
   (* Override the log level if it's provided by an environment variable!
      This is for debugging a command that gets called by some wrapper. *)
   let level : Logs.level option =
@@ -317,12 +349,12 @@ let setup ?(highlight_setting = Console.get_highlight_setting ())
     | Off -> false
     | Auto -> isatty
   in
-  let style_renderer =
-    match highlight with
-    | true -> Some `Ansi_tty
-    | false -> None
+  (* an absent renderer would make Fmt_tty detect the tty on its own and
+     ignore the decision above *)
+  let style_renderer : Fmt.style_renderer =
+    if highlight then `Ansi_tty else `None
   in
-  Fmt_tty.setup_std_outputs ?style_renderer ();
+  Fmt_tty.setup_std_outputs ~style_renderer ();
   Logs.set_level ~all:true level;
   Logs.set_reporter
     (mk_reporter ~additional_reporters ~dst ~require_one_of_these_tags

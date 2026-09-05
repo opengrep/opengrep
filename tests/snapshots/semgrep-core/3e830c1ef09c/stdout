@@ -1,0 +1,58 @@
+--- begin input files ---
+basic/README.md
+basic/bento.png
+basic/inside.py
+basic/metavariable-comparison-bad-content.py
+basic/metavariable-comparison-base.py
+basic/metavariable-comparison-strip.py
+basic/metavariable-comparison.py
+basic/metavariable-regex-multi-regex.py
+basic/metavariable-regex-multi-rule.py
+basic/metavariable-regex.py
+basic/nested-patterns.js
+basic/nosem.c
+basic/nosem.go
+basic/nosem.java
+basic/nosem.js
+basic/nosem.py
+basic/regex-all-noopengrep.txt
+basic/regex-any-language.html
+basic/regex-nosemgrep.txt
+basic/regex-utf8.txt
+basic/regex.py
+basic/simple_python_no_extension
+basic/stupid.js
+basic/stupid.py
+basic/stupid_no_extension
+inside.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 26 files changed, 176 insertions(+)
+ create mode 100644 basic/README.md
+ create mode 100644 basic/bento.png
+ create mode 100644 basic/inside.py
+ create mode 100644 basic/metavariable-comparison-bad-content.py
+ create mode 100644 basic/metavariable-comparison-base.py
+ create mode 100644 basic/metavariable-comparison-strip.py
+ create mode 100644 basic/metavariable-comparison.py
+ create mode 100644 basic/metavariable-regex-multi-regex.py
+ create mode 100644 basic/metavariable-regex-multi-rule.py
+ create mode 100644 basic/metavariable-regex.py
+ create mode 100644 basic/nested-patterns.js
+ create mode 100644 basic/nosem.c
+ create mode 100644 basic/nosem.go
+ create mode 100644 basic/nosem.java
+ create mode 100644 basic/nosem.js
+ create mode 100644 basic/nosem.py
+ create mode 100644 basic/regex-all-noopengrep.txt
+ create mode 100644 basic/regex-any-language.html
+ create mode 100644 basic/regex-nosemgrep.txt
+ create mode 100644 basic/regex-utf8.txt
+ create mode 100644 basic/regex.py
+ create mode 100644 basic/simple_python_no_extension
+ create mode 100644 basic/stupid.js
+ create mode 100644 basic/stupid.py
+ create mode 100644 basic/stupid_no_extension
+ create mode 100644 inside.yaml
+{"version":"<MASKED>","results":[{"check_id":"open-from-request","path":"basic/inside.py","start":{"line":4,"col":5,"offset":86},"end":{"line":4,"col":15,"offset":96},"extra":{"metavars":{"$X":{"start":{"line":4,"col":10,"offset":91},"end":{"line":4,"col":14,"offset":95},"abstract_content":"path","propagated_value":{"svalue_start":{"line":3,"col":12,"offset":60},"svalue_end":{"line":3,"col":33,"offset":81},"svalue_abstract_content":"request.get(\"unsafe\")"}}},"message":"Unsafe open from request data","metadata":{},"severity":"ERROR","fingerprint":"763a712d33e1a8ad75177aa04c000fa47b75573c4dfe9cf47b5a9607458daa68a084f57cdbfa487488463f199cac63c13d4b497c45762aaf4c3a32d875022ea5_0","lines":"    open(path)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"open-from-request","path":"basic/inside.py","start":{"line":14,"col":5,"offset":255},"end":{"line":14,"col":12,"offset":262},"extra":{"metavars":{"$X":{"start":{"line":14,"col":10,"offset":260},"end":{"line":14,"col":11,"offset":261},"abstract_content":"z","propagated_value":{"svalue_start":{"line":12,"col":5,"offset":218},"svalue_end":{"line":12,"col":26,"offset":239},"svalue_abstract_content":"request.get(\"unsafe\")"}}},"message":"Unsafe open from request data","metadata":{},"severity":"ERROR","fingerprint":"311e189595397239a347219e1724b89a80b753e5cfe7453918ee7de92ff1639216cdaccce41e77d3f95ec37b0efc361085e91808ab7df89c2fe9c62d17bac773_0","lines":"    open(z)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["basic/inside.py","basic/metavariable-comparison-bad-content.py","basic/metavariable-comparison-base.py","basic/metavariable-comparison-strip.py","basic/metavariable-comparison.py","basic/metavariable-regex-multi-regex.py","basic/metavariable-regex-multi-rule.py","basic/metavariable-regex.py","basic/nosem.py","basic/regex.py","basic/stupid.py"]},"interfile_languages_used":[],"skipped_rules":[]}

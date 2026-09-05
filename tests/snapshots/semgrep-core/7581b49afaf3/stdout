@@ -1,0 +1,10 @@
+--- begin input files ---
+multi-lines.java
+multi-lines.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 22 insertions(+)
+ create mode 100644 multi-lines.java
+ create mode 100644 multi-lines.yaml
+{"version":"<MASKED>","results":[{"check_id":"multi-lines","path":"multi-lines.java","start":{"line":4,"col":5,"offset":45},"end":{"line":9,"col":21,"offset":131},"extra":{"metavars":{"$V":{"start":{"line":4,"col":5,"offset":45},"end":{"line":4,"col":11,"offset":51},"abstract_content":"myfile"}},"message":"found","metadata":{},"severity":"ERROR","fingerprint":"fc3b49279d4cbca0dbb05739fd1611b9cdfded079ad7102361c25530757b210f7320557aecf4d60c2162f3374b960e4f4f29b46b1d65b3756db477aa2f54ab06_0","lines":"    myfile = open();\n    try {\n      foo(myfile);\n    }\n    finally {\n      close(myfile);","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["multi-lines.java"]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -9,6 +9,9 @@
 type conf = {
   rules_source : Rules_source.t;
   core_runner_conf : Core_runner.conf;
+  json : bool;
+  (* --force-color, which wins over $NO_COLOR like it does for a scan *)
+  force_color : bool;
   common : CLI_common.conf;
 }
 [@@deriving show]

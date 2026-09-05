@@ -1,0 +1,28 @@
+--- begin input files ---
+rules/imported-entity.yaml
+targets/imported-entity.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 11 insertions(+)
+ create mode 100644 rules/imported-entity.yaml
+ create mode 100644 targets/imported-entity.py
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    targets/imported-entity.py
+   ❯❯❱ rules.exception-useless-parentheses
+          Found useless parentheses
+
+           ▶▶┆ Autofix ▶ raise RandomError
+            4┆ raise RandomError
+
+--- targets/imported-entity.py after the scan ---
+from randomlib.errors import RandomError
+
+def test_test():
+  raise RandomError()
+

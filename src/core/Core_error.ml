@@ -50,19 +50,6 @@ type t = {
 }
 [@@deriving show]
 
-(* Used only in pro in Deep_scan_phases.ml
- * TODO? we should probably get rid of it
- *)
-exception Unhandled_core_error of t
-
-let () =
-  Printexc.register_printer (function
-    | Unhandled_core_error core_error ->
-        Some
-          (Printf.sprintf "Core_error.Unhandled_core_error(%s)"
-             (show core_error))
-    | _ -> None)
-
 (* ugly alias because 'type t = t' is not allowed in ErrorSet below *)
 type core_error = t
 
@@ -110,6 +97,7 @@ let mk_error ?rule_id ?(msg = "") ?(loc : Tok.location option)
     | SemgrepError
     | InvalidRuleSchemaError
     | UnknownLanguageError
+    | MissingConfig
     | MissingPlugin
     | DependencyResolutionError _ ->
         msg
@@ -151,7 +139,17 @@ let error_of_invalid_rule ((kind, rule_id, pos) : Rule_error.invalid_rule) : t =
             max_version = Option.map Semver.to_string max_version;
           }
     | MissingPlugin _msg -> Out.MissingPlugin
-    | _ -> Out.RuleParseError
+    | InvalidLanguage _ -> Out.UnknownLanguageError
+    (* the structure of the rule is wrong: what pysemgrep found with its
+       JSON schema of the rules *)
+    | DeprecatedFeature _
+    | MissingPositiveTermInAnd
+    | MisplacedNegation
+    | InvalidOther _ ->
+        Out.InvalidRuleSchemaError
+    | InvalidPattern _
+    | InvalidRegexp _ ->
+        Out.RuleParseError
   in
   mk_error_tok ~rule_id pos msg err
 
@@ -165,7 +163,8 @@ let error_of_rule_error (err : Rule_error.t) : t =
         rule_id = Some rule_id;
         typ = Out.PatternParseError yaml_path;
         (* TODO: Switch to using option and report better info for figuring out why the location is missing *)
-        loc = Some (Tok.unsafe_loc_of_tok pos);
+        (* no location for the pattern of -e *)
+        loc = Tok.loc_of_tok pos |> Result.to_option;
         msg =
           spf
             "Invalid pattern for %s:\n\
@@ -177,6 +176,8 @@ let error_of_rule_error (err : Rule_error.t) : t =
         details = None;
       }
   | InvalidRule err -> error_of_invalid_rule err
+  (* no file to locate the error in *)
+  | ConfigNotFound msg -> mk_error ?rule_id ~msg Out.MissingConfig
   | InvalidYaml (msg, pos) ->
       mk_error_tok ?rule_id ~file pos msg Out.InvalidYaml
   | DuplicateYamlKey (s, pos) ->
@@ -327,13 +328,15 @@ let severity_of_error (typ : Out.error_type) : Out.error_severity =
   | ParseError
   | PartialParsing _
   | OtherParseError
-  | InvalidYaml
   | Timeout
   | OutOfMemory
   | StackOverflow
   | SemgrepWarning ->
       `Warning
   (* Errors *)
+  (* a rule file that is not valid YAML cannot be loaded *)
+  | InvalidYaml
+  | MissingConfig
   | SemgrepMatchFound
   | AstBuilderError
   | RuleParseError

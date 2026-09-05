@@ -4,6 +4,7 @@
   (wrapped false)
   (libraries
     commons
+    networking.http_mock_client
 
     osemgrep_cli
   )

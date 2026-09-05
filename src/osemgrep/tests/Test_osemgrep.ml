@@ -13,7 +13,6 @@
  * LICENSE for more details.
  *)
 
-open Printf
 open Fpath_.Operators
 
 (*****************************************************************************)
@@ -90,84 +89,94 @@ let test_subcommand_after_global_flag (caps : CLI.caps) () =
       ]
   in
   Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
-      Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml"
-        (fun () ->
-          CLI.main caps
-            [| "opengrep"; "--experimental"; "ci"; "--config"; "rules.yaml" |]
-          |> Exit_code.Check.findings))
+      CLI.main caps
+        [| "opengrep"; "--experimental"; "ci"; "--config"; "rules.yaml" |]
+      |> Exit_code.Check.findings)
 
-(* 'opengrep ci -d' must be accepted by the ci parser (so that without
-   --experimental the run still falls back to pysemgrep, where the flag
-   works) and dispatch to the show subcommand like scan does; a parser
-   rejection would print an unknown-option usage error instead *)
-let test_ci_dump_command_for_core (caps : CLI.caps) () =
+(* '--help' and '-h' print the text of Help.ml, which the tool writes
+   itself rather than letting cmdliner generate it, so it is snapshotted.
+   python: test_help_text *)
+let test_help (caps : CLI.caps) (flag : string) () =
+  CLI.main caps [| "opengrep"; flag |] |> Exit_code.Check.ok
+
+(* 'opengrep ... | head' closes the pipe once it has its line: the scan ends
+   quietly with the conventional code for it, rather than reporting a
+   Sys_error and a stack trace. The target is large enough for the output to
+   leave the buffer of the standard channel while the scan runs. *)
+let test_broken_pipe (caps : CLI.caps) () =
   let repo_files =
     Testutil_files.
       [
         File
           ( "rules.yaml",
             "rules:\n\
-             - id: eqeq-bad\n\
-            \  pattern: $X == $X\n\
-            \  message: bad\n\
+             - id: print-call\n\
+            \  pattern: print(...)\n\
+            \  message: found\n\
             \  languages: [python]\n\
-            \  severity: ERROR\n" );
-        File ("foo.py", "def foo(a, b):\n    return a + b == a + b\n");
+            \  severity: WARNING\n" );
+        File
+          ( "many.py",
+            String.concat ""
+              (List.init 400 (fun (i : int) -> Printf.sprintf "print(%d)\n" i))
+          );
       ]
   in
-  Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
-      Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml"
-        (fun () ->
+  Testutil_git.with_git_repo repo_files (fun _cwd ->
+      Test_scan_helpers.with_stdout_to_closed_pipe (fun () ->
           CLI.main caps
             [|
-              "opengrep"; "--experimental"; "ci"; "--config"; "rules.yaml"; "-d";
-            |]
-          |> Exit_code.Check.fatal))
+              "opengrep";
+              "scan";
+              "--experimental";
+              "--json";
+              "--config";
+              "rules.yaml";
+              "many.py";
+            |])
+      |> Exit_code.Check.broken_pipe)
 
-let random_init = lazy (Random.self_init ())
+(* the exit codes of Exit_code.ml that a subcommand documents; 13 and 14 are
+   declared there and returned by no subcommand *)
+let documented_exit_codes : string list =
+  [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]
 
-let create_named_pipe () =
-  Lazy.force random_init;
-  let path =
-    Filename.concat
-      (Filename.get_temp_dir_name ())
-      (sprintf "semgrep-test-%x.py" (Random.bits ()))
+(* A subcommand's man page documents the exit codes that subcommand
+   returns: not the codes of another one, and not cmdliner's defaults,
+   which no code path here produces.
+   coupling: the exits_* lists of CLI_common.ml *)
+let test_man_page_exit_codes (caps : CLI.caps) (subcommand : string)
+    (codes : string list) () =
+  let exit_code, out =
+    Testo.with_capture stdout (fun () ->
+        let exit_code =
+          CLI.main caps [| "opengrep"; subcommand; "--help=plain" |]
+        in
+        (* cmdliner leaves the page in the standard formatter, which the
+           binary flushes on its way out and a test has to flush itself *)
+        Format.pp_print_flush Format.std_formatter ();
+        exit_code)
   in
-  Unix.mkfifo path 0o644;
-  Fpath.v path
-
-(*
-   This probably doesn't work on Windows due to the reliance on a shell
-   command but could be ported (it doesn't need 'fork').
-   TODO: switch to OCaml 5 and use parallelism.
-*)
-let with_read_from_named_pipe ~data func =
-  let pipe_path = create_named_pipe () in
-  Common.protect
-    (fun () ->
-      (* Start another process to write to the pipe in parallel *)
-      UTmp.with_temp_file (fun reg_file ->
-          (* We go through a regular file so as to avoid quoting issues. *)
-          UFile.write_file ~file:reg_file data;
-          let writer_command =
-            (* Copy the data from the regular file into the named pipe *)
-            sprintf "cat '%s' >> '%s'" !!reg_file !!pipe_path
-          in
-          (* Launch the process that feeds the pipe *)
-          let writer = Unix.open_process_out writer_command in
-          Common.protect
-            (fun () ->
-              (* This function can read the payload from the named pipe *)
-              func pipe_path)
-            ~finally:(fun () ->
-              (* Close the helper process *)
-              close_out_noerr writer)))
-    ~finally:(fun () -> Sys.remove !!pipe_path)
+  Exit_code.Check.ok exit_code;
+  let documents (code : string) : bool =
+    String_.contains ~term:(Printf.sprintf "\n       %s " code) out
+  in
+  documented_exit_codes
+  |> List.iter (fun (code : string) ->
+         Alcotest.(check bool)
+           (Printf.sprintf "%s and the exit code %s" subcommand code)
+           (List.exists (String.equal code) codes)
+           (documents code));
+  [ "123"; "124"; "125" ]
+  |> List.iter (fun (code : string) ->
+         Alcotest.(check bool)
+           (Printf.sprintf "%s does not document cmdliner's %s" subcommand code)
+           false (documents code))
 
 let test_named_pipe (caps : Scan_subcommand.caps) =
   let func () =
     (* Search for pattern "hello" in a named pipe containing "hello" *)
-    with_read_from_named_pipe ~data:"hello\n" (fun pipe_path ->
+    Test_scan_helpers.with_read_from_named_pipe ~data:"hello\n" (fun pipe_path ->
         Scan_subcommand.main caps
           [|
             "opengrep-scan";
@@ -189,19 +198,31 @@ let test_named_pipe (caps : Scan_subcommand.caps) =
 let tests (caps : CLI.caps) =
   let scan_caps = (caps :> Scan_subcommand.caps) in
   Testo.categorize "Osemgrep multi subcommands (e2e)"
-    [
+    ([
       test_scan_config_registry_no_token caps;
       Testo.create "subcommand after global flag"
         (test_subcommand_after_global_flag caps);
-      Testo.create "ci accepts dump-command-for-core"
-        ~checked_output:(Testo.stdxxx ())
-        ~normalize:
-          [
-            Testutil_logs.mask_time;
-            Testutil.mask_temp_paths ();
-            Testutil_git.mask_temp_git_hash;
-          ]
-        (test_ci_dump_command_for_core caps);
       test_absolute_target_path scan_caps;
       test_named_pipe scan_caps;
+      Testo.create "a closed output pipe ends the scan quietly"
+        (test_broken_pipe caps);
     ]
+    @ ([
+         ("ci", [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);
+         ("install-ci", [ "0"; "2"; "141" ]);
+         ("lsp", [ "0"; "2"; "141" ]);
+         ("scan", [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);
+         ("show", [ "0"; "2"; "3"; "4"; "7"; "141" ]);
+         ("test", [ "0"; "1"; "2"; "7"; "141" ]);
+         ("validate", [ "0"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);
+       ]
+       |> List_.map (fun ((subcommand : string), (codes : string list)) ->
+              Testo.create
+                (Printf.sprintf "exit codes in the man page of %s" subcommand)
+                (test_man_page_exit_codes caps subcommand codes)))
+    @ ([ "--help"; "-h" ]
+       |> List_.map (fun (flag : string) ->
+              Testo.create
+                (Printf.sprintf "help text of %s" flag)
+                ~checked_output:(Testo.stdout ())
+                (test_help caps flag))))

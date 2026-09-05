@@ -1,0 +1,10 @@
+--- begin input files ---
+metavariable-pattern.conf
+metavariable-pattern.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 20 insertions(+)
+ create mode 100644 metavariable-pattern.conf
+ create mode 100644 metavariable-pattern.yaml
+{"version":"<MASKED>","results":[{"check_id":"test-aliengrep-mv","path":"metavariable-pattern.conf","start":{"line":1,"col":7,"offset":6},"end":{"line":1,"col":12,"offset":11},"extra":{"metavars":{"$X":{"start":{"line":1,"col":7,"offset":6},"end":{"line":1,"col":12,"offset":11},"abstract_content":"value"}},"message":"found 'value'\n","metadata":{},"severity":"ERROR","fingerprint":"b321738d7ff5029af14c54b75f959e0c5a9d85bfa91ed391eacb5da900a8c5f7e01e78042a664bacd43ad7bc95d2ce763b9d5ffa32a82b8d0d2a991ef15b3a62_0","lines":"key = value","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["metavariable-pattern.conf"]},"interfile_languages_used":[],"skipped_rules":[]}

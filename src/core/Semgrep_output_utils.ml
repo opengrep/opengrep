@@ -192,24 +192,34 @@ let sort_core_matches (matches : core_match list) : core_match list =
 
    This uses the same ordering as in pysemgrep in RuleMatch.get_ordering_key()
 *)
-let compare_cli_matches (a : cli_match) (b : cli_match) =
-  let c = Fpath.compare a.path b.path in
+let compare_reported_order (a_path, (a_start : position), (a_end : position), a_id)
+    (b_path, (b_start : position), (b_end : position), b_id) =
+  let c = Fpath.compare a_path b_path in
   if c <> 0 then c
   else
-    let a_start = a.start in
-    let b_start = b.start in
     let c = Int.compare a_start.line b_start.line in
     if c <> 0 then c
     else
       let c = Int.compare a_start.col b_start.col in
       if c <> 0 then c
       else
-        let a_end = a.end_ in
-        let b_end = b.end_ in
         let c = Int.compare a_end.line b_end.line in
         if c <> 0 then c
         else
           let c = Int.compare a_end.col b_end.col in
-          if c <> 0 then c else Rule_ID.compare a.check_id b.check_id
+          if c <> 0 then c else Rule_ID.compare a_id b_id
+
+let compare_cli_matches (a : cli_match) (b : cli_match) =
+  compare_reported_order
+    (a.path, a.start, a.end_, a.check_id)
+    (b.path, b.start, b.end_, b.check_id)
 
 let sort_cli_matches xs = List.sort compare_cli_matches xs
+
+let sort_core_matches_as_reported (xs : core_match list) : core_match list =
+  List.sort
+    (fun (a : core_match) (b : core_match) ->
+      compare_reported_order
+        (a.path, a.start, a.end_, a.check_id)
+        (b.path, b.start, b.end_, b.check_id))
+    xs

@@ -1,0 +1,13 @@
+--- begin input files ---
+filecount.yaml
+multilangproj/code.js
+multilangproj/math.ml
+multilangproj/script.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 47 insertions(+)
+ create mode 100644 filecount.yaml
+ create mode 100644 multilangproj/code.js
+ create mode 100644 multilangproj/math.ml
+ create mode 100644 multilangproj/script.py

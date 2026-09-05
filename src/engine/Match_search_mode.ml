@@ -151,6 +151,12 @@ let error_with_rule_id rule_id (error : Core_error.t) =
 
 let lazy_force x = Lazy.force x [@@profiling]
 
+(* The times of a nested formula (a metavariable-pattern, evaluated once
+   per binding in the match loop) are discarded, see
+   get_nested_formula_matches: they are not measured. *)
+let with_time (xconf : xconfig) (f : unit -> 'a) : 'a * float =
+  if xconf.nested_formula then (f (), 0.0) else Core_profiling.with_time f
+
 (* `fold_with_expls` is a left fold across a list of things, while
    accumulating an explanation for each item. it preserves the
    explanations in the same order, though.
@@ -270,10 +276,10 @@ let matches_of_patterns ~has_as_metavariable ?mvar_context ?range_filter rule
   match xlang with
   | Xlang.L (lang, _) ->
       let (ast, skipped_tokens), parse_time =
-        Common.with_time (fun () -> lazy_force lazy_ast_and_errors)
+        with_time xconf (fun () -> lazy_force lazy_ast_and_errors)
       in
       let matches, match_time =
-        Common.with_time (fun () ->
+        with_time xconf (fun () ->
             let mini_rules =
               patterns
               |> List_.map (function pat, b, c, d ->
@@ -677,14 +683,6 @@ let mk_expls_after_formula_kind ~formula_kind_expls ~filter_expls ~focus_expls
 (* Metavariable condition evaluation *)
 (*****************************************************************************)
 
-let hook_pro_entropy_analysis :
-    (mode:Rule.entropy_analysis_mode -> string -> bool) option ref =
-  ref None
-
-let hook_pro_metavariable_name :
-    (G.expr -> Rule.metavar_cond_name -> bool) option ref =
-  ref None
-
 let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
     (cond : R.metavar_cond) : (RM.t * MV.bindings list) list =
   let file = env.xtarget.path.internal_path_to_content in
@@ -697,7 +695,7 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
              let env =
                Eval_generic.bindings_to_env env.xconf.config ~file bindings
              in
-             Eval_generic.eval_bool env e r.origin.facts bindings |> map_bool r
+             Eval_generic.eval_bool env e |> map_bool r
          | R.CondNestedFormula (mvar, opt_lang, formula) -> (
              (* TODO: could return expl for nested matching! *)
              match
@@ -746,19 +744,14 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
                  error env
                    (spf "couldn't find metavar %s in the match results." mvar);
                  None)
-         | R.CondName ({ mvar; _ } as cond) -> (
-             let find_name env e cond =
-               match !hook_pro_metavariable_name with
-               | None ->
-                   error env
-                     "semgrep-internal-metavariable-name operator is only \
-                      supported in the Pro engine";
-                   false
-               | Some f -> f e cond
-             in
+         | R.CondName { mvar; _ } -> (
              let* mval = List.assoc_opt mvar bindings in
              match Metavariable.mvalue_to_expr mval with
-             | Some e -> find_name env e cond |> map_bool r
+             | Some _ ->
+                 error env
+                   "the semgrep-internal-metavariable-name operator is not \
+                    supported";
+                 None
              | None ->
                  error env
                    (spf "couldn't find metavar %s in the match results." mvar);
@@ -789,24 +782,11 @@ let rec filter_ranges (env : env) (xs : (RM.t * MV.bindings list) list)
               *)
              | Some capture_bindings -> Some (r, capture_bindings @ new_bindings)
              )
-         | R.CondAnalysis (mvar, CondEntropyV2 mode) -> (
-             match !hook_pro_entropy_analysis with
-             | None ->
-                 (* TODO - nice UX handling of this for pysemgrep - tell the user
-                  * that they ran a rule in OSS w/o Pro hook and so their rule
-                  * didn't do anything
-                  *)
-                 (* nosemgrep: no-logs-in-library *)
-                 Logs.err (fun m ->
-                     m
-                       "EntropyV2 rule encountered without loading proprietary \
-                        plugin");
-                 None
-             | Some f ->
-                 let bindings = r.mvars in
-                 Metavariable_analysis.analyze_string_metavar env bindings mvar
-                   (f ~mode)
-                 |> map_bool r)
+         | R.CondAnalysis (_mvar, CondEntropyV2 _mode) ->
+             (* nosemgrep: no-logs-in-library *)
+             Logs.err (fun m ->
+                 m "the entropy_v2 analysis is not supported; the rule matches nothing");
+             None
          | R.CondAnalysis (mvar, CondEntropy) ->
              let bindings = r.mvars in
              Metavariable_analysis.analyze_string_metavar env bindings mvar
@@ -1128,7 +1108,11 @@ and matches_of_formula xconf rule xtarget formula opt_context :
     }
   in
   Log.info (fun m -> m "evaluating the formula");
-  let final_ranges, expl = evaluate_formula env opt_context formula in
+  (* the evaluation (nested metavariable-pattern formulas, metavariable
+   * conditions, focus) is matching time too *)
+  let (final_ranges, expl), evaluation_time =
+    with_time xconf (fun () -> evaluate_formula env opt_context formula)
+  in
   Log.info (fun m -> m "found %d final ranges" (List.length final_ranges));
   let res' =
     {
@@ -1136,6 +1120,8 @@ and matches_of_formula xconf rule xtarget formula opt_context :
       RP.errors = E.ErrorSet.union res.RP.errors !(env.errors);
       explanations = Option.to_list expl;
     }
+    |> RP.map_profiling (fun (p : Core_profiling.rule_profiling) ->
+           { p with rule_match_time = p.rule_match_time +. evaluation_time })
   in
   (res', final_ranges)
 [@@profiling]

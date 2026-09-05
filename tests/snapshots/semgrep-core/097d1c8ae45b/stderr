@@ -1,0 +1,15 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/invalid-pattern-child.yaml:9:13: Invalid rule schema in rule rules.blah
+  --> rules/invalid-pattern-child.yaml:9
+8  |           - pattern: $X == $Y
+9  |           - pattern-not: $Z == $Z
+   |             ^^^^^^^^^^^
+10 | 
+you can only negate directly inside `patterns:` or `all:`

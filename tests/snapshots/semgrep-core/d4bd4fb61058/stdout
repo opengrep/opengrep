@@ -1,0 +1,49 @@
+--- begin input files ---
+rules/requests-use-timeout.yaml
+targets/requests-use-timeout.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 61 insertions(+)
+ create mode 100644 rules/requests-use-timeout.yaml
+ create mode 100644 targets/requests-use-timeout.py
+{"version":"<MASKED>","results":[{"check_id":"rules.python.requests.best-practice.use-timeout.use-timeout","path":"targets/requests-use-timeout.py","start":{"line":6,"col":5,"offset":67},"end":{"line":6,"col":22,"offset":84},"extra":{"metavars":{},"message":"'requests' calls default to waiting until the connection is closed.\nThis means a 'requests' call without a timeout will hang the program\nif a response is never received. Consider setting a timeout for all\n'requests'.\n","fix":"requests.get(url, timeout=30)","fixed_lines":["r = requests.get(url, timeout=30)"],"metadata":{},"severity":"WARNING","fingerprint":"a626a32b67e306bc14d48b5eafaf10eedc913cc0c1ecb4193ccf6d065f1211a52f59eefccf37b9633d37da0316c7f11fcee2a96840070eaca780d2423ace1744_0","lines":"r = requests.get(url)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.python.requests.best-practice.use-timeout.use-timeout","path":"targets/requests-use-timeout.py","start":{"line":9,"col":5,"offset":112},"end":{"line":9,"col":23,"offset":130},"extra":{"metavars":{},"message":"'requests' calls default to waiting until the connection is closed.\nThis means a 'requests' call without a timeout will hang the program\nif a response is never received. Consider setting a timeout for all\n'requests'.\n","fix":"requests.post(url, timeout=30)","fixed_lines":["r = requests.post(url, timeout=30)"],"metadata":{},"severity":"WARNING","fingerprint":"a626a32b67e306bc14d48b5eafaf10eedc913cc0c1ecb4193ccf6d065f1211a52f59eefccf37b9633d37da0316c7f11fcee2a96840070eaca780d2423ace1744_1","lines":"r = requests.post(url)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.python.requests.best-practice.use-timeout.use-timeout","path":"targets/requests-use-timeout.py","start":{"line":12,"col":5,"offset":158},"end":{"line":12,"col":33,"offset":186},"extra":{"metavars":{},"message":"'requests' calls default to waiting until the connection is closed.\nThis means a 'requests' call without a timeout will hang the program\nif a response is never received. Consider setting a timeout for all\n'requests'.\n","fix":"requests.request(\"GET\", url, timeout=30)","fixed_lines":["r = requests.request(\"GET\", url, timeout=30)"],"metadata":{},"severity":"WARNING","fingerprint":"a626a32b67e306bc14d48b5eafaf10eedc913cc0c1ecb4193ccf6d065f1211a52f59eefccf37b9633d37da0316c7f11fcee2a96840070eaca780d2423ace1744_2","lines":"r = requests.request(\"GET\", url)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.python.requests.best-practice.use-timeout.use-timeout","path":"targets/requests-use-timeout.py","start":{"line":18,"col":5,"offset":248},"end":{"line":18,"col":42,"offset":285},"extra":{"metavars":{},"message":"'requests' calls default to waiting until the connection is closed.\nThis means a 'requests' call without a timeout will hang the program\nif a response is never received. Consider setting a timeout for all\n'requests'.\n","fix":"requests.request(\"GET\", return_url(), timeout=30)","fixed_lines":["r = requests.request(\"GET\", return_url(), timeout=30)"],"metadata":{},"severity":"WARNING","fingerprint":"a626a32b67e306bc14d48b5eafaf10eedc913cc0c1ecb4193ccf6d065f1211a52f59eefccf37b9633d37da0316c7f11fcee2a96840070eaca780d2423ace1744_3","lines":"r = requests.request(\"GET\", return_url())","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.python.requests.best-practice.use-timeout.use-timeout","path":"targets/requests-use-timeout.py","start":{"line":29,"col":9,"offset":462},"end":{"line":29,"col":18,"offset":471},"extra":{"metavars":{},"message":"'requests' calls default to waiting until the connection is closed.\nThis means a 'requests' call without a timeout will hang the program\nif a response is never received. Consider setting a timeout for all\n'requests'.\n","fix":"post(url, timeout=30)","fixed_lines":["    r = post(url, timeout=30)"],"metadata":{},"severity":"WARNING","fingerprint":"a626a32b67e306bc14d48b5eafaf10eedc913cc0c1ecb4193ccf6d065f1211a52f59eefccf37b9633d37da0316c7f11fcee2a96840070eaca780d2423ace1744_4","lines":"    r = post(url)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/requests-use-timeout.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/requests-use-timeout.py after the scan ---
+import requests
+
+url = "www.github.com"
+
+# ruleid: use-timeout
+r = requests.get(url)
+
+# ruleid: use-timeout
+r = requests.post(url)
+
+# ruleid: use-timeout
+r = requests.request("GET", url)
+
+def return_url():
+    return url
+
+# ruleid: use-timeout
+r = requests.request("GET", return_url())
+
+# ok
+r = requests.get(url, timeout=50)
+
+def from_import_test1(url):
+    from requests import get, post
+    # ok
+    r = get(url, timeout=3)
+
+    # ruleid: use-timeout
+    r = post(url)
+
+def test2():
+    """Perform a requests.get and default headers set"""
+    headers = {**_get_default_headers(), **headers}
+    # ok
+    r = requests.get(
+        url, headers=headers, params=params, **{"timeout": TIMEOUT, **kwargs}
+    )
+    return r

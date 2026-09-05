@@ -1,0 +1,10 @@
+--- begin input files ---
+regex-utf8.txt
+regex-utf8.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 19 insertions(+)
+ create mode 100644 regex-utf8.txt
+ create mode 100644 regex-utf8.yaml
+{"version":"<MASKED>","results":[{"check_id":"test-regex","path":"regex-utf8.txt","start":{"line":2,"col":1,"offset":8},"end":{"line":2,"col":5,"offset":12},"extra":{"metavars":{},"message":"check different ways to match UTF-8-encoded Unicode text","metadata":{},"severity":"ERROR","fingerprint":"be8b3eab8ec004a953d066f56ea1047f03c35535cdc50368d0cf2d65e937bce313c24249c156911ab4f3a50972614dd14e7d32f621edf9923162148c514aadf0_0","lines":"😊 (smiley)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"test-regex","path":"regex-utf8.txt","start":{"line":5,"col":1,"offset":31},"end":{"line":5,"col":5,"offset":35},"extra":{"metavars":{},"message":"check different ways to match UTF-8-encoded Unicode text","metadata":{},"severity":"ERROR","fingerprint":"be8b3eab8ec004a953d066f56ea1047f03c35535cdc50368d0cf2d65e937bce313c24249c156911ab4f3a50972614dd14e7d32f621edf9923162148c514aadf0_1","lines":"🚀 (rocket)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"test-regex","path":"regex-utf8.txt","start":{"line":11,"col":1,"offset":79},"end":{"line":11,"col":9,"offset":87},"extra":{"metavars":{},"message":"check different ways to match UTF-8-encoded Unicode text","metadata":{},"severity":"ERROR","fingerprint":"be8b3eab8ec004a953d066f56ea1047f03c35535cdc50368d0cf2d65e937bce313c24249c156911ab4f3a50972614dd14e7d32f621edf9923162148c514aadf0_2","lines":"<βγδ> (Greek letters)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["regex-utf8.txt"]},"interfile_languages_used":[],"skipped_rules":[]}

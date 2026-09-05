@@ -293,19 +293,21 @@ type filter_result =
   | Skip of Out.skipped_target (* ignore this file and report it *)
   | Ignore_silently (* ignore and don't report this file *)
 
-let ignore_path selection_events fpath =
+let skipped_of_ignored (selection_events : Gitignore.selection_event list)
+    (fpath : Fpath.t) : Out.skipped_target =
   Log.debug (fun m ->
       m "Ignoring path %s:\n%s" !!fpath
         (Gitignore.show_selection_events selection_events));
   let reason = get_reason_for_exclusion selection_events in
-  Skip
-    {
-      Out.path = fpath;
-      reason;
-      details =
-        Some "excluded by --include/--exclude, gitignore, or semgrepignore";
-      rule_id = None;
-    }
+  { Out.path = fpath; reason; details = None; rule_id = None }
+
+let ignore_path selection_events fpath =
+  Skip (skipped_of_ignored selection_events fpath)
+
+(* the path without its last n segments *)
+let rec parent_n (n : int) (path : Fpath.t) : Fpath.t =
+  if n <= 0 then Fpath.rem_empty_seg path
+  else parent_n (n - 1) (Fpath.parent path)
 
 let apply_include_filter status selection_events include_filter ppath =
   match status with
@@ -315,19 +317,35 @@ let apply_include_filter status selection_events include_filter ppath =
       | None -> (status, selection_events)
       | Some include_filter -> Include_filter.select include_filter ppath)
 
+(* Never scanned and never reported, as pysemgrep's PATHS_ALWAYS_SKIPPED
+   (target_manager.py), which held '**/.git' and '**/.git/**': the folder
+   git keeps its data in, and everything under it, whatever the ignore
+   files of the project say. *)
+let is_always_skipped (ppath : Ppath.t) : bool =
+  Ppath.segments ppath |> List.exists (String.equal ".git")
+
 (* Note that include_filter applies only to the paths of regular files. They're
  * applied last, after the exclude/gitignore/semgrepignore filters.
  *)
-let filter_path (ign : Gitignore.filter)
+let filter_path ?(kind : Unix.file_kind option) (ign : Gitignore.filter)
     (include_filter : Include_filter.t option) (fppath : Fppath.t) :
     filter_result =
   let { fpath; ppath } : Fppath.t = fppath in
+  if is_always_skipped ppath then Ignore_silently
+  else
   let status, selection_events = Gitignore_filter.select ign ppath in
   match status with
   | Ignored -> ignore_path selection_events fpath
   | Not_ignored -> (
       (* TODO: check read permission too? *)
-      match (Unix.lstat !!fpath).st_kind with
+      (* [kind] is what a caller that has already stat'ed the path knows: a
+         scanning root is followed with Unix.stat, so it is filtered as the
+         file it leads to rather than skipped as a symlink. *)
+      match
+        match kind with
+        | Some (kind : Unix.file_kind) -> kind
+        | None -> (Unix.lstat !!fpath).st_kind
+      with
       (* skipping symlinks *)
       | S_LNK -> Ignore_silently
       | S_REG -> (
@@ -337,7 +355,17 @@ let filter_path (ign : Gitignore.filter)
           match status with
           | Ignored -> ignore_path selection_events fpath
           | Not_ignored -> Keep)
-      | S_DIR -> Dir
+      | S_DIR -> (
+          (* A pattern ending with a slash, like 'sub/', applies to
+             directories only and matches a path ending with a slash only.
+             Tested with the slash, the directory is skipped and reported
+             once; without it, it would be entered and each file reported. *)
+          let status, selection_events =
+            Gitignore_filter.select ign (Ppath.add_seg ppath "")
+          in
+          match status with
+          | Ignored -> ignore_path selection_events fpath
+          | Not_ignored -> Dir)
       | S_FIFO
       | S_CHR
       | S_BLK
@@ -357,16 +385,105 @@ let filter_path (ign : Gitignore.filter)
    obtained with 'git ls-files'. A strong postcondition is that the
    paths returned must correspond to existing regular files!
 *)
+(* An ignored directory is reported once, with the first file met under it
+   from a scanning root at or above it. *)
+type dir_status =
+  | Dir_not_ignored
+  | Dir_ignored of Gitignore.selection_event list
+  | Dir_reported
+
+(* the ppath of a scanning root without the trailing slash marker of a
+   directory, as the ancestors of a file are built *)
+let root_ppath (root : Fppath.t) : Ppath.t =
+  Ppath.create
+    ("" :: List.filter (fun (seg : string) -> not (String.equal seg ""))
+             (Ppath.relative_segments root.ppath))
+
 let filter_paths
     ((ign, include_filter) : Gitignore.filter * Include_filter.t option)
-    (target_files : Fppath.t list) : Fppath.t list * Out.skipped_target list =
+    (scanning_roots : Fppath.t list) (target_files : Fppath.t list) :
+    Fppath.t list * Out.skipped_target list =
   let (selected_paths : Fppath.t list ref) = ref [] in
   let (skipped : Out.skipped_target list ref) = ref [] in
   let add path = Stack_.push path selected_paths in
   let skip target = Stack_.push target skipped in
+  let (dirs : (Ppath.t, dir_status) Hashtbl.t) = Hashtbl.create 1024 in
+  let (roots : (Ppath.t, unit) Hashtbl.t) = Hashtbl.create 16 in
+  scanning_roots
+  |> List.iter (fun (root : Fppath.t) ->
+         Hashtbl.replace roots (root_ppath root) ());
+  (* The files under an ignored directory are dropped without being tested
+     and the directory is reported once, as pysemgrep did.
+
+     The fpath of a file is a prefix, the scanning root as typed or as git
+     reports it, followed by its segments below the root, the same as in
+     its ppath. Dropping segments below the root from the fpath gives the
+     fpath of an ancestor. Nothing is known of the prefix, which may go
+     through a symlink, so an ignored ancestor above the root is not
+     reported here: the file is, by the filter below, as pysemgrep did. *)
+  let under_ignored_dir (fppath : Fppath.t) : bool =
+    (* the ancestors from the project root down; [below] is the number of
+       segments of the file under the ancestor being looked at *)
+    let rec loop (dir_ppath : Ppath.t) (in_root : bool)
+        (remaining : string list) (below : int) : bool =
+      match remaining with
+      | []
+      | [ _ ] ->
+          false
+      | segment :: remaining ->
+          let dir_ppath = Ppath.add_seg dir_ppath segment in
+          let below = below - 1 in
+          let in_root = in_root || Hashtbl.mem roots dir_ppath in
+          let status =
+            match Hashtbl.find_opt dirs dir_ppath with
+            | Some status -> status
+            | None ->
+                (* the trailing slash makes directory-only patterns apply *)
+                let status, selection_events =
+                  Gitignore_filter.select ign (Ppath.add_seg dir_ppath "")
+                in
+                let status =
+                  match status with
+                  | Gitignore.Ignored -> Dir_ignored selection_events
+                  | Gitignore.Not_ignored -> Dir_not_ignored
+                in
+                Hashtbl.replace dirs dir_ppath status;
+                status
+          in
+          match (status, in_root) with
+          | Dir_not_ignored, _ -> loop dir_ppath in_root remaining below
+          | (Dir_ignored _ | Dir_reported), false -> false
+          | Dir_ignored selection_events, true ->
+              skip
+                (skipped_of_ignored selection_events
+                   (parent_n below fppath.fpath));
+              Hashtbl.replace dirs dir_ppath Dir_reported;
+              true
+          | Dir_reported, true -> true
+    in
+    let segments = Ppath.relative_segments fppath.ppath in
+    loop Ppath.root (Hashtbl.mem roots Ppath.root) segments
+      (List.length segments)
+  in
+  (* A scanning root that is a symlink to a file is the file the user
+     named: git lists it like any other, but it is followed here as it is
+     when the walk starts from it, instead of being dropped for being a
+     symlink. *)
+  let kind_of_scanning_root (fppath : Fppath.t) : Unix.file_kind option =
+    if
+      Hashtbl.mem roots (root_ppath fppath)
+      && UFile.is_reg ~follow_symlinks:true fppath.fpath
+    then Some Unix.S_REG
+    else None
+  in
   target_files
   |> List.iter (fun fppath ->
-         match filter_path ign include_filter fppath with
+         if under_ignored_dir fppath then ()
+         else
+         match
+           filter_path ?kind:(kind_of_scanning_root fppath) ign include_filter
+             fppath
+         with
          | Keep -> (
              (* This section is similar to what we have in
                 'walk_skip_and_collect' but the rest is sufficiently different
@@ -385,14 +502,30 @@ let filter_paths
 (* Note: throughout this file we use List.rev_append instead of (@) for
  * concatenating file lists, since it is tail-recursive. The order does not
  * matter because we sort and deduplicate at the end in get_targets. *)
-let filter_size_and_minified max_target_bytes exclude_minified_files paths =
-  let selected_fppaths, skipped_size =
+(* [keep_any_extension] holds for the files the default extension
+   exclusions must not apply to, [keep_any_size] for those the size limit
+   must not apply to. *)
+let filter_extension_size_and_minified ~(keep_any_extension : Fppath.t -> bool)
+    ~(keep_any_size : Fppath.t -> bool) max_target_bytes exclude_minified_files
+    paths =
+  let partition ~(exempt : Fppath.t -> bool)
+      (check : Fpath.t -> (Fpath.t, Out.skipped_target) result)
+      (fppaths : Fppath.t list) : Fppath.t list * Out.skipped_target list =
     Result_.partition
       (fun (fppath : Fppath.t) ->
-        Result.map
-          (fun _ -> fppath)
-          (Skip_target.is_big max_target_bytes fppath.fpath))
+        if exempt fppath then Ok fppath
+        else Result.map (fun (_ : Fpath.t) -> fppath) (check fppath.fpath))
+      fppaths
+  in
+  (* by extension first, as it reads nothing *)
+  let selected_fppaths, skipped_extension =
+    partition ~exempt:keep_any_extension Skip_target.has_excluded_extension
       paths
+  in
+  let selected_fppaths, skipped_size =
+    partition ~exempt:keep_any_size
+      (Skip_target.is_big max_target_bytes)
+      selected_fppaths
   in
   let selected_fppaths, skipped_minified =
     if exclude_minified_files then
@@ -402,9 +535,13 @@ let filter_size_and_minified max_target_bytes exclude_minified_files paths =
         selected_fppaths
     else (selected_fppaths, [])
   in
+  Log.debug (fun m ->
+      m "skipped_extension: %d" (List.length skipped_extension));
   Log.debug (fun m -> m "skipped_size: %d" (List.length skipped_size));
   Log.debug (fun m -> m "skipped_minified: %d" (List.length skipped_minified));
-  (selected_fppaths, List.rev_append skipped_size skipped_minified)
+  ( selected_fppaths,
+    List.rev_append skipped_extension
+      (List.rev_append skipped_size skipped_minified) )
 
 (*************************************************************************)
 (* Finding by walking *)
@@ -529,23 +666,11 @@ let git_list_files ~exclude_standard
                     against git's canonical targets would emit a '..' walk-up.
                     Canonicalise a copy for the relativize and the git lookup
                     below so they stay clean, while still prefixing the typed
-                    root onto the result. No-op on case-sensitive filesystems. *)
+                    root onto the result. Canonicalising also resolves the
+                    symlinks of the typed root: git rejects a path that leads
+                    outside the directory it runs in. *)
                  let canon_scanning_root_path =
-                   Rpath.canonical_if_win sc_root.fpath
-                 in
-                 (* Best effort to get a relative scanning root path
-                    (will fail in file systems with multiple roots) *)
-                 let rel_scanning_root_path_or_absolute =
-                   if Fpath.is_rel canon_scanning_root_path then
-                     canon_scanning_root_path
-                   else
-                     match
-                       Fpath.relativize ~root:cwd canon_scanning_root_path
-                     with
-                     | Some rel_scanning_root -> rel_scanning_root
-                     | None ->
-                         (* absolute, on another volume than cwd *)
-                         canon_scanning_root_path
+                   Rpath.canonical_exn sc_root.fpath
                  in
                  (* We can't just cd into the scanning root to obtain paths
                     relative to it because the scanning root may be a regular
@@ -568,50 +693,39 @@ let git_list_files ~exclude_standard
                            The only exception is if the scanning root is '.',
                            in which case we don't produce './foo' but 'foo'.
                         *)
-                        let target_fpath =
-                          match
-                            (* 'root' must be a folder. We relativize against
-                               the canonicalised root and cwd, so on Windows
-                               this no longer emits a '..' walk-up; the clean
-                               remainder is then prefixed with the typed root
-                               below. *)
-                            Fpath.relativize
-                              ~root:rel_scanning_root_path_or_absolute
-                              target_relative_to_cwd_or_absolute
-                          with
-                          | Some target_relative_to_scan_root ->
-                              Fpath_.append_no_dot orig_scanning_root_path
-                                target_relative_to_scan_root
-                          | None -> target_relative_to_cwd_or_absolute
-                        in
-                        (* Obtain a path relative to the project root *)
-                        let target_ppath =
-                          match
-                            Fpath.relativize
-                              ~root:(Rpath.to_fpath project_root)
-                              (cwd // target_relative_to_cwd_or_absolute)
-                          with
-                          | None ->
-                              (* TODO: return an Error instead and let the
-                                 caller decide instead of assert false
-                              *)
-                              (* nosemgrep: no-logs-in-library *)
-                              Logs.err (fun m ->
-                                  m
-                                    "Internal error: cannot obtain path \
-                                     relative to project root from \
-                                     project_root=%s, cwd=%S, \
-                                     path_relative_to_cwd=%S"
-                                    !!(Rpath.to_fpath project_root)
-                                    !!cwd
-                                    !!target_relative_to_cwd_or_absolute);
-                              assert false
-                          | Some fpath_relative_to_project_root ->
-                              Ppath.of_relative_fpath
-                                fpath_relative_to_project_root
-                        in
-                        ({ fpath = target_fpath; ppath = target_ppath }
-                          : Fppath.t)))
+                        match
+                          (* Both absolute and normalised: relative to
+                             cwd, the typed root and the path listed by
+                             git can spell one directory two ways, '../sub'
+                             and '.', and never match. *)
+                          Fpath.relativize ~root:canon_scanning_root_path
+                            (Fpath.normalize
+                               (cwd // target_relative_to_cwd_or_absolute))
+                        with
+                        | Some target_relative_to_scan_root ->
+                            (* The segments below the root extend both the
+                               root as typed and its ppath, so that the
+                               file and its root are in one frame even
+                               when the root goes through a symlink. *)
+                            ({
+                               fpath =
+                                 Fpath_.append_no_dot orig_scanning_root_path
+                                   target_relative_to_scan_root;
+                               ppath =
+                                 Ppath.append_fpath sc_root.ppath
+                                   target_relative_to_scan_root;
+                             }
+                              : Fppath.t)
+                        | None ->
+                            (* cannot happen with a correct root: the scan
+                               aborts rather than report a wrong path *)
+                            failwith
+                              (spf
+                                 "internal error: git listed a path outside \
+                                  the scanning root: root=%s, cwd=%s, \
+                                  path=%s"
+                                 !!canon_scanning_root_path !!cwd
+                                 !!target_relative_to_cwd_or_absolute)))
                else (
                  (* scanning root is neither a file nor a folder *)
                  Log.warn (fun m ->
@@ -653,8 +767,21 @@ let scanning_root_by_project ~(force_root : Project.t option)
     ~(force_novcs : bool) (scanning_root : Scanning_root.t) :
     Project.t * Fppath.t =
   let scanning_root_fpath = Scanning_root.to_fpath scanning_root in
+  (* Outside any VCS, the working directory is the project when the root
+     is under it, so that its ignore files apply, as the Python wrapper
+     reads the .semgrepignore of the working directory. *)
+  let fallback_root : Rfpath.t option =
+    let cwd = Rpath.getcwd () in
+    match Rpath.of_fpath scanning_root_fpath with
+    | Ok root when Fpath.is_prefix (Rpath.to_fpath cwd) (Rpath.to_fpath root)
+      ->
+        Some (Rfpath.of_fpath_exn (Rpath.to_fpath cwd))
+    | Ok _
+    | Error _ ->
+        None
+  in
   let kind, scanning_root_info =
-    Project.find_any_project_root ~fallback_root:None ~force_novcs ~force_root
+    Project.find_any_project_root ~fallback_root ~force_novcs ~force_root
       scanning_root_fpath
   in
   let project : Project.t = { kind; root = scanning_root_info.project_root } in
@@ -694,7 +821,7 @@ let group_scanning_roots_by_project (conf : conf)
            for some tests to pass within our semgrep repo but it's not clear
            why it's like this.
            TODO: make tests work without requiring --project-root? *)
-        Some Project.{ kind = Project.Gitignore_project; root = proj_root }
+        Some Project.{ kind = Project.No_VCS_project; root = proj_root }
     | None ->
         (* Usual case when scanning the local file system *)
         None
@@ -762,8 +889,17 @@ let setup_path_filters conf (project_roots : Project.roots) :
    * We would still need to intialize at the beginning with
    * the .gitignore of all the parents of the scan_root.
    *)
+  (* The ignore file of the working directory applies wherever the scanning
+     roots are, as it did for the Python wrapper. When the working
+     directory is the project root it is already read as the project's own,
+     with its patterns anchored there. *)
+  let working_directory : Fpath.t option =
+    let cwd = Rpath.to_fpath (Rpath.getcwd ()) in
+    if Fpath.equal cwd (Rpath.to_fpath (Rfpath.to_rpath project_root)) then None
+    else Some cwd
+  in
   let semgrepignore_filter =
-    Semgrepignore.create ~cli_patterns:conf.exclude
+    Semgrepignore.create ~cli_patterns:conf.exclude ?working_directory
       ?semgrepignore_filename:conf.semgrepignore_filename
       ~default_semgrepignore_patterns:Semgrep_scan_legacy
       ~exclusion_mechanism
@@ -778,12 +914,14 @@ let setup_path_filters conf (project_roots : Project.roots) :
   (semgrepignore_filter, include_filter)
 
 (* Work from a list of target paths obtained with git *)
-let filter_targets conf project_roots (all_files : Fppath.t list) =
-  let ign = setup_path_filters conf project_roots in
-  filter_paths ign all_files
+let filter_targets
+    (filters : Gitignore.filter * Include_filter.t option)
+    (project_roots : Project.roots) (all_files : Fppath.t list) =
+  filter_paths filters project_roots.scanning_roots all_files
 
-let get_targets_from_filesystem conf (project_roots : Project.roots) =
-  let ign, include_filter = setup_path_filters conf project_roots in
+let get_targets_from_filesystem
+    ((ign, include_filter) : Gitignore.filter * Include_filter.t option)
+    conf (project_roots : Project.roots) =
   List.fold_left
     (fun (selected, skipped) (scan_root : Fppath.t) ->
       (* better: Note that we use Unix.stat below, not Unix.lstat, so
@@ -798,10 +936,29 @@ let get_targets_from_filesystem conf (project_roots : Project.roots) =
         match (Unix.stat !!(scan_root.fpath)).st_kind with
         (* TOPORT? make sure has right permissions (readable) *)
         | S_REG ->
+          let keep_if_readable () =
+            match Skip_target.filter_file_access_permissions scan_root.fpath with
+            | Ok _path -> ([ scan_root ], [])
+            | Error skipped -> ([], [ skipped ])
+          in
           if not conf.apply_includes_excludes_to_file_targets then
-            ([ scan_root ], [])
+            (* a file the user named is taken whatever the filters, but it
+               still has to be readable *)
+            keep_if_readable ()
           else
-            walk_skip_and_collect ign include_filter scan_root
+            (* '--force-exclude': the filters apply to the file the user
+               named as they do to any other file. Walking it is not an
+               option: the walk tests the read and execute permissions of
+               what it starts from, which a regular file rarely has. The
+               kind comes from the Unix.stat above, so a root that is a
+               symlink to a file is filtered as that file and not dropped
+               for being a symlink. *)
+            (match filter_path ~kind:Unix.S_REG ign include_filter scan_root with
+            | Keep -> keep_if_readable ()
+            | Skip skipped -> ([], [ skipped ])
+            | Dir
+            | Ignore_silently ->
+                ([], []))
         | S_DIR -> walk_skip_and_collect ign include_filter scan_root
         | S_LNK ->
             (* already dereferenced by Unix.stat *)
@@ -823,6 +980,8 @@ let get_targets_from_filesystem conf (project_roots : Project.roots) =
    files regardless of filters (gitignore, semgrepignore, --include,
    --exclude, ...).
    If they already occur in the list of skipped targets, they will be removed.
+   A file the scan cannot read is not selected: it is reported as skipped,
+   and the caller turns that into an error of the run.
 *)
 let force_select_scanning_roots
     ?(apply_includes_excludes_to_files = false)
@@ -830,13 +989,17 @@ let force_select_scanning_roots
     (selected_targets : Fppath.t list)
     (skipped_targets : Out.skipped_target list) :
     Fppath.t list * Out.skipped_target list =
-  let regular_files_to_add =
+  let regular_files_to_add, unreadable_files =
     if not apply_includes_excludes_to_files then
       (* default behaviour: *)
       project_roots.scanning_roots
       |> List.filter (fun (sc_root : Fppath.t) ->
           UFile.is_reg ~follow_symlinks:true sc_root.fpath)
-    else []
+      |> List.partition_map (fun (sc_root : Fppath.t) ->
+             match Skip_target.filter_file_access_permissions sc_root.fpath with
+             | Ok _path -> Left sc_root
+             | Error skipped -> Right skipped)
+    else ([], [])
   in
   let skipped_targets =
     let regular_files_to_add =
@@ -849,7 +1012,7 @@ let force_select_scanning_roots
            not (Set_.mem skipped.path regular_files_to_add))
   in
   let selected_targets = List.rev_append selected_targets regular_files_to_add in
-  (selected_targets, skipped_targets)
+  (selected_targets, List.rev_append unreadable_files skipped_targets)
 
 (*
    Target files are identified by following these steps:
@@ -866,12 +1029,41 @@ let force_select_scanning_roots
       semgrepignore mechanism. This allows the inclusion of additional
       files that are not under git control because .semgrepignore
       files allows de-exclusion/re-inclusion patterns such as e.g.
-      '!*.min.js'.
+      '!build/'.
       Typically, the sets of files produced by (2) and (3) overlap vastly.
    4. Take the union of (2) and (3).
 *)
+(* A directory given as a scanning root that the ignore rules exclude is
+   not listed at all. The walk tests the entries of a directory, never the
+   directory it starts from, and git would list everything under it. *)
+let ignored_scanning_root (ign : Gitignore.filter) (root : Fppath.t) :
+    Out.skipped_target option =
+  if not (UFile.is_dir ~follow_symlinks:true root.fpath) then None
+  else
+    (* the trailing slash makes directory-only patterns apply *)
+    let status, selection_events =
+      Gitignore_filter.select ign (Ppath.add_seg root.ppath "")
+    in
+    match status with
+    | Not_ignored -> None
+    | Ignored ->
+        Log.warn (fun m ->
+            m "the scanning root %s is skipped, nothing under it is scanned:\n%s"
+              !!(root.fpath)
+              (Gitignore.show_selection_events selection_events));
+        Some (skipped_of_ignored selection_events root.fpath)
+
 let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targets =
   Log.debug (fun m -> m "Find_target.get_targets_for_project");
+  let ((ign, _) as filters) = setup_path_filters conf project_roots in
+  let skipped_roots, scanning_roots =
+    project_roots.scanning_roots
+    |> List.partition_map (fun (root : Fppath.t) ->
+           match ignored_scanning_root ign root with
+           | Some skipped -> Left skipped
+           | None -> Right root)
+  in
+  let project_roots = { project_roots with scanning_roots } in
   (* Obtain the list of files from git if possible because it does it
      faster than what we can do by scanning the filesystem: *)
   let git_tracked = git_list_tracked_files project_roots in
@@ -887,12 +1079,13 @@ let get_targets_for_project conf (project_roots : Project.roots) : Fppath.t targ
             m "target file candidates from git: tracked: %i, untracked: %i"
               (List.length tracked)
               (List.length untracked));
-        filter_targets conf project_roots (List.rev_append tracked untracked)
+        filter_targets filters project_roots (List.rev_append tracked untracked)
     (* Non-Git projects *)
     | None, _
     | _, None ->
-        get_targets_from_filesystem conf project_roots
+        get_targets_from_filesystem filters conf project_roots
   in
+  let skipped_targets = List.rev_append skipped_roots skipped_targets in
   let is_git_repo = Option.is_some git_tracked in
   let selected_targets, skipped_targets =
     force_select_scanning_roots
@@ -923,15 +1116,29 @@ let get_targets conf scanning_roots : Fppath.t targets =
       { selected = []; skipped = []; git_repo = false }
       (group_scanning_roots_by_project conf scanning_roots)
   in
-  let selected, big_and_minified =
+  (* The default exclusions by extension and the size limit apply to what
+     walking a directory root turns up, not to a file the user named on the
+     command line: pysemgrep added those back after filtering
+     (bypass_includes_excludes_for_files of target_manager.py). *)
+  let is_explicit_file (fppath : Fppath.t) : bool =
+    (not conf.apply_includes_excludes_to_file_targets)
+    && Explicit_targets.mem conf.explicit_targets fppath.fpath
+  in
+  let selected, skipped_files =
     raw.selected
     |> List.sort_uniq Fppath.compare
-    |> filter_size_and_minified conf.max_target_bytes conf.exclude_minified_files
+    |> filter_extension_size_and_minified
+         ~keep_any_extension:(fun (fppath : Fppath.t) ->
+           (* an --include pattern already narrows the selection, so the
+              default exclusions by extension are dropped with it *)
+           Option.is_some conf.include_ || is_explicit_file fppath)
+         ~keep_any_size:is_explicit_file conf.max_target_bytes
+         conf.exclude_minified_files
   in
   let skipped =
     List.sort_uniq
       (fun (a : Out.skipped_target) (b : Out.skipped_target) -> Fpath.compare a.path b.path)
-      (List.rev_append big_and_minified raw.skipped)
+      (List.rev_append skipped_files raw.skipped)
   in
   { selected; skipped; git_repo = raw.git_repo }
 [@@profiling]

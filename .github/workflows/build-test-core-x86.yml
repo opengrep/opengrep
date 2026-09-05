@@ -71,39 +71,23 @@ jobs:
 
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: opengrep-core-x86
+          name: opengrep-build-linux-x86
           path: artifacts.tgz
 
-  build-musllinux-x86:
-    needs:
-      - build-core
-    container: quay.io/pypa/musllinux_1_2_x86_64
-    runs-on: ubuntu-latest
-    steps:
-      - name: Make checkout speedy
-        run: git config --global fetch.parallel 50
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
-        with:
-          submodules: true
-      - run: |
-          apk update
-          apk add --no-cache zip python3 py3-pip py3-virtualenv python3-dev gcc musl-dev
-      - uses: actions/download-artifact@b14cf4c92620c250e1c074ab0a5800e37df86765 # ratchet:actions/download-artifact@v4
-        with:
-          name: opengrep-core-x86
-      - run: |
-          tar xf artifacts.tgz
-          cp artifacts/opengrep-core cli/src/semgrep/bin
-          python3 -m venv venv
-          . venv/bin/activate
-          ./scripts/build-wheels.sh
+      # A tarball rather than a bare file, so that the executable bit survives
+      # the upload.
+      - name: Make artifact for ./bin/opengrep
+        run: |
+          mkdir opengrep
+          cp ./bin/opengrep opengrep/
+          tar czf opengrep.tgz opengrep
+
       - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # ratchet:actions/upload-artifact@v4
         with:
-          name: musllinux-x86-wheel
-          path: cli/dist.zip
+          name: opengrep-linux-x86
+          path: opengrep.tgz
 
   build-test-manylinux-x86:
     needs:
       - build-core
-      # - build-musllinux-x86 # NOTE: This is not really necessary.
     uses: ./.github/workflows/build-test-manylinux.yml

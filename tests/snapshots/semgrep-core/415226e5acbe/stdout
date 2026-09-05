@@ -1,0 +1,20 @@
+[4mUsage[24m: [36mopengrep [OPTIONS] COMMAND [ARGS]...[39m
+
+  To get started quickly, run [36m`opengrep scan --config auto`[39m
+
+  Run [36m`opengrep SUBCOMMAND --help`[39m for more information on each subcommand
+
+  If no subcommand is passed, will run [36m`scan`[39m subcommand by default
+
+[4mOptions[24m:
+  -h, --help  Show this message and exit.
+  --core      Run the low-level engine CLI; its own options are shown by [36m`opengrep --core -help`[39m
+
+[4mCommands[24m:
+  [36mci[39m                   Run Opengrep on a git diff (for use in CI)
+  [36minstall-ci[39m           Add an Opengrep workflow to a git repository
+  [36mlsp[39m                  Start the Opengrep LSP server (useful for IDEs)
+  [36mscan[39m                 Run Opengrep rules on local folders or files
+  [36mshow[39m                 Show various types of information
+  [36mtest[39m                 Test the rules
+  [36mvalidate[39m             Validate rules in local files/directories

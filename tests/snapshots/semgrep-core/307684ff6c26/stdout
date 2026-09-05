@@ -1,0 +1,12 @@
+--- begin input files ---
+eqeq-python.yaml
+targets/size/big.py
+targets/size/small.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 34 insertions(+)
+ create mode 100644 eqeq-python.yaml
+ create mode 100644 targets/size/big.py
+ create mode 100644 targets/size/small.py
+{"version":"<MASKED>","results":[{"check_id":"eqeq-is-bad","path":"targets/size/big.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"x"}},"message":"useless comparison operation `x == x` or `x != x`","metadata":{"shortlink":"https://sg.run/xyz1"},"severity":"ERROR","fingerprint":"173dba04092ba268dce05ff5ea3728f61dc9bf04d620db7946ad2b687fce88038c474809606ac3f3f5229c833bf1d5109a39a69375a34a00f3a4ffcb0320afca_0","lines":"x == x","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/size/big.py"],"skipped":[]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -13,7 +13,6 @@ module Log = Log_reporting.Log
 (* Helpers *)
 (*****************************************************************************)
 
-let ellipsis_string = " ... "
 let rule_leading_indent_size = 3
 
 let rule_indent_size =
@@ -25,10 +24,41 @@ let rule_leading_indent = String.make rule_leading_indent_size ' '
 let detail_indent = String.make detail_indent_size ' '
 let findings_indent = String.make findings_indent_size ' '
 
+(* python: console.py, the width of the console the wrapper printed on: the
+   COLUMNS environment variable when it holds a positive integer, else the
+   width of the terminal, at most 120 columns and at least 40 *)
 let text_width =
-  let max_text_width = 120 in
-  let w = Option.value ~default:max_text_width (Terminal_size.get_columns ()) in
-  min w max_text_width
+  let max_text_width = 120 and min_text_width = 40 in
+  let columns_env : int option =
+    match
+      Opengrep_env.getenv_opt "COLUMNS"
+      |> Option.map String.trim
+      |> Fun.flip Option.bind int_of_string_opt
+    with
+    | Some w when w > 0 -> Some w
+    | _ -> None
+  in
+  let columns : int option =
+    match columns_env with
+    | Some _ -> columns_env
+    | None -> Terminal_size.get_columns ()
+  in
+  Option.fold columns ~none:max_text_width ~some:(fun (w : int) ->
+      Int.min max_text_width (Int.max min_text_width w))
+
+(* python: text.py, the columns rich adds to every line of the findings
+   block, and the widths derived from the width of the console:
+   FINDINGS_TEXT_WIDTH for a line of code, RULE_TEXT_WIDTH for a rule id,
+   DESC_TEXT_WIDTH for a message and AUTOFIX_TEXT_WIDTH for a fix *)
+let console_indent_size = 2
+let findings_text_width = text_width - 16
+let rule_text_width = text_width - 9
+let desc_text_width = text_width - 12
+let autofix_text_width = text_width - 25
+
+(* python: text.py safe_width(), which keeps a width usable *)
+let min_wrap_width = 10
+let safe_width (width : int) : int = max min_wrap_width width
 
 (* TODO: re-enable dynamic size in a separate PR to avoid too many test changes *)
 let fill_count = 40
@@ -140,53 +170,335 @@ let dedent_lines (lines : string list) =
       lines,
     longest_prefix )
 
-(*
-   Take a piece of text and break it into lines no longer than max_width.
-   The result is a list of (indentation, line of text) which allows the
-   text part to be styled later.
+(* python: the width of a tab stop, str.expandtabs()'s default *)
+let tab_size = 8
 
-   indent: number of spaces
-   max_width: maximum available space >= length of indentation + line of text
-
-   TODO: add unit tests for this code
-*)
-let indent_and_wrap_lines ~indent ~max_width txt : (string * string) list =
-  Log.debug (fun m -> m "wrap indent=%d max_width=%d s=%s" indent max_width txt);
-  let indentation = String.make indent ' ' in
-  let real_width = max_width - indent in
-  let rec wrap txt acc =
-    (* In some context (e.g., pre-commit in CI), the number of columns of
-     * your terminal can be small in which case real_width above can become
-     * negative, in which case we should stop, otherwise
-     * String.rindex_from() below will raise an Invalid_arg exn.
-     *)
-    if String.length txt <= real_width || real_width <= 0 then
-      List.rev ((indentation, txt) :: acc)
-    else
-      (* here we know String.length txt > real_width > 0 *)
-      let cut =
-        let prev_ws =
-          try String.rindex_from txt real_width ' ' with
-          | Not_found -> 0
-        and prev_dash =
-          try 1 + String.rindex_from txt real_width '-' with
-          | Not_found -> 0
-        in
-        let m = max prev_ws prev_dash in
-        if m = 0 then real_width else m
-      in
-      let line_text, remaining_text =
-        (Str.first_chars txt cut, String.(trim (sub txt cut (length txt - cut))))
-      in
-      wrap remaining_text ((indentation, line_text) :: acc)
+(* python: str.expandtabs(), which TextWrapper runs on the whole text
+   before it wraps: a tab moves to the next multiple of eight columns,
+   counted from the start of the text. The array returned maps every byte
+   offset of [s] to its offset in the result. *)
+let expand_tabs (s : string) : string * int array =
+  let len = String.length s in
+  let buf = Buffer.create len in
+  let offsets = Array.make (len + 1) 0 in
+  (* a column is a code point, as it is for a Python string *)
+  let rec go (i : int) (column : int) : unit =
+    if i >= len then ()
+    else begin
+      offsets.(i) <- Buffer.length buf;
+      match s.[i] with
+      | '\t' ->
+          let pad = tab_size - (column mod tab_size) in
+          Buffer.add_string buf (String.make pad ' ');
+          go (i + 1) (column + pad)
+      | '\n'
+      | '\r' ->
+          Buffer.add_char buf s.[i];
+          go (i + 1) 0
+      | (_ : char) ->
+          let n = Uchar.utf_decode_length (String.get_utf_8_uchar s i) in
+          Buffer.add_string buf (String.sub s i n);
+          (* the bytes of a code point are copied, so they keep their
+             places within it *)
+          for k = 1 to n - 1 do
+            offsets.(i + k) <- Buffer.length buf - (n - k)
+          done;
+          go (i + n) (column + 1)
+    end
   in
-  wrap txt []
+  go 0 0;
+  offsets.(len) <- Buffer.length buf;
+  (Buffer.contents buf, offsets)
+
+(* python: TextWrapper._munge_whitespace, the tab expansion followed by a
+   space for each of the vertical tab, form feed and carriage return, so
+   that the wrapping never sees them. A newline never reaches here: the
+   callers split on it first. The translation keeps the byte offsets, so
+   the array of expand_tabs still maps the text given here to the result. *)
+let munge_whitespace_with_offsets (s : string) : string * int array =
+  let expanded, offsets = expand_tabs s in
+  ( String.map
+      (fun (c : char) ->
+        match c with
+        | '\011'
+        | '\012'
+        | '\r' ->
+            ' '
+        | (_ : char) -> c)
+      expanded,
+    offsets )
+
+let munge_whitespace (s : string) : string =
+  fst (munge_whitespace_with_offsets s)
+
+(* the indentation of the [i]th line of a filled text, after the columns
+   the console adds *)
+let chunk_indentation ~(initial_indent : int) ~(subsequent_indent : int)
+    (i : int) : string =
+  String.make
+    (console_indent_size + if i = 0 then initial_indent else subsequent_indent)
+    ' '
+
+(* python: the two fillers a finding went through. click.wrap_text
+   overrides TextWrapper._handle_long_word: a word too long for a line is
+   cut at the width, never after a hyphen, and always keeps one column. *)
+type filler =
+  | Textwrap
+  | Click
+
+(*
+   Take a piece of text and break it into the lines of a filled paragraph,
+   given as (offset, length) pairs in bytes so that the caller can print
+   each line with its own indentation and style a range of the text.
+
+   width: maximum space for a line, its indentation included
+   initial_indent: number of spaces before the first line
+   subsequent_indent: number of spaces before the other lines
+
+   The cuts are made between code points, never inside a UTF-8 sequence:
+   at the last space that fits, at the last hyphen between two letters, or
+   at the width for a word too long for a line of its own. In some context
+   (e.g., pre-commit in CI), the number of columns of your terminal can be
+   small, in which case the space left for the text can become negative and
+   a line then holds a single code point.
+
+   python: textwrap.TextWrapper for a code line, a rule title and the
+   autofix; click.wrap_text, which subclasses it, for the rule message.
+   The text must already have gone through munge_whitespace.
+
+   The wrapping is covered by the text output tests of
+   Test_scan_subcommand_text.ml.
+*)
+let fill_chunks ~(filler : filler) ~(width : int) ~(initial_indent : int)
+    ~(subsequent_indent : int) (s : string) : (int * int) list =
+  let offsets = Utf8.code_point_offsets s in
+  let n = Array.length offsets - 1 in
+  let char_at (i : int) : char = s.[offsets.(i)] in
+  let is_space (i : int) : bool = i < n && Char.equal (char_at i) ' ' in
+  (* python: '\w' minus the digits, so that "foo-bar" is two chunks but
+     "aaa1-2" is one; a code point outside ASCII counts as a letter *)
+  let is_letter (i : int) : bool =
+    match char_at i with
+    | 'a' .. 'z'
+    | 'A' .. 'Z'
+    | '_' ->
+        true
+    | c -> Char.code c >= 0x80
+  in
+  (* python: wordsep_re, whose hyphenated-word alternative ends a chunk on
+     a hyphen preceded by '<letter><letter>' or by '<letter>-<letter>' and
+     followed by '<letter>[-]<letter>' *)
+  let ends_chunk (i : int) : bool =
+    let before =
+      (i >= 2 && is_letter (i - 1) && is_letter (i - 2))
+      || i >= 3
+         && is_letter (i - 1)
+         && Char.equal (char_at (i - 2)) '-'
+         && is_letter (i - 3)
+    in
+    let after =
+      i + 1 < n && is_letter (i + 1)
+      && ((i + 2 < n && is_letter (i + 2))
+         || i + 3 < n
+            && Char.equal (char_at (i + 2)) '-'
+            && is_letter (i + 3))
+    in
+    Char.equal (char_at i) '-' && before && after
+  in
+  let chunks : (int * int) list =
+    let rec spaces (i : int) : int = if is_space i then spaces (i + 1) else i in
+    let rec word (i : int) : int =
+      if i >= n || is_space i then i
+      else if ends_chunk i then i + 1
+      else word (i + 1)
+    in
+    let rec go (i : int) (acc : (int * int) list) : (int * int) list =
+      if i >= n then List.rev acc
+      else
+        let j = if is_space i then spaces i else word i in
+        go j ((i, j) :: acc)
+    in
+    go 0 []
+  in
+  (* python: TextWrapper._wrap_chunks *)
+  let rec fill (chunks : (int * int) list) (lines : (int * int) list) :
+      (int * int) list =
+    let first = List_.null lines in
+    let avail =
+      width - if first then initial_indent else subsequent_indent
+    in
+    (* python: the spaces at the start of a line other than the first are
+       dropped *)
+    let chunks =
+      match chunks with
+      | (i, _) :: rest when (not first) && is_space i -> rest
+      | _else_ -> chunks
+    in
+    match chunks with
+    | [] -> List.rev lines
+    | (start, _) :: _ ->
+        (* the chunks that fit, the text being contiguous from [start] *)
+        let rec take (cs : (int * int) list) (stop : int) =
+          match cs with
+          | (_, j) :: rest when j - start <= avail -> take rest j
+          | _else_ -> (cs, stop)
+        in
+        let rest, stop = take chunks start in
+        (* python: a chunk too long for a line of its own fills the end of
+           this one, after its last hyphen when it has one *)
+        let rest, stop =
+          match rest with
+          | (i, j) :: more when j - i > avail ->
+              let space_left =
+                match filler with
+                | Textwrap ->
+                    if avail < 1 then 1 else avail - (stop - start)
+                (* python: click's _handle_long_word leaves one column *)
+                | Click -> Int.max (avail - (stop - start)) 1
+              in
+              let cut =
+                let plain = min j (stop + space_left) in
+                (* the hyphen must have a character of its own before it:
+                   the first one after the leading hyphens of the word *)
+                let rec first_non_hyphen (p : int) : int =
+                  if p < j && Char.equal (char_at p) '-' then
+                    first_non_hyphen (p + 1)
+                  else p
+                in
+                let non_hyphen = first_non_hyphen i in
+                let rec last_hyphen (k : int) : int option =
+                  if k - 1 <= non_hyphen then None
+                  else if Char.equal (char_at (k - 1)) '-' then Some k
+                  else last_hyphen (k - 1)
+                in
+                match filler with
+                (* python: click's _handle_long_word does not look for a
+                   hyphen; it cuts at the width *)
+                | Click -> plain
+                | Textwrap -> (
+                    match last_hyphen plain with
+                    | Some k -> k
+                    | None -> plain)
+              in
+              ((if cut >= j then more else (cut, j) :: more), cut)
+          | _else_ -> (rest, stop)
+        in
+        (* python: the spaces at the end of a line are dropped *)
+        let rec trim (stop : int) : int =
+          if stop > start && is_space (stop - 1) then trim (stop - 1) else stop
+        in
+        let stop = trim stop in
+        fill rest (if stop > start then (start, stop) :: lines else lines)
+  in
+  fill chunks []
+  |> List_.map (fun ((start : int), (stop : int)) ->
+         (offsets.(start), offsets.(stop) - offsets.(start)))
+
+(* The lines of [txt] wrapped as [fill_chunks] does, each with the spaces
+   to print it after: the indentation of the paragraph plus the two columns
+   rich added to every line the wrapper printed. *)
+let wrap_lines ~(filler : filler) ~(width : int) ~(initial_indent : int)
+    ~(subsequent_indent : int) (txt : string) : (string * string) list =
+  Log.debug (fun m ->
+      m "wrap width=%d initial_indent=%d subsequent_indent=%d s=%s" width
+        initial_indent subsequent_indent txt);
+  let txt = munge_whitespace txt in
+  let indentation = chunk_indentation ~initial_indent ~subsequent_indent in
+  match fill_chunks ~filler ~width ~initial_indent ~subsequent_indent txt with
+  | [] -> [ (indentation 0, "") ]
+  | chunks ->
+      chunks
+      |> List.mapi (fun (i : int) ((offset : int), (length : int)) ->
+             (indentation i, String.sub txt offset length))
+
+(* The paragraphs of a rule message, each with the indentation of its own
+   first line: the lines of a paragraph are joined and filled as one, and
+   a blank line separates two paragraphs.
+
+   python: click.wrap_text(preserve_paragraphs=True) in text.py *)
+let message_paragraphs (msg : string) : (int * string) list =
+  let flush (indent : int option) (buf : string list)
+      (acc : (int * string) list) : (int * string) list =
+    match buf with
+    | [] -> acc
+    | _ :: _ ->
+        (Option.value ~default:0 indent, buf |> List.rev |> String.concat " ")
+        :: acc
+  in
+  let rec go (lines : string list) (indent : int option) (buf : string list)
+      (acc : (int * string) list) : (int * string) list =
+    match lines with
+    | [] -> List.rev (flush indent buf acc)
+    | line :: rest ->
+        if String.equal line "" then go rest None [] (flush indent buf acc)
+        else
+          let indent, line =
+            match indent with
+            | Some _ -> (indent, line)
+            | None ->
+                (* python: the paragraph is indented like its first line *)
+                let rec first_char (i : int) : int =
+                  if i < String.length line && Char.equal line.[i] ' ' then
+                    first_char (i + 1)
+                  else i
+                in
+                let i = first_char 0 in
+                (Some i, Str.string_after line i)
+          in
+          go rest indent (line :: buf) acc
+  in
+  match go (String.split_on_char '\n' msg) None [] [] with
+  | [] -> [ (0, "") ]
+  | paragraphs -> paragraphs
 
 let cut s idx1 idx2 =
   Log.debug (fun m -> m "cut %d (idx1 %d idx2 %d)" (String.length s) idx1 idx2);
   ( Str.first_chars s idx1,
     String.sub s idx1 (idx2 - idx1),
     Str.string_after s idx2 )
+
+(* python: text.py format_finding_line(), which wraps the number of a line
+   and the line itself as one piece of text: 8 columns of indentation, the
+   line number right-aligned in 5 columns with its separator, then the
+   code, the wrapped lines being indented by 13 columns. *)
+let line_number_indent_size = 8
+let code_indent_size = 13
+let line_number_width = 5
+
+(* A line of code prefixed with its number, wrapped, with the bold part
+   [bold_start, bold_end) of the code carried across the wrapped chunks. *)
+let pp_wrapped_code_line ppf ~(line_number : int) ~(width : int)
+    ~(bold_start : int) ~(bold_end : int) (line : string) : unit =
+  let prefix =
+    (* python: f"{line_number}┆ ".rjust(5); the separator is one column of
+       three bytes *)
+    let text = string_of_int line_number ^ "┆ " in
+    let columns = String.length text - 2 in
+    String.make (max 0 (line_number_width - columns)) ' ' ^ text
+  in
+  let typed = prefix ^ line in
+  let shift = String.length prefix in
+  (* the tabs are expanded from the start of the line, its number
+     included, so the bold range moves with the text *)
+  let text, offset_of = munge_whitespace_with_offsets typed in
+  let moved (i : int) : int =
+    offset_of.(max 0 (min (String.length typed) (i + shift)))
+  in
+  let bold_start = moved bold_start and bold_end = moved bold_end in
+  let indentation =
+    chunk_indentation ~initial_indent:line_number_indent_size
+      ~subsequent_indent:code_indent_size
+  in
+  fill_chunks ~filler:Textwrap ~width ~initial_indent:line_number_indent_size
+    ~subsequent_indent:code_indent_size text
+  |> List.iteri (fun (i : int) ((offset : int), (length : int)) ->
+         let chunk = String.sub text offset length in
+         let bold_from = max 0 (min length (bold_start - offset)) in
+         let bold_to = max bold_from (min length (bold_end - offset)) in
+         let a, b, c = cut chunk bold_from bold_to in
+         Fmt.pf ppf "%s%s%a%s@." (indentation i) a
+           Fmt.(styled `Bold string)
+           b c)
 
 let pp_dataflow_trace ppf (trace : OutJ.match_dataflow_trace) =
   (* Helper to print a location with bold highlighting *)
@@ -305,66 +617,32 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
     else (List_.take keep lines, Some (ll - keep))
   in
   let start_line = m.start.line in
-  let stripped, _ =
-    lines
-    |> List.fold_left
-         (fun (stripped, line_number) line ->
-           let line, line_off, stripped' =
-             let ll = String.length line in
-             if max_chars_per_line > 0 && ll > max_chars_per_line then
-               if start_line = line_number then
-                 let start_col = m.start.col - 1 - dedented in
-                 let end_col = min (start_col + max_chars_per_line) ll in
-                 let data =
-                   String.sub line start_col (end_col - start_col - 1)
-                 in
-                 ( (if start_col > 0 then ellipsis_string else "")
-                   ^ data ^ ellipsis_string,
-                   m.start.col - 1,
-                   true )
-               else
-                 ( Str.first_chars line max_chars_per_line ^ ellipsis_string,
-                   0,
-                   true )
-             else (line, 0, false)
-           in
-           let line_number_str = string_of_int line_number in
-           let pad =
-             String.make
-               (findings_indent_size + 1 - String.length line_number_str)
-               ' '
-           in
-           let col c = max 0 (c - 1 - dedented - line_off) in
-           let ellipsis_len p =
-             if stripped' && p then String.length ellipsis_string else 0
-           in
-           let start_color =
-             if line_number > start_line then 0
-             else col m.start.col + ellipsis_len (line_off > 0)
-           in
-           let end_color =
-             max start_color
-               (if line_number >= m.end_.line then
-                  min
-                    (if m.start.line = m.end_.line then
-                       start_color + (m.end_.col - m.start.col)
-                     else col m.end_.col - ellipsis_len true)
-                    (String.length line - ellipsis_len true)
-                else String.length line)
-           in
-           let a, b, c = cut line start_color end_color in
-           (* TODO(secrets): Apply masking to b *)
-           Fmt.pf ppf "%s%s┆ %s%a%s@." pad line_number_str a
-             Fmt.(styled `Bold string)
-             b c;
-           (stripped' || stripped, succ line_number))
-         (false, start_line)
+  (* python: per_line_max_chars_limit, the whole rendered line being
+     wrapped at --max-chars-per-line, or at the width of the findings
+     block when the flag asks for more *)
+  let width =
+    safe_width
+      (if max_chars_per_line > 0 then min max_chars_per_line findings_text_width
+       else findings_text_width)
   in
-  if stripped then
-    Fmt.pf ppf
-      "%s[shortened a long line from output, adjust with \
-       --max-chars-per-line]@."
-      findings_indent;
+  lines
+  |> List.iteri (fun (i : int) (line : string) ->
+         let line_number = start_line + i in
+         let col c = max 0 (c - 1 - dedented) in
+         let bold_start = if line_number > start_line then 0 else col m.start.col in
+         let bold_end =
+           max bold_start
+             (if line_number >= m.end_.line then
+                min
+                  (if m.start.line = m.end_.line then
+                     bold_start + (m.end_.col - m.start.col)
+                   else col m.end_.col)
+                  (String.length line)
+              else String.length line)
+         in
+         (* TODO(secrets): Apply masking to the bold part *)
+         pp_wrapped_code_line ppf ~line_number ~width ~bold_start ~bold_end
+           line);
   (match m.extra.dataflow_trace with
   | Some trace -> if show_dataflow_traces then pp_dataflow_trace ppf trace else ()
   | None -> ());
@@ -378,30 +656,24 @@ let pp_finding ~max_chars_per_line ~max_lines_per_finding ~color_output
         Fmt.pf ppf "%s⋮┆%s" findings_indent (String.make fill_count '-')
 
 (* TODO: factorize more this code, just the color and >>> change below *)
-let pp_styled_severity ppf ~no_color (severity : OutJ.match_severity) =
+let pp_styled_severity ppf (severity : OutJ.match_severity) =
   match severity with
   | `Critical ->
       Fmt.pf ppf "%s%a" rule_leading_indent
-        (if no_color then Fmt.(styled `None string)
-         else Fmt.(styled (`Fg `Magenta) string))
+        Fmt.(styled (`Fg `Magenta) string)
         "❯❯❯❱"
   | `Error
   | `High ->
-      Fmt.pf ppf "%s%a" rule_leading_indent
-        (if no_color then Fmt.(styled `None string)
-         else Fmt.(styled (`Fg `Red) string))
-        "❯❯❱"
+      Fmt.pf ppf "%s%a" rule_leading_indent Fmt.(styled (`Fg `Red) string) "❯❯❱"
   | `Warning
   | `Medium ->
       Fmt.pf ppf "%s%a" rule_leading_indent
-        (if no_color then Fmt.(styled `None string)
-         else Fmt.(styled (`Fg `Yellow) string))
+        Fmt.(styled (`Fg `Yellow) string)
         " ❯❱"
   | `Info
   | `Low ->
       Fmt.pf ppf "%s%a" rule_leading_indent
-        (if no_color then Fmt.(styled `None string)
-         else Fmt.(styled (`Fg `Green) string))
+        Fmt.(styled (`Fg `Green) string)
         "  ❱"
   | `Inventory
   | `Experiment ->
@@ -425,22 +697,17 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
       | None -> true
       | Some m -> m.path <> cur.path
     in
+    (* the rule name and its message are printed together, for a match of
+       a new rule or with a different message (the message is derived from
+       a template of the rule) *)
     let must_print_rule =
-      (* must print rule name because it's a match for a new rule *)
       must_print_file
       ||
       match prev with
       | None -> true
-      | Some m -> not (Rule_ID.equal m.check_id cur.check_id)
-    in
-    let must_print_message =
-      (* must print message derived from template it's different from the
-         previous message *)
-      must_print_file
-      ||
-      match prev with
-      | None -> true
-      | Some m -> m.extra.message <> cur.extra.message
+      | Some m ->
+          (not (Rule_ID.equal m.check_id cur.check_id))
+          || not (String.equal m.extra.message cur.extra.message)
     in
     let has_rule_name = cur.check_id <> Rule_ID.dash_e in
     (if must_print_file then
@@ -451,12 +718,14 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
          else Fmt.any "  "
        in
        Fmt.pf ppf "  %a@." Fmt.(styled (`Fg `Cyan) (esc ++ string)) !!(cur.path));
-    (if must_print_rule || must_print_message then
-       let no_color = !Semgrep_envvars.v.no_color in
+    (if must_print_rule then
        let rule_name_lines =
          if has_rule_name then (
-           pp_styled_severity ppf ~no_color cur.extra.severity;
-           indent_and_wrap_lines ~indent:rule_indent_size ~max_width:text_width
+           pp_styled_severity ppf cur.extra.severity;
+           (* python: RULE_TEXT_WIDTH and RULE_INDENT *)
+           wrap_lines ~filler:Textwrap ~width:(safe_width rule_text_width)
+             ~initial_indent:0
+             ~subsequent_indent:(rule_indent_size - console_indent_size)
              (Rule_ID.to_string cur.check_id))
          else []
        in
@@ -470,17 +739,51 @@ let pp_text_outputs ~max_chars_per_line ~max_lines_per_finding
              (fun (indentation, txt) ->
                Fmt.pf ppf "%s%a@." indentation Fmt.(styled `Bold string) txt)
              rest;
-           if must_print_message then
-             List.iter
-               (fun (indentation, txt) -> Fmt.pf ppf "%s%s@." indentation txt)
-               (indent_and_wrap_lines ~indent:detail_indent_size
-                  ~max_width:(text_width - detail_indent_size)
-                  cur.extra.message);
+           (* python: DESC_TEXT_WIDTH and BASE_INDENT, the message being
+              filled paragraph by paragraph *)
+           cur.extra.message |> message_paragraphs
+           |> List.iteri
+                (fun (i : int) ((extra_indent : int), (paragraph : string)) ->
+                  if i > 0 then Fmt.pf ppf "@.";
+                  let indent =
+                    detail_indent_size - console_indent_size + extra_indent
+                  in
+                  wrap_lines ~filler:Click ~width:(safe_width desc_text_width)
+                    ~initial_indent:indent ~subsequent_indent:indent paragraph
+                  |> List.iter (fun (indentation, txt) ->
+                         Fmt.pf ppf "%s%s@." indentation txt));
            (match metadata_member "shortlink" cur.extra.metadata with
            | `String txt -> Fmt.pf ppf "%sDetails: %s@." detail_indent txt
            | _ -> ());
            Fmt.pf ppf "@.");
-    (* TODO autofix *)
+    (match cur.extra.fix with
+    | None -> ()
+    | Some fix ->
+        (* the fix on one line, wrapped after the tag; an empty fix deletes
+           the match *)
+        let autofix_tag = "▶▶┆ Autofix ▶ " in
+        let fix_text =
+          fix |> String.split_on_char '\n' |> List_.map String.trim
+          |> List.filter (fun (s : string) -> not (String.equal s ""))
+          |> String.concat " "
+        in
+        (* python: (BASE_INDENT + 1) columns, plus those of the console *)
+        Fmt.pf ppf "%s%a"
+          (String.make (detail_indent_size + 1) ' ')
+          Fmt.(styled (`Fg `Green) string)
+          autofix_tag;
+        if String.equal fix_text "" then
+          Fmt.pf ppf "%a@." Fmt.(styled (`Fg `Red) string) "delete"
+        else
+          (* python: AUTOFIX_TEXT_WIDTH, and BASE_INDENT + 4 for the line
+             number of the wrapped lines *)
+          wrap_lines ~filler:Textwrap ~width:(safe_width autofix_text_width)
+            ~initial_indent:0
+            ~subsequent_indent:(detail_indent_size + 4 - console_indent_size)
+            fix_text
+          |> List.iteri (fun (i : int) ((indentation : string), (txt : string)) ->
+                 if i = 0 then Fmt.pf ppf "%s@." txt
+                 else Fmt.pf ppf "%s%s@." indentation txt));
     let same_file_next =
       match next with
       | None -> false
@@ -599,4 +902,12 @@ let pp_cli_output
              | None -> [])
       |> Set_.of_list |> Set_.elements |> List.sort String.compare
     in
-    pp_rules_fired ppf "BLOCKING SECRETS RULES FIRED:" secrets_ids)
+    pp_rules_fired ppf "BLOCKING SECRETS RULES FIRED:" secrets_ids);
+  (* the "time" field is there with --time *)
+  match cli_output.time with
+  | Some time ->
+      (* python: a blank line separates the block from the findings, and
+         the last finding printed one already *)
+      if List_.null cli_output.results then Fmt.pf ppf "@.";
+      Time_report.pp_time_summary ppf time cli_output.errors
+  | None -> ()

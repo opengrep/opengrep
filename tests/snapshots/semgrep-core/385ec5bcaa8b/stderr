@@ -1,0 +1,27 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+
+
+┌────────────────┐
+│ Debugging Info │
+└────────────────┘
+
+  SCAN ENVIRONMENT
+  versions    - opengrep <MASKED>
+  environment - running in environment git, triggering event is unknown
+
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules.yaml:3:5: Invalid rule schema in rule no-pattern-here
+  --> rules.yaml:3
+2 | rules:
+3 |   - id: no-pattern-here
+  |     ^
+4 |     message: "this rule has no pattern"
+Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.
+[<MASKED TIMESTAMP>][ERROR]: There were errors during analysis but the scan will succeed because there were no blocking findings, use --no-suppress-errors if you want it to fail when there are errors.
+ASSERT exit code

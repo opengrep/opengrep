@@ -603,27 +603,13 @@ let eval_opt env e =
       Log.err (fun m -> m "NotHandled: %s" (G.show_expr e));
       None
 
-let eval_bool env e facts bindings =
+let eval_bool env e =
   let res = eval_opt env e in
   match res with
   | Some (Bool b) -> b
-  | Some res -> (
+  | Some res ->
       Log.err (fun m -> m "not a boolean: %s" (show_value res));
-      (* facts_satisfy_e is just a stub, but we intend to prioritize the results of
-       * eval_bool, so if eval_opt returns a bool, that will be the source of truth.
-       * otherwise (i.e. if eval_opt fails), we will resort to pattern when (if the
-       * pro flag is enabled).
-       *
-       * TODO: eventually we should merge this into eval_opt. consider the condition
-       * $X == 0 && $Y > 0, maybe $X == 0 needs const-prop info to be resolved,
-       * and $Y > 0 needs the facts. perhaps instead of raise (NotHandled code) in
-       * eval_op, we can first try to find a fact that implies $X > 0 or its negation.
-       *)
-      match !Dataflow_when.hook_facts_satisfy_e with
-      | None -> false
-      | Some facts_satisfy_e -> facts_satisfy_e bindings facts e)
-  | None -> (
+      false
+  | None ->
       Log.err (fun m -> m "got exn during eval_bool");
-      match !Dataflow_when.hook_facts_satisfy_e with
-      | None -> false
-      | Some facts_satisfy_e -> facts_satisfy_e bindings facts e)
+      false

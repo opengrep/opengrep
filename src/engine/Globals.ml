@@ -28,19 +28,19 @@
  * can eliminate them.
  *
  * To find candidates for those "dangerous" globals, you can start with:
- *  $ ./bin/opengrep-cli --experimental -e 'val $V: $T ref' -l ocaml src/ libs/
- *  $ ./bin/opengrep-cli --experimental -e 'let $V: $T = ref $X' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'val $V: $T ref' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'let $V: $T = ref $X' -l ocaml src/ libs/
  *
  * We also need to look for things like hash tables and [Lazy.t] and [Str], which are
  * not thread-safe: 
- *  $ ./bin/opengrep-cli --experimental -e 'let $H = Hashtbl.create $I' -l ocaml src/ libs/
- *  $ ./bin/opengrep-cli --experimental -e 'Lazy.force $L' -l ocaml src/ libs/
- *  $ ./bin/opengrep-cli --experimental -e 'Str.$F' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'let $H = Hashtbl.create $I' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'Lazy.force $L' -l ocaml src/ libs/
+ *  $ ./bin/opengrep --experimental -e 'Str.$F' -l ocaml src/ libs/
  *  NOTE: Some [Str] functions have been improved to work with less issues in Domains. 
  *
  * And to check use of Lwt which may have issues with memprof-limits cancellation: 
- *  $ ./bin/opengrep-cli -e 'Lwt_platform.$F' -l ocaml src/ libs/
- *  $ ./bin/opengrep-cli -e 'Lwt.$F' -l ocaml src/ libs/
+ *  $ ./bin/opengrep -e 'Lwt_platform.$F' -l ocaml src/ libs/
+ *  $ ./bin/opengrep -e 'Lwt.$F' -l ocaml src/ libs/
  *)
 
 (*****************************************************************************)
@@ -60,7 +60,6 @@ let reset () =
   (* TODO: Better to just get rid of global state, this is tricky with domains. *)
   TLS.set Rule.last_matched_rule None; (* DONE *)
   TLS.set Match_patterns.last_matched_rule None; (* NEW, DONE *)
-  Pro_hooks.reset_pro_hooks ();
   (* TODO: There is probably more places where we need to do that: *)
   let _ : _ Seq.t = Saturn.Htbl.remove_all Xpattern_matcher.hmemo in
   let _ : _ Seq.t = Saturn.Htbl.remove_all Range.hmemo in
@@ -74,7 +73,6 @@ let reset () =
    * - GenSym.MkId for AST_generic.SId and AST_generic.IdInfoId [DONE]
    * - Tracing.ml active_endpoint [Ignore for now, seems OK since tracing is disabled]
    * - Parmap_targets.ml parmap_child_top_level_span [Does not exist]
-   * - Session.ml scan_config_parser_ref [Reference which is not set anywhere, in OSS at least]
    * - many more [So true...]
    *)
   ()

@@ -107,6 +107,21 @@ jobs:
       # - name: Install pre-release version
       #   run: bash ./install.sh -v v1.28.0-interfile.alpha.1
 
+      # From 2.0.0 the asset is the static binary, one per architecture;
+      # enable once the v2.0.0 tag exists
+      # - name: Install 2.0.0
+      #   run: |
+      #     bash ./install.sh -v v2.0.0
+      #     binary="$HOME/.opengrep/cli/v2.0.0/opengrep"
+      #     if [ ! -f "$binary" ]; then
+      #       echo "Binary not found at $binary" 1>&2
+      #       exit 1
+      #     fi
+      #     "$binary" --version | grep -qF 2.0.0 || {
+      #       echo "Expected --version to report 2.0.0" 1>&2
+      #       exit 1
+      #     }
+
       # Test remote execution style (one-liner simulation)
       - name: Test script from stdin
         run: bash -s -- -h < ./install.sh
@@ -121,7 +136,8 @@ jobs:
           persist-credentials: false
 
       # Alpine exercises the musl detection path, which selects the
-      # musllinux asset
+      # musllinux asset before 2.0.0; from 2.0.0 it checks that the static
+      # Linux binary also runs on musl
       - name: Install and verify on Alpine (musl)
         run: |
           docker run --rm -v "$PWD:/work" alpine:3.21 sh -c '

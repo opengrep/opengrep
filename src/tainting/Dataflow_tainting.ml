@@ -146,13 +146,6 @@ type env = {
 }
 
 (*****************************************************************************)
-(* Hooks *)
-(*****************************************************************************)
-
-let hook_find_attribute_in_class = ref None
-let hook_check_tainted_at_exit_sinks = ref None
-
-(*****************************************************************************)
 (* Options *)
 (*****************************************************************************)
 
@@ -245,7 +238,7 @@ let any_is_best_source ?(is_lval = false) env any =
 let any_is_best_sink env any =
   env.taint_inst.preds.is_sink any
   |> List.filter (fun (tm : R.taint_sink TM.t) ->
-         (* at-exit sinks are handled in 'check_tainted_at_exit_sinks' *)
+         (* at-exit sinks are filtered out and never reported *)
          (not tm.spec.sink_at_exit) && TM.is_best_match env.func.best_matches tm)
 
 let orig_is_source (taint_inst : Taint_rule_inst.t) orig =
@@ -288,7 +281,7 @@ let lval_is_sink env lval =
   let sinks = env.taint_inst.preds.is_sink any in
   sinks
   |> List.filter (fun (tm : R.taint_sink TM.t) ->
-         (* at-exit sinks are handled in 'check_tainted_at_exit_sinks' *)
+         (* at-exit sinks are filtered out and never reported *)
          not tm.spec.sink_at_exit)
 [@@profiling]
 
@@ -1263,7 +1256,7 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
    e =
      Fetch
        ({
-          base = Var obj;
+          base = Var _obj;
           rev_offset =
             [ { o = Dot { IL.ident = method_str, method_tok; sid; _ }; _ } ];
         } as lval);
@@ -1282,29 +1275,17 @@ and propagate_taint_via_java_getters_and_setters_without_definition env e args
               Hashtbl.find_opt env.taint_inst.java_props_cache (prop_str, sid)
           with
           | Some prop_name -> prop_name
-          | None -> (
-              let mk_default_prop_name () =
-                  let prop_name =
-                  {
-                      ident = (prop_str, method_tok);
-                      sid = G.SId.unsafe_default;
-                      id_info = G.empty_id_info ();
-                  }
-                  in
-                  Hashtbl.add env.taint_inst.java_props_cache (prop_str, sid)
-                  prop_name;
-                  prop_name
+          | None ->
+              let prop_name =
+                {
+                  ident = (prop_str, method_tok);
+                  sid = G.SId.unsafe_default;
+                  id_info = G.empty_id_info ();
+                }
               in
-              match (!(obj.id_info.id_type), !hook_find_attribute_in_class) with
-              | Some { t = TyN class_name; _ }, Some hook -> (
-                  match hook class_name prop_str with
-                  | None -> mk_default_prop_name ()
-                  | Some prop_name ->
-                      let prop_name = AST_to_IL.var_of_name prop_name in
-                      Hashtbl.add env.taint_inst.java_props_cache
-                          (prop_str, sid) prop_name;
-                      prop_name)
-              | __else__ -> mk_default_prop_name ())
+              Hashtbl.add env.taint_inst.java_props_cache (prop_str, sid)
+                prop_name;
+              prop_name
           in
           { lval with rev_offset = [ { o = Dot prop_name; oorig = NoOrig } ] }
         in
@@ -2904,16 +2885,6 @@ let check_tainted_control_at_exit node env =
         in
         record_effects env effects
 
-let check_tainted_at_exit_sinks node env =
-  match !hook_check_tainted_at_exit_sinks with
-  | None -> ()
-  | Some hook -> (
-      match hook env.taint_inst env.lval_env node with
-      | None -> ()
-      | Some (taints_at_exit, sink_matches_at_exit) ->
-          effects_of_tainted_sinks env taints_at_exit sink_matches_at_exit
-          |> record_effects env)
-
 (*****************************************************************************)
 (* Transfer *)
 (*****************************************************************************)
@@ -3343,7 +3314,6 @@ let rec transfer : env -> fun_cfg:F.fun_cfg -> Lval_env.t D.transfn =
   env.effects_acc := Effects.union effects_lambdas !(env.effects_acc);
   let env_at_exit = { env with lval_env = out' } in
   check_tainted_control_at_exit node env_at_exit;
-  check_tainted_at_exit_sinks node env_at_exit;
   Log.debug (fun m ->
       m ~tags:transfer_tag "Taint transfer %s%s\n  %s:\n  IN:  %s\n  OUT: %s"
         (Option.map IL.str_of_name env.func.name ||| "<FUN>")

@@ -1,0 +1,15 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/bad6.yaml:5:9: Invalid rule schema in rule rules.arg-reassign
+  --> rules/bad6.yaml:5
+4 |     patterns:
+5 |       - pattern-either: "$X == $X"
+  |         ^^^^^^^^^^^^^^
+6 |     message: "$X is being assigned to one or two"
+Expected a list for pattern-either

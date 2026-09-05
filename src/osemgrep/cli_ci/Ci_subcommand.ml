@@ -195,8 +195,8 @@ let warn_ignored_flags (ci_conf : Ci_CLI.conf) : unit =
 let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
   let conf = ci_conf.scan_conf in
   warn_ignored_flags ci_conf;
-  (* post fallback, and inside the suppressed region: a bad destination is
-   * suppressed like any other error *)
+  (* inside the suppressed region: a bad destination is suppressed like any
+   * other error *)
   Output.check_destinations conf.output_conf;
   match resolve_subdir ci_conf.subdir with
   | Error exit_code -> exit_code
@@ -242,71 +242,79 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
       Profiler.start profiler ~name:"total_time";
       Core_profiling.profiling := conf.core_runner_conf.time_flag;
       let rules_and_origins, fatal_errors =
-        Scan_subcommand.rules_from_rules_source
-          (caps :> < Cap.network ; Cap.tmp >)
-          ~skip_invalid_configs:conf.skip_invalid_configs
-          ~rewrite_rule_ids:conf.rewrite_rule_ids
-          ~strict:conf.core_runner_conf.strict conf.rules_source
+        Profiler.record profiler ~name:"config_time" (fun () ->
+            Scan_subcommand.rules_from_rules_source
+              (caps :> < Cap.network ; Cap.tmp >)
+              ~skip_invalid_configs:conf.skip_invalid_configs
+              ~rewrite_rule_ids:conf.rewrite_rule_ids
+              ~strict:conf.core_runner_conf.strict
+              (Rule_fetching.classify conf.rules_source))
       in
       match fatal_errors with
       | _ :: _ ->
-          Scan_subcommand.output_and_exit_from_fatal_core_errors_exn
-            ~exit_code:(Exit_code.missing_config ~__LOC__)
+          let core_errors =
+            Scan_subcommand.core_errors_of_fatal_rule_errors fatal_errors
+          in
+          Scan_subcommand.output_and_exit_from_invalid_config_exn
+            ~text_message:(Rule_errors_report.invalid_configs_message core_errors)
             (caps :> < Cap.stdout >)
-            conf profiler
-            (Scan_subcommand.core_errors_of_fatal_rule_errors fatal_errors)
+            conf profiler core_errors
       | [] -> (
-          let targets_and_skipped =
-            Find_targets.get_target_fpaths conf.targeting_conf
-              conf.target_roots
-          in
-          let res =
-            Scan_subcommand.check_targets_with_rules ~print_summary:false
-              (caps
-                :> < Cap.stdout
-                   ; Cap.chdir
-                   ; Cap.tmp
-                   ; Cap.fork
-                   ; Cap.time_limit
-                   ; Cap.memory_limit >)
-              conf profiler rules_and_origins targets_and_skipped
-          in
-          match res with
-          | Error exit_code ->
-              Logs.app (fun m -> m "Encountered error when running rules");
-              exit_code
-          | Ok (rules, _res, cli_output) ->
-              let num_blocking_findings =
-                cli_output.results
-                |> List.filter (fun (m : Out.cli_match) ->
-                       Matches_report.is_blocking m.extra.metadata)
-                |> List.length
+          match
+            Scan_subcommand.get_targets_or_exit
+              (caps :> < Cap.stdout >)
+              conf profiler
+          with
+          | Error exit_code -> exit_code
+          | Ok targets_and_skipped -> (
+              let res =
+                Scan_subcommand.check_targets_with_rules ~print_summary:false
+                  (caps
+                    :> < Cap.stdout
+                       ; Cap.chdir
+                       ; Cap.tmp
+                       ; Cap.fork
+                       ; Cap.time_limit
+                       ; Cap.memory_limit >)
+                  conf profiler rules_and_origins targets_and_skipped
               in
-              Logs.app (fun m -> m "CI scan completed successfully.");
-              Logs.app (fun m ->
-                  m "  Found %s (%d blocking) from %s."
-                    (String_.unit_str
-                       (List.length cli_output.results)
-                       "finding")
-                    num_blocking_findings
-                    (String_.unit_str (List.length rules) "rule"));
-              if num_blocking_findings > 0 then
-                if List.mem meta#event_name ci_conf.audit_on then (
+              match res with
+              | Error exit_code ->
+                  Logs.app (fun m -> m "Encountered error when running rules");
+                  exit_code
+              | Ok (rules, _res, cli_output) ->
+                  let num_blocking_findings =
+                    cli_output.results
+                    |> List.filter (fun (m : Out.cli_match) ->
+                           Matches_report.is_blocking m.extra.metadata)
+                    |> List.length
+                  in
+                  Logs.app (fun m -> m "CI scan completed successfully.");
                   Logs.app (fun m ->
-                      m
-                        "  Audit mode is on for %s, so exiting with code 0 \
-                         even if matches found"
-                        meta#event_name);
-                  Exit_code.ok ~__LOC__)
-                else (
-                  Logs.app (fun m ->
-                      m "  Has findings for blocking rules so exiting with \
-                         code 1");
-                  Exit_code.findings ~__LOC__)
-              else (
-                Logs.app (fun m ->
-                    m "  No blocking findings so exiting with code 0");
-                Exit_code.ok ~__LOC__)))
+                      m "  Found %s (%d blocking) from %s."
+                        (String_.unit_str
+                           (List.length cli_output.results)
+                           "finding")
+                        num_blocking_findings
+                        (String_.unit_str (List.length rules) "rule"));
+                  if num_blocking_findings > 0 then
+                    if List.mem meta#event_name ci_conf.audit_on then (
+                      Logs.app (fun m ->
+                          m
+                            "  Audit mode is on for %s, so exiting with code \
+                             0 even if matches found"
+                            meta#event_name);
+                      Exit_code.ok ~__LOC__)
+                    else (
+                      Logs.app (fun m ->
+                          m
+                            "  Has findings for blocking rules so exiting \
+                             with code 1");
+                      Exit_code.findings ~__LOC__)
+                  else (
+                    Logs.app (fun m ->
+                        m "  No blocking findings so exiting with code 0");
+                    Exit_code.ok ~__LOC__))))
 
 (*****************************************************************************)
 (* Error suppression *)
@@ -325,6 +333,10 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
         | None -> Exit_code.fatal ~__LOC__
         | Some code -> code)
     | Error.Exit_code code -> code
+    (* say nothing and return the conventional code for a closed pipe *)
+    | exn when Error.is_broken_pipe exn ->
+        Error.silence_std_formatter ();
+        Exit_code.broken_pipe ~__LOC__
     (* coupling: CLI.safe_run maps the two exceptions below the same way *)
     (* a failed git command is already explained by Git_wrapper's own
      * warning; no backtrace needed *)
@@ -346,6 +358,9 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
   | 0
   | 1 ->
       exit_code
+  (* a closed pipe is not an error of the analysis, and there is nothing to
+     say about it *)
+  | _ when Exit_code.Equal.broken_pipe exit_code -> exit_code
   | _ when ci_conf.suppress_errors ->
       Logs.err (fun m ->
           m
@@ -362,24 +377,11 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
 
 let run_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
   let conf = ci_conf.scan_conf in
-  (* coupling: the pysemgrep fallback logic of Scan_subcommand.run_conf *)
-  (match conf.common.maturity with
-  | Maturity.Default -> raise Pysemgrep.Fallback
-  (* this should never happen because --legacy is handled in the entrypoint *)
-  | Maturity.Legacy -> raise Pysemgrep.Fallback
-  | Maturity.Experimental
-  | Maturity.Develop ->
-      ());
   CLI_common.setup_logging ~force_color:conf.output_conf.force_color
     ~level:conf.common.logging_level;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
   Logs.debug (fun m -> m "conf = %s" (Ci_CLI.show_conf ci_conf));
-  (* coupling: Scan_subcommand.run_conf dispatches show subconfs the same
-   * way (-d/--dump-command-for-core turns the run into a show command) *)
-  match conf.show with
-  | Some show ->
-      Show_subcommand.run_conf (caps :> < Cap.stdout ; Cap.network ; Cap.tmp >) show
-  | None -> run_and_suppress_errors caps ci_conf
+  run_and_suppress_errors caps ci_conf
 
 let main (caps : < caps ; .. >) (argv : string array) : Exit_code.t =
   let conf = Ci_CLI.parse_argv argv in

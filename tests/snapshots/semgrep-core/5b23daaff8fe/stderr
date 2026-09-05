@@ -1,0 +1,2 @@
+[<MASKED TIMESTAMP>][WARNING]: no fixtest for test targets/test2.py but the rule file rules/basic_fix.yaml uses autofix
+ASSERT exit code

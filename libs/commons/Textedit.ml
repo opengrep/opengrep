@@ -140,6 +140,7 @@ let apply_edits_to_text path text edits =
      Don't sort the edits. They must be applied in the order in which they
      were detected. If two rules report a problem at the same location,
      the first rule that reports the problem has precedence.
+     (The callers pass the edits in the order the findings are reported.)
   *)
   Log.info (fun m ->
       m "Applying %i edits to file %s" (List.length edits) !!path);

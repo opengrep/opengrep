@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/invalid-pattern-child.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 10 insertions(+)
+ create mode 100644 rules/invalid-pattern-child.yaml
+ create mode 100644 target.py
+exit code: 7
+--- begin input files ---
+rules/invalid-pattern-child.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 10 insertions(+)
+ create mode 100644 rules/invalid-pattern-child.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.blah","message":"Invalid rule schema at line rules/invalid-pattern-child.yaml:9:\n you can only negate directly inside `patterns:` or `all:`","path":"rules/invalid-pattern-child.yaml","long_msg":"you can only negate directly inside `patterns:` or `all:`","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-pattern-child.yaml","start":{"line":9,"col":13,"offset":161},"end":{"line":9,"col":24,"offset":172}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 7

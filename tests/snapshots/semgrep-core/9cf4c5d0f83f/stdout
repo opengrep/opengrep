@@ -1,0 +1,19 @@
+--- begin input files ---
+rules/ocaml_paren_expr.yaml
+targets/ocaml_paren_expr.ml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/ocaml_paren_expr.yaml
+ create mode 100644 targets/ocaml_paren_expr.ml
+{"version":"<MASKED>","results":[{"check_id":"rules.wrap-afunc-arguments","path":"targets/ocaml_paren_expr.ml","start":{"line":1,"col":11,"offset":10},"end":{"line":1,"col":39,"offset":38},"extra":{"metavars":{"$X":{"start":{"line":1,"col":27,"offset":26},"end":{"line":1,"col":39,"offset":38},"abstract_content":"the_argument"}},"message":"Wrap the arguments to `a_function_call` with `wrap` first","fix":"a_function_call (wrap (the_argument))","metadata":{},"severity":"ERROR","fingerprint":"a3d450e8c89f0a29298564291dd5a1a930394bbe75d5cc042d7f9bd0736ca3ee2133a2c4033d96e772b5f26f9ddd3b7210fad27d4e75aa27eb6c61b1e4af5639_0","lines":"let one = a_function_call the_argument","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.wrap-afunc-arguments","path":"targets/ocaml_paren_expr.ml","start":{"line":3,"col":11,"offset":50},"end":{"line":3,"col":41,"offset":80},"extra":{"metavars":{"$X":{"start":{"line":3,"col":28,"offset":67},"end":{"line":3,"col":40,"offset":79},"abstract_content":"the_argument"}},"message":"Wrap the arguments to `a_function_call` with `wrap` first","fix":"a_function_call (wrap (the_argument))","metadata":{},"severity":"ERROR","fingerprint":"a3d450e8c89f0a29298564291dd5a1a930394bbe75d5cc042d7f9bd0736ca3ee2133a2c4033d96e772b5f26f9ddd3b7210fad27d4e75aa27eb6c61b1e4af5639_1","lines":"let two = a_function_call (the_argument)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.wrap-afunc-arguments","path":"targets/ocaml_paren_expr.ml","start":{"line":5,"col":13,"offset":94},"end":{"line":5,"col":56,"offset":137},"extra":{"metavars":{"$X":{"start":{"line":5,"col":29,"offset":110},"end":{"line":5,"col":56,"offset":137},"abstract_content":"another_func the_argument"}},"message":"Wrap the arguments to `a_function_call` with `wrap` first","fix":"a_function_call (wrap ((another_func the_argument)))","metadata":{},"severity":"ERROR","fingerprint":"a88519d71e3ea919c3e62d23caf516bb0e3e1c6fa6df2ca4d1681b654c9b729dbb3323f2557bba84324d19fcfea63e29465927c0ea1f5bb409b292e4425c1083_0","lines":"let three = a_function_call (another_func the_argument)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.wrap-afunc-arguments","path":"targets/ocaml_paren_expr.ml","start":{"line":7,"col":13,"offset":151},"end":{"line":7,"col":60,"offset":198},"extra":{"metavars":{"$X":{"start":{"line":7,"col":29,"offset":167},"end":{"line":7,"col":60,"offset":198},"abstract_content":"(tuple_member threeple_member)"}},"message":"Wrap the arguments to `a_function_call` with `wrap` first","fix":"a_function_call (wrap ((tuple_member, threeple_member)))","metadata":{},"severity":"ERROR","fingerprint":"b7d6502e78b0aceff7e0351cd2b5a9923adf3210dc44204205f7f0c0962ac4dd4dadd785c3c8646b8425895c2c6a2fe76633afea89ae6e9541c1bb5580958eda_0","lines":"let three = a_function_call (tuple_member, threeple_member)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/ocaml_paren_expr.ml"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/ocaml_paren_expr.ml after the scan ---
+let one = a_function_call (wrap (the_argument))
+
+let two = a_function_call (wrap (the_argument))
+
+let three = a_function_call (wrap ((another_func the_argument)))
+
+let three = a_function_call (wrap ((tuple_member, threeple_member)))
+

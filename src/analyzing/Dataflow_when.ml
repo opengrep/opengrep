@@ -57,9 +57,8 @@ type ctx = facts list
 (* Helpers *)
 (*****************************************************************************)
 
-(* if the -path_sensitive flag is enabled, the ref below will be set to
- * true. the functions in this file will only execute if both
- * -deep_intra_file and -path_sensitive are enabled.
+(* The functions in this file execute only when the ref below is set to
+ * true; nothing sets it yet, a flag for path sensitivity is to come.
  *)
 let hook_path_sensitive = ref false
 
@@ -370,15 +369,7 @@ let facts_satisfy_e (mvars : Metavariable.bindings) (facts : facts) (e : expr) =
       Log.debug (fun m -> m "not a condition for when");
       false
 
-(* NOTE: Not thread-safe, also not used presumably since PRO-related. *)
-let hook_annotate_facts = ref None
-let hook_facts_satisfy_e = ref None
-
 (* NOTE: I don't want to delete dependent code that now becomes unused, because
  * it can be useful, and the change is best left minimised for now. *)
-let _ = ignore hook_annotate_facts
 let _ = ignore annotate_facts
 let _ = ignore facts_satisfy_e
-(* let with_pro_hooks f =
-     Common.save_excursion hook_annotate_facts (Some annotate_facts) (fun () ->
-         Common.save_excursion hook_facts_satisfy_e (Some facts_satisfy_e) f) *)

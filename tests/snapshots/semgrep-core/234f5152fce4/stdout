@@ -1,0 +1,12 @@
+Test name: without git > symlink inside the project keeps its name
+--- Files not added to git ---
+.semgrepignore
+dir/a.c
+dir/b.c
+link
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected link/a.c
+--- Skipped targets ---
+ignored link/b.c [Semgrep_output_v1_t.Semgrepignore_patterns_match]

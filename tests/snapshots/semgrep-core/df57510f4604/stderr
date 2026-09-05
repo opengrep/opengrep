@@ -1,0 +1,15 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/invalid-metavariable-regex.yaml:8:9: Invalid rule schema in rule rules.boto3-internal-network
+  --> rules/invalid-metavariable-regex.yaml:8
+7 |         regex: '192.168\.\d{1,3}\.\d{1,3}'
+8 |         metavariable: $MODULE
+  |         ^^^^^^^^^^^^
+9 |         regex: (boto|boto3)
+duplicate key 'metavariable' in dictionary. You should use multiple metavariable-regex

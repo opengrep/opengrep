@@ -1,0 +1,28 @@
+--- begin input files ---
+rules/utf-8.yaml
+targets/utf-8.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 27 insertions(+)
+ create mode 100644 rules/utf-8.yaml
+ create mode 100644 targets/utf-8.py
+{"version":"<MASKED>","results":[{"check_id":"rules.replace-with-smiley","path":"targets/utf-8.py","start":{"line":12,"col":1,"offset":432},"end":{"line":12,"col":11,"offset":442},"extra":{"metavars":{},"message":"Unnecessary parameter which matches the default","fix":"print('😊')","metadata":{},"severity":"WARNING","fingerprint":"32903d7e555bc24dbe415cddc4ad6ec49103731cace3e098fbab1a9f44fffc286ff4066b0a9c6076caf1f74d7af59a610dca1ff28e1b937de0bba745059297a4_0","lines":"print('a')","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.replace-with-smiley","path":"targets/utf-8.py","start":{"line":16,"col":13,"offset":585},"end":{"line":16,"col":23,"offset":595},"extra":{"metavars":{},"message":"Unnecessary parameter which matches the default","fix":"print('😊')","metadata":{},"severity":"WARNING","fingerprint":"32903d7e555bc24dbe415cddc4ad6ec49103731cace3e098fbab1a9f44fffc286ff4066b0a9c6076caf1f74d7af59a610dca1ff28e1b937de0bba745059297a4_1","lines":"y = '😊'; print('a'); print('a')","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.replace-with-smiley","path":"targets/utf-8.py","start":{"line":16,"col":25,"offset":597},"end":{"line":16,"col":35,"offset":607},"extra":{"metavars":{},"message":"Unnecessary parameter which matches the default","fix":"print('😊')","metadata":{},"severity":"WARNING","fingerprint":"32903d7e555bc24dbe415cddc4ad6ec49103731cace3e098fbab1a9f44fffc286ff4066b0a9c6076caf1f74d7af59a610dca1ff28e1b937de0bba745059297a4_2","lines":"y = '😊'; print('a'); print('a')","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/utf-8.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/utf-8.py after the scan ---
+# Tests autofixes when non-ascii characters are present in the source file and
+# the fix.
+#
+# In Python, strings are sequences of characters. In OCaml, they are sequences
+# of bytes. Because of this, we need to be particularly careful that we do not
+# conflate bytes with characters.
+
+# U+1F60A. Has a 4 byte encoding in utf-8. This is here to throw off offsets
+# later in the file if we are computing them incorrectly.
+x = '😊'
+
+print('😊')
+
+# And this one is here at the beginning of a line to throw off columns later in
+# the line if we are computing them incorrectly.
+y = '😊'; print('😊'); print('😊')
+

@@ -25,10 +25,11 @@ rules:
               ...
               [@@action]
     message: you should not print anything on stdout as it may interfere with
-      the JSON output we must return to pyopengrep from opengrep-core, or it may
-      interfere with the output of opengrep-cli.
+      the JSON output of 'opengrep --core', or it may interfere with the
+      output of opengrep.
       Use Logs.debug() for debugging, UConsole.print() for actual valid output
-      in opengrep-core, or Logs.app() and CapConsole.print() in opengrep-cli.
+      in the core CLI, or Logs.app() and CapConsole.print() in the opengrep
+      CLI.
     languages: [ocaml]
     severity: ERROR
     paths:
@@ -41,18 +42,6 @@ rules:
         - languages/*
         - scripts/*
         - tools/*
-
-  - id: use-state-for-global-settings
-    pattern: global $VAR
-    message: |
-      Instead of setting global variables,
-      keep your variables around on the semgrep.state.SemgrepState class.
-      You'll then be able to access this anywhere with:
-
-      from semgrep.state import get_state
-      $VAR = get_state().$VAR
-    languages: [python]
-    severity: ERROR
 
   - id: not-using-our-pcre-wrappers
     patterns:
@@ -172,71 +161,6 @@ rules:
     languages: [ocaml]
     severity: ERROR
 
-  - id: no-exit-code-1-in-semgrep
-    pattern: sys.exit(1)
-    fix: sys.exit(2)
-    message: >-
-      Exit code 1 is reserved for notifying users that blocking findings were found.
-      Please use a different exit code, or better yet, a SemgrepError exception.
-      For generic fatal errors, we use exit code 2.
-    languages: [python]
-    severity: ERROR
-    paths:
-      include:
-        - cli/*
-
-  - id: no-env-vars-on-top-level
-    patterns:
-      - pattern-either:
-          - pattern: os.getenv
-          - pattern: os.environ
-      - pattern-not-inside: "def $F(...): ..."
-    message: >-
-      If you access environment variables on the top level of a module,
-      it'll be near impossible to mock the value of that variable in tests.
-
-      Please make sure to only access environment variables in functions,
-      preferably in semgrep.env.Env
-    languages: [python]
-    severity: ERROR
-    paths:
-      include:
-        - cli/src/*
-
-  - id: typehint-run-semgrep
-    patterns:
-      - focus-metavariable: $FIXTURE
-      - pattern-inside: |
-          def $FUNC(..., $FIXTURE, ...): ...
-      - pattern-not-inside: |
-          def $FUNC(..., $FIXTURE: tests.fixtures.RunSemgrep, ...): ...
-      - metavariable-regex:
-          metavariable: $FIXTURE
-          regex: ^run_semgrep.*$
-    message: >-
-      Please add a type hint for your use of $FIXTURE.
-      It should look like this: `$FIXTURE: RunSemgrep`,
-      and you should import it like this: `from tests.fixtures import RunSemgrep`.
-    languages: [python]
-    severity: ERROR
-    paths:
-      include:
-        - cli/tests/*
-
-  - id: use-git-check-output-helper
-    pattern-either:
-      - pattern: subprocess.$METHOD(["git", ...], ...)
-      - pattern: semgrep.util.sub_check_output(["git", ...], ...)
-    message: >-
-      We have a helper function git_check_output in meta.py that
-      handles printing nice error+debug messages on failure. Use
-      that instead of using subprocess
-    languages: [python]
-    severity: ERROR
-    paths:
-      include:
-        - cli/src/*
-
   # Rules that used to be in pfff.yml and could be put in p/ocaml at some point
   - id: bad-pervasives
     pattern: Pervasives.$X
@@ -291,16 +215,6 @@ rules:
         - changelog.d/*.changed
         - changelog.d/*.fixed
         - changelog.d/*.infra
-
-  - id: pass-console-to-rich-progress
-    patterns:
-      - pattern: rich.progress.track(...)
-      - pattern-not: rich.progress.track(..., console=semgrep.console.console)
-    message: >-
-      You need to pass our custom console to rich progress bars
-      so that it progress to the correct output stream (usually stderr).
-    languages: [python]
-    severity: ERROR
 
   - id: list-hd
     pattern: List.hd

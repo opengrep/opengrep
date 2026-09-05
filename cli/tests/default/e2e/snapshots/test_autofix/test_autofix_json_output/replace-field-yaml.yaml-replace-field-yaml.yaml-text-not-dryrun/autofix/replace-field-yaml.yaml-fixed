@@ -1,5 +1,0 @@
-x:
-  # ruleid: yaml-excessive-capture
-  y: false
-  # comment
-  z: "z"

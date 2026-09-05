@@ -61,7 +61,7 @@ let format_cli_match (cli_match : Out.cli_match) : (string * JSON.yojson) list =
               `Assoc
                 [
                   ("type", `String "flagged-as-likely-false-positive");
-                  ("origin", `String "Semgrep");
+                  ("origin", `String "Opengrep");
                   ( "description",
                     `String "This finding is from a low confidence rule." );
                 ];
@@ -90,10 +90,10 @@ let format_cli_match (cli_match : Out.cli_match) : (string * JSON.yojson) list =
                 `Assoc
                   [
                     ("type", `String "flagged-as-likely-false-positive");
-                    ("origin", `String "Semgrep Supply Chain");
+                    ("origin", `String "Opengrep");
                     ( "description",
                       `String
-                        "Semgrep found no way to reach this vulnerability \
+                        "Opengrep found no way to reach this vulnerability \
                          while scanning your code." );
                   ];
               ]
@@ -132,9 +132,9 @@ let format_cli_match (cli_match : Out.cli_match) : (string * JSON.yojson) list =
       ( "scanner",
         `Assoc
           [
-            ("id", `String "semgrep");
-            ("name", `String "Semgrep");
-            ("vendor", `Assoc [ ("name", `String "Semgrep") ]);
+            ("id", `String "opengrep");
+            ("name", `String "Opengrep");
+            ("vendor", `Assoc [ ("name", `String "Opengrep") ]);
           ] );
       ( "location",
         `Assoc
@@ -149,9 +149,9 @@ let format_cli_match (cli_match : Out.cli_match) : (string * JSON.yojson) list =
           [
             `Assoc
               [
-                ("type", `String "semgrep_type");
+                ("type", `String "opengrep_type");
                 ( "name",
-                  `String ("Semgrep - " ^ Rule_ID.to_string cli_match.check_id)
+                  `String ("Opengrep - " ^ Rule_ID.to_string cli_match.check_id)
                 );
                 ("value", `String (Rule_ID.to_string cli_match.check_id));
                 ("url", `String source);
@@ -207,7 +207,8 @@ let output ?(start_time: Timedesc.Timestamp.t option) f (matches : Out.cli_match
       ]
   in
   let now = Timedesc.Timestamp.now () in
-  (* NOTE: This only really works for --experimental mode. *)
+  (* NOTE: Callers with no profiler pass no start time; the scan is then
+   * reported as starting now. *)
   let start_time = Option.value start_time ~default:now in
   let end_time = now in
   (* bugfix: gitlab does not use the RFC 3339 date format but instead a

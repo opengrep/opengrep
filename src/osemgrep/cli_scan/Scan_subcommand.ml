@@ -88,6 +88,33 @@ let exit_code_of_errors ~strict (errors : Out.core_error list) : Exit_code.t =
           exit_code
       | _ -> Exit_code.ok ~__LOC__)
 
+(* A target the user named that the scan could not read is an error of the
+ * run: pysemgrep rejected it on its command line with
+ * "Path 'x' is not readable" and exit code 2. Here the scan goes on, so
+ * the file is also reported among the skipped targets and counted in the
+ * summary, and the error makes the run exit 2.
+ *)
+let unreadable_scanning_root_errors (conf : Scan_CLI.conf)
+    (skipped : Out.skipped_target list) : Core_error.t list =
+  (* the roots as the user spelled them ('./x', an absolute path) against
+     the paths the targeting reports *)
+  let roots : Fpath.Set.t =
+    conf.target_roots
+    |> List_.map (fun (root : Scanning_root.t) ->
+           Fpath.normalize (Scanning_root.to_fpath root))
+    |> Fpath.Set.of_list
+  in
+  skipped
+  |> List.filter (fun (x : Out.skipped_target) ->
+         match x.reason with
+         | Out.Insufficient_permissions ->
+             Fpath.Set.mem (Fpath.normalize x.path) roots
+         | _ -> false)
+  |> List_.map (fun (x : Out.skipped_target) ->
+         Core_error.mk_error
+           ~msg:(spf "Path '%s' is not readable" !!(x.path))
+           Out.SemgrepError)
+
 (* Core errors are easier to report. *)
 let core_errors_of_fatal_rule_errors (fatal_errors : Rule_error.t list) :
     Core_error.t list =
@@ -95,9 +122,9 @@ let core_errors_of_fatal_rule_errors (fatal_errors : Rule_error.t list) :
   |> List_.map (fun (e : Rule_error.t) -> Core_error.error_of_rule_error e)
 
 (* we require stdout here to give the proper output, such as with --json *)
-let output_and_exit_from_fatal_core_errors_exn ~exit_code
-    (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
-    (errors : Core_error.t list) : Exit_code.t =
+let output_and_exit_from_fatal_core_errors_exn ~(text_message : string)
+    ~(exit_code : Exit_code.t) (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
+    (profiler : Profiler.t) (errors : Core_error.t list) : Exit_code.t =
   match conf.output_conf.output_format with
   (* For textual output, it seems that we do not have a unified way to
      display errors, other than raising an exception and dispatching to the
@@ -106,26 +133,76 @@ let output_and_exit_from_fatal_core_errors_exn ~exit_code
      Output.output_result handler, which will display the JSON even in
      the event of an error.
   *)
-  | Output_format.Text ->
-      raise
-        (Error.Semgrep_error
-           ( Common.spf
-               "invalid configuration file found (%d configs were invalid)\n%s"
-               (List.length errors)
-               (String.concat "\n"
-                  (List_.map Core_error.string_of_error errors)),
-             Some (Exit_code.missing_config ~__LOC__) ))
+  | Output_format.Text -> raise (Error.Semgrep_error (text_message, Some exit_code))
   | _ ->
+      (* the document carries the errors; when it goes to a file, stderr is
+         where the user sees them *)
+      if Option.is_some conf.output_conf.output then
+        Logs.err (fun m -> m "%s" text_message);
       let res =
         Core_runner.mk_result [] (Core_result.mk_result_with_just_errors errors)
       in
 
-      Output.output_result
+      Output.output_result ~keep_ignored:false
         (caps :> < Cap.stdout >)
         (* TODO: choose output conf? *)
         conf.output_conf profiler res
       |> ignore;
       exit_code
+
+(* A configuration that cannot be loaded aborts the run with the
+ * "invalid configuration" exit code, whatever the kinds of the errors:
+ * pysemgrep raised a final SemgrepError with MISSING_CONFIG_EXIT_CODE on
+ * top of the per-error codes (run_scan.py), which the entries of the JSON
+ * keep. *)
+let output_and_exit_from_invalid_config_exn ~(text_message : string)
+    (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t)
+    (errors : Core_error.t list) : Exit_code.t =
+  output_and_exit_from_fatal_core_errors_exn ~text_message
+    ~exit_code:(Exit_code.missing_config ~__LOC__)
+    caps conf profiler errors
+
+(* A fatal error of the command itself (a git failure, a config that cannot
+ * be downloaded, an option we cannot read): the document of the format
+ * asked for still carries it, as pysemgrep's output handler ran in a
+ * 'finally' clause (output.py handle_semgrep_errors). *)
+let output_and_exit_from_fatal_exn ~(msg : string) ~(exit_code : Exit_code.t)
+    (caps : < Cap.stdout >) (conf : Scan_CLI.conf) (profiler : Profiler.t) :
+    Exit_code.t =
+  output_and_exit_from_fatal_core_errors_exn ~text_message:msg ~exit_code caps
+    conf profiler
+    [ Core_error.mk_error ~msg Out.SemgrepError ]
+
+(* A scanning root that does not exist aborts the scan, as pysemgrep's
+ * FilesNotFoundError does: one fatal error per missing root, reported in
+ * the output format asked for, exit code 2. *)
+let get_targets_or_exit (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
+    (profiler : Profiler.t) : (Fpath.t Find_targets.targets, Exit_code.t) result
+    =
+  let missing_roots : Fpath.t list =
+    conf.target_roots
+    |> List_.map Scanning_root.to_fpath
+    |> List.filter (fun (root : Fpath.t) -> not (Sys.file_exists !!root))
+  in
+  match missing_roots with
+  | [] ->
+      Ok (Find_targets.get_target_fpaths conf.targeting_conf conf.target_roots)
+  | _ :: _ ->
+      let errors : Core_error.t list =
+        missing_roots
+        |> List_.map (fun (root : Fpath.t) ->
+               Core_error.mk_error
+                 ~msg:(spf "File not found: %s" !!root)
+                 Out.SemgrepError)
+      in
+      Error
+        (output_and_exit_from_fatal_core_errors_exn
+           ~text_message:
+             (errors
+             |> List_.map (fun (error : Core_error.t) -> error.msg)
+             |> String.concat "\n")
+           ~exit_code:(Exit_code.fatal ~__LOC__)
+           caps conf profiler errors)
 
 (*****************************************************************************)
 (* Incremental display *)
@@ -176,6 +253,7 @@ let mk_file_match_hook ~inline_metavars (conf : Scan_CLI.conf)
     let hrules = Rule.hrules_of_rules rules in
     let fixed_env = Fixed_lines.mk_env () in
     core_matches
+    |> Semgrep_output_utils.sort_core_matches_as_reported
     |> List_.map
          (Cli_json_output.cli_match_of_core_match
             ~fixed_lines:conf.output_conf.fixed_lines fixed_env hrules)
@@ -239,10 +317,20 @@ let choose_output_format_and_match_hook (caps : < Cap.stdout >)
 (* Printing stuff for CLI UX *)
 (*****************************************************************************)
 
+(* python: main.py conditional_welcome(), which printed the banner only
+ * when stdout was a terminal, so that a log of a scan does not gain the
+ * lines below; it printed none of it for the alternate modes either, and
+ * the pattern mode ('-e/--pattern', '-l/--lang') is one of them. *)
+let show_banner (rules_source : Rules_source.t) : bool =
+  !ANSITerminal.isatty Unix.stdout
+  &&
+  match rules_source with
+  | Rules_source.Pattern _ -> false
+  | Configs _ -> true
+
 let print_logo () : unit =
   let logo =
-    Ocolor_format.asprintf
-      {|
+    {|
 ┌──────────────┐
 │ Opengrep CLI │
 └──────────────┘
@@ -251,9 +339,14 @@ let print_logo () : unit =
   Logs.app (fun m -> m "%s" logo);
   ()
 
+(* These strings go to stderr through Logs.app, so they are styled with the
+   renderer of stderr, which follows --force-color, $NO_COLOR and the tty
+   like every other output (see CLI_common.setup_logging). *)
+let styled (style : Fmt.style) (text : string) : string =
+  Fmt.str_like Fmt.stderr "%a" Fmt.(styled style string) text
+
 let feature_status ~(enabled : bool) : string =
-  if enabled then Ocolor_format.asprintf {|@{<green>✔@}|}
-  else Ocolor_format.asprintf {|@{<red>✘@}|}
+  if enabled then styled (`Fg `Green) "✔" else styled (`Fg `Red) "✘"
 
 let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) *) () :
     unit =
@@ -286,46 +379,32 @@ let print_feature_section (* ~(includes_token : bool) ~(engine : Engine_type.t) 
   List.iter
     (fun (feature_name, desc, is_enabled) ->
       Logs.app (fun m ->
-          m "%s %s"
-            (feature_status ~enabled:is_enabled)
-            (Ocolor_format.asprintf {|@{<bold>%s@}|} feature_name));
+          m "%s %s" (feature_status ~enabled:is_enabled) (styled `Bold feature_name));
       Logs.app (fun m ->
           m "  %s %s\n" (feature_status ~enabled:is_enabled) desc))
     features;
   ()
 
-let display_rule_source ~(rule_source : Rules_source.t) : unit =
+let display_rule_source (source : Rule_fetching.source) : unit =
   let msg =
-    match rule_source with
-    | Configs xs -> (
-        let kinds =
-          List_.map
-            (fun str -> Rules_config.parse_config_string ~in_docker:false str)
-            xs
-        in
+    match source with
+    | Configs (configs, _not_found) -> (
         let has = function
           | `Registry ->
               List.exists
                 (function
-                  | C.A _
-                  | C.R _ ->
-                      true
+                  | C.R _ -> true
                   | _ -> false)
-                kinds
+                configs
           | `Git ->
-              List.exists (function C.Git _ -> true | _ -> false) kinds
+              List.exists (function C.Git _ -> true | _ -> false) configs
         in
         match () with
-        | _ when has `Registry ->
-            Ocolor_format.asprintf {|@{<bold>  %s@}|}
-              "Loading rules from registry..."
+        | _ when has `Registry -> styled `Bold "  Loading rules from registry..."
         | _ when has `Git ->
-            Ocolor_format.asprintf {|@{<bold>  %s@}|}
-              "Loading rules from git repository..."
-        | _ ->
-            Ocolor_format.asprintf {|@{<bold>  %s@}|}
-              "Loading rules from local config...")
-    | Pattern _ -> Ocolor_format.asprintf {|@{  %s@}|} "Using custom pattern."
+            styled `Bold "  Loading rules from git repository..."
+        | _ -> styled `Bold "  Loading rules from local config...")
+    | Pattern _ -> "  Using custom pattern."
   in
   Logs.app (fun m -> m "%s" msg);
   ()
@@ -339,7 +418,7 @@ let mk_core_run_for_osemgrep (caps : < Core_scan.caps ; .. >) :
   Core_runner.mk_core_run_for_osemgrep (Core_scan.scan caps)
 
 let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
-    ~strict caps rules_source =
+    ~strict caps (source : Rule_fetching.source) =
   (* Create the wait hook for our progress indicator *)
   let spinner_ls =
     if Console_Spinner.should_show_spinner () then
@@ -348,18 +427,16 @@ let rules_from_rules_source ?(skip_invalid_configs = false) ~rewrite_rule_ids
   in
   (* Fetch the rules *)
   let rules_and_origins =
-    Rule_fetching.rules_from_rules_source_async ~skip_invalid_configs
+    Rule_fetching.rules_from_source_async ~skip_invalid_configs
       ~rewrite_rule_ids ~strict
       (caps :> < Cap.network ; Cap.tmp >)
-      rules_source
+      source
   in
   Lwt_platform.run (Lwt.pick (rules_and_origins :: spinner_ls))
 [@@profiling]
 
 let adjust_skipped (skipped : Out.skipped_target list)
     (res : Core_runner.result) : Core_runner.result =
-  let errors_skipped = Skipped_report.errors_to_skipped res.core.errors in
-  let skipped = skipped @ errors_skipped in
   (* TODO: what is in core.skipped_targets? should we add them to
    * skipped above too?
    *)
@@ -395,14 +472,13 @@ let trim_core_match_fix (r : Out.core_match) =
   let extra = { r.extra with fix } in
   { r with extra }
 
-let adjust_nosemgrep_and_autofix ~keep_ignored (res : Core_runner.result) :
+(* The nosem-ignored matches stay in the results here: Output drops them
+   once the match-based ids are indexed, which counts them as pysemgrep
+   did. *)
+let adjust_nosemgrep_and_autofix (res : Core_runner.result) :
     Core_runner.result =
-  let filtered_matches =
-    res.core.results
-    |> List_.map trim_core_match_fix
-    |> Nosemgrep.filter_ignored ~keep_ignored
-  in
-  { res with core = { res.core with results = filtered_matches } }
+  let matches = res.core.results |> List_.map trim_core_match_fix in
+  { res with core = { res.core with results = matches } }
 
 (*****************************************************************************)
 (* Yet another check targets with rules *)
@@ -437,42 +513,32 @@ let check_targets_with_rules ?(print_summary = true)
               (Rule_ID.to_string (fst r.Rule.id))
               (Tok.stringpos_of_tok (snd r.Rule.id))))
   in
-  let too_many_entries = conf.output_conf.max_log_list_entries in
-  Logs.info (fun m ->
-      m "%a" (Rules_report.pp_rules ~too_many_entries) (conf.rules_source, rules));
-
   match rules with
   | [] ->
-      (* desired/legacy semgrep behavior: fail if no valid rule was found
-
-         Problem in case of all Apex rules being skipped by semgrep-core:
-         - actual pysemgrep behavior:
-           * doesn't count these rules as skipped, resulting in a successful exit
-           * reports Apex targets as scanned that weren't scanned
-         - osemgrep behavior:
-           * reports skipped rules and skipped/scanned targets correctly
-         How to fix this:
-         - pysemgrep should read the 'scanned' field reporting the targets that
-           were really scanned by semgrep-core instead of the current
-           implementation that assumes semgrep-core will scan all the targets it
-           receives.
-         Should we fix this?
-         - it's necessary to get the same output with pysemgrep and osemgrep
-         - it's a bit of an effort on the Python side for something that's
-           not very important
-         Suggestion:
-         - tolerate different output between pysemgrep and osemgrep
-           for tests that we would mark as such.
-      *)
+      (* fail if no valid rule was found *)
       (* Here, we output again, because we need to make sure that invalid rule errors
          are also surfaced to users who request --json or similar.
       *)
-      let core_errors =
-        List_.map Core_error.error_of_invalid_rule invalid_rules
+      let core_errors, text_message =
+        match invalid_rules with
+        (* a config that holds no rule at all (e.g. 'rules: []'): there is
+           no invalid rule to report, so we report the missing config as
+           pysemgrep's config_resolver did *)
+        | [] ->
+            ( [
+                Core_error.mk_error
+                  ~msg:Rule_fetching.no_config_given_message Out.MissingConfig;
+              ],
+              Rule_fetching.no_config_given_message )
+        | _ :: _ ->
+            let core_errors =
+              List_.map Core_error.error_of_invalid_rule invalid_rules
+            in
+            ( core_errors,
+              Rule_errors_report.invalid_configs_message core_errors )
       in
       Error
-        (output_and_exit_from_fatal_core_errors_exn
-           ~exit_code:(Exit_code.missing_config ~__LOC__)
+        (output_and_exit_from_invalid_config_exn ~text_message
            (caps :> < Cap.stdout >)
            conf profiler core_errors)
   | _ -> (
@@ -480,7 +546,19 @@ let check_targets_with_rules ?(print_summary = true)
          Otherwise, if we filter to have 0 rules, we will signal that there is something
          wrong with the configuration.
       *)
+      let rules_not_run =
+        Rule_filtering.rules_not_run conf.rule_filtering_conf rules
+      in
+      if not (List_.null rules_not_run) then
+        Logs.info (fun m ->
+            m "%s of severity INVENTORY or EXPERIMENT not run"
+              (String_.unit_str (List.length rules_not_run) "rule"));
       let rules = Rule_filtering.filter_rules conf.rule_filtering_conf rules in
+      let too_many_entries = conf.output_conf.max_log_list_entries in
+      Logs.info (fun m ->
+          m "%a"
+            (Rules_report.pp_rules ~too_many_entries)
+            (conf.rules_source, rules));
       (* step 2: printing the skipped targets *)
       let selected = targets_and_skipped.Find_targets.selected
       and skipped = targets_and_skipped.Find_targets.skipped in
@@ -518,6 +596,7 @@ let check_targets_with_rules ?(print_summary = true)
                   mk_core_run_for_osemgrep caps
                 in
                 run ?file_match_hook
+                  ~git_repo:targets_and_skipped.Find_targets.git_repo
                   conf.core_runner_conf conf.targeting_conf conf.matching_conf
                   (rules, invalid_rules) selected)
         | Some baseline ->
@@ -527,6 +606,7 @@ let check_targets_with_rules ?(print_summary = true)
              fun targets rules ->
               let { run } : Core_runner.func = mk_core_run_for_osemgrep caps in
               run ?file_match_hook
+                ~git_repo:targets_and_skipped.Find_targets.git_repo
                 conf.core_runner_conf conf.targeting_conf conf.matching_conf
                 (rules, invalid_rules) targets
             in
@@ -539,16 +619,64 @@ let check_targets_with_rules ?(print_summary = true)
           (* TOADAPT? Runner_exit.exit_semgrep (Unknown_exception e) instead *)
           Exception.reraise exn
       | Ok result ->
+          (* the errors come last so that the exit code of the run is
+             theirs: a target the user named and the scan could not read
+             makes the run fail *)
+          let result : Core_result.t =
+            {
+              result with
+              Core_result.errors =
+                result.Core_result.errors
+                @ unreadable_scanning_root_errors conf skipped;
+            }
+          in
           let (res : Core_runner.result) =
             Core_runner.mk_result
               ~inline:conf.core_runner_conf.inline_metavariables
               rules
               result
           in
+          (* python: the files of the rules not run were scanned by the
+             wrapper, which dropped their findings afterwards; they are
+             listed as scanned here too *)
+          let (res : Core_runner.result) =
+            let scanned_by_no_rule : Fpath.t list =
+              Core_runner.split_jobs_by_language conf.targeting_conf
+                rules_not_run selected
+              |> List.concat_map (fun (job : Lang_job.t) -> job.targets)
+            in
+            { res with scanned = Set_.union res.scanned (Set_.of_list scanned_by_no_rule) }
+          in
+          (* the rules were parsed when fetched, before the engine ran *)
+          let rules_parse_time : float =
+            rules_and_origins
+            |> List.fold_left
+                 (fun (acc : float) (r : Rule_fetching.rules_and_origin) ->
+                   acc +. r.parse_time)
+                 0.0
+          in
+          let (res : Core_runner.result) =
+            {
+              res with
+              core =
+                {
+                  res.core with
+                  time =
+                    res.core.time
+                    |> Option.map (fun (time : Out.profile) ->
+                           {
+                             time with
+                             rules_parse_time =
+                               time.rules_parse_time +. rules_parse_time;
+                           });
+                };
+            }
+          in
           let output_conf : Output.conf =
             { conf.output_conf with output_format }
           in
-          (* step 3'': adjust the matches, filter via nosemgrep and part1 autofix *)
+          (* step 3'': adjust the matches and part1 autofix; the nosemgrep
+             filtering itself happens in Output, after the ids are indexed *)
           let keep_ignored =
             (not conf.core_runner_conf.nosem)
             (* --disable-nosem *)
@@ -557,28 +685,72 @@ let check_targets_with_rules ?(print_summary = true)
                the suppressed matches it reports *)
             || Output.keeps_ignores output_conf
           in
-          let res = adjust_nosemgrep_and_autofix ~keep_ignored res in
+          let res = adjust_nosemgrep_and_autofix res in
 
           (* step 4: adjust the skipped_targets *)
+          (* the targets with an error count as partially analysed, in the
+             JSON and in the summary below; the files no rule would have
+             scanned are not reported *)
+          let xlangs =
+            rules
+            |> List_.map (fun (r : Rule.t) -> r.target_analyzer)
+            |> List_.deduplicate
+          in
+          let skipped =
+            skipped @ Skipped_report.errors_to_skipped res.core.errors
+            |> Skipped_report.for_languages xlangs
+          in
           let res = adjust_skipped skipped res in
+
+          (* python: OutputHandler.handle_semgrep_errors, the errors of the
+             scan as lines of the text output, before the findings *)
+          (match output_format with
+          | Text ->
+              res.core.errors
+              |> List_.map Cli_json_output.cli_error_of_core_error
+              |> Summary_report.cli_errors_to_report
+                   ~verbose:conf.output_conf.skipped_files
+              |> List.iter (fun (error : Out.cli_error) ->
+                     Logs.app (fun m ->
+                         m "%a" Summary_report.pp_cli_error error))
+          | _ -> ());
 
           (* step 5: report the matches *)
           Logs.info (fun m -> m "reporting matches if any");
           (* outputting the result on stdout! in JSON/Text/... depending on conf *)
           let cli_output =
-            Output.output_result (caps :> < Cap.stdout >) output_conf profiler res
+            Output.output_result ~keep_ignored
+              (caps :> < Cap.stdout >)
+              output_conf profiler res
           in
+          (* python: the timeout warnings printed in text mode with the
+             results (not with --quiet, on either side) *)
+          (match output_format with
+          | Text ->
+              let warnings =
+                Fmt_.with_buffer_to_string (fun ppf ->
+                    Summary_report.pp_timeout_warnings
+                      ~timeout_threshold:conf.core_runner_conf.timeout_threshold
+                      ppf cli_output.errors)
+              in
+              if not (String.equal warnings "") then
+                Logs.warn (fun m -> m "%s" (String.trim warnings))
+          | _ -> ());
           Profiler.stop_ign profiler ~name:"total_time";
 
-          (* We'll report the number of valid rules, not the number of
-             rules applicable to our target files. *)
-          let valid_rules =
-            match result_or_exn with
-            | Ok r ->
-                r.valid_rules
-                |> List_.map (fun (rv : Rule.rule) ->
-                       Rule_ID.to_string (fst rv.id))
-            | Error _ -> []
+          (* The rules that ran are those with a target file, as the Python
+             wrapper counts them; a rule of several languages is in the
+             job of each. When no rule has a target, the wrapper falls back
+             to the rules it loaded (output.py: executed_rule_count or
+             len(filtered_rules)). *)
+          let num_rules_ran : int =
+            match
+              result.rules_with_targets
+              |> List_.map (fun (rv : Rule.rule) -> fst rv.id)
+              |> List.sort_uniq Rule_ID.compare
+            with
+            | [] -> List.length rules
+            | ids -> List.length ids
           in
 
           let skipped_groups = Skipped_report.group_skipped skipped in
@@ -597,6 +769,8 @@ let check_targets_with_rules ?(print_summary = true)
                 (Summary_report.pp_summary
                    ~respect_gitignore:conf.targeting_conf.respect_gitignore
                    ~is_git_repo:targets_and_skipped.Find_targets.git_repo
+                   ~is_baseline_scan:
+                     (Option.is_some conf.targeting_conf.baseline_commit)
                    ~maturity:conf.common.maturity
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
                    ~skipped_groups)
@@ -606,7 +780,7 @@ let check_targets_with_rules ?(print_summary = true)
           if print_summary then
             Logs.app (fun m ->
                 m "Ran %s on %s: %s."
-                  (String_.unit_str (List.length valid_rules) "rule")
+                  (String_.unit_str num_rules_ran "rule")
                   (String_.unit_str (List.length cli_output.paths.scanned) "file")
                   (String_.unit_str (List.length cli_output.results) "finding"));
 
@@ -614,9 +788,13 @@ let check_targets_with_rules ?(print_summary = true)
           (* this must happen posterior to reporting matches, or will report the
              already-fixed file
           *)
+          (* overlapping fixes: the first finding in reported order wins,
+             as for the fixed_lines of a dry run *)
           if conf.autofix then
             Autofix.apply_fixes_of_core_matches
-              ~dryrun:conf.output_conf.fixed_lines res.core.results;
+              ~dryrun:conf.output_conf.fixed_lines
+              (Semgrep_output_utils.sort_core_matches_as_reported
+                 (Nosemgrep.filter_ignored ~keep_ignored res.core.results));
 
           (* TOPORT? was in formater/base.py
              def keep_ignores(self) -> bool:
@@ -633,10 +811,47 @@ let check_targets_with_rules ?(print_summary = true)
 (* Run the real 'scan' subcommand *)
 (*****************************************************************************)
 
+(* An error that aborts the run before any result is printed (a config that
+ * cannot be downloaded, an option we cannot read, a git command that fails,
+ * ...) still gets a document in the machine formats. The text format keeps
+ * raising: CLI.safe_run prints the message on stderr, as before.
+ *)
+let with_fatal_error_output (caps : < Cap.stdout >) (conf : Scan_CLI.conf)
+    (f : unit -> Exit_code.t) : Exit_code.t =
+  match conf.output_conf.output_format with
+  | Output_format.Text -> f ()
+  | _ -> (
+      let report (msg : string) (exit_code : Exit_code.t) : Exit_code.t =
+        (* the document carries the error, as for the other aborted
+           machine-format runs (a rule file that does not load, a scanning
+           root that does not exist) and as pysemgrep did *)
+        (* the times of the run are of no interest for an aborted one *)
+        output_and_exit_from_fatal_exn ~msg ~exit_code caps conf
+          (Profiler.make ())
+      in
+      try f () with
+      (* not errors: the ways a subcommand asks for an exit code *)
+      | (Error.Exit_code _ | Common.UnixExit _) as exn ->
+          Exception.catch_and_reraise exn
+      (* no error document can reach a closed pipe; CLI.safe_run turns it
+         into a quiet exit *)
+      | exn when Error.is_broken_pipe exn -> Exception.catch_and_reraise exn
+      | Error.Semgrep_error (msg, opt_exit_code) ->
+          report msg (opt_exit_code ||| Exit_code.fatal ~__LOC__)
+      | Git_wrapper.Error msg -> report msg (Exit_code.fatal ~__LOC__)
+      | Failure msg -> report (spf "Error: %s" msg) (Exit_code.fatal ~__LOC__)
+      | e ->
+          let trace = Printexc.get_backtrace () in
+          Logs.debug (fun m -> m "%s" trace);
+          report
+            (spf "Error: exception %s" (Printexc.to_string e))
+            (Exit_code.fatal ~__LOC__))
+
 let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
   (* step0: more initializations *)
+  let banner = show_banner conf.rules_source in
   (* Print The logo ASAP to minimize time to first meaningful content paint *)
-  print_logo ();
+  if banner then print_logo ();
 
   (* imitate pysemgrep for backward compatible profiling metrics ? *)
   let profiler = Profiler.make () in
@@ -649,111 +864,83 @@ let run_scan_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
      Ideally, pattern mode should be a different subcommand, but for now we will
      conditionally print the feature section.
   *)
-  (match conf.rules_source with
-  | Pattern _ ->
-      Logs.app (fun m ->
-          m "%s"
-            (Ocolor_format.asprintf {|@{<bold>  %s@}|}
-               "Code scanning.\n"))
-  | _ ->
-      print_feature_section
-        (* ~includes_token:(settings.api_token <> None) *)
-        (* ~engine:conf.engine_type) *) ());
+  if banner then
+    (match conf.rules_source with
+    | Pattern _ ->
+        Logs.app (fun m -> m "%s" (styled `Bold "  Code scanning.\n"))
+    | _ ->
+        print_feature_section
+          (* ~includes_token:(settings.api_token <> None) *)
+          (* ~engine:conf.engine_type) *) ());
 
   (* step1: getting the rules *)
   Logs.info (fun m -> m "Getting the rules");
   (* Display a (possibly interactive) message to denote rule fetching *)
-  display_rule_source ~rule_source:conf.rules_source;
+  let source = Rule_fetching.classify conf.rules_source in
+  if banner then display_rule_source source;
   let rules_and_origins, fatal_errors =
-    rules_from_rules_source
-      (caps :> < Cap.network ; Cap.tmp >)
-      ~skip_invalid_configs:conf.skip_invalid_configs
-      ~rewrite_rule_ids:conf.rewrite_rule_ids
-      ~strict:conf.core_runner_conf.strict conf.rules_source
+    Profiler.record profiler ~name:"config_time" (fun () ->
+        rules_from_rules_source
+          (caps :> < Cap.network ; Cap.tmp >)
+          ~skip_invalid_configs:conf.skip_invalid_configs
+          ~rewrite_rule_ids:conf.rewrite_rule_ids
+          ~strict:conf.core_runner_conf.strict source)
   in
 
   match fatal_errors with
   (* if there are fatal errors, we must exit :( *)
   | _ :: _ ->
       let core_errors = core_errors_of_fatal_rule_errors fatal_errors in
-      output_and_exit_from_fatal_core_errors_exn
-        ~exit_code:(Exit_code.missing_config ~__LOC__)
+      output_and_exit_from_invalid_config_exn
+        ~text_message:(Rule_errors_report.invalid_configs_message core_errors)
         (caps :> < Cap.stdout >)
         conf profiler core_errors
   (* but with no fatal rule errors, we can proceed with the scan! *)
   | [] -> (
       (* step2: getting the targets *)
       Logs.info (fun m -> m "Computing the targets");
-      let targets_and_skipped =
-        Find_targets.get_target_fpaths conf.targeting_conf conf.target_roots
-      in
-
-      (* step3: let's go *)
-      let res =
-        check_targets_with_rules
-          (caps
-            :> < Cap.stdout
-               ; Cap.chdir
-               ; Cap.tmp
-               ; Cap.fork
-               ; Cap.time_limit
-               ; Cap.memory_limit >)
-          conf profiler rules_and_origins targets_and_skipped
-      in
-
-      (* step4: exit with the right exit code *)
-      match res with
+      match get_targets_or_exit (caps :> < Cap.stdout >) conf profiler with
       | Error exit_code -> exit_code
-      | Ok (_rules, res, cli_output) ->
-          (* final result for the shell *)
-          (* the nosem-suppressed matches are still in cli_output when an
-             output reports them (see Output.keeps_ignores), but they are
-             suppressed, so they must not make --error fail the run *)
-          if
-            conf.error_on_findings
-            && List.exists
-                 (fun (m : Out.cli_match) -> not (m.extra.is_ignored ||| false))
-                 cli_output.results
-          then Exit_code.findings ~__LOC__
-          else
-            exit_code_of_errors ~strict:conf.core_runner_conf.strict
-              res.core.errors)
+      | Ok targets_and_skipped -> (
+          (* step3: let's go *)
+          let res =
+            check_targets_with_rules
+              (caps
+                :> < Cap.stdout
+                   ; Cap.chdir
+                   ; Cap.tmp
+                   ; Cap.fork
+                   ; Cap.time_limit
+                   ; Cap.memory_limit >)
+              conf profiler rules_and_origins targets_and_skipped
+          in
+
+          (* step4: exit with the right exit code *)
+          match res with
+          | Error exit_code -> exit_code
+          | Ok (_rules, res, cli_output) ->
+              (* final result for the shell *)
+              (* the nosem-suppressed matches are still in cli_output when an
+                 output reports them (see Output.keeps_ignores), but they are
+                 suppressed, so they must not make --error fail the run *)
+              if
+                conf.error_on_findings
+                && List.exists
+                     (fun (m : Out.cli_match) ->
+                       not (m.extra.is_ignored ||| false))
+                     cli_output.results
+              then Exit_code.findings ~__LOC__
+              else
+                exit_code_of_errors ~strict:conf.core_runner_conf.strict
+                  res.core.errors))
 
 (*****************************************************************************)
-(* Run 'scan' or 'test' or 'validate' or 'show' (or fallback to pysemgrep) *)
+(* Run 'scan' or 'test' or 'validate' or 'show' *)
 (*****************************************************************************)
 
 (* All the business logic after command-line parsing. Return the desired
    exit code. *)
 let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
-  (* coupling: if you modify the pysemgrep fallback code below, you
-   * probably also need to modify it in Ci_subcommand.ml
-   *)
-  (match conf.common.maturity with
-  | Maturity.Default -> (
-      (* TODO: handle more confs, or fallback to pysemgrep further down *)
-      match conf with
-      | {
-       show =
-         Some
-           {
-             show_kind = Show_CLI.DumpEnginePath | Show_CLI.DumpCommandForCore;
-             _;
-           };
-       _;
-      } ->
-          raise Pysemgrep.Fallback
-      | { show = Some _; _ } -> ()
-      | _else_ -> raise Pysemgrep.Fallback)
-  (* this should never happen because --legacy is handled in cli/bin/semgrep *)
-  | Maturity.Legacy -> raise Pysemgrep.Fallback
-  (* ok the user explicitely requested --experimental (or --develop),
-   * let's keep going with osemgrep then
-   *)
-  | Maturity.Experimental
-  | Maturity.Develop ->
-      ());
-
   (* Note that basic logging (Logs_.setup_basic()) was done in CLI.ml before, but
    * in CLI_common.setup_logging() we do the full setup (Logs_.setup()) now
    * that we have a conf object.
@@ -762,8 +949,6 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
     ~level:conf.common.logging_level;
   Logs.info (fun m -> m "Opengrep version: %s" Version.version);
 
-  (* only now that the fallback above has let us through: pysemgrep has its
-   * own handling of these destinations, and gets to keep it *)
   Output.check_destinations conf.output_conf;
 
   let conf =
@@ -791,7 +976,8 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
    *)
   | _ when conf.version ->
       CapConsole.print caps#stdout Version.version;
-      (* TOPORT: if enable_version_check: version_check() *)
+      (* pysemgrep called version_check() here; Opengrep has none, and
+       * --enable-version-check is only accepted for compatibility. *)
       Exit_code.ok ~__LOC__
   | _ when conf.test <> None ->
       Test_subcommand.run_conf
@@ -823,7 +1009,10 @@ let run_conf (caps : < caps ; .. >) (conf : Scan_CLI.conf) : Exit_code.t =
       (* --------------------------------------------------------- *)
       (* Let's go, this is an actual scan subcommand *)
       (* --------------------------------------------------------- *)
-      run_scan_conf caps conf
+      with_fatal_error_output
+        (caps :> < Cap.stdout >)
+        conf
+        (fun () -> run_scan_conf caps conf)
 
 (*****************************************************************************)
 (* Entry point *)

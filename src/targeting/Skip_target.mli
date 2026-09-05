@@ -1,3 +1,9 @@
+val has_excluded_extension :
+  Fpath.t -> (Fpath.t, Semgrep_output_v1_t.skipped_target) result
+(** [has_excluded_extension path] returns [Error skipped_target] if the file
+    has an extension that is never scanned, such as [.min.js], and [Ok path]
+    otherwise. *)
+
 val is_minified :
   Fpath.t -> (Fpath.t, Semgrep_output_v1_t.skipped_target) result
 (** [is_minified path] returns [Ok path] if the file is not minified, and

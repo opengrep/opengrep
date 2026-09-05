@@ -1,0 +1,23 @@
+--- begin input files ---
+rules/three-autofixes.yaml
+targets/three-autofixes.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 39 insertions(+)
+ create mode 100644 rules/three-autofixes.yaml
+ create mode 100644 targets/three-autofixes.py
+{"version":"<MASKED>","results":[{"check_id":"rules.autofix-bugtest","path":"targets/three-autofixes.py","start":{"line":4,"col":12,"offset":45},"end":{"line":8,"col":6,"offset":147},"extra":{"metavars":{"$REQUEST_FUNC":{"start":{"line":4,"col":12,"offset":45},"end":{"line":4,"col":25,"offset":58},"abstract_content":"requests.post"},"$...ARGS":{"start":{"line":5,"col":9,"offset":68},"end":{"line":7,"col":29,"offset":140},"abstract_content":"headers auth_headers url self.url endpoints\"endpoint\""}},"message":"This rule decreases the file in length and will be applied three times in this test.\n","fix":"requests.post(headers=auth_headers, url=self.url, endpoints=\"endpoint\", _injected=True)","metadata":{},"severity":"ERROR","fingerprint":"3e4eb9629ccfad1eeb1444992b4314f461273a2c56c5c12f29dd4a36a1f64fa88135fe182c5ef2dae1d5a2815c599f1c8527fe4aa67d1237be7dc27a5ef8f873_0","lines":"    return requests.post(\n        headers=auth_headers,\n        url=self.url,\n        endpoints=\"endpoint\",\n    )","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.autofix-bugtest","path":"targets/three-autofixes.py","start":{"line":12,"col":12,"offset":184},"end":{"line":16,"col":6,"offset":286},"extra":{"metavars":{"$REQUEST_FUNC":{"start":{"line":12,"col":12,"offset":184},"end":{"line":12,"col":25,"offset":197},"abstract_content":"requests.post"},"$...ARGS":{"start":{"line":13,"col":9,"offset":207},"end":{"line":15,"col":29,"offset":279},"abstract_content":"headers auth_headers url self.url endpoints\"endpoint\""}},"message":"This rule decreases the file in length and will be applied three times in this test.\n","fix":"requests.post(headers=auth_headers, url=self.url, endpoints=\"endpoint\", _injected=True)","metadata":{},"severity":"ERROR","fingerprint":"3e4eb9629ccfad1eeb1444992b4314f461273a2c56c5c12f29dd4a36a1f64fa88135fe182c5ef2dae1d5a2815c599f1c8527fe4aa67d1237be7dc27a5ef8f873_1","lines":"    return requests.post(\n        headers=auth_headers,\n        url=self.url,\n        endpoints=\"endpoint\",\n    )","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.autofix-bugtest","path":"targets/three-autofixes.py","start":{"line":20,"col":12,"offset":324},"end":{"line":24,"col":6,"offset":425},"extra":{"metavars":{"$REQUEST_FUNC":{"start":{"line":20,"col":12,"offset":324},"end":{"line":20,"col":25,"offset":337},"abstract_content":"requests.post"},"$...ARGS":{"start":{"line":21,"col":9,"offset":347},"end":{"line":23,"col":29,"offset":419},"abstract_content":"headers auth_headers url self.url endpoints\"endpoint\""}},"message":"This rule decreases the file in length and will be applied three times in this test.\n","fix":"requests.post(headers=auth_headers, url=self.url, endpoints=\"endpoint\", _injected=True)","metadata":{},"severity":"ERROR","fingerprint":"3e4eb9629ccfad1eeb1444992b4314f461273a2c56c5c12f29dd4a36a1f64fa88135fe182c5ef2dae1d5a2815c599f1c8527fe4aa67d1237be7dc27a5ef8f873_2","lines":"    return requests.post(\n        headers=auth_headers,\n        url=self.url,\n        endpoints=\"endpoint\"\n    )","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/three-autofixes.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/three-autofixes.py after the scan ---
+import requests
+
+def _do_stuff():
+    return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+
+
+def _do_other_stuff():
+    return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)
+
+
+def _do_other_stuff2():
+    return requests.post(headers=auth_headers, url=self.url, endpoints="endpoint", _injected=True)

@@ -1,0 +1,16 @@
+--- begin input files ---
+eqeq-basic.yaml
+targets/ignores_default/.gitignore
+targets/ignores_default/find.js
+targets/ignores_default/ignore.min.js
+targets/ignores_default/ignore_test.go
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 5 files changed, 11 insertions(+)
+ create mode 100644 eqeq-basic.yaml
+ create mode 100644 targets/ignores_default/.gitignore
+ create mode 100644 targets/ignores_default/find.js
+ create mode 100644 targets/ignores_default/ignore.min.js
+ create mode 100644 targets/ignores_default/ignore_test.go
+{"version":"<MASKED>","results":[{"check_id":"eqeq-bad","path":"targets/ignores_default/find.js","start":{"line":1,"col":9,"offset":8},"end":{"line":1,"col":15,"offset":14},"extra":{"metavars":{"$X":{"start":{"line":1,"col":9,"offset":8},"end":{"line":1,"col":10,"offset":9},"abstract_content":"0"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"e10f8782a0f6d4cab7e1f9f216b5009d6eb0a3863924e984f3f07f5c34663c48c7606d9e16b2752f8c0cebddac37763d1c6c33f4e78b10f905dcc7e4f504d202_0","lines":"var x = 0 == 0","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/ignores_default/find.js"]},"interfile_languages_used":[],"skipped_rules":[]}

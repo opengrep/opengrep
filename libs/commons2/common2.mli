@@ -293,7 +293,6 @@ val timestamp : unit -> string
 val lines : string -> string list
 val words : string -> string list
 val nblines_eff : filename -> int
-val unix_diff : filename -> filename -> string list
 val n_space : int -> string
 
 (*****************************************************************************)

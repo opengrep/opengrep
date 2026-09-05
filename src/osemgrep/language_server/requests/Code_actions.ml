@@ -54,7 +54,7 @@ let fix_code_action_of_match (m : OutJ.cli_match) =
   let action =
     CodeAction.create ~command
       ~title:
-        (Printf.sprintf "Semgrep(%s): Apply autofix"
+        (Printf.sprintf "Opengrep(%s): Apply autofix"
            (Rule_ID.to_string m.check_id))
       ~isPreferred:true ~kind:CodeActionKind.QuickFix ~edit ()
   in
@@ -69,7 +69,7 @@ let ignore_code_action_of_match (m : OutJ.cli_match) =
     CodeAction.create ~command
       ~title:
         Printf.(
-          sprintf "Semgrep(%s): Ignore finding" (Rule_ID.to_string m.check_id))
+          sprintf "Opengrep(%s): Ignore finding" (Rule_ID.to_string m.check_id))
       ~isPreferred:true ~kind:CodeActionKind.QuickFix ()
   in
   `CodeAction action

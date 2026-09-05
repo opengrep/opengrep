@@ -75,5 +75,5 @@ opam exec -- make core
 opam exec -- make core-test
 
 mkdir artifacts
-cp bin/opengrep-core artifacts/
+cp bin/opengrep artifacts/
 tar czf artifacts.tgz artifacts

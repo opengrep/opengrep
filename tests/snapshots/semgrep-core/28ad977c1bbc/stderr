@@ -1,0 +1,15 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/bad10.yaml:2:5: Invalid rule schema in rule rules.rule-with-null-keys
+  --> rules/bad10.yaml:2
+1 | rules:
+2 |   - id: rule-with-null-keys
+  |     ^
+3 |     message: This rule has a null value
+Expected only one of `pattern`, `pattern-either`, `patterns`, or `pattern-regex`

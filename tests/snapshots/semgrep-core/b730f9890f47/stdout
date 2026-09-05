@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/missing-pattern.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 7 insertions(+)
+ create mode 100644 rules/missing-pattern.yaml
+ create mode 100644 target.py
+exit code: 7
+--- begin input files ---
+rules/missing-pattern.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 7 insertions(+)
+ create mode 100644 rules/missing-pattern.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq","message":"Invalid rule schema at line rules/missing-pattern.yaml:2:\n Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.","path":"rules/missing-pattern.yaml","long_msg":"Expected one of `pattern`, `pattern-either`, `patterns`, `pattern-regex`, or `r2c-internal-project-depends-on` to be present.","short_msg":"Invalid rule schema","spans":[{"file":"rules/missing-pattern.yaml","start":{"line":2,"col":3,"offset":9},"end":{"line":2,"col":4,"offset":10}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 7

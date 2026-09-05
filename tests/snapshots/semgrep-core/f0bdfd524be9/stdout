@@ -1,0 +1,10 @@
+--- begin input files ---
+interpolated_message.yaml
+target_with_metavariable.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 10 insertions(+)
+ create mode 100644 interpolated_message.yaml
+ create mode 100644 target_with_metavariable.py
+{"version":"<MASKED>","results":[{"check_id":"interpolated-message","path":"target_with_metavariable.py","start":{"line":2,"col":1,"offset":1},"end":{"line":2,"col":25,"offset":25},"extra":{"metavars":{"$X":{"start":{"line":2,"col":5,"offset":5},"end":{"line":2,"col":24,"offset":24},"abstract_content":"\"$X is a cool name\""}},"message":"Arg to `foo` is \"$X is a cool name\"\n","metadata":{},"severity":"ERROR","fingerprint":"020fbea4a52f24bc7af7126aa3b26ceb59b5507d1ebe92a7a79c2daad8a86bfb40ea52664bca37030bd0f2c82b7a50918c9699c5f43e08b8b47bdc577d85e1a3_0","lines":"foo(\"$X is a cool name\")","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["target_with_metavariable.py"]},"interfile_languages_used":[],"skipped_rules":[]}

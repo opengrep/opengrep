@@ -29,10 +29,14 @@ module Out = Semgrep_output_v1_t
    with_git: make this a git repository
    non_git_files: extra files that must be created but won't be git-added
                   (only relevant if with_git is true)
+   cwd: a folder of the workspace to run from, instead of its root
+   scanning_root: may start with "<root>", the absolute path of the workspace
+   project_root: a folder of the workspace forced as the project root,
+                 like --project-root
 *)
 let test_find_targets ?expected_outcome ?includes ?(excludes = [])
-    ?(non_git_files : F.t list = []) ~with_git ?(scanning_root = ".") name
-    (files : F.t list) =
+    ?(non_git_files : F.t list = []) ~with_git ?(cwd = ".")
+    ?(scanning_root = ".") ?project_root name (files : F.t list) =
   let category = if with_git then "with git" else "without git" in
   let test_func () =
     printf "Test name: %s > %s\n" category name;
@@ -60,11 +64,25 @@ let test_find_targets ?expected_outcome ?includes ?(excludes = [])
             Find_targets.default_conf with
             include_ = includes;
             exclude = excludes;
+            force_project_root =
+              Option.map
+                (fun (dir : string) ->
+                  Find_targets.Filesystem (Rfpath.of_fpath_exn (root / dir)))
+                project_root;
           }
         in
+        let scanning_root =
+          let placeholder = "<root>" in
+          if String.starts_with ~prefix:placeholder scanning_root then
+            !!root
+            ^ String.sub scanning_root (String.length placeholder)
+                (String.length scanning_root - String.length placeholder)
+          else scanning_root
+        in
         let targets =
-          Find_targets.get_target_fpaths conf
-            [ Scanning_root.of_fpath (Fpath.v scanning_root) ]
+          F.with_chdir (Fpath.v cwd) (fun () ->
+              Find_targets.get_target_fpaths conf
+                [ Scanning_root.of_fpath (Fpath.v scanning_root) ])
         in
         (match includes with
         | None -> ()
@@ -118,8 +136,8 @@ let tests_with_or_without_git ~with_git =
     test_find_targets ~with_git ~scanning_root:"a.py"
       "scanning root as a symlink to a missing regular file"
       [ F.Symlink ("a.py", "b.py") ];
-    test_find_targets ~expected_outcome:(Should_fail "TODO") ~with_git
-      ~scanning_root:"link-to-src" "scanning root as a symlink to a folder"
+    test_find_targets ~with_git ~scanning_root:"link-to-src"
+      "scanning root as a symlink to a folder"
       [ F.dir "src" [ F.file "a.py" ]; F.Symlink ("link-to-src", "src") ];
     (*
        Test that the '--include' filter takes place after all the other
@@ -138,6 +156,81 @@ let tests_with_or_without_git ~with_git =
        (.semgrepignore, --include, --exclude) *)
     test_find_targets ~with_git ~scanning_root:"a.py" "scan explicit target"
       [ F.file "a.py"; F.File (".semgrepignore", "a.py\n") ];
+    (* The paths keep the scanning root as typed, whatever its spelling
+       and wherever the command runs. *)
+    test_find_targets ~with_git ~cwd:"dir" ~scanning_root:".."
+      "scanning root above the working directory"
+      [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
+    test_find_targets ~with_git ~cwd:"dir" ~scanning_root:"../dir"
+      "scanning root spelled through the parent"
+      [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
+    test_find_targets ~with_git ~cwd:"dir" ~scanning_root:"<root>"
+      "absolute scanning root above the working directory"
+      [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
+    test_find_targets ~with_git ~scanning_root:"<root>/dir"
+      "absolute scanning root below the working directory"
+      [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
+    (* A forced project root takes the scanning root as typed: the symlink
+       leaves the folder but its name is inside it. *)
+    test_find_targets ~with_git ~project_root:"dir" ~scanning_root:"dir/link"
+      "forced project root with a symlink leaving it"
+      [
+        F.dir "dir" [ F.Symlink ("link", "../other") ];
+        F.dir "other" [ F.file "a.c" ];
+      ];
+    (* A symlink inside the project stays a name in the project path: the
+       ignore file is anchored on the name, not on the folder it points to. *)
+    test_find_targets ~with_git ~scanning_root:"link"
+      "symlink inside the project keeps its name"
+      [
+        F.File (".semgrepignore", "link/b.c\n");
+        F.dir "dir" [ F.file "a.c"; F.file "b.c" ];
+        F.Symlink ("link", "dir");
+      ];
+    (* The ignore file of the working directory applies to a root under it,
+       with its patterns anchored there. *)
+    test_find_targets ~with_git ~scanning_root:"dir"
+      "semgrepignore of the working directory applies under it"
+      [ F.File (".semgrepignore", "dir/b\n"); F.dir "dir" [ F.file "a"; F.file "b" ] ];
+    (* It also applies to a root outside it, with only the patterns that
+       are not anchored to it, as the Python wrapper's did. *)
+    test_find_targets ~with_git ~cwd:"here" ~scanning_root:"../there"
+      "semgrepignore of the working directory applies outside it"
+      [
+        F.dir "here" [ F.File (".semgrepignore", "deep/\n/anchored/\n") ];
+        F.dir "there"
+          [
+            F.file "a.c";
+            F.dir "deep" [ F.file "b.c" ];
+            F.dir "anchored" [ F.file "c.c" ];
+          ];
+      ];
+    (* An ignored folder given as the scanning root is not scanned. *)
+    test_find_targets ~with_git ~scanning_root:"dir"
+      "scanning root is a semgrepignored folder"
+      [ F.File (".semgrepignore", "dir/\n"); F.dir "dir" [ F.file "a.c" ] ];
+    (* The folder is reported once, not each file under it. *)
+    test_find_targets ~with_git "semgrepignored folder is reported once"
+      [
+        F.File (".semgrepignore", "dir/\n");
+        F.dir "dir" [ F.file "a.c"; F.file "b.c" ];
+        F.file "c.c";
+      ];
+    (* The paths keep the scanning root as typed, through the symlink. *)
+    test_find_targets ~with_git ~scanning_root:"link/sub"
+      "scanning root under a symlinked folder"
+      [
+        F.dir "dir"
+          [
+            F.dir "sub"
+              [
+                F.File (".semgrepignore", "x/\n");
+                F.dir "x" [ F.file "a.c" ];
+                F.file "b.c";
+              ];
+          ];
+        F.Symlink ("link", "dir");
+      ];
   ]
 
 (*
@@ -162,6 +255,14 @@ let tests_with_git_only =
       ];
     test_find_targets ~with_git "symlinks from git are filtered too"
       [ F.Symlink ("lnk", "missing"); F.File ("a", "some content") ];
+    (* The ignored folder is above the scanning root, which is reported
+       itself. *)
+    test_find_targets ~with_git ~scanning_root:"dir/sub"
+      "scanning root under a semgrepignored folder"
+      [
+        F.File (".semgrepignore", "dir/\n");
+        F.dir "dir" [ F.dir "sub" [ F.file "a.c" ] ];
+      ];
   ]
 
 let tests =
