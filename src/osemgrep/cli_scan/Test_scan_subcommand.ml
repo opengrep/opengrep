@@ -2007,28 +2007,28 @@ let tests (caps : < Scan_subcommand.caps >) =
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental caps);
       t "interfile pre-existing findings are not reported by a diff scan"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_multi_commit
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_multi_commit
         (test_interfile_diff_scan_preexisting caps);
       t "interfile findings when scanning from a subdirectory"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_scan_from_subdir caps);
       t "interfile diff scan from a subdirectory reports nothing pre-existing"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_multi_commit
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_multi_commit
         (test_interfile_diff_scan_subdir caps);
       t "interfile findings in a diff scan"
-        ~checked_output:(Testo.stdxxx ()) ~normalize:normalize_multi_commit
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_multi_commit
         (test_interfile_diff_scan caps);
       t "interfile findings from a partial target set"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_partial_target caps);
       t "interfile same-sink findings keep distinct sources"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_source_sink_dedup caps);
       t "intrafile same-sink findings dedup to one"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_intrafile_same_sink_dedup caps);
       t "interfile findings with --incremental-output"
-        ~checked_output:(Testo.stdxxx ()) ~normalize
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_incremental_output caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
