@@ -30,13 +30,14 @@ let discover_test_cases (root : Fpath.t)
     lang_dirs
 
 let run_test ?(taint_interfile = true) ?(taint_intrafile = true)
-    ?(taint_interfile_depth = 3)
+    ?(taint_interfile_depth = Limits_semgrep.taint_INTERFILE_DEPTH)
+    ?(rule_file = "rule.yaml")
     (caps : Core_scan.caps) (test_dir : Fpath.t) () : unit =
   let files = Testutil_files.read test_dir in
   Testutil_git.with_git_repo files (fun (raw_cwd : Fpath.t) ->
       (* realpath so graph- and Find_targets-resolved paths agree (macOS /var → /private/var otherwise breaks the graph lookup). *)
       let cwd = Fpath.v (Unix.realpath !!raw_cwd) in
-      let rule_file = Fpath.(cwd / "rule.yaml") in
+      let rule_file = Fpath.(cwd / rule_file) in
 
       let rules =
         match Parse_rule.parse_and_filter_invalid_rules rule_file with
@@ -157,6 +158,15 @@ let regression_tests (caps : Core_scan.caps) : Testo.t list =
     Testo.create "regression: rule-option interfile implies intrafile"
       (run_test ~taint_interfile:false ~taint_intrafile:false caps
          Fpath.(root / "python" / "mutual_recursion"));
+    (* The scan's depth applies to a rule without one: four hops need a
+       depth of four, and a negative depth is unbounded. *)
+    Testo.create "regression: scan depth reaches a four-hop sink"
+      (run_test ~taint_interfile_depth:4 ~rule_file:"rule_default.yaml" caps
+         Fpath.(root / "python" / "depth_unbounded"));
+    Testo.create "regression: negative scan depth is unbounded"
+      (run_test ~taint_interfile_depth:(-1) ~rule_file:"rule_default.yaml"
+         caps
+         Fpath.(root / "python" / "depth_unbounded"));
   ]
 
 let tests (caps : Core_scan.caps) : Testo.t list =
