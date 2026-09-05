@@ -18,7 +18,8 @@ open Callee_resolution
    Over-approximates on purpose: any function-ref nested anywhere in the
    argument is treated as a potential callback. Precision at per-offset
    granularity is handled later by Sig_inst's offset-walk. *)
-let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
+let rec extract_callbacks_from_arg ~(lang : Lang.t)
+    ?(func_lookup : Func_lookup.t = Func_lookup.empty) (arg_expr : G.expr) :
     (IL.name * Tok.t * IL.name option) list =
   match arg_expr.G.e with
   (* Plain identifier: foo — may be a function name directly, OR a variable
@@ -35,7 +36,10 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
   | G.N (G.Id (id, id_info)) ->
       let is_bound_value =
         match !(id_info.id_resolved) with
-        | Some ((G.LocalVar | G.Parameter | G.EnclosedVar), _) -> true
+        | Some ((G.Parameter | G.EnclosedVar), _) -> true
+        (* a nested function is a local name, and still a function *)
+        | Some (G.LocalVar, _) ->
+            List_.null (Func_lookup.nested_in_same_file func_lookup (fst id))
         | _ -> false
       in
       let direct =
@@ -44,7 +48,8 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
       in
       let via_svalue =
         match !(id_info.id_svalue) with
-        | Some (G.Sym inner) -> extract_callbacks_from_arg ~lang inner
+        | Some (G.Sym inner) ->
+            extract_callbacks_from_arg ~lang ~func_lookup inner
         | _ -> []
       in
       direct @ via_svalue
@@ -92,7 +97,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
                     (_, (G.VarDef { G.vinit = Some v; _ } | G.FieldDefColon { G.vinit = Some v; _ }));
                 _;
               } ->
-              extract_callbacks_from_arg ~lang v
+              extract_callbacks_from_arg ~lang ~func_lookup v
           | _ -> [])
         fields
   (* Dict literal: entries are G.Container(G.Tuple, [key; val]); recurse val *)
@@ -101,12 +106,12 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t) (arg_expr : G.expr) :
         (fun kv ->
           match kv.G.e with
           | G.Container (G.Tuple, (_, [ _key; v ], _)) ->
-              extract_callbacks_from_arg ~lang v
+              extract_callbacks_from_arg ~lang ~func_lookup v
           | _ -> [])
         kvs
   (* List/Tuple/Array/Set literal: recurse into each element *)
   | G.Container ((G.List | G.Tuple | G.Array | G.Set), (_, xs, _)) ->
-      List.concat_map (extract_callbacks_from_arg ~lang) xs
+      List.concat_map (extract_callbacks_from_arg ~lang ~func_lookup) xs
   (* Ruby [method(:name)]: a callable reference to the named function.
      Sym-prop carries the [Call(method, [Atom :name])] expression on
      the callback variable's [id_svalue], so the recursion above
@@ -295,7 +300,9 @@ let try_identify_callback_args ~lang ~all_funcs
           [ (AST_to_IL.var_of_id_info id id_info, snd id, None) ]
       | _ -> []
     in
-    let candidates = direct_this @ extract_callbacks_from_arg ~lang expr in
+    let candidates =
+      direct_this @ extract_callbacks_from_arg ~lang ~func_lookup expr
+    in
     List.filter_map
       (fun (callback_name, tok, tmp_opt) ->
         identify_callback ~all_funcs ~func_lookup ~caller_parent_path callback_name

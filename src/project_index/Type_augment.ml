@@ -251,14 +251,13 @@ let build_export_class_indexes ~(lang : Lang.t)
 
 let build_file_funcs_index (all_funcs : FA.func_info list)
   : (string, FA.func_info list) Hashtbl.t =
-  (* Keyed by def file: bounded by the function count. *)
+  (* Keyed by def file: bounded by the function count. Every named function
+     of the file, nested ones included: the same-file lookup finds nested
+     callbacks through it; consumers resolving imports keep methods and free
+     functions only. *)
   let index = Hashtbl.create (List.length all_funcs) in
   List.iter (fun (func : FA.func_info) ->
-    let is_recognised =
-      Option.is_some (Func_info.as_method func.FA.fn_id)
-      || Option.is_some (Func_info.as_free func.FA.fn_id)
-    in
-    if is_recognised then
+    if Option.is_some (Func_info.leaf_name func.FA.fn_id) then
       match Func_info.def_file_opt func with
       | Some file ->
         let file = Fpath.to_string file in

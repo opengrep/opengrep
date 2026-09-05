@@ -186,6 +186,26 @@ let tests parse_program =
             |> List.filter_map (Option.map (fun (_, sid) -> AST_generic.SId.to_int sid)))
             (resolutions_of_name ast2 "handler"
             |> List.filter_map (Option.map (fun (_, sid) -> AST_generic.SId.to_int sid))));
+      t "python nested definitions bind in their function" (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/python/nested_helpers.py")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Python ast;
+          (* Two nested [helper]s in different functions are two bindings;
+             each call refers to its own. *)
+          (match def_sids_of_name ast "helper" with
+          | [ first; second ] ->
+              Alcotest.(check bool) "two bindings" false
+                (AST_generic.SId.equal first second);
+              Alcotest.(check (list int)) "each call to its own"
+                [ AST_generic.SId.to_int first; AST_generic.SId.to_int second ]
+                (resolutions_of_name ast "helper"
+                |> List.filter_map
+                     (Option.map (fun (_, sid) -> AST_generic.SId.to_int sid)))
+          | sids ->
+              Alcotest.failf "expected two definitions of helper, found %d"
+                (List.length sids)));
       t "python local shadows module function" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/python/shadow_global_fn.py")

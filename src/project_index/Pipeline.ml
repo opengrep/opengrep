@@ -251,6 +251,11 @@ let build_file_funcs_by_package
       let funcs =
         List.concat_map (fun path ->
           Option.value (Hashtbl.find_opt file_funcs_index path) ~default:[]
+          (* an import sees the file's methods and free functions, not
+             its nested ones *)
+          |> List.filter (fun (func : Func_info.t) ->
+                 Option.is_some (Func_info.as_method func.Func_info.fn_id)
+                 || Option.is_some (Func_info.as_free func.Func_info.fn_id))
         ) candidates
       in
       if funcs = [] then None else Some (local, funcs)
