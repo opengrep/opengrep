@@ -842,9 +842,7 @@ let run_test (caps : < scan_caps ; .. >) (conf : Test_CLI.conf)
   (* note that even one target file can result in different targets
    * if the rules contain multiple xlangs.
    *)
-  let targets : Target.t list =
-    Core_runner.targets_for_files_and_rules target_files rules
-  in
+  let targets, rules = Core_runner.targets_and_rules_for_files target_files rules in
   let files_and_annots : (Fpath.t * A.annotations) list =
     target_files |> List_.map (fun file -> (file, A.annotations file))
   in
