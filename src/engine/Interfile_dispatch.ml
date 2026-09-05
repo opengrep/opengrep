@@ -432,8 +432,11 @@ let compute_rule_subgraph
       Match_env.adjust_xconfig_with_rule_options xconf rule.R.options
     in
     let interfile_graph = lc.lc_interfile_graph in
+    (* the scan always sets a depth; the default covers a bare xconfig *)
     let interfile_depth =
-      Some xconf'.Match_env.config.taint_interfile_depth
+      Some
+        (Option.value ~default:Limits_semgrep.taint_INTERFILE_DEPTH
+           xconf'.Match_env.config.taint_interfile_depth)
     in
     let src_in = List.filter (Call_graph.G.mem_vertex interfile_graph) sources in
     let snk_in = List.filter (Call_graph.G.mem_vertex interfile_graph) sinks in
