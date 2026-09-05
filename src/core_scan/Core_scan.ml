@@ -884,7 +884,7 @@ type scan_work_error =
   | Interfile_error of Rule_ID.t * Core_error.t
 
 let handle_work_item
-    (caps : < Cap.memory_limit ; .. >)
+    (caps : < Cap.memory_limit ; Cap.time_limit ; .. >)
     (config : Core_scan_config.t)
     (target_handler : target_handler)
     (item : scan_work_item) : scan_work_result =
@@ -902,15 +902,43 @@ let handle_work_item
     Target_result (result, target_opt)
   | Interfile_rule rs ->
     (* Run under the global memory limit so [--max-memory] applies to
-       interfile dispatch too. *)
+       interfile dispatch too, and under [--interfile-timeout], which bounds
+       the dispatch of one rule; the per-target [--timeout] does not apply
+       here. *)
+    let rule_id = Interfile_dispatch.rule_id_of rs in
+    let time_limit =
+      if config.interfile_timeout > 0 then
+        Some
+          (float_of_int config.interfile_timeout,
+           (caps :> < Cap.time_limit >))
+      else None
+    in
     let matches =
       Memory_limit.run_with_global_memory_limit
         (caps :> < Cap.memory_limit >)
         ~get_context:(fun () ->
-          spf "interfile rule %s"
-            (Rule_ID.to_string (Interfile_dispatch.rule_id_of rs)))
+          spf "interfile rule %s" (Rule_ID.to_string rule_id))
         ~mem_limit_mb:config.max_memory_mb
-        (fun () -> Interfile_dispatch.run_rule rs)
+        (fun () ->
+          match
+            Time_limit.set_timeout_opt
+              ~name:"Core_scan.interfile_timeout_function" time_limit
+              (fun () -> Interfile_dispatch.run_rule rs)
+          with
+          | Some matches -> matches
+          | None ->
+            (* [Time_limit] returns None rather than raising, so re-raise the
+               timeout: [unified_exception_handler] then reports it as an
+               Out.Timeout error carrying the rule id, the way an exceeded
+               memory limit is reported as an Out.OutOfMemory one.  The
+               constructor is spelled [Exception.Timeout] because
+               [Time_limit.Timeout] keeps its argument type abstract. *)
+            raise
+              (Exception.Timeout
+                 {
+                   Exception.name = "interfile analysis";
+                   max_duration = float_of_int config.interfile_timeout;
+                 }))
     in
     (* Stream these like per-target matches.  [Output_format.Incremental] skips
        the final render on the assumption everything was already emitted through
@@ -948,7 +976,7 @@ let unified_exception_handler (item : scan_work_item) (e : Exception.t)
     Interfile_error (rule_id, { base_err with E.rule_id = Some rule_id })
 
 let iter_unified_and_get_matches_and_exn_to_errors
-    (caps : < Cap.fork ; Cap.memory_limit ; .. >)
+    (caps : < Cap.fork ; Cap.memory_limit ; Cap.time_limit ; .. >)
     (config : Core_scan_config.t)
     (target_handler : target_handler)
     ~(interfile_rule_states : Interfile_dispatch.rule_state list)
@@ -980,7 +1008,7 @@ let iter_unified_and_get_matches_and_exn_to_errors
       config.ncores
       ~exception_handler:unified_exception_handler
       (handle_work_item
-         (caps :> < Cap.memory_limit >) config target_handler)
+         (caps :> < Cap.memory_limit ; Cap.time_limit >) config target_handler)
       work_items
   in
   let file_results, scanned_targets, interfile_matches =
@@ -1143,7 +1171,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   in
   let file_results, scanned_targets, interfile_matches =
     iter_unified_and_get_matches_and_exn_to_errors
-      (caps :> < Cap.fork ; Cap.memory_limit >)
+      (caps :> < Cap.fork ; Cap.memory_limit ; Cap.time_limit >)
       config
       (mk_target_handler
          (caps :> < Cap.time_limit >)
