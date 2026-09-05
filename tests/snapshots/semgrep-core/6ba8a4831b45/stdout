@@ -25,9 +25,9 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
   Engine time:
   Total CPU time: x.xxxs  File parse time: x.xxxs  Rule parse time: x.xxxs  Match time: x.xxxs
   Slowest 5/1 files
-  stupid.py                                          (  0B):  x.xxxs (x.xxxs to parse)
+  stupid.py                                          ( 42B):  x.xxxs (x.xxxs to parse)
   Slowest 5 rules to match
   eqeq-bad:                                                   x.xxxs
-  Analyzed: 1 python files (  0B in x.xxx seconds)
+  Analyzed: 1 python files ( 42B in x.xxx seconds)
   Errors:   0 files with errors
 
