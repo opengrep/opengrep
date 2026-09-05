@@ -1,0 +1,13 @@
+rules:
+  - id: php-function-scope
+    languages: [php]
+    severity: ERROR
+    message: >
+      A function body sees a top-level variable only through a global
+      directive, a closure sees it only through a use clause, and an arrow
+      function sees it as is.
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
