@@ -369,12 +369,158 @@ let mk_checks_tests (caps : Test_subcommand.caps) : Testo.t list =
     ]
 
 (*****************************************************************************)
+(* Pairing rules with targets, and the todo annotations *)
+(*****************************************************************************)
+
+(* Run the subcommand over [files] and return its exit code and its JSON
+   report. *)
+let run_test_json (caps : Test_subcommand.caps) (files : F.t list)
+    (argv : string list) : Exit_code.t * Semgrep_output_v1_t.tests_result =
+  Testutil_files.with_tempfiles ~chdir:true files (fun _cwd ->
+      let exit_code, out =
+        Testo.with_capture stdout (fun () ->
+            Test_subcommand.main caps
+              (Array.of_list (("opengrep-test" :: argv) @ [ "--json" ])))
+      in
+      (exit_code, Semgrep_output_v1_j.tests_result_of_string out))
+
+let eqeq_rule_content =
+  {|
+rules:
+  - id: eqeq-is-bad
+    pattern: $X == $X
+    message: "useless comparison"
+    languages: [python]
+    severity: ERROR
+|}
+
+let other_rule_content =
+  {|
+rules:
+  - id: no-print
+    pattern: print(...)
+    message: "no print"
+    languages: [python]
+    severity: ERROR
+|}
+
+(* 'test --config rules targets', without the trailing slashes, pairs each
+   rule with the target that carries its name. python: test.py asked the file
+   system whether the target was a file (Path.is_file), where a syntactic
+   test held for every path and paired every rule with every target. *)
+let test_rules_and_targets_directories (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.dir "rules"
+        [
+          F.File ("eqeq.yaml", eqeq_rule_content);
+          F.File ("other.yaml", other_rule_content);
+        ];
+      F.dir "targets"
+        [
+          F.File ("eqeq.py", "# ruleid: eqeq-is-bad\nx == x\n");
+          F.File ("other.py", "# ruleid: no-print\nprint(1)\n");
+          F.File ("orphan.py", "y = 1\n");
+        ];
+    ]
+  in
+  let checked (spelling : string list) : (string * bool) list =
+    let exit_code, res = run_test_json caps files spelling in
+    Exit_code.Check.ok exit_code;
+    (* the key of a rule file keeps the spelling of the config path, so only
+       the checks themselves are compared *)
+    res.results
+    |> List.concat_map
+         (fun ((_rule_file : string), (checks : Semgrep_output_v1_t.checks)) ->
+           checks.checks
+           |> List_.map
+                (fun
+                  ((rule_id : string), (r : Semgrep_output_v1_t.rule_result))
+                -> (rule_id, r.passed)))
+    |> List.sort compare
+  in
+  let expected = [ ("eqeq-is-bad", true); ("no-print", true) ] in
+  Alcotest.(check (list (pair string bool)))
+    "without the trailing slashes" expected
+    (checked [ "--config"; "rules"; "targets" ]);
+  Alcotest.(check (list (pair string bool)))
+    "with the trailing slashes" expected
+    (checked [ "--config"; "rules/"; "targets/" ])
+
+(* python: test.py takes the todook: and todoruleid: lines out of both the
+   expected and the reported set before comparing them, so a stale annotation
+   of either kind cannot fail the check. *)
+let test_todo_annotations (caps : Test_subcommand.caps) () =
+  let check (name : string) (target : string) : unit =
+    let files =
+      [ F.File ("eqeq.yaml", eqeq_rule_content); F.File ("eqeq.py", target) ]
+    in
+    let exit_code, res =
+      run_test_json caps files [ "--config"; "eqeq.yaml"; "eqeq.py" ]
+    in
+    Exit_code.Check.ok exit_code;
+    match res.results with
+    | [ (_rule_file, { checks = [ (_rule_id, rule_result) ] }) ] -> (
+        Alcotest.(check bool) (name ^ ": the check passed") true
+          rule_result.passed;
+        match rule_result.matches with
+        | [ (_target, { expected_lines; reported_lines }) ] ->
+            Alcotest.(check (list int))
+              (name ^ ": the expected lines") [ 2 ] expected_lines;
+            Alcotest.(check (list int))
+              (name ^ ": the reported lines") [ 2 ] reported_lines
+        | _ -> Alcotest.fail (name ^ ": expected one target"))
+    | _ -> Alcotest.fail (name ^ ": expected one rule with one check")
+  in
+  (* the engine now matches a line the annotation says it should not *)
+  check "todoruleid"
+    "# ruleid: eqeq-is-bad\nx == x\n# todoruleid: eqeq-is-bad\ny == y\n";
+  (* the engine no longer matches a line the annotation says it does *)
+  check "todook"
+    "# ruleid: eqeq-is-bad\nx == x\n# todook: eqeq-is-bad\nz == w\n"
+
+(* A rule with a fix and two test targets is listed once among the configs
+   without a fixtest, and --matching-diagnosis reports no diagnosis for it
+   rather than stopping the run. *)
+let test_two_targets_for_one_rule (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File
+        ( "dup.yaml",
+          {|
+rules:
+  - id: dup-rule
+    pattern: foo($X)
+    fix: bar($X)
+    message: m
+    languages: [python, js]
+    severity: ERROR
+|}
+        );
+      F.File ("dup.py", "# ruleid: dup-rule\nfoo(1)\n");
+      F.File ("dup.js", "// ruleid: dup-rule\nfoo(1)\n");
+    ]
+  in
+  let exit_code, res = run_test_json caps files [ "."; "--matching-diagnosis" ] in
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check (list string))
+    "the rule file is listed once" [ "./dup.yaml" ]
+    (List_.map Fpath.to_string res.config_missing_fixtests)
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
 let tests (caps : < Test_subcommand.caps >) =
   Testo.categorize "Osemgrep Test (e2e)"
     (mk_matching_explanation_tests caps
-    @ [ t "missing test targets abort the run" (test_missing_targets caps) ]
+    @ [
+        t "missing test targets abort the run" (test_missing_targets caps);
+        t "a rules directory and a targets directory pair by name"
+          (test_rules_and_targets_directories caps);
+        t "todoruleid: and todook: lines are left out of the comparison"
+          (test_todo_annotations caps);
+        t "a rule with two test targets" (test_two_targets_for_one_rule caps);
+      ]
     @ mk_fixtest_tests caps
     @ mk_checks_tests caps)

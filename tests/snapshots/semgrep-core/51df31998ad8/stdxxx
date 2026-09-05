@@ -15,4 +15,4 @@ targets/test3.py
 	-sys.exit(2)
 	+somethingElse(1)
 
-[33mASSERT[0m exit code
+ASSERT exit code

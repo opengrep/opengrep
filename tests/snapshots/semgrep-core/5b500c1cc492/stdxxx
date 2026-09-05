@@ -3,4 +3,4 @@ rules/directory/basic.yaml
 targets/directory/basic.py
 --- end input files ---
 {"results":{"rules/directory/basic.yaml":{"checks":{"basic-test":{"passed":true,"matches":{"<TMP>/<MASKED>/targets/directory/basic.py":{"expected_lines":[2],"reported_lines":[2]}},"errors":[]}}}},"fixtest_results":{},"config_missing_tests":[],"config_missing_fixtests":[],"config_with_errors":[]}
-[33mASSERT[0m exit code
+ASSERT exit code

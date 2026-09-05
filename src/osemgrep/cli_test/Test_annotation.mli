@@ -33,4 +33,8 @@ type annotations = (t * linenb) list
 
 val annotations : Fpath.t -> annotations
 val group_by_rule_id : annotations -> (Rule_ID.t, linenb list) Assoc.t
-val filter_todook : annotations -> linenb list -> linenb list
+(* Drop the lines carrying a 'todook:' or a 'todoruleid:' annotation.
+ * python: test.py subtracts todo_ok_lines and todo_ruleid_lines from both the
+ * expected and the reported lines before comparing them, which is what makes
+ * those annotations mean "do not judge this line". *)
+val filter_todo : annotations -> linenb list -> linenb list

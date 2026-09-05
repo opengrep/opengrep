@@ -18,4 +18,4 @@ A potential match at line 3 was removed by this pattern at line 7 in ./test.yaml
 test.py: Unexpected lack of match at line 5
 A potential match at line 5 was removed by this pattern at line 7 in ./test.yaml:
           - not: foo($X)
-[33mASSERT[0m exit code
+ASSERT exit code
