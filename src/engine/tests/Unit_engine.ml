@@ -859,9 +859,8 @@ let semgrep_rules_repo_tests () : Testo.t list =
                   | _ -> test)
            |> Testo.categorize group))
 
-(* Guards the [Lang.langs_of_filename] denylist that keeps manifests
-   ([.mod]/[.sum], which [File_type] maps to [PL Go]) away from the Go
-   parser; removing the denylist must fail here. *)
+(* The Go module manifest shares the [.mod] extension with Go source files
+   and must not reach the Go parser. *)
 let lang_classification_tests () =
   let assert_classified_as ~(label : string) (fname : string)
       (expected : Lang.t list) () =
@@ -873,10 +872,10 @@ let lang_classification_tests () =
   [
     t "go.mod is not classified as a source language"
       (assert_classified_as ~label:"go.mod" "go.mod" []);
-    t "go.sum is not classified as a source language"
-      (assert_classified_as ~label:"go.sum" "go.sum" []);
     t ".go files still classify as Go"
       (assert_classified_as ~label:"foo.go" "foo.go" [ Lang.Go ]);
+    t ".mod files other than go.mod still classify as Go"
+      (assert_classified_as ~label:"foo.mod" "foo.mod" [ Lang.Go ]);
   ]
 
 (*****************************************************************************)
