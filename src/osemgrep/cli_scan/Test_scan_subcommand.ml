@@ -146,7 +146,7 @@ let dummy_app_token = "FAKETESTINGAUTHTOKEN"
 let normalize =
   [
     Testutil_logs.mask_time;
-    Testutil.mask_temp_paths ();
+    Test_scan_helpers.mask_test_temp_paths ();
     Testutil_git.mask_temp_git_hash;
     Testo.mask_line ~after:"Opengrep version: " ();
     Testo.mask_pcre_pattern {|\{"version":"([^"]+)","results":\[|}

@@ -58,7 +58,7 @@ let aliengrep_cases : (string * string) list =
     ("dockerfile", "dockerfile");
     ("multi-lines", "multi-lines.java");
     ("terraform", "terraform.tf");
-    ("begin-end", "begin-end.log");
+    ("begin-end", "begin-end.txt");
     ("long-match", "long-match.txt");
     ("metavariable-pattern", "metavariable-pattern.conf");
   ]

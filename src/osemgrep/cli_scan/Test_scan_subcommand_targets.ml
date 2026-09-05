@@ -285,26 +285,30 @@ let tests (caps : < Scan_subcommand.caps >) =
          There is no git repository, as the Python harness copies the files
          instead of committing them.
          python: test_permissions_ls *)
-      t "permissions: the file list" ~checked_output:(Testo.stdout ())
+      t "permissions: the file list" ?skipped:unless_root
+        ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "--x-ls"; "targets/permissions" ]);
       (* python: test_permissions_scan_full_strict *)
-      t "permissions: JSON with --verbose" ~checked_output:(Testo.stdout ())
+      t "permissions: JSON with --verbose" ?skipped:unless_root
+        ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[ "--json" ]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "--verbose"; "targets/permissions" ]);
       (* the same scan in text mode: the unreadable file and directory are
          listed in the verbose block and counted in the summary *)
-      t "permissions: text with --verbose" ~checked_output:(Testo.split_stdout_stderr ())
+      t "permissions: text with --verbose" ?skipped:unless_root
+        ~checked_output:(Testo.split_stdout_stderr ())
         ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "--verbose"; "targets/permissions" ]);
       (* python: test_permissions_scan_full_lax *)
-      t "permissions: JSON" ~checked_output:(Testo.stdout ())
+      t "permissions: JSON" ?skipped:unless_root
+        ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[ "--json" ]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
@@ -406,14 +410,16 @@ let tests (caps : < Scan_subcommand.caps >) =
          skipped, kept out of the scanned files, and makes the run fail as
          it did for the wrapper. *)
       t "permissions: unreadable file named on the command line"
-        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        ?skipped:unless_root ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false
            ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml" ~targets:[]
            ~extra_files:permissions_files ~check:Exit_code.Check.fatal
            ~extra_args:
              [ "--verbose"; "targets/permissions/unreadable_file.py" ]);
       t "permissions: unreadable directory named on the command line"
-        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        ?skipped:unless_root ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~git:false
            ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml" ~targets:[]
            ~extra_files:permissions_files ~check:Exit_code.Check.fatal
@@ -433,7 +439,8 @@ let tests (caps : < Scan_subcommand.caps >) =
                   F.dir "targets" [ target_dir "nested_paths" ];
                 ]
               ~extra_args:[ "targets/nested_paths/src" ]));
-      t "ignore file without read permission" ~checked_output:(Testo.stdout ())
+      t "ignore file without read permission" ?skipped:unless_root
+        ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (with_one_ignore_file_warning ~reason:"Permission denied"
            (run_scan caps ~root ~git:false ~format_args:[ "--json" ]

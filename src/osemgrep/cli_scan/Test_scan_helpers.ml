@@ -38,10 +38,32 @@ let with_env_app_token ?(token : string = dummy_app_token) (f : unit -> 'a) : 'a
  * would the "version" that opens the JSON output, recognisable by the
  * "results" following it. The root-level "version" of SARIF is the spec
  * version (stable, followed by "runs") and must NOT be masked. *)
+(* The directories, named pipes and stdin copies the tests and the scan
+   create under the system's temporary directory, and nothing else there: a
+   fixture may name /tmp itself. Both the directory as configured and its
+   physical path. *)
+let mask_test_temp_paths () : string -> string =
+  let temp_dirs =
+    let configured = Filename.get_temp_dir_name () in
+    List.sort_uniq String.compare [ configured; Unix.realpath configured ]
+    |> List_.map (fun (dir : string) ->
+           Re.Pcre.quote (Fpath.to_string (Fpath.rem_empty_seg (Fpath.v dir))))
+  in
+  Testo.mask_pcre_pattern
+    ~replace:(fun (_ : string) -> "<TMP>/<MASKED>")
+    (Printf.sprintf
+       {|(?:%s)[/\\]+(?:test-[0-9a-f]+|[A-Za-z0-9._-]*opengrep-[A-Za-z0-9._-]*)|}
+       (String.concat "|" temp_dirs))
+
+(* A test that needs a file nobody can read cannot run as root. *)
+let unless_root : string option =
+  if Int.equal (Unix.geteuid ()) 0 then Some "root reads every file"
+  else None
+
 let normalise : (string -> string) list =
   [
     Testutil_logs.mask_time;
-    Testutil.mask_temp_paths ();
+    mask_test_temp_paths ();
     Testutil_git.mask_temp_git_hash;
     Testo.mask_pcre_pattern {|"semanticVersion":"[^"]*"|};
     Testo.mask_pcre_pattern {|\{"version":"([^"]*)","results"|};
