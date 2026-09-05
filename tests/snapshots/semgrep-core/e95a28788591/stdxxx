@@ -23,15 +23,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 exclude_include/included/included.vue
  create mode 100644 filecount.yaml
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -48,7 +39,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 4 rules on 5 files: 0 findings.
 ASSERT exit code

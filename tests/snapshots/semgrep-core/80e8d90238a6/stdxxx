@@ -1,23 +1,10 @@
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
 └─────────────┘
   Scanning 2 files with 4 Code rules:
-
-  Language   Rules   Files          Origin   Rules
- ──────────────────────────        ────────────────
-  python         3       1          Custom       4
-
+  Scanning 1 file with 3 python rules.
 --- begin input files ---
 eqeq.yaml
 stupid.py

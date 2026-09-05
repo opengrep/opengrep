@@ -112,11 +112,65 @@ let permissions_files : F.t list =
    test_max_target_bytes_output_pysemfail *)
 let max_target_bytes : string list = [ "1MB"; "100B"; "1B" ]
 
+(* Files whose extension the targeting excludes by default, '.min.js' and
+   '.d.ts'. The '.semgrepignore' at the root replaces the built-in
+   patterns, whose '*.min.js' would hide the file before a '--include' is
+   applied. *)
+let excluded_extension_files : F.t list =
+  [
+    F.File (".semgrepignore", "# no patterns\n");
+    F.dir "targets" [ target_dir "excluded_extensions" ];
+  ]
+
+(* A file over '--max-target-bytes' next to a small one. The file is built
+   here rather than kept as a fixture so that the limit can be small. *)
+let size_files : F.t list =
+  [
+    F.dir "targets"
+      [
+        F.dir "size"
+          [
+            F.File ("big.py", "x == x\n" ^ String.make 200 '#' ^ "\n");
+            F.File ("small.py", "y == y\n");
+          ];
+      ];
+  ]
+
+(* The '--include' and '--exclude' patterns that contain a slash, over a
+   tree with the same directory name at two depths. *)
+let nested_path_options : string list list =
+  [
+    [ "--include"; "lib/b.js" ];
+    [ "--include"; "src/*" ];
+    [ "--exclude"; "src/*" ];
+  ]
+
+(* A file and a symlink to it, so that a scanning root can be spelled
+   through the symlink. *)
+let symlink_to_file_files : F.t list =
+  [ F.File ("real.py", "x == x\n"); F.Symlink ("link.py", "real.py") ]
+
 (* The general scan fixtures, symlinked into the repo as the Python
    harness does with its targets; absolute, as the harness runs from the
    project root. *)
 let symlinked_targets : F.t list =
   [ F.Symlink ("targets", !!(Fpath.v (Sys.getcwd ()) // fixtures_root / "targets")) ]
+
+(* An ignore file the scan cannot read is reported on stderr, which the
+   snapshot of a test checking stdout does not hold, and one such file is
+   reported once however many readers meet it. *)
+let with_one_ignore_file_warning ~(reason : string) (f : unit -> unit) :
+    unit -> unit =
+ fun () ->
+  let (), (output : string) = Testo.with_capture stderr f in
+  let warnings : string list =
+    String.split_on_char '\n' output
+    |> List.filter (String_.contains ~term:"Ignoring the file ")
+  in
+  Alcotest.(check int) "one warning about the ignore file" 1
+    (List.length warnings);
+  Alcotest.(check bool) "the warning says why" true
+    (List.exists (String_.contains ~term:reason) warnings)
 
 (*****************************************************************************)
 (* Entry point *)
@@ -143,6 +197,16 @@ let tests (caps : < Scan_subcommand.caps >) =
                     (("--x-ls" :: options) @ [ "targets/exclude_include" ]))))
     (* differs from the Python wrapper: the status counts the files kept,
        where it counts the files found *)
+    @ (nested_path_options
+      |> List.map (fun (options : string list) ->
+             t
+               (Printf.sprintf "nested paths: %s" (String.concat " " options))
+               ~checked_output:(Testo.stdout ()) ~normalize:normalise
+               (run_scan caps ~root ~format_args:[] ~rule:"rules/eqeq-basic.yaml"
+                  ~targets:[]
+                  ~extra_files:[ F.dir "targets" [ target_dir "nested_paths" ] ]
+                  ~extra_args:
+                    (("--x-ls-long" :: options) @ [ "targets/nested_paths" ]))))
     @ (max_target_bytes
       |> List.concat_map (fun (bytes : string) ->
              let scan (format_args : string list) : unit -> unit =
@@ -245,6 +309,149 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[ "--json" ]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "targets/permissions" ]);
+      (* A file the user names is scanned whatever its extension: the
+         default exclusions are for what walking a directory turns up.
+         The wrapper had no such exclusions at all. *)
+      t "excluded extensions: named on the command line"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-js-ts.yaml" ~targets:[]
+           ~extra_files:excluded_extension_files
+           ~extra_args:
+             [
+               "--verbose"; "targets/excluded_extensions/min.min.js";
+               "targets/excluded_extensions/t.d.ts";
+             ]);
+      (* ... and so is one a '--include' pattern of the user selects *)
+      t "excluded extensions: matched by --include"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-js-ts.yaml" ~targets:[]
+           ~extra_files:excluded_extension_files
+           ~extra_args:
+             [
+               "--verbose"; "--include=*.min.js"; "--include=*.d.ts";
+               "targets/excluded_extensions";
+             ]);
+      (* found by walking the directory, the '.min.js' is skipped and the
+         '.d.ts' is not a target of the rule *)
+      t "excluded extensions: found by walking"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-js-ts.yaml" ~targets:[]
+           ~extra_files:excluded_extension_files
+           ~extra_args:[ "--verbose"; "targets/excluded_extensions" ]);
+      (* A file the user names is scanned whatever its size, as the Python
+         wrapper did; the skip reason of the one found by walking is the
+         one the wrapper reported. *)
+      t "max target bytes: file named on the command line"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-python.yaml" ~targets:[] ~extra_files:size_files
+           ~extra_args:
+             [
+               "--verbose"; "--max-target-bytes"; "100"; "targets/size/big.py";
+             ]);
+      t "max target bytes: file found by walking"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-python.yaml" ~targets:[] ~extra_files:size_files
+           ~extra_args:
+             [ "--verbose"; "--max-target-bytes"; "100"; "targets/size" ]);
+      (* '--force-exclude' puts the filters back on the file the user
+         named, the size limit included, as it did for the wrapper. *)
+      t "max target bytes: file named with --force-exclude"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-python.yaml" ~targets:[] ~extra_files:size_files
+           ~extra_args:
+             [
+               "--verbose"; "--force-exclude"; "--max-target-bytes"; "100";
+               "targets/size/big.py";
+             ]);
+      t "force exclude: a readable file named on the command line"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-python.yaml" ~targets:[] ~extra_files:size_files
+           ~extra_args:
+             [ "--verbose"; "--force-exclude"; "targets/size/small.py" ]);
+      (* A scanning root that is a symlink to a file is followed and
+         scanned under '--force-exclude' as it is without the flag; only
+         the exclusions applied to it can leave it out. *)
+      t "force exclude: a symlink to a file named on the command line"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-python.yaml" ~targets:[]
+           ~extra_files:symlink_to_file_files
+           ~extra_args:[ "--verbose"; "--force-exclude"; "link.py" ]);
+      t "force exclude: a symlink to a file the exclusions leave out"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-python.yaml" ~targets:[]
+           ~extra_files:symlink_to_file_files
+           ~extra_args:
+             [
+               "--verbose"; "--force-exclude"; "--exclude"; "link.py";
+               "link.py";
+             ]);
+      (* A scanning root spelled with a leading './' is reported without
+         it, as the wrapper's Path did. *)
+      t "scanning root spelled with a leading dot"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+           ~extra_files:[ F.dir "targets" [ target_dir "nested_paths" ] ]
+           ~extra_args:[ "./targets/nested_paths/src" ]);
+      (* An unreadable target named on the command line is reported as
+         skipped, kept out of the scanned files, and makes the run fail as
+         it did for the wrapper. *)
+      t "permissions: unreadable file named on the command line"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:fixtures_root ~git:false
+           ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml" ~targets:[]
+           ~extra_files:permissions_files ~check:Exit_code.Check.fatal
+           ~extra_args:
+             [ "--verbose"; "targets/permissions/unreadable_file.py" ]);
+      t "permissions: unreadable directory named on the command line"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root:fixtures_root ~git:false
+           ~format_args:[ "--json" ] ~rule:"rules/eqeq.yaml" ~targets:[]
+           ~extra_files:permissions_files ~check:Exit_code.Check.fatal
+           ~extra_args:
+             [ "--verbose"; "targets/permissions/unreadable_subdir" ]);
+      (* An ignore file that cannot be read as a file holds no patterns:
+         the scan warns and goes on, where it used to abort. The snapshot
+         holds the scan that went on; the warning is on stderr. *)
+      t "ignore file that is a directory" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (with_one_ignore_file_warning ~reason:"not a regular file"
+           (run_scan caps ~root ~git:false ~format_args:[ "--json" ]
+              ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+              ~extra_files:
+                [
+                  F.dir ".semgrepignore" [ F.File ("inside", "") ];
+                  F.dir "targets" [ target_dir "nested_paths" ];
+                ]
+              ~extra_args:[ "targets/nested_paths/src" ]));
+      t "ignore file without read permission" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (with_one_ignore_file_warning ~reason:"Permission denied"
+           (run_scan caps ~root ~git:false ~format_args:[ "--json" ]
+              ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+              ~extra_files:
+                [
+                  F.Unreadable (".semgrepignore", "src/\n");
+                  F.dir "targets" [ target_dir "nested_paths" ];
+                ]
+              ~extra_args:[ "targets/nested_paths/src" ]));
+      (* The folder git keeps its data in is never reported, as the
+         wrapper's PATHS_ALWAYS_SKIPPED was not. *)
+      t "the git folder is not reported" ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+           ~extra_files:[ F.dir "targets" [ target_dir "nested_paths" ] ]
+           ~extra_args:[ "--no-git-ignore"; "--verbose"; "." ]);
       (* python: test_semgrepignore_ignore_log_report *)
       t "ignore log report: text" ~checked_output:(Testo.stdxxx ())
         ~normalize:normalise

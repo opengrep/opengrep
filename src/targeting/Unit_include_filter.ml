@@ -29,9 +29,16 @@ let tests =
     test_include [ "a" ] "/a" Not_ignored;
     test_include [ "/a" ] "/a" Not_ignored;
     test_include [ "/a" ] "/a/b" Not_ignored;
-    test_include [ "/b" ] "/a/b" Ignored;
+    (* a pattern of the command line matches anywhere in the path, so a
+       leading slash does not anchor it at the project root *)
+    test_include [ "/b" ] "/a/b" Not_ignored;
     test_include [ "b" ] "/a/b/c" Not_ignored;
     test_include [ "c" ] "/a/b/c" Not_ignored;
     test_include [ "included.*" ]
       "/targets/exclude_include/included/included.js" Not_ignored;
+    (* a pattern containing a slash matches anywhere too *)
+    test_include [ "lib/b.py" ] "/src/lib/b.py" Not_ignored;
+    test_include [ "lib/b.py" ] "/src/lib/c.py" Ignored;
+    test_include [ "src/*" ] "/app/src/d.py" Not_ignored;
+    test_include [ "src/*" ] "/app/other/d.py" Ignored;
   ]

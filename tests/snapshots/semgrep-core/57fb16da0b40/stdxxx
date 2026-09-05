@@ -63,16 +63,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 targets/basic/stupid.py
  create mode 100644 targets/basic/stupid_no_extension
 [<MASKED TIMESTAMP>][INFO]: Opengrep version: 1.29.0
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
 [<MASKED TIMESTAMP>][INFO]: Getting the rules
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][INFO]: loading local config from nosem.yaml
 [<MASKED TIMESTAMP>][INFO]: Done loading local config from nosem.yaml
 [<MASKED TIMESTAMP>][INFO]: Computing the targets
@@ -155,10 +146,10 @@ Files skipped:
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
 Some files were skipped or only partially analyzed.
-  Scan skipped: 17 files matching --exclude patterns.
+  Scan was limited to files tracked by git.
+  Scan skipped: 17 files matching --exclude patterns
   For a full list of skipped files, run opengrep with the --verbose flag.
 
-Ran 0 rules on 0 files: 0 findings.
+Ran 1 rule on 0 files: 0 findings.
 ASSERT exit code

@@ -108,8 +108,43 @@ let contents_of_builtin_semgrepignore = function
   | Empty -> ""
   | Semgrep_scan_legacy -> default_semgrepignore_for_semgrep_scan
 
-let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore_filename) ~default_semgrepignore_patterns
+(* The path of the ignore file of a folder, or of the file itself when the
+   name given on the command line is an absolute path. *)
+let semgrepignore_path ~(filename : string) (dir : Fpath.t) : Fpath.t =
+  let fname = Fpath.v filename in
+  if Fpath.is_abs fname then fname else Fpath.add_seg dir filename
+
+(* An ignore file the scan can read as a file. A folder of that name, or
+   one whose permissions deny reading, holds no patterns: Gitignore_cache
+   leaves it out with a warning, so it must not count as one here either. *)
+let is_readable_ignore_file (path : Fpath.t) : bool =
+  UFile.is_reg ~follow_symlinks:true path
+  && Result.is_ok (Skip_target.filter_file_access_permissions path)
+
+(* The contents of an ignore file, or None. A path that is not there at
+   all is the ordinary case and says nothing; one that is there and cannot
+   be read as a file gets a warning saying why. Reading must never stop
+   the scan. *)
+let read_ignore_file_opt (path : Fpath.t) : string option =
+  let warn (reason : string) : string option =
+    Gitignore_cache.warn_unreadable path reason;
+    None
+  in
+  if not (Sys.file_exists (Fpath.to_string path)) then None
+  else if not (UFile.is_reg ~follow_symlinks:true path) then
+    warn "not a regular file"
+  else
+    try Some (UFile.read_file path) with
+    | Sys_error (msg : string) -> warn msg
+    | Unix.Unix_error ((err : Unix.error), _, _) ->
+        warn (Unix.error_message err)
+
+let create ?(cli_patterns = []) ?(working_directory : Fpath.t option)
+    ?(semgrepignore_filename = default_semgrepignore_filename) ~default_semgrepignore_patterns
     ~exclusion_mechanism ~project_root () =
+  (* the ignore files of this filter are read from here on, so a file that
+     was reported for an earlier filter is reported again *)
+  Gitignore_cache.forget_warnings ();
   let root_anchor = Glob.Pattern.root_pattern in
   let default_patterns =
     Parse_gitignore.from_string ~name:"default semgrepignore patterns"
@@ -118,8 +153,9 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
   in
   let cli_patterns =
     List.concat_map
-      (Parse_gitignore.from_string ~name:"exclude pattern from command line"
-         ~source_kind:"exclude" ~anchor:root_anchor)
+      (Parse_gitignore.cli_patterns_from_string
+         ~name:"exclude pattern from command line" ~source_kind:"exclude"
+         ~anchor:root_anchor)
       cli_patterns
   in
   let default_semgrepignore_file_level : Gitignore.level =
@@ -154,13 +190,10 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
   *)
   let root_semgrepignore_exists =
     let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
-    let semgrepignore_fname = Fpath.v semgrepignore_filename in
-    let semgrepignore_path =
-      if Fpath.is_abs semgrepignore_fname
-      then semgrepignore_fname
-      else Fpath.add_seg root_dir semgrepignore_filename
-    in
-    Sys.file_exists (Fpath.to_string semgrepignore_path)
+    (* a file the scan cannot read holds no patterns, so it does not
+       replace the built-in ones either *)
+    is_readable_ignore_file
+      (semgrepignore_path ~filename:semgrepignore_filename root_dir)
   in
 
   (*
@@ -171,12 +204,46 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
     exclusion_mechanism.use_semgrepignore_files && not root_semgrepignore_exists
   in
 
+  (*
+     pysemgrep read the '.semgrepignore' of the working directory whatever
+     the scanning root was, and applied to a path outside that directory
+     only the patterns that are not anchored to it, the ones that match at
+     any depth (the _survives method of ignores.py). When the working
+     directory is the project root, its file is read as the project's own
+     and its patterns are anchored there, so nothing is added here.
+  *)
+  let working_directory_levels : Gitignore.level list =
+    match working_directory with
+    | Some dir when exclusion_mechanism.use_semgrepignore_files -> (
+        let path = semgrepignore_path ~filename:semgrepignore_filename dir in
+        match read_ignore_file_opt path with
+        | None -> []
+        | Some (contents : string) ->
+            [
+              {
+                Gitignore.level_kind = "semgrepignore of the working directory";
+                source_name = Fpath.to_string path;
+                patterns =
+                  Parse_gitignore.unanchored_from_string
+                    ~name:(Fpath.to_string path) ~source_kind:"semgrepignore"
+                    ~anchor:root_anchor ~source_path:(Some path) contents;
+              };
+            ])
+    | Some _
+    | None ->
+        []
+  in
   let higher_priority_levels =
-    if use_default_semgrepignore then
-      (* use the built-in semgrepignore rules in the absence of a root
-         '.semgrepignore' file *)
-      [ default_semgrepignore_file_level; cli_level ]
-    else [ cli_level ]
+    (* the working directory's file comes last: target_manager.py applied
+       the command-line includes and excludes before the semgrepignore
+       filter, so a line there cannot bring back a path '--exclude' or
+       '--include' left out *)
+    (if use_default_semgrepignore then
+       (* use the built-in semgrepignore rules in the absence of a root
+          '.semgrepignore' file *)
+       [ default_semgrepignore_file_level; cli_level ]
+     else [ cli_level ])
+    @ working_directory_levels
   in
   let gitignore_filter =
     Gitignore_filter.create ~higher_priority_levels

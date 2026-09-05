@@ -242,12 +242,21 @@ let read root =
     let name = Fpath.basename path in
     let st = UUnix.lstat !!path in
     match st.st_kind with
-    | S_DIR ->
-        let names = get_dir_entries path in
-        Dir (name, List_.map (fun name -> read (path / name)) names)
-    | S_REG when st.st_perm land 0o111 <> 0 ->
-        Executable (name, UFile.read_file path)
-    | S_REG -> File (name, UFile.read_file path)
+    (* An entry 'write' created as Unreadable or Unreadable_dir cannot be
+       read back, so it is reported as such, with no contents and no entries,
+       rather than raising. What the process may read is what decides, not
+       the permission bits, since a privileged process reads them anyway. *)
+    | S_DIR -> (
+        match get_dir_entries path with
+        | names -> Dir (name, List_.map (fun name -> read (path / name)) names)
+        | exception (UUnix.Unix_error _ | Sys_error _) ->
+            Unreadable_dir (name, []))
+    | S_REG -> (
+        match UFile.read_file path with
+        | contents ->
+            if st.st_perm land 0o111 <> 0 then Executable (name, contents)
+            else File (name, contents)
+        | exception (UUnix.Unix_error _ | Sys_error _) -> Unreadable (name, ""))
     | S_LNK -> Symlink (name, UUnix.readlink !!path)
     | _other ->
         failwith ("Testutil_files.read: unsupported file type: " ^ !!path)

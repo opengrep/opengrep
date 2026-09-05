@@ -1,0 +1,18 @@
+--- begin input files ---
+eqeq-basic.yaml
+targets/nested_paths/app/src/d.js
+targets/nested_paths/src/a.js
+targets/nested_paths/src/lib/b.js
+targets/nested_paths/src/util/c.js
+targets/nested_paths/top.js
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 6 files changed, 12 insertions(+)
+ create mode 100644 eqeq-basic.yaml
+ create mode 100644 targets/nested_paths/app/src/d.js
+ create mode 100644 targets/nested_paths/src/a.js
+ create mode 100644 targets/nested_paths/src/lib/b.js
+ create mode 100644 targets/nested_paths/src/util/c.js
+ create mode 100644 targets/nested_paths/top.js
+{"version":"<MASKED>","results":[{"check_id":"eqeq-bad","path":"targets/nested_paths/src/a.js","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"a"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"8101dc794670bbb48c682f647d2a063bc810d315cefcb2d1d8af9e5371a59e1f82986057d1a2df365839d80f5da6b0822222b0cb16ce70b9c26e6ad5a474d462_0","lines":"a == a","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"eqeq-bad","path":"targets/nested_paths/src/lib/b.js","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"b"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"327eeeba062582493be0c1bf9726d1b97e11c0e7837454ef03d3a5a90546c437bb0677213faddb9ed87c0a6f344de5e10e0d331b502620a5773c0ae5c0b48c89_0","lines":"b == b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"eqeq-bad","path":"targets/nested_paths/src/util/c.js","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"c"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"c88944e9d2b50660a2f31bb43a5fc8c453687e317b88190ffe0acaa650951ec63ded4951e9ff3e3ad343db8b04e53e6a0fdfb9c118ed45ba50124ab03ce0da55_0","lines":"c == c","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/nested_paths/src/a.js","targets/nested_paths/src/lib/b.js","targets/nested_paths/src/util/c.js"]},"interfile_languages_used":[],"skipped_rules":[]}
