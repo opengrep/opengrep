@@ -225,7 +225,16 @@ let build_file_funcs_by_package
         path_suffix_index:(string, string list) Hashtbl.t option ->
         current_file:Fpath.t -> string -> string list)
     (fi : file_info)
-  : (string, Func_info.t list) Hashtbl.t option =
+  : Func_lookup.leaf_index option =
+  (* Import aliases in a per-file table; the shared project table is read
+     only. *)
+  let over_project (alias_extra : (string * Func_info.t list) list) =
+    let aliases = Hashtbl.create (List.length alias_extra) in
+    List.iter (fun (key, funcs) -> Hashtbl.replace aliases key funcs) alias_extra;
+    Func_lookup.leaf_index_override
+      ~front:(Func_lookup.leaf_index_of_hashtbl aliases)
+      ~back:(Func_lookup.leaf_index_of_hashtbl project_funcs_by_package)
+  in
   if cfg.Index_lang_rules.unqualified_scope = `Per_directory then begin
     let alias_extra = List.filter_map (fun (local, target) ->
       let target_str = Names.Module_qn.to_string target in
@@ -236,12 +245,9 @@ let build_file_funcs_by_package
         | Some fs -> Some (local, fs)
         | None -> None
     ) fi.fi_imports in
-    if alias_extra = [] then Some project_funcs_by_package
-    else begin
-      let tbl = Hashtbl.copy project_funcs_by_package in
-      List.iter (fun (key, funcs) -> Hashtbl.replace tbl key funcs) alias_extra;
-      Some tbl
-    end
+    if alias_extra = [] then
+      Some (Func_lookup.leaf_index_of_hashtbl project_funcs_by_package)
+    else Some (over_project alias_extra)
   end
   else begin
     let alias_extra_ts = List.filter_map (fun (local, specifier, _kind) ->
@@ -266,12 +272,9 @@ let build_file_funcs_by_package
       | None -> None
     ) fi.fi_imports in
     let alias_extra = alias_extra_ts @ alias_extra_py in
-    if alias_extra = [] then Some project_funcs_by_package
-    else begin
-      let tbl = Hashtbl.copy project_funcs_by_package in
-      List.iter (fun (key, funcs) -> Hashtbl.replace tbl key funcs) alias_extra;
-      Some tbl
-    end
+    if alias_extra = [] then
+      Some (Func_lookup.leaf_index_of_hashtbl project_funcs_by_package)
+    else Some (over_project alias_extra)
   end
 
 let build_import_target_files
@@ -673,8 +676,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~same_file_funcs_by_name:
           (Func_lookup.leaf_index_of_hashtbl same_file_funcs_by_name)
         ~overload_groups:(Lang_config.overloads_by_type lang)
-        ?funcs_by_package:
-          (Option.map Func_lookup.leaf_index_of_hashtbl file_funcs_by_package)
+        ?funcs_by_package:file_funcs_by_package
         ~file_module_qn:
           (Func_lookup.file_module_index_of_hashtbl file_module_qn)
         ~class_aliases:

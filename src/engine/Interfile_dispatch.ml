@@ -262,6 +262,8 @@ let init_file
     ~(path_root : Fpath.t option)
     ~(fid_set : FidSet.t)
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
+    ~(function_maps :
+        (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
     ~(file_path : Fpath.t)
     (acc : file_init_acc)
     : file_init_acc =
@@ -314,8 +316,12 @@ let init_file
   let fid_filter (fid : Function_id.t) : bool =
     FidSet.mem (Interfile_graph.absolutify_fid path_root fid) fid_set
   in
+  (* The file's functions were lowered once for every rule's subgraph; this
+     rule keeps its own. A file absent from the table is lowered here. *)
   let raw_info_map =
-    Match_tainting_mode.build_info_map ~lang ~fid_filter ast
+    match Hashtbl.find_opt function_maps abs_file with
+    | Some info_map -> FunctionMap.filter (fun fid _ -> fid_filter fid) info_map
+    | None -> Match_tainting_mode.build_info_map ~lang ~fid_filter ast
   in
   let enriched_map =
     FunctionMap.map
@@ -534,6 +540,8 @@ let compute_rule_subgraph
 (* Precondition: all [rsg] files are in [ast_table]. *)
 let init_rule_state
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
+    ~(function_maps :
+        (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
     ~(target_root_map : Fpath.t option FpathMap.t)
     (rsg : rule_subgraph)
     : rule_state =
@@ -546,7 +554,7 @@ let init_rule_state
          try
            init_file ~lang ~rule ~xconf:rsg.rsg_xconf ~path_root
              ~fid_set:rsg.rsg_fid_set
-             ~ast_table ~file_path acc
+             ~ast_table ~function_maps ~file_path acc
          with
          | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
            let bt = Printexc.get_backtrace () in
@@ -1803,6 +1811,66 @@ let build_rule_states
                       (Fpath.to_string file) (Printexc.to_string exn)))
         tbl)
     full_ast_lookup;
+  (* Lower each file's functions to IL and CFG once, for the union of the
+     subgraphs of the rules that reach the file, in parallel over files.
+     Every rule's state then filters its own functions out of the table
+     instead of lowering the file again; the CFGs are not written after
+     construction, so the rules share them. *)
+  let function_maps :
+      (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t =
+    let rsgs_by_file : (Fpath.t, rule_subgraph list) Hashtbl.t =
+      Hashtbl.create 256
+    in
+    List.iter
+      (fun (rsg : rule_subgraph) ->
+        List.iter
+          (fun (file : Fpath.t) ->
+            let file = Fpath.normalize file in
+            let rsgs =
+              Option.value (Hashtbl.find_opt rsgs_by_file file) ~default:[]
+            in
+            Hashtbl.replace rsgs_by_file file (rsg :: rsgs))
+          rsg.rsg_files)
+      rule_subgraphs;
+    let lower ((file, rsgs) : Fpath.t * rule_subgraph list) =
+      match rsgs with
+      | [] -> None
+      | rsg :: _ -> (
+          let lang = rsg.rsg_lang_context.lc_lang in
+          let path_root = path_root_for_file target_root_map file in
+          let fid_filter (fid : Function_id.t) : bool =
+            let abs_fid = Interfile_graph.absolutify_fid path_root fid in
+            List.exists
+              (fun (rsg : rule_subgraph) -> FidSet.mem abs_fid rsg.rsg_fid_set)
+              rsgs
+          in
+          match
+            Hashtbl.find_opt (ast_table_for_lang full_ast_lookup lang) file
+          with
+          | Some ast ->
+              Some (file, Match_tainting_mode.build_info_map ~lang ~fid_filter ast)
+          | None -> None)
+    in
+    let lowered_batches, (_failed_batches : (Fpath.t * rule_subgraph list) list list) =
+      run_parmap caps ~ncores
+        ~on_exn:(fun (batch : (Fpath.t * rule_subgraph list) list)
+                     (exn : Exception.t) ->
+          Log.warn (fun m ->
+              m "interfile dispatch: lowering a batch of %d files failed, \
+                 their rules lower them themselves: %s"
+                (List.length batch) (Exception.to_string exn));
+          batch)
+        (List_.filter_map lower)
+        (chunks parse_batch_size
+           (Hashtbl.fold (fun file rsgs acc -> (file, rsgs) :: acc)
+              rsgs_by_file []))
+    in
+    let tbl = Hashtbl.create (Hashtbl.length rsgs_by_file) in
+    List.iter
+      (List.iter (fun (file, info_map) -> Hashtbl.replace tbl file info_map))
+      lowered_batches;
+    tbl
+  in
   (* Failed-init rules fall back to per-target intrafile (below). *)
   let (rule_states : rule_state list),
       (failed_rsgs : rule_subgraph list) =
@@ -1817,7 +1885,7 @@ let build_rule_states
         init_rule_state
           ~ast_table:(ast_table_for_lang full_ast_lookup
                         rsg.rsg_lang_context.lc_lang)
-          ~target_root_map rsg)
+          ~function_maps ~target_root_map rsg)
       rule_subgraphs
   in
   let langs =
