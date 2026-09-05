@@ -1262,24 +1262,34 @@ let parse_companion_files
     (parsed, failures)
   end
 
-(* Returns rule_states, interfile langs, and per-rule fallback target paths. *)
+(* Why the interfile graph of a language could not be built within the
+   scan's limits; its interfile rules then run per target. *)
+type build_limit = Build_timeout | Build_out_of_memory
+
+(* Returns rule_states, interfile langs, per-rule fallback target paths,
+   per-file index failures, and the rules whose graph build hit a limit. *)
 let build_rule_states
-    (caps : < Cap.fork >)
+    (caps : < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
     ~(ncores : int)
     ~(taint_interfile : bool)
+    ~(graph_timeout : int)
+    ~(max_memory_mb : int)
     ~(valid_rules : R.rule list)
     ~(targets : Target.t list)
     ~(targeting_conf : Find_targets.conf)
     ~(xconf : Match_env.xconfig)
     : rule_state list * Xlang.t list * (Rule_ID.t * Fpath.t list) list
-      * (Fpath.t * string) list =
+      * (Fpath.t * string) list * (Rule_ID.t * build_limit) list =
   (* A rule-local option counts, not just the global flag. *)
   let lang_rules =
     interfile_taint_rules_by_lang ~taint_interfile valid_rules
   in
   match lang_rules with
-  | [] -> ([], [], [], [])
+  | [] -> ([], [], [], [], [])
   | _ ->
+  (* the limits apply to the graph build only; the rest forks *)
+  let limit_caps = caps in
+  let caps = (caps :> < Cap.fork >) in
   Log.info (fun m ->
       m "interfile preprocess: %d languages with interfile taint rules"
         (List.length lang_rules));
@@ -1337,8 +1347,36 @@ let build_rule_states
   (* Per language: the context (when the build is usable) and the build's
      per-file failures — files whose functions/edges are missing from the
      graph.  The failures become scan errors so the recall loss is visible. *)
+  (* One graph build per language and root, under the scan's graph time
+     limit and its process-wide memory limit. *)
+  let bounded_build (lang : Lang.t) (project_root : Fpath.t) :
+      ((Interfile_graph.interfile_graph * Interfile_graph.resolved_asts
+        * (Fpath.t * string) list) option,
+       build_limit) result =
+    let time_limit =
+      if graph_timeout > 0 then
+        Some (float_of_int graph_timeout, (limit_caps :> < Cap.time_limit >))
+      else None
+    in
+    match
+      Memory_limit.run_with_global_memory_limit
+        (limit_caps :> < Cap.memory_limit >)
+        ~get_context:(fun () ->
+          Printf.sprintf "interfile graph build for %s" (Lang.to_string lang))
+        ~mem_limit_mb:max_memory_mb
+        (fun () ->
+          Time_limit.set_timeout_opt
+            ~name:"Interfile_dispatch.graph_build" time_limit (fun () ->
+              Interfile_graph.load_interfile_build caps
+                ~ncores ~targeting_conf lang project_root))
+    with
+    | Some build_opt -> Ok build_opt
+    | None -> Error Build_timeout
+    | exception Memory_limit.ExceededMemoryLimit _ -> Error Build_out_of_memory
+  in
   let per_lang :
-      (lang_context option * (Fpath.t * string) list) list =
+      (lang_context option * (Fpath.t * string) list
+       * (Rule_ID.t * build_limit) list) list =
     Hashtbl.fold (fun _ (project_root, root_targets) acc ->
       List_.map
         (fun ((lang : Lang.t), (rules : R.taint_rule list)) ->
@@ -1357,9 +1395,21 @@ let build_rule_states
               | Lockfile _ -> false)
               root_targets
           in
-          let build_opt =
-            Interfile_graph.load_interfile_build caps
-              ~ncores ~targeting_conf lang project_root
+          let build_opt, limit_failures =
+            match bounded_build lang project_root with
+            | Ok build_opt -> (build_opt, [])
+            | Error limit ->
+                Log.warn (fun m ->
+                    m "interfile preprocess: the graph build for %s under \
+                       %s hit the scan's %s; its taint rules run per target"
+                      (Lang.to_string lang) (Fpath.to_string project_root)
+                      (match limit with
+                       | Build_timeout -> "time limit"
+                       | Build_out_of_memory -> "memory limit"));
+                ( None,
+                  List_.map
+                    (fun (rule : R.taint_rule) -> (fst rule.R.id, limit))
+                    rules )
           in
           (match build_opt with
            | Some (_, asts, _) ->
@@ -1427,16 +1477,19 @@ let build_rule_states
                       lc_interfile_graph = interfile_graph;
                       lc_matching_targets = matching_targets })
           in
-          (lc_opt, file_failures))
+          (lc_opt, file_failures, limit_failures))
         lang_rules
       @ acc)
       targets_by_root []
   in
   let lang_contexts : lang_context list =
-    List.filter_map (fun (lc_opt, _) -> lc_opt) per_lang
+    List.filter_map (fun (lc_opt, _, _) -> lc_opt) per_lang
   in
   let index_build_failures : (Fpath.t * string) list =
-    List.concat_map (fun (_, failures) -> failures) per_lang
+    List.concat_map (fun (_, failures, _) -> failures) per_lang
+  in
+  let build_limit_failures : (Rule_ID.t * build_limit) list =
+    List.concat_map (fun (_, _, failures) -> failures) per_lang
   in
   let target_batches : (Lang.t * Fpath.t list) list =
     List.concat_map (fun (lc : lang_context) ->
@@ -1776,4 +1829,5 @@ let build_rule_states
   in
   (rule_states, langs,
    fallback_rule_target_paths @ failed_fallback @ failed_spec_fallback,
-   index_build_failures @ parse_failures @ companion_failures)
+   index_build_failures @ parse_failures @ companion_failures,
+   build_limit_failures)

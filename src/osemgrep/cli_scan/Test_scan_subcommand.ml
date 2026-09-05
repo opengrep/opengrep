@@ -591,9 +591,10 @@ let test_interfile_paths_scanned (caps : Scan_subcommand.caps) () =
                    (spf "%s has a byte count" (Fpath.to_string t.path))
                    true (t.num_bytes > 0))))
 
-(* The process-wide [--max-memory] bounds interfile dispatch too: exceeding
-   it aborts the analysis of a rule, reported as an out-of-memory error
-   against that rule. *)
+(* The process-wide [--max-memory] bounds the interfile graph build and
+   dispatch too: exceeding it aborts the analysis of a rule, reported as an
+   out-of-memory error against that rule; the rule then runs per target,
+   under the same limit. *)
 let test_interfile_limits (caps : Scan_subcommand.caps) () =
   let scan (args : string list) : Semgrep_output_v1_t.cli_output * Exit_code.t =
     with_env_app_token (fun () ->
@@ -620,13 +621,20 @@ let test_interfile_limits (caps : Scan_subcommand.caps) () =
   in
   let out, exit_code = scan [ "--max-memory"; "1" ] in
   Exit_code.Check.ok exit_code;
-  Alcotest.(check (list (pair string (option string))))
-    "the memory limit is reported against the rule"
-    [ ("Out of memory", Some "interfile-taint") ]
-    (out.errors
+  let errors =
+    out.errors
     |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
            ( Error.string_of_error_type e.type_,
-             Option.map Rule_ID.to_string e.rule_id )))
+             Option.map Rule_ID.to_string e.rule_id ))
+  in
+  Alcotest.(check bool) "every error is the memory limit" true
+    (errors <> []
+    && List.for_all
+         (fun ((type_, _) : string * string option) ->
+           String.equal type_ "Out of memory")
+         errors);
+  Alcotest.(check bool) "the memory limit is reported against the rule" true
+    (List.mem ("Out of memory", Some "interfile-taint") errors)
 
 (* The intrafile counterpart of the test above: without interfile, the dedup
    key omits the source, so the same two flows collapse into one finding. *)

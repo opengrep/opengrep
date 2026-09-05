@@ -451,6 +451,18 @@ If set to 0 will not have time limit. Defaults to 0.
   in
   Arg.value (Arg.opt Arg.int default info)
 
+let o_timeout_interfile_graph : int Term.t =
+  let default = default.core_runner_conf.interfile_graph_timeout in
+  let info =
+    Arg.info [ "interfile-graph-timeout" ]
+      ~doc:
+        {|Maximum time in seconds to spend building the interfile call graph
+of a language; past it, its interfile rules run on single files. If set to 0
+will not have time limit. Defaults to 0.
+|}
+  in
+  Arg.value (Arg.opt Arg.int default info)
+
 (* ------------------------------------------------------------------ *)
 (* Display options *)
 (* ------------------------------------------------------------------ *)
@@ -1260,7 +1272,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       scan_unknown_extensions semgrepignore_filename severity show_supported_languages
       skip_invalid_configs
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
-      timeout_interfile timeout_threshold (*  trace trace_endpoint *) use_git
+      timeout_interfile timeout_interfile_graph timeout_threshold
+      (*  trace trace_endpoint *) use_git
       validate version _version_check vim vim_outputs
       x_ignore_semgrepignore_files x_ls x_ls_long =
     (* Print a warning if any of the internal or experimental options.
@@ -1352,6 +1365,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         max_memory_mb =
           max_memory_mb ||| default.core_runner_conf.max_memory_mb;
         interfile_timeout = timeout_interfile;
+        interfile_graph_timeout = timeout_interfile_graph;
         max_match_per_file;
         dataflow_traces;
         nosem;
@@ -1504,6 +1518,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_skip_invalid_configs $ o_strict
     $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
+    $ o_timeout_interfile_graph
     $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate
     $ o_version $ o_version_check $ o_vim $ o_vim_outputs
     $ o_ignore_semgrepignore_files $ o_ls $ o_ls_long)
