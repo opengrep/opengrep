@@ -15,16 +15,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules.yml
  create mode 100644 stupid.py
 [<MASKED TIMESTAMP>][INFO]: Opengrep version: <MASKED>
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
 [<MASKED TIMESTAMP>][INFO]: Getting the rules
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][INFO]: loading local config from rules.yml
 [<MASKED TIMESTAMP>][INFO]: Done loading local config from rules.yml
 [<MASKED TIMESTAMP>][INFO]: Computing the targets
@@ -103,7 +94,8 @@ Files skipped:
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 1 finding.
 ASSERT exit code

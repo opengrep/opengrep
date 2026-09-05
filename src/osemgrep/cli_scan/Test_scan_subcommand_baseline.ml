@@ -79,6 +79,27 @@ let scan_both (caps : caps) ~(baseline : string) : unit =
 
 let head (caps : caps) : string = String.trim (git caps [ "rev-parse"; "HEAD" ])
 
+(* The paths a baseline scan of [root] reports, sorted, from its JSON. *)
+let baseline_paths (caps : caps) ~(baseline : string) (root : string) :
+    string list =
+  let exit_code, out =
+    Testo.with_capture stdout (fun () ->
+        without_settings (fun () ->
+            Scan_subcommand.main
+              (caps :> Scan_subcommand.caps)
+              (Array.of_list
+                 [
+                   "opengrep-scan"; "--experimental"; "--json"; "--quiet"; "-e";
+                   Printf.sprintf "$X = %s" sentinel; "-l"; "python";
+                   "--baseline-commit"; baseline; root;
+                 ])))
+  in
+  Exit_code.Check.ok exit_code;
+  (Semgrep_output_v1_j.cli_output_of_string out).results
+  |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+         Fpath.to_string m.path)
+  |> List.sort String.compare
+
 (* A repo with the given files committed, then [f]. *)
 let in_repo (files : F.t list) (f : unit -> unit) : unit -> unit =
  fun () ->
@@ -96,6 +117,29 @@ let test_one_commit_with_baseline (caps : caps) =
       let baseline = head caps in
       let (_ : string) = commit caps "noop" in
       scan_both caps ~baseline)
+
+(* python: target_manager.py, the fragment of the summary that says what
+   limited the scan: the baseline commit rather than the git listing *)
+let test_baseline_summary_line (caps : caps) =
+  in_repo [ F.File ("foo.py", x_line) ] (fun () ->
+      let baseline = head caps in
+      write "bar.py" y_line;
+      let (_ : string) = commit_all caps "another finding" in
+      let exit_code, output =
+        Testo.with_capture stderr (fun () -> scan ~baseline caps)
+      in
+      Exit_code.Check.ok exit_code;
+      Alcotest.(check bool)
+        "the block says what the scan was limited to" true
+        (String_.contains
+           ~term:
+             "Some files were skipped or only partially analyzed.\n\
+             \  Scan was limited to files changed since baseline commit."
+           output);
+      Alcotest.(check bool)
+        "and not what a scan without a baseline says" false
+        (String_.contains ~term:"Scan was limited to files tracked by git."
+           output))
 
 (* python: test_symlink; symlinks to a file, to a symlink, and broken *)
 let test_symlink (caps : caps) =
@@ -375,6 +419,108 @@ let test_worktree_dirty_from_eol_normalization (caps : caps) =
       let (_ : string) = commit_all caps "add the sentinel" in
       scan ~baseline caps |> Exit_code.Check.ok)
 
+(* A scanning root given as an absolute path selects the same changed files
+   as the equivalent relative one. git lists the changed paths relative to
+   the current directory, so without relativising the targets an absolute
+   root intersects with nothing and the scan silently reports no finding. *)
+let test_absolute_root_with_baseline (caps : caps) =
+  in_repo
+    [
+      F.Dir ("sub", [ F.File ("a.py", "x = 1\n") ]);
+      F.Dir ("other", [ F.File ("b.py", "y = 1\n") ]);
+    ]
+    (fun () ->
+      let baseline = head caps in
+      write "sub/a.py" ("x = 1\n" ^ x_line);
+      write "other/b.py" ("y = 1\n" ^ y_line);
+      let (_ : string) = commit_all caps ~serial:2 "two findings" in
+      let paths (root : string) : string list =
+        baseline_paths caps ~baseline root
+      in
+      let cwd = Sys.getcwd () in
+      Alcotest.(check (list string))
+        "the whole repository"
+        [ "other/b.py"; "sub/a.py" ]
+        (paths ".");
+      Alcotest.(check (list string))
+        "the repository by its absolute path"
+        [ "other/b.py"; "sub/a.py" ]
+        (paths cwd);
+      Alcotest.(check (list string))
+        "a subdirectory" [ "sub/a.py" ] (paths "sub");
+      Alcotest.(check (list string))
+        "a subdirectory by its absolute path" [ "sub/a.py" ]
+        (paths (Filename.concat cwd "sub")))
+
+(* A scanning root above the current directory selects the changed files
+   git lists there, which are the ones under the current directory. Without
+   spelling the targets from the current directory too, a '..' root keeps
+   that prefix, intersects with nothing, and the scan silently reports no
+   finding. *)
+let test_root_above_cwd_with_baseline (caps : caps) =
+  in_repo
+    [
+      F.Dir ("sub", [ F.File ("a.py", "x = 1\n") ]);
+      F.Dir ("other", [ F.File ("b.py", "y = 1\n") ]);
+    ]
+    (fun () ->
+      let baseline = head caps in
+      write "sub/a.py" ("x = 1\n" ^ x_line);
+      write "other/b.py" ("y = 1\n" ^ y_line);
+      let (_ : string) = commit_all caps ~serial:2 "two findings" in
+      Testutil_files.with_chdir (Fpath.v "sub") (fun () ->
+          Alcotest.(check (list string))
+            "the whole repository from one of its subdirectories" [ "a.py" ]
+            (baseline_paths caps ~baseline "..")))
+
+(* A scanning root spelled through a symlinked ancestor selects the same
+   changed files as the real one. The current directory the targets are
+   relativised against is free of symbolic links, so without resolving the
+   root the two spellings never meet and the scan reports no finding.
+   '/tmp' is such a symlink on macOS. *)
+let test_root_through_symlinked_ancestor (caps : caps) =
+  in_repo
+    [ F.Dir ("sub", [ F.File ("a.py", "x = 1\n") ]) ]
+    (fun () ->
+      let baseline = head caps in
+      write "sub/a.py" ("x = 1\n" ^ x_line);
+      let (_ : string) = commit_all caps ~serial:2 "a finding" in
+      let real = Sys.getcwd () in
+      Testutil_files.with_tempdir (fun (tmp : Fpath.t) ->
+          let link = Fpath.(tmp / "repo") in
+          Unix.symlink real (Fpath.to_string link);
+          Alcotest.(check (list string))
+            "the repository reached through a symlink" [ "sub/a.py" ]
+            (baseline_paths caps ~baseline
+               (Fpath.to_string Fpath.(link / "sub")))))
+
+(* The current directory need not exist at the baseline commit. There is
+   nothing of it to scan there, so the scan reports the findings of the head
+   rather than dying on the checkout of the baseline. *)
+let test_cwd_absent_from_baseline (caps : caps) =
+  in_repo [ F.File ("old.py", "x = 1\n") ] (fun () ->
+      let baseline = head caps in
+      Unix.mkdir "new" 0o755;
+      write "new/n.py" x_line;
+      let (_ : string) = commit_all caps ~serial:2 "a new directory" in
+      Testutil_files.with_chdir (Fpath.v "new") (fun () ->
+          Alcotest.(check (list string))
+            "the finding of a directory the baseline does not have" [ "n.py" ]
+            (baseline_paths caps ~baseline ".")))
+
+(* An empty --baseline-commit means no baseline, as it already does for
+   $SEMGREP_BASELINE_COMMIT: a CI template whose base-commit variable is
+   unset must still scan everything rather than fail the job. *)
+let test_empty_baseline (caps : caps) =
+  in_repo [ F.File ("foo.py", x_line) ] (fun () ->
+      let exit_code, output =
+        Testo.with_capture stdout (fun () -> scan ~baseline:"" caps)
+      in
+      Exit_code.Check.ok exit_code;
+      Alcotest.(check bool)
+        "the whole file is scanned, as without a baseline" true
+        (String_.contains ~term:"foo.py" output))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -386,6 +532,8 @@ let tests (caps : caps) =
   Testo.categorize "Osemgrep Scan baseline (e2e)"
     ([
        text "one commit with the baseline" (test_one_commit_with_baseline caps);
+       t "the summary line of a baseline scan"
+         (test_baseline_summary_line caps);
        text "symlinks" (test_symlink caps);
        text "renamed directory" (test_renamed_dir caps);
        text "directory symlink changed" (test_dir_symlink_changed caps);
@@ -409,6 +557,15 @@ let tests (caps : caps) =
          (test_conflicting_file_and_main_branch_names caps);
        text "worktree dirty from end-of-line normalisation"
          (test_worktree_dirty_from_eol_normalization caps);
+       t "an absolute scanning root" (test_absolute_root_with_baseline caps);
+       t "a scanning root above the current directory"
+         (test_root_above_cwd_with_baseline caps);
+       t "a scanning root through a symlinked ancestor"
+         (test_root_through_symlinked_ancestor caps);
+       t "a current directory absent from the baseline commit"
+         (test_cwd_absent_from_baseline caps);
+       t "an empty baseline commit scans everything"
+         (test_empty_baseline caps);
      ]
     @ (List.concat_map
          (fun (current : string) ->

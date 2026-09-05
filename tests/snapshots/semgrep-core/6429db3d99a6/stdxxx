@@ -63,15 +63,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 targets/basic/stupid.py
  create mode 100644 targets/basic/stupid_no_extension
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-[32m✔[0m [1mOpengrep OSS[0m
-  [32m✔[0m Basic security coverage for first-party code vulnerabilities.
-
-[1m  Loading rules from local config...[0m
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -107,7 +98,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 4 rules on 14 files: 2 findings.
 [33mASSERT[0m exit code

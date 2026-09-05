@@ -53,8 +53,8 @@ let cli_errors_to_report ~(verbose : bool) (errors : OutJ.cli_error list) :
   |> List.filter (fun (error : OutJ.cli_error) ->
          (not (has_own_line error)) && is_reported error)
 
-let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_target_bytes
-    ~skipped_groups ppf () : unit =
+let pp_summary ~respect_gitignore ~is_git_repo ~is_baseline_scan
+    ~(maturity : Maturity.t) ~max_target_bytes ~skipped_groups ppf () : unit =
   let {
     Skipped_report.ignored = semgrep_ignored;
     include_ = include_ignored;
@@ -69,15 +69,19 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
   in
 
   Fmt_.pp_heading ppf "Scan Summary";
-  (* TODO
-        if self.target_manager.baseline_handler:
-            limited_fragments.append(
-                "Scan was limited to files changed since baseline commit."
-            )
-  *)
-  (* Printed on its own: whether git left a file out is not known, so it
-     stays apart from the counts below. *)
-  if respect_gitignore && is_git_repo then
+  (* python: the "limited" fragment of the block below; a baseline scan
+     reports the commit it compares with rather than the git listing.
+     The git fragment is printed whenever the targets came from a git listing
+     and gitignore was respected, whether or not git left any file out.
+     The wrapper's condition, quoted below, counts the scanning roots that
+     are directories: with none, dir_targets and targets_not_in_git are both
+     0 and the fragment is not printed. So a scan whose roots are all files,
+     inside a git repository, prints the line here and did not in the
+     wrapper. *)
+  let limited : string option =
+    if is_baseline_scan then
+      Some "Scan was limited to files changed since baseline commit."
+    else if respect_gitignore && is_git_repo then
       (* # Each target could be a git repo, and we respect the git ignore
          # of each target, so to be accurate with this print statement we
          # need to check if any target is a git repo and not just the cwd
@@ -92,7 +96,9 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
                      targets_not_in_git += 1
                      continue
          if targets_not_in_git != dir_targets: *)
-    Fmt.pf ppf "Scan was limited to files tracked by git.@\n";
+      Some "Scan was limited to files tracked by git."
+    else None
+  in
   let opt_msg msg = function
     | [] -> None
     | xs -> Some (string_of_int (List.length xs) ^ " " ^ msg)
@@ -138,15 +144,16 @@ let pp_summary ~respect_gitignore ~is_git_repo ~(maturity : Maturity.t) ~max_tar
       "files only partially analyzed due to a parsing or internal Opengrep error"
       (Skipped_report.group_errors_by_file errors)
   in
-  match (out_skipped, out_partial) with
-  | [], None -> ()
-  | xs, parts -> (
+  match (limited, out_skipped, out_partial) with
+  | None, [], None -> ()
+  | limited, xs, parts -> (
       Fmt.pf ppf "Some files were skipped or only partially analyzed.@\n";
+      Option.iter (fun txt -> Fmt.pf ppf "  %s@\n" txt) limited;
       Option.iter (fun txt -> Fmt.pf ppf "  Partially scanned: %s@\n" txt) parts;
       match xs with
       | [] -> ()
       | xs ->
-          Fmt.pf ppf "  Scan skipped: %s.@\n" (String.concat ", " xs);
+          Fmt.pf ppf "  Scan skipped: %s@\n" (String.concat ", " xs);
           Fmt.pf ppf
             "  For a full list of skipped files, run opengrep with the \
              --verbose flag.@\n")
@@ -163,6 +170,10 @@ let pp_timeout_warnings ~(timeout_threshold : int) ppf
     |> Assoc.group_by fst
     |> List_.map (fun (path, xs) ->
            (path, xs |> List_.map snd |> List.sort Rule_ID.compare))
+    (* Assoc.group_by returns its groups in Hashtbl.fold order, i.e. an
+       arbitrary one; sorting by path makes the block reproducible. *)
+    |> List.sort (fun ((p1 : Fpath.t), _) ((p2 : Fpath.t), _) ->
+           Fpath.compare p1 p2)
   in
   timeouts_by_file
   |> List.iter (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->

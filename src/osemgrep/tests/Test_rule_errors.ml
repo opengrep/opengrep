@@ -32,11 +32,15 @@ let t = Testo.create
 
 let fixtures_root : Fpath.t = Fpath.v "tests/rule_errors"
 
+(* The "version" that opens the JSON output is the engine version, which
+   would make these snapshots drift every release; it is recognisable by the
+   "results" following it. *)
 let normalize : (string -> string) list =
   [
     Testutil_logs.mask_time;
     Testutil.mask_temp_paths ();
     Testutil_git.mask_temp_git_hash;
+    Testo.mask_pcre_pattern {|\{"version":"([^"]*)","results"|};
   ]
 
 let rule_files (dir : string) : string list =

@@ -46,9 +46,11 @@ let error_message ~rule_id ~(location : Out.location option)
     ~(error_type : Out.error_type) ~core_message : string =
   match error_type with
   (* an error of the command itself (e.g. a scanning root that does not
-   * exist), not of the scan engine: the message is already complete, as
-   * with pysemgrep's SemgrepError *)
-  | SemgrepError -> core_message
+   * exist, or no config given), not of the scan engine: the message is
+   * already complete, as with pysemgrep's SemgrepError *)
+  | SemgrepError
+  | MissingConfig ->
+      core_message
   | _ -> (
       let rule_id_str_opt = Option.map Rule_ID.to_string rule_id in
       let error_context =
@@ -150,11 +152,27 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
   | DependencyResolutionError _ ->
       Exit_code.ok ~__LOC__
 
+(* A parse error quotes the bytes it choked on, so an error entry takes
+ * strings from its target just as a match does, and every one of them is
+ * sanitised for the same reason (see 'sanitize_cli_match' below).
+ *)
+let sanitize_cli_error (e : Out.cli_error) : Out.cli_error =
+  let sanitize = Option.map String_.sanitize_utf8 in
+  {
+    e with
+    message = sanitize e.message;
+    long_msg = sanitize e.long_msg;
+    short_msg = sanitize e.short_msg;
+    help = sanitize e.help;
+  }
+
 (* Skipping the intermediate python SemgrepCoreError for now.
  * TODO: should we return an Error.Semgrep_core_error instead? like we
  * do in python? and then generate an Out.cli_error out of it?
  *)
 let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
+  sanitize_cli_error
+  @@
   match x with
   | {
    error_type;
@@ -276,8 +294,76 @@ let make_fixed_lines fixes_env fix path (start : Out.position)
   in
   Fixed_lines.make_fixed_lines fixes_env edit
 
+(* A target is a sequence of bytes and nothing guarantees it is UTF-8, but
+ * every output format has to be: a JSON or SARIF document with a stray byte
+ * in it is rejected by every reader. pysemgrep read its targets with
+ * errors="replace", so the bytes it could not decode became U+FFFD; we do the
+ * same to the strings a match takes from its target file, once, here.
+ *)
+let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
+  let sanitize = String_.sanitize_utf8 in
+  let sanitize_metavar_value (mval : Out.metavar_value) : Out.metavar_value =
+    {
+      mval with
+      abstract_content = sanitize mval.abstract_content;
+      propagated_value =
+        mval.propagated_value
+        |> Option.map (fun (v : Out.svalue_value) ->
+               {
+                 v with
+                 Out.svalue_abstract_content =
+                   sanitize v.Out.svalue_abstract_content;
+               });
+    }
+  in
+  let sanitize_intermediate_var (v : Out.match_intermediate_var) :
+      Out.match_intermediate_var =
+    { v with content = sanitize v.content }
+  in
+  let rec sanitize_call_trace (trace : Out.match_call_trace) :
+      Out.match_call_trace =
+    match trace with
+    | CliLoc (loc, content) -> CliLoc (loc, sanitize content)
+    | CliCall ((loc, content), vars, trace) ->
+        CliCall
+          ( (loc, sanitize content),
+            List_.map sanitize_intermediate_var vars,
+            sanitize_call_trace trace )
+  in
+  let sanitize_dataflow_trace (trace : Out.match_dataflow_trace) :
+      Out.match_dataflow_trace =
+    {
+      taint_source = trace.taint_source |> Option.map sanitize_call_trace;
+      intermediate_vars =
+        trace.intermediate_vars
+        |> Option.map (List_.map sanitize_intermediate_var);
+      taint_sink = trace.taint_sink |> Option.map sanitize_call_trace;
+    }
+  in
+  let extra = m.extra in
+  {
+    m with
+    extra =
+      {
+        extra with
+        message = sanitize extra.message;
+        lines = sanitize extra.lines;
+        fix = extra.fix |> Option.map sanitize;
+        fixed_lines = extra.fixed_lines |> Option.map (List_.map sanitize);
+        metavars =
+          extra.metavars
+          |> Option.map
+               (List_.map (fun ((name : string), (mval : Out.metavar_value)) ->
+                    (name, sanitize_metavar_value mval)));
+        dataflow_trace =
+          extra.dataflow_trace |> Option.map sanitize_dataflow_trace;
+      };
+  }
+
 let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
     (m : Out.core_match) : Out.cli_match =
+  sanitize_cli_match
+  @@
   match m with
   | {
    check_id = rule_id;

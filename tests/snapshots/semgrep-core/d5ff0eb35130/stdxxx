@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/defaulthttpclient.yaml
  create mode 100644 targets/defaulthttpclient.java
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -38,13 +29,11 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
     targets/defaulthttpclient.java
     ❯❱ rules.java.lang.security.audit.crypto.ssl.defaulthttpclient-is-deprecated.defaulthttpclient-is-deprecated
-          DefaultHttpClient is deprecated. Further, it does not support connections
-using TLS1.2, which makes
-          using DefaultHttpClient a security hazard.
-Use SystemDefaultHttpClient instead, which supports
+          DefaultHttpClient is deprecated. Further, it does not support connections using TLS1.2, which makes
+          using DefaultHttpClient a security hazard. Use SystemDefaultHttpClient instead, which supports
           TLS1.2.
 
-          ▶▶┆ Autofix ▶ HttpClient client = new SystemDefaultHttpClient();
+           ▶▶┆ Autofix ▶ HttpClient client = new SystemDefaultHttpClient();
            15┆ HttpClient client = new DefaultHttpClient();
 
 
@@ -52,7 +41,8 @@ Use SystemDefaultHttpClient instead, which supports
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 1 finding.
 --- targets/defaulthttpclient.java after the scan ---

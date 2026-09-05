@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/django-none-password-default.yaml
  create mode 100644 targets/django-none-password-default.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -38,13 +29,11 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
     targets/django-none-password-default.py
    ❯❯❱ rules.python.django.security.passwords.use-none-for-password-default.use-none-for-password-default
-          'new_password' is using the empty string as its default and is being used to set
-the password on
-          'user'. If you meant to set an unusable password, set
-the default value to 'None' or call
+          'new_password' is using the empty string as its default and is being used to set the password on
+          'user'. If you meant to set an unusable password, set the default value to 'None' or call
           'set_unusable_password()'.
 
-          ▶▶┆ Autofix ▶ new_password = request.data.get("password", None) validate_password(new_password, user=user)
+           ▶▶┆ Autofix ▶ new_password = request.data.get("password", None) validate_password(new_password, user=user)
               user.set_password(new_password) user.save()
            60┆ new_password = request.data.get("password", "")
            61┆ validate_password(new_password, user=user)
@@ -52,23 +41,21 @@ the default value to 'None' or call
            63┆ user.save()
             ⋮┆----------------------------------------
    ❯❯❱ rules.python.django.security.passwords.use-none-for-password-default.use-none-for-password-default
-          'password' is using the empty string as its default and is being used to set
-the password on 'user'.
-          If you meant to set an unusable password, set
-the default value to 'None' or call
+          'password' is using the empty string as its default and is being used to set the password on 'user'.
+          If you meant to set an unusable password, set the default value to 'None' or call
           'set_unusable_password()'.
 
-          ▶▶┆ Autofix ▶ def create_user(self, email, password=None): """ Creates and saves a Poster with the given
-              email and password. """ if not email: raise ValueError('Users must have an email address')
-              user = self.model(email=self.normalize_email(email)) user.set_password(password)
-              user.save(using=self._db) return user
+           ▶▶┆ Autofix ▶ def create_user(self, email, password=None): """ Creates and saves a Poster with the given
+              email and password. """ if not email: raise ValueError('Users must have an email
+              address') user = self.model(email=self.normalize_email(email))
+              user.set_password(password) user.save(using=self._db) return user
            71┆ def create_user(self, email, password=""):
            72┆     """
            73┆     Creates and saves a Poster with the given email and password.
            74┆     """
            75┆     if not email:
            76┆         raise ValueError('Users must have an email address')
-           77┆ 
+           77┆
            78┆     user = self.model(email=self.normalize_email(email))
            79┆     user.set_password(password)
            80┆     user.save(using=self._db)
@@ -79,7 +66,8 @@ the default value to 'None' or call
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 2 findings.
 --- targets/django-none-password-default.py after the scan ---

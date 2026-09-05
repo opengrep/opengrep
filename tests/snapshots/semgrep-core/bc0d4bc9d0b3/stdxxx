@@ -14,15 +14,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 6 insertions(+)
  create mode 100644 rules/bad16.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/bad16.yaml:2:9: Invalid rule schema in rule rules.eqeq-is-bad
   --> rules/bad16.yaml:2
@@ -41,14 +32,5 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 6 insertions(+)
  create mode 100644 rules/bad16.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-{"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq-is-bad","message":"Invalid rule schema at line rules/bad16.yaml:2:\n missing languages","path":"rules/bad16.yaml","long_msg":"missing languages","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad16.yaml","start":{"line":2,"col":9,"offset":15},"end":{"line":2,"col":20,"offset":26}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.eqeq-is-bad","message":"Invalid rule schema at line rules/bad16.yaml:2:\n missing languages","path":"rules/bad16.yaml","long_msg":"missing languages","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad16.yaml","start":{"line":2,"col":9,"offset":15},"end":{"line":2,"col":20,"offset":26}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 exit code: 7

@@ -14,7 +14,6 @@ type t =
    * like a Dir. *)
   | Git of git_config
   | R of registry_config_kind
-  | A of app_config_kind
 
 (* the config string after the 'git+' prefix: the clone URL and an optional
  * branch/tag given as a '#'-fragment (e.g. '...#v1.2.0'). *)
@@ -35,12 +34,6 @@ and registry_config_kind =
   | Auto
   (* p/r2c *)
   | R2c
-
-(* Semgrep App shortcuts *)
-and app_config_kind =
-  (* this requires also SEMGREP_REPO_NAME to be set *)
-  | Policy
-  | SupplyChain
 [@@deriving show]
 
 (* the in_docker parameter is useful just for better error reporting *)

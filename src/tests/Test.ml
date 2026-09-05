@@ -159,6 +159,7 @@ let tests (caps : Cap.all_caps) =
       Test_scan_subcommand.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_sarif.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_output.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_text.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_formats.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_findings.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_targets.tests (caps :> Scan_subcommand.caps);
@@ -234,6 +235,10 @@ let main (caps : Cap.all_caps) : unit =
         UConsole.setup ~highlight_setting:On ();
         (* TODO? use Log_semgrep.setup? *)
         Logs_.setup_basic ~level:(Some Logs.Debug) ();
+        (* The style renderer is process-global and the CLI's logging setup
+           leaves whatever it installed behind, so a test that ran with
+           colours enabled would colour the next test's log lines. *)
+        Fmt_tty.setup_std_outputs ~style_renderer:`None ();
         (* The file contents and positions cached by path: two tests can
            put different files under one relative path. *)
         Globals.reset ()

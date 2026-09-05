@@ -26,14 +26,14 @@ targets/basic/stupid.js
 targets/basic/stupid.py
 targets/basic/stupid_no_extension
 --- end input files ---
-[<MASKED TIMESTAMP>][[34mINFO[0m]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
 Initialized empty Git repository in <TMP>/<MASKED>/.git/
-[<MASKED TIMESTAMP>][[34mINFO[0m]: Running external command: 'git' 'config' 'user.name' 'Tester'
-[<MASKED TIMESTAMP>][[34mINFO[0m]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
-[<MASKED TIMESTAMP>][[34mINFO[0m]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
-[<MASKED TIMESTAMP>][[34mINFO[0m]: Running external command: 'git' 'config' 'gc.auto' '0'
-[<MASKED TIMESTAMP>][[34mINFO[0m]: Running external command: 'git' 'add' '.'
-[<MASKED TIMESTAMP>][[34mINFO[0m]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
 [main (root-commit) <MASKED>] Add files
  26 files changed, 213 insertions(+)
  create mode 100644 eqeq.yaml

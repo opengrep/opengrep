@@ -15,25 +15,12 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/exact-collision.yaml
  create mode 100644 targets/collision.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
 └─────────────┘
   Scanning 1 file tracked by git with 2 Code rules:
-
-  Language   Rules   Files          Origin   Rules
- ──────────────────────────        ────────────────
-  python         2       1          Custom       2
-
+  Scanning 1 file with 2 python rules.
 
 
 ┌─────────────────┐
@@ -44,13 +31,13 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
     ❯❱ rules.first-rule
           Semgrep found a match
 
-          ▶▶┆ Autofix ▶ once
+           ▶▶┆ Autofix ▶ once
             2┆ a = 1
 
     ❯❱ rules.second-rule
           Semgrep found a match
 
-          ▶▶┆ Autofix ▶ twice
+           ▶▶┆ Autofix ▶ twice
             2┆ a = 1
 
 
@@ -58,7 +45,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 2 rules on 1 file: 2 findings.
 --- targets/collision.py after the scan ---

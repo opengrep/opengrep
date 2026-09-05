@@ -100,6 +100,27 @@ let test_lines_of_range () =
   (* - Zero length range - *)
   check [ "bar" ] "foo\nbar\n" (4, 4)
 
+(* Every byte that is not part of a valid UTF-8 sequence becomes U+FFFD,
+   one per byte, as Python does when a file is read with errors="replace". *)
+let test_sanitize_utf8 () =
+  let check (expected : string) (str : string) : unit =
+    Alcotest.(check string) __LOC__ expected (String_.sanitize_utf8 str)
+  in
+  let rep : string = "\xef\xbf\xbd" in
+  check "" "";
+  check "ascii" "ascii";
+  (* already valid UTF-8 is returned unchanged, whatever its width *)
+  check "caf\xc3\xa9" "caf\xc3\xa9";
+  check "\xe2\x82\xac" "\xe2\x82\xac";
+  check "\xf0\x9f\x92\xa9" "\xf0\x9f\x92\xa9";
+  (* bytes that cannot start a sequence *)
+  check rep "\xff";
+  check (rep ^ rep) "\xff\xfe";
+  check ("caf" ^ rep) "caf\xe9";
+  (* a sequence cut short *)
+  check rep "\xe2\x82";
+  check (rep ^ "a") "\xe2\x82a"
+
 let tests =
   Testo.categorize "String_"
     [
@@ -107,4 +128,5 @@ let tests =
       t ~checked_output:(Testo.stdout ()) "show" test_show;
       t "trim_cr" test_trim_cr;
       t "lines_of_range" test_lines_of_range;
+      t "sanitize_utf8" test_sanitize_utf8;
     ]

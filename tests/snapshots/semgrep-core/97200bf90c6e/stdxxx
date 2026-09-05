@@ -32,11 +32,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 │ Scan Status │
 └─────────────┘
   Scanning 3 files tracked by git with 2 Code rules:
-
-  Language   Rules   Files          Origin   Rules
- ──────────────────────────        ────────────────
-  python         2       1          Custom       2
-
+  Scanning 1 file with 2 python rules.
 
 
 ┌──────────────────────────┐
@@ -63,7 +59,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 CI scan completed successfully.
   Found 2 findings (2 blocking) from 2 rules.

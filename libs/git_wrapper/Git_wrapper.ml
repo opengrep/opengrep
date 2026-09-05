@@ -264,7 +264,7 @@ Failed to run %s. Possible reasons:
 - the git binary is not available
 - the current working directory is not a git repository
 - the baseline commit is not a parent of the current commit
-  (if you are running through semgrep-app, check if you are setting `SEMGREP_BRANCH` or `SEMGREP_BASELINE_COMMIT` properly)
+  (in CI, check that `OPENGREP_BRANCH` / `SEMGREP_BRANCH` and `OPENGREP_BASELINE_COMMIT` / `SEMGREP_BASELINE_COMMIT` are set correctly)
 - the current working directory is not marked as safe
   (fix with `git config --global --add safe.directory $(pwd)`)
 
@@ -591,12 +591,47 @@ let shallow_clone ?ref_ (url : Uri.t) (dst : Fpath.t) : (unit, string) result =
             non-interactively: ssh-agent / credential helper)"
            (Uri.to_string url))
 
+(* The report pysemgrep printed whenever a git command failed
+ * (git.py _git_check_output): git's exit code and error output, then the
+ * reasons users actually hit, since a message naming only the command sends
+ * them looking in the wrong place. [exit_code] is None when the process could
+ * not be started at all, in which case [output] carries the reason.
+ *)
+let failed_git_command_msg ~(exit_code : int option) ~(output : string)
+    (args : string list) : string =
+  spf
+    "Command failed with exit code: %s\n\
+     -----\n\
+     Command failed with output:\n\
+     %s\n\n\
+     Failed to run 'git %s'. Possible reasons:\n\n\
+     - the git binary is not available\n\
+     - the current working directory is not a git repository\n\
+     - the baseline commit is not a parent of the current commit\n\
+     - the current working directory is not marked as safe\n\
+    \    (fix with `git config --global --add safe.directory $(pwd)`)\n\n\
+     Try running the command yourself to debug the issue."
+    (match exit_code with
+    | Some code -> string_of_int code
+    | None -> "unknown")
+    output (String.concat " " args)
+
 (* TODO: use better types? sha1? *)
 let merge_base (commit : string) : string =
-  let cmd = (git, [ "merge-base"; commit; "HEAD" ]) in
-  match UCmd.string_of_run ~trim:true cmd with
-  | Ok (merge_base, (_, `Exited 0)) -> merge_base
-  | _ -> raise (Error "Could not get merge base from git merge-base")
+  let args = [ "merge-base"; commit; "HEAD" ] in
+  let cmd = (git, args) in
+  match UCmd.string_of_run_with_stderr ~trim:true cmd with
+  | Ok (merge_base, (_, `Exited 0)), _ -> merge_base
+  | Ok (_, (_, status)), stderr ->
+      let exit_code =
+        match status with
+        | `Exited code -> Some code
+        (* like the wrapper's subprocess returncode for a signalled child *)
+        | `Signaled signal -> Some (-signal)
+      in
+      raise (Error (failed_git_command_msg ~exit_code ~output:stderr args))
+  | Error (`Msg m), _ ->
+      raise (Error (failed_git_command_msg ~exit_code:None ~output:m args))
 
 let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
   (* Canonicalise cwd on Windows so it agrees with git's canonical project
@@ -632,8 +667,13 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
   match UCmd.status_of_run ~quiet:true cmd with
   | Ok (`Exited 0) ->
       let work () =
-        Fpath.append temp_dir relative_path
-        |> Fpath.to_string |> CapSys.chdir caps#chdir;
+        let dir = Fpath.append temp_dir relative_path in
+        (* The current directory need not exist at [commit]: a scan started
+           from a directory added after it would otherwise die on the chdir.
+           An empty stand-in leaves that side of the scan without targets,
+           which is what a directory absent from the commit holds. *)
+        UFile.make_directories dir;
+        !!dir |> CapSys.chdir caps#chdir;
         f ()
       in
       let cleanup () =

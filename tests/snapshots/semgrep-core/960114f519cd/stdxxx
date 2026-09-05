@@ -14,15 +14,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 16 insertions(+)
  create mode 100644 rules/invalid.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/invalid.yaml:1:1: Invalid YAML
   --> rules/invalid.yaml:1
@@ -40,14 +31,5 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 16 insertions(+)
  create mode 100644 rules/invalid.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-{"version":"1.29.0","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/invalid.yaml:1:\n (approximate error location; error nearby after) error calling parser: mapping values are not allowed in this context character 0 position 0 returned: 0","path":"rules/invalid.yaml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"<MASKED>","results":[],"errors":[{"code":5,"level":"error","type":"Invalid YAML","message":"Invalid YAML at line rules/invalid.yaml:1:\n (approximate error location; error nearby after) error calling parser: mapping values are not allowed in this context character 0 position 0 returned: 0","path":"rules/invalid.yaml"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 exit code: 7

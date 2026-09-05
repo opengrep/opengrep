@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules.yml
  create mode 100644 stupid.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -41,18 +32,19 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
           A message with a long word aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa in
           it.
 
-            1┆ print("id = 1 AND
-               aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-               aaaaaaaaaa = TRUE" == "id = 1 AND
-               aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-               aaaaaaaaaa = TRUE")
+            1┆ print("id = 1 AND aaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+               aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =
+               TRUE" == "id = 1 AND aaaaaaaaaaaaaaaaaaaaaaaaaa
+               aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =
+               TRUE")
 
 
 
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 1 finding.
 ASSERT exit code

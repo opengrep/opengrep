@@ -186,9 +186,36 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
     | Find_targets.Rev rev -> rev
   in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
+  (* The whole differential scan works on paths relative to the current
+     directory: that is the form git lists ('--relative' in
+     Git_wrapper.status) and the form the baseline worktree is scanned in.
+     The targets of an absolute scanning root are absolute, and those of a
+     root above the current directory keep its '../' prefix; both are
+     spelled from the current directory here. Without this they match none
+     of git's paths and the scan silently reports no finding at all. *)
+  let cwd = Rpath.getcwd () |> Rpath.to_fpath |> Fpath.to_dir_path in
+  let relative_to_cwd (path : Fpath.t) : Fpath.t =
+    let absolute =
+      Fpath.normalize (if Fpath.is_abs path then path else Fpath.(cwd // path))
+    in
+    (* the current directory above is free of symbolic links and a root the
+       user spelled through one is not ('/tmp' on macOS, a junction on
+       Windows); the two forms cannot be relativized against each other.
+       Only the directory is resolved, so a target that is itself a symlink
+       keeps the name git lists it under. *)
+    let resolved =
+      let dir, last_segment = Fpath.split_base absolute in
+      match Rpath.of_fpath dir with
+      | Ok real -> Fpath.(Rpath.to_fpath real // last_segment)
+      | Error (_ : string) -> absolute
+    in
+    match Fpath.relativize ~root:cwd resolved with
+    | Some rel -> Fpath.normalize rel
+    | None -> Fpath.normalize path
+  in
   (* git reports plain relative paths; a "./"-prefixed scanning root would
      otherwise never match them *)
-  let targets = List_.map Fpath.normalize targets in
+  let targets = List_.map relative_to_cwd targets in
   let targets =
     let added_or_modified =
       status.added @ status.modified |> List_.map Fpath.v

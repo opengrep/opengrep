@@ -14,15 +14,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 13 insertions(+)
  create mode 100644 rules/badpaths1.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/badpaths1.yaml:8:7: Invalid rule schema in rule rules.arg-reassign
   --> rules/badpaths1.yaml:8
@@ -41,14 +32,5 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 13 insertions(+)
  create mode 100644 rules/badpaths1.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-{"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.arg-reassign","message":"Invalid rule schema at line rules/badpaths1.yaml:8:\n each paths should be a dictionary","path":"rules/badpaths1.yaml","long_msg":"each paths should be a dictionary","short_msg":"Invalid rule schema","spans":[{"file":"rules/badpaths1.yaml","start":{"line":8,"col":7,"offset":182},"end":{"line":8,"col":8,"offset":183}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.arg-reassign","message":"Invalid rule schema at line rules/badpaths1.yaml:8:\n each paths should be a dictionary","path":"rules/badpaths1.yaml","long_msg":"each paths should be a dictionary","short_msg":"Invalid rule schema","spans":[{"file":"rules/badpaths1.yaml","start":{"line":8,"col":7,"offset":182},"end":{"line":8,"col":8,"offset":183}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 exit code: 7

@@ -14,15 +14,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 9 insertions(+)
  create mode 100644 rules/extra_field.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][WARNING]: Skipping unknown field 'some-other-extra-field' in rule "rules.eqeq-bad"
 
 
@@ -36,9 +27,10 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
-Ran 0 rules on 0 files: 0 findings.
+Ran 1 rule on 0 files: 0 findings.
 exit code: 0
 --- begin input files ---
 rules/extra_field.yaml
@@ -49,15 +41,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 9 insertions(+)
  create mode 100644 rules/extra_field.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][WARNING]: Skipping unknown field 'some-other-extra-field' in rule "rules.eqeq-bad"
 
 
@@ -66,13 +49,14 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 └─────────────┘
   Scanning 1 file tracked by git with 1 Code rule:
   Nothing to scan.
-{"version":"1.29.0","results":[],"errors":[],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"<MASKED>","results":[],"errors":[],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 
 
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
-Ran 0 rules on 0 files: 0 findings.
+Ran 1 rule on 0 files: 0 findings.
 exit code: 0

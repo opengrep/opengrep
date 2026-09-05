@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/autofix.yaml
  create mode 100644 targets/autofix.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -40,10 +31,10 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
    ❯❯❱ rules.use-dict-get
           Use `.get()` method to avoid a KeyNotFound error
 
-          ▶▶┆ Autofix ▶ inputs.get(x)
+           ▶▶┆ Autofix ▶ inputs.get(x)
             5┆ inputs.get(x) = 1
             ⋮┆----------------------------------------
-          ▶▶┆ Autofix ▶ inputs.get((x + 1))
+           ▶▶┆ Autofix ▶ inputs.get((x + 1))
             6┆ if inputs.get((x + 1)) == True:
 
 
@@ -51,7 +42,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 2 findings.
 --- targets/autofix.py after the scan ---

@@ -293,15 +293,28 @@ let setup_basic ?(level = Some Logs.Warning) () =
        ~read_tags_from_env_vars:[] ~highlight:false ());
   ()
 
+(* The destination of the last file reporter. A process may call [setup] more
+   than once (the test binary, the language server), so we close the previous
+   channel instead of accumulating one per call. *)
+let log_file_dst : (Format.formatter * out_channel) option ref = ref None
+
+let close_log_file () : unit =
+  !log_file_dst
+  |> Option.iter (fun ((dst : Format.formatter), (oc : out_channel)) ->
+         Format.pp_print_flush dst ();
+         close_out_noerr oc);
+  log_file_dst := None
+
+let () = UStdlib.at_exit close_log_file
+
 (* A reporter writing the same messages as the main one, without colours,
    to a file it truncates. *)
 let file_reporter ~require_one_of_these_tags ~read_tags_from_env_vars
     (file : Fpath.t) : Logs.reporter =
+  close_log_file ();
   let oc = UStdlib.open_out (Fpath.to_string file) in
   let dst = UFormat.formatter_of_out_channel oc in
-  UStdlib.at_exit (fun () ->
-      Format.pp_print_flush dst ();
-      close_out oc);
+  log_file_dst := Some (dst, oc);
   mk_reporter ~dst ~require_one_of_these_tags ~read_tags_from_env_vars
     ~highlight:false ()
 

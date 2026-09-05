@@ -14,15 +14,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 10 insertions(+)
  create mode 100644 rules/bad12.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/bad12.yaml:6:9: Invalid rule schema in rule rules.bad12
   --> rules/bad12.yaml:6
@@ -41,14 +32,5 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  2 files changed, 10 insertions(+)
  create mode 100644 rules/bad12.yaml
  create mode 100644 target.py
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-{"version":"1.29.0","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.bad12","message":"Invalid rule schema at line rules/bad12.yaml:6:\n you can only negate directly inside `patterns:` or `all:`","path":"rules/bad12.yaml","long_msg":"you can only negate directly inside `patterns:` or `all:`","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad12.yaml","start":{"line":6,"col":9,"offset":124},"end":{"line":6,"col":20,"offset":135}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.bad12","message":"Invalid rule schema at line rules/bad12.yaml:6:\n you can only negate directly inside `patterns:` or `all:`","path":"rules/bad12.yaml","long_msg":"you can only negate directly inside `patterns:` or `all:`","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad12.yaml","start":{"line":6,"col":9,"offset":124},"end":{"line":6,"col":20,"offset":135}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
 exit code: 7

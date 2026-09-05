@@ -15,15 +15,6 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/imported-entity.yaml
  create mode 100644 targets/imported-entity.py
 
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-✔ Opengrep OSS
-  ✔ Basic security coverage for first-party code vulnerabilities.
-
-  Loading rules from local config...
-
 
 ┌─────────────┐
 │ Scan Status │
@@ -40,7 +31,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
    ❯❯❱ rules.exception-useless-parentheses
           Found useless parentheses
 
-          ▶▶┆ Autofix ▶ raise RandomError
+           ▶▶┆ Autofix ▶ raise RandomError
             4┆ raise RandomError()
 
 
@@ -48,7 +39,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
 
 Ran 1 rule on 1 file: 1 finding.
 --- targets/imported-entity.py after the scan ---

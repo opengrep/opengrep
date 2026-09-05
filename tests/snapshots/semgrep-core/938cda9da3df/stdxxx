@@ -62,7 +62,8 @@ Removed 1 finding that were in baseline scan
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
+Some files were skipped or only partially analyzed.
+  Scan was limited to files changed since baseline commit.
 
 CI scan completed successfully.
   Found 1 finding (1 blocking) from 1 rule.

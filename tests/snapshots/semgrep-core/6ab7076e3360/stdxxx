@@ -17,16 +17,7 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 rules/two_rules/eqeq.yaml
  create mode 100644 rules/two_rules/func.yaml
 [<MASKED TIMESTAMP>][[34mINFO[0m]: Opengrep version: <MASKED>
-
-┌──────────────┐
-│ Opengrep CLI │
-└──────────────┘
-
-[32m✔[0m [1mOpengrep OSS[0m
-  [32m✔[0m Basic security coverage for first-party code vulnerabilities.
-
 [<MASKED TIMESTAMP>][[34mINFO[0m]: Getting the rules
-[1m  Loading rules from local config...[0m
 [<MASKED TIMESTAMP>][[34mINFO[0m]: loading local config from rules/two_rules/func.yaml
 [<MASKED TIMESTAMP>][[34mINFO[0m]: Done loading local config from rules/two_rules/func.yaml
 [<MASKED TIMESTAMP>][[34mINFO[0m]: loading local config from rules/two_rules/eqeq.yaml
@@ -45,11 +36,7 @@ Rules:
 │ Scan Status │
 └─────────────┘
   Scanning 1 file tracked by git with 2 Code rules:
-
-  Language   Rules   Files          Origin   Rules
- ──────────────────────────        ────────────────
-  js             2       1          Custom       2
-
+  Scanning 1 file with 2 js rules.
 [<MASKED TIMESTAMP>][[34mINFO[0m]: scan: processing 1 files (skipping 0), with 2 rules (skipping 0 )
 [33m[WARN][0m Syntax error at line invalid_javascript.js:5:
  `key:` was unexpected
@@ -116,8 +103,8 @@ Files skipped:
 ┌──────────────┐
 │ Scan Summary │
 └──────────────┘
-Scan was limited to files tracked by git.
 Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
   Partially scanned: 1 files only partially analyzed due to a parsing or internal Opengrep error
 
 Ran 2 rules on 1 file: 3 findings.

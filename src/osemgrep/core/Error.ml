@@ -24,6 +24,36 @@ module OutJ = Semgrep_output_v1_j
 exception Semgrep_error of string * Exit_code.t option
 exception Exit_code of Exit_code.t
 
+(*****************************************************************************)
+(* Broken pipe *)
+(*****************************************************************************)
+
+(* A reader that closed the pipe ('opengrep ... | head') ends the output
+ * normally: nothing is reported and no error document can be written, since
+ * there is nowhere left to write it.
+ *)
+let is_broken_pipe (exn : exn) : bool =
+  match exn with
+  | Sys_error "Broken pipe"
+  | Unix.Unix_error (Unix.EPIPE, _, _) ->
+      true
+  | _ -> false
+
+(* The standard formatters are flushed again by Stdlib from at_exit, which
+ * would raise the broken pipe a second time, outside any handler. Sending
+ * what they still hold to a sink that cannot fail keeps that flush quiet.
+ *)
+let drop_buffered_stdout () : unit =
+  Format.pp_set_formatter_out_functions Format.std_formatter
+    {
+      out_string = (fun _ _ _ -> ());
+      out_flush = (fun () -> ());
+      out_newline = (fun () -> ());
+      out_spaces = (fun _ -> ());
+      out_indent = (fun _ -> ());
+      out_width = (fun _ ~pos:_ ~len:_ -> 0);
+    }
+
 (* TOPORT?
    (*
       python: class ErrorWithSpan(SemgrepError)
