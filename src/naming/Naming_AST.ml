@@ -982,15 +982,16 @@ class ['self] resolve_visitor env lang =
            * a call resolving to this name reaches the def's signature
            * (interprocedural analysis).
            *
-           * Scope: JS/TS resolve function names in any context (the
-           * interprocedural feature those users requested, see
+           * Scope: every function, method and nested function definition
+           * resolves, in every language (the interprocedural feature JS/TS
+           * users requested first, see
            *
            *     https://github.com/semgrep/semgrep/issues/2787).
            *
-           * Other languages resolve only *top-level* function defs.  Resolving
-           * class methods / nested functions regressed interprocedural taint —
+           * Resolving class methods once regressed interprocedural taint —
            * a helper method sanitizing its argument stopped being recognized
-           * (the Java XXE rules, which have a duplicated [setFeatures] helper).
+           * (the Java XXE rules, which have a duplicated [setFeatures]
+           * helper); those rules guard this now.
            * Top-level functions are what name-based rules need, e.g.
            *
            *     semgrep-rules/python/flask/correctness/same-handler-name.yaml
@@ -1007,20 +1008,7 @@ class ['self] resolve_visitor env lang =
            * But do we need a special scope for imported functions? *)
           (if has_function_namespace lang then
              declare_func env lang id id_info frettype
-           else
-            let resolve =
-              match lang with
-              | Lang.Js
-              | Lang.Ts ->
-                  true
-              | _ -> (
-                  match top_context env with
-                  | AtToplevel
-                  | InFunction ->
-                      true
-                  | _ -> false)
-            in
-            if resolve then (
+           else if is_resolvable_name_ctx env lang then (
               (* The scope a definition binds its name in: the file's imported
                  scope at the top level (see above), else the enclosing block,
                  a function's for a nested function, a class's for a method.
@@ -1039,7 +1027,7 @@ class ['self] resolve_visitor env lang =
               let sid = SId.of_tok ~binding ~file:env.file (snd id) in
               let resolved = untyped_ent (resolved_name_kind env lang, sid) in
               add_to_scope id resolved env.names;
-              set_resolved env id_info resolved)));
+              set_resolved env id_info resolved));
           super#visit_definition venv x
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
