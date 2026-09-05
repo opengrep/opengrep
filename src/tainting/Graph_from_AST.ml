@@ -660,7 +660,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
 let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
     (ranges : Range.t list) : Function_id.t list =
   (* Hash table to track ALL functions containing each range, along with function size *)
-  (* Set keyed by [compare_fn_id] so same-leaf funcs at different positions stay distinct. *)
+  (* Set keyed by [compare_fn_id], which compares positions, so same-leaf
+     funcs at different positions stay distinct. *)
   let module FnIdSet =
     Set.Make (struct
       type t = fn_id

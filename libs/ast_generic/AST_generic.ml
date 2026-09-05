@@ -284,58 +284,99 @@ type module_name =
    scheme as [Function_id]) or a synthetic IL temp ([idx >= 1]); the two never
    collide within a file.  Not a [Tok.t] because that lacks [hash] and its
    equality is position-insensitive, which would destroy sid identity. *)
+(* A symbol id names a binding of one file: the identity two occurrences of
+ * a name share when they refer to the same binding. It also carries the
+ * definition site of the occurrence that created it, for the call graph,
+ * which keys a function by where it is defined; the site is not part of
+ * the identity, so two definitions rebinding one name in one scope are
+ * equal while each keeps its own site. *)
 module SId : sig
   type t [@@deriving show, eq, ord, hash, sexp]
 
-  (* [?name] overrides the token text: synthetic names (e.g. lambda
-     [_tmp_lambda]) key [Function_id] on the ident string, not the text
-     of the located-fake token they carry. *)
-  val of_tok : ?name:string -> file:string -> Tok.t -> t
-  val of_index : file:string -> int -> t
+  (* A binding naming allocated, counted per file in traversal order, so
+     that two parses of the same bytes agree. [?name] overrides the token
+     text: synthetic names (e.g. lambda [_tmp_lambda]) key [Function_id]
+     on the ident string, not the text of the located-fake token. *)
+  val of_tok : ?name:string -> binding:int -> file:string -> Tok.t -> t
+
+  (* A definition naming did not bind, identified by its site. *)
+  val of_site : ?name:string -> file:string -> Tok.t -> t
+
+  (* An IL temporary, counted per lowering. *)
+  val temp : file:string -> int -> t
+
+  (* Injective within a file. *)
   val to_int : t -> int
 
-  (* Human-readable positional identity for AST dumps, not the [to_int] hash. *)
+  (* Identity and site, for logs. *)
   val to_string : t -> string
 
-  (* Positional identity; [idx] dropped (a temp is never a function-def key).
-     Used by [Function_id.of_sid] without consulting the call graph. *)
+  (* The definition site: name, file, line, column. Used by
+     [Function_id.of_sid] without consulting the call graph. *)
   val to_loc : t -> string * string * int * int
   val unsafe_default : t
   val is_unsafe_default : t -> bool
 end = struct
-  type t = { name : string; file : string; line : int; col : int; idx : int }
+  type identity =
+    | Binding of int
+    | Temp of int
+    | Site of int * int (* line, column *)
+  [@@deriving show, eq, ord, hash, sexp]
+
+  type site = { name : string; line : int; col : int }
+  [@@deriving show, eq, ord, hash, sexp]
+
+  type t = {
+    file : string;
+    identity : identity;
+    site : site; [@equal fun _a _b -> true] [@compare fun _a _b -> 0] [@hash.ignore]
+  }
   [@@deriving show, eq, ord, hash, sexp]
 
   (* Caller supplies the real [file] (single-file lowered program); a placeless
      [Error] token still gets the real file with zeroed position. *)
-  let of_tok ?name ~file tok =
+  let site_of_tok ?name tok =
     match Tok.loc_of_tok tok with
     | Ok loc ->
         {
           name = (match name with Some n -> n | None -> loc.Tok.str);
-          file;
           line = loc.Tok.pos.line;
           col = loc.Tok.pos.column;
-          idx = 0;
         }
-    | Error _ -> { name = ""; file; line = 0; col = 0; idx = 0 }
+    | Error _ -> { name = ""; line = 0; col = 0 }
 
-  let of_index ~file idx = { name = ""; file; line = 0; col = 0; idx }
+  let of_tok ?name ~binding ~file tok =
+    { file; identity = Binding binding; site = site_of_tok ?name tok }
 
-  let to_int t = Hashtbl.hash t
+  let of_site ?name ~file tok =
+    let site = site_of_tok ?name tok in
+    { file; identity = Site (site.line, site.col); site }
+
+  let no_site = { name = ""; line = 0; col = 0 }
+  let temp ~file idx = { file; identity = Temp idx; site = no_site }
+
+  let to_int t =
+    match t.identity with
+    | Binding n -> n
+    | Temp n -> -n
+    | Site (line, col) -> (line * 100_000) + col
 
   let to_string t =
-    if t.idx > 0 then
-      Printf.sprintf "#%d@%s" t.idx t.file
-    else if String.equal t.file "" && String.equal t.name "" then
-      "<unresolved>"
-    else Printf.sprintf "%s@%s:%d:%d" t.name t.file t.line t.col
+    match t.identity with
+    | Temp n -> Printf.sprintf "#%d@%s" n t.file
+    | Binding _
+    | Site _ ->
+        if String.equal t.file "" && String.equal t.site.name "" then
+          "<unresolved>"
+        else
+          Printf.sprintf "%s@%s:%d:%d#%d" t.site.name t.file t.site.line
+            t.site.col (to_int t)
 
-  let to_loc t = (t.name, t.file, t.line, t.col)
+  let to_loc t = (t.site.name, t.file, t.site.line, t.site.col)
 
-  (* The "not yet resolved" sentinel; left fileless (unlike [of_tok]/[of_index])
-     since naming overwrites it before the file would matter. *)
-  let unsafe_default = { name = ""; file = ""; line = 0; col = 0; idx = 0 }
+  (* The "not yet resolved" sentinel; left fileless since naming overwrites
+     it before the file would matter. *)
+  let unsafe_default = { file = ""; identity = Binding 0; site = no_site }
   let is_unsafe_default t = equal t unsafe_default
 end
 

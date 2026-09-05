@@ -2,7 +2,19 @@ module G = AST_generic
 
 (* Scope path outermost->innermost: [Some cls; Some meth] method, [] anonymous. *)
 type fn_id = IL.name option list
-[@@deriving show, eq, ord]
+[@@deriving show]
+
+(* Paths name definitions by where they are: two definitions rebinding one
+   name share a sid but are distinct functions. *)
+let compare_fn_id (a : fn_id) (b : fn_id) : int =
+  List.compare
+    (Option.compare (fun (n1 : IL.name) (n2 : IL.name) ->
+         Function_id.compare (Function_id.of_il_name n1)
+           (Function_id.of_il_name n2)))
+    a b
+
+let equal_fn_id (a : fn_id) (b : fn_id) : bool =
+  Int.equal (compare_fn_id a b) 0
 
 type t = {
   fn_id : fn_id;

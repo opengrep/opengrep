@@ -1,6 +1,11 @@
 (* Scope path outermost->innermost: [Some cls; Some meth] method, [] anonymous. *)
 type fn_id = IL.name option list
-[@@deriving show, eq, ord]
+[@@deriving show]
+
+(* Paths name definitions by where they are: two definitions rebinding one
+   name share a sid but are distinct functions. *)
+val compare_fn_id : fn_id -> fn_id -> int
+val equal_fn_id : fn_id -> fn_id -> bool
 
 (* [entity = None] for anonymous funcs. *)
 type t = {

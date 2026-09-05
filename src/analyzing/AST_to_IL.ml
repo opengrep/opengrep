@@ -162,11 +162,11 @@ let fresh_var ?(str = "_tmp") env tok : name =
   (* The sid is a per-file-unique synthetic index, NOT derived from the
      token's position: distinct temps can share a (fake) source position,
      so position cannot identify them. *)
-  let i = G.SId.of_index ~file:env.file (Atomic.fetch_and_add env.idx_counter 1) in
+  let i = G.SId.temp ~file:env.file (Atomic.fetch_and_add env.idx_counter 1) in
   { ident = (str, tok); sid = i; id_info = G.empty_id_info () }
 
 let fresh_label ?(label = "_label") env tok : label =
-  let i = G.SId.of_index ~file:env.file (Atomic.fetch_and_add env.idx_counter 1) in
+  let i = G.SId.temp ~file:env.file (Atomic.fetch_and_add env.idx_counter 1) in
   ((label, tok), i)
 
 let fresh_lval ?str env tok : lval =
