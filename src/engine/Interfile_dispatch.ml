@@ -1270,7 +1270,7 @@ let parse_companion_files
 
 (* Why the interfile graph of a language could not be built within the
    scan's limits; its interfile rules then run per target. *)
-type build_limit = Build_timeout | Build_out_of_memory
+type build_limit = Build_out_of_memory
 
 (* Returns rule_states, interfile langs, per-rule fallback target paths,
    per-file index failures, and the rules whose graph build hit a limit. *)
@@ -1278,7 +1278,6 @@ let build_rule_states
     (caps : < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
     ~(ncores : int)
     ~(taint_interfile : bool)
-    ~(graph_timeout : int)
     ~(max_memory_mb : int)
     ~(valid_rules : R.rule list)
     ~(targets : Target.t list)
@@ -1353,17 +1352,15 @@ let build_rule_states
   (* Per language: the context (when the build is usable) and the build's
      per-file failures — files whose functions/edges are missing from the
      graph.  The failures become scan errors so the recall loss is visible. *)
-  (* One graph build per language and root, under the scan's graph time
-     limit and its process-wide memory limit. *)
+  (* One graph build per language and root, under the scan's process-wide
+     memory limit. No time limit: the setup is data processing per file
+     plus one capped type fixpoint, and a limit set on this domain would
+     not reach the worker domains anyway; [--interfile-timeout] bounds
+     each rule's run. *)
   let bounded_build (lang : Lang.t) (project_root : Fpath.t) :
       ((Interfile_graph.interfile_graph * Interfile_graph.resolved_asts
         * (Fpath.t * string) list) option,
        build_limit) result =
-    let time_limit =
-      if graph_timeout > 0 then
-        Some (float_of_int graph_timeout, (limit_caps :> < Cap.time_limit >))
-      else None
-    in
     match
       Memory_limit.run_with_global_memory_limit
         (limit_caps :> < Cap.memory_limit >)
@@ -1371,13 +1368,10 @@ let build_rule_states
           Printf.sprintf "interfile graph build for %s" (Lang.to_string lang))
         ~mem_limit_mb:max_memory_mb
         (fun () ->
-          Time_limit.set_timeout_opt
-            ~name:"Interfile_dispatch.graph_build" time_limit (fun () ->
-              Interfile_graph.load_interfile_build caps
-                ~ncores ~targeting_conf lang project_root))
+          Interfile_graph.load_interfile_build caps
+            ~ncores ~targeting_conf lang project_root)
     with
-    | Some build_opt -> Ok build_opt
-    | None -> Error Build_timeout
+    | build_opt -> Ok build_opt
     | exception Memory_limit.ExceededMemoryLimit _ -> Error Build_out_of_memory
   in
   let per_lang :
@@ -1410,7 +1404,6 @@ let build_rule_states
                        %s hit the scan's %s; its taint rules run per target"
                       (Lang.to_string lang) (Fpath.to_string project_root)
                       (match limit with
-                       | Build_timeout -> "time limit"
                        | Build_out_of_memory -> "memory limit"));
                 ( None,
                   List_.map

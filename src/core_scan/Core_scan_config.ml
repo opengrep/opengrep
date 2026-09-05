@@ -82,8 +82,6 @@ type t = {
   max_memory_mb : int;
   (* maximum time to spend on the interfile analysis of a rule *)
   interfile_timeout : int;
-  (* maximum time to spend building the interfile graph of a language *)
-  interfile_graph_timeout : int;
   max_match_per_file : int;
   ncores : int;
   (* a.k.a -fast (on by default) *)
@@ -139,8 +137,6 @@ let default =
     max_memory_mb = 0;
     (* maximum time to spend on the interfile analysis of a rule *)
     interfile_timeout = 0;
-    (* maximum time to spend building the interfile graph of a language *)
-    interfile_graph_timeout = 0;
     max_match_per_file = 10_000;
     ncores = 1;
     (* a.k.a -fast, on by default *)

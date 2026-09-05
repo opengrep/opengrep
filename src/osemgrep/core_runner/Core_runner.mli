@@ -17,10 +17,8 @@ type conf = {
   dynamic_timeout_unit_kb : int;
   allow_rule_timeout_control : bool;
   timeout_threshold : int;
-  (* time limits of the interfile analysis of a rule and of the interfile
-     graph build of a language *)
+  (* time limit of the interfile analysis of a rule *)
   interfile_timeout : int;
-  interfile_graph_timeout : int;
   (* features *)
   nosem : bool;
   strict : bool;
