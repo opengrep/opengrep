@@ -1,11 +1,13 @@
 (* Index types wrap [Hashtbl.t]s (no snapshot): do not mutate after wrapping. *)
 
-(* [Layered (front, back)] answers a leaf with [front]'s functions followed
-   by [back]'s: a file's visible functions over the project's, without
-   copying the project table per file. *)
+(* [Layered (front, back)]: [front]'s functions for the leaf, then [back]'s.
+   [Override (front, back)]: [front]'s functions when it has the leaf, else
+   [back]'s. Both read [back], the project table shared by all files, and
+   never write it; [front] is a small table built for one file. *)
 type leaf_index =
   | Table of (string, Func_info.t list) Hashtbl.t
   | Layered of leaf_index * leaf_index
+  | Override of leaf_index * leaf_index
 type module_index = (Names.Module_qn.t, Func_info.t list) Hashtbl.t
 type alias_index = (string, Names.Module_qn.t) Hashtbl.t
 type file_module_index = (string, Names.Module_qn.t) Hashtbl.t
@@ -18,6 +20,7 @@ type class_alias_index = (string, string * name_set) Hashtbl.t
 
 let leaf_index_of_hashtbl tbl = Table tbl
 let leaf_index_layered ~front ~back = Layered (front, back)
+let leaf_index_override ~front ~back = Override (front, back)
 
 let rec find_leaf (idx : leaf_index) (leaf : string) : Func_info.t list =
   match idx with
@@ -27,6 +30,10 @@ let rec find_leaf (idx : leaf_index) (leaf : string) : Func_info.t list =
       | xs, [] -> xs
       | [], ys -> ys
       | xs, ys -> xs @ ys)
+  | Override (front, back) -> (
+      match find_leaf front leaf with
+      | [] -> find_leaf back leaf
+      | xs -> xs)
 
 let module_index_of_hashtbl tbl = tbl
 let alias_index_of_hashtbl tbl = tbl

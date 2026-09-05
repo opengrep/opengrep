@@ -1148,13 +1148,16 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       paths)
     interfile_fallback_rule_target_paths;
   let cwd = Fpath.v (Sys.getcwd ()) in
+  (* Consulted once per (rule, target) pair. *)
+  let interfile_rule_id_set : (Rule_ID.t, unit) Hashtbl.t =
+    Hashtbl.create (List.length interfile_rule_ids)
+  in
+  List.iter
+    (fun (rid : Rule_ID.t) -> Hashtbl.replace interfile_rule_id_set rid ())
+    interfile_rule_ids;
   let rule_runs_on_target (rule : R.t) (target : Target.t) : bool =
     let rid = fst rule.id in
-    let is_interfile =
-      List.exists (fun (i : Rule_ID.t) -> Rule_ID.equal i rid)
-        interfile_rule_ids
-    in
-    if not is_interfile then true
+    if not (Hashtbl.mem interfile_rule_id_set rid) then true
     else
       match Hashtbl.find_opt fallback_paths_by_rule rid with
       | None ->
