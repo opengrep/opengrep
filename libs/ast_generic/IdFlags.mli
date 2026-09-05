@@ -55,12 +55,6 @@ val is_static : t -> bool
 
 val set_static : t -> t
 
-val is_function_def : t -> bool
-(** Marks a function/method *definition* name, so the matcher can unify two
-    same-named definitions (now distinct positional sids) under one metavar. *)
-
-val set_function_def : t -> t
-
 val union : t -> t -> t
 (** Union two sets of flags. *)
 
