@@ -256,14 +256,15 @@ let targets_and_rules_of_lang_jobs (lang_jobs : Lang_job.t list) :
   (targets, rules)
 
 (* used only in Test_subcommand.ml *)
-let targets_for_files_and_rules (files : Fpath.t list) (rules : Rule.t list) :
-    Target.t list =
+let targets_and_rules_for_files (files : Fpath.t list) (rules : Rule.t list) :
+    Target.t list * Rule.t list =
   (* Test targets are explicit, like the files named on the command line of
-   * a scan. A target whose extension belongs to no language of the rules is
-   * analysed by every rule.
+   * a scan, and the rules are the ones a scan runs, a JavaScript rule taking
+   * TypeScript targets too. A target whose extension belongs to no language
+   * of the rules is analysed by every rule.
    *)
   let has_a_rule_language_extension (file : Fpath.t) : bool =
-    rules
+    add_typescript_to_javascript_rules_hack rules
     |> List.exists (fun (rule : Rule.t) ->
            Filter_target.filter_target_for_xlang rule.target_analyzer file)
   in
@@ -276,8 +277,7 @@ let targets_for_files_and_rules (files : Fpath.t list) (rules : Rule.t list) :
         |> Find_targets.Explicit_targets.of_list;
     }
   in
-  let lang_jobs = split_jobs_by_language conf rules files in
-  lang_jobs |> List.concat_map targets_of_lang_job
+  targets_and_rules_of_lang_jobs (split_jobs_by_language conf rules files)
 
 (*************************************************************************)
 (* SCA targeting *)
