@@ -86,7 +86,9 @@ type rule_profiling = {
 (* Save time information as we run each file *)
 type file_profiling = {
   file : Fpath.t;
-  (* Derived from length of Xtarget.lazy_content, to avoid system calls later. *)
+  (* The size the scan took when scheduling the target, to avoid system
+   * calls later; None only for the synthetic entries of an interfile
+   * error. *)
   file_size_bytes : int option;
   rule_times : rule_profiling list;
   run_time : float;
