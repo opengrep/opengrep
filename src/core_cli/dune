@@ -15,6 +15,7 @@
     process_limits
     ; we now also depends on spacegrep with full-rule-in-ocaml
     spacegrep
+    sarif ; Core_actions.sarif_sort
 
     ; internal deps in src/
     semgrep.core
@@ -24,7 +25,6 @@
     semgrep.analyzing.tests ; Test_analyze_generic.actions
     semgrep.engine.tests
     semgrep.data
-    semgrep_rpc
 
     ; experiments
     semgrep.synthesizing

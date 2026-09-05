@@ -8,19 +8,6 @@ type java_props_cache
 
 val mk_empty_java_props_cache : unit -> java_props_cache
 
-val hook_find_attribute_in_class :
-  (AST_generic.name -> string -> AST_generic.name option) option ref
-(** Pro inter-file (aka deep) *)
-
-val hook_check_tainted_at_exit_sinks :
-  (Taint_rule_inst.t ->
-  Taint_lval_env.t ->
-  IL.node ->
-  (Taint.taints * Shape_and_sig.Effect.sink list) option)
-  option
-  ref
-(** Pro: support for `at-exit: true` sinks *)
-
 val pattern_leaves_with_offsets :
   lang:Lang.t ->
   AST_generic.pattern ->

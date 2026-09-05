@@ -52,7 +52,6 @@ and origin =
   | CLI_argument
   | Local_file of Fpath.t
   | Registry
-  | App
   | Untrusted_remote of Uri.t
   (* For rules cloned from a remote git repository passed as 'git+<url>'.
    * Like Untrusted_remote, these are third-party rules and do not get the
@@ -270,9 +269,7 @@ let mk_import_callback (caps : < Cap.network ; Cap.tmp ; .. >) base str =
  *)
 let modify_registry_provided_metadata (origin : origin) (rule : Rule.t) =
   match origin with
-  | Registry
-  | App ->
-      rule
+  | Registry -> rule
   | CLI_argument
   | Local_file _
   | Untrusted_remote _

@@ -7,14 +7,14 @@
       let run profiler =
         Profiler.start profiler ~name:"my computation";
         my_computation ();
-        Profiler.stop profiler ~name:"my computation"
+        Profiler.stop_ign profiler ~name:"my computation"
 
       let () =
         let profiler = Profiler.make () in
         run profiler;
-        List.iter (fun (name, time) ->
-          Format.printf "%S took %fs\n%!" name time)
-          (Profiler.dump profiler)
+        Profiler.elapsed profiler ~name:"my computation"
+        |> Option.iter (fun time ->
+               Format.printf "%S took %fs\n%!" "my computation" time)
     ]}
 
     We can only record sequential tasks - the use of lwt {b is not} recommended.
@@ -33,20 +33,14 @@ val make : unit -> t
 val start : t -> name:string -> unit
 (** [start profiler ~name] starts to record [name]. *)
 
-val stop : t -> name:string -> unit
-(** [stop profiler ~name] stops to profile [name] and record the time spent
-    internally. If [name] does not exists or already recorder, this function
-    raises an [Invalid_arg]. *)
-
 val stop_ign : t -> name:string -> unit
-(** Same as {!val:stop} but ignores errors. *)
+(** [stop_ign profiler ~name] stops to profile [name] and record the time spent
+    internally. If [name] does not exist or is already recorded, it does
+    nothing. *)
 
 val record : t -> name:string -> (unit -> 'a) -> 'a
 (** [record t ~name fn] records the time spent by the given [fn] and save it
     into the profiler with the name [name]. *)
-
-val dump : t -> (string * float) list
-(** [dump profiler] returns all recorded metrics. *)
 
 val elapsed : t -> name:string -> float option
 (** [elapsed profiler ~name] is the time recorded for [name], or the time

@@ -20,9 +20,6 @@ type spec_matches = {
       (** Ranges matched by `pattern-sinks:` *)
 }
 
-val hook_mk_taint_spec_match_preds :
-  (Rule.rule -> spec_matches -> Taint_rule_inst.spec_predicates) option ref
-
 (* It could be a private function, but it is also used by Deep Semgrep. *)
 (* This [formula_cache] argument is exposed here because this function is also
    a subroutine but the cache itself should be created outside of the any main

@@ -36,9 +36,6 @@ val invalid_api_key : __LOC__:string -> t
 val scan_fail : __LOC__:string -> t
 val broken_pipe : __LOC__:string -> t
 
-(* to remove at some point *)
-val not_implemented_in_osemgrep : __LOC__:string -> t
-
 (*
    Test for equality without creating a new exit code that would get logged.
 *)
@@ -54,7 +51,6 @@ module Equal : sig
   val invalid_api_key : t -> bool
   val scan_fail : t -> bool
   val broken_pipe : t -> bool
-  val not_implemented_in_osemgrep : t -> bool
 end
 
 (*
@@ -82,5 +78,4 @@ module Check : sig
   val invalid_api_key : t -> unit
   val scan_fail : t -> unit
   val broken_pipe : t -> unit
-  val not_implemented_in_osemgrep : t -> unit
 end

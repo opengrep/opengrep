@@ -126,15 +126,6 @@ type t = {
 (* Merge helpers *)
 (*****************************************************************************)
 
-(* used in pro engine e.g. when merging secret mode results *)
-let merge a b : t =
-  {
-    rules = a.rules @ b.rules;
-    rules_parse_time = a.rules_parse_time +. b.rules_parse_time;
-    file_times = a.file_times @ b.file_times;
-    max_memory_bytes = Int.max a.max_memory_bytes b.max_memory_bytes;
-  }
-
 let add_times (a : times) (b : times) : times =
   {
     match_time = a.match_time +. b.match_time;

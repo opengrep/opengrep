@@ -44,7 +44,6 @@ type t = {
 }
 [@@deriving show]
 
-val merge : t -> t -> t
 val add_times : times -> times -> times
 val empty_partial_profiling : Fpath.t -> partial_profiling
 val empty_rule_profiling : Rule.t -> rule_profiling

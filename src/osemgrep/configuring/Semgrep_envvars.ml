@@ -73,21 +73,12 @@ let in_env var = env_opt var <> None
  *)
 type t = {
   semgrep_url : Uri.t;
-  version_check_url : Uri.t;
-  version_check_timeout : int;
-  version_check_cache_path : Fpath.t;
-  git_command_timeout : int;
-  src_directory : Fpath.t;
   user_home_dir : Fpath.t;
   user_dot_semgrep_dir : Fpath.t;
   no_color : bool;
-  is_ci : bool;
   in_docker : bool;
-  in_gh_action : bool;
   (* deprecated *)
   min_fetch_depth : int;
-  (* TODO(reynir): is this deprecated?! *)
-  mock_using_registry : bool;
   in_test: bool;
 }
 
@@ -122,27 +113,13 @@ let of_current_sys_env () : t =
     (* fail_open_url =
          env_or Uri.of_string "SEMGREP_FAIL_OPEN_URL"
            (Uri.of_string "https://fail-open.prod.semgrep.dev/failure"); *)
-    (* integration_name can take a label like "funkyintegration" for custom partner integrations *)
-    version_check_url =
-      env_or Uri.of_string "OPENGREP_VERSION_CHECK_URL"
-        (Uri.of_string "https://opengrep.dev/api/check-version");
-    version_check_timeout =
-      env_or int_of_string "OPENGREP_VERSION_CHECK_TIMEOUT" 2;
-    version_check_cache_path =
-      env_or Fpath.v "OPENGREP_VERSION_CACHE_PATH"
-        (Fpath.v (Sys.getcwd ()) / ".cache" / "opengrep_version");
-    git_command_timeout = env_or int_of_string "SEMGREP_GIT_COMMAND_TIMEOUT" 300;
-    src_directory = env_or Fpath.v "SEMGREP_SRC_DIRECTORY" (Fpath.v "/src");
     user_home_dir;
     user_dot_semgrep_dir;
     (* https://no-color.org/ and pysemgrep's terminal.py: the variable
        disables colour by being set, whatever its value *)
     no_color = in_env "NO_COLOR" || in_env "SEMGREP_FORCE_NO_COLOR";
-    is_ci = in_env "CI";
     in_docker = in_env "SEMGREP_IN_DOCKER";
-    in_gh_action = in_env "GITHUB_WORKSPACE";
     min_fetch_depth = env_or int_of_string "SEMGREP_GHA_MIN_FETCH_DEPTH" 0;
-    mock_using_registry = in_env "MOCK_USING_REGISTRY";
     in_test = in_env "OPENGREP_IN_TEST";
   }
 

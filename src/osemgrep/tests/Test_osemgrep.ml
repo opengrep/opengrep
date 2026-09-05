@@ -89,11 +89,9 @@ let test_subcommand_after_global_flag (caps : CLI.caps) () =
       ]
   in
   Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
-      Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml"
-        (fun () ->
-          CLI.main caps
-            [| "opengrep"; "--experimental"; "ci"; "--config"; "rules.yaml" |]
-          |> Exit_code.Check.findings))
+      CLI.main caps
+        [| "opengrep"; "--experimental"; "ci"; "--config"; "rules.yaml" |]
+      |> Exit_code.Check.findings)
 
 (* '--help' and '-h' print the text of Help.ml, which the tool writes
    itself rather than letting cmdliner generate it, so it is snapshotted.
@@ -125,20 +123,18 @@ let test_broken_pipe (caps : CLI.caps) () =
       ]
   in
   Testutil_git.with_git_repo repo_files (fun _cwd ->
-      Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml"
-        (fun () ->
-          Test_scan_helpers.with_stdout_to_closed_pipe (fun () ->
-              CLI.main caps
-                [|
-                  "opengrep";
-                  "scan";
-                  "--experimental";
-                  "--json";
-                  "--config";
-                  "rules.yaml";
-                  "many.py";
-                |])
-          |> Exit_code.Check.broken_pipe))
+      Test_scan_helpers.with_stdout_to_closed_pipe (fun () ->
+          CLI.main caps
+            [|
+              "opengrep";
+              "scan";
+              "--experimental";
+              "--json";
+              "--config";
+              "rules.yaml";
+              "many.py";
+            |])
+      |> Exit_code.Check.broken_pipe)
 
 (* Every exit code opengrep can return, from Exit_code.ml *)
 let documented_exit_codes : string list =

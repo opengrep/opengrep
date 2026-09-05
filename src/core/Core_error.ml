@@ -50,19 +50,6 @@ type t = {
 }
 [@@deriving show]
 
-(* Used only in pro in Deep_scan_phases.ml
- * TODO? we should probably get rid of it
- *)
-exception Unhandled_core_error of t
-
-let () =
-  Printexc.register_printer (function
-    | Unhandled_core_error core_error ->
-        Some
-          (Printf.sprintf "Core_error.Unhandled_core_error(%s)"
-             (show core_error))
-    | _ -> None)
-
 (* ugly alias because 'type t = t' is not allowed in ErrorSet below *)
 type core_error = t
 

@@ -94,9 +94,8 @@ let start_time_from_profiler_opt (profiler : Profiler.t) : Timedesc.Timestamp.t 
 (* Format dispatcher *)
 (*****************************************************************************)
 
-(* called also from RPC_return.ml *)
 let format
-    (* The scan and ci paths always pass this; RPC_return.ml does not. *)
+    (* The scan and ci paths always pass this. *)
     ?(profiler : Profiler.t option)
     (kind : Output_format.t)
     (cli_output : Out.cli_output) : string list =

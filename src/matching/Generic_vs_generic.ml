@@ -29,9 +29,6 @@ module H = AST_generic_helpers
 open Matching_generic
 module Log = Log_matching.Log
 
-let hook_find_possible_parents = ref None
-let hook_r2c_pro_was_here = ref None
-
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -432,12 +429,8 @@ let rec m_name_inner a b =
      the inner m_name function.
   *)
   let m_name = m_name_inner in
-  let try_parents dotted =
-    let parents =
-      match !hook_find_possible_parents with
-      | None -> []
-      | Some f -> f dotted
-    in
+  let try_parents _dotted =
+    let parents = [] in
     (* less: use a fold *)
     let rec aux xs =
       match xs with
@@ -1644,11 +1637,6 @@ and m_container_ordered_elements a b =
  *    style as typechecking could also bind metavariables in the process
  *)
 and m_compatible_type lang typed_mvar t e =
-  let t =
-    match !Naming_AST.pro_hook_normalize_ast_generic_type with
-    | Some f -> f lang t
-    | None -> t
-  in
   match (t.G.t, e.G.e) with
   (* for C specific literals *)
   | G.TyPointer (_, { t = TyN (G.Id (("char", _), _)); _ }), B.L (B.String _) ->
@@ -3738,34 +3726,7 @@ and m_class_parent_basic (a1, a2) (b1, b2) =
   let* () = m_option m_arguments a2 b2 in
   return ()
 
-and m_class_parent a b =
-  m_class_parent_basic a b >!> (* less: could be >||> *)
-                           fun () ->
-  match (a, b) with
-  (* less: this could be generalized, but let's go simple first *)
-  | (a1, None), ({ t = B.TyN (B.Id (id, { id_resolved; _ })); _ }, None) ->
-      let xs =
-        match !id_resolved with
-        | Some (B.ImportedEntity canonical, _sid) ->
-            G.canonical_to_dotted (snd id) canonical
-        | _ -> [ id ]
-      in
-      (* deep: *)
-      let candidates =
-        match !hook_find_possible_parents with
-        | None -> []
-        | Some f -> f xs
-      in
-      (* less: use a fold *)
-      let rec aux xs =
-        match xs with
-        | [] -> fail ()
-        | x :: xs ->
-            let t = B.TyN x |> B.t in
-            m_type_ a1 t >||> aux xs
-      in
-      aux candidates
-  | _ -> fail ()
+and m_class_parent a b = m_class_parent_basic a b
 
 (* ------------------------------------------------------------------------- *)
 (* Class definition *)
