@@ -23,7 +23,8 @@ open Callee_resolution
 (* Where a callback name may be looked up. A bare name or a [self.x] form
    searches the caller's scope, class and the project's free functions; a
    dotted name is confined to its receiver: the functions of the module it
-   names, or the methods of the class the receiver is declared as. A dotted
+   names, the methods of the class the receiver is declared as, or, for a
+   receiver of unknown type, any class's method with that leaf. A dotted
    leaf never denotes a free function of the current package: a constant or
    field that happens to share the name of the enclosing function must not
    become a reference to that function, a self-edge whose signature then
@@ -32,33 +33,32 @@ type callback_scope =
   | Unscoped
   | In_module of Names.Module_qn.t
   | Method_of of string
+  | Method_by_leaf
 
 let is_self_receiver (s : string) : bool =
   match s with
   | "self" | "this" | "cls" | "$this" -> true
   | _ -> false
 
-(* The scope of a [recv.leaf] argument, [None] when the receiver is a value
-   of unknown type: such a leaf is a field or a method value we cannot
-   resolve by name. *)
+(* The scope of a [recv.leaf] argument. *)
 let scope_of_receiver ~(func_lookup : Func_lookup.t)
-    ((recv, recv_info) : G.ident * G.id_info) : callback_scope option =
-  if is_self_receiver (fst recv) then Some Unscoped
+    ((recv, recv_info) : G.ident * G.id_info) : callback_scope =
+  if is_self_receiver (fst recv) then Unscoped
   else
     match Func_lookup.resolve_alias func_lookup (fst recv) with
-    | Some qn -> Some (In_module qn)
+    | Some qn -> In_module qn
     | None -> (
         match !(recv_info.G.id_resolved) with
         | Some (G.ImportedModule parts, _) ->
-            Some (In_module (Names.Module_qn.of_parts parts))
+            In_module (Names.Module_qn.of_parts parts)
         | _ -> (
             match
               Option.bind
                 (Type_infer.declared_class_of_name (G.Id (recv, recv_info)))
                 Ty_leaf.leaf_of_name
             with
-            | Some cls -> Some (Method_of cls)
-            | None -> None))
+            | Some cls -> Method_of cls
+            | None -> Method_by_leaf))
 
 let rec extract_callbacks_from_arg ~(lang : Lang.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty) (arg_expr : G.expr) :
@@ -104,11 +104,9 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
   (* DotAccess: module.func, self.method or obj.method — confined to the
      receiver's scope, see [scope_of_receiver]. *)
   | G.DotAccess
-      ({ e = G.N (G.Id (recv, recv_info)); _ }, _, G.FN (G.Id (id, id_info))) -> (
-      match scope_of_receiver ~func_lookup (recv, recv_info) with
-      | Some scope ->
-          [ (AST_to_IL.var_of_id_info id id_info, snd id, None, scope) ]
-      | None -> [])
+      ({ e = G.N (G.Id (recv, recv_info)); _ }, _, G.FN (G.Id (id, id_info))) ->
+      [ (AST_to_IL.var_of_id_info id id_info, snd id, None,
+         scope_of_receiver ~func_lookup (recv, recv_info)) ]
   (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
      named (local or remote) function. Structure:
      OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
@@ -179,6 +177,42 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
   | _ -> []
 
 
+(* Any class's method with the callback's leaf; the callback's file wins on
+   homonym collisions. *)
+let class_method_by_leaf ~(all_funcs : func_info list)
+    (callback_name : IL.name) : func_info option =
+  let callback_name_str = fst callback_name.IL.ident in
+  let callback_file =
+    if Tok.is_fake (snd callback_name.IL.ident) then None
+    else
+      try Some (Fpath.to_string
+                  (Tok.file_of_tok
+                     (snd callback_name.IL.ident)))
+      with Tok.NoTokenLocation _ -> None
+  in
+  let method_candidates = List.filter (fun f ->
+    match Func_info.as_method f.fn_id with
+    | Some (_, m) ->
+      String.equal (fst m.IL.ident) callback_name_str
+    | None -> false
+  ) all_funcs in
+  match callback_file, method_candidates with
+  | _, [] -> None
+  | _, [only] -> Some only
+  | Some f, (first :: _ as cands) ->
+    let same_file = List.filter (fun fi ->
+      match List_.init_and_last_opt fi.fn_id with
+      | Some (_, Some n) when not (Tok.is_fake (snd n.IL.ident)) ->
+        (try String.equal
+               (Fpath.to_string (Tok.file_of_tok (snd n.IL.ident))) f
+         with Tok.NoTokenLocation _ -> false)
+      | _ -> false
+    ) cands in
+    (match same_file with
+     | hd :: _ -> Some hd
+     | [] -> Some first)
+  | None, hd :: _ -> Some hd
+
 (* Helper to identify a callback fn_id, checking nested functions in same scope first *)
 let identify_callback ?(all_funcs = [])
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
@@ -197,6 +231,9 @@ let identify_callback ?(all_funcs = [])
              Func_info.is_method_of ~class_name:cls
                ~method_name:callback_name_str f.fn_id)
       |> Option.map (fun (f : func_info) -> f.fn_id)
+  | Method_by_leaf ->
+      Option.map (fun (f : func_info) -> f.fn_id)
+        (class_method_by_leaf ~all_funcs callback_name)
   | Unscoped ->
   let current_class_for_narrow =
     Option.map (fun (c : IL.name) -> fst c.IL.ident)
@@ -262,40 +299,7 @@ let identify_callback ?(all_funcs = [])
               Log.debug (fun m -> m "HOF_EXTRACT: Found top-level callback %s" callback_name_str);
               Some f.fn_id
           | None ->
-              (* Any-class method with matching leaf; same-file wins on homonym collisions. *)
-              let any_method_match =
-                let callback_file =
-                  if Tok.is_fake (snd callback_name.IL.ident) then None
-                  else
-                    try Some (Fpath.to_string
-                                (Tok.file_of_tok
-                                   (snd callback_name.IL.ident)))
-                    with Tok.NoTokenLocation _ -> None
-                in
-                let method_candidates = List.filter (fun f ->
-                  match Func_info.as_method f.fn_id with
-                  | Some (_, m) ->
-                    String.equal (fst m.IL.ident) callback_name_str
-                  | None -> false
-                ) all_funcs in
-                match callback_file, method_candidates with
-                | _, [] -> None
-                | _, [only] -> Some only
-                | Some f, (first :: _ as cands) ->
-                  let same_file = List.filter (fun fi ->
-                    match List_.init_and_last_opt fi.fn_id with
-                    | Some (_, Some n) when not (Tok.is_fake (snd n.IL.ident)) ->
-                      (try String.equal
-                             (Fpath.to_string (Tok.file_of_tok (snd n.IL.ident))) f
-                       with Tok.NoTokenLocation _ -> false)
-                    | _ -> false
-                  ) cands in
-                  (match same_file with
-                   | hd :: _ -> Some hd
-                   | [] -> Some first)
-                | None, hd :: _ -> Some hd
-              in
-              (match any_method_match with
+              (match class_method_by_leaf ~all_funcs callback_name with
                | Some f ->
                  Log.debug (fun m -> m "HOF_EXTRACT: Found any-class-method callback %s" callback_name_str);
                  Some f.fn_id
