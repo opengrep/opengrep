@@ -223,6 +223,21 @@ let tests parse_program =
              `global $counter` rebinding pair in uses_global(). *)
           check_resolutions ast "$counter"
             [ "Global"; "LocalVar"; "LocalVar"; "Global"; "Global" ]);
+      t "php function body sees the file scope only through directives"
+        (fun () ->
+          let file =
+            Fpath.v (Filename.concat tests_path "naming/php/function_scope.php")
+          in
+          let ast = parse_program file in
+          Naming_AST.resolve Lang.Php ast;
+          (* Occurrences: the top-level assignment, the read in a function
+             body without a directive, the arrow function's read, the
+             closure's read through its [use], the read after an upper-case
+             [GLOBAL]. *)
+          check_resolutions ast "$config"
+            [ "Global"; "Unresolved"; "Global"; "Global"; "Global" ];
+          (* the directive creates the global *)
+          check_resolutions ast "$created" [ "Global" ]);
       t "js bare assignment mutates outer binding" (fun () ->
           let file =
             Fpath.v (Filename.concat tests_path "naming/js/assign_outer.js")
