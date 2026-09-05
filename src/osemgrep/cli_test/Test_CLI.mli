@@ -10,6 +10,8 @@ type conf = {
   target : target_kind;
   ignore_todo : bool;
   json : bool;
+  (* --force-color, which wins over $NO_COLOR like it does for a scan *)
+  force_color : bool;
   optimizations : bool;
   strict : bool;
   (* Whether to emit "matching diagnosis", which analyzes failing

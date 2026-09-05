@@ -91,7 +91,7 @@ let cmdline_term : conf Term.t =
       optimizations output rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions subdir suppress_errors taint_intrafile text
       text_outputs time_flag timeout _timeout_interfileTODO timeout_threshold
-      use_git version_check vim vim_outputs =
+      use_git _version_check vim vim_outputs =
     let output_format : Output_format.t =
       SC.output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
         ~gitlab_sast ~gitlab_secrets ~junit_xml
@@ -217,8 +217,6 @@ let cmdline_term : conf Term.t =
         (* like in ci.py: ci reports and gates, it never modifies the
            checkout *)
         autofix = false;
-        (* accepted like in ci.py, where the version check is inert *)
-        version_check;
         output_conf;
         incremental_output = false;
         incremental_output_postprocess = false;
@@ -303,7 +301,7 @@ let man : Cmdliner.Manpage.block list =
   ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep ci" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep ci" ~doc ~man ~exits:CLI_common.exits_ci
 
 (*****************************************************************************)
 (* Entry point *)

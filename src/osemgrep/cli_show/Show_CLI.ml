@@ -194,7 +194,7 @@ let man : Cmdliner.Manpage.block list =
   ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep show" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep show" ~doc ~man ~exits:CLI_common.exits_show
 
 (*****************************************************************************)
 (* Entry point *)

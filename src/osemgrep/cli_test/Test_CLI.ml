@@ -27,6 +27,8 @@ type conf = {
    * the playground? and the optimizations and strict?
    *)
   json : bool;
+  (* --force-color, which wins over $NO_COLOR like it does for a scan *)
+  force_color : bool;
   (* take the whole core_runner_conf? like for validate? *)
   optimizations : bool;
   strict : bool;
@@ -81,7 +83,7 @@ let o_config : string list Term.t =
   H.string_list_with_env [ "c"; "f"; "config" ] ~env:"SEMGREP_RULES"
     ~doc:
       {|YAML configuration file, directory of YAML files ending in
-.yml|.yaml, URL of a configuration file, or Opengrep registry entry name.
+.yml|.yaml, URL of a configuration file, or Semgrep registry entry name.
 May also be set with SEMGREP_RULES, a whitespace-separated list of rule
 sources.
 |}
@@ -203,8 +205,9 @@ let target_kind_of_roots_and_config target_roots config =
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common config json matching_diagnosis max_memory_mb strict
-      taint_intrafile test_ignore_todo timeout timeout_threshold =
+  let combine args common config force_color json matching_diagnosis
+      max_memory_mb strict taint_intrafile test_ignore_todo timeout
+      timeout_threshold =
     let target =
       target_kind_of_roots_and_config (Fpath_.of_strings args) config
     in
@@ -212,6 +215,7 @@ let cmdline_term : conf Term.t =
       target;
       strict;
       json;
+      force_color;
       ignore_todo = test_ignore_todo;
       common;
       optimizations = true;
@@ -223,9 +227,11 @@ let cmdline_term : conf Term.t =
     }
   in
   Term.(
-    const combine $ o_args $ CLI_common.o_common $ o_config $ o_json
-    $ o_matching_diagnosis $ o_max_memory_mb $ o_strict $ o_taint_intrafile
-    $ o_test_ignore_todo $ o_timeout $ o_timeout_threshold)
+    const combine $ o_args $ CLI_common.o_common $ o_config
+    $ CLI_common.o_force_color ~default:Output.default.force_color
+    $ o_json $ o_matching_diagnosis
+    $ o_max_memory_mb $ o_strict $ o_taint_intrafile $ o_test_ignore_todo
+    $ o_timeout $ o_timeout_threshold)
 
 let doc = "testing the rules"
 
@@ -236,7 +242,7 @@ let man : Cmdliner.Manpage.block list =
   ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep test" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep test" ~doc ~man ~exits:CLI_common.exits_test
 
 (*****************************************************************************)
 (* Entry point *)

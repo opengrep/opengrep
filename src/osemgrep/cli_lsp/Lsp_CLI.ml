@@ -28,7 +28,7 @@ let man : Cmdliner.Manpage.block list =
   [ `S Cmdliner.Manpage.s_description; `P "Language server mode!!" ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep lsp" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep lsp" ~doc ~man ~exits:CLI_common.exits_lsp
 
 (*****************************************************************************)
 (* Entry point *)

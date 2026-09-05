@@ -28,8 +28,6 @@ type conf = {
   (* osemgrep-only: *)
   incremental_output : bool;
   incremental_output_postprocess : bool;
-  (* Networking options *)
-  version_check : bool;
   (* Debugging/logging/profiling options *)
   common : CLI_common.conf;
   (* trace : bool; *)

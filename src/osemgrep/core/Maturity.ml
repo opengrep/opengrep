@@ -14,7 +14,10 @@ module Term = Cmdliner.Term
 type t =
   (* alt: we could use an option type also *)
   | Default
-  (* Enables the features still marked experimental *)
+  (* What --experimental selects. It used to enable the features still
+   * marked experimental; those gates are gone, so nothing behaves
+   * differently under it and the flag is only accepted for compatibility.
+   *)
   | Experimental
   (* Leaving on the edge! This is used to specify whether to get rid of
    * pysemgrep behavior/limitations/errors or to keep how things were done
