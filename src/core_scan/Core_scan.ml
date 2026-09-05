@@ -983,7 +983,8 @@ let iter_unified_and_get_matches_and_exn_to_errors
     (targets : Target.t list)
     : Core_profiling.file_profiling Core_result.match_result list
       * Target.t list
-      * PM.t list =
+      * PM.t list
+      * E.t list =
   (* Interfile tasks first (heaviest), then targets by decreasing size
      for greedy scheduling. *)
   let work_items =
@@ -1011,12 +1012,13 @@ let iter_unified_and_get_matches_and_exn_to_errors
          (caps :> < Cap.memory_limit ; Cap.time_limit >) config target_handler)
       work_items
   in
-  let file_results, scanned_targets, interfile_matches =
+  let file_results, scanned_targets, interfile_matches, interfile_rule_errors =
     List.fold_left
       (fun ((files :
                Core_profiling.file_profiling Core_result.match_result list),
             (scanned : Target.t list),
-            (interfile : PM.t list))
+            (interfile : PM.t list),
+            (rule_errors : E.t list))
         (result : (scan_work_result, scan_work_error) result) ->
         match result with
         | Ok (Target_result (res, target_opt)) ->
@@ -1025,9 +1027,9 @@ let iter_unified_and_get_matches_and_exn_to_errors
             | Some t -> t :: scanned
             | None -> scanned
           in
-          (res :: files, scanned', interfile)
+          (res :: files, scanned', interfile, rule_errors)
         | Ok (Interfile_result matches) ->
-          (files, scanned, List.rev_append matches interfile)
+          (files, scanned, List.rev_append matches interfile, rule_errors)
         | Error (Target_error (target, e)) ->
           let internal_path = Target.internal_path target in
           let noprof =
@@ -1038,29 +1040,21 @@ let iter_unified_and_get_matches_and_exn_to_errors
             Core_result.mk_match_result [] errors noprof
           in
           (Core_result.add_run_time 0.0 match_result :: files,
-           target :: scanned, interfile)
+           target :: scanned, interfile, rule_errors)
         | Error (Interfile_error (rule_id, err)) ->
           (* Surface the failure as an error rather than silently dropping
-             findings; attribute it to a synthetic path since there's no
-             single target file to point at. *)
+             findings. A rule spans many files, so the error carries the
+             rule id and no path, and goes with the scan's errors rather
+             than through a per-target result. *)
           Logs.warn (fun m ->
               m "interfile: rule %s failed; surfacing as error"
                 (Rule_ID.to_string rule_id));
-          let synth_path =
-            Fpath.v (spf "<interfile-dispatch/%s>"
-                       (Rule_ID.to_string rule_id))
-          in
-          let noprof = Core_profiling.empty_partial_profiling synth_path in
-          let errors = ESet.singleton err in
-          let match_result =
-            Core_result.mk_match_result [] errors noprof
-          in
-          (Core_result.add_run_time 0.0 match_result :: files,
-           scanned, interfile))
-      ([], [], [])
+          (files, scanned, interfile, err :: rule_errors))
+      ([], [], [], [])
       work_results
   in
-  (List.rev file_results, List.rev scanned_targets, interfile_matches)
+  (List.rev file_results, List.rev scanned_targets, interfile_matches,
+   interfile_rule_errors)
 
 (* coupling: with Deep_scan.scan_aux() *)
 let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
@@ -1182,7 +1176,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
          | Some p ->
            Hashtbl.mem fallback_set (Fpath.to_string p))
   in
-  let file_results, scanned_targets, interfile_matches =
+  let file_results, scanned_targets, interfile_matches, interfile_rule_errors =
     iter_unified_and_get_matches_and_exn_to_errors
       (caps :> < Cap.fork ; Cap.memory_limit ; Cap.time_limit >)
       config
@@ -1217,7 +1211,9 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   in
   (* concatenate all errors *)
   let errors =
-    interfile_index_errors @ rule_errors @ new_errors @ res.errors in
+    interfile_index_errors @ interfile_rule_errors @ rule_errors @ new_errors
+    @ res.errors
+  in
   (* Concatenate all the skipped targets *)
   let skipped_targets = skipped @ new_skipped @ res.skipped_targets in
 
