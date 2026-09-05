@@ -79,7 +79,6 @@ val o_dynamic_timeout : bool Cmdliner.Term.t
 val o_dynamic_timeout_max_multiplier : int Cmdliner.Term.t
 val o_dynamic_timeout_unit_kb : int Cmdliner.Term.t
 val o_max_match_per_file : int Cmdliner.Term.t
-val o_opengrep_ignore_pattern : string option Cmdliner.Term.t
 val o_autofix : bool Cmdliner.Term.t
 val o_baseline_commit : string option Cmdliner.Term.t
 val o_dataflow_traces : bool Cmdliner.Term.t

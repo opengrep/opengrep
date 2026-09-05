@@ -13,9 +13,9 @@ No tests for fixes found.
 --------------------------------------------------------------------------------
 Matching diagnosis:
 test.py: Unexpected lack of match at line 3
-A potential match at line 3 was removed by this pattern at line 7 in ./test.yaml:
+A potential match at line 3 was removed by this pattern at line 7 in test.yaml:
           - not: foo($X)
 test.py: Unexpected lack of match at line 5
-A potential match at line 5 was removed by this pattern at line 7 in ./test.yaml:
+A potential match at line 5 was removed by this pattern at line 7 in test.yaml:
           - not: foo($X)
 ASSERT exit code

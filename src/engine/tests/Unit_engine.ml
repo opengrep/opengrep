@@ -704,7 +704,7 @@ let lang_tainting_tests () =
 (*****************************************************************************)
 
 (* DEPRECATED: this is redundant because we now have 'make rules-test'
- * which calls 'osemgrep-pro test --pro tests/rules tests/rules_v2'
+ * which calls 'opengrep test tests/rules tests/rules_v2'
  *)
 let full_rule_regression_tests () =
   let path = tests_path / "rules" in

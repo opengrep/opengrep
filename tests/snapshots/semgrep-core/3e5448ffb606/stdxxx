@@ -14,7 +14,7 @@ No tests for fixes found.
 Matching diagnosis:
 test.py: Unexpected match at line 5:
     foo(good)
-This match originated at this pattern at line 6 in ./test.yaml:
+This match originated at this pattern at line 6 in test.yaml:
         - pattern: foo(...)
 Maybe the match was supposed to be filtered out by one of these patterns?
   line 7:

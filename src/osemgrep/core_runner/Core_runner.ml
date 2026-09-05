@@ -258,7 +258,24 @@ let targets_and_rules_of_lang_jobs (lang_jobs : Lang_job.t list) :
 (* used only in Test_subcommand.ml *)
 let targets_for_files_and_rules (files : Fpath.t list) (rules : Rule.t list) :
     Target.t list =
-  let conf = Find_targets.default_conf in
+  (* Test targets are explicit, like the files named on the command line of
+   * a scan. A target whose extension belongs to no language of the rules is
+   * analysed by every rule.
+   *)
+  let has_a_rule_language_extension (file : Fpath.t) : bool =
+    rules
+    |> List.exists (fun (rule : Rule.t) ->
+           Filter_target.filter_target_for_xlang rule.target_analyzer file)
+  in
+  let conf =
+    {
+      Find_targets.default_conf with
+      always_select_explicit_targets = true;
+      explicit_targets =
+        files |> List_.exclude has_a_rule_language_extension
+        |> Find_targets.Explicit_targets.of_list;
+    }
+  in
   let lang_jobs = split_jobs_by_language conf rules files in
   lang_jobs |> List.concat_map targets_of_lang_job
 

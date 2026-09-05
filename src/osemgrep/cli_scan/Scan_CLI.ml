@@ -535,15 +535,6 @@ let o_nosem : bool Term.t =
       {|Enables 'nosem'. Findings will not be reported on lines containing
           a 'nosem' comment at the end. Enabled by default.|}
 
-let o_opengrep_ignore_pattern : string option Term.t =
-  let info =
-    Arg.info [ "opengrep-ignore-pattern" ]
-      ~doc:
-        {|Add a custom prefix for comments to be ignored by opengrep, alongside the default 'nosem', 'nosemgrep' and 'noopengrep'.
-          For example, '--opengrep-ignore-pattern=noscan' makes opengrep recognize lines with 'noscan' comments as well as the default ones.|}
-  in
-  Arg.value (Arg.opt Arg.(some string) None info)
-
 let o_output : string option Term.t =
   let info =
     Arg.info [ "o"; "output" ]
@@ -1190,8 +1181,8 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
-    ~test_ignore_todo ~strict ~taint_intrafile ~timeout ~timeout_threshold
-    ~max_memory_mb ~common : Test_CLI.conf option =
+    ~test_ignore_todo ~strict ~taint_intrafile ~opengrep_ignore_pattern
+    ~timeout ~timeout_threshold ~max_memory_mb ~common : Test_CLI.conf option =
   if test then
     let target =
       Test_CLI.target_kind_of_roots_and_config
@@ -1214,6 +1205,7 @@ let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
           common;
           matching_diagnosis = false;
           taint_intrafile;
+          opengrep_ignore_pattern;
           timeout;
           timeout_threshold;
           max_memory_mb;
@@ -1405,8 +1397,9 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =
       test_CLI_conf ~test ~target_roots ~config ~json ~force_color
-        ~optimizations ~test_ignore_todo ~strict ~taint_intrafile ~timeout
-        ~timeout_threshold ~max_memory_mb ~common
+        ~optimizations ~test_ignore_todo ~strict ~taint_intrafile
+        ~opengrep_ignore_pattern ~timeout ~timeout_threshold ~max_memory_mb
+        ~common
     in
     (* warnings *)
     if include_ <> None && exclude_ <> [] then
@@ -1473,7 +1466,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_json $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes
-    $ o_num_jobs $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations
+    $ o_num_jobs $ o_nosem $ CLI_common.o_opengrep_ignore_pattern
+    $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root
     $ o_taint_intrafile
     $ o_effect_guards

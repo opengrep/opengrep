@@ -259,7 +259,7 @@ let cmdline_term : conf Term.t =
     $ SC.o_matching_explanations $ SC.o_max_chars_per_line
     $ SC.o_max_lines_per_finding $ SC.o_max_log_list_entries
     $ SC.o_max_match_per_file $ SC.o_max_memory_mb $ SC.o_max_target_bytes
-    $ SC.o_nosem $ SC.o_num_jobs $ SC.o_opengrep_ignore_pattern
+    $ SC.o_nosem $ SC.o_num_jobs $ CLI_common.o_opengrep_ignore_pattern
     $ SC.o_optimizations $ SC.o_output $ SC.o_rewrite_rule_ids $ SC.o_sarif
     $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ o_subdir
     $ o_suppress_errors $ SC.o_taint_intrafile $ SC.o_text $ SC.o_text_outputs
