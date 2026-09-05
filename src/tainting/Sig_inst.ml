@@ -398,11 +398,15 @@ let instantiate_taints inst_var inst_trace taints =
 (* NOTE: 'a is either:
  * - IL.exp in instantiate_lval_using_actual_exps
  * - Taints.t * shape in instantiate_lval_using_shape *)
-let find_pos_in_actual_args ?(err_ctx = "???") (args : 'a IL.argument list)
+(* [err_ctx] renders the call for log messages; it is a thunk because
+   rendering an expression goes through [Format] and this runs once per
+   signature instantiation, where it dominated the profiling. *)
+let find_pos_in_actual_args ?(err_ctx = fun () -> "???")
+    (args : 'a IL.argument list)
     (fparams : Signature.params) ~(combine_rest_args : 'a list -> 'a) : T.arg -> 'a option =
   Log.debug (fun m ->
       m "FIND_POS_IN_ACTUAL_ARGS: err_ctx=%s, num_args=%d, num_fparams=%d, fparams=%s"
-        err_ctx
+        (err_ctx ())
         (List.length args)
         (List.length fparams)
         (fparams |> List.map Signature.show_param |> String.concat ", "));
@@ -431,14 +435,14 @@ let find_pos_in_actual_args ?(err_ctx = "???") (args : 'a IL.argument list)
      (* No more formal args, but there are still positional args *)
      | [], _ ->
         Log.err (fun m ->
-          m "function applied to more arguments than expected by the signature (%s)" err_ctx);
+          m "function applied to more arguments than expected by the signature (%s)" (err_ctx ()));
           []
      (* The formal arg doesn't get a value (not found among named args, 
       * and no more positional args) *)
      | None :: _ , []
      | Some (Signature.P _, None) :: _, [] ->
         Log.err (fun m ->
-          m "function applied to fewer arguments than expected by the signature (%s)" err_ctx);
+          m "function applied to fewer arguments than expected by the signature (%s)" (err_ctx ()));
           []
      (* The value for the formal arg is found among named actual args *)
      | Some (Signature.P name, Some v) :: avs, _
@@ -1306,7 +1310,7 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t)
         *)
       let* (arg_exp : IL.exp) =
         find_pos_in_actual_args
-          ~err_ctx:(Display_IL.string_of_exp fun_exp)
+          ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
           ~combine_rest_args:combine_rest_args_exp
           args_exps fparams pos
       in
@@ -1481,7 +1485,7 @@ let instantiate_lval_using_shape ~(lang : Lang.t)
     match base with
     | `Arg pos ->
         find_pos_in_actual_args
-          ~err_ctx:(Display_IL.string_of_exp fun_exp)
+          ~err_ctx:(fun () -> Display_IL.string_of_exp fun_exp)
           ~combine_rest_args:combine_rest_args_taint
           args_taints fparams pos
     | `Var var ->
@@ -2529,7 +2533,7 @@ let build_barg_remap (canonical_params : Signature.params)
         canonical_params
     in
     let lookup =
-      find_pos_in_actual_args ~err_ctx:"merge_dispatch" synthetic_args
+      find_pos_in_actual_args ~err_ctx:(fun () -> "merge_dispatch") synthetic_args
         impl_params ~combine_rest_args:List.hd
     in
     let canonical_names =

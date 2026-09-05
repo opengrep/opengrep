@@ -53,7 +53,9 @@ module G = AST_generic
  * derived orders (token-insensitive via [Tok.t_always_equal]); names use
  * [str_of_name], which carries the [sid] as [pp_exp] did. *)
 let compare_name (n1 : name) (n2 : name) : int =
-  String.compare (str_of_name n1) (str_of_name n2)
+  (* A total order agreeing with [str_of_name] equality, without rendering:
+     that went through [Format] on every comparison and showed in profiling. *)
+  IL.compare_name n1 n2
 
 let var_special_tag = function
   | This -> 0
@@ -161,9 +163,11 @@ let equal_exp (e1 : exp) (e2 : exp) : bool = Int.equal (compare_exp e1 e2) 0
 (* Token-insensitive structural hash, consistent with [equal_exp] (equal conds
  * have identical structure, hence equal hash) and bounded to a few levels so it
  * stays O(1); distinct conds that collide are separated by [equal_exp]. Leaves
- * defer to the [AST_generic] derived hashes (token-insensitive); names hash by
- * [str_of_name]. Used by the guard-cond intern table in [Effect_guard]. *)
-let hash_name (n : name) : int = Stdlib.Hashtbl.hash (str_of_name n)
+ * defer to the [AST_generic] derived hashes (token-insensitive); names hash
+ * by ident and sid, the same identity [str_of_name] renders. Used by the
+ * guard-cond intern table in [Effect_guard]. *)
+let hash_name (n : name) : int =
+  Stdlib.Hashtbl.hash (fst n.ident, G.SId.hash n.sid)
 
 let rec hash_exp_fuel (fuel : int) (e : exp) : int =
   if fuel <= 0 then 0
