@@ -906,8 +906,8 @@ class ['self] resolve_visitor env lang =
            *
            * This rule tries to match two different functions using the same
            * meta-variable. This works when the function names are not
-           * resolved, but breaks when each function gets a unique sid; hence
-           * the flag set below.
+           * resolved, and breaks when each function gets a unique sid; two
+           * definitions of one name in one scope share their binding.
            *
            * We add the name to the "imported" scope (not current scope):
            * current scope shadowed imported function names even when the
@@ -927,15 +927,15 @@ class ['self] resolve_visitor env lang =
                 | _ -> false)
           in
           if resolve then (
-            (* The scope a definition binds its name in: the enclosing
-               function's block for a nested function, the file's imported
-               scope otherwise (see above). A definition of a name that
-               scope already binds rebinds it: the same identity, at its
-               own site. *)
+            (* The scope a definition binds its name in: the file's imported
+               scope at the top level (see above), else the enclosing block,
+               a function's for a nested function, a class's for a method.
+               A definition of a name that scope already binds rebinds it:
+               the same identity, at its own site. *)
             let scope, add_to_scope =
-              match (top_context env, !(env.names.blocks)) with
-              | InFunction, current :: _ -> (current, add_ident_current_scope)
-              | _ -> (!(env.names.imported), add_ident_imported_scope)
+              match !(env.names.blocks) with
+              | [] -> (!(env.names.imported), add_ident_imported_scope)
+              | current :: _ -> (current, add_ident_current_scope)
             in
             let binding =
               match lookup (fst id) [ scope ] with
@@ -945,11 +945,7 @@ class ['self] resolve_visitor env lang =
             let sid = SId.of_tok ~binding ~file:env.file (snd id) in
             let resolved = untyped_ent (resolved_name_kind env lang, sid) in
             add_to_scope id resolved env.names;
-            set_resolved env id_info resolved;
-            (* Mark the name as a function definition so the matcher can still
-               unify two same-named defs — which now resolve to distinct
-               positional sids — under a single metavar. *)
-            id_info.id_flags := IdFlags.set_function_def !(id_info.id_flags));
+            set_resolved env id_info resolved);
           super#visit_definition venv x
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           (* PHP keywords are case-insensitive *)
