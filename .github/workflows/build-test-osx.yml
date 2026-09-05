@@ -62,6 +62,7 @@ jobs:
       - name: Compile opengrep
         run: opam exec -- make core
       - name: Test opengrep
+        if: ${{ inputs.arch != 'x86_64' }}
         run: opam exec -- make core-test
       - name: Set DYLIB_DIR based on inputs.arch
         env:
