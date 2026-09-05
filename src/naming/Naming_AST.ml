@@ -230,6 +230,13 @@ let lookup_nonlocal_scope id scopes =
       let _ = error tok "no outerscope" in
       None
 
+(* for a PHP closure [use]: the variable of the scope enclosing the closure,
+ * the file's variables when the closure is at the top level *)
+let lookup_enclosing_scope (s, _) scopes =
+  match !(scopes.blocks) with
+  | _ :: xxs -> lookup s (xxs @ [ !(scopes.global) ])
+  | [] -> None
+
 let has_block_scope (lang : Lang.t) =
   match lang with
   (* These languages don't have block scope *)
@@ -256,6 +263,11 @@ type env = {
    * handle also basic typing information now for Java/Go.
    *)
   names : scopes;
+  (* Inside a PHP function body, the number of enclosing block scopes it
+   * hides: it sees no enclosing local and no file variable, only what a
+   * [global] directive or a closure [use] plants in it. None outside any
+   * function body, where the file scope is visible. *)
+  hidden_blocks : int option ref;
   in_lvalue : bool ref;
   in_type : bool ref;
   lang : Lang.t;
@@ -269,6 +281,7 @@ let default_env lang file =
   {
     ctx = ref [ AtToplevel ];
     names = default_scopes ();
+    hidden_blocks = ref None;
     in_lvalue = ref false;
     in_type = ref false;
     lang;
@@ -304,6 +317,15 @@ let set_resolved env id_info x =
    *)
   if not !(env.in_type) then id_info.id_type := x.enttype
 
+(* the block scopes a lookup may see, innermost first *)
+let visible_blocks env =
+  let blocks = !(env.names.blocks) in
+  match !(env.hidden_blocks) with
+  | None -> blocks
+  | Some hidden ->
+      let visible = List.length blocks - hidden in
+      List.filteri (fun (i : int) (_ : scope) -> i < visible) blocks
+
 (* accessors *)
 let lookup_scope_opt ?(class_attr = false) (s, _) env =
   let scopes = env.names in
@@ -319,10 +341,21 @@ let lookup_scope_opt ?(class_attr = false) (s, _) env =
               (* just look current scope! no access to nested scopes or global *)
             then [ xs; !(scopes.imported) ]
             else [ xs ] @ xxs @ [ !(scopes.global); !(scopes.imported) ]
-        (* | Lang.Php ->
-             (* just look current scope! no access to nested scopes or global *)
-             [xs;                            !(scopes.imported)]
-        *)
+        | Lang.Php ->
+            (* just look current scope! no access to nested scopes or global:
+             * a function body sees its own locals, what a [global] directive
+             * or a closure [use] planted in it, the file's functions and
+             * constants (no [$] sigil), not the file's variables; an arrow
+             * function sees the scopes enclosing it, the file's variables
+             * included when no function body is in between *)
+            let file_scope =
+              if
+                Option.is_none !(env.hidden_blocks)
+                || not (String.starts_with ~prefix:"$" s)
+              then [ !(scopes.global) ]
+              else []
+            in
+            visible_blocks env @ file_scope @ [ !(scopes.imported) ]
         | _ -> [ xs ] @ xxs @ [ !(scopes.global); !(scopes.imported) ])
   in
   lookup ~class_attr s actual_scopes
@@ -671,6 +704,19 @@ class ['self] resolve_visitor env lang =
        * (no need to declarare prototype and forward decls as in C).
        *)
       let new_params = params_of_parameters env x.fparams in
+      (* A PHP function or closure body sees no enclosing local; a method
+         body sees its class's scope, for the class constants; an arrow
+         function sees everything. *)
+      let hidden_blocks =
+        let enclosing = List.length !(env.names.blocks) in
+        match (lang, fst x.fkind) with
+        | Lang.Php, (Function | LambdaKind | BlockCases) -> Some enclosing
+        | Lang.Php, Method -> Some (max 0 (enclosing - 1))
+        | Lang.Php, Arrow
+        | _ ->
+            !(env.hidden_blocks)
+      in
+      Common.save_excursion_unsafe env.hidden_blocks hidden_blocks (fun () ->
       with_new_context InFunction env (fun () ->
           with_new_function_scope new_params env.names (fun () ->
               (* Each [ParamPattern]'s synthetic implicit binder was just
@@ -690,7 +736,7 @@ class ['self] resolve_visitor env lang =
                * without the new_params (this would also prevent cycle if
                * a parameter name is the same than type name used in ptype
                * (see tests/naming/python/shadow_name_type.py) *)
-              super#visit_function_definition venv x))
+              super#visit_function_definition venv x)))
 
     method! visit_definition venv x =
       match x with
@@ -836,18 +882,28 @@ class ['self] resolve_visitor env lang =
            * def's identity (interprocedural analysis).
            *
            * Scope: JS/TS resolve function names in any context (the
-           * interprocedural feature those users requested, semgrep#2787).
+           * interprocedural feature those users requested, see
+           *
+           *     https://github.com/semgrep/semgrep/issues/2787).
+           *
            * Other languages resolve only *top-level* function defs.  Resolving
            * class methods / nested functions regressed interprocedural taint —
            * a helper method sanitizing its argument stopped being recognized
            * (the Java XXE rules, which have a duplicated [setFeatures] helper).
-           * Top-level functions are what name-based rules need (e.g. flask
-           * same-handler-name).
+           * Top-level functions are what name-based rules need, e.g.
+           *
+           *     semgrep-rules/python/flask/correctness/same-handler-name.yaml
+           *
+           * This rule tries to match two different functions using the same
+           * meta-variable. This works when the function names are not
+           * resolved, but breaks when each function gets a unique sid; hence
+           * the flag set below.
            *
            * We add the name to the "imported" scope (not current scope):
            * current scope shadowed imported function names even when the
            * import came later, breaking
-           *   semgrep-rules/python/django/security/audit/raw-query.py. *)
+           *   semgrep-rules/python/django/security/audit/raw-query.py.
+           * But do we need a special scope for imported functions? *)
           let resolve =
             match lang with
             | Lang.Js
@@ -866,11 +922,14 @@ class ['self] resolve_visitor env lang =
             id_info.id_flags := IdFlags.set_function_def !(id_info.id_flags));
           super#visit_definition venv x
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
-          let s = Tok.content_of_tok tok in
+          (* PHP keywords are case-insensitive *)
+          let s = String.lowercase_ascii (Tok.content_of_tok tok) in
           let flookup =
             match s with
             | "global" -> lookup_global_scope
             | "nonlocal" -> lookup_nonlocal_scope
+            (* a PHP closure [use ($x)] *)
+            | "use" -> lookup_enclosing_scope
             | _ ->
                 error tok (spf "unrecognized UseOuterDecl directive: %s" s);
                 lookup_global_scope
@@ -879,6 +938,14 @@ class ['self] resolve_visitor env lang =
           | Some resolved ->
               set_resolved env id_info resolved;
               add_ident_current_scope id resolved env.names
+          | None when String.equal s "global" ->
+              (* the directive creates the global when the file has not
+                 assigned it yet, as the language does *)
+              declare_var env lang id id_info ~force_global:true
+                ~explicit:false None None;
+              lookup_global_scope id env.names
+              |> Option.iter (fun resolved ->
+                     add_ident_current_scope id resolved env.names)
           | None ->
               error tok
                 (spf "could not find '%s' for directive %s"
@@ -1163,24 +1230,21 @@ class ['self] resolve_visitor env lang =
              augmented-assignment targets and (Ruby) top-level assignments
              all reach the name through here, and must declare a local
              rather than bind a same-named definition from an outer scope. *)
-          let lookup_here id env =
-            if
-              !(env.in_lvalue)
-              && assign_implicitly_declares lang
-              && is_resolvable_name_ctx env lang
-            then lookup_for_implicit_assign_opt id env
+          let implicit_declaration =
+            !(env.in_lvalue)
+            && assign_implicitly_declares lang
+            && is_resolvable_name_ctx env lang
+          in
+          let resolved =
+            if implicit_declaration then lookup_for_implicit_assign_opt id env
             else lookup_scope_opt id env
           in
-          (match lookup_here id env with
+          (match resolved with
           | Some resolved ->
               (* name resolution *)
               set_resolved env id_info resolved
           | None ->
-              if
-                !(env.in_lvalue)
-                && assign_implicitly_declares lang
-                && is_resolvable_name_ctx env lang
-              then
+              if implicit_declaration then
                 (* first use of a variable can be a VarDef in some languages *)
                 declare_var env lang id id_info ~explicit:false None None
               else
