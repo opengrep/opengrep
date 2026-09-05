@@ -30,5 +30,5 @@ Removed 0 findings that were in baseline scan
 Some files were skipped or only partially analyzed.
   Scan was limited to files changed since baseline commit.
 
-Ran 1 rule on 0 files: 1 finding.
+Ran 1 rule on 1 file: 1 finding.
 ASSERT exit code
