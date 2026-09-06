@@ -1,0 +1,14 @@
+--- begin input files ---
+broken.py
+main.py
+rules.yml
+sinks.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 24 insertions(+)
+ create mode 100644 broken.py
+ create mode 100644 main.py
+ create mode 100644 rules.yml
+ create mode 100644 sinks.py
+{"version":"<MASKED>","results":[{"check_id":"interfile-taint","path":"sinks.py","start":{"line":3,"col":5,"offset":18},"end":{"line":3,"col":12,"offset":25},"extra":{"metavars":{},"message":"cross-file taint","metadata":{},"severity":"ERROR","fingerprint":"0e488f3ca4f8c71baddbef0fe22ba8141e464830a7e2303363fbda8948d2ecc42a1b8de96e08ebe90bf5ad9c54e99161a0da323770cd6a534a3c0bc93b4a06ed_0","lines":"    sink(v)","is_ignored":false,"validation_state":"NO_VALIDATOR","dataflow_trace":{"taint_source":["CliLoc",[{"path":"main.py","start":{"line":5,"col":10,"offset":44},"end":{"line":5,"col":18,"offset":52}},"source()"]],"intermediate_vars":[],"taint_sink":["CliCall",[[{"path":"main.py","start":{"line":5,"col":5,"offset":39},"end":{"line":5,"col":9,"offset":43}},"leak"],[{"location":{"path":"sinks.py","start":{"line":2,"col":10,"offset":10},"end":{"line":2,"col":11,"offset":11}},"content":"v"}],["CliLoc",[{"path":"sinks.py","start":{"line":3,"col":5,"offset":18},"end":{"line":3,"col":12,"offset":25}},"sink(v)"]]]]},"engine_kind":"OSS"}}],"errors":[{"code":3,"level":"warn","type":"Syntax error","message":"Syntax error at line broken.py:2:\n `:` was unexpected","path":"broken.py"}],"paths":{"scanned":["broken.py","main.py","sinks.py"]},"interfile_languages_used":["Python"],"skipped_rules":[]}

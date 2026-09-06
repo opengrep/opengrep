@@ -4,6 +4,8 @@
 
 module Log = Log_tainting.Log
 module R = Rule
+module E = Core_error
+module Out = Semgrep_output_v1_j
 module G = AST_generic
 module PM = Core_match
 module Effect = Shape_and_sig.Effect
@@ -139,10 +141,17 @@ let targets_in_interfile_graph
     | Lockfile _ -> None
   ) targets
 
+(* An exception on a file, of a rule when one is involved, as a per-target
+   failure reports it. *)
+let file_error ?(rule_id : Rule_ID.t option) ~(file : Fpath.t)
+    (exn : Exception.t) : E.t =
+  { (E.exn_to_error ~file exn) with E.rule_id }
+
 type rule_specs = {
   rs_rule : R.taint_rule;
   rs_sources : Function_id.t list;
   rs_sinks : Function_id.t list;
+  rs_errors : E.t list;  (* targets whose extraction failed *)
 }
 
 (* Formula cache is per-file to avoid byte-position collisions. *)
@@ -178,33 +187,35 @@ let extract_specs_for_rule
         | Some content -> func content
         | None -> true)
   in
-  let sources, sinks =
+  let sources, sinks, errors =
     List.fold_left
       (fun ((src_acc : Function_id.t list),
-            (snk_acc : Function_id.t list))
+            (snk_acc : Function_id.t list),
+            (err_acc : E.t list))
         (target : interfile_target) ->
         match Hashtbl.find_opt ast_table target.abs_path with
-        | None -> (src_acc, snk_acc)
+        | None -> (src_acc, snk_acc, err_acc)
         | Some _ when not (file_is_relevant target.abs_path) ->
-            (src_acc, snk_acc)
+            (src_acc, snk_acc, err_acc)
         | Some ast ->
           let formula_cache =
             Formula_cache.mk_specialized_formula_cache [rule]
           in
-          let spec_matches, _expls =
-            try
-              Match_taint_spec.spec_matches_of_taint_rule
-                ~per_file_formula_cache:formula_cache
-                xconf (Fpath.to_string target.abs_path) (ast, []) rule
-            with
-            | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn
-              ->
-              Log.warn (fun m ->
-                  m "interfile spec_extract: fatal %s on %s"
-                    (Printexc.to_string exn)
-                    (Fpath.to_string target.abs_path));
-              Exception.catch_and_reraise exn
-          in
+          match
+            Match_taint_spec.spec_matches_of_taint_rule
+              ~per_file_formula_cache:formula_cache
+              xconf (Fpath.to_string target.abs_path) (ast, []) rule
+          with
+          | exception exn ->
+            (* contained to the file: its sources and sinks are missing *)
+            let exn = Exception.catch exn in
+            Log.warn (fun m ->
+                m "interfile spec_extract: %s on %s, skipping the file"
+                  (Exception.to_string exn)
+                  (Fpath.to_string target.abs_path));
+            (src_acc, snk_acc,
+             file_error ~rule_id ~file:target.abs_path exn :: err_acc)
+          | spec_matches, _expls ->
           let resolve_ranges (ranges : Range.t list)
               : Function_id.t list =
             if List_.null ranges then []
@@ -241,17 +252,20 @@ let extract_specs_for_rule
                   (List.length sink_fids)
                   (Rule_ID.to_string rule_id));
           (List.rev_append source_fids src_acc,
-           List.rev_append sink_fids snk_acc))
-      ([], []) matching_targets
+           List.rev_append sink_fids snk_acc,
+           err_acc))
+      ([], [], []) matching_targets
   in
   { rs_rule = rule;
     rs_sources = sources;
-    rs_sinks = sinks }
+    rs_sinks = sinks;
+    rs_errors = errors }
 
 
 type file_init_acc = {
   fi_info_map : Match_tainting_mode.fun_info FunctionMap.t;
   fi_file_envs : file_env FpathMap.t;
+  fi_errors : E.t list;  (* files whose init failed *)
 }
 
 (* [fid_set] filters which functions get IL+CFG construction. *)
@@ -348,6 +362,7 @@ let init_file
         acc.fi_info_map resolved_map;
     fi_file_envs =
       FpathMap.add abs_file file_env acc.fi_file_envs;
+    fi_errors = acc.fi_errors;
   }
 
 let fid_set_of_graph (graph : Call_graph.G.t) : FidSet.t =
@@ -544,9 +559,10 @@ let init_rule_state
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
     ~(target_root_map : Fpath.t option FpathMap.t)
     (rsg : rule_subgraph)
-    : rule_state =
+    : rule_state * E.t list =
   let lang = rsg.rsg_lang_context.lc_lang in
   let rule = rsg.rsg_specs.rs_rule in
+  let rule_id = fst rule.R.id in
   let init_acc =
     List.fold_left
       (fun (acc : file_init_acc) (file_path : Fpath.t) ->
@@ -556,30 +572,25 @@ let init_rule_state
              ~fid_set:rsg.rsg_fid_set
              ~ast_table ~function_maps ~file_path acc
          with
-         | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
-           let bt = Printexc.get_backtrace () in
-           Log.warn (fun m ->
-               m "interfile dispatch: fatal %s in init_file %s for rule %s\n%s"
-                 (Printexc.to_string exn)
-                 (Fpath.to_string file_path)
-                 (Rule_ID.to_string (fst rule.R.id)) bt);
-           Exception.catch_and_reraise exn
          | exn ->
-           (* See [parse_file_batch]: [semgrep.tainting] is muted by default,
-              and this drops one file's functions from the rule's interfile
-              state. *)
-           Logs.warn (fun m ->
+           (* contained to the file: its functions are missing from the
+              rule's interfile state *)
+           let exn = Exception.catch exn in
+           Log.warn (fun m ->
                m "interfile dispatch: skipping file %s for rule %s, its \
                   functions are excluded from cross-file analysis: %s"
                  (Fpath.to_string file_path)
-                 (Rule_ID.to_string (fst rule.R.id))
-                 (Printexc.to_string exn));
-           acc)
+                 (Rule_ID.to_string rule_id)
+                 (Exception.to_string exn));
+           { acc with
+             fi_errors =
+               file_error ~rule_id ~file:file_path exn :: acc.fi_errors })
       { fi_info_map = FunctionMap.empty;
-        fi_file_envs = FpathMap.empty; }
+        fi_file_envs = FpathMap.empty;
+        fi_errors = [] }
       rsg.rsg_files
   in
-  {
+  ({
     rule;
     lang;
     relevant_graph = rsg.rsg_relevant_graph;
@@ -590,7 +601,7 @@ let init_rule_state
       Some (Builtin_models.create_all_builtin_models lang);
     match_on = Match_tainting_mode.match_on_of_xconf rsg.rsg_xconf;
     target_root_map;
-  }
+  }, init_acc.fi_errors)
 
 (* Returns None (not raise) on a miss: a raise plus Core_scan's silent-warn
    handler would drop every finding for the rule. *)
@@ -1123,42 +1134,50 @@ let chunks (n : int) (xs : 'a list) : 'a list list =
   in
   loop [] [] 0 xs
 
+(* A parsed batch: the ASTs by file, and the files that failed, each with
+   its error as a per-target failure reports it. *)
+type parsed_batch =
+  Lang.t * (Fpath.t, G.program) Hashtbl.t * (Fpath.t * E.t) list
+
 (* Reuse a [resolved] projidx AST when present (it carries cross-file
-   id_resolved); otherwise fresh-parse. *)
+   id_resolved); otherwise fresh-parse. A failure is contained to its
+   file. *)
 let parse_file_batch
     ?(resolved : (string, G.program) Hashtbl.t = Hashtbl.create 0)
-    (lang : Lang.t) (files : Fpath.t list)
-    : (Fpath.t, G.program) Hashtbl.t =
+    (lang : Lang.t) (files : Fpath.t list) : parsed_batch =
   let tbl = Hashtbl.create (List.length files) in
-  List.iter (fun (file : Fpath.t) ->
-    let key = Fpath.to_string (Fpath.normalize file) in
-    match Hashtbl.find_opt resolved key with
-    | Some ast -> Hashtbl.replace tbl file ast
-    | None ->
-      (match
-        (try Some (parse_file lang file)
-         with
-         | (Out_of_memory | Stack_overflow
-           | Time_limit.Timeout _) as exn ->
-           Exception.catch_and_reraise exn
-         | exn ->
-           (* [Logs] rather than [Log]: the [semgrep.tainting] source is
-              skipped by default even under [--debug], so routing this there
-              drops the file from analysis with no visible trace at all.  Only
-              an internal failure reaches here — malformed input is either
-              recovered by the parser or excluded upstream — so it means a bug,
-              and must not be silent. *)
-           Logs.warn (fun m ->
-               m "interfile parse: failed to parse %s, excluding it from \
-                  cross-file analysis: %s"
-                 (Fpath.to_string file)
-                 (Printexc.to_string exn));
-           None)
-      with
-      | None -> ()
-      | Some ast -> Hashtbl.replace tbl file ast))
-    files;
-  tbl
+  let failures =
+    List.fold_left
+      (fun (failures : (Fpath.t * E.t) list) (file : Fpath.t) ->
+        let key = Fpath.to_string (Fpath.normalize file) in
+        match Hashtbl.find_opt resolved key with
+        | Some ast -> Hashtbl.replace tbl file ast; failures
+        | None ->
+          (match parse_file lang file with
+           | ast -> Hashtbl.replace tbl file ast; failures
+           | exception exn ->
+             (file, file_error ~file (Exception.catch exn)) :: failures))
+      [] files
+  in
+  (lang, tbl, failures)
+
+(* the batch failed outside the per-file parse: every file failed *)
+let failed_batch ((lang, batch) : Lang.t * Fpath.t list) (exn : Exception.t)
+    : parsed_batch =
+  Log.warn (fun m ->
+      m "interfile parse: %s batch failed: %s" (Lang.to_string lang)
+        (Exception.to_string exn));
+  (lang, Hashtbl.create 0,
+   List_.map (fun (file : Fpath.t) -> (file, file_error ~file exn)) batch)
+
+let batch_asts (batches : parsed_batch list)
+    : (Lang.t * (Fpath.t, G.program) Hashtbl.t) list =
+  List_.map (fun ((lang, tbl, _) : parsed_batch) -> (lang, tbl)) batches
+
+let batch_failures (batches : parsed_batch list) : (Fpath.t * E.t) list =
+  List.concat_map
+    (fun ((_, _, failures) : parsed_batch) -> failures)
+    batches
 
 let build_ast_lookup
     (batch_results : (Lang.t * (Fpath.t, G.program) Hashtbl.t) list)
@@ -1195,8 +1214,7 @@ let parse_companion_files
         (Lang.t, (Fpath.t, G.program) Hashtbl.t) Hashtbl.t)
     ~(lang_contexts : lang_context list)
     (rule_subgraphs : rule_subgraph list)
-    : (Lang.t * (Fpath.t, G.program) Hashtbl.t) list
-      * (Fpath.t * string) list =
+    : (Lang.t * (Fpath.t, G.program) Hashtbl.t) list * E.t list =
   let seen = Hashtbl.create 256 in
   let companion_files : (Lang.t * Fpath.t) list =
     List.concat_map
@@ -1240,48 +1258,30 @@ let parse_companion_files
           |> List_.map (fun (batch : Fpath.t list) -> (lang, batch)))
         lang_contexts
     in
-    let parsed, (failed_batches : (Lang.t * Fpath.t list * string) list) =
-      run_parmap caps ~ncores
-        ~on_exn:(fun ((lang, batch) : Lang.t * Fpath.t list)
-                     (exn : Exception.t) ->
-          let msg = Printexc.to_string (Exception.get_exn exn) in
-          Log.warn (fun m ->
-              m "interfile parse: %s companion batch failed: %s"
-                (Lang.to_string lang) msg);
-          (lang, batch, msg))
+    let parsed, failed =
+      run_parmap caps ~ncores ~on_exn:failed_batch
         (fun ((lang, batch) : Lang.t * Fpath.t list) ->
-          let tbl = parse_file_batch ~resolved lang batch in
+          let ((_, tbl, _) as parsed) =
+            parse_file_batch ~resolved lang batch
+          in
           Log.info (fun m ->
               m "interfile parse: %s: parsed %d/%d companion files"
                 (Lang.to_string lang)
                 (Hashtbl.length tbl)
                 (List.length batch));
-          (lang, tbl))
+          parsed)
         companion_batches
     in
-    (* Companion files are not scan targets, so there is no intrafile
-       fallback for them; the loss is cross-file recall through their
-       functions.  Surface it per file rather than only in the logs. *)
-    let failures : (Fpath.t * string) list =
-      List.concat_map
-        (fun ((lang, batch, msg) : Lang.t * Fpath.t list * string) ->
-           List_.map
-             (fun (file : Fpath.t) ->
-                (file,
-                 Printf.sprintf "%s: interfile companion parse failed: %s"
-                   (Lang.to_string lang) msg))
-             batch)
-        failed_batches
-    in
-    (parsed, failures)
+    let batches = parsed @ failed in
+    (* Companion files are not scan targets; the loss is cross-file recall
+       through their functions.  Surface it per file rather than only in
+       the logs. *)
+    (batch_asts batches, List_.map snd (batch_failures batches))
   end
 
-(* Why the interfile graph of a language could not be built within the
-   scan's limits; its interfile rules then run per target. *)
-type build_limit = Build_out_of_memory
-
-(* Returns rule_states, interfile langs, per-rule fallback target paths,
-   per-file index failures, and the rules whose graph build hit a limit. *)
+(* Returns rule_states, interfile langs, and the errors of the files the
+   analysis lost or left out and of the rules that did not run, as a
+   per-target failure reports them. *)
 let build_rule_states
     (caps : < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
     ~(ncores : int)
@@ -1291,14 +1291,13 @@ let build_rule_states
     ~(targets : Target.t list)
     ~(targeting_conf : Find_targets.conf)
     ~(xconf : Match_env.xconfig)
-    : rule_state list * Xlang.t list * (Rule_ID.t * Fpath.t list) list
-      * (Fpath.t * string) list * (Rule_ID.t * build_limit) list =
+    : rule_state list * Xlang.t list * E.t list =
   (* A rule-local option counts, not just the global flag. *)
   let lang_rules =
     interfile_taint_rules_by_lang ~taint_interfile valid_rules
   in
   match lang_rules with
-  | [] -> ([], [], [], [], [])
+  | [] -> ([], [], [])
   | _ ->
   (* the limits apply to the graph build only; the rest forks *)
   let limit_caps = caps in
@@ -1333,28 +1332,6 @@ let build_rule_states
         m "interfile preprocess: targets span %d project roots; \
            building one interfile graph per (lang, root)"
           (Hashtbl.length targets_by_root));
-  (* Target abs_paths interfile dispatch won't cover, needing intrafile
-     fallback; consumed by [Core_scan]'s per-target gate. *)
-  let fallback_target_paths_by_lang_root :
-      (string * string, Fpath.t list) Hashtbl.t =
-    Hashtbl.create 4
-  in
-  let record_fallback_paths ~lang ~project_root new_paths =
-    let key =
-      (Lang.to_lowercase_alnum lang,
-       Fpath.to_string (Fpath.normalize project_root))
-    in
-    let existing =
-      Option.value ~default:[]
-        (Hashtbl.find_opt fallback_target_paths_by_lang_root key)
-    in
-    Hashtbl.replace fallback_target_paths_by_lang_root key
-      (List.rev_append new_paths existing)
-  in
-  let record_fallback ~lang ~project_root targets =
-    record_fallback_paths ~lang ~project_root
-      (List.filter_map (Target.abs_path ~cwd) targets)
-  in
   (* Abs-path keys are globally unique, so merging across roots is safe. *)
   let projidx_asts : (string, G.program) Hashtbl.t = Hashtbl.create 1024 in
   (* Per language: the context (when the build is usable) and the build's
@@ -1367,8 +1344,8 @@ let build_rule_states
      each rule's run. *)
   let bounded_build (lang : Lang.t) (project_root : Fpath.t) :
       ((Interfile_graph.interfile_graph * Interfile_graph.resolved_asts
-        * (Fpath.t * string) list) option,
-       build_limit) result =
+        * E.t list) option,
+       E.t) result =
     match
       Memory_limit.run_with_global_memory_limit
         (limit_caps :> < Cap.memory_limit >)
@@ -1380,19 +1357,15 @@ let build_rule_states
             ~ncores ~targeting_conf lang project_root)
     with
     | build_opt -> Ok build_opt
-    | exception Memory_limit.ExceededMemoryLimit _ -> Error Build_out_of_memory
+    | exception (Memory_limit.ExceededMemoryLimit _ as exn) ->
+      Error (E.exn_to_error (Exception.catch exn))
   in
-  let per_lang :
-      (lang_context option * (Fpath.t * string) list
-       * (Rule_ID.t * build_limit) list) list =
+  let per_lang : (lang_context option * E.t list) list =
     Hashtbl.fold (fun _ (project_root, root_targets) acc ->
       List_.map
         (fun ((lang : Lang.t), (rules : R.taint_rule list)) ->
-          (* Fallback recording must stay lang-scoped: a multi-language
-             rule [L (Js,[Ts])] has a context per language, so recording
-             another language's targets here would double-run them —
-             dispatched by their own context AND per-target via the
-             fallback gate. *)
+          (* A multi-language rule [L (Js,[Ts])] has a context per
+             language, each with the targets of its own language. *)
           let lang_targets =
             List.filter (fun (target : Target.t) ->
               match target with
@@ -1406,40 +1379,62 @@ let build_rule_states
           let build_opt, limit_failures =
             match bounded_build lang project_root with
             | Ok build_opt -> (build_opt, [])
-            | Error limit ->
+            | Error err ->
                 Log.warn (fun m ->
                     m "interfile preprocess: the graph build for %s under \
-                       %s hit the scan's %s; its taint rules run per target"
-                      (Lang.to_string lang) (Fpath.to_string project_root)
-                      (match limit with
-                       | Build_out_of_memory -> "memory limit"));
+                       %s hit the scan's memory limit; its taint rules do \
+                       not run"
+                      (Lang.to_string lang) (Fpath.to_string project_root));
+                (* the one error, once per rule that did not run *)
                 ( None,
                   List_.map
-                    (fun (rule : R.taint_rule) -> (fst rule.R.id, limit))
+                    (fun (rule : R.taint_rule) ->
+                      { err with E.rule_id = Some (fst rule.R.id) })
                     rules )
           in
           (match build_opt with
            | Some (_, asts, _) ->
              Hashtbl.iter (Hashtbl.replace projidx_asts) asts
            | None -> ());
-          let file_failures =
+          (* a warning at the file, as a partial parse is reported *)
+          let file_warning (file : Fpath.t) (msg : string) : E.t =
+            E.mk_error ~msg ~loc:(Tok.first_loc_of_file file)
+              Out.SemgrepWarning
+          in
+          let file_failures : E.t list =
             match build_opt with
             | None -> []
-            | Some (_, _, failures) ->
-              List_.map (fun (file, msg) ->
-                (file, Printf.sprintf "%s: %s" (Lang.to_string lang) msg))
-                failures
+            | Some (_, _, failures) -> failures
           in
-          let lc_opt =
+          (* A file with an index error is absent from the graph because
+             of it; it is not reported a second time as absent. *)
+          let index_failed : (Fpath.t, unit) Hashtbl.t = Hashtbl.create 16 in
+          List.iter (fun (err : E.t) ->
+              match err.E.loc with
+              | Some { pos; _ } ->
+                Hashtbl.replace index_failed (Fpath.normalize pos.Pos.file) ()
+              | None -> ())
+            file_failures;
+          (* targets the interfile analysis leaves out, one warning each *)
+          let not_covered (targets : Target.t list) (why : string)
+              : E.t list =
+            List_.map (fun (target : Target.t) ->
+                file_warning (Target.internal_path target)
+                  (why ^ "; its taint rules did not run on this file"))
+              targets
+          in
+          let lc_opt, uncovered =
           match build_opt with
+          | None when limit_failures <> [] ->
+            (* reported per rule *)
+            (None, [])
           | None ->
             Log.warn (fun m ->
                 m "interfile preprocess: project_index build failed for \
-                   %s under %s; affected taint rules will fall back to \
-                   intrafile for that root"
+                   %s under %s; its taint rules do not run for that root"
                   (Lang.to_string lang) (Fpath.to_string project_root));
-            record_fallback ~lang ~project_root lang_targets;
-            None
+            (None,
+             not_covered lang_targets "the interfile graph could not be built")
           | Some (interfile_graph, _, _) ->
             let interfile_files = interfile_file_set interfile_graph in
             let matching_targets =
@@ -1454,49 +1449,48 @@ let build_rule_states
               List.filter (fun target ->
                 match Target.abs_path ~cwd target with
                 | None -> false
-                | Some path -> not (Hashtbl.mem matched_paths path))
+                | Some path ->
+                  not (Hashtbl.mem matched_paths path)
+                  && not (Hashtbl.mem index_failed path))
                 lang_targets
+            in
+            let uncovered =
+              not_covered unmatched "absent from the interfile graph"
             in
             (match matching_targets with
              | [] ->
                Log.warn (fun m ->
                    m "interfile preprocess: no scan targets present in \
-                      the interfile graph for %s under %s; affected \
-                      taint rules will fall back to intrafile for those \
-                      targets"
+                      the interfile graph for %s under %s; its taint \
+                      rules do not run for that root"
                      (Lang.to_string lang)
                      (Fpath.to_string project_root));
-               record_fallback ~lang ~project_root lang_targets;
-               None
+               (None, uncovered)
              | _ :: _ ->
-               if unmatched <> [] then begin
+               if unmatched <> [] then
                  Log.warn (fun m ->
                      m "interfile preprocess: %d scan target(s) absent \
-                        from the interfile graph for %s under %s; they \
-                        will fall back to intrafile"
+                        from the interfile graph for %s under %s; the \
+                        taint rules do not run on them"
                        (List.length unmatched)
                        (Lang.to_string lang)
                        (Fpath.to_string project_root));
-                 record_fallback ~lang ~project_root unmatched
-               end;
-               Some { lc_lang = lang;
-                      lc_rules = rules;
-                      lc_interfile_graph = interfile_graph;
-                      lc_matching_targets = matching_targets })
+               (Some { lc_lang = lang;
+                       lc_rules = rules;
+                       lc_interfile_graph = interfile_graph;
+                       lc_matching_targets = matching_targets },
+                uncovered))
           in
-          (lc_opt, file_failures, limit_failures))
+          (lc_opt, file_failures @ uncovered @ limit_failures))
         lang_rules
       @ acc)
       targets_by_root []
   in
   let lang_contexts : lang_context list =
-    List.filter_map (fun (lc_opt, _, _) -> lc_opt) per_lang
+    List.filter_map (fun (lc_opt, _) -> lc_opt) per_lang
   in
-  let index_build_failures : (Fpath.t * string) list =
-    List.concat_map (fun (_, failures, _) -> failures) per_lang
-  in
-  let build_limit_failures : (Rule_ID.t * build_limit) list =
-    List.concat_map (fun (_, _, failures) -> failures) per_lang
+  let build_errors : E.t list =
+    List.concat_map (fun (_, errors) -> errors) per_lang
   in
   let target_batches : (Lang.t * Fpath.t list) list =
     List.concat_map (fun (lc : lang_context) ->
@@ -1508,28 +1502,26 @@ let build_rule_states
       |> List_.map (fun (batch : Fpath.t list) -> (lc.lc_lang, batch)))
       lang_contexts
   in
-  let (target_results :
-         (Lang.t * (Fpath.t, G.program) Hashtbl.t) list),
-      (failed_target_batches : (Lang.t * Fpath.t list * string) list) =
-    run_parmap caps ~ncores
-      ~on_exn:(fun ((lang, batch) : Lang.t * Fpath.t list)
-                   (exn : Exception.t) ->
-        let msg = Printexc.to_string (Exception.get_exn exn) in
-        Log.warn (fun m ->
-            m "interfile parse: %s batch failed: %s"
-              (Lang.to_string lang) msg);
-        (lang, batch, msg))
-      (fun ((lang, batch) : Lang.t * Fpath.t list) ->
-        let tbl = parse_file_batch ~resolved:projidx_asts lang batch in
-        Log.info (fun m ->
-            m "interfile parse: %s: parsed %d/%d files in batch"
-              (Lang.to_string lang)
-              (Hashtbl.length tbl)
-              (List.length batch));
-        (lang, tbl))
-      target_batches
+  let parsed_target_batches : parsed_batch list =
+    let parsed, failed =
+      run_parmap caps ~ncores ~on_exn:failed_batch
+        (fun ((lang, batch) : Lang.t * Fpath.t list) ->
+          let ((_, tbl, _) as parsed) =
+            parse_file_batch ~resolved:projidx_asts lang batch
+          in
+          Log.info (fun m ->
+              m "interfile parse: %s: parsed %d/%d files in batch"
+                (Lang.to_string lang)
+                (Hashtbl.length tbl)
+                (List.length batch));
+          parsed)
+        target_batches
+    in
+    parsed @ failed
   in
-  let target_ast_lookup = build_ast_lookup target_results in
+  let target_ast_lookup =
+    build_ast_lookup (batch_asts parsed_target_batches)
+  in
   (* Spec extraction matches on FRESH Naming-only parses: matching is
      positional (ranges and fids are identical for the same bytes), and
      the projidx-published [id_type]/svalue payloads inside [id_info]
@@ -1537,22 +1529,18 @@ let build_rule_states
      on grafana, 188s vs 1s of formula matching for one rule.  The
      stamped ASTs stay in [target_ast_lookup] for dispatch, whose sid
      resolution needs them. *)
-  let (extraction_results :
-         (Lang.t * (Fpath.t, G.program) Hashtbl.t) list),
-      (failed_extraction_batches : (Lang.t * Fpath.t list * string) list) =
-    run_parmap caps ~ncores
-      ~on_exn:(fun ((lang, batch) : Lang.t * Fpath.t list)
-                   (exn : Exception.t) ->
-        let msg = Printexc.to_string (Exception.get_exn exn) in
-        Log.warn (fun m ->
-            m "interfile extraction parse: %s batch failed: %s"
-              (Lang.to_string lang) msg);
-        (lang, batch, msg))
-      (fun ((lang, batch) : Lang.t * Fpath.t list) ->
-        (lang, parse_file_batch lang batch))
-      target_batches
+  let parsed_extraction_batches : parsed_batch list =
+    let parsed, failed =
+      run_parmap caps ~ncores ~on_exn:failed_batch
+        (fun ((lang, batch) : Lang.t * Fpath.t list) ->
+          parse_file_batch lang batch)
+        target_batches
+    in
+    parsed @ failed
   in
-  let extraction_ast_lookup = build_ast_lookup extraction_results in
+  let extraction_ast_lookup =
+    build_ast_lookup (batch_asts parsed_extraction_batches)
+  in
   (* Issue #499 gap B, cross-file half: compute argument-to-parameter
      symbolic stamps over each language's dispatch ASTs — whose
      [id_resolved] links (naming same-file, projidx cross-file) connect
@@ -1568,18 +1556,17 @@ let build_rule_states
   let stamped_files : (Fpath.t, unit) Hashtbl.t = Hashtbl.create 4 in
   (* This loop runs on the coordinator, outside the parmap wrapper that
      contains a failure to its item elsewhere in this function, so a file
-     whose walk overflows the stack or exhausts memory is contained here:
-     it leaves both AST tables and runs per target, with a scan error, the
-     way a file whose parse failed does below. A timeout propagates. *)
-  let failed_stamp_files : (Lang.t * Fpath.t * string) list ref = ref [] in
-  let per_file (lang : Lang.t) (file : Fpath.t) (stamp : unit -> unit)
-      : unit =
+     whose walk fails is contained here: it leaves both AST tables, with a
+     scan error, the way a file whose parse failed does below. *)
+  let failed_stamp_files : (Fpath.t * E.t) list ref = ref [] in
+  let per_file (file : Fpath.t) (stamp : unit -> unit) : unit =
     try stamp () with
-    | Time_limit.Timeout _ as exn -> Exception.catch_and_reraise exn
-    | (Out_of_memory | Stack_overflow) as exn ->
+    | exn ->
         failed_stamp_files :=
-          (lang, file, Printexc.to_string exn) :: !failed_stamp_files
+          (file, file_error ~file (Exception.catch exn)) :: !failed_stamp_files
   in
+  (* failures of the walks below that keep the file: reported, not dropped *)
+  let stamp_errors : E.t list ref = ref [] in
   List.iter
     (fun (lc : lang_context) ->
       let dispatch_tbl = ast_table_for_lang target_ast_lookup lc.lc_lang in
@@ -1594,18 +1581,19 @@ let build_rule_states
          to drop: the language loses its stamps and keeps its files. *)
       let param_stamps =
         try Callback_svalue.collect_stamps asts with
-        | Time_limit.Timeout _ as exn -> Exception.catch_and_reraise exn
-        | (Out_of_memory | Stack_overflow) as exn ->
-            Logs.warn (fun m ->
+        | exn ->
+            let exn = Exception.catch exn in
+            Log.warn (fun m ->
                 m "interfile stamping: %s collecting the %s callback \
                    stamps, none applied"
-                  (Printexc.to_string exn) (Lang.to_string lc.lc_lang));
+                  (Exception.to_string exn) (Lang.to_string lc.lc_lang));
+            stamp_errors := E.exn_to_error exn :: !stamp_errors;
             []
       in
       if param_stamps <> [] then
         Hashtbl.iter
           (fun file ast ->
-            per_file lc.lc_lang file (fun () ->
+            per_file file (fun () ->
                 ignore (Callback_svalue.apply_stamps param_stamps ast)))
           dispatch_tbl;
       (* Extraction parses additionally need the dispatch AST's own [Sym]
@@ -1614,7 +1602,7 @@ let build_rule_states
          Naming-only extraction parse never sees projidx payloads. *)
       Hashtbl.iter
         (fun file ast ->
-          per_file lc.lc_lang file (fun () ->
+          per_file file (fun () ->
               let mirrored =
                 match Hashtbl.find_opt dispatch_tbl file with
                 | Some dispatch_ast ->
@@ -1626,56 +1614,25 @@ let build_rule_states
               then Hashtbl.replace stamped_files file ()))
         extraction_tbl;
       List.iter
-        (fun ((_, file, _) : Lang.t * Fpath.t * string) ->
+        (fun ((file, _) : Fpath.t * E.t) ->
           Hashtbl.remove dispatch_tbl file;
           Hashtbl.remove extraction_tbl file)
         !failed_stamp_files)
     lang_contexts;
-  (* A failed parse batch leaves its files with no dispatch AST and/or no
-     extraction AST, and a failed stamping walk removes its file from both:
-     such a file can neither be dispatched nor seed the subgraph,
-     so without intervention its findings would silently vanish (the
-     per-target gate blocks interfile rules on non-fallback paths).  Run
-     them per-target intrafile instead, and surface one scan error per
-     file.  The fallback key's root component is ignored by its consumer
-     (it matches on lang alone), so [cwd] serves as the key root. *)
-  let failed_parse_files : (Lang.t * Fpath.t * string) list =
+  (* A file whose parse failed has no dispatch AST and/or no extraction
+     AST, and a failed stamping walk removes its file from both: such a
+     file can neither be dispatched nor seed the subgraph, so its findings
+     would silently vanish. Surface one scan error per file. *)
+  let parse_failures : E.t list =
     let seen = Hashtbl.create 16 in
-    let per_file
-        (files : (Lang.t * Fpath.t * string) list) =
-      List_.filter_map
-        (fun ((lang, file, msg) : Lang.t * Fpath.t * string) ->
+    !failed_stamp_files
+    @ batch_failures (parsed_target_batches @ parsed_extraction_batches)
+    |> List_.filter_map (fun ((file, err) : Fpath.t * E.t) ->
            if Hashtbl.mem seen file then None
            else begin
-             Hashtbl.replace seen file true;
-             Some (lang, file, msg)
+             Hashtbl.replace seen file ();
+             Some err
            end)
-        files
-    in
-    (failed_target_batches @ failed_extraction_batches)
-    |> List.concat_map
-         (fun ((lang, batch, msg) : Lang.t * Fpath.t list * string) ->
-            per_file
-              (List_.map
-                 (fun (file : Fpath.t) ->
-                    (lang, file, "interfile parse failed: " ^ msg))
-                 batch))
-    |> List.append
-         (per_file
-            (List_.map
-               (fun ((lang, file, msg) : Lang.t * Fpath.t * string) ->
-                  (lang, file, "interfile stamping failed: " ^ msg))
-               !failed_stamp_files))
-  in
-  List.iter
-    (fun ((lang, file, _msg) : Lang.t * Fpath.t * string) ->
-       record_fallback_paths ~lang ~project_root:cwd [ file ])
-    failed_parse_files;
-  let parse_failures : (Fpath.t * string) list =
-    List_.map
-      (fun ((lang, file, msg) : Lang.t * Fpath.t * string) ->
-         (file, Printf.sprintf "%s: %s" (Lang.to_string lang) msg))
-      failed_parse_files
   in
   (* (rule, chunk) pairs in one parmap so an expensive-to-match rule
      spreads across domains. *)
@@ -1713,22 +1670,20 @@ let build_rule_states
             if not (Hashtbl.mem target_contents target.abs_path) then
               match UFile.read_file target.abs_path with
               | content -> Hashtbl.replace target_contents target.abs_path content
-              | exception ((Out_of_memory | Time_limit.Timeout _) as exn) ->
-                  Exception.catch_and_reraise exn
               | exception _ -> ())
           lc.lc_matching_targets)
       lang_contexts;
   let (spec_partials : (int * rule_specs) list),
-      (failed_spec_chunks : (int * string) list) =
+      (failed_spec_chunks : (int * E.t) list) =
     run_parmap caps ~ncores
       ~on_exn:(fun ((i, _chunk) : int * interfile_target list)
                  (exn : Exception.t) ->
         let _lc, rule = spec_pairs.(i) in
-        let msg = Exception.to_string exn in
+        let rule_id = fst rule.R.id in
         Log.warn (fun m ->
             m "interfile spec_extract: rule %s failed: %s"
-              (Rule_ID.to_string (fst rule.R.id)) msg);
-        (i, msg))
+              (Rule_ID.to_string rule_id) (Exception.to_string exn));
+        (i, { (E.exn_to_error exn) with E.rule_id = Some rule_id }))
       (fun ((i, chunk) : int * interfile_target list) ->
         let lc, rule = spec_pairs.(i) in
         let specs =
@@ -1742,26 +1697,32 @@ let build_rule_states
       spec_chunk_items
   in
   (* A failed chunk leaves rule [i]'s seeds incomplete for this context;
-     dispatching a partial seeding would find an unpredictable subset and
-     could double-report against the per-target fallback.  Treat the rule
-     as failed for the whole context — like a failed [init_rule_state]:
-     no dispatch, every matching target runs per-target intrafile. *)
-  let failed_spec_rules : (int, unit) Hashtbl.t = Hashtbl.create 4 in
+     dispatching a partial seeding would find an unpredictable subset.
+     Treat the rule as failed for the whole context — like a failed
+     [init_rule_state]: no dispatch. *)
+  (* the first failed chunk's error stands for the rule *)
+  let failed_spec_rules : (int, E.t) Hashtbl.t = Hashtbl.create 4 in
   List.iter
-    (fun ((i, _msg) : int * string) ->
-       Hashtbl.replace failed_spec_rules i ())
+    (fun ((i, err) : int * E.t) ->
+       if not (Hashtbl.mem failed_spec_rules i) then
+         Hashtbl.replace failed_spec_rules i err)
     failed_spec_chunks;
+  let spec_failures : E.t list =
+    Hashtbl.fold (fun (_ : int) (err : E.t) acc -> err :: acc)
+      failed_spec_rules []
+  in
   let all_specs : (lang_context * rule_specs) list =
     let module IntMap = Map.Make (Int) in
     let by_rule =
       List.fold_left
         (fun acc ((i, specs) : int * rule_specs) ->
-          let sources, sinks =
-            Option.value (IntMap.find_opt i acc) ~default:([], [])
+          let sources, sinks, errors =
+            Option.value (IntMap.find_opt i acc) ~default:([], [], [])
           in
           IntMap.add i
             (List.rev_append specs.rs_sources sources,
-             List.rev_append specs.rs_sinks sinks)
+             List.rev_append specs.rs_sinks sinks,
+             List.rev_append specs.rs_errors errors)
             acc)
         IntMap.empty spec_partials
     in
@@ -1769,11 +1730,16 @@ let build_rule_states
     |> List.mapi (fun i ((lc : lang_context), (rule : R.taint_rule)) ->
          if Hashtbl.mem failed_spec_rules i then None
          else
-           let rs_sources, rs_sinks =
-             Option.value (IntMap.find_opt i by_rule) ~default:([], [])
+           let rs_sources, rs_sinks, rs_errors =
+             Option.value (IntMap.find_opt i by_rule) ~default:([], [], [])
            in
-           Some (lc, { rs_rule = rule; rs_sources; rs_sinks }))
+           Some (lc, { rs_rule = rule; rs_sources; rs_sinks; rs_errors }))
     |> List.filter_map Fun.id
+  in
+  let spec_file_failures : E.t list =
+    List.concat_map
+      (fun ((_, specs) : lang_context * rule_specs) -> specs.rs_errors)
+      all_specs
   in
   let rule_subgraphs : rule_subgraph list =
     List_.filter_map
@@ -1786,7 +1752,8 @@ let build_rule_states
       ~target_ast_lookup ~lang_contexts rule_subgraphs
   in
   let full_ast_lookup =
-    build_ast_lookup (List.rev_append companion_results target_results)
+    build_ast_lookup
+      (List.rev_append companion_results (batch_asts parsed_target_batches))
   in
   (* Publish inferred classes onto [id_type] for FRESH-parsed files only:
      projidx already stamped the ASTs it returned (with project-wide type
@@ -1803,12 +1770,12 @@ let build_rule_states
               Object_initialization.(
                 stamp_id_types (detect_object_initialization ast lang) ast)
             with
-            | (Out_of_memory | Time_limit.Timeout _) as exn ->
-                Exception.catch_and_reraise exn
             | exn ->
+                let exn = Exception.catch exn in
                 Log.warn (fun m ->
                     m "interfile dispatch: id_type stamping failed for %s: %s"
-                      (Fpath.to_string file) (Printexc.to_string exn)))
+                      (Fpath.to_string file) (Exception.to_string exn));
+                stamp_errors := file_error ~file exn :: !stamp_errors)
         tbl)
     full_ast_lookup;
   (* Lower each file's functions to IL and CFG once, for the union of the
@@ -1871,16 +1838,16 @@ let build_rule_states
       lowered_batches;
     tbl
   in
-  (* Failed-init rules fall back to per-target intrafile (below). *)
-  let (rule_states : rule_state list),
-      (failed_rsgs : rule_subgraph list) =
+  (* A rule whose init failed does not run; a file whose init failed is
+     missing from its rule's state. *)
+  let (inits : (rule_state * E.t list) list), (init_failures : E.t list) =
     run_parmap caps ~ncores
       ~on_exn:(fun (rsg : rule_subgraph) (exn : Exception.t) ->
+        let rule_id = fst rsg.rsg_specs.rs_rule.R.id in
         Log.warn (fun m ->
             m "interfile init_rule: rule %s failed: %s"
-              (Rule_ID.to_string (fst rsg.rsg_specs.rs_rule.R.id))
-              (Exception.to_string exn));
-        rsg)
+              (Rule_ID.to_string rule_id) (Exception.to_string exn));
+        { (E.exn_to_error exn) with E.rule_id = Some rule_id })
       (fun (rsg : rule_subgraph) ->
         init_rule_state
           ~ast_table:(ast_table_for_lang full_ast_lookup
@@ -1888,58 +1855,21 @@ let build_rule_states
           ~function_maps ~target_root_map rsg)
       rule_subgraphs
   in
+  let rule_states = List_.map fst inits in
+  let init_file_failures = List.concat_map snd inits in
   let langs =
     List.map (fun (lc : lang_context) ->
       Xlang.L (lc.lc_lang, []))
       lang_contexts
   in
-  (* Per rule, target abs paths interfile dispatch won't cover;
-     [Core_scan] runs those per-target. *)
-  let fallback_rule_target_paths
-      : (Rule_ID.t * Fpath.t list) list =
-    if Hashtbl.length fallback_target_paths_by_lang_root = 0 then []
-    else
-      List_.filter_map (fun (rule : R.rule) ->
-        match rule.R.mode with
-        | `Taint _ ->
-          if not (rule_is_interfile ~taint_interfile rule) then None
-          else
-            let lang_keys =
-              Xlang.to_langs rule.R.target_analyzer
-              |> List.map Lang.to_lowercase_alnum
-            in
-            let paths =
-              Hashtbl.fold (fun (lang_key, _root_str) ps acc ->
-                if List.mem lang_key lang_keys then List.rev_append ps acc
-                else acc)
-                fallback_target_paths_by_lang_root []
-            in
-            (match paths with
-             | [] -> None
-             | _ -> Some (fst rule.R.id, paths))
-        | _ -> None)
-        valid_rules
+  (* Every error at the path the scan was given, as findings are. *)
+  let errors =
+    build_errors @ parse_failures @ companion_failures @ !stamp_errors
+    @ spec_failures @ spec_file_failures @ init_failures
+    @ init_file_failures
+    |> List_.map (fun (err : E.t) ->
+           { err with
+             E.loc =
+               Option.map (rebase_loc (rebase_file target_root_map)) err.E.loc })
   in
-  let failed_fallback =
-    List.map (fun (rsg : rule_subgraph) ->
-      (fst rsg.rsg_specs.rs_rule.R.id,
-       List_.map (fun (target : interfile_target) -> target.abs_path)
-         rsg.rsg_lang_context.lc_matching_targets))
-      failed_rsgs
-  in
-  (* Rules whose spec extraction failed: no rule_state was built for the
-     context (excluded from [all_specs]), so every matching target must
-     run per-target.  [Core_scan] unions entries per rule. *)
-  let failed_spec_fallback =
-    Hashtbl.fold (fun (i : int) () acc ->
-        let lc, rule = spec_pairs.(i) in
-        (fst rule.R.id,
-         List_.map (fun (target : interfile_target) -> target.abs_path)
-           lc.lc_matching_targets)
-        :: acc)
-      failed_spec_rules []
-  in
-  (rule_states, langs,
-   fallback_rule_target_paths @ failed_fallback @ failed_spec_fallback,
-   index_build_failures @ parse_failures @ companion_failures,
-   build_limit_failures)
+  (rule_states, langs, errors)

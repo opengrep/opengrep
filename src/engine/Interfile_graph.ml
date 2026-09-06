@@ -17,7 +17,7 @@ let load_interfile_build (caps : < Cap.fork >)
     ?(ncores : int = 0)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
-    : (interfile_graph * resolved_asts * (Fpath.t * string) list) option =
+    : (interfile_graph * resolved_asts * Core_error.t list) option =
   let project_root_abs =
     if Fpath.is_abs project_root then Fpath.normalize project_root
     else Fpath.(v (Sys.getcwd ()) // project_root) |> Fpath.normalize
@@ -38,14 +38,14 @@ let load_interfile_build (caps : < Cap.fork >)
     Some (Call_graph.make_paths_absolute project_root_abs graph, asts,
           failures)
   with
-  | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
+  | (Out_of_memory | Memory_limit.ExceededMemoryLimit _) as exn ->
     Exception.catch_and_reraise exn
   | exn ->
     Log.warn (fun m ->
         m "Interfile_graph: build failed for %s under %s: %s"
           (Lang.to_string lang)
           (Fpath.to_string project_root_abs)
-          (Printexc.to_string exn));
+          (Exception.to_string (Exception.catch exn)));
     None
 
 let load_interfile_graph (caps : < Cap.fork >)
