@@ -470,6 +470,7 @@ let taint_config_of_rule ~per_file_formula_cache
                 |> List.exists (fun (src : R.taint_source) -> src.source_control);
                 preds;
                 handle_effects;
+                recursive = false;
                 java_props_cache = Hashtbl.create 30;
             },
             spec_matches,

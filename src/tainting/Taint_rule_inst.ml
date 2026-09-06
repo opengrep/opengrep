@@ -99,6 +99,13 @@ type t = {
        * then we avoid adding control taint-variables to environment. *)
   preds : spec_predicates;
   handle_effects : effects_handler;  (** Callback to report effects. *)
+  recursive : bool;
+      (** The function belongs to a recursive component of the call graph,
+          direct or mutual recursion. The calls it instantiates compose
+          argument offsets under the flat bound: through recursion an
+          offset grows at every call, and the longer offsets multiply the
+          polymorphic taints and add no finding. See
+          [Taint_shape.max_poly_offset]. *)
   java_props_cache : java_props_cache;
       (** Getters/setters without a definition are resolved to the property
     * named after them.
