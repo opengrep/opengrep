@@ -582,11 +582,26 @@ let propagate_taint_to_label replace_labels label (taint : T.taint) =
    We will figure out how many actual Semgrep findings are generated
    when this information is used, later.
 *)
+(* The items of a sink effect are bounded like a taint set: a call trace
+   distinguishes two taints of the same source, and recursion makes them
+   without bound. *)
+let bound_sink_items (taints_with_traces : Effect.taint_to_sink_item list) :
+    Effect.taint_to_sink_item list =
+  let max = !Flag_semgrep.max_taint_set_size in
+  if max =|= 0 || List.compare_length_with taints_with_traces max <= 0 then
+    taints_with_traces
+  else (
+    Log.warn (fun m ->
+        m "SINK_ITEMS_SATURATED: cardinal=%d dropping=%d"
+          (List.length taints_with_traces)
+          (List.length taints_with_traces - max));
+    List_.take max taints_with_traces)
+
 let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
     Effect.t list =
-  match taints_with_traces with
+  match bound_sink_items taints_with_traces with
   | [] -> []
-  | _ :: _ -> (
+  | _ :: _ as taints_with_traces -> (
       (* We cannot check whether we satisfy the `requires` here.
          This is because this sink may be inside of a function, meaning that
          argument taint can reach it, which can only be instantiated at the
