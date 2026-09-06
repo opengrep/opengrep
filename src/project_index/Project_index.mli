@@ -36,4 +36,4 @@ val collect_resolved :
   excludes:string list ->
   unit ->
   Call_graph.G.t * (string, AST_generic.program) Hashtbl.t
-  * (Fpath.t * string) list
+  * Core_error.t list

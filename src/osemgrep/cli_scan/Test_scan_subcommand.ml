@@ -577,6 +577,8 @@ let test_interfile_paths_scanned (caps : Scan_subcommand.caps) () =
           Exit_code.Check.ok exit_code;
           let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
           Alcotest.(check int) "one interfile finding" 1 (List.length out.results);
+          (* no per-target job ran: none could have reported an error *)
+          Alcotest.(check int) "no errors" 0 (List.length out.errors);
           Alcotest.(check (list string))
             "both targets scanned" [ "main.py"; "sinks.py" ]
             (out.paths.scanned |> List_.map Fpath.to_string |> List_.sort);
@@ -590,6 +592,68 @@ let test_interfile_paths_scanned (caps : Scan_subcommand.caps) () =
                  Alcotest.(check bool)
                    (spf "%s has a byte count" (Fpath.to_string t.path))
                    true (t.num_bytes > 0))))
+
+(* A file the parser rejects is reported once, as the syntax error a
+   per-target scan reports at the file; the other files are analysed and
+   the cross-file flow between them is found. *)
+let interfile_broken_py_content = {|
+def broken(:
+    sink(source(
+|}
+
+let test_interfile_parse_error (caps : Scan_subcommand.caps)
+    (args : string list) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+          F.File ("broken.py", interfile_broken_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  (Array.of_list
+                     ([
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile";
+                      ]
+                     @ args)))
+          in
+          Exit_code.Check.ok exit_code))
+
+(* A scan target the index does not discover, here a gitignored file named
+   on the command line, has no node in the graph: it is reported as a
+   warning at the file, the interfile rules do not run on it, and the
+   flow between the other files is found. *)
+let test_interfile_target_absent_from_graph (caps : Scan_subcommand.caps)
+    (args : string list) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+          F.File (".gitignore", "gen/\n");
+          F.Dir ("gen", [ F.File ("extra.py", interfile_caller_py_content) ]);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  (Array.of_list
+                     ([
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile";
+                      ]
+                     @ args
+                     @ [ "main.py"; "sinks.py"; "gen/extra.py" ])))
+          in
+          Exit_code.Check.ok exit_code))
 
 (* The interfile fixture scanned with the given arguments; the captured
    stdout and the exit code. *)
@@ -2337,6 +2401,18 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_interfile_source_sink_dedup caps);
       t "interfile targets are scanned targets"
         (test_interfile_paths_scanned caps);
+      t "interfile parse error on one file"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_parse_error caps []);
+      t "interfile parse error on one file, JSON"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_parse_error caps [ "--json" ]);
+      t "interfile target absent from the graph"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_target_absent_from_graph caps []);
+      t "interfile target absent from the graph, JSON"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_target_absent_from_graph caps [ "--json" ]);
       t "interfile JSON output" (test_interfile_json_output caps);
       t "interfile SARIF output" (test_interfile_sarif_output caps);
       t "interfile ignored caller" (test_interfile_ignored_caller caps);

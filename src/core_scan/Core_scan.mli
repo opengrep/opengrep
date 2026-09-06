@@ -78,14 +78,8 @@ val rules_for_analyzer : analyzer:Xlang.t -> Rule.t list -> Rule.t list
 *)
 val print_cli_progress : Core_scan_config.t -> unit
 
-type target_handler = Target.t -> Core_result.matches_single_file * bool
-
-val iter_targets_and_get_matches_and_exn_to_errors :
-  < Cap.fork ; Cap.memory_limit > ->
-  Core_scan_config.t ->
-  target_handler ->
-  Target.t list ->
-  Core_profiling.file_profiling Core_result.match_result list * Target.t list
+type target_handler =
+  Target.t -> Rule.t list -> Core_result.matches_single_file * bool
 
 val filter_files_with_too_many_matches_and_transform_as_timeout :
   int ->

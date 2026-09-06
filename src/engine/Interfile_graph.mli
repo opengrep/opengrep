@@ -13,7 +13,7 @@ val load_interfile_build :
   ?ncores:int ->
   targeting_conf:Find_targets.conf ->
   Lang.t -> Fpath.t ->
-  (interfile_graph * resolved_asts * (Fpath.t * string) list) option
+  (interfile_graph * resolved_asts * Core_error.t list) option
 (** The third component lists per-file index build failures: those files'
     functions and edges are missing from the graph, so callers surface them
     as scan errors rather than dropping them. *)

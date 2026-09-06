@@ -118,7 +118,8 @@ type func = Core_scan_config.t -> Core_result.result_or_exn
 (* TODO: stdout (sometimes) *)
 type caps = < Cap.fork ; Cap.time_limit ; Cap.memory_limit >
 
-(* Type of the iter_targets_and_get_matches_and_exn_to_errors callback.
+(* Type of the per-target callback of a scan, given the target and the
+   rules selected for it.
 
    A target handler returns (matches, was_scanned) where was_scanned indicates
    whether at least one rule applied to the target since the target could
@@ -128,7 +129,18 @@ type caps = < Cap.fork ; Cap.time_limit ; Cap.memory_limit >
 
    Remember that a target handler may run in another domain.
 *)
-type target_handler = Target.t -> Core_result.matches_single_file * bool
+type target_handler =
+  Target.t -> Rule.t list -> Core_result.matches_single_file * bool
+
+(* Per_target_rules: the rules a per-target job runs on the target.
+   Interfile_dispatch_only: every applicable rule is handled by interfile
+   dispatch; the target gets no job and is reported as scanned.
+   No_applicable_rule: the target gets no job and is not reported as
+   scanned. *)
+type target_rules =
+  | Per_target_rules of Rule.t list
+  | Interfile_dispatch_only
+  | No_applicable_rule
 
 (*****************************************************************************)
 (* Helpers *)
@@ -262,7 +274,7 @@ let filter_files_with_too_many_matches_and_transform_as_timeout
  * encoded in the wrong way in the Inputs_to_core.atd (for example
  * in the case of filenames with special unicode bytes in it), in which case
  * Common2.filesize above would fail and crash the whole scan as the
- * raised exn is outside the iter_targets_and_get_matches_and_exn_to_errors
+ * raised exn is outside the handle_target_with_protection
  * big try. This is why it's better to filter those problematic targets
  * early on.
  *)
@@ -507,6 +519,7 @@ let handle_target_with_protection
     (config : Core_scan_config.t)
     (handle_target : target_handler)
     (target : Target.t)
+    (rules : Rule.t list)
     : Core_profiling.file_profiling Core_result.match_result * Target.t option =
   let internal_path = Target.internal_path target in
   let noprof = Core_profiling.empty_partial_profiling internal_path in
@@ -529,7 +542,7 @@ let handle_target_with_protection
                  e.g. while parsing it, must not be attributed to
                  the last rule of the previous target *)
               TLS.set Rule.last_matched_rule None;
-              let res, was_scanned = handle_target target in
+              let res, was_scanned = handle_target target rules in
               (* old: This was to test -max_memory, to give a chance
                * to Gc.create_alarm to run even if the program does
                * not even need to run the Gc. However, this has a
@@ -558,10 +571,10 @@ let handle_target_with_protection
          * semgrep-core program.
          *)
         | exn when not !Flag_semgrep.fail_fast ->
+            let e = Exception.catch exn in
             Logs.err (fun m ->
                 m "exception on %s (%s)" !!internal_path
-                  (Printexc.to_string exn));
-            let e = Exception.catch exn in
+                  (Exception.to_string e));
             let errors =
               ESet.singleton (E.exn_to_error ~file:internal_path e)
             in
@@ -569,63 +582,6 @@ let handle_target_with_protection
   in
   let scanned_target = if was_scanned then Some target else None in
   (Core_result.add_run_time run_time res, scanned_target)
-
-(* Returns a list of match results and a separate list of scanned targets *)
-let iter_targets_and_get_matches_and_exn_to_errors
-    (caps : < Cap.fork ; Cap.memory_limit ; .. >) (config : Core_scan_config.t)
-    (handle_target : target_handler) (targets : Target.t list) :
-    Core_profiling.file_profiling Core_result.match_result list * Target.t list
-    =
-  (* The target is None when the file was not scanned *)
-  let (xs
-        : ( Core_profiling.file_profiling Core_result.match_result
-            * Target.t option,
-            Target.t * Core_error.t )
-          result
-          list) =
-    targets
-    |> Parallel_targets.map_targets
-         (caps :> < Cap.fork >)
-         config.ncores
-         (fun (target : Target.t) ->
-           handle_target_with_protection
-             (caps :> < Cap.memory_limit >) config handle_target target)
-  in
-  let xs =
-    xs
-    |> List_.map
-         (fun
-           (x :
-             ( Core_profiling.file_profiling Core_result.match_result
-               * Target.t option,
-               Target.t * Core_error.t )
-             result)
-         ->
-           match x with
-           | Ok res -> res
-           | Error (target, e) ->
-               let internal_path = Target.internal_path target in
-               let noprof =
-                 Core_profiling.empty_partial_profiling internal_path
-               in
-               let errors = ESet.singleton e in
-               let match_result =
-                 Core_result.mk_match_result [] errors noprof
-               in
-               (Core_result.add_run_time 0.0 match_result, Some target))
-  in
-  let matches, opt_paths = List_.split xs in
-  let scanned =
-    opt_paths |> List_.filter_map Fun.id
-    (* old: It's necessary to remove duplicates because extracted targets are
-       mapped back to their original target, and you can have multiple
-       extracted targets for a single file. Might as well sort too
-       TODO? still needed now that we don't have extracted targets in Core_scan?
-       |> List.sort_uniq Fpath.compare
-    *)
-  in
-  (matches, scanned)
-[@@trace]
 
 (*****************************************************************************)
 (* Rule selection *)
@@ -763,13 +719,12 @@ let interfile_xconfig (config : Core_scan_config.t)
 (* a "core" scan *)
 (*****************************************************************************)
 
-(* build the callback for iter_targets_and_get_matches_and_exn_to_errors *)
+(* build the per-target callback *)
 let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
-    (valid_rules : Rule.t list)
-    ?(rule_runs_on_target : (Rule.t -> Target.t -> bool) = fun _ _ -> true)
     ~equivs
     (prefilter_cache_opt : Match_env.prefilter_config) : target_handler =
-  function
+ fun target rules ->
+  match target with
   | Lockfile ({ path; kind } as lockfile) ->
       (* TODO: (sca) we always pass None as the manifest target here, but this
        * code path only applies to Supply Chain scans in the core which we
@@ -781,7 +736,7 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
          interfile rule is never matched against a lockfile *)
       let rules =
         supply_chain_rules ~lockfile_kind:kind ~origin
-          ~respect_rule_paths:config.respect_rule_paths valid_rules
+          ~respect_rule_paths:config.respect_rule_paths rules
       in
       let dep_matches =
         rules
@@ -791,24 +746,8 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
       let was_scanned = not (List_.null rules) in
       (* TODO: run all the right hooks *)
       (Core_result.collate_rule_results path dep_matches, was_scanned)
-  | Regular
-      ({
-         analyzer;
-         products;
-         path = { origin; internal_path_to_content = file };
-         _;
-       } as target) ->
-      let pre_gate_rules =
-        rules_for_target ~analyzer ~products ~origin
-          ~respect_rule_paths:config.respect_rule_paths valid_rules
-      in
-      let rules =
-        pre_gate_rules
-        |> List.filter (fun r -> rule_runs_on_target r (Regular target))
-      in
-      (* Use pre-gate rules: a target counts as scanned even when its only
-         applicable rules go through interfile dispatch. *)
-      let was_scanned = not (List_.null pre_gate_rules) in
+  | Regular ({ path = { internal_path_to_content = file; _ }; _ } as target) ->
+      let was_scanned = not (List_.null rules) in
 
       (* TODO: can we skip all of this if there are no applicable
          rules? In particular, can we skip print_cli_progress? *)
@@ -862,7 +801,7 @@ module DLS = Domain.DLS
 (* A target carries the size the scheduling took for it: that is the byte
    count --time reports, without a system call of its own. *)
 type scan_work_item =
-  | Per_target of Target.t * int (* size in bytes *)
+  | Per_target of Target.t * int (* size in bytes *) * Rule.t list
   | Interfile_rule of Interfile_dispatch.rule_state
 
 type scan_work_result =
@@ -880,9 +819,9 @@ let handle_work_item
     (target_handler : target_handler)
     (item : scan_work_item) : scan_work_result =
   match item with
-  | Per_target (target, file_size) ->
+  | Per_target (target, file_size, rules) ->
     let result, target_opt =
-      handle_target_with_protection caps config target_handler target
+      handle_target_with_protection caps config target_handler target rules
     in
     let result =
       Core_result.map_profiling
@@ -950,12 +889,10 @@ let handle_work_item
 let unified_exception_handler (item : scan_work_item) (e : Exception.t)
     : scan_work_error =
   match item with
-  | Per_target (target, _size) ->
+  | Per_target (target, _size, _rules) ->
     let internal_path = Target.internal_path target in
-    let exn = Exception.get_exn e in
     Logs.err (fun m ->
-        m "exception on %s (%s)" !!internal_path
-          (Printexc.to_string exn));
+        m "exception on %s (%s)" !!internal_path (Exception.to_string e));
     Target_error (target, E.exn_to_error ~file:internal_path e)
   | Interfile_rule rs ->
     let rule_id = Interfile_dispatch.rule_id_of rs in
@@ -971,11 +908,28 @@ let iter_unified_and_get_matches_and_exn_to_errors
     (config : Core_scan_config.t)
     (target_handler : target_handler)
     ~(interfile_rule_states : Interfile_dispatch.rule_state list)
+    ~(target_rules : Target.t -> target_rules)
     (targets : Target.t list)
     : Core_profiling.file_profiling Core_result.match_result list
       * Target.t list
       * PM.t list
       * E.t list =
+  let to_run, dispatched =
+    targets
+    |> List.fold_left
+         (fun ((to_run : (Target.t * int * Rule.t list) list),
+               (dispatched : (Target.t * int) list))
+              (target : Target.t) ->
+           match target_rules target with
+           | No_applicable_rule -> (to_run, dispatched)
+           | Per_target_rules rules ->
+               let size = UFile.filesize (Target.internal_path target) in
+               ((target, size, rules) :: to_run, dispatched)
+           | Interfile_dispatch_only ->
+               let size = UFile.filesize (Target.internal_path target) in
+               (to_run, (target, size) :: dispatched))
+         ([], [])
+  in
   (* Interfile tasks first (heaviest), then targets by decreasing size
      for greedy scheduling. *)
   let work_items =
@@ -985,14 +939,24 @@ let iter_unified_and_get_matches_and_exn_to_errors
         interfile_rule_states
     in
     let target_items =
-      targets
-      |> List_.map (fun (target : Target.t) ->
-             (target, UFile.filesize (Target.internal_path target)))
-      |> List_.sort_by_key snd (Fun.flip Int.compare)
-      |> List_.map (fun ((target : Target.t), (size : int)) ->
-             Per_target (target, size))
+      to_run
+      |> List_.sort_by_key (fun (_, size, _) -> size) (Fun.flip Int.compare)
+      |> List_.map (fun ((target : Target.t), (size : int), rules) ->
+             Per_target (target, size, rules))
     in
     interfile_items @ target_items
+  in
+  (* empty result with the byte count for --time *)
+  let dispatched_results =
+    dispatched
+    |> List_.map (fun ((target : Target.t), (size : int)) ->
+           Core_result.mk_match_result [] ESet.empty
+             (Core_profiling.empty_partial_profiling
+                (Target.internal_path target))
+           |> Core_result.add_run_time 0.0
+           |> Core_result.map_profiling
+                (fun (p : Core_profiling.file_profiling) ->
+                  { p with file_size_bytes = Some size }))
   in
   let work_results =
     Parallel_targets.map_work_items
@@ -1041,7 +1005,7 @@ let iter_unified_and_get_matches_and_exn_to_errors
               m "interfile: rule %s failed; surfacing as error"
                 (Rule_ID.to_string rule_id));
           (files, scanned, interfile, err :: rule_errors))
-      ([], [], [], [])
+      (dispatched_results, List_.map fst dispatched, [], [])
       work_results
   in
   (List.rev file_results, List.rev scanned_targets, interfile_matches,
@@ -1082,9 +1046,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
     else NoPrefiltering
   in
   let equivs = parse_equivalences config.equivalences_file in
-  let interfile_rule_states, interfile_languages_used,
-      interfile_fallback_rule_target_paths, interfile_index_failures,
-      interfile_build_limit_failures =
+  let interfile_rule_states, interfile_languages_used, interfile_errors =
     Interfile_dispatch.build_rule_states
       (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
       ~ncores:config.ncores
@@ -1094,93 +1056,44 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       ~targeting_conf:config.targeting_conf
       ~xconf:(interfile_xconfig config ~equivs)
   in
-  (* A file the index build failed on has no functions or call edges in the
-     interfile graph — findings through it are silently missing — so each
-     failure is surfaced as a (warning-severity) scan error, like a partial
-     parse, rather than left as a debug log line. *)
-  let interfile_index_errors : E.t list =
-    List_.map (fun ((file : Fpath.t), (msg : string)) ->
-        E.mk_error
-          ~msg:(spf "interfile index build failed for this file \
-                     (cross-file findings through it may be missing): %s" msg)
-          ~loc:(Tok.first_loc_of_file file)
-          Out.SemgrepWarning)
-      interfile_index_failures
-    @ List_.map
-        (fun ((rule_id : Rule_ID.t), (limit : Interfile_dispatch.build_limit)) ->
-          let msg, error_type =
-            match limit with
-            | Build_out_of_memory ->
-                ( "the interfile graph build hit --max-memory; this rule ran \
-                   on single files",
-                  Out.OutOfMemory )
-          in
-          E.mk_error ~rule_id ~msg error_type)
-        interfile_build_limit_failures
-  in
   let interfile_rule_ids =
     Interfile_dispatch.interfile_taint_rule_ids
       ~taint_interfile:config.taint_interfile valid_rules
   in
-  (* The per-target handler receives every valid rule, so that a target
-     whose only applicable rule is dispatched interfile still counts as
-     scanned; rule_runs_on_target below is the one place that keeps a
-     dispatched rule out of per-target matching. An interfile rule with a
-     graph-build failure runs only on its fallback target paths; the rest
-     go through dispatch, so running them here would double-count. *)
-  let fallback_paths_by_rule : (Rule_ID.t, (string, unit) Hashtbl.t) Hashtbl.t =
-    Hashtbl.create 4
-  in
-  (* A rule can contribute several path lists (graph-coverage gaps plus one
-     per failed rule subgraph) — union them; replacing would silently drop
-     the earlier lists' targets from both dispatch and the per-target run. *)
-  List.iter (fun (rid, paths) ->
-    let set =
-      match Hashtbl.find_opt fallback_paths_by_rule rid with
-      | Some set -> set
-      | None ->
-          let set = Hashtbl.create (List.length paths) in
-          Hashtbl.replace fallback_paths_by_rule rid set;
-          set
-    in
-    List.iter (fun p ->
-      Hashtbl.replace set (Fpath.to_string (Fpath.normalize p)) ())
-      paths)
-    interfile_fallback_rule_target_paths;
-  let cwd = Fpath.v (Sys.getcwd ()) in
-  (* Consulted once per (rule, target) pair. *)
+  (* An interfile rule runs in its interfile task only, never per target. *)
   let interfile_rule_id_set : (Rule_ID.t, unit) Hashtbl.t =
     Hashtbl.create (List.length interfile_rule_ids)
   in
   List.iter
     (fun (rid : Rule_ID.t) -> Hashtbl.replace interfile_rule_id_set rid ())
     interfile_rule_ids;
-  let rule_runs_on_target (rule : R.t) (target : Target.t) : bool =
-    let rid = fst rule.id in
-    if not (Hashtbl.mem interfile_rule_id_set rid) then true
-    else
-      match Hashtbl.find_opt fallback_paths_by_rule rid with
-      | None ->
-        (* Interfile rule with full coverage — dispatch handles every
-           target; never runs in per-target. *)
-        false
-      | Some fallback_set ->
-        (match Target.abs_path ~cwd target with
-         | None -> true  (* Lockfile / no abs_path: be conservative *)
-         | Some p ->
-           Hashtbl.mem fallback_set (Fpath.to_string p))
+  let runs_per_target (rule : R.t) : bool =
+    not (Hashtbl.mem interfile_rule_id_set (fst rule.id))
+  in
+  (* A lockfile takes every rule; its handler keeps those with a
+     dependency formula. *)
+  let target_rules (target : Target.t) : target_rules =
+    match target with
+    | Lockfile _ -> Per_target_rules valid_rules
+    | Regular { analyzer; products; path = { origin; _ }; _ } -> (
+        match
+          rules_for_target ~analyzer ~products ~origin
+            ~respect_rule_paths:config.respect_rule_paths valid_rules
+        with
+        | [] -> No_applicable_rule
+        | rules -> (
+            match List.filter runs_per_target rules with
+            | [] -> Interfile_dispatch_only
+            | rules -> Per_target_rules rules))
   in
   let file_results, scanned_targets, interfile_matches, interfile_rule_errors =
     iter_unified_and_get_matches_and_exn_to_errors
       (caps :> < Cap.fork ; Cap.memory_limit ; Cap.time_limit >)
       config
-      (mk_target_handler
-         (caps :> < Cap.time_limit >)
-         config valid_rules
-         ~rule_runs_on_target
-         ~equivs
+      (mk_target_handler (caps :> < Cap.time_limit >) config ~equivs
          prefilter_cache_opt)
       ~interfile_rule_states
+      ~target_rules
       targets
   in
 
@@ -1205,7 +1118,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
   in
   (* concatenate all errors *)
   let errors =
-    interfile_index_errors @ interfile_rule_errors @ rule_errors @ new_errors
+    interfile_errors @ interfile_rule_errors @ rule_errors @ new_errors
     @ res.errors
   in
   (* Concatenate all the skipped targets *)

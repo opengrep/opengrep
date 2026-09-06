@@ -44,15 +44,17 @@ let rec chunks (n : int) (xs : 'a list) : 'a list list =
    re-raised. *)
 let run_per_file (caps : < Cap.fork >) ~(ncores : int)
     (fn : 'a -> 'b) (items : 'a list)
-    : ('b, 'a * string) Result.t list =
+    : ('b, 'a * Exception.t) Result.t list =
   (* [fn] fixes the type: one [Ok]/[Error] per item; an [Error] carries the
-     item so the caller can attribute (and surface) the failure. *)
+     item so the caller can attribute (and surface) the failure. The whole
+     build runs under one memory limit scope, so the limit's exception
+     must reach that scope. *)
   let run_one item =
     try Ok (fn item)
     with
-    | (Out_of_memory | Stack_overflow | Time_limit.Timeout _) as exn ->
+    | (Out_of_memory | Memory_limit.ExceededMemoryLimit _) as exn ->
       Exception.catch_and_reraise exn
-    | exn -> Error (item, Printexc.to_string exn)
+    | exn -> Error (item, Exception.catch exn)
   in
   let batches = chunks per_file_batch_size items in
   let n = List.length batches in
@@ -62,16 +64,16 @@ let run_per_file (caps : < Cap.fork >) ~(ncores : int)
       ~num_domains:(min ncores n) ~chunksize:1
       ~exception_handler:(fun _ exn ->
         match Exception.get_exn exn with
-        | Out_of_memory | Stack_overflow | Time_limit.Timeout _ ->
+        | Out_of_memory | Memory_limit.ExceededMemoryLimit _ ->
           Exception.reraise exn
-        | exn -> Printexc.to_string exn)
+        | _ -> exn)
       (fun batch -> List_.map run_one batch)
       batches
     |> List.map2 (fun batch -> function
         | Ok batch_results -> batch_results
         (* A batch-level failure (thrown outside [run_one]) loses the
-           per-item results; attribute its message to every item. *)
-        | Error msg -> List_.map (fun item -> Error (item, msg)) batch)
+           per-item results; attribute it to every item. *)
+        | Error exn -> List_.map (fun item -> Error (item, exn)) batch)
         batches
     |> List.concat
 
@@ -81,7 +83,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     ?(class_infos = [])
     ?(reexport_map = Hashtbl.create 0)
     (file_infos : file_info list)
-    : Call_graph.G.t * class_fun_info list * (Fpath.t * string) list =
+    : Call_graph.G.t * class_fun_info list * Core_error.t list =
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
   in
@@ -204,10 +206,10 @@ let build_project_call_graph (caps : < Cap.fork >)
   let phase1_failures =
     List.filter_map (function
       | Ok _ -> None
-      | Error ((fi : file_info), msg) ->
+      | Error ((fi : file_info), exn) ->
         Log.warn (fun m -> m "[skip] projidx phase 1 failed on %s: %s"
-                    (Fpath.to_string fi.fi_file) msg);
-        Some (fi.fi_file, Printf.sprintf "projidx phase 1 (functions): %s" msg))
+                    (Fpath.to_string fi.fi_file) (Exception.to_string exn));
+        Some (Core_error.exn_to_error ~file:fi.fi_file exn))
       per_file_funcs
   in
   List.iter (fun (func : FA.func_info) ->
@@ -459,10 +461,10 @@ let build_project_call_graph (caps : < Cap.fork >)
           Call_graph.add_edge graph ~src ~dst ~call_tok)
           edges;
         None
-      | Error ((fi : file_info), msg) ->
+      | Error ((fi : file_info), exn) ->
         Log.warn (fun m -> m "[skip] projidx phase 2 failed on %s: %s"
-                    (Fpath.to_string fi.fi_file) msg);
-        Some (fi.fi_file, Printf.sprintf "projidx phase 2 (call edges): %s" msg))
+                    (Fpath.to_string fi.fi_file) (Exception.to_string exn));
+        Some (Core_error.exn_to_error ~file:fi.fi_file exn))
       per_file_edges
   in
   (* Interface dispatch edges.  See [Structural_dispatch]. *)
@@ -515,7 +517,7 @@ let run_pipeline (caps : < Cap.fork >)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
   : entry list * Call_graph.G.t * int * int * file_info list
-    * (Fpath.t * string) list =
+    * Core_error.t list =
   let cfg = Index_lang_rules.for_lang lang in
   (* [discover_excludes] so the CLI and embedded engine index the same files. *)
   let excludes =
@@ -579,19 +581,19 @@ let run_pipeline (caps : < Cap.fork >)
       List.map (fun file ->
         try Ok (process file)
         with
-        | Out_of_memory | Stack_overflow | Time_limit.Timeout _ as exn ->
-          raise exn
-        | exn -> Error (file, Printexc.to_string exn)
+        | (Out_of_memory | Memory_limit.ExceededMemoryLimit _) as exn ->
+          Exception.catch_and_reraise exn
+        | exn -> Error (file, Exception.catch exn)
       ) files
     else
       Domainslib_.parmap caps
         ~num_domains:ncores
         ~chunksize:1
         ~exception_handler:(fun file exc ->
-          (match Exception.get_exn exc with
-           | Out_of_memory | Stack_overflow | Time_limit.Timeout _ ->
-             Exception.reraise exc
-           | exn -> (file, Printexc.to_string exn)))
+          match Exception.get_exn exc with
+          | Out_of_memory | Memory_limit.ExceededMemoryLimit _ ->
+            Exception.reraise exc
+          | _ -> (file, exc))
         process
         files
   in
@@ -603,12 +605,12 @@ let run_pipeline (caps : < Cap.fork >)
          List.rev_append class_infos cs,
          fi :: fis,
          fails)
-      | Error (file, msg) ->
+      | Error (file, exn) ->
         (* [sk] counts failures so far; log the first five only. *)
         if sk < 5 then
-          Log.warn (fun m -> m "[skip] %s: %s" (Fpath.to_string file) msg);
-        (sc, sk + 1, es, cs, fis,
-         (file, Printf.sprintf "projidx parse/collect: %s" msg) :: fails)
+          Log.warn (fun m -> m "[skip] %s: %s" (Fpath.to_string file)
+                      (Exception.to_string exn));
+        (sc, sk + 1, es, cs, fis, Core_error.exn_to_error ~file exn :: fails)
     ) (0, 0, [], [], [], []) results
   in
   let parse_failures = List.rev parse_failures in
@@ -676,8 +678,7 @@ let collect_resolved (caps : < Cap.fork >)
                 Discover.projidx_default_targeting_conf)
     ~(lang : Lang.t) ~(project_root : Fpath.t) ~(ncores : int)
     ~(includes : string list) ~(excludes : string list) ()
-  : Call_graph.G.t * (string, G.program) Hashtbl.t
-    * (Fpath.t * string) list =
+  : Call_graph.G.t * (string, G.program) Hashtbl.t * Core_error.t list =
   let project_root_abs = project_root_abs_of project_root in
   let absnorm (file : Fpath.t) : string =
     (if Fpath.is_abs file then file else Fpath.(project_root_abs // file))
