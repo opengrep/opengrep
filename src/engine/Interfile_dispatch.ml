@@ -38,6 +38,9 @@ type rule_state = {
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
   match_on : [ `Sink | `Source ];
   target_root_map : Fpath.t option FpathMap.t;
+  recursive_fids : FidSet.t;
+      (* members of a recursive component: an SCC of several functions,
+         or one that calls itself *)
 }
 
 type interfile_target = {
@@ -322,6 +325,7 @@ let init_file
         track_control = false;
         preds = empty_preds;
         handle_effects = (fun _fn_name effects -> effects);
+        recursive = false;
         java_props_cache = Hashtbl.create 0;
       }
   in
@@ -601,16 +605,30 @@ let init_rule_state
       Some (Builtin_models.create_all_builtin_models lang);
     match_on = Match_tainting_mode.match_on_of_xconf rsg.rsg_xconf;
     target_root_map;
+    recursive_fids =
+      Call_graph.SCC.scc_list rsg.rsg_relevant_graph
+      |> List.concat_map (fun (members : Function_id.t list) ->
+             match members with
+             | [ fid ] ->
+                 if Call_graph.G.mem_edge rsg.rsg_relevant_graph fid fid
+                 then [ fid ]
+                 else []
+             | _ -> members)
+      |> FidSet.of_list;
   }, init_acc.fi_errors)
 
 (* Returns None (not raise) on a miss: a raise plus Core_scan's silent-warn
    handler would drop every finding for the rule. *)
-let taint_inst_of_info (fid : Function_id.t)
+let taint_inst_of_info (rs : rule_state) (fid : Function_id.t)
     (info : Match_tainting_mode.fun_info)
     : (Taint_rule_inst.t * G.program) option =
   match info.Match_tainting_mode.taint_inst,
         info.Match_tainting_mode.file_ast with
-  | Some ti, Some ast -> Some (ti, ast)
+  | Some ti, Some ast ->
+    Some
+      ({ ti with
+         Taint_rule_inst.recursive = FidSet.mem fid rs.recursive_fids },
+       ast)
   | None, _ ->
     Log.warn (fun m ->
         m "interfile: function %s missing taint_inst — skipping (likely \
@@ -648,7 +666,7 @@ let extract_and_check_function
     ~(detect_findings : bool)
     (db : Shape_and_sig.signature_database)
     : Shape_and_sig.signature_database * PM.t list =
-  match taint_inst_of_info fid info with
+  match taint_inst_of_info rs fid info with
   | None ->
     (db, [])
   | Some (fn_taint_inst, fun_ast) ->
@@ -789,7 +807,7 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
       (info : Match_tainting_mode.fun_info)
       (db : Shape_and_sig.signature_database)
       : Shape_and_sig.signature_database =
-    match taint_inst_of_info fid info with
+    match taint_inst_of_info rs fid info with
     | None -> db
     | Some (fn_taint_inst, fun_ast) ->
       let db', fresh =
@@ -797,6 +815,18 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
           ?builtin_signature_db:rs.builtin_signature_db
           ~lang:rs.lang ~db ~taint_inst:fn_taint_inst ~ast:fun_ast info
       in
+      (* growth of a function's signature across the fixpoint rounds *)
+      Log.debug (fun m ->
+          m "interfile fixpoint: %s: %d signature(s), %d effects%s"
+            (Function_id.show_debug fid) (List.length fresh)
+            (List.fold_left
+               (fun acc (xs : Shape_and_sig.extended_sig) ->
+                 acc
+                 + Shape_and_sig.Effects.cardinal
+                     xs.Shape_and_sig.sig_.Shape_and_sig.Signature.effects)
+               0 fresh)
+            (if fn_taint_inst.Taint_rule_inst.recursive then ", recursive"
+             else ""));
       let fresh_set =
         List.fold_left
           (fun acc (xs : Shape_and_sig.extended_sig) ->

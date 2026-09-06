@@ -56,6 +56,7 @@ val merge_dispatch_signatures :
 
 val instantiate_function_signature :
   lang:Lang.t ->
+  ?max_offset:int ->
   ?outer_params:IL.param list ->
   Taint_lval_env.t ->
   Shape_and_sig.Signature.t ->

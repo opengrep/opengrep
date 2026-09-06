@@ -1081,23 +1081,36 @@ let lookup_signature_with_object_context env fun_exp arity =
  * pass picks up effects recorded by the previous one — converging to a
  * least-fixed-point over direct self-recursion. Both sids derive from the
  * same AST's def token, so the comparison is path-representation-free. *)
-let self_sig_if_recursive env fun_exp =
+let is_self_call env (fun_exp : IL.exp) : bool =
   match (fun_exp.e, env.func.name) with
   | Fetch { base = Var callee; rev_offset = [] }, Some self_name -> (
       match !(callee.id_info.G.id_resolved) with
-      | Some (_, sid)
-        when (not (G.SId.is_unsafe_default sid))
-             && Function_id.equal (Function_id.of_sid sid)
-                  (Function_id.of_il_name self_name) ->
-          env.did_self_recurse := true;
-          Some
-            {
-              Signature.params = env.func.sig_params;
-              params_il = env.func.il_params;
-              effects = !(env.effects_acc);
-            }
-      | _ -> None)
-  | _ -> None
+      | Some (_, sid) ->
+          (not (G.SId.is_unsafe_default sid))
+          && Function_id.equal (Function_id.of_sid sid)
+               (Function_id.of_il_name self_name)
+      | None -> false)
+  | _ -> false
+
+let self_sig_if_recursive env fun_exp =
+  if is_self_call env fun_exp then (
+    env.did_self_recurse := true;
+    Some
+      {
+        Signature.params = env.func.sig_params;
+        params_il = env.func.il_params;
+        effects = !(env.effects_acc);
+      })
+  else None
+
+(* Bound on the offsets composed for a call: one field access on a
+   recursive edge (the caller is in a recursive component, or the call is
+   a direct self call), [Shape.max_poly_offset] otherwise. See
+   [Taint_rule_inst.recursive]. *)
+let poly_offset_bound env (fun_exp : IL.exp) : int =
+  if env.taint_inst.Taint_rule_inst.recursive || is_self_call env fun_exp
+  then Limits_semgrep.taint_MAX_POLY_OFFSET_FLAT
+  else Shape.max_poly_offset env.taint_inst.lang
 
 let lookup_signature env fun_exp arity =
   Log.debug (fun m ->
@@ -1942,7 +1955,9 @@ let resolve_preserved_to_sink_in_call env ~callee ~arg ~arg_offset
                   m "Resolving ToSinkInCall for '%s' at use site"
                     (IL.str_of_name callee_name));
               Sig_inst.instantiate_function_signature
-                ~lang:env.taint_inst.lang ~outer_params:env.func.il_params
+                ~lang:env.taint_inst.lang
+                ~max_offset:(poly_offset_bound env callee)
+                ~outer_params:env.func.il_params
                 env.lval_env callee_sig ~callee ~args:None args_taints
                 ~lookup_sig:(fun exp _depth ->
                   let arity = List.length args_taints in
@@ -2178,6 +2193,7 @@ let check_function_call env fun_exp args
       (* Callback lookup in both modes; effects-explosion hazard contained by [Sig_inst.preserve_effect]. *)
       let invoke_inst () =
         Sig_inst.instantiate_function_signature ~lang:env.taint_inst.lang
+          ~max_offset:(poly_offset_bound env fun_exp)
           ~outer_params:env.func.il_params env.lval_env fun_sig
           ~callee:fun_exp ~args:(Some args) args_taints
           ~lookup_sig:(lookup_signature env) ()
@@ -2451,6 +2467,7 @@ let call_with_intrafile lval_opt e env args instr =
                 (match
                    Sig_inst.instantiate_function_signature
                      ~lang:env.taint_inst.lang
+                     ~max_offset:(poly_offset_bound env inner_e)
                      ~outer_params:env.func.il_params env.lval_env
                      fun_sig ~callee:inner_e
                      ~args:(Some [ lambda_arg ]) args_taints

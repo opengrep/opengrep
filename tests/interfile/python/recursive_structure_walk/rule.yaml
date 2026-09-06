@@ -1,0 +1,18 @@
+rules:
+  - id: recursive-structure-walk-taint
+    options:
+      taint_interfile: true
+    message: >
+      A self-recursive walk over a structure calls itself on several fields
+      of its argument. Composing the argument's offsets through the
+      recursive call multiplies the polymorphic taints by the number of
+      fields per level; the analysis must terminate quickly and keep the
+      finding at the sink inside the walk.
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
