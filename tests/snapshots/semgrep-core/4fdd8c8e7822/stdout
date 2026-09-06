@@ -19,4 +19,4 @@ selected targets/nested_paths/app/src/d.js
 selected targets/nested_paths/src/a.js
 selected targets/nested_paths/src/lib/b.js
 selected targets/nested_paths/src/util/c.js
-selected targets/nested_paths/top.js
+ignored targets/nested_paths/top.js [cli_include_flags_do_not_match]

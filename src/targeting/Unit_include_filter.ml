@@ -39,8 +39,12 @@ let tests =
     test_include [ "included.*" ]
       "/targets/exclude_include/included/included.js" Not_ignored;
     (* a pattern containing a slash matches anywhere too *)
-    test_include [ "lib/b.py" ] "/src/lib/b.py" Not_ignored;
+    (* a slash inside a pattern anchors it at the project root too *)
+    test_include [ "lib/b.py" ] "/src/lib/b.py" Ignored;
+    test_include [ "lib/b.py" ] "/lib/b.py" Not_ignored;
+    test_include [ "**/lib/b.py" ] "/src/lib/b.py" Not_ignored;
     test_include [ "lib/b.py" ] "/src/lib/c.py" Ignored;
-    test_include [ "src/*" ] "/app/src/d.py" Not_ignored;
+    test_include [ "src/*" ] "/app/src/d.py" Ignored;
+    test_include [ "src/*" ] "/src/d.py" Not_ignored;
     test_include [ "src/*" ] "/app/other/d.py" Ignored;
   ]

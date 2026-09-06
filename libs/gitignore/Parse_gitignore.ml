@@ -93,21 +93,17 @@ let parse_pattern ~source ~anchor str : M.compiled_pattern =
   M.compile ~source absolute_pattern
 
 (*
-   A '--include' or '--exclude' pattern from the command line matches
-   anywhere in a path unless it starts with '/' or '**/', where a gitignore
-   pattern containing a slash is anchored at the folder of its file.
-   pysemgrep expanded such a pattern 'foo/bar' into the two wcmatch
-   patterns '**/foo/bar' and '**/foo/bar/**'
-   (TargetManager.preprocess_path_patterns of target_manager.py); the
-   second one is what selects the files under a folder named by the
-   pattern, so both are needed. A leading slash anchors the pattern at the
-   project root, as it does in a gitignore file.
+   A '--include' or '--exclude' pattern from the command line anchors at
+   the project root when a gitignore pattern would: a leading '/' or '**/',
+   or a slash anywhere but the end. Otherwise it matches anywhere in a path.
+   The second matcher selects the files under a folder the pattern names,
+   as pysemgrep's expansion of 'foo/bar' into '**/foo/bar/**' did
+   (TargetManager.preprocess_path_patterns of target_manager.py).
 *)
 let parse_cli_pattern ~source ~anchor str : M.compiled_pattern list =
+  let pat = Glob.Parse.parse_string str in
   let pat : Glob.Pattern.t =
-    match Glob.Parse.parse_string str with
-    | (Segment [] :: _ | Any_subpath :: _) as anchored -> anchored
-    | anywhere -> Any_subpath :: anywhere
+    if is_anchored_pattern pat then pat else Any_subpath :: pat
   in
   [ pat; Glob.Pattern.append pat [ Any_subpath ] ]
   |> List_.map (fun (pat : Glob.Pattern.t) ->

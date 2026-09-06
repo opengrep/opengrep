@@ -137,12 +137,17 @@ let size_files : F.t list =
   ]
 
 (* The '--include' and '--exclude' patterns that contain a slash, over a
-   tree with the same directory name at two depths. *)
+   tree with the same directory name at two depths. A slash inside a
+   pattern anchors it at the project root, where a leading '**/' matches
+   at any depth. *)
 let nested_path_options : string list list =
   [
     [ "--include"; "lib/b.js" ];
+    [ "--include"; "**/lib/b.js" ];
     [ "--include"; "src/*" ];
+    [ "--include"; "**/src/*" ];
     [ "--exclude"; "src/*" ];
+    [ "--exclude"; "**/src/*" ];
   ]
 
 (* A file and a symlink to it, so that a scanning root can be spelled
