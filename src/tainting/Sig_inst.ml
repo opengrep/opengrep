@@ -1273,12 +1273,12 @@ let classify_guards ~(lang : Lang.t) ?(can_freeze = false)
    extraction/instantiation rounds of the topo fixpoint otherwise extend
    [this.db.engine.engine...] without bound. Truncation keeps the prefix
    — a coarser lval, so taint reach can only widen, never shrink. *)
-let cap_offset ~(lang : Lang.t) (offset : T.offset list) : T.offset list =
-  let max = Shape.max_poly_offset lang in
+let cap_offset ~(max : int) (offset : T.offset list) : T.offset list =
   if List.compare_length_with offset max <= 0 then offset
   else List.filteri (fun i _ -> i < max) offset
 
-let instantiate_lval_using_actual_exps ~(lang : Lang.t)
+(* [max_offset] bounds the composed offsets, see [Shape.compose_offset]. *)
+let instantiate_lval_using_actual_exps ~(lang : Lang.t) ~(max_offset : int)
     (fun_exp : IL.exp) fparams args_exps
     (tlval : T.lval) : (IL.name * T.offset list * T.tainted_token) option =
   (* Error handling  *)
@@ -1318,7 +1318,7 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t)
       | Fetch ({ base = Var obj; _ } as arg_lval), _ ->
           let* var, offset = Lval_env.normalize_lval lang arg_lval in
           Some
-            (var, Shape.compose_offset ~lang offset tlval.offset,
+            (var, Shape.compose_offset ~max:max_offset ~lang offset tlval.offset,
              snd obj.ident)
       | __else__ -> None)
   | BThis -> (
@@ -1355,18 +1355,19 @@ let instantiate_lval_using_actual_exps ~(lang : Lang.t)
           | Var obj, [], _offset ->
               (* fun_exp = `obj.method(...)`, given lval = `this.x`
                  the instantiated l-value is `obj.x` *)
-              Some (obj, cap_offset ~lang tlval.offset, snd obj.ident)
+              Some (obj, cap_offset ~max:max_offset tlval.offset, snd obj.ident)
           | VarSpecial (This, _), [], Ofld var :: offset ->
               (* fun_exp = `this.method(...)`, given lval = `this.x.y.z`
                  the instantiated l-value is `x.y.z`. *)
-              Some (var, cap_offset ~lang offset, snd method_.ident)
+              Some (var, cap_offset ~max:max_offset offset, snd method_.ident)
           | __else__ ->
               (* fun_exp = `this.obj.method(...)` (e.g.), given lval = `this.x.y`
                  the instantiated l-value is `obj.x.y`. *)
               let lval = IL.{ base; rev_offset = rev_offset' } in
               let* var, offset = Lval_env.normalize_lval lang lval in
               Some
-                (var, Shape.compose_offset ~lang offset tlval.offset,
+                (var,
+                 Shape.compose_offset ~max:max_offset ~lang offset tlval.offset,
                  snd method_.ident))
       | __else__ ->
           log_error ();
@@ -1453,7 +1454,7 @@ let combine_rest_args_taint (ts : (Taints.t * shape) list) : Taints.t * shape =
   in
   (taints, shape) 
 
-let instantiate_lval_using_shape ~(lang : Lang.t)
+let instantiate_lval_using_shape ~(lang : Lang.t) ~(max_offset : int)
     lval_env fparams
     (fun_exp : IL.exp) args_taints
     lval : (Taints.t * shape) option =
@@ -1496,11 +1497,11 @@ let instantiate_lval_using_shape ~(lang : Lang.t)
       m "INST_LVAL_SHAPE: base_taints=%d base_shape=%s offset=%s"
         (Taints.cardinal base_taints) (show_shape base_shape)
         (T.show_offset_list offset));
-  Shape.find_in_shape_poly ~lang ~taints:base_taints offset
+  Shape.find_in_shape_poly ~max:max_offset ~lang ~taints:base_taints offset
     base_shape
 
 (* What is the taint denoted by 'sig_lval' ? *)
-let instantiate_lval ~(lang : Lang.t)
+let instantiate_lval ~(lang : Lang.t) ~(max_offset : int)
     lval_env fparams fun_exp
     args_exps
     (args_taints : (Taints.t * shape) IL.argument list) (sig_lval : T.lval) =
@@ -1509,7 +1510,7 @@ let instantiate_lval ~(lang : Lang.t)
         (T.show_lval sig_lval) (List.length args_taints)
         (fparams |> List.map Signature.show_param |> String.concat ","));
   match
-    instantiate_lval_using_shape ~lang lval_env fparams fun_exp
+    instantiate_lval_using_shape ~lang ~max_offset lval_env fparams fun_exp
       args_taints sig_lval
   with
   | Some (taints, shape) -> Some (taints, shape)
@@ -1528,7 +1529,7 @@ let instantiate_lval ~(lang : Lang.t)
            *   see 'lval_of_sig_lval'.
            *)
           let* var, offset, _obj =
-            instantiate_lval_using_actual_exps ~lang fun_exp
+            instantiate_lval_using_actual_exps ~lang ~max_offset fun_exp
               fparams args_exps sig_lval
           in
           let lval_taints, shape =
@@ -1590,6 +1591,7 @@ let outer_actuals_for_callback (resolve_arg : T.arg -> IL.exp option)
       input into the function body, from the calling context?
 *)
 let rec instantiate_function_signature ~(lang : Lang.t)
+    ?(max_offset : int = Shape.max_poly_offset lang)
     ?(outer_params : IL.param list option) lval_env
     (taint_sig : Signature.t) ~callee ~(args : _ option)
     (args_taints : (Taints.t * shape) IL.argument list)
@@ -1630,7 +1632,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
        So we will isolate this as a specific step to be applied as necessary.
     *)
     let opt_taints_shape =
-      instantiate_lval ~lang lval_env taint_sig.params callee
+      instantiate_lval ~lang ~max_offset lval_env taint_sig.params callee
         args args_taints lval
     in
     Log.debug (fun m ->
@@ -1669,7 +1671,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
         | T.BGlob gvar -> Some (gvar, lval.offset, snd gvar.ident)
         | T.BArg _ | T.BThis -> None)
     | Some args ->
-        instantiate_lval_using_actual_exps ~lang callee
+        instantiate_lval_using_actual_exps ~lang ~max_offset callee
           taint_sig.params args lval
   in
   (* Freezing is allowed only with concrete actuals: the recursive-HOF
@@ -1895,7 +1897,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                           (T.show_lval dst_sig_lval));
                     None)
             | Some args ->
-                instantiate_lval_using_actual_exps ~lang callee
+                instantiate_lval_using_actual_exps ~lang ~max_offset callee
                   taint_sig.params args dst_sig_lval
           in
           let taints = inst_taints tainted_tok in
@@ -2190,7 +2192,7 @@ let rec instantiate_function_signature ~(lang : Lang.t)
                 outer_actuals_for_callback resolve_arg fun_args_taints
               in
               (match
-                 instantiate_function_signature ~lang
+                 instantiate_function_signature ~lang ~max_offset
                    ?outer_params lval_env
                    fun_sig ~callee:fun_exp ~args:callback_actual_args args_taints
                    ?lookup_sig ~depth:(depth + 1) ~recursive_cache ()
