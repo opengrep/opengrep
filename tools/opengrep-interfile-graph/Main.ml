@@ -308,7 +308,7 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
   let { Find_targets.selected = fpaths; _ } =
     Find_targets.get_target_fpaths Find_targets.default_conf roots
   in
-  let targets = Core_runner.targets_for_files_and_rules fpaths rules in
+  let targets, rules = Core_runner.targets_and_rules_for_files fpaths rules in
   let config : Core_scan_config.t =
     { Core_scan_config.default with
       rule_source = Core_scan_config.Rules rules;
@@ -324,11 +324,12 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
   let targeting_conf =
     Opengrep_project_index.Discover.projidx_default_targeting_conf
   in
-  let rule_states, _langs, _fallbacks, _index_failures =
+  let rule_states, _langs, _fallbacks, _index_failures, _build_limits =
     Interfile_dispatch.build_rule_states
-      (caps :> < Cap.fork >)
+      (caps :> < Cap.fork ; Cap.time_limit ; Cap.memory_limit >)
       ~ncores
       ~taint_interfile:true
+      ~max_memory_mb:config.max_memory_mb
       ~valid_rules:rules ~targets
       ~targeting_conf
       ~xconf
