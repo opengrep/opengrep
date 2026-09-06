@@ -60,8 +60,9 @@ let create ~project_root patterns =
     - /a/b/c (the pattern b/c matches anywhere in the path)
 
    The 'select' function below receives the path to a file within a project
-   rather than a whole file tree. A pattern matches anywhere in that path
-   and matches everything under a folder it names, which is what
+   rather than a whole file tree. A pattern matches anywhere in that path,
+   or at the project root only when it starts with a slash, and matches
+   everything under a folder it names, which is what
    'Parse_gitignore.parse_cli_pattern' compiles it into.
 
    The path is selected if it matches any of the include patterns.
