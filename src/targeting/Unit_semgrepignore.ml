@@ -183,6 +183,14 @@ let tests =
              ("/b/a.ml", false);
              ("/b/a.c", true);
            ]);
+      t "excludes with a leading slash"
+        (test_filter ~excludes:[ "/vendor"; "lib/gen" ] []
+           [
+             ("/vendor/a.c", false);
+             ("/b/vendor/a.c", true);
+             ("/lib/gen/a.c", false);
+             ("/b/lib/gen/a.c", false);
+           ]);
       (* Tests for custom semgrepignore filename feature *)
       t "custom semgrepignore filename"
         (test_filter_custom_filename ~semgrepignore_filename:"custom.ignore"

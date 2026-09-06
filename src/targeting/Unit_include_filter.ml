@@ -29,9 +29,11 @@ let tests =
     test_include [ "a" ] "/a" Not_ignored;
     test_include [ "/a" ] "/a" Not_ignored;
     test_include [ "/a" ] "/a/b" Not_ignored;
-    (* a pattern of the command line matches anywhere in the path, so a
-       leading slash does not anchor it at the project root *)
-    test_include [ "/b" ] "/a/b" Not_ignored;
+    (* a leading slash anchors a pattern at the project root *)
+    test_include [ "/b" ] "/a/b" Ignored;
+    test_include [ "/a/b" ] "/a/b/c" Not_ignored;
+    test_include [ "/a/b" ] "/x/a/b/c" Ignored;
+    test_include [ "**/b" ] "/a/b" Not_ignored;
     test_include [ "b" ] "/a/b/c" Not_ignored;
     test_include [ "c" ] "/a/b/c" Not_ignored;
     test_include [ "included.*" ]
