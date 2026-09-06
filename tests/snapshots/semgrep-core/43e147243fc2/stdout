@@ -15,8 +15,8 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 targets/nested_paths/src/lib/b.js
  create mode 100644 targets/nested_paths/src/util/c.js
  create mode 100644 targets/nested_paths/top.js
-selected targets/nested_paths/src/lib/b.js
 ignored targets/nested_paths/app/src/d.js [cli_include_flags_do_not_match]
 ignored targets/nested_paths/src/a.js [cli_include_flags_do_not_match]
+ignored targets/nested_paths/src/lib/b.js [cli_include_flags_do_not_match]
 ignored targets/nested_paths/src/util/c.js [cli_include_flags_do_not_match]
 ignored targets/nested_paths/top.js [cli_include_flags_do_not_match]

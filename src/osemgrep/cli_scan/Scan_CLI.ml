@@ -157,12 +157,13 @@ let o_exclude : string list Term.t =
 '--exclude=*.py' will ignore the following: 'foo.py', 'src/foo.py',
 'foo.py/bar.sh'.
 '--exclude=tests' will ignore 'tests/foo.py' as well as 'a/b/tests/c/foo.py'.
-So will '--exclude=tests/foo.py': a slash inside $(docv) does not anchor it.
-A leading slash does: '--exclude=/tests' ignores 'tests/foo.py' but not
-'a/b/tests/c/foo.py'.
+$(docv) anchors at the project root as a gitignore pattern does: a slash
+anywhere but the end anchors it, so '--exclude=/tests' and
+'--exclude=tests/foo.py' ignore 'tests/foo.py' but not 'a/b/tests/c/foo.py';
+'**/' in front matches at any depth.
 Multiple '--exclude' options may be specified.
-$(docv) is a glob-style pattern that otherwise uses the same syntax as
-gitignore and semgrepignore, which is documented at
+$(docv) is a glob-style pattern that uses the same syntax as gitignore
+and semgrepignore, which is documented at
 https://git-scm.com/docs/gitignore#_pattern_format
 |}
   in
@@ -204,11 +205,12 @@ specifying the language with '-l javascript' might preselect files
 selection to the single file 'src/foo.jsx'. A choice of multiple
 '--include' patterns can be specified. For example, '--include=foo.*
 --include=bar.*' will select both 'src/foo.jsx' and
-'lib/bar.js'. A pattern matches anywhere in the path unless it starts with
-a slash, which anchors it at the project root: '--include=/src' selects
-'src/foo.jsx' but not 'app/src/foo.jsx'. Glob-style patterns otherwise
-follow the syntax supported by gitignore and semgrepignore, which is
-documented at https://git-scm.com/docs/gitignore#_pattern_format
+'lib/bar.js'. A pattern anchors at the project root as a gitignore pattern
+does: a slash anywhere but the end anchors it, so '--include=/src' and
+'--include=src/foo.jsx' select 'src/foo.jsx' but not 'app/src/foo.jsx';
+'**/' in front matches at any depth. Glob-style patterns follow the
+syntax supported by gitignore and semgrepignore, which is documented at
+https://git-scm.com/docs/gitignore#_pattern_format
 |}
   in
   Arg.value (Arg.opt_all Arg.string [] info)
