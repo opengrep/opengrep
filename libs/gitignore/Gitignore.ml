@@ -124,6 +124,11 @@ type filter = {
   higher_priority_levels : level list;
   gitignore_file_cache : gitignores_cache;
   lower_priority_levels : level list;
+  (* Selection events and levels after each directory has been checked
+     with the higher-priority levels, keyed by the directory's path: every
+     path below a directory starts from that state instead of matching the
+     directory's ancestors again. See Gitignore_filter.select_path. *)
+  dir_states : (string, selection_event list * level list) Hashtbl.t;
 }
 
 (* Final result of a gitignore filter (clearer than a bool) *)

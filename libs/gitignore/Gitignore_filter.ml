@@ -11,6 +11,7 @@ let create ?(higher_priority_levels = []) ?(lower_priority_levels = [])
     higher_priority_levels;
     gitignore_file_cache;
     lower_priority_levels;
+    dir_states = Hashtbl.create 1024;
   }
 
 let is_selected (sel_events : Gitignore.selection_event list) =
@@ -53,47 +54,93 @@ let select_one acc levels path : Gitignore.selection_event list =
     acc levels
 [@@profiling]
 
-let select_path opt_gitignore_file_cache sel_events levels relative_segments =
+(* Add [segment] to [parent_path] and check whether the partial path is
+   gitignored. [last] is true for the path's final segment, and for a
+   directory queried with a trailing slash, whose own directory-only check
+   is the empty segment that follows. Returns the events and levels to
+   continue from. *)
+let enter opt_gitignore_file_cache sel_events levels parent_path segment
+    ~last =
+  let levels =
+    match opt_gitignore_file_cache with
+    | Some cache -> (
+        (* load local gitignore file *)
+        match Gitignore_cache.load cache parent_path with
+        | Some additional_level -> levels @ [ additional_level ]
+        | None -> levels)
+    | None -> levels
+  in
+  let file_path = parent_path / segment in
+  let sel_events = select_one sel_events levels file_path in
+  let deselected =
+    match sel_events with
+    | Deselected _ :: _ -> true
+    | _ -> false
+  in
+  (* stop here, don't go deeper as per gitignore spec *)
+  if is_selected sel_events || last then (sel_events, levels)
+  (* If a path has been deselected, don't test for dir-only patterns *)
+  else if deselected then (sel_events, levels)
+  else
+    (* add trailing slash to match directory-only patterns *)
+    let dir_path = file_path / "" in
+    (select_one sel_events levels dir_path, levels)
+
+(* [dir_states], when given, memoises the state after each intermediate
+   directory: the events and levels of a directory depend only on the
+   directory, and every path below it repeats the same checks otherwise.
+   The last segment, and the directory-only check of a trailing slash, are
+   never memoised. *)
+let select_path ?dir_states opt_gitignore_file_cache sel_events levels
+    relative_segments =
   let rec loop sel_events levels parent_path segments =
-    (* add a segment to the path and check if it's gitignored *)
     match segments with
     | [] -> sel_events
-    | segment :: segments -> (
-        let levels =
-          match opt_gitignore_file_cache with
-          | Some cache -> (
-              (* load local gitignore file *)
-              match Gitignore_cache.load cache parent_path with
-              | Some additional_level -> levels @ [ additional_level ]
-              | None -> levels)
-          | None -> levels
-        in
-        (* check whether partial path should be gitignored *)
-        let file_path = parent_path / segment in
-        let sel_events = select_one sel_events levels file_path in
-        let deselected =
-          match sel_events with
-          | Deselected _ :: _ -> true
-          | _ -> false
-        in
-        if is_selected sel_events then
-          (* stop here, don't go deeper as per gitignore spec *)
-          sel_events
-        else
+    | segment :: segments ->
+        let last =
           match segments with
           | []
           | [ "" ] ->
-              loop sel_events levels file_path segments
-          (* If a path has been deselected, don't test for dir-only patterns *)
-          | _ :: _ when deselected -> loop sel_events levels file_path segments
-          | _ :: _ ->
-              (* add trailing slash to match directory-only patterns *)
-              let dir_path = file_path / "" in
-              let sel_events = select_one sel_events levels dir_path in
-              if is_selected sel_events then sel_events
-              else loop sel_events levels file_path segments)
+              true
+          | _ :: _ -> false
+        in
+        let sel_events, levels =
+          enter opt_gitignore_file_cache sel_events levels parent_path segment
+            ~last
+        in
+        if is_selected sel_events then sel_events
+        else loop sel_events levels (parent_path / segment) segments
   in
-  loop sel_events levels Ppath.root relative_segments
+  (* State after the intermediate directories [dirs], memoised per prefix. *)
+  let rec dir_state (dirs : string list) : selection_event list * level list =
+    match List.rev dirs with
+    | [] -> (sel_events, levels)
+    | segment :: rev_parents -> (
+        let parents = List.rev rev_parents in
+        let parent_path = Ppath.add_segs Ppath.root parents in
+        let key = Ppath.to_string_fast (parent_path / segment) in
+        match Option.bind dir_states (fun tbl -> Hashtbl.find_opt tbl key) with
+        | Some state -> state
+        | None ->
+            let sel_events, levels = dir_state parents in
+            let state =
+              if is_selected sel_events then (sel_events, levels)
+              else
+                enter opt_gitignore_file_cache sel_events levels parent_path
+                  segment ~last:false
+            in
+            Option.iter (fun tbl -> Hashtbl.replace tbl key state) dir_states;
+            state)
+  in
+  let dirs, tail =
+    match List.rev relative_segments with
+    | "" :: segment :: rev_dirs -> (List.rev rev_dirs, [ segment; "" ])
+    | segment :: rev_dirs -> (List.rev rev_dirs, [ segment ])
+    | [] -> ([], [])
+  in
+  let sel_events, levels = dir_state dirs in
+  if is_selected sel_events then sel_events
+  else loop sel_events levels (Ppath.add_segs Ppath.root dirs) tail
 
 (*
    Filter a path according to gitignore rules, requiring all the parent paths
@@ -109,8 +156,8 @@ let select t (full_git_path : Ppath.t) =
   (* higher levels (command-line)
      and middle levels (gitignore files discovered along the way) *)
   let sel_events =
-    select_path (Some t.gitignore_file_cache) sel_events
-      t.higher_priority_levels rel_segments
+    select_path ~dir_states:t.dir_states (Some t.gitignore_file_cache)
+      sel_events t.higher_priority_levels rel_segments
   in
   if is_selected sel_events then result_of_selection_events sel_events
   else
