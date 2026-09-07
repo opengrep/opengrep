@@ -44,7 +44,16 @@ let context_lines = 1
 
 (* the lines of the file around the location, each with its number *)
 let excerpt_lines (loc : Out.location) : (int * string) list =
-  let lines = UFile.read_file loc.path |> String.split_on_char '\n' in
+  let content = UFile.read_file loc.path in
+  let lines = String.split_on_char '\n' content in
+  (* the final newline of a file splits into a last empty element, which is
+     not a line of the file; an empty file splits into that element too,
+     and keeps it so that the error still has a line to point at *)
+  let lines =
+    match List.rev lines with
+    | "" :: rest when not (String.equal content "") -> List.rev rest
+    | _else_ -> lines
+  in
   let first = max 1 (loc.start.line - context_lines) in
   let last = min (List.length lines) (loc.end_.line + context_lines) in
   lines

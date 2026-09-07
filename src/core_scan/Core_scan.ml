@@ -841,8 +841,12 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
          profiling =
            Option.map
              (fun (p : Core_profiling.partial_profiling) ->
+                (* The size is the length of the content the scan read.
+                   When timings are asked for and no rule read the content,
+                   it is read once here, so that the report shows the real
+                   size instead of zero. *)
                 let p_file_size_bytes =
-                  if Lazy.is_val xtarget.lazy_content then
+                  if Lazy.is_val xtarget.lazy_content || config.report_time then
                     Some (String.length (Lazy.force xtarget.lazy_content))
                   else None
                 in

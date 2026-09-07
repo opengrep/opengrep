@@ -256,7 +256,8 @@ type filler =
    subsequent_indent: number of spaces before the other lines
 
    The cuts are made between code points, never inside a UTF-8 sequence:
-   at the last space that fits, at the last hyphen between two letters, or
+   at the last space that fits, at the last hyphen between two letters, on
+   either side of a run of two or more hyphens between two words, or
    at the width for a word too long for a line of its own. In some context
    (e.g., pre-commit in CI), the number of columns of your terminal can be
    small, in which case the space left for the text can become negative and
@@ -305,17 +306,65 @@ let fill_chunks ~(filler : filler) ~(width : int) ~(initial_indent : int)
     in
     Char.equal (char_at i) '-' && before && after
   in
+  (* python: '\w' *)
+  let is_word (i : int) : bool =
+    is_letter i
+    ||
+    match char_at i with
+    | '0' .. '9' -> true
+    | (_ : char) -> false
+  in
+  (* python: word_punct, the class the em-dash alternatives require before
+     the hyphens *)
+  let is_word_punct (i : int) : bool =
+    is_word i
+    ||
+    match char_at i with
+    | '!'
+    | '"'
+    | '\''
+    | '&'
+    | '.'
+    | ','
+    | '?' ->
+        true
+    | (_ : char) -> false
+  in
+  (* python: the '-{2,}\w' that both em-dash alternatives of wordsep_re look
+     for; the end of the run of hyphens, or None when [i] does not start one
+     followed by a word character *)
+  let em_dash_run (i : int) : int option =
+    let rec run (k : int) : int =
+      if k < n && Char.equal (char_at k) '-' then run (k + 1) else k
+    in
+    let stop = run i in
+    if stop - i >= 2 && stop < n && is_word stop then Some stop else None
+  in
+  (* python: the em-dash alternative of wordsep_re, which makes a run of at
+     least two hyphens between two words a chunk of its own *)
+  let em_dash_chunk (i : int) : int option =
+    if i > 0 && is_word_punct (i - 1) then em_dash_run i else None
+  in
   let chunks : (int * int) list =
     let rec spaces (i : int) : int = if is_space i then spaces (i + 1) else i in
-    let rec word (i : int) : int =
+    (* a word ends at a space, after a hyphen between two letters, or
+       before the run of hyphens that starts the next chunk *)
+    let rec word (start : int) (i : int) : int =
       if i >= n || is_space i then i
       else if ends_chunk i then i + 1
-      else word (i + 1)
+      else if i > start && Option.is_some (em_dash_chunk i) then i
+      else word start (i + 1)
     in
     let rec go (i : int) (acc : (int * int) list) : (int * int) list =
       if i >= n then List.rev acc
       else
-        let j = if is_space i then spaces i else word i in
+        let j =
+          if is_space i then spaces i
+          else
+            match em_dash_chunk i with
+            | Some stop -> stop
+            | None -> word i i
+        in
         go j ((i, j) :: acc)
     in
     go 0 []

@@ -61,6 +61,13 @@ let line_containing (term : string) (lines : string list) : string =
   | line :: _ -> line
   | [] -> Alcotest.fail (spf "no line containing %S" term)
 
+(* the size column of a line of the --time report: the four characters the
+   report writes after the parenthesis that opens it *)
+let size_in (line : string) : string =
+  match String.index_opt line '(' with
+  | None -> Alcotest.fail (spf "no size in %S" line)
+  | Some i -> Str.string_before (Str.string_after line (i + 1)) 4
+
 (*****************************************************************************)
 (* Fixtures *)
 (*****************************************************************************)
@@ -154,6 +161,34 @@ let unicode_py =
   in
   let text = repeat 10 "日本語 café " in
   ("unicode.py", spf "x = \"%s\" == \"%s\"\n" text text)
+
+(* a code line with a run of two hyphens between two words, which the
+   filler makes a chunk of its own *)
+let em_dash_py =
+  let text = String.make 22 'a' ^ "foo--bar" ^ String.make 20 'b' in
+  ("emdash.py", spf "x = \"%s\" == \"%s\"\n" text text)
+
+let accented_name (n : int) : string * string =
+  ( String.concat "" (List.init n (fun (_ : int) -> "é")) ^ ".py",
+    "x = 1 == 1\n" )
+
+(* a name of more than fifty characters, each of two bytes, so that the
+   --time report has to cut it, and one short enough for it to pad *)
+let long_name_py = accented_name 60
+let short_name_py = accented_name 10
+
+(* a rule whose pattern does not parse, on the last line of the file: the
+   excerpt of the error stops at that line, whether or not the file ends
+   with a newline *)
+let last_line_error_rule (trailing_newline : bool) : string =
+  spf
+    {|rules:
+  - id: bad
+    message: m
+    languages: [python]
+    severity: ERROR
+    pattern: "foo("%s|}
+    (if trailing_newline then "\n" else "")
 
 (*****************************************************************************)
 (* Individual tests *)
@@ -271,6 +306,39 @@ let test_message_paragraphs (caps : Scan_subcommand.caps) () =
      in
      blank_before lines)
 
+(* python: textwrap's wordsep_re, whose two em-dash alternatives make a run
+   of at least two hyphens between two words a chunk of its own: the run
+   moves whole to the next line instead of being cut after its first
+   hyphen *)
+let test_message_em_dash (caps : Scan_subcommand.caps) () =
+  let lines =
+    scan_output caps ~channel:stdout ~rule:eqeq_rule ~target:em_dash_py
+      [ "--max-chars-per-line"; "40" ]
+  in
+  let code_lines =
+    List.filter
+      (fun (line : string) ->
+        String_.contains ~term:"aaa" line || String_.contains ~term:"bar" line)
+      lines
+  in
+  Alcotest.(check bool)
+    "the line was wrapped" true
+    (List.length code_lines > 1);
+  List.iter
+    (fun (line : string) ->
+      Alcotest.(check bool)
+        (spf "%S does not end after the first hyphen of the run" line)
+        false
+        (String_.contains ~term:"foo-" line))
+    code_lines;
+  Alcotest.(check bool)
+    "the run of hyphens starts the next line" true
+    (List.exists
+       (fun (line : string) ->
+         let text = String.trim line in
+         String.length text >= 5 && String.equal (Str.first_chars text 5) "--bar")
+       code_lines)
+
 (* python: text.py, the fix printed after (BASE_INDENT + 1) columns plus
    the two of the console *)
 let test_autofix_indent (caps : Scan_subcommand.caps) () =
@@ -375,15 +443,86 @@ let test_time_report (caps : Scan_subcommand.caps) () =
   (* the size is the engine's num_bytes, taken from the content it read;
      the report makes no file-system call, so the file listed among the
      slowest and the language total report the same number *)
-  let size_in (line : string) : string =
-    match String.index_opt line '(' with
-    | None -> Alcotest.fail (spf "no size in %S" line)
-    | Some i -> Str.string_before (Str.string_after line (i + 1)) 4
-  in
   Alcotest.(check string)
     "the size of the slowest file is the engine's"
     (size_in (line_containing "Analyzed:" block))
     (size_in (line_containing "stupid.py" block))
+
+(* A pattern of two metavariables gives no regexp prefilter, so no rule
+   reads the content of the target while matching. Under --time the scan
+   reads it once for the report, and the size of the slowest file is the
+   number of bytes of the file. Under a kilobyte the report writes that
+   number right-aligned in three columns, followed by B. *)
+let test_time_report_size_without_prefilter (caps : Scan_subcommand.caps) () =
+  let lines =
+    scan_output caps ~channel:stdout ~rule:eqeq_rule ~target:stupid_py
+      [ "--time" ]
+  in
+  Alcotest.(check string)
+    "the size of the slowest file is the byte count of the file"
+    (spf "%3dB" (String.length (snd stupid_py)))
+    (size_in (line_containing "to parse" lines))
+
+(* python: util.truncate and the '<50' of print_time_summary(), which cut
+   and padded a file name by characters: a name of two-byte characters is
+   never cut inside one, and the column that follows it starts at the same
+   place whatever the name *)
+let test_time_report_unicode_name (caps : Scan_subcommand.caps) () =
+  (* the name column of the slowest file, without the two columns of the
+     console *)
+  let name_column (target : string * string) : string =
+    let lines =
+      scan_output caps ~channel:stdout ~rule:eqeq_rule ~target [ "--time" ]
+    in
+    let line = line_containing "to parse" lines in
+    let size = Str.search_forward (Str.regexp_string " (") line 0 in
+    Str.string_after (Str.string_before line size) 2
+  in
+  let cut = name_column long_name_py in
+  let padded = name_column short_name_py in
+  List.iter
+    (fun ((what : string), (column : string)) ->
+      Alcotest.(check bool)
+        (spf "%s: no character was cut in half in %S" what column)
+        true (Utf8.is_valid column);
+      Alcotest.(check int)
+        (spf "%s: the name column is fifty characters wide" what)
+        50 (width column))
+    [ ("a name to cut", cut); ("a name to pad", padded) ];
+  Alcotest.(check string)
+    "a name too long for the column keeps its end" "..."
+    (Str.first_chars cut 3)
+
+(* python: ErrorWithSpan, whose excerpt came from str.splitlines: the final
+   newline of a rule file is not a line of its own, so an error on the last
+   line has no line after it *)
+let test_rule_error_last_line (caps : Scan_subcommand.caps) () =
+  (* the numbered lines of the excerpt of the error a scan raises for an
+     invalid config, which the CLI prints as it is *)
+  let excerpt (trailing_newline : bool) : string list =
+    let lines =
+      try
+        ignore
+          (scan_output caps ~channel:stderr
+             ~rule:(last_line_error_rule trailing_newline)
+             ~target:stupid_py []);
+        Alcotest.fail "the scan did not report an invalid config"
+      with
+      | Error.Semgrep_error ((msg : string), (_ : Exit_code.t option)) ->
+          String.split_on_char '\n' msg
+    in
+    List.filter
+      (fun (line : string) ->
+        Str.string_match (Str.regexp "^[0-9]+ *|") line 0)
+      lines
+  in
+  Alcotest.(check (list string))
+    "the excerpt stops at the last line of the file"
+    [ "5 |     severity: ERROR"; "6 |     pattern: \"foo(\"" ]
+    (excerpt true);
+  Alcotest.(check (list string))
+    "a file without a final newline is unchanged" (excerpt true)
+    (excerpt false)
 
 (* python: terminal.py, which turned colour off when the output is not a
    terminal and on for --force-color; 'validate' goes through the same
@@ -492,6 +631,8 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_code_line_with_a_tab (caps :> Scan_subcommand.caps));
       t "the hyphens of a message follow click's rules"
         (test_message_hyphens (caps :> Scan_subcommand.caps));
+      t "a run of hyphens between two words is a chunk of its own"
+        (test_message_em_dash (caps :> Scan_subcommand.caps));
       t "the paragraphs of a message are filled and indented"
         (test_message_paragraphs (caps :> Scan_subcommand.caps));
       t "the autofix line is indented like the wrapper's"
@@ -503,6 +644,13 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "no banner when stdout is not a terminal"
         (test_no_banner_off_a_terminal (caps :> Scan_subcommand.caps));
       t "the --time report" (test_time_report (caps :> Scan_subcommand.caps));
+      t "the --time report sizes a file no rule read"
+        (test_time_report_size_without_prefilter
+           (caps :> Scan_subcommand.caps));
+      t "the --time report cuts and pads a name by characters"
+        (test_time_report_unicode_name (caps :> Scan_subcommand.caps));
+      t "the excerpt of a rule error on the last line"
+        (test_rule_error_last_line (caps :> Scan_subcommand.caps));
       t "colour precedence, for validate and test too"
         (test_colour_precedence (caps :> Scan_subcommand.caps));
       t "NO_COLOR turns colour off whatever its value" test_no_color_any_value;

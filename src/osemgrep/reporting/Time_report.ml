@@ -46,13 +46,22 @@ let format_bytes (num : int) : string =
   in
   go (float_of_int num) [ ""; "K"; "M"; "G"; "T"; "P"; "E"; "Z" ]
 
-(* python: util.truncate, keeps the end of the name *)
+(* python: util.truncate, keeps the end of the name. The wrapper counted
+   the characters of the name, so a name is cut between code points and
+   never inside a UTF-8 sequence. *)
 let truncate (name : string) : string =
-  let len = String.length name in
+  let offsets = Utf8.code_point_offsets name in
+  let len = Array.length offsets - 1 in
   if len > col_lim then
     let prefix = "..." in
-    prefix ^ Str.string_after name (len - col_lim + String.length prefix)
+    prefix ^ Str.string_after name offsets.(len - col_lim + String.length prefix)
   else name
+
+(* python: the '<' of a format spec, which pads a name to a number of
+   characters, not of bytes *)
+let pad_right (width : int) (s : string) : string =
+  let len = Utf8.length s in
+  if len >= width then s else s ^ String.make (width - len) ' '
 
 let lang_of_path (path : Fpath.t) : string =
   match Lang.langs_of_filename path with
@@ -136,7 +145,7 @@ let pp_time_summary ppf (time : Out.profile) (errors : Out.cli_error list) :
        ->
          Fmt.pf ppf "%s%a %-8s %.3fs (%.3fs to parse)@." console_indent
            Fmt.(styled (`Fg `Green) string)
-           (spf "%-50s" (truncate (Fpath.to_string t.path)))
+           (pad_right 50 (truncate (Fpath.to_string t.path)))
            (spf "(%s):" (format_bytes t.num_bytes))
            run_time parse_time);
   pp_line ppf (spf "Slowest %d rules to match" items_to_show);
@@ -145,7 +154,7 @@ let pp_time_summary ppf (time : Out.profile) (errors : Out.cli_error list) :
   |> List.iter (fun ((rule_id : Rule_ID.t), (match_time : float)) ->
          Fmt.pf ppf "%s%a %.3fs@." console_indent
            Fmt.(styled (`Fg `Yellow) string)
-           (spf "%-59s" (truncate (Rule_ID.to_string rule_id) ^ ":"))
+           (pad_right 59 (truncate (Rule_ID.to_string rule_id) ^ ":"))
            match_time);
   (* the files analysed, per language *)
   let by_lang : (string * Out.target_times list) list =
