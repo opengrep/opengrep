@@ -584,18 +584,56 @@ let propagate_taint_to_label replace_labels label (taint : T.taint) =
 *)
 (* The items of a sink effect are bounded like a taint set: a call trace
    distinguishes two taints of the same source, and recursion makes them
-   without bound. *)
+   without bound. The bound counts the items of each label separately,
+   because a sink whose `requires` mentions several labels must still see
+   an item of every one of them. *)
 let bound_sink_items (taints_with_traces : Effect.taint_to_sink_item list) :
     Effect.taint_to_sink_item list =
   let max = !Flag_semgrep.max_taint_set_size in
   if max =|= 0 || List.compare_length_with taints_with_traces max <= 0 then
     taints_with_traces
-  else (
-    Log.warn (fun m ->
-        m "SINK_ITEMS_SATURATED: cardinal=%d dropping=%d"
-          (List.length taints_with_traces)
-          (List.length taints_with_traces - max));
-    List_.take max taints_with_traces)
+  else
+    (* Taint that does not come from a source carries no label; those items
+       are counted together, under the same bound. *)
+    let label_of_item ({ Effect.taint; _ } : Effect.taint_to_sink_item) :
+        string option =
+      match taint.T.orig with
+      | T.Src src -> Some src.T.label
+      | Var _
+      | Shape_var _
+      | Control ->
+          None
+    in
+    let same_label (label1 : string option) (label2 : string option) : bool =
+      Option.equal String.equal label1 label2
+    in
+    (* One pass over the items, keeping the first 'max' of each label in
+       their original order; 'taken' holds one entry per distinct label. *)
+    let kept, dropped, _taken =
+      taints_with_traces
+      |> List.fold_left
+           (fun (kept, dropped, taken) (item : Effect.taint_to_sink_item) ->
+             let label = label_of_item item in
+             let n =
+               match List.find_opt (fun (l, _) -> same_label l label) taken with
+               | Some (_, n) -> n
+               | None -> 0
+             in
+             if n < max then
+               ( item :: kept,
+                 dropped,
+                 (label, n + 1)
+                 :: List.filter (fun (l, _) -> not (same_label l label)) taken )
+             else (kept, dropped + 1, taken))
+           ([], 0, [])
+    in
+    if dropped =|= 0 then taints_with_traces
+    else (
+      Log.warn (fun m ->
+          m "SINK_ITEMS_SATURATED: cardinal=%d dropping=%d beyond %d per label"
+            (List.length taints_with_traces)
+            dropped max);
+      List.rev kept)
 
 let effects_of_tainted_sink env taints_with_traces (sink : Effect.sink) :
     Effect.t list =
