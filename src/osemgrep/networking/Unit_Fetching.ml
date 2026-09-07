@@ -42,5 +42,29 @@ let real_fetch_tests caps =
       t "fetch ocaml rules 5" fetch_ocaml_rules;
     ]
 
+(* The registry endpoint that each shortcut accepted by --config asks for.
+   No request is made; only the URL is built. *)
+let registry_url_tests () =
+  let base : string = "https://registry.invalid" in
+  let check (name : string) (kind : Rules_config.registry_config_kind)
+      (path : string) : unit =
+    let url : string =
+      Semgrep_envvars.with_envvar "SEMGREP_URL" base (fun () ->
+          Uri.to_string (Semgrep_Registry.url_of_registry_config_kind kind))
+    in
+    Alcotest.(check string) name (base ^ path) url
+  in
+  (* python: AUTO_CONFIG_LOCATION in config_resolver.py *)
+  check "auto" Rules_config.Auto "/c/auto";
+  check "r2c" Rules_config.R2c "/c/p/r2c";
+  check "a pack" (Rules_config.Pack "default") "/c/p/default";
+  check "a ruleset" (Rules_config.Registry "python") "/c/r/python";
+  check "a snippet" (Rules_config.Snippet "aBcDeF") "/c/s/aBcDeF"
+
+let registry_tests =
+  Testo.categorize "registry tests"
+    [ t "the url of each registry shortcut" registry_url_tests ]
+
 let tests caps =
-  Testo.categorize_suites "OSemgrep Fetch" [ real_fetch_tests caps ]
+  Testo.categorize_suites "OSemgrep Fetch"
+    [ real_fetch_tests caps; registry_tests ]

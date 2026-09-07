@@ -53,8 +53,8 @@ and registry_config_kind =
   | Pack of string
   (* s/... *)
   | Snippet of string
-  (* pack shortcuts *)
-  (* "p/default" *)
+  (* shortcuts *)
+  (* "c/auto" *)
   | Auto
   (* "p/r2c" *)
   | R2c

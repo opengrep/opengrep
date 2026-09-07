@@ -154,6 +154,16 @@ let partition_or_skip ~skip_invalid_configs
     (oks, []))
   else (oks, errs)
 
+(* The rule files under [dir], sorted by path. List_files.list returns the
+ * entries in the order the file system hands them out, which puts the files
+ * of a subdirectory before later siblings and varies between machines. The
+ * order decides the order of the rule errors in the output and, through the
+ * last of them, the exit code, so we fix it here. *)
+let rule_files_in_dir (dir : Fpath.t) : Fpath.t list =
+  List_files.list dir
+  |> List.filter Rule_file.is_valid_rule_filename
+  |> List.sort Fpath.compare
+
 let fetch_content_from_url_async caps (url : Uri.t) : string Lwt.t =
   (* TOPORT? _nice_semgrep_url() *)
   Logs.info (fun m -> m "trying to download from %s" (Uri.to_string url));
@@ -415,8 +425,7 @@ let rules_from_dashdash_config_async ?(skip_invalid_configs = false)
        * we used to fetch rules from ~/.semgrep/ implicitely when --config
        * was not given, but this feature was removed, so now we can KISS.
        *)
-      List_files.list dir
-      |> List.filter Rule_file.is_valid_rule_filename
+      rule_files_in_dir dir
       |> List_.map (fun file ->
              load_rules_from_file ~rewrite_rule_ids ~origin:(Local_file file)
                caps file)
@@ -444,8 +453,7 @@ let rules_from_dashdash_config_async ?(skip_invalid_configs = false)
           (* We stamp the origin as [Git_repo url] rather than [Local_file
            * <tmp>] so that rule-ids are not prefixed with the temp path and
            * the true (untrusted) origin is tracked. *)
-          List_files.list checkout_dir
-          |> List.filter Rule_file.is_valid_rule_filename
+          rule_files_in_dir checkout_dir
           |> List_.map (fun file ->
                  load_rules_from_file ~rewrite_rule_ids ~origin:(Git_repo url)
                    caps file
@@ -562,18 +570,16 @@ let rules_from_source_async ?(skip_invalid_configs = false) ~rewrite_rule_ids
         in
 
         (* NOTE: We should default to config auto if no config was passed in an earlier step,
-            but if we reach this step without a config, we emit the error below.
+            but if we reach this step without a config, the error comes later.
         *)
-        (* we would prefer to emit output based on the fatal errors here over complaining
-           about not obtaining any configs, so we only emit this error if we didn't get
-           any fatal errors (which will separately be processed)
-        *)
-        if rules_and_origins =*= [] && errors =*= [] then
-          raise
-            (Error.Semgrep_error
-               ( no_config_given_message,
-                 Some (Exit_code.missing_config ~__LOC__) ));
-
+        (* A config that gives no rule at all is not an error of this step:
+           pysemgrep raised "No config given" from run_scan.py, so only a scan
+           ended on it, and 'validate' called such a configuration valid with
+           no rule. 'scan' and 'ci' report it where they find no rule to run
+           (Scan_subcommand.check_targets_with_rules builds the error with
+           this message), which comes after the fatal errors of the rule
+           files: a run with both reports those rather than the missing
+           config. *)
         Lwt.return (rules_and_origins, errors)
     (* better: '-e foo -l regex' was not handled in pysemgrep
        *  (got a weird 'invalid pattern clause' error)

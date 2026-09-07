@@ -7,10 +7,10 @@
 [<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
 [<MASKED TIMESTAMP>][[34mINFO[0m]: Opengrep version: <MASKED>
 [<MASKED TIMESTAMP>][[34mINFO[0m]: Getting the rules
-[<MASKED TIMESTAMP>][[34mINFO[0m]: loading local config from rules/two_rules/func.yaml
-[<MASKED TIMESTAMP>][[34mINFO[0m]: Done loading local config from rules/two_rules/func.yaml
 [<MASKED TIMESTAMP>][[34mINFO[0m]: loading local config from rules/two_rules/eqeq.yaml
 [<MASKED TIMESTAMP>][[34mINFO[0m]: Done loading local config from rules/two_rules/eqeq.yaml
+[<MASKED TIMESTAMP>][[34mINFO[0m]: loading local config from rules/two_rules/func.yaml
+[<MASKED TIMESTAMP>][[34mINFO[0m]: Done loading local config from rules/two_rules/func.yaml
 [<MASKED TIMESTAMP>][[34mINFO[0m]: Computing the targets
 [<MASKED TIMESTAMP>][[34mINFO[0m]: running 2 rules from 1 config rules/two_rules/
 Rules:
