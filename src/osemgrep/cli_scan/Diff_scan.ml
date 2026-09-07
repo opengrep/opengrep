@@ -261,6 +261,12 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               in
               (res, sigs)))
     in
+    (* The baseline work is over and its worktree is gone. The caches the
+       baseline scan filled hold that worktree's file contents under the paths
+       the head shares with it, so the head's findings must not be rendered
+       before they are cleared: they would be rendered from the baseline's
+       bytes, or fail on a baseline file shorter than the head's. *)
+    Globals.reset ();
     match baseline_result with
     | res, _sigs when Result.is_error res -> res
     | _res, sigs -> Ok (remove_matches_in_baseline sigs r status.renamed)
