@@ -695,6 +695,26 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
   | Ok _ -> raise (Error ("Could not create git worktree for " ^ commit))
   | Error (`Msg e) -> raise (Error e)
 
+(* Rewrite a path that git lists from the root of the repository as a path
+   relative to [cwd]. A file outside [cwd] then keeps a '../' prefix; asking
+   git for the same thing with '--relative' would drop it from the diff
+   altogether. The root of the repository is read once, and the rest is
+   string work on the paths of the diff, not on the targets. *)
+let path_from_cwd ?(cwd : Fpath.t option) () : string -> string =
+  let abs_cwd =
+    (match cwd with
+    | None -> getcwd ()
+    | Some dir -> Fpath.(getcwd () // dir))
+    |> Fpath.normalize |> Rpath.canonical_if_win
+  in
+  match project_root_for_files_in_dir abs_cwd with
+  | None -> Fun.id
+  | Some (project_root : Fpath.t) ->
+      let project_root = Rpath.canonical_if_win project_root in
+      fun (path : string) ->
+        !!(relativize_if_possible ~abs_cwd
+             Fpath.(project_root // v path |> normalize))
+
 let status ?cwd ?commit () =
   let cmd =
     ( git,
@@ -707,10 +727,10 @@ let status ?cwd ?commit () =
           "-z";
           "--diff-filter=ACDMRTUXB";
           "--ignore-submodules";
-          "--relative";
         ]
       @ opt commit )
   in
+  let from_cwd = path_from_cwd ?cwd () in
   let stats =
     match UCmd.string_of_run ~trim:true cmd with
     | Ok (str, (_, `Exited 0)) -> str |> String.split_on_char '\000'
@@ -737,37 +757,52 @@ let status ?cwd ?commit () =
   let removed = ref [] in
   let unmerged = ref [] in
   let renamed = ref [] in
-  let rec parse = function
-    | _ :: file :: tail when check_dir file && check_symlink file ->
-        Log.info (fun m ->
-            m "Skipping %s since it is a symlink to a directory: %s" file
-              (UUnix.realpath file));
-        parse tail
-    | "A" :: file :: tail ->
-        added := file :: !added;
-        parse tail
-    | "M" :: file :: tail ->
-        modified := file :: !modified;
-        parse tail
-    | "D" :: file :: tail ->
-        removed := file :: !removed;
-        parse tail
-    | "U" :: file :: tail ->
-        unmerged := file :: !unmerged;
-        parse tail
-    | "T" (* type changed *) :: file :: tail ->
-        if not (check_symlink file) then modified := file :: !modified;
-        parse tail
-    | typ :: before :: after :: tail when String.starts_with ~prefix:"R" typ ->
-        removed := before :: !removed;
-        added := after :: !added;
-        renamed := (before, after) :: !renamed;
-        parse tail
-    | "!" (* ignored *) :: _ :: tail -> parse tail
-    | "?" (* untracked *) :: _ :: tail -> parse tail
-    | unknown :: file :: tail ->
-        Log.warn (fun m -> m "unknown type in git status: %s, %s" unknown file);
-        parse tail
+  (* '-z --name-status' writes a status letter, then the two paths of a
+     rename and one path for every other change. Each path is made relative
+     to the current directory as it is read, so the stream is walked once. *)
+  let rec parse (entries : string list) : unit =
+    match entries with
+    | typ :: path :: tail -> (
+        let file = from_cwd path in
+        match typ with
+        | _ when check_dir file && check_symlink file ->
+            Log.info (fun m ->
+                m "Skipping %s since it is a symlink to a directory: %s" file
+                  (UUnix.realpath file));
+            parse tail
+        | "A" ->
+            added := file :: !added;
+            parse tail
+        | "M" ->
+            modified := file :: !modified;
+            parse tail
+        | "D" ->
+            removed := file :: !removed;
+            parse tail
+        | "U" ->
+            unmerged := file :: !unmerged;
+            parse tail
+        | "T" (* type changed *) ->
+            if not (check_symlink file) then modified := file :: !modified;
+            parse tail
+        | _ when String.starts_with ~prefix:"R" typ -> (
+            match tail with
+            | after :: tail ->
+                let after = from_cwd after in
+                removed := file :: !removed;
+                added := after :: !added;
+                renamed := (file, after) :: !renamed;
+                parse tail
+            | [] ->
+                Log.warn (fun m ->
+                    m "unknown type in git status: %s, %s" typ file))
+        | "!" (* ignored *)
+        | "?" (* untracked *) ->
+            parse tail
+        | unknown ->
+            Log.warn (fun m ->
+                m "unknown type in git status: %s, %s" unknown file);
+            parse tail)
     | [ remain ] ->
         Log.warn (fun m -> m "unknown data after parsing git status: %s" remain)
     | [] -> ()
