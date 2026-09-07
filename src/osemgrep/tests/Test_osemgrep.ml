@@ -497,6 +497,7 @@ let tests (caps : CLI.caps) =
       Testo.create "a closed output pipe ends the scan quietly"
         (test_broken_pipe caps);
       Testo.create "a fix that cannot be written keeps one document"
+        ?skipped:Test_scan_helpers.unless_root
         (test_autofix_on_read_only_file caps);
       Testo.create "an output that cannot be written prints no document"
         (test_unwritable_extra_output caps);

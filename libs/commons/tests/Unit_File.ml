@@ -224,6 +224,20 @@ let test_read_unreadable () =
             true
         | _ -> false))
 
+(* A directory is not created where a regular file already stands: the
+   attempt fails with EEXIST, including when the path comes from
+   Fpath.parent and so carries a trailing empty segment. *)
+let test_make_directories_over_a_file () =
+  let open Testutil_files in
+  with_tempfiles ~chdir:true [ file "a.txt" ] (fun (cwd : Fpath.t) ->
+      Alcotest.(check bool)
+        "the file is not turned into a directory" true
+        (match
+           UFile.make_directories (Fpath.parent Fpath.(cwd / "a.txt" / "b"))
+         with
+        | () -> false
+        | exception Unix.Unix_error (Unix.EEXIST, _, _) -> true))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -269,6 +283,8 @@ let tests =
       t "is_dir_or_lnk" test_is_dir_or_lnk;
       t "is_lnk_or_reg" test_is_lnk_or_reg;
       t "is_dir_or_lnk_or_reg" test_is_dir_or_lnk_or_reg;
+      t "make_directories on a parent that is a file"
+        test_make_directories_over_a_file;
       t "read a tree with unreadable entries"
         ?skipped:
           (* nothing is unreadable to root *)

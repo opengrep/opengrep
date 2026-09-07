@@ -335,10 +335,15 @@ let dispatch_output_format
          * that simply found nothing *)
         let str = render conf profiler ~hrules kind cli_output ||| "" in
         let file = Fpath.v dest in
+        let parent = Fpath.parent file |> Fpath.rem_empty_seg in
         (* a destination we cannot write to is the user's mistake, not ours,
-         * so report it without the backtrace of an unexpected exception *)
+         * so report it without the backtrace of an unexpected exception.
+         * The parent directory is created only when it is missing, so a
+         * parent that is a file is reported by the open of the destination,
+         * whose message already names it; a failure to create a missing
+         * parent names no path, so the destination is added to it. *)
         (try
-           UFile.make_directories (Fpath.parent file);
+           if not (Sys.file_exists !!parent) then UFile.make_directories parent;
            UFile.write_file ~file str
          with
         | Unix.Unix_error (err, _, _) ->
@@ -346,7 +351,7 @@ let dispatch_output_format
               (spf "Cannot write output to %s: %s" dest
                  (Unix.error_message err))
         | Sys_error (msg : string) ->
-            Error.abort (spf "Cannot write output to %s: %s" dest msg))
+            Error.abort (spf "Cannot write output: %s" msg))
   in
   effective_outputs conf
   |> List.iter (fun ((dest : string option), (kind : Output_format.t)) ->

@@ -55,9 +55,9 @@ let mask_test_temp_paths () : string -> string =
        {|(?:%s)[/\\]+(?:test-[0-9a-f]+|[A-Za-z0-9._-]*opengrep-[A-Za-z0-9._-]*)|}
        (String.concat "|" temp_dirs))
 
-(* A test that needs a file nobody can read cannot run as root. *)
+(* A test that needs a file nobody can read or write cannot run as root. *)
 let unless_root : string option =
-  if Int.equal (Unix.geteuid ()) 0 then Some "root reads every file"
+  if Int.equal (Unix.geteuid ()) 0 then Some "root ignores file permissions"
   else None
 
 let normalise : (string -> string) list =

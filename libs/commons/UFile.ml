@@ -287,6 +287,11 @@ let is_executable file =
   stat.st_kind =*= Unix.S_REG && perms land 0o011 <> 0
 
 let rec make_directories dir =
+  (* Fpath.parent leaves a trailing empty segment on its result; it is
+   * dropped so that mkdir is given the directory name itself, as a name
+   * written with a trailing separator is not reported the same way by
+   * every operating system *)
+  let dir = Fpath.rem_empty_seg dir in
   try UUnix.mkdir !!dir 0o755 with
   (* The directory already exists *)
   | UUnix.Unix_error ((EEXIST | EISDIR), _, _)

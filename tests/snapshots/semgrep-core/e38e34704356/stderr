@@ -22,6 +22,6 @@
 └─────────────┘
   Scanning 2 files tracked by git with 1 Code rule:
   Scanning 1 file.
-[<MASKED TIMESTAMP>][ERROR]: Cannot write output to foo.py/x.sarif: Not a directory
+[<MASKED TIMESTAMP>][ERROR]: Cannot write output: foo.py/x.sarif: Not a directory
 [<MASKED TIMESTAMP>][ERROR]: There were errors during analysis but the scan will succeed because there were no blocking findings, use --no-suppress-errors if you want it to fail when there are errors.
 ASSERT exit code

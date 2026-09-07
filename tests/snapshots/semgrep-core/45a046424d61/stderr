@@ -22,5 +22,5 @@
 └─────────────┘
   Scanning 2 files tracked by git with 1 Code rule:
   Scanning 1 file.
-[<MASKED TIMESTAMP>][ERROR]: Cannot write output to foo.py/x.sarif: Not a directory
+[<MASKED TIMESTAMP>][ERROR]: Cannot write output: foo.py/x.sarif: Not a directory
 ASSERT exit code
