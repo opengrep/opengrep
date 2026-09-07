@@ -1,5 +1,51 @@
 # Changelog
 
+## [1.30.0](https://github.com/opengrep/opengrep/releases/tag/v1.30.0) - 07-09-2026
+
+### New features
+
+* `ci` subcommand reimplemented in OCaml, run as `opengrep --experimental ci` by @dimitris-m in #802
+
+### Language support
+
+* PHP: lex numeric separators (`1_000`, `0x1_C`), explicit octal `0o17` and uppercase `0B` binary by @maciejpirog in #814
+* PHP: legacy octal literals are read in base 8, so `017` is 15 and not 17 by @maciejpirog in #814
+* PHP: `from` is an ordinary identifier everywhere except directly after `yield` by @maciejpirog in #816
+* PHP: parse a trailing comma in attribute arguments, as in `#[Route("/a", name: "a",)]` by @maciejpirog in #817
+* PHP: allow a reserved word as a named-argument label in a call by @mcdruid in #819
+* PHP: allow keyword named-argument labels in attribute arguments, and `goto`, `true` and `false` as labels by @maciejpirog in #821
+* PHP: accept `...` as a named argument's value, so `implode(separator: ..., array: ...)` matches by @maciejpirog in #821
+* PHP: accept several exception types in every `catch` of a `try`, not just the first by @maciejpirog in #822
+* PHP: parse a variable-less `catch (Exception) {}` (PHP 8.0) by @maciejpirog in #822
+* PHP: keep every type of a multi-catch as a union, and match the clause on any one of them by @maciejpirog in #822
+* PHP: declare and use semi-reserved keywords as method, class constant and enum case names by @maciejpirog in #823
+* PHP: `C::static`, `C::self`, `C::__CLASS__` and `C::array()` parse as member accesses, not as the constructs they spell by @maciejpirog in #823
+* PHP: accept a heredoc or nowdoc as a constant expression, initialising a const, property, parameter default, static variable or enum case by @maciejpirog in #824
+* PHP: parse PHP 7.3 flexible heredocs, with an indented closing marker, and keep the body's own newlines by @maciejpirog in #824
+* PHP: parse intersection types in parameters, as in `f(X&Y $p)`, telling them apart from by-reference `f(X &$p)` by @maciejpirog in #824
+* PHP: read a property off any constant expression (PHP 8.3), as in `const P = (new A)->prop` by @maciejpirog in #824
+
+### Improvements
+
+* Remove `--oss-only`, `--diff-depth`, `--x-dump-rule-partitions` and ci's no-op `--autofix`/`--supply-chain`/`--code` by @dimitris-m in #802
+* ci: `SEMGREP_RULES` and `SEMGREP_AUDIT_ON` are whitespace-separated lists, `SEMGREP_BASELINE_REF` aliases `--baseline-commit` by @dimitris-m in #802
+* Replace `Kcas_data.Hashtbl` with `Saturn.Htbl` and drop the `kcas_data` dependency by @dimitris-m in #813
+* Remove uncalled functions from `libs/commons` and `libs/commons2`, including the `Cache_disk` module by @dimitris-m in #813
+
+### Bug fixes
+
+* taint: deliver propagator taints when the `to` l-value is visited before the `from` by @corneliuhoffman in #809
+* ci: pass the GitLab job token through the environment rather than the command line, and redact URL userinfo in logged git commands by @dimitris-m in #802
+* ci: search deeper for a GitHub merge base only when the branch-off point is missing, and fetch all history on the last attempt by @dimitris-m in #802
+
+### New Contributors
+
+* @JAugusto42 made their first contribution in #801
+* @mcdruid made their first contribution in #819
+
+**Full Changelog**: https://github.com/opengrep/opengrep/compare/v1.29.0...v1.30.0
+
+
 ## [1.29.0](https://github.com/opengrep/opengrep/releases/tag/v1.29.0) - 28-08-2026
 
 ### Improvements
