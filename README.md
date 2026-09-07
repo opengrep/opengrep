@@ -60,18 +60,18 @@ Apex · Bash · C · C++ · C# · Clojure · Crystal · Dart · Dockerfile · El
 
 ## Installation
 
-### Quick Install (Recommended)
+### Homebrew (macOS)
+
+```bash
+brew install opengrep/tap/opengrep
+```
+
+### Quick Install
 
 #### Linux / macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash
-```
-
-Or if you've cloned the repo:
-
-```bash
-./install.sh
 ```
 
 #### Windows (PowerShell)
