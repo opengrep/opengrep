@@ -58,6 +58,24 @@ module Legacy = struct
         close_in chan;
         List.rev !acc
 
+  (* Reads at most [max_len] bytes, chunk by chunk, so that reading the head
+     of a target does not load the whole file into memory. *)
+  let input_at_most (chan : in_channel) (max_len : int) : string =
+    let chunk_len = 4096 in
+    let buf = Bytes.create (min max_len chunk_len) in
+    let extbuf = Buffer.create (min max_len chunk_len) in
+    let rec loop () =
+      let remaining = max_len - Buffer.length extbuf in
+      if remaining <= 0 then Buffer.contents extbuf
+      else
+        match input chan buf 0 (min remaining (Bytes.length buf)) with
+        | 0 -> Buffer.contents extbuf
+        | num_bytes ->
+            Buffer.add_subbytes extbuf buf 0 num_bytes;
+            loop ()
+    in
+    loop ()
+
   (*
    This implementation works even with Linux files like /dev/fd/63
    created by bash's process substitution e.g.
@@ -76,14 +94,27 @@ module Legacy = struct
    Why such a function is not provided by the ocaml standard library is
    unclear.
 *)
-  let read_file ?(max_len = max_int) path =
-    let chan = UStdlib.open_in_bin path in
-    let contents =
-      Common.protect ~finally:(fun () -> close_in chan) (fun () ->
-          In_channel.input_all chan)
+  let read_file ?(max_len : int = max_int) (path : string) : string =
+    (* Opening a named pipe waits for a writer to open the other end. A
+       signal delivered during that wait, such as the end of a child
+       process (SIGCHLD), interrupts the open instead of resuming it, so
+       the open is retried here. The reads below go through a channel,
+       which resumes an interrupted read on its own. The descriptor is
+       opened close-on-exec, as opening a channel by name does, so that a
+       child process does not inherit it. *)
+    let rec open_retrying_on_interrupt () : in_channel =
+      match UUnix.openfile path [ UUnix.O_RDONLY; UUnix.O_CLOEXEC ] 0 with
+      | fd -> UUnix.in_channel_of_descr fd
+      | exception UUnix.Unix_error (UUnix.EINTR, _, _) ->
+          open_retrying_on_interrupt ()
     in
-    if String.length contents > max_len then String.sub contents 0 max_len
-    else contents
+    let chan = open_retrying_on_interrupt () in
+    Common.protect
+      ~finally:(fun () -> close_in chan)
+      (fun () ->
+        if max_len >= max_int then In_channel.input_all chan
+        else if max_len <= 0 then ""
+        else input_at_most chan max_len)
 
   let write_file ~file s =
     let chan = UStdlib.open_out_bin file in

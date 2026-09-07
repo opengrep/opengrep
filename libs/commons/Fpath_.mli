@@ -57,6 +57,12 @@ val append_no_dot : Fpath.t -> Fpath.t -> Fpath.t
    kept as typed, so 'a/../b' and 'a/./b' keep their spelling. *)
 val strip_leading_dot_and_trailing_slash : Fpath.t -> Fpath.t
 
+(* Drop the '.' segments of a path, which name no part of it: 'a/./b'
+   becomes 'a/b' and '.' stays '.'. Only those segments go: a '..' is
+   kept as typed, where Fpath.normalize resolves it against the preceding
+   segment and so names another file when that segment is a symlink. *)
+val drop_dot_segments : Fpath.t -> Fpath.t
+
 (*
    Operators on files or file paths or anything related to files.
    This is module is meant to be opened:
