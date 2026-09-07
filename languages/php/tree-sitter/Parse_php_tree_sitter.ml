@@ -1759,7 +1759,8 @@ and map_primary_expression (env : env) (x : CST.primary_expression) : A.expr =
           (* this grammar's arrow_function carries no attribute_list *)
           A.f_attrs = [];
           A.l_uses = [];
-          A.f_body = Expr (v7, Tok.unsafe_sc);
+          (* the body of a short lambda is its return value *)
+          A.f_body = Return (v6, Some v7);
         }
   | `Obj_crea_exp x -> map_object_creation_expression env x
   | `Update_exp x -> map_update_expression env x
