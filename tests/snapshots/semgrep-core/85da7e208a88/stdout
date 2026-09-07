@@ -1,4 +1,4 @@
-Test name: with git > semgrepignore of the working directory applies under it
+Test name: with git > semgrepignore above the scanning root
 --- Files added before 'git add' ---
 .semgrepignore
 dir/a

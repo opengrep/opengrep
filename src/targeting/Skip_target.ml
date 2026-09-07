@@ -9,21 +9,22 @@ module Out = Semgrep_output_v1_t
 (* Extensions never scanned *)
 (****************************************************************************)
 
-(* The extensions always excluded, whatever the flags and ignore files:
-   minified JavaScript and TypeScript declarations, from lang.json. *)
-let excluded_extensions : string list Lazy.t =
-  lazy
-    (Lang.assoc
-    |> List.concat_map (fun ((_ : string), (lang : Lang.t)) ->
-           Lang.excluded_exts_of_lang lang)
-    |> List_.deduplicate)
+(* The extensions never scanned when walking a directory. Two things put such
+   a file back in the target list: a scan run with any '--include' pattern,
+   and naming the file on the command line (unless includes and excludes are
+   applied to file targets too). See 'keep_any_extension' in
+   Find_targets.get_targets.
+   Only minified JavaScript is here. The other extension lang.json marks as
+   excluded, '.d.ts', is a TypeScript target like any other, so it is left
+   out of this list. *)
+let excluded_extensions : string list = [ ".min.js" ]
 
 let has_excluded_extension (path : Fpath.t) :
     (Fpath.t, Out.skipped_target) result =
   if
     List.exists
       (fun (ext : string) -> String.ends_with ~suffix:ext !!path)
-      (Lazy.force excluded_extensions)
+      excluded_extensions
   then
     Error { Out.path; reason = Always_skipped; details = None; rule_id = None }
   else Ok path

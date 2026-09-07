@@ -60,11 +60,10 @@ type scanning_root_info = {
    This returns the project root and the path relative to that root
    (see the scanning_root_info type above).
 
-   If a project root is not found, the project kind is 'Other_project'
-   and the project root is what 'fallback_project_root' specifies.
-
-   To keep things simple, the default value of 'fallback_project_root' is
-   set to the current folder '.', resolved to a physical path.
+   If a project root is not found, the project kind is 'No_VCS_project'
+   and the scanning root is its own project: a folder is its own project
+   root, a regular file has its containing folder as project root. The
+   current folder plays no part in this.
 
    'force_root' can be used to impose the project root rather than guessing
    it. It's useful for testing the gitignore mechanism and stay within
@@ -75,7 +74,6 @@ type scanning_root_info = {
    the root of a project.
 *)
 val find_any_project_root :
-  fallback_root:Rfpath.t option ->
   force_novcs:bool ->
   force_root:t option ->
   Fpath.t ->

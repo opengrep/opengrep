@@ -6,10 +6,10 @@
    - this is used to filter candidates for a given language
    - a given file may be in multiple languages
 
-   This will exclude files we don't want to handle with semgrep, such
-   as the '.min.js' files (JavaScript minified files which are not human-
-   readable and usually really big) or '.d.ts' (TypeScript typed interfaces
-   for which we don't have a parser).
+   No extension is set apart here: a '.min.js' is JavaScript and a '.d.ts'
+   is TypeScript. It is targeting that reports a '.min.js' as always
+   skipped, unless an '--include' pattern names it; every other extension,
+   '.d.ts' included, is a target of its language.
 *)
 val inspect_file_p : Lang.t -> Fpath.t -> bool
 

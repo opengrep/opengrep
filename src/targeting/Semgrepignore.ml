@@ -108,7 +108,7 @@ let contents_of_builtin_semgrepignore = function
   | Empty -> ""
   | Semgrep_scan_legacy -> default_semgrepignore_for_semgrep_scan
 
-let create ?(cli_patterns = []) ?(working_directory : Fpath.t option)
+let create ?(cli_patterns = [])
     ?(semgrepignore_filename = default_semgrepignore_filename) ~default_semgrepignore_patterns
     ~exclusion_mechanism ~project_root () =
   let root_anchor = Glob.Pattern.root_pattern in
@@ -179,45 +179,14 @@ let create ?(cli_patterns = []) ?(working_directory : Fpath.t option)
     exclusion_mechanism.use_semgrepignore_files && not root_semgrepignore_exists
   in
 
-  (*
-     pysemgrep read the '.semgrepignore' of the working directory whatever
-     the scanning root was, and applied to a path outside that directory
-     only the patterns that are not anchored to it, the ones that match at
-     any depth (the _survives method of ignores.py). When the working
-     directory is the project root, its file is read as the project's own
-     and its patterns are anchored there, so nothing is added here.
-  *)
-  let working_directory_levels : Gitignore.level list =
-    match working_directory with
-    | Some dir when exclusion_mechanism.use_semgrepignore_files -> (
-        let path =
-          Gitignore_cache.ignore_file_path ~filename:semgrepignore_filename dir
-        in
-        match read_ignore_file_opt dir with
-        | None -> []
-        | Some (contents : string) ->
-            [
-              {
-                Gitignore.level_kind = "semgrepignore of the working directory";
-                source_name = Fpath.to_string path;
-                patterns =
-                  Parse_gitignore.unanchored_from_string
-                    ~name:(Fpath.to_string path) ~source_kind:"semgrepignore"
-                    ~anchor:root_anchor ~source_path:(Some path) contents;
-              };
-            ])
-    | _ -> []
-  in
+  (* The '.semgrepignore' of a folder is read as that folder's ignore file,
+     with its patterns anchored there, whether or not the command runs from
+     it. A scanning root outside the folder is not affected by it. *)
   let higher_priority_levels =
-    (* the working directory's file comes last: target_manager.py applied
-       the command-line includes and excludes before the semgrepignore
-       filter, so a line there cannot bring back a path '--exclude' or
-       '--include' left out *)
-    (if use_default_semgrepignore then
-       (* use the built-in semgrepignore rules in the absence of a root
-          '.semgrepignore' file *)
-       [ default_semgrepignore_file_level; cli_level ]
-     else [ cli_level ])
-    @ working_directory_levels
+    if use_default_semgrepignore then
+      (* use the built-in semgrepignore rules in the absence of a root
+         '.semgrepignore' file *)
+      [ default_semgrepignore_file_level; cli_level ]
+    else [ cli_level ]
   in
   Gitignore_filter.create ~higher_priority_levels ~gitignore_file_cache ()

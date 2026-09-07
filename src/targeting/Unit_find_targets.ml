@@ -187,15 +187,27 @@ let tests_with_or_without_git ~with_git =
         F.dir "dir" [ F.file "a.c"; F.file "b.c" ];
         F.Symlink ("link", "dir");
       ];
-    (* The ignore file of the working directory applies to a root under it,
-       with its patterns anchored there. *)
+    (* In a git project the repository root is the project, so its ignore
+       file applies to a scanning root under it, with its patterns anchored
+       at the repository root. Outside a VCS the scanning root is its own
+       project and an ignore file above it is not read. *)
     test_find_targets ~with_git ~scanning_root:"dir"
-      "semgrepignore of the working directory applies under it"
+      "semgrepignore above the scanning root"
       [ F.File (".semgrepignore", "dir/b\n"); F.dir "dir" [ F.file "a"; F.file "b" ] ];
-    (* It also applies to a root outside it, with only the patterns that
-       are not anchored to it, as the Python wrapper's did. *)
+    (* Outside a VCS the ignore file of the scanning root itself is read,
+       whatever the folder the command runs from: only 'b' is ignored. In a
+       git project both files are read, so 'a' is ignored as well. *)
+    test_find_targets ~with_git ~scanning_root:"dir"
+      "semgrepignore at the scanning root"
+      [
+        F.File (".semgrepignore", "a\n");
+        F.dir "dir" [ F.File (".semgrepignore", "b\n"); F.file "a"; F.file "b" ];
+      ];
+    (* An ignore file in the folder the command runs from does not apply to
+       a root outside it, whether or not its patterns are anchored: the
+       folder the command runs from is not special. *)
     test_find_targets ~with_git ~cwd:"here" ~scanning_root:"../there"
-      "semgrepignore of the working directory applies outside it"
+      "semgrepignore of the working directory does not apply outside it"
       [
         F.dir "here" [ F.File (".semgrepignore", "deep/\n/anchored/\n") ];
         F.dir "there"

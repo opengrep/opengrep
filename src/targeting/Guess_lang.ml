@@ -86,19 +86,27 @@ let is_executable =
      a script. *)
   Or (has_extension [ ".exe" ], Test_path f)
 
-let get_first_line path =
-  UFile.with_open_in path (fun ic ->
-      try input_line ic with
-      | End_of_file -> (* empty file *) "")
+(* A file the process cannot open holds no content we can look at, so the
+   language tests below see the empty string rather than raising. *)
+let read_unreadable_as_empty (f : unit -> string) : string =
+  try f () with
+  | Sys_error (_ : string) -> ""
+
+let get_first_line (path : Fpath.t) : string =
+  read_unreadable_as_empty (fun () ->
+      UFile.with_open_in path (fun ic ->
+          try input_line ic with
+          | End_of_file -> (* empty file *) ""))
 
 (*
    Get the first N bytes of the file, which is ideally obtained from
    a single filesystem block.
 *)
-let get_first_block ?(block_size = 4096) path =
-  UFile.with_open_in path (fun ic ->
-      let len = min block_size (in_channel_length ic) in
-      really_input_string ic len)
+let get_first_block ?(block_size = 4096) (path : Fpath.t) : string =
+  read_unreadable_as_empty (fun () ->
+      UFile.with_open_in path (fun ic ->
+          let len = min block_size (in_channel_length ic) in
+          really_input_string ic len))
 
 (* XXX: Need thread-safe solution, or just [force] it now. However, it does not
  * seem to be used concurrently. *)
@@ -202,8 +210,10 @@ let is_executable_script cmd_names =
                       ^^^^
 *)
 let matches_lang lang =
-  (* the extensions never scanned, like '.min.js', are left to targeting,
-     which reports them; here a minified file is JavaScript *)
+  (* here a '.min.js' is JavaScript and a '.d.ts' is TypeScript. Targeting
+     reports the '.min.js' as always skipped unless an '--include' pattern
+     names it; every other extension, '.d.ts' included, is a target of its
+     language. *)
   let has_ext = has_lang_extension lang in
   match Lang.shebangs_of_lang lang with
   | [] -> has_ext

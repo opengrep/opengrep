@@ -25,8 +25,13 @@ open Test_scan_helpers
 let root : Fpath.t = Fpath.v "tests/targeting"
 let targets_root : Fpath.t = root / "targets"
 
+(* A directory of the fixtures, copied into the repo under the same name,
+   with extra entries added next to what was copied. *)
+let target_dir_with (name : string) (extra : F.t list) : F.t =
+  F.dir name (F.read (targets_root / name) @ extra)
+
 (* A directory of the fixtures, copied into the repo under the same name. *)
-let target_dir (name : string) : F.t = F.dir name (F.read (targets_root / name))
+let target_dir (name : string) : F.t = target_dir_with name []
 
 (* The same, for a directory of the general scan fixtures. *)
 let scan_target_dir (name : string) : F.t =
@@ -106,16 +111,35 @@ let permissions_files : F.t list =
       ];
   ]
 
+(* A file the scan cannot read, next to one it can, left out by the
+   '.semgrepignore'. Deciding whether a skipped '.php' file is a target of
+   the rule's language opens it to look for a shebang, and opening this one
+   fails. *)
+let unreadable_ignored_files : F.t list =
+  [
+    F.dir "targets"
+      [
+        F.dir "unreadable_ignored"
+          [
+            (* the scanning root is the project outside a VCS, so this is
+               where the ignore file is read from *)
+            F.File (".semgrepignore", "hidden.php\n");
+            F.File ("main.php", "<?php $x == $x;\n");
+            F.Unreadable ("hidden.php", "<?php $y == $y;\n");
+          ];
+      ];
+  ]
+
 (* Byte counts that --max-target-bytes is tried with over targets/basic:
    1MB keeps every file, 100B and 1B skip the bigger ones.
    python: test_max_target_bytes_results, test_max_target_bytes_output,
    test_max_target_bytes_output_pysemfail *)
 let max_target_bytes : string list = [ "1MB"; "100B"; "1B" ]
 
-(* Files whose extension the targeting excludes by default, '.min.js' and
-   '.d.ts'. The '.semgrepignore' at the root replaces the built-in
-   patterns, whose '*.min.js' would hide the file before a '--include' is
-   applied. *)
+(* A '.min.js', which targeting excludes by extension, and a '.d.ts', which
+   is a TypeScript target like any other. The '.semgrepignore' at the root
+   replaces the built-in patterns, whose '*.min.js' would hide the first
+   file before a '--include' is applied. *)
 let excluded_extension_files : F.t list =
   [
     F.File (".semgrepignore", "# no patterns\n");
@@ -318,9 +342,18 @@ let tests (caps : < Scan_subcommand.caps >) =
         (run_scan caps ~root:fixtures_root ~git:false ~format_args:[ "--json" ]
            ~rule:"rules/eqeq.yaml" ~targets:[] ~extra_files:permissions_files
            ~extra_args:[ "targets/permissions" ]);
+      (* A file the '.semgrepignore' leaves out is reported as skipped
+         whether or not the scan can read it: whether it is reported at all
+         is decided from its name, and reading it is allowed to fail. *)
+      t "permissions: unreadable file skipped by .semgrepignore"
+        ?skipped:unless_root ~checked_output:(Testo.stdout ())
+        ~normalize:normalise
+        (run_scan caps ~root ~git:false ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-php.yaml" ~targets:[]
+           ~extra_files:unreadable_ignored_files
+           ~extra_args:[ "--verbose"; "targets/unreadable_ignored" ]);
       (* A file the user names is scanned whatever its extension: the
-         default exclusions are for what walking a directory turns up.
-         The wrapper had no such exclusions at all. *)
+         '.min.js' exclusion is for what walking a directory turns up. *)
       t "excluded extensions: named on the command line"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root ~format_args:[ "--json" ]
@@ -342,8 +375,8 @@ let tests (caps : < Scan_subcommand.caps >) =
                "--verbose"; "--include=*.min.js"; "--include=*.d.ts";
                "targets/excluded_extensions";
              ]);
-      (* found by walking the directory, the '.min.js' is skipped and the
-         '.d.ts' is not a target of the rule *)
+      (* found by walking the directory, the '.min.js' is always skipped
+         and the '.d.ts' is scanned as TypeScript *)
       t "excluded extensions: found by walking"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root ~format_args:[ "--json" ]
@@ -411,6 +444,14 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"rules/eqeq-basic.yaml" ~targets:[]
            ~extra_files:[ F.dir "targets" [ target_dir "nested_paths" ] ]
            ~extra_args:[ "./targets/nested_paths/src" ]);
+      (* A '.' segment further down the scanning root is dropped as well,
+         so the findings are reported under the path without it. *)
+      t "scanning root spelled with an interior dot"
+        ~checked_output:(Testo.stdout ()) ~normalize:normalise
+        (run_scan caps ~root ~format_args:[ "--json" ]
+           ~rule:"rules/eqeq-basic.yaml" ~targets:[]
+           ~extra_files:[ F.dir "targets" [ target_dir "nested_paths" ] ]
+           ~extra_args:[ "targets/nested_paths/./src" ]);
       (* An unreadable target named on the command line is reported as
          skipped, kept out of the scanned files, and makes the run fail as
          it did for the wrapper. *)
@@ -440,10 +481,13 @@ let tests (caps : < Scan_subcommand.caps >) =
               ~rule:"rules/eqeq-basic.yaml" ~targets:[]
               ~extra_files:
                 [
-                  F.dir ".semgrepignore" [ F.File ("inside", "") ];
-                  F.dir "targets" [ target_dir "nested_paths" ];
+                  F.dir "targets"
+                    [
+                      target_dir_with "nested_paths"
+                        [ F.dir ".semgrepignore" [ F.File ("inside", "") ] ];
+                    ];
                 ]
-              ~extra_args:[ "targets/nested_paths/src" ]));
+              ~extra_args:[ "targets/nested_paths" ]));
       t "ignore file without read permission" ?skipped:unless_root
         ~checked_output:(Testo.stdout ())
         ~normalize:normalise
@@ -452,10 +496,13 @@ let tests (caps : < Scan_subcommand.caps >) =
               ~rule:"rules/eqeq-basic.yaml" ~targets:[]
               ~extra_files:
                 [
-                  F.Unreadable (".semgrepignore", "src/\n");
-                  F.dir "targets" [ target_dir "nested_paths" ];
+                  F.dir "targets"
+                    [
+                      target_dir_with "nested_paths"
+                        [ F.Unreadable (".semgrepignore", "src/\n") ];
+                    ];
                 ]
-              ~extra_args:[ "targets/nested_paths/src" ]));
+              ~extra_args:[ "targets/nested_paths" ]));
       (* The folder git keeps its data in is never reported, as the
          wrapper's PATHS_ALWAYS_SKIPPED was not. *)
       t "the git folder is not reported" ~checked_output:(Testo.stdout ())

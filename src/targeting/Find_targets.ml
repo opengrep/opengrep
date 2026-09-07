@@ -502,9 +502,8 @@ let filter_paths
 (* Note: throughout this file we use List.rev_append instead of (@) for
  * concatenating file lists, since it is tail-recursive. The order does not
  * matter because we sort and deduplicate at the end in get_targets. *)
-(* [keep_any_extension] holds for the files the default extension
-   exclusions must not apply to, [keep_any_size] for those the size limit
-   must not apply to. *)
+(* [keep_any_extension] holds for the files the '.min.js' exclusion must not
+   apply to, [keep_any_size] for those the size limit must not apply to. *)
 let filter_extension_size_and_minified ~(keep_any_extension : Fppath.t -> bool)
     ~(keep_any_size : Fppath.t -> bool) max_target_bytes exclude_minified_files
     paths =
@@ -767,22 +766,12 @@ let scanning_root_by_project ~(force_root : Project.t option)
     ~(force_novcs : bool) (scanning_root : Scanning_root.t) :
     Project.t * Fppath.t =
   let scanning_root_fpath = Scanning_root.to_fpath scanning_root in
-  (* Outside any VCS, the working directory is the project when the root
-     is under it, so that its ignore files apply, as the Python wrapper
-     reads the .semgrepignore of the working directory. *)
-  let fallback_root : Rfpath.t option =
-    let cwd = Rpath.getcwd () in
-    match Rpath.of_fpath scanning_root_fpath with
-    | Ok root when Fpath.is_prefix (Rpath.to_fpath cwd) (Rpath.to_fpath root)
-      ->
-        Some (Rfpath.of_fpath_exn (Rpath.to_fpath cwd))
-    | Ok _
-    | Error _ ->
-        None
-  in
+  (* Outside any VCS the scanning root is its own project, wherever the
+     command runs from: a folder is its own project root, a file has its
+     containing folder as project root. An ignore file above the scanning
+     root is not read. *)
   let kind, scanning_root_info =
-    Project.find_any_project_root ~fallback_root ~force_novcs ~force_root
-      scanning_root_fpath
+    Project.find_any_project_root ~force_novcs ~force_root scanning_root_fpath
   in
   let project : Project.t = { kind; root = scanning_root_info.project_root } in
   let path : Fppath.t =
@@ -889,17 +878,8 @@ let setup_path_filters conf (project_roots : Project.roots) :
    * We would still need to intialize at the beginning with
    * the .gitignore of all the parents of the scan_root.
    *)
-  (* The ignore file of the working directory applies wherever the scanning
-     roots are, as it did for the Python wrapper. When the working
-     directory is the project root it is already read as the project's own,
-     with its patterns anchored there. *)
-  let working_directory : Fpath.t option =
-    let cwd = Rpath.to_fpath (Rpath.getcwd ()) in
-    if Fpath.equal cwd (Rpath.to_fpath (Rfpath.to_rpath project_root)) then None
-    else Some cwd
-  in
   let semgrepignore_filter =
-    Semgrepignore.create ~cli_patterns:conf.exclude ?working_directory
+    Semgrepignore.create ~cli_patterns:conf.exclude
       ?semgrepignore_filename:conf.semgrepignore_filename
       ~default_semgrepignore_patterns:Semgrep_scan_legacy
       ~exclusion_mechanism
@@ -1116,9 +1096,9 @@ let get_targets conf scanning_roots : Fppath.t targets =
       { selected = []; skipped = []; git_repo = false }
       (group_scanning_roots_by_project conf scanning_roots)
   in
-  (* The default exclusions by extension and the size limit apply to what
-     walking a directory root turns up, not to a file the user named on the
-     command line: pysemgrep added those back after filtering
+  (* The '.min.js' exclusion and the size limit apply to what walking a
+     directory root turns up, not to a file the user named on the command
+     line: pysemgrep added those back after filtering
      (bypass_includes_excludes_for_files of target_manager.py). *)
   let is_explicit_file (fppath : Fppath.t) : bool =
     (not conf.apply_includes_excludes_to_file_targets)
@@ -1130,7 +1110,7 @@ let get_targets conf scanning_roots : Fppath.t targets =
     |> filter_extension_size_and_minified
          ~keep_any_extension:(fun (fppath : Fppath.t) ->
            (* an --include pattern already narrows the selection, so the
-              default exclusions by extension are dropped with it *)
+              '.min.js' exclusion is dropped with it *)
            Option.is_some conf.include_ || is_explicit_file fppath)
          ~keep_any_size:is_explicit_file conf.max_target_bytes
          conf.exclude_minified_files

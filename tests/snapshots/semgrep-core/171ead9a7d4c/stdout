@@ -1,0 +1,7 @@
+--- begin input files ---
+eqeq-php.yaml
+targets/unreadable_ignored/.semgrepignore
+targets/unreadable_ignored/hidden.php
+targets/unreadable_ignored/main.php
+--- end input files ---
+{"version":"<MASKED>","results":[{"check_id":"eqeq-bad","path":"targets/unreadable_ignored/main.php","start":{"line":1,"col":7,"offset":6},"end":{"line":1,"col":15,"offset":14},"extra":{"metavars":{"$X":{"start":{"line":1,"col":7,"offset":6},"end":{"line":1,"col":9,"offset":8},"abstract_content":"$x"}},"message":"useless comparison","metadata":{},"severity":"ERROR","fingerprint":"e3f51ac91797b1550cc8a4588afc25d4684ab4038c98ec46d61fa244a34875dfbaae3272a729028f3b5c299f5b0c24984998bd0b4942938155ab17f7304a1901_0","lines":"<?php $x == $x;","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/unreadable_ignored/main.php"],"skipped":[{"path":"targets/unreadable_ignored/hidden.php","reason":"semgrepignore_patterns_match"}]},"interfile_languages_used":[],"skipped_rules":[]}

@@ -1,4 +1,4 @@
-Test name: with git > semgrepignore of the working directory applies outside it
+Test name: with git > semgrepignore of the working directory does not apply outside it
 --- Files added before 'git add' ---
 here/.semgrepignore
 there/a.c
@@ -20,5 +20,5 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 --- Selected targets ---
 selected ../there/a.c
 selected ../there/anchored/c.c
+selected ../there/deep/b.c
 --- Skipped targets ---
-ignored ../there/deep [Semgrep_output_v1_t.Semgrepignore_patterns_match]
