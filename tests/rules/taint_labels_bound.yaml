@@ -1,0 +1,14 @@
+rules:
+  - id: test
+    message: Test
+    severity: INFO
+    languages: [py]
+    mode: taint
+    pattern-sources:
+      - label: A
+        pattern: srcA()
+      - label: B
+        pattern: srcB()
+    pattern-sinks:
+      - requires: A and B
+        pattern: sink(...)
