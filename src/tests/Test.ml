@@ -35,12 +35,20 @@ let t = Testo.create
 (* Helpers *)
 (*****************************************************************************)
 
+(* macOS rewrites __CF_USER_TEXT_ENCODING with the uid of the process the first
+   time CoreFoundation initialises in it, which resolving a host name does. The
+   new value comes from the operating system and not from the test, so this
+   variable is left out of the comparison. *)
+let macos_text_encoding_var = "__CF_USER_TEXT_ENCODING"
+
 let parse_env_entry ~ignore_empty s =
   match String.index_opt s '=' with
   | Some i ->
       let k = String_.safe_sub s 0 i in
       let v = String_.safe_sub s (i + 1) (String.length s - i - 1) in
-      if ignore_empty && v = "" then None else Some (k, v)
+      if String.equal k macos_text_encoding_var || (ignore_empty && v = "") then
+        None
+      else Some (k, v)
   | None -> None
 
 (* Get the set of environment variables and their values, optionally
