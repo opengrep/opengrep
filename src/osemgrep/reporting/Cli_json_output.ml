@@ -73,6 +73,7 @@ let error_message ~rule_id ~(location : Out.location option)
             spf "when running %s%s" id suffix
         | Some id, IncompatibleRule _ -> id
         | Some id, MissingPlugin -> spf "for rule %s" id
+        | Some id, UnsupportedSupplyChainRule -> spf "in rule %s" id
         | _ -> (
             match location with
             | None -> ""
@@ -121,14 +122,20 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
   | LexicalError
   | PartialParsing _ ->
       Exit_code.invalid_code ~__LOC__
-  (* rule errors: the code of the error, which is also the exit code of a
-     scan whose rules could not be loaded *)
+  (* rule errors: the code the JSON entry carries. The exit code of a scan
+     whose rules could not be loaded is derived from these, but is not always
+     the same code: see exit_code_of_invalid_config_errors in
+     Scan_subcommand.ml *)
   | InvalidYaml -> Exit_code.unparseable_yaml ~__LOC__
+  | InvalidRuleSchemaError -> Exit_code.invalid_pattern ~__LOC__
+  (* a pattern that does not parse was reported by the engine, and
+     pysemgrep gave an engine error of severity Error the fatal code unless
+     it was a target parse error (core_error_to_semgrep_error in
+     core_output.py) *)
   | RuleParseError
   | PatternParseError _
-  | PatternParseError0
-  | InvalidRuleSchemaError ->
-      Exit_code.invalid_pattern ~__LOC__
+  | PatternParseError0 ->
+      Exit_code.fatal ~__LOC__
   | OtherParseError
   | AstBuilderError
   | MatchingError
@@ -149,8 +156,65 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
   | IncompatibleRule _
   | IncompatibleRule0
   | MissingPlugin
+  | UnsupportedSupplyChainRule
   | DependencyResolutionError _ ->
       Exit_code.ok ~__LOC__
+
+(* An error that fails a run on its own. A warning or an info does not: a
+ * rule that requires a newer version of the engine leaves the run
+ * successful. *)
+let is_real_error_severity (severity : Out.error_severity) : bool =
+  match severity with
+  | `Error -> true
+  | `Warning
+  | `Info ->
+      false
+
+(* The error a failed run exits with. pysemgrep took the last error its
+ * output handler had collected (_final_raise in output.py) and, unless
+ * --strict was given, ignored it when its severity was below Error: a rule
+ * that requires a newer version of the engine leaves the run successful.
+ * pysemgrep collected the errors of a rule file in an order different from
+ * ours, so we take the last error of severity Error rather than the last
+ * error.
+ * python: select_real_errors in error.py *)
+let last_real_error (errors : Core_error.t list) : Core_error.t option =
+  errors |> List.rev
+  |> List.find_opt (fun (err : Core_error.t) ->
+         is_real_error_severity
+           (Core_error.severity_of_error err.Core_error.typ))
+
+(* python: this used to be done in a _final_raise method from output.py
+ * but better separation of concern to do it here.
+ *)
+let exit_code_of_errors ~(strict : bool) (errors : Out.core_error list) :
+    Exit_code.t =
+  match List.rev errors with
+  | [] -> Exit_code.ok ~__LOC__
+  (* TODO? why do we look at the last error? What about the other errors? *)
+  | x :: _ -> (
+      (* alt: raise a Semgrep_error that would be caught by CLI_Common
+       * wrapper instead of returning an exit code directly? *)
+      match () with
+      | _ when is_real_error_severity x.severity ->
+          let exit_code = exit_code_of_error_type x.error_type in
+          Logs.info (fun m ->
+              m
+                "Exiting opengrep scan due to error of severity level=Error: %s \
+                 -> exit code %i"
+                (Semgrep_output_v1_j.string_of_error_type x.error_type)
+                (Exit_code.to_int exit_code));
+          exit_code
+      | _ when strict ->
+          let exit_code = exit_code_of_error_type x.error_type in
+          Logs.info (fun m ->
+              m
+                "Exiting opengrep scan due to error in strict mode: %s -> exit \
+                 code %i"
+                (Semgrep_output_v1_j.string_of_error_type x.error_type)
+                (Exit_code.to_int exit_code));
+          exit_code
+      | _ -> Exit_code.ok ~__LOC__)
 
 (* A parse error quotes the bytes it choked on, so an error entry takes
  * strings from its target just as a match does, and every one of them is
@@ -215,6 +279,7 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         | IncompatibleRule _
         | IncompatibleRule0
         | MissingPlugin
+        | UnsupportedSupplyChainRule
         | DependencyResolutionError _ ->
             rule_id
       in
@@ -248,6 +313,7 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         | IncompatibleRule _
         | IncompatibleRule0
         | MissingPlugin
+        | UnsupportedSupplyChainRule
         | DependencyResolutionError _ ->
             location |> Option.map (fun (x : Out.location) -> x.path)
       in
@@ -360,8 +426,24 @@ let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
       };
   }
 
-let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
-    (m : Out.core_match) : Out.cli_match =
+(* The path the match-based id is computed from. A scan of '/home/me/proj/sub'
+ * and a scan of 'sub' from /home/me/proj report the same finding, so the id
+ * cannot hash the path as the user wrote it: it hashes the path relative to
+ * the current directory. A path that does not lie under the current directory
+ * ('../lib/x.py') is hashed as it was written; the prefix is stripped, never
+ * walked up with '..'.
+ * python: 'self.path.relative_to(Path.cwd())' in get_match_based_key()
+ * (rule_match.py), whose ValueError falls back to the path itself. *)
+let path_of_match_based_id ~(cwd : Fpath.t) (path : Fpath.t) : Fpath.t =
+  match Fpath.rem_prefix cwd path with
+  | Some relative -> relative
+  | None -> path
+
+(* 'cwd' is read once by the caller rather than once per match; it is only
+ * the match-based id that uses it, the reported path stays as the user typed
+ * it. *)
+let cli_match_of_core_match ~(cwd : Fpath.t) ~fixed_lines fixed_env
+    (hrules : Rule.hrules) (m : Out.core_match) : Out.cli_match =
   sanitize_cli_match
   @@
   match m with
@@ -442,7 +524,8 @@ let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
             is_ignored = Some is_ignored;
             fingerprint =
               Semgrep_hashing_functions.Match_based_id.partial rule rule_id
-                metavars !!path;
+                metavars
+                !!(path_of_match_based_id ~cwd path);
             sca_info = sca_match;
             fixed_lines;
             dataflow_trace;
@@ -568,12 +651,14 @@ let cli_output_of_runner_result ~fixed_lines (core : Out.core_output)
         []
       in
       let fixed_env = Fixed_lines.mk_env () in
+      let cwd : Fpath.t = Fpath.v (Sys.getcwd ()) in
       {
         version = Some version;
         (* Skipping the python intermediate RuleMatchMap for now *)
         results =
           matches
-          |> List_.map (cli_match_of_core_match ~fixed_lines fixed_env hrules)
+          |> List_.map
+               (cli_match_of_core_match ~cwd ~fixed_lines fixed_env hrules)
           |> Semgrep_output_utils.sort_cli_matches;
         errors = errors |> List_.map cli_error_of_core_error;
         paths;

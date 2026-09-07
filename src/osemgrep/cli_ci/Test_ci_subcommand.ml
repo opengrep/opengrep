@@ -256,6 +256,22 @@ let test_output_conflict_fatal (caps : Ci_subcommand.caps) () =
       [ "-o"; "out.json"; "--json-output=out.json"; "--no-suppress-errors" ]
     ~check:Exit_code.Check.fatal ()
 
+(* the error document of a machine format goes to the same destinations as a
+ * scan's document, so a destination that cannot be written fails a second
+ * time while the first error is being reported; that second failure is
+ * suppressed like any other. 'foo.py' is the target file, so 'foo.py/x.sarif'
+ * names a path under a regular file *)
+let test_unwritable_output_suppressed (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:[ "--json"; "--sarif-output"; "foo.py/x.sarif" ]
+    ()
+
+let test_unwritable_output_fatal (caps : Ci_subcommand.caps) () =
+  run_ci caps ~rule:blocking_rule_content ~target:finding_py_content
+    ~extra_args:
+      [ "--json"; "--sarif-output"; "foo.py/x.sarif"; "--no-suppress-errors" ]
+    ~check:Exit_code.Check.fatal ()
+
 (* an explicit false in the environment must turn suppression off, exactly
  * like the --no-suppress-errors flag *)
 let test_suppress_errors_env_false (caps : Ci_subcommand.caps) () =
@@ -890,6 +906,12 @@ let tests (caps : < Ci_subcommand.caps >) =
       t "output conflict is fatal without suppression"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_output_conflict_fatal caps);
+      t "unwritable output destination is suppressed to ok"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_unwritable_output_suppressed caps);
+      t "unwritable output destination is fatal without suppression"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_unwritable_output_fatal caps);
       t "suppress-errors env var set to false"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_suppress_errors_env_false caps);

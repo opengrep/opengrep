@@ -251,12 +251,15 @@ let render (conf : conf) (profiler : Profiler.t) ~(hrules : Rule.hrules)
       | xs -> Some (String.concat "\n" xs))
 
 (* All the (destination, format) pairs to produce: the extra outputs
- * requested with --<format>-output, plus the primary output_format going
- * to the -o destination (or stdout when there is no -o).
+ * requested with --<format>-output, then the primary output_format going
+ * to the -o destination (or stdout when there is no -o). The primary one
+ * comes last, as it does in pysemgrep (output.py normalize() adds it to the
+ * dict after the others), so that a file we cannot write aborts the run
+ * before anything reaches stdout.
  * Aborts like pysemgrep (output.py normalize()) if the -o destination is
  * already used by a --<format>-output flag.
  *)
-let effective_outputs (conf : conf) : (string option, Output_format.t) Map_.t =
+let effective_outputs (conf : conf) : (string option * Output_format.t) list =
   match conf.output with
   | Some dest when Map_.mem conf.output conf.outputs ->
       Error.abort
@@ -264,7 +267,7 @@ let effective_outputs (conf : conf) : (string option, Output_format.t) Map_.t =
            "Invalid output configuration: same output destination (%s) with \
             multiple formats."
            dest)
-  | _else_ -> Map_.add conf.output conf.output_format conf.outputs
+  | _else_ -> Map_.to_list conf.outputs @ [ (conf.output, conf.output_format) ]
 
 (* A destination carrying a scheme is a URL rather than a path. Fpath makes
  * no such distinction: on Windows it reads any "<scheme>:" before a
@@ -292,7 +295,7 @@ let check_destination (dest : string) : unit =
  * nothing. Also aborts on the conflicts reported by effective_outputs. *)
 let check_destinations (conf : conf) : unit =
   effective_outputs conf
-  |> Map_.iter (fun (dest : string option) (_kind : Output_format.t) ->
+  |> List.iter (fun ((dest : string option), (_kind : Output_format.t)) ->
          Option.iter check_destination dest)
 
 let dispatch_output_format
@@ -346,7 +349,7 @@ let dispatch_output_format
             Error.abort (spf "Cannot write output to %s: %s" dest msg))
   in
   effective_outputs conf
-  |> Map_.iter (fun dest kind ->
+  |> List.iter (fun ((dest : string option), (kind : Output_format.t)) ->
          let cli_output = for_output_format conf kind cli_output in
          match dest with
          | None -> print_stdout kind cli_output

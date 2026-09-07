@@ -16,6 +16,7 @@ and invalid_rule_kind =
       * (Semver_.t option (* minimum version supported by this rule *)
         * Semver_.t option (* maximum version *))
   | MissingPlugin of string (* error message *)
+  | UnsupportedSupplyChainRule of string (* the rule key asking for it *)
   | InvalidOther of string
 [@@deriving show]
 

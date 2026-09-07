@@ -32,20 +32,58 @@ type skipped_targets_grouped = {
 (* Helpers *)
 (*****************************************************************************)
 
-(* one entry per error; the reports group them by file *)
+(* Whether the file an error points at is a target of the scan. The errors
+   raised while a rule is loaded point at the rule file, which is never
+   scanned: no target of the run was left partially analysed by them. *)
+let is_on_a_target (error_type : OutJ.error_type) : bool =
+  match error_type with
+  | RuleParseError
+  | PatternParseError _
+  | PatternParseError0
+  | InvalidYaml
+  | InvalidRuleSchemaError
+  | UnknownLanguageError
+  | MissingConfig
+  | MissingPlugin
+  | IncompatibleRule _
+  | IncompatibleRule0
+  | UnsupportedSupplyChainRule ->
+      false
+  | LexicalError
+  | ParseError
+  | OtherParseError
+  | PartialParsing _
+  | AstBuilderError
+  | MatchingError
+  | SemgrepMatchFound
+  | TooManyMatches
+  | FatalError
+  | Timeout
+  | OutOfMemory
+  | StackOverflow
+  | TimeoutDuringInterfile
+  | OutOfMemoryDuringInterfile
+  | SemgrepWarning
+  | SemgrepError
+  | DependencyResolutionError _ ->
+      true
+
+(* one entry per error on a target; the reports group them by file *)
 let errors_to_skipped (errors : OutJ.core_error list) : OutJ.skipped_target list
     =
   errors
-  |> List_.filter_map (fun OutJ.{ location; message; rule_id; _ } ->
+  |> List_.filter_map (fun OutJ.{ location; message; rule_id; error_type; _ } ->
          let* loc = location in
-         Some
-           OutJ.
-             {
-               path = loc.path;
-               reason = Analysis_failed_parser_or_internal_error;
-               details = Some message;
-               rule_id;
-             })
+         if is_on_a_target error_type then
+           Some
+             OutJ.
+               {
+                 path = loc.path;
+                 reason = Analysis_failed_parser_or_internal_error;
+                 details = Some message;
+                 rule_id;
+               }
+         else None)
 
 (* the files partially analysed, each with the ids of the rules that failed
    on it, in the order of the entries *)

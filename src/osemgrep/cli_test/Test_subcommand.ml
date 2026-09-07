@@ -42,7 +42,7 @@ module A = Test_annotation
  * Note that the legacy 'semgrep scan --test' is redirected to this file after
  * having built a compatible Test_CLI.conf.
  *
- * TODO: conf.ignore_todo? conf.strict?
+ * TODO: conf.ignore_todo?
  * LATER: factorize code with Unit_engine.ml and Test_engine.ml
  *
  * This is a port of test.py
@@ -106,6 +106,10 @@ type error =
   (* the rule ids the annotations of a test file name are not the ones that
      matched in it *)
   | RuleIdMismatch of Fpath.t (* test file *) * Rule_ID.t list (* unmatched *)
+  (* an error the scan of the test targets raised: a target that does not
+     parse, a rule that timed out, a rule error at match time. The checks of
+     the rule file report it too; --strict makes it fail the run. *)
+  | ScanError of Out.core_error
 
 (* to avoid having functions with lots of parameters *)
 type env = {
@@ -127,6 +131,23 @@ let break_line =
 (* File targeting (the set of tests) *)
 (*****************************************************************************)
 
+(* The rule files and the test targets are tested and reported in path order,
+ * which does not depend on the file system. python: test.py kept the order
+ * rglob returned them in, which is the order a directory is listed in.
+ *)
+let in_path_order (paths : Fpath.t list) : Fpath.t list =
+  List.sort Fpath.compare paths
+
+(* The test targets held by a directory that carries the rule file's stem.
+ * python: test.py listed the whole target tree with rglob and kept a file at
+ * any depth under such a directory, minus the rule files (a .test.yaml is a
+ * target, a .yaml is not) and the fixtests.
+ *)
+let targets_under_dir (dir : Fpath.t) : Fpath.t list =
+  UFile.files_of_dirs_or_files_no_vcs_nofilter [ dir ]
+  |> List_.exclude (fun (p : Fpath.t) ->
+         List.mem "fixed" (Fpath_.exts p) || Rule_tests.is_config_suffix p)
+
 (* TODO? Move to Rule_tests.ml? *)
 let find_targets_for_rule (rule_file : Fpath.t) : Fpath.t list =
   let dir, base = Fpath.split_base rule_file in
@@ -135,11 +156,23 @@ let find_targets_for_rule (rule_file : Fpath.t) : Fpath.t list =
   dir |> List_files.read_dir_entries_fpath
   |> List_.exclude (fun p ->
          Fpath.equal p base || List.mem "fixed" (Fpath_.exts p))
-  |> List_.filter_map (fun p ->
+  |> List.concat_map (fun p ->
          (* the ~multi:true should then handle the foo.test.yaml *)
          if Fpath.equal (Fpath.rem_ext ~multi:true p) base_no_ext then
-           Some (dir // p)
-         else None)
+           (* a rule file with no directory part, as 'r1.yaml' is under the
+            * root '.', splits into the directory './'; its targets are
+            * reported without that prefix, like the rule file itself *)
+           let path = Fpath_.append_no_dot dir p in
+           (* python: test.py kept a candidate only if target.is_file(), so a
+            * directory carrying the rule file's stem, as in 'eqeq/' next to
+            * 'eqeq.yaml', gives its own files as targets. The name is
+            * compared first so that only a candidate is stat'ed. *)
+           if UFile.is_reg ~follow_symlinks:true path then [ path ]
+           else if UFile.is_dir ~follow_symlinks:true path then
+             targets_under_dir path
+           else []
+         else [])
+  |> in_path_order
 
 let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
     tests =
@@ -151,6 +184,7 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
         |> List.filter Rule_file.is_valid_rule_filename
         (* a rule file listed under '.' is reported without the './' prefix *)
         |> List_.map Fpath_.strip_leading_dot_and_trailing_slash
+        |> in_path_order
       in
       rule_files
       |> List_.filter_map (fun (rule_file : Fpath.t) ->
@@ -182,7 +216,9 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
   | Test_CLI.Dir (dir_targets, Some config_str) -> (
       match Rules_config.parse_config_string ~in_docker:false config_str with
       | Dir dir_rules ->
-          let rule_files = Rule_tests.get_config_filenames dir_rules in
+          let rule_files =
+            Rule_tests.get_config_filenames dir_rules |> in_path_order
+          in
           Rule_tests.get_config_test_filenames ~original_config:dir_rules
             ~configs:rule_files ~original_target:dir_targets
           |> List_.filter_map (fun (rule_file, targets) ->
@@ -191,12 +227,13 @@ let rules_and_targets (kind : Test_CLI.target_kind) (errors : error list ref) :
                        m "could not find target for %s" !!rule_file);
                    Stack_.push (MissingTest rule_file) errors;
                    None)
-                 else (
+                 else
+                   let targets = in_path_order targets in
                    Logs.debug (fun m ->
                        m "found targets for %s: %s" !!rule_file
                          (targets |> List_.map Fpath.to_string
                          |> String.concat ", "));
-                   Some (rule_file, targets)))
+                   Some (rule_file, targets))
       | File _
       | URL _
       | Git _
@@ -233,7 +270,12 @@ let fixtest_result_for_target (_env : env) (target : Fpath.t)
     match actual_res with
     | Textedit.Success actual_content ->
         if String.equal expected_content actual_content then []
-        else Unified_diff.lines ~old_:expected_content ~new_:actual_content
+        else
+          (* python: difflib.unified_diff prints an old and a new file header
+           * before the first hunk; test.py passes no file names, so the two
+           * lines carry none, and the old file is the fixtest *)
+          "---" :: "+++"
+          :: Unified_diff.lines ~old_:expected_content ~new_:actual_content
     | Overlap _ ->
         Logs.err (fun m -> m "fixes overlap for %s" !!target);
         (* TODO? return an error instead ?*)
@@ -351,7 +393,8 @@ let pp_failed_check ppf ((rule_id : string), (rule_res : Out.rule_result)) :
          in
          Format.fprintf ppf "\tmissed lines: %a, incorrect lines: %a@\n"
            pp_lines missed pp_lines incorrect);
-  Format.fprintf ppf "\ttest file path: %s@\n"
+  (* python: the block ends with a blank line *)
+  Format.fprintf ppf "\ttest file path: %s@\n@\n"
     (rule_res.matches |> List_.map fst |> String.concat " ")
 
 (* python: _generate_fixcheck_output_line *)
@@ -359,7 +402,9 @@ let pp_failed_fixtest ppf (fixtest_result : fixtest_result) : unit =
   Format.fprintf ppf "\t✖ %s <> autofix applied to %s@\n@\n"
     !!(fixtest_result.fixtest) !!(fixtest_result.target);
   fixtest_result.diff
-  |> List.iter (fun (line : string) -> Format.fprintf ppf "\t%s@\n" line)
+  |> List.iter (fun (line : string) -> Format.fprintf ppf "\t%s@\n" line);
+  (* python: the block ends with two blank lines *)
+  Format.fprintf ppf "@\n@\n"
 
 let report_tests_result (caps : < Cap.stdout >) ~matching_diagnosis ~json
     ~(config_errors : (Fpath.t * string) list) (res : Out.tests_result)
@@ -396,11 +441,14 @@ let report_tests_result (caps : < Cap.stdout >) ~matching_diagnosis ~json
         =
      fun pp failures ->
       print break_line;
-      (* the blocks separated by a blank line, and one after the last *)
+      (* python: the blocks are concatenated, each carrying its own trailing
+         blank lines, and the print of the whole adds one more newline: one
+         blank line between two failed checks and two between two failed
+         fixtests, one more after the last block of either *)
       failures
       |> List_.map (fun failure ->
              Fmt_.with_buffer_to_string (fun ppf -> pp ppf failure))
-      |> String.concat "\n" |> print
+      |> String.concat "" |> print
     in
 
     (* "unit" tests *)
@@ -538,16 +586,36 @@ let run_rules_against_targets caps (env : env) (rules : Rule.t list)
  * nothing. Todoruleid is kept so that the comparison below can drop the
  * lines it annotates from both the expected and the reported set, as
  * test.py does.
+ * python: this is test.py's 'ruleid_lines', which is also what the checks
+ * are keyed on, so a rule id that only ever appears in a 'todook:' line is
+ * not a check of its own. The lines a 'todook:' annotates are still dropped
+ * from both sets: the comparison below takes them from the file's own
+ * annotations, not from this list.
  *)
 let expected_annots (annots : A.annotations) : A.annotations =
   annots
   |> List.filter (fun ((annot : A.t), (_ : A.linenb)) ->
          match annot.kind with
          | Ruleid
-         | Todook
          | Todoruleid ->
              true
-         | Ok -> false)
+         | Todook
+         | Ok ->
+             false)
+
+(* The annotations that name a rule the file expects the run to report on:
+ * test.py built its 'test_lines' from the 'ruleid:', 'todoruleid:' and 'ok:'
+ * lines only, so a 'todook:' for a rule that never fires is not a mismatch.
+ *)
+let named_rule_annots (annots : A.annotations) : A.annotations =
+  annots
+  |> List.filter (fun ((annot : A.t), (_ : A.linenb)) ->
+         match annot.kind with
+         | Ruleid
+         | Todoruleid
+         | Ok ->
+             true
+         | Todook -> false)
 
 (*****************************************************************************)
 (* Comparing *)
@@ -618,7 +686,7 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
     |> List.iter (fun (file, annotations) ->
            let file = Fpath.normalize file in
            let expected_by_rule_id : (Rule_ID.t, A.linenb list) Assoc.t =
-             A.group_by_rule_id annotations
+             A.group_by_rule_id (expected_annots annotations)
            in
            expected_by_rule_id
            |> List.iter (fun (rule_id, lines) ->
@@ -641,7 +709,9 @@ let compare_actual_to_expected (env : env) (matches : Core_match.t list)
              expected_by_ruleid_and_file |> Assoc.find_opt id
              |> List_.optlist_to_list
            in
-           let all_files : Fpath.t list = Assoc.join_keys actual expected in
+           let all_files : Fpath.t list =
+             Assoc.join_keys actual expected |> in_path_order
+           in
            let rule_opts_for_id = (Rule_ID.Map.find_opt id rule_opts) in
            let res : (bool * (Fpath.t * Out.expected_reported)) list =
              all_files
@@ -748,16 +818,15 @@ let compare_for_autofix (env : env) (rules : Rule.t list)
                    !!target !!(env.rule_file));
              Stack_.push (MissingFixtest env.rule_file) env.errors;
              None
-         | Some fixtest, false ->
-             (* stricter? *)
-             Logs.err (fun m ->
-                 m
-                   "found the fixtest %s but the rule file %s does not contain \
-                    autofix"
-                   !!fixtest !!(env.rule_file));
-             None
          | None, false -> None
-         | Some fixtest_target, true ->
+         | Some fixtest_target, _ ->
+             (* old: (* stricter? *) a fixtest beside a rule file with no
+              * fix: was reported with Logs.err and not run. python: test.py
+              * pairs a .fixed file with its target whatever the rule file
+              * contains and runs the autofix pass on it, so a rule with no
+              * fix: leaves the target unchanged and the fixtest fails unless
+              * the fixed file is a copy of the target.
+              *)
              let matches =
                matches
                |> List.filter (fun (pm : Core_match.t) ->
@@ -775,11 +844,6 @@ let run_engine (caps : < scan_caps ; .. >) (env : env) (rules : Rule.t list)
     (files_and_annots : (Fpath.t * A.annotations) list) :
     test_result list * fixtest_result list =
   let res : Core_result.t = run_rules_against_targets caps env rules targets in
-  let expected : (Fpath.t * A.annotations) list =
-    files_and_annots
-    |> List_.map (fun ((file : Fpath.t), (annots : A.annotations)) ->
-           (file, expected_annots annots))
-  in
   let matches =
     res.processed_matches
     (* python: a match on a line with a nosem annotation, or with the one of
@@ -797,39 +861,51 @@ let run_engine (caps : < scan_caps ; .. >) (env : env) (rules : Rule.t list)
              List.sort_uniq Rule_ID.compare xs
            in
            let annotated =
-             ids (annots |> List_.map (fun ((a : A.t), (_ : A.linenb)) -> a.id))
+             ids
+               (named_rule_annots annots
+               |> List_.map (fun ((a : A.t), (_ : A.linenb)) -> a.id))
            in
-           let reported =
-             matches
-             |> List.filter (fun (pm : Core_match.t) ->
-                    Fpath.equal
-                      (Fpath.normalize pm.path.internal_path_to_content)
-                      (Fpath.normalize file))
-             |> List_.map (fun (pm : Core_match.t) -> pm.rule_id.id)
-             |> ids
-           in
-           if not (List.equal Rule_ID.equal annotated reported) then (
-             let unmatched =
-               List.filter
-                 (fun (id : Rule_ID.t) ->
-                   not (List.exists (Rule_ID.equal id) reported))
-                 annotated
-             in
-             Logs.err (fun m ->
-                 m
-                   "Found rule id mismatch - file=%s 'ruleid' annotation with \
-                    no YAML rule=%s"
-                   !!file
-                   (unmatched |> List_.map Rule_ID.to_string
-                  |> String.concat ", "));
-             Stack_.push (RuleIdMismatch (file, unmatched)) env.errors));
+           (* python: a file with none of those annotations is not a key of
+            * 'test_lines' and is not compared, so a match in a file with no
+            * annotation fails its check instead of stopping the run *)
+           match annotated with
+           | [] -> ()
+           | _ :: _ ->
+               let reported =
+                 matches
+                 |> List.filter (fun (pm : Core_match.t) ->
+                        Fpath.equal
+                          (Fpath.normalize pm.path.internal_path_to_content)
+                          (Fpath.normalize file))
+                 |> List_.map (fun (pm : Core_match.t) -> pm.rule_id.id)
+                 |> ids
+               in
+               if not (List.equal Rule_ID.equal annotated reported) then (
+                 let unmatched =
+                   List.filter
+                     (fun (id : Rule_ID.t) ->
+                       not (List.exists (Rule_ID.equal id) reported))
+                     annotated
+                 in
+                 Logs.err (fun m ->
+                     m
+                       "Found rule id mismatch - file=%s 'ruleid' annotation \
+                        with no YAML rule=%s"
+                       !!file
+                       (unmatched |> List_.map Rule_ID.to_string
+                      |> String.concat ", "));
+                 Stack_.push (RuleIdMismatch (file, unmatched)) env.errors));
+  let core_errors : Out.core_error list =
+    res.errors |> List_.map Core_json_output.error_to_error
+  in
+  (* the checks of this rule file carry them, and --strict makes them fail
+   * the run (see run_conf) *)
+  core_errors
+  |> List.iter (fun (err : Out.core_error) ->
+         Stack_.push (ScanError err) env.errors);
   let checks =
-    compare_actual_to_expected env matches expected res.explanations
-      ~errors:
-        (res.errors
-        |> List_.map (fun (err : Core_error.t) ->
-               Cli_json_output.cli_error_of_core_error
-                 (Core_json_output.error_to_error err)))
+    compare_actual_to_expected env matches files_and_annots res.explanations
+      ~errors:(core_errors |> List_.map Cli_json_output.cli_error_of_core_error)
   in
   (* optional fixtest *)
   let fixtest = compare_for_autofix env rules matches in
@@ -962,7 +1038,24 @@ let run_conf (caps : < caps ; .. >) (conf : Test_CLI.conf) : Exit_code.t =
     |> List.exists (fun (_target_file, (res : Out.fixtest_result)) ->
            not res.passed)
   in
-  if config_error || any_failures || any_fixtest_failures then
+  (* An error raised while the test targets are scanned fails the run under
+   * the rule a scan follows: without --strict only an error of severity
+   * Error fails the run, with it any error does. A rule file whose only
+   * error is attached to no check, because that file produced no check,
+   * then fails the run too. The errors are read in the order they were
+   * collected.
+   *)
+  let strict_error =
+    conf.strict
+    && not
+         (Exit_code.Equal.ok
+            (Cli_json_output.exit_code_of_errors ~strict:true
+               (!errors |> List.rev
+               |> List_.filter_map (function
+                    | ScanError err -> Some err
+                    | _else_ -> None))))
+  in
+  if config_error || any_failures || any_fixtest_failures || strict_error then
     Exit_code.findings ~__LOC__
   else Exit_code.ok ~__LOC__
 

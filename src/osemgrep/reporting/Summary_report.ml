@@ -19,8 +19,17 @@ module OutJ = Semgrep_output_v1_t
    then the message with its location. The label takes the colour the rest
    of the text output gives that severity. *)
 let pp_cli_error ppf (error : OutJ.cli_error) : unit =
+  (* A rule matching on the project's dependencies is skipped, which the user
+     has to act on to get the findings that rule would report: the line is
+     labelled a warning. The error itself keeps the info level, which is what
+     the JSON output reports and what decides the exit code. *)
+  let (level : OutJ.error_severity) =
+    match error.type_ with
+    | UnsupportedSupplyChainRule -> `Warning
+    | _else_ -> error.level
+  in
   let (label : string), (style : Fmt.style) =
-    match error.level with
+    match level with
     | `Error -> ("[ERROR]", `Fg `Red)
     | `Warning -> ("[WARN]", `Fg `Yellow)
     | `Info -> ("[INFO]", `Fg `Green)

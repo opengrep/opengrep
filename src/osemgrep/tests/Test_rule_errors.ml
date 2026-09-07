@@ -144,6 +144,95 @@ let test_missing_config_file (caps : CLI.caps) () =
         |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
                (Error.string_of_error_type e.type_, e.code))))
 
+(* a rule matching on the project's dependencies is skipped: no finding of
+   its own, an info-level error naming it, one warning line in the text
+   output, no such line in the JSON output, no target counted as partially
+   analysed, a successful run, and the other rules of its file still run *)
+let test_supply_chain_rule_skipped (caps : CLI.caps) () =
+  let repo_files =
+    [
+      F.Dir
+        ( "rules",
+          [
+            F.File
+              ( "supply_chain.yaml",
+                UFile.read_file Fpath.(fixtures_root / "supply_chain.yaml") );
+          ] );
+      F.File ("target.py", "import requests\nx == x\n");
+    ]
+  in
+  Testutil_git.with_git_repo repo_files (fun _cwd ->
+      let scan (args : string list) : Exit_code.t =
+        CLI.main caps
+          (Array.of_list
+             ([
+                "opengrep";
+                "--experimental";
+                "scan";
+                "--config";
+                "rules/supply_chain.yaml";
+              ]
+             @ args @ [ "target.py" ]))
+      in
+      (* the findings and the summary of a run, the summary being what the
+         scan writes on stderr *)
+      let outputs_of (args : string list) : string * string =
+        let (exit_code, (stdout_output : string)), (stderr_output : string) =
+          Testo.with_capture stderr (fun () ->
+              Testo.with_capture stdout (fun () -> scan args))
+        in
+        Exit_code.Check.ok exit_code;
+        (stdout_output, stderr_output)
+      in
+      (* the line naming the skipped rule and the key it comes from *)
+      let announcement =
+        "[WARN] Unsupported supply-chain rule in rule rules.depends-on-requests"
+      in
+      let _text_stdout, text_stderr = outputs_of [] in
+      Alcotest.(check bool)
+        "the text output announces the skipped rule as a warning" true
+        (String_.contains ~term:announcement text_stderr);
+      Alcotest.(check bool)
+        "the skipped rule is not also announced as information" false
+        (String_.contains ~term:"[INFO] Unsupported supply-chain rule"
+           text_stderr);
+      (* the rule file the error points at is not a target, so no file was
+         left partially analysed *)
+      Alcotest.(check bool)
+        "no file counts as partially analysed" false
+        (String_.contains ~term:"Partially scanned" text_stderr);
+      let stdout_output, json_stderr = outputs_of [ "--json" ] in
+      Alcotest.(check bool)
+        "the JSON output reports the skipped rule in the document alone" false
+        (String_.contains ~term:"Unsupported supply-chain rule" json_stderr);
+      Alcotest.(check bool)
+        "no file counts as partially analysed in JSON output" false
+        (String_.contains ~term:"Partially scanned" json_stderr);
+      let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+      Alcotest.(check (list string))
+        "only the rule without a dependency condition matches"
+        [ "rules.eqeq-bad" ]
+        (out.results
+        |> List_.map (fun (x : Semgrep_output_v1_t.cli_match) ->
+               Rule_ID.to_string x.check_id));
+      let string_of_level (level : Semgrep_output_v1_t.error_severity) : string
+          =
+        match level with
+        | `Error -> "error"
+        | `Warning -> "warning"
+        | `Info -> "info"
+      in
+      Alcotest.(check (list (triple string string string)))
+        "one info-level error for the skipped rule"
+        [
+          ("Unsupported supply-chain rule", "rules.depends-on-requests", "info");
+        ]
+        (out.errors
+        |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+               ( Error.string_of_error_type e.type_,
+                 Option.fold ~none:"" ~some:Rule_ID.to_string e.rule_id,
+                 string_of_level e.level ))))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -156,6 +245,8 @@ let tests (caps : CLI.caps) =
           ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
           (test_extra_field_valid caps);
         t "rule errors: missing config file" (test_missing_config_file caps);
+        t "rule errors: a supply-chain rule is skipped"
+          (test_supply_chain_rule_skipped caps);
         (* a configuration the report calls invalid fails the run, whether it
            is validated by the subcommand or by the legacy scan flag *)
         t "rule errors: validate a file that does not parse"
@@ -181,8 +272,10 @@ let tests (caps : CLI.caps) =
           ~checked_output:(Testo.stdout ()) ~normalize
           (validate_rule_file caps ~dir:"syntax" ~rule:"good.yaml"
              [ "validate"; "rules/good.yaml" ]);
-        t "rule errors: validate a good rule file, JSON"
+        (* the JSON document holds the errors of the configuration, so a
+           configuration without errors prints no document *)
+        t "rule errors: scan --validate --json, a good rule file"
           ~checked_output:(Testo.stdout ()) ~normalize
           (validate_rule_file caps ~dir:"syntax" ~rule:"good.yaml"
-             [ "validate"; "--json"; "rules/good.yaml" ]);
+             [ "scan"; "--validate"; "--json"; "--config"; "rules/good.yaml" ]);
       ])

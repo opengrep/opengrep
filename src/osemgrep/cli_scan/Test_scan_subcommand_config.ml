@@ -90,6 +90,120 @@ let json_scan (caps : Scan_subcommand.caps) ?rule ?(extra_files = [])
     ~extra_args:config_args ()
 
 (*****************************************************************************)
+(* Configurations that do not load *)
+(*****************************************************************************)
+
+(* Rule files, each broken in one way, as the errors of a configuration
+   decide the exit code of the scan. *)
+let unparsable_pattern_rule : string =
+  {|rules:
+  - id: badpat
+    pattern: "def foo("
+    message: m
+    languages: [python]
+    severity: WARNING
+|}
+
+let unknown_language_rule : string =
+  {|rules:
+  - id: badlang
+    pattern: foo()
+    message: m
+    languages: [nosuchlang]
+    severity: WARNING
+|}
+
+(* an unterminated quoted scalar *)
+let unparsable_yaml_rule : string =
+  {|rules:
+  - id: bad
+    pattern: "foo(
+    languages: [python]
+|}
+
+let incompatible_rule : string =
+  {|rules:
+  - id: too-new
+    min-version: 99.0.0
+    pattern: foo()
+    message: m
+    languages: [python]
+    severity: WARNING
+|}
+
+(* the broken rule first, the incompatible one last: the exit code is that
+   of the pattern that does not parse, the incompatible rule being below the
+   Error severity *)
+let unparsable_then_incompatible_rules : string =
+  {|rules:
+  - id: badpat
+    pattern: "def foo("
+    message: m
+    languages: [python]
+    severity: WARNING
+  - id: too-new
+    min-version: 99.0.0
+    pattern: foo()
+    message: m
+    languages: [python]
+    severity: WARNING
+|}
+
+(* Two rule files, each broken in a different way, one of them in a
+   subdirectory of the config directory. Sorted by path, rules/lang.yaml
+   comes before rules/sub/pat.yaml. *)
+let broken_rules_dir : F.t list =
+  [
+    F.dir "rules"
+      [
+        F.File ("lang.yaml", unknown_language_rule);
+        F.dir "sub" [ F.File ("pat.yaml", unparsable_pattern_rule) ];
+      ];
+  ]
+
+(* The same two rule files with their names exchanged, so that the file
+   whose pattern does not parse sorts before the one with the unknown
+   language. *)
+let broken_rules_dir_swapped : F.t list =
+  [
+    F.dir "rules"
+      [
+        F.File ("pat.yaml", unparsable_pattern_rule);
+        F.dir "sub" [ F.File ("lang.yaml", unknown_language_rule) ];
+      ];
+  ]
+
+(* The exit code of a --json scan of [files] run with --config [config], and
+   the codes carried by the errors of the document it prints. *)
+let scan_error_codes (caps : Scan_subcommand.caps) (files : F.t list)
+    (config : string) : int * int list =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        (F.File ("target.py", "foo()\n") :: files)
+        (fun (_ : Fpath.t) ->
+          let exit_code, out =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan";
+                        "--experimental";
+                        "--json";
+                        "--config";
+                        config;
+                        "target.py";
+                      |]))
+          in
+          ( Exit_code.to_int exit_code,
+            (Semgrep_output_v1_j.cli_output_of_string out).errors
+            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) -> e.code) )))
+
+(* The same for a configuration made of the single rule file [rule]. *)
+let config_error_codes (caps : Scan_subcommand.caps) (rule : string) :
+    int * int list =
+  scan_error_codes caps [ F.File ("rule.yaml", rule) ] "rule.yaml"
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
@@ -202,12 +316,11 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~targets:[ "targets/basic/stupid.py" ]
            ~check:Exit_code.Check.missing_config);
       (* A rule whose pattern does not parse: the JSON carries the rule
-         parse error and nothing is scanned.
-         differs from the Python wrapper: it ends with exit code 2 and
-         reports the error with code 2, opengrep aborts on the
-         configuration with exit code 7 and reports the error with code 4,
-         and the wrapper lists the target as scanned and the rule as a
-         skipped path, where opengrep lists neither
+         parse error and nothing is scanned. The run ends with the fatal
+         exit code and the error carries code 2, as the Python wrapper's
+         did.
+         differs from the Python wrapper: it lists the target as scanned
+         and the rule as a skipped path, where opengrep lists neither
          python: test_rule_parser__failure__error_messages *)
       t "config: a rule pattern that does not parse"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
@@ -215,17 +328,69 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"bad-java-rule.yaml"
            ~targets:[ "targets/bad/basic_java.java" ]
            ~extra_args:[ "--verbose"; "--strict"; "basic_java.java" ]
-           ~check:Exit_code.Check.missing_config);
-      (* A config that parses but holds no rule: the "No config given" error
-         of the Python wrapper, with the exit code of a missing
-         configuration. *)
+           ~check:Exit_code.Check.fatal);
+      (* A config that parses but holds no rule is not a missing
+         configuration: the scan scans nothing, reports no error and
+         succeeds. *)
       t "config: a file with an empty rules list"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root ~format_args:[ "--json" ]
            ~extra_files:[ F.File ("emptyrules.yaml", "rules: []\n") ]
            ~extra_args:[ "--config"; "emptyrules.yaml" ]
            ~targets:[ "targets/basic/stupid.py" ]
-           ~check:Exit_code.Check.missing_config);
+           ~check:Exit_code.Check.ok);
+      (* The exit code of a configuration that does not load is decided by
+         the kinds of error it produced: an unknown language left
+         config_resolver.py with its own code, a pattern the engine could not
+         parse is reported by the scan and exits with the fatal code, and
+         every other kind it collected was covered by the
+         MISSING_CONFIG_EXIT_CODE run_scan.py raised.
+         differs from the Python wrapper: it adds an entry of its own with
+         code 7 to the errors of the invalid YAML, which opengrep reports
+         with the entry of the YAML error alone *)
+      t "config: the exit code of a configuration that does not load"
+        (fun () ->
+          let check (name : string) (rule : string)
+              (expected : int * int list) : unit =
+            Alcotest.(check (pair int (list int)))
+              name expected (config_error_codes caps rule)
+          in
+          check "a pattern that does not parse" unparsable_pattern_rule
+            (2, [ 2 ]);
+          check "an unknown language" unknown_language_rule (8, [ 8 ]);
+          check "a file that is not valid YAML" unparsable_yaml_rule (7, [ 5 ]);
+          (* an incompatible rule is reported with severity Info, and a
+             configuration whose errors are all below Error leaves the run
+             successful *)
+          check "a rule that requires a newer version" incompatible_rule
+            (0, [ 0 ]);
+          check "a broken rule then an incompatible one"
+            unparsable_then_incompatible_rules (2, [ 2; 0 ]);
+          (* a configuration that resolved and holds no rule is not a
+             missing configuration: it scans nothing and succeeds *)
+          check "a config with an empty rules list" "rules: []\n" (0, []));
+      (* The rule files of a config directory are read in path order, so the
+         errors come out in that order. The exit code is decided by which
+         kinds of error the configuration produced, in a fixed order: an
+         unknown language, then a pattern that does not parse, then any
+         other error of severity Error. It therefore does not depend on
+         which of the two files sorts first.
+         differs from the Python wrapper: it reports the unknown language
+         alone, where opengrep reports both broken rules *)
+      t "config: a directory is read in path order" (fun () ->
+          let check (name : string) (files : F.t list)
+              (expected : int * int list) : unit =
+            Alcotest.(check (pair int (list int)))
+              name expected (scan_error_codes caps files "rules")
+          in
+          check
+            "the unknown language of rules/lang.yaml, then the pattern of \
+             rules/sub/pat.yaml"
+            broken_rules_dir (8, [ 8; 2 ]);
+          check
+            "the pattern of rules/pat.yaml, then the unknown language of \
+             rules/sub/lang.yaml"
+            broken_rules_dir_swapped (8, [ 2; 8 ]));
       (* --version prints the version and nothing else. It changes at every
          release, so it is matched rather than snapshotted.
          python: test_version *)

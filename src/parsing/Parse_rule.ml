@@ -688,38 +688,21 @@ let parse_steps env key (value : G.expr) : (R.step list, Rule_error.t) result =
 (* Parsers for Supply chain *)
 (*****************************************************************************)
 
-let parse_ecosystem env key value =
-  match value.G.e with
-  | G.L (String (_, (_ecosystem, _), _)) ->
-      Ok `Npm
-      (* | _ -> error_at_key env.id key ("Unknown ecosystem: " ^ ecosystem)) *)
-  | _ -> error_at_key env.id key "Non-string data for ecosystem?"
+(* the rule key asking for a supply-chain (dependency) analysis *)
+let dependency_key : string = "r2c-internal-project-depends-on"
 
-let parse_dependency_pattern key env value :
-    (SCA_pattern.t, Rule_error.t) result =
-  let/ rd = parse_dict env key value in
-  let/ ecosystem = take_key rd env parse_ecosystem "namespace" in
-  let/ package_name = take_key rd env parse_string "package" in
-  let/ version_str = take_key rd env parse_string "version" in
-  let/ version_constraints =
-    try Ok (Parse_SCA_version.parse_constraints version_str) with
-    | Parse_SCA_version.Error error_str ->
-        error_at_key env.id key
-          (spf "bad version constraint format for %s, error = %s" version_str
-             error_str)
-  in
-  Ok SCA_pattern.{ ecosystem; package_name; version_constraints }
-
-let parse_dependency_formula env key value :
-    (R.sca_dependency_formula, Rule_error.t) result =
-  let/ rd = parse_dict env key value in
-  if Hashtbl.mem rd.h "depends-on-either" then
-    take_key rd env
-      (fun env key -> parse_list env key (parse_dependency_pattern key))
-      "depends-on-either"
-  else
-    let/ dependency_pattern = parse_dependency_pattern key env value in
-    Ok [ dependency_pattern ]
+(* Opengrep does not analyse a project's dependencies, so a rule using
+ * dependency_key is invalid here: it is reported and skipped, instead of
+ * being run as a plain rule with its dependency condition dropped.
+ * The dependency formula itself is not read: the parsers for it are gone,
+ * and a constraint we cannot read must not make the whole rule file fail to
+ * load.
+ *)
+let unsupported_supply_chain_rule (env : env) (key : key) :
+    (R.sca_dependency_formula option, Rule_error.t) result =
+  Error
+    (Rule_error.mk_error ~rule_id:env.id
+       (InvalidRule (UnsupportedSupplyChainRule (fst key), env.id, snd key)))
 
 (*****************************************************************************)
 (* Parse the whole thing  *)
@@ -891,6 +874,7 @@ let parse_one_rule ~rewrite_rule_ids (i : int) (rule : G.expr) :
     {
       id = rule_id;
       target_analyzer;
+      rule_analyzer = target_analyzer;
       in_metavariable_pattern = false;
       path = [ string_of_int i; "rules" ];
       options_key;
@@ -899,7 +883,9 @@ let parse_one_rule ~rewrite_rule_ids (i : int) (rule : G.expr) :
   in
   let/ mode_opt = take_opt rd env parse_string_wrap "mode" in
   let/ dep_formula_opt =
-    take_opt rd env parse_dependency_formula "r2c-internal-project-depends-on"
+    match dict_take_opt rd dependency_key with
+    | Some (key, _value) -> unsupported_supply_chain_rule env key
+    | None -> Ok None
   in
   (* this parses the search formula, or taint spec, or extract mode, etc. *)
   let/ mode = parse_mode env mode_opt dep_formula_opt rd in
@@ -973,10 +959,8 @@ let parse_generic_ast ?(error_recovery = false) ?rewrite_rule_ids
               in
               let/ () = check_that_dict_is_empty root_dict in
               Ok rules
-          (* it's also ok to not have the toplevel rules:, anyway we never
-             * used another toplevel key
-          *)
-          | G.Container (G.Array, (_tok, rules, _r)) -> Ok rules
+          (* the top level of a rule file is a mapping holding `rules:`; a
+             sequence or a scalar at the top level is not a rule file *)
           | _ -> missing_rules_field ())
       | [] ->
           (* an empty rules file returns an empty list of rules *)
@@ -1108,6 +1092,7 @@ let parse_xpattern xlang (str, tok) =
       (* the id of the rule made of the -e pattern, for its errors *)
       id = Rule_ID.dash_e;
       target_analyzer = xlang;
+      rule_analyzer = xlang;
       in_metavariable_pattern = false;
       path = [];
       options_key = None;

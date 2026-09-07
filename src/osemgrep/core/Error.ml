@@ -169,6 +169,7 @@ let rec string_of_error_type (error_type : OutJ.error_type) : string =
   | OutOfMemory
   | StackOverflow
   | TimeoutDuringInterfile
-  | OutOfMemoryDuringInterfile ->
+  | OutOfMemoryDuringInterfile
+  | UnsupportedSupplyChainRule ->
       OutJ.string_of_error_type error_type
       |> JSON.remove_enclosing_quotes_of_jstring

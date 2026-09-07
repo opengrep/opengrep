@@ -79,20 +79,24 @@ let scan_both (caps : caps) ~(baseline : string) : unit =
 
 let head (caps : caps) : string = String.trim (git caps [ "rev-parse"; "HEAD" ])
 
-(* The paths a baseline scan of [root] reports, sorted, from its JSON. *)
-let baseline_paths (caps : caps) ~(baseline : string) (root : string) :
-    string list =
+(* The paths a baseline scan of [root] reports, sorted, from its JSON.
+   [unknown_extensions] passes '--scan-unknown-extensions', which makes a
+   root named on the command line scanned whatever its extension. *)
+let baseline_paths ?(unknown_extensions : bool = false) (caps : caps)
+    ~(baseline : string) (root : string) : string list =
   let exit_code, out =
     Testo.with_capture stdout (fun () ->
         without_settings (fun () ->
             Scan_subcommand.main
               (caps :> Scan_subcommand.caps)
               (Array.of_list
-                 [
-                   "opengrep-scan"; "--experimental"; "--json"; "--quiet"; "-e";
-                   Printf.sprintf "$X = %s" sentinel; "-l"; "python";
-                   "--baseline-commit"; baseline; root;
-                 ])))
+                 ([
+                    "opengrep-scan"; "--experimental"; "--json"; "--quiet"; "-e";
+                    Printf.sprintf "$X = %s" sentinel; "-l"; "python";
+                  ]
+                 @ (if unknown_extensions then [ "--scan-unknown-extensions" ]
+                    else [])
+                 @ [ "--baseline-commit"; baseline; root ]))))
   in
   Exit_code.Check.ok exit_code;
   (Semgrep_output_v1_j.cli_output_of_string out).results
@@ -420,9 +424,11 @@ let test_worktree_dirty_from_eol_normalization (caps : caps) =
       scan ~baseline caps |> Exit_code.Check.ok)
 
 (* A scanning root given as an absolute path selects the same changed files
-   as the equivalent relative one. git lists the changed paths relative to
-   the current directory, so without relativising the targets an absolute
-   root intersects with nothing and the scan silently reports no finding. *)
+   as the equivalent relative one, and reports them under the name it was
+   given, as a scan without a baseline does. Git_wrapper.status gives the
+   changed paths relative to the current directory, so without relativising
+   the targets to match them an absolute root intersects with nothing and
+   the scan reports no finding and no error. *)
 let test_absolute_root_with_baseline (caps : caps) =
   in_repo
     [
@@ -444,19 +450,20 @@ let test_absolute_root_with_baseline (caps : caps) =
         (paths ".");
       Alcotest.(check (list string))
         "the repository by its absolute path"
-        [ "other/b.py"; "sub/a.py" ]
+        [ Filename.concat cwd "other/b.py"; Filename.concat cwd "sub/a.py" ]
         (paths cwd);
       Alcotest.(check (list string))
         "a subdirectory" [ "sub/a.py" ] (paths "sub");
       Alcotest.(check (list string))
-        "a subdirectory by its absolute path" [ "sub/a.py" ]
+        "a subdirectory by its absolute path"
+        [ Filename.concat cwd "sub/a.py" ]
         (paths (Filename.concat cwd "sub")))
 
 (* A scanning root above the current directory selects the changed files
-   git lists there, which are the ones under the current directory. Without
-   spelling the targets from the current directory too, a '..' root keeps
-   that prefix, intersects with nothing, and the scan silently reports no
-   finding. *)
+   under it, the ones outside the current directory included: the diff
+   covers the whole repository, and Git_wrapper.status gives its paths
+   relative to the current directory. The findings are reported under the
+   '../' names the scan was given, as they are without a baseline. *)
 let test_root_above_cwd_with_baseline (caps : caps) =
   in_repo
     [
@@ -470,8 +477,12 @@ let test_root_above_cwd_with_baseline (caps : caps) =
       let (_ : string) = commit_all caps ~serial:2 "two findings" in
       Testutil_files.with_chdir (Fpath.v "sub") (fun () ->
           Alcotest.(check (list string))
-            "the whole repository from one of its subdirectories" [ "a.py" ]
-            (baseline_paths caps ~baseline "..")))
+            "the whole repository from one of its subdirectories"
+            [ "../other/b.py"; "../sub/a.py" ]
+            (baseline_paths caps ~baseline "..");
+          Alcotest.(check (list string))
+            "a sibling directory of the current one" [ "../other/b.py" ]
+            (baseline_paths caps ~baseline "../other")))
 
 (* A scanning root spelled through a symlinked ancestor selects the same
    changed files as the real one. The current directory the targets are
@@ -490,9 +501,55 @@ let test_root_through_symlinked_ancestor (caps : caps) =
           let link = Fpath.(tmp / "repo") in
           Unix.symlink real (Fpath.to_string link);
           Alcotest.(check (list string))
-            "the repository reached through a symlink" [ "sub/a.py" ]
+            "the repository reached through a symlink"
+            [ Fpath.to_string Fpath.(link / "sub" / "a.py") ]
             (baseline_paths caps ~baseline
                (Fpath.to_string Fpath.(link / "sub")))))
+
+(* '--scan-unknown-extensions' scans a target named on the command line
+   whatever its extension. A target is recognised by the name it was given,
+   so a baseline scan must look it up under a name the target list agrees
+   with: otherwise language detection rejects the '.dat' file and the scan
+   reports no finding. That holds of the head scan, which keeps the name as
+   typed, and of the baseline scan, which makes it relative to the current
+   directory. *)
+let test_explicit_target_with_baseline (caps : caps) =
+  in_repo
+    [
+      F.Dir ("data", [ F.File ("bar.dat", y_line) ]);
+      F.Dir ("sub", [ F.File ("b.py", "y = 1\n") ]);
+    ]
+    (fun () ->
+      let baseline = head caps in
+      write "data/foo.dat" x_line;
+      write "data/bar.dat" (y_line ^ x_line);
+      let (_ : string) = commit_all caps ~serial:2 "two findings" in
+      let paths (root : string) : string list =
+        baseline_paths ~unknown_extensions:true caps ~baseline root
+      in
+      let cwd = Sys.getcwd () in
+      Alcotest.(check (list string))
+        "the target as typed" [ "data/foo.dat" ] (paths "data/foo.dat");
+      Alcotest.(check (list string))
+        "the target with a '.' segment" [ "data/foo.dat" ]
+        (paths "data/./foo.dat");
+      Alcotest.(check (list string))
+        "the target by its absolute path"
+        [ Filename.concat cwd "data/foo.dat" ]
+        (paths (Filename.concat cwd "data/foo.dat"));
+      (* the baseline holds the file and one of its two findings, which the
+         baseline scan must reach through the same name to remove *)
+      Alcotest.(check (list string))
+        "a target of the baseline too, with a '.' segment" [ "data/bar.dat" ]
+        (paths "data/./bar.dat");
+      Alcotest.(check (list string))
+        "a target of the baseline too, by its absolute path"
+        [ Filename.concat cwd "data/bar.dat" ]
+        (paths (Filename.concat cwd "data/bar.dat"));
+      Testutil_files.with_chdir (Fpath.v "sub") (fun () ->
+          Alcotest.(check (list string))
+            "the target from another directory" [ "../data/foo.dat" ]
+            (paths "../data/foo.dat")))
 
 (* The current directory need not exist at the baseline commit. There is
    nothing of it to scan there, so the scan reports the findings of the head
@@ -562,6 +619,8 @@ let tests (caps : caps) =
          (test_root_above_cwd_with_baseline caps);
        t "a scanning root through a symlinked ancestor"
          (test_root_through_symlinked_ancestor caps);
+       t "a target named on the command line with an unknown extension"
+         (test_explicit_target_with_baseline caps);
        t "a current directory absent from the baseline commit"
          (test_cwd_absent_from_baseline caps);
        t "an empty baseline commit scans everything"

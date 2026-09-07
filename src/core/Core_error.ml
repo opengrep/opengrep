@@ -99,6 +99,7 @@ let mk_error ?rule_id ?(msg = "") ?(loc : Tok.location option)
     | UnknownLanguageError
     | MissingConfig
     | MissingPlugin
+    | UnsupportedSupplyChainRule
     | DependencyResolutionError _ ->
         msg
   in
@@ -139,6 +140,7 @@ let error_of_invalid_rule ((kind, rule_id, pos) : Rule_error.invalid_rule) : t =
             max_version = Option.map Semver.to_string max_version;
           }
     | MissingPlugin _msg -> Out.MissingPlugin
+    | UnsupportedSupplyChainRule _key -> Out.UnsupportedSupplyChainRule
     | InvalidLanguage _ -> Out.UnknownLanguageError
     (* the structure of the rule is wrong: what pysemgrep found with its
        JSON schema of the rules *)
@@ -353,5 +355,7 @@ let severity_of_error (typ : Out.error_type) : Out.error_severity =
   | IncompatibleRule _
   | IncompatibleRule0
   | MissingPlugin
+  (* a rule opengrep does not support is not something to fix either *)
+  | UnsupportedSupplyChainRule
   | DependencyResolutionError _ ->
       `Info

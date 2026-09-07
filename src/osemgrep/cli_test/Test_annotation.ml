@@ -100,6 +100,22 @@ let parse_kind_opt (s : string) : (kind * string) option =
     Some (kind_of_string kind_str, String.trim s)
   else None
 
+(* python: test.py dropped one of those prefixes from the id list and kept
+ * the kind of the line, so 'ruleid: deepok: foo' names the rule foo and
+ * counts as a 'ruleid:' line.
+ *)
+let (deep_prefixes : string list) =
+  [ "deepok:"; "prook:"; "deepruleid:"; "proruleid:" ]
+
+(* "deepok: foo, bar" -> "foo, bar" *)
+let remove_deep_prefix (s : string) : string =
+  match
+    deep_prefixes
+    |> List.find_opt (fun (prefix : string) -> String.starts_with ~prefix s)
+  with
+  | Some prefix -> String.trim (Str.string_after s (String.length prefix))
+  | None -> s
+
 (* matches a comment opener followed by an annotation keyword, anywhere in the
  * line *)
 let annotated_comment_regexp : Str.regexp =
@@ -190,8 +206,12 @@ let annotations_of_string (orig_str : string) (file : Fpath.t) (idx : linenb) :
         match parse_kind_opt s with
         | Some (kind, s) ->
             let xs =
-              Str.split_delim (Str.regexp "[ \t]*,[ \t]*") s
+              Str.split_delim (Str.regexp "[ \t]*,[ \t]*") (remove_deep_prefix s)
               |> List_.map String.trim
+              (* python: filter(None, ...): a trailing comma in the id list
+               * adds no rule id *)
+              |> List_.exclude (fun (id_str : string) ->
+                     String.equal id_str "")
             in
             xs
             |> List_.filter_map (fun id_str ->
@@ -245,6 +265,23 @@ let () =
       test "return res.send({ok: true})" [];
       (* the annotation may follow code on the same line *)
       test "x = 1 # todook: foo" [ { kind = Todook; id = rule_id "foo" } ];
+      (* a trailing comma adds no rule id *)
+      test "// ruleid: foo," [ { kind = Ruleid; id = rule_id "foo" } ];
+      test "// ruleid: foo,,bar"
+        [
+          { kind = Ruleid; id = rule_id "foo" };
+          { kind = Ruleid; id = rule_id "bar" };
+        ];
+      (* the deep/pro prefixes are dropped and the kind of the line is kept *)
+      test "// ruleid: deepok: foo" [ { kind = Ruleid; id = rule_id "foo" } ];
+      test "// ruleid: prook:foo" [ { kind = Ruleid; id = rule_id "foo" } ];
+      test "// todook: deepruleid: foo"
+        [ { kind = Todook; id = rule_id "foo" } ];
+      test "// ok: proruleid: foo, bar"
+        [
+          { kind = Ok; id = rule_id "foo" };
+          { kind = Ok; id = rule_id "bar" };
+        ];
       ())
 
 (*****************************************************************************)

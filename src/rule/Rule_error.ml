@@ -57,6 +57,9 @@ and invalid_rule_kind =
       * (Semver_.t option (* minimum version supported by this rule *)
         * Semver_.t option (* maximum version *))
   | MissingPlugin of string (* error message *)
+  (* opengrep does not do supply-chain analysis; the string is the rule key
+   * asking for it *)
+  | UnsupportedSupplyChainRule of string
   | InvalidOther of string
 [@@deriving show]
 
@@ -152,6 +155,11 @@ let string_of_invalid_rule_kind = function
         (Semver.to_string cur)
   | IncompatibleRule (_, (None, None)) -> assert false
   | MissingPlugin msg -> msg
+  | UnsupportedSupplyChainRule key ->
+      spf
+        "Opengrep does not support supply-chain (dependency) rules: this rule \
+         matches on the project's dependencies with '%s'"
+        key
   | InvalidOther s -> s
 
 let string_of_invalid_rule ((kind, rule_id, pos) : invalid_rule) =
@@ -192,5 +200,6 @@ let is_skippable_error (kind : invalid_rule_kind) : bool =
   | InvalidOther _ ->
       false
   | IncompatibleRule _
-  | MissingPlugin _ ->
+  | MissingPlugin _
+  | UnsupportedSupplyChainRule _ ->
       true

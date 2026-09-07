@@ -10,6 +10,9 @@ type conf = {
   rules_source : Rules_source.t;
   core_runner_conf : Core_runner.conf;
   json : bool;
+  (* the output configuration of the scan that asked for the validation, so
+   * that the document goes where -o/--output names *)
+  output_conf : Output.conf;
   (* --force-color, which wins over $NO_COLOR like it does for a scan *)
   force_color : bool;
   common : CLI_common.conf;

@@ -15,6 +15,8 @@ type skipped_targets_grouped = {
   errors : Semgrep_output_v1_t.skipped_target list;
 }
 
+(* one entry per error on a scan target; an error raised while a rule is
+   loaded points at the rule file, which no scan analysed, and is left out *)
 val errors_to_skipped :
   Semgrep_output_v1_t.core_error list -> Semgrep_output_v1_t.skipped_target list
 

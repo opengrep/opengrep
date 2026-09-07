@@ -388,17 +388,17 @@ let tests (caps : < Scan_subcommand.caps >) =
         (json_findings_on_file caps
            ~rule:"rules/regex/regex-any-language-multiple-alias-none.yaml"
            ~target:"targets/basic/regex-any-language.html");
-      (* differs from the Python wrapper: it reports the invalid regex as a
-         matching error of exit code 2 and scans on; opengrep rejects the
-         rule and, as for every configuration it cannot load, exits 7 with
-         an error of code 4 *)
-      (* python: test_regex_rule__invalid_expression *)
+      (* The run ends with the fatal exit code and reports a rule parse error
+         of code 2, as the Python wrapper's did.
+         differs from the Python wrapper: it lists the target as scanned,
+         where opengrep rejects the rule and scans nothing
+         python: test_regex_rule__invalid_expression *)
       t "findings: an invalid regex" ~checked_output:(Testo.stdout ())
         ~normalize:normalise
         (run_scan caps ~format_args:[ "--json" ]
            ~rule:"rules/regex/regex-invalid.yaml" ~targets:[]
            ~extra_files:[ basic_dir ] ~extra_args:[ "basic" ]
-           ~check:Exit_code.Check.missing_config);
+           ~check:Exit_code.Check.fatal);
       (* A regex that matches the empty string reports the empty file, at
          its line 1. python: test_pattern_regex_empty_file *)
       t "findings: pattern-regex over an empty file"

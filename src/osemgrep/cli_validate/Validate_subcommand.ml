@@ -316,6 +316,18 @@ let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
   in
 
   (* step3: summarizing findings (errors) *)
+  (* A rule that matches on the project's dependencies is skipped rather
+   * than rejected: it is reported above, with the part of the rule it comes
+   * from, but it does not make the configuration invalid, so the run ends
+   * with the ok code. A rule skipped for its version constraint does count,
+   * and makes the configuration invalid. *)
+  let invalid_rule_errors : Core_error.t list =
+    invalid_rule_errors
+    |> List.filter (fun (err : Core_error.t) ->
+           match err.Core_error.typ with
+           | Out.UnsupportedSupplyChainRule -> false
+           | _ -> true)
+  in
   (* the fatal errors, usually a file that is not a rule file, count too:
    * the report calls such a configuration invalid, so the run must fail *)
   let num_errors =
@@ -332,22 +344,40 @@ let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
     fatal_errors @ invalid_rule_errors
     @ List_.map core_error_of_metacheck_error metacheck_errors
   in
-  if conf.json then
+  (* A valid configuration has no error to report, so no document is
+   * printed and no file is written at the destination -o names.
+   * python: scan in commands/scan.py called its output handler only when
+   * the validation had collected errors. *)
+  if conf.json && not (List_.null errors) then
     Output.output_result ~keep_ignored:false
       (caps :> < Cap.stdout >)
-      { Output.default with output_format = Output_format.Json }
+      { conf.output_conf with output_format = Output_format.Json }
       (Profiler.make ())
       (Core_runner.mk_result [] (Core_result.mk_result_with_just_errors errors))
     |> ignore;
 
-  (* step4: exit code. A configuration the report calls invalid always fails,
-   * with the code of the last error as pysemgrep's _final_raise gave it. *)
-  match List.rev errors with
+  (* step4: exit code. A configuration the report calls invalid always fails:
+   * pysemgrep exited with the code of the last error of severity Error
+   * (_final_raise in output.py), and with the fatal code when every error
+   * was below that severity, as the "Please fix the above errors"
+   * SemgrepError it then raised carried no code of its own (scan.py). *)
+  match errors with
   | [] -> Exit_code.ok ~__LOC__
-  | (last : Core_error.t) :: _ ->
+  | _ :: _ -> (
       (* was a raise SemgrepError originally *)
       Logs.err (fun m -> m "Please fix the above errors and try again.");
-      Cli_json_output.exit_code_of_error_type last.typ
+      match Cli_json_output.last_real_error errors with
+      | None -> Exit_code.fatal ~__LOC__
+      (* A configuration that cannot be found ends a validation with the
+       * fatal code, while its entry keeps the missing-configuration code.
+       * python: _load_config_from_local_path in config_resolver.py raised a
+       * SemgrepError with no code of its own, and sanity_check_resolved_config
+       * in run_scan.py, which a scan runs and a validation does not, raised
+       * the missing-configuration code. *)
+      | Some { Core_error.typ = Out.MissingConfig; _ } ->
+          Exit_code.fatal ~__LOC__
+      | Some (last : Core_error.t) ->
+          Cli_json_output.exit_code_of_error_type last.typ)
 
 (*****************************************************************************)
 (* Entry point *)

@@ -325,13 +325,36 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
  * becomes a success. *)
 let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
     Exit_code.t =
+  let conf = ci_conf.scan_conf in
+  (* an error that aborts the run before any result still gets a document in
+   * the machine formats, as it does for a scan; the text format only gets
+   * the message on stderr *)
+  let report (msg : string) (exit_code : Exit_code.t) : Exit_code.t =
+    match conf.output_conf.output_format with
+    | Output_format.Text ->
+        Logs.err (fun m -> m "%s" msg);
+        exit_code
+    | _ -> (
+        (* the document goes to the destination the scan was given, which can
+         * be a file that cannot be written; that second failure is reported
+         * on stderr and leaves the exit code of the error being reported, so
+         * that the suppression below still applies to it *)
+        try
+          Scan_subcommand.output_and_exit_from_fatal_core_errors_exn
+            ~text_message:msg ~exit_code
+            (caps :> < Cap.stdout >)
+            conf (Profiler.make ())
+            [ Core_error.mk_error ~msg Out.SemgrepError ]
+        with
+        | Error.Semgrep_error (output_msg, _) ->
+            Logs.err (fun m -> m "%s" output_msg);
+            exit_code)
+  in
   let exit_code =
     try run_ci_conf caps ci_conf with
-    | Error.Semgrep_error (s, opt_exit_code) -> (
-        Logs.err (fun m -> m "%s" s);
-        match opt_exit_code with
-        | None -> Exit_code.fatal ~__LOC__
-        | Some code -> code)
+    | Error.Semgrep_error (s, opt_exit_code) ->
+        report s
+          (opt_exit_code |> Option.value ~default:(Exit_code.fatal ~__LOC__))
     | Error.Exit_code code -> code
     (* say nothing and return the conventional code for a closed pipe *)
     | exn when Error.is_broken_pipe exn ->
@@ -340,19 +363,17 @@ let run_and_suppress_errors (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) :
     (* coupling: CLI.safe_run maps the two exceptions below the same way *)
     (* a failed git command is already explained by Git_wrapper's own
      * warning; no backtrace needed *)
-    | Git_wrapper.Error msg ->
-        Logs.err (fun m -> m "%s" msg);
-        Exit_code.fatal ~__LOC__
+    | Git_wrapper.Error msg -> report msg (Exit_code.fatal ~__LOC__)
     | Common.UnixExit i ->
         Exit_code.of_int ~__LOC__ ~code:i ~description:"rogue UnixExit"
     | Failure msg ->
-        Logs.err (fun m -> m "Error: %s%!" msg);
-        Exit_code.fatal ~__LOC__
+        report (Printf.sprintf "Error: %s" msg) (Exit_code.fatal ~__LOC__)
     | e ->
         let trace = Printexc.get_backtrace () in
-        Logs.err (fun m ->
-            m "Error: exception %s\n%s%!" (Printexc.to_string e) trace);
-        Exit_code.fatal ~__LOC__
+        Logs.debug (fun m -> m "%s" trace);
+        report
+          (Printf.sprintf "Error: exception %s" (Printexc.to_string e))
+          (Exit_code.fatal ~__LOC__)
   in
   match Exit_code.to_int exit_code with
   | 0

@@ -192,6 +192,296 @@ let test_named_pipe (caps : Scan_subcommand.caps) =
   Testo.create "named pipe as target" func
 
 (*****************************************************************************)
+(* Output destinations and the document of a failed run *)
+(*****************************************************************************)
+
+let eval_rules : string =
+  "rules:\n\
+  \  - id: use-eval\n\
+  \    pattern: eval($X)\n\
+  \    fix: safe_eval($X)\n\
+  \    message: eval is dangerous\n\
+  \    languages: [python]\n\
+  \    severity: WARNING\n"
+
+let eval_target : string = "eval(\"1+1\")\n"
+
+let with_eval_repo (f : unit -> unit) : unit =
+  Testutil_git.with_git_repo
+    Testutil_files.
+      [ File ("rules.yaml", eval_rules); File ("foo.py", eval_target) ]
+    (fun _cwd -> f ())
+
+(* the cli output documents printed on stdout; a run prints one *)
+let documents (out : string) : string list =
+  String.split_on_char '\n' out
+  |> List.filter (fun (line : string) ->
+         String_.contains ~term:"\"results\":" line)
+
+(* A fix that cannot be written is reported on stderr and leaves the run
+   itself successful with its single document: the failure to write is not
+   a failure of the scan, which carries on. *)
+let test_autofix_on_read_only_file (caps : CLI.caps) () =
+  with_eval_repo (fun () ->
+      Unix.chmod "foo.py" 0o444;
+      let exit_code, out =
+        Testo.with_capture stdout (fun () ->
+            CLI.main caps
+              [|
+                "opengrep";
+                "scan";
+                "--experimental";
+                "--json";
+                "--autofix";
+                "--config";
+                "rules.yaml";
+                "foo.py";
+              |])
+      in
+      Unix.chmod "foo.py" 0o644;
+      Exit_code.Check.ok exit_code;
+      Alcotest.(check int) "one document" 1 (List.length (documents out));
+      Alcotest.(check string) "the target is left alone" eval_target
+        (UFile.read_file (Fpath.v "foo.py")))
+
+(* An extra output that cannot be written aborts the run before anything
+   reaches stdout, rather than printing the findings and then a second
+   document holding only the error, which would overwrite a -o
+   destination. *)
+let test_unwritable_extra_output (caps : CLI.caps) () =
+  with_eval_repo (fun () ->
+      let exit_code, out =
+        Testo.with_capture stdout (fun () ->
+            CLI.main caps
+              [|
+                "opengrep";
+                "scan";
+                "--experimental";
+                "--json";
+                (* a regular file is not a directory to write into *)
+                "--sarif-output";
+                "foo.py/report.sarif";
+                "--config";
+                "rules.yaml";
+                "foo.py";
+              |])
+      in
+      Exit_code.Check.fatal exit_code;
+      Alcotest.(check int) "no document" 0 (List.length (documents out)))
+
+(* 'opengrep ci --json' prints the document of an error that aborts the run
+   before any result; the default --suppress-errors then makes it exit 0. *)
+let test_ci_json_fatal_error (caps : CLI.caps) () =
+  Testutil_git.with_git_repo
+    Testutil_files.[ File ("foo.py", eval_target); Dir ("norules", []) ]
+    (fun _cwd ->
+      let exit_code, out =
+        Testo.with_capture stdout (fun () ->
+            CLI.main caps
+              [|
+                "opengrep";
+                "--experimental";
+                "ci";
+                "--json";
+                "--config";
+                "norules";
+              |])
+      in
+      Exit_code.Check.ok exit_code;
+      Alcotest.(check int) "one document" 1 (List.length (documents out));
+      let output = Semgrep_output_v1_j.cli_output_of_string out in
+      Alcotest.(check bool) "the document carries the error" true
+        (not (List_.null output.errors)))
+
+(* 'scan --validate --json' prints the document of the errors it found, so a
+   valid configuration produces no document at all: nothing on stdout, and
+   no file at the destination -o names. An invalid one puts the document in
+   that file and leaves stdout empty.
+   python: scan in commands/scan.py called its output handler only when the
+   validation had collected errors. *)
+let test_validate_output_to_file (caps : CLI.caps) () =
+  let validate_to_file (what : string) (rule : string)
+      ~(document_in_file : bool) (check_exit_code : Exit_code.t -> unit) : unit
+      =
+    Testutil_git.with_git_repo
+      Testutil_files.[ File ("rules.yaml", rule) ]
+      (fun (_cwd : Fpath.t) ->
+        let exit_code, out =
+          Testo.with_capture stdout (fun () ->
+              CLI.main caps
+                [|
+                  "opengrep";
+                  "scan";
+                  "--experimental";
+                  "--validate";
+                  "--json";
+                  "--config";
+                  "rules.yaml";
+                  "-o";
+                  "report.json";
+                |])
+        in
+        check_exit_code exit_code;
+        Alcotest.(check int)
+          (Printf.sprintf "%s: nothing on stdout" what)
+          0
+          (List.length (documents out));
+        let report : Fpath.t = Fpath.v "report.json" in
+        Alcotest.(check bool)
+          (Printf.sprintf "%s: the -o file exists" what)
+          document_in_file (Sys.file_exists !!report);
+        if document_in_file then
+          Alcotest.(check int)
+            (Printf.sprintf "%s: the document is in the -o file" what)
+            1
+            (List.length (documents (UFile.read_file report))))
+  in
+  validate_to_file "a valid configuration" eval_rules ~document_in_file:false
+    Exit_code.Check.ok;
+  validate_to_file "an invalid configuration"
+    Test_scan_subcommand_config.unknown_language_rule ~document_in_file:true
+    Exit_code.Check.invalid_language
+
+(* A rule matching on the project's dependencies, which opengrep skips. *)
+let supply_chain_rules : string =
+  "rules:\n\
+  \  - id: depends-on-requests\n\
+  \    pattern: import requests\n\
+  \    message: requests used\n\
+  \    languages: [python]\n\
+  \    severity: WARNING\n\
+  \    r2c-internal-project-depends-on:\n\
+  \      namespace: pypi\n\
+  \      package: requests\n\
+  \      version: \"<99\"\n"
+
+(* A configuration the report calls invalid never leaves the run
+   successful: the run ends with the code of the last error of severity
+   Error, or with the fatal code when every error is below that severity.
+   python: _final_raise in output.py exited with the code of that last
+   error, and the "Please fix the above errors" SemgrepError that scan in
+   commands/scan.py then raised carried no code of its own. *)
+let test_validate_exit_codes (caps : CLI.caps) () =
+  let validate ~(args : string list) (files : Testutil_files.t list)
+      (config : string) : int * string =
+    Testutil_git.with_git_repo files (fun (_ : Fpath.t) ->
+        let exit_code, out =
+          Testo.with_capture stdout (fun () ->
+              CLI.main caps
+                (Array.of_list
+                   ([ "opengrep"; "scan"; "--experimental"; "--validate" ]
+                   @ args
+                   @ [ "--config"; config ])))
+        in
+        (Exit_code.to_int exit_code, out))
+  in
+  let check_exit_code (name : string) (rule : string) (expected : int) : unit =
+    Alcotest.(check int) name expected
+      (fst
+         (validate ~args:[]
+            Testutil_files.[ File ("rules.yaml", rule) ]
+            "rules.yaml"))
+  in
+  (* an incompatible rule is reported with severity Info, so it is the
+     fatal code of the final error that the run ends with, not the ok code
+     of that entry *)
+  check_exit_code "a rule that requires a newer version"
+    Test_scan_subcommand_config.incompatible_rule 2;
+  check_exit_code "a broken rule then an incompatible one"
+    Test_scan_subcommand_config.unparsable_then_incompatible_rules 2;
+  check_exit_code "an unknown language"
+    Test_scan_subcommand_config.unknown_language_rule 8;
+  check_exit_code "a file that is not valid YAML"
+    Test_scan_subcommand_config.unparsable_yaml_rule 5;
+  (* a rule opengrep skips because it matches on the project's dependencies
+     is reported, but the configuration holding it is still valid *)
+  check_exit_code "a rule matching on the project's dependencies"
+    supply_chain_rules 0;
+  (* an empty directory of rules is a valid configuration with no rule;
+     only a scan fails on it, for having no rule to run *)
+  Alcotest.(check int)
+    "an empty directory of rules" 0
+    (fst
+       (validate ~args:[]
+          Testutil_files.[ Dir ("rules", []); File ("target.py", "x == x\n") ]
+          "rules"));
+  (* a config that cannot be found ends the validation with the fatal code,
+     while its entry keeps the missing-configuration code; only a scan exits
+     with that code as well.
+     differs from the Python wrapper: its entry carries code 2.
+     python: sanity_check_resolved_config in run_scan.py, which a scan runs
+     and a validation does not, raised the missing-configuration code *)
+  let exit_code, out =
+    validate ~args:[ "--json" ]
+      Testutil_files.[ File ("target.py", "x == x\n") ]
+      "nosuch.yaml"
+  in
+  Alcotest.(check int) "a config that does not exist" 2 exit_code;
+  Alcotest.(check (list (pair string int)))
+    "the error entry of a config that does not exist"
+    [ ("Missing config", 7) ]
+    ((Semgrep_output_v1_j.cli_output_of_string out).errors
+    |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+           (Error.string_of_error_type e.type_, e.code)))
+
+(* python: run_scan.py saves core_time right after the scan of the head,
+   before the baseline worktree is scanned, so a baseline scan reports it
+   like any other. *)
+let test_baseline_core_time (caps : CLI.caps) () =
+  with_eval_repo (fun () ->
+      let baseline =
+        String.trim
+          (Git_wrapper.command (caps :> < Cap.exec >) [ "rev-parse"; "HEAD" ])
+      in
+      let exit_code, out =
+        Testo.with_capture stdout (fun () ->
+            CLI.main caps
+              [|
+                "opengrep";
+                "scan";
+                "--experimental";
+                "--json";
+                "--time";
+                "--baseline-commit";
+                baseline;
+                "--config";
+                "rules.yaml";
+                ".";
+              |])
+      in
+      Exit_code.Check.ok exit_code;
+      let output = Semgrep_output_v1_j.cli_output_of_string out in
+      let names : string list =
+        match output.time with
+        | None -> []
+        | Some (time : Semgrep_output_v1_t.profile) ->
+            List_.map fst time.profiling_times
+      in
+      Alcotest.(check bool) "core_time is reported" true
+        (List.exists (String.equal "core_time") names))
+
+(* --text does not win over a machine format: '--text --json' prints the
+   JSON document. *)
+let test_text_with_json (caps : CLI.caps) () =
+  with_eval_repo (fun () ->
+      let exit_code, out =
+        Testo.with_capture stdout (fun () ->
+            CLI.main caps
+              [|
+                "opengrep";
+                "scan";
+                "--experimental";
+                "--text";
+                "--json";
+                "--config";
+                "rules.yaml";
+                "foo.py";
+              |])
+      in
+      Exit_code.Check.ok exit_code;
+      Alcotest.(check int) "the JSON document" 1 (List.length (documents out)))
+
+(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
@@ -206,6 +496,28 @@ let tests (caps : CLI.caps) =
       test_named_pipe scan_caps;
       Testo.create "a closed output pipe ends the scan quietly"
         (test_broken_pipe caps);
+      Testo.create "a fix that cannot be written keeps one document"
+        (test_autofix_on_read_only_file caps);
+      Testo.create "an output that cannot be written prints no document"
+        (test_unwritable_extra_output caps);
+      Testo.create "ci --json reports a fatal error as the document"
+        (test_ci_json_fatal_error caps);
+      (* Both validation tests run under the metarules fixture of
+         Test_rule_errors: a validation fetches the 'p/semgrep-rule-lints'
+         pack from the registry, and a test must not depend on the network.
+         On macOS the name resolution of that fetch initialises
+         CoreFoundation, which rewrites __CF_USER_TEXT_ENCODING to the uid of
+         the process, and the environment check of the test harness then
+         fails the test. *)
+      Testo.create
+        "scan --validate --json writes the -o file only for an invalid \
+         configuration"
+        (Test_rule_errors.with_metarules (test_validate_output_to_file caps));
+      Testo.create "scan --validate fails on an invalid configuration"
+        (Test_rule_errors.with_metarules (test_validate_exit_codes caps));
+      Testo.create "a baseline scan reports core_time"
+        (test_baseline_core_time caps);
+      Testo.create "--text does not win over --json" (test_text_with_json caps);
     ]
     @ ([
          ("ci", [ "0"; "1"; "2"; "3"; "4"; "5"; "7"; "8"; "141" ]);

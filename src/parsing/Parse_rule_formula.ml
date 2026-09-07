@@ -199,11 +199,15 @@ let parse_rule_xpattern env (str, tok) =
 
 (* A 'pattern' has no semantic meaning for a regex-only rule, which would
  * silently read it as a regex (python: Rule._validate_none_language_rule).
+ * Only the rule's own 'languages' makes a rule regex-only, so a 'pattern'
+ * under a 'metavariable-pattern: {language: regex}' of a rule declaring a
+ * real language is accepted; conversely, in a regex-only rule a sub-language
+ * given by a 'metavariable-pattern' makes a 'pattern' meaningful again.
  *)
-let check_pattern_clause_allowed env (key : key) : (unit, Rule_error.t) result
-    =
-  match env.target_analyzer with
-  | Xlang.LRegex ->
+let check_pattern_clause_allowed (env : env) (key : key) :
+    (unit, Rule_error.t) result =
+  match (env.rule_analyzer, env.target_analyzer) with
+  | Xlang.LRegex, Xlang.LRegex ->
       error_at_key env.id key
         (spf
            "invalid pattern clause 'pattern' with regex-only rules in rule: \

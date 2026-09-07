@@ -545,9 +545,7 @@ let o_nosem : bool Term.t =
 let o_output : string option Term.t =
   let info =
     Arg.info [ "o"; "output" ]
-      ~doc:
-        "Save search results to a file or post to URL. Default is to print to \
-         stdout."
+      ~doc:"Save search results to a file. Default is to print to stdout."
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
@@ -636,9 +634,7 @@ let make_o_format_outputs : ?fancy:string -> string -> string list Term.t =
   let info =
     Arg.info
       [ format ^ "-output" ]
-      ~doc:
-        ("Write a copy of the " ^ fancy_format
-       ^ " output to a file or post to URL.")
+      ~doc:("Save a copy of the " ^ fancy_format ^ " output to a file.")
   in
   Arg.value (Arg.opt_all Arg.string [] info)
 
@@ -987,9 +983,13 @@ let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
                (* A leading './' and a trailing '/' name no part of the
                 * path: pyopengrep's Path dropped them, in the reported
                 * paths and in the message for a root that does not exist,
-                * and a file spelled 'a.py/' was the file 'a.py'. *)
+                * and a file written as 'a.py/' was the file 'a.py'.
+                * A '.' segment further down names no part of it either,
+                * so 'data/./foo.py' is reported as 'data/foo.py'. *)
                let orig_path =
-                 Fpath_.strip_leading_dot_and_trailing_slash (Fpath.v str)
+                 Fpath.v str
+                 |> Fpath_.strip_leading_dot_and_trailing_slash
+                 |> Fpath_.drop_dot_segments
                in
                (* a path that does not exist is left to the scan, which
                 * reports it as a fatal "File not found" error *)
@@ -1073,8 +1073,9 @@ let output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
   if cnt >= 2 then
     (* TOPORT: list the possibilities *)
     Error.abort "Mutually exclusive options --json/--emacs/--vim/--sarif/...";
+  (* --text is not mutually exclusive with the others: pysemgrep took it as
+     the format only when no machine format was given *)
   match () with
-  | _ when text -> Output_format.Text
   | _ when files_with_matches -> Output_format.Files_with_matches
   | _ when json -> Output_format.Json
   | _ when emacs -> Output_format.Emacs
@@ -1083,6 +1084,7 @@ let output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
   | _ when gitlab_sast -> Output_format.Gitlab_sast
   | _ when gitlab_secrets -> Output_format.Gitlab_secrets
   | _ when junit_xml -> Output_format.Junit_xml
+  | _ when text -> Output_format.Text
   | _else_ -> default.output_conf.output_format
 
 (* reused in Ci_CLI.ml *)
@@ -1174,7 +1176,7 @@ let show_CLI_conf ~dump_ast ~show_supported_languages ~target_roots ~pattern
   | _else_ -> None
 
 let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
-    ~force_color ~common : Validate_CLI.conf option =
+    ~output_conf ~force_color ~common : Validate_CLI.conf option =
   if validate then
     match rules_source with
     | Rules_source.Configs [] ->
@@ -1184,7 +1186,15 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
            a rule"
     | Configs (_ :: _)
     | Pattern _ ->
-        Some { rules_source; core_runner_conf; json; force_color; common }
+        Some
+          {
+            rules_source;
+            core_runner_conf;
+            json;
+            output_conf;
+            force_color;
+            common;
+          }
   else None
 
 let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
@@ -1399,7 +1409,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
      *)
     let validate : Validate_CLI.conf option =
       validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
-        ~force_color ~common
+        ~output_conf ~force_color ~common
     in
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =

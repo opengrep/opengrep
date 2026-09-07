@@ -55,4 +55,4 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
  create mode 100644 basic/stupid.py
  create mode 100644 basic/stupid_no_extension
  create mode 100644 regex-invalid.yaml
-{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"Rule parse error","rule_id":"test-regex","message":"Rule parse error in rule test-regex:\n invalid regex '(abc': missing closing parenthesis at position 4"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+{"version":"<MASKED>","results":[],"errors":[{"code":2,"level":"error","type":"Rule parse error","rule_id":"test-regex","message":"Rule parse error in rule test-regex:\n invalid regex '(abc': missing closing parenthesis at position 4"}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}

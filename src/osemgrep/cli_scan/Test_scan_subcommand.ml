@@ -528,9 +528,18 @@ if 5 == 5:
 |}
 
 (* (path, line, fingerprint) of the findings of a --json scan of the
- * targets, sorted *)
+ * targets, sorted.
+ * [roots] builds the roots the scan is given, from the repository's own
+ * directory as the file system reports it, and defaults to the paths of the
+ * targets; [chdir] is the directory of the repository the scan runs from;
+ * [added] are files written and committed on top of the repository's first
+ * commit, which a scan with '--baseline-commit HEAD~1' then reports alone.
+ *)
 let fingerprints_of_scan (caps : Scan_subcommand.caps)
-    ?(config : string option) ~(rule_path : string) ~(rule : string)
+    ?(config : string option) ?(chdir : string option)
+    ?(roots : (Fpath.t -> string list) option)
+    ?(added : (string * string) list = []) ?(extra_args : string list = [])
+    ~(rule_path : string) ~(rule : string)
     ~(targets : (string * string) list) () : (string * int * string) list =
   (* the spelling of --config, which the rule ids and so the fingerprints
      depend on; the rule file itself is always written at rule_path *)
@@ -549,23 +558,46 @@ let fingerprints_of_scan (caps : Scan_subcommand.caps)
          targets
   in
   with_env_app_token (fun () ->
-      Testutil_git.with_git_repo repo_files (fun _cwd ->
-          let (), stdout_output =
-            Testo.with_capture stdout (fun () ->
-                let exit_code =
-                  without_settings (fun () ->
-                      Scan_subcommand.main caps
-                        (Array.of_list
-                           ([
-                              "opengrep-scan";
-                              "--experimental";
-                              "--json";
-                              "--config";
-                              config;
-                            ]
-                           @ List_.map fst targets)))
-                in
-                Exit_code.Check.ok exit_code)
+      Testutil_git.with_git_repo repo_files (fun (_repo : Fpath.t) ->
+          added
+          |> List.iter (fun ((path : string), (contents : string)) ->
+                 UFile.write_file ~file:(Fpath.v path) contents);
+          if not (List_.null added) then (
+            Git_wrapper.add [ Fpath.v "." ];
+            Git_wrapper.commit "another finding");
+          let roots : string list =
+            match roots with
+            (* the repository as the scan itself sees it: the temporary
+               directory can be reached through a symbolic link, and a root
+               given through that link is not under the current
+               directory *)
+            | Some roots -> roots (Fpath.v (Sys.getcwd ()))
+            | None -> List_.map fst targets
+          in
+          let scan () : string =
+            let (), stdout_output =
+              Testo.with_capture stdout (fun () ->
+                  let exit_code =
+                    without_settings (fun () ->
+                        Scan_subcommand.main caps
+                          (Array.of_list
+                             ([
+                                "opengrep-scan";
+                                "--experimental";
+                                "--json";
+                                "--config";
+                                config;
+                              ]
+                             @ extra_args @ roots)))
+                  in
+                  Exit_code.Check.ok exit_code)
+            in
+            stdout_output
+          in
+          let stdout_output : string =
+            match chdir with
+            | None -> scan ()
+            | Some dir -> F.with_chdir (Fpath.v dir) scan
           in
           let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
           out.results
@@ -677,7 +709,69 @@ let test_fingerprints (caps : Scan_subcommand.caps) () =
         4,
         "d3d094efc363029d2993f4b046b759137f3eb9fd4e950c3bc62256f104919f35ea8e7e07412c9514d682f0d83f84d40cd19fc3aa98c278dff16152a0d851d7fb_1"
       );
+    ];
+  (* The ids of the scans below, whose reported paths hold the temporary
+     directory of the repository and so cannot be compared. *)
+  let check_ids (name : string) ?config ?chdir ?roots ?added ?extra_args
+      (expected : string list) ~rule_path ~rule ~targets : unit =
+    Alcotest.(check (list string))
+      name expected
+      (fingerprints_of_scan caps ?config ?chdir ?roots ?added ?extra_args
+         ~rule_path ~rule ~targets ()
+      |> List_.map (fun ((_ : string), (_ : int), (fingerprint : string)) ->
+             fingerprint))
+  in
+  let stupid_target : (string * string) list =
+    [ ("targets/basic/stupid.py", stupid_py_content) ]
+  in
+  (* the id of that finding when the scan runs from the repository, the same
+     for every form of the root below *)
+  let stupid_id : string =
+    "62b4a09c4569768898c43c09fa0a5b95b7e93257ef3a0911a5c379b6265b4d49fa4aecd5782461632e9aef4779af02d7cad4405b9a5318a0e5ffe9a5bd8daeae_0"
+  in
+  let eqeq (name : string) ?config ?chdir ?roots ?added ?extra_args
+      (expected : string list) : unit =
+    check_ids name ?config ?chdir ?roots ?added ?extra_args expected
+      ~rule_path:"rules/eqeq.yaml" ~rule:eqeq_is_bad_rule_content
+      ~targets:stupid_target
+  in
+  (* The id hashes the path relative to the current directory, so the
+     form of the root does not change it. *)
+  eqeq "root given as a directory" [ stupid_id ] ~roots:(fun (_ : Fpath.t) ->
+      [ "targets/basic" ]);
+  eqeq "root given as an absolute directory" [ stupid_id ]
+    ~roots:(fun (repo : Fpath.t) ->
+      [ Fpath.to_string Fpath.(repo / "targets" / "basic") ]);
+  eqeq "target given with a leading './'" [ stupid_id ]
+    ~roots:(fun (_ : Fpath.t) -> [ "./targets/basic/stupid.py" ]);
+  eqeq "target given with an inner '/./'" [ stupid_id ]
+    ~roots:(fun (_ : Fpath.t) -> [ "targets/./basic/stupid.py" ]);
+  eqeq "target given as an absolute file" [ stupid_id ]
+    ~roots:(fun (repo : Fpath.t) ->
+      [ Fpath.to_string Fpath.(repo / "targets" / "basic" / "stupid.py") ]);
+  (* A root that is not under the current directory is reported as it was
+     written: pysemgrep's relative_to() raises on such a path and falls back
+     to it. The id below differs from the one above because the reported
+     path does. *)
+  eqeq "root above the current directory"
+    [
+      "ba5ad896ebd37521d1c548b334317c5fb1792ea6c7e94aabd73fa203d8e899d55fc9cb471567cf5b9948b40799e087d913f84a6eadf1e85ee3c619af055b009d_0";
     ]
+    ~chdir:"targets/basic" ~config:"../../rules/eqeq.yaml"
+    ~roots:(fun (_ : Fpath.t) -> [ "../basic" ]);
+  (* A finding of a file added after the baseline commit gets the same id
+     whether or not the scan is limited to what changed since. *)
+  let new_target : (string * string) list =
+    [ ("targets/basic/new.py", stupid_py_content) ]
+  in
+  let new_id : string =
+    "618629a708295579efc9cb5cd5bed4ea2dcd9abadee1f78d6e3b0aeea31536ecc720f30d085d8a2a9e055ebd4a91af591d89397f104aaea5ebefdd5746157620_0"
+  in
+  eqeq "a finding added on top of the baseline commit" [ new_id; stupid_id ]
+    ~added:new_target ~roots:(fun (_ : Fpath.t) -> [ "targets/basic" ]);
+  eqeq "the same finding under --baseline-commit" [ new_id ] ~added:new_target
+    ~extra_args:[ "--baseline-commit"; "HEAD~1" ]
+    ~roots:(fun (_ : Fpath.t) -> [ "targets/basic" ])
 
 (* Match-based ids survive changes of formatting and of the code an
  * ellipsis spans, and change with the matched code and the metavariable
@@ -1216,20 +1310,23 @@ let test_rule_errors (caps : Scan_subcommand.caps) () =
       name expected_errors errors;
     expected_exit exit_code
   in
-  (* the run aborts on the configuration, so the exit code is the same for
-     every kind of error; the code of each entry still names the kind *)
+  (* The run aborts on the configuration with the code of its last error of
+     severity Error, which pysemgrep gave only to an unknown language and to
+     a pattern that does not parse: it raised MISSING_CONFIG_EXIT_CODE over
+     every other kind of configuration error. The code of each entry names
+     the kind. *)
   check "unknown language" ~rule:(Some unknown_language_rule_content) []
     [ ("Unknown language", 8, Some "arg-reassign") ]
-    Exit_code.Check.missing_config;
+    Exit_code.Check.invalid_language;
   check "pattern in a regex rule" ~rule:(Some pattern_in_regex_rule_content) []
     [ ("Invalid rule schema", 4, Some "bad") ]
     Exit_code.Check.missing_config;
   check "invalid pattern in a rule" ~rule:(Some invalid_pattern_rule_content) []
-    [ ("Rule parse error", 4, Some "bad-pat") ]
-    Exit_code.Check.missing_config;
+    [ ("Rule parse error", 2, Some "bad-pat") ]
+    Exit_code.Check.fatal;
   check "invalid -e pattern" ~rule:None [ "-e"; "("; "-l"; "python" ]
-    [ ("Rule parse error", 4, Some "-") ]
-    Exit_code.Check.missing_config
+    [ ("Rule parse error", 2, Some "-") ]
+    Exit_code.Check.fatal
 
 (*****************************************************************************)
 (* nosem with an invalid or unknown rule id *)

@@ -22,7 +22,11 @@ val main : < caps ; .. > -> string array -> Exit_code.t
 
 (* internal *)
 val run_conf : < caps ; .. > -> Scan_CLI.conf -> Exit_code.t
-val run_scan_conf : < caps ; .. > -> Scan_CLI.conf -> Exit_code.t
+
+(* internal: on_output is called once the results have been reported, so
+ * that a failure afterwards does not print a second document. *)
+val run_scan_conf :
+  ?on_output:(unit -> unit) -> < caps ; .. > -> Scan_CLI.conf -> Exit_code.t
 
 (* internal: also used in CI *)
 val rules_from_rules_source :

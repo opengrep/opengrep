@@ -8,6 +8,7 @@ test.yaml
 	missed lines: [3, 5], incorrect lines: []
 	test file path: <TMP>/<MASKED>/test.py
 
+
 No tests for fixes found.
 --------------------------------------------------------------------------------
 Matching diagnosis:

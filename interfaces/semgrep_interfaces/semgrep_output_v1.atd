@@ -688,6 +688,9 @@ type error_type
   | OutOfMemoryDuringInterfile <json name="OOM during interfile analysis">
   (* since semgrep 1.40.0 *)
   | MissingPlugin <json name="Missing plugin">
+  (* opengrep: a rule matching on the project's dependencies, which opengrep
+   * does not analyse *)
+  | UnsupportedSupplyChainRule <json name="Unsupported supply-chain rule">
   (* !constructors with arguments! *)
   (* the string list is the "YAML path" of the pattern, e.g. ["rules"; "1"; ...] *)
   | PatternParseError of string list

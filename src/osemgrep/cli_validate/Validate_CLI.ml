@@ -31,6 +31,9 @@ type conf = {
   (* --json: the errors of the validation are then reported as the cli
    * output document, as they are for a scan *)
   json : bool;
+  (* the output configuration of the scan that asked for the validation, so
+   * that the document goes where -o/--output names *)
+  output_conf : Output.conf;
   (* --force-color, which wins over $NO_COLOR like it does for a scan *)
   force_color : bool;
   common : CLI_common.conf;
@@ -68,7 +71,14 @@ let cmdline_term : conf Term.t =
     let core_runner_conf = Core_runner.default_conf in
     (* the 'validate' subcommand has no output flag of its own; only
        'scan --validate --json' asks for the document *)
-    { rules_source; core_runner_conf; json = false; force_color; common }
+    {
+      rules_source;
+      core_runner_conf;
+      json = false;
+      output_conf = Output.default;
+      force_color;
+      common;
+    }
   in
   Term.(
     const combine $ o_args $ CLI_common.o_common

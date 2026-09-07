@@ -13,6 +13,8 @@ type key = string Rule.wrap
 type env = {
   id : Rule_ID.t;
   target_analyzer : Xlang.t;
+  (* analyzer declared by the rule's own 'languages' field *)
+  rule_analyzer : Xlang.t;
   in_metavariable_pattern : bool;
   path : string list;
   options_key : key option;

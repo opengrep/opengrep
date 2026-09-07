@@ -9,14 +9,19 @@ targets/test4.py
 	missed lines: [2, 5], incorrect lines: []
 	test file path: <TMP>/<MASKED>/targets/test4.py
 
+
 0/1: 1 fix tests did not pass:
 --------------------------------------------------------------------------------
 	✖ targets/test4.fixed.py <> autofix applied to targets/test4.py
 
+	---
+	+++
 	@@ -2 +2 @@
 	-sys.exit(1)
 	+exit(1)
 	@@ -5 +5 @@
 	-sys.exit(2)
 	+exit(2)
+
+
 

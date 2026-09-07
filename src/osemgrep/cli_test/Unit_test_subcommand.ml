@@ -576,10 +576,13 @@ let test_todo_annotations_are_per_rule_id (caps : Test_subcommand.caps) () =
       F.File ("both.yaml", eqeq_and_print_rule_content);
       (* the todook: names no-print only; both rules match its line, and
          eqeq-is-bad is annotated further down so that every rule that
-         matches is named in the file *)
+         matches is named in the file. The 'ok: no-print' puts no-print in
+         the set the rule id mismatch check compares, which a todook: line
+         does not do. *)
       F.File
         ( "both.py",
-          "# todook: no-print\nprint(x == x)\n# ruleid: eqeq-is-bad\nx == x\n" );
+          "# ok: no-print\nz = 1\n# todook: no-print\nprint(x == x)\n# ruleid: \
+           eqeq-is-bad\nx == x\n" );
     ]
   in
   let exit_code, res =
@@ -605,7 +608,7 @@ let test_todo_annotations_are_per_rule_id (caps : Test_subcommand.caps) () =
   in
   Alcotest.(check (list (triple string bool (list int))))
     "the todook: of one rule does not hide the match of the other"
-    [ ("eqeq-is-bad", false, [ 2; 4 ]); ("no-print", true, []) ]
+    [ ("eqeq-is-bad", false, [ 4; 6 ]); ("no-print", true, []) ]
     checks
 
 (* a match on a line with the ignore annotation is not reported *)
@@ -681,6 +684,210 @@ let test_rule_id_mismatch (caps : Test_subcommand.caps) () =
       in
       Exit_code.Check.fatal exit_code)
 
+(* python: test.py built the set it compares from the 'ruleid:',
+   'todoruleid:' and 'ok:' lines only, so a 'todook:' naming a rule that never
+   fires does not stop the run; and it keyed the checks on the 'ruleid:' and
+   'todoruleid:' lines, so such a rule id is not a check of its own. *)
+let test_todook_for_a_rule_that_never_matches (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("both.yaml", eqeq_and_print_rule_content);
+      F.File
+        ("both.py", "# ruleid: eqeq-is-bad\nx == x\n# todook: no-print\nz = 1\n");
+    ]
+  in
+  let exit_code, res =
+    run_test_json caps files [ "--config"; "both.yaml"; "both.py" ]
+  in
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check (list (pair string bool)))
+    "the annotated rule is the only check"
+    [ ("eqeq-is-bad", true) ]
+    (res.results
+    |> List.concat_map
+         (fun ((_rule_file : string), (checks : Semgrep_output_v1_t.checks)) ->
+           checks.checks
+           |> List_.map
+                (fun
+                  ((rule_id : string), (r : Semgrep_output_v1_t.rule_result))
+                -> (rule_id, r.passed)))
+    |> List.sort (fun ((a : string), _) ((b : string), _) -> String.compare a b))
+
+(* python: test.py pairs a .fixed file with its target whatever the rule file
+   contains and runs the autofix pass, so a rule with no fix: leaves the
+   target unchanged and the fixtest fails unless the fixed file is a copy of
+   the target. *)
+let test_fixtest_for_a_rule_without_a_fix (caps : Test_subcommand.caps) () =
+  let check (name : string) (fixed : string) ~(passed : bool)
+      ~(argv : string list) ~(check_exit : Exit_code.t -> unit) : unit =
+    let files =
+      [
+        F.File ("eqeq.yaml", eqeq_rule_content);
+        F.File ("eqeq.py", eqeq_target_content);
+        F.File ("eqeq.fixed.py", fixed);
+      ]
+    in
+    let exit_code, res = run_test_json caps files argv in
+    check_exit exit_code;
+    Alcotest.(check (list (pair string bool)))
+      name
+      [ ("eqeq.py", passed) ]
+      (res.fixtest_results
+      |> List_.map
+           (fun
+             ( (target : string),
+               (r : Semgrep_output_v1_t.fixtest_result) )
+           -> (target, r.passed)));
+    Alcotest.(check (list string))
+      (name ^ ": the rule file has a fixtest")
+      []
+      (List_.map Fpath.to_string res.config_missing_fixtests)
+  in
+  let config_argv = [ "--config"; "eqeq.yaml"; "eqeq.py" ] in
+  check "a fixed file that differs from the target"
+    "# ruleid: eqeq-is-bad\ny == y\n" ~passed:false ~argv:config_argv
+    ~check_exit:Exit_code.Check.findings;
+  check "a fixed file that is a copy of the target" eqeq_target_content
+    ~passed:true ~argv:config_argv ~check_exit:Exit_code.Check.ok;
+  (* the same pair found through the root '.', where the target of a rule
+     file is reported without the './' prefix, as the rule file is *)
+  check "a fixed file reached through the root '.'" eqeq_target_content
+    ~passed:true ~argv:[ "." ] ~check_exit:Exit_code.Check.ok
+
+(* python: a file with no 'ruleid:', 'todoruleid:' or 'ok:' line is not part
+   of the comparison of annotated ids, so a match in it fails its check
+   instead of stopping the run. *)
+let test_match_in_an_unannotated_file (caps : Test_subcommand.caps) () =
+  let files =
+    [ F.File ("eqeq.yaml", eqeq_rule_content); F.File ("eqeq.py", "x == x\n") ]
+  in
+  let exit_code, res =
+    run_test_json caps files [ "--config"; "eqeq.yaml"; "eqeq.py" ]
+  in
+  Exit_code.Check.findings exit_code;
+  check_single_result "a match with no annotation" res ~passed:false
+    ~expected_lines:[] ~reported_lines:[ 1 ]
+
+(* python: test.py listed the target tree with rglob and paired a rule file
+   with every file under a directory carrying its stem, at any depth. A rule
+   file there is not a target, a .fixed file is not either. *)
+let test_directory_named_like_the_rule_file (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.dir "rules"
+        [
+          F.File ("eqeq.yaml", eqeq_rule_content);
+          F.dir "eqeq"
+            [
+              F.File ("case1.py", eqeq_target_content);
+              (* neither of these two is a target of eqeq.yaml *)
+              F.File ("case1.fixed.py", eqeq_target_content);
+              F.File ("nested.yaml", other_rule_content);
+              F.dir "sub" [ F.File ("case2.py", eqeq_target_content) ];
+              (* sorts first by path and last by base name *)
+              F.dir "a" [ F.File ("zz.py", eqeq_target_content) ];
+            ];
+        ];
+    ]
+  in
+  let exit_code, res = run_test_json caps files [ "rules" ] in
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check (list string))
+    "the rule file under the directory has no target of its own"
+    [ "rules/eqeq/nested.yaml" ]
+    (List_.map Fpath.to_string res.config_missing_tests);
+  match res.results with
+  | [ (_rule_file, { checks = [ (rule_id, rule_result) ] }) ] ->
+      Alcotest.(check string) "the rule id" "eqeq-is-bad" rule_id;
+      Alcotest.(check bool) "the verdict" true rule_result.passed;
+      (* the files at the top of the directory and below it, reported in path
+         order: 'eqeq/a/zz.py' before 'eqeq/case1.py' before
+         'eqeq/sub/case2.py', which is not the order of their base names *)
+      Alcotest.(check (list (pair string (list int))))
+        "every file under the directory, in path order"
+        [ ("zz.py", [ 2 ]); ("case1.py", [ 2 ]); ("case2.py", [ 2 ]) ]
+        (rule_result.matches
+        |> List_.map
+             (fun
+               ( (target : string),
+                 (lines : Semgrep_output_v1_t.expected_reported) )
+             ->
+               (* the report gives absolute paths *)
+               (Filename.basename target, lines.reported_lines)))
+  | _ -> Alcotest.fail "expected one rule file with one check"
+
+(* python: filter(None, ...) dropped the empty id a trailing comma leaves. *)
+let test_trailing_comma_in_the_id_list (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("eqeq.yaml", eqeq_rule_content);
+      F.File ("eqeq.py", "# ruleid: eqeq-is-bad,\nx == x\n");
+    ]
+  in
+  let exit_code, res =
+    run_test_json caps files [ "--config"; "eqeq.yaml"; "eqeq.py" ]
+  in
+  Exit_code.Check.ok exit_code;
+  check_single_result "a trailing comma" res ~passed:true ~expected_lines:[ 2 ]
+    ~reported_lines:[ 2 ]
+
+(* python: test.py dropped a 'deepok'/'prook'/'deepruleid'/'proruleid' prefix
+   from the id list and kept the kind of the line. *)
+let test_deep_prefix_in_the_id_list (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("eqeq.yaml", eqeq_rule_content);
+      F.File
+        ( "eqeq.py",
+          "# ruleid: eqeq-is-bad\nx == x\n# ruleid: deepok: eqeq-is-bad\ny == y\n"
+        );
+    ]
+  in
+  let exit_code, res =
+    run_test_json caps files [ "--config"; "eqeq.yaml"; "eqeq.py" ]
+  in
+  Exit_code.Check.ok exit_code;
+  check_single_result "a deepok: prefix" res ~passed:true
+    ~expected_lines:[ 2; 4 ] ~reported_lines:[ 2; 4 ]
+
+let eqeq_go_rule_content =
+  {|
+rules:
+  - id: eqeq-is-bad
+    pattern: $X == $X
+    message: "useless comparison"
+    languages: [go]
+    severity: ERROR
+|}
+
+(* 'str ing' is not a type name, so the Go parser reports the span it could
+   not read and the scan raises a PartialParsing error of severity Warning *)
+let invalid_go_target_content = "package p\n\ntype T struct {\n\tS str ing\n}\n"
+
+(* The rule matches nothing and the target carries no annotation, so the rule
+   file produces no check and the error of the scan is attached to none. The
+   run passes without --strict and fails with it: --strict on 'test' has the
+   meaning it has for 'scan'.
+   differs from the Python wrapper: it ignores an error of the scan under
+   --strict *)
+let test_strict_fails_on_a_scan_error (caps : Test_subcommand.caps) () =
+  let files =
+    [
+      F.File ("eqeq.yaml", eqeq_go_rule_content);
+      F.File ("eqeq.go", invalid_go_target_content);
+    ]
+  in
+  let exit_code, res = run_test_json caps files [ "." ] in
+  Exit_code.Check.ok exit_code;
+  Alcotest.(check (list string))
+    "the rule file produced no check" []
+    (res.results
+    |> List.concat_map
+         (fun ((_rule_file : string), (checks : Semgrep_output_v1_t.checks)) ->
+           checks.checks |> List_.map fst));
+  let strict_exit_code, _res = run_test_json caps files [ "."; "--strict" ] in
+  Exit_code.Check.findings strict_exit_code
+
 (* a rule file listed under '.' is reported without the './' prefix *)
 let test_rule_file_keys_of_a_dot_root (caps : Test_subcommand.caps) () =
   let files =
@@ -729,6 +936,20 @@ let tests (caps : < Test_subcommand.caps >) =
           (test_rule_file_keys_of_a_dot_root caps);
         t "a rule that matches without an annotation fails the run"
           (test_rule_id_mismatch caps);
+        t "a todook: for a rule that never matches is not a check of its own"
+          (test_todook_for_a_rule_that_never_matches caps);
+        t "a fixtest beside a rule file with no fix: is run"
+          (test_fixtest_for_a_rule_without_a_fix caps);
+        t "a match in a file with no annotation fails its check"
+          (test_match_in_an_unannotated_file caps);
+        t "a directory carrying the rule file's stem holds its test targets"
+          (test_directory_named_like_the_rule_file caps);
+        t "a trailing comma in an annotation adds no rule id"
+          (test_trailing_comma_in_the_id_list caps);
+        t "a deepok: prefix keeps the kind of the annotation"
+          (test_deep_prefix_in_the_id_list caps);
+        t "--strict fails the run on an error of the scan"
+          (test_strict_fails_on_a_scan_error caps);
       ]
     @ mk_fixtest_tests caps
     @ mk_checks_tests caps)

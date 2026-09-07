@@ -24,7 +24,7 @@ type conf = {
   (* ??? *)
   ignore_todo : bool;
   (* TODO? do we need those options? people use the JSON output?
-   * the playground? and the optimizations and strict?
+   * the playground? and the optimizations?
    *)
   json : bool;
   (* --force-color, which wins over $NO_COLOR like it does for a scan *)
@@ -72,12 +72,21 @@ let o_json : bool Term.t =
   let info = Arg.info [ "json" ] ~doc:{|Output results in JSON format.|} in
   Arg.value (Arg.flag info)
 
-(* coupling: similar to Scan_CLI.o_strict? *)
+(* coupling: Scan_CLI.o_strict; both derive the exit code from the errors of
+ * the run with Cli_json_output.exit_code_of_errors *)
 (* TODO: be stricter when parsing target files; reject files that partially
  * parse.
  *)
 let o_strict : bool Term.t =
-  let info = Arg.info [ "strict" ] ~doc:{|???.|} in
+  let info =
+    Arg.info [ "strict" ]
+      ~doc:
+        {|A failing check, a failing fix test and a rule file that does not
+load fail the run with or without --strict. With --strict, an error raised
+while the test targets are scanned also fails the run: a target that does
+not parse, a rule that times out, a rule error at match time.
+|}
+  in
   Arg.value (Arg.flag info)
 
 (* coupling: Scan_CLI.o_config *)

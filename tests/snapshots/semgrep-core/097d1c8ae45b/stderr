@@ -8,8 +8,7 @@
 [<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
 rules/invalid-pattern-child.yaml:9:13: Invalid rule schema in rule rules.blah
   --> rules/invalid-pattern-child.yaml:9
-8  |           - pattern: $X == $Y
-9  |           - pattern-not: $Z == $Z
-   |             ^^^^^^^^^^^
-10 | 
+8 |           - pattern: $X == $Y
+9 |           - pattern-not: $Z == $Z
+  |             ^^^^^^^^^^^
 you can only negate directly inside `patterns:` or `all:`
