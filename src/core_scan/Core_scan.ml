@@ -594,32 +594,6 @@ let rules_for_analyzer ~analyzer rules =
          (* Don't run a Python rule on a JavaScript target *)
          Xlang.is_compatible ~require:analyzer ~provide:r.target_analyzer)
 
-(* Note that filtering is applied on the basis of the target's origin, not the
- * target's "file". This is because filtering should apply to the user's
- * perception of the file, not whatever we may transform it to internally.
- *
- * For instance, the "file" of a target may be a tempfile which has no meaning,
- * and is essentially randomly generated. `paths:` filtering shouldn't apply to
- * this!
- *
- * Note also that `paths:` filters are relative to the root of a project [0],
- * so if the target's file is an absolute path, we don't want to use that for
- * filtering: instead, we'd want the origin to be the desired relative path and
- * use that.
- *
- * [0]: <https://semgrep.dev/docs/writing-rules/rule-syntax/#paths>
- *)
-let rules_for_origin paths (origin : Origin.t) =
-  match paths with
-  | Some paths -> (
-      match origin with
-      | File path -> Filter_target.filter_paths paths path
-      | GitBlob { paths = target_paths; _ } ->
-          target_paths
-          |> List.exists (fun (_, path_at_commit) ->
-                 Filter_target.filter_paths paths path_at_commit))
-  | _else -> true
-
 (* This is also used by semgrep-proprietary. *)
 (* TODO: reduce memory allocation by using only one call to List.filter?
    or something even better to reduce the time spent on each target in
@@ -640,7 +614,7 @@ let rules_for_target ~analyzer ~products ~origin ~respect_rule_paths rules =
               * again here for osemgrep which use a different file targeting
               * strategy.
            *)
-           rules_for_origin r.paths origin)
+           Filter_target.rule_applies_to_origin r.paths origin)
   else rules
 
 (*****************************************************************************)
@@ -668,7 +642,7 @@ let supply_chain_rules ~lockfile_kind ~respect_rule_paths ~origin rules =
   let rules = rules_for_lockfile_kind ~lockfile_kind rules in
   if respect_rule_paths then
     rules
-    |> List.filter (fun ((r : R.rule), _) -> rules_for_origin r.paths origin)
+    |> List.filter (fun ((r : R.rule), _) -> Filter_target.rule_applies_to_origin r.paths origin)
   else rules
 
 let sca_rules_filtering (target : Target.regular) (rules : Rule.t list) :
@@ -1053,6 +1027,7 @@ let scan_exn (caps : < caps ; .. >) (config : Core_scan_config.t)
       ~taint_interfile:config.taint_interfile
       ~max_memory_mb:config.max_memory_mb
       ~valid_rules ~targets
+      ~respect_rule_paths:config.respect_rule_paths
       ~targeting_conf:config.targeting_conf
       ~xconf:(interfile_xconfig config ~equivs)
   in

@@ -331,6 +331,7 @@ let build_rule_states_from_args ~(rules_file : Fpath.t)
       ~taint_interfile:true
       ~max_memory_mb:config.max_memory_mb
       ~valid_rules:rules ~targets
+      ~respect_rule_paths:true
       ~targeting_conf
       ~xconf
   in
