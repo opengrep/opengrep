@@ -1371,10 +1371,6 @@ let build_rule_states
              Hashtbl.iter (Hashtbl.replace projidx_asts) asts
            | None -> ());
           (* a warning at the file, as a partial parse is reported *)
-          let file_warning (file : Fpath.t) (msg : string) : E.t =
-            E.mk_error ~msg ~loc:(Tok.first_loc_of_file file)
-              Out.SemgrepWarning
-          in
           let file_failures : E.t list =
             match build_opt with
             | None -> []
@@ -1390,12 +1386,35 @@ let build_rule_states
               | None -> ())
             file_failures;
           (* targets the interfile analysis leaves out, one warning each *)
+          (* One warning per language and root, the files named: a scan
+             with many targets the index leaves out is one fact, not one
+             error per file. Without a location the files are not listed
+             as partially analysed: every other rule ran on them. *)
           let not_covered (targets : Target.t list) (why : string)
               : E.t list =
-            List_.map (fun (target : Target.t) ->
-                file_warning (Target.internal_path target)
-                  (why ^ "; its taint rules did not run on this file"))
-              targets
+            match targets with
+            | [] -> []
+            | _ ->
+              let files =
+                List_.map
+                  (fun (target : Target.t) ->
+                    Fpath.to_string (Target.internal_path target))
+                  targets
+              in
+              let shown = List.filteri (fun i _ -> i < 10) files in
+              let more = List.length files - List.length shown in
+              [ E.mk_error
+                  ~msg:
+                    (Printf.sprintf
+                       "%d %s target%s under %s %s: %s%s; their interfile \
+                        taint rules did not run on them"
+                       (List.length files) (Lang.to_string lang)
+                       (if List.length files = 1 then "" else "s")
+                       (Fpath.to_string project_root) why
+                       (String.concat ", " shown)
+                       (if more > 0 then Printf.sprintf " and %d more" more
+                        else ""))
+                  Out.SemgrepWarning ]
           in
           let lc_opt, uncovered =
           match build_opt with
@@ -1409,8 +1428,14 @@ let build_rule_states
                   (Lang.to_string lang) (Fpath.to_string project_root));
             (None,
              not_covered lang_targets "the interfile graph could not be built")
-          | Some (interfile_graph, _, _) ->
+          | Some (interfile_graph, asts, _) ->
+            (* covered: every file the index parsed, a file with nothing to
+               index (an empty package file) included *)
             let interfile_files = interfile_file_set interfile_graph in
+            Hashtbl.iter
+              (fun (file : string) _ ->
+                Hashtbl.replace interfile_files (Fpath.v file) true)
+              asts;
             let matching_targets =
               targets_in_interfile_graph ~lang ~cwd
                 ~interfile_files lang_targets
