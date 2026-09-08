@@ -758,6 +758,20 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               relevant_graph []
             |> List.rev
           in
+          let sccs = Sig_fixpoint.sccs_callees_first relevant_graph in
+          (* A member of a recursive component composes its offsets under
+             the flat bound, as the interfile path does. *)
+          let recursive_fids =
+            Sig_fixpoint.recursive_members relevant_graph sccs
+            |> List.fold_left
+                 (fun acc fid -> Shape_and_sig.FunctionMap.add fid () acc)
+                 Shape_and_sig.FunctionMap.empty
+          in
+          let taint_inst_of (node : Function_id.t) : Taint_rule_inst.t =
+            { taint_inst with
+              Taint_rule_inst.recursive =
+                Shape_and_sig.FunctionMap.mem node recursive_fids }
+          in
           (* A function's own signatures replace its db entry
              ([Sig_fixpoint.store]). *)
           let analyze (node : Function_id.t)
@@ -768,14 +782,14 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
             | Some info ->
               let db', fresh =
                 extract_signatures ?builtin_signature_db
-                  ~call_graph:relevant_graph ~lang ~db ~taint_inst ~ast info
+                  ~call_graph:relevant_graph ~lang ~db
+                  ~taint_inst:(taint_inst_of node) ~ast info
               in
               Sig_fixpoint.store node fresh db'
           in
           let signature_db_after_order =
             Sig_fixpoint.run ~rule_id:(fst rule.R.id) ~graph:relevant_graph
-              ~sccs:(Sig_fixpoint.sccs_callees_first relevant_graph)
-              ~analyze initial_signature_db
+              ~sccs ~analyze initial_signature_db
           in
           (* Single match-emission pass over the converged DB. *)
           let topo_matches =
@@ -794,7 +808,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                   let _db, findings =
                     extract_and_check ?builtin_signature_db
                       ~call_graph:relevant_graph ~glob_env ~lang
-                      ~db:signature_db_after_order ~match_on ~taint_inst ~ast
+                      ~db:signature_db_after_order ~match_on
+                      ~taint_inst:(taint_inst_of node) ~ast
                       ~detect_findings:true info
                   in
                   if not (List_.null findings) then

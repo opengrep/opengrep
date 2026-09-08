@@ -1,0 +1,16 @@
+rules:
+  - id: recursive-builder-offsets
+    languages: [php]
+    severity: ERROR
+    message: >
+      A self-recursive builder stores its own result under several fields
+      of a fresh object. Through the recursive call an argument's offset
+      grows at every level; composing it under the flat bound keeps the
+      taint reachable at the sink, and the analysis fast.
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

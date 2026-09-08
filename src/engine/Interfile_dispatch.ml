@@ -788,8 +788,8 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
                0 fresh)
             (if fn_taint_inst.Taint_rule_inst.recursive then ", recursive"
              else ""));
-      Sig_fixpoint.store
-        ~max_shape_depth:Limits_semgrep.taint_MAX_SIG_SHAPE_DEPTH fid fresh db'
+      Sig_fixpoint.store ~max_shape_depth:(Taint_shape.max_poly_offset rs.lang)
+        fid fresh db'
   in
   (* Phase 1: SCC signature fixpoint, no finding emission. *)
   let analyze (fid : Function_id.t)

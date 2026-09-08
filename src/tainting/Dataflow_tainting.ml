@@ -349,12 +349,14 @@ let record_effects env new_effects =
      * fixpoint timeout with a huge lval_env. Truncating every effect as it
      * is recorded cuts that ascending chain where it feeds back, and bounds
      * the shapes stored in signature databases (SCC-level recursion
-     * included). See [Limits_semgrep.taint_MAX_SIG_SHAPE_DEPTH]. *)
+     * included). The cut is the longest offset a lookup can form: no level
+     * below it is ever read, and a builder of [k] fields keeps a [k]-way
+     * tree of the cut depth. *)
     let new_effects =
       new_effects
       |> List_.map
            (Shape.truncate_effect
-              ~max_depth:Limits_semgrep.taint_MAX_SIG_SHAPE_DEPTH)
+              ~max_depth:(Shape.max_poly_offset env.taint_inst.lang))
     in
     env.effects_acc := Effects.add_list new_effects !(env.effects_acc)
 
