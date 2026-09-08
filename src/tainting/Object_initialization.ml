@@ -335,7 +335,10 @@ let detect_object_initialization
 
 (* Stamp each mapping's class onto every occurrence's [id_type] so consumers
    read it off the AST (fill-on-None; a [TyFun] [id_type] is overwritten —
-   C++'s most vexing parse). First mapping per leaf wins. *)
+   C++'s most vexing parse). An occurrence takes the nearest mapping of its
+   variable that precedes it: a receiver rebound to another class is that
+   class from the rebinding on. An occurrence no mapping precedes takes the
+   first. *)
 let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
   let sid_of_name (n : G.name) : G.SId.t option =
     match n with
@@ -343,10 +346,19 @@ let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
         match !(info.G.id_resolved) with Some (_, sid) -> Some sid | None -> None)
     | _ -> None
   in
+  (* [-1] for a name with no place: it precedes everything. *)
+  let pos_of_name (n : G.name) : int =
+    match n with
+    | G.Id ((_, tok), _) -> (
+        match Tok.loc_of_tok tok with
+        | Ok loc -> loc.Tok.pos.Pos.bytepos
+        | Error _ -> -1)
+    | _ -> -1
+  in
   (* sid equality required only when both sides have resolved sids; else
      name-only — which can stamp a same-named var from an unrelated scope
      when sids are unresolved (Go/C++ often lack one). *)
-  let by_leaf : (string, (G.SId.t option * G.name) list) Hashtbl.t =
+  let by_leaf : (string, (G.SId.t option * int * G.name) list) Hashtbl.t =
     Hashtbl.create (max 16 (2 * List.length mappings))
   in
   List.iter
@@ -354,24 +366,39 @@ let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
       match Ty_leaf.leaf_of_name lhs with
       | Some s ->
         let prev = Option.value (Hashtbl.find_opt by_leaf s) ~default:[] in
-        Hashtbl.replace by_leaf s ((sid_of_name lhs, ty) :: prev)
+        Hashtbl.replace by_leaf s ((sid_of_name lhs, pos_of_name lhs, ty) :: prev)
       | None -> ())
     mappings;
-  Hashtbl.filter_map_inplace (fun _ l -> Some (List.rev l)) by_leaf;
-  let class_of_occurrence (n : G.name) : G.name option =
+  (* in source order *)
+  Hashtbl.filter_map_inplace
+    (fun _ l ->
+      Some (List.stable_sort (fun (_, p, _) (_, q, _) -> Int.compare p q) l))
+    by_leaf;
+  let class_of_occurrence (n : G.name)
+      : (G.name * [ `Preceded | `Fallback ]) option =
     let sid_o = sid_of_name n in
+    let pos_o = pos_of_name n in
     match Ty_leaf.leaf_of_name n with
     | None -> None
     | Some s -> (
         match Hashtbl.find_opt by_leaf s with
         | None -> None
         | Some cands ->
-          List.find_map
-            (fun (sid_m, ty) ->
-              match (sid_o, sid_m) with
-              | Some a, Some b -> if G.SId.equal a b then Some ty else None
-              | _ -> Some ty)
-            cands)
+          let same_var (sid_m, _, _) =
+            match (sid_o, sid_m) with
+            | Some a, Some b -> G.SId.equal a b
+            | _ -> true
+          in
+          let cands = List.filter same_var cands in
+          let preceding =
+            List.fold_left
+              (fun acc (_, p, ty) -> if p <= pos_o then Some ty else acc)
+              None cands
+          in
+          match (preceding, cands) with
+          | Some ty, _ -> Some (ty, `Preceded)
+          | None, (_, _, ty) :: _ -> Some (ty, `Fallback)
+          | None, [] -> None)
   in
   (* A stamped [id_type] carries the class name — strings and location
      tokens — but NOT live [id_info]s: a name stamped with its AST
@@ -391,16 +418,23 @@ let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
 
       method! visit_expr () e =
         (match e.G.e with
-        | G.N (G.Id (_, info) as n)
-          when (match !(info.G.id_type) with
-               | None | Some { G.t = G.TyFun _; _ } -> true
-               | Some _ -> false) -> (
+        | G.N (G.Id (_, info) as n) -> (
+            (* A mapping that precedes the occurrence is the construction
+               the name last took, more precise than the declaration's
+               type naming gave it; the fallback only fills a missing one. *)
+            let untyped =
+              match !(info.G.id_type) with
+              | None | Some { G.t = G.TyFun _; _ } -> true
+              | Some _ -> false
+            in
+            let stamp (ty : G.name) : unit =
+              info.G.id_type :=
+                Some { G.t = G.TyN (detacher#visit_name () ty); G.t_attrs = [] }
+            in
             match class_of_occurrence n with
-            | Some ty ->
-                info.G.id_type :=
-                  Some { G.t = G.TyN (detacher#visit_name () ty);
-                         G.t_attrs = [] }
-            | None -> ())
+            | Some (ty, `Preceded) -> stamp ty
+            | Some (ty, `Fallback) when untyped -> stamp ty
+            | _ -> ())
         | _ -> ());
         super#visit_expr () e
     end

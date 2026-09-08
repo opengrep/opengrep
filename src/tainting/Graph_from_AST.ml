@@ -20,10 +20,18 @@ let fn_id_to_node = fn_id_to_node
 let uses_new_keyword = uses_new_keyword
 let resolved_name_of_fn_id = resolved_name_of_fn_id
 
+(* A name's key carries the class its [id_type] holds: a receiver rebound
+   to another class is another callee, with the same text. *)
 let canonical_callee_key (e : G.expr) : string option =
   let rec key e =
     match e.G.e with
-    | G.N (G.Id ((s, _), _)) -> Some s
+    | G.N (G.Id ((s, _), info)) -> (
+        match Option.bind !(info.G.id_type) Ty_leaf.class_name_of_ty with
+        | Some cls -> (
+            match Ty_leaf.leaf_of_name cls with
+            | Some leaf -> Some (s ^ ":" ^ leaf)
+            | None -> Some s)
+        | None -> Some s)
     | G.DotAccess (sub, _, G.FN (G.Id ((s, _), _))) ->
       (match key sub with
        | Some k -> Some (k ^ "." ^ s)
