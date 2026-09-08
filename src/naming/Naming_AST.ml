@@ -1019,13 +1019,17 @@ class ['self] resolve_visitor env lang =
                 | [] -> (!(env.names.imported), add_ident_imported_scope)
                 | current :: _ -> (current, add_ident_current_scope)
               in
-              let binding =
+              (* A rebinding keeps the type the scope had for the name: a Java
+                 field and its same-named accessor are one entry here, and
+                 the field's type is what a use of the name carries. *)
+              let binding, enttype =
                 match lookup (fst id) [ scope ] with
-                | Some { entname = _, bound; _ } -> SId.to_int bound
-                | None -> fresh_binding env
+                | Some { entname = _, bound; enttype } ->
+                    (SId.to_int bound, enttype)
+                | None -> (fresh_binding env, None)
               in
               let sid = SId.of_tok ~binding ~file:env.file (snd id) in
-              let resolved = untyped_ent (resolved_name_kind env lang, sid) in
+              let resolved = { entname = (resolved_name_kind env lang, sid); enttype } in
               add_to_scope id resolved env.names;
               set_resolved env id_info resolved));
           super#visit_definition venv x
