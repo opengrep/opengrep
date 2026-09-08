@@ -47,6 +47,7 @@ type rule_state = {
 type interfile_target = {
   abs_path : Fpath.t;
   path_root : Fpath.t option;  (* base for absolutifying token paths; None if abs *)
+  origin : Origin.t;  (* the file as the user names it: what a rule's paths: see *)
 }
 
 type lang_context = {
@@ -123,14 +124,14 @@ let targets_in_interfile_graph
     : interfile_target list =
   List.filter_map (fun (target : Target.t) ->
     match target with
-    | Regular ({ analyzer; path = { internal_path_to_content; _ }; _ }) ->
+    | Regular ({ analyzer; path = { internal_path_to_content; origin }; _ }) ->
       (match Xlang.to_lang analyzer with
        | Ok target_lang when Lang.equal target_lang lang ->
          let abs_path, path_root =
            Fpath_.absolutify ~cwd internal_path_to_content
          in
          if Hashtbl.mem interfile_files abs_path then
-           Some { abs_path; path_root }
+           Some { abs_path; path_root; origin }
          else begin
            Log.warn (fun m ->
                m "interfile preprocess: target %s (abs: %s) not found in \
@@ -156,6 +157,8 @@ type rule_specs = {
   rs_sources : Function_id.t list;
   rs_sinks : Function_id.t list;
   rs_errors : E.t list;  (* targets whose extraction failed *)
+  rs_target_files : FpathSet.t;
+      (* the rule's targets: the scan's, less what its paths: excludes *)
 }
 
 (* Formula cache is per-file to avoid byte-position collisions. *)
@@ -263,7 +266,10 @@ let extract_specs_for_rule
   { rs_rule = rule;
     rs_sources = sources;
     rs_sinks = sinks;
-    rs_errors = errors }
+    rs_errors = errors;
+    rs_target_files =
+      FpathSet.of_list
+        (List.map (fun (t : interfile_target) -> t.abs_path) matching_targets) }
 
 
 type file_init_acc = {
@@ -476,13 +482,9 @@ let compute_rule_subgraph
        file the graph knows about; on a partial scan the counterpart may sit in
        a file that was never a target and so never had its specs extracted. *)
     let scan_is_partial =
-      let targets =
-        lc.lc_matching_targets
-        |> List.map (fun (t : interfile_target) -> Fpath.normalize t.abs_path)
-        |> FpathSet.of_list
-      in
       Interfile_graph.files_of_graph interfile_graph
-      |> List.exists (fun f -> not (FpathSet.mem (Fpath.normalize f) targets))
+      |> List.exists (fun f ->
+             not (FpathSet.mem (Fpath.normalize f) specs.rs_target_files))
     in
     let relevant_graph =
       match sources, sinks with
@@ -1247,6 +1249,7 @@ let build_rule_states
     ~(max_memory_mb : int)
     ~(valid_rules : R.rule list)
     ~(targets : Target.t list)
+    ~(respect_rule_paths : bool)
     ~(targeting_conf : Find_targets.conf)
     ~(xconf : Match_env.xconfig)
     : rule_state list * Xlang.t list * E.t list =
@@ -1600,10 +1603,21 @@ let build_rule_states
          List.map (fun (rule : R.taint_rule) -> (lc, rule)) lc.lc_rules)
          lang_contexts)
   in
+  (* A rule's targets are the scan's, less what its paths: excludes: the
+     same test the per-target path applies to a rule. *)
+  let rule_targets ((lc : lang_context), (rule : R.taint_rule))
+      : interfile_target list =
+    if respect_rule_paths then
+      List.filter
+        (fun (t : interfile_target) ->
+          Filter_target.rule_applies_to_origin rule.R.paths t.origin)
+        lc.lc_matching_targets
+    else lc.lc_matching_targets
+  in
   let spec_chunk_items : (int * interfile_target list) list =
     spec_pairs |> Array.to_list
-    |> List.mapi (fun i ((lc : lang_context), _rule) ->
-         chunks spec_extract_batch_size lc.lc_matching_targets
+    |> List.mapi (fun i pair ->
+         chunks spec_extract_batch_size (rule_targets pair)
          |> List_.map (fun chunk -> (i, chunk)))
     |> List.concat
   in
@@ -1674,13 +1688,15 @@ let build_rule_states
     let by_rule =
       List.fold_left
         (fun acc ((i, specs) : int * rule_specs) ->
-          let sources, sinks, errors =
-            Option.value (IntMap.find_opt i acc) ~default:([], [], [])
+          let sources, sinks, errors, files =
+            Option.value (IntMap.find_opt i acc)
+              ~default:([], [], [], FpathSet.empty)
           in
           IntMap.add i
             (List.rev_append specs.rs_sources sources,
              List.rev_append specs.rs_sinks sinks,
-             List.rev_append specs.rs_errors errors)
+             List.rev_append specs.rs_errors errors,
+             FpathSet.union specs.rs_target_files files)
             acc)
         IntMap.empty spec_partials
     in
@@ -1688,10 +1704,14 @@ let build_rule_states
     |> List.mapi (fun i ((lc : lang_context), (rule : R.taint_rule)) ->
          if Hashtbl.mem failed_spec_rules i then None
          else
-           let rs_sources, rs_sinks, rs_errors =
-             Option.value (IntMap.find_opt i by_rule) ~default:([], [], [])
+           let rs_sources, rs_sinks, rs_errors, rs_target_files =
+             Option.value (IntMap.find_opt i by_rule)
+               ~default:([], [], [], FpathSet.empty)
            in
-           Some (lc, { rs_rule = rule; rs_sources; rs_sinks; rs_errors }))
+           Some
+             (lc,
+              { rs_rule = rule; rs_sources; rs_sinks; rs_errors;
+                rs_target_files }))
     |> List.filter_map Fun.id
   in
   let spec_file_failures : E.t list =
@@ -1807,6 +1827,13 @@ let build_rule_states
               (Rule_ID.to_string rule_id) (Exception.to_string exn));
         { (E.exn_to_error exn) with E.rule_id = Some rule_id })
       (fun (rsg : rule_subgraph) ->
+        (* the rule's targets only: a finding in a file its paths: excludes
+           is a companion's, and is not reported *)
+        let target_root_map =
+          FpathMap.filter
+            (fun abs _ -> FpathSet.mem abs rsg.rsg_specs.rs_target_files)
+            target_root_map
+        in
         init_rule_state
           ~ast_table:(ast_table_for_lang full_ast_lookup
                         rsg.rsg_lang_context.lc_lang)

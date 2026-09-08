@@ -30,6 +30,7 @@ val build_rule_states :
   max_memory_mb:int ->
   valid_rules:Rule.t list ->
   targets:Target.t list ->
+  respect_rule_paths:bool ->
   targeting_conf:Find_targets.conf ->
   xconf:Match_env.xconfig ->
   rule_state list * Xlang.t list * Core_error.t list
