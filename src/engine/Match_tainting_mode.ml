@@ -784,42 +784,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               relevant_graph []
             |> List.rev
           in
-          (* SCC-aware signature fixpoint.  A plain topological pass visits the
-             members of a cycle in arbitrary order, so a mutually-recursive
-             caller can be summarised before its callee and produce an
-             incomplete signature.  Iterate each cyclic SCC to a fixpoint;
-             singleton SCCs without a self-loop run once (the old behaviour). *)
-          let module Sig_lattice = struct
-            type t = Shape_and_sig.SignatureSet.t
-
-            (* Guard-aware: plain [equal] is guard-blind and would declare
-               the SCC converged while an effect's guard still refines
-               (Clojure length-atom guards exist even with [effect_guards]
-               off). *)
-            let equal = Shape_and_sig.SignatureSet.equal_with_guards
-          end in
-          let module Sig_store = struct
-            type t = Shape_and_sig.signature_database
-            type node = Function_id.t
-            type lattice = Shape_and_sig.SignatureSet.t
-            let get (n : Function_id.t) (db : Shape_and_sig.signature_database)
-                : lattice =
-              match
-                Shape_and_sig.FunctionMap.find_opt n db.Shape_and_sig.signatures
-              with
-              | Some s -> s
-              | None -> Shape_and_sig.SignatureSet.empty
-            let set (n : Function_id.t) (s : lattice)
-                (db : Shape_and_sig.signature_database) : t =
-              { Shape_and_sig.signatures =
-                  Shape_and_sig.FunctionMap.add n s db.Shape_and_sig.signatures }
-          end in
-          let module Engine =
-            Graph_fixpoint.Make (Call_graph.G) (Sig_lattice) (Sig_store)
-          in
-          (* Extract a function's own signature(s) and REPLACE its entry with
-             just those, so fixpoint iterations don't accumulate same-arity
-             sigs ([find_by_arity] gives up on several, losing the sig). *)
+          (* A function's own signatures replace its db entry
+             ([Sig_fixpoint.store]). *)
           let analyze (node : Function_id.t)
               (db : Shape_and_sig.signature_database)
               : Shape_and_sig.signature_database =
@@ -830,26 +796,12 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
                 extract_signatures ?builtin_signature_db
                   ~call_graph:relevant_graph ~lang ~db ~taint_inst ~ast info
               in
-              let fresh_set =
-                List.fold_left
-                  (fun acc s -> Shape_and_sig.SignatureSet.add s acc)
-                  Shape_and_sig.SignatureSet.empty fresh
-              in
-              Sig_store.set node fresh_set db'
-          in
-          let sccs_callees_first =
-            List.rev (Call_graph.SCC.scc_list relevant_graph)
+              Sig_fixpoint.store node fresh db'
           in
           let signature_db_after_order =
-            Engine.run ~max_iter:20
-              ~on_max_iter:(fun (members : Function_id.t list) ->
-                Log.warn (fun m ->
-                    m "TAINT_FP: rule %s: signature SCC of size %d hit \
-                       max_iter, using current DB"
-                      (Rule_ID.to_string (fst rule.R.id))
-                      (List.length members)))
-              ~sccs:sccs_callees_first ~graph:relevant_graph ~analyze
-              initial_signature_db
+            Sig_fixpoint.run ~rule_id:(fst rule.R.id) ~graph:relevant_graph
+              ~sccs:(Sig_fixpoint.sccs_callees_first relevant_graph)
+              ~analyze initial_signature_db
           in
           (* Single match-emission pass over the converged DB. *)
           let topo_matches =

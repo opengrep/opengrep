@@ -38,6 +38,7 @@ type rule_state = {
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
   match_on : [ `Sink | `Source ];
   target_root_map : Fpath.t option FpathMap.t;
+  sccs : Function_id.t list list;  (* of [relevant_graph], callees first *)
   recursive_fids : FidSet.t;
       (* members of a recursive component: an SCC of several functions,
          or one that calls itself *)
@@ -594,6 +595,7 @@ let init_rule_state
         fi_errors = [] }
       rsg.rsg_files
   in
+  let sccs = Sig_fixpoint.sccs_callees_first rsg.rsg_relevant_graph in
   ({
     rule;
     lang;
@@ -605,15 +607,9 @@ let init_rule_state
       Some (Builtin_models.create_all_builtin_models lang);
     match_on = Match_tainting_mode.match_on_of_xconf rsg.rsg_xconf;
     target_root_map;
+    sccs;
     recursive_fids =
-      Call_graph.SCC.scc_list rsg.rsg_relevant_graph
-      |> List.concat_map (fun (members : Function_id.t list) ->
-             match members with
-             | [ fid ] ->
-                 if Call_graph.G.mem_edge rsg.rsg_relevant_graph fid fid
-                 then [ fid ]
-                 else []
-             | _ -> members)
+      Sig_fixpoint.recursive_members rsg.rsg_relevant_graph sccs
       |> FidSet.of_list;
   }, init_acc.fi_errors)
 
@@ -764,45 +760,10 @@ let fid_arity_of (rs : rule_state) (info : Match_tainting_mode.fun_info)
     (Tok.unbracket info.Match_tainting_mode.fdef.AST_generic.fparams)
     info rs.lang
 
-(* SCC-aware signature fixpoint over the relevant call graph.  A plain
-   topological fold ([Call_graph.Topo]) visits the members of a cycle in
-   arbitrary order, so a caller inside a cycle can be summarised before its
-   mutual callee and produce an incomplete signature (mutual recursion, and
-   indirect impl<->interface dispatch cycles).  Iterate each cyclic SCC to a
-   fixpoint; singleton SCCs without a self-loop run once, as a plain single
-   pass would. *)
-module Sig_lattice = struct
-  type t = Shape_and_sig.SignatureSet.t
-
-  (* Guard-aware: plain [equal] is guard-blind and would declare the SCC
-     converged while an effect's guard still refines (Clojure length-atom
-     guards exist even with [effect_guards] off). *)
-  let equal = Shape_and_sig.SignatureSet.equal_with_guards
-end
-
-module Sig_store = struct
-  type t = Shape_and_sig.signature_database
-  type node = Function_id.t
-  type lattice = Shape_and_sig.SignatureSet.t
-  let get (n : Function_id.t) (db : Shape_and_sig.signature_database) : lattice =
-    match FunctionMap.find_opt n db.Shape_and_sig.signatures with
-    | Some s -> s
-    | None -> Shape_and_sig.SignatureSet.empty
-  let set (n : Function_id.t) (s : lattice)
-      (db : Shape_and_sig.signature_database) : t =
-    { Shape_and_sig.signatures =
-        FunctionMap.add n s db.Shape_and_sig.signatures }
-end
-
-module Sig_engine =
-  Graph_fixpoint.Make (Call_graph.G) (Sig_lattice) (Sig_store)
-
 let topo_fold ~(detect_findings : bool) (rs : rule_state)
     : Shape_and_sig.signature_database * PM.t list =
   let initial_db = initial_sig_db rs in
-  (* Extract a function's own signature(s) and REPLACE its db entry with just
-     those, so repeated fixpoint iterations don't accumulate several same-arity
-     sigs (which makes [find_by_arity] give up). *)
+  (* A function's own signatures replace its db entry ([Sig_fixpoint.store]). *)
   let extract_replace (fid : Function_id.t)
       (info : Match_tainting_mode.fun_info)
       (db : Shape_and_sig.signature_database)
@@ -827,24 +788,8 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
                0 fresh)
             (if fn_taint_inst.Taint_rule_inst.recursive then ", recursive"
              else ""));
-      let fresh_set =
-        List.fold_left
-          (fun acc (xs : Shape_and_sig.extended_sig) ->
-            (* Widen stored shapes: a self-recursive tree-builder nests its
-               return shape one level deeper per SCC round (no fixpoint in
-               the shape domain); truncating at the store point cuts the
-               ascending chain where the cost is incurred. *)
-            let xs =
-              { xs with
-                Shape_and_sig.sig_ =
-                  Taint_shape.truncate_signature
-                    ~max_depth:Limits_semgrep.taint_MAX_SIG_SHAPE_DEPTH
-                    xs.Shape_and_sig.sig_ }
-            in
-            Shape_and_sig.SignatureSet.add xs acc)
-          Shape_and_sig.SignatureSet.empty fresh
-      in
-      Sig_store.set fid fresh_set db'
+      Sig_fixpoint.store
+        ~max_shape_depth:Limits_semgrep.taint_MAX_SIG_SHAPE_DEPTH fid fresh db'
   in
   (* Phase 1: SCC signature fixpoint, no finding emission. *)
   let analyze (fid : Function_id.t)
@@ -879,11 +824,6 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
           if List_.null (dispatch_impls rs fid) then db
           else dispatch_merge_fbdecl rs fid (fid_arity_of rs info) db)
   in
-  (* [SCC.scc_list] returns components in an order where callers precede
-     callees for our callee->caller edges; reverse for callees-first. *)
-  let sccs_callees_first =
-    List.rev (Call_graph.SCC.scc_list rs.relevant_graph)
-  in
   (* Edge-less SOURCE seeds are outside the SCC list, so nothing else
      computes their signature — yet the epilogue and the [id_resolved]-stamp
      channel both reach one without any graph edge.  Restricted to sources:
@@ -891,14 +831,8 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
      signature, and analyzing every orphan means a CFG build plus dataflow
      per seed per rule (minutes on a large corpus). *)
   let converged_db =
-    Sig_engine.run ~max_iter:20
-      ~on_max_iter:(fun (members : Function_id.t list) ->
-        Log.warn (fun m ->
-            m "interfile: rule %s: signature SCC of size %d hit max_iter, \
-               using current DB"
-              (Rule_ID.to_string (fst rs.rule.R.id))
-              (List.length members)))
-      ~sccs:sccs_callees_first ~graph:rs.relevant_graph ~analyze initial_db
+    Sig_fixpoint.run ~rule_id:(fst rs.rule.R.id) ~graph:rs.relevant_graph
+      ~sccs:rs.sccs ~analyze initial_db
   in
   (* Phase 2: single match-emission pass over the converged DB.  Every
      function's callees already have their final signatures, so order is
