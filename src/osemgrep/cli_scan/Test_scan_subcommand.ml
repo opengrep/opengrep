@@ -739,6 +739,101 @@ let test_interfile_symlinked_root (caps : Scan_subcommand.caps) () =
                 |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
                        Fpath.basename m.path)))))
 
+(* A file the index parsed is covered even when it holds nothing to index:
+   an empty package file is not absent from the graph. *)
+let test_interfile_empty_file_is_covered (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", "from pkg.sinks import leak\n\ndef go():\n    leak(source())\n");
+          F.Dir
+            ( "pkg",
+              [
+                F.File ("__init__.py", "");
+                F.File ("sinks.py", interfile_sink_py_content);
+              ] );
+        ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "no errors" []
+            (out.errors
+            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                   Option.value e.message ~default:"error"));
+          Alcotest.(check (list string)) "the finding's file" [ "pkg/sinks.py" ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path))))
+
+(* Targets the index leaves out, here two files a tsconfig excludes, are
+   reported once per language and root, the files named, not once each. *)
+let test_interfile_uncovered_targets_aggregated (caps : Scan_subcommand.caps)
+    () =
+  let rules = {|rules:
+  - id: t
+    languages: [typescript]
+    severity: WARNING
+    message: t
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", rules);
+          F.File ("tsconfig.json", {|{ "exclude": ["gen/**"] }|});
+          F.File ("main.ts", "import { run } from \"./sinks\";\nrun(source());\n");
+          F.File ("sinks.ts", "export function run(x) { sink(x); }\n");
+          F.Dir
+            ( "gen",
+              [
+                F.File ("a.ts", "export const a = 1;\n");
+                F.File ("b.ts", "export const b = 2;\n");
+              ] );
+        ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "the finding's file" [ "sinks.ts" ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path));
+          let messages =
+            out.errors
+            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                   Option.value e.message ~default:"error")
+          in
+          Alcotest.(check int) "one warning" 1 (List.length messages);
+          List.iter
+            (fun file ->
+              Alcotest.(check bool) ("names " ^ file) true
+                (List.for_all
+                   (fun (m : string) -> String_.contains m ~term:file)
+                   messages))
+            [ "gen/a.ts"; "gen/b.ts" ]))
+
 (* Sources and sinks are extracted only over the scan's target files, so a
    partial scan — one file here, but equally a diff scan or a CI changed-files
    run — sees just one side of the flow.  Scanning only the sink file must
@@ -2659,6 +2754,10 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "interfile rule paths" (test_interfile_rule_paths caps);
       t "interfile findings through a symlinked root"
         (test_interfile_symlinked_root caps);
+      t "interfile empty file is covered"
+        (test_interfile_empty_file_is_covered caps);
+      t "interfile uncovered targets aggregated"
+        (test_interfile_uncovered_targets_aggregated caps);
       t "interfile SARIF output" (test_interfile_sarif_output caps);
       t "interfile ignored caller" (test_interfile_ignored_caller caps);
       t "interfile with search and intrafile rules"

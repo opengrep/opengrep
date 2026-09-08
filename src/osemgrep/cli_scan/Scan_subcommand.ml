@@ -824,7 +824,15 @@ let check_targets_with_rules ?(print_summary = true)
                      (Option.is_some conf.targeting_conf.baseline_commit)
                    ~maturity:conf.common.maturity
                    ~max_target_bytes:conf.targeting_conf.max_target_bytes
-                   ~skipped_groups)
+                   ~skipped_groups
+                   ~unplaced_warnings:
+                     (result.Core_result.errors
+                     |> List.filter (fun (e : Core_error.t) ->
+                            (match e.typ with
+                            | SemgrepWarning -> true
+                            | _ -> false)
+                            && Option.is_none e.loc)
+                     |> List.length))
                 ());
           (* python: the print_summary parameter of output(); 'opengrep ci'
            * prints its own completion lines instead *)
