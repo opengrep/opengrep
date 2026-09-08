@@ -31,14 +31,20 @@ module Field_key = struct
 end
 module Field_map = Map.Make (Field_key)
 
-(* Keys are bare class-name leaves and setters are last-wins, so homonym
-   classes across packages share one slot; edge-time qualifier hints in
-   [Graph_from_AST] disambiguate the common Go case. *)
+(* Keys are bare class-name leaves: a call site has a leaf. Two classes of
+   one leaf keep separate entries, one per defining file, and a reader
+   takes the entry of the file its state sees the class in
+   ([class_files_of]): a state narrowed to a caller's imports sees the
+   caller's class. Edge-time qualifier hints in [Graph_from_AST]
+   disambiguate the common Go case. *)
 type t = {
-  inherited_methods : Func_info.t list Class_name_map.t;
-  parent_class : Names.Class_name.t Class_name_map.t;
+  class_files : Fpath.t list Class_name_map.t;
+  inherited_methods : (Fpath.t * Func_info.t list) list Class_name_map.t;
+  parent_class : (Fpath.t * Names.Class_name.t) list Class_name_map.t;
   module_singletons : AST_generic.name Module_qn_map.t;
-  method_returns : AST_generic.name Method_map.t;
+  (* Class leaves unqualified; one entry per defining file, the reader
+     picks the file of the class it sees ([get_method_return]). *)
+  method_returns : (Fpath.t * AST_generic.name) list Method_map.t;
   (* Class leaves unqualified; list disambiguates by package. *)
   fields : (Fpath.t * AST_generic.name) list Field_map.t;
   methods : Func_info.t list Class_name_map.t;
@@ -48,6 +54,7 @@ type t = {
 }
 
 let empty = {
+  class_files = Class_name_map.empty;
   inherited_methods = Class_name_map.empty;
   parent_class = Class_name_map.empty;
   module_singletons = Module_qn_map.empty;
@@ -59,23 +66,82 @@ let empty = {
   method_return_tuples = Method_map.empty;
 }
 
-(* Last-wins on homonym class names across files. *)
-let set_parent t child parent =
-  { t with parent_class = Class_name_map.add child parent t.parent_class }
+let get_methods t cls = Class_name_map.find_opt cls t.methods
 
-let get_parent t child = Class_name_map.find_opt child t.parent_class
+let add_class_file t cls file =
+  let cur = Option.value (Class_name_map.find_opt cls t.class_files) ~default:[] in
+  if List.exists (Fpath.equal file) cur then t
+  else { t with class_files = Class_name_map.add cls (file :: cur) t.class_files }
+
+(* The files this state sees the class defined in: its [class_files], as
+   narrowed to a caller's imports, else the files of its methods. *)
+let class_files_of t cls =
+  match Class_name_map.find_opt cls t.class_files with
+  | Some (_ :: _ as files) -> files
+  | _ ->
+      Option.value (get_methods t cls) ~default:[]
+      |> List.filter_map Func_info.def_file_opt
+
+(* The per-file entries the state's view of the class selects, or all of
+   them when it selects none. *)
+let entries_of t cls (entries : (Fpath.t * 'a) list) : 'a list =
+  let files = class_files_of t cls in
+  match List.filter (fun (f, _) -> List.exists (Fpath.equal f) files) entries with
+  | [] -> List.map snd entries
+  | selected -> List.map snd selected
+
+(* One entry per file; a re-set of a file with an equal value leaves the
+   state physically unchanged, so a fixpoint over it stabilises. *)
+let set_entry (entries : (Fpath.t * 'a) list) (file : Fpath.t) (v : 'a)
+    : (Fpath.t * 'a) list =
+  match List.find_opt (fun (f, _) -> Fpath.equal f file) entries with
+  | Some (_, old) when old == v -> entries
+  | Some _ -> List.map (fun ((f, _) as e) -> if Fpath.equal f file then (f, v) else e) entries
+  | None -> (file, v) :: entries
+
+let set_parent t child def_file parent =
+  let cur = Option.value (Class_name_map.find_opt child t.parent_class) ~default:[] in
+  let entries = set_entry cur def_file parent in
+  if entries == cur then t
+  else { t with parent_class = Class_name_map.add child entries t.parent_class }
+
+let get_parent t child =
+  match Class_name_map.find_opt child t.parent_class with
+  | None -> None
+  | Some entries -> (
+      match entries_of t child entries with
+      | p :: _ -> Some p
+      | [] -> None)
 
 let set_module_singleton t qn ty =
   { t with module_singletons = Module_qn_map.add qn ty t.module_singletons }
 
 let get_module_singleton t qn = Module_qn_map.find_opt qn t.module_singletons
 
-(* Last-wins; monotone call sites must gate on an already-known check. *)
-let set_method_return t cls meth ty =
-  { t with method_returns = Method_map.add (cls, meth) ty t.method_returns }
+(* One entry per defining file. A re-set of the same file with an equal
+   type leaves the state physically unchanged, so a fixpoint over it
+   stabilises; monotone call sites must still gate on an already-known
+   check. *)
+let set_method_return t cls meth def_file ty =
+  let cur =
+    Option.value (Method_map.find_opt (cls, meth) t.method_returns) ~default:[]
+  in
+  let entries = set_entry cur def_file ty in
+  if entries == cur then t
+  else { t with method_returns = Method_map.add (cls, meth) entries t.method_returns }
 
 let get_method_return t cls meth =
-  Method_map.find_opt (cls, meth) t.method_returns
+  match Method_map.find_opt (cls, meth) t.method_returns with
+  | None -> None
+  | Some entries -> (
+      match entries_of t cls entries with
+      | ty :: _ -> Some ty
+      | [] -> None)
+
+let has_method_return t cls meth def_file =
+  match Method_map.find_opt (cls, meth) t.method_returns with
+  | None -> false
+  | Some entries -> List.exists (fun (f, _) -> Fpath.equal f def_file) entries
 
 let set_field t cls field def_file ty =
   let cur =
@@ -100,30 +166,49 @@ let add_method t cls method_info =
   in
   { t with methods = Class_name_map.add cls (method_info :: cur) t.methods }
 
-let get_methods t cls = Class_name_map.find_opt cls t.methods
-
 let has_methods t cls = Class_name_map.mem cls t.methods
 
 let fold_methods (f : Names.Class_name.t -> Func_info.t list -> 'a -> 'a)
     (t : t) (init : 'a) : 'a =
   Class_name_map.fold f t.methods init
 
-let narrow_methods ?(classes : Names.Class_name.t list option)
-    ~(keep : Names.Class_name.t -> Func_info.t -> bool) (t : t) : t =
-  let narrow cls methods t =
-    match Func_info.narrow_colliding_groups ~keep:(keep cls) methods with
-    | Some filtered -> set_methods t cls filtered
-    | None -> t
+let narrow ?(classes : Names.Class_name.t list option)
+    ~(keep_file : Names.Class_name.t -> string -> bool)
+    ~(file_of_func : Func_info.t -> string option) (t : t) : t =
+  let keep cls (func : Func_info.t) =
+    match file_of_func func with
+    | Some file -> keep_file cls file
+    | None -> false
   in
-  match classes with
-  | None -> fold_methods narrow t t
-  | Some classes ->
-      List.fold_left
-        (fun t cls ->
-          match get_methods t cls with
-          | Some methods -> narrow cls methods t
+  let keep_file cls (file : Fpath.t) = keep_file cls (Fpath.to_string file) in
+  let narrow_class cls t =
+    let t =
+      match get_methods t cls with
+      | None -> t
+      | Some methods -> (
+          match Func_info.narrow_colliding_groups ~keep:(keep cls) methods with
+          | Some filtered -> set_methods t cls filtered
           | None -> t)
-        t classes
+    in
+    match Class_name_map.find_opt cls t.class_files with
+    | None | Some [] | Some [ _ ] -> t
+    | Some files -> (
+        (* the files [keep_file] accepts, or all of them when it accepts none *)
+        match List.filter (keep_file cls) files with
+        | [] -> t
+        | kept when List.length kept = List.length files -> t
+        | kept -> { t with class_files = Class_name_map.add cls kept t.class_files })
+  in
+  let classes =
+    match classes with
+    | Some classes -> classes
+    | None ->
+        Class_name_map.fold (fun cls _ acc -> cls :: acc) t.methods []
+        |> List.rev_append
+             (Class_name_map.fold (fun cls _ acc -> cls :: acc) t.class_files [])
+        |> List.sort_uniq Names.Class_name.compare
+  in
+  List.fold_left (fun t cls -> narrow_class cls t) t classes
 
 let set_function_return t fn ty =
   { t with function_returns = Method_name_map.add fn ty t.function_returns }
@@ -153,12 +238,15 @@ let method_leaf_names (fs : Func_info.t list) : (string, unit) Hashtbl.t =
   ) fs;
   tbl
 
-let add_inherited t cls (newcomers : Func_info.t list) =
+let add_inherited t cls def_file (newcomers : Func_info.t list) =
   if newcomers = [] then t
   else
-    let existing =
+    let entries =
       Option.value (Class_name_map.find_opt cls t.inherited_methods)
         ~default:[]
+    in
+    let existing =
+      Option.value (List.assoc_opt def_file entries) ~default:[]
     in
     let seen = method_leaf_names existing in
     let added =
@@ -174,11 +262,14 @@ let add_inherited t cls (newcomers : Func_info.t list) =
     if added = [] then t
     else
       { t with inherited_methods =
-          Class_name_map.add cls (added @ existing) t.inherited_methods }
+          Class_name_map.add cls
+            (set_entry entries def_file (added @ existing))
+            t.inherited_methods }
 
 let get_inherited t cls =
-  Option.value (Class_name_map.find_opt cls t.inherited_methods)
-    ~default:[]
+  match Class_name_map.find_opt cls t.inherited_methods with
+  | None -> []
+  | Some entries -> List.concat (entries_of t cls entries)
 
 (* Full qualified path: leaf-only misses [pkg_a.Store]→[pkg_b.Store] flips. *)
 let g_name_key (name : AST_generic.name) : string list =
@@ -193,13 +284,20 @@ let func_info_equal (a : Func_info.t) (b : Func_info.t) : bool =
 let list_equal eq a b =
   List.length a = List.length b && List.for_all2 eq a b
 let equal a b =
-  Class_name_map.equal (list_equal func_info_equal)
-    a.inherited_methods b.inherited_methods
-  && Class_name_map.equal Names.Class_name.equal
+  Class_name_map.equal (list_equal Fpath.equal) a.class_files b.class_files
+  && Class_name_map.equal
+       (list_equal (fun (fa, ma) (fb, mb) ->
+          Fpath.equal fa fb && list_equal func_info_equal ma mb))
+       a.inherited_methods b.inherited_methods
+  && Class_name_map.equal
+       (list_equal (fun (fa, pa) (fb, pb) ->
+          Fpath.equal fa fb && Names.Class_name.equal pa pb))
        a.parent_class b.parent_class
   && Module_qn_map.equal g_name_equal
        a.module_singletons b.module_singletons
-  && Method_map.equal g_name_equal
+  && Method_map.equal
+       (list_equal (fun (fa, ta) (fb, tb) ->
+          Fpath.equal fa fb && g_name_equal ta tb))
        a.method_returns b.method_returns
   && Field_map.equal
        (list_equal (fun (fa, ta) (fb, tb) ->

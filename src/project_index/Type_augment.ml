@@ -65,12 +65,12 @@ let populate_returns_from_decls
              | other -> other)
           | None -> None
         in
-        (match ret with
-         | Some ret_type ->
+        (match ret, Func_info.def_file_opt func with
+         | Some ret_type, Some def_file ->
            Type_state.set_method_return state
              (Names.Class_name.of_string (fst cls.IL.ident))
-             (Names.Method_name.of_string (fst meth.IL.ident)) ret_type
-         | None -> state)
+             (Names.Method_name.of_string (fst meth.IL.ident)) def_file ret_type
+         | _ -> state)
       | None -> state
     in
     match frettype with
@@ -293,13 +293,15 @@ let augment_return_types_from_bodies
   let step (state : Type_state.t) : Type_state.t =
     List.fold_left (fun state (func : FA.func_info) ->
       let already_known =
-        match class_method_of func with
-        | Some (cls, meth) ->
-          Type_state.get_method_return state
+        match class_method_of func, Func_info.def_file_opt func with
+        | Some (cls, meth), Some def_file ->
+          (* known for this class, the one of this file: a same-named
+             class elsewhere does not stand in for it *)
+          Type_state.has_method_return state
             (Names.Class_name.of_string cls)
-            (Names.Method_name.of_string meth)
-          |> Option.is_some
-        | None ->
+            (Names.Method_name.of_string meth) def_file
+        | Some _, None -> true
+        | None, _ ->
           (match leaf_fn_name func with
            | Some name ->
              Type_state.get_function_return state
@@ -322,12 +324,13 @@ let augment_return_types_from_bodies
         match inferred with
         | [] -> state
         | ty :: _ ->
-          (match class_method_of func with
-           | Some (cls, meth) ->
+          (match class_method_of func, Func_info.def_file_opt func with
+           | Some (cls, meth), Some def_file ->
              Type_state.set_method_return state
                (Names.Class_name.of_string cls)
-               (Names.Method_name.of_string meth) ty
-           | None ->
+               (Names.Method_name.of_string meth) def_file ty
+           | Some _, None -> state
+           | None, _ ->
              (match leaf_fn_name func with
               | Some name ->
                 Type_state.set_function_return state

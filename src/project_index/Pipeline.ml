@@ -351,19 +351,16 @@ let narrow_methods_by_import_files
     ~(file_of_func : Func_info.t -> string option)
     ~(caller_file : string)
     (ts : Type_state.t) : Type_state.t =
-  let keep (cls_name : Names.Class_name.t) (func : Func_info.t) : bool =
-    match file_of_func func with
-    | None -> false
-    | Some file ->
-      String.equal file caller_file
-      || (match
-            Hashtbl.find_opt import_target_files
-              (Names.Class_name.to_string cls_name)
-          with
-         | Some target_set -> Hashtbl.mem target_set file
-         | None -> false)
+  let keep_file (cls_name : Names.Class_name.t) (file : string) : bool =
+    String.equal file caller_file
+    || (match
+          Hashtbl.find_opt import_target_files
+            (Names.Class_name.to_string cls_name)
+        with
+       | Some target_set -> Hashtbl.mem target_set file
+       | None -> false)
   in
-  Type_state.narrow_methods ~keep
+  Type_state.narrow ~keep_file ~file_of_func
     ~classes:
       (Hashtbl.fold (fun cls _ acc -> Names.Class_name.of_string cls :: acc)
          import_target_files [])
@@ -397,17 +394,14 @@ let narrow_methods_by_required_files
   in
   if spec_suffixes = [] then ts
   else
-    let keep (_ : Names.Class_name.t) (func : Func_info.t) : bool =
-      match file_of_func func with
-      | None -> false
-      | Some file ->
-        String.equal file caller_file
-        || (let rev_file_segs = Path_segs.rev_no_ext file in
-            List.exists
-              (fun rev_spec -> Path_segs.is_prefix rev_spec rev_file_segs)
-              spec_suffixes)
+    let keep_file (_ : Names.Class_name.t) (file : string) : bool =
+      String.equal file caller_file
+      || (let rev_file_segs = Path_segs.rev_no_ext file in
+          List.exists
+            (fun rev_spec -> Path_segs.is_prefix rev_spec rev_file_segs)
+            spec_suffixes)
     in
-    Type_state.narrow_methods ~keep ts
+    Type_state.narrow ~keep_file ~file_of_func ts
 
 let build_same_file_funcs_by_name
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -650,10 +644,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       match cfg.Index_lang_rules.unqualified_scope with
       | `Per_file ->
           let caller_dir = Filename.dirname fi_file_str in
-          let keep (_ : Names.Class_name.t) (func : Func_info.t) : bool =
-            match func_file_opt func with
-            | Some file -> String.equal (Filename.dirname file) caller_dir
-            | None -> false
+          let keep_file (_ : Names.Class_name.t) (file : string) : bool =
+            String.equal (Filename.dirname file) caller_dir
           in
           let classes =
             if cfg.Index_lang_rules.narrow_methods_by_required_files then None
@@ -666,7 +658,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                      | _ -> None)
                    fi.fi_imports)
           in
-          Type_state.narrow_methods ?classes ~keep file_type_state
+          Type_state.narrow ?classes ~keep_file ~file_of_func:func_file_opt
+            file_type_state
       | `Per_directory | `Per_package -> file_type_state
     in
     let same_file_funcs_by_name =
@@ -698,7 +691,10 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ()
     in
     stamp_singleton_imports ~type_state fi;
-    stamp_var_types ~type_state ~slice_element_of_field fi.fi_ast;
+    (* the file's view: the classes it imports, a method's return type
+       from the class it sees *)
+    stamp_var_types ~type_state:file_type_state ~slice_element_of_field
+      fi.fi_ast;
     let per_fdef_edges =
       Visit_function_defs.fold_with_parent_path ~lang
         (fun edges opt_ent parent_path fdef ->
@@ -787,7 +783,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
             isinstance_facts @ self_facts @ param_facts
           in
           Object_initialization.stamp_id_types fdef_facts body_program;
-          stamp_var_types ~type_state ~slice_element_of_field body_program;
+          stamp_var_types ~type_state:file_type_state ~slice_element_of_field
+            body_program;
           let { FA.calls = callee_calls; callbacks = callback_calls; _ } =
             FA.extract_calls ~lang ~all_funcs
               ~func_lookup ~type_state:file_type_state
