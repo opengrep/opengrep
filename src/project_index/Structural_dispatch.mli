@@ -7,6 +7,7 @@ val emit_overload_edges :
 (* Emits [C.M <- I.M] Dispatch edges (structural interface satisfaction) so the topo fold sees impls before interfaces. *)
 
 val emit_dispatch_edges :
+  lang:Lang.t ->
   cfg:Index_lang_rules.t ->
   type_state:Type_state.t ->
   func_def_file:(Graph_from_AST.func_info -> string option) ->

@@ -24,6 +24,7 @@ val resolve_parent_by_scope :
    method shadows a BODY-LESS ancestor declaration (abstract method) of
    the same arity — the source for nominal override dispatch edges. *)
 val inherit_into_type_state :
+  lang:Lang.t ->
   cross_module_parents:bool ->
   reexport_map:(Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t ->
   class_infos:class_info list ->

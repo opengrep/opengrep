@@ -279,7 +279,7 @@ let build_project_call_graph (caps : < Cap.fork >)
         | `Per_file -> false
         | `Per_directory | `Per_package -> true
       in
-      Mro.inherit_into_type_state ~cross_module_parents ~reexport_map
+      Mro.inherit_into_type_state ~lang ~cross_module_parents ~reexport_map
         ~class_infos ~func_def_file:Type_augment.func_def_file type_state
     else (type_state, [], [])
   in
@@ -470,7 +470,8 @@ let build_project_call_graph (caps : < Cap.fork >)
   (* Interface dispatch edges.  See [Structural_dispatch]. *)
   let n_dispatch =
     Structural_dispatch.emit_dispatch_edges
-      ~cfg ~type_state ~func_def_file:Type_augment.func_def_file ~class_infos ~graph
+      ~lang ~cfg ~type_state ~func_def_file:Type_augment.func_def_file
+      ~class_infos ~graph
   in
   if n_dispatch > 0 then
     Log.debug (fun m -> m "Interface dispatch: emitted %d Dispatch edges"

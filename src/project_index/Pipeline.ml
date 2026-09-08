@@ -727,7 +727,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                 let mk str =
                   G.Id ((str, Tok.unsafe_fake_tok str), G.empty_id_info ())
                 in
-                [ (mk "self", cls_id); (mk "cls", cls_id) ]
+                List.map (fun name -> (mk name, cls_id)) (Receiver.self_names lang)
               | _ -> []
             in
             (* isinstance narrowing over-applies: [(var, T)] holds for the
