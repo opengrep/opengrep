@@ -508,8 +508,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   (graph, inherited_by_class, phase1_failures @ phase2_failures)
 
 let project_root_abs_of (project_root : Fpath.t) : Fpath.t =
-  if Fpath.is_abs project_root then project_root
-  else Fpath.(v (Sys.getcwd ()) // project_root) |> Fpath.normalize
+  fst (Fpath_.absolutify ~cwd:(Fpath.v (Sys.getcwd ())) project_root)
 
 let run_pipeline (caps : < Cap.fork >)
     ?(targeting_conf : Find_targets.conf =
@@ -551,8 +550,7 @@ let run_pipeline (caps : < Cap.fork >)
      directory prefixes. *)
   let project_root_abs = project_root_abs_of project_root in
   let absolutize (file : Fpath.t) : Fpath.t =
-    if Fpath.is_abs file then file
-    else Fpath.(project_root_abs // file) |> Fpath.normalize
+    fst (Fpath_.absolutify ~cwd:project_root_abs file)
   in
   (* Go package identity from [go.mod] (go.work workspaces are not
      parsed); empty for non-Go, so [mp]
@@ -681,8 +679,7 @@ let collect_resolved (caps : < Cap.fork >)
   : Call_graph.G.t * (string, G.program) Hashtbl.t * Core_error.t list =
   let project_root_abs = project_root_abs_of project_root in
   let absnorm (file : Fpath.t) : string =
-    (if Fpath.is_abs file then file else Fpath.(project_root_abs // file))
-    |> Fpath.normalize |> Fpath.to_string
+    fst (Fpath_.absolutify ~cwd:project_root_abs file) |> Fpath.to_string
   in
   let (_entries, graph, _scanned, _skipped, all_files, failures) =
     run_pipeline caps ~targeting_conf ~lang ~project_root:project_root_abs
@@ -702,8 +699,7 @@ let resolve_ast_for_file (caps : < Cap.fork >)
   : G.program option =
   let project_root_abs = project_root_abs_of project_root in
   let target_key =
-    (if Fpath.is_abs target then target else Fpath.(project_root_abs // target))
-    |> Fpath.normalize |> Fpath.to_string
+    fst (Fpath_.absolutify ~cwd:project_root_abs target) |> Fpath.to_string
   in
   let _graph, asts, _failures =
     collect_resolved caps ~targeting_conf ~lang ~project_root ~ncores

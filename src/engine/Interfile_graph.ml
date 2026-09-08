@@ -19,8 +19,7 @@ let load_interfile_build (caps : < Cap.fork >)
     (lang : Lang.t) (project_root : Fpath.t)
     : (interfile_graph * resolved_asts * Core_error.t list) option =
   let project_root_abs =
-    if Fpath.is_abs project_root then Fpath.normalize project_root
-    else Fpath.(v (Sys.getcwd ()) // project_root) |> Fpath.normalize
+    fst (Fpath_.absolutify ~cwd:(Fpath.v (Sys.getcwd ())) project_root)
   in
   let ncores =
     if ncores <= 0 then Domainslib_.get_cpu_count () else ncores

@@ -324,9 +324,7 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (conf : Scan_CLI.conf)
         real
   in
   let relative_to_cwd (path : Fpath.t) : Fpath.t =
-    let absolute =
-      Fpath.normalize (if Fpath.is_abs path then path else Fpath.(cwd // path))
-    in
+    let absolute = fst (Fpath_.absolutify ~cwd path) in
     let resolved =
       let dir, last_segment = Fpath.split_base absolute in
       Fpath.(resolve_dir dir // last_segment)
