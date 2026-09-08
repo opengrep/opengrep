@@ -18,8 +18,13 @@ let load_interfile_build (caps : < Cap.fork >)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
     : (interfile_graph * resolved_asts * Core_error.t list) option =
+  (* The graph is keyed by canonical path, whatever spelling the root came
+     in; the targets are matched by theirs ([Interfile_dispatch]). *)
   let project_root_abs =
-    fst (Fpath_.absolutify ~cwd:(Fpath.v (Sys.getcwd ())) project_root)
+    let abs = fst (Fpath_.absolutify ~cwd:(Fpath.v (Sys.getcwd ())) project_root) in
+    match Rpath.of_fpath abs with
+    | Ok r -> Rpath.to_fpath r
+    | Error _ -> abs
   in
   let ncores =
     if ncores <= 0 then Domainslib_.get_cpu_count () else ncores

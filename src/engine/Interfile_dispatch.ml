@@ -17,6 +17,11 @@ module FpathMap = Map.Make (Fpath)
 module FpathSet = Set.Make (Fpath)
 module FidSet = Set.Make (Function_id)
 
+(* A target as the scan spelled it, kept beside its canonical path: the
+   finding reports the spelling, whose hash is the fingerprint. [path_root]
+   is the base a relative spelling was given against. *)
+type target_spelling = { typed : Fpath.t; path_root : Fpath.t option }
+
 let parse_file (lang : Lang.t) (file : Fpath.t) : G.program =
   let result = Parse_target.parse_and_resolve_name lang file in
   result.Parsing_result2.ast
@@ -37,7 +42,7 @@ type rule_state = {
   file_envs : file_env FpathMap.t;
   builtin_signature_db : Shape_and_sig.builtin_signature_database option;
   match_on : [ `Sink | `Source ];
-  target_root_map : Fpath.t option FpathMap.t;
+  target_root_map : target_spelling FpathMap.t;  (* by canonical path *)
   sccs : Function_id.t list list;  (* of [relevant_graph], callees first *)
   recursive_fids : FidSet.t;
       (* members of a recursive component: an SCC of several functions,
@@ -115,7 +120,21 @@ let interfile_file_set (graph : Call_graph.G.t) : (Fpath.t, bool) Hashtbl.t =
   ) graph;
   tbl
 
-(* Relative internal paths are absolutified against [cwd], not project_root. *)
+(* A target's identity in the graph is its canonical path, the one the
+   index keys its files by: the spelling the scan was given may go through
+   a symlink, on the root or below it. A path that cannot be resolved (a
+   file that is not there) keeps its absolute spelling. Relative spellings
+   are against [cwd], not project_root. *)
+let canonical_path ~(cwd : Fpath.t) (typed : Fpath.t)
+    : Fpath.t * target_spelling =
+  let abs, path_root = Fpath_.absolutify ~cwd typed in
+  let canon =
+    match Rpath.of_fpath abs with
+    | Ok r -> Rpath.to_fpath r
+    | Error _ -> abs
+  in
+  (canon, { typed; path_root })
+
 let targets_in_interfile_graph
     ~(lang : Lang.t)
     ~(cwd : Fpath.t)
@@ -127,11 +146,11 @@ let targets_in_interfile_graph
     | Regular ({ analyzer; path = { internal_path_to_content; origin }; _ }) ->
       (match Xlang.to_lang analyzer with
        | Ok target_lang when Lang.equal target_lang lang ->
-         let abs_path, path_root =
-           Fpath_.absolutify ~cwd internal_path_to_content
+         let abs_path, (spelling : target_spelling) =
+           canonical_path ~cwd internal_path_to_content
          in
          if Hashtbl.mem interfile_files abs_path then
-           Some { abs_path; path_root; origin }
+           Some { abs_path; path_root = spelling.path_root; origin }
          else begin
            Log.warn (fun m ->
                m "interfile preprocess: target %s (abs: %s) not found in \
@@ -382,28 +401,25 @@ let fid_set_of_graph (graph : Call_graph.G.t) : FidSet.t =
 (* Base path for absolutifying a target's token paths: cwd if its internal
    path is relative, None if already absolute. *)
 let build_target_root_map ~(cwd : Fpath.t) (targets : Target.t list)
-    : Fpath.t option FpathMap.t =
-  List.fold_left (fun (acc : Fpath.t option FpathMap.t) (target : Target.t) ->
+    : target_spelling FpathMap.t =
+  List.fold_left (fun (acc : target_spelling FpathMap.t) (target : Target.t) ->
       match target with
       | Regular ({ path = { internal_path_to_content; _ }; _ }) ->
-        let abs_path, path_root =
-          Fpath_.absolutify ~cwd internal_path_to_content
-        in
-        FpathMap.add abs_path path_root acc
+        let abs_path, spelling = canonical_path ~cwd internal_path_to_content in
+        FpathMap.add abs_path spelling acc
       | Lockfile _ -> acc)
     FpathMap.empty targets
 
 (* None for non-target subgraph files (already absolute; absolutify is a no-op). *)
 let path_root_for_file
-    (target_root_map : Fpath.t option FpathMap.t)
+    (target_root_map : target_spelling FpathMap.t)
     (file_path : Fpath.t) : Fpath.t option =
-  let norm = Fpath.normalize file_path in
-  match FpathMap.find_opt norm target_root_map with
-  | Some pr -> pr
+  match FpathMap.find_opt (Fpath.normalize file_path) target_root_map with
+  | Some { path_root; _ } -> path_root
   | None -> None
 
 let is_target_file
-    (target_root_map : Fpath.t option FpathMap.t)
+    (target_root_map : target_spelling FpathMap.t)
     (file_path : Fpath.t) : bool =
   FpathMap.mem (Fpath.normalize file_path) target_root_map
 
@@ -564,7 +580,7 @@ let init_rule_state
     ~(ast_table : (Fpath.t, G.program) Hashtbl.t)
     ~(function_maps :
         (Fpath.t, Match_tainting_mode.fun_info FunctionMap.t) Hashtbl.t)
-    ~(target_root_map : Fpath.t option FpathMap.t)
+    ~(target_root_map : target_spelling FpathMap.t)
     (rsg : rule_subgraph)
     : rule_state * E.t list =
   let lang = rsg.rsg_lang_context.lc_lang in
@@ -902,18 +918,15 @@ let extract_signatures (rs : rule_state)
    hashed verbatim into the finding's fingerprint (match_based_id), so an
    absolute path ties fingerprints to the checkout directory and breaks
    cross-run comparison (e.g. between CI runners).  [target_root_map]
-   records each target's original anchor: [Some root] means the target was
-   given relative to [root] (restore that), [None] means it was given
-   absolute (keep it, matching what a per-target scan would report).
-   Non-target companion files stay absolute; they were never targets and
-   only appear inside taint traces. *)
-let rebase_file (target_root_map : Fpath.t option FpathMap.t)
+   keeps each target's spelling by its canonical path, so a finding in a
+   target reports what a per-target scan would.  Non-target companion
+   files stay absolute; they were never targets and only appear inside
+   taint traces. *)
+let rebase_file (target_root_map : target_spelling FpathMap.t)
     (file : Fpath.t) : Fpath.t option =
   match FpathMap.find_opt (Fpath.normalize file) target_root_map with
-  | Some (Some root) -> Fpath.relativize ~root file
-  | Some None
-  | None ->
-      None
+  | Some { typed; _ } -> Some typed
+  | None -> None
 
 let rebase_loc (rebase : Fpath.t -> Fpath.t option) (loc : Tok.location)
     : Tok.location =
@@ -948,7 +961,7 @@ let rebase_trace (rebase : Fpath.t -> Fpath.t option) (trace : Taint_trace.t)
       })
     trace
 
-let rebase_pm (target_root_map : Fpath.t option FpathMap.t) (pm : PM.t)
+let rebase_pm (target_root_map : target_spelling FpathMap.t) (pm : PM.t)
     : PM.t =
   let rebase = rebase_file target_root_map in
   let path =
@@ -1407,10 +1420,11 @@ let build_rule_states
               Hashtbl.replace matched_paths (Fpath.normalize it.abs_path) ())
               matching_targets;
             let unmatched =
-              List.filter (fun target ->
-                match Target.abs_path ~cwd target with
-                | None -> false
-                | Some path ->
+              List.filter (fun (target : Target.t) ->
+                match target with
+                | Lockfile _ -> false
+                | Regular { path = { internal_path_to_content; _ }; _ } ->
+                  let path, _ = canonical_path ~cwd internal_path_to_content in
                   not (Hashtbl.mem matched_paths path)
                   && not (Hashtbl.mem index_failed path))
                 lang_targets
