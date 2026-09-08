@@ -69,6 +69,11 @@ let def_file_opt (func_info : t) : Fpath.t option =
 
 let free_id (leaf : IL.name) : fn_id = [None; Some leaf]
 
+let prefer ~(keep : t -> bool) (funcs : t list) : t list =
+  match List.filter keep funcs with
+  | [] -> funcs
+  | kept -> kept
+
 (* Narrow one class's method list per method-name group.  Two same-named
    classes in different files land under one bare class name at method
    dispatch, and [pick_by_arity] drops the call on the (class, method, arity)

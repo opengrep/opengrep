@@ -39,6 +39,15 @@ val get_methods : t -> Names.Class_name.t -> Func_info.t list option
 val fold_methods :
   (Names.Class_name.t -> Func_info.t list -> 'a -> 'a) -> t -> 'a -> 'a
 
+(* The colliding method groups of the given classes (every class when
+   none is given) narrowed to the methods [keep] accepts, as
+   [Func_info.narrow_colliding_groups] does. *)
+val narrow_methods :
+  ?classes:Names.Class_name.t list ->
+  keep:(Names.Class_name.t -> Func_info.t -> bool) ->
+  t ->
+  t
+
 val set_function_return :
   t -> Names.Method_name.t -> AST_generic.name -> t
 

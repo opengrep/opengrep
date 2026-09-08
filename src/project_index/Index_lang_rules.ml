@@ -283,15 +283,13 @@ let rust_narrow_methods_by_imports
         let hint_dash =
           String.map (fun ch -> if ch = '_' then '-' else ch) hint
         in
-        let filtered = List.filter (fun (func : Func_info.t) ->
+        let keep (func : Func_info.t) : bool =
           match file_of_func func with
           | None -> false
           | Some file ->
             string_contains file hint || string_contains file hint_dash
-        ) methods in
-        if filtered <> [] && List.length filtered <> List.length methods
-        then Type_state.set_methods state cls_name filtered
-        else state
+        in
+        Type_state.set_methods state cls_name (Func_info.prefer ~keep methods)
     ) import_hint ts
 
 (* [from pkg.mod import Widget] records [("Widget", pkg.mod.Widget)] in
@@ -319,42 +317,27 @@ let python_narrow_methods_by_imports
       fi_imports
   in
   let rev_module_segs (file : string) : string list =
-    match Fpath.of_string file with
-    | Error _ -> []
-    | Ok path ->
-      (match List.rev (Fpath.segs path) with
-       | [] -> []
-       | last :: rev_init ->
-         let last = Filename.remove_extension last in
-         (* [pkg/mod/__init__.py] provides [pkg.mod], not [pkg.mod.__init__]. *)
-         if String.equal last "__init__" then rev_init else last :: rev_init)
+    match Path_segs.rev_no_ext file with
+    (* [pkg/mod/__init__.py] provides [pkg.mod], not [pkg.mod.__init__]. *)
+    | "__init__" :: rev_init -> rev_init
+    | segs -> segs
   in
-  let rec prefix_of pre l =
-    match pre, l with
-    | [], _ -> true
-    | p :: ps, x :: xs -> String.equal p x && prefix_of ps xs
-    | _ :: _, [] -> false
+  let keep (cls_name : Names.Class_name.t) (func : Func_info.t) : bool =
+    let cls = Names.Class_name.to_string cls_name in
+    match file_of_func func with
+    | None -> false
+    | Some file ->
+      let rev_segs = rev_module_segs file in
+      List.exists
+        (fun (c, rev_module) ->
+           String.equal c cls && Path_segs.is_prefix rev_module rev_segs)
+        imported
   in
-  List.fold_left (fun state cls ->
-    let cls_name = Names.Class_name.of_string cls in
-    match Type_state.get_methods state cls_name with
-    | None -> state
-    | Some methods ->
-      let keep (func : Func_info.t) : bool =
-        match file_of_func func with
-        | None -> false
-        | Some file ->
-          let rev_segs = rev_module_segs file in
-          List.exists
-            (fun (c, rev_module) ->
-               String.equal c cls && prefix_of rev_module rev_segs)
-            imported
-      in
-      (match Func_info.narrow_colliding_groups ~keep methods with
-       | Some filtered -> Type_state.set_methods state cls_name filtered
-       | None -> state))
+  Type_state.narrow_methods ~keep
+    ~classes:
+      (List.sort_uniq String.compare (List.map fst imported)
+      |> List.map Names.Class_name.of_string)
     ts
-    (List.sort_uniq String.compare (List.map fst imported))
 
 let python : t = { default with
   is_init_file = python_is_init_file;

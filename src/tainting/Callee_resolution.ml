@@ -342,12 +342,10 @@ let rec identify_callee ~(lang : Lang.t)
     match current_file_of_caller with
     | None -> matches
     | Some cf ->
-      let same = List.filter (fun f ->
+      Func_info.prefer matches ~keep:(fun f ->
         match func_def_file f with
         | Some df -> String.equal df cf
-        | None -> false
-      ) matches in
-      (match same with [] -> matches | _ -> same)
+        | None -> false)
   in
   (* Prefer the caller's own directory (Go packages are directory-scoped). *)
   let same_dir_filter (matches : func_info list) : func_info list =
@@ -357,12 +355,10 @@ let rec identify_callee ~(lang : Lang.t)
     | None -> matches
     | Some cf ->
       let cdir = Filename.dirname cf in
-      let same = List.filter (fun f ->
+      Func_info.prefer matches ~keep:(fun f ->
         match func_def_file f with
         | Some df -> String.equal (Filename.dirname df) cdir
-        | None -> false
-      ) matches in
-      (match same with [] -> matches | _ -> same)
+        | None -> false)
   in
   let narrow_by_package_qualifier (qual : string option)
       (matches : func_info list) : func_info list =
@@ -381,9 +377,7 @@ let rec identify_callee ~(lang : Lang.t)
            | _ ->
              String.equal (Filename.basename (Filename.dirname df)) q)
       in
-      (match List.filter in_package matches with
-       | [] -> matches
-       | qm -> qm)
+      Func_info.prefer ~keep:in_package matches
   in
   (* Prefer the caller's own file, then dir (Go packages are directory-scoped:
      same-leaf collisions). *)

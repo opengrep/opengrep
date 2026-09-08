@@ -351,21 +351,23 @@ let narrow_methods_by_import_files
     ~(file_of_func : Func_info.t -> string option)
     ~(caller_file : string)
     (ts : Type_state.t) : Type_state.t =
-  Hashtbl.fold (fun cls target_set state ->
-    let cls_name = Names.Class_name.of_string cls in
-    match Type_state.get_methods state cls_name with
-    | None -> state
-    | Some methods ->
-      let keep (func : Func_info.t) : bool =
-        match file_of_func func with
-        | None -> false
-        | Some file ->
-          Hashtbl.mem target_set file || String.equal file caller_file
-      in
-      (match Func_info.narrow_colliding_groups ~keep methods with
-       | Some filtered -> Type_state.set_methods state cls_name filtered
-       | None -> state)
-  ) import_target_files ts
+  let keep (cls_name : Names.Class_name.t) (func : Func_info.t) : bool =
+    match file_of_func func with
+    | None -> false
+    | Some file ->
+      String.equal file caller_file
+      || (match
+            Hashtbl.find_opt import_target_files
+              (Names.Class_name.to_string cls_name)
+          with
+         | Some target_set -> Hashtbl.mem target_set file
+         | None -> false)
+  in
+  Type_state.narrow_methods ~keep
+    ~classes:
+      (Hashtbl.fold (fun cls _ acc -> Names.Class_name.of_string cls :: acc)
+         import_target_files [])
+    ts
 
 (* Restrict colliding methods to files the caller itself requires (whole-file
    "*" import specifiers — Ruby [require_relative], PHP [require]/[include])
@@ -381,50 +383,31 @@ let narrow_methods_by_required_files
     ~(file_of_func : Func_info.t -> string option)
     ~(caller_file : string)
     (ts : Type_state.t) : Type_state.t =
-  let strip_ext_last (segs : string list) : string list =
-    match List.rev segs with
-    | last :: rev_init -> List.rev (Filename.remove_extension last :: rev_init)
-    | [] -> []
-  in
   let spec_suffixes =
     List.filter_map (fun spec ->
-      let segs =
-        String.split_on_char '/' spec
+      match
+        Path_segs.rev_no_ext spec
         |> List.filter (fun seg ->
              not (String.equal seg "") && not (String.equal seg ".")
              && not (String.equal seg ".."))
-      in
-      match strip_ext_last segs with
+      with
       | [] -> None
-      | segs -> Some (List.rev segs))
+      | segs -> Some segs)
       required_specs
   in
   if spec_suffixes = [] then ts
   else
-    let keep (func : Func_info.t) : bool =
+    let keep (_ : Names.Class_name.t) (func : Func_info.t) : bool =
       match file_of_func func with
       | None -> false
       | Some file ->
         String.equal file caller_file
-        || (let rev_file_segs =
-              match Fpath.of_string file with
-              | Ok path -> List.rev (strip_ext_last (Fpath.segs path))
-              | Error _ -> []
-            in
-            let rec prefix_of pre l =
-              match pre, l with
-              | [], _ -> true
-              | p :: ps, x :: xs -> String.equal p x && prefix_of ps xs
-              | _ :: _, [] -> false
-            in
-            List.exists (fun rev_spec -> prefix_of rev_spec rev_file_segs)
+        || (let rev_file_segs = Path_segs.rev_no_ext file in
+            List.exists
+              (fun rev_spec -> Path_segs.is_prefix rev_spec rev_file_segs)
               spec_suffixes)
     in
-    Type_state.fold_methods (fun cls_name methods state ->
-      match Func_info.narrow_colliding_groups ~keep methods with
-      | Some filtered -> Type_state.set_methods state cls_name filtered
-      | None -> state)
-      ts ts
+    Type_state.narrow_methods ~keep ts
 
 let build_same_file_funcs_by_name
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
