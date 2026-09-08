@@ -25,6 +25,10 @@ val free_id : IL.name -> fn_id
 (* File of the def's [fkind] token; [None] only for location-less tokens. *)
 val def_file_opt : t -> Fpath.t option
 
+(* The candidates [keep] accepts, or all of them when it accepts none: a
+   file test that matches nothing must not erase a function. *)
+val prefer : keep:(t -> bool) -> t list -> t list
+
 (* Drop non-[keep] methods, but only within method-name groups that hold
    several entries and would keep at least one survivor.  Uniquely named
    methods and groups [keep] would empty are left alone, so a failed match

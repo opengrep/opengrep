@@ -108,6 +108,23 @@ let fold_methods (f : Names.Class_name.t -> Func_info.t list -> 'a -> 'a)
     (t : t) (init : 'a) : 'a =
   Class_name_map.fold f t.methods init
 
+let narrow_methods ?(classes : Names.Class_name.t list option)
+    ~(keep : Names.Class_name.t -> Func_info.t -> bool) (t : t) : t =
+  let narrow cls methods t =
+    match Func_info.narrow_colliding_groups ~keep:(keep cls) methods with
+    | Some filtered -> set_methods t cls filtered
+    | None -> t
+  in
+  match classes with
+  | None -> fold_methods narrow t t
+  | Some classes ->
+      List.fold_left
+        (fun t cls ->
+          match get_methods t cls with
+          | Some methods -> narrow cls methods t
+          | None -> t)
+        t classes
+
 let set_function_return t fn ty =
   { t with function_returns = Method_name_map.add fn ty t.function_returns }
 
