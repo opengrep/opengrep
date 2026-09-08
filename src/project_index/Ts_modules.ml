@@ -175,6 +175,11 @@ let discover_excludes ~(project_root : Fpath.t) : string list =
     List.map (normalize_pattern ~project_root ~config_dir:dir) raw)
     configs
 
+(* The extensions a specifier leaves out: the source extensions
+   [resolve_specifier] probes. *)
+let source_exts =
+  [ ".ts"; ".tsx"; ".mts"; ".cts"; ".js"; ".jsx"; ".mjs"; ".cjs" ]
+
 (* [max_suffix_segs] is the greatest number of '/'-separated segments in any
    bare import specifier the project actually imports.  A specifier is looked up
    verbatim as a suffix key ([resolve_specifier]), so a suffix with more segments
@@ -189,9 +194,7 @@ let build_path_suffix_index ~(max_suffix_segs : int) (file_paths : string list)
     Hashtbl.create (List.length file_paths * max_suffix_segs)
   in
   let strip_ext (path : Fpath.t) : Fpath.t =
-    if Fpath.mem_ext [ ".tsx"; ".ts"; ".jsx"; ".js" ] path
-    then Fpath.rem_ext path
-    else path
+    if Fpath.mem_ext source_exts path then Fpath.rem_ext path else path
   in
   let strip_index (path : Fpath.t) : Fpath.t =
     let parent = Fpath.parent path |> Fpath.rem_empty_seg in

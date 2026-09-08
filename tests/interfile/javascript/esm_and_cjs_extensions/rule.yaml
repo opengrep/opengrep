@@ -1,0 +1,16 @@
+rules:
+  - id: esm-and-cjs-extensions
+    languages: [js]
+    severity: ERROR
+    message: >
+      A '.mjs' or '.cjs' file is a JavaScript target, so it must be in the
+      interfile graph: taint flows across an import of './sinks.mjs', a
+      require of './lib.cjs', and a bare specifier that resolves to an
+      '.mjs' file.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

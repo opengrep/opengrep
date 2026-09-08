@@ -82,11 +82,10 @@ returns the IDs of all rules that go through per-rule dispatch;
 `build_rule_states` additionally returns, per rule, the target paths
 its dispatch does not cover — because the graph build failed for that
 `(lang, project_root)`, the target never made it into the graph, its
-rule subgraph failed, or a parse/extraction batch failed.  `Core_scan`
-unions those paths per rule and gates per target: an interfile rule
-runs in the per-target queue only on targets in its uncovered set
-(intrafile fallback) — covered targets are handled by per-rule
-dispatch and the per-target queue skips them.  Per-file index build
+rule subgraph failed, or a parse/extraction batch failed.  An interfile rule
+runs in its interfile task only: a target the graph does not cover is
+reported as a warning at that file, and the per-target queue never
+runs an interfile rule.  Per-file index build
 failures are also surfaced as scan warnings in the results, so a
 degraded scan is visible rather than silent.
 
