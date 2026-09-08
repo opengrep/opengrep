@@ -700,6 +700,45 @@ let test_interfile_rule_paths (caps : Scan_subcommand.caps) () =
             |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
                    Fpath.to_string m.path))))
 
+(* The scanning root as typed may go through a symlink. The interfile graph
+   is keyed on canonical paths; the findings must not depend on the
+   spelling, and no target may be reported as absent from the graph. *)
+let test_interfile_symlinked_root (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+        (fun cwd ->
+          UTmp.with_temp_dir (fun dir ->
+              let link = Fpath.(dir / "repo") in
+              Unix.symlink (Fpath.to_string cwd) (Fpath.to_string link);
+              let (), stdout_output =
+                Testo.with_capture stdout (fun () ->
+                    without_settings (fun () ->
+                        Scan_subcommand.main caps
+                          [|
+                            "opengrep-scan"; "--experimental"; "--config";
+                            "rules.yml"; "--json"; "--taint-interfile";
+                            Fpath.to_string link;
+                          |])
+                    |> ignore)
+              in
+              let out =
+                Semgrep_output_v1_j.cli_output_of_string stdout_output
+              in
+              Alcotest.(check (list string)) "no errors" []
+                (out.errors
+                |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                       Option.value e.message ~default:"error"));
+              Alcotest.(check (list string)) "the finding's file"
+                [ "sinks.py" ]
+                (out.results
+                |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                       Fpath.basename m.path)))))
+
 (* Sources and sinks are extracted only over the scan's target files, so a
    partial scan — one file here, but equally a diff scan or a CI changed-files
    run — sees just one side of the flow.  Scanning only the sink file must
@@ -2618,6 +2657,8 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "interfile finding in a non-target companion"
         (test_interfile_finding_in_non_target caps);
       t "interfile rule paths" (test_interfile_rule_paths caps);
+      t "interfile findings through a symlinked root"
+        (test_interfile_symlinked_root caps);
       t "interfile SARIF output" (test_interfile_sarif_output caps);
       t "interfile ignored caller" (test_interfile_ignored_caller caps);
       t "interfile with search and intrafile rules"

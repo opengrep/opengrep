@@ -34,9 +34,9 @@ let run_test ?(taint_interfile = true) ?(taint_intrafile = true)
     ?(rule_file = "rule.yaml")
     (caps : Core_scan.caps) (test_dir : Fpath.t) () : unit =
   let files = Testutil_files.read test_dir in
-  Testutil_git.with_git_repo files (fun (raw_cwd : Fpath.t) ->
-      (* realpath so graph- and Find_targets-resolved paths agree (macOS /var → /private/var otherwise breaks the graph lookup). *)
-      let cwd = Fpath.v (Unix.realpath !!raw_cwd) in
+  Testutil_git.with_git_repo files (fun (cwd : Fpath.t) ->
+      (* [cwd] is the temp dir as spelled, through the /var symlink on
+         macOS: the engine keys the graph by canonical path itself. *)
       let rule_file = Fpath.(cwd / rule_file) in
 
       let rules =
