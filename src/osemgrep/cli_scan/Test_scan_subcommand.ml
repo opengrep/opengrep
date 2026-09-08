@@ -787,8 +787,8 @@ let test_interfile_mixed_rules (caps : Scan_subcommand.caps) () =
 
 (* The process-wide [--max-memory] bounds the interfile graph build and
    dispatch too: exceeding it aborts the analysis of a rule, reported as an
-   out-of-memory error against that rule; the rule then runs per target,
-   under the same limit. *)
+   out-of-memory error against that rule; the rule then runs on no
+   target. *)
 let test_interfile_limits (caps : Scan_subcommand.caps) () =
   let scan (args : string list) : Semgrep_output_v1_t.cli_output * Exit_code.t =
     with_env_app_token (fun () ->

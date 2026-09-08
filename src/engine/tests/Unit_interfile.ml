@@ -52,29 +52,15 @@ let run_test ?(taint_interfile = true) ?(taint_intrafile = true)
         Find_targets.get_target_fpaths Find_targets.default_conf
           [ Scanning_root.of_fpath cwd ]
       in
-      (* Drop files misclassified into the rule's xlang (e.g. go.mod -> PL Go) that would crash the parser as bogus source. *)
-      let lang_matches (fpath : Fpath.t) : bool =
-        let lang_set = Xlang.to_langs xlang in
-        let file_langs =
-          try Lang.langs_of_filename fpath with _ -> []
-        in
-        List.exists (fun l -> List.exists (Lang.equal l) lang_set) file_langs
+      (* The scan's own selection of a rule's targets; the annotations are
+         read from those files. *)
+      let pl_files =
+        all_fpaths |> List.filter (Filter_target.filter_target_for_xlang xlang)
       in
       let targets =
-        all_fpaths
-        |> List.filter lang_matches
+        pl_files
         |> List_.map (fun (fpath : Fpath.t) ->
           Target.mk_target ~project_root:cwd xlang fpath)
-      in
-
-      (* PL source files only, to avoid regex-scanning binary fixtures. *)
-      let pl_files =
-        List.filter
-          (fun (f : Fpath.t) ->
-            match File_type.file_type_of_file f with
-            | File_type.PL _ -> true
-            | _ -> false)
-          all_fpaths
       in
       (* Every case must state its intent: without at least one
          annotation, a case that produces no findings passes even when
