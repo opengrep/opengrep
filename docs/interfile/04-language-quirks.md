@@ -412,6 +412,19 @@ methods' `fn_id`s when it has any; for an empty subclass like
 class's simple name, so empty subclasses inherit their parents'
 methods like any other subclass.
 
+### Abstract methods have no body
+
+An abstract or interface method lowers to `FBNothing`: dispatch merges
+its implementations' signatures into the declaration for taint, which
+gives it a signature, not a body.  So a pattern with a body,
+`void $F(...) { ... }`, matches the concrete methods only, and a
+declaration pattern, `void $F(...);`, matches the abstract and the
+interface ones.  The base matched the body pattern on an abstract method
+because it represented the missing body as an empty block; that was an
+accident of representation, not a semantics to keep, and it is not
+restored (decided 2026-09-08; the pattern tests
+`abstract_method_has_no_body` and `abstract_method_declaration` pin it).
+
 ### Lambdas
 
 Stream chains (`.filter(x -> ...)`) and lambdas in callbacks are
