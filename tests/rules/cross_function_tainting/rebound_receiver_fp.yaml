@@ -1,0 +1,13 @@
+rules:
+  - id: rebound_receiver_fp
+    languages: [javascript]
+    severity: ERROR
+    message: >
+      A receiver rebound to another class is typed by its nearest preceding assignment: the call after the rebinding does not reach the old class's method.
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
