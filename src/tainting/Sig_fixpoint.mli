@@ -25,10 +25,13 @@ val store :
   db
 (** Replaces the function's signatures with these, so that the rounds of a
     cycle do not accumulate several signatures of one arity (which makes
-    [find_by_arity] give up). A stored shape is cut at [max_shape_depth]:
-    a self-recursive builder nests its return shape one level deeper per
-    round, with no fixpoint in the shape domain, and the cut at the store
-    point ends that chain where its cost is paid. *)
+    [find_by_arity] give up). A stored shape is cut at [max_shape_depth],
+    the taints below the cut folded into the cut cell: a self-recursive
+    builder nests its return shape one level deeper per round, with no
+    fixpoint in the shape domain, and a builder of [k] fields stores a
+    [k]-way tree of the cut depth. The depth to pass is the longest offset
+    a lookup can form, [Taint_shape.max_poly_offset]: no level below it is
+    ever read. *)
 
 val run :
   rule_id:Rule_ID.t ->

@@ -94,23 +94,6 @@ let taint_MAX_POLY_OFFSET_FLAT = 1
  * consider them equal (widening approximation) to force fixpoint convergence. *)
 let taint_MAX_SHAPE_DEPTH = 50
 
-(** Maximum [Obj] nesting depth for shapes STORED in a signature database
- * during the interfile SCC fixpoint (see [Taint_shape.truncate_signature]).
- *
- * [taint_MAX_SHAPE_DEPTH] above only widens the equality test: it stops the
- * iteration after shapes approaching depth 50 have already been built and
- * instantiated, whose cost is astronomically out of reach for a
- * self-recursive tree-builder (a function that wraps its own recursive
- * result in a fresh container, e.g. a JSON-schema transformer). Such a
- * function has no fixpoint in the shape domain — each SCC round nests its
- * return shape one level deeper, and branch unification can double the node
- * count per round. This limit widens where the cost is incurred: subtrees
- * below the cutoff collapse into the cutoff cell's taints, in the spirit of
- * (and consistent with) [taint_MAX_POLY_OFFSET]. With branch unification
- * doubling nodes per level the worst-case shape is ~2^depth nodes, so keep
- * this in the single digits. *)
-let taint_MAX_SIG_SHAPE_DEPTH = 8
-
 (** Maximum nesting of [Fun] shapes stored in a signature database (see
  * [Taint_shape.bound_fun_shape]).
  *

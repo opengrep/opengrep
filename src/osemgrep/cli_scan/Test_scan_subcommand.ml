@@ -503,6 +503,132 @@ let test_interfile_incremental_output (caps : Scan_subcommand.caps) () =
           in
           Exit_code.Check.ok exit_code))
 
+(* A self-recursive builder stores its own result under six fields of a
+   fresh object. Its stored return shape is a six-way tree, and every
+   fixpoint round grows it one level: cut at the depth a lookup can reach,
+   the shape stays small and the sink is found within the time limit. *)
+let test_interfile_recursive_builder_width (caps : Scan_subcommand.caps) () =
+  let builder = {|<?php
+function build($x, $n) {
+    $node = new stdClass();
+    if ($n > 0) {
+        $node->a = build($x, $n - 1);
+        $node->b = build($x, $n - 1);
+        $node->c = build($x, $n - 1);
+        $node->d = build($x, $n - 1);
+        $node->e = build($x, $n - 1);
+        $node->f = build($x, $n - 1);
+    }
+    $node->v = $x;
+    return $node;
+}
+|} in
+  let caller = {|<?php
+require_once 'build.php';
+function go() {
+    $t = build(source(), 3);
+    sink($t->a->b->v);
+}
+|} in
+  let rules = {|rules:
+  - id: builder
+    languages: [php]
+    severity: WARNING
+    message: builder
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [ F.File ("rules.yml", rules); F.File ("build.php", builder);
+          F.File ("main.php", caller) ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                        "--interfile-timeout"; "10";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "no errors" []
+            (out.errors
+            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                   Option.value e.message ~default:"error"));
+          Alcotest.(check (list string)) "the finding's file" [ "main.php" ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path))))
+
+(* Two functions sink the same text, [sink($t->a->b->v)], one from a
+   tainted build and one from a clean build, of a four-field recursive
+   builder. The finding is at the tainted sink, whatever another function
+   sinks: before the stored shapes were cut at the offset bound, the
+   second function's analysis lost it. *)
+let test_intrafile_same_sink_text_twice (caps : Scan_subcommand.caps) () =
+  let source = {|<?php
+function build($x, $n) {
+    $node = new stdClass();
+    if ($n > 0) {
+        $node->a = build($x, $n - 1);
+        $node->b = build($x, $n - 1);
+        $node->c = build($x, $n - 1);
+        $node->d = build($x, $n - 1);
+    }
+    $node->v = $x;
+    return $node;
+}
+
+function tainted() {
+    $t = build(source(), 3);
+    sink($t->a->b->v);
+}
+
+function clean() {
+    $t = build(1, 3);
+    sink($t->a->b->v);
+}
+|} in
+  let rules = {|rules:
+  - id: same-text
+    languages: [php]
+    severity: WARNING
+    message: same-text
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [ F.File ("rules.yml", rules); F.File ("main.php", source) ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list int)) "the finding's line" [ 16 ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   m.start.line))))
+
 (* Sources and sinks are extracted only over the scan's target files, so a
    partial scan — one file here, but equally a diff scan or a CI changed-files
    run — sees just one side of the flow.  Scanning only the sink file must
@@ -2414,6 +2540,10 @@ let tests (caps : < Scan_subcommand.caps >) =
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_interfile_target_absent_from_graph caps [ "--json" ]);
       t "interfile JSON output" (test_interfile_json_output caps);
+      t "interfile recursive builder of width six"
+        (test_interfile_recursive_builder_width caps);
+      t "intrafile same sink text in two functions"
+        (test_intrafile_same_sink_text_twice caps);
       t "interfile SARIF output" (test_interfile_sarif_output caps);
       t "interfile ignored caller" (test_interfile_ignored_caller caps);
       t "interfile with search and intrafile rules"
