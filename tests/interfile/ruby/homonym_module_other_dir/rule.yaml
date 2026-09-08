@@ -1,0 +1,15 @@
+rules:
+  - id: homonym-module-other-dir
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      Two directories hold a file of the same name with a same-named class
+      and method. The caller requires the one beside it; the call resolves
+      to that one, not to neither.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

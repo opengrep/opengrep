@@ -639,6 +639,36 @@ let edges_for_file (ctx : ctx) (fi : file_info)
           ~file_of_func:func_file_opt ~caller_file:fi_file_str base
       else base
     in
+    (* A name resolves beside the caller first: for a language whose
+       unqualified names are per file, an import is a path, and a same-named
+       module elsewhere in the project is another module. Among the
+       methods still colliding, those defined in the caller's directory
+       win; a class with none there keeps them all. Scoped to the classes
+       the file imports, or to every class when its imports are whole
+       files (Ruby, PHP), where the pass above already visits them all. *)
+    let file_type_state =
+      match cfg.Index_lang_rules.unqualified_scope with
+      | `Per_file ->
+          let caller_dir = Filename.dirname fi_file_str in
+          let keep (_ : Names.Class_name.t) (func : Func_info.t) : bool =
+            match func_file_opt func with
+            | Some file -> String.equal (Filename.dirname file) caller_dir
+            | None -> false
+          in
+          let classes =
+            if cfg.Index_lang_rules.narrow_methods_by_required_files then None
+            else
+              Some
+                (List.filter_map
+                   (fun (_local, target) ->
+                     match List.rev (Names.Module_qn.parts target) with
+                     | cls :: _ :: _ -> Some (Names.Class_name.of_string cls)
+                     | _ -> None)
+                   fi.fi_imports)
+          in
+          Type_state.narrow_methods ?classes ~keep file_type_state
+      | `Per_directory | `Per_package -> file_type_state
+    in
     let same_file_funcs_by_name =
       build_same_file_funcs_by_name ~file_funcs_index ~fi_file_str
     in
