@@ -629,6 +629,36 @@ function clean() {
             |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
                    m.start.line))))
 
+(* Only the caller is a target; the sink is in a companion the scan did not
+   ask for. A finding is reported in target files only, and never with a
+   path outside the scanned set. *)
+let test_interfile_finding_in_non_target (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile"; "main.py";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "scanned" [ "main.py" ]
+            (out.paths.scanned |> List_.map Fpath.to_string);
+          Alcotest.(check (list string)) "findings in targets only" []
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path))))
+
 (* Sources and sinks are extracted only over the scan's target files, so a
    partial scan — one file here, but equally a diff scan or a CI changed-files
    run — sees just one side of the flow.  Scanning only the sink file must
@@ -2544,6 +2574,8 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_interfile_recursive_builder_width caps);
       t "intrafile same sink text in two functions"
         (test_intrafile_same_sink_text_twice caps);
+      t "interfile finding in a non-target companion"
+        (test_interfile_finding_in_non_target caps);
       t "interfile SARIF output" (test_interfile_sarif_output caps);
       t "interfile ignored caller" (test_interfile_ignored_caller caps);
       t "interfile with search and intrafile rules"

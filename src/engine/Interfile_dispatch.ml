@@ -846,19 +846,15 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
         | G.FBNothing -> matches_acc
         | _ ->
           let fid_file = file_of_fid fid in
-          let fid_is_target =
-            match fid_file with
-            | Some fp -> is_target_file rs.target_root_map fp
-            | None -> false
-          in
           (* Detect in companions too, not just targets.  A cross-file finding
              is emitted while analysing the CALLER that instantiates the
              callee's signature, so when only the sink's file was targeted the
              caller is a companion and gating on it drops the finding even
-             though the sink itself is in scope.  Companion findings are then
-             filtered to target files below, so nothing outside the requested
-             scope is reported.  On a whole-project scan every file is a target
-             and this costs nothing. *)
+             though the sink itself is in scope.  Every finding is then kept
+             by its own file, whoever was analysed: a target caller's finding
+             at a sink in a companion is outside the requested scope too.  On
+             a whole-project scan every file is a target and this costs
+             nothing. *)
           let do_detect = detect_findings && Option.is_some fid_file in
           if not do_detect then matches_acc
           else
@@ -876,13 +872,11 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
                 converged_db
             in
             let findings =
-              if fid_is_target then findings
-              else
-                List.filter
-                  (fun (pm : PM.t) ->
-                     is_target_file rs.target_root_map
-                       pm.PM.path.Target.internal_path_to_content)
-                  findings
+              List.filter
+                (fun (pm : PM.t) ->
+                   is_target_file rs.target_root_map
+                     pm.PM.path.Target.internal_path_to_content)
+                findings
             in
             List.rev_append findings matches_acc)
   in
