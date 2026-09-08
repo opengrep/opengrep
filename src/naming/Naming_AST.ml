@@ -1269,8 +1269,10 @@ class ['self] resolve_visitor env lang =
                  imported *)
               | Some { entname = ImportedEntity xs, _sidm; _ } ->
                   (* Fully qualified — identity is the canonical name, not the
-                     sid; still anchor the sid at the name's real place. *)
-                  let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
+                     sid: every use of the name shares binding 0, which is
+                     never minted, so a metavariable unifies over them; the
+                     sid is still anchored at the name's real place. *)
+                  let sid = SId.of_tok ~binding:0 ~file:env.file (snd id) in
                   let rest_of_middle = List_.map fst rest_of_middle in
                   let canonical =
                     xs @ dotted_to_canonical (rest_of_middle @ [ id ])
