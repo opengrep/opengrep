@@ -33,8 +33,7 @@ let url_of_registry_config_kind rkind =
      * are relying on those configs which take a long time to download.
      * TODO: Those tests should be optimized and use local configs instead.
      *)
-    (* python: AUTO_CONFIG_LOCATION in config_resolver.py *)
-    | C.Auto -> spf "%s/auto" prefix
+    | C.Auto -> spf "%s/p/default" prefix
     | C.R2c -> spf "%s/p/r2c" prefix
   in
   Uri.of_string url

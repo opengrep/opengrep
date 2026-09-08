@@ -54,8 +54,7 @@ let registry_url_tests () =
     in
     Alcotest.(check string) name (base ^ path) url
   in
-  (* python: AUTO_CONFIG_LOCATION in config_resolver.py *)
-  check "auto" Rules_config.Auto "/c/auto";
+  check "auto" Rules_config.Auto "/c/p/default";
   check "r2c" Rules_config.R2c "/c/p/r2c";
   check "a pack" (Rules_config.Pack "default") "/c/p/default";
   check "a ruleset" (Rules_config.Registry "python") "/c/r/python";

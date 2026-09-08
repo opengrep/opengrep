@@ -30,7 +30,7 @@ and registry_config_kind =
   (* s/... *)
   | Snippet of string
   (* shortcuts *)
-  (* "c/auto" *)
+  (* "p/default" *)
   | Auto
   (* p/r2c *)
   | R2c
