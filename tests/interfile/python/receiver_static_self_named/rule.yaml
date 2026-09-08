@@ -1,0 +1,13 @@
+rules:
+  - id: receiver-static-self-named
+    languages: [python]
+    severity: ERROR
+    message: >
+      A static method has no receiver, even when its first parameter is named self: every call argument fills a parameter.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

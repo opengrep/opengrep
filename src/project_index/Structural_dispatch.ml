@@ -94,6 +94,7 @@ let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
   end
 
 let emit_dispatch_edges
+    ~(lang : Lang.t)
     ~(cfg : Index_lang_rules.t)
     ~(type_state : Type_state.t)
     ~(func_def_file : FA.func_info -> string option)
@@ -136,16 +137,11 @@ let emit_dispatch_edges
     Option.map (fun (_, meth) -> fst meth.IL.ident)
       (Func_info.as_method func.FA.fn_id)
   in
+  (* Without the receiver, present on impls but not on interface decls. *)
   let method_arity (func : FA.func_info) : int =
-    let _, params, _ = func.FA.fdef.G.fparams in
-    let raw = List.length params in
-    (* Subtract Go receivers ([ParamReceiver], present on impls but not interface decls) so arities match. *)
-    let has_receiver =
-      match params with
-      | G.ParamReceiver _ :: _ -> true
-      | _ -> false
-    in
-    if has_receiver then raw - 1 else raw
+    Receiver.arity lang ~is_method:(Receiver.is_method func.FA.fdef)
+      ~is_static:(Receiver.is_static func.FA.entity)
+      (Tok.unbracket func.FA.fdef.G.fparams)
   in
   let method_name_arity (func : FA.func_info) : (string * int) option =
     match method_name func with

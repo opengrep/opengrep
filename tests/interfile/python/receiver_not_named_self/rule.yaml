@@ -1,0 +1,13 @@
+rules:
+  - id: receiver-not-named-self
+    languages: [python]
+    severity: ERROR
+    message: >
+      The receiver of a Python method is its first parameter whatever its name; the call's first argument types the second parameter.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

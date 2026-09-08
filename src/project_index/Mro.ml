@@ -138,6 +138,7 @@ let resolve_parent_lexical
       (try_scopes enclosing)
 
 let inherit_into_type_state
+    ~(lang : Lang.t)
     ~(cross_module_parents : bool)
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
     ~(class_infos : class_info list)
@@ -348,9 +349,12 @@ let inherit_into_type_state
               let ovr =
                 match pm.FA.fdef.G.fbody with
                 | G.FBDecl _ | G.FBNothing ->
-                  let pm_arity =
-                    List.length (Tok.unbracket pm.FA.fdef.G.fparams)
+                  let arity (f : FA.func_info) : int =
+                    Receiver.arity lang ~is_method:(Receiver.is_method f.FA.fdef)
+                      ~is_static:(Receiver.is_static f.FA.entity)
+                      (Tok.unbracket f.FA.fdef.G.fparams)
                   in
+                  let pm_arity = arity pm in
                   (match
                      List.find_opt
                        (fun (om : FA.func_info) ->
@@ -358,10 +362,7 @@ let inherit_into_type_state
                            | Some (_, ometh) ->
                              String.equal (fst ometh.IL.ident) mname
                            | None -> false)
-                          && Int.equal
-                               (List.length
-                                  (Tok.unbracket om.FA.fdef.G.fparams))
-                               pm_arity)
+                          && Int.equal (arity om) pm_arity)
                        own
                    with
                    | Some om -> (om, pm) :: ovr

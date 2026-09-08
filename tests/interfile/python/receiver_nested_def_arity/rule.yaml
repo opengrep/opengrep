@@ -1,0 +1,13 @@
+rules:
+  - id: receiver-nested-def-arity
+    languages: [python]
+    severity: ERROR
+    message: >
+      A def nested in a method is not a method: it takes no implicit receiver, so its arity is its parameter count and a homonym of another arity does not shadow it.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

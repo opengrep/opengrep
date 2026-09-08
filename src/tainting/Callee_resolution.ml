@@ -92,36 +92,13 @@ let find_func_in_scope (all_funcs : func_info list)
     else false
   ) all_funcs
 
-(* Arity of a function definition as seen from a call site: explicit
-   arguments only.  The definition-side explicit receiver — Go/Rust
-   [ParamReceiver], Python's first instance/class-method parameter
-   ([self]/[cls] by position, not name; [@staticmethod] has none) — takes
-   no call argument and must not count, or arity comparison against call
-   sites can never match for methods.  Mirrors
-   [Match_tainting_mode.is_implicit_receiver]. *)
+(* Arity of a function definition as seen from a call site: the parameters
+   a call fills, so arity comparison against call sites matches for
+   methods. *)
 let get_func_arity ~(lang : Lang.t) (f : func_info) : int =
-  let params = Tok.unbracket f.fdef.G.fparams in
-  let is_static =
-    match f.entity with
-    | Some ent ->
-        List.exists
-          (fun (attr : G.attribute) ->
-             match attr with
-             | G.KeywordAttr (G.Static, _) -> true
-             | _ -> false)
-          ent.G.attrs
-    | None -> false
-  in
-  let is_method = Option.is_some (Func_info.enclosing_class f.fn_id) in
-  params
-  |> List.filteri (fun i (p : G.parameter) ->
-         match p with
-         | G.ParamReceiver _ -> false
-         | _ -> (
-             match lang with
-             | Lang.Python -> not (is_method && i =*= 0 && not is_static)
-             | _ -> true))
-  |> List.length
+  Receiver.arity lang ~is_method:(Receiver.is_method f.fdef)
+    ~is_static:(Receiver.is_static f.entity)
+    (Tok.unbracket f.fdef.G.fparams)
 
 (* Disambiguate among candidate functions matching a call site by name.
    [matches] are the candidates; [call_arity] is the number of arguments

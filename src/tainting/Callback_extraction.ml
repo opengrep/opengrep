@@ -35,15 +35,10 @@ type callback_scope =
   | Method_of of string
   | Method_by_leaf
 
-let is_self_receiver (s : string) : bool =
-  match s with
-  | "self" | "this" | "cls" | "$this" -> true
-  | _ -> false
-
 (* The scope of a [recv.leaf] argument. *)
-let scope_of_receiver ~(func_lookup : Func_lookup.t)
+let scope_of_receiver ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
     ((recv, recv_info) : G.ident * G.id_info) : callback_scope =
-  if is_self_receiver (fst recv) then Unscoped
+  if Receiver.is_self_name lang (fst recv) then Unscoped
   else
     match Func_lookup.resolve_alias func_lookup (fst recv) with
     | Some qn -> In_module qn
@@ -106,7 +101,7 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
   | G.DotAccess
       ({ e = G.N (G.Id (recv, recv_info)); _ }, _, G.FN (G.Id (id, id_info))) ->
       [ (AST_to_IL.var_of_id_info id id_info, snd id, None,
-         scope_of_receiver ~func_lookup (recv, recv_info)) ]
+         scope_of_receiver ~lang ~func_lookup (recv, recv_info)) ]
   (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
      named (local or remote) function. Structure:
      OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])

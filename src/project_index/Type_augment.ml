@@ -511,10 +511,9 @@ let augment_fields_from_self_assignments
          in Python, [ParamReceiver] in Go) shifts every later param by
          one. *)
       let receiver_offset =
-        match params with
-        | G.ParamReceiver _ :: _ -> 1
-        | G.Param { pname = Some (("self" | "cls"), _); _ } :: _ -> 1
-        | _ -> 0
+        List.length params
+        - Receiver.arity lang ~is_method:(Receiver.is_method func.FA.fdef)
+            ~is_static:(Receiver.is_static func.FA.entity) params
       in
       let caller_arg_type i =
         Hashtbl.find_opt caller_arg_types (cls, meth, i - receiver_offset)
