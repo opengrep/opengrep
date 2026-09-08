@@ -106,10 +106,14 @@ let build_project_call_graph (caps : < Cap.fork >)
       in
       match child, parent with
       | Some child_name, Some parent_name ->
-        Type_state.set_parent state
-          (Names.Class_name.of_string child_name)
-          (Names.Class_name.of_string parent_name)
-      | _ -> state
+        let child = Names.Class_name.of_string child_name in
+        Type_state.set_parent
+          (Type_state.add_class_file state child ci.ci_file)
+          child ci.ci_file (Names.Class_name.of_string parent_name)
+      | Some child_name, None ->
+        Type_state.add_class_file state
+          (Names.Class_name.of_string child_name) ci.ci_file
+      | None, _ -> state
     ) Type_state.empty class_infos
   in
   let graph = Call_graph.G.create () in

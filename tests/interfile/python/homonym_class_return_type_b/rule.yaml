@@ -1,0 +1,16 @@
+rules:
+  - id: homonym-class-return-type-b
+    languages: [python]
+    severity: ERROR
+    message: >
+      Two packages each declare a class Config whose load() returns a
+      different class. The return type recorded for Config.load must be
+      the one of the Config the caller imported, not whichever same-named
+      class the index saw last.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

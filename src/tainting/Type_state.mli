@@ -2,10 +2,18 @@ type t
 
 val empty : t
 
-val add_inherited : t -> Names.Class_name.t -> Func_info.t list -> t
+(* Every map below is keyed by the bare class name, with one entry per
+   defining file; a reader takes the entries of the files this state sees
+   the class in ([add_class_file], narrowed by [narrow]), else all. *)
+
+val add_class_file : t -> Names.Class_name.t -> Fpath.t -> t
+
+val add_inherited :
+  t -> Names.Class_name.t -> Fpath.t -> Func_info.t list -> t
 
 (* Single direct parent; first parent wins on multiple inheritance. *)
-val set_parent : t -> Names.Class_name.t -> Names.Class_name.t -> t
+val set_parent :
+  t -> Names.Class_name.t -> Fpath.t -> Names.Class_name.t -> t
 
 val get_parent : t -> Names.Class_name.t -> Names.Class_name.t option
 
@@ -15,11 +23,20 @@ val set_module_singleton :
 val get_module_singleton :
   t -> Names.Module_qn.t -> AST_generic.name option
 
+(* One entry per defining file, so two same-named classes keep their own
+   return types; a re-set of one file with an equal type changes nothing. *)
 val set_method_return :
-  t -> Names.Class_name.t -> Names.Method_name.t -> AST_generic.name -> t
+  t -> Names.Class_name.t -> Names.Method_name.t -> Fpath.t ->
+  AST_generic.name -> t
 
+(* The entry of the file that defines the class as this state sees it
+   (its [methods]), else the first. *)
 val get_method_return :
   t -> Names.Class_name.t -> Names.Method_name.t -> AST_generic.name option
+
+(* Whether the method of the class defined in this file has an entry. *)
+val has_method_return :
+  t -> Names.Class_name.t -> Names.Method_name.t -> Fpath.t -> bool
 
 (* Appends; [field_type_for_caller] disambiguates by caller directory. *)
 val set_field :
@@ -39,12 +56,14 @@ val get_methods : t -> Names.Class_name.t -> Func_info.t list option
 val fold_methods :
   (Names.Class_name.t -> Func_info.t list -> 'a -> 'a) -> t -> 'a -> 'a
 
-(* The colliding method groups of the given classes (every class when
-   none is given) narrowed to the methods [keep] accepts, as
-   [Func_info.narrow_colliding_groups] does. *)
-val narrow_methods :
+(* The given classes (every class when none is given) narrowed to the
+   files [keep_file] accepts: their colliding method groups as
+   [Func_info.narrow_colliding_groups] does, and their defining files, all
+   of them kept when it accepts none. *)
+val narrow :
   ?classes:Names.Class_name.t list ->
-  keep:(Names.Class_name.t -> Func_info.t -> bool) ->
+  keep_file:(Names.Class_name.t -> string -> bool) ->
+  file_of_func:(Func_info.t -> string option) ->
   t ->
   t
 

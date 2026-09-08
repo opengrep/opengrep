@@ -322,18 +322,15 @@ let python_narrow_methods_by_imports
     | "__init__" :: rev_init -> rev_init
     | segs -> segs
   in
-  let keep (cls_name : Names.Class_name.t) (func : Func_info.t) : bool =
+  let keep_file (cls_name : Names.Class_name.t) (file : string) : bool =
     let cls = Names.Class_name.to_string cls_name in
-    match file_of_func func with
-    | None -> false
-    | Some file ->
-      let rev_segs = rev_module_segs file in
-      List.exists
-        (fun (c, rev_module) ->
-           String.equal c cls && Path_segs.is_prefix rev_module rev_segs)
-        imported
+    let rev_segs = rev_module_segs file in
+    List.exists
+      (fun (c, rev_module) ->
+         String.equal c cls && Path_segs.is_prefix rev_module rev_segs)
+      imported
   in
-  Type_state.narrow_methods ~keep
+  Type_state.narrow ~keep_file ~file_of_func
     ~classes:
       (List.sort_uniq String.compare (List.map fst imported)
       |> List.map Names.Class_name.of_string)

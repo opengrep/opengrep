@@ -384,7 +384,7 @@ let inherit_into_type_state
       let override_acc = List.rev_append overrides override_acc in
       if added <> [] then
         (Type_state.add_inherited state
-           (Names.Class_name.of_string child_simple) added,
+           (Names.Class_name.of_string child_simple) ci.ci_file added,
          (ci, added) :: inherited_acc,
          override_acc)
       else (state, inherited_acc, override_acc)
