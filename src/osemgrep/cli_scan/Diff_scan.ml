@@ -49,20 +49,15 @@ type diff_scan_func =
    baseline commit scan. Matches are considered identical if the
    tuples containing the rule ID, file path, and matched code snippet
    are equal. *)
-(* The path component is taken relative to the scan root.  Matches normally
-   carry the target path as given (relative), but a match on an absolute
-   target carries an absolute path — into the baseline worktree for the
-   baseline scan, into the real checkout for the head one — so those must be
-   relativized against each scan's own root or they could never compare
-   equal and such findings could never be deduplicated. *)
-let extract_sig ~(root : Fpath.t) renamed (m : Core_match.t) =
+(* The path component is taken relative to the current directory, by the
+   same [from_cwd] the targets went through: a match carries the target
+   path as given, relative or absolute, spelled through a symlink or not,
+   and the two scans must agree on it or a finding could never be
+   deduplicated. *)
+let extract_sig ~(from_cwd : Fpath.t -> Fpath.t) renamed (m : Core_match.t) =
   let rule_id = m.rule_id in
   let abs_path = m.path.internal_path_to_content in
-  let rel_path =
-    match Fpath.relativize ~root abs_path with
-    | Some rel -> rel
-    | None -> abs_path
-  in
+  let rel_path = from_cwd abs_path in
   let path =
     !!rel_path |> fun p ->
     Option.bind renamed
@@ -81,10 +76,10 @@ let extract_sig ~(root : Fpath.t) renamed (m : Core_match.t) =
    baseline matches: reading a match's lines needs its file, and an interfile
    match's path is absolute into that worktree, which is gone by the time we
    get here. *)
-let remove_matches_in_baseline sigs (head : Core_result.t)
+let remove_matches_in_baseline ~(from_cwd : Fpath.t -> Fpath.t) sigs
+    (head : Core_result.t)
     (renamed : (string (* filename *) * string (* filename *)) list) =
-  let root = Fpath.v (Sys.getcwd ()) in
-  let extract_sig renamed m = extract_sig ~root renamed m in
+  let extract_sig renamed m = extract_sig ~from_cwd renamed m in
   let removed = ref 0 in
   let processed_matches =
     List_.filter_map
@@ -228,9 +223,24 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                      that subdirectory, resurrecting pre-existing cross-file
                      findings as "new".  Multi-root scans lose their per-target
                      roots the same way. *)
+                  (* the roots relative to the current directory, as the
+                     targets are: a root spelled absolute names the head
+                     checkout, and the replay would scan that, not the
+                     baseline *)
+                  let baseline_roots =
+                    conf.target_roots
+                    |> List_.map (fun (root : Scanning_root.t) ->
+                           (* as a directory: relativised as a plain path,
+                              the current directory itself comes out as
+                              "../<its name>", which names a sibling of the
+                              worktree, not the worktree *)
+                           Scanning_root.to_fpath root
+                           |> Fpath.to_dir_path |> from_cwd
+                           |> Fpath.rem_empty_seg |> Scanning_root.of_fpath)
+                  in
                   let { Find_targets.selected = all_in_baseline; _ } =
                     Find_targets.get_target_fpaths_with_project_roots
-                      conf.targeting_conf conf.target_roots
+                      conf.targeting_conf baseline_roots
                   in
                   all_in_baseline
                 else wrap_as_targets paths_in_match
@@ -242,7 +252,6 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               (* Build the signatures HERE, still inside the worktree that
                  produced these matches: an interfile match's path is absolute
                  into this worktree, and it is removed as soon as we return. *)
-              let root = Fpath.v (Sys.getcwd ()) in
               let sigs =
                 match res with
                 | Ok (baseline_r : Core_result.t) ->
@@ -254,7 +263,7 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                      at several places of a file each remove one head finding *)
                   List.iter
                     (fun ({ pm; _ } : Core_result.processed_match) ->
-                       Hashtbl.add tbl (extract_sig ~root None pm) true)
+                       Hashtbl.add tbl (extract_sig ~from_cwd None pm) true)
                     baseline_r.processed_matches;
                   tbl
                 | Error _ -> Hashtbl.create 0
@@ -269,7 +278,8 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
     Globals.reset ();
     match baseline_result with
     | res, _sigs when Result.is_error res -> res
-    | _res, sigs -> Ok (remove_matches_in_baseline sigs r status.renamed)
+    | _res, sigs ->
+        Ok (remove_matches_in_baseline ~from_cwd sigs r status.renamed)
   else Ok r
 
 (*****************************************************************************)
