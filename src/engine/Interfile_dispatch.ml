@@ -65,12 +65,16 @@ type lang_context = {
 let file_of_fid (fid : Function_id.t) : Fpath.t option =
   Option.map Fpath.normalize (Function_id.file_of fid)
 
-(* Interfile via the global flag or the rule's own option. *)
+(* A taint rule, interfile via the global flag or the rule's own option. *)
 let rule_is_interfile ~(taint_interfile : bool) (rule : R.rule) : bool =
-  taint_interfile ||
-  (match rule.R.options with
-   | Some opts -> opts.taint_interfile
-   | None -> false)
+  (match rule.R.mode with
+   | `Taint _ -> true
+   | _ -> false)
+  && (taint_interfile
+     ||
+     match rule.R.options with
+     | Some opts -> opts.taint_interfile
+     | None -> false)
 
 let interfile_taint_rules_by_lang
     ~(taint_interfile : bool)
