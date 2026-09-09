@@ -39,7 +39,9 @@ let bfs_vertices ?(g_global : graph option)
     (iter_edges : (G.E.t -> unit) -> graph -> ?g_global:graph ->
       vertex -> unit)
     (neighbour_of : G.E.t -> vertex)
-    (g : graph) (starts : vertex list) (max_depth : int) : VSet.t =
+    (g : graph) (starts : vertex list) (max_depth : int) : VSet.t * bool =
+  (* The second result: the search stopped at [max_depth] with vertices
+     still to expand, so what lies beyond the budget was not reached. *)
   (* [Dispatch] edges cost 0 and [Call] edges cost 1 — a 0-1 shortest-path
      problem.  Expand each depth level's full 0-cost [Dispatch] closure
      before charging a [Call] step, so every vertex is first reached (and
@@ -89,7 +91,12 @@ let bfs_vertices ?(g_global : graph option)
     level := dispatch_closure (call_successors !level);
     incr depth
   done;
-  !visited
+  (* what the last level would have expanded to *)
+  let cut =
+    max_depth >= 0 && !depth >= max_depth
+    && not (List_.null (call_successors !level))
+  in
+  (!visited, cut)
 
 let%test "bfs_vertices: reaches a vertex via a cheaper 0-cost dispatch path" =
   (* Edges (kind): S -Call-> W, S -Dispatch-> A, A -Dispatch-> W, W -Call-> X.
@@ -107,7 +114,7 @@ let%test "bfs_vertices: reaches a vertex via a cheaper 0-cost dispatch path" =
   Call_graph.add_edge g ~kind:Call_graph.Dispatch ~src:s ~dst:a ~call_tok:tok;
   Call_graph.add_edge g ~kind:Call_graph.Dispatch ~src:a ~dst:w ~call_tok:tok;
   Call_graph.add_edge g ~kind:Call_graph.Call ~src:w ~dst:x ~call_tok:tok;
-  let reached = bfs_vertices iter_succ_e_either G.E.dst g [ s ] 1 in
+  let reached, _cut = bfs_vertices iter_succ_e_either G.E.dst g [ s ] 1 in
   VSet.mem x reached
 
 let induced_subgraph ?(g_global : graph option) (g : graph)
@@ -140,9 +147,9 @@ let compute_seeded_subgraph ?(g_global : Call_graph.G.t option)
     ?(depth : int option)
     (graph : Call_graph.G.t)
     ~(seeds : Function_id.t list)
-    : Call_graph.G.t =
+    : Call_graph.G.t * bool =
   match seeds with
-  | [] -> Call_graph.G.create ()
+  | [] -> (Call_graph.G.create (), false)
   | _ :: _ ->
       let max_depth =
         match depth with
@@ -152,14 +159,14 @@ let compute_seeded_subgraph ?(g_global : Call_graph.G.t option)
       (* Edges run callee -> caller, so successors are callers: take those
          first, since they are what can carry taint in or out, then their
          callees, so the helpers a companion routes through are present too. *)
-      let callers =
+      let callers, cut_callers =
         bfs_vertices ?g_global iter_succ_e_either G.E.dst graph seeds max_depth
       in
-      let with_callees =
+      let with_callees, cut_callees =
         bfs_vertices ?g_global iter_pred_e_either G.E.src graph
           (VSet.elements callers) max_depth
       in
-      induced_subgraph ?g_global graph with_callees
+      (induced_subgraph ?g_global graph with_callees, cut_callers || cut_callees)
 
 (* Compute the subgraph containing only functions relevant for taint flow
    from sources to sinks. [depth] caps hops; [g_global] is read-only. *)
@@ -167,10 +174,10 @@ let compute_relevant_subgraph ?(g_global : Call_graph.G.t option)
     ?(depth : int option)
     (graph : Call_graph.G.t)
     ~(sources : Function_id.t list) ~(sinks : Function_id.t list)
-    : Call_graph.G.t =
+    : Call_graph.G.t * bool =
   match (sources, sinks) with
   | [], _ | _, [] ->
-      Call_graph.G.create ()
+      (Call_graph.G.create (), false)
   | _ :: _, _ :: _ ->
       let max_depth =
         match depth with
@@ -184,11 +191,11 @@ let compute_relevant_subgraph ?(g_global : Call_graph.G.t option)
       in
 
       (* Edges are callee -> caller; the two successor-BFSes intersect at common ancestors of sources and sinks. *)
-      let from_sources =
+      let from_sources, cut_sources =
         bfs_vertices ?g_global iter_succ_e_either G.E.dst
           graph sources max_depth
       in
-      let from_sinks =
+      let from_sinks, cut_sinks =
         bfs_vertices ?g_global iter_succ_e_either G.E.dst
           graph sinks max_depth
       in
@@ -214,7 +221,7 @@ let compute_relevant_subgraph ?(g_global : Call_graph.G.t option)
       in
       let relevant = VSet.filter is_relevant common in
 
-      let callee_vertices =
+      let callee_vertices, cut_callees =
         bfs_vertices ?g_global iter_pred_e_either G.E.src
           graph (VSet.elements relevant) max_depth
       in
@@ -259,4 +266,5 @@ let compute_relevant_subgraph ?(g_global : Call_graph.G.t option)
           in
           loop max_depth callee_vertices
       in
-      induced_subgraph ?g_global graph with_impls
+      ( induced_subgraph ?g_global graph with_impls,
+        cut_sources || cut_sinks || cut_callees )

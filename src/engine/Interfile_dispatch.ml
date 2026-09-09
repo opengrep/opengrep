@@ -435,6 +435,8 @@ type rule_subgraph = {
   rsg_topo_order : Function_id.t list;
   rsg_files : Fpath.t list;
   rsg_fid_set : FidSet.t;
+  rsg_depth_cut : int option;
+      (* the depth at which a search stopped with calls beyond it *)
 }
 
 (* Break direct impl→interface cycles so impls precede interfaces in the
@@ -506,7 +508,7 @@ let compute_rule_subgraph
       |> List.exists (fun f ->
              not (FpathSet.mem (Fpath.normalize f) specs.rs_target_files))
     in
-    let relevant_graph =
+    let relevant_graph, depth_cut =
       match sources, sinks with
       | [], seeds
       | seeds, [] when scan_is_partial ->
@@ -577,6 +579,7 @@ let compute_rule_subgraph
         rsg_topo_order = topo_order;
         rsg_files = files;
         rsg_fid_set = fid_set;
+        rsg_depth_cut = (if depth_cut then interfile_depth else None);
       }
 
 (* Precondition: all [rsg] files are in [ast_table]. *)
@@ -1890,11 +1893,33 @@ let build_rule_states
       Xlang.L (lc.lc_lang, []))
       lang_contexts
   in
+  (* One warning per rule whose search stopped at the depth with calls
+     beyond it: a longer chain of calls from a source to a sink is not
+     followed, and the flag that raises the depth is named. *)
+  let depth_warnings : E.t list =
+    List.filter_map
+      (fun (rsg : rule_subgraph) ->
+        match rsg.rsg_depth_cut with
+        | None -> None
+        | Some depth ->
+            let rule_id = fst rsg.rsg_specs.rs_rule.R.id in
+            Some
+              (E.mk_error ~rule_id
+                 ~msg:
+                   (Printf.sprintf
+                      "rule %s: the interfile search stopped at depth %d \
+                       with calls beyond it, so a longer chain of calls from \
+                       a source to a sink is not followed; \
+                       --taint-interfile-depth raises the depth, -1 removes it"
+                      (Rule_ID.to_string rule_id) depth)
+                 Out.SemgrepWarning))
+      rule_subgraphs
+  in
   (* Every error at the path the scan was given, as findings are. *)
   let errors =
     build_errors @ parse_failures @ companion_failures @ !stamp_errors
     @ spec_failures @ spec_file_failures @ init_failures
-    @ init_file_failures
+    @ init_file_failures @ depth_warnings
     |> List_.map (fun (err : E.t) ->
            { err with
              E.loc =

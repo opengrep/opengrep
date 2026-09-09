@@ -747,7 +747,8 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
               m "SUBGRAPH: Found %d source functions and %d sink functions"
                 (List.length source_functions)
                 (List.length sink_functions));
-          let relevant_graph =
+          (* unbounded: no depth, so never cut *)
+          let relevant_graph, _cut =
             Graph_reachability.compute_relevant_subgraph call_graph
               ~sources:source_functions ~sinks:sink_functions
           in
