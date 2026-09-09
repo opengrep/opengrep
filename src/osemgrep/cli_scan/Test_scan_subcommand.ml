@@ -834,6 +834,44 @@ let test_interfile_uncovered_targets_aggregated (caps : Scan_subcommand.caps)
                    messages))
             [ "gen/a.ts"; "gen/b.ts" ]))
 
+(* The scanning root given as an absolute path, and a commit that adds a
+   second sink beside a pre-existing cross-file flow. The baseline replay
+   rediscovers its targets inside the baseline worktree, so the root must
+   be taken relative to the current directory there; taken as spelled, it
+   names the head checkout, the replay sees both sinks, and the
+   pre-existing one is reported as new beside the added one. *)
+let test_interfile_diff_scan_absolute_root (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun cwd ->
+          UFile.write_file ~file:(Fpath.v "sinks.py")
+            "\ndef leak(v):\n    sink(v)\n    sink(v)\n";
+          Git_wrapper.add [ Fpath.v "." ];
+          Git_wrapper.commit "Add a second sink";
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                        "--baseline-commit"; "HEAD~1"; Fpath.to_string cwd;
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list (pair string int))) "the added sink only"
+            [ ("sinks.py", 4) ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   (Fpath.basename m.path, m.start.line)))))
+
 (* Sources and sinks are extracted only over the scan's target files, so a
    partial scan — one file here, but equally a diff scan or a CI changed-files
    run — sees just one side of the flow.  Scanning only the sink file must
@@ -2758,6 +2796,8 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_interfile_empty_file_is_covered caps);
       t "interfile uncovered targets aggregated"
         (test_interfile_uncovered_targets_aggregated caps);
+      t "interfile diff scan with an absolute root"
+        (test_interfile_diff_scan_absolute_root caps);
       t "interfile SARIF output" (test_interfile_sarif_output caps);
       t "interfile ignored caller" (test_interfile_ignored_caller caps);
       t "interfile with search and intrafile rules"
