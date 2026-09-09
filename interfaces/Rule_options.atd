@@ -174,7 +174,9 @@ type t = {
   (* Preprocess comments away to facilitate matching with spacegrep. *)
   ?generic_comment_style: generic_comment_style option;
 
-  (* Whether a rule should be considered for interfile analysis. *)
+  (* Whether a rule should be considered for interfile analysis.
+     Alias for taint_interfile, the name published rules use; it sets
+     taint_interfile when the rule is parsed, and setting both is an error. *)
   ~interfile <ocaml default="false"> : bool;
 
   (* Whether last expression executed in a function is treated the
