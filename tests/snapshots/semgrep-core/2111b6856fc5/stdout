@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/invalid-interfile-options.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 14 insertions(+)
+ create mode 100644 rules/invalid-interfile-options.yaml
+ create mode 100644 target.py
+exit code: 7
+--- begin input files ---
+rules/invalid-interfile-options.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 14 insertions(+)
+ create mode 100644 rules/invalid-interfile-options.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.interfile-and-taint-interfile","message":"Invalid rule schema at line rules/invalid-interfile-options.yaml:4:\n only one of interfile and taint_interfile can be set","path":"rules/invalid-interfile-options.yaml","long_msg":"only one of interfile and taint_interfile can be set","short_msg":"Invalid rule schema","spans":[{"file":"rules/invalid-interfile-options.yaml","start":{"line":4,"col":3,"offset":59},"end":{"line":4,"col":10,"offset":66}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 7

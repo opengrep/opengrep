@@ -30,6 +30,10 @@ through interfile dispatch.  The two settings never cancel each other
 the per-rule `taint_interfile_depth` combine by **max** (the deeper of
 the two wins).
 
+`options.interfile: true` is an alias for
+`options.taint_interfile: true`; a rule that sets both is rejected as
+an invalid rule.
+
 Implies `--taint-intrafile` because interfile builds on the
 intrafile per-function dataflow.
 
