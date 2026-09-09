@@ -193,17 +193,17 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
               in
               (* A rule can turn interfile on by itself, so the CLI flag alone
                  does not decide this. *)
-              let interfile_in_play =
-                conf.core_runner_conf.taint_interfile
-                || List.exists
-                     (fun (rule : Rule.rule) ->
-                        match rule.Rule.options with
-                        | Some opts -> opts.taint_interfile
-                        | None -> false)
-                     rules
+              (* The interfile rules replay over the baseline's full target
+                 set, every other rule over the files that carry a match:
+                 one interfile rule does not make every rule rescan the
+                 tree. *)
+              let interfile_rules, other_rules =
+                List.partition
+                  (Interfile_dispatch.rule_is_interfile
+                     ~taint_interfile:conf.core_runner_conf.taint_interfile)
+                  baseline_rules
               in
-              let baseline_targets =
-                if interfile_in_play then
+              let interfile_targets () =
                   (* An interfile match depends on files that carry no match of
                      their own — the caller supplying the taint — so replaying
                      only [paths_in_match] cannot reproduce it: the baseline
@@ -243,11 +243,35 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                       conf.targeting_conf baseline_roots
                   in
                   all_in_baseline
-                else wrap_as_targets paths_in_match
               in
-              let res =
-                core ~explicit_targets:baseline_explicit_targets
-                  baseline_targets baseline_rules
+              (* [targets] is computed only when there is a rule to replay:
+                 the interfile set is a rediscovery of the whole tree *)
+              let replay (rules : Rule.rules)
+                  (targets : unit -> Target_and_root.t list)
+                  : Core_result.result_or_exn option =
+                match rules with
+                | [] -> None
+                | _ ->
+                    Some
+                      (core ~explicit_targets:baseline_explicit_targets
+                         (targets ()) rules)
+              in
+              let res : Core_result.result_or_exn =
+                let merge (a : Core_result.result_or_exn option)
+                    (b : Core_result.result_or_exn option) =
+                  match (a, b) with
+                  | None, None -> Ok (Core_result.mk_result_with_just_errors [])
+                  | Some r, None | None, Some r -> r
+                  | Some (Error e), _ | _, Some (Error e) -> Error e
+                  | Some (Ok ra), Some (Ok rb) ->
+                      Ok
+                        { ra with
+                          processed_matches =
+                            ra.processed_matches @ rb.processed_matches }
+                in
+                merge
+                  (replay other_rules (fun () -> wrap_as_targets paths_in_match))
+                  (replay interfile_rules interfile_targets)
               in
               (* Build the signatures HERE, still inside the worktree that
                  produced these matches: an interfile match's path is absolute

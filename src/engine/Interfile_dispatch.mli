@@ -17,6 +17,10 @@ val extract_signatures : rule_state -> Shape_and_sig.signature_database
 
 val run_rule : rule_state -> Core_match.t list
 
+val rule_is_interfile : taint_interfile:bool -> Rule.t -> bool
+(** A taint rule the interfile task runs: the global flag or the rule's
+    own option. *)
+
 val interfile_taint_rule_ids :
   taint_interfile:bool ->
   Rule.t list ->
