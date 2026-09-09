@@ -872,6 +872,78 @@ let test_interfile_diff_scan_absolute_root (caps : Scan_subcommand.caps) () =
             |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
                    (Fpath.basename m.path, m.start.line)))))
 
+(* A chain of four calls from the source to the sink, one beyond the
+   default depth: the scan finds nothing and says why, one warning naming
+   the rule and the depth flag; at depth four it finds the sink and says
+   nothing. *)
+let test_interfile_depth_cut_warning (caps : Scan_subcommand.caps) () =
+  let chain = {|
+def f1(x):
+    f2(x)
+
+def f2(x):
+    f3(x)
+
+def f3(x):
+    f4(x)
+
+def f4(x):
+    sink(x)
+|} in
+  let caller = {|
+from chain import f1
+
+def handler():
+    f1(source())
+|} in
+  let scan (args : string list) : Semgrep_output_v1_t.cli_output =
+    with_env_app_token (fun () ->
+        Testutil_git.with_git_repo
+          [
+            F.File ("rules.yml", taint_interfile_content);
+            F.File ("main.py", caller);
+            F.File ("chain.py", chain);
+          ]
+          (fun _cwd ->
+            let (), stdout_output =
+              Testo.with_capture stdout (fun () ->
+                  without_settings (fun () ->
+                      Scan_subcommand.main caps
+                        (Array.of_list
+                           ([
+                              "opengrep-scan"; "--experimental"; "--config";
+                              "rules.yml"; "--json"; "--taint-interfile";
+                            ]
+                           @ args)))
+                  |> ignore)
+            in
+            Semgrep_output_v1_j.cli_output_of_string stdout_output))
+  in
+  let messages (out : Semgrep_output_v1_t.cli_output) =
+    out.errors
+    |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+           Option.value e.message ~default:"error")
+  in
+  let files (out : Semgrep_output_v1_t.cli_output) =
+    out.results
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           Fpath.to_string m.path)
+  in
+  let cut = scan [] in
+  Alcotest.(check (list string)) "nothing found at the default depth" []
+    (files cut);
+  Alcotest.(check int) "one warning" 1 (List.length (messages cut));
+  Alcotest.(check bool) "the warning names the rule and the depth flag" true
+    (List.for_all
+       (fun (m : string) ->
+         String_.contains m ~term:"--taint-interfile-depth"
+         && String_.contains m ~term:"interfile-taint")
+       (messages cut));
+  let deep = scan [ "--taint-interfile-depth"; "4" ] in
+  Alcotest.(check (list string)) "found at depth four" [ "chain.py" ]
+    (files deep);
+  Alcotest.(check (list string)) "no warning at depth four" [] (messages deep)
+
 (* Sources and sinks are extracted only over the scan's target files, so a
    partial scan — one file here, but equally a diff scan or a CI changed-files
    run — sees just one side of the flow.  Scanning only the sink file must
@@ -2798,6 +2870,7 @@ let tests (caps : < Scan_subcommand.caps >) =
         (test_interfile_uncovered_targets_aggregated caps);
       t "interfile diff scan with an absolute root"
         (test_interfile_diff_scan_absolute_root caps);
+      t "interfile depth cut warning" (test_interfile_depth_cut_warning caps);
       t "interfile SARIF output" (test_interfile_sarif_output caps);
       t "interfile ignored caller" (test_interfile_ignored_caller caps);
       t "interfile with search and intrafile rules"
