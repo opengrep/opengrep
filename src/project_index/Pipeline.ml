@@ -3,7 +3,8 @@ module G = AST_generic
 open Types
 
 
-(* Infer var classes from assignments and stamp them onto [id_type]. *)
+(* Infer var classes from assignments and stamp them onto
+   [id_instance_type]. *)
 type stamp_var_types =
   type_state:Type_state.t ->
   slice_element_of_field:(string * string, G.name) Hashtbl.t ->
@@ -138,7 +139,8 @@ let stamp_import_value_aliases
     end
   end
 
-(* Detect ctor/import-derived var classes and stamp them onto [id_type].
+(* Detect ctor/import-derived var classes and stamp them onto
+   [id_instance_type].
    Side effect on [visible]: extends it with discovered class names so
    [build_funcs_by_name] keeps their methods. *)
 let stamp_base_var_types

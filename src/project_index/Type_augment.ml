@@ -567,8 +567,9 @@ let augment_fields_from_self_assignments
       (match body with
        | None -> outer_acc
        | Some body_stmt ->
-         (* Publish param classes onto the body's [id_type] so the typer
-            resolves param-derived rhs exprs. *)
+         (* Publish parameter classes onto the body's [id_instance_type] so
+            [Type_infer] resolves right-hand-side expressions derived from a
+            parameter. *)
          let param_facts =
            Hashtbl.fold (fun pname ty acc ->
              (G.Id ((pname, Tok.unsafe_fake_tok pname), G.empty_id_info ()),
@@ -615,9 +616,10 @@ let augment_fields_from_self_assignments
       ty
   ) type_state (List.rev collected)
 
-(* Infer var classes from assignment/def/range statements and stamp them onto
-   [id_type]; iterate so one pass's stamps unlock the next pass's inferences
-   (the typer reads receiver types off [id_type]). *)
+(* Infer variable classes from assignment/def/range statements and stamp them
+   onto [id_instance_type]; iterate so one pass's stamps unlock the next
+   pass's inferences ([Type_infer] reads a receiver's class off
+   [id_instance_type], else off [id_type]). *)
 let stamp_var_types_from_bodies
     ~(uses_new_keyword : bool)
     ~(type_state : Type_state.t)

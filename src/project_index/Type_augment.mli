@@ -63,7 +63,7 @@ val augment_fields_from_self_assignments :
   Graph_from_AST.func_info list ->
   Type_state.t
 
-(* Stamp inferred variable classes onto [id_type] across an AST. *)
+(* Stamp inferred variable classes onto [id_instance_type] across an AST. *)
 val stamp_var_types_from_bodies :
   uses_new_keyword:bool ->
   type_state:Type_state.t ->

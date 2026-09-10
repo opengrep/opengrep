@@ -137,7 +137,7 @@ type env = {
       (** Builtin signature database for standard library functions *)
   call_graph : Call_graph.G.t option;
       (** Local (intrafile) call graph for edge-based signature lookup.
-          Interfile resolution keys the signature DB by [id_resolved]
+          Interfile resolution keys the signature DB by [id_callee_definition]
           def-site sid first; this graph is the fallback for callees
           without a stamp (the intrafile path's main channel). *)
   call_graph_caller : IL.name option;
@@ -835,7 +835,8 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
             (S.show_shape fun_shape));
       []
 
-(* Fast path via [id_resolved] sid (= sig DB key), skipping the edge scan.
+(* Fast path via [id_callee_definition] sid (= sig DB key), skipping the edge
+   scan.
    The stamp is trusted whatever name it resolves to, gated only by the
    lookup itself: a leaf-name mismatch is as likely to be a deliberate
    alias (a class-body field alias exposes name X for a target named Y,
@@ -843,9 +844,10 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
    (Ruby [Cls.new]->[initialize], Python [Cls()]->[__init__]) as a stale
    stamp, and a stamp that resolves to a stored signature of the right
    arity is evidence enough. *)
-let signature_via_id_resolved ~project_root db (id_info : G.id_info) arity =
-  match !(id_info.G.id_resolved) with
-  | Some (_, sid) when not (G.SId.is_unsafe_default sid) ->
+let signature_via_callee_definition ~project_root db (id_info : G.id_info)
+    arity =
+  match !(id_info.G.id_callee_definition) with
+  | Some sid when not (G.SId.is_unsafe_default sid) ->
     (* A project scan keys the sig DB by absolutified fids, while sids
        carry the as-parsed (possibly relative) file. *)
     let fid =
@@ -859,11 +861,11 @@ let signature_via_id_resolved ~project_root db (id_info : G.id_info) arity =
 
 let get_signature_for_object ?(callee_id_info : G.id_info option)
     ~project_root graph caller_node db method_name arity =
-  (* obj.method(): prefer the callee leaf's [id_resolved] def-site sid,
+  (* obj.method(): prefer the callee leaf's [id_callee_definition] def-site sid,
      else the local call-graph edge, else the method-name fid. *)
   let fast =
     Option.bind callee_id_info (fun ii ->
-        signature_via_id_resolved
+        signature_via_callee_definition
           ~project_root
           db ii arity)
   in
@@ -899,7 +901,7 @@ let try_builtin_fallback env func_name arity result =
  * call branch and the Ruby [method(:name)] recogniser. *)
 let lookup_bare_function_name env db (name : IL.name) arity =
   match
-    signature_via_id_resolved
+    signature_via_callee_definition
       ~project_root:env.taint_inst.project_root db name.IL.id_info arity
   with
   | Some _ as r -> r
@@ -987,7 +989,7 @@ let lookup_signature_with_object_context env fun_exp arity =
           }
         when Option.is_some env.class_name -> (
           match
-            signature_via_id_resolved
+            signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
@@ -1034,7 +1036,7 @@ let lookup_signature_with_object_context env fun_exp arity =
           (* Chained call (e.g. [i.Next.G(s)]): the leaf method's stamp is
              the resolution channel, same as the single-offset branch. *)
           match
-            signature_via_id_resolved
+            signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
@@ -1065,7 +1067,7 @@ let lookup_signature_with_object_context env fun_exp arity =
              No name-keyed DB fallback: a bare method-name lookup would
              match any same-named method regardless of class. *)
           match
-            signature_via_id_resolved
+            signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
@@ -1095,7 +1097,7 @@ let lookup_signature_with_object_context env fun_exp arity =
              No name-keyed DB fallback: a bare method-name lookup would
              match any same-named method regardless of class. *)
           match
-            signature_via_id_resolved
+            signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
               method_name.id_info arity
           with
@@ -1115,7 +1117,7 @@ let lookup_signature_with_object_context env fun_exp arity =
               | None -> None))
       | _ -> None)
 
-(* If [fun_exp]'s [id_resolved] def-site sid is the function currently
+(* If [fun_exp]'s [id_callee_definition] def-site sid is the function currently
  * under analysis, return a synthesised signature built from the effects
  * accumulated so far. The surrounding dataflow fixpoint iterates, so each
  * pass picks up effects recorded by the previous one — converging to a
@@ -1124,8 +1126,8 @@ let lookup_signature_with_object_context env fun_exp arity =
 let is_self_call env (fun_exp : IL.exp) : bool =
   match (fun_exp.e, env.func.name) with
   | Fetch { base = Var callee; rev_offset = [] }, Some self_name -> (
-      match !(callee.id_info.G.id_resolved) with
-      | Some (_, sid) ->
+      match !(callee.id_info.G.id_callee_definition) with
+      | Some sid ->
           (not (G.SId.is_unsafe_default sid))
           && Function_id.equal (Function_id.of_sid sid)
                (Function_id.of_il_name self_name)
@@ -2409,7 +2411,7 @@ let call_with_intrafile lval_opt e env args instr =
     ~filter_sinks:(fun m -> not (m.spec.sink_exact && m.spec.sink_has_focus));
   let call_taints, shape, lval_env =
     (* Constructor call handling for ClassName() and ClassName.new():
-       the callee leaf's [id_resolved] sid points at the resolved def
+       the callee leaf's [id_callee_definition] sid points at the resolved def
        (stamped by extraction), and a construction resolves to the ctor
        def (e.g. [__init__]/[initialize]), so the sid's leaf name decides.
        A construction must not be mistaken for an implicit block/HOF call,
@@ -2428,15 +2430,15 @@ let call_with_intrafile lval_opt e env args instr =
              || not Lang.(env.taint_inst.lang =*= Ruby || env.taint_inst.lang =*= Crystal) -> false
       | _ -> true) &&
       Option.is_some env.signature_db &&
-      let resolved_sid = match e.e with
+      let callee_definition_sid = match e.e with
         | Fetch { base = Var name; rev_offset = [] } ->
-            !(name.id_info.G.id_resolved)
+            !(name.id_info.G.id_callee_definition)
         | Fetch { base = Var _; rev_offset = [ { o = Dot m; _ } ] } ->
-            !(m.id_info.G.id_resolved)
+            !(m.id_info.G.id_callee_definition)
         | _ -> None
       in
-      (match resolved_sid with
-       | Some (_, sid) when not (G.SId.is_unsafe_default sid) ->
+      (match callee_definition_sid with
+       | Some sid when not (G.SId.is_unsafe_default sid) ->
            let (rname, _, _, _) = G.SId.to_loc sid in
            Object_initialization.is_constructor env.taint_inst.lang
              rname None
@@ -2593,7 +2595,8 @@ let call_with_intrafile lval_opt e env args instr =
                                  rev_offset = [{ o = Dot name; oorig = NoOrig }] };
                      eorig = e.eorig }
             (* [ClassName.new()]: keep the [new] offset — it carries the
-               ctor def's [id_resolved] stamp; the class-name base does not. *)
+               ctor def's [id_callee_definition] stamp; the class-name base
+               does not. *)
             | Some lval, Fetch { base = Var _; rev_offset = [ ({ o = Dot _; _ } as off) ] } ->
                 IL.{ e = Fetch { base = lval.base; rev_offset = [ off ] };
                      eorig = e.eorig }

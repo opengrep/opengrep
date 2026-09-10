@@ -11,7 +11,8 @@ val collect :
   unit ->
   Types.entry list * Call_graph.G.t * int * int
 
-(* Resolved AST (cross-file [id_resolved]) of [target], or [None] if not discovered. *)
+(* Resolved AST (cross-file [id_callee_definition]) of [target], or [None] if
+   not discovered. *)
 val resolve_ast_for_file :
   < Cap.fork > ->
   ?targeting_conf:Find_targets.conf ->
@@ -23,9 +24,10 @@ val resolve_ast_for_file :
   AST_generic.program option
 
 (* Call graph + resolved-AST map (abs path -> AST with cross-file
-   [id_resolved]) + per-file build failures.  A failed file's functions and
-   call edges are MISSING from the graph, so the caller must surface the
-   failures (the engine turns them into scan errors) rather than drop them. *)
+   [id_callee_definition]) + per-file build failures.  A failed file's
+   functions and call edges are MISSING from the graph, so the caller must
+   surface the failures (the engine turns them into scan errors) rather than
+   drop them. *)
 val collect_resolved :
   < Cap.fork > ->
   ?targeting_conf:Find_targets.conf ->

@@ -3,7 +3,8 @@ module G = AST_generic
 (* Element type's leaf class of an iterable ([[]T] / arrays). *)
 val slice_element_of_ty : G.type_ -> G.name option
 
-(* The class declared on the name's [id_type]. *)
+(* The class on the name's [id_instance_type], else the one its [id_type]
+   declares. *)
 val declared_class_of_name : G.name -> G.name option
 
 (* [current_class] is [None] outside a method. *)

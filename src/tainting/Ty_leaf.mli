@@ -4,6 +4,8 @@ module G = AST_generic
 
 val leaf_of_name : G.name -> string option
 
+val instance_or_declared_type : G.id_info -> G.type_ option
+
 (* The package qualifier of a name: [pkg] in [pkg.Foo]; [None] for bare [Id]. *)
 val qualifier_of_name : G.name -> string option
 

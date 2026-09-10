@@ -730,9 +730,10 @@ let rec identify_callee ~(lang : Lang.t)
               _,
               G.FN (G.Id ((id, _), _id_info)) ) ->
             let method_name_str = id in
-            (* Receiver type published on [id_info] by projidx augment / intrafile broadcast. *)
+            (* Receiver's instance class, published on [id_info] by projidx
+               augment / intrafile broadcast, else its declared type. *)
             let obj_class_opt =
-              Option.bind !(obj_id_info.G.id_type)
+              Option.bind (Ty_leaf.instance_or_declared_type obj_id_info)
                 Ty_leaf.qualified_class_name_of_ty
             in
             (match obj_class_opt with

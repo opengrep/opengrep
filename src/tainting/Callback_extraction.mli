@@ -3,15 +3,17 @@
  * record/list literals, or reached via [id_svalue]) to callee [fn_id]s.
  * See [Graph_from_AST] for the orchestration that consumes these. *)
 
-(* Resolved name a [fn_id] writes back onto the AST, when it carries a real
-   (non-fake) token. *)
+(* Resolved name of a [fn_id] — the definition's kind and sid — when its leaf
+   carries a real (non-fake) token. [set_callee_definition] stamps its sid
+   onto the AST. *)
 val resolved_name_of_fn_id :
   ?allow_located_fake:bool ->
   Callee_resolution.fn_id ->
   AST_generic.resolved_name option
 
-(* Sets [ii.id_resolved]; mutating the ref mutates the shared AST. *)
-val set_id_resolved_to_def :
+(* Sets [ii.id_callee_definition] to the definition's sid; mutating the ref
+   mutates the shared AST. *)
+val set_callee_definition :
   ?allow_located_fake:bool ->
   AST_generic.id_info ->
   Callee_resolution.fn_id ->

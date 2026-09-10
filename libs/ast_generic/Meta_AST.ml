@@ -135,10 +135,12 @@ let vof_module_name = function
 
 let vof_dotted_ident = vof_dotted_name
 
+let vof_sid (sid : sid) = OCaml.vof_int (SId.to_int sid)
+
 let rec vof_resolved_name (v1, v2) =
   let v1 = vof_resolved_name_kind v1 in
   (* the binding number, which does not depend on the file's path *)
-  let v2 = OCaml.vof_int (SId.to_int v2) in
+  let v2 = vof_sid v2 in
   OCaml.VTuple [ v1; v2 ]
 
 and vof_canonical_name v1 = OCaml.vof_list OCaml.vof_string v1
@@ -203,12 +205,20 @@ and vof_id_info
       id_resolved = v_id_resolved;
       id_resolved_alternatives = v_id_resolved_alts;
       id_type = v_id_type;
+      id_instance_type = v_id_instance_type;
+      id_callee_definition = v_id_callee_definition;
       id_svalue = v3;
       id_flags;
     } =
   let bnds = [] in
   let arg = OCaml.vof_ref (OCaml.vof_option vof_svalue) v3 in
   let bnd = ("id_svalue", arg) in
+  let bnds = bnd :: bnds in
+  let arg = OCaml.vof_ref (OCaml.vof_option vof_sid) v_id_callee_definition in
+  let bnd = ("id_callee_definition", arg) in
+  let bnds = bnd :: bnds in
+  let arg = OCaml.vof_ref (OCaml.vof_option vof_type_) v_id_instance_type in
+  let bnd = ("id_instance_type", arg) in
   let bnds = bnd :: bnds in
   let arg = OCaml.vof_ref (OCaml.vof_option vof_type_) v_id_type in
   let bnd = ("id_type", arg) in
