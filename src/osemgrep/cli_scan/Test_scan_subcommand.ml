@@ -700,9 +700,9 @@ let test_interfile_rule_paths (caps : Scan_subcommand.caps) () =
             |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
                    Fpath.to_string m.path))))
 
-(* The scanning root as typed may go through a symlink. The interfile graph
+(* The scanning root as given may go through a symlink. The interfile graph
    is keyed on canonical paths; the findings must not depend on the
-   spelling, and no target may be reported as absent from the graph. *)
+   form of the path, and no target may be reported as absent from the graph. *)
 let test_interfile_symlinked_root (caps : Scan_subcommand.caps) () =
   with_env_app_token (fun () ->
       Testutil_git.with_git_repo
@@ -837,7 +837,7 @@ let test_interfile_uncovered_targets_aggregated (caps : Scan_subcommand.caps)
 (* The scanning root given as an absolute path, and a commit that adds a
    second sink beside a pre-existing cross-file flow. The baseline replay
    rediscovers its targets inside the baseline worktree, so the root must
-   be taken relative to the current directory there; taken as spelled, it
+   be taken relative to the current directory there; taken as given, it
    names the head checkout, the replay sees both sinks, and the
    pre-existing one is reported as new beside the added one. *)
 let test_interfile_diff_scan_absolute_root (caps : Scan_subcommand.caps) () =
