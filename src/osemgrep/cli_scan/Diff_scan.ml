@@ -51,7 +51,7 @@ type diff_scan_func =
    are equal. *)
 (* The path component is taken relative to the current directory, by the
    same [from_cwd] the targets went through: a match carries the target
-   path as given, relative or absolute, spelled through a symlink or not,
+   path as given, relative or absolute, through a symlink or not,
    and the two scans must agree on it or a finding could never be
    deduplicated. *)
 let extract_sig ~(from_cwd : Fpath.t -> Fpath.t) renamed (m : Core_match.t) =
@@ -224,9 +224,8 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                      findings as "new".  Multi-root scans lose their per-target
                      roots the same way. *)
                   (* the roots relative to the current directory, as the
-                     targets are: a root spelled absolute names the head
-                     checkout, and the replay would scan that, not the
-                     baseline *)
+                     targets are: an absolute root is the head checkout, and
+                     the replay would scan that, not the baseline *)
                   let baseline_roots =
                     conf.target_roots
                     |> List_.map (fun (root : Scanning_root.t) ->

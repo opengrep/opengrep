@@ -18,8 +18,8 @@ let load_interfile_build (caps : < Cap.fork >)
     ~(targeting_conf : Find_targets.conf)
     (lang : Lang.t) (project_root : Fpath.t)
     : (interfile_graph * resolved_asts * Core_error.t list) option =
-  (* The graph is keyed by canonical path, whatever spelling the root came
-     in; the targets are matched by theirs ([Interfile_dispatch]). *)
+  (* The graph is keyed by canonical path, whether the root is relative or
+     absolute, and [Interfile_dispatch] looks targets up by canonical path. *)
   let project_root_abs =
     let abs = fst (Fpath_.absolutify ~cwd:(Fpath.v (Sys.getcwd ())) project_root) in
     match Rpath.of_fpath abs with
