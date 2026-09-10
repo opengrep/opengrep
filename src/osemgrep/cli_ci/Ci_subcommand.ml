@@ -286,7 +286,7 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
                   let num_blocking_findings =
                     cli_output.results
                     |> List.filter (fun (m : Out.cli_match) ->
-                           Matches_report.is_blocking m.extra.metadata)
+                           Findings_layout.is_blocking m.extra.metadata)
                     |> List.length
                   in
                   Logs.app (fun m -> m "CI scan completed successfully.");

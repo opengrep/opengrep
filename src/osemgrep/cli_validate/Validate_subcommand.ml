@@ -353,7 +353,9 @@ let run_conf (caps : < caps ; .. >) (conf : Validate_CLI.conf) : Exit_code.t =
    * python: scan in commands/scan.py called its output handler only when
    * the validation had collected errors. *)
   if conf.json && not (List_.null errors) then
-    Output.output_result ~keep_ignored:false
+    Output.output_result
+      ~skin:(Skins.resolve Skins.default)
+      ~keep_ignored:false
       (caps :> < Cap.stdout >)
       { conf.output_conf with output_format = Output_format.Json }
       (Profiler.make ())

@@ -85,6 +85,7 @@ type result = {
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
+    ?on_plan:(Skin_model.Plan.t -> unit) ->
     git_repo:bool ->
     conf ->
     Find_targets.conf ->
@@ -133,20 +134,6 @@ let default_conf : conf =
     strict = false;
     engine_config = Engine_config.default;
   }
-
-(*************************************************************************)
-(* Metrics and reporting *)
-(*************************************************************************)
-(* the targets are those tracked by git only when git listed them and its
-   exclusions were respected *)
-let report_status ~(tracked_by_git : bool) (lang_jobs : Lang_job.t list)
-    (rules : Rule.t list) (targets : Target_and_root.t list) =
-  Logs.app (fun m ->
-      m "%a"
-        (fun ppf () ->
-          Status_report.pp_status ~rules ~num_targets:(List.length targets)
-            ~tracked_by_git lang_jobs ppf)
-        ())
 
 (*************************************************************************)
 (* Extract mode *)
@@ -453,7 +440,8 @@ let mk_result ?(inline = false) ?(taint_interfile = false)
 
 (* Core_scan.core_scan_func adapter for osemgrep *)
 let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
-  let run ?file_match_hook ~(git_repo : bool) (conf : conf)
+  let run ?file_match_hook ?(on_plan = fun (_ : Skin_model.Plan.t) -> ())
+      ~(git_repo : bool) (conf : conf)
       (targeting_conf : Find_targets.conf)
       (matching_conf : Match_patterns.matching_conf)
       (rules_and_invalid : Rule_error.rules_and_invalid)
@@ -487,9 +475,13 @@ let mk_core_run_for_osemgrep (core_scan_func : Core_scan.func) : func =
        See https://www.notion.so/r2cdev/Osemgrep-scanning-algorithm-5962232bfd74433ba50f97c86bd1a0f3
     *)
     let lang_jobs = split_jobs_by_language targeting_conf valid_rules targets in
-    report_status
-      ~tracked_by_git:(targeting_conf.respect_gitignore && git_repo)
-      lang_jobs valid_rules targets;
+    (* the targets are those tracked by git only when git listed them and
+       its exclusions were respected *)
+    on_plan
+      (Scan_plan.of_lang_jobs ~rules:valid_rules
+         ~num_targets:(List.length targets)
+         ~tracked_by_git:(targeting_conf.respect_gitignore && git_repo)
+         lang_jobs);
     let code_targets, applicable_rules =
       targets_and_rules_of_lang_jobs lang_jobs
     in

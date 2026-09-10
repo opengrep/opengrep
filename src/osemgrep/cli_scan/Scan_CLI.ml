@@ -808,6 +808,16 @@ Each should be one of INFO, WARNING, or ERROR.
           [ ("INFO", `Info); ("WARNING", `Warning); ("ERROR", `Error) ])
        [] info)
 
+let o_skin : Skin.name Term.t =
+  let info =
+    Arg.info [ "skin" ]
+      ~doc:
+        {|Which look the text report has: $(b,legacy) is the report opengrep
+has always printed, $(b,simple) is terse and unadorned, $(b,vivid) uses
+colour for readability.|}
+  in
+  Arg.value (Arg.opt (Cmdliner.Arg.enum Skin.all_names) Skins.default info)
+
 let o_exclude_rule_ids : string list Term.t =
   let info =
     Arg.info [ "exclude-rule" ]
@@ -1275,7 +1285,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       taint_interfile_depth taint_intrafile
       effect_guards replacement rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions semgrepignore_filename severity show_supported_languages
-      skip_invalid_configs
+      skin skip_invalid_configs
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
       timeout_interfile timeout_threshold
       (*  trace trace_endpoint *) use_git
@@ -1336,6 +1346,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           | Some (Info | Debug) -> true
           | _else_ -> false);
         max_log_list_entries;
+        skin;
         is_ci_invocation = false;
       }
     in
@@ -1519,7 +1530,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_replacement
     $ o_rewrite_rule_ids $ o_sarif $ o_sarif_outputs $ o_scan_unknown_extensions
     $ o_semgrepignore_filename $ o_severity $ o_show_supported_languages
-    $ o_skip_invalid_configs $ o_strict
+    $ o_skin $ o_skip_invalid_configs $ o_strict
     $ o_target_roots $ o_test $ Test_CLI.o_test_ignore_todo $ o_text
     $ o_text_outputs $ o_time $ o_timeout $ o_timeout_interfile
     $ o_timeout_threshold $ (* o_trace $ o_trace_endpoint $ *) o_use_git $ o_validate
