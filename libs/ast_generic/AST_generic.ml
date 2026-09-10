@@ -549,6 +549,7 @@ class virtual ['self] iter_parent =
     method visit_location _env _ = ()
     method visit_id_flags_t _env _ = ()
     method visit_resolved_name _env _ = ()
+    method visit_sid _env _ = ()
     method visit_tok _env _ = ()
 
     method visit_parsed_int env pi =
@@ -621,6 +622,7 @@ class virtual ['self] map_parent =
     method visit_location _env x = x
     method visit_id_flags_t _env x = x
     method visit_resolved_name _env x = x
+    method visit_sid _env x = x
     method visit_tok _env x = x
     method visit_parsed_int env pi = Parsed_int.map_tok (self#visit_tok env) pi
   end
@@ -713,7 +715,11 @@ and id_info = {
    *   whereas the second `foo` has type `Foo` but with SId.t "m".
    *)
   id_type : type_ option ref; [@hash.ignore] [@equal fun _a _b -> true]
+  id_instance_type : type_ option ref;
+      [@hash.ignore] [@equal fun _a _b -> true]
   (* type checker (typing) *)
+  id_callee_definition : sid option ref;
+      [@hash.ignore] [@equal fun _a _b -> true]
   (* sgrep: this is for sgrep constant propagation hack.
    * todo? associate only with Id?
    * note that we do not use the svalue for equality (hence the adhoc
@@ -2364,6 +2370,8 @@ let empty_id_info ?(hidden = false) ?(case_insensitive = false) () =
     id_resolved = ref None;
     id_resolved_alternatives = ref [];
     id_type = ref None;
+    id_instance_type = ref None;
+    id_callee_definition = ref None;
     id_svalue = ref None;
     id_flags =
       ref (IdFlags.make ~hidden ~case_insensitive ~final:false ~static:false);

@@ -693,7 +693,7 @@ let extract_and_check_function
     let glob_env = glob_env_of_fid rs fid in
     let updated_db, findings =
       (* No [~call_graph]: interfile callee resolution is sid-only (the
-         [id_resolved] def-site sids stamped by projidx). The local
+         [id_callee_definition] def-site sids stamped by projidx). The local
          call-graph fallback is for the intrafile path. *)
       Match_tainting_mode.extract_and_check
         ?builtin_signature_db:rs.builtin_signature_db
@@ -849,7 +849,8 @@ let topo_fold ~(detect_findings : bool) (rs : rule_state)
           else dispatch_merge_fbdecl rs fid (fid_arity_of rs info) db)
   in
   (* Edge-less SOURCE seeds are outside the SCC list, so nothing else
-     computes their signature — yet the epilogue and the [id_resolved]-stamp
+     computes their signature — yet the epilogue and the
+     [id_callee_definition]-stamp
      channel both reach one without any graph edge.  Restricted to sources:
      an edge-less sink anchors a finding where it already is and needs no
      signature, and analyzing every orphan means a CFG build plus dataflow
@@ -1118,9 +1119,9 @@ let chunks (n : int) (xs : 'a list) : 'a list list =
 type parsed_batch =
   Lang.t * (Fpath.t, G.program) Hashtbl.t * (Fpath.t * E.t) list
 
-(* Reuse a [resolved] projidx AST when present (it carries cross-file
-   id_resolved); otherwise fresh-parse. A failure is contained to its
-   file. *)
+(* Reuse a [resolved] projidx AST when present (it carries the cross-file
+   [id_callee_definition] stamps); otherwise fresh-parse. A failure is
+   contained to its file. *)
 let parse_file_batch
     ?(resolved : (string, G.program) Hashtbl.t = Hashtbl.create 0)
     (lang : Lang.t) (files : Fpath.t list) : parsed_batch =
@@ -1530,7 +1531,7 @@ let build_rule_states
   in
   (* Spec extraction matches on FRESH Naming-only parses: matching is
      positional (ranges and fids are identical for the same bytes), and
-     the projidx-published [id_type]/svalue payloads inside [id_info]
+     the projidx-published [id_instance_type]/svalue payloads inside [id_info]
      make every generic AST traversal ~2 orders of magnitude slower —
      on grafana, 188s vs 1s of formula matching for one rule.  The
      stamped ASTs stay in [target_ast_lookup] for dispatch, whose sid
@@ -1549,8 +1550,9 @@ let build_rule_states
   in
   (* Issue #499 gap B, cross-file half: compute argument-to-parameter
      symbolic stamps over each language's dispatch ASTs — whose
-     [id_resolved] links (naming same-file, projidx cross-file) connect
-     call sites to defs — and apply them to BOTH flavors: sids are
+     [id_callee_definition] stamps (projidx) and file-level [id_resolved]
+     bindings (naming, same file) connect call sites to defs — and apply
+     them to BOTH flavors: sids are
      positional, so decisions from the dispatch parse hold for the fresh
      extraction parse of the same bytes. Extraction then finds the sink
      match inside the callee body (seeding the subgraph), and dispatch's
@@ -1778,8 +1780,8 @@ let build_rule_states
     build_ast_lookup
       (List.rev_append companion_results (batch_asts parsed_target_batches))
   in
-  (* Publish inferred classes onto [id_type] for FRESH-parsed files only:
-     projidx already stamped the ASTs it returned (with project-wide type
+  (* Publish inferred classes onto [id_instance_type] for FRESH-parsed files
+     only: projidx already stamped the ASTs it returned (with project-wide type
      facts), and those are reused verbatim here — re-stamping them is a
      redundant whole-AST walk. Only files absent from [projidx_asts] were
      fresh-parsed and still need it. Once per file (the mapping depends
@@ -1796,7 +1798,9 @@ let build_rule_states
             | exn ->
                 let exn = Exception.catch exn in
                 Log.warn (fun m ->
-                    m "interfile dispatch: id_type stamping failed for %s: %s"
+                    m
+                      "interfile dispatch: instance-type stamping failed for \
+                       %s: %s"
                       (Fpath.to_string file) (Exception.to_string exn));
                 stamp_errors := file_error ~file exn :: !stamp_errors)
         tbl)

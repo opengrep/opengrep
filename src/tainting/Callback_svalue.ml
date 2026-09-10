@@ -12,11 +12,11 @@
  * sink inside the callee body, and everything downstream — seeding,
  * signatures, instantiation — proceeds as for a defined callback.
  *
- * The same collection works same-file (naming links the call's callee to
- * the local def) and cross-file (projidx writes [id_resolved] links onto
- * the dispatch ASTs). [G.SId.t] is a binding counted in traversal order
- * within its file, or a definition's site, so stamps computed on one
- * parse apply to any other parse of the same bytes
+ * The same collection works same-file (naming binds the call's callee to
+ * the local def) and cross-file (projidx writes [id_callee_definition]
+ * stamps onto the dispatch ASTs). [G.SId.t] is a binding counted in
+ * traversal order within its file, or a definition's site, so stamps
+ * computed on one parse apply to any other parse of the same bytes
  * — interfile matches specs on fresh Naming-only parses but runs dataflow
  * on projidx-stamped ASTs, and both must agree on the added matches.
  *
@@ -37,20 +37,38 @@ module Log = Log_tainting.Log
 (* Value observed for one parameter position at one call site: a bare name
    that is not itself a local/parameter/enclosed variable (those have no
    stable identity across call sites). *)
+let is_local_binding (info : G.id_info) : bool =
+  match !(info.G.id_resolved) with
+  | Some ((G.LocalVar | G.Parameter | G.EnclosedVar), _) -> true
+  | Some _
+  | None ->
+      false
+
+let is_resolved_callee (info : G.id_info) : bool =
+  Option.is_some !(info.G.id_callee_definition)
+
 let acceptable_actual (e : G.expr) : (string * G.expr) option =
   match e.G.e with
-  | G.N (G.Id ((s, _), ainfo)) -> (
-      match !(ainfo.G.id_resolved) with
-      | Some ((G.LocalVar | G.Parameter | G.EnclosedVar), _) -> None
-      | Some _
-      | None ->
-          Some (s, e))
+  | G.N (G.Id ((s, _), ainfo)) ->
+      if is_resolved_callee ainfo || not (is_local_binding ainfo) then
+        Some (s, e)
+      else None
   | _ -> None
 
-let sid_of_id_info (info : G.id_info) : G.SId.t option =
+let binding_sid (info : G.id_info) : G.SId.t option =
   match !(info.G.id_resolved) with
   | Some (_, sid) -> Some sid
   | None -> None
+
+let callee_sid (info : G.id_info) : G.SId.t option =
+  match !(info.G.id_callee_definition) with
+  | Some _ as sid -> sid
+  | None -> (
+      match !(info.G.id_resolved) with
+      | Some (G.Global, sid) -> Some sid
+      | Some _
+      | None ->
+          None)
 
 type def_entry = {
   (* Parameter sids by position; [None] for non-classic parameters. *)
@@ -71,7 +89,7 @@ let callee_positions_of_body (param_sids : G.SId.t option array)
       method! visit_expr () e =
         (match e.G.e with
         | G.Call ({ e = G.N (G.Id (_, cinfo)); _ }, _) -> (
-            match sid_of_id_info cinfo with
+            match binding_sid cinfo with
             | None -> ()
             | Some csid ->
                 Array.iteri
@@ -92,7 +110,7 @@ let param_sids_of_fdef (fdef : G.function_definition) : G.SId.t option array =
   Tok.unbracket fdef.G.fparams
   |> List_.map (fun (p : G.parameter) ->
          match p with
-         | G.Param { pinfo; _ } -> sid_of_id_info pinfo
+         | G.Param { pinfo; _ } -> binding_sid pinfo
          | _ -> None)
   |> Array.of_list
 
@@ -110,7 +128,7 @@ let collect_stamps (asts : G.program list) : (G.SId.t * G.expr) list =
       method! visit_definition () ((ent, dkind) as def) =
         (match (ent.G.name, dkind) with
         | G.EN (G.Id (_, info)), G.FuncDef fdef -> (
-            match sid_of_id_info info with
+            match binding_sid info with
             | None -> ()
             | Some def_sid ->
                 let de_param_sids = param_sids_of_fdef fdef in
@@ -152,7 +170,7 @@ let collect_stamps (asts : G.program list) : (G.SId.t * G.expr) list =
         method! visit_expr () e =
           (match e.G.e with
           | G.Call ({ e = G.N (G.Id (_, cinfo)); _ }, (_, args, _)) -> (
-              match sid_of_id_info cinfo with
+              match callee_sid cinfo with
               | None -> ()
               | Some csid -> (
                   match Hashtbl.find_opt defs csid with
@@ -211,8 +229,8 @@ let collect_sym_stamps (ast : G.program) : (G.SId.t * G.expr) list =
       inherit [_] G.iter_no_id_info
 
       method! visit_id_info () (info : G.id_info) =
-        (match (!(info.G.id_resolved), !(info.G.id_svalue)) with
-        | Some (_, sid), Some (G.Sym value) ->
+        (match (binding_sid info, !(info.G.id_svalue)) with
+        | Some sid, Some (G.Sym value) ->
             if not (Hashtbl.mem acc sid) then Hashtbl.replace acc sid value
         | _ -> ())
     end
@@ -237,7 +255,7 @@ let apply_stamps (stamps : (G.SId.t * G.expr) list) (ast : G.program) : int =
           inherit [_] G.iter_no_id_info
 
           method! visit_id_info () (info : G.id_info) =
-            (match (sid_of_id_info info, !(info.G.id_svalue)) with
+            (match (binding_sid info, !(info.G.id_svalue)) with
             | Some sid, None -> (
                 match Hashtbl.find_opt by_sid sid with
                 | Some value ->

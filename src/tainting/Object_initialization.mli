@@ -22,9 +22,10 @@ val detect_object_initialization :
   ?extra_class_names:AST_generic.name list ->
   AST_generic.program -> Lang.t -> object_mapping list
 
-(* Stamp each mapping's class onto every occurrence's [id_type]
-   (fill-on-None; a [TyFun] [id_type] is overwritten — C++'s most
-   vexing parse). First mapping per leaf wins. *)
+(* Stamp each mapping's class onto every occurrence's [id_instance_type],
+   leaving naming's [id_type] alone. A fallback mapping stamps only an
+   occurrence with no instance type whose declared type is absent or a
+   [TyFun] (C++'s most vexing parse). First mapping per leaf wins. *)
 val stamp_id_types : object_mapping list -> AST_generic.program -> unit
 
 (* Collect all class names from an AST *)

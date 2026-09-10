@@ -304,8 +304,7 @@ let identify_callback ?(all_funcs = [])
 
 (* [?allow_located_fake]: synthetic lambda names are located fakes — they
    carry the lambda's def position and key [Function_id] like a real token.
-   Direct-call write-back stamps them; callback-argument stamping does not
-   (a stamped callback *reference* perturbs the HOF shape-propagation flow).
+   Direct-call write-back and callback-argument stamping both stamp them.
    The sid name is the ident string, matching [Function_id.compute_key], so
    [Function_id.of_sid] rebuilds the exact vertex/DB key. *)
 let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
@@ -332,11 +331,12 @@ let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
       with Tok.NoTokenLocation _ -> None)
   | _ -> None
 
-(* Sets [ii.id_resolved]; mutating the ref mutates the shared AST. *)
-let set_id_resolved_to_def ?allow_located_fake (ii : G.id_info)
+(* Sets [ii.id_callee_definition] to the definition's sid; mutating the ref
+   mutates the shared AST. *)
+let set_callee_definition ?allow_located_fake (ii : G.id_info)
     (fn_id : fn_id) : unit =
   match resolved_name_of_fn_id ?allow_located_fake fn_id with
-  | Some rn -> ii.G.id_resolved := Some rn
+  | Some (_, sid) -> ii.G.id_callee_definition := Some sid
   | None -> ()
 
 (* Try to identify a callback from a G.argument, returning fn_id, token, and optional _tmp node.
@@ -368,7 +368,7 @@ let try_identify_callback_args ~lang ~all_funcs
         identify_callback ~all_funcs ~func_lookup ~caller_parent_path ~scope
           callback_name
         |> Option.map (fun fn_id ->
-            set_id_resolved_to_def ~allow_located_fake:true
+            set_callee_definition ~allow_located_fake:true
               callback_name.IL.id_info fn_id;
             (fn_id, tok, tmp_opt)))
       candidates

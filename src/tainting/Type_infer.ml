@@ -14,7 +14,7 @@ let id_info_of_name : G.name -> G.id_info = function
   | G.IdQualified qi -> qi.G.name_info
 
 let declared_class_of_name (name : G.name) : G.name option =
-  match !((id_info_of_name name).G.id_type) with
+  match Ty_leaf.instance_or_declared_type (id_info_of_name name) with
   | Some ty -> Ty_leaf.qualified_class_name_of_ty ty
   | None -> None
 

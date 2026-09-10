@@ -20,13 +20,17 @@ let fn_id_to_node = fn_id_to_node
 let uses_new_keyword = uses_new_keyword
 let resolved_name_of_fn_id = resolved_name_of_fn_id
 
-(* A name's key carries the class its [id_type] holds: a receiver rebound
-   to another class is another callee, with the same text. *)
+(* A name's key carries the class its [id_instance_type] holds, else its
+   [id_type]: a receiver rebound to another class is another callee, with
+   the same text. *)
 let canonical_callee_key (e : G.expr) : string option =
   let rec key e =
     match e.G.e with
     | G.N (G.Id ((s, _), info)) -> (
-        match Option.bind !(info.G.id_type) Ty_leaf.class_name_of_ty with
+        match
+          Option.bind (Ty_leaf.instance_or_declared_type info)
+            Ty_leaf.class_name_of_ty
+        with
         | Some cls -> (
             match Ty_leaf.leaf_of_name cls with
             | Some leaf -> Some (s ^ ":" ^ leaf)
@@ -160,9 +164,9 @@ let callee_leaf_id_info (callee : G.expr) : G.id_info option =
       Some ii
   | _ -> None
 
-let write_back_callee_resolved (callee : G.expr) (fn_id : fn_id) : unit =
+let write_back_callee_definition (callee : G.expr) (fn_id : fn_id) : unit =
   match callee_leaf_id_info callee with
-  | Some ii -> set_id_resolved_to_def ~allow_located_fake:true ii fn_id
+  | Some ii -> set_callee_definition ~allow_located_fake:true ii fn_id
   | None -> ()
 
 (* Non-memoisable callee shapes bypass the cache; sole AST write-back chokepoint. *)
@@ -182,7 +186,7 @@ let memo_lookup_or_compute (memo_tbl : callee_memo)
          r)
   in
   (match result with
-   | Some fn_id -> write_back_callee_resolved callee fn_id
+   | Some fn_id -> write_back_callee_definition callee fn_id
    | None -> ());
   result
 
@@ -341,7 +345,7 @@ let extract_calls ~(lang : Lang.t)
               (* [AST_to_IL.mk_class_constructor_name] threads this exact
                  [id_info] onto the IL ctor callee, so the stamp is what
                  the engine's signature lookup reads for [new Cls(...)]. *)
-              set_id_resolved_to_def ~allow_located_fake:true id_info fn_id;
+              set_callee_definition ~allow_located_fake:true id_info fn_id;
               let tok =
                 match AST_generic_helpers.ii_of_any (G.T ty) with
                 | tok :: _ -> tok

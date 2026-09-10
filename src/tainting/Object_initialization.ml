@@ -333,12 +333,13 @@ let detect_object_initialization
   visitor#visit_program () ast;
   !object_mappings
 
-(* Stamp each mapping's class onto every occurrence's [id_type] so consumers
-   read it off the AST (fill-on-None; a [TyFun] [id_type] is overwritten —
-   C++'s most vexing parse). An occurrence takes the nearest mapping of its
-   variable that precedes it: a receiver rebound to another class is that
-   class from the rebinding on. An occurrence no mapping precedes takes the
-   first. *)
+(* Stamp each mapping's class onto every occurrence's [id_instance_type] so
+   consumers read it off the AST; naming's [id_type] keeps the declared type.
+   A fallback mapping stamps only an occurrence with no instance type whose
+   declared type is absent or a [TyFun] (C++'s most vexing parse). An
+   occurrence takes the nearest mapping of its variable that precedes it: a
+   receiver rebound to another class is that class from the rebinding on. An
+   occurrence no mapping precedes takes the first. *)
 let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
   let sid_of_name (n : G.name) : G.SId.t option =
     match n with
@@ -423,12 +424,14 @@ let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
                the name last took, more precise than the declaration's
                type naming gave it; the fallback only fills a missing one. *)
             let untyped =
+              Option.is_none !(info.G.id_instance_type)
+              &&
               match !(info.G.id_type) with
               | None | Some { G.t = G.TyFun _; _ } -> true
               | Some _ -> false
             in
             let stamp (ty : G.name) : unit =
-              info.G.id_type :=
+              info.G.id_instance_type :=
                 Some { G.t = G.TyN (detacher#visit_name () ty); G.t_attrs = [] }
             in
             match class_of_occurrence n with

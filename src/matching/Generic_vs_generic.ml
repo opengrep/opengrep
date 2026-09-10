@@ -741,6 +741,8 @@ and m_id_info a b =
         G.id_resolved = _a1;
         id_resolved_alternatives = _a2;
         id_type = _a3;
+        id_instance_type = _a_instance_type;
+        id_callee_definition = _a_callee_definition;
         id_svalue = _a4;
         id_flags = _a5;
       },
@@ -748,6 +750,8 @@ and m_id_info a b =
         B.id_resolved = _b1;
         id_resolved_alternatives = _b2;
         id_type = _b3;
+        id_instance_type = _b_instance_type;
+        id_callee_definition = _b_callee_definition;
         id_svalue = _b4;
         id_flags = _b5;
       } ) ->

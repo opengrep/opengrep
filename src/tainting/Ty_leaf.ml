@@ -11,6 +11,11 @@ let leaf_of_name (name : G.name) : string option =
   | Some (G.Id ((str, _), _)) -> Some str
   | _ -> None
 
+let instance_or_declared_type (info : G.id_info) : G.type_ option =
+  match !(info.G.id_instance_type) with
+  | Some _ as ty -> ty
+  | None -> !(info.G.id_type)
+
 let qualifier_of_name : G.name -> string option = function
   | G.IdQualified { G.name_middle = Some (G.QDots dots); _ } ->
     Option.map (fun ((qualifier, _), _) -> qualifier) (List_.last_opt dots)
