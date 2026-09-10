@@ -56,16 +56,23 @@ val get_methods : t -> Names.Class_name.t -> Func_info.t list option
 val fold_methods :
   (Names.Class_name.t -> Func_info.t list -> 'a -> 'a) -> t -> 'a -> 'a
 
-(* The given classes (every class when none is given) narrowed to the
-   files [keep_file] accepts: their colliding method groups as
-   [Func_info.narrow_colliding_groups] does, and their defining files, all
-   of them kept when it accepts none. *)
+(* The result is [t] with every class of [classes] narrowed to the defining
+   files that [keep_file] accepts and to the methods that
+   [Func_info.narrow_colliding_groups] keeps. A method group that [keep_file]
+   would empty keeps every entry. A file list that [keep_file] would empty
+   keeps every file. A class outside [classes] is unchanged. *)
 val narrow :
-  ?classes:Names.Class_name.t list ->
+  classes:Names.Class_name.t list ->
   keep_file:(Names.Class_name.t -> string -> bool) ->
   file_of_func:(Func_info.t -> string option) ->
   t ->
   t
+
+(* The result lists the classes whose method list or list of defining
+   files the narrowing can change: a class with two methods of one bare
+   name, and a class with more than one defining file. A caller that
+   narrows every class of the project passes this list as [classes]. *)
+val narrowable_classes : t -> Names.Class_name.t list
 
 val set_function_return :
   t -> Names.Method_name.t -> AST_generic.name -> t

@@ -31,21 +31,23 @@ module Field_key = struct
 end
 module Field_map = Map.Make (Field_key)
 
-(* Keys are bare class-name leaves: a call site has a leaf. Two classes of
-   one leaf keep separate entries, one per defining file, and a reader
-   takes the entry of the file its state sees the class in
-   ([class_files_of]): a state narrowed to a caller's imports sees the
-   caller's class. Edge-time qualifier hints in [Graph_from_AST]
-   disambiguate the common Go case. *)
+(* Keys are bare class names, because a call site carries a bare name. Two
+   classes of one bare name keep separate entries, one per defining file, and
+   a reader reads the entry of the file that its own state records for the
+   class ([class_files_of]). A state narrowed to a caller's imports records
+   the caller's class. Qualifier hints recorded at edge time in
+   [Graph_from_AST] disambiguate the common Go case. *)
 type t = {
   class_files : Fpath.t list Class_name_map.t;
   inherited_methods : (Fpath.t * Func_info.t list) list Class_name_map.t;
   parent_class : (Fpath.t * Names.Class_name.t) list Class_name_map.t;
   module_singletons : AST_generic.name Module_qn_map.t;
-  (* Class leaves unqualified; one entry per defining file, the reader
-     picks the file of the class it sees ([get_method_return]). *)
+  (* Class bare names are unqualified, with one entry per defining file.
+     [get_method_return] reads the entry of the file that the reader's state
+     records for the class. *)
   method_returns : (Fpath.t * AST_generic.name) list Method_map.t;
-  (* Class leaves unqualified; list disambiguates by package. *)
+  (* Class bare names are unqualified, and the list disambiguates them by
+     package. *)
   fields : (Fpath.t * AST_generic.name) list Field_map.t;
   methods : Func_info.t list Class_name_map.t;
   function_returns : AST_generic.name Method_name_map.t;
@@ -172,7 +174,7 @@ let fold_methods (f : Names.Class_name.t -> Func_info.t list -> 'a -> 'a)
     (t : t) (init : 'a) : 'a =
   Class_name_map.fold f t.methods init
 
-let narrow ?(classes : Names.Class_name.t list option)
+let narrow ~(classes : Names.Class_name.t list)
     ~(keep_file : Names.Class_name.t -> string -> bool)
     ~(file_of_func : Func_info.t -> string option) (t : t) : t =
   let keep cls (func : Func_info.t) =
@@ -199,16 +201,21 @@ let narrow ?(classes : Names.Class_name.t list option)
         | kept when List.length kept = List.length files -> t
         | kept -> { t with class_files = Class_name_map.add cls kept t.class_files })
   in
-  let classes =
-    match classes with
-    | Some classes -> classes
-    | None ->
-        Class_name_map.fold (fun cls _ acc -> cls :: acc) t.methods []
-        |> List.rev_append
-             (Class_name_map.fold (fun cls _ acc -> cls :: acc) t.class_files [])
-        |> List.sort_uniq Names.Class_name.compare
-  in
   List.fold_left (fun t cls -> narrow_class cls t) t classes
+
+let narrowable_classes (t : t) : Names.Class_name.t list =
+  Class_name_map.fold
+    (fun (cls : Names.Class_name.t) (methods : Func_info.t list) acc ->
+       if Func_info.has_colliding_bare_names methods then cls :: acc else acc)
+    t.methods []
+  |> List.rev_append
+       (Class_name_map.fold
+          (fun (cls : Names.Class_name.t) (files : Fpath.t list) acc ->
+             match files with
+             | [] | [ _ ] -> acc
+             | _ :: _ :: _ -> cls :: acc)
+          t.class_files [])
+  |> List.sort_uniq Names.Class_name.compare
 
 let set_function_return t fn ty =
   { t with function_returns = Method_name_map.add fn ty t.function_returns }
@@ -229,7 +236,7 @@ let set_method_return_tuple t cls meth tys =
 let get_method_return_tuple t cls meth =
   Method_map.find_opt (cls, meth) t.method_return_tuples
 
-let method_leaf_names (fs : Func_info.t list) : (string, unit) Hashtbl.t =
+let bare_method_names (fs : Func_info.t list) : (string, unit) Hashtbl.t =
   let tbl = Hashtbl.create (List.length fs) in
   List.iter (fun (func : Func_info.t) ->
     match Func_info.as_method func.fn_id with
@@ -248,7 +255,7 @@ let add_inherited t cls def_file (newcomers : Func_info.t list) =
     let existing =
       Option.value (List.assoc_opt def_file entries) ~default:[]
     in
-    let seen = method_leaf_names existing in
+    let seen = bare_method_names existing in
     let added =
       List.filter (fun (func : Func_info.t) ->
         match Func_info.as_method func.fn_id with
@@ -271,7 +278,8 @@ let get_inherited t cls =
   | None -> []
   | Some entries -> List.concat (entries_of t cls entries)
 
-(* Full qualified path: leaf-only misses [pkg_a.Store]→[pkg_b.Store] flips. *)
+(* The key is the full qualified path. A key of the bare name alone would not
+   record the change from [pkg_a.Store] to [pkg_b.Store]. *)
 let g_name_key (name : AST_generic.name) : string list =
   AST_generic_helpers.dotted_ident_of_name name |> List.map fst
 let g_name_equal a b = List.equal String.equal (g_name_key a) (g_name_key b)
@@ -340,8 +348,9 @@ let method_return t ~class_name ~method_name =
     (Names.Class_name.of_string class_name)
     (Names.Method_name.of_string method_name)
 
-(* When [caller_dir] is given, prefer the field entry defined in that directory
-   (Go: same package) to disambiguate same-leaf classes across packages. *)
+(* When [caller_dir] is given, the field entry defined in that directory is
+   preferred. A Go package is one directory, so the preference distinguishes
+   two classes of one bare name in different packages. *)
 let field_type_for_caller t ~class_name ~field_name ~caller_dir =
   let cls = Names.Class_name.of_string class_name in
   let field = Names.Field_name.of_string field_name in

@@ -28,11 +28,19 @@ type stamp_var_types =
   G.program ->
   unit
 
+type required_files_narrowing = {
+  narrowable_classes : Names.Class_name.t list;
+  rev_path_segs_by_file : string list Common.SMap.t;
+  narrowed_type_state_by_caller_dir : Type_state.t Common.SMap.t;
+}
+
 type ctx = {
   lang : Lang.t;
   cfg : Index_lang_rules.t;
   type_state : Type_state.t;
+  required_files_narrowing : required_files_narrowing option;
   all_funcs : Func_info.t list;
+  project_constructors : Func_lookup.constructor_index;
   project_funcs_by_name : (string, Func_info.t list) Hashtbl.t;
   project_funcs_by_module :
     (Names.Module_qn.t, Func_info.t list) Hashtbl.t;
@@ -244,15 +252,15 @@ let build_file_funcs_by_package
         path_suffix_index:(string, string list) Hashtbl.t option ->
         current_file:Fpath.t -> string -> string list)
     (fi : file_info)
-  : Func_lookup.leaf_index option =
+  : Func_lookup.bare_name_index option =
   (* Import aliases in a per-file table; the shared project table is read
      only. *)
   let over_project (alias_extra : (string * Func_info.t list) list) =
     let aliases = Hashtbl.create (List.length alias_extra) in
     List.iter (fun (key, funcs) -> Hashtbl.replace aliases key funcs) alias_extra;
-    Func_lookup.leaf_index_override
-      ~front:(Func_lookup.leaf_index_of_hashtbl aliases)
-      ~back:(Func_lookup.leaf_index_of_hashtbl project_funcs_by_package)
+    Func_lookup.bare_name_index_override
+      ~front:(Func_lookup.bare_name_index_of_hashtbl aliases)
+      ~back:(Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
   in
   if cfg.Index_lang_rules.unqualified_scope = `Per_directory then begin
     let alias_extra = List.filter_map (fun (local, target) ->
@@ -265,7 +273,7 @@ let build_file_funcs_by_package
         | None -> None
     ) fi.fi_imports in
     if alias_extra = [] then
-      Some (Func_lookup.leaf_index_of_hashtbl project_funcs_by_package)
+      Some (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
     else Some (over_project alias_extra)
   end
   else begin
@@ -292,7 +300,7 @@ let build_file_funcs_by_package
     ) fi.fi_imports in
     let alias_extra = alias_extra_ts @ alias_extra_py in
     if alias_extra = [] then
-      Some (Func_lookup.leaf_index_of_hashtbl project_funcs_by_package)
+      Some (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
     else Some (over_project alias_extra)
   end
 
@@ -398,6 +406,7 @@ let narrow_methods_by_required_files
     ~(required_specs : string list)
     ~(file_of_func : Func_info.t -> string option)
     ~(caller_file : string)
+    ~(narrowing : required_files_narrowing)
     (ts : Type_state.t) : Type_state.t =
   let spec_suffixes =
     List.filter_map (fun spec ->
@@ -415,12 +424,35 @@ let narrow_methods_by_required_files
   else
     let keep_file (_ : Names.Class_name.t) (file : string) : bool =
       String.equal file caller_file
-      || (let rev_file_segs = Path_segs.rev_no_ext file in
+      || (let rev_file_segs =
+            Common.SMap.find file narrowing.rev_path_segs_by_file
+          in
           List.exists
             (fun rev_spec -> Path_segs.is_prefix rev_spec rev_file_segs)
             spec_suffixes)
     in
-    Type_state.narrow ~keep_file ~file_of_func ts
+    Type_state.narrow ~classes:narrowing.narrowable_classes ~keep_file
+      ~file_of_func ts
+
+let func_file_opt (func : Func_info.t) : string option =
+  Option.map Fpath.to_string (Func_info.def_file_opt func)
+
+let keep_file_in_dir (dir : string) (_ : Names.Class_name.t) (file : string)
+    : bool =
+  String.equal (Filename.dirname file) dir
+
+let distinct_dirs_of_files (file_infos : file_info list) : string list =
+  List.rev_map
+    (fun (fi : file_info) -> Filename.dirname (Fpath.to_string fi.fi_file))
+    file_infos
+  |> List.sort_uniq String.compare
+
+let narrowed_type_state_for_dir
+    ~(type_state : Type_state.t)
+    ~(narrowable_classes : Names.Class_name.t list)
+    (dir : string) : Type_state.t =
+  Type_state.narrow ~classes:narrowable_classes
+    ~keep_file:(keep_file_in_dir dir) ~file_of_func:func_file_opt type_state
 
 let build_same_file_funcs_by_name
     ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
@@ -433,8 +465,8 @@ let build_same_file_funcs_by_name
   let tbl = Hashtbl.create (List.length same_file_list) in
   List.iter (fun (func : Func_info.t) ->
     match List_.init_and_last_opt func.Func_info.fn_id with
-    | Some (_, Some leaf) ->
-      let name = fst leaf.IL.ident in
+    | Some (_, Some bare_name) ->
+      let name = fst bare_name.IL.ident in
       let cur = Option.value (Hashtbl.find_opt tbl name) ~default:[] in
       Hashtbl.replace tbl name (func :: cur)
     | _ -> ()
@@ -491,16 +523,16 @@ let build_funcs_by_name
         match Hashtbl.find_opt default_export_fn path with
         | None -> ()
         | Some target ->
-          (* Expose the target under the importer's local name at the
-             TARGET's identity: the synth leaf carries [local] at the
-             target's position/sid, so name lookup finds [local] while
-             fn_id_to_node / resolved_name_of_fn_id resolve to the
-             target's real vertex (where its body and signature live) —
-             the same same-position/different-name convention as
-             Ts_class_aliases and Reexports.expose_free_as. A lambda
-             default export (synthetic [_module_exports_default], no real
-             vertex) stays unresolved, as before. *)
-          (match Func_info.leaf_name target.Func_info.fn_id with
+          (* The target is exposed under the importer's local name at the
+             target's identity. The synthetic bare name carries [local] at
+             the target's position and sid, so a name lookup finds [local]
+             while [fn_id_to_node] and [resolved_name_of_fn_id] resolve to the
+             target's real vertex, which holds its body and signature.
+             [Ts_class_aliases] and Reexports.expose_free_as use the same
+             convention of one position with two names. A lambda default
+             export (the synthetic [_module_exports_default], with no real
+             vertex) stays unresolved. *)
+          (match Func_info.bare_name target.Func_info.fn_id with
            | None -> ()
            | Some (tname : IL.name) ->
              let alias_ii = G.empty_id_info () in
@@ -540,7 +572,7 @@ let build_funcs_by_name
              | None -> false
            in
            if from_target_file then
-             match Func_info.leaf_name target.Func_info.fn_id with
+             match Func_info.bare_name target.Func_info.fn_id with
              | None -> ()
              | Some (tname : IL.name) ->
                let alias_ii = G.empty_id_info () in
@@ -589,7 +621,8 @@ let stamp_singleton_imports
 
 let edges_for_file (ctx : ctx) (fi : file_info)
   : (Function_id.t * Function_id.t * Tok.t) list =
-  let { lang; cfg; type_state; all_funcs;
+  let { lang; cfg; type_state; required_files_narrowing; all_funcs;
+        project_constructors;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
         project_funcs_by_package; project_class_names;
         file_funcs_index;
@@ -606,9 +639,6 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let visible = staged "visibility" (fun () -> visible_names_for_file fi) in
     let fi_file_str = Fpath.to_string fi.fi_file in
     let top_level_node = top_level_node_for fi.fi_file in
-    let func_file_opt (func : FA.func_info) : string option =
-      Option.map Fpath.to_string (Func_info.def_file_opt func)
-    in
     let func_in_caller_file (func : FA.func_info) : bool =
       match func_file_opt func with
       | Some file_str -> file_str = fi_file_str
@@ -648,44 +678,51 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       if cfg.Index_lang_rules.narrow_methods_by_import_files then
         narrow_methods_by_import_files ~import_target_files
           ~file_of_func:func_file_opt ~caller_file:fi_file_str base
-      else if cfg.Index_lang_rules.narrow_methods_by_required_files then
-        let required_specs =
-          List.filter_map (fun (local, spec, _kind) ->
-            if String.equal local "*" then Some spec else None)
-            fi.fi_import_specifiers
-        in
-        narrow_methods_by_required_files ~required_specs
-          ~file_of_func:func_file_opt ~caller_file:fi_file_str base
-      else base
+      else
+        match required_files_narrowing with
+        | Some (narrowing : required_files_narrowing) ->
+          let required_specs =
+            List.filter_map (fun (local, spec, _kind) ->
+              if String.equal local "*" then Some spec else None)
+              fi.fi_import_specifiers
+          in
+          narrow_methods_by_required_files ~required_specs
+            ~file_of_func:func_file_opt ~caller_file:fi_file_str ~narrowing
+            base
+        | None -> base
     in
-    (* A name resolves beside the caller first: for a language whose
-       unqualified names are per file, an import is a path, and a same-named
-       module elsewhere in the project is another module. Among the
-       methods still colliding, those defined in the caller's directory
-       win; a class with none there keeps them all. Scoped to the classes
-       the file imports, or to every class when its imports are whole
-       files (Ruby, PHP), where the pass above already visits them all. *)
+    (* For a language whose unqualified names are per file, a method name
+       that still collides after the required-files pass resolves to the
+       definitions in the caller's directory. A class with no definition in
+       that directory keeps all its definitions. The narrowing covers the
+       classes the file imports, or, when the imports name whole files (Ruby,
+       PHP), the classes that the narrowing can change. A file that the pass
+       above did not narrow uses the state computed once for its
+       directory. *)
     let file_type_state =
       staged "narrow type state to caller dir" @@ fun () ->
       match cfg.Index_lang_rules.unqualified_scope with
-      | `Per_file ->
+      | `Per_file -> (
           let caller_dir = Filename.dirname fi_file_str in
-          let keep_file (_ : Names.Class_name.t) (file : string) : bool =
-            String.equal (Filename.dirname file) caller_dir
+          let narrow_to_caller_dir (classes : Names.Class_name.t list)
+              : Type_state.t =
+            Type_state.narrow ~classes ~keep_file:(keep_file_in_dir caller_dir)
+              ~file_of_func:func_file_opt file_type_state
           in
-          let classes =
-            if cfg.Index_lang_rules.narrow_methods_by_required_files then None
-            else
-              Some
-                (List.filter_map
-                   (fun (_local, target) ->
-                     match List.rev (Names.Module_qn.parts target) with
-                     | cls :: _ :: _ -> Some (Names.Class_name.of_string cls)
-                     | _ -> None)
-                   fi.fi_imports)
-          in
-          Type_state.narrow ?classes ~keep_file ~file_of_func:func_file_opt
-            file_type_state
+          match required_files_narrowing with
+          | Some (narrowing : required_files_narrowing) ->
+            if file_type_state == type_state then
+              Common.SMap.find caller_dir
+                narrowing.narrowed_type_state_by_caller_dir
+            else narrow_to_caller_dir narrowing.narrowable_classes
+          | None ->
+            narrow_to_caller_dir
+              (List.filter_map
+                 (fun (_local, target) ->
+                   match List.rev (Names.Module_qn.parts target) with
+                   | cls :: _ :: _ -> Some (Names.Class_name.of_string cls)
+                   | _ -> None)
+                 fi.fi_imports))
       | `Per_directory | `Per_package -> file_type_state
     in
     let same_file_funcs_by_name =
@@ -701,15 +738,15 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let func_lookup =
       staged "func_lookup create" @@ fun () ->
       Func_lookup.create
-        ?funcs_by_name:(Option.map Func_lookup.leaf_index_of_hashtbl funcs_by_name)
+        ?funcs_by_name:(Option.map Func_lookup.bare_name_index_of_hashtbl funcs_by_name)
         ~project_funcs_by_name:
-          (Func_lookup.leaf_index_of_hashtbl project_funcs_by_name)
+          (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_name)
         ?funcs_by_module_qn:
           (Option.map Func_lookup.module_index_of_hashtbl funcs_by_module_qn)
         ?alias_to_module_qn:
           (Option.map Func_lookup.alias_index_of_hashtbl alias_to_module_qn)
         ~same_file_funcs_by_name:
-          (Func_lookup.leaf_index_of_hashtbl same_file_funcs_by_name)
+          (Func_lookup.bare_name_index_of_hashtbl same_file_funcs_by_name)
         ~overload_groups:(Lang_config.overloads_by_type lang)
         ?funcs_by_package:file_funcs_by_package
         ~file_module_qn:
@@ -717,6 +754,10 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ~class_aliases:
           (Func_lookup.class_alias_index_of_hashtbl
              (build_class_aliases ~path_suffix_index ~resolve_ts_specifier fi))
+        ?constructors:
+          (Option.bind funcs_by_name
+             (Func_lookup.constructor_index_of_hashtbl ~lang))
+        ~project_constructors
         ()
     in
     staged "stamp var types" (fun () ->
@@ -770,7 +811,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                 match param with
                 | G.ParamReceiver { G.pname = Some pn; ptype = Some pty; _ }
                 | G.Param { G.pname = Some pn; ptype = Some pty; _ } ->
-                  (match Ty_leaf.inner_class_name_of_ty pty with
+                  (match Ty_bare_name.inner_class_name_of_ty pty with
                    | Some cls -> Some (G.Id (pn, G.empty_id_info ()), cls)
                    | None -> None)
                 | _ -> None)
@@ -802,12 +843,12 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                       (match var_e.G.e, ty_e.G.e with
                        | G.N (G.Id _ as var_n), G.N (G.Id _ as ty_n)
                        | G.N (G.Id _ as var_n), G.N (G.IdQualified _ as ty_n) ->
-                         let ty_leaf = match ty_n with
+                         let ty_bare_name = match ty_n with
                            | G.Id _ -> ty_n
                            | G.IdQualified { name_last = ((str, tok), _); _ } ->
                              G.Id ((str, tok), G.empty_id_info ())
                          in
-                         (var_n, ty_leaf) :: acc
+                         (var_n, ty_bare_name) :: acc
                        | _ -> acc)
                     | _ -> acc) [] body_stmt
             in
@@ -864,14 +905,14 @@ let edges_for_file (ctx : ctx) (fi : file_info)
          rather than merged: a merge copied the project table once per
          file. *)
       let project_index =
-        Func_lookup.leaf_index_of_hashtbl project_funcs_by_name
+        Func_lookup.bare_name_index_of_hashtbl project_funcs_by_name
       in
       let merged_funcs_by_name =
         match funcs_by_name with
         | None -> project_index
         | Some pf ->
-          Func_lookup.leaf_index_layered
-            ~front:(Func_lookup.leaf_index_of_hashtbl pf)
+          Func_lookup.bare_name_index_layered
+            ~front:(Func_lookup.bare_name_index_of_hashtbl pf)
             ~back:project_index
       in
       let toplevel_func_lookup =
