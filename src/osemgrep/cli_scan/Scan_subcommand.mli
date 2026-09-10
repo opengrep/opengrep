@@ -31,6 +31,9 @@ val run_scan_conf :
 (* internal: also used in CI *)
 val rules_from_rules_source :
   ?skip_invalid_configs:bool ->
+  (* the line the spinner animates while the rules are fetched, erased
+     when they are in; the skin decides whether there is one *)
+  ?status:string ->
   rewrite_rule_ids:bool ->
   strict:bool ->
   < Cap.network ; Cap.tmp > ->

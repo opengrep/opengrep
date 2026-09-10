@@ -230,6 +230,10 @@ let main (caps : Cap.all_caps) : unit =
   (* Don't read ~/.gitconfig since it varies from one developer to another,
      resulting in variable output *)
   Unix.putenv "GIT_CONFIG_NOGLOBAL" "true";
+  (* The expected outputs below are the legacy report. Pinning the skin here
+     rather than on each scan keeps every test on it, including ones added
+     later, and leaves --skin free for a test that wants another. *)
+  Unix.putenv "OPENGREP_SKIN" "legacy";
   Testutil_files.with_chdir project_root (fun () ->
       (* coupling: partial copy of the content of CLI.main() *)
       Core_CLI.register_exception_printers ();

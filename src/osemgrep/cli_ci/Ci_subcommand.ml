@@ -107,21 +107,27 @@ let fix_head_if_github_action (caps : < Cap.exec >)
               "The GitHub event reports a pull request but no head commit; \
                leaving the checkout as it is")
 
-let report_scan_environment (meta : Git_metadata.meta_t) : unit =
-  Logs.app (fun m -> m "%a" Fmt_.pp_heading "Debugging Info");
-  Logs.app (fun m -> m "  %a" Fmt.(styled `Underline string) "SCAN ENVIRONMENT");
-  Logs.app (fun m ->
-      m "  versions    - opengrep %a on OCaml %a"
-        Fmt.(styled `Bold string)
-        Version.version
-        Fmt.(styled `Bold string)
-        Sys.ocaml_version);
-  Logs.app (fun m ->
-      m "  environment - running in environment %a, triggering event is %a@."
-        Fmt.(styled `Bold string)
-        meta#scan_environment
-        Fmt.(styled `Bold string)
-        meta#event_name)
+(* The environment the run is part of, handed to the skin rather than
+   printed here, so that --skin decides how it looks. *)
+let report_scan_environment (output_conf : Output.conf)
+    (meta : Git_metadata.meta_t) : unit =
+  let module Sk = (val Skins.resolve output_conf.skin : Skin.S) in
+  Skin_emit.emit
+    (Sk.on_start
+       (Output.skin_ctx output_conf)
+       {
+         Skin_model.Start.banner = false;
+         features = [];
+         rule_source = Skin_model.Start.Local;
+         ci =
+           Some
+             {
+               Skin_model.Start.version = Version.version;
+               ocaml_version = Sys.ocaml_version;
+               environment = meta#scan_environment;
+               event_name = meta#event_name;
+             };
+       })
 
 (*****************************************************************************)
 (* Helpers *)
@@ -217,7 +223,7 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
           (caps :> < Cap.exec ; Cap.network >)
           ~cli_baseline_ref:ci_conf.baseline_commit ~subdir
       in
-      report_scan_environment meta;
+      report_scan_environment ci_conf.scan_conf.output_conf meta;
       fix_head_if_github_action (caps :> < Cap.exec >) meta;
       (* the targeting the flags could not know: the current directory (or
        * --subdir) as the only root, the ci excludes, and the baseline from
@@ -286,7 +292,7 @@ let run_ci_conf (caps : < caps ; .. >) (ci_conf : Ci_CLI.conf) : Exit_code.t =
                   let num_blocking_findings =
                     cli_output.results
                     |> List.filter (fun (m : Out.cli_match) ->
-                           Matches_report.is_blocking m.extra.metadata)
+                           Findings_layout.is_blocking m.extra.metadata)
                     |> List.length
                   in
                   Logs.app (fun m -> m "CI scan completed successfully.");

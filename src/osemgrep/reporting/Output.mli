@@ -28,6 +28,8 @@ type conf = {
    * in the log output.
    *)
   max_log_list_entries : int;
+  (* which skin renders the report; --skin *)
+  skin : Skin.name;
   (* true for 'opengrep ci': the Text format then keeps blocking and
    * non-blocking findings in separate groups and appends the
    * "RULES FIRED" sections *)
@@ -36,6 +38,15 @@ type conf = {
 [@@deriving show]
 
 val default : conf
+
+(* What a skin draws on for this run: the colours, the width and the
+   rendering options of the text report. *)
+val skin_ctx :
+  ?interfile_dedup_by:Core_match.interfile_dedup_by ->
+  ?is_interfile:(Rule_ID.t -> bool) ->
+  ?dest:string ->
+  conf ->
+  Skin.ctx
 
 (* used with max_log_list_entries *)
 val too_much_data : string
@@ -65,7 +76,31 @@ val keeps_ignores : conf -> bool
  * then in the SARIF output format, we include a message to nudge the user
  * to log in and try Pro.
  *)
+(* The findings and errors of a scan, made suitable for the user: nosem
+   filtering, messages, fingerprints, and the profiling times. Computes
+   nothing about the terminal, so a caller is free to render it later. *)
+val cli_output_of_result :
+  keep_ignored:bool ->
+  conf ->
+  Profiler.t ->
+  Core_runner.result ->
+  Out.cli_output
+
+(* Writes the output: the primary format on stdout (or its -o file), and
+   every --<format>-output destination. *)
+val dispatch :
+  skin:(module Skin.S) ->
+  < Cap.stdout > ->
+  Profiler.t ->
+  conf ->
+  Out.cli_output ->
+  Rule.hrules ->
+  interfile_dedup_by:Core_match.interfile_dedup_by ->
+  is_interfile:(Rule_ID.t -> bool) ->
+  unit
+
 val output_result :
+  skin:(module Skin.S) ->
   keep_ignored:bool ->
   < Cap.stdout > ->
   conf ->
