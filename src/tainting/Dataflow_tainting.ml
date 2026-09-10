@@ -2476,20 +2476,6 @@ let call_with_intrafile lval_opt e env args instr =
                     let call_taints =
                       match e_obj with
                       | `Fun -> call_taints
-                      | `Obj (obj_taints, _) when not (Taints.is_empty obj_taints) ->
-                          let receiver_taint_lval =
-                            { T.base = T.BThis; offset = [] }
-                          in
-                          let receiver_effect =
-                            Effect.ToLval
-                              {
-                                taints = obj_taints;
-                                lval = receiver_taint_lval;
-                                guards = Effect_guard.top;
-                              }
-                          in
-                          record_effects { env with lval_env } [ receiver_effect ];
-                          call_taints |> Taints.union obj_taints
                       | `Obj (obj_taints, _) -> call_taints |> Taints.union obj_taints
                     in
                     (call_taints, Bot, lval_env)))))

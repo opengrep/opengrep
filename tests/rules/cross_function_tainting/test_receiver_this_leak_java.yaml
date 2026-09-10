@@ -1,0 +1,13 @@
+rules:
+  - id: test-receiver-this-leak-java
+    message: taint reaches a sink through the receiver of a method call
+    languages:
+      - java
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
