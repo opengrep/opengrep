@@ -821,6 +821,8 @@ let semgrep_rules_repo_tests () : Testo.t list =
                 rules need updating upstream. *)
              | s when s =~ ".*/semgrep-rules/ruby/rails/security/brakeman/check-rails-session-secret-handling.yaml" -> None
              | s when s =~ ".*/semgrep-rules/ruby/rails/security/brakeman/check-cookie-store-session-security-attributes.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/java/spring/security/injection/tainted-sql-string.yaml" -> None
+             | s when s =~ ".*/semgrep-rules/java/lang/security/audit/xss/no-direct-response-writer.yaml" -> None
              (* ok let's keep all the other one with the appropriate group name *)
              | s when s =~ ".*/semgrep-rules/\\([a-zA-Z]+\\)/.*" ->
                  (* This is confusing because it looks like a programming
@@ -829,10 +831,6 @@ let semgrep_rules_repo_tests () : Testo.t list =
                     TODO: don't capitalize? leave a slash? *)
                  let s = Common.matched1 test.name in
                  Some (String.capitalize_ascii s)
-             (* TODO: This is not skipped! See above. It should move further up to be
-              * excluded! Remove exclusion? *)
-             (* this skips a test that incorrectly fails for cross-function tainting (because of false positives) *)
-             (* | s when s =~ ".*/semgrep-rules/java/lang/security/audit/xss/no-direct-response-writer.yaml" -> None *)
              (* this skips the semgrep-rules/.github entries *)
              | _ ->
                  Logs.info (fun m -> m "skipping %s" test.name);
