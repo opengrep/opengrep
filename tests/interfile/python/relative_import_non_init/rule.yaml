@@ -6,10 +6,10 @@ rules:
       Regression for [from . import x] inside a non-package module
       (i.e. a regular .py file whose containing dir has an
       __init__.py).  In [pkg/main.py], [from . import helpers]
-      should resolve [helpers] to the qn [pkg.helpers] — but
-      [module_name_string] used to compute drops relative to the
-      module's own path including the file's leaf segment, so the
-      qn came out as [pkg.main.helpers], which doesn't match any
+      should resolve [helpers] to the qn [pkg.helpers], but
+      [module_name_string] used to count the drops relative to the
+      module's own path, including the file's own last segment, so
+      the qualified name was [pkg.main.helpers], which matches no
       file in [funcs_by_module_qn].  The bug silently dropped the
       call edge from [main.py] to [helpers.py:get_tainted], so
       interfile taint never followed the cross-file flow from

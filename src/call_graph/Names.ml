@@ -8,7 +8,7 @@ module type DOTTED = sig
   val to_string : t -> string
   val of_parts : string list -> t
   val parts : t -> string list
-  val leaf : t -> string
+  val bare_name : t -> string
   val is_empty : t -> bool
   val split_last : t -> (t * string) option
   val concat : t -> string -> t
@@ -23,7 +23,7 @@ module Make_dotted () : DOTTED = struct
   let to_string s = s
   let of_parts = String.concat "."
   let parts = String.split_on_char '.'
-  let leaf t =
+  let bare_name t =
     match List.rev (parts t) with
     | last :: _ -> last
     | [] -> ""
@@ -35,8 +35,8 @@ module Make_dotted () : DOTTED = struct
       | None -> Some ("", t)
       | Some i ->
         let parent = String.sub t 0 i in
-        let leaf = String.sub t (i + 1) (String.length t - i - 1) in
-        Some (parent, leaf)
+        let bare_name = String.sub t (i + 1) (String.length t - i - 1) in
+        Some (parent, bare_name)
   let concat t part =
     if String.length t = 0 then part
     else if String.length part = 0 then t

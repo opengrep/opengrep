@@ -36,7 +36,6 @@ type t = {
   uses_new_keyword : bool;
   (* Methods invoking `self` as a function (Runnable.run, Proc#call): a Fun-shaped receiver call becomes a direct lambda invocation. *)
   invoke_methods : string list;
-  (* Callee leaf names short-circuited to [None] in [identify_callee]. *)
   (* [true] makes [extract_calls] skip nested fdefs/lambdas; unsafe where they need the enclosing scope ([self] in Python methods). *)
   skip_nested_in_extract_calls : bool;
 }
@@ -220,7 +219,8 @@ let csharp = {
 }
 
 let go = {
-  (* No leaf-name HOF configs: bare leaf names would match unrelated calls corpus-wide; auto-detection handles function-ref args. *)
+  (* Go declares no bare-name HOF configuration, because a bare name would match unrelated calls across the whole corpus.
+     Auto-detection handles a function reference passed as an argument. *)
   hof_configs = [];
   collection_configs = [
     ArgTaintsThis { methods = ["Store"]; arity = 2; taint_arg_index = 1; returns_this = false };

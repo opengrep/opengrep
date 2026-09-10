@@ -1,6 +1,7 @@
 module G = AST_generic
 
-(* Element type's leaf class of an iterable ([[]T] / arrays). *)
+(* The result is the bare class name of an iterable's element type ([[]T] and
+   arrays). *)
 val slice_element_of_ty : G.type_ -> G.name option
 
 (* The class on the name's [id_instance_type], else the one its [id_type]

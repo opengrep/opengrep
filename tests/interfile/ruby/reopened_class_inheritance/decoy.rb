@@ -1,5 +1,5 @@
-# A homonym `Dec::Widget` with a same-named `run` — a benign collision that
-# leaf-name method dispatch cannot tell apart from the real `Widget#run`.
+# `Dec::Widget` is a homonym with a `run` method of the same name.  Dispatch
+# on the bare name alone cannot distinguish it from the real `Widget#run`.
 # `Sub` (below) must resolve `run` through its type/MRO, not globally.
 module Dec
   class Widget

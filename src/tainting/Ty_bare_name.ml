@@ -1,13 +1,13 @@
 module G = AST_generic
 
-let leaf_of_qname (name : G.name) : G.name option =
+let bare_name_of_qname (name : G.name) : G.name option =
   match name with
   | G.Id _ -> Some name
   | G.IdQualified { name_last = ((str, tok), _); _ } ->
     Some (G.Id ((str, tok), G.empty_id_info ()))
 
-let leaf_of_name (name : G.name) : string option =
-  match leaf_of_qname name with
+let bare_name_of_name (name : G.name) : string option =
+  match bare_name_of_qname name with
   | Some (G.Id ((str, _), _)) -> Some str
   | _ -> None
 
@@ -36,7 +36,7 @@ let rec qualified_class_name_of_ty (ty : G.type_) : G.name option =
   | _ -> None
 
 let class_name_of_ty (ty : G.type_) : G.name option =
-  Option.bind (qualified_class_name_of_ty ty) leaf_of_qname
+  Option.bind (qualified_class_name_of_ty ty) bare_name_of_qname
 
 let rec inner_class_name_of_ty ?(through_funty = false) (ty : G.type_)
   : G.name option =

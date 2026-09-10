@@ -14,7 +14,7 @@ val resolve_parent_qn :
 val resolve_parent_by_scope :
   cross_module_parents:bool ->
   by_qn:(Names.Class_qn.t, class_info) Hashtbl.t ->
-  qns_by_leaf:(Names.Class_name.t, Names.Class_qn.t list) Hashtbl.t ->
+  qns_by_bare_name:(Names.Class_name.t, Names.Class_qn.t list) Hashtbl.t ->
   class_info -> string list -> Names.Module_qn.t option
 
 (* C3 linearisation of every class hierarchy: extends the lattice with each

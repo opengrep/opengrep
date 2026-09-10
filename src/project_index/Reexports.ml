@@ -11,7 +11,7 @@ module Log = Log_projidx.Log
    [entity = None] keeps the target's original name from also being
    exposed under this module. *)
 let expose_free_as ~(alias : string) (func : FA.func_info) : FA.func_info =
-  match Func_info.leaf_name func.FA.fn_id with
+  match Func_info.bare_name func.FA.fn_id with
   | None -> func
   | Some (tname : IL.name) ->
     let alias_ii = G.empty_id_info () in

@@ -64,12 +64,12 @@ type t = {
 
 let decorator_simple_name (attr : G.attribute) : string option =
   match attr with
-  | G.NamedAttr (_, name, _) -> Ty_leaf.leaf_of_name name
+  | G.NamedAttr (_, name, _) -> Ty_bare_name.bare_name_of_name name
   | _ -> None
 
 let entity_simple_name (ent : G.entity) : string option =
   match ent.G.name with
-  | G.EN name -> Ty_leaf.leaf_of_name name
+  | G.EN name -> Ty_bare_name.bare_name_of_name name
   | _ -> None
 
 let name_to_path (name : G.name) : string list =
@@ -85,8 +85,8 @@ let name_to_path (name : G.name) : string list =
 
 let callee_simple_name (callee : G.expr) : string option =
   match callee.G.e with
-  | G.N name -> Ty_leaf.leaf_of_name name
-  | G.DotAccess (_, _, G.FN name) -> Ty_leaf.leaf_of_name name
+  | G.N name -> Ty_bare_name.bare_name_of_name name
+  | G.DotAccess (_, _, G.FN name) -> Ty_bare_name.bare_name_of_name name
   | _ -> None
 
 let first_arg_string (args : G.argument list) : string option =
@@ -182,7 +182,7 @@ let python_namedtuple_dunders =
 let is_namedtuple_subclass (cdef : G.class_definition) : bool =
   List.exists (fun (ty, _) ->
     match ty.G.t with
-    | G.TyN name -> Ty_leaf.leaf_of_name name = Some "NamedTuple"
+    | G.TyN name -> Ty_bare_name.bare_name_of_name name = Some "NamedTuple"
     | _ -> false
   ) cdef.G.cextends
 

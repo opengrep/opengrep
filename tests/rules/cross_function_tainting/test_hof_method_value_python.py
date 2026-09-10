@@ -1,5 +1,5 @@
-# A method value of a receiver with no declared type, passed as a callback:
-# resolved to the class's method by its leaf name.
+# A method value of a receiver with no declared type is passed as a callback,
+# and it resolves to the class's method by its bare name.
 
 
 def source():

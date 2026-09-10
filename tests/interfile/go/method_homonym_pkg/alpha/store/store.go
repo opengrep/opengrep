@@ -4,8 +4,9 @@ type DB struct{}
 
 func (d *DB) Query(query string) string { return query }
 
-// The SINK-bearing Store.  Homonym with beta/store's Store (same leaf
-// class name + method + arity); only the import path distinguishes them.
+// This Store carries the sink.  It is a homonym of beta/store's Store, with
+// the same bare class name, method and arity; only the import path
+// distinguishes them.
 type Store struct{ db *DB }
 
 func (s *Store) Save(query string) string {

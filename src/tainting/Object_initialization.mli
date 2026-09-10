@@ -25,7 +25,8 @@ val detect_object_initialization :
 (* Stamp each mapping's class onto every occurrence's [id_instance_type],
    leaving naming's [id_type] alone. A fallback mapping stamps only an
    occurrence with no instance type whose declared type is absent or a
-   [TyFun] (C++'s most vexing parse). First mapping per leaf wins. *)
+   [TyFun] (C++'s most vexing parse). The first mapping for a bare name is the
+   one used. *)
 val stamp_id_types : object_mapping list -> AST_generic.program -> unit
 
 (* Collect all class names from an AST *)

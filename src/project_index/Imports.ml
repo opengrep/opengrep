@@ -25,8 +25,9 @@ let module_name_string ~(cfg : Index_lang_rules.t)
     let real_strs = List.map fst real_parts in
     if prefix_segs = [] then Names.Module_qn.of_parts real_strs
     else begin
-      (* Relative imports: [__init__.py] file IS the package (no leaf drop);
-         each extra [.] walks one level up. *)
+      (* For a relative import, an [__init__.py] file is itself the package,
+         so the last segment is not dropped. Each extra [.] removes one
+         further level. *)
       let init_offset = if is_init_file then 0 else 1 in
       let extra_dotdots =
         List.fold_left (fun acc (part_str, _) ->
@@ -52,7 +53,7 @@ let collect_clojure_ns_form
   : (string * Names.Module_qn.t) list
     * (string * string * import_kind) list =
   let id_name (expr : G.expr) : string option =
-    match expr.G.e with G.N name -> Ty_leaf.leaf_of_name name | _ -> None
+    match expr.G.e with G.N name -> Ty_bare_name.bare_name_of_name name | _ -> None
   in
   let kwd_name (expr : G.expr) : string option =
     match expr.G.e with

@@ -30,24 +30,25 @@ let func_def_file (func : FA.func_info) : string option =
   | None -> Option.map Fpath.to_string (Func_info.def_file_opt func)
 
 (* Declared return types, in one pass over [all_funcs]:
-   - free-function return (leaf key, [class_name_of_ty]);
+   - free-function return (bare-name key, [class_name_of_ty]);
    - method return ([(class, method)], [inner_class_name_of_ty], [this]/[self]
      resolving to the enclosing class);
    - tuple returns (Go [func F() (T, error)]) so [a, b := F()] splits into
-     [(a, T)]/[(b, error)] — keyed by leaf and, for methods, by [(class, method)]. *)
+     [(a, T)]/[(b, error)], keyed by bare name and, for methods, by
+     [(class, method)]. *)
 let populate_returns_from_decls
     (state : Type_state.t) (all_funcs : FA.func_info list) : Type_state.t =
-  let leaf_is_this_or_self name =
-    match Ty_leaf.leaf_of_name name with
+  let bare_name_is_this_or_self name =
+    match Ty_bare_name.bare_name_of_name name with
     | Some ("this" | "Self" | "self") -> true
     | _ -> false
   in
   List.fold_left (fun state (func : FA.func_info) ->
-    let leaf = Func_info.leaf_name func.FA.fn_id in
+    let bare_name = Func_info.bare_name func.FA.fn_id in
     let method_ = Func_info.as_method func.FA.fn_id in
     let frettype = func.FA.fdef.G.frettype in
     let state =
-      match leaf, Option.bind frettype Ty_leaf.class_name_of_ty with
+      match bare_name, Option.bind frettype Ty_bare_name.class_name_of_ty with
       | Some name, Some ret_type ->
         Type_state.set_function_return state
           (Names.Method_name.of_string (fst name.IL.ident)) ret_type
@@ -59,8 +60,8 @@ let populate_returns_from_decls
         let ret =
           match frettype with
           | Some ty ->
-            (match Ty_leaf.inner_class_name_of_ty ty with
-             | Some name when leaf_is_this_or_self name ->
+            (match Ty_bare_name.inner_class_name_of_ty ty with
+             | Some name when bare_name_is_this_or_self name ->
                Some (G.Id (cls.IL.ident, G.empty_id_info ()))
              | other -> other)
           | None -> None
@@ -75,9 +76,9 @@ let populate_returns_from_decls
     in
     match frettype with
     | Some { G.t = G.TyTuple (_, ts, _); _ } ->
-      let elems = List.map Ty_leaf.class_name_of_ty ts in
+      let elems = List.map Ty_bare_name.class_name_of_ty ts in
       let state =
-        match leaf with
+        match bare_name with
         | Some name ->
           Type_state.set_function_return_tuple state
             (Names.Method_name.of_string (fst name.IL.ident)) elems
@@ -102,7 +103,7 @@ let build_fields_by_class_index
   let collected = ref [] in
   let helems = Hashtbl.create 1024 in
   let add_field ~def_file cls field_name vtype =
-    (match Ty_leaf.qualified_class_name_of_ty vtype with
+    (match Ty_bare_name.qualified_class_name_of_ty vtype with
      | Some name ->
        collected := (cls, field_name, def_file, name) :: !collected
      | None -> ());
@@ -212,7 +213,7 @@ let build_export_class_indexes ~(lang : Lang.t)
         in
         let class_of_init (expr : G.expr) : G.name option =
           match expr.G.e with
-          | G.New (_, ty, _, _) -> Ty_leaf.class_name_of_ty ty
+          | G.New (_, ty, _, _) -> Ty_bare_name.class_name_of_ty ty
           | G.N (G.Id ((id_str, _), _)) -> lookup_local id_str
           | G.Call ({ e = G.N (G.Id ((fname, _), _)); _ }, _) ->
             Type_state.get_function_return type_state
@@ -257,7 +258,7 @@ let build_file_funcs_index (all_funcs : FA.func_info list)
      functions only. *)
   let index = Hashtbl.create (List.length all_funcs) in
   List.iter (fun (func : FA.func_info) ->
-    if Option.is_some (Func_info.leaf_name func.FA.fn_id) then
+    if Option.is_some (Func_info.bare_name func.FA.fn_id) then
       match Func_info.def_file_opt func with
       | Some file ->
         let file = Fpath.to_string file in
@@ -283,8 +284,8 @@ let augment_return_types_from_bodies
         | G.Return (_, Some expr, _) -> expr :: acc
         | _ -> acc) [] body_stmt)
   in
-  let leaf_fn_name (func : FA.func_info) =
-    Option.map (fun name -> fst name.IL.ident) (Func_info.leaf_name func.FA.fn_id)
+  let bare_fn_name (func : FA.func_info) =
+    Option.map (fun name -> fst name.IL.ident) (Func_info.bare_name func.FA.fn_id)
   in
   let class_method_of (func : FA.func_info) =
     Option.map (fun (cls, meth) -> (fst cls.IL.ident, fst meth.IL.ident))
@@ -302,7 +303,7 @@ let augment_return_types_from_bodies
             (Names.Method_name.of_string meth) def_file
         | Some _, None -> true
         | None, _ ->
-          (match leaf_fn_name func with
+          (match bare_fn_name func with
            | Some name ->
              Type_state.get_function_return state
                (Names.Method_name.of_string name)
@@ -331,7 +332,7 @@ let augment_return_types_from_bodies
                (Names.Method_name.of_string meth) def_file ty
            | Some _, None -> state
            | None, _ ->
-             (match leaf_fn_name func with
+             (match bare_fn_name func with
               | Some name ->
                 Type_state.set_function_return state
                   (Names.Method_name.of_string name) ty
@@ -373,7 +374,7 @@ let build_caller_arg_types
      The precise semantics — the field's type is per construction site —
      needs per-call-site instantiation, not this global table; see the
      ctor-arg-conflict notes in the interfile task list. *)
-  let candidate_leaves : (string * string * int, string list) Hashtbl.t =
+  let candidate_bare_names : (string * string * int, string list) Hashtbl.t =
     Hashtbl.create 64
   in
   let infer expr =
@@ -391,7 +392,7 @@ let build_caller_arg_types
                Option.bind
                  (Type_infer.method_call_target ~type_recv:infer callee)
                  (fun (recv, meth) ->
-                    Option.map (fun cls -> (cls, meth)) (Ty_leaf.leaf_of_name recv))
+                    Option.map (fun cls -> (cls, meth)) (Ty_bare_name.bare_name_of_name recv))
              (* Bare-name call [Cls(args)]: treat as ctor [(Cls, "__init__")]. *)
              | G.N (G.Id ((cls, _), _)) ->
                Some (cls, "__init__")
@@ -404,15 +405,16 @@ let build_caller_arg_types
                 | G.Arg expr | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) ->
                   (match infer expr with
                    | Some ty ->
-                     (match Ty_leaf.leaf_of_name ty with
-                      | Some leaf when Type_state.has_class type_state leaf ->
+                     (match Ty_bare_name.bare_name_of_name ty with
+                      | Some bare_name
+                        when Type_state.has_class type_state bare_name ->
                         let prev =
                           Option.value ~default:[]
-                            (Hashtbl.find_opt candidate_leaves (cls, meth, i))
+                            (Hashtbl.find_opt candidate_bare_names (cls, meth, i))
                         in
-                        if not (List.mem leaf prev) then
-                          Hashtbl.replace candidate_leaves (cls, meth, i)
-                            (leaf :: prev);
+                        if not (List.mem bare_name prev) then
+                          Hashtbl.replace candidate_bare_names (cls, meth, i)
+                            (bare_name :: prev);
                         if not (Hashtbl.mem arg_types (cls, meth, i)) then
                           Hashtbl.replace arg_types (cls, meth, i) ty
                       | _ -> ())
@@ -428,9 +430,9 @@ let build_caller_arg_types
   ) file_infos;
   let conflicted_keys =
     Hashtbl.fold
-      (fun key leaves acc ->
-        if List.length leaves > 1 then key :: acc else acc)
-      candidate_leaves []
+      (fun key bare_names acc ->
+        if List.length bare_names > 1 then key :: acc else acc)
+      candidate_bare_names []
   in
   List.iter (Hashtbl.remove arg_types) conflicted_keys;
   if not (List_.null conflicted_keys) then
@@ -525,7 +527,7 @@ let augment_fields_from_self_assignments
         match param with
         | G.Param { pname = Some (pn, _); ptype = Some pty; _ }
         | G.ParamReceiver { pname = Some (pn, _); ptype = Some pty; _ } ->
-          (match Ty_leaf.class_name_of_ty pty with
+          (match Ty_bare_name.class_name_of_ty pty with
            | Some name -> Hashtbl.replace param_types pn name
            | None ->
              (match caller_arg_type i with
@@ -546,7 +548,7 @@ let augment_fields_from_self_assignments
             match param with
             | G.Param { G.pname = Some (pn, _); ptype = Some pty; _ }
             | G.ParamReceiver { G.pname = Some (pn, _); ptype = Some pty; _ } ->
-              (match Ty_leaf.class_name_of_ty pty with
+              (match Ty_bare_name.class_name_of_ty pty with
                | Some ty ->
                  let field = strip pn in
                  if already_known cls field then acc
@@ -653,7 +655,7 @@ let stamp_var_types_from_bodies
           { G.e = G.N obj_name; _ }, _,
           G.FN (G.Id ((mname, _), _))); _ }, _) ->
         (match Option.bind (Type_infer.declared_class_of_name obj_name)
-                 Ty_leaf.leaf_of_name with
+                 Ty_bare_name.bare_name_of_name with
          | None -> acc
          | Some cls ->
            (match Type_state.get_method_return_tuple type_state
@@ -692,7 +694,7 @@ let stamp_var_types_from_bodies
         | G.DotAccess ({ G.e = G.N obj_name; _ }, _,
                        G.FN (G.Id ((field, _), _))) ->
           (match Option.bind (Type_infer.declared_class_of_name obj_name)
-                   Ty_leaf.leaf_of_name with
+                   Ty_bare_name.bare_name_of_name with
            | Some cls -> Hashtbl.find_opt slice_element_of_field (cls, field)
            | None -> None)
         | _ -> None

@@ -27,7 +27,7 @@ let lift_embedded_interfaces
                     { G.e = G.Call (
                         { G.e = G.IdSpecial (G.Spread, _); _ },
                         (_, [G.Arg { G.e = G.N name; _ }], _)); _ }, _); _ } ->
-                  Ty_leaf.leaf_of_name name
+                  Ty_bare_name.bare_name_of_name name
                 | _ -> None
               ) fields in
               if embedded <> [] then

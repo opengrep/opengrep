@@ -1411,13 +1411,14 @@ class ['self] resolve_visitor env lang =
            * as ArrayAccess above. *)
           Common.save_excursion_unsafe env.in_lvalue false (fun () ->
               self#visit_expr venv e1);
-          (* A field or method leaf names a member of the receiver, never a
-           * binding in scope: a member that shares the name of a function
-           * in scope is not a reference to that function, so the leaf gets
-           * no [id_resolved] here (the project index resolves method leaves
-           * by receiver type). A same-named typed binding still types the
-           * leaf: struct field declarations reach the file scope as typed
-           * globals, and typed metavariables read the type from the leaf. *)
+          (* The bare name of a field or method identifies a member of the
+           * receiver, never a binding in scope. A member that shares the name
+           * of a function in scope is not a reference to that function, so
+           * this code sets no [id_resolved] on the bare name; the project
+           * index resolves a method bare name by receiver type. A same-named
+           * typed binding still gives the bare name a type: a struct field
+           * declaration is recorded in the file scope as a typed global, and
+           * a typed metavariable reads the type from the bare name. *)
           (match fname with
            | FN (Id (id, id_info)) -> (
                match lookup_scope_opt id env with

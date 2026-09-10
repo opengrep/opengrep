@@ -3,9 +3,9 @@
  * record/list literals, or reached via [id_svalue]) to callee [fn_id]s.
  * See [Graph_from_AST] for the orchestration that consumes these. *)
 
-(* Resolved name of a [fn_id] — the definition's kind and sid — when its leaf
-   carries a real (non-fake) token. [set_callee_definition] stamps its sid
-   onto the AST. *)
+(* The result is the resolved name of a [fn_id], that is the definition's kind
+   and sid, and it is present when the bare name carries a real (non-fake)
+   token. [set_callee_definition] stamps that sid onto the AST. *)
 val resolved_name_of_fn_id :
   ?allow_located_fake:bool ->
   Callee_resolution.fn_id ->

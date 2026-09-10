@@ -2,7 +2,7 @@ module G = AST_generic
 
 let rec slice_element_of_ty (ty : G.type_) : G.name option =
   match ty.G.t with
-  | G.TyArray (_, inner) -> Ty_leaf.class_name_of_ty inner
+  | G.TyArray (_, inner) -> Ty_bare_name.class_name_of_ty inner
   | G.TyPointer (_, inner) | G.TyRef (_, inner) -> slice_element_of_ty inner
   | _ -> None
 
@@ -14,8 +14,8 @@ let id_info_of_name : G.name -> G.id_info = function
   | G.IdQualified qi -> qi.G.name_info
 
 let declared_class_of_name (name : G.name) : G.name option =
-  match Ty_leaf.instance_or_declared_type (id_info_of_name name) with
-  | Some ty -> Ty_leaf.qualified_class_name_of_ty ty
+  match Ty_bare_name.instance_or_declared_type (id_info_of_name name) with
+  | Some ty -> Ty_bare_name.qualified_class_name_of_ty ty
   | None -> None
 
 type ctx = {
@@ -33,7 +33,7 @@ let method_call_target
     (callee : G.expr) : (G.name * string) option =
   match callee.G.e with
   | G.DotAccess (recv, _, G.FN meth) ->
-    (match Ty_leaf.leaf_of_name meth with
+    (match Ty_bare_name.bare_name_of_name meth with
      | None -> None
      | Some method_name ->
        (match type_recv recv with
@@ -65,7 +65,7 @@ let rec type_of_expr ?(max_depth = 6) ~(ctx : ctx) (expr : G.expr) : G.name opti
     (match ctx.current_class with
      | None -> None
      | Some cls ->
-       (match Ty_leaf.leaf_of_name cls with
+       (match Ty_bare_name.bare_name_of_name cls with
         | None -> None
         | Some cur ->
           Some (name_of_string (Option.value (ctx.parent_of cur) ~default:cur))))
@@ -76,7 +76,7 @@ let rec type_of_expr ?(max_depth = 6) ~(ctx : ctx) (expr : G.expr) : G.name opti
   | G.Call (({ G.e = G.DotAccess _; _ } as callee), _) ->
     (match method_call_target ~type_recv:(fun expr -> recur expr) callee with
      | Some (recv_class, method_name) ->
-       (match Ty_leaf.leaf_of_name recv_class with
+       (match Ty_bare_name.bare_name_of_name recv_class with
         | None -> None
         | Some class_name ->
           (match ctx.method_return ~class_name ~method_name with
@@ -94,33 +94,34 @@ let rec type_of_expr ?(max_depth = 6) ~(ctx : ctx) (expr : G.expr) : G.name opti
         | None -> Some (G.Id (cls, G.empty_id_info ()))))
   (* Bare [foo()]: free-fn return, else no-[new] langs treat [Foo()] as constructor of [foo]. *)
   | G.Call ({ G.e = G.N (G.Id _ as name); _ }, _) ->
-    (match Ty_leaf.leaf_of_name name with
+    (match Ty_bare_name.bare_name_of_name name with
      | None -> None
      | Some fn_name ->
        (match ctx.function_return fn_name with
         | Some _ as ret -> ret
         | None -> if ctx.uses_new_keyword then None else Some name))
   | G.DotAccess (obj, _, G.FN field_id) ->
-    (match Ty_leaf.leaf_of_name field_id with
+    (match Ty_bare_name.bare_name_of_name field_id with
      | None -> None
      | Some field_name ->
        (match recur obj with
         | None -> None
         | Some obj_type ->
-          (match Ty_leaf.leaf_of_name obj_type with
+          (match Ty_bare_name.bare_name_of_name obj_type with
            | None -> None
            | Some class_name -> ctx.field_type ~class_name ~field_name)))
-  | G.New (_, ty, _, _) -> Ty_leaf.class_name_of_ty ty
-  | G.Cast (ty, _, _) -> Ty_leaf.class_name_of_ty ty
+  | G.New (_, ty, _, _) -> Ty_bare_name.class_name_of_ty ty
+  | G.Cast (ty, _, _) -> Ty_bare_name.class_name_of_ty ty
   (* Order: declared [id_type], then bare-name-as-class. *)
   | G.N name ->
     (match declared_class_of_name name with
      | Some _ as resolved -> resolved
      | None ->
-       (match Ty_leaf.leaf_of_name name with
+       (match Ty_bare_name.bare_name_of_name name with
         | None -> None
-        | Some leaf ->
-          if ctx.has_class leaf then Some (name_of_string leaf) else None))
+        | Some bare_name ->
+          if ctx.has_class bare_name then Some (name_of_string bare_name)
+          else None))
   | _ -> None
 
 let infer_expr_type
