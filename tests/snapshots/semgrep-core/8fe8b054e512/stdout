@@ -24,15 +24,15 @@ Initialized empty Git repository in <TMP>/<MASKED>/.git/
 
              Taint comes from:
               main.py
-               5┆     leak(source())
+               5┆ leak(source())
 
              This is how taint reaches the sink:
               main.py
-               5┆     leak(source())
+               5┆ leak(source())
 
              Taint flows through these intermediate variables:
                2┆ def leak(v):
 
              then reaches:
-               3┆     sink(v)
+               3┆ sink(v)
 

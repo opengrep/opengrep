@@ -90,7 +90,7 @@ let cmdline_term : conf Term.t =
       max_memory_mb max_target_bytes nosem num_jobs
       opengrep_ignore_pattern
       optimizations output rewrite_rule_ids sarif sarif_outputs
-      scan_unknown_extensions subdir suppress_errors taint_interfile
+      scan_unknown_extensions skin subdir suppress_errors taint_interfile
       taint_interfile_depth taint_intrafile text text_outputs time_flag timeout
       timeout_interfile timeout_threshold use_git
       _version_check vim
@@ -121,6 +121,7 @@ let cmdline_term : conf Term.t =
           | Some (Info | Debug) -> true
           | _else_ -> false);
         max_log_list_entries;
+        skin;
         is_ci_invocation = true;
       }
     in
@@ -269,7 +270,8 @@ let cmdline_term : conf Term.t =
     $ SC.o_max_match_per_file $ SC.o_max_memory_mb $ SC.o_max_target_bytes
     $ SC.o_nosem $ SC.o_num_jobs $ CLI_common.o_opengrep_ignore_pattern
     $ SC.o_optimizations $ SC.o_output $ SC.o_rewrite_rule_ids $ SC.o_sarif
-    $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ o_subdir
+    $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ SC.o_skin
+    $ o_subdir
     $ o_suppress_errors $ SC.o_taint_interfile $ SC.o_taint_interfile_depth
     $ SC.o_taint_intrafile $ SC.o_text $ SC.o_text_outputs
     $ SC.o_time $ SC.o_timeout $ SC.o_timeout_interfile
