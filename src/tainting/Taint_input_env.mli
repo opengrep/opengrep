@@ -16,3 +16,6 @@ val mk_file_env :
   Taint_lval_env.t * Shape_and_sig.Effects.t
 (** Constructs the global taint environment for a given file: it finds global-
   and class- variable definitions that are final, and checks if they are tainted. *)
+
+val ranges_of_tainted_globals_in_functions :
+  Taint_lval_env.t -> AST_generic.program -> Range.t list

@@ -499,8 +499,10 @@ let check_rule per_file_formula_cache (rule : R.taint_rule) match_hook
           (* Optimize: filter call graph to only functions relevant for this rule
              Use the already-computed source/sink ranges from spec_matches *)
           let source_ranges =
-            spec_matches.sources
-            |> List.map (fun (rwm, _src) -> rwm.Range_with_metavars.r)
+            (spec_matches.sources
+            |> List.map (fun (rwm, _src) -> rwm.Range_with_metavars.r))
+            @ Taint_input_env.ranges_of_tainted_globals_in_functions glob_env
+                ast
           in
           let sink_ranges =
             spec_matches.sinks
