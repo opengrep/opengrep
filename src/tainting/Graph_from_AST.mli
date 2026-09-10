@@ -42,7 +42,7 @@ type fdef_edges = {
 val extract_calls :
   lang : Lang.t ->
   ?all_funcs : func_info list ->
-  ?func_lookup : Func_lookup.t ->
+  func_lookup : Func_lookup.t ->
   ?type_state : Type_state.t ->
   ?caller_parent_path : fn_id ->
   AST_generic.function_definition ->
@@ -51,7 +51,7 @@ val extract_calls :
 val extract_decorator_calls :
   lang : Lang.t ->
   ?all_funcs : func_info list ->
-  ?func_lookup : Func_lookup.t ->
+  func_lookup : Func_lookup.t ->
   ?type_state : Type_state.t ->
   ?caller_parent_path : fn_id ->
   AST_generic.attribute list ->
@@ -60,7 +60,7 @@ val extract_decorator_calls :
 val extract_toplevel_calls :
   lang : Lang.t ->
   ?all_funcs : func_info list ->
-  ?func_lookup : Func_lookup.t ->
+  func_lookup : Func_lookup.t ->
   ?type_state : Type_state.t ->
   AST_generic.program ->
   (fn_id * Tok.t) list
@@ -68,7 +68,7 @@ val extract_toplevel_calls :
 val extract_toplevel_hof_callbacks :
   lang : Lang.t ->
   ?all_funcs : func_info list ->
-  ?func_lookup : Func_lookup.t ->
+  func_lookup : Func_lookup.t ->
   AST_generic.program ->
   (fn_id * Tok.t) list
 

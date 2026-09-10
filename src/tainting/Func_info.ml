@@ -27,7 +27,7 @@ let as_method : fn_id -> (IL.name * IL.name) option = function
   | _ -> None
 
 let as_free : fn_id -> IL.name option = function
-  | [None; Some leaf] -> Some leaf
+  | [None; Some bare_name] -> Some bare_name
   | _ -> None
 
 let is_method_of ~(class_name : string) ~(method_name : string)
@@ -38,7 +38,7 @@ let is_method_of ~(class_name : string) ~(method_name : string)
     && String.equal (fst meth.IL.ident) method_name
   | None -> false
 
-let leaf_name : fn_id -> IL.name option = fun fn_id ->
+let bare_name : fn_id -> IL.name option = fun fn_id ->
   match List.rev fn_id with
   | Some name :: _ -> Some name
   | _ -> None
@@ -52,7 +52,7 @@ let method_id ~(cls : IL.name) ~(meth : IL.name) : fn_id =
 
 (* File of the def's [fkind] token; anchored fake tokens still carry their
    file.  Indexed methods can have a location-less reconstructed [fkind], so
-   fall back to the def's own name tokens (leaf first), which carry the source
+   fall back to the def's own name tokens (bare name first), which carry the source
    file.  [None] only when no token has a location. *)
 let def_file_opt (func_info : t) : Fpath.t option =
   let from_tok tok =
@@ -67,12 +67,24 @@ let def_file_opt (func_info : t) : Fpath.t option =
         | None -> None)
       (List.rev func_info.fn_id)
 
-let free_id (leaf : IL.name) : fn_id = [None; Some leaf]
+let free_id (bare_name : IL.name) : fn_id = [None; Some bare_name]
 
 let prefer ~(keep : t -> bool) (funcs : t list) : t list =
   match List.filter keep funcs with
   | [] -> funcs
   | kept -> kept
+
+let bare_name_key (func : t) : string =
+  match bare_name func.fn_id with
+  | Some (name : IL.name) -> fst name.IL.ident
+  | None -> ""
+
+let has_colliding_bare_names (funcs : t list) : bool =
+  let bare_names = List.map bare_name_key funcs in
+  not
+    (Int.equal
+       (List.length (List.sort_uniq String.compare bare_names))
+       (List.length bare_names))
 
 (* Narrow one class's method list per method-name group.  Two same-named
    classes in different files land under one bare class name at method
@@ -87,28 +99,46 @@ let prefer ~(keep : t -> bool) (funcs : t list) : t list =
    rather than erasing the method.  [None] = nothing changed. *)
 let narrow_colliding_groups ~(keep : t -> bool) (methods : t list)
     : t list option =
-  let leaf (func : t) : string =
-    match leaf_name func.fn_id with
-    | Some (name : IL.name) -> fst name.IL.ident
-    | None -> ""
+  let methods_with_bare_name =
+    List.map (fun (func : t) -> (bare_name_key func, func)) methods
   in
-  let named = List.map (fun func -> (leaf func, func)) methods in
+  let entries_per_name =
+    List.fold_left
+      (fun (entries_per_name : int Common.SMap.t)
+           ((name : string), (_ : t)) ->
+        Common.SMap.update name
+          (function
+            | None -> Some 1
+            | Some (count : int) -> Some (count + 1))
+          entries_per_name)
+      Common.SMap.empty methods_with_bare_name
+  in
+  let name_is_shared (name : string) : bool =
+    Common.SMap.find name entries_per_name > 1
+  in
+  let named_with_kept_in_shared_group =
+    List.map
+      (fun ((name : string), (func : t)) ->
+        (name, func, name_is_shared name && keep func))
+      methods_with_bare_name
+  in
   (* Method names whose group spans several entries and keeps at least one
      survivor; every other name is left alone. *)
   let narrowed_names =
-    List.sort_uniq String.compare (List.map fst named)
-    |> List.filter (fun name ->
-         let group =
-           List.filter (fun (n, _) -> String.equal n name) named
-         in
-         List.length group > 1
-         && List.exists (fun (_, func) -> keep func) group)
+    List.fold_left
+      (fun (narrowed_names : Common.SSet.t)
+           ((name : string), _, (kept_in_shared_group : bool)) ->
+        if kept_in_shared_group then Common.SSet.add name narrowed_names
+        else narrowed_names)
+      Common.SSet.empty named_with_kept_in_shared_group
   in
-  let filtered =
-    List.filter_map (fun (name, func) ->
-      if List.exists (String.equal name) narrowed_names && not (keep func)
-      then None
-      else Some func)
-      named
+  let kept_methods =
+    List.filter_map
+      (fun ((name : string), (func : t), (kept_in_shared_group : bool)) ->
+        if Common.SSet.mem name narrowed_names && not kept_in_shared_group
+        then None
+        else Some func)
+      named_with_kept_in_shared_group
   in
-  if List.length filtered <> List.length methods then Some filtered else None
+  if Int.equal (List.length kept_methods) (List.length methods) then None
+  else Some kept_methods

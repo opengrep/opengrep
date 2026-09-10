@@ -28,12 +28,12 @@ let canonical_callee_key (e : G.expr) : string option =
     match e.G.e with
     | G.N (G.Id ((s, _), info)) -> (
         match
-          Option.bind (Ty_leaf.instance_or_declared_type info)
-            Ty_leaf.class_name_of_ty
+          Option.bind (Ty_bare_name.instance_or_declared_type info)
+            Ty_bare_name.class_name_of_ty
         with
         | Some cls -> (
-            match Ty_leaf.leaf_of_name cls with
-            | Some leaf -> Some (s ^ ":" ^ leaf)
+            match Ty_bare_name.bare_name_of_name cls with
+            | Some bare_name -> Some (s ^ ":" ^ bare_name)
             | None -> Some s)
         | None -> Some s)
     | G.DotAccess (sub, _, G.FN (G.Id ((s, _), _))) ->
@@ -152,7 +152,7 @@ type fdef_edges = {
 (* Tables are per-fdef / per-file top-level, so callee shape + arity suffice. *)
 type callee_memo = (string * int, Func_info.fn_id option) Hashtbl.t
 
-let callee_leaf_id_info (callee : G.expr) : G.id_info option =
+let callee_bare_name_id_info (callee : G.expr) : G.id_info option =
   match callee.G.e with
   | G.N (G.Id (_, ii)) -> Some ii
   | G.DotAccess (_, _, G.FN (G.Id (_, ii))) -> Some ii
@@ -165,7 +165,7 @@ let callee_leaf_id_info (callee : G.expr) : G.id_info option =
   | _ -> None
 
 let write_back_callee_definition (callee : G.expr) (fn_id : fn_id) : unit =
-  match callee_leaf_id_info callee with
+  match callee_bare_name_id_info callee with
   | Some ii -> set_callee_definition ~allow_located_fake:true ii fn_id
   | None -> ()
 
@@ -192,7 +192,7 @@ let memo_lookup_or_compute (memo_tbl : callee_memo)
 
 let extract_calls ~(lang : Lang.t)
     ?(all_funcs = [])
-    ?(func_lookup : Func_lookup.t = Func_lookup.empty)
+    ~(func_lookup : Func_lookup.t)
     ?(type_state : Type_state.t = Type_state.empty)
     ?(caller_parent_path = [])
     (fdef : G.function_definition) : fdef_edges =
@@ -389,7 +389,7 @@ let extract_calls ~(lang : Lang.t)
 
 let extract_decorator_calls ~(lang : Lang.t)
     ?(all_funcs = [])
-    ?(func_lookup : Func_lookup.t = Func_lookup.empty)
+    ~(func_lookup : Func_lookup.t)
     ?(type_state : Type_state.t = Type_state.empty)
     ?(caller_parent_path = [])
     (attrs : G.attribute list) : (fn_id * Tok.t) list =
@@ -417,7 +417,7 @@ let extract_decorator_calls ~(lang : Lang.t)
 
 let extract_toplevel_calls ~(lang : Lang.t)
     ?(all_funcs = [])
-    ?(func_lookup : Func_lookup.t = Func_lookup.empty)
+    ~(func_lookup : Func_lookup.t)
     ?(type_state : Type_state.t = Type_state.empty)
     (ast : G.program)
   : (fn_id * Tok.t) list =
@@ -457,7 +457,7 @@ let extract_toplevel_calls ~(lang : Lang.t)
 let extract_toplevel_hof_callbacks
     ~(lang : Lang.t)
     ?(all_funcs = [])
-    ?(func_lookup : Func_lookup.t = Func_lookup.empty)
+    ~(func_lookup : Func_lookup.t)
     (ast : G.program) : (fn_id * Tok.t) list =
   (* Filter operator pseudo-calls: PEP 604 unions would emit spurious callback edges. *)
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
@@ -496,6 +496,11 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
         | None -> funcs)
       [] ast
   in
+  let func_lookup =
+    Func_lookup.create
+      ~constructors:(Func_lookup.constructor_index_of_funcs ~lang funcs)
+      ()
+  in
   (* Visit all calls in the AST, tracking the current function context *)
   Visit_function_defs.visit_with_parent_path ~lang
     (fun opt_ent parent_path fdef ->
@@ -507,7 +512,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
           in
 
           let { calls = callee_calls; callbacks = callback_calls; _ } =
-            extract_calls ~lang ~all_funcs:funcs ~caller_parent_path:fn_id fdef
+            extract_calls ~lang ~all_funcs:funcs ~func_lookup
+              ~caller_parent_path:fn_id fdef
           in
 
           (* Add labeled edges for each call - edge from callee to caller for bottom-up analysis *)
@@ -541,7 +547,9 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
     ast;
 
   (* Extract calls from top-level code (outside any function) and add edges to <top_level> *)
-  let toplevel_calls = extract_toplevel_calls ~lang ~all_funcs:funcs ast in
+  let toplevel_calls =
+    extract_toplevel_calls ~lang ~all_funcs:funcs ~func_lookup ast
+  in
   List.iter
     (fun (callee_fn_id, call_tok) ->
       match fn_id_to_node callee_fn_id with
@@ -672,8 +680,8 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
 let find_functions_containing_ranges ~(lang : Lang.t) (ast : G.program)
     (ranges : Range.t list) : Function_id.t list =
   (* Hash table to track ALL functions containing each range, along with function size *)
-  (* Set keyed by [compare_fn_id], which compares positions, so same-leaf
-     funcs at different positions stay distinct. *)
+  (* The set is keyed by [compare_fn_id], which compares positions, so two
+     functions of one bare name at different positions stay distinct. *)
   let module FnIdSet =
     Set.Make (struct
       type t = fn_id

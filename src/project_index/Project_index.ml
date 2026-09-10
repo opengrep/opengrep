@@ -102,14 +102,15 @@ let build_project_call_graph (caps : < Cap.fork >)
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
   in
-  (* [child_simple_name -> parent_simple_name] resolves [super().X()] to the
-     parent's method (single-inheritance approximation: first parent's leaf). *)
+  (* The map from a child's simple name to its parent's simple name resolves
+     [super().X()] to the parent's method. The map records the first parent's
+     bare name only, which approximates single inheritance. *)
   let type_state =
     List.fold_left (fun state ci ->
       let child =
-        match Names.Class_qn.leaf ci.ci_qn with
+        match Names.Class_qn.bare_name ci.ci_qn with
         | "" -> None
-        | leaf -> Some leaf
+        | bare_name -> Some bare_name
       in
       let parent =
         match ci.ci_parent_paths with
@@ -264,15 +265,20 @@ let build_project_call_graph (caps : < Cap.fork >)
       let cur = Option.value (Hashtbl.find_opt funcs_by_name name) ~default:[] in
       Hashtbl.replace funcs_by_name name (func :: cur)
     in
-    let leaf = Option.map (fun name -> fst name.IL.ident) (Func_info.leaf_name func.FA.fn_id) in
-    Option.iter add_name leaf;
-    (* Named lambdas have a synthetic [_tmp_lambda] leaf; also index under the
-       binding var name so [handler(...)] resolves. *)
+    let bare_name =
+      Option.map (fun name -> fst name.IL.ident)
+        (Func_info.bare_name func.FA.fn_id)
+    in
+    Option.iter add_name bare_name;
+    (* A named lambda carries the synthetic bare name [_tmp_lambda], so this
+       code also indexes the lambda under the name of the variable it is bound
+       to, and [handler(...)] then resolves. *)
     (match func.FA.entity with
      | Some ent ->
        (match Index_lang_rules.entity_simple_name ent with
-        | Some entity_name when (match leaf with
-                                 | Some leaf_name -> not (String.equal leaf_name entity_name)
+        | Some entity_name when (match bare_name with
+                                 | Some fn_bare_name ->
+                                   not (String.equal fn_bare_name entity_name)
                                  | None -> true) ->
             add_name entity_name
         | _ -> ())
@@ -427,11 +433,64 @@ let build_project_call_graph (caps : < Cap.fork >)
       m "[interfile timing] project index: call graph: indexes (exports, \
          packages, modules, re-exports, visibility): %.2fs"
         (Unix.gettimeofday () -. t_indexes_start));
+  let project_constructors =
+    timed "call graph: constructors by class" @@ fun () ->
+    Func_lookup.constructor_index_of_funcs ~lang all_funcs
+  in
+  let required_files_narrowing : Pipeline.required_files_narrowing option =
+    if not cfg.Index_lang_rules.narrow_methods_by_required_files then None
+    else
+      let narrowable_classes =
+        timed "call graph: narrowable classes" @@ fun () ->
+        Type_state.narrowable_classes type_state
+      in
+      let rev_path_segs_by_file =
+        timed "call graph: path segments per definition file" @@ fun () ->
+        List.fold_left
+          (fun (segs_by_file : string list Common.SMap.t) (fi : file_info) ->
+            let file = Fpath.to_string fi.fi_file in
+            Common.SMap.add file (Path_segs.rev_no_ext file) segs_by_file)
+          Common.SMap.empty file_infos
+      in
+      let narrowed_type_state_by_caller_dir =
+        timed "call graph: narrow type state per caller dir" @@ fun () ->
+        let caller_dirs = Pipeline.distinct_dirs_of_files file_infos in
+        let narrow_dir (dir : string) : Type_state.t =
+          Pipeline.narrowed_type_state_for_dir ~type_state ~narrowable_classes
+            dir
+        in
+        let dir_type_states =
+          if ncores <= 1 || List.compare_length_with caller_dirs 1 <= 0 then
+            List_.map narrow_dir caller_dirs
+          else
+            Domainslib_.parmap caps
+              ~num_domains:(min ncores (List.length caller_dirs))
+              ~chunksize:1
+              ~exception_handler:(fun (dir : string) (exn : Exception.t) ->
+                (dir, exn))
+              narrow_dir caller_dirs
+            |> List_.map (function
+                 | Ok dir_type_state -> dir_type_state
+                 | Error (_dir, exn) -> Exception.reraise exn)
+        in
+        List.fold_left2
+          (fun (by_caller_dir : Type_state.t Common.SMap.t) (dir : string)
+               (dir_type_state : Type_state.t) ->
+            Common.SMap.add dir dir_type_state by_caller_dir)
+          Common.SMap.empty caller_dirs dir_type_states
+      in
+      Some
+        { Pipeline.narrowable_classes;
+          rev_path_segs_by_file;
+          narrowed_type_state_by_caller_dir }
+  in
   let pipeline_ctx : Pipeline.ctx =
     { Pipeline.lang;
       cfg;
       type_state;
+      required_files_narrowing;
       all_funcs;
+      project_constructors;
       project_funcs_by_name;
       project_funcs_by_module;
       file_module_qn;
@@ -754,7 +813,7 @@ let run_pipeline (caps : < Cap.fork >)
             name = method_name; kind = K_method;
             file = ci.ci_file; range = ci.ci_range;
             defining_class_id = Some ci.ci_id })
-          (Func_info.leaf_name func.Func_info.fn_id))
+          (Func_info.bare_name func.Func_info.fn_id))
         funcs)
       inherited_by_class
   in

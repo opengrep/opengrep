@@ -11,11 +11,28 @@ type stamp_var_types =
   G.program ->
   unit
 
+(* A [required_files_narrowing] holds the project-wide inputs of the
+   narrowing by required files (Ruby, PHP): the classes that the
+   narrowing can change, the reversed path segments of each definition
+   file, and the type state narrowed to each caller directory. One state
+   per directory covers every file of that directory that the
+   required-files pass did not narrow. The reversed segments are held for
+   every file in the list of project files, so the lookup of a definition
+   file always succeeds. The narrowed states cover every directory of that
+   same list, so the lookup of a caller directory always succeeds. *)
+type required_files_narrowing = {
+  narrowable_classes : Names.Class_name.t list;
+  rev_path_segs_by_file : string list Common.SMap.t;
+  narrowed_type_state_by_caller_dir : Type_state.t Common.SMap.t;
+}
+
 type ctx = {
   lang : Lang.t;
   cfg : Index_lang_rules.t;
   type_state : Type_state.t;
+  required_files_narrowing : required_files_narrowing option;
   all_funcs : Func_info.t list;
+  project_constructors : Func_lookup.constructor_index;
   project_funcs_by_name : (string, Func_info.t list) Hashtbl.t;
   project_funcs_by_module :
     (Names.Module_qn.t, Func_info.t list) Hashtbl.t;
@@ -44,6 +61,20 @@ type ctx = {
    Conflicting or non-bare-name assignments are dropped. *)
 val build_value_alias_index :
   Types.file_info list -> (string * string, AST_generic.expr) Hashtbl.t
+
+(* The result lists the directories of the given files, sorted and without
+   repetition. *)
+val distinct_dirs_of_files : Types.file_info list -> string list
+
+(* The result is [type_state] with [narrowable_classes] narrowed to the
+   methods and the defining files in [dir]. A file of that directory
+   resolves its calls against this state when no earlier pass narrowed
+   the state for that file. *)
+val narrowed_type_state_for_dir :
+  type_state:Type_state.t ->
+  narrowable_classes:Names.Class_name.t list ->
+  string ->
+  Type_state.t
 
 val edges_for_file :
   ctx -> file_info ->

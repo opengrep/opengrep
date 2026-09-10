@@ -8,7 +8,7 @@ let pathological_candidate_cap = unique_call_threshold * 4
 
 let infer_class_max_depth = 8
 
-let leaf_of_callee (e : G.expr) : string option =
+let bare_name_of_callee (e : G.expr) : string option =
   match e.G.e with
   | G.N (G.Id ((s, _), _))
   | G.N (G.IdQualified { name_last = ((s, _), _); _ })
@@ -154,8 +154,9 @@ let overload_representative ~(lang : Lang.t) ~(overload_groups : bool)
         matches
         |> List.filter_map (fun (f : func_info) ->
                Option.map
-                 (fun (leaf : IL.name) -> (Function_id.of_il_name leaf, f))
-                 (Func_info.leaf_name f.fn_id))
+                 (fun (bare_name : IL.name) ->
+                    (Function_id.of_il_name bare_name, f))
+                 (Func_info.bare_name f.fn_id))
         |> List.sort (fun ((a : Function_id.t), _) ((b : Function_id.t), _) ->
                Function_id.compare a b)
         |> List_.hd_opt
@@ -221,12 +222,12 @@ let fn_id_to_node (fn_id : fn_id) : node option =
   match List.rev fn_id with
   | Some name :: _ ->
     let ident_node = Function_id.of_il_name name in
-    (* Alias-synthetic leaf (cf. Ts_class_aliases): the exposed ident
-       sits at the TARGET's position while the resolved sid carries the
-       target's own name — same position, different name is that
-       deliberate signature, and the node must be the target's identity
-       (that's where the def and its signature live). Real defs resolve
-       to their own name, so this is a no-op for them. *)
+    (* An alias-synthetic bare name (see Ts_class_aliases) is recorded at
+       the target's position, while the resolved sid carries the target's
+       own name. That pair, one position with two names, identifies an
+       alias, and the node must be the target's identity, because the
+       target holds the definition and its signature. A real definition
+       resolves to its own name, so this branch changes nothing for it. *)
     (match !(name.IL.id_info.G.id_resolved) with
      | Some (_, sid) when not (G.SId.is_unsafe_default sid) ->
        let sid_node = Function_id.of_sid sid in
@@ -255,7 +256,7 @@ let resolve_constructor ~(lang : Lang.t) ~all_funcs (class_name : string)
   List.find_opt (fun f ->
     match Func_info.as_method f.fn_id with
     | Some (c, m) ->
-        fst c.IL.ident = class_name
+        String.equal (fst c.IL.ident) class_name
         && Object_initialization.is_constructor lang (fst m.IL.ident)
              (Some class_name)
     | None -> false
@@ -268,11 +269,11 @@ let resolve_constructor_from_type ~(lang : Lang.t) ~all_funcs (ty : G.type_) : f
     resolve_constructor ~lang ~all_funcs name
   | _ -> None
 
-let funcs_with_leaf ~(func_lookup : Func_lookup.t)
-    ~(all_funcs : func_info list) (leaf : string) : func_info list =
-  Func_lookup.funcs_with_leaf func_lookup ~all_funcs leaf
+let funcs_with_bare_name ~(func_lookup : Func_lookup.t)
+    ~(all_funcs : func_info list) (bare_name : string) : func_info list =
+  Func_lookup.funcs_with_bare_name func_lookup ~all_funcs bare_name
 
-(* Leaf-name narrowing of [all_funcs] is required for tractability. *)
+(* Bare-name narrowing of [all_funcs] is required for tractability. *)
 let rec identify_callee ~(lang : Lang.t)
     ?(all_funcs = [])
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
@@ -356,8 +357,9 @@ let rec identify_callee ~(lang : Lang.t)
       in
       Func_info.prefer ~keep:in_package matches
   in
-  (* Prefer the caller's own file, then dir (Go packages are directory-scoped:
-     same-leaf collisions). *)
+  (* The candidates defined in the caller's own file are preferred, then
+     those defined in the caller's directory. A Go package is one directory,
+     so two classes of one bare name collide across directories. *)
   let narrow_file_then_dir matches =
     if List.length matches > 1 then
       let by_file = same_file_filter matches in
@@ -395,7 +397,7 @@ let rec identify_callee ~(lang : Lang.t)
       ~(distinct_key : func_info -> string option)
       (name : string) : fn_id option =
     let cands =
-      funcs_with_leaf ~func_lookup ~all_funcs name
+      funcs_with_bare_name ~func_lookup ~all_funcs name
       |> List.filter candidate_filter
     in
     match cands with
@@ -450,10 +452,10 @@ let rec identify_callee ~(lang : Lang.t)
       (match Names.Module_qn.split_last imported_qn with
        | None -> None
        | Some (module_qn, _) when Names.Module_qn.is_empty module_qn -> None
-       | Some (module_qn, leaf_name) ->
+       | Some (module_qn, bare_name) ->
          let candidates =
            Func_lookup.funcs_in_module func_lookup module_qn
-           |> List.filter (fun f -> is_free_named f leaf_name)
+           |> List.filter (fun f -> is_free_named f bare_name)
          in
          pick_by_arity ~lang call_arity candidates)
   in
@@ -489,7 +491,7 @@ let rec identify_callee ~(lang : Lang.t)
           | None ->
             let cls_simple =
               match List_.last_opt parts with
-              | None -> Names.Module_qn.leaf base_qn
+              | None -> Names.Module_qn.bare_name base_qn
               | Some p -> p
             in
             if not (Type_state.has_class type_state cls_simple) then None
@@ -502,24 +504,18 @@ let rec identify_callee ~(lang : Lang.t)
   in
   (* Kept un-narrowed for the bare-generic [foo<T>()] reroute. *)
   let unnarrowed_all_funcs = all_funcs in
-  (* leaf-narrowed [all_funcs] is keyed on class name, so re-narrow by constructor names. *)
-  let ctor_candidate_funcs () =
-    let names = (Lang_config.get lang).Lang_config.constructor_names in
-    match
-      List.concat_map
-        (fun cn ->
-          match Func_lookup.narrow_candidates_by_leaf func_lookup cn with
-          | Some fs -> fs
-          | None -> [])
-        names
-    with
-    | [] -> unnarrowed_all_funcs
-    | fs -> fs
+  (* The result is the first constructor the lookup's constructor index
+     holds for the class, and [None] when the index holds no constructor
+     for the class. *)
+  let ctor_of_class (class_name : string) : fn_id option =
+    match Func_lookup.constructors_of_class func_lookup class_name with
+    | (func : func_info) :: _ -> Some func.fn_id
+    | [] -> None
   in
   let all_funcs =
-    match leaf_of_callee callee with
-    | Some leaf ->
-      (match Func_lookup.narrow_candidates_by_leaf func_lookup leaf with
+    match bare_name_of_callee callee with
+    | Some bare_name ->
+      (match Func_lookup.narrow_candidates_by_bare_name func_lookup bare_name with
        | Some narrowed -> narrowed
        | None -> all_funcs)
     | None -> all_funcs
@@ -589,9 +585,7 @@ let rec identify_callee ~(lang : Lang.t)
                                construction — passing a class is not
                                constructing it. *)
                             if allow_constructor then
-                              resolve_constructor ~lang
-                                ~all_funcs:(ctor_candidate_funcs ())
-                                callee_name_str
+                              ctor_of_class callee_name_str
                             else None)))
               | None when is_locally_imported callee_name_str ->
                   try_imported_callee ~callee_name:callee_name_str
@@ -611,9 +605,7 @@ let rec identify_callee ~(lang : Lang.t)
                          [allow_constructor] false when probing a bare-identifier
                          ARGUMENT as a possible call (see method arm above). *)
                       (match (if allow_constructor then
-                                resolve_constructor ~lang
-                                  ~all_funcs:(ctor_candidate_funcs ())
-                                  callee_name_str
+                                ctor_of_class callee_name_str
                               else None) with
                        | Some _ as r -> r
                        | None ->
@@ -628,10 +620,10 @@ let rec identify_callee ~(lang : Lang.t)
                                | Some (module_qn, _)
                                  when Names.Module_qn.is_empty module_qn ->
                                  None
-                               | Some (module_qn, leaf_name) ->
+                               | Some (module_qn, bare_name) ->
                                  let candidates =
                                    Func_lookup.funcs_in_module func_lookup module_qn
-                                   |> List.filter (fun f -> is_free_named f leaf_name)
+                                   |> List.filter (fun f -> is_free_named f bare_name)
                                  in
                                  (match pick_by_arity ~lang call_arity candidates with
                                   | Some _ as r -> r
@@ -733,13 +725,13 @@ let rec identify_callee ~(lang : Lang.t)
             (* Receiver's instance class, published on [id_info] by projidx
                augment / intrafile broadcast, else its declared type. *)
             let obj_class_opt =
-              Option.bind (Ty_leaf.instance_or_declared_type obj_id_info)
-                Ty_leaf.qualified_class_name_of_ty
+              Option.bind (Ty_bare_name.instance_or_declared_type obj_id_info)
+                Ty_bare_name.qualified_class_name_of_ty
             in
             (match obj_class_opt with
             | Some class_name ->
                 let class_name_str =
-                  Option.value (Ty_leaf.leaf_of_name class_name) ~default:""
+                  Option.value (Ty_bare_name.bare_name_of_name class_name) ~default:""
                 in
                 (* [import { C as Alias }] then [new Alias()]: naming types
                    the receiver from the initializer, so the class name is
@@ -779,7 +771,7 @@ let rec identify_callee ~(lang : Lang.t)
                           | from_origin -> (exported, from_origin)))
                 in
                 resolve_class_method
-                  ?qualifier:(Ty_leaf.qualifier_of_name class_name)
+                  ?qualifier:(Ty_bare_name.qualifier_of_name class_name)
                   ~class_name:class_name_str
                   ~method_name:method_name_str method_matches
             | None ->
@@ -819,8 +811,7 @@ let rec identify_callee ~(lang : Lang.t)
                          let ctor_via_new =
                            if String.equal method_name_str "new"
                               && Lang.(lang =*= Ruby || lang =*= Crystal) then
-                             resolve_constructor ~lang
-                               ~all_funcs:(ctor_candidate_funcs ()) obj_name
+                             ctor_of_class obj_name
                            else None
                          in
                          (match ctor_via_new with
@@ -875,10 +866,10 @@ let rec identify_callee ~(lang : Lang.t)
                     G.FN (G.Id (("new", _), _))); _ }, _)
                 when Lang.(lang =*= Ruby || lang =*= Crystal) -> Some cn
               | _ ->
-                Option.bind inferred_receiver_type Ty_leaf.leaf_of_name
+                Option.bind inferred_receiver_type Ty_bare_name.bare_name_of_name
             in
             let qualifier_hint : string option =
-              Option.bind inferred_receiver_type Ty_leaf.qualifier_of_name
+              Option.bind inferred_receiver_type Ty_bare_name.qualifier_of_name
             in
             (match class_name_opt with
             | Some class_name ->

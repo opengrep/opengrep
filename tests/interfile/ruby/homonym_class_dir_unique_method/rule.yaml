@@ -1,0 +1,15 @@
+rules:
+  - id: homonym-class-dir-unique-method
+    languages: [ruby]
+    severity: ERROR
+    message: >
+      Two directories hold a class of the same name. The method both
+      directories define resolves to the definition beside the caller; the
+      method only the other directory defines still resolves.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
