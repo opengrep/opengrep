@@ -781,7 +781,7 @@ type scan_work_item =
 type scan_work_result =
   | Target_result of
       Core_profiling.file_profiling Core_result.match_result * Target.t option
-  | Interfile_result of PM.t list
+  | Interfile_result of PM.t list * E.t list
 
 type scan_work_error =
   | Target_error of Target.t * Core_error.t
@@ -817,7 +817,7 @@ let handle_work_item
            (caps :> < Cap.time_limit >))
       else None
     in
-    let matches =
+    let matches, errors =
       Memory_limit.run_with_global_memory_limit
         (caps :> < Cap.memory_limit >)
         ~get_context:(fun () ->
@@ -829,20 +829,15 @@ let handle_work_item
               ~name:"Core_scan.interfile_timeout_function" time_limit
               (fun () -> Interfile_dispatch.run_rule rs)
           with
-          | Some matches -> matches
+          | Some matches -> (matches, [])
           | None ->
-            (* [Time_limit] returns None rather than raising, so re-raise the
-               timeout: [unified_exception_handler] then reports it as an
-               Out.Timeout error carrying the rule id, the way an exceeded
-               memory limit is reported as an Out.OutOfMemory one.  The
-               constructor is spelled [Exception.Timeout] because
-               [Time_limit.Timeout] keeps its argument type abstract. *)
-            raise
-              (Exception.Timeout
-                 {
-                   Exception.name = "interfile analysis";
-                   max_duration = float_of_int config.interfile_timeout;
-                 }))
+            (* [Time_limit] returns None when the limit expires; the timeout
+               is reported as an Out.Timeout error for the rule, as
+               [Match_rules] reports a per-rule timeout. *)
+            Logs.err (fun m ->
+                m "timeout for rule %s in interfile analysis"
+                  (Rule_ID.to_string rule_id));
+            ([], [ E.mk_error ~rule_id Out.Timeout ]))
     in
     (* Stream these like per-target matches.  [Output_format.Incremental] skips
        the final render on the assumption everything was already emitted through
@@ -858,7 +853,7 @@ let handle_work_item
             hook file
               (Core_result.mk_match_result pms ESet.empty
                  (Core_profiling.empty_partial_profiling file))));
-    Interfile_result matches
+    Interfile_result (matches, errors)
 
 let unified_exception_handler (item : scan_work_item) (e : Exception.t)
     : scan_work_error =
@@ -957,8 +952,9 @@ let iter_unified_and_get_matches_and_exn_to_errors
             | None -> scanned
           in
           (res :: files, scanned', interfile, rule_errors)
-        | Ok (Interfile_result matches) ->
-          (files, scanned, List.rev_append matches interfile, rule_errors)
+        | Ok (Interfile_result (matches, errors)) ->
+          (files, scanned, List.rev_append matches interfile,
+           List.rev_append errors rule_errors)
         | Error (Target_error (target, e)) ->
           let internal_path = Target.internal_path target in
           let noprof =
