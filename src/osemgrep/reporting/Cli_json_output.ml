@@ -440,7 +440,7 @@ let path_of_match_based_id ~(cwd : Fpath.t) (path : Fpath.t) : Fpath.t =
   | None -> path
 
 (* 'cwd' is read once by the caller rather than once per match; it is only
- * the match-based id that uses it, the reported path stays as the user typed
+ * the match-based id that uses it, the reported path stays as the user gave
  * it. *)
 let cli_match_of_core_match ~(cwd : Fpath.t) ~fixed_lines fixed_env
     (hrules : Rule.hrules) (m : Out.core_match) : Out.cli_match =

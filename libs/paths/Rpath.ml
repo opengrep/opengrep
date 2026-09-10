@@ -86,7 +86,7 @@ let to_fpath (Rpath x) = x
 let canonical_exn s = to_fpath (of_fpath_exn s)
 
 (* On case-insensitive filesystems (Windows), resolve [p] to its physical real
-   path so its spelling (case and 8.3 short names) agrees with the canonical
+   path so its form (case and 8.3 short names) agrees with the canonical
    paths the OS and git report. On case-sensitive filesystems the command-line
    path is already canonical, so [p] is returned unchanged. If [p] can't be
    resolved (e.g. removed since it was last checked, or a parent directory is

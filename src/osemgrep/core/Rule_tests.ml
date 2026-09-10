@@ -137,7 +137,7 @@ let get_config_filenames original_config =
 
 let get_config_test_filenames ~original_config ~configs ~original_target =
   (* python: original_target_is_file_not_directory = original_target.is_file()
-   * A file is one on the file system, not one whose spelling has no trailing
+   * A file is one on the file system, not one whose path has no trailing
    * slash: with 'test --config rules targets' the syntactic test held for
    * every path and paired every rule with every target. *)
   let is_file = UFile.is_reg ~follow_symlinks:true in

@@ -302,11 +302,11 @@ let cwd () =
   else capitalize_drive_letter cwd
 
 (*
-   The path made absolute as typed, using getcwd() if needed: a symlink on
+   The path made absolute as given, using getcwd() if needed: a symlink on
    the way stays a name, as git and the ignore files see it.
    I hesitated to put this into Fpath_ since Fpath is purely syntactic.
 *)
-let absolute_as_typed path =
+let absolute_as_given path =
   if Fpath.is_rel path then Fpath.(v (cwd ()) // path) else path
 
 (*
@@ -320,7 +320,7 @@ let absolute_as_typed path =
    So we turn our path into an rpath.
 *)
 let absolute_resolved path =
-  match Rpath.of_fpath (absolute_as_typed path) with
+  match Rpath.of_fpath (absolute_as_given path) with
   | Ok path -> Some (Rpath.to_fpath path)
   | Error _ -> None
 
@@ -329,9 +329,9 @@ let of_relative_fpath (fpath : Fpath.t) =
   else invalid_arg ("Ppath.of_relative_fpath: " ^ !!fpath)
 
 (*
-   A path is in the project when the path as typed lies under the project
+   A path is in the project when the path as given lies under the project
    root, or else when the resolved path does: the root may have been found
-   by resolving a symlink of the path. As typed comes first, so that a
+   by resolving a symlink of the path. As given comes first, so that a
    symlink inside the project stays a name in the project path.
 
    This assumes the input paths are normalized. We use this
@@ -339,7 +339,7 @@ let of_relative_fpath (fpath : Fpath.t) =
 *)
 let in_project_unsafe_for_tests ~(phys_root : Fpath.t) (path : Fpath.t) =
   let rel_path =
-    match remove_prefix phys_root (absolute_as_typed path) with
+    match remove_prefix phys_root (absolute_as_given path) with
     | Some rel_path -> Some rel_path
     | None -> (
         match absolute_resolved path with

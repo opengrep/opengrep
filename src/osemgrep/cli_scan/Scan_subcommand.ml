@@ -61,7 +61,7 @@ type caps =
  *)
 let unreadable_scanning_root_errors (conf : Scan_CLI.conf)
     (skipped : Out.skipped_target list) : Core_error.t list =
-  (* the roots as the user spelled them ('./x', an absolute path) against
+  (* the roots as the user gave them ('./x', an absolute path) against
      the paths the targeting reports *)
   let roots : Fpath.Set.t =
     conf.target_roots

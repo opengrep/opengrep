@@ -541,7 +541,7 @@ let fingerprints_of_scan (caps : Scan_subcommand.caps)
     ?(added : (string * string) list = []) ?(extra_args : string list = [])
     ~(rule_path : string) ~(rule : string)
     ~(targets : (string * string) list) () : (string * int * string) list =
-  (* the spelling of --config, which the rule ids and so the fingerprints
+  (* the form of the --config path, which the rule ids and so the fingerprints
      depend on; the rule file itself is always written at rule_path *)
   let config : string = Option.value config ~default:rule_path in
   let rec tree (path : string list) (contents : string) : F.t =
@@ -620,9 +620,9 @@ let test_fingerprints (caps : Scan_subcommand.caps) () =
       );
     ];
   (* the './' of a config path is not a directory of the rule id, so the
-     fingerprint is the one the plain spelling gives; python:
+     fingerprint is the one the plain path gives; python:
      convert_config_id_to_prefix strips the leading '.' and '/' *)
-  check "config path spelled with './'" ~config:"./rules/eqeq.yaml"
+  check "config path written with './'" ~config:"./rules/eqeq.yaml"
     ~rule_path:"rules/eqeq.yaml" ~rule:eqeq_is_bad_rule_content
     ~targets:[ ("targets/basic/stupid.py", stupid_py_content) ]
     [

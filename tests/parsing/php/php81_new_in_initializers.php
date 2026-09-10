@@ -34,7 +34,7 @@ function statics()
 }
 
 // self, parent and static are keywords rather than plain class names, so they
-// need spelling out separately
+// are handled separately
 
 class Keywords extends Base
 {

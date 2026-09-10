@@ -43,7 +43,7 @@ let append_no_dot a b = if Fpath.is_current_dir a then b else Fpath.append a b
 (* A leading './' and a trailing '/' carry no information about which file
    a path names, and pyopengrep dropped them from the paths given on its
    command line: './src/' was reported as 'src'. Everything else is kept as
-   typed, so 'a/../b' and 'a/./b' keep their spelling. *)
+   given, so 'a/../b' and 'a/./b' keep their form. *)
 let rec strip_leading_dot_and_trailing_slash (path : Fpath.t) : Fpath.t =
   let path = Fpath.rem_empty_seg path in
   match Fpath.segs path with
@@ -53,7 +53,7 @@ let rec strip_leading_dot_and_trailing_slash (path : Fpath.t) : Fpath.t =
 
 (* A '.' segment names no part of a path either, and pyopengrep's Path
    dropped every one of them: 'a/./b' was 'a/b'. A '..' segment is kept as
-   typed, which rules out Fpath.normalize: normalize resolves '..' against
+   given, which rules out Fpath.normalize: normalize resolves '..' against
    the preceding segment, and so names another file when that segment is a
    symlink. *)
 let drop_dot_segments (path : Fpath.t) : Fpath.t =

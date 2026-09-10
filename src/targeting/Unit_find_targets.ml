@@ -156,13 +156,13 @@ let tests_with_or_without_git ~with_git =
        (.semgrepignore, --include, --exclude) *)
     test_find_targets ~with_git ~scanning_root:"a.py" "scan explicit target"
       [ F.file "a.py"; F.File (".semgrepignore", "a.py\n") ];
-    (* The paths keep the scanning root as typed, whatever its spelling
+    (* The paths keep the scanning root as given, whatever its form
        and wherever the command runs. *)
     test_find_targets ~with_git ~cwd:"dir" ~scanning_root:".."
       "scanning root above the working directory"
       [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
     test_find_targets ~with_git ~cwd:"dir" ~scanning_root:"../dir"
-      "scanning root spelled through the parent"
+      "scanning root written through the parent"
       [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
     test_find_targets ~with_git ~cwd:"dir" ~scanning_root:"<root>"
       "absolute scanning root above the working directory"
@@ -170,7 +170,7 @@ let tests_with_or_without_git ~with_git =
     test_find_targets ~with_git ~scanning_root:"<root>/dir"
       "absolute scanning root below the working directory"
       [ F.dir "dir" [ F.file "a.c" ]; F.file "c.c" ];
-    (* A forced project root takes the scanning root as typed: the symlink
+    (* A forced project root takes the scanning root as given: the symlink
        leaves the folder but its name is inside it. *)
     test_find_targets ~with_git ~project_root:"dir" ~scanning_root:"dir/link"
       "forced project root with a symlink leaving it"
@@ -228,7 +228,7 @@ let tests_with_or_without_git ~with_git =
         F.dir "dir" [ F.file "a.c"; F.file "b.c" ];
         F.file "c.c";
       ];
-    (* The paths keep the scanning root as typed, through the symlink. *)
+    (* The paths keep the scanning root as given, through the symlink. *)
     test_find_targets ~with_git ~scanning_root:"link/sub"
       "scanning root under a symlinked folder"
       [

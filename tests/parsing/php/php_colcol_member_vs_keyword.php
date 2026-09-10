@@ -1,6 +1,6 @@
 <?php
 
-// after '::' a word is a member name, never the construct it spells: 'C::static'
+// after '::' a word is a member name, never the construct it names: 'C::static'
 // is a constant called 'static', not late static binding. Before '::' those
 // same words keep their meaning.
 

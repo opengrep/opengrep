@@ -484,10 +484,10 @@ let test_root_above_cwd_with_baseline (caps : caps) =
             "a sibling directory of the current one" [ "../other/b.py" ]
             (baseline_paths caps ~baseline "../other")))
 
-(* A scanning root spelled through a symlinked ancestor selects the same
+(* A scanning root given through a symlinked ancestor selects the same
    changed files as the real one. The current directory the targets are
    relativised against is free of symbolic links, so without resolving the
-   root the two spellings never meet and the scan reports no finding.
+   root the two forms never meet and the scan reports no finding.
    '/tmp' is such a symlink on macOS. *)
 let test_root_through_symlinked_ancestor (caps : caps) =
   in_repo
@@ -511,7 +511,7 @@ let test_root_through_symlinked_ancestor (caps : caps) =
    so a baseline scan must look it up under a name the target list agrees
    with: otherwise language detection rejects the '.dat' file and the scan
    reports no finding. That holds of the head scan, which keeps the name as
-   typed, and of the baseline scan, which makes it relative to the current
+   given, and of the baseline scan, which makes it relative to the current
    directory. *)
 let test_explicit_target_with_baseline (caps : caps) =
   in_repo
@@ -529,7 +529,7 @@ let test_explicit_target_with_baseline (caps : caps) =
       in
       let cwd = Sys.getcwd () in
       Alcotest.(check (list string))
-        "the target as typed" [ "data/foo.dat" ] (paths "data/foo.dat");
+        "the target as given" [ "data/foo.dat" ] (paths "data/foo.dat");
       Alcotest.(check (list string))
         "the target with a '.' segment" [ "data/foo.dat" ]
         (paths "data/./foo.dat");

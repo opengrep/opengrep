@@ -56,7 +56,7 @@ let remove_matches_in_baseline caps (commit : string)
   let extract_sig renamed (m : Core_match.t) =
     let rule_id = m.rule_id in
     (* the two scans name their targets differently: the head scan as the
-       user typed them, the baseline scan relative to the current directory,
+       user gave them, the baseline scan relative to the current directory,
        so the signatures compare on the form git uses *)
     let path =
       !!(from_cwd m.path.internal_path_to_content) |> fun p ->
@@ -222,9 +222,9 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
      wrote them, exactly as without a baseline. Without this they match none
      of git's paths and the scan reports no finding and no error. *)
   let cwd = Rpath.getcwd () |> Rpath.to_fpath |> Fpath.to_dir_path in
-  (* the current directory above is free of symbolic links and a root the
-     user spelled through one is not ('/tmp' on macOS, a junction on
-     Windows); the two forms cannot be relativized against each other.
+  (* the current directory above is free of symbolic links; a root that
+     goes through one ('/tmp' on macOS, a junction on Windows) is not,
+     and the two cannot be relativized against each other.
      Only the directory is resolved, so a target that is itself a symlink
      keeps the name git lists it under. The targets share a few directories,
      each resolved once. *)

@@ -174,7 +174,7 @@ let nested_path_options : string list list =
     [ "--exclude"; "**/src/*" ];
   ]
 
-(* A file and a symlink to it, so that a scanning root can be spelled
+(* A file and a symlink to it, so that a scanning root can be given
    through the symlink. *)
 let symlink_to_file_files : F.t list =
   [ F.File ("real.py", "x == x\n"); F.Symlink ("link.py", "real.py") ]
@@ -282,7 +282,7 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~rule:"rules/eqeq.yaml" ~targets:[ "targets/basic/stupid.py" ]
            ~extra_args:[ "--exclude=stupid.py" ]);
       (* --project-root with a scanning root under a symlink that leaves
-         the project: the paths are taken as typed *)
+         the project: the paths are taken as given *)
       t "forced project root with symlinked targets"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root:fixtures_root ~format_args:[ "--json" ]
@@ -436,9 +436,9 @@ let tests (caps : < Scan_subcommand.caps >) =
                "--verbose"; "--force-exclude"; "--exclude"; "link.py";
                "link.py";
              ]);
-      (* A scanning root spelled with a leading './' is reported without
+      (* A scanning root written with a leading './' is reported without
          it, as the wrapper's Path did. *)
-      t "scanning root spelled with a leading dot"
+      t "scanning root written with a leading dot"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root ~format_args:[ "--json" ]
            ~rule:"rules/eqeq-basic.yaml" ~targets:[]
@@ -446,7 +446,7 @@ let tests (caps : < Scan_subcommand.caps >) =
            ~extra_args:[ "./targets/nested_paths/src" ]);
       (* A '.' segment further down the scanning root is dropped as well,
          so the findings are reported under the path without it. *)
-      t "scanning root spelled with an interior dot"
+      t "scanning root written with an interior dot"
         ~checked_output:(Testo.stdout ()) ~normalize:normalise
         (run_scan caps ~root ~format_args:[ "--json" ]
            ~rule:"rules/eqeq-basic.yaml" ~targets:[]

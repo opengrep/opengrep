@@ -427,10 +427,10 @@ let test_rules_and_targets_directories (caps : Test_subcommand.caps) () =
         ];
     ]
   in
-  let checked (spelling : string list) : (string * bool) list =
-    let exit_code, res = run_test_json caps files spelling in
+  let checked (args : string list) : (string * bool) list =
+    let exit_code, res = run_test_json caps files args in
     Exit_code.Check.ok exit_code;
-    (* the key of a rule file keeps the spelling of the config path, so only
+    (* the key of a rule file keeps the config path as given, so only
        the checks themselves are compared *)
     res.results
     |> List.concat_map

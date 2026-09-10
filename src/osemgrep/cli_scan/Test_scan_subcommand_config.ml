@@ -9,7 +9,7 @@ open Test_scan_helpers
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
-(* End-to-end tests of how the rules of a scan are loaded: the spelling of
+(* End-to-end tests of how the rules of a scan are loaded: the form of
  * a --config path, a hidden rule file, several configs, a rule given
  * twice, nested pattern operators. The findings are checked in JSON.
  *
@@ -23,7 +23,7 @@ open Test_scan_helpers
 let root : Fpath.t = Fpath.v "tests/configs"
 
 (* The rules directory copied into the repo under the same name, for the
-   tests that spell the config path. *)
+   tests of how the config path is given. *)
 let rules_dir : F.t = F.dir "rules" (F.read (root / "rules"))
 
 (* Rule directories whose names carry the characters under test, copied

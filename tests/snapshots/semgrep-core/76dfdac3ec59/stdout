@@ -1,4 +1,4 @@
-Test name: without git > scanning root spelled through the parent
+Test name: without git > scanning root written through the parent
 --- Files not added to git ---
 c.c
 dir/a.c

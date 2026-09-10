@@ -32,8 +32,8 @@ function wholeArray() {
 }
 
 // In JS `o[0]` and `o["0"]` are the same property: an integer key is
-// canonicalized to its decimal string spelling. Taint.offset_of_IL conflates
-// a canonical integer spelling into the Oint the numeric form takes -- for
+// canonicalized to its decimal string form. Taint.offset_of_IL conflates
+// a canonical integer form into the Oint the numeric form takes -- for
 // JS/TS only, since e.g. in Python d[0] and d["0"] really are different
 // dict keys.
 function numericStringKey(o) {
@@ -50,7 +50,7 @@ function numericStringKeyOtherDirection(o) {
   sink(o["0"]);
 }
 
-// A non-canonical spelling is a distinct property in JS too: o["00"] and
+// A non-canonical form is a distinct property in JS too: o["00"] and
 // o[0] do not alias, nor do o["0x10"] and o[16].
 function nonCanonicalStringKey(o) {
   o["00"] = taint_source();

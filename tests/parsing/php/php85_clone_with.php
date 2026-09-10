@@ -24,7 +24,7 @@ class C
     }
 }
 
-// the older spellings must keep working
+// the older forms must keep working
 
 $k = clone $obj;
 $l = clone($obj);

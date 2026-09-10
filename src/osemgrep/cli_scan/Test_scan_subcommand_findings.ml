@@ -364,7 +364,7 @@ let tests (caps : < Scan_subcommand.caps >) =
              "rules/metavariable_propagation/metavariable-regex-propagation.yaml"
            ~target:
              "targets/metavariable_propagation/metavariable-regex-propagation.py");
-      (* A regex rule for every language, spelled 'generic' and 'none'.
+      (* A regex rule for every language, written as 'generic' and 'none'.
          python: test_regex_with_any_language_rule *)
       t "findings: regex for any language" ~checked_output:(Testo.stdout ())
         ~normalize:normalise

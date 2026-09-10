@@ -415,7 +415,7 @@ let filter_paths
   (* The files under an ignored directory are dropped without being tested
      and the directory is reported once, as pysemgrep did.
 
-     The fpath of a file is a prefix, the scanning root as typed or as git
+     The fpath of a file is a prefix, the scanning root as given or as git
      reports it, followed by its segments below the root, the same as in
      its ppath. Dropping segments below the root from the fpath gives the
      fpath of an ancestor. Nothing is known of the prefix, which may go
@@ -638,7 +638,7 @@ let git_list_files ~exclude_standard
    *)
   match project.kind with
   | Git_project ->
-      (* Canonicalise cwd on Windows so its spelling (case, 8.3 short names)
+      (* Canonicalise cwd on Windows so its form (case, 8.3 short names)
          agrees with git's canonical paths; otherwise relativizing against it
          can emit a '..' walk-up. No-op on case-sensitive filesystems. *)
       let cwd = Rpath.canonical_if_win (Fpath.v (Sys.getcwd ())) in
@@ -657,16 +657,16 @@ let git_list_files ~exclude_standard
                        (Fppath.show sc_root));
                  let project_root = Rfpath.to_rpath project.root in
                  (* The path prefix we want for all the target file paths that
-                    we return: the scanning root exactly as the user typed it,
+                    we return: the scanning root exactly as the user gave it,
                     like pyopengrep. *)
                  let orig_scanning_root_path = sc_root.fpath in
-                 (* On Windows the typed root can differ from git's canonical
+                 (* On Windows the root as given can differ from git's canonical
                     paths in case or via 8.3 short names; relativizing it
                     against git's canonical targets would emit a '..' walk-up.
                     Canonicalise a copy for the relativize and the git lookup
-                    below so they stay clean, while still prefixing the typed
-                    root onto the result. Canonicalising also resolves the
-                    symlinks of the typed root: git rejects a path that leads
+                    below so they stay clean, while still prefixing the root as
+                    given onto the result. Canonicalising also resolves the
+                    symlinks of the root as given: git rejects a path that leads
                     outside the directory it runs in. *)
                  let canon_scanning_root_path =
                    Rpath.canonical_exn sc_root.fpath
@@ -694,16 +694,16 @@ let git_list_files ~exclude_standard
                         *)
                         match
                           (* Both absolute and normalised: relative to
-                             cwd, the typed root and the path listed by
-                             git can spell one directory two ways, '../sub'
-                             and '.', and never match. *)
+                             cwd, the root as given and the path git lists
+                             can be '../sub' and '.' for the same
+                             directory, and never match. *)
                           Fpath.relativize ~root:canon_scanning_root_path
                             (Fpath.normalize
                                (cwd // target_relative_to_cwd_or_absolute))
                         with
                         | Some target_relative_to_scan_root ->
                             (* The segments below the root extend both the
-                               root as typed and its ppath, so that the
+                               root as given and its ppath, so that the
                                file and its root are in one frame even
                                when the root goes through a symlink. *)
                             ({

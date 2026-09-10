@@ -93,7 +93,7 @@ let with_metarules (f : unit -> unit) : unit -> unit =
     f
 
 (* the rule file of the fixtures validated, printing the exit code; the
-   arguments spell the subcommand, so that both 'validate' and the legacy
+   arguments name the subcommand, so that both 'validate' and the legacy
    'scan --validate' are covered *)
 let validate_rule_file (caps : CLI.caps) ~(dir : string) ~(rule : string)
     (args : string list) : unit -> unit =

@@ -112,7 +112,7 @@ why a rule did or did not match.|}
 
 (* The engine limits below are options: without the flag the test run keeps
  * the limits of a scan (see Test_subcommand.core_scan_config), which the
- * help text below spells out.
+ * help text below states.
  *)
 
 (* coupling: Scan_CLI.o_timeout *)
