@@ -435,12 +435,6 @@ let with_debug_trace ?(src = debug_trace_src) ~__FUNCTION__
       in
       (* Purposefully not using ~src here so that it goes to the
          applications logs. *)
-      (match exn with
-      | Exception.Timeout _ ->
-          (* %t the little known give me back my format stream
-             specifier. *)
-          () (* Logs.debug (fun m -> m "%t" msgf) *)
-      | _ -> () (* Logs.err (fun m -> m "%t" msgf) *));
       Exception.reraise exn'
 
 (*****************************************************************************)

@@ -147,7 +147,6 @@ let (run_parser : 'ast parser -> Fpath.t -> 'ast internal_result) =
             let ast, stat = f file in
             ResOk (ast, stat, [])
           with
-          | Time_limit.Timeout _ as e -> Exception.catch_and_reraise e
           | exn ->
               let e = Exception.catch exn in
               (* TODO: print where the exception was raised or reraise *)
@@ -181,7 +180,6 @@ let (run_parser : 'ast parser -> Fpath.t -> 'ast internal_result) =
                   (List.length res.errors));
             ResPartial (ast, stat, res.errors)
       with
-      | Time_limit.Timeout _ as e -> Exception.catch_and_reraise e
       (* to get correct stack trace on parse error *)
       | exn when !debug_exn -> Exception.catch_and_reraise exn
       | exn ->
@@ -280,7 +278,6 @@ let run_parser_pat p str =
         extract_pattern_from_tree_sitter_result res
   in
   try Ok (parse ()) with
-  | Time_limit.Timeout _ as e -> Exception.catch_and_reraise e
   | exn -> Error (Exception.catch exn)
 
 (* This is a simplified version of run_either. We don't need most of the

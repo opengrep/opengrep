@@ -407,7 +407,7 @@ let parsing_common (caps : < Cap.time_limit ; Cap.memory_limit >)
            let stat =
              try
                match
-                 Memory_limit.run_with_memory_limit
+                 Memory_limit.run_with_global_memory_limit
                    (caps :> < Cap.memory_limit >)
                    ~mem_limit_mb
                    (fun () ->
@@ -422,7 +422,6 @@ let parsing_common (caps : < Cap.time_limit ; Cap.memory_limit >)
                | None ->
                    { (Parsing_stat.bad_stat !!file) with have_timeout = true }
              with
-             | Time_limit.Timeout _ -> assert false
              | exn ->
                  if verbose then print_exn !!file exn;
                  (* bugfix: bad_stat() could actually triggering some

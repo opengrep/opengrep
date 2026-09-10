@@ -97,7 +97,6 @@ let%test _ =
 
 let parse_pattern lang pattern =
   try Ok (Parse_pattern.parse_pattern lang pattern) with
-  | Time_limit.Timeout _ as e -> Exception.catch_and_reraise e
   | e ->
       let e = Exception.catch e in
       Error e
@@ -110,7 +109,6 @@ let parse_target lang text =
   (* nosemgrep: forbid-tmp *)
   UTmp.with_temp_file ~contents:text ~suffix:".check" (fun file ->
       try Ok (Parse_target.just_parse_with_lang lang file) with
-      | Time_limit.Timeout _ as e -> Exception.catch_and_reraise e
       | e ->
           let e = Exception.catch e in
           Error e)
@@ -267,7 +265,6 @@ let ast_based_fix ~fix (start, end_) (pm : Core_match.t) : Textedit.t option =
       (* Perform sanity checks for the resulting fix. *)
       validate_fix lang (Lazy.force target_contents) edit
     with
-    | Time_limit.Timeout _ as e -> Exception.catch_and_reraise e
     | e ->
         let e = Exception.catch e in
         Error

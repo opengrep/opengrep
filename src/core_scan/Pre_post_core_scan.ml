@@ -141,7 +141,7 @@ let call_with_pre_and_post_processor
     Logs_.with_debug_trace ~__FUNCTION__:"Pre_post_core_scan.pre_process"
       (fun () ->
         try Processor.pre_process config rules with
-        | (Time_limit.Timeout _ | Common.UnixExit _) as e ->
+        | (Common.UnixExit _) as e ->
             Exception.catch_and_reraise e
         | exn ->
             let e = Exception.catch exn in
@@ -159,7 +159,7 @@ let call_with_pre_and_post_processor
     Logs_.with_debug_trace ~__FUNCTION__:"Pre_post_core_scan.post_process"
       (fun () ->
         try Processor.post_process config state res with
-        | (Time_limit.Timeout _ | Common.UnixExit _) as e ->
+        | (Common.UnixExit _) as e ->
             Exception.catch_and_reraise e
         | exn ->
             let e = Exception.catch exn in

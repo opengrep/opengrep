@@ -110,7 +110,7 @@ let pcre_error_to_string s exn =
 let try_and_raise_invalid_pattern_if_error (env : env) (s, t)
     (f : unit -> ('a, Rule_error.t) Result.t) : ('a, Rule_error.t) Result.t =
   try f () with
-  | (Time_limit.Timeout _ | UnixExit _) as e -> Exception.catch_and_reraise e
+  | (UnixExit _) as e -> Exception.catch_and_reraise e
   (* TODO: capture and adjust pos of parsing error exns instead of using [t] *)
   | exn ->
       let error_kind : Rule_error.invalid_rule_kind =
@@ -518,7 +518,7 @@ let parse_python_expression env key s =
     | Error s -> error_at_key env.id key s
     | _ -> error_at_key env.id key "not a Python expression"
   with
-  | (Time_limit.Timeout _ | UnixExit _) as e -> Exception.catch_and_reraise e
+  | (UnixExit _) as e -> Exception.catch_and_reraise e
   | exn -> error_at_key env.id key ("exn: " ^ Common.exn_to_s exn)
 
 let parse_metavar_cond env key s = parse_python_expression env key s

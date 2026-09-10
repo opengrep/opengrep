@@ -580,15 +580,6 @@ let iter_targets_and_get_matches_and_exn_to_errors
                       *)
                      let scanned = true in
                      (Core_result.mk_match_result [] errors noprof, scanned)
-                 | Time_limit.Timeout _ ->
-                     (* converted in Main_timeout in timeout_function() *)
-                     (* FIXME:
-                          Actually, I managed to get this assert to trigger by
-                          running semgrep -c p/default-v2 on elasticsearch with
-                          -timeout 0.01 !
-                     *)
-                     failwith
-                       "Time limit exceeded (this shouldn't happen, FIXME)"
                  (* convert all other exns (e.g., a parse error in a target file)
                   * in an empty match result with errors, so that one error in
                   * one target file does not abort the whole scan and the

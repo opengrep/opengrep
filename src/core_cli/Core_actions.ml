@@ -47,7 +47,6 @@ let json_of_v (v : OCaml.v) =
  *)
 let try_with_log_exn_and_reraise (file : Fpath.t) f =
   try f () with
-  | Time_limit.Timeout _ as exn -> Exception.catch_and_reraise exn
   | exn ->
       let e = Exception.catch exn in
       let err = E.exn_to_error ~file e in

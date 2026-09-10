@@ -286,7 +286,7 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
              in
              ({ pm with is_ignored }, errors)
            with
-           | (Time_limit.Timeout _ | Common.ErrorOnFile _) as exn ->
+           | (Common.ErrorOnFile _) as exn ->
                Exception.catch_and_reraise exn
            | exn ->
                (* let's rewrap the exn with ErrorOnFile *)
