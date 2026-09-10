@@ -216,13 +216,18 @@ let add_ident_global_scope id resolved scopes =
 let _add_ident_function_scope _id _resolved _scopes = raise Todo
 let untyped_ent name = { entname = name; enttype = None }
 
-let rec find_in_scope (ns : namespace) (s : string) (xs : scope) :
-    scope_info option =
+let rec find_in_scope_where (ns : namespace) (s : string)
+    (p : scope_info -> bool) (xs : scope) : scope_info option =
   match xs with
   | [] -> None
   | ((entry_ns, entry_s), res) :: xs ->
-      if equal_namespace ns entry_ns && String.equal s entry_s then Some res
-      else find_in_scope ns s xs
+      if equal_namespace ns entry_ns && String.equal s entry_s && p res then
+        Some res
+      else find_in_scope_where ns s p xs
+
+let find_in_scope (ns : namespace) (s : string) (xs : scope) :
+    scope_info option =
+  find_in_scope_where ns s (fun _ -> true) xs
 
 let rec lookup_namespace ~(class_attr : bool) (ns : namespace) (s : string)
     (xxs : scope list) : scope_info option =
@@ -699,7 +704,11 @@ let js_get_angular_constructor_args env attrs defs =
 let current_scope_entry (env : env) (ns : namespace) (id : ident) :
     scope_info option =
   match (top_context env, !(env.names.blocks)) with
-  | InClass, current :: _ -> find_in_scope ns (H.str_of_ident id) current
+  | InClass, current :: _ ->
+      let site = SId.of_site ~file:env.file (snd id) in
+      find_in_scope_where ns (H.str_of_ident id)
+        (fun ({ entname = _, sid; _ } : scope_info) -> SId.same_site sid site)
+        current
   | _ -> None
 
 let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
