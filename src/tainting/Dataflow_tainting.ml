@@ -3862,12 +3862,154 @@ and (fixpoint :
   (* Extract signatures for all lambdas in the function for HOF support.
      We collect ALL lambdas (including nested ones) in innermost-first order,
      so nested lambda signatures are available when processing their parents. *)
+  let best_matches =
+    (* Here we compute the "canonical" or "best" source/sanitizer/sink matches,
+     * for each source/sanitizer/sink we check whether there is a "best match"
+     * among all the potential matches in the CFG.
+     * See NOTE "Best matches" *)
+    fun_cfg
+    |> TM.best_matches_in_nodes ~sub_matches_of_orig:(fun orig ->
+           let sources =
+             orig_is_source taint_inst orig
+             |> List.to_seq
+             |> Seq.filter (fun (m : R.taint_source TM.t) ->
+                    m.spec.source_exact)
+             |> Seq.map (fun m -> TM.Any m)
+           in
+           let sanitizers =
+             orig_is_sanitizer taint_inst orig
+             |> List.to_seq
+             |> Seq.filter (fun (m : R.taint_sanitizer TM.t) ->
+                    m.spec.sanitizer_exact)
+             |> Seq.map (fun m -> TM.Any m)
+           in
+           let sinks =
+             orig_is_sink taint_inst orig
+             |> List.to_seq
+             |> Seq.filter (fun (m : R.taint_sink TM.t) -> m.spec.sink_exact)
+             |> Seq.map (fun m -> TM.Any m)
+           in
+           sources |> Seq.append sanitizers |> Seq.append sinks)
+  in
+  let used_lambdas = lambdas_used_in_cfg fun_cfg in
+  let func =
+    {
+      name;
+      sig_params = Signature.of_IL_params fun_cfg.params;
+      il_params = fun_cfg.params;
+      param_sids = mk_param_sids fun_cfg.params;
+      best_matches;
+      used_lambdas;
+    }
+  in
+  (* The lambdas whose signature can be consumed: a [Fun] shape is only
+     read when the lambda is handed to a callee that has a signature (so
+     [Sig_inst] may instantiate it), called through its variable, or used
+     in any other way (kept, conservatively).  A lambda only ever passed to
+     callees without a signature -- RSpec's [describe]/[it] blocks, Rails
+     DSL blocks -- never has its signature looked up, and extracting it (a
+     dataflow per lambda per enclosing fixpoint, nested blocks repeatedly)
+     was most of the interfile epilogue on GitLab. *)
+  let needed_lambdas (all_lambdas : (IL.name * IL.fun_cfg) list) : IL.NameSet.t
+      =
+    let lambda_names =
+      List.fold_left
+        (fun s (n, _) -> IL.NameSet.add n s)
+        IL.NameSet.empty all_lambdas
+    in
+    if IL.NameSet.is_empty lambda_names then lambda_names
+    else
+      let probe_env =
+        {
+          taint_inst;
+          func;
+          in_lambda = None;
+          needed_vars = IL.NameSet.empty;
+          lval_env = enhanced_in_env;
+          effects_acc = ref Effects.empty;
+          did_self_recurse = ref false;
+          signature_db;
+          builtin_signature_db;
+          call_graph;
+          call_graph_caller = name;
+          class_name;
+        }
+      in
+      let callee_has_sig_memo : (string * int, bool) Hashtbl.t =
+        Hashtbl.create 16
+      in
+      let callee_has_sig (callee : IL.exp) (arity : int) : bool =
+        let key = (Display_IL.string_of_exp callee, arity) in
+        match Hashtbl.find_opt callee_has_sig_memo key with
+        | Some b -> b
+        | None ->
+            let b = Option.is_some (lookup_signature probe_env callee arity) in
+            Hashtbl.replace callee_has_sig_memo key b;
+            b
+      in
+      let lambda_var_of_lval (lv : IL.lval) : IL.name option =
+        match lv with
+        | { base = Var v; rev_offset = [] } when IL.NameSet.mem v lambda_names ->
+            Some v
+        | _ -> None
+      in
+      let lambda_var_of_exp (e : IL.exp) : IL.name option =
+        match e.e with
+        | Fetch lv -> lambda_var_of_lval lv
+        | _ -> None
+      in
+      let count v xs =
+        List.length
+          (List.filter (fun x -> Int.equal (IL.NameOrdered.compare x v) 0) xs)
+      in
+      LV.reachable_nodes fun_cfg
+      |> Seq.fold_left
+           (fun (needed : IL.NameSet.t) (node : IL.node) ->
+             let mentioned =
+               LV.rlvals_of_node node.n |> List.filter_map lambda_var_of_lval
+             in
+             match mentioned with
+             | [] -> needed
+             | _ -> (
+                 match node.n with
+                 | NInstr { i = Call (_, callee, args); _ } ->
+                     let bare_args =
+                       List.filter_map
+                         (function
+                           | Unnamed e | Named (_, e) -> lambda_var_of_exp e)
+                         args
+                     in
+                     let arity = List.length args in
+                     let callee_needs = callee_has_sig callee arity in
+                     List.fold_left
+                       (fun needed v ->
+                         (* needed unless its only uses here are as a bare
+                            argument to a callee without a signature *)
+                         if
+                           (not callee_needs)
+                           && Int.equal (count v mentioned) (count v bare_args)
+                         then needed
+                         else IL.NameSet.add v needed)
+                       needed mentioned
+                 | _ ->
+                     List.fold_left
+                       (fun needed v -> IL.NameSet.add v needed)
+                       needed mentioned))
+           IL.NameSet.empty
+  in
   let signature_db_with_lambdas =
+    Taint_timing.accum "eager lambda signature extraction" @@ fun () ->
     if taint_intrafile_ then
       match signature_db with
       | Some db ->
           (* Collect all lambdas recursively, innermost first *)
           let all_lambdas_list = collect_all_lambdas_innermost_first fun_cfg in
+          let needed = needed_lambdas all_lambdas_list in
+          let all_lambdas_list =
+            List.filter
+              (fun (n, _) -> IL.NameSet.mem n needed)
+              all_lambdas_list
+          in
           List.fold_left
             (fun acc_db (lambda_name, lambda_cfg) ->
               let fn_id = Function_id.of_il_name lambda_name in
@@ -4048,47 +4190,8 @@ and (fixpoint :
     else signature_db
   in
 
-  let best_matches =
-    (* Here we compute the "canonical" or "best" source/sanitizer/sink matches,
-     * for each source/sanitizer/sink we check whether there is a "best match"
-     * among all the potential matches in the CFG.
-     * See NOTE "Best matches" *)
-    fun_cfg
-    |> TM.best_matches_in_nodes ~sub_matches_of_orig:(fun orig ->
-           let sources =
-             orig_is_source taint_inst orig
-             |> List.to_seq
-             |> Seq.filter (fun (m : R.taint_source TM.t) ->
-                    m.spec.source_exact)
-             |> Seq.map (fun m -> TM.Any m)
-           in
-           let sanitizers =
-             orig_is_sanitizer taint_inst orig
-             |> List.to_seq
-             |> Seq.filter (fun (m : R.taint_sanitizer TM.t) ->
-                    m.spec.sanitizer_exact)
-             |> Seq.map (fun m -> TM.Any m)
-           in
-           let sinks =
-             orig_is_sink taint_inst orig
-             |> List.to_seq
-             |> Seq.filter (fun (m : R.taint_sink TM.t) -> m.spec.sink_exact)
-             |> Seq.map (fun m -> TM.Any m)
-           in
-           sources |> Seq.append sanitizers |> Seq.append sinks)
-  in
-  let used_lambdas = lambdas_used_in_cfg fun_cfg in
-  let func =
-    {
-      name;
-      sig_params = Signature.of_IL_params fun_cfg.params;
-      il_params = fun_cfg.params;
-      param_sids = mk_param_sids fun_cfg.params;
-      best_matches;
-      used_lambdas;
-    }
-  in
   let effects, mapping =
+    Taint_timing.accum "main dataflow pass" @@ fun () ->
     fixpoint_aux taint_inst func ~enter_lval_env:enhanced_in_env ~in_lambda:None
       ~class_name ?signature_db:signature_db_with_lambdas ?builtin_signature_db ?call_graph
       ~call_graph_caller:name fun_cfg

@@ -45,6 +45,20 @@ val taint_config_of_rule :
   Rule.taint_rule ->
   (Taint_rule_inst.t * spec_matches * Matching_explanation.t list) option
 
+(* The second half of [taint_config_of_rule]: the instance from spec
+   matches computed earlier (by [spec_matches_of_taint_rule]) for the same
+   rule and file bytes, so a caller that already matched the specs need
+   not match them again.  Same emptiness gating as [taint_config_of_rule]. *)
+val taint_config_of_spec_matches :
+  ?handle_effects:Taint_rule_inst.effects_handler ->
+  ?allow_partial:bool ->
+  Match_env.xconfig ->
+  Lang.t ->
+  Fpath.t ->
+  Rule.taint_rule ->
+  spec_matches ->
+  Taint_rule_inst.t option
+
 (* The raw spec matches, ungated: unlike [taint_config_of_rule] it applies
    no source/sink emptiness rule and builds no [Taint_rule_inst.t]. *)
 val spec_matches_of_taint_rule :
