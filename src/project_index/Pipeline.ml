@@ -2,6 +2,23 @@ module FA = Graph_from_AST
 module G = AST_generic
 open Types
 
+(* Wall-clock time of the stages of [edges_for_file], summed across every
+   file and every domain; [Project_index] logs it after the edge pass. *)
+let edge_stage_secs : (string, float) Hashtbl.t = Hashtbl.create 8
+let edge_stage_mutex = Mutex.create ()
+
+let staged (name : string) (f : unit -> 'a) : 'a =
+  let res, secs = Common.with_time f in
+  Mutex.lock edge_stage_mutex;
+  let prev = Option.value (Hashtbl.find_opt edge_stage_secs name) ~default:0. in
+  Hashtbl.replace edge_stage_secs name (prev +. secs);
+  Mutex.unlock edge_stage_mutex;
+  res
+
+let edge_stage_report () : (string * float) list =
+  Hashtbl.fold (fun k v acc -> (k, v) :: acc) edge_stage_secs []
+  |> List.sort (fun (_, a) (_, b) -> compare b a)
+
 
 (* Infer var classes from assignments and stamp them onto
    [id_instance_type]. *)
@@ -586,7 +603,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     let emitter =
       Edge_emitter.create ~top_level:(top_level_node_for fi.fi_file)
     in
-    let visible = visible_names_for_file fi in
+    let visible = staged "visibility" (fun () -> visible_names_for_file fi) in
     let fi_file_str = Fpath.to_string fi.fi_file in
     let top_level_node = top_level_node_for fi.fi_file in
     let func_file_opt (func : FA.func_info) : string option =
@@ -598,11 +615,14 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       | None -> false
     in
     (* Must run before [build_funcs_by_name]: augments [visible] with cross-file class targets it filters on. *)
-    stamp_base_var_types ~lang ~project_class_names
-      ~default_export_class ~named_export_classes
-      ~path_suffix_index ~resolve_ts_specifier ~visible fi;
-    stamp_import_value_aliases ~value_alias_index fi;
-    let alias_to_module_qn = build_alias_to_module_qn ~cfg fi in
+    staged "stamp base var types + import aliases" (fun () ->
+      stamp_base_var_types ~lang ~project_class_names
+        ~default_export_class ~named_export_classes
+        ~path_suffix_index ~resolve_ts_specifier ~visible fi;
+      stamp_import_value_aliases ~value_alias_index fi);
+    let alias_to_module_qn =
+      staged "alias to module map" (fun () -> build_alias_to_module_qn ~cfg fi)
+    in
     let funcs_by_module_qn
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
       match cfg.Index_lang_rules.unqualified_scope with
@@ -610,14 +630,17 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       | _ -> None
     in
     let file_funcs_by_package =
+      staged "file funcs by package" @@ fun () ->
       build_file_funcs_by_package ~cfg ~project_funcs_by_package
         ~project_funcs_by_module ~file_funcs_index
         ~path_suffix_index ~resolve_ts_specifier fi
     in
     let import_target_files =
+      staged "import target files" @@ fun () ->
       build_import_target_files ~path_suffix_index ~resolve_ts_specifier fi
     in
     let file_type_state =
+      staged "narrow methods by imports/required files" @@ fun () ->
       let base =
         cfg.Index_lang_rules.narrow_methods_by_imports
           ~fi_imports:fi.fi_imports ~file_of_func:func_file_opt type_state
@@ -643,6 +666,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
        the file imports, or to every class when its imports are whole
        files (Ruby, PHP), where the pass above already visits them all. *)
     let file_type_state =
+      staged "narrow type state to caller dir" @@ fun () ->
       match cfg.Index_lang_rules.unqualified_scope with
       | `Per_file ->
           let caller_dir = Filename.dirname fi_file_str in
@@ -665,14 +689,17 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       | `Per_directory | `Per_package -> file_type_state
     in
     let same_file_funcs_by_name =
+      staged "same-file funcs table" @@ fun () ->
       build_same_file_funcs_by_name ~file_funcs_index ~fi_file_str
     in
     let funcs_by_name =
+      staged "funcs_by_name table" @@ fun () ->
       build_funcs_by_name ~visible ~project_funcs_by_name ~default_export_fn
         ~path_suffix_index ~resolve_ts_specifier ~import_target_files
         ~func_file_opt ~func_in_caller_file fi
     in
     let func_lookup =
+      staged "func_lookup create" @@ fun () ->
       Func_lookup.create
         ?funcs_by_name:(Option.map Func_lookup.leaf_index_of_hashtbl funcs_by_name)
         ~project_funcs_by_name:
@@ -692,12 +719,14 @@ let edges_for_file (ctx : ctx) (fi : file_info)
              (build_class_aliases ~path_suffix_index ~resolve_ts_specifier fi))
         ()
     in
-    stamp_singleton_imports ~type_state fi;
-    (* the file's view: the classes it imports, a method's return type
-       from the class it sees *)
-    stamp_var_types ~type_state:file_type_state ~slice_element_of_field
-      fi.fi_ast;
+    staged "stamp var types" (fun () ->
+      stamp_singleton_imports ~type_state fi;
+      (* the file's view: the classes it imports, a method's return type
+         from the class it sees *)
+      stamp_var_types ~type_state:file_type_state ~slice_element_of_field
+        fi.fi_ast);
     let per_fdef_edges =
+      staged "extract calls" @@ fun () ->
       Visit_function_defs.fold_with_parent_path ~lang
         (fun edges opt_ent parent_path fdef ->
         (* A skipped anon attributes calls to its enclosing named ancestor, else the file's [<top_level>] node. *)

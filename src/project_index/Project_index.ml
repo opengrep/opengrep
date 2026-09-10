@@ -24,7 +24,14 @@ module FA = Graph_from_AST
    while keeping [chunksize = 1] — one task per thread — so the
    [Memprof_limits]-based memory limit and timeout stay sound (see the
    warning on [Domainslib_.parmap]). *)
-let per_file_batch_size = 500
+(* Files are sorted by decreasing size before the edge pass, so a batch is
+   a run of similar-sized files; small batches let the pool balance the
+   heavy head of that order instead of handing one domain the 500 largest
+   files (on GitLab that left the pool one third busy). *)
+let per_file_batch_size =
+  match Sys.getenv_opt "OPENGREP_PROJIDX_BATCH" with
+  | Some s -> ( try int_of_string s with _ -> 32)
+  | None -> 32
 
 (* Split a list into chunks of at most [n] elements. *)
 let rec chunks (n : int) (xs : 'a list) : 'a list list =
@@ -76,6 +83,14 @@ let run_per_file (caps : < Cap.fork >) ~(ncores : int)
         | Error exn -> List_.map (fun item -> Error (item, exn)) batch)
         batches
     |> List.concat
+
+(* Wall-clock time of one phase, at info level under one tag so a log grep
+   gives the phase table (see also Interfile_dispatch.timed). *)
+let timed (name : string) (f : unit -> 'a) : 'a =
+  let res, secs = Common.with_time f in
+  Log_interfile_timing.Log.info (fun m ->
+      m "[interfile timing] project index: %s: %.2fs" name secs);
+  res
 
 let build_project_call_graph (caps : < Cap.fork >)
     ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
@@ -200,7 +215,10 @@ let build_project_call_graph (caps : < Cap.fork >)
       | _ -> acc
     ) acc fi.fi_observations
   in
-  let per_file_funcs = run_per_file caps ~ncores phase1_per_file file_infos in
+  let per_file_funcs =
+    timed "call graph: functions per file" @@ fun () ->
+    run_per_file caps ~ncores phase1_per_file file_infos
+  in
   let all_funcs =
     List.concat_map (function Ok fs -> fs | Error _ -> []) per_file_funcs
   in
@@ -277,6 +295,7 @@ let build_project_call_graph (caps : < Cap.fork >)
     Go_inheritance.lift_embedded_interfaces ~lang file_infos type_state
   in
   let type_state, inherited_by_class, override_pairs =
+    timed "call graph: inheritance (Mro)" @@ fun () ->
     if cfg.Index_lang_rules.walks_inheritance then
       let cross_module_parents =
         match cfg.Index_lang_rules.unqualified_scope with
@@ -317,6 +336,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   let outer_equal (a, _) (b, _) = Type_state.equal a b in
   let (type_state, caller_arg_types), outer_iters =
+    timed "call graph: type inference fixpoint" @@ fun () ->
     Fixpoint.run
       ~equal:outer_equal
       ~step:outer_step
@@ -334,6 +354,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   let type_state =
     Type_augment.build_module_singleton_types ~uses_new_keyword type_state file_infos
   in
+  let t_indexes_start = Unix.gettimeofday () in
   let default_export_class, named_export_classes =
     Type_augment.build_export_class_indexes ~lang ~type_state file_infos in
 
@@ -402,6 +423,10 @@ let build_project_call_graph (caps : < Cap.fork >)
 
   (* Per-AST [extract_calls] into an edge list; graph mutated only in the
      merge step. *)
+  Log_interfile_timing.Log.info (fun m ->
+      m "[interfile timing] project index: call graph: indexes (exports, \
+         packages, modules, re-exports, visibility): %.2fs"
+        (Unix.gettimeofday () -. t_indexes_start));
   let pipeline_ctx : Pipeline.ctx =
     { Pipeline.lang;
       cfg;
@@ -430,7 +455,19 @@ let build_project_call_graph (caps : < Cap.fork >)
       value_alias_index = Pipeline.build_value_alias_index file_infos;
     }
   in
-  let edges_for_file fi = Pipeline.edges_for_file pipeline_ctx fi in
+  (* per-file wall time of the edge walk, across domains, for the slowest
+     files: the pass is parallel, so a few slow files bound its wall time *)
+  let file_secs : (Fpath.t * float) list ref = ref [] in
+  let file_secs_mutex = Mutex.create () in
+  let edges_for_file fi =
+    let res, secs =
+      Common.with_time (fun () -> Pipeline.edges_for_file pipeline_ctx fi)
+    in
+    Mutex.lock file_secs_mutex;
+    file_secs := (fi.fi_file, secs) :: !file_secs;
+    Mutex.unlock file_secs_mutex;
+    res
+  in
   (* Pre-populate [<top_level>] nodes BEFORE the parallel phase: the table and
      graph are read-only across domains after this. *)
   List.iter (fun (fi : file_info) ->
@@ -455,10 +492,58 @@ let build_project_call_graph (caps : < Cap.fork >)
     |> List.sort (fun (a, _) (b, _) -> Int.compare b a)
     |> List_.map snd
   in
-  let per_file_edges = run_per_file caps ~ncores edges_for_file file_infos in
+  let per_file_edges =
+    timed "call graph: edges per file" @@ fun () ->
+    run_per_file caps ~ncores edges_for_file file_infos
+  in
+  (* stage split of the edge pass, and the shape of the name table it
+     resolves calls against *)
+  Log_interfile_timing.Log.info (fun m ->
+      let stages =
+        Pipeline.edge_stage_report ()
+        |> List.map (fun (name, secs) -> Printf.sprintf "%s %.1fs" name secs)
+        |> String.concat ", "
+      in
+      let n_names = Hashtbl.length project_funcs_by_name in
+      let sizes =
+        Hashtbl.fold
+          (fun name funcs acc -> (name, List.length funcs) :: acc)
+          project_funcs_by_name []
+        |> List.sort (fun (_, a) (_, b) -> compare b a)
+      in
+      let total = List.fold_left (fun acc (_, n) -> acc + n) 0 sizes in
+      let top =
+        List.filteri (fun i _ -> i < 8) sizes
+        |> List.map (fun (name, n) -> Printf.sprintf "%s:%d" name n)
+        |> String.concat " "
+      in
+      m "[interfile timing] project index: edge pass stages (CPU sum): %s; \
+         name table: %d names, %d funcs, largest buckets %s"
+        stages n_names total top);
+  Log_interfile_timing.Log.info (fun m ->
+      let slowest =
+        List.sort (fun (_, a) (_, b) -> compare b a) !file_secs
+        |> List.filteri (fun i _ -> i < 8)
+        |> List.map (fun (file, secs) ->
+               Printf.sprintf "%s %.1fs" (Fpath.to_string file) secs)
+        |> String.concat ", "
+      in
+      let total = List.fold_left (fun acc (_, s) -> acc +. s) 0. !file_secs in
+      m "[interfile timing] project index: edge pass in-domain total %.1fs \
+         over %d files (compare with the stage sum: the rest is outside the \
+         timed stages); slowest files: %s"
+        total (List.length !file_secs) slowest);
   (* A failed file's outgoing call edges are MISSING from the graph; the
      failure list is returned so the engine can surface it as a scan error. *)
+  let t_merge_start = Unix.gettimeofday () in
+  let n_emitted =
+    List.fold_left
+      (fun n -> function Ok edges -> n + List.length edges | Error _ -> n)
+      0 per_file_edges
+  in
   let phase2_failures =
+    timed (Printf.sprintf "call graph: add call edges (%d emitted)" n_emitted)
+    @@ fun () ->
     List.filter_map (function
       | Ok edges ->
         List.iter (fun (src, dst, call_tok) ->
@@ -473,6 +558,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   in
   (* Interface dispatch edges.  See [Structural_dispatch]. *)
   let n_dispatch =
+    timed "call graph: interface dispatch edges" @@ fun () ->
     Structural_dispatch.emit_dispatch_edges
       ~lang ~cfg ~type_state ~func_def_file:Type_augment.func_def_file
       ~class_infos ~graph
@@ -485,6 +571,7 @@ let build_project_call_graph (caps : < Cap.fork >)
      dispatch (impl -> decl), so [dispatch_merge_fbdecl] and the
      reachability dispatch closure treat both alike. *)
   let n_override =
+    timed "call graph: override dispatch edges" @@ fun () ->
     List.fold_left
       (fun n ((c_m : FA.func_info), (p_m : FA.func_info)) ->
         match FA.fn_id_to_node c_m.FA.fn_id, FA.fn_id_to_node p_m.FA.fn_id with
@@ -505,11 +592,16 @@ let build_project_call_graph (caps : < Cap.fork >)
       n_override);
   (* Same-arity overloads of one scope: see [Structural_dispatch]. *)
   let n_overload =
+    timed "call graph: overload dispatch edges" @@ fun () ->
     Structural_dispatch.emit_overload_edges ~lang ~graph all_funcs
   in
   if n_overload > 0 then
     Log.debug (fun m -> m "Overload dispatch: emitted %d Dispatch edges"
       n_overload);
+  Log_interfile_timing.Log.info (fun m ->
+      m "[interfile timing] project index: call graph: edge merge (add edges, \
+         dispatch/override/overload): %.2fs"
+        (Unix.gettimeofday () -. t_merge_start));
   (graph, inherited_by_class, phase1_failures @ phase2_failures)
 
 let project_root_abs_of (project_root : Fpath.t) : Fpath.t =
@@ -527,8 +619,11 @@ let run_pipeline (caps : < Cap.fork >)
   let excludes =
     excludes @ cfg.Index_lang_rules.discover_excludes ~project_root
   in
-  let files = Discover.discover_files ~targeting_conf
-    ~lang ~project_root ~includes ~excludes in
+  let files =
+    timed "discover files" @@ fun () ->
+    Discover.discover_files ~targeting_conf
+      ~lang ~project_root ~includes ~excludes
+  in
   let n_total = List.length files in
   Log.info (fun m -> m "Discovered %d %s files. Parsing with %d domain(s)..."
     n_total (Lang.to_string lang) ncores);
@@ -580,6 +675,7 @@ let run_pipeline (caps : < Cap.fork >)
     Symbols.collect_in_ast ~cfg ~lang ~module_path:mp ~file ast
   in
   let results =
+    timed (Printf.sprintf "parse + symbols (%d files)" n_total) @@ fun () ->
     if ncores <= 1 then
       List.map (fun file ->
         try Ok (process file)
@@ -617,7 +713,10 @@ let run_pipeline (caps : < Cap.fork >)
     ) (0, 0, [], [], [], []) results
   in
   let parse_failures = List.rev parse_failures in
-  let reexport_map = Reexports.build_reexport_map ~cfg all_files in
+  let reexport_map =
+    timed "re-export map" @@ fun () ->
+    Reexports.build_reexport_map ~cfg all_files
+  in
   Log.debug (fun m -> m "Re-export map: %d entries (lang has_reexports=%b)"
     (Hashtbl.length reexport_map) cfg.Index_lang_rules.has_reexports);
   let wrappers : (string, dataclass_wrapper) Hashtbl.t =
@@ -629,12 +728,14 @@ let run_pipeline (caps : < Cap.fork >)
   ) all_files;
   Log.debug (fun m -> m "Wrappers: %d" (Hashtbl.length wrappers));
   let synth_from_wrappers =
+    timed "wrapper synthesis" @@ fun () ->
     Symbols.dataclass_wrapper_synth_entries ~cfg ~wrappers all_entries all_classes
   in
   Log.debug (fun m -> m "Wrapper synthesis: %d dunders emitted"
     (List.length synth_from_wrappers));
   let entries_pre_mro = all_entries @ synth_from_wrappers in
   let graph, inherited_by_class, worker_failures =
+    timed "call graph (edges + fixpoint)" @@ fun () ->
     build_project_call_graph caps ~cfg ~lang ~ncores
       ~class_infos:all_classes ~reexport_map all_files
   in
@@ -644,6 +745,7 @@ let run_pipeline (caps : < Cap.fork >)
      discards them.  The derivation is one pass over the C3 output; consider
      gating it to the [collect] path if it ever shows up in profiles. *)
   let inherited =
+    timed "inherited method entries" @@ fun () ->
     List.concat_map (fun ((ci : class_info), funcs) ->
       List.filter_map (fun (func : Func_info.t) ->
         Option.map (fun (meth : IL.name) ->

@@ -49,3 +49,7 @@ val edges_for_file :
   ctx -> file_info ->
   (Function_id.t * Function_id.t * Tok.t) list
 
+
+(* Wall-clock seconds per stage of [edges_for_file], summed over every
+   file and domain since the process started, largest first. *)
+val edge_stage_report : unit -> (string * float) list

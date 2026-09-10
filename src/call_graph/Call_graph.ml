@@ -30,20 +30,45 @@ let default_edge = {
   kind = Call;
 }
 
-(** The call graph module - bidirectional labeled graph *)
-module G =
-  Graph.Imperative.Digraph.ConcreteBidirectionalLabeled
-    (struct
-      type t = node
-      let compare = compare_node
-      let hash = hash_node
-      let equal = equal_node
-    end)
-    (struct
-      type t = edge
-      let compare = compare_edge
-      let default = default_edge
-    end)
+module V = struct
+  type t = node
+  let compare = compare_node
+  let hash = hash_node
+  let equal = equal_node
+end
+
+module Edge = struct
+  type t = edge
+  let compare = compare_edge
+  let default = default_edge
+end
+
+(** The call graph module - bidirectional labeled graph.
+
+    The same instantiation as [Graph.Imperative.Digraph.ConcreteBidirectionalLabeled]
+    (ocamlgraph 2.2.0), except for [add_edge_e]: ocamlgraph's first runs
+    [mem_edge_e], a linear scan ([S.exists]) of the source vertex's adjacency
+    set, so inserting an edge costs the source's degree. Edges go callee ->
+    caller, and a callee with tens of thousands of callers made the spec
+    subtree of GitLab spend 40s adding 130k edges. The adjacency sets are
+    [Set]s, so the unchecked insert is idempotent and the scan is redundant. *)
+module G = struct
+  module Impl = Graph.Blocks.Make (Graph.Blocks.Make_Hashtbl)
+  include Impl.Digraph.ConcreteBidirectionalLabeled (V) (Edge)
+
+  let add_vertex g v = ignore (add_vertex g v)
+  let add_edge_e g e = ignore (unsafe_add_edge_e g e)
+  let add_edge g v1 v2 = add_edge_e g (v1, Edge.default, v2)
+  let remove_edge g v1 v2 = ignore (remove_edge g v1 v2)
+  let remove_edge_e g e = ignore (remove_edge_e g e)
+
+  let remove_vertex g v =
+    if HM.mem v g then begin
+      iter_pred_e (fun e -> remove_edge_e g e) g v;
+      iter_succ_e (fun e -> remove_edge_e g e) g v;
+      ignore (HM.remove v g)
+    end
+end
 
 (** For DOT export *)
 module Display = struct

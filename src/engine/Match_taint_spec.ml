@@ -446,15 +446,14 @@ let mk_taint_spec_match_preds rule matches =
 
 let default_effect_handler _fun_name new_effects = new_effects
 
-let taint_config_of_rule ~per_file_formula_cache
+let taint_config_of_spec_matches
     ?(handle_effects = default_effect_handler) ?(allow_partial = false)
-    xconf lang file ast_and_errors
-    ({ mode = `Taint spec; _ } as rule : R.taint_rule) =
-  match spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
-      ast_and_errors rule with
-  | { sinks = []; sources = []; sanitizers = []; propagators = [] }, _ -> None
-  | ({ sinks = []; _ } | { sources = []; _ }), _ when not allow_partial -> None
-  | spec_matches, expls ->
+    xconf lang file ({ mode = `Taint spec; _ } as rule : R.taint_rule)
+    (spec_matches : spec_matches) : Taint_rule_inst.t option =
+  match spec_matches with
+  | { sinks = []; sources = []; sanitizers = []; propagators = [] } -> None
+  | { sinks = []; _ } | { sources = []; _ } when not allow_partial -> None
+  | spec_matches ->
       let xconf = Match_env.adjust_xconfig_with_rule_options xconf rule.options in
       let options = xconf.config in
       let preds = mk_taint_spec_match_preds rule spec_matches in
@@ -472,7 +471,16 @@ let taint_config_of_rule ~per_file_formula_cache
                 handle_effects;
                 recursive = false;
                 java_props_cache = Hashtbl.create 30;
-            },
-            spec_matches,
-            expls)
+            })
+
+let taint_config_of_rule ~per_file_formula_cache
+    ?(handle_effects = default_effect_handler) ?(allow_partial = false)
+    xconf lang file ast_and_errors (rule : R.taint_rule) =
+  let spec_matches, expls =
+    spec_matches_of_taint_rule ~per_file_formula_cache xconf !!file
+      ast_and_errors rule
+  in
+  taint_config_of_spec_matches ~handle_effects ~allow_partial xconf lang file
+    rule spec_matches
+  |> Option.map (fun inst -> (inst, spec_matches, expls))
 [@@trace_trace]

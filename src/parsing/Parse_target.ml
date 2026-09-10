@@ -85,15 +85,19 @@ let just_parse_with_lang (lang : Lang.t) (file : Fpath.t) : Res.t =
 (*****************************************************************************)
 
 let run_analyses_after_name_resolution lang ast =
-  Typing.check_program lang ast;
+  Profiling.profile_code "Typing.check_program" (fun () ->
+      Typing.check_program lang ast);
 
-  Implicit_return.mark_implicit_return lang ast;
+  Profiling.profile_code "Implicit_return.mark_implicit_return" (fun () ->
+      Implicit_return.mark_implicit_return lang ast);
 
   (* Flow-insensitive constant propagation. *)
-  Constant_propagation.propagate_basic lang ast;
+  Profiling.profile_code "Constant_propagation.propagate_basic" (fun () ->
+      Constant_propagation.propagate_basic lang ast);
 
   (* Flow-sensitive constant propagation. *)
-  Constant_propagation.propagate_dataflow lang ast
+  Profiling.profile_code "Constant_propagation.propagate_dataflow" (fun () ->
+      Constant_propagation.propagate_dataflow lang ast)
 
 let just_resolve_name lang ast =
   (* to be deterministic, reset the gensym; anyway right now semgrep is
@@ -107,7 +111,8 @@ let just_resolve_name lang ast =
   (* In Ruby and Crystal, bare unresolved identifiers are method calls. *)
   let ast =
     if Lang.equal lang Lang.Ruby || Lang.equal lang Lang.Crystal then
-      Disambiguate_ruby_calls.disambiguate ast
+      Profiling.profile_code "Disambiguate_ruby_calls.disambiguate" (fun () ->
+          Disambiguate_ruby_calls.disambiguate ast)
     else ast
   in
   run_analyses_after_name_resolution lang ast;

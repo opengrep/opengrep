@@ -653,6 +653,11 @@ let main_cmd : int Cmd.t =
 
 let () =
   Parsing_init.init ();
+  (* OPENGREP_LOG_SRCS=semgrep.interfile_timing prints the phase timings of
+     the index build, as the scan does under --verbose. *)
+  if Option.is_some (Sys.getenv_opt "OPENGREP_LOG_SRCS") then
+    Logs_.setup ~read_srcs_from_env_vars:[ "OPENGREP_LOG_SRCS" ]
+      ~level:(Some Logs.Info) ();
   match Cmd.eval_value ~catch:false ~argv:Sys.argv main_cmd with
   | Ok (`Ok code) -> exit code
   | Ok (`Version | `Help) -> exit 0
