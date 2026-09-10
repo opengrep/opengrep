@@ -1,5 +1,6 @@
-(* Per-file in-scope leaf names for bare-name call resolution, so builtins
-   ([all], [isinstance]) don't match same-named project funcs. *)
+(* The index holds the bare names in scope in each file, so that a call to a
+   builtin ([all], [isinstance]) does not resolve to a project function of the
+   same name. *)
 
 val build_dir_index :
   cfg:Index_lang_rules.t ->

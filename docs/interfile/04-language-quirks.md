@@ -274,7 +274,7 @@ Several indexes keep these resolutions O(1):
 
 - `default_export_class : (module_path, name)` — for `import X from
   "./y"`.
-- `named_export_classes : (module_path, leaf_name, name)` — for
+- `named_export_classes : (module_path, bare_name, name)`, for
   `import { X } from "./y"`.
 - `default_export_fn : (file_path, func_info)` — for CJS
   `module.exports = fn`: the exported function value (often an
@@ -358,11 +358,10 @@ static method on `Class` specifically — not to a same-named instance
 method on an unrelated class.  The obj.method() site in
 `identify_callee` therefore returns `None` (rather than a bare-name
 project-wide fallback) when the imported-name lookup fails:
-returning a candidate without a class-context check would let
-`Class::staticMethod(...)` aliases to methods on completely
-unrelated classes that happen to share the leaf name.  The static
-resolution path is `import name → class qualifier → exact static
-method`, with no name-only fallback.
+returning a candidate without a class-context check would alias
+`Class::staticMethod(...)` to methods on unrelated classes that
+share the bare name.  The static resolution path is `import name →
+class qualifier → exact static method`, with no name-only fallback.
 
 ## Java / Kotlin
 

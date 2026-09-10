@@ -61,14 +61,14 @@ let emit_overload_edges ~(lang : Lang.t) ~(graph : Call_graph.G.t)
             false
         | _ -> true
       in
-      match (scope, Func_info.leaf_name func.FA.fn_id, Func_info.def_file_opt func) with
-      | Some scope, Some leaf, Some file when concrete ->
+      match (scope, Func_info.bare_name func.FA.fn_id, Func_info.def_file_opt func) with
+      | Some scope, Some bare_name, Some file when concrete ->
           let key =
             Printf.sprintf "%s\000%s\000%s\000%d" (Fpath.to_string file) scope
-              (fst leaf.IL.ident)
+              (fst bare_name.IL.ident)
               (List.length (Tok.unbracket func.FA.fdef.G.fparams))
           in
-          let node = Function_id.of_il_name leaf in
+          let node = Function_id.of_il_name bare_name in
           let members = Option.value (Hashtbl.find_opt groups key) ~default:[] in
           Hashtbl.replace groups key ((node, func) :: members)
       | _ -> ())
@@ -111,17 +111,17 @@ let emit_dispatch_edges
     match Hashtbl.find_opt methods_in_file_cache key with
     | Some cached_methods -> cached_methods
     | None ->
-      let leaf = Names.Class_qn.leaf ci.ci_qn in
+      let bare_name = Names.Class_qn.bare_name ci.ci_qn in
       let cands =
         Option.value
           (Type_state.get_methods type_state
-             (Names.Class_name.of_string leaf))
+             (Names.Class_name.of_string bare_name))
           ~default:[]
       in
       let ci_dir_str = Fpath.parent ci.ci_file |> Fpath.to_string in
       let filtered_methods = List.filter (fun func ->
         match Func_info.as_method func.FA.fn_id with
-        | Some (cls, _) when String.equal (fst cls.IL.ident) leaf ->
+        | Some (cls, _) when String.equal (fst cls.IL.ident) bare_name ->
           (match func_def_file func with
            | Some df ->
              String.equal
@@ -148,8 +148,9 @@ let emit_dispatch_edges
     | Some name -> Some (name, method_arity func)
     | None -> None
   in
-  (* Single return type leaf, or [None] when there is no return or it
-     isn't a simple named type (Go multi-returns, func types, etc.).
+  (* The result is the bare name of the single return type, and [None] when
+     the function has no return value or the return value has no simple named
+     type (a Go multiple return, a function type, and so on).
 
      We compare RETURN types, not parameters: tree-sitter-go misparses an
      unnamed-param interface decl ([Group(string, func(RouteRegister),
@@ -157,17 +158,17 @@ let emit_dispatch_edges
      the parameter NAME and the following token as its type — so a
      genuine implementation's params disagree with its own interface's
      garbled params. A return position is always a bare type (no
-     [name type] ambiguity), so its leaf is trustworthy on both the decl
+     [name type] ambiguity), so its bare name is trustworthy on both the decl
      and the impl. *)
-  let rettype_leaf (func : FA.func_info) : string option =
+  let rettype_bare_name (func : FA.func_info) : string option =
     match func.FA.fdef.G.frettype with
-    | Some ty -> Option.bind (Ty_leaf.class_name_of_ty ty) Ty_leaf.leaf_of_name
+    | Some ty -> Option.bind (Ty_bare_name.class_name_of_ty ty) Ty_bare_name.bare_name_of_name
     | None -> None
   in
   (* Only a definite type mismatch (both sides a simple named type,
-     different leaves) rejects; either side unknown stays compatible, so
+     different bare names) rejects; either side unknown stays compatible, so
      the match degrades to name+arity where types are absent/complex —
-     never losing an edge the old code emitted. Leaf comparison ignores
+     never losing an edge the old code emitted. Bare-name comparison ignores
      qualification ([pkg.Err] vs imported [Err]). *)
   let types_compatible (a : string option) (b : string option) : bool =
     match a, b with
@@ -215,13 +216,14 @@ let emit_dispatch_edges
       | _ -> true
     ) (params_of func)
   in
-  (* Positional param-type leaves, [None] where a param has no simple
-     named type. *)
-  let param_type_leaves (func : FA.func_info) : string option list =
+  (* The result lists the bare name of each parameter's type in position
+     order, with [None] for a parameter whose type is not a simple named
+     type. *)
+  let param_type_bare_names (func : FA.func_info) : string option list =
     List.map (fun p ->
       match p with
       | G.Param { G.ptype = Some ty; _ } ->
-        Option.bind (Ty_leaf.class_name_of_ty ty) Ty_leaf.leaf_of_name
+        Option.bind (Ty_bare_name.class_name_of_ty ty) Ty_bare_name.bare_name_of_name
       | _ -> None
     ) (params_of func)
   in
@@ -232,8 +234,8 @@ let emit_dispatch_edges
     if not (params_trustworthy iface_m && params_trustworthy concrete_m)
     then true
     else
-      let i = param_type_leaves iface_m in
-      let c = param_type_leaves concrete_m in
+      let i = param_type_bare_names iface_m in
+      let c = param_type_bare_names concrete_m in
       Int.equal (List.length i) (List.length c)
       && List.for_all2 types_compatible i c
   in
@@ -244,7 +246,7 @@ let emit_dispatch_edges
     match method_name iface_m, method_name concrete_m with
     | Some i_name, Some c_name when String.equal i_name c_name ->
       Int.equal (method_arity iface_m) (method_arity concrete_m)
-      && types_compatible (rettype_leaf iface_m) (rettype_leaf concrete_m)
+      && types_compatible (rettype_bare_name iface_m) (rettype_bare_name concrete_m)
       && params_compatible iface_m concrete_m
     | _ -> false
   in

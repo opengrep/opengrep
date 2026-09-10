@@ -11,7 +11,7 @@ let add_class_body_aliases
     (type_state : Type_state.t) : Type_state.t =
   if not (lang_applies lang) then type_state
   else
-    let leaf_of_init_expr (expr : G.expr) : string option =
+    let bare_name_of_init_expr (expr : G.expr) : string option =
       match expr.G.e with
       | G.N (G.Id ((name, _), _)) -> Some name
       | _ -> None
@@ -66,7 +66,7 @@ let add_class_body_aliases
         match stmt.G.s with
         | G.DefStmt (alias_ent,
                      G.VarDef { G.vinit = Some init; G.vtype = None; _ }) ->
-          (match Index_lang_rules.entity_simple_name alias_ent, leaf_of_init_expr init with
+          (match Index_lang_rules.entity_simple_name alias_ent, bare_name_of_init_expr init with
            | Some alias_name, Some target_name ->
              Option.bind (find_target_fn fi target_name) (fun target ->
                Option.map (fun (tname : IL.name) ->
@@ -96,7 +96,7 @@ let add_class_body_aliases
                    fdef = target.FA.fdef;
                  } in
                  (cls_name, synthetic)
-               ) (Func_info.leaf_name target.FA.fn_id))
+               ) (Func_info.bare_name target.FA.fn_id))
            | _ -> None)
         | _ -> None
       ) fields

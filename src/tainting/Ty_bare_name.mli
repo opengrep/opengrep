@@ -1,8 +1,8 @@
-(* Canonical leaf-class extractors for [G.type_]. *)
+(* These functions extract the bare class name of a [G.type_]. *)
 
 module G = AST_generic
 
-val leaf_of_name : G.name -> string option
+val bare_name_of_name : G.name -> string option
 
 val instance_or_declared_type : G.id_info -> G.type_ option
 

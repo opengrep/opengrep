@@ -55,7 +55,7 @@ type scope_kind =
   | Sc_function of string
 
 let qualified_name_of ~(module_path : Names.Module_qn.t)
-    (outer_to_inner : scope_kind list) (leaf : string) : string =
+    (outer_to_inner : scope_kind list) (bare_name : string) : string =
   let buf = Buffer.create 64 in
   Buffer.add_string buf (Names.Module_qn.to_string module_path);
   let prev_was_fn =
@@ -71,7 +71,7 @@ let qualified_name_of ~(module_path : Names.Module_qn.t)
   in
   Buffer.add_char buf '.';
   if prev_was_fn then Buffer.add_string buf "<locals>.";
-  Buffer.add_string buf leaf;
+  Buffer.add_string buf bare_name;
   Buffer.contents buf
 
 let immediate_enclosing_class_id (innermost_first : scope_kind list)
@@ -308,7 +308,7 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
            let lhs_name_id =
              match lhs.G.e with
              | G.N gname ->
-               (match Ty_leaf.leaf_of_name gname with
+               (match Ty_bare_name.bare_name_of_name gname with
                 | None -> None
                 | Some name ->
                   Some (name, Function_id.of_il_name

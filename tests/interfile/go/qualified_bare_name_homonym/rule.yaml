@@ -1,5 +1,5 @@
 rules:
-  - id: qualified-leaf-homonym
+  - id: qualified-bare-name-homonym
     mode: taint
     languages:
       - go

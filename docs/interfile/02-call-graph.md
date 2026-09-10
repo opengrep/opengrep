@@ -72,11 +72,11 @@ Phase 1 visits every AST and records two things:
    projidx synthesises a `func_info` for it so call sites resolve).
 
    `fn_id` is `IL.name option list` — a path from outermost scope to
-   the function's leaf name (`[None; Some foo]` for a free function,
+   the function's bare name (`[None; Some foo]` for a free function,
    `[Some Cls; Some meth]` for a method, longer for nested defs).
    Consumers don't pattern-match the list directly; they go through
    `Func_info.as_method` / `Func_info.as_free`, which return the
-   typed pair / leaf when the shape matches and `None` otherwise.
+   typed pair / bare name when the shape matches and `None` otherwise.
    This keeps the wire shape compatible with upstream
    `Visit_function_defs` while removing the silent-drop
    `| _ -> false` arms from every consumer site.
@@ -165,8 +165,8 @@ declared in many files but only one is the "real" base.
 
 `Type_state.equal` (used by the augment-pass fixpoint to detect
 convergence) compares each binding's values structurally, including
-the **full qualified path** of `G.name` values, not just their leaf
-strings.  Two distinct qualified types with the same leaf (Go's
+the **full qualified path** of `G.name` values, not only the bare
+names.  Two distinct qualified types with the same bare name (Go's
 `pkg_a.Store` vs `pkg_b.Store`) must register as a change, otherwise
 the fixpoint would converge prematurely on a stale type.
 
@@ -190,8 +190,8 @@ memory limit and timeout stay sound).  For each file the task calls
    `Func_lookup.t`:
 
    ```
-   funcs_by_name             (* per-file: project-wide leaf → funcs, narrowed to visible names *)
-   project_funcs_by_name     (* project-wide leaf → funcs, no visibility narrowing *)
+   funcs_by_name             (* per file: maps a project-wide bare name to functions, narrowed to the visible names *)
+   project_funcs_by_name     (* maps a project-wide bare name to functions, with no visibility narrowing *)
    funcs_by_module_qn        (* M.foo qualified resolution *)
    alias_to_module_qn        (* per-file: import M as X *)
    same_file_funcs_by_name   (* per-file: defs in this file *)

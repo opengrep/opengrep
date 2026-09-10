@@ -10,9 +10,10 @@ module type DOTTED = sig
   val to_string : t -> string
   val of_parts : string list -> t
   val parts : t -> string list
-  val leaf : t -> string
+  val bare_name : t -> string
   val is_empty : t -> bool
-  (* [(parent, leaf)]; [Some ("", leaf)] for single-segment, [None] for empty. *)
+  (* The result is [Some (parent, bare_name)], [Some ("", bare_name)] for a
+     single segment, and [None] for an empty name. *)
   val split_last : t -> (t * string) option
   val concat : t -> string -> t
   val equal : t -> t -> bool

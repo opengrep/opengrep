@@ -235,9 +235,9 @@ PHP's static-call syntax `Class::staticMethod(...)` must resolve to
 a static method on `Class` specifically.  The obj.method() site in
 `identify_callee` therefore returns `None` (rather than a bare-name
 project-wide fallback) when the imported-name lookup fails.  A
-bare-name fallback would let `Class::staticMethod(...)` aliases to
-methods on completely unrelated classes that happen to share the
-leaf name, which is precision-destroying in practice.
+bare-name fallback would alias `Class::staticMethod(...)` to methods
+on unrelated classes that share the bare name, and that loses
+precision.
 
 ### B5. Top-level HOF callbacks are collected structurally
 
@@ -286,8 +286,8 @@ Same reasoning applies to `Type_state.set_module_singleton`.
 
 A constructor call names the *class*, never the constructor method:
 `Foo()` (Python/Kotlin/Scala), `new Foo()` (Java/C#/JS/TS),
-`Foo.new()` (Ruby/Crystal).  The callee leaf is `Foo` or `new`, so
-the usual leaf-narrowed candidate list never contains the
+`Foo.new()` (Ruby/Crystal).  The callee bare name is `Foo` or `new`, so
+the usual bare-name-narrowed candidate list never contains the
 constructor (`__init__`, `initialize`, the C++ class-named ctor,
 …).
 
@@ -295,8 +295,9 @@ constructor (`__init__`, `initialize`, the C++ class-named ctor,
 `constructor_names` (from `Lang_config`) to recover the candidate
 set, then resolves to the constructor declared on the named class.
 The Ruby/Crystal `ClassName.new(args)` shape is handled at the
-`obj.method()` site: when the method leaf is `new`, it synthesises
-the receiver type and routes to the same constructor resolution.
+`obj.method()` site: when the method bare name is `new`, the engine
+synthesises the receiver type and uses the same constructor
+resolution.
 This is what lets taint flow into a constructor's body and out
 through `this`/`self` fields (see A4).
 
@@ -393,16 +394,17 @@ build, so nothing needs caching.
 ### D2. Callee-resolution lookups are O(1)
 
 The name lookups behind `Callee_resolution.identify_callee` and the
-HOF extraction ask "which project-wide functions match this leaf
-name?":
+HOF extraction answer one question: which project-wide functions
+carry this bare name?
 
 - The HOF candidate filter in `extract_hof_callbacks_from_call`
-  narrows via `Func_lookup.narrow_candidates_by_leaf` (the per-file
-  visibility-narrowed `funcs_by_name`), falling back to the full
-  function list when the narrowed set is empty.
+  narrows the candidates with
+  `Func_lookup.narrow_candidates_by_bare_name` (the per-file
+  visibility-narrowed `funcs_by_name`), and uses the full function
+  list when the narrowed set is empty.
 - The bare-name and method-name uniqueness fallbacks
   (`try_unique_callee`, `try_unique_method_call`) share one lookup
-  path: `try_unique_by_distinct_key` → `funcs_with_leaf` →
+  path: `try_unique_by_distinct_key` → `funcs_with_bare_name` →
   `project_funcs_by_name` (project-wide, no visibility narrowing —
   a uniqueness test needs the unfiltered set).
 

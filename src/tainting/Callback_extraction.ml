@@ -24,8 +24,8 @@ open Callee_resolution
    searches the caller's scope, class and the project's free functions; a
    dotted name is confined to its receiver: the functions of the module it
    names, the methods of the class the receiver is declared as, or, for a
-   receiver of unknown type, any class's method with that leaf. A dotted
-   leaf never denotes a free function of the current package: a constant or
+   receiver of unknown type, any class's method with that bare name. A dotted
+   name never denotes a free function of the current package: a constant or
    field that happens to share the name of the enclosing function must not
    become a reference to that function, a self-edge whose signature then
    embeds itself without bound. *)
@@ -33,9 +33,10 @@ type callback_scope =
   | Unscoped
   | In_module of Names.Module_qn.t
   | Method_of of string
-  | Method_by_leaf
+  | Method_by_bare_name
 
-(* The scope of a [recv.leaf] argument. *)
+(* The result is the scope in which a [recv.bare_name] argument is looked
+   up. *)
 let scope_of_receiver ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
     ((recv, recv_info) : G.ident * G.id_info) : callback_scope =
   if Receiver.is_self_name lang (fst recv) then Unscoped
@@ -50,10 +51,10 @@ let scope_of_receiver ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
             match
               Option.bind
                 (Type_infer.declared_class_of_name (G.Id (recv, recv_info)))
-                Ty_leaf.leaf_of_name
+                Ty_bare_name.bare_name_of_name
             with
             | Some cls -> Method_of cls
-            | None -> Method_by_leaf))
+            | None -> Method_by_bare_name))
 
 let rec extract_callbacks_from_arg ~(lang : Lang.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty) (arg_expr : G.expr) :
@@ -172,9 +173,10 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
   | _ -> []
 
 
-(* Any class's method with the callback's leaf; the callback's file wins on
-   homonym collisions. *)
-let class_method_by_leaf ~(all_funcs : func_info list)
+(* The result is a method of any class that carries the callback's bare name.
+   When several classes carry it, the method defined in the callback's own file
+   is chosen. *)
+let class_method_by_bare_name ~(all_funcs : func_info list)
     (callback_name : IL.name) : func_info option =
   let callback_name_str = fst callback_name.IL.ident in
   let callback_file =
@@ -226,9 +228,9 @@ let identify_callback ?(all_funcs = [])
              Func_info.is_method_of ~class_name:cls
                ~method_name:callback_name_str f.fn_id)
       |> Option.map (fun (f : func_info) -> f.fn_id)
-  | Method_by_leaf ->
+  | Method_by_bare_name ->
       Option.map (fun (f : func_info) -> f.fn_id)
-        (class_method_by_leaf ~all_funcs callback_name)
+        (class_method_by_bare_name ~all_funcs callback_name)
   | Unscoped ->
   let current_class_for_narrow =
     Option.map (fun (c : IL.name) -> fst c.IL.ident)
@@ -245,7 +247,7 @@ let identify_callback ?(all_funcs = [])
     let project_free_named () =
       List.filter (fun f -> is_free_named f callback_name_str) all_funcs
     in
-    match Func_lookup.narrow_candidates_by_leaf func_lookup callback_name_str with
+    match Func_lookup.narrow_candidates_by_bare_name func_lookup callback_name_str with
     | Some [] ->
       (match current_class_for_narrow with
        | Some cls -> class_filtered_in_all_funcs cls
@@ -294,7 +296,7 @@ let identify_callback ?(all_funcs = [])
               Log.debug (fun m -> m "HOF_EXTRACT: Found top-level callback %s" callback_name_str);
               Some f.fn_id
           | None ->
-              (match class_method_by_leaf ~all_funcs callback_name with
+              (match class_method_by_bare_name ~all_funcs callback_name with
                | Some f ->
                  Log.debug (fun m -> m "HOF_EXTRACT: Found any-class-method callback %s" callback_name_str);
                  Some f.fn_id
@@ -319,7 +321,7 @@ let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
         let sid =
           (* The definition's own sid, when naming bound it, so that a
              stamp equals the definition's identity. An alias-synthetic
-             leaf (cf. Ts_class_aliases and fn_id_to_node) carries the
+             bare name (cf. Ts_class_aliases and fn_id_to_node) carries the
              TARGET's sid under a different name; propagating it points
              at where the def and its signature live. A definition naming
              did not bind is identified by its site. *)

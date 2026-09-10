@@ -838,7 +838,7 @@ let effects_of_call_func_arg fun_exp fun_shape args_taints =
 (* Fast path via [id_callee_definition] sid (= sig DB key), skipping the edge
    scan.
    The stamp is trusted whatever name it resolves to, gated only by the
-   lookup itself: a leaf-name mismatch is as likely to be a deliberate
+   lookup itself: a bare-name mismatch is as likely to be a deliberate
    alias (a class-body field alias exposes name X for a target named Y,
    and projidx's write-back stamps the target's sid) or a constructor
    (Ruby [Cls.new]->[initialize], Python [Cls()]->[__init__]) as a stale
@@ -861,8 +861,9 @@ let signature_via_callee_definition ~project_root db (id_info : G.id_info)
 
 let get_signature_for_object ?(callee_id_info : G.id_info option)
     ~project_root graph caller_node db method_name arity =
-  (* obj.method(): prefer the callee leaf's [id_callee_definition] def-site sid,
-     else the local call-graph edge, else the method-name fid. *)
+  (* For an [obj.method()] call the lookup uses the [id_callee_definition] sid
+     stamped on the callee bare name, then the local call-graph edge, then the
+     method-name fid. *)
   let fast =
     Option.bind callee_id_info (fun ii ->
         signature_via_callee_definition
@@ -1033,8 +1034,9 @@ let lookup_signature_with_object_context env fun_exp arity =
               let result = try_builtin_fallback env (fst qualified_name.ident) arity result in
               try_builtin_fallback env (fst method_name.ident) arity result)
       | Fetch { base = Var _obj; rev_offset = { o = Dot method_name; _ } :: _ } -> (
-          (* Chained call (e.g. [i.Next.G(s)]): the leaf method's stamp is
-             the resolution channel, same as the single-offset branch. *)
+          (* For a chained call such as [i.Next.G(s)], the stamp on the bare
+             method name resolves the callee. The single-offset branch
+             resolves it the same way. *)
           match
             signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
@@ -1061,11 +1063,12 @@ let lookup_signature_with_object_context env fun_exp arity =
             base = VarSpecial ((Self | This), _);
             rev_offset = [ { o = Dot method_name; _ } ];
           } -> (
-          (* Direct self/this method call ([this.handle (x)]): the leaf
-             method's stamp, then the graph edge anchored at the method
-             token — the same channels as the self-field branch below.
-             No name-keyed DB fallback: a bare method-name lookup would
-             match any same-named method regardless of class. *)
+          (* For a direct [self]/[this] method call such as [this.handle (x)],
+             the lookup uses the stamp on the bare method name, then the graph
+             edge anchored at the method token, as the self-field branch below
+             does. There is no name-keyed database fallback, because a bare
+             method-name lookup would match a method of that name on any
+             class. *)
           match
             signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
@@ -1090,12 +1093,13 @@ let lookup_signature_with_object_context env fun_exp arity =
             base = VarSpecial ((Self | This), _);
             rev_offset = { o = Dot method_name; _ } :: _ :: _;
           } -> (
-          (* Call through a self-field (e.g. [self.worker.work(x)], the
-             field typed from its initializer or from callers): the leaf
-             method's stamp, then the graph edge anchored at the method
-             token — the same channels as the chained-var branch above.
-             No name-keyed DB fallback: a bare method-name lookup would
-             match any same-named method regardless of class. *)
+          (* For a call through a self field such as [self.worker.work(x)],
+             where the field takes its type from its initialiser or from its
+             callers, the lookup uses the stamp on the bare method name, then
+             the graph edge anchored at the method token, as the
+             chained-variable branch above does. There is no name-keyed
+             database fallback, because a bare method-name lookup would match
+             a method of that name on any class. *)
           match
             signature_via_callee_definition
               ~project_root:env.taint_inst.project_root db
@@ -2411,9 +2415,9 @@ let call_with_intrafile lval_opt e env args instr =
     ~filter_sinks:(fun m -> not (m.spec.sink_exact && m.spec.sink_has_focus));
   let call_taints, shape, lval_env =
     (* Constructor call handling for ClassName() and ClassName.new():
-       the callee leaf's [id_callee_definition] sid points at the resolved def
+       the callee bare name's [id_callee_definition] sid points at the resolved def
        (stamped by extraction), and a construction resolves to the ctor
-       def (e.g. [__init__]/[initialize]), so the sid's leaf name decides.
+       def (e.g. [__init__]/[initialize]), so the sid's bare name decides.
        A construction must not be mistaken for an implicit block/HOF call,
        and its callee is remapped below so Sig_inst maps BThis onto the
        assignment target. *)

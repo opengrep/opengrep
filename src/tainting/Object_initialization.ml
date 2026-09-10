@@ -21,14 +21,15 @@ type matcher = G.expr -> G.name list -> G.name option
 (* Common Matchers *)
 (*****************************************************************************)
 
-(* Matched on leaf name, so a qualified ref matches a class by its simple name. *)
+(* The match is on the bare name, so a qualified reference matches a class by
+   its simple name. *)
 let is_known_class (name : G.name) (class_names : G.name list) : bool =
-  match Ty_leaf.leaf_of_name name with
+  match Ty_bare_name.bare_name_of_name name with
   | None -> false
   | Some s1 ->
     List.exists
       (fun class_name ->
-        match Ty_leaf.leaf_of_name class_name with
+        match Ty_bare_name.bare_name_of_name class_name with
         | Some s2 -> String.equal s1 s2
         | None -> false)
       class_names
@@ -255,7 +256,7 @@ let detect_object_initialization
                        || Lang.equal lang Lang.Rust -> (
                     match var_def.G.vtype with
                     | Some var_type -> (
-                        match Ty_leaf.inner_class_name_of_ty
+                        match Ty_bare_name.inner_class_name_of_ty
                                 ~through_funty:true var_type with
                         | Some name when is_known_class name class_names ->
                           object_mappings := (var_name, name) :: !object_mappings
@@ -359,30 +360,30 @@ let stamp_id_types (mappings : object_mapping list) (ast : G.program) : unit =
   (* sid equality required only when both sides have resolved sids; else
      name-only — which can stamp a same-named var from an unrelated scope
      when sids are unresolved (Go/C++ often lack one). *)
-  let by_leaf : (string, (G.SId.t option * int * G.name) list) Hashtbl.t =
+  let by_bare_name : (string, (G.SId.t option * int * G.name) list) Hashtbl.t =
     Hashtbl.create (max 16 (2 * List.length mappings))
   in
   List.iter
     (fun (lhs, ty) ->
-      match Ty_leaf.leaf_of_name lhs with
+      match Ty_bare_name.bare_name_of_name lhs with
       | Some s ->
-        let prev = Option.value (Hashtbl.find_opt by_leaf s) ~default:[] in
-        Hashtbl.replace by_leaf s ((sid_of_name lhs, pos_of_name lhs, ty) :: prev)
+        let prev = Option.value (Hashtbl.find_opt by_bare_name s) ~default:[] in
+        Hashtbl.replace by_bare_name s ((sid_of_name lhs, pos_of_name lhs, ty) :: prev)
       | None -> ())
     mappings;
   (* in source order *)
   Hashtbl.filter_map_inplace
     (fun _ l ->
       Some (List.stable_sort (fun (_, p, _) (_, q, _) -> Int.compare p q) l))
-    by_leaf;
+    by_bare_name;
   let class_of_occurrence (n : G.name)
       : (G.name * [ `Preceded | `Fallback ]) option =
     let sid_o = sid_of_name n in
     let pos_o = pos_of_name n in
-    match Ty_leaf.leaf_of_name n with
+    match Ty_bare_name.bare_name_of_name n with
     | None -> None
     | Some s -> (
-        match Hashtbl.find_opt by_leaf s with
+        match Hashtbl.find_opt by_bare_name s with
         | None -> None
         | Some cands ->
           let same_var (sid_m, _, _) =
