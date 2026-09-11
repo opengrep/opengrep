@@ -300,10 +300,15 @@ let o_baseline_commit : string option Term.t =
     $ H.string_opt_with_envs [ "baseline-commit" ]
         ~envs:[ "SEMGREP_BASELINE_COMMIT"; "SEMGREP_BASELINE_REF" ]
         ~doc:
-          {|Only show results that are not found in this commit hash. Aborts run
-if not currently in a git directory, there are unstaged changes, or
-given baseline hash doesn't exist. An empty value means no baseline.
-May also be set with SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
+          {|Only show results that are not found in this commit. The baseline is
+the merge base of the given commit and HEAD, so a branch name selects the
+point where the current branch forked from it. The files scanned are those
+that differ between the baseline and the git index, which holds the committed
+and staged changes; unstaged changes are not considered. Aborts run if not
+currently in a git directory or if the merge base cannot be computed. An empty
+value means no baseline.
+May also be set with OPENGREP_BASELINE_COMMIT or SEMGREP_BASELINE_COMMIT, and
+with OPENGREP_BASELINE_REF or SEMGREP_BASELINE_REF.
 |})
 
 (* ------------------------------------------------------------------ *)
@@ -831,9 +836,10 @@ let o_exclude_minified_files : bool Term.t =
     ~neg_options:[ "no-exclude-minified-files" ]
     ~default:default.targeting_conf.exclude_minified_files
     ~doc:
-      {|Skip minified files. These are files that are > 7% whitespace, or who
-        have a large number of bytes per line. By default minified files are
-   scanned |}
+      {|Skip minified files: files whose first 4 KB are less than 7%
+        whitespace, or average more than 1000 bytes per line. Files of 1000
+        bytes or less are never skipped. By default minified files are
+        scanned.|}
 
 (* ------------------------------------------------------------------ *)
 (* Alternate modes *)
@@ -1552,6 +1558,26 @@ let man : Cmdliner.Manpage.block list =
       "This will automatically fetch rules for your project from the Semgrep \
        Registry.";
     `P "For more information about Opengrep, go to https://opengrep.dev.";
+    `S Cmdliner.Manpage.s_environment;
+    `P
+      "For each SEMGREP_* variable, its OPENGREP_* alias is also honoured and \
+       wins when both are set. A variable set to the empty string counts as \
+       unset, and an option given on the command line wins over its variable.";
+    `P
+      "$(b,SEMGREP_RULES): the rule sources of $(b,--config), separated by \
+       whitespace, used when the option is not given.";
+    `P "$(b,SEMGREP_TIMEOUT): the value of $(b,--timeout).";
+    `P
+      "$(b,SEMGREP_BASELINE_COMMIT), $(b,SEMGREP_BASELINE_REF): the value of \
+       $(b,--baseline-commit); the first one set wins.";
+    `P
+      "$(b,SEMGREP_LOG_LEVEL): the level of the logs on stderr (none, app, \
+       error, warning, info or debug). It wins over $(b,--quiet), \
+       $(b,--verbose) and $(b,--debug).";
+    `P "$(b,SEMGREP_LOG_FILE): write a copy of the logs to this file.";
+    `P
+      "$(b,NO_COLOR), $(b,SEMGREP_FORCE_NO_COLOR): turn off colour and other \
+       styling. $(b,--force-color) and $(b,SEMGREP_FORCE_COLOR) win over them.";
   ]
   @ CLI_common.help_page_bottom
 

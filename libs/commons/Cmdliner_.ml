@@ -99,7 +99,7 @@ let warn_env_ignored ~(vars : string list) (options : string list) : unit =
   | None -> ()
   | Some ((name : string), (_ : string)) ->
       let option =
-        add_option_dashes options |> List.hd
+        add_option_dashes options |> String.concat "/"
       in
       Logs.warn (fun m -> m "%s is given; ignoring $%s" option name)
 

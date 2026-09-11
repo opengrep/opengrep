@@ -287,21 +287,21 @@ let man : Cmdliner.Manpage.block list =
     `P
       "For each SEMGREP_* variable, its OPENGREP_* alias is also honoured \
        and wins when both are set.";
-    `P "$(b,SEMGREP_REPO_NAME): override the detected repository name.";
     `P
-      "$(b,SEMGREP_REPO_DISPLAY_NAME): the name the repository is displayed \
-       as; setting it per directory keeps the scans of one monorepo apart.";
-    `P "$(b,SEMGREP_REPO_URL): override the detected repository URL.";
+      "$(b,SEMGREP_PR_ID): marks the run as a pull request, which makes the \
+       triggering event $(b,pull_request), the name $(b,--audit-on) is \
+       matched against. GitHub Actions and GitLab CI take the event from \
+       their own variables instead.";
     `P
-      "$(b,SEMGREP_COMMIT): override the detected commit (a commit id or any \
-       git rev, such as a short id, branch or tag).";
+      "$(b,SEMGREP_REPO_NAME): on GitHub Actions pull requests with \
+       $(b,GH_TOKEN) set, the repository whose API is asked for the merge \
+       base, $(b,GITHUB_REPOSITORY) by default. It has no other effect.";
     `P
-      "$(b,SEMGREP_BRANCH): override the detected branch. Not applied on \
-       GitLab CI, where the branch is always $(b,CI_COMMIT_REF_NAME).";
-    `P
-      "$(b,SEMGREP_PR_ID), $(b,SEMGREP_PR_TITLE): override the detected \
-       PR/MR id and title.";
-    `P "$(b,SEMGREP_JOB_URL): override the detected CI job URL.";
+      "$(b,SEMGREP_REPO_DISPLAY_NAME), $(b,SEMGREP_REPO_URL), \
+       $(b,SEMGREP_COMMIT), $(b,SEMGREP_BRANCH), $(b,SEMGREP_PR_TITLE), \
+       $(b,SEMGREP_JOB_URL): accepted for compatibility with semgrep, which \
+       sent them to its app. Opengrep neither shows nor uses them: they \
+       change no output and not what is scanned.";
     `P
       "$(b,GH_TOKEN): on GitHub Actions pull requests, ask the GitHub API \
        for the merge base instead of fetching history until it can be \
