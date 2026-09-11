@@ -1,0 +1,14 @@
+rules:
+  - id: namespace-import-member
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A namespace import binds the module itself, so lib.process names the
+      export of lib.ts and not the same-named function of other.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

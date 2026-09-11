@@ -1,0 +1,14 @@
+rules:
+  - id: require-destructure-binds-name
+    languages: [js]
+    severity: ERROR
+    message: >
+      A require with a destructuring pattern binds each destructured name
+      to the export of that name, so run names a.js's export.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

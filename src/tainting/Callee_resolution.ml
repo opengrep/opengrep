@@ -222,7 +222,7 @@ let fn_id_to_node (fn_id : fn_id) : node option =
   match List.rev fn_id with
   | Some name :: _ ->
     let ident_node = Function_id.of_il_name name in
-    (* An alias-synthetic bare name (see Ts_class_aliases) is recorded at
+    (* An alias-synthetic bare name is recorded at
        the target's position, while the resolved sid carries the target's
        own name. That pair, one position with two names, identifies an
        alias, and the node must be the target's identity, because the
@@ -781,42 +781,9 @@ let rec identify_callee ~(lang : Lang.t)
                 let class_name_str =
                   Option.value (Ty_bare_name.bare_name_of_name class_name) ~default:""
                 in
-                (* [import { C as Alias }] then [new Alias()]: naming types
-                   the receiver from the initializer, so the class name is
-                   the local alias, which names no class.  The alias also
-                   names its origin file exactly — which is what tells two
-                   same-named imported classes apart. *)
-                let class_name_str, method_matches =
-                  let direct =
-                    Type_state.find_methods type_state ~fallback:all_funcs
-                      ~class_name:class_name_str ~method_name:method_name_str
-                  in
-                  match direct with
-                  | _ :: _ -> (class_name_str, direct)
-                  | [] -> (
-                      match
-                        Func_lookup.resolve_class_alias func_lookup
-                          class_name_str
-                      with
-                      | None -> (class_name_str, direct)
-                      | Some (exported, target_files) -> (
-                          let of_exported =
-                            Type_state.find_methods type_state
-                              ~fallback:all_funcs ~class_name:exported
-                              ~method_name:method_name_str
-                          in
-                          match
-                            List.filter
-                              (fun (f : func_info) ->
-                                match Func_info.def_file_opt f with
-                                | Some file ->
-                                    Func_lookup.name_set_mem target_files
-                                      (Fpath.to_string file)
-                                | None -> false)
-                              of_exported
-                          with
-                          | [] -> (exported, of_exported)
-                          | from_origin -> (exported, from_origin)))
+                let method_matches =
+                  Type_state.find_methods type_state ~fallback:all_funcs
+                    ~class_name:class_name_str ~method_name:method_name_str
                 in
                 resolve_class_method
                   ?qualifier:(Ty_bare_name.qualifier_of_name class_name)
@@ -947,6 +914,7 @@ type binding_target =
   | Bound_module of Names.Module_qn.t
   | Bound_class of Names.Class_qn.t
   | Bound_functions of func_info list
+  | Bound_object of func_info list Common.SMap.t
 
 type dotted_chain = {
   dc_rooted : bool;
@@ -995,12 +963,17 @@ let class_in_scope ~(func_lookup : Func_lookup.t)
 let head_binding ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) (segment : string)
     : binding_target option =
-  match class_in_scope ~func_lookup ~caller_parent_path segment with
+  let entries = entries_in_scope ~func_lookup ~caller_parent_path segment in
+  match Func_lookup.class_of_entries entries with
   | Some (class_qn : Names.Class_qn.t) -> Some (Bound_class class_qn)
-  | None ->
-    Option.map
-      (fun (qn : Names.Module_qn.t) -> Bound_module qn)
-      (Func_lookup.resolve_alias func_lookup segment)
+  | None -> (
+    match Func_lookup.object_of_entries entries with
+    | Some (members : func_info list Common.SMap.t) ->
+      Some (Bound_object members)
+    | None ->
+      Option.map
+        (fun (qn : Names.Module_qn.t) -> Bound_module qn)
+        (Func_lookup.resolve_alias func_lookup segment))
 
 let attribute_of ~(func_lookup : Func_lookup.t) (target : binding_target)
     (segment : string) : binding_target option =
@@ -1024,6 +997,10 @@ let attribute_of ~(func_lookup : Func_lookup.t) (target : binding_target)
         Some (Bound_class nested)
       else None
     | (_ :: _) as funcs -> Some (Bound_functions funcs))
+  | Bound_object (members : func_info list Common.SMap.t) ->
+    Option.map
+      (fun (funcs : func_info list) -> Bound_functions funcs)
+      (Common.SMap.find_opt segment members)
   | Bound_functions _ -> None
 
 let longest_accepted_prefix ~(accept : string list -> bool)
@@ -1181,15 +1158,32 @@ let class_qn_of_type_name ~(func_lookup : Func_lookup.t)
     : Names.Class_qn.t option =
   match class_qn_of_resolution ~func_lookup name with
   | Some _ as resolved -> resolved
-  | None ->
-    Option.bind (Ty_bare_name.bare_name_of_name name)
-      (fun (bare_name : string) ->
-        match
-          Option.bind owner (fun (owner : Names.Class_qn.t) ->
-            class_qn_in_module_of ~func_lookup ~owner bare_name)
-        with
-        | Some _ as resolved -> resolved
-        | None -> class_in_scope ~func_lookup ~caller_parent_path bare_name)
+  | None -> (
+    match name with
+    | G.IdQualified { G.name_middle = Some (G.QDots (_ :: _)); _ } ->
+      Option.bind (dotted_chain_of_name name)
+        (fun (chain : dotted_chain) ->
+          match follow_chain ~func_lookup ~caller_parent_path chain with
+          | Some (Bound_class (class_qn : Names.Class_qn.t)) -> Some class_qn
+          | Some (Bound_module _)
+          | Some (Bound_object _)
+          | Some (Bound_functions _)
+          | None -> None)
+    | G.Id _
+    | G.IdQualified _ ->
+      Option.bind (Ty_bare_name.bare_name_of_name name)
+        (fun (bare_name : string) ->
+          match
+            Option.bind owner (fun (owner : Names.Class_qn.t) ->
+              class_qn_in_module_of ~func_lookup ~owner bare_name)
+          with
+          | Some _ as resolved -> resolved
+          | None -> class_in_scope ~func_lookup ~caller_parent_path bare_name))
+
+let declared_class_name_of_ty (ty : G.type_) : G.name option =
+  match Ty_bare_name.dotted_class_name_of_ty ty with
+  | Some _ as dotted -> dotted
+  | None -> Ty_bare_name.qualified_class_name_of_ty ty
 
 let return_type_class_qn ~(func_lookup : Func_lookup.t)
     ~(caller_parent_path : IL.name option list) (funcs : func_info list)
@@ -1197,7 +1191,7 @@ let return_type_class_qn ~(func_lookup : Func_lookup.t)
   List.find_map
     (fun (f : func_info) ->
       Option.bind f.fdef.G.frettype (fun (ty : G.type_) ->
-        Option.bind (Ty_bare_name.qualified_class_name_of_ty ty)
+        Option.bind (declared_class_name_of_ty ty)
           (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)))
     funcs
 
@@ -1216,7 +1210,7 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
     else
       Option.bind
         (Option.bind (Ty_bare_name.instance_or_declared_type id_info)
-           Ty_bare_name.qualified_class_name_of_ty)
+           declared_class_name_of_ty)
         (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)
   | G.Call (callee, _) -> (
     match
@@ -1229,6 +1223,7 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
              (return_type_class_qn ~func_lookup ~caller_parent_path funcs) ->
       return_type_class_qn ~func_lookup ~caller_parent_path funcs
     | Some (Bound_functions _)
+    | Some (Bound_object _)
     | Some (Bound_module _)
     | None -> (
       match callee.G.e with
@@ -1242,7 +1237,7 @@ let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
                ~owner:(Some owner)))
       | _ -> None))
   | G.New (_, (ty : G.type_), _, _) ->
-    Option.bind (Ty_bare_name.qualified_class_name_of_ty ty)
+    Option.bind (declared_class_name_of_ty ty)
       (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)
   | G.DotAccess (inner, _, G.FN (G.Id ((field_name, _), _))) ->
     Option.bind (of_receiver inner) (fun (owner : Names.Class_qn.t) ->
@@ -1314,6 +1309,7 @@ let identify_callee_interfile ~(lang : Lang.t)
       if allow_constructor then
         pick (constructor_of_class ~lang ~func_lookup class_qn)
       else None
+    | Some (Bound_object _)
     | Some (Bound_module _)
     | None -> None
   in

@@ -18,7 +18,6 @@ type name_set = (string, unit) Hashtbl.t
 (* Local import name -> the exported name it binds and the files that
    export it.  [import { C as Alias }] names its origin exactly, which is
    what tells two same-named imported classes apart. *)
-type class_alias_index = (string, string * name_set) Hashtbl.t
 
 type constructor_index = Func_info.t list Common.SMap.t
 
@@ -51,6 +50,7 @@ type scope_kind =
   | Scope_function of Func_info.t
   | Scope_class of Names.Class_qn.t
   | Scope_extension of Func_info.t
+  | Scope_object of Func_info.t list Common.SMap.t
 
 type scope_entry = {
   kind : scope_kind;
@@ -68,6 +68,7 @@ let class_of_entries (entries : scope_entry list) : Names.Class_qn.t option =
       match entry.kind with
       | Scope_class (class_qn : Names.Class_qn.t) -> Some class_qn
       | Scope_function _
+      | Scope_object _
       | Scope_extension _ -> None)
     entries
 
@@ -77,6 +78,7 @@ let functions_of_entries (entries : scope_entry list) : Func_info.t list =
       match entry.kind with
       | Scope_function (func : Func_info.t) -> Some func
       | Scope_class _
+      | Scope_object _
       | Scope_extension _ -> None)
     entries
 
@@ -86,7 +88,19 @@ let extensions_of_entries (entries : scope_entry list) : Func_info.t list =
       match entry.kind with
       | Scope_extension (func : Func_info.t) -> Some func
       | Scope_class _
+      | Scope_object _
       | Scope_function _ -> None)
+    entries
+
+let object_of_entries (entries : scope_entry list)
+    : Func_info.t list Common.SMap.t option =
+  List.find_map
+    (fun (entry : scope_entry) ->
+      match entry.kind with
+      | Scope_object (members : Func_info.t list Common.SMap.t) -> Some members
+      | Scope_class _
+      | Scope_function _
+      | Scope_extension _ -> None)
     entries
 
 let empty_scope_table : scope_table = Common.SMap.empty
@@ -112,8 +126,6 @@ let module_index_of_hashtbl tbl = tbl
 let alias_index_of_hashtbl tbl = tbl
 let file_module_index_of_hashtbl tbl = tbl
 let name_set_of_hashtbl tbl = tbl
-let class_alias_index_of_hashtbl tbl = tbl
-let name_set_mem set name = Hashtbl.mem set name
 
 let constructor_index_of_funcs ~(lang : Lang.t)
     (funcs : Func_info.t list) : constructor_index =
@@ -160,7 +172,6 @@ type t = {
   (* Disambiguates method homonyms across same-basename packages by exact import path. *)
   file_module_qn : file_module_index option;
   local_imports : name_set option;
-  class_aliases : class_alias_index option;
   constructors : constructor_index option;
   project_constructors : constructor_index option;
   (* The project index widens an overload group's representative to the
@@ -250,7 +261,6 @@ let empty = {
   funcs_by_package = None;
   file_module_qn = None;
   local_imports = None;
-  class_aliases = None;
   constructors = None;
   project_constructors = None;
   overload_groups = false;
@@ -266,7 +276,7 @@ let create
     ?funcs_by_name ?project_funcs_by_name
     ?funcs_by_module_qn ?alias_to_module_qn
     ?same_file_funcs_by_name ?funcs_by_package ?file_module_qn
-    ?local_imports ?class_aliases ?constructors ?project_constructors
+    ?local_imports ?constructors ?project_constructors
     ?(overload_groups = false)
     ?(own_modules : Names.Module_qn.t list = [])
     ~(module_attributes : module_attributes)
@@ -282,7 +292,6 @@ let create
     funcs_by_package;
     file_module_qn;
     local_imports;
-    class_aliases;
     constructors;
     project_constructors;
     overload_groups;
@@ -292,12 +301,6 @@ let create
     resolution_orders;
     class_qn_by_definition;
     methods_by_class }
-
-(* [None] when the name is not an import alias for a class. *)
-let resolve_class_alias t name =
-  match t.class_aliases with
-  | Some idx -> Hashtbl.find_opt idx name
-  | None -> None
 
 let with_local_imports t local_imports : t =
   { t with local_imports }

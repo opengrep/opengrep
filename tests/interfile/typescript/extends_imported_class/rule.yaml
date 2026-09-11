@@ -1,0 +1,14 @@
+rules:
+  - id: extends-imported-class
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A parent class is taken from the file's own bindings, so Child
+      extends base.ts's Base and not the same-named class of other.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

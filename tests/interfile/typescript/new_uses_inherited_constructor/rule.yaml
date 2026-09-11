@@ -1,0 +1,14 @@
+rules:
+  - id: new-uses-inherited-constructor
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A class with no constructor of its own is constructed through its
+      parent's, so new Child runs Base's constructor.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

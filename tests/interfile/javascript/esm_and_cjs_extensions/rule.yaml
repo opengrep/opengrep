@@ -5,8 +5,8 @@ rules:
     message: >
       A '.mjs' or '.cjs' file is a JavaScript target, so it must be in the
       interfile graph: taint flows across an import of './sinks.mjs', a
-      require of './lib.cjs', and a bare specifier that resolves to an
-      '.mjs' file.
+      require of './lib.cjs', and a bare specifier that a tsconfig "paths"
+      entry maps to an '.mjs' file.
     mode: taint
     options:
       taint_interfile: true

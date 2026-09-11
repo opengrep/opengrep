@@ -498,7 +498,7 @@ let (mk_visitor : visitor_in -> visitor_out) =
         | None -> ());
         v_tok v4;
         v_filename v5
-    | Import (t, v1, v2) ->
+    | Import (t, _role, _binding, v1, v2) ->
         let t = v_tok t in
         let v1 =
           v_list
@@ -513,7 +513,11 @@ let (mk_visitor : visitor_in -> visitor_out) =
         let t = v_tok t in
         let v1 = v_name v1 in
         ()
-    | ModuleAlias (t, v1, v2) ->
+    | ImportAlias (t, v1, v2) ->
+        v_tok t;
+        v_name v1;
+        v_list v_name v2
+    | ModuleAlias (t, _binding, v1, v2) ->
         let t = v_tok t in
         let v1 = v_name v1 and v2 = v_filename v2 in
         ()

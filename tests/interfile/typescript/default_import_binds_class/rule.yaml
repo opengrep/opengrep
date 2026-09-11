@@ -1,0 +1,14 @@
+rules:
+  - id: default-import-binds-class
+    languages: [ts]
+    severity: ERROR
+    message: >
+      The default import names a.ts's default export, so the method call
+      reaches a.ts's Handler and not the same-named class of b.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

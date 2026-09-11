@@ -6,8 +6,8 @@ module Log = Log_projidx.Log
    [from .m import f as g]): expose it as [alias] at the target's own
    position/sid, so name-based lookup finds [alias] while the graph node
    and signature stamp (via fn_id_to_node / resolved_name_of_fn_id in
-   the tainting layer) resolve to the target's real definition — same
-   same-position/different-name convention as Ts_class_aliases.
+   the tainting layer) resolve to the target's real definition.  One
+   position carrying two names is the convention that marks an alias.
    [entity = None] keeps the target's original name from also being
    exposed under this module. *)
 let expose_free_as ~(alias : string) (func : FA.func_info) : FA.func_info =

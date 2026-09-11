@@ -1,0 +1,14 @@
+rules:
+  - id: side-effect-import-binds-nothing
+    languages: [ts]
+    severity: ERROR
+    message: >
+      An import written for its effects alone binds no name, so the bare
+      call resolves to nothing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

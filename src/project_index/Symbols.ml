@@ -111,6 +111,7 @@ let cdef_of_module_items (items : G.stmt list) : G.class_definition =
     cbody = (fk, List.map (fun stmt -> G.F stmt) items, fk) }
 
 let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
+    ~(resolution : Module_paths.specifier_resolution)
     ~(module_path : Names.Module_qn.t) ~(file : Fpath.t)
     (ast : G.program) : entry list * class_info list * file_info =
   let entries = ref [] in
@@ -118,7 +119,8 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
   let dc_wrappers = ref [] in
   let imports, import_specifiers =
     let is_init_file = cfg.Index_lang_rules.is_init_file file in
-    Imports.collect_imports ~cfg ~current_module_path:module_path ~is_init_file ast
+    Imports.collect_imports ~cfg ~resolution ~current_file:file
+      ~current_module_path:module_path ~is_init_file ast
   in
   let mk_entry ~(id : Function_id.t) ~(name : string) ~(qn : Names.Def_qn.t)
       ~(kind : def_kind) ~(range : Range.t option)
@@ -390,15 +392,26 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     | `Per_package
     | `Per_namespace -> true
     | `Per_file
-    | `Per_directory -> cfg.Index_lang_rules.class_identity_is_constant_path
+    | `Per_directory
+    | `Per_module -> cfg.Index_lang_rules.class_identity_is_constant_path
   in
   let qn_module_path =
     if root_namespace_qn then Names.Module_qn.empty else module_path
   in
+  let region_prefix : string list =
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_module ->
+      if Names.Module_qn.is_empty module_path then []
+      else Names.Module_qn.parts module_path
+    | `Per_file
+    | `Per_directory
+    | `Per_package
+    | `Per_namespace -> []
+  in
   let module_path_of_regions (regions : string list list) : Names.Module_qn.t =
     match List.concat (List.rev regions) with
     | [] -> qn_module_path
-    | parts -> Names.Module_qn.of_parts parts
+    | parts -> Names.Module_qn.of_parts (region_prefix @ parts)
   in
   let rec walk_top_level
       ((regions : string list list), (opened : Names.Module_qn.t list))
@@ -440,9 +453,16 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     end
   in
   let module_regions =
-    match List.sort_uniq Names.Module_qn.compare opened_regions with
-    | [] -> [ (if package_scoped then qn_module_path else module_path) ]
-    | regions -> regions
+    let opened = List.sort_uniq Names.Module_qn.compare opened_regions in
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_module -> module_path :: opened
+    | `Per_file
+    | `Per_directory
+    | `Per_package
+    | `Per_namespace -> (
+      match opened with
+      | [] -> [ (if package_scoped then qn_module_path else module_path) ]
+      | regions -> regions)
   in
   let fi = { fi_file = file; fi_module_path = module_path;
              fi_module_regions = module_regions;

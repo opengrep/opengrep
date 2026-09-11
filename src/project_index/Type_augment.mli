@@ -19,14 +19,6 @@ val build_fields_by_class_index :
   Types.file_info list ->
   Type_state.t * (string * string, AST_generic.name) Hashtbl.t
 
-(* TS default/named export -> class name indexes. *)
-val build_export_class_indexes :
-  lang:Lang.t ->
-  type_state:Type_state.t ->
-  Types.file_info list ->
-  (string, AST_generic.name) Hashtbl.t
-  * (string * string, AST_generic.name) Hashtbl.t
-
 (* Group functions by defining file. *)
 val build_file_funcs_index :
   Graph_from_AST.func_info list ->

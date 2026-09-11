@@ -168,6 +168,11 @@ let own_alias_bindings
        | Some (ent : AST_generic.entity),
          Some ((parent_path : IL.name option list),
                Some (bare_name : IL.name)) -> (
+         let parent_path =
+           match Func_info.as_free func.Func_info.fn_id with
+           | Some _ -> []
+           | None -> parent_path
+         in
          match Index_lang_rules.entity_simple_name ent with
          | Some (alias : string)
            when not (String.equal alias (fst bare_name.IL.ident)) ->

@@ -24,7 +24,14 @@ type import_kind =
   | I_named of string
   | I_namespace
 
-type import_binds = Binds_any | Binds_function | Binds_constant
+type import_binds =
+  | Binds_any
+  | Binds_function
+  | Binds_constant
+  | Binds_type
+  | Binds_module
+
+type import_role = Role_binds | Role_reexports
 
 type import = {
   im_local : string;
@@ -33,6 +40,7 @@ type import = {
   im_static : bool;
   im_global : bool;
   im_binds : import_binds;
+  im_role : import_role;
 }
 
 type class_info = {

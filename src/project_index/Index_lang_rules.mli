@@ -7,6 +7,11 @@ type wrapper = {
   w_frozen_default : bool;
 }
 
+type project_discovery = {
+  excludes : string list;
+  module_paths : (string * string list) list;
+}
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -25,14 +30,15 @@ type t = {
   has_reexports : bool;
   include_anonymous_funcs : bool;
   unqualified_scope :
-    [ `Per_file | `Per_directory | `Per_package | `Per_namespace ];
+    [ `Per_file | `Per_directory | `Per_package | `Per_namespace
+    | `Per_module ];
   (* This language's [Package]/[PackageEnd] directives are qn scopes (namespace
      blocks / package clauses), not the file's module identity (contrast Go). *)
   package_directive_is_namespace : bool;
   (* Class identity is its constant path, file-independent (Ruby reopening):
      drops the file-path prefix from class qns. *)
   class_identity_is_constant_path : bool;
-  discover_excludes : project_root:Fpath.t -> string list;
+  discover_project : project_root:Fpath.t -> project_discovery;
   class_def_reshape :
     G.entity -> G.definition_kind -> (G.entity * G.definition_kind) option;
 
@@ -42,11 +48,6 @@ type t = {
     file_of_func:(Func_info.t -> string option) ->
     Type_state.t ->
     Type_state.t;
-
-  (* When true, restrict each imported class's methods to the file(s) it was
-     imported from, disambiguating same-named classes across files at dispatch
-     (TS/JS default imports where two files each [export default class Handler]). *)
-  narrow_methods_by_import_files : bool;
 
   (* When true, restrict same-named colliding methods to the files the caller
      itself requires (Ruby [require_relative]). *)

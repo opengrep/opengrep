@@ -11,10 +11,6 @@ type alias_index
 type file_module_index
 type name_set
 
-(* Local import name -> the exported name it binds and the files that
-   export it; [import { C as Alias }] names its origin exactly. *)
-type class_alias_index
-
 (* A [constructor_index] maps the bare class name to the constructor
    functions of that class, each list in the order in which the functions
    were given. *)
@@ -43,6 +39,7 @@ type scope_kind =
   | Scope_function of Func_info.t
   | Scope_class of Names.Class_qn.t
   | Scope_extension of Func_info.t
+  | Scope_object of Func_info.t list Common.SMap.t
 
 type scope_entry = {
   kind : scope_kind;
@@ -59,6 +56,9 @@ val functions_of_entries : scope_entry list -> Func_info.t list
 
 val extensions_of_entries : scope_entry list -> Func_info.t list
 
+val object_of_entries :
+  scope_entry list -> Func_info.t list Common.SMap.t option
+
 val empty_scope_table : scope_table
 
 val bare_name_index_layered : front:bare_name_index -> back:bare_name_index -> bare_name_index
@@ -72,9 +72,6 @@ val alias_index_of_hashtbl :
 val file_module_index_of_hashtbl :
   (string, Names.Module_qn.t) Hashtbl.t -> file_module_index
 val name_set_of_hashtbl : (string, unit) Hashtbl.t -> name_set
-
-val class_alias_index_of_hashtbl :
-  (string, string * name_set) Hashtbl.t -> class_alias_index
 
 (* The result holds the constructors that a file's bare-name table
    contains under the constructor names of [lang], keyed by class. The
@@ -91,8 +88,6 @@ val constructor_index_of_hashtbl :
 val constructor_index_of_funcs :
   lang:Lang.t -> Func_info.t list -> constructor_index
 
-val name_set_mem : name_set -> string -> bool
-
 val create :
   ?funcs_by_name : bare_name_index ->
   ?project_funcs_by_name : bare_name_index ->
@@ -102,7 +97,6 @@ val create :
   ?funcs_by_package : bare_name_index ->
   ?file_module_qn : file_module_index ->
   ?local_imports : name_set ->
-  ?class_aliases : class_alias_index ->
   ?constructors : constructor_index ->
   ?project_constructors : constructor_index ->
   ?overload_groups : bool ->
@@ -138,9 +132,6 @@ val find_along_order :
   Names.Class_qn.t list ->
   (Names.Class_qn.t -> string list) ->
   Func_info.t list
-
-(* [None] when the name is not an import alias bound to a class. *)
-val resolve_class_alias : t -> string -> (string * name_set) option
 
 val with_local_imports :
   t -> name_set option -> t

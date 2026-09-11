@@ -1,0 +1,14 @@
+rules:
+  - id: index-specifier-binds-directory
+    languages: [ts]
+    severity: ERROR
+    message: >
+      The candidate order takes the first project file a specifier names,
+      so ./svc names svc.ts and the directory index is not bound as well.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

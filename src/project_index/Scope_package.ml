@@ -30,6 +30,7 @@ let is_extension_binding (binding : Scope_binding.positioned_binding) : bool =
       match kind with
       | Func_lookup.Scope_extension _ -> true
       | Func_lookup.Scope_function _
+      | Func_lookup.Scope_object _
       | Func_lookup.Scope_class _ -> false)
     binding.Scope_binding.pb_kinds
 

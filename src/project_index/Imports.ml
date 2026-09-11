@@ -15,6 +15,23 @@ let binding_of (imp : import) : binding =
   if String.equal imp.im_local wildcard_local then Wildcard_from imp.im_target
   else Named_binding { local = imp.im_local; target = imp.im_target }
 
+let record_field_names (e : G.expr) : (G.ident * string) list =
+  match e.G.e with
+  | G.Record (_, fields, _) ->
+    List.filter_map
+      (fun (field : G.field) ->
+        match field with
+        | G.F { G.s = G.DefStmt ((ent : G.entity),
+                                 (G.FieldDefColon vd | G.VarDef vd)); _ } -> (
+          match (ent.G.name, vd.G.vinit) with
+          | G.EN (G.Id ((key : G.ident), _)),
+            Some { G.e = G.N (G.Id ((value, _), _)); _ } -> Some (key, value)
+          | G.EN (G.Id ((key : G.ident), _)), _ -> Some (key, fst key)
+          | _ -> None)
+        | _ -> None)
+      fields
+  | _ -> []
+
 (* Clojure [(ns x (:require ...))] is one [OtherDirective("NsDirective")] whose
    requires the parser doesn't surface as imports; pull aliases/refers out here. *)
 let collect_clojure_ns_form ~(tok : Tok.t)
@@ -36,7 +53,8 @@ let collect_clojure_ns_form ~(tok : Tok.t)
   let add ((acc, specs) : import list * (string * string * import_kind) list)
       (local : string) (target : Names.Module_qn.t) =
     ({ im_local = local; im_target = target; im_tok = tok;
-       im_static = false; im_global = false; im_binds = Binds_any }
+       im_static = false; im_global = false; im_binds = Binds_any;
+       im_role = Role_binds }
      :: acc, specs)
   in
   let walk_require_vector st vec_items =
@@ -80,6 +98,8 @@ let collect_clojure_ns_form ~(tok : Tok.t)
   | _ -> st
 
 let collect_imports ~(cfg : Index_lang_rules.t)
+    ~(resolution : Module_paths.specifier_resolution)
+    ~(current_file : Fpath.t)
     ~(current_module_path : Names.Module_qn.t)
     ~(is_init_file : bool)
     (ast : G.program) :
@@ -89,15 +109,22 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     | G.DottedName _ -> ""
   in
   let add_spec (acc, specs) local mn kind =
-    let spec = raw_specifier mn in
-    if String.length spec > 0
-    then (acc, (local, spec, kind) :: specs)
-    else (acc, specs)
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_module -> (acc, specs)
+    | `Per_file
+    | `Per_directory
+    | `Per_package
+    | `Per_namespace ->
+      let spec = raw_specifier mn in
+      if Int.compare (String.length spec) 0 > 0
+      then (acc, (local, spec, kind) :: specs)
+      else (acc, specs)
   in
   let add ~(tok : Tok.t) ~(static : bool) ~(global : bool)
-      ~(binds : import_binds) (acc, specs) local target =
+      ~(binds : import_binds) ~(role : import_role) (acc, specs) local target =
     ({ im_local = local; im_target = target; im_tok = tok;
-       im_static = static; im_global = global; im_binds = binds }
+       im_static = static; im_global = global; im_binds = binds;
+       im_role = role }
      :: acc, specs)
   in
   let is_static_attr (attr : G.attribute) : bool =
@@ -110,34 +137,43 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     | G.KeywordAttr (G.GlobalScope, _) -> true
     | _ -> false
   in
+  let has_keyword (keyword : G.keyword_attribute) (attrs : G.attribute list)
+      : bool =
+    List.exists (fun (attr : G.attribute) ->
+      match attr with
+      | G.KeywordAttr (kw, _) -> G.equal_keyword_attribute kw keyword
+      | _ -> false)
+      attrs
+  in
+  let role_of_attrs (attrs : G.attribute list) : import_role =
+    if has_keyword G.Reexport attrs then Role_reexports else Role_binds
+  in
   let binds_of_attrs (attrs : G.attribute list) : import_binds =
-    if List.exists (fun (attr : G.attribute) ->
-         match attr with
-         | G.KeywordAttr (G.Callable, _) -> true
-         | _ -> false)
-         attrs
-    then Binds_function
-    else if
-      List.exists (fun (attr : G.attribute) ->
-        match attr with
-        | G.KeywordAttr (G.Const, _) -> true
-        | _ -> false)
-        attrs
-    then Binds_constant
+    if has_keyword G.TypeOnly attrs then Binds_type
+    else if has_keyword G.Callable attrs then Binds_function
+    else if has_keyword G.Const attrs then Binds_constant
     else Binds_any
   in
+  let module_name_of (mn : G.module_name) : Names.Module_qn.t option =
+    match
+      Module_paths.module_name_string ~cfg ~resolution ~current_file
+        ~current_module_path ~is_init_file mn
+    with
+    | Some (qn : Names.Module_qn.t) when not (Names.Module_qn.is_empty qn) ->
+      Some qn
+    | Some _
+    | None -> None
+  in
   let on_directive st (dir : G.directive) =
-    let add =
+    let add ~(binds : import_binds) =
       add ~static:(List.exists is_static_attr dir.G.d_attrs)
         ~global:(List.exists is_global_attr dir.G.d_attrs)
-        ~binds:(binds_of_attrs dir.G.d_attrs)
+        ~binds
+        ~role:(role_of_attrs dir.G.d_attrs)
     in
+    let attr_binds = binds_of_attrs dir.G.d_attrs in
     match dir.G.d with
     | G.ImportAs (tok, mn, alias_opt) ->
-      let qn =
-        Module_paths.module_name_string ~cfg ~current_module_path ~is_init_file
-          mn
-      in
       let local =
         match alias_opt with
         | Some ((alias, _), _) -> alias
@@ -153,20 +189,32 @@ let collect_imports ~(cfg : Index_lang_rules.t)
                 (match Fpath.of_string spec with
                  | Ok path -> Fpath.basename path
                  | Error _ -> spec)
-              | _ -> spec))
+              | `Per_module -> ""
+              | `Per_file
+              | `Per_package
+              | `Per_namespace -> spec))
       in
-      if String.length local > 0 && not (Names.Module_qn.is_empty qn) then
-        (* TS/JS default and namespace imports are indistinguishable here;
-           treat both as [I_namespace]. *)
-        add_spec (add ~tok st local qn) local mn I_namespace
-      else st
-    | G.ImportFrom (tok, mn, names) ->
-      let qn =
-        Module_paths.module_name_string ~cfg ~current_module_path ~is_init_file
-          mn
+      let binds =
+        match (attr_binds, cfg.Index_lang_rules.unqualified_scope) with
+        | Binds_type, _ -> Binds_type
+        | (Binds_any | Binds_function | Binds_constant | Binds_module),
+          `Per_module -> Binds_module
+        | _, (`Per_file | `Per_directory | `Per_package | `Per_namespace) ->
+          attr_binds
       in
-      if Names.Module_qn.is_empty qn then st
-      else
+      (match
+         (module_name_of mn, Int.compare (String.length local) 0 > 0)
+       with
+       | Some (qn : Names.Module_qn.t), true ->
+         (* TS/JS default and namespace imports are indistinguishable here;
+            treat both as [I_namespace]. *)
+         add_spec (add ~binds ~tok st local qn) local mn I_namespace
+       | Some _, false
+       | None, _ -> st)
+    | G.ImportFrom (tok, mn, names) -> (
+      match module_name_of mn with
+      | None -> st
+      | Some (qn : Names.Module_qn.t) ->
         List.fold_left (fun st ((name, _), alias_opt) ->
           let local =
             match alias_opt with
@@ -178,20 +226,19 @@ let collect_imports ~(cfg : Index_lang_rules.t)
             if String.equal name "default" then I_default
             else I_named name
           in
-          add_spec (add ~tok st local target) local mn kind
-        ) st names
+          add_spec (add ~binds:attr_binds ~tok st local target) local mn kind
+        ) st names)
     (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs.
        The raw specifier is kept under the same "*" sentinel so file-target
        narrowing can resolve a whole-file import (Ruby [require_relative]) to
        the file(s) it names ([add_spec] drops [DottedName] imports, whose
        specifier is empty). *)
-    | G.ImportAll (tok, mn, _) ->
-      let qn =
-        Module_paths.module_name_string ~cfg ~current_module_path ~is_init_file
-          mn
-      in
-      if Names.Module_qn.is_empty qn then st
-      else add_spec (add ~tok st wildcard_local qn) wildcard_local mn I_namespace
+    | G.ImportAll (tok, mn, _) -> (
+      match module_name_of mn with
+      | None -> st
+      | Some (qn : Names.Module_qn.t) ->
+        add_spec (add ~binds:attr_binds ~tok st wildcard_local qn)
+          wildcard_local mn I_namespace)
     | G.OtherDirective (("NsDirective", tok), exprs) ->
       List.fold_left (collect_clojure_ns_form ~tok) st exprs
     | _ -> st
@@ -207,47 +254,56 @@ let collect_imports ~(cfg : Index_lang_rules.t)
   let mk_filename_mn (spec : string) : G.module_name =
     G.FileName (spec, Tok.unsafe_fake_tok spec)
   in
-  let qn_of_specifier spec : Names.Module_qn.t =
-    (* No relative-path rewriting; [Ts_modules.resolve_specifier] uses the raw form. *)
-    Names.Module_qn.of_string spec
+  let qn_of_specifier (spec : string) : Names.Module_qn.t option =
+    module_name_of (mk_filename_mn spec)
   in
   let on_defstmt st (ent : G.entity) (vd : G.variable_definition) =
     match vd.G.vinit with
     | None -> st
     | Some rhs ->
-      match extract_require_spec rhs, ent.G.name with
+      let bind_names (spec : string)
+          (names : (G.ident * string) list) =
+        match qn_of_specifier spec with
+        | None -> st
+        | Some (qn : Names.Module_qn.t) ->
+          List.fold_left
+            (fun st (((key : string), (tok : Tok.t)), (local : string)) ->
+              add_spec
+                (add ~tok ~static:false ~global:false ~binds:Binds_any
+                   ~role:Role_binds st local (Names.Module_qn.concat qn key))
+                local (mk_filename_mn spec) (I_named key))
+            st names
+      in
+      match (extract_require_spec rhs, ent.G.name) with
       | Some spec, G.EN (G.Id ((local, tok), _))
-        when String.length local > 0 ->
-        let qn = qn_of_specifier spec in
-        let st =
-          add ~tok ~static:false ~global:false ~binds:Binds_any st local qn
-        in
-        let st = add_spec st local (mk_filename_mn spec) I_default in
-        add_spec st local (mk_filename_mn spec) I_namespace
+        when Int.compare (String.length local) 0 > 0 -> (
+        match qn_of_specifier spec with
+        | None -> st
+        | Some (qn : Names.Module_qn.t) ->
+          let st =
+            add ~tok ~static:false ~global:false ~binds:Binds_module
+              ~role:Role_binds st local qn
+          in
+          let st = add_spec st local (mk_filename_mn spec) I_default in
+          add_spec st local (mk_filename_mn spec) I_namespace)
       | Some spec, G.EPattern (G.PatRecord (_, fields, _)) ->
-        List.fold_left (fun st (pat_field : G.dotted_ident * G.pattern) ->
-          let dotted_name, value_pat = pat_field in
-          let key_name = match dotted_name with
-            | (seg, tok) :: _ -> Some (seg, tok)
-            | [] -> None
-          in
-          let local_name = match value_pat, key_name with
-            | G.PatId ((id_str, _), _), _ -> Some id_str
-            | _, Some (seg, _) -> Some seg
-            | _, None -> None
-          in
-          match key_name, local_name with
-          | Some (key, tok), Some local ->
-            let target =
-              Names.Module_qn.concat (Names.Module_qn.of_string spec) key
-            in
-            add_spec
-              (add ~tok ~static:false ~global:false ~binds:Binds_any st local
-                 target)
-              local (mk_filename_mn spec) (I_named key)
-          | _ -> st
-        ) st fields
-      | _ -> st
+        bind_names spec
+          (List.filter_map
+             (fun (((dotted_name : G.dotted_ident), (value_pat : G.pattern))) ->
+               match (dotted_name, value_pat) with
+               | (key : G.ident) :: _, G.PatId ((id_str, _), _) ->
+                 Some (key, id_str)
+               | (key : G.ident) :: _, _ -> Some (key, fst key)
+               | [], _ -> None)
+             fields)
+      | None, _ -> (
+        match rhs.G.e with
+        | G.Assign (pattern, _, (inner : G.expr)) -> (
+          match extract_require_spec inner with
+          | None -> st
+          | Some (spec : string) -> bind_names spec (record_field_names pattern))
+        | _ -> st)
+      | Some _, _ -> st
   in
   (* PHP [require]/[include] parse as calls to [__builtin__require*], not
      import directives; capture them as whole-file "*" imports like Ruby's

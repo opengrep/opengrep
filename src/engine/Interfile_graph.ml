@@ -29,14 +29,12 @@ let load_interfile_build (caps : < Cap.fork >)
   let ncores =
     if ncores <= 0 then Domainslib_.get_cpu_count () else ncores
   in
-  let cfg = Opengrep_project_index.Index_lang_rules.for_lang lang in
-  let excludes = cfg.discover_excludes ~project_root:project_root_abs in
   try
     let (graph, asts, failures) =
       Opengrep_project_index.Project_index.collect_resolved caps
         ~targeting_conf
         ~lang ~project_root:project_root_abs ~ncores
-        ~includes:[] ~excludes ()
+        ~includes:[] ~excludes:[] ()
     in
     (* [Interfile_dispatch] looks up vertices by absolute path. *)
     Some (Call_graph.make_paths_absolute project_root_abs graph, asts,

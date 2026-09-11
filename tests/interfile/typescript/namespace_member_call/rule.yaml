@@ -1,0 +1,15 @@
+rules:
+  - id: namespace-member-call
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A namespace is a region of its module, so the import of Svc from
+      lib.ts names lib.ts's namespace and not the same-named namespace of
+      other.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

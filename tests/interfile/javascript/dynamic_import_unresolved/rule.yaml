@@ -1,0 +1,14 @@
+rules:
+  - id: dynamic-import-unresolved
+    languages: [js]
+    severity: ERROR
+    message: >
+      A dynamic import binds its names at run time through the promise it
+      returns, so the call through the module object resolves to nothing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

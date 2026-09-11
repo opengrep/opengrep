@@ -1,5 +1,5 @@
-(* TypeScript/JavaScript module handling: tsconfig-driven discover excludes
-   and import-specifier resolution against the project file set. *)
+(* This module reads the exclude globs and the path mappings that the
+   project's tsconfig files declare. *)
 
 module Log = Log_projidx.Log
 
@@ -167,102 +167,85 @@ let normalize_pattern ~(project_root : Fpath.t) ~(config_dir : Fpath.t)
        | ["."] | ".." :: _ -> pat  (* config at or outside the root *)
        | segs -> String.concat "/" segs ^ "/" ^ pat)
 
-let discover_excludes ~(project_root : Fpath.t) : string list =
-  let configs = find_tsconfigs project_root in
+let excludes_of_configs ~(project_root : Fpath.t) (configs : Fpath.t list)
+    : string list =
   List.concat_map (fun cfg ->
     let dir = Fpath.parent cfg in
     let raw = read_tsconfig_excludes cfg in
     List.map (normalize_pattern ~project_root ~config_dir:dir) raw)
     configs
 
-(* The extensions a specifier leaves out: the source extensions
-   [resolve_specifier] probes. *)
-let source_exts =
-  [ ".ts"; ".tsx"; ".mts"; ".cts"; ".js"; ".jsx"; ".mjs"; ".cjs" ]
+let read_tsconfig_paths (path : Fpath.t) : (string * string list) list =
+  let config_dir = Fpath.parent path in
+  match
+    Nonfatal.catch ~default:None (fun () -> Some (UFile.read_file path))
+  with
+  | None ->
+    Log.debug (fun m ->
+      m "tsconfig: failed to read %s; no path mappings applied"
+        (Fpath.to_string path));
+    []
+  | Some raw ->
+    Nonfatal.catch ~default:[] (fun () ->
+      let cleaned = raw |> strip_bom |> strip_jsonc |> strip_trailing_commas in
+      match Yojson.Basic.from_string cleaned with
+      | `Assoc fields -> (
+        match List.assoc_opt "compilerOptions" fields with
+        | Some (`Assoc options) ->
+          let base_dir =
+            match List.assoc_opt "baseUrl" options with
+            | Some (`String (base : string)) ->
+              Fpath.append config_dir (Fpath.v base)
+            | Some _
+            | None -> config_dir
+          in
+          let absolute (target : string) : string =
+            Fpath.append base_dir (Fpath.v target) |> Fpath.normalize
+            |> Fpath.rem_empty_seg |> Fpath.to_string
+          in
+          (match List.assoc_opt "paths" options with
+           | Some (`Assoc entries) ->
+             List.map
+               (fun ((key : string), (targets : Yojson.Basic.t)) ->
+                 ( key,
+                   match targets with
+                   | `List items ->
+                     List.filter_map
+                       (function
+                         | `String target -> Some (absolute target)
+                         | _ -> None)
+                       items
+                   | _ -> [] ))
+               entries
+           | Some _
+           | None -> [])
+        | Some _
+        | None -> [])
+      | _ -> [])
 
-(* [max_suffix_segs] is the greatest number of '/'-separated segments in any
-   bare import specifier the project actually imports.  A specifier is looked up
-   verbatim as a suffix key ([resolve_specifier]), so a suffix with more segments
-   than the longest specifier can never match and need not be indexed.  Bounding
-   the suffix length this way keeps the index size proportional to the number of
-   files times [max_suffix_segs] (specifiers are short) rather than times
-   file-path depth. *)
-let build_path_suffix_index ~(max_suffix_segs : int) (file_paths : string list)
-  : (string, string list) Hashtbl.t =
-  (* At most [max_suffix_segs] entries per file. *)
-  let index : (string, string list) Hashtbl.t =
-    Hashtbl.create (List.length file_paths * max_suffix_segs)
-  in
-  let strip_ext (path : Fpath.t) : Fpath.t =
-    if Fpath.mem_ext source_exts path then Fpath.rem_ext path else path
-  in
-  let strip_index (path : Fpath.t) : Fpath.t =
-    let parent = Fpath.parent path |> Fpath.rem_empty_seg in
-    if String.equal (Fpath.basename path) "index"
-       && not (Fpath.is_current_dir parent)
-    then parent
-    else path
-  in
-  (* Count how many suffix slots a full (uncapped) index would insert, so the
-     debug log can show the reduction the cap buys. *)
-  let uncapped_slots, capped_slots =
-    List.fold_left (fun (uncapped, capped) path ->
-      let stripped = Fpath.v path |> strip_ext |> strip_index in
-      (* Suffix keys are joined with '/' to match raw import specifiers,
-         which use '/' on every platform. *)
-      let parts = Fpath.segs stripped in
-      let n = List.length parts in
-      let arr = Array.of_list parts in
-      (* Suffix starting at [i] has [n - i] segments; keep only those with at
-         most [max_suffix_segs]. *)
-      let lo = if n > max_suffix_segs then n - max_suffix_segs else 0 in
-      for i = lo to n - 1 do
-        let suffix = String.concat "/"
-          (Array.to_list (Array.sub arr i (n - i))) in
-        let cur = Option.value (Hashtbl.find_opt index suffix) ~default:[] in
-        Hashtbl.replace index suffix (path :: cur)
-      done;
-      (uncapped + n, capped + (n - lo))
-    ) (0, 0) file_paths
-  in
-  Log.debug (fun m -> m
-    "path suffix index: %d keys, %d slots (cap %d segs; uncapped would be %d slots)"
-    (Hashtbl.length index) capped_slots max_suffix_segs uncapped_slots);
-  index
+let paths_of_configs ~(project_root : Fpath.t) (configs : Fpath.t list)
+    : (string * string list) list =
+  match configs with
+  | [] -> []
+  | _ :: _ ->
+    let root_str = Fpath.to_string (Fpath.normalize project_root) in
+    let at_root =
+      List.filter
+        (fun (config : Fpath.t) ->
+          String.equal
+            (Fpath.to_string
+               (Fpath.parent config |> Fpath.normalize |> Fpath.rem_empty_seg))
+            (Fpath.to_string
+               (Fpath.normalize project_root |> Fpath.rem_empty_seg)))
+        configs
+    in
+    Log.debug (fun m ->
+      m "tsconfig paths: %d config(s) at the project root %s"
+        (List.length at_root) root_str);
+    List.concat_map read_tsconfig_paths at_root
 
-let resolve_specifier
-    ?(path_suffix_index : (string, string list) Hashtbl.t option = None)
-    ~(current_file : Fpath.t) (specifier : string) : string list =
-  if String.length specifier = 0 then []
-  else if specifier.[0] = '.' then begin
-    let base_path =
-      Fpath.append (Fpath.parent current_file) (Fpath.v specifier)
-      |> Fpath.normalize |> Fpath.rem_empty_seg
-    in
-    let base = Fpath.to_string base_path in
-    let index_under name = Fpath.(base_path // v name) |> Fpath.to_string in
-    (* Extensioned specifiers: mandatory under NodeNext resolution, where
-       './utils.js' refers to utils.ts on disk (and plain CJS requires
-       name the real file).  Try the literal path and the source-extension
-       swaps first; appending to an already-extensioned base can only
-       produce names like [utils.js.ts], which never exist. *)
-    let extensioned =
-      let chop = Fpath.to_string (Fpath.rem_ext base_path) in
-      match Fpath.get_ext base_path with
-      | ".js" -> [ base; chop ^ ".ts"; chop ^ ".tsx" ]
-      | ".jsx" -> [ base; chop ^ ".tsx" ]
-      | ".mjs" -> [ base; chop ^ ".mts"; chop ^ ".ts" ]
-      | ".cjs" -> [ base; chop ^ ".cts"; chop ^ ".ts" ]
-      | ".ts" | ".tsx" | ".mts" | ".cts" -> [ base ]
-      | _ -> []
-    in
-    extensioned
-    @ [ base ^ ".ts"; base ^ ".tsx"; base ^ ".js"; base ^ ".jsx";
-        index_under "index.ts"; index_under "index.tsx";
-        index_under "index.js"; index_under "index.jsx" ]
-  end
-  else
-    match path_suffix_index with
-    | None -> []
-    | Some idx ->
-      (Option.value (Hashtbl.find_opt idx specifier) ~default:[])
+let discover ~(project_root : Fpath.t)
+    : string list * (string * string list) list =
+  let configs = find_tsconfigs project_root in
+  (excludes_of_configs ~project_root configs,
+   paths_of_configs ~project_root configs)

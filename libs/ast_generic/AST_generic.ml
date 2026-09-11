@@ -1691,6 +1691,8 @@ and keyword_attribute =
   | Extern (* less: of string? like extern "C" in C++ or Rust *)
   | GlobalScope
   | Callable
+  | TypeOnly
+  | Reexport
   | Volatile
   (* the classic C++ modifiers for fields/methods *)
   | Public

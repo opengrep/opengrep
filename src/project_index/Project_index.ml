@@ -453,12 +453,6 @@ let build_project_call_graph (caps : < Cap.fork >)
       Common.SMap.empty indexed_classes
   in
 
-  (* TS/JS class-body aliases [class C { static foo = importedFn }]. *)
-  let type_state =
-    Ts_class_aliases.add_class_body_aliases
-      ~lang ~project_funcs_by_name file_infos type_state
-  in
-
   let type_state = Type_augment.populate_returns_from_decls type_state all_funcs in
   let type_state, slice_element_of_field =
     Type_augment.build_fields_by_class_index ~cfg type_state file_infos in
@@ -501,36 +495,9 @@ let build_project_call_graph (caps : < Cap.fork >)
     Type_augment.build_module_singleton_types ~uses_new_keyword type_state file_infos
   in
   let t_indexes_start = Unix.gettimeofday () in
-  let default_export_class, named_export_classes =
-    Type_augment.build_export_class_indexes ~lang ~type_state file_infos in
-
-  (* CommonJS [module.exports = ...] default-export fn.  See [Cjs_exports]. *)
-  let default_export_fn = Cjs_exports.build_default_export_fn ~lang file_infos in
-  Log.debug (fun m -> m "default_export_fn: %d files"
-    (Hashtbl.length default_export_fn));
   let file_funcs_index = Type_augment.build_file_funcs_index all_funcs in
-  let path_suffix_index : (string, string list) Hashtbl.t option =
-    if Lang.equal lang Lang.Ts || Lang.equal lang Lang.Js then
-      (* Only suffixes as long as the longest bare (non-relative) import
-         specifier can ever be queried; pass that as the index's suffix cap. *)
-      let max_suffix_segs =
-        List.fold_left (fun acc (fi : file_info) ->
-          List.fold_left (fun acc (_local, specifier, _kind) ->
-            if String.length specifier > 0 && not (Char.equal specifier.[0] '.')
-            then max acc (List.length (String.split_on_char '/' specifier))
-            else acc)
-            acc fi.fi_import_specifiers)
-          0 file_infos
-      in
-      Some (Ts_modules.build_path_suffix_index ~max_suffix_segs
-              (List.map (fun fi -> Fpath.to_string fi.fi_file) file_infos))
-    else None
-  in
-  Log.debug (fun m -> m "Exports: %d default / %d named.  File-funcs index: %d files.  Suffix index: %d entries"
-    (Hashtbl.length default_export_class)
-    (Hashtbl.length named_export_classes)
-    (Hashtbl.length file_funcs_index)
-    (match path_suffix_index with Some index -> Hashtbl.length index | None -> 0));
+  Log.debug (fun m -> m "File-funcs index: %d files"
+    (Hashtbl.length file_funcs_index));
 
   (* Project-wide free-function indexes.  See [Func_index]. *)
   let project_funcs_by_package = Func_index.build_by_package ~cfg all_funcs in
@@ -631,9 +598,45 @@ let build_project_call_graph (caps : < Cap.fork >)
                 by_class))
       definitions_by_qn Func_lookup.Class_qn_map.empty
   in
+  let value_alias_index = Pipeline.build_value_alias_index file_infos in
+  let module_scope =
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_module ->
+      timed "call graph: module exports" (fun () ->
+        Scope_module.build_project_scope ~definitions_by_qn ~value_alias_index
+          ~classes_by_file ~class_parent_paths ~file_funcs_index
+          ~file_infos:indexed_files)
+    | `Per_file
+    | `Per_directory
+    | `Per_package
+    | `Per_namespace -> Scope_module.no_project_scope
+  in
+  let methods_by_class : Func_lookup.methods_by_class =
+    List.fold_left
+      (fun (by_class : Func_lookup.methods_by_class)
+           (((class_qn : Names.Class_qn.t), (name : string),
+             (funcs : FA.func_info list))) ->
+        Func_lookup.Class_qn_map.add class_qn
+          (Common.SMap.add name funcs
+             (Option.value
+                (Func_lookup.Class_qn_map.find_opt class_qn by_class)
+                ~default:Common.SMap.empty))
+          by_class)
+      methods_by_class (Scope_module.class_aliases_of module_scope)
+  in
   let attributes_by_module =
     timed "call graph: attributes by module" (fun () ->
       Func_index.build_attributes_by_module ~cfg ~dunder_all
+        ~exported:
+          (match cfg.Index_lang_rules.unqualified_scope with
+           | `Per_module ->
+             Func_index.Only_exported_names
+               (Scope_module.exported_names
+                  (Scope_module.exports_of module_scope))
+           | `Per_file
+           | `Per_directory
+           | `Per_package
+           | `Per_namespace -> Func_index.Every_definition_is_an_attribute)
         ~definitions_by_qn ~file_infos:indexed_files)
   in
   let pipeline_ctx : Pipeline.ctx =
@@ -651,6 +654,7 @@ let build_project_call_graph (caps : < Cap.fork >)
               ~file_infos:indexed_files
           | `Per_file
           | `Per_directory
+          | `Per_module
           | `Per_package -> Common.SMap.empty);
       php_global_bindings =
         (match cfg.Index_lang_rules.unqualified_scope with
@@ -658,7 +662,9 @@ let build_project_call_graph (caps : < Cap.fork >)
            Scope_php.global_function_bindings ~attributes_by_module
          | `Per_file
          | `Per_directory
+         | `Per_module
          | `Per_package -> []);
+      module_scope;
       dunder_all;
       resolution_orders;
       class_qn_by_definition;
@@ -683,10 +689,6 @@ let build_project_call_graph (caps : < Cap.fork >)
       project_funcs_by_package;
       project_class_names;
       file_funcs_index;
-      default_export_class;
-      named_export_classes;
-      default_export_fn;
-      path_suffix_index;
       slice_element_of_field;
       top_level_node_for;
       visible_names_for_file;
@@ -694,10 +696,7 @@ let build_project_call_graph (caps : < Cap.fork >)
         (fun ~type_state ~slice_element_of_field ast ->
           Type_augment.stamp_var_types_from_bodies ~uses_new_keyword
             ~type_state ~slice_element_of_field ast);
-      resolve_ts_specifier =
-        (fun ~path_suffix_index ~current_file specifier ->
-          Ts_modules.resolve_specifier ~path_suffix_index ~current_file specifier);
-      value_alias_index = Pipeline.build_value_alias_index file_infos;
+      value_alias_index;
     }
   in
   (* per-file wall time of the edge walk, across domains, for the slowest
@@ -860,10 +859,15 @@ let run_pipeline (caps : < Cap.fork >)
   : entry list * Call_graph.G.t * int * int * file_info list
     * Core_error.t list =
   let cfg = Index_lang_rules.for_lang lang in
-  (* [discover_excludes] so the CLI and embedded engine index the same files. *)
-  let excludes =
-    excludes @ cfg.Index_lang_rules.discover_excludes ~project_root
+  (* Absolutize paths: interface dispatch's [family_key] needs consistent
+     directory prefixes. *)
+  let project_root_abs = project_root_abs_of project_root in
+  (* One walk of the build configuration; its excludes keep the CLI and the
+     embedded engine indexing the same files. *)
+  let discovered =
+    cfg.Index_lang_rules.discover_project ~project_root:project_root_abs
   in
+  let excludes = excludes @ discovered.Index_lang_rules.excludes in
   let files =
     timed "discover files" @@ fun () ->
     Discover.discover_files ~targeting_conf
@@ -891,9 +895,6 @@ let run_pipeline (caps : < Cap.fork >)
         | _ -> stmt
       ) ast
   in
-  (* Absolutize paths: interface dispatch's [family_key] needs consistent
-     directory prefixes. *)
-  let project_root_abs = project_root_abs_of project_root in
   let absolutize (file : Fpath.t) : Fpath.t =
     fst (Fpath_.absolutify ~cwd:project_root_abs file)
   in
@@ -906,6 +907,19 @@ let run_pipeline (caps : < Cap.fork >)
            (List.map absolutize files)
     else Go_modules.empty
   in
+  let resolution =
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_module ->
+      timed "specifier resolution" @@ fun () ->
+      Module_paths.specifier_resolution_of_files ~cfg
+        ~project_root:project_root_abs
+        ~paths:discovered.Index_lang_rules.module_paths
+        (List.map absolutize files)
+    | `Per_file
+    | `Per_directory
+    | `Per_package
+    | `Per_namespace -> Module_paths.Specifier_is_module_name
+  in
   let process file =
     let file = absolutize file in
     let ast =
@@ -916,7 +930,7 @@ let run_pipeline (caps : < Cap.fork >)
       Module_paths.module_qn_of_file ~cfg ~go_modules ~project_root
         ~ast:(Some ast) file
     in
-    Symbols.collect_in_ast ~cfg ~lang ~module_path:mp ~file ast
+    Symbols.collect_in_ast ~cfg ~lang ~resolution ~module_path:mp ~file ast
   in
   let results =
     timed (Printf.sprintf "parse + symbols (%d files)" n_total) @@ fun () ->

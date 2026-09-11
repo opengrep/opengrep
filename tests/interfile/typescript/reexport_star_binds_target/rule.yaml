@@ -1,0 +1,14 @@
+rules:
+  - id: reexport-star-binds-target
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A star re-export exports every named export of the target, so an
+      import of run from b.ts reaches a.ts's run.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

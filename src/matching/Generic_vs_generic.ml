@@ -288,6 +288,8 @@ let m_module_name_prefix a b =
       (* TODO figure out what prefix support means here *)
         ~m_string_for_default:m_filepath_prefix a b
   | G.DottedName a1, B.DottedName b1 -> m_dotted_name_prefix_ok a1 b1
+  | G.DottedName [ (s, t) ], B.FileName b1 when Mvar.is_metavar_name s ->
+      envf (s, t) (MV.N (H.name_of_ids [ b1 ]))
   | G.FileName _, _
   | G.DottedName _, _ ->
       fail ()

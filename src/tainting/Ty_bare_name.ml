@@ -35,6 +35,45 @@ let rec qualified_class_name_of_ty (ty : G.type_) : G.name option =
     qualified_class_name_of_ty inner
   | _ -> None
 
+let rec dotted_idents_of_expr (e : G.expr) : G.ident list option =
+  match e.G.e with
+  | G.N (G.Id ((id : G.ident), _)) -> Some [ id ]
+  | G.N (G.IdQualified { G.name_last = ((id : G.ident), _);
+                         name_middle = Some (G.QDots middle); _ }) ->
+    Some (List.map fst middle @ [ id ])
+  | G.N (G.IdQualified { G.name_last = ((id : G.ident), _);
+                         name_middle = None; _ }) -> Some [ id ]
+  | G.DotAccess (receiver, _, G.FN (G.Id ((id : G.ident), _))) ->
+    Option.map
+      (fun (parts : G.ident list) -> parts @ [ id ])
+      (dotted_idents_of_expr receiver)
+  | _ -> None
+
+let name_of_dotted_idents (parts : G.ident list) : G.name option =
+  match List.rev parts with
+  | [] -> None
+  | [ (id : G.ident) ] -> Some (G.Id (id, G.empty_id_info ()))
+  | (last : G.ident) :: (rev_middle : G.ident list) ->
+    Some
+      (G.IdQualified
+         { G.name_last = (last, None);
+           name_middle =
+             Some
+               (G.QDots
+                  (List.rev_map (fun (id : G.ident) -> (id, None)) rev_middle));
+           name_top = None;
+           name_info = G.empty_id_info () })
+
+(* A type written as a dotted expression ([Svc.Handler]) names a class by a
+   qualified name, and this function keeps every segment of it.  The
+   intrafile resolver reads [qualified_class_name_of_ty] instead, which
+   keeps the last segment only. *)
+let dotted_class_name_of_ty (ty : G.type_) : G.name option =
+  match ty.G.t with
+  | G.TyExpr ({ G.e = G.DotAccess (_, _, G.FN (G.Id _)); _ } as dotted) ->
+    Option.bind (dotted_idents_of_expr dotted) name_of_dotted_idents
+  | _ -> None
+
 let class_name_of_ty (ty : G.type_) : G.name option =
   Option.bind (qualified_class_name_of_ty ty) bare_name_of_qname
 

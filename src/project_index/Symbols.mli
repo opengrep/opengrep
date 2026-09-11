@@ -15,6 +15,7 @@ val methods_by_class :
 val collect_in_ast :
   cfg:Index_lang_rules.t ->
   lang:Lang.t ->
+  resolution:Module_paths.specifier_resolution ->
   module_path:Names.Module_qn.t ->
   file:Fpath.t ->
   AST_generic.program ->

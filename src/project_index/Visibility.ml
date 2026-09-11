@@ -34,7 +34,8 @@ let build_dir_index
     | `Per_package
     | `Per_namespace ->
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
-    | `Per_file -> None
+    | `Per_file
+    | `Per_module -> None
   in
   List.iter (fun (fi : Types.file_info) ->
     match scope_key_opt fi with
@@ -60,7 +61,8 @@ let build_dir_index
    | `Per_namespace ->
      Log.info (fun m -> m "Per-namespace scope: %d namespaces indexed"
        (Hashtbl.length dir_index))
-   | `Per_file -> ());
+   | `Per_file
+   | `Per_module -> ());
   dir_index
 
 let for_file
@@ -76,7 +78,8 @@ let for_file
     | `Per_package
     | `Per_namespace ->
       Some (Names.Module_qn.to_string fi.Types.fi_module_path)
-    | `Per_file -> None
+    | `Per_file
+    | `Per_module -> None
   in
   (match scope_key_opt with
    | None -> ()

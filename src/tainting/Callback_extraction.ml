@@ -510,7 +510,7 @@ let resolved_name_of_fn_id ?(allow_located_fake = false) (fn_id : fn_id)
         let sid =
           (* The definition's own sid, when naming bound it, so that a
              stamp equals the definition's identity. An alias-synthetic
-             bare name (cf. Ts_class_aliases and fn_id_to_node) carries the
+             bare name (cf. fn_id_to_node) carries the
              TARGET's sid under a different name; propagating it points
              at where the def and its signature live. A definition naming
              did not bind is identified by its site. *)

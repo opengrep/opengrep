@@ -7,6 +7,8 @@
    definitions, and Clojure [(ns (:require ...))] forms. *)
 val collect_imports :
   cfg:Index_lang_rules.t ->
+  resolution:Module_paths.specifier_resolution ->
+  current_file:Fpath.t ->
   current_module_path:Names.Module_qn.t ->
   is_init_file:bool ->
   AST_generic.program ->
@@ -14,6 +16,9 @@ val collect_imports :
   * (string * string * Types.import_kind) list
 
 val wildcard_local : string
+
+val record_field_names :
+  AST_generic.expr -> (AST_generic.ident * string) list
 
 type binding =
   | Wildcard_from of Names.Module_qn.t

@@ -1,0 +1,14 @@
+rules:
+  - id: type-only-import-binds-nothing
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A type only import binds a type and no value, so a call written
+      through the imported name resolves to nothing.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

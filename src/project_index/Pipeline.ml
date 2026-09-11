@@ -37,6 +37,7 @@ type file_scope = {
   scope_table : Func_lookup.scope_table;
   bound_class_files : (Names.Class_name.t * Fpath.t) list;
   own_modules : Names.Module_qn.t list;
+  module_aliases : (string, Names.Module_qn.t) Hashtbl.t option;
 }
 
 type ctx = {
@@ -54,6 +55,7 @@ type ctx = {
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   php_region_bindings : Scope_php.region_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
+  module_scope : Scope_module.project_scope;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -65,17 +67,10 @@ type ctx = {
   project_funcs_by_package : (string, Func_info.t list) Hashtbl.t;
   project_class_names : G.name list;
   file_funcs_index : (string, Func_info.t list) Hashtbl.t;
-  default_export_class : (string, G.name) Hashtbl.t;
-  named_export_classes : (string * string, G.name) Hashtbl.t;
-  default_export_fn : (string, Func_info.t) Hashtbl.t;
-  path_suffix_index : (string, string list) Hashtbl.t option;
   slice_element_of_field : (string * string, G.name) Hashtbl.t;
   top_level_node_for : Fpath.t -> Function_id.t;
   visible_names_for_file : file_info -> (string, unit) Hashtbl.t;
   stamp_var_types : stamp_var_types;
-  resolve_ts_specifier :
-    path_suffix_index:(string, string list) Hashtbl.t option ->
-    current_file:Fpath.t -> string -> string list;
   (* (module qn string, exported name) -> module-level bare-name alias
      value, for import-value svalue stamping. See
      [build_value_alias_index]. *)
@@ -182,51 +177,20 @@ let stamp_import_value_aliases
     end
   end
 
-(* Detect ctor/import-derived var classes and stamp them onto
+(* This pass reads the class of a variable from the constructor the
+   variable is initialised with and stamps that class onto
    [id_instance_type].
    Side effect on [visible]: extends it with discovered class names so
    [build_funcs_by_name] keeps their methods. *)
 let stamp_base_var_types
     ~(lang : Lang.t)
     ~(project_class_names : G.name list)
-    ~(default_export_class : (string, G.name) Hashtbl.t)
-    ~(named_export_classes : (string * string, G.name) Hashtbl.t)
-    ~(path_suffix_index : (string, string list) Hashtbl.t option)
-    ~(resolve_ts_specifier :
-        path_suffix_index:(string, string list) Hashtbl.t option ->
-        current_file:Fpath.t -> string -> string list)
     ~(visible : (string, unit) Hashtbl.t)
     (fi : file_info) : unit =
-  let import_facts =
-    List.fold_left (fun acc (local, specifier, kind) ->
-      let candidates =
-        resolve_ts_specifier ~path_suffix_index ~current_file:fi.fi_file specifier
-      in
-      let cls_opt =
-        List.find_map (fun path ->
-          match kind with
-          | I_default -> Hashtbl.find_opt default_export_class path
-          | I_named name ->
-            (match Hashtbl.find_opt named_export_classes (path, name) with
-             | Some _ as found -> found
-             | None -> Hashtbl.find_opt default_export_class path)
-          | I_namespace ->
-            Hashtbl.find_opt default_export_class path
-        ) candidates
-      in
-      match cls_opt with
-      | Some cls ->
-        let local_id = G.Id ((local, Tok.unsafe_fake_tok local),
-                             G.empty_id_info ()) in
-        (local_id, cls) :: acc
-      | None -> acc
-    ) [] fi.fi_import_specifiers
-  in
-  let ctor_facts =
+  let facts =
     Object_initialization.detect_object_initialization
       ~extra_class_names:project_class_names fi.fi_ast lang
   in
-  let facts = import_facts @ ctor_facts in
   List.iter (fun (_var, class_name) ->
     match class_name with
     | G.Id ((name_str, _), _) -> Hashtbl.replace visible name_str ()
@@ -238,6 +202,7 @@ let build_alias_to_module_qn
     ~(cfg : Index_lang_rules.t) (fi : file_info)
   : (string, Names.Module_qn.t) Hashtbl.t option =
   match cfg.Index_lang_rules.unqualified_scope with
+  | `Per_module -> None
   | `Per_file | `Per_directory | `Per_namespace ->
     let tbl : (string, Names.Module_qn.t) Hashtbl.t = Hashtbl.create 16 in
     List.iter (fun (imp : import) ->
@@ -266,11 +231,6 @@ let build_file_funcs_by_package
     ~(project_funcs_by_package : (string, Func_info.t list) Hashtbl.t)
     ~(project_funcs_by_module :
         (Names.Module_qn.t, Func_info.t list) Hashtbl.t)
-    ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
-    ~(path_suffix_index : (string, string list) Hashtbl.t option)
-    ~(resolve_ts_specifier :
-        path_suffix_index:(string, string list) Hashtbl.t option ->
-        current_file:Fpath.t -> string -> string list)
     (fi : file_info)
   : Func_lookup.bare_name_index option =
   (* Import aliases in a per-file table; the shared project table is read
@@ -282,136 +242,29 @@ let build_file_funcs_by_package
       ~front:(Func_lookup.bare_name_index_of_hashtbl aliases)
       ~back:(Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
   in
-  if cfg.Index_lang_rules.unqualified_scope = `Per_directory then begin
-    let alias_extra = List.filter_map (fun (imp : import) ->
-      let target_str = Names.Module_qn.to_string imp.im_target in
-      let basename = Filename.basename target_str in
-      if String.equal imp.im_local basename then None
-      else
-        match Hashtbl.find_opt project_funcs_by_package basename with
+  let alias_extra =
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_directory ->
+      List.filter_map (fun (imp : import) ->
+        let target_str = Names.Module_qn.to_string imp.im_target in
+        let basename = Filename.basename target_str in
+        if String.equal imp.im_local basename then None
+        else
+          match Hashtbl.find_opt project_funcs_by_package basename with
+          | Some fs -> Some (imp.im_local, fs)
+          | None -> None
+      ) fi.fi_imports
+    | `Per_module -> []
+    | `Per_file | `Per_package | `Per_namespace ->
+      List.filter_map (fun (imp : import) ->
+        match Hashtbl.find_opt project_funcs_by_module imp.im_target with
         | Some fs -> Some (imp.im_local, fs)
         | None -> None
-    ) fi.fi_imports in
-    if alias_extra = [] then
-      Some (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
-    else Some (over_project alias_extra)
-  end
-  else begin
-    let alias_extra_ts = List.filter_map (fun (local, specifier, _kind) ->
-      let candidates =
-        resolve_ts_specifier ~path_suffix_index ~current_file:fi.fi_file specifier
-      in
-      let funcs =
-        List.concat_map (fun path ->
-          Option.value (Hashtbl.find_opt file_funcs_index path) ~default:[]
-          (* an import sees the file's methods and free functions, not
-             its nested ones *)
-          |> List.filter (fun (func : Func_info.t) ->
-                 Option.is_some (Func_info.as_method func.Func_info.fn_id)
-                 || Option.is_some (Func_info.as_free func.Func_info.fn_id))
-        ) candidates
-      in
-      if funcs = [] then None else Some (local, funcs)
-    ) fi.fi_import_specifiers in
-    let alias_extra_py = List.filter_map (fun (imp : import) ->
-      match Hashtbl.find_opt project_funcs_by_module imp.im_target with
-      | Some fs -> Some (imp.im_local, fs)
-      | None -> None
-    ) fi.fi_imports in
-    let alias_extra = alias_extra_ts @ alias_extra_py in
-    if alias_extra = [] then
-      Some (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
-    else Some (over_project alias_extra)
-  end
-
-let build_import_target_files
-    ~(path_suffix_index : (string, string list) Hashtbl.t option)
-    ~(resolve_ts_specifier :
-        path_suffix_index:(string, string list) Hashtbl.t option ->
-        current_file:Fpath.t -> string -> string list)
-    (fi : file_info)
-  : (string, (string, unit) Hashtbl.t) Hashtbl.t =
-  let target_files = Hashtbl.create 64 in
-  let add_under (key : string) (candidates : string list) =
-    let set =
-      match Hashtbl.find_opt target_files key with
-      | Some file_set -> file_set
-      | None ->
-        let file_set = Hashtbl.create 4 in
-        Hashtbl.replace target_files key file_set; file_set
-    in
-    List.iter (fun path -> Hashtbl.replace set path ()) candidates
+      ) fi.fi_imports
   in
-  List.iter (fun (local, specifier, kind) ->
-    let candidates =
-      resolve_ts_specifier ~path_suffix_index ~current_file:fi.fi_file specifier
-    in
-    if candidates <> [] then begin
-      add_under local candidates;
-      (* Also record the EXPORTED name: method groups are keyed by the
-         class's own name, so an aliased import must contribute its files
-         under that name too — otherwise narrowing sees only the files of
-         the unaliased import and drops the aliased class's methods. *)
-      match kind with
-      | I_named exported when not (String.equal local exported) ->
-        add_under exported candidates
-      | _ -> ()
-    end
-  ) fi.fi_import_specifiers;
-  target_files
-
-(* Local name -> (exported name, files exporting it) for named imports
-   bound under a different local name.  Per file, like every other import
-   index: the binding exists only in the file that wrote the import.  The
-   alias names its origin exactly, which is what tells two same-named
-   imported classes apart at a call site. *)
-let build_class_aliases
-    ~(path_suffix_index : (string, string list) Hashtbl.t option)
-    ~(resolve_ts_specifier :
-        path_suffix_index:(string, string list) Hashtbl.t option ->
-        current_file:Fpath.t -> string -> string list)
-    (fi : file_info)
-  : (string, string * Func_lookup.name_set) Hashtbl.t =
-  let tbl = Hashtbl.create 8 in
-  List.iter (fun (local, specifier, kind) ->
-    match kind with
-    | I_named exported when not (String.equal local exported) ->
-      let candidates =
-        resolve_ts_specifier ~path_suffix_index ~current_file:fi.fi_file
-          specifier
-      in
-      if candidates <> [] then begin
-        let file_set = Hashtbl.create 4 in
-        List.iter (fun path -> Hashtbl.replace file_set path ()) candidates;
-        Hashtbl.replace tbl local
-          (exported, Func_lookup.name_set_of_hashtbl file_set)
-      end
-    | _ -> ())
-    fi.fi_import_specifiers;
-  tbl
-
-(* Restrict an imported class's colliding methods to the file(s) it was
-   imported from (keyed by the import's local name) or the caller's own
-   file. *)
-let narrow_methods_by_import_files
-    ~(import_target_files : (string, (string, unit) Hashtbl.t) Hashtbl.t)
-    ~(file_of_func : Func_info.t -> string option)
-    ~(caller_file : string)
-    (ts : Type_state.t) : Type_state.t =
-  let keep_file (cls_name : Names.Class_name.t) (file : string) : bool =
-    String.equal file caller_file
-    || (match
-          Hashtbl.find_opt import_target_files
-            (Names.Class_name.to_string cls_name)
-        with
-       | Some target_set -> Hashtbl.mem target_set file
-       | None -> false)
-  in
-  Type_state.narrow ~keep_file ~file_of_func
-    ~classes:
-      (Hashtbl.fold (fun cls _ acc -> Names.Class_name.of_string cls :: acc)
-         import_target_files [])
-    ts
+  match alias_extra with
+  | [] -> Some (Func_lookup.bare_name_index_of_hashtbl project_funcs_by_package)
+  | _ :: _ -> Some (over_project alias_extra)
 
 (* Restrict colliding methods to files the caller itself requires (whole-file
    "*" import specifiers, Ruby [require_relative]) or the caller's own file.
@@ -456,7 +309,8 @@ let narrow_methods_by_required_files
 let resolves_by_binding (lang : Lang.t) : bool =
   match lang with
   | Lang.Python | Lang.Python2 | Lang.Python3
-  | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php -> true
+  | Lang.Java | Lang.Kotlin | Lang.Csharp | Lang.Php
+  | Lang.Js | Lang.Ts -> true
   | _ -> false
 
 let definition_of_target
@@ -494,6 +348,7 @@ let build_scope_table
     ~(global_imports : import list)
     ~(php_region_bindings : Scope_php.region_bindings Common.SMap.t)
     ~(php_global_bindings : Scope_binding.positioned_binding list)
+    ~(module_scope : Scope_module.project_scope)
     (fi : file_info) : file_scope option =
   if
     not (resolves_by_binding lang)
@@ -509,7 +364,7 @@ let build_scope_table
           ~nested_types_by_class ~global_imports fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
-             bound_class_files; own_modules = [] }
+             bound_class_files; own_modules = []; module_aliases = None }
     | `Per_namespace ->
       let bindings, own_modules =
         Scope_php.build ~definitions_by_qn
@@ -518,7 +373,18 @@ let build_scope_table
           ~classes_by_file ~class_parent_paths ~file_funcs_index fi
       in
       Some { scope_table = Func_lookup.scope_table_of_map bindings;
-             bound_class_files = []; own_modules }
+             bound_class_files = []; own_modules;
+             module_aliases = None }
+    | `Per_module ->
+      let bound =
+        Scope_module.build ~scope:module_scope ~classes_by_file
+          ~class_parent_paths ~file_funcs_index fi
+      in
+      Some { scope_table =
+               Func_lookup.scope_table_of_map bound.Scope_module.fb_scope;
+             bound_class_files = bound.Scope_module.fb_class_files;
+             own_modules = bound.Scope_module.fb_own_modules;
+             module_aliases = Some bound.Scope_module.fb_module_aliases }
     | `Per_file
     | `Per_directory ->
     let fi_file_str = Fpath.to_string fi.fi_file in
@@ -586,7 +452,7 @@ let build_scope_table
              Func_lookup.scope_table_of_map
                (Scope_binding.bindings_of_positioned
                   (own_bindings @ own_classes @ List.rev imported));
-           bound_class_files; own_modules = [] }
+           bound_class_files; own_modules = []; module_aliases = None }
 
 let narrow_methods_by_bound_files
     ~(bound_class_files : (Names.Class_name.t * Fpath.t) list)
@@ -632,17 +498,8 @@ let build_same_file_funcs_by_name
 let build_funcs_by_name
     ~(visible : (string, unit) Hashtbl.t)
     ~(project_funcs_by_name : (string, Func_info.t list) Hashtbl.t)
-    ~(default_export_fn : (string, Func_info.t) Hashtbl.t)
-    ~(path_suffix_index : (string, string list) Hashtbl.t option)
-    ~(resolve_ts_specifier :
-        path_suffix_index:(string, string list) Hashtbl.t option ->
-        current_file:Fpath.t -> string -> string list)
-    ~(import_target_files :
-        (string, (string, unit) Hashtbl.t) Hashtbl.t)
-    ~(func_file_opt : Func_info.t -> string option)
     ~(func_in_caller_file : Func_info.t -> bool)
-    (fi : file_info)
-  : (string, Func_info.t list) Hashtbl.t option =
+    () : (string, Func_info.t list) Hashtbl.t option =
   let tbl = Hashtbl.create (Hashtbl.length visible) in
   Hashtbl.iter (fun name () ->
     match Hashtbl.find_opt project_funcs_by_name name with
@@ -653,106 +510,10 @@ let build_funcs_by_name
         | Some (cls, _) -> Hashtbl.mem visible (fst cls.IL.ident)
         | None -> true
       ) fs in
-      let kept =
-        match Hashtbl.find_opt import_target_files name with
-        | None -> kept
-        | Some target_set ->
-          let matches = List.filter (fun func ->
-            func_in_caller_file func
-            || (match func_file_opt func with
-                | Some file_str -> Hashtbl.mem target_set file_str
-                | None -> false)
-          ) kept in
-          if matches <> [] then matches else kept
-      in
       let same, other = List.partition func_in_caller_file kept in
       let kept = same @ other in
       if kept <> [] then Hashtbl.replace tbl name kept
   ) visible;
-  List.iter (fun (local, specifier, kind) ->
-    match kind with
-    | I_default ->
-      let candidates =
-        resolve_ts_specifier ~path_suffix_index ~current_file:fi.fi_file specifier
-      in
-      List.iter (fun path ->
-        match Hashtbl.find_opt default_export_fn path with
-        | None -> ()
-        | Some target ->
-          (* The target is exposed under the importer's local name at the
-             target's identity. The synthetic bare name carries [local] at
-             the target's position and sid, so a name lookup finds [local]
-             while [fn_id_to_node] and [resolved_name_of_fn_id] resolve to the
-             target's real vertex, which holds its body and signature.
-             [Ts_class_aliases] and Reexports.expose_free_as use the same
-             convention of one position with two names. A lambda default
-             export (the synthetic [_module_exports_default], with no real
-             vertex) stays unresolved. *)
-          (match Func_info.bare_name target.Func_info.fn_id with
-           | None -> ()
-           | Some (tname : IL.name) ->
-             let alias_ii = G.empty_id_info () in
-             alias_ii.G.id_resolved :=
-               (match !(tname.IL.id_info.G.id_resolved) with
-                | Some _ as r -> r
-                | None -> Some (G.Global, tname.IL.sid));
-             let il_name = IL.{
-               ident = (local, snd tname.IL.ident);
-               sid = tname.IL.sid;
-               id_info = alias_ii;
-             } in
-             let synth : Func_info.t = {
-               fn_id = [None; Some il_name];
-               entity = target.Func_info.entity;
-               fdef = target.Func_info.fdef;
-             } in
-             let cur = Option.value (Hashtbl.find_opt tbl local) ~default:[] in
-             Hashtbl.replace tbl local (synth :: cur))
-      ) candidates
-    (* [import { f as g }]: the call site writes [g], which names no
-       project function.  Expose the target under [local] at the TARGET's
-       identity, exactly as the default-import branch above does. *)
-    | I_named orig_name when not (String.equal local orig_name) ->
-      let candidates =
-        resolve_ts_specifier ~path_suffix_index ~current_file:fi.fi_file specifier
-      in
-      let target_files = Hashtbl.create (List.length candidates) in
-      List.iter (fun path -> Hashtbl.replace target_files path ()) candidates;
-      (match Hashtbl.find_opt project_funcs_by_name orig_name with
-       | None -> ()
-       | Some fs ->
-         List.iter (fun (target : Func_info.t) ->
-           let from_target_file =
-             match func_file_opt target with
-             | Some file_str -> Hashtbl.mem target_files file_str
-             | None -> false
-           in
-           if from_target_file then
-             match Func_info.bare_name target.Func_info.fn_id with
-             | None -> ()
-             | Some (tname : IL.name) ->
-               let alias_ii = G.empty_id_info () in
-               alias_ii.G.id_resolved :=
-                 (match !(tname.IL.id_info.G.id_resolved) with
-                  | Some _ as r -> r
-                  | None -> Some (G.Global, tname.IL.sid));
-               let il_name = IL.{
-                 ident = (local, snd tname.IL.ident);
-                 sid = tname.IL.sid;
-                 id_info = alias_ii;
-               } in
-               let synth : Func_info.t = {
-                 fn_id = [None; Some il_name];
-                 entity = target.Func_info.entity;
-                 fdef = target.Func_info.fdef;
-               } in
-               let cur =
-                 Option.value (Hashtbl.find_opt tbl local) ~default:[]
-               in
-               Hashtbl.replace tbl local (synth :: cur))
-           fs)
-    | _ -> ()
-  ) fi.fi_import_specifiers;
   Some tbl
 
 (* Imported module singletons: stamp [local]'s occurrences with the
@@ -804,16 +565,15 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         attributes_by_module; dunder_all;
         resolution_orders; class_qn_by_definition; methods_by_class;
         extensions_by_module; nested_types_by_class;
-        php_region_bindings; php_global_bindings;
+        php_region_bindings; php_global_bindings; module_scope;
         classes_by_file; class_parent_paths; global_imports;
         project_constructors;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
         project_funcs_by_package; project_class_names;
         file_funcs_index;
-        default_export_class; named_export_classes; default_export_fn;
-        path_suffix_index; slice_element_of_field;
+        slice_element_of_field;
         top_level_node_for; visible_names_for_file;
-        stamp_var_types; resolve_ts_specifier; value_alias_index } = ctx in
+        stamp_var_types; value_alias_index } = ctx in
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
   in
@@ -830,36 +590,34 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     in
     (* Must run before [build_funcs_by_name]: augments [visible] with cross-file class targets it filters on. *)
     staged "stamp base var types + import aliases" (fun () ->
-      stamp_base_var_types ~lang ~project_class_names
-        ~default_export_class ~named_export_classes
-        ~path_suffix_index ~resolve_ts_specifier ~visible fi;
+      stamp_base_var_types ~lang ~project_class_names ~visible fi;
       stamp_import_value_aliases ~value_alias_index fi);
-    let alias_to_module_qn =
-      staged "alias to module map" (fun () -> build_alias_to_module_qn ~cfg fi)
-    in
-    let funcs_by_module_qn
-      : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
-      match cfg.Index_lang_rules.unqualified_scope with
-      | `Per_file | `Per_directory -> Some project_funcs_by_module
-      | _ -> None
-    in
-    let file_funcs_by_package =
-      staged "file funcs by package" @@ fun () ->
-      build_file_funcs_by_package ~cfg ~project_funcs_by_package
-        ~project_funcs_by_module ~file_funcs_index
-        ~path_suffix_index ~resolve_ts_specifier fi
-    in
-    let import_target_files =
-      staged "import target files" @@ fun () ->
-      build_import_target_files ~path_suffix_index ~resolve_ts_specifier fi
-    in
     let file_scope =
       staged "scope table" @@ fun () ->
       build_scope_table ~lang ~cfg ~definitions_by_qn
         ~file_funcs_index ~attributes_by_module ~dunder_all ~classes_by_file
         ~class_parent_paths ~resolution_orders ~methods_by_class
         ~extensions_by_module ~nested_types_by_class ~global_imports
-        ~php_region_bindings ~php_global_bindings fi
+        ~php_region_bindings ~php_global_bindings ~module_scope fi
+    in
+    let alias_to_module_qn =
+      staged "alias to module map" @@ fun () ->
+      match file_scope with
+      | Some { module_aliases = Some (aliases : (string, Names.Module_qn.t) Hashtbl.t); _ } ->
+        if Int.equal (Hashtbl.length aliases) 0 then None else Some aliases
+      | Some { module_aliases = None; _ }
+      | None -> build_alias_to_module_qn ~cfg fi
+    in
+    let funcs_by_module_qn
+      : (Names.Module_qn.t, FA.func_info list) Hashtbl.t option =
+      match cfg.Index_lang_rules.unqualified_scope with
+      | `Per_file | `Per_directory -> Some project_funcs_by_module
+      | `Per_package | `Per_namespace | `Per_module -> None
+    in
+    let file_funcs_by_package =
+      staged "file funcs by package" @@ fun () ->
+      build_file_funcs_by_package ~cfg ~project_funcs_by_package
+        ~project_funcs_by_module fi
     in
     let file_type_state =
       staged "narrow methods by imports/required files" @@ fun () ->
@@ -876,11 +634,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
                fi.fi_imports)
           ~file_of_func:func_file_opt type_state
       in
-      if cfg.Index_lang_rules.narrow_methods_by_import_files then
-        narrow_methods_by_import_files ~import_target_files
-          ~file_of_func:func_file_opt ~caller_file:fi_file_str base
-      else
-        match required_files_narrowing with
+      match required_files_narrowing with
         | Some (narrowing : required_files_narrowing) ->
           let required_specs =
             List.filter_map (fun (local, spec, _kind) ->
@@ -898,9 +652,7 @@ let edges_for_file (ctx : ctx) (fi : file_info)
     in
     let funcs_by_name =
       staged "funcs_by_name table" @@ fun () ->
-      build_funcs_by_name ~visible ~project_funcs_by_name ~default_export_fn
-        ~path_suffix_index ~resolve_ts_specifier ~import_target_files
-        ~func_file_opt ~func_in_caller_file fi
+      build_funcs_by_name ~visible ~project_funcs_by_name ~func_in_caller_file ()
     in
     let func_lookup =
       staged "func_lookup create" @@ fun () ->
@@ -918,9 +670,6 @@ let edges_for_file (ctx : ctx) (fi : file_info)
         ?funcs_by_package:file_funcs_by_package
         ~file_module_qn:
           (Func_lookup.file_module_index_of_hashtbl file_module_qn)
-        ~class_aliases:
-          (Func_lookup.class_alias_index_of_hashtbl
-             (build_class_aliases ~path_suffix_index ~resolve_ts_specifier fi))
         ?constructors:
           (Option.bind funcs_by_name
              (Func_lookup.constructor_index_of_hashtbl ~lang))

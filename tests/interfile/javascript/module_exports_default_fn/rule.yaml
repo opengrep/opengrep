@@ -1,0 +1,14 @@
+rules:
+  - id: module-exports-default-fn
+    languages: [js]
+    severity: ERROR
+    message: >
+      An assignment to module.exports makes that definition the module's
+      default export, so a require of a.js names a.js's run.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

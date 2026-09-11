@@ -1,0 +1,14 @@
+rules:
+  - id: named-import-binds-one-of-two
+    languages: [ts]
+    severity: ERROR
+    message: >
+      The import names a.ts, so run(source()) reaches a.ts's run and not
+      the same-named run of b.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

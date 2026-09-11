@@ -356,7 +356,7 @@ and stmt x =
       G.OtherStmt (G.OS_Todo, G.TodoK v1 :: v2) |> G.s
   | M v1 ->
       let v1 = module_directive v1 in
-      G.DirectiveStmt (v1 |> G.d) |> G.s
+      G.DirectiveStmt v1 |> G.s
   | DefStmt v1 ->
       let v1 = definition v1 in
       G.DefStmt v1 |> G.s
@@ -764,12 +764,29 @@ and alias v1 =
   let v1 = name v1 in
   (v1, G.empty_id_info ())
 
+and import_attrs (tok : tok) (role : import_role) (binding : import_binding) :
+    G.attribute list =
+  (match role with
+  | Import_binds -> []
+  | Import_reexports -> [ G.KeywordAttr (G.Reexport, tok) ])
+  @
+  match binding with
+  | Binds_value -> []
+  | Binds_type -> [ G.KeywordAttr (G.TypeOnly, tok) ]
+
 and module_directive x =
   match x with
-  | ReExportNamespace (v1, _v2, _opt_alias, _v3, v4) ->
+  | ReExportNamespace (v1, v2, opt_alias, _v3, v4) ->
       let v4 = filename v4 in
-      G.OtherDirective (("ReExportNamespace", v1), [ G.Str (fb v4) ])
-  | Import (t, v1, v2) ->
+      let d_attrs = [ G.KeywordAttr (G.Reexport, v1) ] in
+      {
+        (match opt_alias with
+        | None -> G.ImportAll (v1, G.FileName v4, v2) |> G.d
+        | Some a -> G.ImportAs (v1, G.FileName v4, Some (alias a)) |> G.d)
+        with
+        G.d_attrs;
+      }
+  | Import (t, role, binding, v1, v2) ->
       let v1 =
         List_.map
           (fun (v1, v2) ->
@@ -778,26 +795,54 @@ and module_directive x =
           v1
       in
       let v2 = filename v2 in
-      G.ImportFrom (t, G.FileName v2, v1)
-  | ModuleAlias (t, v1, v2) ->
+      {
+        (G.ImportFrom (t, G.FileName v2, v1) |> G.d) with
+        G.d_attrs = import_attrs t role binding;
+      }
+  | ModuleAlias (t, binding, v1, v2) ->
       let v1 = alias v1 and v2 = filename v2 in
-      G.ImportAs (t, G.FileName v2, Some v1)
+      {
+        (G.ImportAs (t, G.FileName v2, Some v1) |> G.d) with
+        G.d_attrs = import_attrs t Import_binds binding;
+      }
+  | ImportAlias (t, v1, v2) ->
+      let v1 = alias v1 and v2 = List_.map name v2 in
+      G.ImportAs (t, G.DottedName v2, Some v1) |> G.d
   (* sgrep: we used to convert this in an OI_ImportEffect, but
    * we now want import "foo" to be used to match any form of import
    *)
   | ImportFile (t, v1) ->
       let v1 = name v1 in
       (* old: G.OtherDirective (G.OI_ImportEffect, [G.I v1]) *)
-      G.ImportAs (t, G.FileName v1, None)
+      G.ImportAs (t, G.FileName v1, None) |> G.d
   | Export (t, v1) ->
       let v1 = name v1 in
-      G.OtherDirective (("Export", t), [ G.I v1 ])
+      G.OtherDirective (("Export", t), [ G.I v1 ]) |> G.d
+
+and namespace_region_stmts (ent : entity) (body : stmt option) : G.stmt list =
+  let v1 = name ent.name in
+  let items =
+    match body with
+    | None -> []
+    | Some st -> (
+        let s = stmt st in
+        match s.G.s with
+        | G.Block (_, xs, _) -> xs
+        | _ -> [ s ])
+  in
+  ((G.DirectiveStmt (G.Package (snd v1, [ v1 ]) |> G.d) |> G.s) :: items)
+  @ [ G.DirectiveStmt (G.PackageEnd (snd v1) |> G.d) |> G.s ]
 
 and list_stmt xs =
   (* converting require() in import, so they can benefit from the
    * other goodies coming with import in semgrep (e.g., equivalence aliasing)
    *)
-  xs |> List_.map (fun st -> [ stmt st ]) |> List_.flatten
+  xs
+  |> List_.map (fun st ->
+         match st with
+         | DefStmt (ent, ModuleDef body) -> namespace_region_stmts ent body
+         | _ -> [ stmt st ])
+  |> List_.flatten
 
 and program v = list_stmt v
 

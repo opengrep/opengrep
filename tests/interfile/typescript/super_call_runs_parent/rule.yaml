@@ -1,0 +1,14 @@
+rules:
+  - id: super-call-runs-parent
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A super call resolves on the enclosing class's order with the head
+      dropped, so Child's handle reaches Base's handle.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

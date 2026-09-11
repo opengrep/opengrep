@@ -537,20 +537,26 @@ and module_directive =
    * when you do 'import "react"' to get a resolved path).
    * See Module_path_js to resolve paths.
    *)
-  | Import of tok * import_specifier list * a_filename
+  | Import of
+      tok * import_role * import_binding * import_specifier list * a_filename
   | Export of tok * a_ident
   (* export * from 'foo'
      export * as bar from 'foo' *)
   | ReExportNamespace of tok * tok * a_ident option * tok * a_filename
   (* hard to unsugar in Import because we do not have the list of names *)
   | ModuleAlias of
-      tok * a_ident * a_filename (* import * as 'name' from 'file' *)
+      tok * import_binding * a_ident
+      * a_filename (* import * as 'name' from 'file' *)
+  | ImportAlias of tok * a_ident * a_ident list
   (* those should not exist (except for sgrep where they are useful),
    * unless file is a CSS file.
    *)
   | ImportFile of tok * a_filename
 
 and import_specifier = a_ident * a_ident option
+
+and import_role = Import_binds | Import_reexports
+and import_binding = Binds_value | Binds_type
 
 (* 'name1 as name2' *)
 (*  [@@deriving show { with_path = false} ] *)

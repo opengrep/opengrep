@@ -1,0 +1,15 @@
+rules:
+  - id: typed-receiver-selects-class
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A parameter's declared type names the class the file binds, so the
+      method call reaches a.ts's Store and not the same-named class of
+      b.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

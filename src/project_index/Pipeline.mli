@@ -29,6 +29,7 @@ type file_scope = {
   scope_table : Func_lookup.scope_table;
   bound_class_files : (Names.Class_name.t * Fpath.t) list;
   own_modules : Names.Module_qn.t list;
+  module_aliases : (string, Names.Module_qn.t) Hashtbl.t option;
 }
 
 type ctx = {
@@ -46,6 +47,7 @@ type ctx = {
   nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   php_region_bindings : Scope_php.region_bindings Common.SMap.t;
   php_global_bindings : Scope_binding.positioned_binding list;
+  module_scope : Scope_module.project_scope;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   global_imports : import list;
@@ -57,17 +59,10 @@ type ctx = {
   project_funcs_by_package : (string, Func_info.t list) Hashtbl.t;
   project_class_names : G.name list;
   file_funcs_index : (string, Func_info.t list) Hashtbl.t;
-  default_export_class : (string, G.name) Hashtbl.t;
-  named_export_classes : (string * string, G.name) Hashtbl.t;
-  default_export_fn : (string, Func_info.t) Hashtbl.t;
-  path_suffix_index : (string, string list) Hashtbl.t option;
   slice_element_of_field : (string * string, G.name) Hashtbl.t;
   top_level_node_for : Fpath.t -> Function_id.t;
   visible_names_for_file : file_info -> (string, unit) Hashtbl.t;
   stamp_var_types : stamp_var_types;
-  resolve_ts_specifier :
-    path_suffix_index:(string, string list) Hashtbl.t option ->
-    current_file:Fpath.t -> string -> string list;
   (* (module qn string, exported name) -> module-level bare-name alias
      value; see [build_value_alias_index]. *)
   value_alias_index : (string * string, AST_generic.expr) Hashtbl.t;
@@ -96,6 +91,7 @@ val build_scope_table :
   global_imports:import list ->
   php_region_bindings:Scope_php.region_bindings Common.SMap.t ->
   php_global_bindings:Scope_binding.positioned_binding list ->
+  module_scope:Scope_module.project_scope ->
   file_info ->
   file_scope option
 

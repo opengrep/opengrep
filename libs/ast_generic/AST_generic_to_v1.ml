@@ -692,6 +692,8 @@ and map_keyword_attribute = function
   | Extern -> Left `Extern
   | GlobalScope -> Right "global"
   | Callable -> Right "function"
+  | TypeOnly -> Right "type"
+  | Reexport -> Right "reexport"
   | Public -> Left `Public
   | Private -> Left `Private
   | Protected -> Left `Protected

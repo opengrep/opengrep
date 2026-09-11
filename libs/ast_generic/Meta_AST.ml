@@ -799,6 +799,8 @@ and vof_keyword_attribute = function
   | Throws -> OCaml.VSum ("Throws", [])
   | Rethrows -> OCaml.VSum ("Rethrows", [])
   | Callable -> OCaml.VSum ("Callable", [])
+  | TypeOnly -> OCaml.VSum ("TypeOnly", [])
+  | Reexport -> OCaml.VSum ("Reexport", [])
   | GlobalScope -> OCaml.VSum ("GlobalScope", [])
 
 and vof_attribute = function

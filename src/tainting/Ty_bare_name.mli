@@ -12,6 +12,10 @@ val qualifier_of_name : G.name -> string option
 (* Keeps the qualifier; strips pointer/ref but not generic application. *)
 val qualified_class_name_of_ty : G.type_ -> G.name option
 
+(* The qualified name of a type written as a dotted expression; [None] for
+   every other shape. *)
+val dotted_class_name_of_ty : G.type_ -> G.name option
+
 val class_name_of_ty : G.type_ -> G.name option
 
 (* Like [class_name_of_ty] but also unwraps generics/pointer-ref;

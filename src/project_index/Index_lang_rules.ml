@@ -5,6 +5,11 @@ type wrapper = {
   w_frozen_default : bool;
 }
 
+type project_discovery = {
+  excludes : string list;
+  module_paths : (string * string list) list;
+}
+
 type t = {
   is_init_file : Fpath.t -> bool;
   is_stub_file : Fpath.t -> bool;
@@ -23,7 +28,8 @@ type t = {
   has_reexports : bool;
   include_anonymous_funcs : bool;
   unqualified_scope :
-    [ `Per_file | `Per_directory | `Per_package | `Per_namespace ];
+    [ `Per_file | `Per_directory | `Per_package | `Per_namespace
+    | `Per_module ];
   (* This language's [Package]/[PackageEnd] directives ([namespace] blocks in
      C++/PHP, [package] clauses in Java/Kotlin/Scala) are qn scopes: a class is
      qualified by the region open at its definition, so several or nested
@@ -37,7 +43,7 @@ type t = {
      file's [module_path] is still tracked (for require-relative / indexing) —
      only the class qn drops it. *)
   class_identity_is_constant_path : bool;
-  discover_excludes : project_root:Fpath.t -> string list;
+  discover_project : project_root:Fpath.t -> project_discovery;
   class_def_reshape :
     G.entity -> G.definition_kind -> (G.entity * G.definition_kind) option;
   narrow_methods_by_imports :
@@ -45,11 +51,6 @@ type t = {
     file_of_func:(Func_info.t -> string option) ->
     Type_state.t ->
     Type_state.t;
-  (* When true, restrict each imported class's methods to the file(s) it was
-     actually imported from (resolved via the path-suffix index).  Disambiguates
-     same-named classes across files at method dispatch — e.g. TS/JS default
-     imports where two files each `export default class Handler`. *)
-  narrow_methods_by_import_files : bool;
   (* When true, restrict same-named colliding methods to the files the caller
      itself requires (whole-file "*" import specifiers — Ruby
      [require_relative], PHP [require]/[include]).  These languages bind no
@@ -248,11 +249,11 @@ let default : t = {
   unqualified_scope = `Per_file;
   package_directive_is_namespace = false;
   class_identity_is_constant_path = false;
-  discover_excludes = (fun ~project_root:_ -> []);
+  discover_project =
+    (fun ~project_root:_ -> { excludes = []; module_paths = [] });
   class_def_reshape = (fun _ _ -> None);
   narrow_methods_by_imports =
     (fun ~fi_imports:_ ~file_of_func:_ ts -> ts);
-  narrow_methods_by_import_files = false;
   narrow_methods_by_required_files = false;
   strip_field_sigil = (fun s -> s);
   class_constructor_synth_fields = (fun _ -> []);
@@ -427,10 +428,15 @@ let typescript_class_constructor_synth_fields
     | _ -> None)
 
 let typescript : t = { default with
+  walks_inheritance = true;
   include_anonymous_funcs = false;
-  discover_excludes = Ts_modules.discover_excludes;
+  discover_project =
+    (fun ~(project_root : Fpath.t) ->
+      let excludes, module_paths = Ts_modules.discover ~project_root in
+      { excludes; module_paths });
   class_constructor_synth_fields = typescript_class_constructor_synth_fields;
-  narrow_methods_by_import_files = true;
+  unqualified_scope = `Per_module;
+  package_directive_is_namespace = true;
 }
 
 let php_strip_field_sigil (field : string) : string =

@@ -1,0 +1,14 @@
+rules:
+  - id: require-binds-module
+    languages: [js]
+    severity: ERROR
+    message: >
+      A require bound to a name binds the target module, so lib.run names
+      a.js's export and not the same-named export of b.js.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

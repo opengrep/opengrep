@@ -81,7 +81,9 @@ let import_binds_kind (imp : import)
   | Types.Binds_function, Function_definitions _ -> true
   | Types.Binds_any, Function_definitions _
   | Types.Binds_function, Class_definition _
-  | Types.Binds_constant, _ -> false
+  | Types.Binds_constant, _
+  | Types.Binds_type, _
+  | Types.Binds_module, _ -> false
 
 let build
     ~(definitions_by_qn : definition Common.SMap.t)

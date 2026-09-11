@@ -64,9 +64,14 @@ let build_by_module
   end
   | _ -> h
 
+type exported_names =
+  | Every_definition_is_an_attribute
+  | Only_exported_names of unit Common.SMap.t Common.SMap.t
+
 let build_attributes_by_module
     ~(cfg : Index_lang_rules.t)
     ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
+    ~(exported : exported_names)
     ~(definitions_by_qn : Types.definition Common.SMap.t)
     ~(file_infos : Types.file_info list)
   : Func_lookup.module_attributes =
@@ -114,7 +119,8 @@ let build_attributes_by_module
   let imports_bind_attributes =
     match cfg.Index_lang_rules.unqualified_scope with
     | `Per_package
-    | `Per_namespace -> false
+    | `Per_namespace
+    | `Per_module -> false
     | `Per_file
     | `Per_directory -> true
   in
@@ -139,13 +145,22 @@ let build_attributes_by_module
             | Some (definition : Types.definition) ->
               add module_key local (attribute_of definition) attributes)
   in
+  let is_attribute (module_key : string) (name : string) : bool =
+    match exported with
+    | Every_definition_is_an_attribute -> true
+    | Only_exported_names (names : unit Common.SMap.t Common.SMap.t) ->
+      Option.fold ~none:false
+        ~some:(fun (bound : unit Common.SMap.t) -> Common.SMap.mem name bound)
+        (Common.SMap.find_opt module_key names)
+  in
   let with_own_definitions =
     Common.SMap.fold
       (fun (qn : string) (definition : Types.definition)
            (attributes : Func_lookup.module_attributes) ->
         match Names.Def_qn.split_last (Names.Def_qn.of_string qn) with
         | Some ((parent : Names.Def_qn.t), (name : string))
-          when Common.SMap.mem (Names.Def_qn.to_string parent) module_qns ->
+          when Common.SMap.mem (Names.Def_qn.to_string parent) module_qns
+               && is_attribute (Names.Def_qn.to_string parent) name ->
           add (Names.Def_qn.to_string parent) name
             (attribute_of definition) attributes
         | Some _

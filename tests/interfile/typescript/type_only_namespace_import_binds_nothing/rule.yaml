@@ -1,0 +1,15 @@
+rules:
+  - id: type-only-namespace-import-binds-nothing
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A type only namespace import binds a type and no value, so the call
+      through it resolves to nothing, while the same call through a value
+      namespace import reaches the module it names.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

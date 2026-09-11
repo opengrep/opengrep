@@ -4,9 +4,14 @@ val build_by_package :
   Graph_from_AST.func_info list ->
   (string, Graph_from_AST.func_info list) Hashtbl.t
 
+type exported_names =
+  | Every_definition_is_an_attribute
+  | Only_exported_names of unit Common.SMap.t Common.SMap.t
+
 val build_attributes_by_module :
   cfg:Index_lang_rules.t ->
   dunder_all:(string, unit) Hashtbl.t Common.SMap.t ->
+  exported:exported_names ->
   definitions_by_qn:Types.definition Common.SMap.t ->
   file_infos:Types.file_info list ->
   Func_lookup.module_attributes

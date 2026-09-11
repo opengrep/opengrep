@@ -1,0 +1,14 @@
+rules:
+  - id: reexport-star-as-namespace
+    languages: [ts]
+    severity: ERROR
+    message: >
+      A star re-export with an alias exports the target module under that
+      name, so svc.run reaches a.ts's run.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
