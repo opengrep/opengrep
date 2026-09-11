@@ -1,0 +1,12 @@
+rules:
+  - id: on-demand-import-binds-util
+    languages: [java]
+    message: An import on demand binds every type of one package and no type of another.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

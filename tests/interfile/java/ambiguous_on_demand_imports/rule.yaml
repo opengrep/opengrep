@@ -1,0 +1,12 @@
+rules:
+  - id: ambiguous-on-demand-imports
+    languages: [java]
+    message: Two imports on demand that bind one simple name leave it unbound.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

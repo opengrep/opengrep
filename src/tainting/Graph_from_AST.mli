@@ -43,7 +43,8 @@ val extract_calls :
   lang : Lang.t ->
   identify_callee : Callee_resolution.call_site_resolver ->
   identify_callback : Callback_extraction.callback_site_resolver ->
-  ?all_funcs : func_info list ->
+  resolve_construction : Callee_resolution.construction_resolver ->
+  resolve_invocation : Callee_resolution.invocation_resolver ->
   func_lookup : Func_lookup.t ->
   ?caller_parent_path : fn_id ->
   AST_generic.function_definition ->

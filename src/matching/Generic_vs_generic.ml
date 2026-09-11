@@ -3368,6 +3368,7 @@ and can_skip_special_cases lang =
       fun p ->
         match p with
         | G.Param p when List.exists is_extern p.pattrs -> true
+        | G.ParamReceiver _ -> true
         | _ -> false
   else
     fun _ -> false

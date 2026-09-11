@@ -461,6 +461,12 @@ let is_constructor (lang : Lang.t) (func_name : string)
 let get_constructor_names (lang : Lang.t) : string list =
   (Lang_config.get lang).constructor_names
 
+let constructor_names_of_class ~(lang : Lang.t) ~(class_name : string)
+    : string list =
+  let configured = get_constructor_names lang in
+  if List.exists (String.equal class_name) configured then configured
+  else class_name :: configured
+
 (* Check if language uses 'new' keyword *)
 let uses_new_keyword (lang : Lang.t) : bool =
   (Lang_config.get lang).uses_new_keyword

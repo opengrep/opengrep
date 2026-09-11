@@ -382,47 +382,66 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
      class reopened across files shares one qn and parent resolution scores on
      the lexical constant path, not the filename.  [fi_module_path] keeps the
      real [module_path] for require-relative / indexing. *)
+  let root_namespace_qn =
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_package -> true
+    | `Per_file
+    | `Per_directory -> cfg.Index_lang_rules.class_identity_is_constant_path
+  in
   let qn_module_path =
-    if cfg.Index_lang_rules.class_identity_is_constant_path
-    then Names.Module_qn.empty else module_path
+    if root_namespace_qn then Names.Module_qn.empty else module_path
   in
   let module_path_of_regions (regions : string list list) : Names.Module_qn.t =
     match List.concat (List.rev regions) with
     | [] -> qn_module_path
     | parts -> Names.Module_qn.of_parts parts
   in
-  let rec walk_top_level (regions : string list list) (stmts : G.stmt list)
-    : string list list =
+  let rec walk_top_level
+      ((regions : string list list), (opened : Names.Module_qn.t list))
+      (stmts : G.stmt list)
+    : string list list * Names.Module_qn.t list =
     match stmts with
-    | [] -> regions
+    | [] -> (regions, opened)
     | stmt :: rest ->
       (* Visit under the region open at this statement, then update the stack
          for the following siblings — [Package]/[PackageEnd]/def are flat
          siblings, so the region a class sees is the one active when reached. *)
-      let regions =
+      let regions, opened =
         match stmt.G.s with
         (* A braced namespace (PHP [namespace A { .. }]) wraps its
            [Package]/[PackageEnd] and defs in a [Block]; descend so the region
            is tracked around the classes inside (the flat statement form
            [namespace A;] needs no unwrapping). *)
-        | G.Block (_, inner, _) -> walk_top_level regions inner
+        | G.Block (_, inner, _) -> walk_top_level (regions, opened) inner
         | G.DirectiveStmt { G.d = G.Package (_, parts); _ } when package_scoped ->
           (make_visitor (module_path_of_regions regions))#visit_stmt [] stmt;
-          List.map fst parts :: regions
+          let regions = List.map fst parts :: regions in
+          (regions, module_path_of_regions regions :: opened)
         | G.DirectiveStmt { G.d = G.PackageEnd _; _ } when package_scoped ->
           (make_visitor (module_path_of_regions regions))#visit_stmt [] stmt;
-          (match regions with _ :: outer -> outer | [] -> [])
+          ((match regions with _ :: outer -> outer | [] -> []), opened)
         | _ ->
           (make_visitor (module_path_of_regions regions))#visit_stmt [] stmt;
-          regions
+          (regions, opened)
       in
-      walk_top_level regions rest
+      walk_top_level (regions, opened) rest
   in
   (* Non-package languages never open regions, so one visitor over the whole
      program suffices; only package languages need the per-top-level walk. *)
-  if package_scoped then ignore (walk_top_level [] ast)
-  else (make_visitor qn_module_path)#visit_program [] ast;
+  let opened_regions =
+    if package_scoped then snd (walk_top_level ([], []) ast)
+    else begin
+      (make_visitor qn_module_path)#visit_program [] ast;
+      []
+    end
+  in
+  let module_regions =
+    match List.sort_uniq Names.Module_qn.compare opened_regions with
+    | [] -> [ (if package_scoped then qn_module_path else module_path) ]
+    | regions -> regions
+  in
   let fi = { fi_file = file; fi_module_path = module_path;
+             fi_module_regions = module_regions;
              fi_imports = imports;
              fi_import_specifiers = import_specifiers;
              fi_dataclass_wrappers = !dc_wrappers;

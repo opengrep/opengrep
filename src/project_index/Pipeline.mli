@@ -41,9 +41,11 @@ type ctx = {
   resolution_orders : Func_lookup.resolution_orders;
   class_qn_by_definition : Func_lookup.class_qn_by_definition;
   methods_by_class : Func_lookup.methods_by_class;
+  extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
+  nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
-  all_funcs : Func_info.t list;
+  global_imports : import list;
   project_constructors : Func_lookup.constructor_index;
   project_funcs_by_name : (string, Func_info.t list) Hashtbl.t;
   project_funcs_by_module :
@@ -84,6 +86,11 @@ val build_scope_table :
   classes_by_file:class_info list Common.SMap.t ->
   class_parent_paths:
     (Function_id.t * IL.name option list) list Common.SMap.t ->
+  resolution_orders:Func_lookup.resolution_orders ->
+  methods_by_class:Func_lookup.methods_by_class ->
+  extensions_by_module:Func_info.t list Common.SMap.t Common.SMap.t ->
+  nested_types_by_class:Names.Class_qn.t Common.SMap.t Common.SMap.t ->
+  global_imports:import list ->
   file_info ->
   file_scope option
 

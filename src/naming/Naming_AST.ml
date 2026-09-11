@@ -641,7 +641,8 @@ let resolved_name_kind env lang =
 let params_of_parameters env params : scope =
   params |> Tok.unbracket
   |> List_.filter_map (function
-       | Param { pname = Some id; pinfo = id_info; ptype = typ; _ } ->
+       | Param { pname = Some id; pinfo = id_info; ptype = typ; _ }
+       | ParamReceiver { pname = Some id; pinfo = id_info; ptype = typ; _ } ->
            let sid = SId.of_tok ~binding:(fresh_binding env) ~file:env.file (snd id) in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;

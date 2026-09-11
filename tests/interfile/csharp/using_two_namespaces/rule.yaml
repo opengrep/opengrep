@@ -1,0 +1,12 @@
+rules:
+  - id: using-two-namespaces
+    languages: [csharp]
+    message: A using directive decides which of two same-named classes a type name denotes.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

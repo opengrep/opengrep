@@ -42,6 +42,7 @@ val attributes_of_module :
 type scope_kind =
   | Scope_function of Func_info.t
   | Scope_class of Names.Class_qn.t
+  | Scope_extension of Func_info.t
 
 type scope_entry = {
   kind : scope_kind;
@@ -55,6 +56,8 @@ val scope_table_of_map : scope_entry list Common.SMap.t -> scope_table
 val class_of_entries : scope_entry list -> Names.Class_qn.t option
 
 val functions_of_entries : scope_entry list -> Func_info.t list
+
+val extensions_of_entries : scope_entry list -> Func_info.t list
 
 val empty_scope_table : scope_table
 
@@ -123,10 +126,15 @@ val resolution_order : t -> Names.Class_qn.t -> Names.Class_qn.t list
 
 val is_known_class : t -> Names.Class_qn.t -> bool
 
+val is_known_module : t -> Names.Module_qn.t -> bool
+
 val class_qn_of_definition : t -> IL.name -> Names.Class_qn.t option
 
 val find_along_order :
-  t -> Names.Class_qn.t list -> string list -> Func_info.t list
+  t ->
+  Names.Class_qn.t list ->
+  (Names.Class_qn.t -> string list) ->
+  Func_info.t list
 
 (* [None] when the name is not an import alias bound to a class. *)
 val resolve_class_alias : t -> string -> (string * name_set) option

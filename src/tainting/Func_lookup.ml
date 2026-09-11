@@ -50,6 +50,7 @@ let attributes_of_module (attributes : module_attributes)
 type scope_kind =
   | Scope_function of Func_info.t
   | Scope_class of Names.Class_qn.t
+  | Scope_extension of Func_info.t
 
 type scope_entry = {
   kind : scope_kind;
@@ -66,7 +67,8 @@ let class_of_entries (entries : scope_entry list) : Names.Class_qn.t option =
     (fun (entry : scope_entry) ->
       match entry.kind with
       | Scope_class (class_qn : Names.Class_qn.t) -> Some class_qn
-      | Scope_function _ -> None)
+      | Scope_function _
+      | Scope_extension _ -> None)
     entries
 
 let functions_of_entries (entries : scope_entry list) : Func_info.t list =
@@ -74,7 +76,17 @@ let functions_of_entries (entries : scope_entry list) : Func_info.t list =
     (fun (entry : scope_entry) ->
       match entry.kind with
       | Scope_function (func : Func_info.t) -> Some func
-      | Scope_class _ -> None)
+      | Scope_class _
+      | Scope_extension _ -> None)
+    entries
+
+let extensions_of_entries (entries : scope_entry list) : Func_info.t list =
+  List.filter_map
+    (fun (entry : scope_entry) ->
+      match entry.kind with
+      | Scope_extension (func : Func_info.t) -> Some func
+      | Scope_class _
+      | Scope_function _ -> None)
     entries
 
 let empty_scope_table : scope_table = Common.SMap.empty
@@ -182,6 +194,15 @@ let resolution_order (t : t) (class_qn : Names.Class_qn.t)
 let is_known_class (t : t) (class_qn : Names.Class_qn.t) : bool =
   Common.SMap.mem (Names.Class_qn.to_string class_qn) t.resolution_orders
 
+let is_known_module (t : t) (module_qn : Names.Module_qn.t) : bool =
+  match
+    Common.SMap.find_opt (Names.Module_qn.to_string module_qn)
+      t.module_attributes
+  with
+  | None -> false
+  | Some (attributes : module_attribute Common.SMap.t) ->
+    not (Common.SMap.is_empty attributes)
+
 let class_qn_of_definition (t : t) (definition : IL.name)
     : Names.Class_qn.t option =
   match
@@ -197,7 +218,7 @@ let class_qn_of_definition (t : t) (definition : IL.name)
          classes)
 
 let find_along_order (t : t) (order : Names.Class_qn.t list)
-    (names : string list) : Func_info.t list =
+    (names_of : Names.Class_qn.t -> string list) : Func_info.t list =
   let bound_on (class_qn : Names.Class_qn.t) : Func_info.t list =
     match Class_qn_map.find_opt class_qn t.methods_by_class with
     | None -> []
@@ -205,7 +226,7 @@ let find_along_order (t : t) (order : Names.Class_qn.t list)
       List.concat_map
         (fun (name : string) ->
           Option.value (Common.SMap.find_opt name by_name) ~default:[])
-        names
+        (names_of class_qn)
   in
   let rec first_binder (order : Names.Class_qn.t list) : Func_info.t list =
     match order with

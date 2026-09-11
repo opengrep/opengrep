@@ -421,12 +421,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   let type_state, inherited_by_class, override_pairs, class_resolution_orders =
     timed "call graph: inheritance (Mro)" @@ fun () ->
     if cfg.Index_lang_rules.walks_inheritance then
-      let cross_module_parents =
-        match cfg.Index_lang_rules.unqualified_scope with
-        | `Per_file -> false
-        | `Per_directory | `Per_package -> true
-      in
-      Mro.inherit_into_type_state ~lang ~cross_module_parents ~reexport_map
+      Mro.inherit_into_type_state ~lang ~reexport_map
         ~class_infos:indexed_classes
         ~func_def_file:Type_augment.func_def_file type_state
     else (type_state, [], [], [])
@@ -644,15 +639,25 @@ let build_project_call_graph (caps : < Cap.fork >)
       definitions_by_qn;
       attributes_by_module =
         timed "call graph: attributes by module" (fun () ->
-          Func_index.build_attributes_by_module ~dunder_all ~definitions_by_qn
-            ~file_infos:indexed_files);
+          Func_index.build_attributes_by_module ~cfg ~dunder_all
+            ~definitions_by_qn ~file_infos:indexed_files);
       dunder_all;
       resolution_orders;
       class_qn_by_definition;
       methods_by_class;
+      extensions_by_module =
+        timed "call graph: extension methods by module" (fun () ->
+          Func_index.build_extensions_by_module ~definitions_by_qn);
+      nested_types_by_class =
+        timed "call graph: nested types by class" (fun () ->
+          Func_index.build_nested_types_by_class ~definitions_by_qn);
       classes_by_file;
       class_parent_paths;
-      all_funcs;
+      global_imports =
+        List.concat_map
+          (fun (fi : file_info) ->
+            List.filter (fun (imp : import) -> imp.im_global) fi.fi_imports)
+          indexed_files;
       project_constructors;
       project_funcs_by_name;
       project_funcs_by_module;

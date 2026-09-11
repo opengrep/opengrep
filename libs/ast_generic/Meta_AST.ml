@@ -797,6 +797,7 @@ and vof_keyword_attribute = function
   | DefaultImpl -> OCaml.VSum ("DefaultImpl", [])
   | Throws -> OCaml.VSum ("Throws", [])
   | Rethrows -> OCaml.VSum ("Rethrows", [])
+  | GlobalScope -> OCaml.VSum ("GlobalScope", [])
 
 and vof_attribute = function
   | KeywordAttr x ->

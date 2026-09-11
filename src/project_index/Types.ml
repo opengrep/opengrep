@@ -28,6 +28,8 @@ type import = {
   im_local : string;
   im_target : Names.Module_qn.t;
   im_tok : Tok.t;
+  im_static : bool;
+  im_global : bool;
 }
 
 type class_info = {
@@ -50,6 +52,7 @@ type dataclass_wrapper = Index_lang_rules.wrapper
 type file_info = {
   fi_file : Fpath.t;
   fi_module_path : Names.Module_qn.t;
+  fi_module_regions : Names.Module_qn.t list;
   fi_imports : import list;
   fi_import_specifiers : (string * string * import_kind) list;
   fi_dataclass_wrappers : dataclass_wrapper list;

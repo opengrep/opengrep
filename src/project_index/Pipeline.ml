@@ -49,9 +49,11 @@ type ctx = {
   resolution_orders : Func_lookup.resolution_orders;
   class_qn_by_definition : Func_lookup.class_qn_by_definition;
   methods_by_class : Func_lookup.methods_by_class;
+  extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t;
+  nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t;
   classes_by_file : class_info list Common.SMap.t;
   class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
-  all_funcs : Func_info.t list;
+  global_imports : import list;
   project_constructors : Func_lookup.constructor_index;
   project_funcs_by_name : (string, Func_info.t list) Hashtbl.t;
   project_funcs_by_module :
@@ -451,7 +453,8 @@ let narrow_methods_by_required_files
 
 let resolves_by_binding (lang : Lang.t) : bool =
   match lang with
-  | Lang.Python | Lang.Python2 | Lang.Python3 -> true
+  | Lang.Python | Lang.Python2 | Lang.Python3
+  | Lang.Java | Lang.Kotlin | Lang.Csharp -> true
   | _ -> false
 
 let definition_of_target
@@ -472,158 +475,6 @@ let definition_of_target
       in
       stored_at (Names.Module_qn.to_string within_package)
 
-type positioned_binding = {
-  pb_pos : Pos.t option;
-  pb_name : string;
-  pb_parent_path : IL.name option list;
-  pb_kinds : Func_lookup.scope_kind list;
-}
-
-let position_of_tok (tok : Tok.t) : Pos.t option =
-  match Tok.loc_of_tok tok with
-  | Ok (loc : Tok.location) -> Some loc.Tok.pos
-  | Error _ -> None
-
-let equal_parent_path (first : IL.name option list)
-    (second : IL.name option list) : bool =
-  List.equal (Option.equal Function_id.equal_il_name) first second
-
-let function_binding_of ~(tok : Tok.t)
-    ~(parent_path : IL.name option list) (name : string)
-    (funcs : Func_info.t list) : positioned_binding list =
-  match funcs with
-  | [] -> []
-  | _ :: _ ->
-    [ { pb_pos = position_of_tok tok; pb_name = name;
-        pb_parent_path = parent_path;
-        pb_kinds =
-          List.map
-            (fun (func : Func_info.t) -> Func_lookup.Scope_function func)
-            funcs } ]
-
-let class_binding_of ~(tok : Tok.t)
-    ~(parent_path : IL.name option list) (name : string)
-    (class_qn : Names.Class_qn.t) : positioned_binding =
-  { pb_pos = position_of_tok tok; pb_name = name;
-    pb_parent_path = parent_path;
-    pb_kinds = [ Func_lookup.Scope_class class_qn ] }
-
-type bound_in_scope = {
-  bs_pos : Pos.t option;
-  bs_parent_path : IL.name option list;
-  bs_kinds : Func_lookup.scope_kind list;
-}
-
-let bindings_of_positioned (bindings : positioned_binding list)
-    : Func_lookup.scope_entry list Common.SMap.t =
-  let in_file_order =
-    List.stable_sort
-      (fun (first : positioned_binding) (second : positioned_binding) ->
-        Option.compare Pos.compare first.pb_pos second.pb_pos)
-      bindings
-  in
-  List.fold_left
-    (fun (bound : bound_in_scope list Common.SMap.t)
-         (binding : positioned_binding) ->
-      let in_name =
-        Option.value (Common.SMap.find_opt binding.pb_name bound) ~default:[]
-      in
-      let same_scope, other_scopes =
-        List.partition
-          (fun (entry : bound_in_scope) ->
-            equal_parent_path entry.bs_parent_path binding.pb_parent_path)
-          in_name
-      in
-      let bound_now =
-        match same_scope with
-        | [ (earlier : bound_in_scope) ]
-          when Option.equal Pos.equal earlier.bs_pos binding.pb_pos ->
-          { earlier with bs_kinds = earlier.bs_kinds @ binding.pb_kinds }
-        | _ ->
-          { bs_pos = binding.pb_pos; bs_parent_path = binding.pb_parent_path;
-            bs_kinds = binding.pb_kinds }
-      in
-      Common.SMap.add binding.pb_name (bound_now :: other_scopes) bound)
-    Common.SMap.empty in_file_order
-  |> Common.SMap.map
-       (fun (in_name : bound_in_scope list) ->
-         List.concat_map
-           (fun (entry : bound_in_scope) ->
-             List.map
-               (fun (kind : Func_lookup.scope_kind) ->
-                 { Func_lookup.kind; parent_path = entry.bs_parent_path })
-               entry.bs_kinds)
-           in_name)
-
-let enclosing_scope_of_class
-    ~(class_parent_paths :
-        (Function_id.t * IL.name option list) list Common.SMap.t)
-    (ci : class_info) : IL.name option list option =
-  let encloses_itself (parent_path : IL.name option list) : bool =
-    match List.rev parent_path with
-    | Some (innermost : IL.name) :: _ ->
-      Function_id.equal_name ci.ci_id innermost
-    | None :: _
-    | [] -> false
-  in
-  Option.bind
-    (Option.bind
-       (Common.SMap.find_opt (Function_id.show ci.ci_id) class_parent_paths)
-       (List.find_opt
-          (fun (((defining : Function_id.t), _) :
-                  Function_id.t * IL.name option list) ->
-            Function_id.equal defining ci.ci_id)))
-    (fun (((_ : Function_id.t), (parent_path : IL.name option list))) ->
-      if encloses_itself parent_path then None else Some parent_path)
-
-let own_class_bindings
-    ~(classes_by_file : class_info list Common.SMap.t)
-    ~(class_parent_paths :
-        (Function_id.t * IL.name option list) list Common.SMap.t)
-    ~(module_path : Names.Module_qn.t)
-    ~(fi_file_str : string) : positioned_binding list =
-  Option.value (Common.SMap.find_opt fi_file_str classes_by_file) ~default:[]
-  |> List.filter_map (fun (ci : class_info) ->
-       match Names.Class_qn.split_last ci.ci_qn with
-       | None -> None
-       | Some ((parent : Names.Class_qn.t), (name : string)) ->
-         let bind (parent_path : IL.name option list) : positioned_binding =
-           class_binding_of ~tok:(Function_id.tok ci.ci_id) ~parent_path name
-             ci.ci_qn
-         in
-         if
-           String.equal (Names.Class_qn.to_string parent)
-             (Names.Module_qn.to_string module_path)
-         then Some (bind [])
-         else
-           Option.map bind (enclosing_scope_of_class ~class_parent_paths ci))
-
-let own_definitions_of_file
-    ~(file_funcs_index : (string, Func_info.t list) Hashtbl.t)
-    ~(fi_file_str : string) : positioned_binding list =
-  let own_funcs =
-    Option.value (Hashtbl.find_opt file_funcs_index fi_file_str) ~default:[]
-  in
-  List.concat_map
-      (fun (func : Func_info.t) ->
-        let bind (parent_path : IL.name option list) (name : IL.name)
-            : positioned_binding list =
-          function_binding_of ~tok:(snd name.IL.ident) ~parent_path
-            (fst name.IL.ident) [ func ]
-        in
-        match Func_info.as_method func.Func_info.fn_id with
-        | Some _ -> []
-        | None -> (
-          match Func_info.as_free func.Func_info.fn_id with
-          | Some (bare_name : IL.name) -> bind [] bare_name
-          | None -> (
-            match List_.init_and_last_opt func.Func_info.fn_id with
-            | Some ((parent_path : IL.name option list),
-                    Some (bare_name : IL.name)) ->
-              bind parent_path bare_name
-            | _ -> [])))
-    own_funcs
-
 let build_scope_table
     ~(lang : Lang.t)
     ~(cfg : Index_lang_rules.t)
@@ -634,44 +485,68 @@ let build_scope_table
     ~(classes_by_file : class_info list Common.SMap.t)
     ~(class_parent_paths :
         (Function_id.t * IL.name option list) list Common.SMap.t)
+    ~(resolution_orders : Func_lookup.resolution_orders)
+    ~(methods_by_class : Func_lookup.methods_by_class)
+    ~(extensions_by_module : Func_info.t list Common.SMap.t Common.SMap.t)
+    ~(nested_types_by_class : Names.Class_qn.t Common.SMap.t Common.SMap.t)
+    ~(global_imports : import list)
     (fi : file_info) : file_scope option =
   if
     not (resolves_by_binding lang)
     || cfg.Index_lang_rules.is_stub_file fi.fi_file
   then None
   else
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_package ->
+      let bindings, bound_class_files =
+        Scope_package.build ~lang ~definitions_by_qn ~attributes_by_module
+          ~classes_by_file ~class_parent_paths ~file_funcs_index
+          ~resolution_orders ~methods_by_class ~extensions_by_module
+          ~nested_types_by_class ~global_imports fi
+      in
+      Some { scope_table = Func_lookup.scope_table_of_map bindings;
+             bound_class_files }
+    | `Per_file
+    | `Per_directory ->
     let fi_file_str = Fpath.to_string fi.fi_file in
     let package =
       Module_paths.enclosing_package ~cfg ~file:fi.fi_file fi.fi_module_path
     in
     let own_bindings =
-      own_definitions_of_file ~file_funcs_index ~fi_file_str
+      Scope_binding.own_definitions_of_file ~file_funcs_index ~fi_file_str
     in
     let own_classes =
-      own_class_bindings ~classes_by_file ~class_parent_paths
-        ~module_path:fi.fi_module_path ~fi_file_str
+      Scope_binding.own_class_bindings ~class_parent_paths
+        ~binds_at_file_scope:(fun (owner : Names.Class_qn.t) ->
+          String.equal (Names.Class_qn.to_string owner)
+            (Names.Module_qn.to_string fi.fi_module_path))
+        ~scope_of_owner:(fun _ -> None)
+        (Option.value (Common.SMap.find_opt fi_file_str classes_by_file)
+           ~default:[])
     in
     let imported, bound_class_files =
       List.fold_left
-        (fun ((imported : positioned_binding list),
+        (fun ((imported : Scope_binding.positioned_binding list),
               (bound_class_files : (Names.Class_name.t * Fpath.t) list))
              (imp : import) ->
-          let tok = imp.im_tok in
+          let pos = Scope_binding.position_of_tok imp.im_tok in
           match Imports.binding_of imp with
           | Imports.Wildcard_from (target : Names.Module_qn.t) ->
             ( Common.SMap.fold
                 (fun (name : string)
                      (attribute : Func_lookup.module_attribute)
-                     (imported : positioned_binding list) ->
+                     (imported : Scope_binding.positioned_binding list) ->
                   if not (Reexports.star_exported ~dunder_all target name) then
                     imported
                   else
                     match attribute with
                     | Func_lookup.Attr_functions (funcs : Func_info.t list) ->
-                      function_binding_of ~tok ~parent_path:[] name funcs
+                      Scope_binding.function_binding_of ~pos ~parent_path:[]
+                        name funcs
                       @ imported
                     | Func_lookup.Attr_class (class_qn : Names.Class_qn.t) ->
-                      class_binding_of ~tok ~parent_path:[] name class_qn
+                      Scope_binding.class_binding_of ~pos ~parent_path:[] name
+                        class_qn
                       :: imported
                     | Func_lookup.Attr_module _ -> imported)
                 (Func_lookup.attributes_of_module attributes_by_module target)
@@ -680,10 +555,14 @@ let build_scope_table
           | Imports.Named_binding { local; target } -> (
             match definition_of_target ~definitions_by_qn ~package target with
             | Some (Function_definitions funcs) ->
-              (function_binding_of ~tok ~parent_path:[] local funcs @ imported,
+              (Scope_binding.function_binding_of ~pos ~parent_path:[] local
+                 funcs
+               @ imported,
                bound_class_files)
             | Some (Class_definition { class_file; class_qn }) ->
-              ( class_binding_of ~tok ~parent_path:[] local class_qn :: imported,
+              ( Scope_binding.class_binding_of ~pos ~parent_path:[] local
+                  class_qn
+                :: imported,
                 (Names.Class_name.of_string
                    (Names.Module_qn.bare_name target), class_file)
                 :: bound_class_files )
@@ -692,7 +571,7 @@ let build_scope_table
     in
     Some { scope_table =
              Func_lookup.scope_table_of_map
-               (bindings_of_positioned
+               (Scope_binding.bindings_of_positioned
                   (own_bindings @ own_classes @ List.rev imported));
            bound_class_files }
 
@@ -884,13 +763,35 @@ let stamp_singleton_imports
   in
   Object_initialization.stamp_id_types facts fi.fi_ast
 
+let construction_resolver ~(lang : Lang.t) ~(type_state : Type_state.t)
+    ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list)
+    ~(call_arity : int) (ty : G.type_) : Func_info.fn_id option =
+  Option.bind (Callee_resolution.expr_of_type_name ty)
+    (fun (callee : G.expr) ->
+      Callee_resolution.identify_callee_interfile ~lang ~type_state
+        ~func_lookup ~caller_parent_path ~call_arity ~allow_constructor:true
+        callee)
+
+let invocation_resolver ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (var_name : string)
+    : Func_info.fn_id option =
+  match
+    Func_lookup.functions_of_entries
+      (Callee_resolution.nearest_scope_entries
+         (Func_lookup.resolve_in_scope func_lookup var_name)
+         caller_parent_path)
+  with
+  | (func : Func_info.t) :: _ -> Some func.Func_info.fn_id
+  | [] -> None
+
 let edges_for_file (ctx : ctx) (fi : file_info)
   : (Function_id.t * Function_id.t * Tok.t) list =
   let { lang; cfg; type_state; required_files_narrowing; definitions_by_qn;
         attributes_by_module; dunder_all;
         resolution_orders; class_qn_by_definition; methods_by_class;
-        classes_by_file; class_parent_paths;
-        all_funcs;
+        extensions_by_module; nested_types_by_class;
+        classes_by_file; class_parent_paths; global_imports;
         project_constructors;
         project_funcs_by_name; project_funcs_by_module; file_module_qn;
         project_funcs_by_package; project_class_names;
@@ -942,7 +843,8 @@ let edges_for_file (ctx : ctx) (fi : file_info)
       staged "scope table" @@ fun () ->
       build_scope_table ~lang ~cfg ~definitions_by_qn
         ~file_funcs_index ~attributes_by_module ~dunder_all ~classes_by_file
-        ~class_parent_paths fi
+        ~class_parent_paths ~resolution_orders ~methods_by_class
+        ~extensions_by_module ~nested_types_by_class ~global_imports fi
     in
     let file_type_state =
       staged "narrow methods by imports/required files" @@ fun () ->
@@ -1123,7 +1025,11 @@ let edges_for_file (ctx : ctx) (fi : file_info)
               ~identify_callback:
                 (Callback_extraction.identify_callback_interfile ~lang
                    ~type_state:file_type_state)
-              ~all_funcs
+              ~resolve_construction:
+                (construction_resolver ~lang ~type_state:file_type_state
+                   ~func_lookup ~caller_parent_path:fn_id)
+              ~resolve_invocation:
+                (invocation_resolver ~func_lookup)
               ~func_lookup
               ~caller_parent_path:fn_id fdef
           in

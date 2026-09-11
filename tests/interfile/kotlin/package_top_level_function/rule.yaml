@@ -1,0 +1,12 @@
+rules:
+  - id: package-top-level-function
+    languages: [kotlin]
+    message: A bare call names a top level function of the file own package, or the one an import binds.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

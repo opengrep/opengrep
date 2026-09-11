@@ -13,12 +13,7 @@ val resolve_parent_qn :
   known_class_qns:(Names.Class_qn.t, unit) Hashtbl.t ->
   string list -> Names.Module_qn.t option
 
-(* [cross_module_parents]: whether a parent may bind to a class sharing
-   no leading qn part with the child — legitimate for namespace/package
-   scoped languages (C++/C#/Java/Go), a homonym trap for module-scoped
-   ones (Python-style: cross-file names need imports). *)
 val resolve_parent_by_scope :
-  cross_module_parents:bool ->
   by_qn:(Names.Class_qn.t, class_info) Hashtbl.t ->
   qns_by_bare_name:(Names.Class_name.t, Names.Class_qn.t list) Hashtbl.t ->
   class_info -> string list -> Names.Module_qn.t option
@@ -31,7 +26,6 @@ val resolve_parent_by_scope :
    the same arity — the source for nominal override dispatch edges. *)
 val inherit_into_type_state :
   lang:Lang.t ->
-  cross_module_parents:bool ->
   reexport_map:(Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t ->
   class_infos:class_info list ->
   func_def_file:(Graph_from_AST.func_info -> string option) ->

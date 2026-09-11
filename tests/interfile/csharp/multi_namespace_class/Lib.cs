@@ -1,7 +1,6 @@
-// C# `namespace {}` blocks parse to `ModuleDef` (like TS), so they ride the
-// Step-1 namespace-scope handling.  `Base` lives in the SECOND namespace; if
-// the namespace scope is dropped it collapses to a bare `Base` and
-// `Client : B.Base` in App.cs cannot resolve it.
+// A C# namespace block delimits a package region, so the class `Base` in the
+// second region of this file carries the qualified name `B.Base` that
+// `Client : B.Base` in App.cs resolves against.
 namespace A {
     class Aux {
         void ping() {}

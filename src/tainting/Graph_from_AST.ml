@@ -193,7 +193,8 @@ let memo_lookup_or_compute (memo_tbl : callee_memo)
 let extract_calls ~(lang : Lang.t)
     ~(identify_callee : Callee_resolution.call_site_resolver)
     ~(identify_callback : Callback_extraction.callback_site_resolver)
-    ?(all_funcs = [])
+    ~(resolve_construction : Callee_resolution.construction_resolver)
+    ~(resolve_invocation : Callee_resolution.invocation_resolver)
     ~(func_lookup : Func_lookup.t)
     ?(caller_parent_path = [])
     (fdef : G.function_definition) : fdef_edges =
@@ -329,9 +330,8 @@ let extract_calls ~(lang : Lang.t)
                | G.DotAccess ({ e = G.N (G.Id ((var_name, _), _)); _ }, _,
                               G.FN (G.Id ((method_name, method_tok), _)))
                  when List.mem method_name invoke_methods ->
-                 (match find_func_in_scope all_funcs caller_parent_path
-                          var_name with
-                  | Some f -> (f.fn_id, method_tok) :: calls
+                 (match resolve_invocation ~caller_parent_path var_name with
+                  | Some fn_id -> (fn_id, method_tok) :: calls
                   | None -> calls)
                | _ -> calls)
           in
@@ -340,7 +340,9 @@ let extract_calls ~(lang : Lang.t)
         | G.New (_tok, ty, id_info, (_, args_list, _)) ->
           (* Use the class-name token to match class_construction's eorig. *)
           let calls =
-            match resolve_constructor_from_type ~lang ~all_funcs ty with
+            match
+              resolve_construction ~call_arity:(List.length args_list) ty
+            with
             | Some fn_id ->
               (* [AST_to_IL.mk_class_constructor_name] threads this exact
                  [id_info] onto the IL ctor callee, so the stamp is what
@@ -518,7 +520,12 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
                 (fun ?func_lookup ?caller_parent_path ?scope ?arg:_ name ->
                   Callback_extraction.identify_callback ~all_funcs:funcs
                     ?func_lookup ?caller_parent_path ?scope name)
-              ~all_funcs:funcs ~func_lookup
+              ~resolve_construction:(fun ~call_arity:_ ty ->
+                resolve_constructor_from_type ~lang ~all_funcs:funcs ty)
+              ~resolve_invocation:(fun ~caller_parent_path var_name ->
+                Option.map (fun (f : func_info) -> f.fn_id)
+                  (find_func_in_scope funcs caller_parent_path var_name))
+              ~func_lookup
               ~caller_parent_path:fn_id fdef
           in
 

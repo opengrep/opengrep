@@ -1,0 +1,12 @@
+rules:
+  - id: qualified-name-binds-type
+    languages: [java]
+    message: A fully qualified type name denotes its class with no import.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

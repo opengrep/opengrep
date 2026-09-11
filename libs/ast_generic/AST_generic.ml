@@ -1688,6 +1688,7 @@ and keyword_attribute =
   (* the classic C modifiers (except Auto) *)
   | Static (* a.k.a Intern in Solidity *)
   | Extern (* less: of string? like extern "C" in C++ or Rust *)
+  | GlobalScope
   | Volatile
   (* the classic C++ modifiers for fields/methods *)
   | Public

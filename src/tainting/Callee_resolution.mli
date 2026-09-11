@@ -31,6 +31,14 @@ val nearest_scope_entries :
 
 val uses_new_keyword : Lang.t -> bool
 
+val expr_of_type_name : AST_generic.type_ -> AST_generic.expr option
+
+type construction_resolver =
+  call_arity:int -> AST_generic.type_ -> fn_id option
+
+type invocation_resolver =
+  caller_parent_path:IL.name option list -> string -> fn_id option
+
 val resolve_constructor_from_type :
   lang:Lang.t -> all_funcs:func_info list -> AST_generic.type_ -> fn_id option
 

@@ -1,0 +1,12 @@
+rules:
+  - id: import-binds-one-of-two-utils
+    languages: [java]
+    message: A single type import decides which of two same-named classes a type name denotes.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

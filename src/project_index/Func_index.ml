@@ -65,6 +65,7 @@ let build_by_module
   | _ -> h
 
 let build_attributes_by_module
+    ~(cfg : Index_lang_rules.t)
     ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
     ~(definitions_by_qn : Types.definition Common.SMap.t)
     ~(file_infos : Types.file_info list)
@@ -72,8 +73,12 @@ let build_attributes_by_module
   let module_qns : unit Common.SMap.t =
     List.fold_left
       (fun (qns : unit Common.SMap.t) (fi : Types.file_info) ->
-        Common.SMap.add
-          (Names.Module_qn.to_string fi.Types.fi_module_path) () qns)
+        List.fold_left
+          (fun (qns : unit Common.SMap.t) (region : Names.Module_qn.t) ->
+            Common.SMap.add (Names.Module_qn.to_string region) () qns)
+          (Common.SMap.add
+             (Names.Module_qn.to_string fi.Types.fi_module_path) () qns)
+          fi.Types.fi_module_regions)
       Common.SMap.empty file_infos
   in
   let attribute_of (definition : Types.definition)
@@ -106,9 +111,18 @@ let build_attributes_by_module
         List.fold_left (on_binding module_key) attributes fi.Types.fi_imports)
       attributes file_infos
   in
+  let imports_bind_attributes =
+    match cfg.Index_lang_rules.unqualified_scope with
+    | `Per_package -> false
+    | `Per_file
+    | `Per_directory -> true
+  in
+  let empty_per_module = Common.SMap.map (fun () -> Common.SMap.empty) module_qns in
   let imported =
+    if not imports_bind_attributes then empty_per_module
+    else
     per_file
-      (Common.SMap.map (fun () -> Common.SMap.empty) module_qns)
+      empty_per_module
       (fun (module_key : string)
            (attributes : Func_lookup.module_attributes)
            (imp : Types.import) ->
@@ -138,6 +152,8 @@ let build_attributes_by_module
       definitions_by_qn imported
   in
   let star_targets : (string * Names.Module_qn.t) list =
+    if not imports_bind_attributes then []
+    else
     List.concat_map
       (fun (fi : Types.file_info) ->
         List.filter_map
@@ -179,3 +195,71 @@ let build_attributes_by_module
     | attributes, _ -> fixpoint attributes
   in
   fixpoint with_own_definitions
+
+let has_receiver_parameter (func : FA.func_info) : bool =
+  match Tok.unbracket func.Func_info.fdef.G.fparams with
+  | G.ParamReceiver _ :: _ -> true
+  | _ -> false
+
+let build_extensions_by_module
+    ~(definitions_by_qn : Types.definition Common.SMap.t)
+  : Func_info.t list Common.SMap.t Common.SMap.t =
+  let owner_module (owner : Names.Def_qn.t) : string option =
+    let owner_key = Names.Def_qn.to_string owner in
+    if Common.SMap.mem owner_key definitions_by_qn then
+      match Names.Def_qn.split_last owner with
+      | Some ((enclosing : Names.Def_qn.t), _) ->
+        Some (Names.Def_qn.to_string enclosing)
+      | None -> None
+    else Some owner_key
+  in
+  Common.SMap.fold
+    (fun (qn : string) (definition : Types.definition)
+         (extensions : Func_info.t list Common.SMap.t Common.SMap.t) ->
+      match definition with
+      | Types.Class_definition _ -> extensions
+      | Types.Function_definitions (funcs : FA.func_info list) -> (
+        match List.filter has_receiver_parameter funcs with
+        | [] -> extensions
+        | (_ :: _) as with_receiver -> (
+          match Names.Def_qn.split_last (Names.Def_qn.of_string qn) with
+          | None -> extensions
+          | Some ((owner : Names.Def_qn.t), (name : string)) -> (
+            match owner_module owner with
+            | None -> extensions
+            | Some (module_key : string) ->
+              Common.SMap.update module_key
+                (function
+                  | None -> Some (Common.SMap.singleton name with_receiver)
+                  | Some (by_name : Func_info.t list Common.SMap.t) ->
+                    Some
+                      (Common.SMap.add name
+                         (with_receiver
+                          @ Option.value (Common.SMap.find_opt name by_name)
+                              ~default:[])
+                         by_name))
+                extensions))))
+    definitions_by_qn Common.SMap.empty
+
+let build_nested_types_by_class
+    ~(definitions_by_qn : Types.definition Common.SMap.t)
+  : Names.Class_qn.t Common.SMap.t Common.SMap.t =
+  Common.SMap.fold
+    (fun (qn : string) (definition : Types.definition)
+         (nested : Names.Class_qn.t Common.SMap.t Common.SMap.t) ->
+      match definition with
+      | Types.Function_definitions _ -> nested
+      | Types.Class_definition { class_qn; _ } -> (
+        match Names.Def_qn.split_last (Names.Def_qn.of_string qn) with
+        | None -> nested
+        | Some ((owner : Names.Def_qn.t), (name : string)) ->
+          let owner_key = Names.Def_qn.to_string owner in
+          if not (Common.SMap.mem owner_key definitions_by_qn) then nested
+          else
+            Common.SMap.update owner_key
+              (function
+                | None -> Some (Common.SMap.singleton name class_qn)
+                | Some (by_name : Names.Class_qn.t Common.SMap.t) ->
+                  Some (Common.SMap.add name class_qn by_name))
+              nested))
+    definitions_by_qn Common.SMap.empty

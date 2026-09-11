@@ -4,10 +4,13 @@ rules:
     severity: ERROR
     message: >
       Tainted data flows from App.cs into `Client.handle`, inherited from
-      `B.Base`.  `Base` is declared in the second of two namespaces in Lib.cs.
-      The cross-file parent edge resolves only if the `namespace` scope is
-      recorded, giving `Base` the qn `B.Base`; dropping the scope collapses it
-      to a bare `Base` and the sink is unreachable.
+      `B.Base`.  `Base` is declared in the second of two namespace regions in
+      Lib.cs.  The cross-file parent edge resolves only if each `namespace`
+      block delimits a package region, giving `Base` the qualified name
+      `B.Base`; without the region `Base` is qualified by the file path and
+      the sink is unreachable.  The file's regions bind as one scope, so a
+      name declared in the first region is visible in the second, which C#
+      does not do.
     mode: taint
     options:
       taint_interfile: true

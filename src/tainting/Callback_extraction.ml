@@ -56,6 +56,34 @@ let scope_of_receiver ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
             | Some cls -> Method_of cls
             | None -> Method_by_bare_name))
 
+let expr_of_receiver_any (any : G.any) : G.expr option =
+  match any with
+  | G.E (receiver : G.expr) -> Some receiver
+  | G.T (ty : G.type_) -> (
+    match ty.G.t with
+    | G.TyN (name : G.name) -> Some (G.N name |> G.e)
+    | G.TyExpr (receiver : G.expr) -> Some receiver
+    | _ -> None)
+  | _ -> None
+
+let dotted_reference ~(tok : Tok.t) (receiver : G.expr) (id : G.ident)
+    (id_info : G.id_info) : G.expr =
+  G.DotAccess (receiver, tok, G.FN (G.Id (id, id_info))) |> G.e
+
+let dotted_reference_of_method_reference (e : G.expr) : G.expr option =
+  match e.G.e with
+  | G.OtherExpr (("MethodRef", tok), receiver_any :: (_ :: _ as rest)) -> (
+    match (expr_of_receiver_any receiver_any, List_.last_opt rest) with
+    | Some (receiver : G.expr), Some (G.I (id : G.ident)) ->
+      Some (dotted_reference ~tok receiver id (G.empty_id_info ()))
+    | _ -> None)
+  | G.OtherExpr (("::", tok), [ G.E field; G.E receiver ]) -> (
+    match field.G.e with
+    | G.N (G.Id ((id : G.ident), (id_info : G.id_info))) ->
+      Some (dotted_reference ~tok receiver id id_info)
+    | _ -> None)
+  | _ -> None
+
 let rec extract_callbacks_from_arg ~(lang : Lang.t)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty) (arg_expr : G.expr) :
     (IL.name * Tok.t * IL.name option * callback_scope) list =
@@ -103,6 +131,12 @@ let rec extract_callbacks_from_arg ~(lang : Lang.t)
       ({ e = G.N (G.Id (recv, recv_info)); _ }, _, G.FN (G.Id (id, id_info))) ->
       [ (AST_to_IL.var_of_id_info id id_info, snd id, None,
          scope_of_receiver ~lang ~func_lookup (recv, recv_info)) ]
+  | G.OtherExpr (("MethodRef", _), _)
+  | G.OtherExpr (("::", _), _) -> (
+      match dotted_reference_of_method_reference arg_expr with
+      | Some reference ->
+          extract_callbacks_from_arg ~lang ~func_lookup reference
+      | None -> [])
   (* Elixir: &func/n or &Mod.func/n - ShortLambda wrapping a call to the
      named (local or remote) function. Structure:
      OtherExpr("ShortLambda", [Params[&1,...]; S(ExprStmt(Call(func, args)))])
@@ -321,7 +355,10 @@ let identify_callback_interfile ~(lang : Lang.t)
     (callback_name : IL.name) : fn_id option =
   let as_reference () : fn_id option =
     match arg with
-    | Some ({ G.e = G.DotAccess (_, _, G.FN (G.Id _)); _ } as reference) ->
+    | Some ({ G.e = G.DotAccess (_, _, G.FN (G.Id _))
+                  | G.N (G.IdQualified { name_middle = Some (G.QDots (_ :: _));
+                                         _ });
+              _ } as reference) ->
       Callee_resolution.identify_callee_interfile ~lang ~type_state
         ~func_lookup ~caller_parent_path ~allow_constructor:false reference
     | Some _
@@ -402,6 +439,9 @@ let try_identify_callback_args ~lang
     ~caller_parent_path (arg : G.argument) :
     (fn_id * Tok.t * IL.name option) list =
   let resolve_in_expr expr =
+    let expr =
+      Option.value (dotted_reference_of_method_reference expr) ~default:expr
+    in
     (* Also handle this.foo pattern *)
     let direct_this =
       match expr.G.e with

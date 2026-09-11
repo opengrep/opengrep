@@ -1,0 +1,12 @@
+rules:
+  - id: extension-method-on-receiver
+    languages: [csharp]
+    message: An extension method is selected by the static type of the receiver at the call site.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

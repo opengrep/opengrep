@@ -46,6 +46,9 @@ val is_constructor : Lang.t -> string -> string option -> bool
 (* Get all constructor method names for a language *)
 val get_constructor_names : Lang.t -> string list
 
+val constructor_names_of_class :
+  lang:Lang.t -> class_name:string -> string list
+
 (* Check if language uses 'new' keyword *)
 val uses_new_keyword : Lang.t -> bool
 

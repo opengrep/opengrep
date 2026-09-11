@@ -676,7 +676,7 @@ and map_attribute = function
       let v1 = map_wrap map_keyword_attribute v1 in
       match v1 with
       | Either.Left v1, tok -> `KeywordAttr (v1, tok)
-      | Either.Right s, tok -> `OtherAttribute (s, [ `Tk tok ]))
+      | Either.Right s, tok -> `OtherAttribute ((s, tok), [ `Tk tok ]))
   | NamedAttr (t, v1, v3) ->
       let t = map_tok t in
       let v1 = map_name v1 and v3 = map_bracket (map_of_list map_argument) v3 in
@@ -689,6 +689,7 @@ and map_keyword_attribute = function
   | Static -> Left `Static
   | Volatile -> Left `Volatile
   | Extern -> Left `Extern
+  | GlobalScope -> Right "global"
   | Public -> Left `Public
   | Private -> Left `Private
   | Protected -> Left `Protected

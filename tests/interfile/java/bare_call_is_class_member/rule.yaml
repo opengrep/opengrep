@@ -1,0 +1,12 @@
+rules:
+  - id: bare-call-is-class-member
+    languages: [java]
+    message: A bare call inside a class names a member of that class, not a same-named member of another class.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

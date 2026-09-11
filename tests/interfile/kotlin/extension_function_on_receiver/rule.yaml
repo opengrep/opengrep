@@ -1,0 +1,12 @@
+rules:
+  - id: extension-function-on-receiver
+    languages: [kotlin]
+    message: An extension function is selected by the static type of the receiver at the call site.
+    severity: ERROR
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

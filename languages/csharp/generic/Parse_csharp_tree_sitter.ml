@@ -2484,12 +2484,10 @@ and parameter (env : env) (v1 : CST.parameter) : G.parameter =
 
 and parameter_type_with_modifiers (env : env)
     ((v1, v2, v3, v4, v5) : CST.parameter_type_with_modifiers) =
-  let attrs =
-    match v1 with
-    (* reusing the attribute extern to match "extern" class to which we attach the method *)
-    | Some tok -> [ KeywordAttr (Extern, token env tok (* "this" *)) ] 
-    | None -> []
-  in
+  (* The "this" modifier marks the receiver of an extension method, so the
+     parameter is emitted as a receiver parameter. *)
+  let receiver_tok = Option.map (token env) v1 (* "this" *) in
+  let attrs = [] in
   let attrs =
     match v2 with
     | Some tok -> NamedAttr (fake "@", H2.name_of_id ("scoped", token env tok), fb []) :: attrs
@@ -2508,21 +2506,28 @@ and parameter_type_with_modifiers (env : env)
     | None -> attrs
   in
   let v5 = ref_base_type env v5 in
-  v5, attrs
+  (v5, attrs, receiver_tok)
 
 and explicit_parameter (env : env) (v1, v2, v3, v4) =
   let v1 = List.concat_map (attribute_list env) v1 in
   let v2 = Option.map (parameter_type_with_modifiers env) v2 in
   let v3 = identifier env v3 (* identifier *) in
   let v4 = Option.map (equals_value_clause env) v4 in
-  Param
+  let param =
     {
       pname = Some v3;
-      ptype = Option.map fst v2;
+      ptype = Option.map (fun (ty, _, _) -> ty) v2;
       pdefault = v4;
-      pattrs = v1 @ List.concat (Option.to_list (Option.map snd v2));
+      pattrs =
+        v1
+        @ List.concat
+            (Option.to_list (Option.map (fun (_, attrs, _) -> attrs) v2));
       pinfo = empty_id_info ();
     }
+  in
+  match Option.join (Option.map (fun (_, _, recv) -> recv) v2) with
+  | Some _ -> ParamReceiver param
+  | None -> Param param
 
 and from_clause (env : env) ((v1, v2, v3, v4, v5) : CST.from_clause) :
     linq_query_part =
@@ -2963,7 +2968,12 @@ and extern_alias_directive (env : env)
   G.DirectiveStmt extern |> G.s
 
 and using_directive (env : env) ((v0, v1, v2, v3, v4) : CST.using_directive) =
-  let _globalTODO = Option.map (token env) v0 in
+  let global_attrs =
+    match Option.map (token env) v0 with
+    | Some tok ->
+        [ G.attr G.GlobalScope tok ]
+    | None -> []
+  in
   let v1 = token env v1 (* "using" *) in
   let v4 = token env v4 (* ";" *) in
   (* NOTE: A using statement can be an import, but also a type alias. Since
@@ -2974,27 +2984,33 @@ and using_directive (env : env) ((v0, v1, v2, v3, v4) : CST.using_directive) =
   match v3 with
   | `Type_name v3 ->
       let v3 = name env v3 in
-      let import =
+      let import, static_attrs =
         match v2 with
         | Some x -> (
             match x with
-            | `Static _tok ->
+            | `Static tok ->
                 (* "static" *)
                 (* using static System.Math; *)
-                (* THINK: The generic AST is undistinguishable from that of `using Foo`. *)
-                G.ImportAll (v1, G.DottedName (H2.dotted_ident_of_name v3), v4)
+                (* A static using carries a static attribute on the directive,
+                   which tells it apart from a using of a namespace. *)
+                ( G.ImportAll
+                    (v1, G.DottedName (H2.dotted_ident_of_name v3), v4),
+                  [ G.attr G.Static (token env tok) ] )
             | `Name_equals x ->
                 (* using Foo = System.Text; *)
                 let alias = name_equals env x in
-                G.ImportAs
-                  ( v1,
-                    G.DottedName (H2.dotted_ident_of_name v3),
-                    Some (alias, empty_id_info ()) ))
+                ( G.ImportAs
+                    ( v1,
+                      G.DottedName (H2.dotted_ident_of_name v3),
+                      Some (alias, empty_id_info ()) ),
+                  [] ))
         | None ->
             (* using System.IO; *)
-            G.ImportAll (v1, G.DottedName (H2.dotted_ident_of_name v3), v4)
+            ( G.ImportAll (v1, G.DottedName (H2.dotted_ident_of_name v3), v4),
+              [] )
       in
-      G.DirectiveStmt (import |> G.d) |> G.s
+      G.DirectiveStmt { G.d = import; d_attrs = global_attrs @ static_attrs }
+      |> G.s
   | _ ->
       let v3 = type_ env v3 in
       (match v2 with
@@ -3087,14 +3103,14 @@ and namespace_declaration (env : env)
         namespace MySpace { ... } ;
             v1       v2      v3  v4
       *)
-  let _v1 = token env v1 (* "namespace" *) in
+  let v1 = token env v1 (* "namespace" *) in
   let v2 = name env v2 in
   let open_brace, decls, close_brace = declaration_list env v3 in
-  let body = G.Block (open_brace, decls, close_brace) |> G.s in
-  let ent = { name = EN v2; attrs = []; tparams = None } in
-  let mkind = G.ModuleStruct (None, [ body ]) in
-  let def = { G.mbody = mkind } in
-  G.DefStmt (ent, G.ModuleDef def) |> G.s
+  let opening =
+    G.DirectiveStmt (G.Package (v1, H2.dotted_ident_of_name v2) |> G.d) |> G.s
+  in
+  let closing = G.DirectiveStmt (G.PackageEnd close_brace |> G.d) |> G.s in
+  G.Block (open_brace, (opening :: decls) @ [ closing ], close_brace) |> G.s
 
 and type_declaration (env : env) (x : CST.type_declaration) : stmt =
   match x with
@@ -3806,16 +3822,16 @@ and declaration ?(this_param=None) (env : env) (x : CST.declaration) : stmt =
   | `Exte_decl (v1, _type_param, v2, v3, v4, v5, _where_clause, v6) ->
       let _v1 = (* "extension" *) token env v1 in
       let _v2 = (* "(" *) token env v2 in
-      let typ, _attrs = parameter_type_with_modifiers env v3 in
+      let typ, _attrs, _receiver = parameter_type_with_modifiers env v3 in
       let this_param =
         match v4 with
         | Some v4 ->
             let ident = identifier env v4 in
-            Some (fun tok -> G.Param
+            Some (fun tok -> G.ParamReceiver
               {pname = Some (fst ident, tok);
                ptype = Some typ;
                pdefault = None;
-               pattrs = [ G.KeywordAttr (G.Extern, fake "this") ];
+               pattrs = [];
                pinfo = G.empty_id_info ~hidden:false ()
               })
         | _ -> None
