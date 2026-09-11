@@ -442,11 +442,17 @@ let log_critical_exn_and_last_rule () =
   (* TODO? why we use Match_patters.last_matched_rule here
      * and below Rule.last_matched_rule?
   *)
+  (* The rule id is the one of Rule.last_matched_rule: the id of the mini
+     rule of Match_patterns.last_matched_rule is the process-wide counter of
+     the patterns, which means nothing to the user. *)
+  (match TLS.get_default ~default:(fun () -> None) Rule.last_matched_rule with
+  | None -> ()
+  | Some rule_id ->
+      Logs.warn (fun m ->
+          m "critical exn while matching rule %s" (Rule_ID.to_string rule_id)));
   match (TLS.get_default ~default:(fun () -> None) Match_patterns.last_matched_rule) with
   | None -> ()
   | Some rule ->
-      Logs.warn (fun m ->
-          m "critical exn while matching ruleid %s" (Rule_ID.to_string rule.id));
       Logs.debug (fun m -> m "full pattern is: %s" rule.MR.pattern_string);
       ()
 
@@ -456,7 +462,8 @@ let errors_of_timeout_or_memory_exn (exn : exn) (target : Target.t) : ESet.t =
   let loc = Tok.first_loc_of_file internal_path in
   match exn with
   | Match_rules.File_timeout rule_ids ->
-      Logs.warn (fun m -> m "Timeout on %s" (Origin.to_string origin));
+      (* the report of the scan states the timeouts *)
+      Logs.info (fun m -> m "Timeout on %s" (Origin.to_string origin));
       (* TODO what happened here is several rules
          timed out while trying to scan a file.
          Which heuristically indicates that the
@@ -533,7 +540,7 @@ let iter_targets_and_get_matches_and_exn_to_errors
             *)
 
            let (res, was_scanned), run_time =
-             Common.with_time (fun () ->
+             Core_profiling.with_time (fun () ->
                  try
                    Memory_limit.run_with_global_memory_limit
                      (caps :> < Cap.memory_limit >)
@@ -545,6 +552,10 @@ let iter_targets_and_get_matches_and_exn_to_errors
                         * now timeout per rule, not per file since pysemgrep
                         * passed all the rules to semgrep-core.
                         *)
+                       (* an exception before any rule runs on this target,
+                          e.g. while parsing it, must not be attributed to
+                          the last rule of the previous target *)
+                       TLS.set Rule.last_matched_rule None;
                        let res, was_scanned = handle_target target in
                        (* old: This was to test -max_memory, to give a chance
                         * to Gc.create_alarm to run even if the program does
@@ -569,15 +580,6 @@ let iter_targets_and_get_matches_and_exn_to_errors
                       *)
                      let scanned = true in
                      (Core_result.mk_match_result [] errors noprof, scanned)
-                 | Time_limit.Timeout _ ->
-                     (* converted in Main_timeout in timeout_function() *)
-                     (* FIXME:
-                          Actually, I managed to get this assert to trigger by
-                          running semgrep -c p/default-v2 on elasticsearch with
-                          -timeout 0.01 !
-                     *)
-                     failwith
-                       "Time limit exceeded (this shouldn't happen, FIXME)"
                  (* convert all other exns (e.g., a parse error in a target file)
                   * in an empty match result with errors, so that one error in
                   * one target file does not abort the whole scan and the
@@ -830,8 +832,12 @@ let mk_target_handler (caps : < Cap.time_limit >) (config : Core_scan_config.t)
          profiling =
            Option.map
              (fun (p : Core_profiling.partial_profiling) ->
+                (* The size is the length of the content the scan read.
+                   When timings are asked for and no rule read the content,
+                   it is read once here, so that the report shows the real
+                   size instead of zero. *)
                 let p_file_size_bytes =
-                  if Lazy.is_val xtarget.lazy_content then
+                  if Lazy.is_val xtarget.lazy_content || config.report_time then
                     Some (String.length (Lazy.force xtarget.lazy_content))
                   else None
                 in

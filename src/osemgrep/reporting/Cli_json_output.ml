@@ -44,33 +44,45 @@ let core_location_to_error_span (loc : Out.location) : Out.error_span =
 (* Generate error message exposed to user *)
 let error_message ~rule_id ~(location : Out.location option)
     ~(error_type : Out.error_type) ~core_message : string =
-  let rule_id_str_opt = Option.map Rule_ID.to_string rule_id in
-  let error_context =
-    match (rule_id_str_opt, error_type) with
-    (* For rule errors, the path is a temporary JSON file containing
-       the broken rule(s). *)
-    | Some id, (RuleParseError | PatternParseError _) -> spf "in rule %s" id
-    | ( Some id,
-        ( PartialParsing _ | ParseError | OtherParseError | AstBuilderError
-        | InvalidYaml | MatchingError | SemgrepMatchFound | TooManyMatches
-        | FatalError | Timeout | OutOfMemory | TimeoutDuringInterfile
-        | OutOfMemoryDuringInterfile ) ) ->
-        let suffix =
-          match location with
-          | None -> ""
-          | Some loc -> spf " on %s" !!(loc.path)
-        in
-        spf "when running %s%s" id suffix
-    | Some id, IncompatibleRule _ -> id
-    | Some id, MissingPlugin -> spf "for rule %s" id
-    | _ -> (
-        match location with
-        | None -> ""
-        | Some loc -> spf "at line %s:%d" !!(loc.path) loc.start.line)
-  in
-  spf "%s %s:\n %s"
-    (Error.string_of_error_type error_type)
-    error_context core_message
+  match error_type with
+  (* an error of the command itself (e.g. a scanning root that does not
+   * exist, or no config given), not of the scan engine: the message is
+   * already complete, as with pysemgrep's SemgrepError *)
+  | SemgrepError
+  | MissingConfig ->
+      core_message
+  | _ -> (
+      let rule_id_str_opt = Option.map Rule_ID.to_string rule_id in
+      let error_context =
+        match (rule_id_str_opt, error_type) with
+        (* For rule errors, the path is a temporary JSON file containing
+           the broken rule(s). *)
+        | Some id, (RuleParseError | PatternParseError _) ->
+            spf "in rule %s" id
+        | ( Some id,
+            ( PartialParsing _ | ParseError | OtherParseError
+            | AstBuilderError | InvalidYaml | MatchingError
+            | SemgrepMatchFound | TooManyMatches | FatalError | Timeout
+            | OutOfMemory | TimeoutDuringInterfile
+            | OutOfMemoryDuringInterfile ) ) ->
+            let suffix =
+              match location with
+              | None -> ""
+              | Some loc -> spf " on %s" !!(loc.path)
+            in
+            spf "when running %s%s" id suffix
+        | Some id, IncompatibleRule _ -> id
+        | Some id, MissingPlugin -> spf "for rule %s" id
+        | Some id, UnsupportedSupplyChainRule -> spf "in rule %s" id
+        | _ -> (
+            match location with
+            | None -> ""
+            | Some loc -> spf "at line %s:%d" !!(loc.path) loc.start.line)
+      in
+      spf "%s%s:\n %s"
+        (Error.string_of_error_type error_type)
+        (if String.equal error_context "" then "" else " " ^ error_context)
+        core_message)
 
 let error_spans ~(error_type : Out.error_type) ~(location : Out.location) =
   match error_type with
@@ -97,6 +109,8 @@ let error_spans ~(error_type : Out.error_type) ~(location : Out.location) =
       in
       Some [ span ]
   | PartialParsing locs -> Some (locs |> List_.map core_location_to_error_span)
+  (* the token of the rule file the error is about *)
+  | InvalidRuleSchemaError -> Some [ core_location_to_error_span location ]
   | _else_ -> None
 
 (* # TODO benchmarking code relies on error code value right now
@@ -108,13 +122,22 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
   | LexicalError
   | PartialParsing _ ->
       Exit_code.invalid_code ~__LOC__
-  (* rule errors lead to `missing_config` *)
-  | InvalidYaml -> Exit_code.missing_config ~__LOC__
-  | OtherParseError
-  | AstBuilderError
+  (* rule errors: the code the JSON entry carries. The exit code of a scan
+     whose rules could not be loaded is derived from these, but is not always
+     the same code: see exit_code_of_invalid_config_errors in
+     Scan_subcommand.ml *)
+  | InvalidYaml -> Exit_code.unparseable_yaml ~__LOC__
+  | InvalidRuleSchemaError -> Exit_code.invalid_pattern ~__LOC__
+  (* a pattern that does not parse was reported by the engine, and
+     pysemgrep gave an engine error of severity Error the fatal code unless
+     it was a target parse error (core_error_to_semgrep_error in
+     core_output.py) *)
   | RuleParseError
   | PatternParseError _
-  | PatternParseError0
+  | PatternParseError0 ->
+      Exit_code.fatal ~__LOC__
+  | OtherParseError
+  | AstBuilderError
   | MatchingError
   | SemgrepMatchFound
   | TooManyMatches
@@ -128,19 +151,92 @@ let exit_code_of_error_type (error_type : Out.error_type) : Exit_code.t =
   | SemgrepWarning
   | SemgrepError ->
       Exit_code.fatal ~__LOC__
-  | InvalidRuleSchemaError -> Exit_code.invalid_pattern ~__LOC__
   | UnknownLanguageError -> Exit_code.invalid_language ~__LOC__
+  | MissingConfig -> Exit_code.missing_config ~__LOC__
   | IncompatibleRule _
   | IncompatibleRule0
   | MissingPlugin
+  | UnsupportedSupplyChainRule
   | DependencyResolutionError _ ->
       Exit_code.ok ~__LOC__
+
+(* An error that fails a run on its own. A warning or an info does not: a
+ * rule that requires a newer version of the engine leaves the run
+ * successful. *)
+let is_real_error_severity (severity : Out.error_severity) : bool =
+  match severity with
+  | `Error -> true
+  | `Warning
+  | `Info ->
+      false
+
+(* The error a failed run exits with. pysemgrep took the last error its
+ * output handler had collected (_final_raise in output.py) and, unless
+ * --strict was given, ignored it when its severity was below Error: a rule
+ * that requires a newer version of the engine leaves the run successful.
+ * pysemgrep collected the errors of a rule file in an order different from
+ * ours, so we take the last error of severity Error rather than the last
+ * error.
+ * python: select_real_errors in error.py *)
+let last_real_error (errors : Core_error.t list) : Core_error.t option =
+  errors |> List.rev
+  |> List.find_opt (fun (err : Core_error.t) ->
+         is_real_error_severity
+           (Core_error.severity_of_error err.Core_error.typ))
+
+(* python: this used to be done in a _final_raise method from output.py
+ * but better separation of concern to do it here.
+ *)
+let exit_code_of_errors ~(strict : bool) (errors : Out.core_error list) :
+    Exit_code.t =
+  match List.rev errors with
+  | [] -> Exit_code.ok ~__LOC__
+  (* TODO? why do we look at the last error? What about the other errors? *)
+  | x :: _ -> (
+      (* alt: raise a Semgrep_error that would be caught by CLI_Common
+       * wrapper instead of returning an exit code directly? *)
+      match () with
+      | _ when is_real_error_severity x.severity ->
+          let exit_code = exit_code_of_error_type x.error_type in
+          Logs.info (fun m ->
+              m
+                "Exiting opengrep scan due to error of severity level=Error: %s \
+                 -> exit code %i"
+                (Semgrep_output_v1_j.string_of_error_type x.error_type)
+                (Exit_code.to_int exit_code));
+          exit_code
+      | _ when strict ->
+          let exit_code = exit_code_of_error_type x.error_type in
+          Logs.info (fun m ->
+              m
+                "Exiting opengrep scan due to error in strict mode: %s -> exit \
+                 code %i"
+                (Semgrep_output_v1_j.string_of_error_type x.error_type)
+                (Exit_code.to_int exit_code));
+          exit_code
+      | _ -> Exit_code.ok ~__LOC__)
+
+(* A parse error quotes the bytes it choked on, so an error entry takes
+ * strings from its target just as a match does, and every one of them is
+ * sanitised for the same reason (see 'sanitize_cli_match' below).
+ *)
+let sanitize_cli_error (e : Out.cli_error) : Out.cli_error =
+  let sanitize = Option.map Utf8.sanitize in
+  {
+    e with
+    message = sanitize e.message;
+    long_msg = sanitize e.long_msg;
+    short_msg = sanitize e.short_msg;
+    help = sanitize e.help;
+  }
 
 (* Skipping the intermediate python SemgrepCoreError for now.
  * TODO: should we return an Error.Semgrep_core_error instead? like we
  * do in python? and then generate an Out.cli_error out of it?
  *)
 let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
+  sanitize_cli_error
+  @@
   match x with
   | {
    error_type;
@@ -159,8 +255,11 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         | PartialParsing _
         | SemgrepWarning
         | SemgrepError
-        | InvalidRuleSchemaError ->
+        | MissingConfig ->
             None
+        (* pysemgrep's schema validator did not know the rule; our parser
+           does *)
+        | InvalidRuleSchemaError
         | OtherParseError
         | AstBuilderError
         | RuleParseError
@@ -180,6 +279,7 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         | IncompatibleRule _
         | IncompatibleRule0
         | MissingPlugin
+        | UnsupportedSupplyChainRule
         | DependencyResolutionError _ ->
             rule_id
       in
@@ -209,9 +309,11 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         | OutOfMemoryDuringInterfile
         | SemgrepWarning
         | SemgrepError
+        | MissingConfig
         | IncompatibleRule _
         | IncompatibleRule0
         | MissingPlugin
+        | UnsupportedSupplyChainRule
         | DependencyResolutionError _ ->
             location |> Option.map (fun (x : Out.location) -> x.path)
       in
@@ -233,9 +335,15 @@ let cli_error_of_core_error (x : Out.core_error) : Out.cli_error =
         path;
         message;
         spans;
-        (* LATER *)
-        long_msg = None;
-        short_msg = None;
+        (* python: ErrorWithSpan, for the errors on the structure of a rule *)
+        long_msg =
+          (match error_type with
+          | InvalidRuleSchemaError -> Some core_message
+          | _ -> None);
+        short_msg =
+          (match error_type with
+          | InvalidRuleSchemaError -> Some "Invalid rule schema"
+          | _ -> None);
         help = None;
       }
 
@@ -252,8 +360,92 @@ let make_fixed_lines fixes_env fix path (start : Out.position)
   in
   Fixed_lines.make_fixed_lines fixes_env edit
 
-let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
-    (m : Out.core_match) : Out.cli_match =
+(* A target is a sequence of bytes and nothing guarantees it is UTF-8, but
+ * every output format has to be: a JSON or SARIF document with a stray byte
+ * in it is rejected by every reader. pysemgrep read its targets with
+ * errors="replace", so the bytes it could not decode became U+FFFD; we do the
+ * same to the strings a match takes from its target file, once, here.
+ *)
+let sanitize_cli_match (m : Out.cli_match) : Out.cli_match =
+  let sanitize = Utf8.sanitize in
+  let sanitize_metavar_value (mval : Out.metavar_value) : Out.metavar_value =
+    {
+      mval with
+      abstract_content = sanitize mval.abstract_content;
+      propagated_value =
+        mval.propagated_value
+        |> Option.map (fun (v : Out.svalue_value) ->
+               {
+                 v with
+                 Out.svalue_abstract_content =
+                   sanitize v.Out.svalue_abstract_content;
+               });
+    }
+  in
+  let sanitize_intermediate_var (v : Out.match_intermediate_var) :
+      Out.match_intermediate_var =
+    { v with content = sanitize v.content }
+  in
+  let rec sanitize_call_trace (trace : Out.match_call_trace) :
+      Out.match_call_trace =
+    match trace with
+    | CliLoc (loc, content) -> CliLoc (loc, sanitize content)
+    | CliCall ((loc, content), vars, trace) ->
+        CliCall
+          ( (loc, sanitize content),
+            List_.map sanitize_intermediate_var vars,
+            sanitize_call_trace trace )
+  in
+  let sanitize_dataflow_trace (trace : Out.match_dataflow_trace) :
+      Out.match_dataflow_trace =
+    {
+      taint_source = trace.taint_source |> Option.map sanitize_call_trace;
+      intermediate_vars =
+        trace.intermediate_vars
+        |> Option.map (List_.map sanitize_intermediate_var);
+      taint_sink = trace.taint_sink |> Option.map sanitize_call_trace;
+    }
+  in
+  let extra = m.extra in
+  {
+    m with
+    extra =
+      {
+        extra with
+        message = sanitize extra.message;
+        lines = sanitize extra.lines;
+        fix = extra.fix |> Option.map sanitize;
+        fixed_lines = extra.fixed_lines |> Option.map (List_.map sanitize);
+        metavars =
+          extra.metavars
+          |> Option.map
+               (List_.map (fun ((name : string), (mval : Out.metavar_value)) ->
+                    (name, sanitize_metavar_value mval)));
+        dataflow_trace =
+          extra.dataflow_trace |> Option.map sanitize_dataflow_trace;
+      };
+  }
+
+(* The path the match-based id is computed from. A scan of '/home/me/proj/sub'
+ * and a scan of 'sub' from /home/me/proj report the same finding, so the id
+ * cannot hash the path as the user wrote it: it hashes the path relative to
+ * the current directory. A path that does not lie under the current directory
+ * ('../lib/x.py') is hashed as it was written; the prefix is stripped, never
+ * walked up with '..'.
+ * python: 'self.path.relative_to(Path.cwd())' in get_match_based_key()
+ * (rule_match.py), whose ValueError falls back to the path itself. *)
+let path_of_match_based_id ~(cwd : Fpath.t) (path : Fpath.t) : Fpath.t =
+  match Fpath.rem_prefix cwd path with
+  | Some relative -> relative
+  | None -> path
+
+(* 'cwd' is read once by the caller rather than once per match; it is only
+ * the match-based id that uses it, the reported path stays as the user gave
+ * it. *)
+let cli_match_of_core_match ~(cwd : Fpath.t) ~fixed_lines fixed_env
+    (hrules : Rule.hrules) (m : Out.core_match) : Out.cli_match =
+  sanitize_cli_match
+  @@
   match m with
   | {
    check_id = rule_id;
@@ -313,7 +505,8 @@ let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
       let lines =
         Semgrep_output_utils.lines_of_file_at_range_exn (start, end_) path
       in
-      let lines = lines |> String.concat "\n" in
+      (* python: "".join(rule_match.lines).rstrip() *)
+      let lines = lines |> String.concat "\n" |> String_.rstrip in
       {
         check_id;
         path;
@@ -330,8 +523,9 @@ let cli_match_of_core_match ~fixed_lines fixed_env (hrules : Rule.hrules)
             fix;
             is_ignored = Some is_ignored;
             fingerprint =
-              Semgrep_hashing_functions.match_based_id_partial rule rule_id
-                metavars !!path;
+              Semgrep_hashing_functions.Match_based_id.partial rule rule_id
+                metavars
+                !!(path_of_match_based_id ~cwd path);
             sca_info = sca_match;
             fixed_lines;
             dataflow_trace;
@@ -423,11 +617,9 @@ let cli_output_of_runner_result ~fixed_lines (core : Out.core_output)
    engine_requested = _;
   } ->
       (* TODO: not sure how it's sorted. Look at rule_match.py keys? *)
-      let matches =
-        matches
-        |> List.sort (fun (a : Out.core_match) (b : Out.core_match) ->
-               compare a.check_id b.check_id)
-      in
+      (* The fixed lines of overlapping fixes go to the first finding in
+         reported order, the one whose fix is applied. *)
+      let matches = Semgrep_output_utils.sort_core_matches_as_reported matches in
       (* TODO: not sure how it's sorted, but Set_.elements return
        * elements in OCaml compare order (=~ lexicographic for strings)
        * python: scanned=[str(path) for path in sorted(self.all_targets)]
@@ -459,12 +651,14 @@ let cli_output_of_runner_result ~fixed_lines (core : Out.core_output)
         []
       in
       let fixed_env = Fixed_lines.mk_env () in
+      let cwd : Fpath.t = Fpath.v (Sys.getcwd ()) in
       {
         version = Some version;
         (* Skipping the python intermediate RuleMatchMap for now *)
         results =
           matches
-          |> List_.map (cli_match_of_core_match ~fixed_lines fixed_env hrules)
+          |> List_.map
+               (cli_match_of_core_match ~cwd ~fixed_lines fixed_env hrules)
           |> Semgrep_output_utils.sort_cli_matches;
         errors = errors |> List_.map cli_error_of_core_error;
         paths;

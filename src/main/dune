@@ -54,11 +54,7 @@
  (package semgrep)
  (section bin)
  (files
-  (Main.exe as opengrep-core)
-  (Main.exe as opengrep-cli) ; this corresponds to `osemgrep`.
-  ; in the long term (and in the short term on windows) we want to ship
-  ; opengrep-cli as "opengrep"
+  ; a single binary; the low-level engine CLI is `opengrep --core`
   (Main.exe as opengrep)
   ; useful to debug opengrep, see ../../debug and ocamldebug
-  (Main.bc as opengrep-core.bc)
   (Main.bc as opengrep.bc)))

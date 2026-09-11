@@ -160,11 +160,10 @@ let force_project_root ?(project_root : Rfpath.t option) (path : Fpath.t) :
   | Ok inproject_path -> { project_root; inproject_path }
   | Error msg -> failwith msg
 
-let find_any_project_root ~fallback_root ~force_novcs ~force_root
+let find_any_project_root ~(force_novcs : bool) ~(force_root : t option)
     (fpath : Fpath.t) : kind * scanning_root_info =
   Log.debug (fun m ->
-      m "find_any_project_root: fallback_root=%s force_root=%s %s"
-        (Logs_.option Rfpath.show fallback_root)
+      m "find_any_project_root: force_root=%s %s"
         (Logs_.option show force_root)
         !!fpath);
   let inferred_kind, root_info =
@@ -181,9 +180,7 @@ let find_any_project_root ~fallback_root ~force_novcs ~force_root
               | Error msg -> failwith msg
             in
             (kind, { project_root; inproject_path })
-        | None ->
-            ( No_VCS_project,
-              force_project_root ?project_root:fallback_root fpath ))
+        | None -> (No_VCS_project, force_project_root fpath))
   in
   let kind = if force_novcs then No_VCS_project else inferred_kind in
   (kind, root_info)

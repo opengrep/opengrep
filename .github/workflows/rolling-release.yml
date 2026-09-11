@@ -47,56 +47,15 @@ jobs:
     needs: validate-inputs
     uses: ./.github/workflows/build-test-windows-x86.yml
 
-  build-manylinux-binary-x86:
-    needs: build-linux-x86
-    uses: ./.github/workflows/build-manylinux-binary.yml
-
-  build-manylinux-binary-aarch64:
-    needs: build-linux-aarch64
-    uses: ./.github/workflows/build-manylinux-binary.yml
-    with:
-      arch: aarch64
-
-  build-musllinux-binary-x86:
-    needs: build-linux-x86
-    uses: ./.github/workflows/build-musllinux-binary.yml
-
-  build-musllinux-binary-aarch64:
-    needs: build-linux-aarch64
-    uses: ./.github/workflows/build-musllinux-binary.yml
-    with:
-      arch: aarch64
-
-  build-osx-binary-arm64:
-    needs: build-osx-arm64
-    uses: ./.github/workflows/build-osx-binary.yml
-
-  build-osx-binary-x86:
-    needs: build-osx-x86
-    uses: ./.github/workflows/build-osx-binary.yml
-    with:
-      arch: x86_64
-
-  build-windows-binary-x86:
-    needs: build-windows-x86
-    uses: ./.github/workflows/build-windows-binary-x86.yml
-
   release:
     runs-on: ubuntu-latest
 
     needs:
-      - build-linux-x86 # redundant
-      - build-linux-aarch64 # redundant
-      - build-manylinux-binary-x86
-      - build-manylinux-binary-aarch64
-      - build-musllinux-binary-x86
-      - build-musllinux-binary-aarch64
-      - build-osx-arm64 # redundant
-      - build-osx-binary-arm64
-      - build-osx-x86 # redundant
-      - build-osx-binary-x86
-      - build-windows-x86 # redundant
-      - build-windows-binary-x86
+      - build-linux-x86
+      - build-linux-aarch64
+      - build-osx-arm64
+      - build-osx-x86
+      - build-windows-x86
 
     steps:
       - name: Download All Artifacts
@@ -108,53 +67,53 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R
 
-      - name: Prepare wheels and binaries
+      - name: Prepare binaries
         run: |
           pushd artifacts/
 
-          tar xzf ./opengrep-core-x86/artifacts.tgz --strip=1
-          tar czf opengrep-core_linux_x86.tar.gz opengrep-core
+          tar xzf ./opengrep-linux-x86/opengrep.tgz --strip=1
+          mv opengrep opengrep_linux_x86
 
-          tar xzf ./opengrep-core-aarch64/artifacts.tgz --strip=1
-          tar czf opengrep-core_linux_aarch64.tar.gz opengrep-core
+          tar xzf ./opengrep-linux-aarch64/opengrep.tgz --strip=1
+          mv opengrep opengrep_linux_aarch64
 
-          tar xzf ./opengrep-osx-x86/artifacts.tgz --strip=1
-          tar czf opengrep-core_osx_x86.tar.gz opengrep-core
+          tar xzf ./opengrep-osx-x86/opengrep.tgz --strip=1
+          mv opengrep opengrep_osx_x86
 
-          tar xzf ./opengrep-osx-arm64/artifacts.tgz --strip=1
-          tar czf opengrep-core_osx_aarch64.tar.gz opengrep-core
+          tar xzf ./opengrep-osx-arm64/opengrep.tgz --strip=1
+          mv opengrep opengrep_osx_arm64
 
-          tar xzf ./opengrep-core-and-dependent-libs-w64-artifact/artifacts.tgz
-          zip -r -j opengrep-core_windows_x86.zip artifacts
+          # The Windows assets are flat: the exe and its DLLs side by side.
+          tar xzf ./opengrep-windows-x86/opengrep.tgz
+          zip -j opengrep_windows_x86.zip opengrep/*
 
-          unzip -j ./manylinux-x86-wheel/dist.zip "*.whl"
-          unzip -j ./osx-arm64-wheel/dist.zip "*.whl"
+          ls -l
 
-          unzip ./opengrep_manylinux_binary_x86_64/opengrep.zip -d ./opengrep_manylinux_binary_x86_64
-          pushd opengrep_manylinux_binary_x86_64; mv opengrep opengrep_manylinux_x86; popd
-          ls -l opengrep_manylinux_binary_x86_64
+          popd
 
-          unzip ./opengrep_manylinux_binary_aarch64/opengrep.zip -d ./opengrep_manylinux_binary_aarch64
-          pushd opengrep_manylinux_binary_aarch64; mv opengrep opengrep_manylinux_aarch64; popd
-          ls -l opengrep_manylinux_binary_aarch64
+      - name: Check the binaries to sign
+        run: |
+          pushd artifacts/
 
-          unzip ./opengrep_musllinux_binary_x86_64/opengrep.zip -d ./opengrep_musllinux_binary_x86_64
-          pushd opengrep_musllinux_binary_x86_64; mv opengrep opengrep_musllinux_x86; popd
-          ls -l opengrep_musllinux_binary_x86_64
+          for bin in opengrep_linux_x86 opengrep_linux_aarch64 \
+                     opengrep_osx_x86 opengrep_osx_arm64; do
+            if [ ! -x "$bin" ]; then
+              echo "$bin is not executable" 1>&2
+              exit 1
+            fi
+          done
 
-          unzip ./opengrep_musllinux_binary_aarch64/opengrep.zip -d ./opengrep_musllinux_binary_aarch64
-          pushd opengrep_musllinux_binary_aarch64; mv opengrep opengrep_musllinux_aarch64; popd
-          ls -l opengrep_musllinux_binary_aarch64
-
-          unzip ./opengrep_osx_binary_arm64/opengrep.zip -d ./opengrep_osx_binary_arm64
-          pushd opengrep_osx_binary_arm64; mv opengrep opengrep_osx_arm64; popd
-          ls -l opengrep_osx_binary_arm64
-
-          unzip ./opengrep_osx_binary_x86/opengrep.zip -d ./opengrep_osx_binary_x86
-          pushd opengrep_osx_binary_x86; mv opengrep opengrep_osx_x86; popd
-          ls -l opengrep_osx_binary_x86
-
-          pushd opengrep_windows_binary_x86; mv opengrep.exe opengrep_windows_x86.exe; popd
+          entries=$(unzip -Z1 opengrep_windows_x86.zip)
+          echo "$entries"
+          echo "$entries" | grep -qx 'opengrep.exe' || {
+            echo "opengrep_windows_x86.zip does not hold opengrep.exe" 1>&2
+            exit 1
+          }
+          dlls=$(echo "$entries" | grep -c '\.dll$' || true)
+          if [ "$dlls" -ne 6 ]; then
+            echo "Expected 6 DLLs in opengrep_windows_x86.zip, found $dlls" 1>&2
+            exit 1
+          fi
 
           popd
 
@@ -164,14 +123,12 @@ jobs:
       - name: Sign all binaries in artifacts
         run: |
           files_to_sign=(
-            artifacts/opengrep_manylinux_binary_x86_64/opengrep_manylinux_x86
-            artifacts/opengrep_manylinux_binary_aarch64/opengrep_manylinux_aarch64
-            artifacts/opengrep_musllinux_binary_x86_64/opengrep_musllinux_x86
-            artifacts/opengrep_musllinux_binary_aarch64/opengrep_musllinux_aarch64
-            artifacts/opengrep_osx_binary_arm64/opengrep_osx_arm64
-            artifacts/opengrep_osx_binary_x86/opengrep_osx_x86
-            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe)
-            for bin in "${files_to_sign[@]}"; do
+            artifacts/opengrep_linux_x86
+            artifacts/opengrep_linux_aarch64
+            artifacts/opengrep_osx_x86
+            artifacts/opengrep_osx_arm64
+            artifacts/opengrep_windows_x86.zip)
+          for bin in "${files_to_sign[@]}"; do
             echo "Signing $bin..."
             cosign sign-blob \
               --yes \
@@ -189,31 +146,20 @@ jobs:
           prerelease: true
           generate_release_notes: true
           files: |
-            artifacts/opengrep-core_linux_x86.tar.gz
-            artifacts/opengrep-core_linux_aarch64.tar.gz
-            artifacts/opengrep-core_osx_x86.tar.gz
-            artifacts/opengrep-core_osx_aarch64.tar.gz
-            artifacts/opengrep-core_windows_x86.zip
-            artifacts/opengrep_manylinux_binary_x86_64/opengrep_manylinux_x86
-            artifacts/opengrep_manylinux_binary_x86_64/opengrep_manylinux_x86.cert
-            artifacts/opengrep_manylinux_binary_x86_64/opengrep_manylinux_x86.sig
-            artifacts/opengrep_manylinux_binary_aarch64/opengrep_manylinux_aarch64
-            artifacts/opengrep_manylinux_binary_aarch64/opengrep_manylinux_aarch64.cert
-            artifacts/opengrep_manylinux_binary_aarch64/opengrep_manylinux_aarch64.sig
-            artifacts/opengrep_musllinux_binary_x86_64/opengrep_musllinux_x86
-            artifacts/opengrep_musllinux_binary_x86_64/opengrep_musllinux_x86.cert
-            artifacts/opengrep_musllinux_binary_x86_64/opengrep_musllinux_x86.sig
-            artifacts/opengrep_musllinux_binary_aarch64/opengrep_musllinux_aarch64
-            artifacts/opengrep_musllinux_binary_aarch64/opengrep_musllinux_aarch64.cert
-            artifacts/opengrep_musllinux_binary_aarch64/opengrep_musllinux_aarch64.sig
-            artifacts/opengrep_osx_binary_arm64/opengrep_osx_arm64
-            artifacts/opengrep_osx_binary_arm64/opengrep_osx_arm64.cert
-            artifacts/opengrep_osx_binary_arm64/opengrep_osx_arm64.sig
-            artifacts/opengrep_osx_binary_x86/opengrep_osx_x86
-            artifacts/opengrep_osx_binary_x86/opengrep_osx_x86.cert
-            artifacts/opengrep_osx_binary_x86/opengrep_osx_x86.sig
-            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe
-            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe.cert
-            artifacts/opengrep_windows_binary_x86/opengrep_windows_x86.exe.sig
+            artifacts/opengrep_linux_x86
+            artifacts/opengrep_linux_x86.cert
+            artifacts/opengrep_linux_x86.sig
+            artifacts/opengrep_linux_aarch64
+            artifacts/opengrep_linux_aarch64.cert
+            artifacts/opengrep_linux_aarch64.sig
+            artifacts/opengrep_osx_x86
+            artifacts/opengrep_osx_x86.cert
+            artifacts/opengrep_osx_x86.sig
+            artifacts/opengrep_osx_arm64
+            artifacts/opengrep_osx_arm64.cert
+            artifacts/opengrep_osx_arm64.sig
+            artifacts/opengrep_windows_x86.zip
+            artifacts/opengrep_windows_x86.zip.cert
+            artifacts/opengrep_windows_x86.zip.sig
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

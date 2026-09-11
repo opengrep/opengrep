@@ -63,7 +63,7 @@ val show_offset : offset -> string
 val show_offset_list : offset list -> string
 val offset_of_IL : Lang.t -> IL.offset -> offset
 (** The [Lang.t] matters for JS/TS only, where an integer index and its
-    canonical decimal string spelling denote the same property and are
+    canonical decimal string form denote the same property and are
     conflated into [Oint]. Pass the language of the file under analysis
     consistently: offsets computed under different languages do not
     compare reliably. *)

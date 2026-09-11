@@ -1,0 +1,16 @@
+Test name: with git > absolute scanning root below the working directory
+--- Files added before 'git add' ---
+c.c
+dir/a.c
+--- begin input files ---
+c.c
+dir/a.c
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 0 insertions(+), 0 deletions(-)
+ create mode 100644 c.c
+ create mode 100644 dir/a.c
+--- Selected targets ---
+selected <TMP>/<MASKED>/dir/a.c
+--- Skipped targets ---

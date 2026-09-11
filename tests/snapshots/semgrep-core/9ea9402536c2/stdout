@@ -1,0 +1,13 @@
+Test name: without git > semgrepignored folder is reported once
+--- Files not added to git ---
+.semgrepignore
+c.c
+dir/a.c
+dir/b.c
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected .semgrepignore
+selected c.c
+--- Skipped targets ---
+ignored dir [Semgrep_output_v1_t.Semgrepignore_patterns_match]

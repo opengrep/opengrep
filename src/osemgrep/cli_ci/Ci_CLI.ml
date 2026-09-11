@@ -1,3 +1,4 @@
+open Common
 module Arg = Cmdliner.Arg
 module Cmd = Cmdliner.Cmd
 module Term = Cmdliner.Term
@@ -79,8 +80,8 @@ let cmdline_term : conf Term.t =
      of the corresponding '$ o_xx $' further below! *)
   let combine allow_local_builds allow_rule_timeout_control
       apply_includes_excludes_to_files audit_on baseline_commit common config
-      dataflow_traces dump_command_for_core dynamic_timeout
-      dynamic_timeout_max_multiplier dynamic_timeout_unit_kb emacs
+      dataflow_traces dynamic_timeout dynamic_timeout_max_multiplier
+      dynamic_timeout_unit_kb emacs
       emacs_outputs exclude_ exclude_rule_ids files_with_matches force_color
       gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
       include_ inline_metavariables json json_outputs junit_xml
@@ -90,7 +91,7 @@ let cmdline_term : conf Term.t =
       optimizations output rewrite_rule_ids sarif sarif_outputs
       scan_unknown_extensions subdir suppress_errors taint_intrafile text
       text_outputs time_flag timeout _timeout_interfileTODO timeout_threshold
-      use_git version_check vim vim_outputs =
+      use_git _version_check vim vim_outputs =
     let output_format : Output_format.t =
       SC.output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
         ~gitlab_sast ~gitlab_secrets ~junit_xml
@@ -137,13 +138,16 @@ let cmdline_term : conf Term.t =
       {
         Core_runner.num_jobs;
         optimizations;
-        timeout;
+        (* the scan CLI parses those three as options, so that 'scan --test'
+           can tell the absence of the flag from its default value *)
+        timeout = timeout ||| Core_runner.default_conf.timeout;
         dynamic_timeout;
         dynamic_timeout_max_multiplier;
         dynamic_timeout_unit_kb;
         allow_rule_timeout_control;
-        timeout_threshold;
-        max_memory_mb;
+        timeout_threshold =
+          timeout_threshold ||| Core_runner.default_conf.timeout_threshold;
+        max_memory_mb = max_memory_mb ||| Core_runner.default_conf.max_memory_mb;
         max_match_per_file;
         dataflow_traces;
         (* --enable-nosem; the engine still annotates the matches, and the
@@ -194,10 +198,8 @@ let cmdline_term : conf Term.t =
     let matching_conf : Match_patterns.matching_conf =
       { Match_patterns.track_enclosing_context = false }
     in
-    (* coupling: Scan_CLI; not on the default maturity, where the run falls
-       back to pyopengrep, which prints no such warning for ci *)
-    if include_ <> None && exclude_ <> [] && common.maturity <> Maturity.Default
-    then
+    (* coupling: Scan_CLI *)
+    if include_ <> None && exclude_ <> [] then
       Logs.warn (fun m ->
           m
             "Paths that match both --include and --exclude will be skipped by \
@@ -215,8 +217,6 @@ let cmdline_term : conf Term.t =
         (* like in ci.py: ci reports and gates, it never modifies the
            checkout *)
         autofix = false;
-        (* accepted like in ci.py, where the version check is inert *)
-        version_check;
         output_conf;
         incremental_output = false;
         incremental_output_postprocess = false;
@@ -225,18 +225,7 @@ let cmdline_term : conf Term.t =
         matching_conf;
         common;
         version = false;
-        (* like Scan_CLI.show_CLI_conf: -d/--dump-command-for-core turns the
-           run into a show command *)
-        show =
-          (if dump_command_for_core then
-             Some
-               {
-                 Show_CLI.show_kind = Show_CLI.DumpCommandForCore;
-                 json;
-                 html = false;
-                 common;
-               }
-           else None);
+        show = None;
         validate = None;
         test = None;
         allow_local_builds;
@@ -260,7 +249,7 @@ let cmdline_term : conf Term.t =
     const combine $ SC.o_allow_local_builds $ SC.o_allow_rule_timeout_control
     $ SC.o_apply_includes_excludes_to_files $ o_audit_on
     $ SC.o_baseline_commit $ CLI_common.o_common $ SC.o_config
-    $ SC.o_dataflow_traces $ SC.o_dump_command_for_core $ SC.o_dynamic_timeout
+    $ SC.o_dataflow_traces $ SC.o_dynamic_timeout
     $ SC.o_dynamic_timeout_max_multiplier $ SC.o_dynamic_timeout_unit_kb
     $ SC.o_emacs $ SC.o_emacs_outputs $ SC.o_exclude $ SC.o_exclude_rule_ids
     $ SC.o_files_with_matches $ SC.o_force_color $ SC.o_gitlab_sast
@@ -270,7 +259,7 @@ let cmdline_term : conf Term.t =
     $ SC.o_matching_explanations $ SC.o_max_chars_per_line
     $ SC.o_max_lines_per_finding $ SC.o_max_log_list_entries
     $ SC.o_max_match_per_file $ SC.o_max_memory_mb $ SC.o_max_target_bytes
-    $ SC.o_nosem $ SC.o_num_jobs $ SC.o_opengrep_ignore_pattern
+    $ SC.o_nosem $ SC.o_num_jobs $ CLI_common.o_opengrep_ignore_pattern
     $ SC.o_optimizations $ SC.o_output $ SC.o_rewrite_rule_ids $ SC.o_sarif
     $ SC.o_sarif_outputs $ SC.o_scan_unknown_extensions $ o_subdir
     $ o_suppress_errors $ SC.o_taint_intrafile $ SC.o_text $ SC.o_text_outputs
@@ -312,7 +301,7 @@ let man : Cmdliner.Manpage.block list =
   ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep ci" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep ci" ~doc ~man ~exits:CLI_common.exits_ci
 
 (*****************************************************************************)
 (* Entry point *)

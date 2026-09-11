@@ -108,7 +108,8 @@ let contents_of_builtin_semgrepignore = function
   | Empty -> ""
   | Semgrep_scan_legacy -> default_semgrepignore_for_semgrep_scan
 
-let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore_filename) ~default_semgrepignore_patterns
+let create ?(cli_patterns = [])
+    ?(semgrepignore_filename = default_semgrepignore_filename) ~default_semgrepignore_patterns
     ~exclusion_mechanism ~project_root () =
   let root_anchor = Glob.Pattern.root_pattern in
   let default_patterns =
@@ -118,8 +119,9 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
   in
   let cli_patterns =
     List.concat_map
-      (Parse_gitignore.from_string ~name:"exclude pattern from command line"
-         ~source_kind:"exclude" ~anchor:root_anchor)
+      (Parse_gitignore.cli_patterns_from_string
+         ~name:"exclude pattern from command line" ~source_kind:"exclude"
+         ~anchor:root_anchor)
       cli_patterns
   in
   let default_semgrepignore_file_level : Gitignore.level =
@@ -145,6 +147,16 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
     if exclusion_mechanism.use_semgrepignore_files then [ semgrepignore_files ]
     else []
   in
+  (* the ignore files of this filter are read through this cache, which
+     reports an unreadable one once *)
+  let gitignore_file_cache =
+    Gitignore_cache.create ~gitignore_filenames:kinds_of_ignore_files_to_consult
+      ~project_root ()
+  in
+  let read_ignore_file_opt (dir : Fpath.t) : string option =
+    Gitignore_cache.read_ignore_file_opt gitignore_file_cache
+      (Gitignore_cache.ignore_file_path ~filename:semgrepignore_filename dir)
+  in
   (*
      Check if there is a top-level '.semgrepignore'. If not, use builtins.
 
@@ -153,14 +165,10 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
      empty root '.semgrepignore' file.
   *)
   let root_semgrepignore_exists =
-    let root_dir = Ppath.to_fpath ~root:project_root Ppath.root in
-    let semgrepignore_fname = Fpath.v semgrepignore_filename in
-    let semgrepignore_path =
-      if Fpath.is_abs semgrepignore_fname
-      then semgrepignore_fname
-      else Fpath.add_seg root_dir semgrepignore_filename
-    in
-    Sys.file_exists (Fpath.to_string semgrepignore_path)
+    (* a file the scan cannot read holds no patterns, so it does not
+       replace the built-in ones either *)
+    Option.is_some
+      (read_ignore_file_opt (Ppath.to_fpath ~root:project_root Ppath.root))
   in
 
   (*
@@ -171,6 +179,9 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
     exclusion_mechanism.use_semgrepignore_files && not root_semgrepignore_exists
   in
 
+  (* The '.semgrepignore' of a folder is read as that folder's ignore file,
+     with its patterns anchored there, whether or not the command runs from
+     it. A scanning root outside the folder is not affected by it. *)
   let higher_priority_levels =
     if use_default_semgrepignore then
       (* use the built-in semgrepignore rules in the absence of a root
@@ -178,8 +189,4 @@ let create ?(cli_patterns = []) ?(semgrepignore_filename = default_semgrepignore
       [ default_semgrepignore_file_level; cli_level ]
     else [ cli_level ]
   in
-  let gitignore_filter =
-    Gitignore_filter.create ~higher_priority_levels
-      ~gitignore_filenames:kinds_of_ignore_files_to_consult ~project_root ()
-  in
-  gitignore_filter
+  Gitignore_filter.create ~higher_priority_levels ~gitignore_file_cache ()

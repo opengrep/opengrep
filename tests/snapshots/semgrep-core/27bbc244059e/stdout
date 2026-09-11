@@ -1,0 +1,20 @@
+--- begin input files ---
+rules/redundant.yaml
+targets/redundant.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 36 insertions(+)
+ create mode 100644 rules/redundant.yaml
+ create mode 100644 targets/redundant.py
+{"version":"<MASKED>","results":[{"check_id":"rules.replace-ac","path":"targets/redundant.py","start":{"line":1,"col":1,"offset":0},"end":{"line":3,"col":2,"offset":5},"extra":{"metavars":{},"message":"slice a-c matches","fix":"replaced_lines_a_to_c_OK","fixed_lines":["replaced_lines_a_to_c_OK"],"metadata":{},"severity":"WARNING","fingerprint":"b37fdf9c92d20a91c7a350dcd205086422f98dc70d3820be03edf76d59fe642d3ac58d33c507ad9ac28579fc59152c2d701ce0b97ca42ff240c4e7d9f8f70ad4_0","lines":"a\nb\nc","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.replace-ac-copy","path":"targets/redundant.py","start":{"line":1,"col":1,"offset":0},"end":{"line":3,"col":2,"offset":5},"extra":{"metavars":{},"message":"slice a-c matches","fix":"replaced_lines_a_to_c_OK","metadata":{},"severity":"WARNING","fingerprint":"ef5b43f0b9f9c89bd58a59df19469bf0dad47d2c0881d5fc55b2e399a57ba1f814898b8247d9c28f513e428b67f9b80ff9721b8f642695db2a8a6f167d8d3d6e_0","lines":"a\nb\nc","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/redundant.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/redundant.py after the scan ---
+a
+b
+c
+d
+e
+f
+g
+h
+

@@ -35,7 +35,10 @@ module SS = Set.Make (String)
 (* Types *)
 (*****************************************************************************)
 type diff_scan_func =
-  Fpath.t list -> Rule.rules -> Core_result.result_or_exn
+  ?explicit_targets:Find_targets.Explicit_targets.t ->
+  Fpath.t list ->
+  Rule.rules ->
+  Core_result.result_or_exn
 
 (*****************************************************************************)
 (* Helpers *)
@@ -46,13 +49,17 @@ type diff_scan_func =
    baseline commit scan. Matches are considered identical if the
    tuples containing the rule ID, file path, and matched code snippet
    are equal. *)
-let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
+let remove_matches_in_baseline caps (commit : string)
+    ~(from_cwd : Fpath.t -> Fpath.t) (baseline : Core_result.t)
     (head : Core_result.t)
     (renamed : (string (* filename *) * string (* filename *)) list) =
   let extract_sig renamed (m : Core_match.t) =
     let rule_id = m.rule_id in
+    (* the two scans name their targets differently: the head scan as the
+       user gave them, the baseline scan relative to the current directory,
+       so the signatures compare on the form git uses *)
     let path =
-      !!(m.path.internal_path_to_content) |> fun p ->
+      !!(from_cwd m.path.internal_path_to_content) |> fun p ->
       Option.bind renamed
         (List_.find_some_opt (fun (before, after) ->
              if String.equal after p then Some before else None))
@@ -109,7 +116,8 @@ let remove_matches_in_baseline caps (commit : string) (baseline : Core_result.t)
    scan. Subsequently, eliminate any previously identified matches
    from the results of the head checkout scan. *)
 let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
-    (profiler : Profiler.t)
+    (profiler : Profiler.t) ~(from_cwd : Fpath.t -> Fpath.t)
+    ~(explicit_targets : Find_targets.Explicit_targets.t)
     (result_or_exn : Core_result.result_or_exn) (rules : Rule.rules)
     (commit : string) (status : Git_wrapper.status)
     (core : diff_scan_func) : Core_result.result_or_exn =
@@ -134,6 +142,17 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
       |> List.filter (fun x ->
              SS.mem (x.Rule.id |> fst |> Rule_ID.to_string) rules_in_match)
     in
+    (* The baseline scan names its targets relative to the current
+       directory, so the targets the command line named are made relative
+       too: a target counts as named on the command line only when the two
+       forms agree. Otherwise the size and '.min.js' bypass, and with
+       '--scan-unknown-extensions' language detection too, drop it in the
+       baseline scan, and the findings the baseline already had are reported
+       as new. Built once per baseline scan. *)
+    let baseline_explicit_targets =
+      Find_targets.Explicit_targets.to_list explicit_targets
+      |> List_.map from_cwd |> Find_targets.Explicit_targets.of_list
+    in
     let baseline_result =
       Profiler.record profiler ~name:"baseline_core_time" (fun () ->
           Git_wrapper.run_with_worktree caps ~commit (fun () ->
@@ -151,18 +170,25 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
                        else None)
                 |> List.of_seq
               in
+              (* the baseline worktree holds the same directories as the
+                 repository, so a target relative to the current directory
+                 names the same file there; an absolute one would name the
+                 file of the head instead *)
               let paths_in_match =
                 r.processed_matches
                 |> List_.map (fun ({ pm; _ } : Core_result.processed_match) ->
-                       !!(pm.path.internal_path_to_content))
+                       !!(from_cwd pm.path.internal_path_to_content))
                 |> prepare_targets
               in
-              core paths_in_match baseline_rules))
+              core ~explicit_targets:baseline_explicit_targets paths_in_match
+                baseline_rules))
     in
     match baseline_result with
     | Error _exn -> baseline_result
     | Ok baseline_r ->
-        Ok (remove_matches_in_baseline caps commit baseline_r r status.renamed)
+        Ok
+          (remove_matches_in_baseline caps commit ~from_cwd baseline_r r
+             status.renamed)
   else Ok r
 
 (*****************************************************************************)
@@ -171,8 +197,9 @@ let scan_baseline_and_remove_duplicates (caps : < Cap.chdir ; Cap.tmp >)
 
 let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
     (baseline : Find_targets.baseline_ref) (targets : Fpath.t list)
-    (rules : Rule.rules) (diff_scan_func : diff_scan_func) :
-    Core_result.result_or_exn =
+    (rules : Rule.rules)
+    ~(explicit_targets : Find_targets.Explicit_targets.t)
+    (diff_scan_func : diff_scan_func) : Core_result.result_or_exn =
   Logs.info (fun m ->
       m "running differential scan on baseline %s"
         (Find_targets.show_baseline_ref baseline));
@@ -186,19 +213,62 @@ let scan_baseline (caps : < Cap.chdir ; Cap.tmp >) (profiler : Profiler.t)
     | Find_targets.Rev rev -> rev
   in
   let status = Git_wrapper.status ~cwd:(Fpath.v ".") ~commit () in
+  (* The differential scan works on paths relative to the current directory:
+     that is the form git lists (Git_wrapper.status) and the form the
+     baseline worktree is scanned in. The targets of an absolute scanning
+     root are absolute, and those of a root above the current directory keep
+     its '../' prefix; both are made relative to the current directory to be
+     matched against git's paths, and are scanned and reported as the user
+     wrote them, exactly as without a baseline. Without this they match none
+     of git's paths and the scan reports no finding and no error. *)
+  let cwd = Rpath.getcwd () |> Rpath.to_fpath |> Fpath.to_dir_path in
+  (* the current directory above is free of symbolic links; a root that
+     goes through one ('/tmp' on macOS, a junction on Windows) is not,
+     and the two cannot be relativized against each other.
+     Only the directory is resolved, so a target that is itself a symlink
+     keeps the name git lists it under. The targets share a few directories,
+     each resolved once. *)
+  let resolved_dirs : (Fpath.t, Fpath.t) Hashtbl.t = Hashtbl.create 16 in
+  let resolve_dir (dir : Fpath.t) : Fpath.t =
+    match Hashtbl.find_opt resolved_dirs dir with
+    | Some real -> real
+    | None ->
+        let real =
+          match Rpath.of_fpath dir with
+          | Ok real -> Rpath.to_fpath real
+          | Error (_ : string) -> dir
+        in
+        Hashtbl.add resolved_dirs dir real;
+        real
+  in
+  let relative_to_cwd (path : Fpath.t) : Fpath.t =
+    let absolute =
+      Fpath.normalize (if Fpath.is_abs path then path else Fpath.(cwd // path))
+    in
+    let resolved =
+      let dir, last_segment = Fpath.split_base absolute in
+      Fpath.(resolve_dir dir // last_segment)
+    in
+    match Fpath.relativize ~root:cwd resolved with
+    | Some rel -> Fpath.normalize rel
+    | None -> Fpath.normalize path
+  in
   (* git reports plain relative paths; a "./"-prefixed scanning root would
      otherwise never match them *)
-  let targets = List_.map Fpath.normalize targets in
   let targets =
     let added_or_modified =
-      status.added @ status.modified |> List_.map Fpath.v
+      status.added @ status.modified
+      |> List_.map (fun (p : string) -> Fpath.v p |> Fpath.normalize)
     in
     let added_or_modified_set = Fpath.Set.of_list added_or_modified in
-    List.filter (fun p -> Fpath.Set.mem p added_or_modified_set) targets
+    List.filter
+      (fun (p : Fpath.t) ->
+        Fpath.Set.mem (relative_to_cwd p) added_or_modified_set)
+      targets
   in
   let (head_scan_result : Core_result.result_or_exn) =
     Profiler.record profiler ~name:"head_core_time" (fun () ->
         diff_scan_func targets rules)
   in
-  scan_baseline_and_remove_duplicates caps profiler head_scan_result rules
-    commit status diff_scan_func
+  scan_baseline_and_remove_duplicates caps profiler ~from_cwd:relative_to_cwd
+    ~explicit_targets head_scan_result rules commit status diff_scan_func

@@ -1,0 +1,18 @@
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'add' '.'
+[<MASKED TIMESTAMP>][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+[<MASKED TIMESTAMP>][ERROR]: invalid configuration file found (1 configs were invalid)
+rules/badpattern.yaml:4:18: Rule parse error in rule rules.eqeq-is-bad
+  --> rules/badpattern.yaml:4
+3 |     patterns:
+4 |       - pattern: $X == $X 3
+  |                  ^^^^^^^^^^
+5 |     message: "yeah this pattern doesn't work"
+Invalid pattern for Python: Stdlib.Parsing.Parse_error
+----- pattern -----
+$X == $X 3
+----- end pattern -----

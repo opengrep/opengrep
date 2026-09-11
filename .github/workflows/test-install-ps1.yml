@@ -112,6 +112,26 @@ jobs:
       # - name: Install pre-release version
       #   run: .\install.ps1 -Version v1.28.0-interfile.alpha.1
 
+      # From 2.0.0 the asset is an archive of opengrep.exe and its DLLs;
+      # enable once the v2.0.0 tag exists
+      # - name: Install 2.0.0
+      #   run: |
+      #     .\install.ps1 -Version v2.0.0
+      #     $inst = "$env:USERPROFILE\.opengrep\cli\v2.0.0"
+      #     if (-not (Test-Path "$inst\opengrep.exe")) {
+      #       Write-Error "Binary not found at $inst\opengrep.exe"
+      #       exit 1
+      #     }
+      #     if (-not (Get-ChildItem -Path "$inst\*.dll")) {
+      #       Write-Error "No DLLs found in $inst"
+      #       exit 1
+      #     }
+      #     & "$inst\opengrep.exe" --version
+      #     if ($LASTEXITCODE -ne 0) {
+      #       Write-Error "Installed binary failed to run"
+      #       exit 1
+      #     }
+
       # Test remote execution style (one-liner simulation)
       - name: Test script from stdin
         run: |

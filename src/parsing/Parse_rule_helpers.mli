@@ -13,6 +13,8 @@ type key = string Rule.wrap
 type env = {
   id : Rule_ID.t;
   target_analyzer : Xlang.t;
+  (* analyzer declared by the rule's own 'languages' field *)
+  rule_analyzer : Xlang.t;
   in_metavariable_pattern : bool;
   path : string list;
   options_key : key option;
@@ -211,15 +213,6 @@ val parse_variant :
 
 val parse_rule_id :
   env -> key -> AST_generic.expr -> (Rule_ID.t * Tok.t, Rule_error.t) Result.t
-
-val parse_http_method :
-  env ->
-  key ->
-  AST_generic.expr ->
-  ([> `DELETE | `GET | `HEAD | `POST | `PUT ], Rule_error.t) Result.t
-
-val parse_auth :
-  env -> key -> AST_generic.expr -> (Rule.auth, Rule_error.t) Result.t
 
 val parse_str_or_dict :
   env ->

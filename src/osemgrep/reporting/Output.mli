@@ -61,6 +61,7 @@ val keeps_ignores : conf -> bool
  * to log in and try Pro.
  *)
 val output_result :
+  keep_ignored:bool ->
   < Cap.stdout > ->
   conf ->
   Profiler.t ->
@@ -69,10 +70,10 @@ val output_result :
 
 (* helper used in output_result() and other callsites.
  * This handles nosemgrep, interpolating messages, and more.
+ * keep_ignored keeps the matches a 'nosemgrep' comment suppressed; they are
+ * dropped after the match-based ids are indexed, so that the index counts
+ * them as pysemgrep's did.
  *)
-val preprocess_result : fixed_lines:bool -> Core_runner.result -> Out.cli_output
+val preprocess_result :
+  fixed_lines:bool -> keep_ignored:bool -> Core_runner.result -> Out.cli_output
 
-(* used by RPC_return.ml for Vim/Emacs/Junit_xml/Gitlab_xxx for now *)
-val format :
-  ?profiler : Profiler.t ->
-  Output_format.t -> Out.cli_output -> string list

@@ -1,0 +1,22 @@
+--- begin input files ---
+eqeq-basic.yaml
+targets/exclude_include/excluded/excluded.js
+targets/exclude_include/excluded/included.js
+targets/exclude_include/included/excluded.js
+targets/exclude_include/included/included.js
+targets/exclude_include/included/included.vue
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 6 files changed, 22 insertions(+)
+ create mode 100644 eqeq-basic.yaml
+ create mode 100644 targets/exclude_include/excluded/excluded.js
+ create mode 100644 targets/exclude_include/excluded/included.js
+ create mode 100644 targets/exclude_include/included/excluded.js
+ create mode 100644 targets/exclude_include/included/included.js
+ create mode 100644 targets/exclude_include/included/included.vue
+targets/exclude_include/excluded/excluded.js
+targets/exclude_include/excluded/included.js
+targets/exclude_include/included/excluded.js
+targets/exclude_include/included/included.js
+targets/exclude_include/included/included.vue

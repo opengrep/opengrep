@@ -1,0 +1,11 @@
+--- begin input files ---
+eqeq.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 59 insertions(+)
+ create mode 100644 eqeq.yaml
+ create mode 100644 stupid.py
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites disabled="0" errors="0" failures="1" tests="1" time="0.0"><testsuite disabled="0" errors="0" failures="1" name="opengrep results" skipped="0" tests="1" time="0"><testcase name="eqeq-is-bad" classname="stupid.py" file="stupid.py" line="3"><failure type="ERROR" message="useless comparison operation `a + b == a + b` or `a + b != a + b`">    return a + b == a + b</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,1 @@
+Osemgrep Scan autofix (e2e) > autofix: redundant.yaml redundant.py json --dryrun

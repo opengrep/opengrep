@@ -81,19 +81,21 @@ To reproduce the benchmarks as run in CI, see the toplevel Makefile.
 
 The benchmarks run in CI run three scripts (see `scripts/run-benchmarks.sh`):
 
-1. `perf/run-benchmarks` -- runs with a specific version of Semgrep,
-   installed via pip, and then the local version. At the end, the version
-   of semgrep installed will be the local version
+1. `perf/run-benchmarks` -- runs with the latest released Opengrep, installed
+   by the toplevel `install.sh` under a scratch directory of the run, and then
+   with the `bin/opengrep` of the build
 2. `perf/compare-perf` -- this checks how much the benchmarks deviate by
    and posts an update if it increases by a lot or a little
 3. `perf/compare-bench-findings` -- this checks the findings to confirm
    that they are still the same as the expected snapshots
 
 For local debugging, it is often easiest to run just the `perf/run-benchmarks`
-command in `scripts/run-benchmarks.sh`.
+command in `scripts/run-benchmarks.sh`. It calls the `opengrep` of the PATH
+with the system `python3`, so put `bin` on the PATH first:
 
-TODO: Running the script may modify `cli/Pipfile` and `cli/Pipfile.lock`. Those
-changes should not be committed
+```
+$ PATH=$PWD/bin:$PATH python3 perf/run-benchmarks --config perf/configs/ci_small_repos.yaml --std-only
+```
 
 ## Modifying what benchmarks are run
 

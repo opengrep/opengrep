@@ -1,0 +1,36 @@
+--- begin input files ---
+rules/overlapping-collision.yaml
+targets/collision.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 28 insertions(+)
+ create mode 100644 rules/overlapping-collision.yaml
+ create mode 100644 targets/collision.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    targets/collision.py
+    ❯❱ rules.first-rule
+          Semgrep found a match
+
+           ▶▶┆ Autofix ▶ once
+            2┆ a = 1
+            3┆ b = 2
+            4┆ c = 3
+
+    ❯❱ rules.second-rule
+          Semgrep found a match
+
+           ▶▶┆ Autofix ▶ twice
+            3┆ b = 2
+            4┆ c = 3
+            5┆ d = 4
+
+--- targets/collision.py after the scan ---
+
+once
+d = 4

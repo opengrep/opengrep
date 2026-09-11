@@ -1,0 +1,10 @@
+--- begin input files ---
+metavariable-regex-propagation.py
+metavariable-regex-propagation.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 22 insertions(+)
+ create mode 100644 metavariable-regex-propagation.py
+ create mode 100644 metavariable-regex-propagation.yaml
+{"version":"<MASKED>","results":[{"check_id":"my_pattern_id","path":"metavariable-regex-propagation.py","start":{"line":2,"col":5,"offset":15},"end":{"line":2,"col":13,"offset":23},"extra":{"metavars":{"$1":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":4,"offset":3},"abstract_content":"foo"},"$FUNC":{"start":{"line":1,"col":5,"offset":4},"end":{"line":1,"col":8,"offset":7},"abstract_content":"foo"}},"message":"Semgrep found a match foo\n","metadata":{},"severity":"WARNING","fingerprint":"d9eca776454ab3dce395f2cbe36494b67408e15d6d7b8a27615c6bdb90c5d9ee7a51000ff83c986e78ecc8e2b43e17e1f4e9987c4d1ae7bb4a1ea112970f4a72_0","lines":"    return 1","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"my_pattern_id","path":"metavariable-regex-propagation.py","start":{"line":5,"col":5,"offset":40},"end":{"line":5,"col":13,"offset":48},"extra":{"metavars":{"$1":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":4,"offset":3},"abstract_content":"bar"},"$FUNC":{"start":{"line":4,"col":5,"offset":29},"end":{"line":4,"col":8,"offset":32},"abstract_content":"bar"}},"message":"Semgrep found a match bar\n","metadata":{},"severity":"WARNING","fingerprint":"a20a9937de77e956e28a68563b15d11373f3a90517de078ce1f073dee8fc5e9c26b488d85212bfcb5b42c2721e6398ff7af24af83bd2f85164fceb941c6fbe1a_0","lines":"    return 2","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["metavariable-regex-propagation.py"]},"interfile_languages_used":[],"skipped_rules":[]}

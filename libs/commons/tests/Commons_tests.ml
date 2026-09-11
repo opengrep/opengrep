@@ -9,6 +9,7 @@ let tests =
       Unit_Pcre2_.tests;
       Unit_regexp_engine.tests;
       Unit_String_.tests;
+      Unit_Utf8.tests;
       Unit_List_.tests;
       Unit_File.tests;
     ]

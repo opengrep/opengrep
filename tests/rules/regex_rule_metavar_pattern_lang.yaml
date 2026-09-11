@@ -1,0 +1,12 @@
+rules:
+  - id: test-regex-rule-mvp-lang
+    languages:
+      - regex
+    message: a python sub-pattern under a regex-only rule
+    patterns:
+      - pattern-regex: foo\((?P<X>.*)\)
+      - metavariable-pattern:
+          metavariable: $X
+          language: python
+          pattern: '"secret"'
+    severity: INFO

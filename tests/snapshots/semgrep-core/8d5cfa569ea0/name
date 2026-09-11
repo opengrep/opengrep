@@ -1,0 +1,1 @@
+Osemgrep Scan autofix (e2e) > autofix: delete-partial-line.yaml delete-partial-line.py text --dryrun

@@ -1,0 +1,28 @@
+--- begin input files ---
+rules.yml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 20 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 stupid.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    stupid.py
+   ❯❯❱ use-dict-get
+          Use `.get()` method to avoid a KeyNotFound error
+
+           ▶▶┆ Autofix ▶ inputs.get("key")
+            2┆ x = inputs["key"]
+
+    ❯❱ no-debug
+          Remove the debug call
+
+           ▶▶┆ Autofix ▶ delete
+            3┆ debug(x)
+

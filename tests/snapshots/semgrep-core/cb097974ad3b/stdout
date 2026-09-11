@@ -1,0 +1,11 @@
+Test name: without git > semgrepignore above the scanning root
+--- Files not added to git ---
+.semgrepignore
+dir/a
+dir/b
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected dir/a
+selected dir/b
+--- Skipped targets ---

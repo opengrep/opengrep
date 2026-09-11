@@ -1,0 +1,21 @@
+--- begin input files ---
+rules/bad14.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 13 insertions(+)
+ create mode 100644 rules/bad14.yaml
+ create mode 100644 target.py
+exit code: 7
+--- begin input files ---
+rules/bad14.yaml
+target.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 13 insertions(+)
+ create mode 100644 rules/bad14.yaml
+ create mode 100644 target.py
+{"version":"<MASKED>","results":[],"errors":[{"code":4,"level":"error","type":"InvalidRuleSchemaError","rule_id":"rules.tainty","message":"Invalid rule schema at line rules/bad14.yaml:10:\n each pattern-sourceslist item should be a dictionary","path":"rules/bad14.yaml","long_msg":"each pattern-sourceslist item should be a dictionary","short_msg":"Invalid rule schema","spans":[{"file":"rules/bad14.yaml","start":{"line":10,"col":9,"offset":159},"end":{"line":10,"col":11,"offset":161}}]}],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}
+exit code: 7

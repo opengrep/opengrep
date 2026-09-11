@@ -46,10 +46,12 @@ type result = {
  * The list of targets below are final targets (not scanning roots).
  * no further scanning of the filesystem shall be performed.
  * The Find_targets.conf argument is for explicit target management.
+ * git_repo says whether the targets came from git, for the scan status.
  *)
 type func = {
   run :
     ?file_match_hook:(Fpath.t -> Core_result.matches_single_file -> unit) ->
+    git_repo:bool ->
     conf ->
     Find_targets.conf ->
     Match_patterns.matching_conf ->
@@ -77,5 +79,11 @@ val mk_result : ?inline:bool -> Rule.rule list -> Core_result.t -> result
 val mk_core_run_for_osemgrep : Core_scan.func -> func
 
 
-(* Helper used in Test_subcommand.ml *)
-val targets_for_files_and_rules : Fpath.t list -> Rule.t list -> Target.t list
+(* Helper used in Test_subcommand.ml: the targets of the files given and
+   the rules as a scan runs them *)
+val targets_and_rules_for_files :
+  Fpath.t list -> Rule.t list -> Target.t list * Rule.t list
+
+(* the targets of each language of the rules *)
+val split_jobs_by_language :
+  Find_targets.conf -> Rule.t list -> Fpath.t list -> Lang_job.t list

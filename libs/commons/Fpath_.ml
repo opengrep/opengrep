@@ -40,6 +40,30 @@ let of_relative_segments segs =
 
 let append_no_dot a b = if Fpath.is_current_dir a then b else Fpath.append a b
 
+(* A leading './' and a trailing '/' carry no information about which file
+   a path names, and pyopengrep dropped them from the paths given on its
+   command line: './src/' was reported as 'src'. Everything else is kept as
+   given, so 'a/../b' and 'a/./b' keep their form. *)
+let rec strip_leading_dot_and_trailing_slash (path : Fpath.t) : Fpath.t =
+  let path = Fpath.rem_empty_seg path in
+  match Fpath.segs path with
+  | "." :: (seg :: _ as segs) when not (String.equal seg "") ->
+      strip_leading_dot_and_trailing_slash (of_relative_segments segs)
+  | _ -> path
+
+(* A '.' segment names no part of a path either, and pyopengrep's Path
+   dropped every one of them: 'a/./b' was 'a/b'. A '..' segment is kept as
+   given, which rules out Fpath.normalize: normalize resolves '..' against
+   the preceding segment, and so names another file when that segment is a
+   symlink. *)
+let drop_dot_segments (path : Fpath.t) : Fpath.t =
+  let volume, _rest = Fpath.split_volume path in
+  match
+    Fpath.segs path |> List_.exclude (fun (seg : string) -> String.equal seg ".")
+  with
+  | [] -> path
+  | segs -> Fpath.v (volume ^ String.concat Fpath.dir_sep segs)
+
 module Operators = struct
   let ( / ) = Fpath.( / )
   let ( // ) = Fpath.( // )
@@ -78,6 +102,32 @@ let () =
       assert (
         split_ext ~multi:true (Fpath.v "a/foo.tar.gz")
         =*= (Fpath.v "a/foo", ".tar.gz")));
+  Testo.test "Fpath_.strip_leading_dot_and_trailing_slash" (fun () ->
+      let check (input : string) (expected : string) : unit =
+        assert (
+          Fpath.equal
+            (strip_leading_dot_and_trailing_slash (Fpath.v input))
+            (Fpath.v expected))
+      in
+      check "./src" "src";
+      check "./src/" "src";
+      check "./." ".";
+      check "." ".";
+      check "./../src/lib" "../src/lib";
+      check "sub/../sub" "sub/../sub";
+      check "top.py/" "top.py";
+      check "/abs/dir/" "/abs/dir");
+  Testo.test "Fpath_.drop_dot_segments" (fun () ->
+      let check (input : string) (expected : string) : unit =
+        assert (
+          Fpath.equal (drop_dot_segments (Fpath.v input)) (Fpath.v expected))
+      in
+      check "a/./b" "a/b";
+      check "./a" "a";
+      check "a/." "a";
+      check "." ".";
+      check "a/../b" "a/../b";
+      check "/abs/./dir/main.py" "/abs/dir/main.py");
   ()
 
 (*****************************************************************************)

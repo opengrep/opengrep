@@ -17,7 +17,7 @@ type conf = {
   logging_level : Logs.level option;
   (* osemgrep-only: pad poor's man profiling info for now *)
   profile : bool;
-  (* osemgrep-only: mix of --experimental, --legacy, --develop *)
+  (* osemgrep-only: mix of --experimental, --develop *)
   maturity : Maturity.t;
 }
 [@@deriving show]
@@ -67,23 +67,73 @@ let o_logging : Logs.level option Term.t =
   in
   Term.(const combine $ o_debug $ o_quiet $ o_verbose)
 
+(*************************************************************************)
+(* Color options *)
+(*************************************************************************)
+
+(* alt: could use Fmt_cli.style_renderer, which supports --color=xxx but
+ * better be backward compatible with how semgrep was doing it before
+ *)
+(* [default] is the force_color of the caller's default output
+ * configuration; this library cannot name that record itself. *)
+let o_force_color ~(default : bool) : bool Term.t =
+  Cmdliner_.negatable_flag_with_env [ "force-color" ]
+    ~neg_options:[ "no-force-color" ] ~default
+      (* NO_COLOR (https://no-color.org/) and SEMGREP_FORCE_NO_COLOR are
+       * handled in setup_logging below; forcing colour wins.
+       *)
+    ~env:"SEMGREP_FORCE_COLOR"
+    ~doc:
+      {|Always include ANSI color in the output, even if not writing to
+a TTY; defaults to using the TTY status
+|}
+
+(* Writing the logs to a side file is a diagnostic convenience: when the path
+ * cannot be created or opened we warn and carry on rather than stop the scan.
+ *)
+let create_log_file (file : Fpath.t) : (unit, string) result =
+  try
+    UFile.make_directories (Fpath.parent file);
+    UFile.write_file ~file "";
+    Ok ()
+  with
+  | Unix.Unix_error (err, _, (arg : string)) ->
+      Error (Common.spf "%s: %s" arg (Unix.error_message err))
+  | Sys_error (msg : string) -> Error msg
+
 let setup_logging ~force_color ~level =
-  Log_semgrep.setup ~force_color ~level ();
+  (* The file of $OPENGREP_LOG_FILE (or $SEMGREP_LOG_FILE) gets a copy of
+   * the logs at the same level as stderr, so that it costs nothing unless
+   * --verbose or --debug is passed too. pysemgrep wrote its own logs there
+   * at the debug level whatever the console level, and to
+   * ~/.semgrep/semgrep.log when the variable was not set.
+   *)
+  let copy_to_file, log_file_error =
+    match Opengrep_env.getenv_with_name_opt "SEMGREP_LOG_FILE" with
+    | None -> (None, None)
+    | Some ((var : string), (value : string)) -> (
+        let file = Fpath.v value in
+        match create_log_file file with
+        | Ok () -> (Some file, None)
+        | Error (msg : string) -> (None, Some (var, msg)))
+  in
+  (* Colour is decided once for every output: --force-color (or
+   * $SEMGREP_FORCE_COLOR) wins, then $NO_COLOR or $SEMGREP_FORCE_NO_COLOR
+   * turns all styling off, otherwise the tty decides. Same precedence as
+   * pysemgrep, which however applied it per piece of output.
+   *)
+  let highlight_setting : Console.highlight_setting =
+    if force_color then On else if !Semgrep_envvars.v.no_color then Off else Auto
+  in
+  Log_semgrep.setup ?copy_to_file ~highlight_setting ~level ();
+  log_file_error
+  |> Option.iter (fun ((var : string), (msg : string)) ->
+         Logs.warn (fun m ->
+             m "cannot write the log file of $%s: %s; continuing without it"
+               var msg));
   Logs.debug (fun m ->
-      m "Logging setup for osemgrep: force_color=%B level=%s" force_color
+      m "Logging setup for opengrep: force_color=%B level=%s" force_color
         (Logs.level_to_string level));
-  (* TOPORT
-        # Setup file logging
-        # env.user_log_file dir must exist
-        env.user_log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(env.user_log_file, "w")
-        file_formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(file_formatter)
-        logger.addHandler(file_handler)
-  *)
   Logs.debug (fun m ->
       m "Executed as: %s" (Sys.argv |> Array.to_list |> String.concat " "))
 
@@ -95,6 +145,20 @@ let setup_logging ~force_color ~level =
 let o_profile : bool Term.t =
   let info = Arg.info [ "profile" ] ~doc:{|<undocumented>|} in
   Arg.value (Arg.flag info)
+
+(*************************************************************************)
+(* Nosemgrep options *)
+(*************************************************************************)
+
+(* shared by scan, ci and test; Test_CLI cannot depend on Scan_CLI *)
+let o_opengrep_ignore_pattern : string option Term.t =
+  let info =
+    Arg.info [ "opengrep-ignore-pattern" ]
+      ~doc:
+        {|Add a custom prefix for comments to be ignored by opengrep, alongside the default 'nosem', 'nosemgrep' and 'noopengrep'.
+          For example, '--opengrep-ignore-pattern=noscan' makes opengrep recognize lines with 'noscan' comments as well as the default ones.|}
+  in
+  Arg.value (Arg.opt Arg.(some string) None info)
 
 (*************************************************************************)
 (* Term for all common CLI flags *)
@@ -109,6 +173,97 @@ let o_common : conf Term.t =
 (*************************************************************************)
 (* Misc *)
 (*************************************************************************)
+
+(* The exit codes opengrep really returns. Without them cmdliner documents its
+ * own defaults (123, 124, 125), which no code path here ever produces.
+ * coupling: Cli_json_output.exit_code_of_error_type
+ *)
+let exit_info (code : Exit_code.t) ~(doc : string) : Cmd.Exit.info =
+  Cmd.Exit.info ~doc (Exit_code.to_int code)
+
+let exit_ok =
+  exit_info Exit_code.Value.ok ~doc:"on success, with nothing to report."
+
+let exit_findings =
+  exit_info Exit_code.Value.findings
+    ~doc:"when findings are reported as errors, see $(b,--error)."
+
+let exit_fatal =
+  exit_info Exit_code.Value.fatal
+    ~doc:"on a fatal error, including an error on the command line."
+
+let exit_invalid_code =
+  exit_info Exit_code.Value.invalid_code
+    ~doc:"when a target file could not be parsed."
+
+let exit_invalid_pattern =
+  exit_info Exit_code.Value.invalid_pattern
+    ~doc:"when a rule pattern could not be parsed."
+
+let exit_unparseable_yaml =
+  exit_info Exit_code.Value.unparseable_yaml
+    ~doc:"when a rule file is not valid YAML."
+
+let exit_missing_config =
+  exit_info Exit_code.Value.missing_config
+    ~doc:"when no valid configuration could be loaded."
+
+let exit_invalid_language =
+  exit_info Exit_code.Value.invalid_language
+    ~doc:"when a rule names a language that is not supported."
+
+(* CLI.safe_run gives it to every subcommand *)
+let exit_broken_pipe =
+  exit_info Exit_code.Value.broken_pipe
+    ~doc:"when the reader of the output closed the pipe."
+
+(* The rules the subcommand could not load: Core_error.error_of_rule_error
+ * gives each one a type and Cli_json_output.exit_code_of_error_type its
+ * code. *)
+let exits_of_invalid_rules =
+  [
+    exit_invalid_pattern;
+    exit_unparseable_yaml;
+    exit_missing_config;
+    exit_invalid_language;
+  ]
+
+(* a scan adds the parse errors of its targets to the codes above *)
+let exits_scan : Cmd.Exit.info list =
+  [ exit_ok; exit_findings; exit_fatal; exit_invalid_code ]
+  @ exits_of_invalid_rules
+  @ [ exit_broken_pipe ]
+
+(* 'ci' returns the code of its scan; with --suppress-errors, the default,
+ * any code other than 0 and 1 becomes 0 *)
+let exits_ci : Cmd.Exit.info list = exits_scan
+
+(* a failed check is a finding; a rule file that does not load makes the
+ * configuration missing *)
+let exits_test : Cmd.Exit.info list =
+  [ exit_ok; exit_findings; exit_fatal; exit_missing_config; exit_broken_pipe ]
+
+(* 'validate' parses its rules, as YAML and as targets of the metachecking
+ * rules, whose matches are fatal *)
+let exits_validate : Cmd.Exit.info list =
+  [ exit_ok; exit_fatal; exit_invalid_code ]
+  @ exits_of_invalid_rules
+  @ [ exit_broken_pipe ]
+
+let exits_show : Cmd.Exit.info list =
+  [
+    exit_ok;
+    exit_fatal;
+    exit_invalid_code;
+    exit_invalid_pattern;
+    exit_missing_config;
+    exit_broken_pipe;
+  ]
+
+let exits_lsp : Cmd.Exit.info list = [ exit_ok; exit_fatal; exit_broken_pipe ]
+
+let exits_install_ci : Cmd.Exit.info list =
+  [ exit_ok; exit_fatal; exit_broken_pipe ]
 
 let help_page_bottom =
   [

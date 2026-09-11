@@ -29,9 +29,6 @@ module H = AST_generic_helpers
 open Matching_generic
 module Log = Log_matching.Log
 
-let hook_find_possible_parents = ref None
-let hook_r2c_pro_was_here = ref None
-
 (*****************************************************************************)
 (* Prelude *)
 (*****************************************************************************)
@@ -382,7 +379,7 @@ let m_with_symbolic_propagation ~is_root f b tin =
     else (
       Log.warn (fun m ->
           m
-            "Aborting symbolic propagation: a bug in Semgrep may be causing an \
+            "Aborting symbolic propagation: a bug in Opengrep may be causing an \
              infinite loop");
       fail () tin)
   else fail () tin
@@ -432,20 +429,6 @@ let rec m_name_inner a b =
      the inner m_name function.
   *)
   let m_name = m_name_inner in
-  let try_parents dotted =
-    let parents =
-      match !hook_find_possible_parents with
-      | None -> []
-      | Some f -> f dotted
-    in
-    (* less: use a fold *)
-    let rec aux xs =
-      match xs with
-      | [] -> fail ()
-      | x :: xs -> m_name a x >||> aux xs
-    in
-    aux parents
-  in
   let try_alternate_names idb resolved =
     let _, tidb = idb in
     match resolved with
@@ -481,26 +464,7 @@ let rec m_name_inner a b =
           (m_name a (B.Id (idb, { infob with B.id_resolved = ref None }))
           >||> try_alternate_names idb resolved
           (* Try the resolved entity *)
-          >||> m_name a (H.name_of_ids dotted)
-          >||>
-          (* Try the resolved entity and parents *)
-          match a with
-          (* > If we're matching against a metavariable, don't bother checking
-           * > the resolved entity or parents. It will only cause duplicate matches
-           * > that can't be deduped, since the captured metavariable will be
-           * > different.
-           *
-           * FIXME:
-           * This is actually not the correct way of dealing with the problem,
-           * because there could be `metavariable-xyz` operators filtering the
-           * potential values of the metavariable. See DeepSemgrep commit
-           *
-           *     5b2766ee30e "test: Tests for matching metavariable patterns against resolved names"
-           *)
-          | G.Id ((str, _tok), _info) when Mvar.is_metavar_name str -> fail ()
-          | _ ->
-              (* Try matching against parent classes *)
-              try_parents dotted)
+          >||> m_name a (H.name_of_ids dotted))
     | __else__ -> fail ()
   in
   match (a, b) with
@@ -538,8 +502,7 @@ let rec m_name_inner a b =
       let dotted = G.canonical_to_dotted (snd idb) canonical in
       (* coupling: resolved names with wildcards *)
       wipe_wildcard_imports
-        (try_parents dotted
-        >||> try_alternate_names idb resolved
+        (try_alternate_names idb resolved
         (* try without resolving anything *)
         >||> m_name a
                (B.IdQualified { nameinfo with name_info = static_empty_id_info })
@@ -587,21 +550,18 @@ let rec m_name_inner a b =
                  {
                    contents =
                      Some
-                       ( (( B.ImportedEntity canonical
-                          | B.ImportedModule canonical
-                          | B.GlobalName (canonical, _) ) as resolved),
+                       ( (( B.ImportedEntity _
+                          | B.ImportedModule _
+                          | B.GlobalName _ ) as resolved),
                          _sid );
                  };
                _;
              };
            _;
          } as b1) ) ->
-      (* TODO? use all the tokens in the name? not just idb? *)
-      let dotted = G.canonical_to_dotted (snd idb) canonical in
       (* coupling: resolved names with wildcards *)
       wipe_wildcard_imports
-        (try_parents dotted
-        >||> try_alternate_names idb resolved
+        (try_alternate_names idb resolved
         >||>
         match a with
         | IdQualified a1 -> m_name_info a1 b1
@@ -1644,11 +1604,6 @@ and m_container_ordered_elements a b =
  *    style as typechecking could also bind metavariables in the process
  *)
 and m_compatible_type lang typed_mvar t e =
-  let t =
-    match !Naming_AST.pro_hook_normalize_ast_generic_type with
-    | Some f -> f lang t
-    | None -> t
-  in
   match (t.G.t, e.G.e) with
   (* for C specific literals *)
   | G.TyPointer (_, { t = TyN (G.Id (("char", _), _)); _ }), B.L (B.String _) ->
@@ -3718,12 +3673,12 @@ and m_list__m_class_parent (xsa : G.class_parent list)
       if
         lang =*= Lang.Kotlin
         (* in Kotlin the order in cextends does not matter *)
-      then m_list_in_any_order ~less_is_ok:true m_class_parent xsa xsb
+      then m_list_in_any_order ~less_is_ok:true m_class_parent_basic xsa xsb
       else
         (* we could generalize to other languages, but we currently get
          * regressions for python where the order does seem to matter
          *)
-        m_list_with_dots m_class_parent
+        m_list_with_dots m_class_parent_basic
           (function
             | { G.t = G.TyEllipsis _; _ }, None -> true
             (* dots: '...', this is very Python Specific I think *)
@@ -3737,35 +3692,6 @@ and m_class_parent_basic (a1, a2) (b1, b2) =
   (* less: m_option_none_can_match_some? *)
   let* () = m_option m_arguments a2 b2 in
   return ()
-
-and m_class_parent a b =
-  m_class_parent_basic a b >!> (* less: could be >||> *)
-                           fun () ->
-  match (a, b) with
-  (* less: this could be generalized, but let's go simple first *)
-  | (a1, None), ({ t = B.TyN (B.Id (id, { id_resolved; _ })); _ }, None) ->
-      let xs =
-        match !id_resolved with
-        | Some (B.ImportedEntity canonical, _sid) ->
-            G.canonical_to_dotted (snd id) canonical
-        | _ -> [ id ]
-      in
-      (* deep: *)
-      let candidates =
-        match !hook_find_possible_parents with
-        | None -> []
-        | Some f -> f xs
-      in
-      (* less: use a fold *)
-      let rec aux xs =
-        match xs with
-        | [] -> fail ()
-        | x :: xs ->
-            let t = B.TyN x |> B.t in
-            m_type_ a1 t >||> aux xs
-      in
-      aux candidates
-  | _ -> fail ()
 
 (* ------------------------------------------------------------------------- *)
 (* Class definition *)

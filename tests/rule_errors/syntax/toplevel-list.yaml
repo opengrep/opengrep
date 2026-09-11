@@ -1,0 +1,6 @@
+# the rules are a sequence at the top level, without the `rules` mapping
+- id: eqeq-bad
+  pattern: $X == $X
+  message: useless comparison
+  languages: [python]
+  severity: ERROR

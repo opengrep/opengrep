@@ -1,0 +1,24 @@
+--- begin input files ---
+rules/order.yaml
+targets/order.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 98 insertions(+)
+ create mode 100644 rules/order.yaml
+ create mode 100644 targets/order.py
+{"version":"<MASKED>","results":[{"check_id":"rules.slice-ab","path":"targets/order.py","start":{"line":5,"col":1,"offset":187},"end":{"line":6,"col":2,"offset":190},"extra":{"metavars":{},"message":"slice a-b matches","fix":"replaced_lines_a_to_b_OK","fixed_lines":["replaced_lines_a_to_b_OK"],"metadata":{},"severity":"WARNING","fingerprint":"e4d34a001f66d469c33dd4328acad00a782e491f387a5a654611047665aeef3e4c64a29ba9a5107da92dcc23ef12493c37a3470252d66e4f0032e02d2823f219_0","lines":"a\nb","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.a-slice-bc","path":"targets/order.py","start":{"line":6,"col":1,"offset":189},"end":{"line":7,"col":2,"offset":192},"extra":{"metavars":{},"message":"slice b-c matches","fix":"replaced_lines_b_to_c_BAD","metadata":{},"severity":"WARNING","fingerprint":"3207587b399b0a325e87a9144f03e7aa262767b36d80347bfee91101c68673fe89235ae3cedcef23b0de7be14014703c55e1c44912b8f81fa47299c5a00b61fe_0","lines":"b\nc","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.z-slice-bc","path":"targets/order.py","start":{"line":6,"col":1,"offset":189},"end":{"line":7,"col":2,"offset":192},"extra":{"metavars":{},"message":"slice b-c matches","fix":"replaced_lines_b_to_c_OK","metadata":{},"severity":"WARNING","fingerprint":"076d5e14b3bfc56ae48431dd2bced17326eaef3e801e671c7328d71eb8df50d135a7cb1e8c77e9d9a6291c5a7718e775daea36a5389a0e4197c6e7b50ed98d3d_0","lines":"b\nc","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.slice-df","path":"targets/order.py","start":{"line":8,"col":1,"offset":193},"end":{"line":10,"col":2,"offset":198},"extra":{"metavars":{},"message":"slice d-f matches","fix":"replaced_lines_d_to_f_OK","fixed_lines":["replaced_lines_d_to_f_OK"],"metadata":{},"severity":"WARNING","fingerprint":"b550e53e1bc430d1a332783b05dedde86b1f220951c24de95e314934d2a416b8205808d0f61b176b60e25836e314cb3eaa48f2d26139ae6c5fbde6a6af638b03_0","lines":"d\ne\nf","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.slice-eg","path":"targets/order.py","start":{"line":9,"col":1,"offset":195},"end":{"line":11,"col":2,"offset":200},"extra":{"metavars":{},"message":"slice e-g matches","fix":"replaced_lines_e_to_g_BAD","metadata":{},"severity":"WARNING","fingerprint":"05fbf41296cc597b86541ceb600ef8aa1cfee24de3bce7f3564971ca15d6ffe5c93175f98b47cbbcbde06d82569513ad6f569a8e9e4cd4a6719720865c90acd4_0","lines":"e\nf\ng","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.slice-gh","path":"targets/order.py","start":{"line":11,"col":1,"offset":199},"end":{"line":12,"col":2,"offset":202},"extra":{"metavars":{},"message":"slice g-h matches","fix":"replaced_lines_g_to_h_OK","fixed_lines":["replaced_lines_g_to_h_OK"],"metadata":{},"severity":"WARNING","fingerprint":"9b1c3974ccf35c540edfbadf65e22f4eff4c661fe0a006e01a7ab308319f8a20a52aaf36e32c3680481251d60517e58abbdecb5a6763bd9b8d817b3c23301303_0","lines":"g\nh","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/order.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/order.py after the scan ---
+# Several findings will overlap in the following array. The autofixes
+# must be applied in the order in which the findings are discovered or
+# in which they are reported (which is it?).
+
+a
+b
+c
+d
+e
+f
+g
+h
+

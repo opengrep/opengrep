@@ -26,13 +26,6 @@ open Lsp
 open Types
 open Fpath_.Operators
 module Out = Semgrep_output_v1_t
-module OutJ = Semgrep_output_v1_j
-
-(*****************************************************************************)
-(* Refs *)
-(*****************************************************************************)
-
-let scan_config_parser = OutJ.scan_config_of_string
 
 (*****************************************************************************)
 (* Types *)
@@ -52,10 +45,8 @@ type caps =
    we want to do asynchronously *)
 type session_cache = {
   mutable rules : Rule.t list; [@opaque]
-  mutable skipped_app_fingerprints : string list;
   mutable open_documents : Fpath.t list;
   mutable initialized : bool;
-  mutable deployment_id : int option;
   lock : Lwt_mutex.t; [@opaque]
 }
 [@@deriving show]
@@ -85,10 +76,8 @@ let create caps capabilities =
   let cached_session =
     {
       rules = [];
-      skipped_app_fingerprints = [];
       lock = Lwt_mutex.create ();
       open_documents = [];
-      deployment_id = None;
       initialized = false;
     }
   in
@@ -204,8 +193,10 @@ let fetch_rules session =
         let config = Rules_config.parse_config_string ~in_docker source in
         (* TODO: registry_caching is not anymore in semgrep-OSS! *)
         Rule_fetching.rules_from_dashdash_config_async
-          ~rewrite_rule_ids:true (* default *)
-          session.caps config)
+          (* The language server keeps the rule ids as the rule files write
+           * them, which is what its diagnostic codes have always been; it
+           * does not apply the path-based prefix the CLI adds. *)
+          ~rewrite_rule_ids:false session.caps config)
       rules_source
   in
 
@@ -248,10 +239,6 @@ let fetch_rules session =
 
   Lwt.return (rules, invalid_rules)
 
-let fetch_skipped_app_fingerprints _caps =
-  (* At some point we should allow users to ignore ids locally *)
-  Lwt.return_nil
-
 (* Useful for when we need to reset diagnostics, such as when changing what
  * rules we've run *)
 let scanned_files session =
@@ -260,11 +247,7 @@ let scanned_files session =
   |> List.sort_uniq Fpath.compare
 
 let skipped_fingerprints session =
-  let skipped_fingerprints =
-    session.cached_session.skipped_app_fingerprints
-    @ session.skipped_local_fingerprints
-  in
-  List.sort_uniq String.compare skipped_fingerprints
+  List.sort_uniq String.compare session.skipped_local_fingerprints
 
 let runner_conf session =
   User_settings.core_runner_conf_of_t session.user_settings
@@ -304,24 +287,14 @@ let load_local_skipped_fingerprints session =
     in
     { session with skipped_local_fingerprints }
 
-let fetch_deployment_id _caps =
-  Lwt.return_none
-
 (*****************************************************************************)
 (* State setters *)
 (*****************************************************************************)
 
 let cache_session session =
   let%lwt rules, _ = fetch_rules session in
-  let%lwt skipped_app_fingerprints =
-    fetch_skipped_app_fingerprints session.caps
-  in
-  let%lwt deployment_id = fetch_deployment_id session.caps in
   Lwt_mutex.with_lock session.cached_session.lock (fun () ->
-      session.cached_session.deployment_id <- deployment_id;
       session.cached_session.rules <- rules;
-      session.cached_session.skipped_app_fingerprints <-
-        skipped_app_fingerprints;
       session.cached_session.initialized <- true;
       Lwt.return_unit)
 

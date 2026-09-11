@@ -125,3 +125,39 @@ let mk_file_env taint_inst ast =
   in
   visitor#visit_program env ast;
   !env
+
+let ranges_of_tainted_globals_in_functions (lval_env : Taint_lval_env.t)
+    (ast : G.program) : Range.t list =
+  let tainted_globals =
+    Taint_lval_env.seq_of_tainted lval_env
+    |> Seq.fold_left
+         (fun acc ((var : IL.name), _cell) -> IL.NameSet.add var acc)
+         IL.NameSet.empty
+  in
+  if IL.NameSet.is_empty tainted_globals then []
+  else
+    let ranges = ref [] in
+    let visitor =
+      object (_self : 'self)
+        inherit [_] G.iter_no_id_info as super
+
+        method! visit_function_definition _in_function fdef =
+          super#visit_function_definition true fdef
+
+        method! visit_Id (in_function : bool) id (id_info : G.id_info) =
+          (if in_function then
+             match is_global id_info with
+             | Some true ->
+                 let var = AST_to_IL.var_of_id_info id id_info in
+                 if IL.NameSet.mem var tainted_globals then
+                   ranges :=
+                     Range.range_of_tokens [ snd id ]
+                     |> Option.fold ~none:!ranges ~some:(fun r -> r :: !ranges)
+             | Some false
+             | None ->
+                 ());
+          super#visit_Id in_function id id_info
+      end
+    in
+    visitor#visit_program false ast;
+    !ranges

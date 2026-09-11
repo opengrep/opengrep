@@ -24,14 +24,24 @@ type conf = {
   (* ??? *)
   ignore_todo : bool;
   (* TODO? do we need those options? people use the JSON output?
-   * the playground? and the optimizations and strict?
+   * the playground? and the optimizations?
    *)
   json : bool;
+  (* --force-color, which wins over $NO_COLOR like it does for a scan *)
+  force_color : bool;
   (* take the whole core_runner_conf? like for validate? *)
   optimizations : bool;
   strict : bool;
   matching_diagnosis : bool;
   taint_intrafile : bool;
+  (* the ignore annotations of a scan apply to a test run too *)
+  opengrep_ignore_pattern : string option;
+  (* None when the flag was not given, in which case the engine defaults
+   * apply, and those set no limit
+   *)
+  timeout : float option;
+  timeout_threshold : int option;
+  max_memory_mb : int option;
   common : CLI_common.conf;
 }
 
@@ -62,12 +72,21 @@ let o_json : bool Term.t =
   let info = Arg.info [ "json" ] ~doc:{|Output results in JSON format.|} in
   Arg.value (Arg.flag info)
 
-(* coupling: similar to Scan_CLI.o_strict? *)
+(* coupling: Scan_CLI.o_strict; both derive the exit code from the errors of
+ * the run with Cli_json_output.exit_code_of_errors *)
 (* TODO: be stricter when parsing target files; reject files that partially
  * parse.
  *)
 let o_strict : bool Term.t =
-  let info = Arg.info [ "strict" ] ~doc:{|???.|} in
+  let info =
+    Arg.info [ "strict" ]
+      ~doc:
+        {|A failing check, a failing fix test and a rule file that does not
+load fail the run with or without --strict. With --strict, an error raised
+while the test targets are scanned also fails the run: a target that does
+not parse, a rule that times out, a rule error at match time.
+|}
+  in
   Arg.value (Arg.flag info)
 
 (* coupling: Scan_CLI.o_config *)
@@ -75,7 +94,7 @@ let o_config : string list Term.t =
   H.string_list_with_env [ "c"; "f"; "config" ] ~env:"SEMGREP_RULES"
     ~doc:
       {|YAML configuration file, directory of YAML files ending in
-.yml|.yaml, URL of a configuration file, or Opengrep registry entry name.
+.yml|.yaml, URL of a configuration file, or Semgrep registry entry name.
 May also be set with SEMGREP_RULES, a whitespace-separated list of rule
 sources.
 |}
@@ -91,6 +110,51 @@ why a rule did or did not match.|}
   in
   Arg.value (Arg.flag info)
 
+(* The engine limits below are options: without the flag the test run keeps
+ * the limits of a scan (see Test_subcommand.core_scan_config), which the
+ * help text below states.
+ *)
+
+(* coupling: Scan_CLI.o_timeout *)
+let o_timeout : float option Term.t =
+  let info =
+    Arg.info [ "timeout" ]
+      ~doc:
+        (Common.spf
+           {|Maximum time to spend running a rule on a single file in
+seconds. If set to 0 will not have time limit. Defaults to %.1f s.
+|}
+           Core_runner.default_conf.timeout)
+  in
+  Arg.value (Arg.opt (Arg.some Arg.float) None info)
+
+(* coupling: Scan_CLI.o_timeout_threshold *)
+let o_timeout_threshold : int option Term.t =
+  let info =
+    Arg.info [ "timeout-threshold" ]
+      ~doc:
+        (Common.spf
+           {|Maximum number of rules that can time out on a file before
+the file is skipped. If set to 0 will not have limit. Defaults to %d.
+|}
+           Core_runner.default_conf.timeout_threshold)
+  in
+  Arg.value (Arg.opt (Arg.some Arg.int) None info)
+
+(* coupling: Scan_CLI.o_max_memory_mb *)
+let o_max_memory_mb : int option Term.t =
+  let info =
+    Arg.info [ "max-memory" ]
+      ~doc:
+        (Common.spf
+           {|Maximum system memory in MiB to use during the interfile pre-processing
+phase, or when running a rule on a single file. If set to 0, will
+not have memory limit. Defaults to %d.
+|}
+           Core_runner.default_conf.max_memory_mb)
+  in
+  Arg.value (Arg.opt (Arg.some Arg.int) None info)
+
 (* ------------------------------------------------------------------ *)
 (* Positional arguments *)
 (* ------------------------------------------------------------------ *)
@@ -98,7 +162,10 @@ why a rule did or did not match.|}
 (* TODO: we accept just one elt here, so why not use just Arg.pos? *)
 let o_args : string list Term.t =
   let info =
-    Arg.info [] ~docv:"STRINGS" ~doc:{|Directory or file containing tests.|}
+    Arg.info [] ~docv:"STRINGS"
+      ~doc:
+        {|Directory or file containing tests. Defaults to the current
+directory.|}
   in
   Arg.value (Arg.pos_all Arg.string [] info)
 
@@ -119,30 +186,55 @@ let o_taint_intrafile : bool Term.t =
 (* Command-line parsing: turn argv into conf *)
 (*************************************************************************)
 let target_kind_of_roots_and_config target_roots config =
+  (* python: test.py defaults to the current directory *)
+  let target_roots =
+    match target_roots with
+    | [] -> [ Fpath.v "." ]
+    | roots -> roots
+  in
+  (* a target that does not exist is an error, as for 'scan' *)
+  (match
+     target_roots
+     |> List.filter (fun (root : Fpath.t) -> not (Sys.file_exists !!root))
+   with
+  | [] -> ()
+  | missing_roots ->
+      Error.abort
+        (missing_roots
+        |> List_.map (fun (root : Fpath.t) ->
+               Printf.sprintf "File not found: %s" !!root)
+        |> String.concat "\n"));
   match (target_roots, config) with
   | [ file ], [ config ] ->
-      if Sys.file_exists !!file && Sys.is_directory !!file then
-        Dir (file, Some config)
+      if Sys.is_directory !!file then Dir (file, Some config)
       else Files ([file], config)
   | [ file ], [] ->
       if Sys.is_directory !!file then Dir (file, None)
       else
         (* was raise Exception but cleaner abort I think *)
         Error.abort "--config is required when running a test on single file"
-  | [], _ -> Error.abort "at least one target required for tests"
-  | files, [ config ] ->
-      Files (files, config)
+  | files, [ config ] -> (
+      (* several targets must all be files *)
+      match
+        files |> List.filter (fun (file : Fpath.t) -> Sys.is_directory !!file)
+      with
+      | [] -> Files (files, config)
+      | dirs ->
+          Error.abort
+            (Printf.sprintf "only one target directory is allowed, got: %s"
+               (dirs |> Fpath_.to_strings |> String.concat " ")))
   | _, _ :: _ :: _ ->
       (* stricter: removed 'config directory' *)
       Error.abort "only one config allowed for tests"
-  | _ :: _, [] ->
+  | _, [] ->
       Error.abort "--config required when running a test on multiple files"
 
 let cmdline_term : conf Term.t =
   (* !The parameters must be in alphabetic orders to match the order
    * of the corresponding '$ o_xx $' further below! *)
-  let combine args common config json matching_diagnosis strict
-      taint_intrafile test_ignore_todo =
+  let combine args common config force_color json matching_diagnosis
+      max_memory_mb opengrep_ignore_pattern strict taint_intrafile
+      test_ignore_todo timeout timeout_threshold =
     let target =
       target_kind_of_roots_and_config (Fpath_.of_strings args) config
     in
@@ -150,17 +242,25 @@ let cmdline_term : conf Term.t =
       target;
       strict;
       json;
+      force_color;
       ignore_todo = test_ignore_todo;
       common;
       optimizations = true;
       matching_diagnosis;
       taint_intrafile;
+      opengrep_ignore_pattern;
+      timeout;
+      timeout_threshold;
+      max_memory_mb;
     }
   in
   Term.(
-    const combine $ o_args $ CLI_common.o_common $ o_config $ o_json
-    $ o_matching_diagnosis $ o_strict $ o_taint_intrafile
-    $ o_test_ignore_todo)
+    const combine $ o_args $ CLI_common.o_common $ o_config
+    $ CLI_common.o_force_color ~default:Output.default.force_color
+    $ o_json $ o_matching_diagnosis
+    $ o_max_memory_mb $ CLI_common.o_opengrep_ignore_pattern $ o_strict
+    $ o_taint_intrafile $ o_test_ignore_todo
+    $ o_timeout $ o_timeout_threshold)
 
 let doc = "testing the rules"
 
@@ -171,7 +271,7 @@ let man : Cmdliner.Manpage.block list =
   ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep test" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep test" ~doc ~man ~exits:CLI_common.exits_test
 
 (*****************************************************************************)
 (* Entry point *)

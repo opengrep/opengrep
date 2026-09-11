@@ -1,0 +1,57 @@
+--- begin input files ---
+rules/python-ranges.yaml
+targets/python-ranges.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 16 insertions(+)
+ create mode 100644 rules/python-ranges.yaml
+ create mode 100644 targets/python-ranges.py
+
+
+┌─────────────────┐
+│ 9 Code Findings │
+└─────────────────┘
+
+    targets/python-ranges.py
+   ❯❯❱ rules.range-test
+          change it
+
+           ▶▶┆ Autofix ▶ bar('abc')
+            1┆ bar('abc')
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ bar("abc")
+            2┆ bar("abc")
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ bar("""abc""")
+            3┆ bar("""abc""")
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ bar(r"abc")
+            4┆ bar(r"abc")
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ bar(f"abc")
+            5┆ bar(f"abc")
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ bar([1])
+            6┆ bar([1])
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ bar([1, 2])
+            7┆ bar([1, 2])
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ bar(x[1])
+            8┆ bar(x[1])
+            ⋮┆----------------------------------------
+           ▶▶┆ Autofix ▶ bar(x[1, 2])
+            9┆ bar(x[1, 2])
+
+--- targets/python-ranges.py after the scan ---
+foo('abc')
+foo("abc")
+foo("""abc""")
+foo(r"abc")
+foo(f"abc")
+foo([1])
+foo([1, 2])
+foo(x[1])
+foo(x[1, 2])
+

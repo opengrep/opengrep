@@ -1,3 +1,0 @@
-from typing import Dict, Any
-
-def get_profile() -> Dict[str, Any]: ...

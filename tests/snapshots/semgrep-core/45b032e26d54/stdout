@@ -1,0 +1,12 @@
+--- begin input files ---
+eqeq-python.yaml
+link.py
+real.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 33 insertions(+)
+ create mode 100644 eqeq-python.yaml
+ create mode 120000 link.py
+ create mode 100644 real.py
+{"version":"<MASKED>","results":[{"check_id":"eqeq-is-bad","path":"link.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"x"}},"message":"useless comparison operation `x == x` or `x != x`","metadata":{"shortlink":"https://sg.run/xyz1"},"severity":"ERROR","fingerprint":"72856a61ab7e8f2343b312ca7037f97cdd777d4ad3db53d6ebd5b7c0e66be5cf46c6ac16d53a79697da508ba20c018a79cfa4ec51f35317688ac80ab5b8e6280_0","lines":"x == x","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["link.py"],"skipped":[]},"interfile_languages_used":[],"skipped_rules":[]}

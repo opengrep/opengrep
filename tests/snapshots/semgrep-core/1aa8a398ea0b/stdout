@@ -1,0 +1,19 @@
+--- begin input files ---
+rules/python-assert-statement.yaml
+targets/python-assert-statement.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/python-assert-statement.yaml
+ create mode 100644 targets/python-assert-statement.py
+{"version":"<MASKED>","results":[{"check_id":"rules.assert_eq-true","path":"targets/python-assert-statement.py","start":{"line":1,"col":1,"offset":0},"end":{"line":3,"col":2,"offset":26},"extra":{"metavars":{"$ACTUAL":{"start":{"line":2,"col":11,"offset":21},"end":{"line":2,"col":14,"offset":24},"abstract_content":"\"a\""}},"message":"Change assert_eq(True, x) to assert x","fix":"assert \"a\"","fixed_lines":["assert \"a\""],"metadata":{},"severity":"INFO","fingerprint":"78ddd86d5774effb63fa830b1f7ed6d965997951711e1d4354382af5c2f9353f8055fda744bcc50864d721d3e05070bf666680cbed3d38da479f5681f11e1c89_0","lines":"assert_eq(\n    True, \"a\"\n)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.assert_eq-true","path":"targets/python-assert-statement.py","start":{"line":4,"col":1,"offset":27},"end":{"line":6,"col":2,"offset":53},"extra":{"metavars":{"$ACTUAL":{"start":{"line":5,"col":11,"offset":48},"end":{"line":5,"col":14,"offset":51},"abstract_content":"\"b\""}},"message":"Change assert_eq(True, x) to assert x","fix":"assert \"b\"","fixed_lines":["assert \"b\""],"metadata":{},"severity":"INFO","fingerprint":"6039fa03eaa7970223343d3d95b8d644ee426c2ff547999a37b96eeb8baf29eb2b0c689afe036b0b5cb9faaf24a282a00d5f502cf73e351ed43642ec962e570f_0","lines":"assert_eq(\n    True, \"b\"\n)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/python-assert-statement.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/python-assert-statement.py after the scan ---
+assert_eq(
+    True, "a"
+)
+assert_eq(
+    True, "b"
+)
+x = "abc"
+

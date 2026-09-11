@@ -34,15 +34,3 @@ type core_scan_func_with_rules =
 val call_with_pre_and_post_processor :
   core_scan_func_with_rules ->
   core_scan_func_with_rules
-
-(* Exposed only for testing purposes. These can be used to arbitrarily change
- * the set of pre and post processors. *)
-
-type test_only_processors
-
-(* The default hook is composed of the nosemgrep processor and the autofix
- * processor. *)
-val test_only_hook_processors : test_only_processors ref
-
-val test_only_processors_of_processor :
-  (module Processor) -> test_only_processors

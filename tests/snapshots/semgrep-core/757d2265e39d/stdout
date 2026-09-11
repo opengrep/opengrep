@@ -1,0 +1,10 @@
+--- begin input files ---
+test2.php
+test2.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 17 insertions(+)
+ create mode 100644 test2.php
+ create mode 100644 test2.yaml
+{"version":"<MASKED>","results":[{"check_id":"test","path":"test2.php","start":{"line":2,"col":20,"offset":40},"end":{"line":2,"col":50,"offset":70},"extra":{"metavars":{"$TAG":{"start":{"line":2,"col":2,"offset":22},"end":{"line":2,"col":7,"offset":27},"abstract_content":"input"},"$ATTR":{"start":{"line":2,"col":20,"offset":40},"end":{"line":2,"col":25,"offset":45},"abstract_content":"value"},"$...CODE":{"start":{"line":2,"col":27,"offset":47},"end":{"line":2,"col":49,"offset":69},"abstract_content":"<?php echo $foobar; ?>"}},"message":"Test","metadata":{},"severity":"ERROR","fingerprint":"796d2ac07e4783c8814355ea9d38f9ee681782514ed0f7047e5cdec5bdb687ca9fa0efc2d98796f4c2c00f3ddc43607223a087edab299029a77e0120e602671c_0","lines":"<input type=\"date\" value=\"<?php echo $foobar; ?>\" />","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["test2.php","test2.yaml"]},"interfile_languages_used":[],"skipped_rules":[]}

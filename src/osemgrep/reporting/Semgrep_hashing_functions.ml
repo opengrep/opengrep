@@ -99,12 +99,13 @@ let name (c : Out.cli_match) =
     | None -> default
   else default
 
-(* TODO(pad): the algorithm below is not what pysemgrep and formula_string do.
- * For instance, pysemgrep does care about the taint labels in a taint source
- * so we need to redesign the whole thing to better match what pysemgrep does.
+(* The algorithm below is not what pysemgrep and formula_string do: it takes
+ * the pattern strings only, whereas pysemgrep also takes the taint labels,
+ * requires, focus-metavariable and metavariable conditions of the rule
+ * (see Formula_string.ml). It is kept as the Parsed_formula scheme of
+ * Match_based_id below; the Pysemgrep scheme is the default.
  *
  * See Unit_reporting.ml for some tests.
- * coupling: rule.py formula_string
  *)
 let string_of_formulas (xs : Rule.formula list) : string =
   (* We need to do this as flattening and sorting does not always produce the
@@ -190,37 +191,69 @@ let match_formula_interpolated_str (rule : Rule.t) metavars : string =
   Metavar_replacement.interpolate_metavars str
     (Metavar_replacement.of_out (metavars ||| []))
 
-(* This is a cursed function that calculates everything but the index part
- * of the match_based_id (hence the partial suffix). It is cursed because we
- * need hashes to be exactly the same, but the algorithm used on the Python
- * side to generate the final string thats hashed has some Python specific
- * quirks.
- *
- * The way match based ID is calculated on the python side is as follows:
- * (see https://github.com/semgrep/semgrep/blob/2d34ce584d16c4e954349690a5f12fae877a94d6/cli/src/semgrep/rule.py#L289-L334)
- * 1. Sort all top level keys (i.e pattern, patterns etc.) alphabetically
- * 2. For each key: DFS the tree and find all pattern values (i.e. the rhs of
- *    pattern: <THING>)
- * 3. Sort all pattern values alphabetically and concatenate them with a space
- * 4. Concatenate all the sorted pattern values with a space
- * 5. Hash the tuple `(sorted_pattern_values, path, rule_id)` w/ blake2b
- * 6. Append the index of the match in the list of matches for the rule
- *    (see [index_match_based_ids])
- *
- * coupling: rule_match.py get_match_based_id ()
- *)
-let match_based_id_partial (rule : Rule.t) (rule_id : Rule_ID.t) metavars path :
-    string =
-  let str_interp = match_formula_interpolated_str rule metavars in
-  (* We have been hashing w/ this PosixPath thing in Python so we must recreate
-   * it here. We also have been hashing a tuple formatted as below.
+module Match_based_id = struct
+  (* The rule part of the id. Pysemgrep is the default: it reproduces
+   * rule.py formula_string() and rule_match.py get_match_based_key(), so
+   * the fingerprints are the ones the Python wrapper gave users.
+   * Parsed_formula derives the string from the parsed formula (pattern
+   * strings only), see string_of_formulas above. *)
+  type scheme = Pysemgrep | Parsed_formula
+
+  (* rule_match.py get_match_based_key(): str.replace of each metavariable
+   * name by its content, in the order the metavariables are listed. *)
+  let substitute_metavars (formula : string) (metavars : Out.metavars) : string
+      =
+    metavars
+    |> List.fold_left
+         (fun (formula : string) ((mvar : string), (mval : Out.metavar_value)) ->
+           Str.global_substitute (Str.regexp_string mvar)
+             (fun (_ : string) -> mval.abstract_content)
+             formula)
+         formula
+
+  let formula (scheme : scheme) (rule : Rule.t) (metavars : Out.metavars option)
+      : string =
+    match scheme with
+    | Pysemgrep -> substitute_metavars rule.formula_string (metavars ||| [])
+    | Parsed_formula -> match_formula_interpolated_str rule metavars
+
+  (* This is a cursed function that calculates everything but the index part
+   * of the match_based_id (hence the partial suffix). It is cursed because we
+   * need hashes to be exactly the same, but the algorithm used on the Python
+   * side to generate the final string thats hashed has some Python specific
+   * quirks.
+   *
+   * The way match based ID is calculated on the python side is as follows:
+   * (see https://github.com/semgrep/semgrep/blob/2d34ce584d16c4e954349690a5f12fae877a94d6/cli/src/semgrep/rule.py#L289-L334)
+   * 1. For each pattern key of the rule (pattern, patterns, pattern-sources,
+   *    etc.): DFS the value and collect every string in it (pattern texts,
+   *    but also labels, requires, focus-metavariable names, metavariable
+   *    conditions, ...), each level sorted and joined with a space
+   *    (see Formula_string.ml, the Pysemgrep scheme)
+   * 2. Sort the per-key strings and concatenate them with a space
+   * 3. Replace the metavariable names by their content
+   * 4. Hash the tuple `(formula, path, rule_id)` w/ blake2b
+   * 5. Append the index of the match in the list of matches for the rule
+   *    (see [index_match_based_ids])
+   *
+   * coupling: rule_match.py get_match_based_id ()
    *)
-  let string =
-    spf "(%s, PosixPath(%s), %s)"
-      (Python_str_repr.repr str_interp)
-      (Python_str_repr.repr path)
-      (Python_str_repr.repr (Rule_ID.to_string rule_id))
-  in
-  let hash = Digestif.BLAKE2B.digest_string string |> Digestif.BLAKE2B.to_hex in
-  Logs.debug (fun m -> m "match_key = %s, match_id = %s" string hash);
-  hash
+  let partial ?(scheme : scheme = Pysemgrep) (rule : Rule.t)
+      (rule_id : Rule_ID.t) (metavars : Out.metavars option) (path : string) :
+      string =
+    let str_interp = formula scheme rule metavars in
+    (* We have been hashing w/ this PosixPath thing in Python so we must
+     * recreate it here. We also have been hashing a tuple formatted as below.
+     *)
+    let string =
+      spf "(%s, PosixPath(%s), %s)"
+        (Python_str_repr.repr str_interp)
+        (Python_str_repr.repr path)
+        (Python_str_repr.repr (Rule_ID.to_string rule_id))
+    in
+    let hash =
+      Digestif.BLAKE2B.digest_string string |> Digestif.BLAKE2B.to_hex
+    in
+    Logs.debug (fun m -> m "match_key = %s, match_id = %s" string hash);
+    hash
+end

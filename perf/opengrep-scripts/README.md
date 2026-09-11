@@ -41,7 +41,10 @@ Workflow:
 1. First run: checks out reference, builds it, returns to HEAD, builds HEAD, benchmarks
 2. Subsequent runs: reference is cached, just builds HEAD in place (no checkout needed)
 
-Binaries are cached in `binaries/<label>/venv/bin/opengrep`.
+Each side is exposed as `binaries/<label>/opengrep`, out of the way of the next
+build: `make core` then a copy of `bin/opengrep`, or, for a reference that still
+has the Python wrapper (a `cli/` directory), `make copy-core-for-cli` plus
+`pip install cli/` into `binaries/<label>/venv` and a symlink to its entry point.
 
 Unstaged changes are allowed when the reference is cached (no checkout required).
 
@@ -71,6 +74,7 @@ Options:
 - `--taint-rules-only` - Use only taint rules
 - `--no-taint-rules` - Use only non-taint (search) rules
 - `--intrafile` - Enable intrafile taint analysis
+- `--experimental` - Pass `--experimental` to both binaries; it selects the OCaml engine of semgrep and of opengrep releases below 2.0.0, and is inert on opengrep 2.0.0 and later
 - `--max-time MINS` - Hard timeout per command (default: 15)
 - `--dry-run` - Print commands without executing
 - `-- ARGS` - Pass additional arguments to both tools (e.g., `-- --time`)

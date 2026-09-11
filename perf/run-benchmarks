@@ -222,7 +222,7 @@ def run_semgrep(
     print(f"current directory: {os.getcwd()}")
     print("opengrep command: {}".format(" ".join(args)))
     os.environ["SEMGREP_CORE_EXTRA"] = variant.semgrep_core_extra
-    print(f"extra arguments for opengrep-core: '{variant.semgrep_core_extra}'")
+    print(f"extra arguments for the core engine: '{variant.semgrep_core_extra}'")
 
     t1 = time.time()
     res = subprocess.run(  # nosem

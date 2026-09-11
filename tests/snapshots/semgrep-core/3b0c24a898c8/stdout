@@ -1,0 +1,10 @@
+--- begin input files ---
+multiple-nosemgrep.py
+rules/two_matches.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 multiple-nosemgrep.py
+ create mode 100644 rules/two_matches.yaml
+{"version":"<MASKED>","results":[],"errors":[],"paths":{"scanned":["multiple-nosemgrep.py"]},"interfile_languages_used":[],"skipped_rules":[]}

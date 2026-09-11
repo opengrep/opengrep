@@ -1,0 +1,26 @@
+--- begin input files ---
+rules.yml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 13 insertions(+)
+ create mode 100644 rules.yml
+ create mode 100644 stupid.py
+
+
+┌─────────────────┐
+│ 2 Code Findings │
+└─────────────────┘
+
+    stupid.py
+   ❯❯❱ rule1
+          Same message as other rule.
+
+            1┆ print(1 == 1)
+
+   ❯❯❱ rule2
+          Same message as other rule.
+
+            1┆ print(1 == 1)
+

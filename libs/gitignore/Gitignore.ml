@@ -13,7 +13,7 @@
    functions. A .gitignore contains a list of patterns, where
    each pattern is essentially a "path selector".
 
-   See also Parse_gitignore.from_file().
+   See also Parse_gitignore.from_file_contents().
 *)
 type path_selectors = path_selector list
 
@@ -104,6 +104,10 @@ type gitignores_cache = {
   gitignore_filenames : gitignore_filename list;
   (* TODO? why we use a cache? Why not loading all those .gitiginore at once?*)
   cache : (string, level option) Hashtbl.t;
+  (* The ignore files that could not be read, reported once each: the
+     '.semgrepignore' of the working directory is read both as a level of
+     its own and by the walk that enters that directory. *)
+  unreadable_reported : (string, unit) Hashtbl.t;
 }
 
 (*
@@ -120,6 +124,11 @@ type filter = {
   higher_priority_levels : level list;
   gitignore_file_cache : gitignores_cache;
   lower_priority_levels : level list;
+  (* Selection events and levels after each directory has been checked
+     with the higher-priority levels, keyed by the directory's path: every
+     path below a directory starts from that state instead of matching the
+     directory's ancestors again. See Gitignore_filter.select_path. *)
+  dir_states : (string, selection_event list * level list) Hashtbl.t;
 }
 
 (* Final result of a gitignore filter (clearer than a bool) *)

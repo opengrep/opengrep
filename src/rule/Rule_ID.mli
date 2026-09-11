@@ -19,6 +19,7 @@ val of_string_opt : string -> t option
 val to_string_list : t list -> string list
 val of_string_list : string list -> t list
 val compare : t -> t -> int
+val equal : t -> t -> bool
 
 (* Validation function called by of_string.
    Checks for the format [a-zA-Z0-9._-]* *)

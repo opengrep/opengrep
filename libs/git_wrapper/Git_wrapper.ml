@@ -254,22 +254,28 @@ let blobs_by_commit objects commits =
 (* Entry points *)
 (*****************************************************************************)
 
-let warn_and_fail (cmd : Cmd.t) : 'a =
-  (* nosemgrep: no-logs-in-library *)
-  Logs.warn (fun m ->
-      m
-        {|Command failed.
------
-Failed to run %s. Possible reasons:
-- the git binary is not available
+(* The reasons pysemgrep listed whenever a git command failed
+ * (git.py _git_check_output). They are the ones users actually hit, and a
+ * message naming only the command sends them looking in the wrong place. *)
+let possible_reasons : string =
+  {|- the git binary is not available
 - the current working directory is not a git repository
 - the baseline commit is not a parent of the current commit
-  (if you are running through semgrep-app, check if you are setting `SEMGREP_BRANCH` or `SEMGREP_BASELINE_COMMIT` properly)
+  (in CI, check that `OPENGREP_BRANCH` / `SEMGREP_BRANCH` and `OPENGREP_BASELINE_COMMIT` / `SEMGREP_BASELINE_COMMIT` are set correctly)
 - the current working directory is not marked as safe
   (fix with `git config --global --add safe.directory $(pwd)`)
 
 Try running the command yourself to debug the issue.|}
-        (Redact.redact_url_userinfo (Cmd.to_string cmd)));
+
+let warn_and_fail (cmd : Cmd.t) : 'a =
+  (* nosemgrep: no-logs-in-library *)
+  Logs.warn (fun m ->
+      m {|Command failed.
+-----
+Failed to run %s. Possible reasons:
+%s|}
+        (Redact.redact_url_userinfo (Cmd.to_string cmd))
+        possible_reasons);
   raise (Error "Error when we run a git command")
 
 (* Similar to Sys.command, but specific to git *)
@@ -591,12 +597,42 @@ let shallow_clone ?ref_ (url : Uri.t) (dst : Fpath.t) : (unit, string) result =
             non-interactively: ssh-agent / credential helper)"
            (Uri.to_string url))
 
+(* The report pysemgrep printed whenever a git command failed
+ * (git.py _git_check_output): git's exit code and error output, then the
+ * reasons users actually hit, since a message naming only the command sends
+ * them looking in the wrong place. [exit_code] is None when the process could
+ * not be started at all, in which case [output] carries the reason.
+ *)
+let failed_git_command_msg ~(exit_code : int option) ~(output : string)
+    (args : string list) : string =
+  spf
+    "Command failed with exit code: %s\n\
+     -----\n\
+     Command failed with output:\n\
+     %s\n\n\
+     Failed to run 'git %s'. Possible reasons:\n\n\
+     %s"
+    (match exit_code with
+    | Some code -> string_of_int code
+    | None -> "unknown")
+    output (String.concat " " args) possible_reasons
+
 (* TODO: use better types? sha1? *)
 let merge_base (commit : string) : string =
-  let cmd = (git, [ "merge-base"; commit; "HEAD" ]) in
-  match UCmd.string_of_run ~trim:true cmd with
-  | Ok (merge_base, (_, `Exited 0)) -> merge_base
-  | _ -> raise (Error "Could not get merge base from git merge-base")
+  let args = [ "merge-base"; commit; "HEAD" ] in
+  let cmd = (git, args) in
+  match UCmd.string_of_run_with_stderr ~trim:true cmd with
+  | Ok (merge_base, (_, `Exited 0)), _ -> merge_base
+  | Ok (_, (_, status)), stderr ->
+      let exit_code =
+        match status with
+        | `Exited code -> Some code
+        (* like the wrapper's subprocess returncode for a signalled child *)
+        | `Signaled signal -> Some (-signal)
+      in
+      raise (Error (failed_git_command_msg ~exit_code ~output:stderr args))
+  | Error (`Msg m), _ ->
+      raise (Error (failed_git_command_msg ~exit_code:None ~output:m args))
 
 let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
   (* Canonicalise cwd on Windows so it agrees with git's canonical project
@@ -617,7 +653,7 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
   let rand_dir () =
     let rand = Stdlib.Random.State.make_self_init () in
     let uuid = Uuidm.v4_gen rand () in
-    let dir_name = "semgrep_git_worktree_" ^ Uuidm.to_string uuid in
+    let dir_name = "opengrep_git_worktree_" ^ Uuidm.to_string uuid in
     let dir = CapTmp.get_temp_dir_name caps#tmp / dir_name in
     UUnix.mkdir !!dir 0o777;
     dir
@@ -632,13 +668,22 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
   match UCmd.status_of_run ~quiet:true cmd with
   | Ok (`Exited 0) ->
       let work () =
-        Fpath.append temp_dir relative_path
-        |> Fpath.to_string |> CapSys.chdir caps#chdir;
+        let dir = Fpath.append temp_dir relative_path in
+        (* The current directory need not exist at [commit]: a scan started
+           from a directory added after it would otherwise die on the chdir.
+           An empty stand-in leaves that side of the scan without targets,
+           which is what a directory absent from the commit holds. *)
+        UFile.make_directories dir;
+        !!dir |> CapSys.chdir caps#chdir;
         f ()
       in
       let cleanup () =
         cwd |> Fpath.to_string |> CapSys.chdir caps#chdir;
-        let cmd = (git, [ "worktree"; "remove"; !!temp_dir ]) in
+        (* A fresh checkout can look modified without any modification,
+           when a .gitattributes normalises line endings that the blobs
+           do not have; git then refuses to remove the worktree unless
+           forced. It is a throwaway directory, so forcing is safe. *)
+        let cmd = (git, [ "worktree"; "remove"; "--force"; !!temp_dir ]) in
         match UCmd.status_of_run ~quiet:true cmd with
         | Ok (`Exited 0) ->
             Log.info (fun m -> m "Finished cleaning up git worktree")
@@ -649,6 +694,26 @@ let run_with_worktree (caps : < Cap.chdir ; Cap.tmp >) ~commit ?branch f =
       Common.protect ~finally:cleanup work
   | Ok _ -> raise (Error ("Could not create git worktree for " ^ commit))
   | Error (`Msg e) -> raise (Error e)
+
+(* Rewrite a path that git lists from the root of the repository as a path
+   relative to [cwd]. A file outside [cwd] then keeps a '../' prefix; asking
+   git for the same thing with '--relative' would drop it from the diff
+   altogether. The root of the repository is read once, and the rest is
+   string work on the paths of the diff, not on the targets. *)
+let path_from_cwd ?(cwd : Fpath.t option) () : string -> string =
+  let abs_cwd =
+    (match cwd with
+    | None -> getcwd ()
+    | Some dir -> Fpath.(getcwd () // dir))
+    |> Fpath.normalize |> Rpath.canonical_if_win
+  in
+  match project_root_for_files_in_dir abs_cwd with
+  | None -> Fun.id
+  | Some (project_root : Fpath.t) ->
+      let project_root = Rpath.canonical_if_win project_root in
+      fun (path : string) ->
+        !!(relativize_if_possible ~abs_cwd
+             Fpath.(project_root // v path |> normalize))
 
 let status ?cwd ?commit () =
   let cmd =
@@ -662,10 +727,10 @@ let status ?cwd ?commit () =
           "-z";
           "--diff-filter=ACDMRTUXB";
           "--ignore-submodules";
-          "--relative";
         ]
       @ opt commit )
   in
+  let from_cwd = path_from_cwd ?cwd () in
   let stats =
     match UCmd.string_of_run ~trim:true cmd with
     | Ok (str, (_, `Exited 0)) -> str |> String.split_on_char '\000'
@@ -692,37 +757,52 @@ let status ?cwd ?commit () =
   let removed = ref [] in
   let unmerged = ref [] in
   let renamed = ref [] in
-  let rec parse = function
-    | _ :: file :: tail when check_dir file && check_symlink file ->
-        Log.info (fun m ->
-            m "Skipping %s since it is a symlink to a directory: %s" file
-              (UUnix.realpath file));
-        parse tail
-    | "A" :: file :: tail ->
-        added := file :: !added;
-        parse tail
-    | "M" :: file :: tail ->
-        modified := file :: !modified;
-        parse tail
-    | "D" :: file :: tail ->
-        removed := file :: !removed;
-        parse tail
-    | "U" :: file :: tail ->
-        unmerged := file :: !unmerged;
-        parse tail
-    | "T" (* type changed *) :: file :: tail ->
-        if not (check_symlink file) then modified := file :: !modified;
-        parse tail
-    | typ :: before :: after :: tail when String.starts_with ~prefix:"R" typ ->
-        removed := before :: !removed;
-        added := after :: !added;
-        renamed := (before, after) :: !renamed;
-        parse tail
-    | "!" (* ignored *) :: _ :: tail -> parse tail
-    | "?" (* untracked *) :: _ :: tail -> parse tail
-    | unknown :: file :: tail ->
-        Log.warn (fun m -> m "unknown type in git status: %s, %s" unknown file);
-        parse tail
+  (* '-z --name-status' writes a status letter, then the two paths of a
+     rename and one path for every other change. Each path is made relative
+     to the current directory as it is read, so the stream is walked once. *)
+  let rec parse (entries : string list) : unit =
+    match entries with
+    | typ :: path :: tail -> (
+        let file = from_cwd path in
+        match typ with
+        | _ when check_dir file && check_symlink file ->
+            Log.info (fun m ->
+                m "Skipping %s since it is a symlink to a directory: %s" file
+                  (UUnix.realpath file));
+            parse tail
+        | "A" ->
+            added := file :: !added;
+            parse tail
+        | "M" ->
+            modified := file :: !modified;
+            parse tail
+        | "D" ->
+            removed := file :: !removed;
+            parse tail
+        | "U" ->
+            unmerged := file :: !unmerged;
+            parse tail
+        | "T" (* type changed *) ->
+            if not (check_symlink file) then modified := file :: !modified;
+            parse tail
+        | _ when String.starts_with ~prefix:"R" typ -> (
+            match tail with
+            | after :: tail ->
+                let after = from_cwd after in
+                removed := file :: !removed;
+                added := after :: !added;
+                renamed := (file, after) :: !renamed;
+                parse tail
+            | [] ->
+                Log.warn (fun m ->
+                    m "unknown type in git status: %s, %s" typ file))
+        | "!" (* ignored *)
+        | "?" (* untracked *) ->
+            parse tail
+        | unknown ->
+            Log.warn (fun m ->
+                m "unknown type in git status: %s, %s" unknown file);
+            parse tail)
     | [ remain ] ->
         Log.warn (fun m -> m "unknown data after parsing git status: %s" remain)
     | [] -> ()

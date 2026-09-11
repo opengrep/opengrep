@@ -57,7 +57,7 @@ $y = new class { public function m() {} }->m();
 $z = new class () { public function m() {} }->m();
 $aa = new class (1, 2) { public function m() {} }->m();
 
-// --- the older spellings must keep working --------------------------------
+// --- the older forms must keep working ------------------------------------
 
 $ab = new Foo();
 $ac = new Foo;

@@ -13,12 +13,8 @@
 (* A SEMantic GREP.
  * See https://semgrep.dev/ for more information.
  *
- * This is the entry point of the semgrep-core program used internally
- * by pysemgrep, the entry point of osemgrep, and currently also the entry point
- * of semgrep for windows. See also the ../../cli/bin/semgrep python wrapper
- * script which is currently the real entry point of semgrep.
- * LATER: when osemgrep is fully done we can just get rid of semgrep-core,
- * osemgrep, the wrapper script, and have a single binary called 'semgrep'.
+ * This is the entry point of the opengrep command-line interface and of
+ * the low-level engine CLI reachable through 'opengrep --core'.
  *
  * Related work using code patterns (from oldest to newest):
  *  - Structural Search and Replace (SSR) in Jetbrains IDEs
@@ -81,70 +77,31 @@
  *)
 
 (*****************************************************************************)
-(* Helpers *)
-(*****************************************************************************)
-
-let flags_that_require_experimental : string list =
-  [ "--output-enclosing-context"; "--semgrepignore-filename" ]
-
-let experimental_flags_error_msg : string =
-  "The --experimental option required for the following flags: "
-
-let check_experimental_flags (argv : string array) : unit =
-  if Array.mem "--experimental" argv
-  then ()
-  else
-    match
-      List.filter (Fun.flip Array.mem argv) flags_that_require_experimental
-    with
-    | [] -> ()
-    | xs -> ignore (Error.abort (experimental_flags_error_msg ^ String.concat ", " xs))
-
-(*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
 
-(* We currently use the same binary for semgrep-core and osemgrep (and now
- * also for semgrep for windows). See 'make core' and './dune' install section.
- * We use the argv[0] trick below to decide whether the user wants the
- * semgrep-core or osemgrep (or semgrep) behavior.
+(* We use the same binary for the opengrep CLI and for the low-level engine
+ * CLI (historically called semgrep-core, then opengrep-core).
+ * See 'make core' and './dune' install section.
+ *
+ * The dispatch does not look at argv[0] anymore: the binary always runs the
+ * opengrep CLI, whatever name it was installed or downloaded under, except
+ * when its first argument is '--core', in which case the low-level engine
+ * CLI runs with '--core' removed from the command line.
  *)
 let () =
   Cap.main (fun (caps : Cap.all_caps) ->
       let argv = CapSys.argv caps#argv in
-      let argv0 =
-        (* remove the possible ".exe" extension for Windows and ".bc" *)
-        Fpath.v argv.(0) |> Fpath.base |> Fpath.rem_ext |> Fpath.to_string
-      in
-      let experimental =
-        Array.mem "--experimental" argv
-      in
-      match argv0, experimental with
-      (* opengrep-cli a.k.a. osemgrep *)
-      | "opengrep-cli", _
-      (* In the long term (and in the short term on windows) we want to ship
-       * opengrep-cli as the default "opengrep" binary, without any
-       * wrapper script such as cli/bin/semgrep around it.
-       *)
-      | "opengrep", _
-      | _, true ->
-          let exit_code =
-            match argv0 with
-            | "opengrep" ->
-                (* adding --experimental so we don't default back to pysemgrep *)
-                CLI.main
-                  (caps :> CLI.caps)
-                  (if experimental then argv
-                   else CLI.with_experimental_flag argv)
-            | _else_ ->
-                check_experimental_flags argv;
-                CLI.main (caps :> CLI.caps) argv
-          in
+      match Array.to_list argv with
+      (* the low-level engine CLI, whose options are shown by
+       * 'opengrep --core -help' *)
+      | argv0 :: "--core" :: args ->
+          Core_CLI.main caps (Array.of_list (argv0 :: args))
+      | _else_ ->
+          let exit_code = CLI.main (caps :> CLI.caps) argv in
           if not (Exit_code.Equal.ok exit_code) then
             Logs.info (fun m ->
                 m "Error: %s\nExiting with error status %i: %s\n%!"
                   exit_code.description exit_code.code
                   (String.concat " " (Array.to_list argv)));
-          CapStdlib.exit caps#exit exit_code.code
-      (* legacy opengrep-core a.k.a. semgrep-core *)
-      | _else_ -> Core_CLI.main caps argv)
+          CapStdlib.exit caps#exit exit_code.code)

@@ -139,6 +139,8 @@ val file_kind_of_yojson : Yojson.Safe.t -> (Unix.file_kind, string) result
 (*****************************************************************************)
 (* Makes the given directory as well as its parent directories.
  * Raises Unix_error if A non-directory object with the same name exists.
+ * A trailing empty segment, as Fpath.parent leaves on its result, is
+ * dropped before the directory is created.
  *)
 val make_directories : Fpath.t -> unit
 

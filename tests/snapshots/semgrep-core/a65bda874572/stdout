@@ -1,0 +1,10 @@
+--- begin input files ---
+multi-focus-metavariable.py
+multi-focus-metavariable.yaml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 33 insertions(+)
+ create mode 100644 multi-focus-metavariable.py
+ create mode 100644 multi-focus-metavariable.yaml
+{"version":"<MASKED>","results":[{"check_id":"multi-focus-metavariable","path":"multi-focus-metavariable.py","start":{"line":3,"col":2,"offset":42},"end":{"line":3,"col":3,"offset":43},"extra":{"metavars":{"$X":{"start":{"line":3,"col":2,"offset":42},"end":{"line":3,"col":3,"offset":43},"abstract_content":"1"},"$Y":{"start":{"line":12,"col":2,"offset":159},"end":{"line":12,"col":3,"offset":160},"abstract_content":"4"}},"message":"Test for multiple metavariables","metadata":{},"severity":"ERROR","fingerprint":"3d704b47cb74bab89309167aac1f33616d83afd31fb88a8dc2e0ef15293a473534824ec9dcb4c376f4919df1893cb18bfb1ff3a0708fff056515f39628860463_0","lines":"\t1","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"multi-focus-metavariable","path":"multi-focus-metavariable.py","start":{"line":12,"col":2,"offset":159},"end":{"line":12,"col":3,"offset":160},"extra":{"metavars":{"$X":{"start":{"line":3,"col":2,"offset":42},"end":{"line":3,"col":3,"offset":43},"abstract_content":"1"},"$Y":{"start":{"line":12,"col":2,"offset":159},"end":{"line":12,"col":3,"offset":160},"abstract_content":"4"}},"message":"Test for multiple metavariables","metadata":{},"severity":"ERROR","fingerprint":"3d704b47cb74bab89309167aac1f33616d83afd31fb88a8dc2e0ef15293a473534824ec9dcb4c376f4919df1893cb18bfb1ff3a0708fff056515f39628860463_1","lines":"\t4","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["multi-focus-metavariable.py"]},"interfile_languages_used":[],"skipped_rules":[]}

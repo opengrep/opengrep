@@ -195,12 +195,12 @@ match o.o with
   when Float.is_integer f && Float.abs f < Float.of_int Int.max_int ->
     Oint (int_of_float f)
 (* In JS/TS `o[0]` and `o["0"]` are the same property: an integer key is
- * canonicalized to its decimal string spelling. Map a string index that
- * is such a canonical spelling to the [Oint] the numeric form takes, so
- * both sides unify. Non-canonical spellings (`"00"`, `"-0"`, `"0x10"`)
+ * canonicalized to its decimal string form. Map a string index that
+ * is in such a canonical form to the [Oint] the numeric form takes, so
+ * both sides unify. Non-canonical forms (`"00"`, `"-0"`, `"0x10"`)
  * name distinct properties in JS too and stay [Ostr]. Restricted to
  * integers that survive the float round-trip: past 2^53 the numeric key
- * collapses to a neighbouring integer while the string spelling remains
+ * collapses to a neighbouring integer while the string form remains
  * its own property. Every other language keeps the distinction — in
  * Python `d[0]` and `d["0"]` really are different dict keys. *)
 | IL.Index { e = IL.Literal (String (_, (s, _), _)); _ }

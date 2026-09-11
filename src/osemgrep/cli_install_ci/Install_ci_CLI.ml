@@ -33,12 +33,12 @@ type conf = {
 (*****************************************************************************)
 (* Manpage Documentation *)
 (*****************************************************************************)
-let doc = "Install semgrep as a workflow within a CI environment."
+let doc = "Install opengrep as a workflow within a CI environment."
 
 let long_desc =
   Printf.sprintf
     {|%s Specify a git repository path (e.g. ".") or qualified repo name (e.g. "owner/repo"),
-and this command will add the semgrep actions workflow. The workflow file will run `semgrep ci`
+and this command will add the opengrep actions workflow. The workflow file will run `opengrep ci`
 on every pull request opened on a main branch.
 
 NOTE: Currently, this command only supports Github Actions.
@@ -49,7 +49,7 @@ let man : Cmdliner.Manpage.block list =
   [ `S Cmdliner.Manpage.s_description; `P long_desc ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "semgrep install-ci" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep install-ci" ~doc ~man ~exits:CLI_common.exits_install_ci
 
 (*****************************************************************************)
 (* Flags *)

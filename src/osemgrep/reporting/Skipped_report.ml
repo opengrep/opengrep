@@ -20,6 +20,7 @@ type skipped_targets_grouped = {
   include_ : Semgrep_output_v1_t.skipped_target list;
   exclude : Semgrep_output_v1_t.skipped_target list;
   always : Semgrep_output_v1_t.skipped_target list;
+  permissions : Semgrep_output_v1_t.skipped_target list;
   other : Semgrep_output_v1_t.skipped_target list;
   (* targets possibly skipped because there was a parsing/matching/...
    * error while running the engine on it.
@@ -31,19 +32,68 @@ type skipped_targets_grouped = {
 (* Helpers *)
 (*****************************************************************************)
 
+(* Whether the file an error points at is a target of the scan. The errors
+   raised while a rule is loaded point at the rule file, which is never
+   scanned: no target of the run was left partially analysed by them. *)
+let is_on_a_target (error_type : OutJ.error_type) : bool =
+  match error_type with
+  | RuleParseError
+  | PatternParseError _
+  | PatternParseError0
+  | InvalidYaml
+  | InvalidRuleSchemaError
+  | UnknownLanguageError
+  | MissingConfig
+  | MissingPlugin
+  | IncompatibleRule _
+  | IncompatibleRule0
+  | UnsupportedSupplyChainRule ->
+      false
+  | LexicalError
+  | ParseError
+  | OtherParseError
+  | PartialParsing _
+  | AstBuilderError
+  | MatchingError
+  | SemgrepMatchFound
+  | TooManyMatches
+  | FatalError
+  | Timeout
+  | OutOfMemory
+  | StackOverflow
+  | TimeoutDuringInterfile
+  | OutOfMemoryDuringInterfile
+  | SemgrepWarning
+  | SemgrepError
+  | DependencyResolutionError _ ->
+      true
+
+(* one entry per error on a target; the reports group them by file *)
 let errors_to_skipped (errors : OutJ.core_error list) : OutJ.skipped_target list
     =
   errors
-  |> List_.filter_map (fun OutJ.{ location; message; rule_id; _ } ->
+  |> List_.filter_map (fun OutJ.{ location; message; rule_id; error_type; _ } ->
          let* loc = location in
-         Some
-           OutJ.
-             {
-               path = loc.path;
-               reason = Analysis_failed_parser_or_internal_error;
-               details = Some message;
-               rule_id;
-             })
+         if is_on_a_target error_type then
+           Some
+             OutJ.
+               {
+                 path = loc.path;
+                 reason = Analysis_failed_parser_or_internal_error;
+                 details = Some message;
+                 rule_id;
+               }
+         else None)
+
+(* the files partially analysed, each with the ids of the rules that failed
+   on it, in the order of the entries *)
+let group_errors_by_file (errors : OutJ.skipped_target list) :
+    (Fpath.t * Rule_ID.t list) list =
+  errors
+  |> Assoc.group_by (fun (x : OutJ.skipped_target) -> x.path)
+  |> List_.map (fun (path, entries) ->
+         (path, entries |> List_.filter_map (fun (x : OutJ.skipped_target) -> x.rule_id)))
+  |> List.sort (fun (a, _) (b, _) -> Fpath.compare a b)
 
 let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
     =
@@ -61,6 +111,7 @@ let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
         | Cli_exclude_flags_match -> `Exclude
         | Analysis_failed_parser_or_internal_error -> `Error
         | Always_skipped -> `Always
+        | Insufficient_permissions -> `Permissions
         | Excluded_by_config
         | Wrong_language
         | Minified
@@ -68,8 +119,7 @@ let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
         | Dotfile
         | Nonexistent_file
         | Irrelevant_rule
-        | Too_many_matches
-        | Insufficient_permissions ->
+        | Too_many_matches ->
             `Other)
       skipped
   in
@@ -89,6 +139,9 @@ let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
     always =
       (try List.assoc `Always groups with
       | Not_found -> []);
+    permissions =
+      (try List.assoc `Permissions groups with
+      | Not_found -> []);
     other =
       (try List.assoc `Other groups with
       | Not_found -> []);
@@ -96,6 +149,24 @@ let group_skipped (skipped : OutJ.skipped_target list) : skipped_targets_grouped
       (try List.assoc `Error groups with
       | Not_found -> []);
   }
+
+(* A file no rule would scan is not reported as skipped. Directories are,
+   and so are the failures on the files that were scanned. *)
+let for_languages (xlangs : Xlang.t list) (skipped : OutJ.skipped_target list)
+    : OutJ.skipped_target list =
+  let scannable (path : Fpath.t) : bool =
+    UFile.is_dir ~follow_symlinks:true path
+    || List.exists
+         (fun (xlang : Xlang.t) -> Filter_target.filter_target_for_xlang xlang path)
+         xlangs
+  in
+  skipped
+  |> List.filter (fun (x : OutJ.skipped_target) ->
+         match x.reason with
+         | Analysis_failed_parser_or_internal_error
+         | Insufficient_permissions ->
+             true
+         | _ -> scannable x.path)
 
 (*****************************************************************************)
 (* Entry point *)
@@ -109,6 +180,7 @@ let pp_skipped ~too_many_entries ppf
     exclude = exclude_ignored;
     size = file_size_ignored;
     always = always_ignored;
+    permissions = permissions_ignored;
     other = other_ignored;
     errors;
   } =
@@ -181,6 +253,12 @@ let pp_skipped ~too_many_entries ppf
   else pp_list exclude_ignored;
   Fmt.pf ppf "@.";
 
+  Fmt.pf ppf "  %a@.@."
+    Fmt.(styled `Bold string)
+    (esc ^ "Files skipped due to insufficient read permissions:");
+  pp_list permissions_ignored;
+  Fmt.pf ppf "@.";
+
   Fmt.pf ppf "  %a@.  %a@.@."
     Fmt.(styled `Bold string)
     (esc ^ "Skipped by limiting to files smaller than "
@@ -203,5 +281,19 @@ let pp_skipped ~too_many_entries ppf
   Fmt.pf ppf "  %a@.@."
     Fmt.(styled `Bold string)
     (esc ^ "Partially analyzed due to parsing or internal Opengrep errors");
-  pp_list errors;
+  (* python: yield_verbose_lines, one line per file with the failing rules *)
+  (match group_errors_by_file errors with
+  | [] -> Fmt.pf ppf "   • <none>@."
+  | files ->
+      files
+      |> List.iter (fun ((path : Fpath.t), (rule_ids : Rule_ID.t list)) ->
+             let with_rules =
+               match rule_ids with
+               | [] -> ""
+               | [ rule_id ] -> spf " with rule %s" (Rule_ID.to_string rule_id)
+               | rule_id :: _ ->
+                   spf " with %d rules (e.g. %s)" (List.length rule_ids)
+                     (Rule_ID.to_string rule_id)
+             in
+             Fmt.pf ppf "   • %s%s@." !!path with_rules));
   Fmt.pf ppf "@."

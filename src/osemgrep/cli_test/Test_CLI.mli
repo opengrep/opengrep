@@ -10,6 +10,8 @@ type conf = {
   target : target_kind;
   ignore_todo : bool;
   json : bool;
+  (* --force-color, which wins over $NO_COLOR like it does for a scan *)
+  force_color : bool;
   optimizations : bool;
   strict : bool;
   (* Whether to emit "matching diagnosis", which analyzes failing
@@ -18,6 +20,14 @@ type conf = {
   *)
   matching_diagnosis : bool;
   taint_intrafile : bool;
+  (* the ignore annotations of a scan apply to a test run too *)
+  opengrep_ignore_pattern : string option;
+  (* None when the flag was not given, in which case the engine defaults
+     apply, and those set no limit
+  *)
+  timeout : float option;
+  timeout_threshold : int option;
+  max_memory_mb : int option;
   common : CLI_common.conf;
 }
 

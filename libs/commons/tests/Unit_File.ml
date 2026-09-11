@@ -202,6 +202,42 @@ let test_is_dir_or_lnk_or_reg () =
         "" false
         (UFile.is_dir_or_lnk_or_reg (Fpath.v "missing")))
 
+(* A tree written with entries the process is not allowed to read comes back
+   with the constructors that say so, rather than raising. *)
+let test_read_unreadable () =
+  let open Testutil_files in
+  with_tempfiles ~chdir:true
+    [
+      File ("readable", "hello");
+      Unreadable ("secret", "hidden");
+      Unreadable_dir ("closed", [ File ("inside", "hidden") ]);
+    ]
+    (fun (cwd : Fpath.t) ->
+      Alcotest.(check bool)
+        "the tree is read back" true
+        (match sort (read cwd) with
+        | [
+         Unreadable_dir ("closed", []);
+         File ("readable", "hello");
+         Unreadable ("secret", "");
+        ] ->
+            true
+        | _ -> false))
+
+(* A directory is not created where a regular file already stands: the
+   attempt fails with EEXIST, including when the path comes from
+   Fpath.parent and so carries a trailing empty segment. *)
+let test_make_directories_over_a_file () =
+  let open Testutil_files in
+  with_tempfiles ~chdir:true [ file "a.txt" ] (fun (cwd : Fpath.t) ->
+      Alcotest.(check bool)
+        "the file is not turned into a directory" true
+        (match
+           UFile.make_directories (Fpath.parent Fpath.(cwd / "a.txt" / "b"))
+         with
+        | () -> false
+        | exception Unix.Unix_error (Unix.EEXIST, _, _) -> true))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -247,4 +283,12 @@ let tests =
       t "is_dir_or_lnk" test_is_dir_or_lnk;
       t "is_lnk_or_reg" test_is_lnk_or_reg;
       t "is_dir_or_lnk_or_reg" test_is_dir_or_lnk_or_reg;
+      t "make_directories on a parent that is a file"
+        test_make_directories_over_a_file;
+      t "read a tree with unreadable entries"
+        ?skipped:
+          (* nothing is unreadable to root *)
+          (if Int.equal (Unix.geteuid ()) 0 then Some "root reads every file"
+           else None)
+        test_read_unreadable;
     ]

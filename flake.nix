@@ -92,7 +92,7 @@
 # `libev`, `libcurl`, `tree-sitter` etc. This means that if someone wants to
 # build and contribute to Opengrep, they must install these dependencies, and
 # hope that their versions is compatible. For example if you install the OCaml
-# packages needed for opengrep-cli, and then install libev, things won't work, since
+# packages needed for opengrep, and then install libev, things won't work, since
 # the lwt package needs libev when its initially installed. If you're on mac,
 # you also have to tell opam where libev is before installing lwt. So our OCaml
 # is correct, but only if you can build it, and only if you build it with the
@@ -151,7 +151,7 @@
 
 # If you want to just build opengrep and run it you can do `nix run
 # ".?submodules=1#"` for opengrep or `nix run ".?submodules=1#<target>"` where
-# target is opengrep, pyopengrep, opengrep-cli, or opengrep-core.
+# target is opengrep.
 
 # ## What's the catch?
 #
@@ -255,7 +255,6 @@
         # TODO Use pkgsStatic if on linux
         pkgs = nixpkgs.legacyPackages.${system};
         on = opam-nix.lib.${system};
-        pythonPackages = pkgs.python314Packages;
         # Build a local opam repo containing the memprof-limits fork, with its
         # `version:` line stripped so opam-nix exposes it as version "dev"
         # (matching the `{= "dev"}` constraints in our opam files).
@@ -270,10 +269,9 @@
         lib = pkgs.lib;
         isDarwin = lib.strings.hasSuffix "darwin" system;
         hasSubmodules = !builtins.hasAttr "submodules" self || self.submodules;
-        # TODO split out opengrep-cli and pyopengrep into diff nix files
       in let
 
-        # opengrep-cli/opengrep-core inputs
+        # opengrep inputs
         opengrepCliInputs = with pkgs; [ pcre2 tree-sitter ];
         devOpamPackagesQuery = {
           # You can add "development" ocaml packages here. They will get added
@@ -331,11 +329,11 @@
         devOpamPackages = builtins.attrValues
           (pkgs.lib.getAttrs (builtins.attrNames devOpamPackagesQuery) scope');
 
-        # opengrep-cli/opengrep-core
+        # opengrep
         # package with all opam deps but nothing else
         baseOpamPackage = scope'.${package}; # Packages from devPackagesQuery
 
-        # Special environment variables for opengrep-cli for linking stuff
+        # Special environment variables for opengrep for linking stuff
         opengrepCliEnvDarwin = {
           # all the dune files of opengrep treesitter <LANG> are missing the
           # :standard field. Basically all compilers autodetect if something is c
@@ -351,11 +349,11 @@
           SEMGREP_NIX_BUILD = "1";
         } // lib.optionalAttrs (isDarwin) opengrepCliEnvDarwin;
         #
-        # opengrep-cli
+        # opengrep
         #
 
-        opengrep-cli = baseOpamPackage.overrideAttrs (prev: rec {
-          pname = "opengrep-cli";
+        opengrep = baseOpamPackage.overrideAttrs (prev: rec {
+          pname = "opengrep";
           env = opengrepCliEnv;
           buildInputs = prev.buildInputs ++ opengrepCliInputs;
           buildPhase' = ''
@@ -372,9 +370,9 @@
           # make sure we have submodules
           # See https://github.com/NixOS/nix/pull/7862
           buildPhase = if hasSubmodules then
-            opengrep-cli.buildPhase'
+            opengrep.buildPhase'
           else
-            opengrep-cli.buildPhaseFail;
+            opengrep.buildPhaseFail;
           nativeCheckInputs = (with pkgs; [ cacert git ]);
           # git init is needed so tests work successfully since many rely on git root existing
           checkPhase = ''
@@ -394,67 +392,6 @@
         # needs new emscripten: https://github.com/NixOS/nixpkgs/issues/306649
         # for the special wasm pass
 
-        # pyopengrep inputs
-        # coupling: anything added to pyopengrep for testing should be added here
-        devPipInputs = with pythonPackages; [
-          pkgs.git
-          flaky
-          pytest-snapshot
-          pytest-mock
-          pytest-freezegun
-          types-freezegun
-        ];
-
-        #
-        # pyopengrep
-        #
-
-        pyopengrep = with pythonPackages;
-          buildPythonApplication {
-            # thanks to @06kellyjac
-            pname = "opengrep";
-            inherit (opengrep-cli) version;
-            src = ./cli;
-            # TODO checks
-            doCheck = false;
-
-            # Newer nixpkgs' buildPythonApplication requires an explicit build
-            # format; the cli uses a PEP 517 pyproject.toml backed by setuptools.
-            pyproject = true;
-            build-system = [ setuptools wheel ];
-            # The wheel's install_requires pins (e.g. `boltons~=21.0`) are
-            # tighter than nixpkgs' tree; skip the automatic runtime-deps
-            # check and trust the versions listed in propagatedBuildInputs.
-            dontCheckRuntimeDeps = true;
-
-            # coupling: anything added to the pyopengrep setup.py should be added here
-            propagatedBuildInputs = [
-              attrs
-              boltons
-              colorama
-              click
-              click-option-group
-              glom
-              requests
-              rich
-              ruamel-yaml
-              tqdm
-              packaging
-              jsonschema
-              wcmatch
-              peewee
-              defusedxml
-              urllib3
-              typing-extensions
-              tomli
-            ];
-            # doesn't work for some reason
-            dontUseSetuptoolsShellHook = true;
-
-            preFixup = ''
-              makeWrapperArgs+=(--prefix PATH : ${opengrep-cli}/bin)
-            '';
-          };
         # TODO opengrep-js
       in {
         # For a lot of nix commands, nix uses the cwd's flake. So
@@ -471,8 +408,8 @@
         #   nix run github:DeterminateSystems/flake-checker
         # to run DeterminateSystem's
         # cool flake checker, without ever needing to install it or anything! Or
-        # other nix users who want to try opengrep-cli can run
-        #   nix run github:opengrep/opengrep?submodules=1#opengrep-cli
+        # other nix users who want to try opengrep can run
+        #   nix run github:opengrep/opengrep?submodules=1#opengrep
         #
         # See: https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake.html#types
         # for more on flake refs
@@ -484,41 +421,28 @@
         # builds the below package leaving it empty builds the default. The
         # output will be linked into the cwd in a folder called "result". Also
         # exports packages for other nix packages to use
-        packages.opengrep-cli = opengrep-cli;
-        packages.opengrep = pyopengrep;
-        packages.default = pyopengrep;
+        packages.opengrep = opengrep;
+        packages.default = opengrep;
 
         #   nix run ".?submodules=1#<PKG_NAME>"
         # builds and runs the package specified, without linking the output
         # result into the cwd. You can try other nixpkgs similarly by running
         # `nix run nixpkgs#<PKG_NAME>` like `nix run nixpkgs#hello_world`.
         apps = {
-          opengrep-cli = {
-            type = "app";
-            program = "${opengrep-cli}/bin/opengrep-cli";
-          };
-          opengrep-core = {
-            type = "app";
-            program = "${opengrep-cli}/bin/opengrep-core";
-          };
           opengrep = {
             type = "app";
-            program = "${pyopengrep}/bin/opengrep";
-          };
-          pyopengrep = {
-            type = "app";
-            program = "${pyopengrep}/bin/pyopengrep";
+            program = "${opengrep}/bin/opengrep";
           };
           default = {
             type = "app";
-            program = "${pyopengrep}/bin/opengrep";
+            program = "${opengrep}/bin/opengrep";
           };
         };
         #   nix flake check ".?submodules=1#"
         # makes sure the flake is a valid structure, all the derivations are
         # valid, and runs anyting put in checks
         checks = {
-          opengrep-cli = opengrep-cli.overrideAttrs (prev: {
+          opengrep = opengrep.overrideAttrs (prev: {
             # We don't want to force people to run the test suite everytime they
             # build opengrep, but we do want to run it here
             doCheck = true;
@@ -532,15 +456,14 @@
         #   nix develop -c $SHELL
         # runs this shell which has all dependencies needed to make opengrep
         devShells.default = pkgs.mkShell {
-          # See comment above opengrep-cli.buildPhase for why we need this
+          # See comment above opengrep.buildPhase for why we need this
           # This doesnt work there because idk
           env = {
             # add env vars here
           } // opengrepCliEnv;
-          inputsFrom = [ opengrep-cli pyopengrep ];
-          buildInputs = devOpamPackages ++ devPipInputs ++ (with pkgs; [
+          inputsFrom = [ opengrep ];
+          buildInputs = devOpamPackages ++ (with pkgs; [
             pre-commit
-            pipenv
             yq-go # for GHA workflows
           ]);
         };

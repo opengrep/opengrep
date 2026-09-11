@@ -1,0 +1,56 @@
+--- begin input files ---
+rules/defaulthttpclient.yaml
+targets/defaulthttpclient.java
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 47 insertions(+)
+ create mode 100644 rules/defaulthttpclient.yaml
+ create mode 100644 targets/defaulthttpclient.java
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    targets/defaulthttpclient.java
+    ❯❱ rules.java.lang.security.audit.crypto.ssl.defaulthttpclient-is-deprecated.defaulthttpclient-is-deprecated
+          DefaultHttpClient is deprecated. Further, it does not support connections using TLS1.2, which makes
+          using DefaultHttpClient a security hazard. Use SystemDefaultHttpClient instead, which supports
+          TLS1.2.
+
+           ▶▶┆ Autofix ▶ HttpClient client = new SystemDefaultHttpClient();
+           15┆ HttpClient client = new DefaultHttpClient();
+
+--- targets/defaulthttpclient.java after the scan ---
+// cf. https://mkyong.com/java/the-type-defaulthttpclient-is-deprecated/
+
+package com.exampleweb.controller;
+
+import org.apache.http.Header;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.DefaultHttpClient;
+
+public class WebCrawler {
+
+	public void crawl(String[] args) throws Exception {
+        // ruleid: defaulthttpclient-is-deprecated
+		HttpClient client = new SystemDefaultHttpClient();
+		HttpGet request = new HttpGet("http://google.com");
+		HttpResponse response = client.execute(request);
+	}
+
+}
+
+public class SecureWebCrawler {
+
+	public void crawl(String[] args) throws Exception {
+        // ok
+		HttpClient client = new SystemDefaultHttpClient();
+		HttpGet request = new HttpGet("http://google.com");
+		HttpResponse response = client.execute(request);
+	}
+
+}

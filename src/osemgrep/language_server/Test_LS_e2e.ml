@@ -91,7 +91,7 @@ let project_root () =
 
 let get_rule_path () =
   match Git_wrapper.project_root_for_files_in_dir Fpath_.current_dir with
-  | Some root -> root // Fpath.v "cli/tests/default/e2e/targets/ls/rules.yaml"
+  | Some root -> root // Fpath.v "tests/ls/rules.yaml"
   | None ->
       failwith "The test program must run from within the semgrep git project"
 
@@ -767,16 +767,10 @@ let with_session caps (f : test_info -> unit Lwt.t) : unit Lwt.t =
        Logs.err (fun m -> m "Got exception: %s" err);
        Logs.err (fun m -> m "Traceback:\n%s" traceback);
        Alcotest.fail "Got exception in Lwt.async during tests");
-  (* we want to start every test logged out, or the LS won't behave
-     predictably, because the testing structure assumes a fresh start
-  *)
-  Testutil_login.with_login_test_env ~chdir:false
-    (fun () ->
-      with_git_tmp_path (fun root ->
-          let server_info = create_info caps in
-          let test_info = { server = server_info; root } in
-          f test_info))
-    ()
+  with_git_tmp_path (fun root ->
+      let server_info = create_info caps in
+      let test_info = { server = server_info; root } in
+      f test_info)
 
 let test_ls_specs caps () =
   with_session caps (fun { server = info; root } ->

@@ -1,0 +1,10 @@
+--- begin input files ---
+emptyrules.yaml
+stupid.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 13 insertions(+)
+ create mode 100644 emptyrules.yaml
+ create mode 100644 stupid.py
+{"version":"<MASKED>","results":[],"errors":[],"paths":{"scanned":[]},"interfile_languages_used":[],"skipped_rules":[]}

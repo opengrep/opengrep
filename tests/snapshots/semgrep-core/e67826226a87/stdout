@@ -1,0 +1,12 @@
+--- begin input files ---
+eqeq-python.yaml
+targets/basic/simple_python_no_extension
+targets/basic/stupid_no_extension
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 3 files changed, 44 insertions(+)
+ create mode 100644 eqeq-python.yaml
+ create mode 100644 targets/basic/simple_python_no_extension
+ create mode 100644 targets/basic/stupid_no_extension
+{"version":"<MASKED>","results":[{"check_id":"eqeq-is-bad","path":"targets/basic/stupid_no_extension","start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":26,"offset":69},"extra":{"metavars":{"$X":{"start":{"line":3,"col":12,"offset":55},"end":{"line":3,"col":17,"offset":60},"abstract_content":"a+b"}},"message":"useless comparison operation `a + b == a + b` or `a + b != a + b`","metadata":{"shortlink":"https://sg.run/xyz1"},"severity":"ERROR","fingerprint":"d65ece9e1904b9b13fd26abb468a4cef79a3295b62b36a327e84ae5d961277cb59109ba3b10e06cbcaeea8c80beab16429f9c975662f0336d4b57c9d482644f3_0","lines":"    return a + b == a + b","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/basic/stupid_no_extension"]},"interfile_languages_used":[],"skipped_rules":[]}

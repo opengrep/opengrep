@@ -685,171 +685,24 @@ let parse_steps env key (value : G.expr) : (R.step list, Rule_error.t) result =
   | _ -> error_at_key env.id key ("Expected a list for " ^ fst key)
 
 (*****************************************************************************)
-(* Parsers for secrets mode *)
-(*****************************************************************************)
-
-let parse_validity env key x : (Rule.validation_state, Rule_error.t) result =
-  match x.G.e with
-  | G.L (String (_, ("valid", _), _)) -> Ok `Confirmed_valid
-  | G.L (String (_, ("invalid", _), _)) -> Ok `Confirmed_invalid
-  | _x -> error_at_key env.id key (spf "parse_validity for %s" (fst key))
-
-let parse_http_request env key value : (Rule.request, Rule_error.t) result =
-  let/ req = parse_dict env key value in
-  let/ url = take_key req env parse_string "url" in
-  let/ meth = take_key req env parse_http_method "method" in
-  let/ headers = take_key req env parse_dict "headers" in
-  let/ headers =
-    headers |> fun { h; _ } ->
-    Hashtbl.fold
-      (fun name value lst ->
-        let/ lst = lst in
-        let/ value = parse_string env (fst value) (snd value) in
-        Ok ({ Rule.name; value } :: lst))
-      h (Ok [])
-  in
-  let/ body = take_opt req env parse_string "body" in
-  let/ auth = take_opt req env parse_auth "auth" in
-  Ok Rule.{ url; meth; headers; body; auth }
-
-let parse_http_matcher_clause key env value :
-    (Rule.http_match_clause, Rule_error.t) result =
-  let/ clause = parse_dict env key value in
-  let/ status_code = take_opt clause env parse_int "status-code" in
-  let/ headers =
-    take_opt clause env
-      (fun env key ->
-        parse_list env key (fun env x ->
-            let/ hd = parse_dict env key x in
-            let/ name = take_key hd env parse_string "name" in
-            let/ value = take_key hd env parse_string "value" in
-            Ok Rule.{ name; value }))
-      "headers"
-  in
-  let/ content =
-    match take_opt clause env parse_dict "content" with
-    | Ok (Some content) ->
-        let/ formula =
-          Parse_rule_formula.parse_formula_old_from_dict env content
-        in
-        let/ language =
-          take_opt content env parse_string "language"
-          |> Result.map
-               (Option.map
-                  (Xlang.of_string ~rule_id:(Rule_ID.to_string env.id)))
-          |> Result.map (Option.value ~default:Xlang.LAliengrep)
-        in
-        Ok (Some (formula, language))
-    | Ok None -> Ok None
-    | Error e -> Error e
-  in
-  match (status_code, headers, content) with
-  | None, None, None ->
-      error_at_key env.id key
-        "A matcher must have at least one of status-code, headers, or content"
-  | _ ->
-      Ok
-        Rule.
-          { status_code; headers = Option.value ~default:[] headers; content }
-
-let parse_http_matcher key env value : (Rule.http_matcher, Rule_error.t) result
-    =
-  let/ matcher = parse_dict env key value in
-  let/ match_conditions =
-    take_key matcher env
-      (fun env key -> parse_list env key (parse_http_matcher_clause key))
-      "match"
-  in
-  let/ result = take_key matcher env parse_dict "result" in
-  let/ validity = take_key result env parse_validity "validity" in
-  let/ message = take_opt result env parse_string "message" in
-  let/ severity =
-    match take_opt result env parse_string_wrap "severity" with
-    | Ok (Some x) ->
-        let/ sev = parse_severity ~id:env.id x in
-        Ok (Some sev)
-    | Ok None -> Ok None
-    | Error e -> Error e
-  in
-  let/ metadata = take_opt_no_env result (generic_to_json env.id) "metadata" in
-  Ok Rule.{ match_conditions; validity; message; severity; metadata }
-
-let parse_http_response env key value :
-    (Rule.http_matcher list, Rule_error.t) result =
-  parse_list env key (parse_http_matcher key) value
-
-let parse_http_validator env key value : (Rule.validator, Rule_error.t) result =
-  let/ validator_dict = parse_dict env key value in
-  let/ request = take_key validator_dict env parse_http_request "request" in
-  let/ response = take_key validator_dict env parse_http_response "response" in
-  Ok (Rule.HTTP { request; response })
-
-let parse_aws_request env key value : (Rule.aws_request, Rule_error.t) result =
-  let/ request_dict = parse_dict env key value in
-  let/ secret_access_key =
-    take_key request_dict env parse_string "secret_access_key"
-  in
-  let/ access_key_id = take_key request_dict env parse_string "access_key_id" in
-  let/ region = take_key request_dict env parse_string "region" in
-  let/ session_token = take_opt request_dict env parse_string "session_token" in
-  Ok Rule.{ secret_access_key; access_key_id; region; session_token }
-
-let parse_aws_validator env key value : (Rule.validator, Rule_error.t) result =
-  let/ validator_dict = parse_dict env key value in
-  let/ request = take_key validator_dict env parse_aws_request "request" in
-  let/ response = take_key validator_dict env parse_http_response "response" in
-  Ok (Rule.AWS { request; response })
-
-let parse_validator key env value =
-  let/ dict = parse_dict env key value in
-  match List_.find_some_opt (Hashtbl.find_opt dict.h) [ "http"; "aws" ] with
-  | Some (("http", _), value) -> parse_http_validator env key value
-  | Some (("aws", _), value) -> parse_aws_validator env key value
-  | Some _
-  | None ->
-      (* The [Some _] case here should be impossible *)
-      error_at_key env.id key
-        ("No recognized validator, must be one of ['http', 'aws'] at " ^ fst key)
-
-let parse_validators env key value =
-  parse_list env key (parse_validator key) value
-
-(*****************************************************************************)
 (* Parsers for Supply chain *)
 (*****************************************************************************)
 
-let parse_ecosystem env key value =
-  match value.G.e with
-  | G.L (String (_, (_ecosystem, _), _)) ->
-      Ok `Npm
-      (* | _ -> error_at_key env.id key ("Unknown ecosystem: " ^ ecosystem)) *)
-  | _ -> error_at_key env.id key "Non-string data for ecosystem?"
+(* the rule key asking for a supply-chain (dependency) analysis *)
+let dependency_key : string = "r2c-internal-project-depends-on"
 
-let parse_dependency_pattern key env value :
-    (SCA_pattern.t, Rule_error.t) result =
-  let/ rd = parse_dict env key value in
-  let/ ecosystem = take_key rd env parse_ecosystem "namespace" in
-  let/ package_name = take_key rd env parse_string "package" in
-  let/ version_str = take_key rd env parse_string "version" in
-  let/ version_constraints =
-    try Ok (Parse_SCA_version.parse_constraints version_str) with
-    | Parse_SCA_version.Error error_str ->
-        error_at_key env.id key
-          (spf "bad version constraint format for %s, error = %s" version_str
-             error_str)
-  in
-  Ok SCA_pattern.{ ecosystem; package_name; version_constraints }
-
-let parse_dependency_formula env key value :
-    (R.sca_dependency_formula, Rule_error.t) result =
-  let/ rd = parse_dict env key value in
-  if Hashtbl.mem rd.h "depends-on-either" then
-    take_key rd env
-      (fun env key -> parse_list env key (parse_dependency_pattern key))
-      "depends-on-either"
-  else
-    let/ dependency_pattern = parse_dependency_pattern key env value in
-    Ok [ dependency_pattern ]
+(* Opengrep does not analyse a project's dependencies, so a rule using
+ * dependency_key is invalid here: it is reported and skipped, instead of
+ * being run as a plain rule with its dependency condition dropped.
+ * The dependency formula itself is not read: the parsers for it are gone,
+ * and a constraint we cannot read must not make the whole rule file fail to
+ * load.
+ *)
+let unsupported_supply_chain_rule (env : env) (key : key) :
+    (R.sca_dependency_formula option, Rule_error.t) result =
+  Error
+    (Rule_error.mk_error ~rule_id:env.id
+       (InvalidRule (UnsupportedSupplyChainRule (fst key), env.id, snd key)))
 
 (*****************************************************************************)
 (* Parse the whole thing  *)
@@ -1021,6 +874,7 @@ let parse_one_rule ~rewrite_rule_ids (i : int) (rule : G.expr) :
     {
       id = rule_id;
       target_analyzer;
+      rule_analyzer = target_analyzer;
       in_metavariable_pattern = false;
       path = [ string_of_int i; "rules" ];
       options_key;
@@ -1029,7 +883,9 @@ let parse_one_rule ~rewrite_rule_ids (i : int) (rule : G.expr) :
   in
   let/ mode_opt = take_opt rd env parse_string_wrap "mode" in
   let/ dep_formula_opt =
-    take_opt rd env parse_dependency_formula "r2c-internal-project-depends-on"
+    match dict_take_opt rd dependency_key with
+    | Some (key, _value) -> unsupported_supply_chain_rule env key
+    | None -> Ok None
   in
   (* this parses the search formula, or taint spec, or extract mode, etc. *)
   let/ mode = parse_mode env mode_opt dep_formula_opt rd in
@@ -1052,13 +908,14 @@ let parse_one_rule ~rewrite_rule_ids (i : int) (rule : G.expr) :
   let/ fix_regex_opt = take_opt rd env parse_fix_regex "fix-regex" in
   let/ paths_opt = take_opt rd env parse_paths "paths" in
   let/ equivs_opt = take_opt rd env parse_equivalences "equivalences" in
-  let/ validators_opt = take_opt rd env parse_validators "validators" in
   H.warn_if_remaining_unparsed_fields rule_id rd;
   Ok
     {
       R.id;
       min_version = Option.map fst min_version;
       max_version = Option.map fst max_version;
+      (* from the rule expression: the parsers above consumed the dict *)
+      formula_string = Formula_string.of_rule rule;
       message;
       target_selector;
       target_analyzer;
@@ -1072,7 +929,6 @@ let parse_one_rule ~rewrite_rule_ids (i : int) (rule : G.expr) :
       paths = paths_opt;
       equivalences = equivs_opt;
       options = options_opt;
-      validators = validators_opt;
       dependency_formula = dep_formula_opt;
     }
 
@@ -1103,14 +959,16 @@ let parse_generic_ast ?(error_recovery = false) ?rewrite_rule_ids
               in
               let/ () = check_that_dict_is_empty root_dict in
               Ok rules
-          (* it's also ok to not have the toplevel rules:, anyway we never
-             * used another toplevel key
-          *)
-          | G.Container (G.Array, (_tok, rules, _r)) -> Ok rules
+          (* the top level of a rule file is a mapping holding `rules:`; a
+             sequence or a scalar at the top level is not a rule file *)
           | _ -> missing_rules_field ())
       | [] ->
           (* an empty rules file returns an empty list of rules *)
-          Ok []
+          (* python: "Empty configuration file", a mistake rather than a
+             configuration with no rules, which is 'rules: []' *)
+          yaml_error
+            (Tok.tok_of_loc (Tok.first_loc_of_file file))
+            "Empty configuration file"
       | _ -> assert false
       (* yaml_to_generic should always return a ExprStmt *)
     in
@@ -1231,8 +1089,10 @@ let parse_and_filter_invalid_rules ?rewrite_rule_ids (file : Fpath.t) :
 let parse_xpattern xlang (str, tok) =
   let env =
     {
-      id = Rule_ID.of_string_exn "anon-pattern";
+      (* the id of the rule made of the -e pattern, for its errors *)
+      id = Rule_ID.dash_e;
       target_analyzer = xlang;
+      rule_analyzer = xlang;
       in_metavariable_pattern = false;
       path = [];
       options_key = None;

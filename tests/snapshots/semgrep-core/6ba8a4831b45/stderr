@@ -1,0 +1,24 @@
+[x.xxx][INFO]: Running external command: 'git' 'init' '-b' 'main'
+[x.xxx][INFO]: Running external command: 'git' 'config' 'user.name' 'Tester'
+[x.xxx][INFO]: Running external command: 'git' 'config' 'user.email' 'tester@example.com'
+[x.xxx][INFO]: Running external command: 'git' 'config' 'maintenance.auto' 'false'
+[x.xxx][INFO]: Running external command: 'git' 'config' 'gc.auto' '0'
+[x.xxx][INFO]: Running external command: 'git' 'add' '.'
+[x.xxx][INFO]: Running external command: 'git' 'commit' '-m' 'Add files'
+
+
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 2 files tracked by git with 1 Code rule:
+  Scanning 1 file.
+
+
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+Some files were skipped or only partially analyzed.
+  Scan was limited to files tracked by git.
+
+Ran 1 rule on 1 file: 1 finding.
+ASSERT exit code

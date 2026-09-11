@@ -1,0 +1,17 @@
+--- begin input files ---
+rules/java-string-wrap.yaml
+targets/java-string-wrap.java
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 12 insertions(+)
+ create mode 100644 rules/java-string-wrap.yaml
+ create mode 100644 targets/java-string-wrap.java
+{"version":"<MASKED>","results":[{"check_id":"rules.wrap-strings","path":"targets/java-string-wrap.java","start":{"line":3,"col":16,"offset":49},"end":{"line":3,"col":19,"offset":52},"extra":{"metavars":{"$S":{"start":{"line":3,"col":16,"offset":49},"end":{"line":3,"col":19,"offset":52},"abstract_content":"\"a\""}},"message":"Wrap strings","fix":"wrap(\"a\")","metadata":{},"severity":"WARNING","fingerprint":"904429466469ebf49ef9edcde860d6c05d6dd4e2c85c1082ce2a9bc27ae9767aa84587c9e2de3f9f05560ec3f06c9b6d365dbe50b29bc213146d3701c9ab5ebd_0","lines":"        return \"a\" + \"b\";","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.wrap-strings","path":"targets/java-string-wrap.java","start":{"line":3,"col":22,"offset":55},"end":{"line":3,"col":25,"offset":58},"extra":{"metavars":{"$S":{"start":{"line":3,"col":22,"offset":55},"end":{"line":3,"col":25,"offset":58},"abstract_content":"\"b\""}},"message":"Wrap strings","fix":"wrap(\"b\")","metadata":{},"severity":"WARNING","fingerprint":"aae5f57da6b31b0da4359479188e82a3c270a59a53ccae39bf4a35fe1458d4013eb3d1ec6c0c1b88a637b3bfe0c75b9b8a4bbd36085adb695be53265cdd1637a_0","lines":"        return \"a\" + \"b\";","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/java-string-wrap.java"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/java-string-wrap.java after the scan ---
+public class C {
+    String f() {
+        return wrap("a") + wrap("b");
+    }
+}
+

@@ -183,6 +183,16 @@ let tests =
              ("/b/a.ml", false);
              ("/b/a.c", true);
            ]);
+      t "excludes with a slash anchor at the project root"
+        (test_filter ~excludes:[ "/vendor"; "lib/gen"; "**/deep/gen" ] []
+           [
+             ("/vendor/a.c", false);
+             ("/b/vendor/a.c", true);
+             ("/lib/gen/a.c", false);
+             ("/b/lib/gen/a.c", true);
+             ("/deep/gen/a.c", false);
+             ("/b/deep/gen/a.c", false);
+           ]);
       (* Tests for custom semgrepignore filename feature *)
       t "custom semgrepignore filename"
         (test_filter_custom_filename ~semgrepignore_filename:"custom.ignore"

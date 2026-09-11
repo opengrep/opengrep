@@ -1,0 +1,34 @@
+--- begin input files ---
+rules/delete-partial-line.yaml
+targets/delete-partial-line.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 50 insertions(+)
+ create mode 100644 rules/delete-partial-line.yaml
+ create mode 100644 targets/delete-partial-line.py
+{"version":"<MASKED>","results":[{"check_id":"rules.delete-default","path":"targets/delete-partial-line.py","start":{"line":14,"col":5,"offset":106},"end":{"line":14,"col":7,"offset":108},"extra":{"metavars":{"$X":{"start":{"line":14,"col":5,"offset":106},"end":{"line":14,"col":7,"offset":108},"abstract_content":"42"}},"message":"Unnecessary parameter which matches the default","fix":"","metadata":{},"severity":"WARNING","fingerprint":"cc6418a9ce37c1b6056f63fd098d5cf130a530286592c50a1f33f77d6f3bb5550aca20bb5ad4e314c7b3559e5e5633c424983b357fac5bb4c263aa4d8455ca5c_0","lines":"foo(42)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.delete-default","path":"targets/delete-partial-line.py","start":{"line":16,"col":1,"offset":115},"end":{"line":16,"col":3,"offset":117},"extra":{"metavars":{"$X":{"start":{"line":16,"col":1,"offset":115},"end":{"line":16,"col":3,"offset":117},"abstract_content":"42"}},"message":"Unnecessary parameter which matches the default","fix":"","metadata":{},"severity":"WARNING","fingerprint":"cc6418a9ce37c1b6056f63fd098d5cf130a530286592c50a1f33f77d6f3bb5550aca20bb5ad4e314c7b3559e5e5633c424983b357fac5bb4c263aa4d8455ca5c_1","lines":"42)","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.delete-default","path":"targets/delete-partial-line.py","start":{"line":17,"col":5,"offset":123},"end":{"line":17,"col":7,"offset":125},"extra":{"metavars":{"$X":{"start":{"line":17,"col":5,"offset":123},"end":{"line":17,"col":7,"offset":125},"abstract_content":"42"}},"message":"Unnecessary parameter which matches the default","fix":"","metadata":{},"severity":"WARNING","fingerprint":"cc6418a9ce37c1b6056f63fd098d5cf130a530286592c50a1f33f77d6f3bb5550aca20bb5ad4e314c7b3559e5e5633c424983b357fac5bb4c263aa4d8455ca5c_2","lines":"foo(42","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.delete-default","path":"targets/delete-partial-line.py","start":{"line":22,"col":1,"offset":162},"end":{"line":22,"col":3,"offset":164},"extra":{"metavars":{"$X":{"start":{"line":22,"col":1,"offset":162},"end":{"line":22,"col":3,"offset":164},"abstract_content":"42"}},"message":"Unnecessary parameter which matches the default","fix":"","metadata":{},"severity":"WARNING","fingerprint":"cc6418a9ce37c1b6056f63fd098d5cf130a530286592c50a1f33f77d6f3bb5550aca20bb5ad4e314c7b3559e5e5633c424983b357fac5bb4c263aa4d8455ca5c_3","lines":"42","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/delete-partial-line.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/delete-partial-line.py after the scan ---
+def foo(x=42):
+    print(x)
+
+# No autofix
+foo()
+foo(
+)
+foo(43)
+foo(
+43
+)
+
+# Autofix of a partial line
+foo()
+foo(
+)
+foo(
+)
+
+# Autofix of an entire line
+foo(
+)
+

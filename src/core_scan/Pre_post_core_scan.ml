@@ -113,9 +113,7 @@ end
 (* Global *)
 (*****************************************************************************)
 
-(* In semgrep OSS we just run the nosemgrep and autofix processors. In Pro we
- * also add the secrets post processor (see Secrets.setup()).
- *)
+(* We run the nosemgrep and autofix processors. *)
 module Initial_processor =
   MkPairProcessor (Nosemgrep_processor) (Autofix_processor)
 
@@ -143,7 +141,7 @@ let call_with_pre_and_post_processor
     Logs_.with_debug_trace ~__FUNCTION__:"Pre_post_core_scan.pre_process"
       (fun () ->
         try Processor.pre_process config rules with
-        | (Time_limit.Timeout _ | Common.UnixExit _) as e ->
+        | (Common.UnixExit _) as e ->
             Exception.catch_and_reraise e
         | exn ->
             let e = Exception.catch exn in
@@ -161,7 +159,7 @@ let call_with_pre_and_post_processor
     Logs_.with_debug_trace ~__FUNCTION__:"Pre_post_core_scan.post_process"
       (fun () ->
         try Processor.post_process config state res with
-        | (Time_limit.Timeout _ | Common.UnixExit _) as e ->
+        | (Common.UnixExit _) as e ->
             Exception.catch_and_reraise e
         | exn ->
             let e = Exception.catch exn in
@@ -171,13 +169,3 @@ let call_with_pre_and_post_processor
             Exception.reraise e)
   in
   res
-(*****************************************************************************)
-(* Test enablement code *)
-(*****************************************************************************)
-
-type test_only_processors = (module Processor)
-
-let test_only_hook_processors = hook_processor
-
-let test_only_processors_of_processor (module P : Processor) =
-  (module P : Processor)

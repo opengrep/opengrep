@@ -115,17 +115,6 @@ val to_capitalized_alnum : t -> string
 val ext_of_lang : t -> string list
 
 (*
-   Return a list of extensions that Semgrep will never scan.
-
-   This will be the case even if the extension contains on of ext_of_lang in
-   its tail.
-
-   E.g., if excluded_exts_of_lang is [".min.js"], and ext_of_lang is [".js"],
-   the file should not be scanned.
-*)
-val excluded_exts_of_lang : t -> string list
-
-(*
    Return a list of programs that can run a script written in this language.
 *)
 val shebangs_of_lang : t -> string list
@@ -144,9 +133,6 @@ val is_js : t -> bool
 val is_c_cpp : t -> bool
 
 val is_caseless : t -> bool
-
-(* accept any variants *)
-val is_proprietary : t -> bool
 val lang_map : (string, t) Hashtbl.t
 
 (* Association from a valid name for a language to its unique internal ID. *)

@@ -1,0 +1,8 @@
+--- begin input files ---
+eqeq.yaml
+targets/permissions/README
+targets/permissions/readable_file.py
+targets/permissions/unreadable_file.py
+targets/permissions/unreadable_subdir/file.py
+--- end input files ---
+{"version":"<MASKED>","results":[{"check_id":"eqeq-is-bad","path":"targets/permissions/readable_file.py","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":7,"offset":6},"extra":{"metavars":{"$X":{"start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":2,"offset":1},"abstract_content":"a"}},"message":"useless comparison operation `a == a` or `a != a`","metadata":{"shortlink":"https://sg.run/xyz1","source":"https://semgrep.dev/r/eqeq-bad"},"severity":"ERROR","fingerprint":"c65e8d8b438d83f0dbfff0cc47c4683e1d01e3125b841f2f2c1248e36955e133e41bc83dfe3a5afbe47ed51132b07d25470ac4f9382af3b0dced735f5b2fd6e1_0","lines":"a == a","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/permissions/readable_file.py"],"skipped":[{"path":"targets/permissions/unreadable_file.py","reason":"insufficient_permissions","details":"file lacks sufficient access permissions"},{"path":"targets/permissions/unreadable_subdir","reason":"insufficient_permissions","details":"folder lacks sufficient access permissions"}]},"interfile_languages_used":[],"skipped_rules":[]}

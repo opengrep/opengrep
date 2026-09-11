@@ -41,7 +41,7 @@ class WithAttributes
     ) {}
 }
 
-// the older spellings must keep working
+// the older forms must keep working
 
 class Old
 {

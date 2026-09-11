@@ -192,10 +192,7 @@ let rule_match_nosem ~nosem_inline_re ~nosem_previous_line_re
         match Rule_ID.of_string_opt id with
         | Some id -> Rule_ID.ends_with pm.rule_id.id ~suffix:id
         (* If `id` isn't a valid identifier don't supress any rule. *)
-        | None ->
-            (* nosemgrep: no-logs-in-library *)
-            Logs.warn (fun m -> m "Invalid rule ID in %s: '%s'" !!path id);
-            false
+        | None -> false
       in
       List.fold_left
         (fun (result, errors) (line_num, id, col) ->
@@ -204,6 +201,10 @@ let rule_match_nosem ~nosem_inline_re ~nosem_previous_line_re
              HTML comments inside tags are not allowed by the spec.
           *)
           let id = Common2.strip '"' id in
+          (* once per id, whatever the number of matches it is checked for *)
+          if Option.is_none (Rule_ID.of_string_opt id) then
+            (* nosemgrep: no-logs-in-library *)
+            Logs.warn (fun m -> m "Invalid rule ID in %s: '%s'" !!path id);
           let loc =
             lazy (* TODO: Check if thread-safe. *)
               Tok.
@@ -285,7 +286,7 @@ let produce_ignored ?(config=Engine_config.default) (matches : Core_result.proce
              in
              ({ pm with is_ignored }, errors)
            with
-           | (Time_limit.Timeout _ | Common.ErrorOnFile _) as exn ->
+           | (Common.ErrorOnFile _) as exn ->
                Exception.catch_and_reraise exn
            | exn ->
                (* let's rewrap the exn with ErrorOnFile *)

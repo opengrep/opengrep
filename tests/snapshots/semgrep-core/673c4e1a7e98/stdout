@@ -1,0 +1,9 @@
+Test name: without git > forced project root with a symlink leaving it
+--- Files not added to git ---
+dir/link
+other/a.c
+--- begin input files ---
+--- end input files ---
+--- Selected targets ---
+selected dir/link/a.c
+--- Skipped targets ---

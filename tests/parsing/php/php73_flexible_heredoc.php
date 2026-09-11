@@ -80,7 +80,7 @@ $nested = <<<OUTER
     more of the outer body
     OUTER;
 
-// and the old spelling, with the marker in the first column, still works
+// and the old form, with the marker in the first column, still works
 
 $oldStyle = <<<EOT
 line one

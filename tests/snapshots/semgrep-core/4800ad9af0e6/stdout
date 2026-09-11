@@ -1,0 +1,14 @@
+--- begin input files ---
+rules/reported-order.yaml
+targets/reported-order.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 33 insertions(+)
+ create mode 100644 rules/reported-order.yaml
+ create mode 100644 targets/reported-order.py
+{"version":"<MASKED>","results":[{"check_id":"rules.slice-ab","path":"targets/reported-order.py","start":{"line":1,"col":1,"offset":0},"end":{"line":2,"col":2,"offset":3},"extra":{"metavars":{},"message":"slice a-b matches","fix":"replaced_lines_a_to_b_OK","metadata":{},"severity":"WARNING","fingerprint":"35d48f2b4996164bef3e08d94432ae6af4bc9a32eb8a11f5de011e9b29f6ddef6ad5b3f8d8a8aa6dc7a8a0d98373996065fb29fd501f355aef6ec9836a6024af_0","lines":"a\nb","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.slice-bc","path":"targets/reported-order.py","start":{"line":2,"col":1,"offset":2},"end":{"line":3,"col":2,"offset":5},"extra":{"metavars":{},"message":"slice b-c matches","fix":"replaced_lines_b_to_c_BAD","metadata":{},"severity":"WARNING","fingerprint":"ec25e5a258ec13532dd87df3d32881a565a55fd78c36f2c2779e9c374ed6fa9c84519e393a4f326950f4898e4c4328aba8e54949c51b5de290654accf44f5e1c_0","lines":"b\nc","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/reported-order.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/reported-order.py after the scan ---
+replaced_lines_a_to_b_OK
+c
+

@@ -1,0 +1,12 @@
+rules:
+  - id: test-mvp-lang-regex
+    languages:
+      - python
+    message: a regex sub-pattern under a rule with a real language
+    patterns:
+      - pattern: foo($X)
+      - metavariable-pattern:
+          metavariable: $X
+          language: regex
+          pattern: secret
+    severity: INFO

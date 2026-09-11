@@ -1,0 +1,17 @@
+# The first rule matches on the project's dependencies, which opengrep does
+# not support: it is skipped, and the second rule of the file still loads.
+rules:
+  - id: depends-on-requests
+    message: requests is used by this project
+    severity: WARNING
+    languages: [python]
+    pattern: import requests
+    r2c-internal-project-depends-on:
+      namespace: pypi
+      package: requests
+      version: "<99"
+  - id: plain-rule
+    message: print is called
+    severity: WARNING
+    languages: [python]
+    pattern: print(...)

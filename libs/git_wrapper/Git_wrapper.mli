@@ -111,7 +111,13 @@ type status = {
 }
 [@@deriving show]
 
-(* git status *)
+(* git status
+ *
+ * The paths are relative to [cwd], or to the current directory when [cwd]
+ * is not given. The diff covers the whole repository, so a changed file that
+ * sits outside that directory is listed with a '../' prefix rather than
+ * dropped.
+ *)
 val status : ?cwd:Fpath.t -> ?commit:string -> unit -> status
 
 (*

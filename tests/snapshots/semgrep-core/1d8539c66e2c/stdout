@@ -1,0 +1,16 @@
+--- begin input files ---
+rules/imported-entity.yaml
+targets/imported-entity.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 11 insertions(+)
+ create mode 100644 rules/imported-entity.yaml
+ create mode 100644 targets/imported-entity.py
+{"version":"<MASKED>","results":[{"check_id":"rules.exception-useless-parentheses","path":"targets/imported-entity.py","start":{"line":4,"col":3,"offset":61},"end":{"line":4,"col":22,"offset":80},"extra":{"metavars":{"$X":{"start":{"line":4,"col":9,"offset":67},"end":{"line":4,"col":20,"offset":78},"abstract_content":"RandomError"}},"message":"Found useless parentheses","fix":"raise RandomError","fixed_lines":["  raise RandomError"],"metadata":{},"severity":"ERROR","fingerprint":"8013d80152a08d5585b7f9a8dd8138f01d9e982f1ae4637c75c5f7476859d63be8cc60bff2265a4a603b95f1b8a93e2f0fd89040b785d94f8ebfcdf02f31d0a1_0","lines":"  raise RandomError()","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/imported-entity.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/imported-entity.py after the scan ---
+from randomlib.errors import RandomError
+
+def test_test():
+  raise RandomError()
+

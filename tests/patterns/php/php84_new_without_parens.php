@@ -1,6 +1,6 @@
 <?php
 
-// the parenthesized and unparenthesized spellings mean the same thing, so a
+// the parenthesized and unparenthesized forms mean the same thing, so a
 // rule written either way must match both
 
 //MATCH:

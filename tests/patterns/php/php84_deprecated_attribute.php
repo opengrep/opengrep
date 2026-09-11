@@ -1,6 +1,6 @@
 <?php
 
-// the canonical spelling of the PHP 8.4 attribute is root-qualified, so a
+// the canonical form of the PHP 8.4 attribute is root-qualified, so a
 // rule must be able to match '#[\Deprecated]' written exactly that way
 
 //MATCH:

@@ -1,0 +1,5 @@
+rules:
+  - id: no-pattern-here
+    message: "this rule has no pattern"
+    languages: [python]
+    severity: ERROR

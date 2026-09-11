@@ -51,8 +51,6 @@ type conf = {
   output_conf : Output.conf;
   incremental_output : bool;
   incremental_output_postprocess : bool;
-  (* Networking options *)
-  version_check : bool;
   (* Debugging/logging/profiling options *)
   common : CLI_common.conf;
   (* trace : bool;
@@ -102,8 +100,6 @@ let default : conf =
     rewrite_rule_ids = true;
     skip_invalid_configs = false;
     matching_conf = Match_patterns.default_matching_conf;
-    (* will send metrics only if the user uses the registry or the app *)
-    version_check = true;
     (* ugly: should be separate subcommands *)
     version = false;
     show = None;
@@ -124,14 +120,18 @@ let default : conf =
 (* ------------------------------------------------------------------ *)
 
 (* alt: was in "Performance and memory options" before *)
+(* Opengrep never contacts a server to compare versions, so this flag has no
+ * effect, here or in 'ci' (where it was already inert in ci.py); it is kept
+ * so that command lines written for pysemgrep still run. It declares no
+ * environment variable either: $SEMGREP_ENABLE_VERSION_CHECK and
+ * $OPENGREP_ENABLE_VERSION_CHECK are ignored, whatever they hold.
+ *)
 let o_version_check : bool Term.t =
-  H.negatable_flag_with_env [ "enable-version-check" ]
-    ~neg_options:[ "disable-version-check" ]
-    ~default:default.version_check
-    ~env:"OPENGREP_ENABLE_VERSION_CHECK"
+  H.negatable_flag [ "enable-version-check" ]
+    ~neg_options:[ "disable-version-check" ] ~default:true
     ~doc:
-      {|Checks Opengrep servers to see if the latest version is run; disabling
- this may reduce exit time after returning results.
+      {|Accepted for compatibility; Opengrep does not check whether a newer
+ version exists.
 |}
 
 (* ------------------------------------------------------------------ *)
@@ -157,6 +157,10 @@ let o_exclude : string list Term.t =
 '--exclude=*.py' will ignore the following: 'foo.py', 'src/foo.py',
 'foo.py/bar.sh'.
 '--exclude=tests' will ignore 'tests/foo.py' as well as 'a/b/tests/c/foo.py'.
+$(docv) anchors at the project root as a gitignore pattern does: a slash
+anywhere but the end anchors it, so '--exclude=/tests' and
+'--exclude=tests/foo.py' ignore 'tests/foo.py' but not 'a/b/tests/c/foo.py';
+'**/' in front matches at any depth.
 Multiple '--exclude' options may be specified.
 $(docv) is a glob-style pattern that uses the same syntax as gitignore
 and semgrepignore, which is documented at
@@ -201,8 +205,11 @@ specifying the language with '-l javascript' might preselect files
 selection to the single file 'src/foo.jsx'. A choice of multiple
 '--include' patterns can be specified. For example, '--include=foo.*
 --include=bar.*' will select both 'src/foo.jsx' and
-'lib/bar.js'. Glob-style patterns follow the syntax supported by
-gitignore and semgrepignore, which is documented at
+'lib/bar.js'. A pattern anchors at the project root as a gitignore pattern
+does: a slash anywhere but the end anchors it, so '--include=/src' and
+'--include=src/foo.jsx' select 'src/foo.jsx' but not 'app/src/foo.jsx';
+'**/' in front matches at any depth. Glob-style patterns follow the
+syntax supported by gitignore and semgrepignore, which is documented at
 https://git-scm.com/docs/gitignore#_pattern_format
 |}
   in
@@ -230,8 +237,8 @@ let o_use_git : bool Term.t =
   H.negatable_flag [ "use-git-ignore" ] ~neg_options:[ "no-git-ignore" ]
     ~default:default.targeting_conf.respect_gitignore
     ~doc:
-      {|'--no-git-ignore' causes opengrep to not call 'git' and not consult
-        '.gitignore' files to determine which files opengrep should scan.
+      {|'--no-git-ignore' causes opengrep to not consult '.gitignore' files
+        to determine which files opengrep should scan.
         As a result of '--no-git-ignore', gitignored files and git submodules
         will be scanned.
         This flag has no effect if the scanning root is not
@@ -246,7 +253,7 @@ let o_ignore_semgrepignore_files : bool Term.t =
         {|[INTERNAL] Ignore all '.semgrepignore' files found in the project
 tree for the purpose of selecting target files to be scanned by opengrep.
 Other filters may still apply.
-THIS OPTION IS NOT PART OF THE SEMGREP API AND MAY
+THIS OPTION IS NOT PART OF THE OPENGREP API AND MAY
 CHANGE OR DISAPPEAR WITHOUT NOTICE.
 |}
   in
@@ -257,7 +264,7 @@ let o_semgrepignore_filename : string option Term.t =
     Arg.info ~docv:"FILENAME"
       [ "semgrepignore-filename" ]
       ~doc:
-        {|Use the file $(docv) instead of the default .semgrepignore to specify targets skipped during the scan. REQUIRES --experimental|}
+        {|Use the file $(docv) instead of the default .semgrepignore to specify targets skipped during the scan.|}
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
@@ -280,14 +287,24 @@ Defaults to %b.
 
 (* alt: could be put in the Display options with nosem *)
 let o_baseline_commit : string option Term.t =
-  H.string_opt_with_envs [ "baseline-commit" ]
-    ~envs:[ "SEMGREP_BASELINE_COMMIT"; "SEMGREP_BASELINE_REF" ]
-    ~doc:
-      {|Only show results that are not found in this commit hash. Aborts run
+  (* An empty value means "no baseline", as it already does for the two
+   * environment variables and as pysemgrep did: a CI template whose
+   * base-commit variable is unset (--baseline-commit "$BASE_SHA") must still
+   * scan everything rather than fail the job. *)
+  let no_baseline_if_empty : string option -> string option = function
+    | Some "" -> None
+    | rev -> rev
+  in
+  Term.(
+    const no_baseline_if_empty
+    $ H.string_opt_with_envs [ "baseline-commit" ]
+        ~envs:[ "SEMGREP_BASELINE_COMMIT"; "SEMGREP_BASELINE_REF" ]
+        ~doc:
+          {|Only show results that are not found in this commit hash. Aborts run
 if not currently in a git directory, there are unstaged changes, or
-given baseline hash doesn't exist. May also be set with
-SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
-|}
+given baseline hash doesn't exist. An empty value means no baseline.
+May also be set with SEMGREP_BASELINE_COMMIT or SEMGREP_BASELINE_REF.
+|})
 
 (* ------------------------------------------------------------------ *)
 (* Performance and memory options *)
@@ -298,24 +315,26 @@ let o_num_jobs : int Term.t =
     Arg.info [ "j"; "jobs" ]
       ~doc:
         {|Number of cores to use to run checks in
-parallel. Defaults to the number of cores detected on the system
-(1 if using --pro).
+parallel. Defaults to the number of cores detected on the system.
 |}
   in
   Arg.value (Arg.opt Arg.int default.core_runner_conf.num_jobs info)
 
-let o_max_memory_mb : int Term.t =
-  let default = default.core_runner_conf.max_memory_mb in
+(* The three engine limits below are options so that a value equal to the
+ * default can be told from the absence of the flag, which 'scan --test'
+ * needs (see test_CLI_conf); the default itself is applied in
+ * core_runner_conf.
+ *)
+let o_max_memory_mb : int option Term.t =
   let info =
     Arg.info [ "max-memory" ]
       ~doc:
         {|Maximum system memory in MiB to use during the interfile pre-processing
 phase, or when running a rule on a single file. If set to 0, will
-not have memory limit. Defaults to 0. For CI scans that use the Pro Engine,
-defaults to 5000 MiB.
+not have memory limit. Defaults to 0.
 |}
   in
-  Arg.value (Arg.opt Arg.int default info)
+  Arg.value (Arg.opt (Arg.some Arg.int) None info)
 
 let o_max_match_per_file : int Term.t =
   let default = default.core_runner_conf.max_match_per_file in
@@ -352,19 +371,16 @@ Use 'none' to turn all optimizations off.
   in
   Arg.value (Arg.opt converter default.core_runner_conf.optimizations info)
 
-let o_timeout : float Term.t =
+let o_timeout : float option Term.t =
   let default = default.core_runner_conf.timeout in
-  let info =
-    Arg.info [ "timeout" ]
-      ~doc:
-        (spf
-           {|Maximum time to spend running a rule on a single file in
+  H.float_opt_with_env [ "timeout" ] ~env:"SEMGREP_TIMEOUT"
+    ~doc:
+      (spf
+         {|Maximum time to spend running a rule on a single file in
 seconds. If set to 0 will not have time limit. Defaults to %.1f s.
+May also be set with OPENGREP_TIMEOUT or SEMGREP_TIMEOUT.
 |}
-           default)
-  in
-  (*TOPORT: envvar="SEMGREP_TIMEOUT" *)
-  Arg.value (Arg.opt Arg.float default info)
+         default)
 
 let o_allow_rule_timeout_control : bool Term.t =
   let info =
@@ -418,7 +434,7 @@ dynamic timeout will never exceed 10 times the given timeout passed in the cli. 
   in
   Arg.value (Arg.opt Arg.int default info)
 
-let o_timeout_threshold : int Term.t =
+let o_timeout_threshold : int option Term.t =
   let default = default.core_runner_conf.timeout_threshold in
   let info =
     Arg.info [ "timeout-threshold" ]
@@ -429,7 +445,7 @@ the file is skipped. If set to 0 will not have limit. Defaults to %d.
 |}
            default)
   in
-  Arg.value (Arg.opt Arg.int default info)
+  Arg.value (Arg.opt (Arg.some Arg.int) None info)
 
 (* TODO: currently just used in pysemgrep and semgrep-core-proprietary *)
 let o_timeout_interfile : int Term.t =
@@ -447,25 +463,17 @@ to 3 hours.|}
 (* Display options *)
 (* ------------------------------------------------------------------ *)
 
-(* alt: could use Fmt_cli.style_renderer, which supports --color=xxx but
- * better be backward compatible with how semgrep was doing it before
- *)
+(* the flag is shared with the other subcommands, which apply the same
+ * colour precedence *)
 let o_force_color : bool Term.t =
-  H.negatable_flag_with_env [ "force-color" ] ~neg_options:[ "no-force-color" ]
-    ~default:default.output_conf.force_color
-      (* TOPORT? need handle SEMGREP_COLOR_NO_COLOR or NO_COLOR
-       * # https://no-color.org/
-       *)
-    ~env:"SEMGREP_FORCE_COLOR"
-    ~doc:
-      {|Always include ANSI color in the output, even if not writing to
-a TTY; defaults to using the TTY status
-|}
+  CLI_common.o_force_color ~default:default.output_conf.force_color
 
 let o_max_chars_per_line : int Term.t =
   let info =
     Arg.info [ "max-chars-per-line" ]
-      ~doc:"Maximum number of characters to show per line."
+      ~doc:
+        "Width at which the lines of a finding are wrapped in the text \
+         output (at most the width of the terminal)."
   in
   Arg.value (Arg.opt Arg.int default.output_conf.max_chars_per_line info)
 
@@ -524,7 +532,7 @@ let o_time : bool Term.t =
     ~default:default.core_runner_conf.time_flag
     ~doc:
       {|Include a timing summary with the results. If output format is json,
- provides times for each pair (rule, target). This feature is meant for internal use and may be changed or removed without warning. At the current moment, --trace is better supported.
+ provides times for each pair (rule, target). This feature is meant for internal use and may be changed or removed without warning.
 |}
 
 let o_nosem : bool Term.t =
@@ -534,21 +542,10 @@ let o_nosem : bool Term.t =
       {|Enables 'nosem'. Findings will not be reported on lines containing
           a 'nosem' comment at the end. Enabled by default.|}
 
-let o_opengrep_ignore_pattern : string option Term.t =
-  let info =
-    Arg.info [ "opengrep-ignore-pattern" ]
-      ~doc:
-        {|Add a custom prefix for comments to be ignored by opengrep, alongside the default 'nosem', 'nosemgrep' and 'noopengrep'.
-          For example, '--opengrep-ignore-pattern=noscan' makes opengrep recognize lines with 'noscan' comments as well as the default ones.|}
-  in
-  Arg.value (Arg.opt Arg.(some string) None info)
-
 let o_output : string option Term.t =
   let info =
     Arg.info [ "o"; "output" ]
-      ~doc:
-        "Save search results to a file or post to URL. Default is to print to \
-         stdout."
+      ~doc:"Save search results to a file. Default is to print to stdout."
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
@@ -568,7 +565,7 @@ let o_json : bool Term.t =
 let o_incremental_output : bool Term.t =
   let info =
     Arg.info [ "incremental-output" ]
-      ~doc:{|Output results incrementally. REQUIRES --experimental|}
+      ~doc:{|Output results incrementally.|}
   in
   Arg.value (Arg.flag info)
 
@@ -584,8 +581,7 @@ let o_files_with_matches : bool Term.t =
   let info =
     Arg.info [ "files-with-matches" ]
       ~doc:
-        {|Output only the names of files containing matches.
-REQUIRES --experimental|}
+        {|Output only the names of files containing matches.|}
   in
   Arg.value (Arg.flag info)
 
@@ -638,9 +634,7 @@ let make_o_format_outputs : ?fancy:string -> string -> string list Term.t =
   let info =
     Arg.info
       [ format ^ "-output" ]
-      ~doc:
-        ("Write a copy of the " ^ fancy_format
-       ^ " output to a file or post to URL.")
+      ~doc:("Save a copy of the " ^ fancy_format ^ " output to a file.")
   in
   Arg.value (Arg.opt_all Arg.string [] info)
 
@@ -675,7 +669,7 @@ let o_effect_guards : bool Term.t =
         ("Attach branch-condition guards to taint effects and evaluate them \
           at call sites, dropping effects whose guard is false. Without this \
           flag only Clojure keeps the arity guards that implement \
-          multi-arity dispatch. REQUIRES --experimental")
+          multi-arity dispatch.")
   in
   Arg.value (Arg.flag info)
 
@@ -704,10 +698,9 @@ A remote git repository of rules is given as `git+<url>`; it is cloned and
 scanned as a directory of rules. Append `#<branch-or-tag>` to pin a ref, e.g.
 `--config git+https://github.com/org/rules#v1.2.0`. Cloning uses git's own
 credentials (ssh-agent, credential helpers, ...) and runs non-interactively.
-REQUIRES --experimental
 
 Use --config auto to automatically obtain rules tailored to this project;
-your project URL will be used to log in to the Semgrep registry.
+your project URL is sent to the Semgrep Registry to select rules.
 
 To run multiple rule files simultaneously, use --config before every YAML,
 URL, or Semgrep registry entry name.
@@ -866,22 +859,6 @@ and then exit (can use --json).
   in
   Arg.value (Arg.flag info)
 
-(* ugly: this should be a separate subcommand, not a flag of semgrep scan.
- * python: Click offer the hidden=True flag to not show it in --help
- * but cmdliner does not have an equivalent I think. Anyway this
- * command should soon disappear anyway.
- *)
-let o_dump_engine_path : bool Term.t =
-  let info = Arg.info [ "dump-engine-path" ] ~doc:{|<internal, do not use>|} in
-  Arg.value (Arg.flag info)
-
-(* LATER: this should not be needed *)
-let o_dump_command_for_core : bool Term.t =
-  let info =
-    Arg.info [ "d"; "dump-command-for-core" ] ~doc:{|<internal, do not use>|}
-  in
-  Arg.value (Arg.flag info)
-
 (* This is just intended to be around temporarily while we roll out and test the feature. Once we
    are confident that the lockfileless
    approach will not cause failures for customers, we should remove this flag and replace it with
@@ -932,7 +909,7 @@ let o_project_root : string option Term.t =
           and assumes a local project without version control (novcs).
           This option is useful to ensure the '.semgrepignore' file that
           may exist at the project root is consulted when the scanning root
-          is not the current folder '.'. REQUIRES --experimental|}
+          is not the current folder '.'.|}
   in
   Arg.value (Arg.opt Arg.(some string) None info)
 
@@ -944,7 +921,7 @@ let o_skip_invalid_configs : bool Term.t =
         (git+<url>), skip files that fail to parse as a rule config, such as
         unrelated YAML files (e.g. GitHub workflows), emitting a warning for
         each instead of aborting the scan. Explicitly named config files still
-        cause an error if invalid. REQUIRES --experimental|}
+        cause an error if invalid.|}
   in
   Arg.value (Arg.flag info)
 
@@ -959,7 +936,7 @@ let o_ls : bool Term.t =
         {|[INTERNAL] List the selected target files
 before any rule-specific or language-specific filtering. Then exit.
 The default output format is one path per line.
-THIS OPTION IS NOT PART OF THE SEMGREP API AND MAY
+THIS OPTION IS NOT PART OF THE OPENGREP API AND MAY
 CHANGE OR DISAPPEAR WITHOUT NOTICE.
 |}
   in
@@ -972,7 +949,7 @@ let o_ls_long : bool Term.t =
         {|[INTERNAL] Show selected targets and skipped targets with reasons why
 they were skipped, using an unspecified output format.
 Implies --x-ls.
-THIS OPTION IS NOT PART OF THE SEMGREP API AND MAY
+THIS OPTION IS NOT PART OF THE OPENGREP API AND MAY
 CHANGE OR DISAPPEAR WITHOUT NOTICE.
 |}
   in
@@ -988,12 +965,11 @@ CHANGE OR DISAPPEAR WITHOUT NOTICE.
    The bool indicates that some paths were converted to temporary files without
    a particular file name or extension.
 
-   experimental = we're sure that we won't invoke pysemgrep later with the
-   same argv; allows us to consume stdin and named pipes.
+   No other program is run on the same argv, so stdin and named pipes can be
+   consumed here.
 *)
 let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
-    ~(experimental : bool) (target_roots : string list) :
-    Scanning_root.t list * bool =
+    (target_roots : string list) : Scanning_root.t list * bool =
   let imply_always_select_explicit_targets = ref false in
   let target_roots =
     target_roots
@@ -1001,21 +977,26 @@ let replace_target_roots_by_regular_files_where_needed (caps : < Cap.tmp >)
            match str with
            | "-" ->
                imply_always_select_explicit_targets := true;
-               if experimental then
-                 (* consumes stdin, preventing command-line forwarding to
-                    pysemgrep or another osemgrep! *)
-                 CapTmp.replace_stdin_by_regular_file caps#tmp
-                   ~prefix:"osemgrep-stdin-" ()
-               else
-                 (* remove this hack when no longer forward the command line
-                    to another program *)
-                 Fpath.v "/dev/stdin"
+               CapTmp.replace_stdin_by_regular_file caps#tmp
+                 ~prefix:"opengrep-stdin-" ()
            | str ->
-               let orig_path = Fpath.v str in
-               if experimental then (
+               (* A leading './' and a trailing '/' name no part of the
+                * path: pyopengrep's Path dropped them, in the reported
+                * paths and in the message for a root that does not exist,
+                * and a file written as 'a.py/' was the file 'a.py'.
+                * A '.' segment further down names no part of it either,
+                * so 'data/./foo.py' is reported as 'data/foo.py'. *)
+               let orig_path =
+                 Fpath.v str
+                 |> Fpath_.strip_leading_dot_and_trailing_slash
+                 |> Fpath_.drop_dot_segments
+               in
+               (* a path that does not exist is left to the scan, which
+                * reports it as a fatal "File not found" error *)
+               if Sys.file_exists (Fpath.to_string orig_path) then (
                  match
                    CapTmp.replace_named_pipe_by_regular_file_if_needed caps#tmp
-                     ~prefix:"osemgrep-named-pipe-" (Fpath.v str)
+                     ~prefix:"opengrep-named-pipe-" orig_path
                  with
                  | None -> orig_path
                  | Some new_path ->
@@ -1092,8 +1073,9 @@ let output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
   if cnt >= 2 then
     (* TOPORT: list the possibilities *)
     Error.abort "Mutually exclusive options --json/--emacs/--vim/--sarif/...";
+  (* --text is not mutually exclusive with the others: pysemgrep took it as
+     the format only when no machine format was given *)
   match () with
-  | _ when text -> Output_format.Text
   | _ when files_with_matches -> Output_format.Files_with_matches
   | _ when json -> Output_format.Json
   | _ when emacs -> Output_format.Emacs
@@ -1102,6 +1084,7 @@ let output_format_conf ~text ~files_with_matches ~json ~emacs ~vim ~sarif
   | _ when gitlab_sast -> Output_format.Gitlab_sast
   | _ when gitlab_secrets -> Output_format.Gitlab_secrets
   | _ when junit_xml -> Output_format.Junit_xml
+  | _ when text -> Output_format.Text
   | _else_ -> default.output_conf.output_format
 
 (* reused in Ci_CLI.ml *)
@@ -1151,9 +1134,8 @@ let outputs_conf ~text_outputs ~json_outputs ~emacs_outputs ~vim_outputs
 (* Alternate subcommand subconf *)
 (*****************************************************************************)
 
-let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
-    ~show_supported_languages ~target_roots ~pattern ~lang ~json ~common :
-    Show_CLI.conf option =
+let show_CLI_conf ~dump_ast ~show_supported_languages ~target_roots ~pattern
+    ~lang ~json ~common : Show_CLI.conf option =
   match () with
   | _ when dump_ast -> (
       let target_roots =
@@ -1189,16 +1171,12 @@ let show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
       (* stricter: *)
       | Some _, _, _ :: _ ->
           Error.abort "Can't specify both -e and a target for --dump-ast")
-  | _ when dump_engine_path ->
-      Some { Show.show_kind = Show.DumpEnginePath; json; html = false; common }
-  | _ when dump_command_for_core ->
-      Some { Show.show_kind = Show.DumpCommandForCore; json; html = false; common }
   | _ when show_supported_languages ->
       Some { Show.show_kind = Show.SupportedLanguages; json; html = false; common }
   | _else_ -> None
 
-let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common :
-    Validate_CLI.conf option =
+let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
+    ~output_conf ~force_color ~common : Validate_CLI.conf option =
   if validate then
     match rules_source with
     | Rules_source.Configs [] ->
@@ -1208,28 +1186,46 @@ let validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common :
            a rule"
     | Configs (_ :: _)
     | Pattern _ ->
-        Some { rules_source; core_runner_conf; common }
+        Some
+          {
+            rules_source;
+            core_runner_conf;
+            json;
+            output_conf;
+            force_color;
+            common;
+          }
   else None
 
-let test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-    ~test_ignore_todo ~strict ~taint_intrafile ~common : Test_CLI.conf option =
+let test_CLI_conf ~test ~target_roots ~config ~json ~force_color ~optimizations
+    ~test_ignore_todo ~strict ~taint_intrafile ~opengrep_ignore_pattern
+    ~timeout ~timeout_threshold ~max_memory_mb ~common : Test_CLI.conf option =
   if test then
     let target =
       Test_CLI.target_kind_of_roots_and_config
         (List_.map Scanning_root.to_fpath target_roots)
         config
     in
+    (* those three flags are options in the scan CLI too, so the test run
+     * gets the value the user typed, whatever it is, and None when the flag
+     * is absent
+     *)
     Some
       Test_CLI.
         {
           target;
           strict;
           json;
+          force_color;
           optimizations;
           ignore_todo = test_ignore_todo;
           common;
           matching_diagnosis = false;
           taint_intrafile;
+          opengrep_ignore_pattern;
+          timeout;
+          timeout_threshold;
+          max_memory_mb;
         }
   else None
 
@@ -1247,7 +1243,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
   let combine
       allow_local_builds allow_rule_timeout_control
       apply_includes_excludes_to_files inline_metavariables autofix baseline_commit common config
-      dataflow_traces dryrun dump_ast dump_command_for_core dump_engine_path
+      dataflow_traces dryrun dump_ast
       dynamic_timeout dynamic_timeout_max_multiplier dynamic_timeout_unit_kb
       emacs emacs_outputs error exclude_ exclude_minified_files exclude_rule_ids files_with_matches
       force_color gitlab_sast gitlab_sast_outputs gitlab_secrets gitlab_secrets_outputs
@@ -1261,7 +1257,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       skip_invalid_configs
       strict target_roots test test_ignore_todo text text_outputs time_flag timeout
       _timeout_interfileTODO timeout_threshold (*  trace trace_endpoint *) use_git
-      validate version version_check vim vim_outputs
+      validate version _version_check vim vim_outputs
       x_ignore_semgrepignore_files x_ls x_ls_long =
     (* Print a warning if any of the internal or experimental options.
        We don't want users to start relying on these. *)
@@ -1283,9 +1279,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
           m
             "The --output-enclosing-context option has no effect without --json.");
     let target_roots, imply_always_select_explicit_targets =
-      replace_target_roots_by_regular_files_where_needed caps
-        ~experimental:(common.CLI_common.maturity =*= Maturity.Experimental)
-        target_roots
+      replace_target_roots_by_regular_files_where_needed caps target_roots
     in
     let force_project_root = project_root_conf ~project_root in
     let explicit_targets =
@@ -1317,7 +1311,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
         strict;
         fixed_lines = dryrun;
         skipped_files =
-          (match common.logging_level with
+          (match common.CLI_common.logging_level with
           | Some (Info | Debug) -> true
           | _else_ -> false);
         max_log_list_entries;
@@ -1334,8 +1328,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
        * this ugly special case returning an empty Configs.
        *)
       | [], None
-        when dump_ast || dump_engine_path || validate || test || version
-             || show_supported_languages ->
+        when dump_ast || validate || test || version || show_supported_languages
+        ->
           Rules_source.Configs []
       | _ ->
           rule_source_conf ~config ~pattern ~lang ~replacement
@@ -1345,13 +1339,15 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       {
         Core_runner.num_jobs;
         optimizations;
-        timeout;
+        timeout = timeout ||| default.core_runner_conf.timeout;
         dynamic_timeout;
         dynamic_timeout_max_multiplier;
         dynamic_timeout_unit_kb;
         allow_rule_timeout_control;
-        timeout_threshold;
-        max_memory_mb;
+        timeout_threshold =
+          timeout_threshold ||| default.core_runner_conf.timeout_threshold;
+        max_memory_mb =
+          max_memory_mb ||| default.core_runner_conf.max_memory_mb;
         max_match_per_file;
         dataflow_traces;
         nosem;
@@ -1370,7 +1366,7 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       | nonempty -> Some nonempty
     in
     let respect_gitignore = use_git in
-    let force_novcs_project = force_project_root <> None || not use_git in
+    let force_novcs_project = not use_git in
     let targeting_conf : Find_targets.conf =
       {
         force_project_root;
@@ -1405,27 +1401,25 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
      * alt: we could move this code in a Dump_subcommand.validate_cli_args()
      *)
     let show : Show_CLI.conf option =
-      show_CLI_conf ~dump_ast ~dump_engine_path ~dump_command_for_core
-        ~show_supported_languages ~target_roots ~pattern ~lang ~json ~common
+      show_CLI_conf ~dump_ast ~show_supported_languages ~target_roots ~pattern
+        ~lang ~json ~common
     in
     (* ugly: validate should be a separate subcommand.
      * alt: we could move this code in a Validate_subcommand.cli_args()
      *)
     let validate : Validate_CLI.conf option =
-      validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~common
+      validate_CLI_conf ~validate ~rules_source ~core_runner_conf ~json
+        ~output_conf ~force_color ~common
     in
     (* ugly: test should be a separate subcommand *)
     let test : Test_CLI.conf option =
-      test_CLI_conf ~test ~target_roots ~config ~json ~optimizations
-        ~test_ignore_todo ~strict ~taint_intrafile ~common
+      test_CLI_conf ~test ~target_roots ~config ~json ~force_color
+        ~optimizations ~test_ignore_todo ~strict ~taint_intrafile
+        ~opengrep_ignore_pattern ~timeout ~timeout_threshold ~max_memory_mb
+        ~common
     in
-    (* warnings.
-     * ugly: TODO: remove the Default guard once we get the warning message
-     * in osemgrep equal to the one in pysemgrep or when we remove
-     * this sanity checks in pysemgrep and just rely on osemgrep to do it.
-     *)
-    if include_ <> None && exclude_ <> [] && common.maturity <> Maturity.Default
-    then
+    (* warnings *)
+    if include_ <> None && exclude_ <> [] then
       Logs.warn (fun m ->
           m
             "Paths that match both --include and --exclude will be skipped by \
@@ -1453,7 +1447,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
       core_runner_conf;
       error_on_findings = error;
       autofix;
-      version_check;
       output_conf;
       incremental_output;
       incremental_output_postprocess;
@@ -1481,7 +1474,6 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_apply_includes_excludes_to_files $ o_inline_metavariables
     $ o_autofix $ o_baseline_commit $ CLI_common.o_common $ o_config
     $ o_dataflow_traces $ o_dryrun $ o_dump_ast
-    $ o_dump_command_for_core $ o_dump_engine_path
     $ o_dynamic_timeout $ o_dynamic_timeout_max_multiplier $ o_dynamic_timeout_unit_kb
     $ o_emacs $ o_emacs_outputs
     $ o_error $ o_exclude $ o_exclude_minified_files $ o_exclude_rule_ids
@@ -1491,7 +1483,8 @@ let cmdline_term caps ~allow_empty_config : conf Term.t =
     $ o_json $ o_json_outputs $ o_junit_xml $ o_junit_xml_outputs $ o_lang
     $ o_matching_explanations $ o_max_chars_per_line $ o_max_lines_per_finding
     $ o_max_log_list_entries $ o_max_match_per_file $ o_max_memory_mb $ o_max_target_bytes
-    $ o_num_jobs $ o_nosem $ o_opengrep_ignore_pattern $ o_optimizations
+    $ o_num_jobs $ o_nosem $ CLI_common.o_opengrep_ignore_pattern
+    $ o_optimizations
     $ o_output $ o_output_enclosing_context $ o_pattern $ o_project_root
     $ o_taint_intrafile
     $ o_effect_guards
@@ -1523,7 +1516,7 @@ let man : Cmdliner.Manpage.block list =
   ]
   @ CLI_common.help_page_bottom
 
-let cmdline_info : Cmd.info = Cmd.info "opengrep scan" ~doc ~man
+let cmdline_info : Cmd.info = Cmd.info "opengrep scan" ~doc ~man ~exits:CLI_common.exits_scan
 
 (*****************************************************************************)
 (* Entry point *)

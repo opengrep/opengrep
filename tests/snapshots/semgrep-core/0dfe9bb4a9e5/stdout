@@ -1,0 +1,20 @@
+--- begin input files ---
+rules/python-delete-import.yaml
+targets/python-delete-import.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 15 insertions(+)
+ create mode 100644 rules/python-delete-import.yaml
+ create mode 100644 targets/python-delete-import.py
+{"version":"<MASKED>","results":[{"check_id":"rules.python-typing-osemgrep","path":"targets/python-delete-import.py","start":{"line":2,"col":1,"offset":11},"end":{"line":2,"col":24,"offset":34},"extra":{"metavars":{"$X":{"start":{"line":2,"col":20,"offset":30},"end":{"line":2,"col":24,"offset":34},"abstract_content":"Dict"}},"message":"found one","fix":"","metadata":{},"severity":"ERROR","fingerprint":"5d1f057a8b8dfb44451eafb3ba183aa1807edc219a35318f44e499951d59b081d614f6f580c8535f038104c73a464e499fb0a8195117442896166ca46ae7fcbf_0","lines":"from typing import Dict","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.python-typing-osemgrep","path":"targets/python-delete-import.py","start":{"line":3,"col":1,"offset":35},"end":{"line":3,"col":24,"offset":58},"extra":{"metavars":{"$X":{"start":{"line":3,"col":20,"offset":54},"end":{"line":3,"col":24,"offset":58},"abstract_content":"List"}},"message":"found one","fix":"","metadata":{},"severity":"ERROR","fingerprint":"d58f044de31f26f6bf93dc2d8b7d41c0f43d54dd7128ec8dabfa7d81d81e20bd45a1974f4fea43eb455006513c1ab7ca158ea7fa78a92b14002b35d026b8abe6_0","lines":"from typing import List","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/python-delete-import.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/python-delete-import.py after the scan ---
+import sys
+from typing import Dict
+from typing import List
+
+def hello():
+    print("hello world")
+
+hello()
+

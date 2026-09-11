@@ -1,0 +1,30 @@
+#
+# The two matches overlap and the rule defined first matches the later
+# span. Overlapping fixes are applied in the order the findings are
+# reported, by position, so the fix of the second rule is applied and
+# the fix of the first rule is not.
+#
+rules:
+  - id: slice-bc
+    pattern: |
+      b
+      ...
+      c
+    fix: |
+      replaced_lines_b_to_c_BAD
+    message: slice b-c matches
+    languages:
+      - python
+    severity: WARNING
+
+  - id: slice-ab
+    pattern: |
+      a
+      ...
+      b
+    fix: |
+      replaced_lines_a_to_b_OK
+    message: slice a-b matches
+    languages:
+      - python
+    severity: WARNING

@@ -1,0 +1,14 @@
+--- begin input files ---
+hello.txt
+rules/rule_id/;/hello.yml
+rules/rule_id/@/hello.yml
+rules/rule_id/@npm-style/hello.yml
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 4 files changed, 19 insertions(+)
+ create mode 100644 hello.txt
+ create mode 100644 rules/rule_id/;/hello.yml
+ create mode 100644 rules/rule_id/@/hello.yml
+ create mode 100644 rules/rule_id/@npm-style/hello.yml
+{"version":"<MASKED>","results":[{"check_id":"rules.rule_id.npm-style.hello","path":"hello.txt","start":{"line":1,"col":1,"offset":0},"end":{"line":1,"col":6,"offset":5},"extra":{"metavars":{},"message":"found something","metadata":{},"severity":"WARNING","fingerprint":"0df424de3894afaea232a5f5446f52800cbd76a4819ac6e7d55a4b978cf1d97ff306e9e5edfef2faf6f7f925d73892c03019bcf848179cacbb7e39b2a25b4c73_0","lines":"hello","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["hello.txt"]},"interfile_languages_used":[],"skipped_rules":[]}

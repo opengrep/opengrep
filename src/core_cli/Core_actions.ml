@@ -47,7 +47,6 @@ let json_of_v (v : OCaml.v) =
  *)
 let try_with_log_exn_and_reraise (file : Fpath.t) f =
   try f () with
-  | Time_limit.Timeout _ as exn -> Exception.catch_and_reraise exn
   | exn ->
       let e = Exception.catch exn in
       let err = E.exn_to_error ~file e in
@@ -182,8 +181,8 @@ let dump_rule (file : Fpath.t) : unit =
 
 let prefilter_of_rules file =
   (* Do we need a new DLS key every time? Don't think so.
-   * But this seems to only be called in a single invocation of opengrep-core,
-   * passing `-prefilter_of_rules`. *)
+   * But this seems to only be called in a single invocation of
+   * `opengrep --core -prefilter_of_rules`. *)
   let cache = Some (Domain.DLS.new_key (fun () -> Hashtbl.create 101)) in
   match Parse_rule.parse file with
   | Ok rules ->

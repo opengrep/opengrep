@@ -1,0 +1,27 @@
+--- begin input files ---
+file_or_link.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 1 file changed, 1 insertion(+)
+ create mode 100644 file_or_link.py
+--- scan ---
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    definitely_a_file.py
+            1┆ x = 23478921
+
+--- scan with the baseline ---
+
+
+┌────────────────┐
+│ 1 Code Finding │
+└────────────────┘
+
+    definitely_a_file.py
+            1┆ x = 23478921
+

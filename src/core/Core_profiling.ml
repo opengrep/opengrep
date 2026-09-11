@@ -50,6 +50,18 @@
 let profiling = ref false
 let profiling_opt prof = if !profiling then Some prof else None
 
+(* Common.with_time when profiling, else no clock read at all: the engine
+ * calls this once per rule and file, and the time is discarded without
+ * --time anyway (see profiling_opt). *)
+let with_time (f : unit -> 'a) : 'a * float =
+  if !profiling then Common.with_time f else (f (), 0.0)
+
+(* the same for a span that does not fit in a closure *)
+let now () : float = if !profiling then Unix.gettimeofday () else 0.0
+
+let since (start : float) : float =
+  if !profiling then Unix.gettimeofday () -. start else 0.0
+
 (*****************************************************************************)
 (* Types *)
 (*****************************************************************************)
@@ -113,15 +125,6 @@ type t = {
 (*****************************************************************************)
 (* Merge helpers *)
 (*****************************************************************************)
-
-(* used in pro engine e.g. when merging secret mode results *)
-let merge a b : t =
-  {
-    rules = a.rules @ b.rules;
-    rules_parse_time = a.rules_parse_time +. b.rules_parse_time;
-    file_times = a.file_times @ b.file_times;
-    max_memory_bytes = Int.max a.max_memory_bytes b.max_memory_bytes;
-  }
 
 let add_times (a : times) (b : times) : times =
   {

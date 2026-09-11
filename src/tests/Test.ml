@@ -35,12 +35,20 @@ let t = Testo.create
 (* Helpers *)
 (*****************************************************************************)
 
+(* macOS rewrites __CF_USER_TEXT_ENCODING with the uid of the process the first
+   time CoreFoundation initialises in it, which resolving a host name does. The
+   new value comes from the operating system and not from the test, so this
+   variable is left out of the comparison. *)
+let macos_text_encoding_var = "__CF_USER_TEXT_ENCODING"
+
 let parse_env_entry ~ignore_empty s =
   match String.index_opt s '=' with
   | Some i ->
       let k = String_.safe_sub s 0 i in
       let v = String_.safe_sub s (i + 1) (String.length s - i - 1) in
-      if ignore_empty && v = "" then None else Some (k, v)
+      if String.equal k macos_text_encoding_var || (ignore_empty && v = "") then
+        None
+      else Some (k, v)
   | None -> None
 
 (* Get the set of environment variables and their values, optionally
@@ -125,7 +133,6 @@ let tests (caps : Cap.all_caps) =
       Parser_regexp.Unit_parsing.tests;
       Unit_ReDoS.tests;
       Unit_guess_lang.tests;
-      Unit_memory_limit.tests (caps :> < Cap.memory_limit >);
       Unit_tok.tests;
       Unit_Ppath.tests;
       Unit_Rpath.tests;
@@ -149,7 +156,6 @@ let tests (caps : Cap.all_caps) =
       Unit_jsonnet.tests (caps :> < Cap.time_limit >);
       Unit_metachecking.tests (caps :> Core_scan.caps);
       (* osemgrep unit tests *)
-      Unit_CLI.tests;
       Unit_LS.tests (caps :> Session.caps);
       (* Unit_Login.tests caps; *)
       Unit_Fetching.tests (caps :> < Cap.network ; Cap.tmp >);
@@ -160,6 +166,14 @@ let tests (caps : Cap.all_caps) =
       Test_scan_subcommand.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_sarif.tests (caps :> Scan_subcommand.caps);
       Test_scan_subcommand_output.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_text.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_formats.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_findings.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_targets.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_config.tests (caps :> Scan_subcommand.caps);
+      Test_scan_subcommand_baseline.tests
+        (caps :> Test_scan_subcommand_baseline.caps);
+      Test_scan_subcommand_autofix.tests (caps :> Scan_subcommand.caps);
       Test_ci_subcommand.tests (caps :> Ci_subcommand.caps);
       Unit_test_subcommand.tests (caps :> Test_subcommand.caps);
       Test_show_subcommand.tests (caps :> Show_subcommand.caps);
@@ -167,9 +181,8 @@ let tests (caps : Cap.all_caps) =
            (\* = Publish_subcommand.caps + Cap.exec for 'semgrep login' *\)
            (caps :> < Cap.stdout ; Cap.network ; Cap.tmp ; Cap.exec >); *)
       Test_osemgrep.tests (caps :> CLI.caps);
-      (* NOTE: Disabled because they require auto config and Metrics which
-       *  are now `Off` by default. *)
-      (* Test_target_selection.tests (caps :> CLI.caps); *)
+      Test_rule_errors.tests (caps :> CLI.caps);
+      Test_target_selection.tests (caps :> CLI.caps);
       (* Networking tests disabled as they will get rate limited sometimes *)
       (* And the SSL issues they've been testing have been stable *)
       (*Unit_Networking.tests;*)
@@ -226,7 +239,14 @@ let main (caps : Cap.all_caps) : unit =
            output can or should change these settings. *)
         UConsole.setup ~highlight_setting:On ();
         (* TODO? use Log_semgrep.setup? *)
-        Logs_.setup_basic ~level:(Some Logs.Debug) ()
+        Logs_.setup_basic ~level:(Some Logs.Debug) ();
+        (* The style renderer is process-global and the CLI's logging setup
+           leaves whatever it installed behind, so a test that ran with
+           colours enabled would colour the next test's log lines. *)
+        Fmt_tty.setup_std_outputs ~style_renderer:`None ();
+        (* The file contents and positions cached by path: two tests can
+           put different files under one relative path. *)
+        Globals.reset ()
       in
       (* Show log messages produced when building the list of tests *)
       reset ();

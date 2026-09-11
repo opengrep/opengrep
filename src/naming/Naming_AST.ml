@@ -136,10 +136,6 @@ let error_report = false
  *    in better 'name' type and 'kname' hook.
  *)
 
-(* Performing normalization of types e.g. A | B => Union[A, B] in
-   Python. This hook will be linked to Type_aliasing.ml *)
-let pro_hook_normalize_ast_generic_type = ref None
-
 (*****************************************************************************)
 (* Scope *)
 (*****************************************************************************)
@@ -154,7 +150,12 @@ type scope_info = {
   enttype : type_ option;
 }
 
-type scope = (string, scope_info) Assoc.t
+type namespace =
+  | VarName
+  | FuncName
+
+type scope_key = namespace * string
+type scope = (scope_key, scope_info) Assoc.t
 
 type scopes = {
   global : scope ref;
@@ -181,29 +182,55 @@ let with_new_function_scope params scopes f =
 let with_new_block_scope scopes f =
   Common.save_excursion_unsafe scopes.blocks ([] :: !(scopes.blocks)) f
 
-let add_ident_current_scope (s, _) resolved scopes =
+let var_key (id : ident) : scope_key = (VarName, H.str_of_ident id)
+let func_key (id : ident) : scope_key = (FuncName, H.str_of_ident id)
+
+let equal_namespace (a : namespace) (b : namespace) : bool =
+  match (a, b) with
+  | VarName, VarName
+  | FuncName, FuncName ->
+      true
+  | VarName, FuncName
+  | FuncName, VarName ->
+      false
+
+let add_key_current_scope (key : scope_key) resolved scopes =
   match !(scopes.blocks) with
-  | [] -> scopes.global := (s, resolved) :: !(scopes.global)
-  | xs :: xxs -> scopes.blocks := ((s, resolved) :: xs) :: xxs
+  | [] -> scopes.global := (key, resolved) :: !(scopes.global)
+  | xs :: xxs -> scopes.blocks := ((key, resolved) :: xs) :: xxs
+
+let add_ident_current_scope id resolved scopes =
+  add_key_current_scope (var_key id) resolved scopes
+
+let add_func_ident_current_scope id resolved scopes =
+  add_key_current_scope (func_key id) resolved scopes
 
 (* for Python *)
-let add_ident_imported_scope (s, _) resolved scopes =
-  scopes.imported := (s, resolved) :: !(scopes.imported)
+let add_ident_imported_scope id resolved scopes =
+  scopes.imported := (var_key id, resolved) :: !(scopes.imported)
 
-let add_ident_global_scope (s, _) resolved scopes =
-  scopes.global := (s, resolved) :: !(scopes.global)
+let add_ident_global_scope id resolved scopes =
+  scopes.global := (var_key id, resolved) :: !(scopes.global)
 
 (* for JS 'var' *)
 let _add_ident_function_scope _id _resolved _scopes = raise Todo
 let untyped_ent name = { entname = name; enttype = None }
 
-(* see also lookup_scope_opt below taking as a parameter the environment *)
-let rec lookup ?(class_attr = false) s xxs =
+let rec find_in_scope (ns : namespace) (s : string) (xs : scope) :
+    scope_info option =
+  match xs with
+  | [] -> None
+  | ((entry_ns, entry_s), res) :: xs ->
+      if equal_namespace ns entry_ns && String.equal s entry_s then Some res
+      else find_in_scope ns s xs
+
+let rec lookup_namespace ~(class_attr : bool) (ns : namespace) (s : string)
+    (xxs : scope list) : scope_info option =
   match xxs with
   | [] -> None
   | xs :: xxs -> (
-      match List.assoc_opt s xs with
-      | None -> lookup ~class_attr s xxs
+      match find_in_scope ns s xs with
+      | None -> lookup_namespace ~class_attr ns s xxs
       | Some res when class_attr -> (
           match res.entname with
           | EnclosedVar, _ -> Some res
@@ -219,8 +246,12 @@ let rec lookup ?(class_attr = false) s xxs =
            *         }
            *     }
            *)
-          | __else__ -> lookup ~class_attr s xxs)
+          | __else__ -> lookup_namespace ~class_attr ns s xxs)
       | Some res -> Some res)
+
+(* see also lookup_scope_opt below taking as a parameter the environment *)
+let lookup ?(class_attr = false) s xxs =
+  lookup_namespace ~class_attr VarName s xxs
 
 (* for Python, PHP *)
 let lookup_global_scope (s, _) scopes = lookup s [ !(scopes.global) ]
@@ -291,11 +322,6 @@ let set_resolved env id_info x =
    * lang-specific resolved found?
    *)
   id_info.id_resolved := Some x.entname;
-  let normalize_type =
-    match !pro_hook_normalize_ast_generic_type with
-    | Some f -> f
-    | None -> fun _ x -> x
-  in
   (* This is defensive programming against the possibility of introducing
    * cycles in the AST.
    * Indeed, when we are inside a type, especially in  (OtherType (OT_Expr)),
@@ -306,11 +332,11 @@ let set_resolved env id_info x =
    * See tests/naming/python/shadow_name_type.py for a pathological example
    * See also tests/rust/parsing/misc_recursion.rs for another example.
    *)
-  if not !(env.in_type) then
-    id_info.id_type := x.enttype |> Option.map (normalize_type env.lang)
+  if not !(env.in_type) then id_info.id_type := x.enttype
 
 (* accessors *)
-let lookup_scope_opt ?(class_attr = false) (s, _) env =
+let lookup_namespace_opt ~(class_attr : bool) (ns : namespace) ((s, _) : ident)
+    (env : env) : scope_info option =
   let scopes = env.names in
 
   let actual_scopes =
@@ -330,7 +356,13 @@ let lookup_scope_opt ?(class_attr = false) (s, _) env =
         *)
         | _ -> [ xs ] @ xxs @ [ !(scopes.global); !(scopes.imported) ])
   in
-  lookup ~class_attr s actual_scopes
+  lookup_namespace ~class_attr ns s actual_scopes
+
+let lookup_scope_opt ?(class_attr = false) id env =
+  lookup_namespace_opt ~class_attr VarName id env
+
+let lookup_func_scope_opt (id : ident) (env : env) : scope_info option =
+  lookup_namespace_opt ~class_attr:false FuncName id env
 
 (*****************************************************************************)
 (* Error management *)
@@ -357,99 +389,85 @@ let rec get_resolved_type lang (vinit, vtype) =
   match vtype with
   | None
   | Some { t = TyAny _; _ } -> (
-      (* Use proprietary type inference, if applicable.
-         This needs to be here while we still use `Naming_AST` for intrafile
-         scans, as opposed to `Naming_SAST`.
-      *)
-      let pro_type =
-        match (!Typing.pro_hook_type_of_expr, vinit) with
-        | Some f, Some e ->
-            let* type_ = f lang e in
-            Type.to_ast_generic_type_ lang (fun name _alts -> name) type_
-        | _ -> None
-      in
-      match pro_type with
-      | Some x -> Some x
-      | None -> (
-          (* Currently these vary between languages *)
-          (* Alternative is to define a TyInt, TyBool, etc. in the generic AST *)
-          (* so this would be more portable across languages *)
-          match vinit with
-          | Some { e = L (Bool (_, tok)); _ } -> make_type "bool" tok
-          | Some { e = L (Int (_, tok)); _ } -> make_type "int" tok
-          | Some { e = L (Float (_, tok)); _ } -> make_type "float" tok
-          | Some { e = L (Char (_, tok)); _ } -> make_type "char" tok
-          | Some { e = L (String (_, (_, tok), _)); _ } ->
-              let string_str =
-                match lang with
-                | Lang.Go -> "str"
-                | Lang.Js
-                | Lang.Ts ->
-                    "string"
-                | _ -> "string"
-              in
-              make_type string_str tok
-          | Some { e = L (Regexp ((_, (_, tok), _), _)); _ } ->
-              make_type "regexp" tok
-          | Some { e = RegexpTemplate ((l, _fragments, _r), _); _ } ->
-              (* TODO: need proper location instead of just the opening '/'? *)
-              make_type "regexp" l
-          | Some { e = L (Unit tok); _ } -> make_type "unit" tok
-          | Some { e = L (Null tok); _ } -> make_type "null" tok
-          | Some { e = L (Imag (_, tok)); _ } -> make_type "imag" tok
-          (* alt: lookup id in env to get its type, which would be cleaner *)
-          | Some { e = N (Id (_, { id_type; _ })); _ } -> !id_type
-          | Some { e = New (_, tp, _, (_, _, _)); _ } -> Some tp
-          (* Scala companion-object apply: [Map(...)],
-           * [mutable.Map[K, V]()], [HashMap[K, V]()]. The head of
-           * the callee gives the type; when the call is
-           * parameterised, we preserve the type arguments as
-           * [TyApply]. Scala-gated so other languages' inference
-           * paths are untouched; non-Map capitalised heads (e.g.
-           * [List(...)]) are harmless — the library-call
-           * recognisers gate against the Map family list. *)
-          | Some { e = Call (callee, _); _ } when lang =*= Lang.Scala ->
-              let name_of_simple_expr (e : expr) =
-                match e.e with
-                | N (Id (id, _)) -> Some id
-                | N (IdQualified { name_last = id, _; _ }) -> Some id
-                | DotAccess (_, _, FN (Id (id, _))) -> Some id
-                | DotAccess
-                    (_, _, FN (IdQualified { name_last = id, _; _ })) ->
-                    Some id
-                | _ -> None
-              in
-              let head_name_and_targs (e : expr) =
-                match e.e with
-                | OtherExpr (("InstanciatedExpr", _), E inner :: rest) ->
-                    let targs =
-                      List.filter_map
-                        (function T t -> Some t | _ -> None)
-                        rest
-                    in
-                    Option.map
-                      (fun id -> (id, targs))
-                      (name_of_simple_expr inner)
-                | _ ->
-                    Option.map (fun id -> (id, [])) (name_of_simple_expr e)
-              in
-              (match head_name_and_targs callee with
-               | Some ((s, tok), []) when String_.is_capitalized s ->
-                   make_type s tok
-               | Some ((s, tok), targs) when String_.is_capitalized s ->
-                   let head_ty =
-                     TyN (Id ((s, tok), empty_id_info ())) |> AST_generic.t
-                   in
-                   let args =
-                     Tok.unsafe_fake_bracket (List.map (fun t -> TA t) targs)
-                   in
-                   Some (TyApply (head_ty, args) |> AST_generic.t)
-               | _ -> None)
-          | Some { e = Ref (tok, exp); _ } ->
-              Option.bind
-                (get_resolved_type lang (Some exp, None))
-                (fun x -> Some (t @@ TyPointer (tok, x)))
-          | _ -> None))
+      (* Currently these vary between languages *)
+      (* Alternative is to define a TyInt, TyBool, etc. in the generic AST *)
+      (* so this would be more portable across languages *)
+      match vinit with
+      | Some { e = L (Bool (_, tok)); _ } -> make_type "bool" tok
+      | Some { e = L (Int (_, tok)); _ } -> make_type "int" tok
+      | Some { e = L (Float (_, tok)); _ } -> make_type "float" tok
+      | Some { e = L (Char (_, tok)); _ } -> make_type "char" tok
+      | Some { e = L (String (_, (_, tok), _)); _ } ->
+          let string_str =
+            match lang with
+            | Lang.Go -> "str"
+            | Lang.Js
+            | Lang.Ts ->
+                "string"
+            | _ -> "string"
+          in
+          make_type string_str tok
+      | Some { e = L (Regexp ((_, (_, tok), _), _)); _ } ->
+          make_type "regexp" tok
+      | Some { e = RegexpTemplate ((l, _fragments, _r), _); _ } ->
+          (* TODO: need proper location instead of just the opening '/'? *)
+          make_type "regexp" l
+      | Some { e = L (Unit tok); _ } -> make_type "unit" tok
+      | Some { e = L (Null tok); _ } -> make_type "null" tok
+      | Some { e = L (Imag (_, tok)); _ } -> make_type "imag" tok
+      (* alt: lookup id in env to get its type, which would be cleaner *)
+      | Some { e = N (Id (_, { id_type; _ })); _ } -> !id_type
+      | Some { e = New (_, tp, _, (_, _, _)); _ } -> Some tp
+      (* Scala companion-object apply: [Map(...)],
+       * [mutable.Map[K, V]()], [HashMap[K, V]()]. The head of
+       * the callee gives the type; when the call is
+       * parameterised, we preserve the type arguments as
+       * [TyApply]. Scala-gated so other languages' inference
+       * paths are untouched; non-Map capitalised heads (e.g.
+       * [List(...)]) are harmless — the library-call
+       * recognisers gate against the Map family list. *)
+      | Some { e = Call (callee, _); _ } when lang =*= Lang.Scala ->
+          let name_of_simple_expr (e : expr) =
+            match e.e with
+            | N (Id (id, _)) -> Some id
+            | N (IdQualified { name_last = id, _; _ }) -> Some id
+            | DotAccess (_, _, FN (Id (id, _))) -> Some id
+            | DotAccess
+                (_, _, FN (IdQualified { name_last = id, _; _ })) ->
+                Some id
+            | _ -> None
+          in
+          let head_name_and_targs (e : expr) =
+            match e.e with
+            | OtherExpr (("InstanciatedExpr", _), E inner :: rest) ->
+                let targs =
+                  List.filter_map
+                    (function T t -> Some t | _ -> None)
+                    rest
+                in
+                Option.map
+                  (fun id -> (id, targs))
+                  (name_of_simple_expr inner)
+            | _ ->
+                Option.map (fun id -> (id, [])) (name_of_simple_expr e)
+          in
+          (match head_name_and_targs callee with
+           | Some ((s, tok), []) when String_.is_capitalized s ->
+               make_type s tok
+           | Some ((s, tok), targs) when String_.is_capitalized s ->
+               let head_ty =
+                 TyN (Id ((s, tok), empty_id_info ())) |> AST_generic.t
+               in
+               let args =
+                 Tok.unsafe_fake_bracket (List.map (fun t -> TA t) targs)
+               in
+               Some (TyApply (head_ty, args) |> AST_generic.t)
+           | _ -> None)
+      | Some { e = Ref (tok, exp); _ } ->
+          Option.bind
+            (get_resolved_type lang (Some exp, None))
+            (fun x -> Some (t @@ TyPointer (tok, x)))
+      | _ -> None)
   | Some _ -> vtype
 
 (*****************************************************************************)
@@ -478,6 +496,13 @@ let is_resolvable_name_ctx env lang =
       | Lang.Cpp ->
           true
       | _ -> false)
+
+let has_function_namespace (lang : Lang.t) : bool =
+  match lang with
+  | Lang.Java
+  | Lang.Kotlin ->
+      true
+  | _ -> false
 
 let resolved_name_kind env lang =
   match top_context env with
@@ -511,7 +536,7 @@ let params_of_parameters env params : scope =
            let sid = SId.mk () in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
-           Some (H.str_of_ident id, resolved)
+           Some (var_key id, resolved)
        (* Destructuring parameter: the synthetic [parameter_classic]
         * carries a [!!_implicit_param!] binder that needs to be resolved
         * as a regular Parameter, so AST_to_IL can generate a
@@ -523,7 +548,7 @@ let params_of_parameters env params : scope =
            let sid = SId.mk () in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
-           Some (H.str_of_ident id, resolved)
+           Some (var_key id, resolved)
        (* Ruby [&callback] block parameter and PHP [&$var] by-reference
         * parameter are both produced as
         * [OtherParam("Ref", [Pa(Param(...))])] by their respective AST
@@ -541,7 +566,7 @@ let params_of_parameters env params : scope =
            let sid = SId.mk () in
            let resolved = { entname = (Parameter, sid); enttype = typ } in
            set_resolved env id_info resolved;
-           Some (H.str_of_ident id, resolved)
+           Some (var_key id, resolved)
        | _ -> None)
 
 let js_get_angular_constructor_args env attrs defs =
@@ -567,9 +592,19 @@ let js_get_angular_constructor_args env attrs defs =
        | _ -> None)
   |> List_.flatten
 
+let current_scope_entry (env : env) (ns : namespace) (id : ident) :
+    scope_info option =
+  match (top_context env, !(env.names.blocks)) with
+  | InClass, current :: _ -> find_in_scope ns (H.str_of_ident id) current
+  | _ -> None
+
 let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
     ~explicit vinit vtype =
-  let sid = SId.mk () in
+  let sid =
+    match current_scope_entry env VarName id with
+    | Some { entname = _, sid; _ } -> sid
+    | None -> SId.mk ()
+  in
   (* for the type, we use the (optional) type in vtype, or, if we can infer
    * the type of the expression vinit (literal or id), we use that as a type
    * useful when the type is not given, e.g. in Go: `var x = 2` *)
@@ -589,6 +624,34 @@ let declare_var env lang id id_info ?(force_global=false) ?(is_macro=false)
   let resolved = { entname = (name_kind, sid); enttype = resolved_type } in
   add_ident_to_its_scope id resolved env.names;
   set_resolved env id_info resolved
+
+let declare_func env lang (id : ident) id_info (frettype : type_ option) =
+  let resolved =
+    match current_scope_entry env FuncName id with
+    | Some resolved -> resolved
+    | None ->
+        let entname = (resolved_name_kind env lang, SId.mk ()) in
+        let resolved = { entname; enttype = frettype } in
+        add_func_ident_current_scope id resolved env.names;
+        resolved
+  in
+  set_resolved env id_info resolved
+
+let declare_class_members env lang (c : class_definition) : unit =
+  if is_resolvable_name_ctx env lang then
+    let _, fields, _ = c.cbody in
+    fields
+    |> List.iter (fun (F stmt) ->
+           match stmt.s with
+           | DefStmt
+               ( { name = EN (Id (id, id_info)); _ },
+                 VarDef { vinit; vtype; vtok = _ } ) ->
+               declare_var env lang id id_info ~explicit:true vinit vtype
+           | DefStmt
+               ({ name = EN (Id (id, id_info)); _ }, FuncDef { frettype; _ })
+             when has_function_namespace lang ->
+               declare_func env lang id id_info frettype
+           | _ -> ())
 
 let set_resolved_global_if_not_already_resolved env ?vinit id id_info =
   (* Used for all clojure non-auto-resolved atoms which we consider globals. *)
@@ -670,8 +733,9 @@ class ['self] resolve_visitor env lang =
               (* TODO? Maybe we need a `with_new_class_scope`. For now, abusing `with_new_function_scope`. *)
               with_new_function_scope (special_class_params @ class_params)
                 env.names (fun () ->
+                  declare_class_members env lang c;
                   self#visit_entity venv entity;
-                  self#visit_class_definition venv (H.reorder_fields_in_class_definition c)))
+                  self#visit_class_definition venv c))
       (* `const x = require('y');` (or var, or let)
        *
        * JS: This is a CommonJS import, popularized before ES6 standardized
@@ -791,7 +855,7 @@ class ['self] resolve_visitor env lang =
         when is_resolvable_name_ctx env lang ->
           super#visit_definition venv x;
           self#visit_pattern venv pat
-      | { name = EN (Id (id, id_info)); _ }, FuncDef _
+      | { name = EN (Id (id, id_info)); _ }, FuncDef { frettype; _ }
         when is_resolvable_name_ctx env lang ->
           (match lang with
           (* We restrict function-name resolution to JS/TS.
@@ -826,7 +890,9 @@ class ['self] resolve_visitor env lang =
                *)
               add_ident_imported_scope id resolved env.names;
               set_resolved env id_info resolved
-          | ___else___ -> ());
+          | ___else___ ->
+              if has_function_namespace lang then
+                declare_func env lang id id_info frettype);
           super#visit_definition venv x
       | { name = EN (Id (id, id_info)); _ }, UseOuterDecl tok ->
           let s = Tok.content_of_tok tok in
@@ -1118,6 +1184,14 @@ class ['self] resolve_visitor env lang =
               self#visit_expr venv e1;
               self#visit_expr venv e2);
           recurse := false
+      | Call ({ e = N (Id (id, id_info)); _ }, args)
+        when has_function_namespace lang -> (
+          match lookup_func_scope_opt id env with
+          | Some resolved ->
+              set_resolved env id_info resolved;
+              self#visit_arguments venv args;
+              recurse := false
+          | None -> ())
       (* specialized kname case when in expr context *)
       | N (Id (id, id_info)) ->
           (match lookup_scope_opt id env with

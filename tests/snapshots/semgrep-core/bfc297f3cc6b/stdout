@@ -1,0 +1,10 @@
+--- begin input files ---
+pattern-not-inside.yaml
+pattern_not_inside_complex.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 25 insertions(+)
+ create mode 100644 pattern-not-inside.yaml
+ create mode 100644 pattern_not_inside_complex.py
+{"version":"<MASKED>","results":[{"check_id":"test_rule_id","path":"pattern_not_inside_complex.py","start":{"line":12,"col":1,"offset":124},"end":{"line":13,"col":18,"offset":150},"extra":{"metavars":{"$FUNC":{"start":{"line":12,"col":5,"offset":128},"end":{"line":12,"col":6,"offset":129},"abstract_content":"D"}},"message":"method D is not inside $CLASS","metadata":{},"severity":"INFO","fingerprint":"c986bda13d5c980a56a23506f00c324240fd3d8c7e33c064ad060db81fbe34f19e1130e465a6989c9823caafb57ca12d5058c99781c213c075d5d85af9819e37_0","lines":"def D():\n    print(\"asdf\")","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["pattern_not_inside_complex.py"]},"interfile_languages_used":[],"skipped_rules":[]}

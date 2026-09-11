@@ -1,0 +1,21 @@
+rules:
+  - id: call-is-the-method
+    severity: WARNING
+    message: the callee carries the method's return type
+    languages:
+      - java
+    patterns:
+      - pattern: $M()
+      - metavariable-type:
+          metavariable: $M
+          type: String
+  - id: read-is-the-field
+    severity: WARNING
+    message: a read of the name carries the field's type
+    languages:
+      - java
+    patterns:
+      - pattern: sink($X)
+      - metavariable-type:
+          metavariable: $X
+          type: int

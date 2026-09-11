@@ -1,0 +1,16 @@
+--- begin input files ---
+rules/exact-collision.yaml
+targets/collision.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 24 insertions(+)
+ create mode 100644 rules/exact-collision.yaml
+ create mode 100644 targets/collision.py
+{"version":"<MASKED>","results":[{"check_id":"rules.first-rule","path":"targets/collision.py","start":{"line":2,"col":5,"offset":5},"end":{"line":2,"col":6,"offset":6},"extra":{"metavars":{},"message":"Semgrep found a match","fix":"once","metadata":{},"severity":"WARNING","fingerprint":"8491f8e61014d85b3e9383fbcc7e0c149daa7d0522154db75e7a9179f0467ade079438c493d093dabd6ba864260097c70bc9e089400b63694b51382d5444e37c_0","lines":"a = 1","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.second-rule","path":"targets/collision.py","start":{"line":2,"col":5,"offset":5},"end":{"line":2,"col":6,"offset":6},"extra":{"metavars":{},"message":"Semgrep found a match","fix":"twice","metadata":{},"severity":"WARNING","fingerprint":"ef1d197c2c25ec762a0da26520355a1b6583c701a699dc8268046b13a36a62dc564857f27305e718677c7dcef8712f6e2ecaa8e8110798f0775f5adc6285c658_0","lines":"a = 1","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/collision.py"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/collision.py after the scan ---
+
+a = once
+b = 2
+c = 3
+d = 4

@@ -1,0 +1,10 @@
+--- begin input files ---
+taint.yaml
+taint_branches.py
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 24 insertions(+)
+ create mode 100644 taint.yaml
+ create mode 100644 taint_branches.py
+{"version":"<MASKED>","results":[{"check_id":"classic","path":"taint_branches.py","start":{"line":8,"col":5,"offset":108},"end":{"line":8,"col":13,"offset":116},"extra":{"metavars":{},"message":"A user input source() went into a dangerous sink()","metadata":{},"severity":"WARNING","fingerprint":"1ed36c93cdb04020a6d818f2013d1f24236b753d5964e59372e2ebe24ca7ee01bad6e60d1f7979b37edb8db38d71bc9f5aed6a7d7efd3e77d1a22e926f881236_0","lines":"    sink1(b)","is_ignored":false,"validation_state":"NO_VALIDATOR","dataflow_trace":{"taint_source":["CliLoc",[{"path":"taint_branches.py","start":{"line":2,"col":9,"offset":19},"end":{"line":2,"col":18,"offset":28}},"source1()"]],"intermediate_vars":[{"location":{"path":"taint_branches.py","start":{"line":2,"col":5,"offset":15},"end":{"line":2,"col":6,"offset":16}},"content":"a"},{"location":{"path":"taint_branches.py","start":{"line":7,"col":9,"offset":98},"end":{"line":7,"col":10,"offset":99}},"content":"b"}],"taint_sink":["CliLoc",[{"path":"taint_branches.py","start":{"line":8,"col":5,"offset":108},"end":{"line":8,"col":13,"offset":116}},"sink1(b)"]]},"engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["taint_branches.py"]},"interfile_languages_used":[],"skipped_rules":[]}

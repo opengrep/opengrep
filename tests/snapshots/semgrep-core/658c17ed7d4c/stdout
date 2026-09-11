@@ -1,0 +1,14 @@
+--- begin input files ---
+rules/two-autofixes.yaml
+targets/two-autofixes.txt
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 2 files changed, 19 insertions(+)
+ create mode 100644 rules/two-autofixes.yaml
+ create mode 100644 targets/two-autofixes.txt
+{"version":"<MASKED>","results":[{"check_id":"rules.remove-two","path":"targets/two-autofixes.txt","start":{"line":1,"col":1,"offset":0},"end":{"line":2,"col":4,"offset":7},"extra":{"metavars":{},"message":"This rule changes the line numbers for the other rule's match","fix":"one","metadata":{},"severity":"ERROR","fingerprint":"4295516406c4d65187ed2e5d87d4d08c107cec644fec60937eeaf0ab79c1c2cc19826003922c81de14ba5489438ec9f8d370ed41a763744fe3bbe34c19f3b4c2_0","lines":"one\ntwo","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}},{"check_id":"rules.remove-four","path":"targets/two-autofixes.txt","start":{"line":3,"col":1,"offset":8},"end":{"line":4,"col":5,"offset":18},"extra":{"metavars":{},"message":"If semgrep is not smart enough, the match of this rule will be out of range","fix":"four","metadata":{},"severity":"ERROR","fingerprint":"2e5fbf51531b0ad43551ea2de0e57f13398d08aad13f37fe7db2d65a2c46c32bdb9270a7cc87e32315d4795fa80580be534df9da318fefe5ecfbeb4362abb9b7_0","lines":"three\nfour","is_ignored":false,"validation_state":"NO_VALIDATOR","engine_kind":"OSS"}}],"errors":[],"paths":{"scanned":["targets/two-autofixes.txt"]},"interfile_languages_used":[],"skipped_rules":[]}
+--- targets/two-autofixes.txt after the scan ---
+one
+four
+

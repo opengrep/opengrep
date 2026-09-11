@@ -1,9 +1,0 @@
-rules:
-- id: param-saved-in-model
-  languages: [python]
-  severity: INFO
-  message: $MODELSAVECALLER,$PARAM,$MODEL
-  pattern: |
-    def $MODELSAVECALLER(..., $PARAM, ...):
-      ...
-      $MODEL.create(..., <... $PARAM ...>, ...)

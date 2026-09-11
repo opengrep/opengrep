@@ -12,7 +12,6 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the file
  * license.txt for more details.
  *)
-open Common
 module Log = Log_process_limits.Log
 module M = Memprof_limits
 
@@ -24,17 +23,6 @@ module M = Memprof_limits
 (* Types *)
 (*****************************************************************************)
 
-(* A timeout exception with accompanying debug information:
-   - a descriptive name
-   - the time limit
-     The mli interface makes this type private to help prevent unsafe uses of
-     the exception. The type is actually defined in the commons compilation
-     unit to allow logging to not treat it a an error.
-*)
-type timeout_info = Exception.timeout_info
-
-exception Timeout = Exception.Timeout
-
 (*****************************************************************************)
 (* Helpers *)
 (*****************************************************************************)
@@ -42,8 +30,6 @@ exception Timeout = Exception.Timeout
 (*****************************************************************************)
 (* Entry points *)
 (*****************************************************************************)
-let string_of_timeout_info { Exception.name; max_duration } =
-  spf "%s:%g" name max_duration
 
 (* could be in Control section *)
 

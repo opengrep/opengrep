@@ -23,8 +23,8 @@ module Env = Semgrep_envvars
 
    This module determines the subcommand invoked on the command line
    and has another module handle it as if it was an independent command.
-   Exceptions are caught and turned into an appropriate exit code
-   (unless you used --debug).
+   Exceptions are caught and turned into an appropriate exit code,
+   with --debug adding their backtrace to the log.
 
    alt: we don't use Cmdliner to dispatch subcommands because it's too
    complicated and anyway we want full control on the main help message.
@@ -57,7 +57,7 @@ let default_subcommand = "scan"
 (* Placeholder for adaptation of pysemgrep state.terminal.init_for_cli() *)
 (* TOPORT:
      1. GITHUB_ACTIONS specific output requirements
-     2. Any NO_COLOR / SEMGREP_FORCE_NO_COLOR behavior
+   NO_COLOR / SEMGREP_FORCE_NO_COLOR are handled in CLI_common.setup_logging.
 *)
 (* let init_for_cli () : unit =
    ()
@@ -84,26 +84,8 @@ let known_subcommands =
   ]
 
 (* Global flags that main below detects on the whole argv and that may
- * legitimately precede the subcommand: typed by the user, or, for
- * --experimental, inserted by Main.ml for the bare 'opengrep' binary. *)
+ * legitimately precede the subcommand. *)
 let global_flags = [ "--experimental"; "--debug"; "--profile" ]
-
-(* Insert --experimental after the subcommand when there is one, else right
- * after argv0: the implicit 'scan' subcommand parses the flag wherever it
- * is, and the scanning roots stay untouched.
- * Used by Main.ml for the bare 'opengrep' binary.
- * Expectation tests: src/osemgrep/tests/Unit_CLI.ml. *)
-let with_experimental_flag (argv : string array) : string array =
-  let pos =
-    if Array.length argv >= 2 && List.mem argv.(1) known_subcommands then 2
-    else 1
-  in
-  Array.concat
-    [
-      Array.sub argv 0 pos;
-      [| "--experimental" |];
-      Array.sub argv pos (Array.length argv - pos);
-    ]
 
 let dispatch_subcommand (caps : caps) (argv : string array) =
   match Array.to_list argv with
@@ -127,9 +109,9 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
   | [ _; "--experimental"; ("-h" | "--help") ] ->
       Help.print_semgrep_dashdash_help caps#stdout;
       Exit_code.ok ~__LOC__
-  | argv0 :: args -> (
+  | argv0 :: args ->
       (* the subcommand may be preceded by global flags, e.g.
-       * 'opengrep --experimental ci' (typed, or built by Main.ml) *)
+       * 'opengrep --experimental ci' *)
       let leading_flags, rest =
         let rec split acc = function
           | arg :: tl when List.mem arg global_flags -> split (arg :: acc) tl
@@ -150,36 +132,24 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
         let subcmd_argv0 = argv0 ^ "-" ^ subcmd in
         subcmd_argv0 :: subcmd_args |> Array.of_list
       in
-      let experimental = Array.mem "--experimental" argv in
       (* coupling: with known_subcommands if you add an entry below.
        * coupling: with Help.ml if you add an entry below.
        *)
-      try
-        match subcmd with
-        (* TODO: gradually remove those 'when experimental' guards as
-         * we progress in osemgrep port (or use Pysemgrep.Fallback further
-         * down when we know we don't handle certain kind of arguments).
-         *)
-        (* partial support, still use Pysemgrep.Fallback in it *)
-        | "scan" -> Scan_subcommand.main caps subcmd_argv
-        | "ci" -> Ci_subcommand.main caps subcmd_argv
-        (* osemgrep-only: and by default! no need for experimental! *)
-        | "lsp" -> Lsp_subcommand.main caps subcmd_argv
-        (* | "logout" ->
-               Logout_subcommand.main (caps :> < Cap.stdout >) subcmd_argv *)
-        | "install-ci" -> Install_ci_subcommand.main caps subcmd_argv
-        | "show" -> Show_subcommand.main caps subcmd_argv
-        | "test" -> Test_subcommand.main caps subcmd_argv
-        | "validate" -> Validate_subcommand.main caps subcmd_argv
-        | _ ->
-            if experimental then
-              (* this should never happen because we default to 'scan',
-               * but better to be safe than sorry.
-               *)
-              Error.abort (Printf.sprintf "unknown opengrep command: %s" subcmd)
-            else raise Pysemgrep.Fallback
-      with
-      | Pysemgrep.Fallback -> Pysemgrep.pysemgrep (caps :> < Cap.exec >) argv)
+      match subcmd with
+      | "scan" -> Scan_subcommand.main caps subcmd_argv
+      | "ci" -> Ci_subcommand.main caps subcmd_argv
+      | "lsp" -> Lsp_subcommand.main caps subcmd_argv
+      (* | "logout" ->
+             Logout_subcommand.main (caps :> < Cap.stdout >) subcmd_argv *)
+      | "install-ci" -> Install_ci_subcommand.main caps subcmd_argv
+      | "show" -> Show_subcommand.main caps subcmd_argv
+      | "test" -> Test_subcommand.main caps subcmd_argv
+      | "validate" -> Validate_subcommand.main caps subcmd_argv
+      | _ ->
+          (* this should never happen because we default to 'scan',
+           * but better to be safe than sorry.
+           *)
+          Error.abort (Printf.sprintf "unknown opengrep command: %s" subcmd)
 [@@profiling]
 
 (*****************************************************************************)
@@ -188,35 +158,48 @@ let dispatch_subcommand (caps : caps) (argv : string array) =
 
 (* Wrapper that catches exceptions and turns them into an exit code
  * TOPORT? "Enforces that exit code 1 is only for findings"
+ *
+ * --debug is the run a user is asked for when reporting a problem, so it
+ * must not change the message or the exit code: the backtrace is logged in
+ * addition to the normal handling, not instead of it.
  *)
-let safe_run ~debug f : Exit_code.t =
-  if debug then f ()
-  else
-    try f () with
-    | Error.Semgrep_error (s, opt_exit_code) -> (
-        Logs.err (fun m -> m "%s" s);
-        match opt_exit_code with
-        | None -> Exit_code.fatal ~__LOC__
-        | Some code -> code)
-    | Error.Exit_code code -> code
-    (* a failed git command is already explained by Git_wrapper's own
-     * warning; no backtrace needed *)
-    | Git_wrapper.Error msg ->
-        Logs.err (fun m -> m "%s" msg);
-        Exit_code.fatal ~__LOC__
-    (* should never happen, you should prefer Error.Exit to Common.UnixExit
-     * but just in case *)
-    | Common.UnixExit i ->
-        Exit_code.of_int ~__LOC__ ~code:i ~description:"rogue UnixExit"
-    (* TOPORT: PLEASE_FILE_ISSUE_TEXT for unexpected exn *)
-    | Failure msg ->
-        Logs.err (fun m -> m "Error: %s%!" msg);
-        Exit_code.fatal ~__LOC__
-    | e ->
-        let trace = Printexc.get_backtrace () in
-        Logs.err (fun m ->
-            m "Error: exception %s\n%s%!" (Printexc.to_string e) trace);
-        Exit_code.fatal ~__LOC__
+let safe_run f : Exit_code.t =
+  (* only shown with --debug, which sets the Debug log level *)
+  let log_backtrace () : unit =
+    Logs.debug (fun m -> m "%s" (Printexc.get_backtrace ()))
+  in
+  try f () with
+  (* say nothing and return the conventional code for a closed pipe *)
+  | exn when Error.is_broken_pipe exn ->
+      Error.silence_std_formatter ();
+      Exit_code.broken_pipe ~__LOC__
+  | Error.Semgrep_error (s, opt_exit_code) -> (
+      Logs.err (fun m -> m "%s" s);
+      log_backtrace ();
+      match opt_exit_code with
+      | None -> Exit_code.fatal ~__LOC__
+      | Some code -> code)
+  | Error.Exit_code code -> code
+  (* a failed git command is already explained by Git_wrapper's own
+   * warning; no backtrace needed *)
+  | Git_wrapper.Error msg ->
+      Logs.err (fun m -> m "%s" msg);
+      log_backtrace ();
+      Exit_code.fatal ~__LOC__
+  (* should never happen, you should prefer Error.Exit to Common.UnixExit
+   * but just in case *)
+  | Common.UnixExit i ->
+      Exit_code.of_int ~__LOC__ ~code:i ~description:"rogue UnixExit"
+  (* TOPORT: PLEASE_FILE_ISSUE_TEXT for unexpected exn *)
+  | Failure msg ->
+      Logs.err (fun m -> m "Error: %s%!" msg);
+      log_backtrace ();
+      Exit_code.fatal ~__LOC__
+  | e ->
+      let trace = Printexc.get_backtrace () in
+      Logs.err (fun m ->
+          m "Error: exception %s\n%s%!" (Printexc.to_string e) trace);
+      Exit_code.fatal ~__LOC__
 
 let before_exit ~profile caps : unit =
   (* alt: could be done in Main.ml instead, just before the call to exit() *)
@@ -237,7 +220,6 @@ let before_exit ~profile caps : unit =
  *)
 let main (caps : caps) (argv : string array) : Exit_code.t =
   Printexc.record_backtrace true;
-  let debug = Array.mem "--debug" argv in
   let profile = Array.mem "--profile" argv in
 
   (* LATER: move this function from Core_CLI to here at some point.
@@ -294,7 +276,7 @@ let main (caps : caps) (argv : string array) : Exit_code.t =
   (* TOADAPT? adapt more of Common.boilerplate? *)
 
   (* !The main call! dispatching a subcommand *)
-  let exit_code = safe_run ~debug (fun () -> dispatch_subcommand caps argv) in
+  let exit_code = safe_run (fun () -> dispatch_subcommand caps argv) in
 
   before_exit ~profile (caps :> < Cap.tmp >);
   exit_code

@@ -36,6 +36,14 @@ val string_list_with_env :
   string list ->
   string list Cmdliner.Term.t
 
+(* A single-valued float option whose value can also come from an environment
+   variable. env is the legacy SEMGREP_* name: the helper reads the variable
+   itself, so that the OPENGREP_/SEMGREP_ alias is honoured and a warning
+   names the one used when both are set (see the .ml). The command line wins
+   over the environment. *)
+val float_opt_with_env :
+  env:string -> doc:string -> string list -> float option Cmdliner.Term.t
+
 (* A single-valued option whose value can also come from one of several
    environment variables (cmdliner supports only one per option). The
    first set variable wins; the command line wins over the environment. *)

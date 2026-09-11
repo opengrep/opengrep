@@ -21,11 +21,11 @@ let name_tests : (string * Lang.t * Fpath.t * success) list =
     ("js relative path", Js, "./a/b.c/foo.js", OK);
     ("js absolute path", Js, "/a/b.c/foo.js", OK);
     ("js double extension", Js, "foo.bar.js", OK);
-    ("min js", Js, "foo.min.js", XFAIL);
+    ("min js", Js, "foo.min.js", OK);
     ("not js", Js, "foo.bar", XFAIL);
     ("jsx", Js, "foo.jsx", OK);
     ("typescript", Ts, "foo.ts", OK);
-    ("typescript .d.ts", Ts, "foo.d.ts", XFAIL);
+    ("typescript .d.ts", Ts, "foo.d.ts", OK);
     ("crystal", Crystal, "foo.cr", OK);
     ("spaces", Ruby, " a b  c.rb", OK);
   ]

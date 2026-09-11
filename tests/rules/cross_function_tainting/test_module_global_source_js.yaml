@@ -1,0 +1,14 @@
+rules:
+  - id: test-module-global-source-js
+    message: |
+      A top-level const assigned from a source reaches a sink inside a
+      function that never appears in a call chain with the source.
+    languages: [js]
+    severity: WARNING
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

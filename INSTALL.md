@@ -14,11 +14,23 @@ curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh |
   curl -fsSL https://raw.githubusercontent.com/opengrep/opengrep/main/install.sh | bash -s -- -l
   ```
 
+# Install a release binary by hand
+
+The binaries of each release are on the
+[releases page](https://github.com/opengrep/opengrep/releases). Download the
+asset for your platform, make it executable and put it where you want it. On
+Windows, the archive holds `opengrep.exe` and the DLLs it needs: keep them
+together in one directory.
+
 # Build instructions for developers
 
 ## Manual development
 
 Developers should consult the makefiles, which are documented.
+The prerequisites are listed in the prelude of the toplevel makefile: OCaml
+(currently 5.5.0) with `dune` and `opam`, a C toolchain with the PCRE and gmp
+libraries, and common tools such as `make` and `git`.
+
 The steps to set up and build everything are normally:
 
 ```
@@ -28,32 +40,15 @@ $ make             # routine build
 $ make test        # test everything
 ```
 
-There's no simple installation of the development version of the
-`opengrep` command (Python wrapper + `opengrep-core` binary). To test
-`opengrep` without installing it, use `pipenv`:
+`make core` builds `bin/opengrep`, the single executable; the low-level
+engine CLI is reachable through `opengrep --core`. There is nothing to
+install: run the build in place.
 
 ```
-$ cd cli
-$ pipenv shell
-$ opengrep --help
+$ ./bin/opengrep --help
 ```
 
-Or more conveniently, you can create a shell function that will call
-`pipenv` from the correct location. For example, if you cloned the
-`opengrep` repo in your home folder (`~`), you can place the following
-code in your `~/.bashrc` file and then use `opengrep-dev` as your
-`opengrep` command:
+`make core-test` runs the tests.
 
-```
-opengrep-dev() {
-  PIPENV_PIPFILE=~/opengrep/cli/Pipfile pipenv run opengrep "$@"
-}
-```
-
-The Opengrep project has two main parts:
-
-- The Python wrapper in the [`cli/`](cli) folder, which has its own
-  makefile needed for some preprocessing and for testing.
-  Read the makefile to see what targets are available.
-- The OCaml core in the [`src/`](src) folder.
-  Read the toplevel makefile to see what's available to the developer.
+The OCaml sources are in the [`src/`](src) folder.
+Read the toplevel makefile to see what's available to the developer.

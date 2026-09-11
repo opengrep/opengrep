@@ -6,6 +6,30 @@ open Fpath_.Operators
 module Out = Semgrep_output_v1_t
 
 (****************************************************************************)
+(* Extensions never scanned *)
+(****************************************************************************)
+
+(* The extensions never scanned when walking a directory. Two things put such
+   a file back in the target list: a scan run with any '--include' pattern,
+   and naming the file on the command line (unless includes and excludes are
+   applied to file targets too). See 'keep_any_extension' in
+   Find_targets.get_targets.
+   Only minified JavaScript is here. The other extension lang.json marks as
+   excluded, '.d.ts', is a TypeScript target like any other, so it is left
+   out of this list. *)
+let excluded_extensions : string list = [ ".min.js" ]
+
+let has_excluded_extension (path : Fpath.t) :
+    (Fpath.t, Out.skipped_target) result =
+  if
+    List.exists
+      (fun (ext : string) -> String.ends_with ~suffix:ext !!path)
+      excluded_extensions
+  then
+    Error { Out.path; reason = Always_skipped; details = None; rule_id = None }
+  else Ok path
+
+(****************************************************************************)
 (* Minified files detection (via whitespace stats) *)
 (****************************************************************************)
 
@@ -135,7 +159,8 @@ let is_big max_bytes path =
     Error
       {
         Out.path;
-        reason = Too_big;
+        (* the reason pysemgrep reported for '--max-target-bytes' *)
+        reason = Exceeded_size_limit;
         details =
           Some
             (spf "target file size exceeds %i bytes at %i bytes" max_bytes size);

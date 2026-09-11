@@ -58,6 +58,24 @@ module Legacy = struct
         close_in chan;
         List.rev !acc
 
+  (* Reads at most [max_len] bytes, chunk by chunk, so that reading the head
+     of a target does not load the whole file into memory. *)
+  let input_at_most (chan : in_channel) (max_len : int) : string =
+    let chunk_len = 4096 in
+    let buf = Bytes.create (min max_len chunk_len) in
+    let extbuf = Buffer.create (min max_len chunk_len) in
+    let rec loop () =
+      let remaining = max_len - Buffer.length extbuf in
+      if remaining <= 0 then Buffer.contents extbuf
+      else
+        match input chan buf 0 (min remaining (Bytes.length buf)) with
+        | 0 -> Buffer.contents extbuf
+        | num_bytes ->
+            Buffer.add_subbytes extbuf buf 0 num_bytes;
+            loop ()
+    in
+    loop ()
+
   (*
    This implementation works even with Linux files like /dev/fd/63
    created by bash's process substitution e.g.
@@ -76,22 +94,27 @@ module Legacy = struct
    Why such a function is not provided by the ocaml standard library is
    unclear.
 *)
-  let read_file ?(max_len = max_int) path =
-    let buf_len = 4096 in
-    let extbuf = Buffer.create 4096 in
-    let buf = Bytes.create buf_len in
-    let rec loop fd =
-      match Unix.read fd buf 0 buf_len with
-      | 0 -> Buffer.contents extbuf
-      | num_bytes ->
-          assert (num_bytes > 0);
-          assert (num_bytes <= buf_len);
-          Buffer.add_subbytes extbuf buf 0 num_bytes;
-          if Buffer.length extbuf >= max_len then Buffer.sub extbuf 0 max_len
-          else loop fd
+  let read_file ?(max_len : int = max_int) (path : string) : string =
+    (* Opening a named pipe waits for a writer to open the other end. A
+       signal delivered during that wait, such as the end of a child
+       process (SIGCHLD), interrupts the open instead of resuming it, so
+       the open is retried here. The reads below go through a channel,
+       which resumes an interrupted read on its own. The descriptor is
+       opened close-on-exec, as opening a channel by name does, so that a
+       child process does not inherit it. *)
+    let rec open_retrying_on_interrupt () : in_channel =
+      match UUnix.openfile path [ UUnix.O_RDONLY; UUnix.O_CLOEXEC ] 0 with
+      | fd -> UUnix.in_channel_of_descr fd
+      | exception UUnix.Unix_error (UUnix.EINTR, _, _) ->
+          open_retrying_on_interrupt ()
     in
-    let fd = UUnix.openfile path [ Unix.O_RDONLY ] 0 in
-    Common.protect ~finally:(fun () -> Unix.close fd) (fun () -> loop fd)
+    let chan = open_retrying_on_interrupt () in
+    Common.protect
+      ~finally:(fun () -> close_in chan)
+      (fun () ->
+        if max_len >= max_int then In_channel.input_all chan
+        else if max_len <= 0 then ""
+        else input_at_most chan max_len)
 
   let write_file ~file s =
     let chan = UStdlib.open_out_bin file in
@@ -264,6 +287,11 @@ let is_executable file =
   stat.st_kind =*= Unix.S_REG && perms land 0o011 <> 0
 
 let rec make_directories dir =
+  (* Fpath.parent leaves a trailing empty segment on its result; it is
+   * dropped so that mkdir is given the directory name itself, as a name
+   * written with a trailing separator is not reported the same way by
+   * every operating system *)
+  let dir = Fpath.rem_empty_seg dir in
   try UUnix.mkdir !!dir 0o755 with
   (* The directory already exists *)
   | UUnix.Unix_error ((EEXIST | EISDIR), _, _)
@@ -299,17 +327,16 @@ let lines_of_file_exn (start_line, end_line) file : string list =
      EOF (e.g. a '}' closing a truncated block), and we must not read past
      the array. The [try/with] below still guards any other bad index. *)
   let end_line = min end_line (Array.length arr - 1) in
-  let lines = List_.enum start_line end_line in
-  match arr with
-  (* This is the case of the empty file. *)
-  | [| "" |] -> []
-  | _ ->
-      lines
-      |> List_.map (fun i ->
-             try arr.(i) with
-             | Invalid_argument s ->
-                 let exn =
-                   Common.ErrorOnFile
-                     (spf "lines_of_file(): %s on index %d" s i, file)
-                 in
-                 Exception.catch_and_reraise exn)
+  (* This is the case of the empty file, whose only entry is the padding at
+     index 0, and of a range that starts past the last line. *)
+  if start_line > end_line then []
+  else
+    List_.enum start_line end_line
+    |> List_.map (fun i ->
+           try arr.(i) with
+           | Invalid_argument s ->
+               let exn =
+                 Common.ErrorOnFile
+                   (spf "lines_of_file(): %s on index %d" s i, file)
+               in
+               Exception.catch_and_reraise exn)

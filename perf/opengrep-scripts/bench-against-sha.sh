@@ -131,8 +131,8 @@ if [[ "$REF_SHA_FULL" == "$HEAD_SHA_FULL" ]]; then
 fi
 
 # Determine binary paths
-REF_BINARY="$BINARIES_DIR/$REF_LABEL/venv/bin/opengrep"
-HEAD_BINARY="$BINARIES_DIR/$HEAD_LABEL/venv/bin/opengrep"
+REF_BINARY="$BINARIES_DIR/$REF_LABEL/opengrep"
+HEAD_BINARY="$BINARIES_DIR/$HEAD_LABEL/opengrep"
 
 # Check what needs building
 need_build_ref=""
@@ -165,26 +165,47 @@ if [[ -n "$dry_run" ]]; then
 fi
 
 # Function to build at current HEAD
+#
+# The reference can predate the removal of the Python wrapper, so the build
+# follows the layout of the tree that is checked out right now. Either way the
+# result is published as binaries/<label>/opengrep, the one path the rest of
+# the script knows about.
 do_build() {
   local label="$1"
   local target_dir="$BINARIES_DIR/$label"
-  local venv_dir="$target_dir/venv"
-  local binary_path="$venv_dir/bin/opengrep"
+  local binary_path="$target_dir/opengrep"
 
   log_info "Building $label..."
+
+  mkdir -p "$target_dir"
+  # Drop whatever a build of a differently shaped tree left behind.
+  rm -f "$binary_path"
 
   log_info "  Running make core..."
   make core
 
-  log_info "  Running make copy-core-for-cli..."
-  make copy-core-for-cli
+  if [[ -d "$OPENGREP_ROOT/cli" ]]; then
+    local venv_dir="$target_dir/venv"
 
-  log_info "  Creating venv at $venv_dir..."
-  mkdir -p "$target_dir"
-  python3 -m venv "$venv_dir"
+    log_info "  Running make copy-core-for-cli..."
+    make copy-core-for-cli
 
-  log_info "  Installing CLI into venv..."
-  "$venv_dir/bin/pip" install --quiet "$OPENGREP_ROOT/cli"
+    log_info "  Creating venv at $venv_dir..."
+    python3 -m venv "$venv_dir"
+
+    log_info "  Installing CLI into venv..."
+    "$venv_dir/bin/pip" install --quiet "$OPENGREP_ROOT/cli"
+
+    # The console script carries an absolute shebang, so it stays runnable
+    # through a symlink.
+    log_info "  Linking $binary_path to the venv entry point..."
+    ln -s "venv/bin/opengrep" "$binary_path"
+  else
+    # bin/opengrep is a symlink into the shared _build, which the next build
+    # overwrites, so copy the executable itself to keep this build around.
+    log_info "  Copying the binary to $binary_path..."
+    cp "$OPENGREP_ROOT/bin/opengrep" "$binary_path"
+  fi
 
   if [[ ! -x "$binary_path" ]]; then
     log_error "Build failed: $binary_path not found"

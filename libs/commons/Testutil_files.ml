@@ -30,6 +30,10 @@ open Common
 type t =
   | Dir of string * t list
   | File of string * string
+  | Executable of string * string
+  (* a file, and a directory, without any permission *)
+  | Unreadable of string * string
+  | Unreadable_dir of string * t list
   | Symlink of string * string
 
 (* if you prefer a curried syntax *)
@@ -44,6 +48,9 @@ let symlink name dest : t = Symlink (name, dest)
 let get_name = function
   | Dir (name, _)
   | File (name, _)
+  | Executable (name, _)
+  | Unreadable (name, _)
+  | Unreadable_dir (name, _)
   | Symlink (name, _) ->
       name
 
@@ -54,7 +61,10 @@ let rec sort xs =
 and sort_one x =
   match x with
   | Dir (name, xs) -> Dir (name, sort xs)
+  | Unreadable_dir (name, xs) -> Unreadable_dir (name, sort xs)
   | File _
+  | Executable _
+  | Unreadable _
   | Symlink _ ->
       x
 
@@ -123,7 +133,10 @@ let remove path =
        background maintenance removing a lock file under .git. An
        already-absent entry is nothing to remove. *)
     | exception UUnix.Unix_error (Unix.ENOENT, _, _) -> ()
-    | { st_kind = S_DIR; _ } ->
+    | { st_kind = S_DIR; st_perm; _ } ->
+        (* an unreadable directory must be made readable before it can be
+           emptied *)
+        if st_perm land 0o700 <> 0o700 then UUnix.chmod !!path 0o700;
         let names = get_dir_entries path in
         List.iter (fun name -> remove (path / name)) names;
         UUnix.rmdir !!path
@@ -172,12 +185,15 @@ let flatten ?(root = Fpath.v ".") ?(include_dirs = false) files =
   let rec flatten acc files = List.fold_left flatten_one acc files
   and flatten_one (acc, dir) file =
     match file with
-    | Dir (name, entries) ->
+    | Dir (name, entries)
+    | Unreadable_dir (name, entries) ->
         let path = dir / name in
         let acc = if include_dirs then path :: acc else acc in
         let acc, _last_dir = flatten (acc, path) entries in
         (acc, dir)
-    | File (name, _contents) ->
+    | File (name, _contents)
+    | Executable (name, _contents)
+    | Unreadable (name, _contents) ->
         let file = dir / name in
         (file :: acc, dir)
     | Symlink (name, _dest) ->
@@ -203,6 +219,20 @@ and write_one root file =
   | File (name, contents) ->
       let path = root / name in
       UFile.write_file ~file:path contents
+  | Executable (name, contents) ->
+      let path = root / name in
+      UFile.write_file ~file:path contents;
+      UUnix.chmod !!path 0o755
+  | Unreadable (name, contents) ->
+      let path = root / name in
+      UFile.write_file ~file:path contents;
+      UUnix.chmod !!path 0o000
+  | Unreadable_dir (name, entries) ->
+      let dir = root / name in
+      if not (USys.file_exists !!dir) then UUnix.mkdir !!dir 0o777;
+      (* write the entries before taking the permissions away *)
+      write dir entries;
+      UUnix.chmod !!dir 0o000
   | Symlink (name, dest) ->
       let path = !!(root / name) in
       UUnix.symlink dest path
@@ -210,11 +240,23 @@ and write_one root file =
 let read root =
   let rec read path =
     let name = Fpath.basename path in
-    match (UUnix.lstat !!path).st_kind with
-    | S_DIR ->
-        let names = get_dir_entries path in
-        Dir (name, List_.map (fun name -> read (path / name)) names)
-    | S_REG -> File (name, UFile.read_file path)
+    let st = UUnix.lstat !!path in
+    match st.st_kind with
+    (* An entry 'write' created as Unreadable or Unreadable_dir cannot be
+       read back, so it is reported as such, with no contents and no entries,
+       rather than raising. What the process may read is what decides, not
+       the permission bits, since a privileged process reads them anyway. *)
+    | S_DIR -> (
+        match get_dir_entries path with
+        | names -> Dir (name, List_.map (fun name -> read (path / name)) names)
+        | exception (UUnix.Unix_error _ | Sys_error _) ->
+            Unreadable_dir (name, []))
+    | S_REG -> (
+        match UFile.read_file path with
+        | contents ->
+            if st.st_perm land 0o111 <> 0 then Executable (name, contents)
+            else File (name, contents)
+        | exception (UUnix.Unix_error _ | Sys_error _) -> Unreadable (name, ""))
     | S_LNK -> Symlink (name, UUnix.readlink !!path)
     | _other ->
         failwith ("Testutil_files.read: unsupported file type: " ^ !!path)

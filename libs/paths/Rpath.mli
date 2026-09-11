@@ -69,7 +69,7 @@ val to_string : t -> string
 val canonical_exn : Fpath.t -> Fpath.t
 
 (* On case-insensitive filesystems (Windows), resolve [p] to its physical real
-   path so its spelling (case and 8.3 short names) agrees with the canonical
+   path so its form (case and 8.3 short names) agrees with the canonical
    paths the OS and git report. On case-sensitive filesystems the command-line
    path is already canonical and is returned unchanged. If [p] can't be
    resolved, it is returned unchanged, matching the behaviour before

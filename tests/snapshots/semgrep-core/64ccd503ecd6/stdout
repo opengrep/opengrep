@@ -1,0 +1,8 @@
+--- begin input files ---
+main
+--- end input files ---
+Initialized empty Git repository in <TMP>/<MASKED>/.git/
+[main (root-commit) <MASKED>] Add files
+ 1 file changed, 1 insertion(+)
+ create mode 100644 main
+--- scan with the baseline ---
