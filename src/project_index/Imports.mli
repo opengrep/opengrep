@@ -10,5 +10,13 @@ val collect_imports :
   current_module_path:Names.Module_qn.t ->
   is_init_file:bool ->
   AST_generic.program ->
-  (string * Names.Module_qn.t) list
+  Types.import list
   * (string * string * Types.import_kind) list
+
+val wildcard_local : string
+
+type binding =
+  | Wildcard_from of Names.Module_qn.t
+  | Named_binding of { local : string; target : Names.Module_qn.t }
+
+val binding_of : Types.import -> binding

@@ -273,6 +273,48 @@ let funcs_with_bare_name ~(func_lookup : Func_lookup.t)
     ~(all_funcs : func_info list) (bare_name : string) : func_info list =
   Func_lookup.funcs_with_bare_name func_lookup ~all_funcs bare_name
 
+let rec parent_path_is_prefix (pre : IL.name option list)
+    (path : IL.name option list) : bool =
+  match pre, path with
+  | [], _ -> true
+  | p :: ps, x :: xs ->
+    Option.equal Function_id.equal_il_name p x
+    && parent_path_is_prefix ps xs
+  | _ :: _, [] -> false
+
+let nearest_scope_entries (entries : Func_lookup.scope_entry list)
+    (caller_parent_path : IL.name option list) : Func_lookup.scope_entry list =
+  let in_scope =
+    List.filter
+      (fun (entry : Func_lookup.scope_entry) ->
+        parent_path_is_prefix entry.Func_lookup.parent_path caller_parent_path)
+      entries
+  in
+  let depth (entry : Func_lookup.scope_entry) : int =
+    List.length entry.Func_lookup.parent_path
+  in
+  match in_scope with
+  | [] -> []
+  | first :: rest ->
+    let nearest =
+      List.fold_left
+        (fun (deepest : int) (entry : Func_lookup.scope_entry) ->
+          max deepest (depth entry))
+        (depth first) rest
+    in
+    List.filter
+      (fun (entry : Func_lookup.scope_entry) ->
+        Int.equal (depth entry) nearest)
+      in_scope
+
+type call_site_resolver =
+  ?func_lookup:Func_lookup.t ->
+  ?caller_parent_path:IL.name option list ->
+  ?call_arity:int ->
+  ?allow_constructor:bool ->
+  G.expr ->
+  fn_id option
+
 (* Bare-name narrowing of [all_funcs] is required for tractability. *)
 let rec identify_callee ~(lang : Lang.t)
     ?(all_funcs = [])
@@ -889,3 +931,287 @@ let rec identify_callee ~(lang : Lang.t)
                   (G.show_expr callee));
             None
 
+type binding_target =
+  | Bound_module of Names.Module_qn.t
+  | Bound_class of Names.Class_qn.t
+  | Bound_functions of func_info list
+
+let rec dotted_chain_of_expr (e : G.expr) : string list option =
+  match e.G.e with
+  | G.N name -> dotted_chain_of_name name
+  | G.DotAccess (receiver, _, G.FN (G.Id ((segment, _), _))) ->
+    Option.map
+      (fun (chain : string list) -> chain @ [ segment ])
+      (dotted_chain_of_expr receiver)
+  | _ -> None
+
+and dotted_chain_of_name (name : G.name) : string list option =
+  match name with
+  | G.Id ((segment, _), _) -> Some [ segment ]
+  | G.IdQualified { name_last = ((last, _), _); name_middle = None;
+                    name_top = None; _ } -> Some [ last ]
+  | G.IdQualified { name_last = ((last, _), _);
+                    name_middle = Some (G.QDots middle);
+                    name_top = None; _ } ->
+    Some
+      (List.map (fun (((segment, _), _) : G.ident * _) -> segment) middle
+       @ [ last ])
+  | G.IdQualified _ -> None
+
+let entries_in_scope ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (name : string)
+    : Func_lookup.scope_entry list =
+  nearest_scope_entries
+    (Func_lookup.resolve_in_scope func_lookup name) caller_parent_path
+
+let class_in_scope ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (name : string)
+    : Names.Class_qn.t option =
+  Func_lookup.class_of_entries
+    (entries_in_scope ~func_lookup ~caller_parent_path name)
+
+let head_binding ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (segment : string)
+    : binding_target option =
+  match class_in_scope ~func_lookup ~caller_parent_path segment with
+  | Some (class_qn : Names.Class_qn.t) -> Some (Bound_class class_qn)
+  | None ->
+    Option.map
+      (fun (qn : Names.Module_qn.t) -> Bound_module qn)
+      (Func_lookup.resolve_alias func_lookup segment)
+
+let attribute_of ~(func_lookup : Func_lookup.t) (target : binding_target)
+    (segment : string) : binding_target option =
+  match target with
+  | Bound_module (module_qn : Names.Module_qn.t) -> (
+    match Func_lookup.module_attribute func_lookup module_qn segment with
+    | Some (Func_lookup.Attr_functions funcs) -> Some (Bound_functions funcs)
+    | Some (Func_lookup.Attr_class class_qn) -> Some (Bound_class class_qn)
+    | Some (Func_lookup.Attr_module submodule_qn) ->
+      Some (Bound_module submodule_qn)
+    | None -> None)
+  | Bound_class (class_qn : Names.Class_qn.t) -> (
+    match
+      Func_lookup.find_along_order func_lookup
+        (Func_lookup.resolution_order func_lookup class_qn) [ segment ]
+    with
+    | [] -> None
+    | (_ :: _) as funcs -> Some (Bound_functions funcs))
+  | Bound_functions _ -> None
+
+let follow_chain ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list) (chain : string list)
+    : binding_target option =
+  match chain with
+  | [] -> None
+  | head :: segments ->
+    List.fold_left
+      (fun (target : binding_target option) (segment : string) ->
+        Option.bind target (fun target ->
+          attribute_of ~func_lookup target segment))
+      (head_binding ~func_lookup ~caller_parent_path head) segments
+
+let constructor_of_class ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
+    (class_qn : Names.Class_qn.t) : func_info list =
+  Func_lookup.find_along_order func_lookup
+    (Func_lookup.resolution_order func_lookup class_qn)
+    (Object_initialization.get_constructor_names lang)
+
+let enclosing_class_qn ~(func_lookup : Func_lookup.t)
+    (caller_parent_path : IL.name option list) : Names.Class_qn.t option =
+  Option.bind (Func_info.enclosing_class caller_parent_path)
+    (Func_lookup.class_qn_of_definition func_lookup)
+
+let caller_file_of_parent_path (caller_parent_path : IL.name option list)
+    : string option =
+  let rec first_located (path : IL.name option list) : string option =
+    match path with
+    | [] -> None
+    | None :: rest -> first_located rest
+    | Some (name : IL.name) :: rest ->
+      let tok = snd name.IL.ident in
+      if Tok.is_fake tok then first_located rest
+      else
+        try Some (Fpath.to_string (Tok.file_of_tok tok))
+        with Tok.NoTokenLocation _ -> first_located rest
+  in
+  first_located caller_parent_path
+
+let id_info_of_name (name : G.name) : G.id_info =
+  match name with
+  | G.Id (_, id_info) -> id_info
+  | G.IdQualified { name_info; _ } -> name_info
+
+let class_qn_of_resolution ~(func_lookup : Func_lookup.t) (name : G.name)
+    : Names.Class_qn.t option =
+  match !((id_info_of_name name).G.id_resolved) with
+  | Some ((G.ImportedEntity parts | G.GlobalName (parts, _)), _) ->
+    let class_qn = Names.Class_qn.of_parts parts in
+    if Func_lookup.is_known_class func_lookup class_qn then Some class_qn
+    else None
+  | Some _
+  | None -> None
+
+let class_qn_in_module_of ~(func_lookup : Func_lookup.t)
+    ~(owner : Names.Class_qn.t) (bare_name : string)
+    : Names.Class_qn.t option =
+  match Names.Class_qn.split_last owner with
+  | None -> None
+  | Some ((parent : Names.Class_qn.t), _) -> (
+    match
+      Func_lookup.module_attribute func_lookup
+        (Names.Module_qn.of_string (Names.Class_qn.to_string parent)) bare_name
+    with
+    | Some (Func_lookup.Attr_class (class_qn : Names.Class_qn.t)) -> Some class_qn
+    | Some (Func_lookup.Attr_functions _)
+    | Some (Func_lookup.Attr_module _)
+    | None -> None)
+
+let class_qn_of_type_name ~(func_lookup : Func_lookup.t)
+    ~(caller_parent_path : IL.name option list)
+    ~(owner : Names.Class_qn.t option) (name : G.name)
+    : Names.Class_qn.t option =
+  match class_qn_of_resolution ~func_lookup name with
+  | Some _ as resolved -> resolved
+  | None ->
+    Option.bind (Ty_bare_name.bare_name_of_name name)
+      (fun (bare_name : string) ->
+        match
+          Option.bind owner (fun (owner : Names.Class_qn.t) ->
+            class_qn_in_module_of ~func_lookup ~owner bare_name)
+        with
+        | Some _ as resolved -> resolved
+        | None -> class_in_scope ~func_lookup ~caller_parent_path bare_name)
+
+let rec receiver_class_qn ~(lang : Lang.t) ~(func_lookup : Func_lookup.t)
+    ~(type_state : Type_state.t)
+    ~(caller_parent_path : IL.name option list) (receiver : G.expr)
+    : Names.Class_qn.t option =
+  let of_receiver = receiver_class_qn ~lang ~func_lookup ~type_state
+      ~caller_parent_path in
+  match receiver.G.e with
+  | G.IdSpecial ((G.This | G.Self), _) ->
+    enclosing_class_qn ~func_lookup caller_parent_path
+  | G.N (G.Id ((name, _), id_info)) ->
+    if Receiver.is_self_name lang name then
+      enclosing_class_qn ~func_lookup caller_parent_path
+    else
+      Option.bind
+        (Option.bind (Ty_bare_name.instance_or_declared_type id_info)
+           Ty_bare_name.qualified_class_name_of_ty)
+        (class_qn_of_type_name ~func_lookup ~caller_parent_path ~owner:None)
+  | G.Call (callee, _) -> (
+    match
+      Option.bind (dotted_chain_of_expr callee)
+        (follow_chain ~func_lookup ~caller_parent_path)
+    with
+    | Some (Bound_class (class_qn : Names.Class_qn.t)) -> Some class_qn
+    | Some (Bound_functions _)
+    | Some (Bound_module _)
+    | None -> (
+      match callee.G.e with
+      | G.DotAccess (inner, _, G.FN (G.Id ((method_name, _), _))) ->
+        Option.bind (of_receiver inner) (fun (owner : Names.Class_qn.t) ->
+          Option.bind
+            (Type_state.method_return type_state
+               ~class_name:(Names.Class_qn.bare_name owner)
+               ~method_name)
+            (class_qn_of_type_name ~func_lookup ~caller_parent_path
+               ~owner:(Some owner)))
+      | _ -> None))
+  | G.DotAccess (inner, _, G.FN (G.Id ((field_name, _), _))) ->
+    Option.bind (of_receiver inner) (fun (owner : Names.Class_qn.t) ->
+      Option.bind
+        (Type_state.field_type_for_caller type_state
+           ~class_name:(Names.Class_qn.bare_name owner) ~field_name
+           ~caller_dir:
+             (Option.map Filename.dirname
+                (caller_file_of_parent_path caller_parent_path)))
+        (class_qn_of_type_name ~func_lookup ~caller_parent_path
+               ~owner:(Some owner)))
+  | _ -> None
+
+let is_super_call (e : G.expr) : bool =
+  match e.G.e with
+  | G.Call ({ G.e = G.N (G.Id (("super", _), _)); _ }, _) -> true
+  | _ -> false
+
+let identify_callee_interfile ~(lang : Lang.t)
+    ~(type_state : Type_state.t)
+    ?(func_lookup : Func_lookup.t = Func_lookup.empty)
+    ?(caller_parent_path : IL.name option list = [])
+    ?(call_arity : int option) ?(allow_constructor = true)
+    (callee : G.expr) : fn_id option =
+  let pick (matches : func_info list) : fn_id option =
+    pick_by_arity
+      ~overload_groups:(Func_lookup.overload_groups func_lookup)
+      ~lang call_arity matches
+  in
+  let along_order (class_qn : Names.Class_qn.t) (method_name : string)
+      : fn_id option =
+    pick
+      (Func_lookup.find_along_order func_lookup
+         (Func_lookup.resolution_order func_lookup class_qn) [ method_name ])
+  in
+  let of_target (target : binding_target option) : fn_id option =
+    match target with
+    | Some (Bound_functions funcs) -> pick funcs
+    | Some (Bound_class class_qn) ->
+      if allow_constructor then
+        pick (constructor_of_class ~lang ~func_lookup class_qn)
+      else None
+    | Some (Bound_module _)
+    | None -> None
+  in
+  let of_bare_name (id : string) : fn_id option =
+    let nearest = entries_in_scope ~func_lookup ~caller_parent_path id in
+    match Func_lookup.class_of_entries nearest with
+    | Some (class_qn : Names.Class_qn.t) ->
+      of_target (Some (Bound_class class_qn))
+    | None -> pick (Func_lookup.functions_of_entries nearest)
+  in
+  match callee.G.e with
+  | G.N (G.Id ((id, _), _id_info)) -> of_bare_name id
+  | G.N (G.IdQualified
+           { name_last = ((id, _), _typeargs); name_middle = None;
+             name_top = None; _ }) -> of_bare_name id
+  | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _)))
+    when is_super_call receiver -> (
+    match enclosing_class_qn ~func_lookup caller_parent_path with
+    | None -> None
+    | Some (class_qn : Names.Class_qn.t) -> (
+      match Func_lookup.resolution_order func_lookup class_qn with
+      | [] | [ _ ] -> None
+      | _ :: after_self ->
+        pick (Func_lookup.find_along_order func_lookup after_self
+                [ method_name ])))
+  | G.DotAccess ({ G.e = G.IdSpecial ((G.This | G.Self), _); _ }, _,
+                 G.FN (G.Id ((method_name, _), _))) -> (
+    match enclosing_class_qn ~func_lookup caller_parent_path with
+    | None -> None
+    | Some (class_qn : Names.Class_qn.t) -> along_order class_qn method_name)
+  | G.DotAccess ({ G.e = G.N (G.Id ((receiver_name, _), _)); _ },
+                 _, G.FN (G.Id ((method_name, _), _)))
+    when Receiver.is_self_name lang receiver_name -> (
+    match enclosing_class_qn ~func_lookup caller_parent_path with
+    | None -> None
+    | Some (class_qn : Names.Class_qn.t) -> along_order class_qn method_name)
+  | G.DotAccess (receiver, _, G.FN (G.Id ((method_name, _), _))) -> (
+    match
+      of_target
+        (Option.bind (dotted_chain_of_expr callee)
+        (follow_chain ~func_lookup ~caller_parent_path))
+    with
+    | Some _ as resolved -> resolved
+    | None -> (
+      match
+        receiver_class_qn ~lang ~func_lookup ~type_state ~caller_parent_path
+          receiver
+      with
+      | None -> None
+      | Some (class_qn : Names.Class_qn.t) -> along_order class_qn method_name))
+  | G.N (G.IdQualified _) ->
+    of_target
+      (Option.bind (dotted_chain_of_expr callee)
+         (follow_chain ~func_lookup ~caller_parent_path))
+  | _ -> None

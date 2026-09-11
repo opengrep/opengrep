@@ -1,3 +1,6 @@
+from outer_gated import outer_gated
+from sink import sink
+
 def gated_must_not_fire_outer_else():
     # data[0] = 1 -> outer takes else, returns "" with no taint.
     # ok: test-guards-disjoint

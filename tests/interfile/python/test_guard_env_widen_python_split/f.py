@@ -1,3 +1,5 @@
+from sink import sink
+
 def f(a, b, x):
     g = ""
     g2 = ""

@@ -1,3 +1,5 @@
+from sink import sink
+
 def s(flag, x):
     g = ""
     if flag == 2:

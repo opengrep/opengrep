@@ -5,5 +5,15 @@ class Fire:
 
 class Util:
     @staticmethod
-    def emit(self, f):
+    def emit(self, f: Fire):
         f.fire(source())
+
+class Smoke:
+    def smoke(self, payload):
+        # ok: receiver-static-self-named
+        sink(payload)
+
+class Untyped:
+    @staticmethod
+    def emit_untyped(self, s):
+        s.smoke(source())

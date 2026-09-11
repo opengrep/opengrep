@@ -1,0 +1,17 @@
+rules:
+  - id: relative-import-binds-function
+    languages: [python]
+    severity: ERROR
+    message: >
+      Two modules define a function named [get]. The module inside the
+      package reaches its sibling through the relative import
+      [from .helpers import get], and the module at the project root
+      reaches the root module through [from helpers import get]. Each
+      call site resolves to the definition its own import names.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

@@ -38,14 +38,17 @@ let build_reexport_map ~(cfg : Index_lang_rules.t)
     List.iter (fun (fi : Types.file_info) ->
       if cfg.Index_lang_rules.is_init_file fi.fi_file then
         let pkg = fi.fi_module_path in
-        List.iter (fun (local, target) ->
-          let bound =
-            if Names.Module_qn.is_empty pkg
-            then Names.Module_qn.of_string local
-            else Names.Module_qn.concat pkg local
-          in
-          if not (Names.Module_qn.equal bound target) then
-            Hashtbl.replace reexport_map bound target
+        List.iter (fun (imp : Types.import) ->
+          match Imports.binding_of imp with
+          | Imports.Wildcard_from _ -> ()
+          | Imports.Named_binding { local; target } ->
+            let bound =
+              if Names.Module_qn.is_empty pkg
+              then Names.Module_qn.of_string local
+              else Names.Module_qn.concat pkg local
+            in
+            if not (Names.Module_qn.equal bound target) then
+              Hashtbl.replace reexport_map bound target
         ) fi.fi_imports
     ) file_infos;
     reexport_map
@@ -113,22 +116,32 @@ let dunder_all_of_ast (ast : G.program) : (string, unit) Hashtbl.t option =
     List.iter (fun n -> Hashtbl.replace tbl n ()) names;
     Some tbl
 
+let build_dunder_all ~(file_infos : Types.file_info list)
+  : (string, unit) Hashtbl.t Common.SMap.t =
+  List.fold_left
+    (fun (declared : (string, unit) Hashtbl.t Common.SMap.t)
+         (fi : Types.file_info) ->
+      match dunder_all_of_ast fi.Types.fi_ast with
+      | None -> declared
+      | Some (names : (string, unit) Hashtbl.t) ->
+        Common.SMap.add
+          (Names.Module_qn.to_string fi.Types.fi_module_path) names declared)
+    Common.SMap.empty file_infos
+
+let star_exported ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
+    (target : Names.Module_qn.t) (name : string) : bool =
+  match
+    Common.SMap.find_opt (Names.Module_qn.to_string target) dunder_all
+  with
+  | Some (names : (string, unit) Hashtbl.t) -> Hashtbl.mem names name
+  | None -> String.length name > 0 && not (Char.equal name.[0] '_')
+
 let resolve_into_module_index
     ~(project_funcs_by_module
       : (Names.Module_qn.t, FA.func_info list) Hashtbl.t)
+    ~(dunder_all : (string, unit) Hashtbl.t Common.SMap.t)
     (file_infos : Types.file_info list)
     : (Names.Module_qn.t * FA.func_info list) list =
-  (* [__all__] name-set per module that declares one; consulted by the
-     wildcard branch. *)
-  let dunder_all_by_module : (Names.Module_qn.t, (string, unit) Hashtbl.t)
-      Hashtbl.t =
-    Hashtbl.create (List.length file_infos)
-  in
-  List.iter (fun (fi : Types.file_info) ->
-    match dunder_all_of_ast fi.Types.fi_ast with
-    | Some names -> Hashtbl.replace dunder_all_by_module fi.fi_module_path names
-    | None -> ()
-  ) file_infos;
   (* Additions as a Map overlay so chained re-exports see prior additions;
      the base table is only read. *)
   let lookup overlay qn =
@@ -144,25 +157,17 @@ let resolve_into_module_index
   let one_pass overlay =
     List.fold_left (fun acc (fi : Types.file_info) ->
       List.fold_left (fun ((overlay, n_added, n_wildcard) as acc)
-                        (local, target_qn) ->
-        if String.equal local "*" then
+                        (imp : Types.import) ->
+        match Imports.binding_of imp with
+        | Imports.Wildcard_from (target_qn : Names.Module_qn.t) ->
           (* [from M import *] brings in exactly [M.__all__] when M
              declares one (INCLUDING [_]-prefixed names it lists, and
              EXCLUDING public names it omits); otherwise it falls back to
              "every name not starting with [_]" (Python's default). *)
-          let exported =
-            match Hashtbl.find_opt dunder_all_by_module target_qn with
-            | Some names ->
-              (fun name_str ->
-                 Hashtbl.mem names name_str)
-            | None ->
-              (fun name_str ->
-                 String.length name_str > 0
-                 && Char.equal name_str.[0] '_' = false)
-          in
           let public = List.filter (fun (func : FA.func_info) ->
             match Func_info.as_free func.FA.fn_id with
-            | Some name -> exported (fst name.IL.ident)
+            | Some name ->
+              star_exported ~dunder_all target_qn (fst name.IL.ident)
             | None -> false
           ) (lookup overlay target_qn) in
           if public = [] then acc
@@ -171,7 +176,7 @@ let resolve_into_module_index
             let merged, n = merge_dedup ~cur ~newcomers:public in
             (MQMap.add fi.fi_module_path merged overlay,
              n_added + n, n_wildcard + n)
-        else
+        | Imports.Named_binding { local; target = target_qn } ->
         match Names.Module_qn.split_last target_qn with
         | Some (target_mod, target_name)
           when not (Names.Module_qn.is_empty target_mod) ->

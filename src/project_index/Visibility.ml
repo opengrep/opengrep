@@ -78,8 +78,9 @@ let for_file
      | Some pkg_names ->
        Hashtbl.iter (fun name () -> Hashtbl.replace visible name ()) pkg_names
      | None -> ());
-  List.iter (fun (local, target) ->
-    if String.equal local "*" then
+  List.iter (fun (imp : Types.import) ->
+    match Imports.binding_of imp with
+    | Imports.Wildcard_from (target : Names.Module_qn.t) ->
       (* ImportAll: target's free funcs visible by bare name, else callee is
          pruned. Deliberately keeps [_]-prefixed names (unlike [Reexports]):
          visibility only prunes candidates, so over-approximating is safe. *)
@@ -90,7 +91,7 @@ let for_file
            match Func_info.as_free func.FA.fn_id with
            | Some name -> Hashtbl.replace visible (fst name.IL.ident) ()
            | None -> ()) funcs)
-    else
+    | Imports.Named_binding { local; target = _ } ->
       Hashtbl.replace visible local ()
   ) fi.Types.fi_imports;
   let add_name ent =

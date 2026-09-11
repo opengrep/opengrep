@@ -22,6 +22,63 @@ type class_alias_index = (string, string * name_set) Hashtbl.t
 
 type constructor_index = Func_info.t list Common.SMap.t
 
+type module_attribute =
+  | Attr_functions of Func_info.t list
+  | Attr_class of Names.Class_qn.t
+  | Attr_module of Names.Module_qn.t
+
+type module_attributes = module_attribute Common.SMap.t Common.SMap.t
+
+type resolution_orders = Names.Class_qn.t list Common.SMap.t
+
+module Class_qn_map = Map.Make (struct
+  type t = Names.Class_qn.t
+  let compare = Names.Class_qn.compare
+end)
+
+type methods_by_class = Func_info.t list Common.SMap.t Class_qn_map.t
+
+type class_qn_by_definition =
+  (Function_id.t * Names.Class_qn.t) list Common.SMap.t
+
+let attributes_of_module (attributes : module_attributes)
+    (qn : Names.Module_qn.t) : module_attribute Common.SMap.t =
+  Option.value
+    (Common.SMap.find_opt (Names.Module_qn.to_string qn) attributes)
+    ~default:Common.SMap.empty
+
+type scope_kind =
+  | Scope_function of Func_info.t
+  | Scope_class of Names.Class_qn.t
+
+type scope_entry = {
+  kind : scope_kind;
+  parent_path : IL.name option list;
+}
+
+type scope_table = scope_entry list Common.SMap.t
+
+let scope_table_of_map (bindings : scope_entry list Common.SMap.t)
+    : scope_table = bindings
+
+let class_of_entries (entries : scope_entry list) : Names.Class_qn.t option =
+  List.find_map
+    (fun (entry : scope_entry) ->
+      match entry.kind with
+      | Scope_class (class_qn : Names.Class_qn.t) -> Some class_qn
+      | Scope_function _ -> None)
+    entries
+
+let functions_of_entries (entries : scope_entry list) : Func_info.t list =
+  List.filter_map
+    (fun (entry : scope_entry) ->
+      match entry.kind with
+      | Scope_function (func : Func_info.t) -> Some func
+      | Scope_class _ -> None)
+    entries
+
+let empty_scope_table : scope_table = Common.SMap.empty
+
 let bare_name_index_of_hashtbl tbl = Table tbl
 let bare_name_index_layered ~front ~back = Layered (front, back)
 let bare_name_index_override ~front ~back = Override (front, back)
@@ -99,9 +156,66 @@ type t = {
      so a same-arity tie resolves to it; a single-file graph has no such
      union and gives up on the tie. *)
   overload_groups : bool;
+  scope_table : scope_table;
+  module_attributes : module_attributes;
+  resolution_orders : resolution_orders;
+  class_qn_by_definition : class_qn_by_definition;
+  methods_by_class : methods_by_class;
 }
 
 let overload_groups (t : t) : bool = t.overload_groups
+
+let resolve_in_scope (t : t) (name : string) : scope_entry list =
+  Option.value (Common.SMap.find_opt name t.scope_table) ~default:[]
+
+let module_attribute (t : t) (qn : Names.Module_qn.t) (name : string)
+    : module_attribute option =
+  Common.SMap.find_opt name (attributes_of_module t.module_attributes qn)
+
+let resolution_order (t : t) (class_qn : Names.Class_qn.t)
+    : Names.Class_qn.t list =
+  Option.value
+    (Common.SMap.find_opt (Names.Class_qn.to_string class_qn)
+       t.resolution_orders)
+    ~default:[]
+
+let is_known_class (t : t) (class_qn : Names.Class_qn.t) : bool =
+  Common.SMap.mem (Names.Class_qn.to_string class_qn) t.resolution_orders
+
+let class_qn_of_definition (t : t) (definition : IL.name)
+    : Names.Class_qn.t option =
+  match
+    Common.SMap.find_opt (fst definition.IL.ident) t.class_qn_by_definition
+  with
+  | None -> None
+  | Some (classes : (Function_id.t * Names.Class_qn.t) list) ->
+    Option.map snd
+      (List.find_opt
+         (fun (((id : Function_id.t), _) :
+                 Function_id.t * Names.Class_qn.t) ->
+           Function_id.equal_name id definition)
+         classes)
+
+let find_along_order (t : t) (order : Names.Class_qn.t list)
+    (names : string list) : Func_info.t list =
+  let bound_on (class_qn : Names.Class_qn.t) : Func_info.t list =
+    match Class_qn_map.find_opt class_qn t.methods_by_class with
+    | None -> []
+    | Some (by_name : Func_info.t list Common.SMap.t) ->
+      List.concat_map
+        (fun (name : string) ->
+          Option.value (Common.SMap.find_opt name by_name) ~default:[])
+        names
+  in
+  let rec first_binder (order : Names.Class_qn.t list) : Func_info.t list =
+    match order with
+    | [] -> []
+    | class_qn :: rest -> (
+      match bound_on class_qn with
+      | [] -> first_binder rest
+      | (_ :: _) as found -> found)
+  in
+  first_binder order
 
 let empty = {
   funcs_by_name = None;
@@ -116,6 +230,11 @@ let empty = {
   constructors = None;
   project_constructors = None;
   overload_groups = false;
+  scope_table = empty_scope_table;
+  module_attributes = Common.SMap.empty;
+  resolution_orders = Common.SMap.empty;
+  class_qn_by_definition = Common.SMap.empty;
+  methods_by_class = Class_qn_map.empty;
 }
 
 let create
@@ -123,7 +242,12 @@ let create
     ?funcs_by_module_qn ?alias_to_module_qn
     ?same_file_funcs_by_name ?funcs_by_package ?file_module_qn
     ?local_imports ?class_aliases ?constructors ?project_constructors
-    ?(overload_groups = false) () =
+    ?(overload_groups = false)
+    ~(module_attributes : module_attributes)
+    ~(resolution_orders : resolution_orders)
+    ~(class_qn_by_definition : class_qn_by_definition)
+    ~(methods_by_class : methods_by_class)
+    ~(scope_table : scope_table) () =
   { funcs_by_name;
     project_funcs_by_name;
     funcs_by_module_qn;
@@ -135,7 +259,12 @@ let create
     class_aliases;
     constructors;
     project_constructors;
-    overload_groups }
+    overload_groups;
+    scope_table;
+    module_attributes;
+    resolution_orders;
+    class_qn_by_definition;
+    methods_by_class }
 
 (* [None] when the name is not an import alias for a class. *)
 let resolve_class_alias t name =

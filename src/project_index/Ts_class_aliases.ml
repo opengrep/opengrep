@@ -36,9 +36,15 @@ let add_class_body_aliases
       match List.find_opt (defined_in fi.Types.fi_file) (free_named name) with
       | Some _ as same_file -> same_file
       | None ->
-        (match List.assoc_opt name fi.Types.fi_imports with
+        (match
+           List.find_opt
+             (fun (imp : Types.import) ->
+               String.equal imp.Types.im_local name)
+             fi.Types.fi_imports
+         with
          | None -> None
-         | Some target_qn ->
+         | Some (imp : Types.import) ->
+           let target_qn = imp.Types.im_target in
            (match Names.Module_qn.split_last target_qn with
             | None -> None
             | Some (target_mod, target_name) ->

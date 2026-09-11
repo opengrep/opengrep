@@ -20,6 +20,44 @@ type class_alias_index
    were given. *)
 type constructor_index
 
+type module_attribute =
+  | Attr_functions of Func_info.t list
+  | Attr_class of Names.Class_qn.t
+  | Attr_module of Names.Module_qn.t
+
+type module_attributes = module_attribute Common.SMap.t Common.SMap.t
+
+type resolution_orders = Names.Class_qn.t list Common.SMap.t
+
+module Class_qn_map : Map.S with type key = Names.Class_qn.t
+
+type methods_by_class = Func_info.t list Common.SMap.t Class_qn_map.t
+
+type class_qn_by_definition =
+  (Function_id.t * Names.Class_qn.t) list Common.SMap.t
+
+val attributes_of_module :
+  module_attributes -> Names.Module_qn.t -> module_attribute Common.SMap.t
+
+type scope_kind =
+  | Scope_function of Func_info.t
+  | Scope_class of Names.Class_qn.t
+
+type scope_entry = {
+  kind : scope_kind;
+  parent_path : IL.name option list;
+}
+
+type scope_table
+
+val scope_table_of_map : scope_entry list Common.SMap.t -> scope_table
+
+val class_of_entries : scope_entry list -> Names.Class_qn.t option
+
+val functions_of_entries : scope_entry list -> Func_info.t list
+
+val empty_scope_table : scope_table
+
 val bare_name_index_layered : front:bare_name_index -> back:bare_name_index -> bare_name_index
 val bare_name_index_override : front:bare_name_index -> back:bare_name_index -> bare_name_index
 val bare_name_index_of_hashtbl :
@@ -65,11 +103,30 @@ val create :
   ?constructors : constructor_index ->
   ?project_constructors : constructor_index ->
   ?overload_groups : bool ->
+  module_attributes : module_attributes ->
+  resolution_orders : resolution_orders ->
+  class_qn_by_definition : class_qn_by_definition ->
+  methods_by_class : methods_by_class ->
+  scope_table : scope_table ->
   unit -> t
 
 (* Whether the index widened overload groups to their union, so that a
    same-arity tie resolves to the group's representative. *)
 val overload_groups : t -> bool
+
+val resolve_in_scope : t -> string -> scope_entry list
+
+val module_attribute :
+  t -> Names.Module_qn.t -> string -> module_attribute option
+
+val resolution_order : t -> Names.Class_qn.t -> Names.Class_qn.t list
+
+val is_known_class : t -> Names.Class_qn.t -> bool
+
+val class_qn_of_definition : t -> IL.name -> Names.Class_qn.t option
+
+val find_along_order :
+  t -> Names.Class_qn.t list -> string list -> Func_info.t list
 
 (* [None] when the name is not an import alias bound to a class. *)
 val resolve_class_alias : t -> string -> (string * name_set) option

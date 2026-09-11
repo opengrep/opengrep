@@ -65,6 +65,7 @@ end
 
 module Class_qn = Make_dotted ()
 module Module_qn = Make_dotted ()
+module Def_qn = Make_dotted ()
 module Class_name = Make_simple ()
 module Method_name = Make_simple ()
 module Field_name = Make_simple ()

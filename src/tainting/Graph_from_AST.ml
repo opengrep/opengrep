@@ -191,9 +191,10 @@ let memo_lookup_or_compute (memo_tbl : callee_memo)
   result
 
 let extract_calls ~(lang : Lang.t)
+    ~(identify_callee : Callee_resolution.call_site_resolver)
+    ~(identify_callback : Callback_extraction.callback_site_resolver)
     ?(all_funcs = [])
     ~(func_lookup : Func_lookup.t)
-    ?(type_state : Type_state.t = Type_state.empty)
     ?(caller_parent_path = [])
     (fdef : G.function_definition) : fdef_edges =
   Log.debug (fun m -> m "CALL_EXTRACT: Starting extraction for function");
@@ -210,11 +211,13 @@ let extract_calls ~(lang : Lang.t)
         Tok.unsafe_fake_bracket (Tok.unbracket inner_args @ outer_arg)
       in
       extract_hof_callbacks_from_call
-        ~lang ~method_hofs ~function_hofs ~all_funcs ~func_lookup
+        ~lang ~method_hofs ~function_hofs ~identify_callback
+        ~func_lookup
         ~caller_parent_path inner_callee merged
     | _ ->
       extract_hof_callbacks_from_call
-        ~lang ~method_hofs ~function_hofs ~all_funcs ~func_lookup
+        ~lang ~method_hofs ~function_hofs ~identify_callback
+        ~func_lookup
         ~caller_parent_path callee args
   in
   let local_imports : (string, unit) Hashtbl.t = Hashtbl.create 4 in
@@ -264,10 +267,8 @@ let extract_calls ~(lang : Lang.t)
          name passed as an argument ([api.url_for(Google)]) is not a
          construction, and [super(Cls, self)] must not give [Cls.__init__]
          a self-loop. *)
-      (match identify_callee ~lang
-               ~all_funcs ~func_lookup ~type_state ~caller_parent_path
-               ~allow_constructor:false
-               arg_expr with
+      (match identify_callee ~func_lookup ~caller_parent_path
+               ~allow_constructor:false arg_expr with
        | Some fn_id ->
          Log.debug (fun m ->
            m "CALL_EXTRACT: Found unresolved Id that is a function, adding as implicit call");
@@ -278,8 +279,7 @@ let extract_calls ~(lang : Lang.t)
   let memo_tbl : callee_memo = Hashtbl.create 64 in
   let identify_callee_cached ~(call_arity : int) (callee : G.expr) : fn_id option =
     memo_lookup_or_compute memo_tbl ~call_arity callee (fun () ->
-        identify_callee ~lang ~all_funcs
-          ~func_lookup ~type_state ~caller_parent_path ~call_arity callee)
+        identify_callee ~func_lookup ~caller_parent_path ~call_arity callee)
   in
   (* Lang-gated: off where nested lambdas need the enclosing scope. *)
   let skip_nested =
@@ -362,9 +362,7 @@ let extract_calls ~(lang : Lang.t)
             G.{ e = G.N name; e_id = -1; e_range = None;
                 is_implicit_return = false; facts = [] }
           in
-          (match identify_callee ~lang
-                   ~all_funcs ~func_lookup ~type_state
-                   ~caller_parent_path synth with
+          (match identify_callee ~func_lookup ~caller_parent_path synth with
            | Some fn_id ->
              let tok = match name with
                | G.Id ((_, t), _) -> t
@@ -387,10 +385,9 @@ let extract_calls ~(lang : Lang.t)
     callbacks = callbacks;
     unresolved_call_sites = max 0 (total - List.length resolved) }
 
-let extract_decorator_calls ~(lang : Lang.t)
-    ?(all_funcs = [])
+let extract_decorator_calls
+    ~(identify_callee : Callee_resolution.call_site_resolver)
     ~(func_lookup : Func_lookup.t)
-    ?(type_state : Type_state.t = Type_state.empty)
     ?(caller_parent_path = [])
     (attrs : G.attribute list) : (fn_id * Tok.t) list =
   List.fold_left (fun acc (attr : G.attribute) ->
@@ -401,9 +398,7 @@ let extract_decorator_calls ~(lang : Lang.t)
       let call_arity = match _args with
         | (_, args, _) -> List.length args
       in
-      (match identify_callee ~lang ~all_funcs
-               ~func_lookup ~type_state ~caller_parent_path
-               ~call_arity synth with
+      (match identify_callee ~func_lookup ~caller_parent_path ~call_arity synth with
        | Some fn_id ->
          let tok = match name with
            | G.Id ((_, t), _) -> t
@@ -415,10 +410,9 @@ let extract_decorator_calls ~(lang : Lang.t)
   ) [] attrs
   |> dedup_fn_ids
 
-let extract_toplevel_calls ~(lang : Lang.t)
-    ?(all_funcs = [])
+let extract_toplevel_calls
+    ~(identify_callee : Callee_resolution.call_site_resolver)
     ~(func_lookup : Func_lookup.t)
-    ?(type_state : Type_state.t = Type_state.empty)
     (ast : G.program)
   : (fn_id * Tok.t) list =
   (* Clear [local_imports]: not inherited at top level. *)
@@ -427,8 +421,7 @@ let extract_toplevel_calls ~(lang : Lang.t)
   let memo_tbl : callee_memo = Hashtbl.create 64 in
   let identify_callee_cached ~(call_arity : int) (callee : G.expr) : fn_id option =
     memo_lookup_or_compute memo_tbl ~call_arity callee (fun () ->
-        identify_callee ~lang ~all_funcs
-          ~func_lookup ~type_state ~caller_parent_path:[] ~call_arity callee)
+        identify_callee ~func_lookup ~caller_parent_path:[] ~call_arity callee)
   in
   Walker.fold_exprs_in_program ~skip_nested_fdefs:true (fun acc e ->
     match e.G.e with
@@ -456,7 +449,7 @@ let extract_toplevel_calls ~(lang : Lang.t)
 
 let extract_toplevel_hof_callbacks
     ~(lang : Lang.t)
-    ?(all_funcs = [])
+    ~(identify_callback : Callback_extraction.callback_site_resolver)
     ~(func_lookup : Func_lookup.t)
     (ast : G.program) : (fn_id * Tok.t) list =
   (* Filter operator pseudo-calls: PEP 604 unions would emit spurious callback edges. *)
@@ -466,8 +459,8 @@ let extract_toplevel_hof_callbacks
     | G.Call (_, args) ->
       Tok.unbracket args
       |> List.concat_map
-           (try_identify_callback_args ~lang ~all_funcs ~func_lookup
-              ~caller_parent_path:[])
+           (try_identify_callback_args ~lang ~identify_callback
+              ~func_lookup ~caller_parent_path:[])
       |> List.fold_left (fun acc (cb_fn_id, tok, _tmp_opt) ->
         (cb_fn_id, tok) :: acc) acc
     | _ -> acc) [] ast
@@ -499,6 +492,11 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
   let func_lookup =
     Func_lookup.create
       ~constructors:(Func_lookup.constructor_index_of_funcs ~lang funcs)
+      ~module_attributes:Common.SMap.empty
+      ~resolution_orders:Common.SMap.empty
+      ~class_qn_by_definition:Common.SMap.empty
+      ~methods_by_class:Func_lookup.Class_qn_map.empty
+      ~scope_table:Func_lookup.empty_scope_table
       ()
   in
   (* Visit all calls in the AST, tracking the current function context *)
@@ -512,7 +510,15 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
           in
 
           let { calls = callee_calls; callbacks = callback_calls; _ } =
-            extract_calls ~lang ~all_funcs:funcs ~func_lookup
+            extract_calls ~lang
+              ~identify_callee:
+                (Callee_resolution.identify_callee ~lang ~all_funcs:funcs
+                   ~type_state:Type_state.empty)
+              ~identify_callback:
+                (fun ?func_lookup ?caller_parent_path ?scope ?arg:_ name ->
+                  Callback_extraction.identify_callback ~all_funcs:funcs
+                    ?func_lookup ?caller_parent_path ?scope name)
+              ~all_funcs:funcs ~func_lookup
               ~caller_parent_path:fn_id fdef
           in
 
@@ -548,7 +554,11 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
 
   (* Extract calls from top-level code (outside any function) and add edges to <top_level> *)
   let toplevel_calls =
-    extract_toplevel_calls ~lang ~all_funcs:funcs ~func_lookup ast
+    extract_toplevel_calls
+      ~identify_callee:
+        (Callee_resolution.identify_callee ~lang ~all_funcs:funcs
+           ~type_state:Type_state.empty)
+      ~func_lookup ast
   in
   List.iter
     (fun (callee_fn_id, call_tok) ->
@@ -570,7 +580,12 @@ let build_call_graph ~(lang : Lang.t) (ast : G.program)
       | G.IdSpecial (G.Op _, _) -> acc
       | _ ->
         let found = extract_hof_callbacks_from_call
-          ~lang ~method_hofs ~function_hofs ~all_funcs:funcs ~caller_parent_path:[]
+          ~lang ~method_hofs ~function_hofs
+          ~identify_callback:
+            (fun ?func_lookup ?caller_parent_path ?scope ?arg:_ name ->
+              Callback_extraction.identify_callback ~all_funcs:funcs
+                ?func_lookup ?caller_parent_path ?scope name)
+          ~caller_parent_path:[]
           callee args
         in
         found @ acc

@@ -1,3 +1,6 @@
+from outer_shared_compound import outer_shared_compound
+from sink import sink
+
 def shared_compound_must_fire_or_violated():
     # Neither disjunct satisfied -> inner False branch.
     # ruleid: test-guards-disjoint

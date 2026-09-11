@@ -1,3 +1,6 @@
+from outer_disjoint import outer_disjoint
+from sink import sink
+
 def disjoint_must_fire_when_inner_true():
     # len == 2 -> inner takes the True branch.
     # ruleid: test-guards-disjoint

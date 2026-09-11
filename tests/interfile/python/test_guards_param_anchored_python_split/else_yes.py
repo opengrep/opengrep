@@ -1,3 +1,5 @@
+from sink import sink
+
 def else_yes(flag, x):
     if flag:
         pass

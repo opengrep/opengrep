@@ -1,3 +1,9 @@
+from FieldUser import FieldUser
+from IntermethodClass import IntermethodClass
+from User import User
+from intermediateFun import intermediateFun
+from sink_ex import sink_ex
+
 def main():
     user = intermediateFun()
     result = sink_ex(user)

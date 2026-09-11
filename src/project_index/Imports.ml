@@ -5,53 +5,22 @@ module G = AST_generic
 
 open Types
 
-let module_name_string ~(cfg : Index_lang_rules.t)
-    ~(current_module_path : Names.Module_qn.t)
-    ~(is_init_file : bool)
-    (mn : G.module_name) : Names.Module_qn.t =
-  match mn with
-  | G.FileName (spec, _) ->
-    Names.Module_qn.of_string (cfg.Index_lang_rules.normalize_import_specifier spec)
-  | G.DottedName parts ->
-    let prefix_segs, real_parts =
-      let rec split acc = function
-        | ((part_str, _) as seg) :: rest
-          when String.equal part_str "." || String.equal part_str ".." ->
-          split (seg :: acc) rest
-        | rest -> (List.rev acc, rest)
-      in
-      split [] parts
-    in
-    let real_strs = List.map fst real_parts in
-    if prefix_segs = [] then Names.Module_qn.of_parts real_strs
-    else begin
-      (* For a relative import, an [__init__.py] file is itself the package,
-         so the last segment is not dropped. Each extra [.] removes one
-         further level. *)
-      let init_offset = if is_init_file then 0 else 1 in
-      let extra_dotdots =
-        List.fold_left (fun acc (part_str, _) ->
-          if String.equal part_str ".." then acc + 1 else acc
-        ) 0 prefix_segs
-      in
-      let drops = init_offset + extra_dotdots in
-      let pkg_parts =
-        if Names.Module_qn.is_empty current_module_path then []
-        else Names.Module_qn.parts current_module_path
-      in
-      let n_keep = max 0 (List.length pkg_parts - drops) in
-      let kept = List.filteri (fun i _ -> i < n_keep) pkg_parts in
-      Names.Module_qn.of_parts (kept @ real_strs)
-    end
+let wildcard_local : string = "*"
+
+type binding =
+  | Wildcard_from of Names.Module_qn.t
+  | Named_binding of { local : string; target : Names.Module_qn.t }
+
+let binding_of (imp : import) : binding =
+  if String.equal imp.im_local wildcard_local then Wildcard_from imp.im_target
+  else Named_binding { local = imp.im_local; target = imp.im_target }
 
 (* Clojure [(ns x (:require ...))] is one [OtherDirective("NsDirective")] whose
    requires the parser doesn't surface as imports; pull aliases/refers out here. *)
-let collect_clojure_ns_form
-    (st : (string * Names.Module_qn.t) list
-        * (string * string * import_kind) list)
+let collect_clojure_ns_form ~(tok : Tok.t)
+    (st : import list * (string * string * import_kind) list)
     (expr_arg : G.any)
-  : (string * Names.Module_qn.t) list
-    * (string * string * import_kind) list =
+  : import list * (string * string * import_kind) list =
   let id_name (expr : G.expr) : string option =
     match expr.G.e with G.N name -> Ty_bare_name.bare_name_of_name name | _ -> None
   in
@@ -64,11 +33,9 @@ let collect_clojure_ns_form
     | _ -> None
   in
   let is_kwd name expr = match kwd_name expr with Some str -> String.equal str name | None -> false in
-  let add ((acc, specs) :
-           (string * Names.Module_qn.t) list
-           * (string * string * import_kind) list)
+  let add ((acc, specs) : import list * (string * string * import_kind) list)
       (local : string) (target : Names.Module_qn.t) =
-    ((local, target) :: acc, specs)
+    ({ im_local = local; im_target = target; im_tok = tok } :: acc, specs)
   in
   let walk_require_vector st vec_items =
     match vec_items with
@@ -83,8 +50,8 @@ let collect_clojure_ns_form
              (* wildcard [("*", ns_qn)] tells the re-export pass to copy ns_qn's
                 free fns for [(h/handle ...)]. *)
              let st = match id_name value with
-               | Some alias -> add (add st alias ns_qn) "*" ns_qn
-               | None -> add st "*" ns_qn
+               | Some alias -> add (add st alias ns_qn) wildcard_local ns_qn
+               | None -> add st wildcard_local ns_qn
              in
              scan st tail
            | kw :: { G.e = G.Container (G.Array, (_, refs, _)); _ } :: tail
@@ -114,8 +81,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     ~(current_module_path : Names.Module_qn.t)
     ~(is_init_file : bool)
     (ast : G.program) :
-    (string * Names.Module_qn.t) list
-    * (string * string * import_kind) list =
+    import list * (string * string * import_kind) list =
   let raw_specifier = function
     | G.FileName (spec, _) -> spec
     | G.DottedName _ -> ""
@@ -126,11 +92,16 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     then (acc, (local, spec, kind) :: specs)
     else (acc, specs)
   in
-  let add (acc, specs) local target = ((local, target) :: acc, specs) in
+  let add ~(tok : Tok.t) (acc, specs) local target =
+    ({ im_local = local; im_target = target; im_tok = tok } :: acc, specs)
+  in
   let on_directive st (dir : G.directive) =
     match dir.G.d with
-    | G.ImportAs (_, mn, alias_opt) ->
-      let qn = module_name_string ~cfg ~current_module_path ~is_init_file mn in
+    | G.ImportAs (tok, mn, alias_opt) ->
+      let qn =
+        Module_paths.module_name_string ~cfg ~current_module_path ~is_init_file
+          mn
+      in
       let local =
         match alias_opt with
         | Some ((alias, _), _) -> alias
@@ -151,10 +122,13 @@ let collect_imports ~(cfg : Index_lang_rules.t)
       if String.length local > 0 && not (Names.Module_qn.is_empty qn) then
         (* TS/JS default and namespace imports are indistinguishable here;
            treat both as [I_namespace]. *)
-        add_spec (add st local qn) local mn I_namespace
+        add_spec (add ~tok st local qn) local mn I_namespace
       else st
-    | G.ImportFrom (_, mn, names) ->
-      let qn = module_name_string ~cfg ~current_module_path ~is_init_file mn in
+    | G.ImportFrom (tok, mn, names) ->
+      let qn =
+        Module_paths.module_name_string ~cfg ~current_module_path ~is_init_file
+          mn
+      in
       if Names.Module_qn.is_empty qn then st
       else
         List.fold_left (fun st ((name, _), alias_opt) ->
@@ -168,19 +142,22 @@ let collect_imports ~(cfg : Index_lang_rules.t)
             if String.equal name "default" then I_default
             else I_named name
           in
-          add_spec (add st local target) local mn kind
+          add_spec (add ~tok st local target) local mn kind
         ) st names
     (* sentinel [("*", M_qn)] tells the re-export pass to bulk-copy M's free funcs.
        The raw specifier is kept under the same "*" sentinel so file-target
        narrowing can resolve a whole-file import (Ruby [require_relative]) to
        the file(s) it names ([add_spec] drops [DottedName] imports, whose
        specifier is empty). *)
-    | G.ImportAll (_, mn, _) ->
-      let qn = module_name_string ~cfg ~current_module_path ~is_init_file mn in
+    | G.ImportAll (tok, mn, _) ->
+      let qn =
+        Module_paths.module_name_string ~cfg ~current_module_path ~is_init_file
+          mn
+      in
       if Names.Module_qn.is_empty qn then st
-      else add_spec (add st "*" qn) "*" mn I_namespace
-    | G.OtherDirective (("NsDirective", _), exprs) ->
-      List.fold_left collect_clojure_ns_form st exprs
+      else add_spec (add ~tok st wildcard_local qn) wildcard_local mn I_namespace
+    | G.OtherDirective (("NsDirective", tok), exprs) ->
+      List.fold_left (collect_clojure_ns_form ~tok) st exprs
     | _ -> st
   in
   let extract_require_spec (expr : G.expr) : string option =
@@ -203,29 +180,31 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     | None -> st
     | Some rhs ->
       match extract_require_spec rhs, ent.G.name with
-      | Some spec, G.EN (G.Id ((local, _), _))
+      | Some spec, G.EN (G.Id ((local, tok), _))
         when String.length local > 0 ->
         let qn = qn_of_specifier spec in
-        let st = add st local qn in
+        let st = add ~tok st local qn in
         let st = add_spec st local (mk_filename_mn spec) I_default in
         add_spec st local (mk_filename_mn spec) I_namespace
       | Some spec, G.EPattern (G.PatRecord (_, fields, _)) ->
         List.fold_left (fun st (pat_field : G.dotted_ident * G.pattern) ->
           let dotted_name, value_pat = pat_field in
           let key_name = match dotted_name with
-            | (seg, _) :: _ -> Some seg
+            | (seg, tok) :: _ -> Some (seg, tok)
             | [] -> None
           in
-          let local_name = match value_pat with
-            | G.PatId ((id_str, _), _) -> Some id_str
-            | _ -> key_name
+          let local_name = match value_pat, key_name with
+            | G.PatId ((id_str, _), _), _ -> Some id_str
+            | _, Some (seg, _) -> Some seg
+            | _, None -> None
           in
           match key_name, local_name with
-          | Some key, Some local ->
+          | Some (key, tok), Some local ->
             let target =
               Names.Module_qn.concat (Names.Module_qn.of_string spec) key
             in
-            add_spec (add st local target) local (mk_filename_mn spec) (I_named key)
+            add_spec (add ~tok st local target) local (mk_filename_mn spec)
+              (I_named key)
           | _ -> st
         ) st fields
       | _ -> st
@@ -249,7 +228,7 @@ let collect_imports ~(cfg : Index_lang_rules.t)
     (* Spec only — no [("*", qn)] binding, which would opt the file into the
        re-export bulk-copy pass. *)
     | Some spec when String.length spec > 0 ->
-      add_spec st "*" (mk_filename_mn spec) I_namespace
+      add_spec st wildcard_local (mk_filename_mn spec) I_namespace
     | _ -> st
   in
   let acc, specs =

@@ -1,0 +1,17 @@
+rules:
+  - id: package-init-binds-function
+    languages: [python]
+    severity: ERROR
+    message: >
+      A package defines a function named [run] in its [__init__.py], and
+      a module at the project root defines a function of the same name.
+      The qualified name of a definition written in [pkg/__init__.py] is
+      [pkg.run], so [from pkg import run] names it and
+      [from run_mod import run] names the other one.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

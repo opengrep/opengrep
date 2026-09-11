@@ -1,3 +1,6 @@
+from custom_for_each import custom_for_each
+from toplevel_handler import toplevel_handler
+
 # Comprehensive HOF test for Python: Custom higher-order functions
 # All of these should detect taint flow from source() to sink()
 

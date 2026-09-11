@@ -37,6 +37,8 @@ module Class_qn : DOTTED
 (* Dotted module qn; Ruby's [::] is normalised to [.] internally. *)
 module Module_qn : DOTTED
 
+module Def_qn : DOTTED
+
 module Class_name : SIMPLE
 module Method_name : SIMPLE
 module Field_name : SIMPLE

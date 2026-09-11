@@ -23,7 +23,11 @@ type stamp_var_types =
 type required_files_narrowing = {
   narrowable_classes : Names.Class_name.t list;
   rev_path_segs_by_file : string list Common.SMap.t;
-  narrowed_type_state_by_caller_dir : Type_state.t Common.SMap.t;
+}
+
+type file_scope = {
+  scope_table : Func_lookup.scope_table;
+  bound_class_files : (Names.Class_name.t * Fpath.t) list;
 }
 
 type ctx = {
@@ -31,6 +35,14 @@ type ctx = {
   cfg : Index_lang_rules.t;
   type_state : Type_state.t;
   required_files_narrowing : required_files_narrowing option;
+  definitions_by_qn : definition Common.SMap.t;
+  attributes_by_module : Func_lookup.module_attributes;
+  dunder_all : (string, unit) Hashtbl.t Common.SMap.t;
+  resolution_orders : Func_lookup.resolution_orders;
+  class_qn_by_definition : Func_lookup.class_qn_by_definition;
+  methods_by_class : Func_lookup.methods_by_class;
+  classes_by_file : class_info list Common.SMap.t;
+  class_parent_paths : (Function_id.t * IL.name option list) list Common.SMap.t;
   all_funcs : Func_info.t list;
   project_constructors : Func_lookup.constructor_index;
   project_funcs_by_name : (string, Func_info.t list) Hashtbl.t;
@@ -62,19 +74,18 @@ type ctx = {
 val build_value_alias_index :
   Types.file_info list -> (string * string, AST_generic.expr) Hashtbl.t
 
-(* The result lists the directories of the given files, sorted and without
-   repetition. *)
-val distinct_dirs_of_files : Types.file_info list -> string list
-
-(* The result is [type_state] with [narrowable_classes] narrowed to the
-   methods and the defining files in [dir]. A file of that directory
-   resolves its calls against this state when no earlier pass narrowed
-   the state for that file. *)
-val narrowed_type_state_for_dir :
-  type_state:Type_state.t ->
-  narrowable_classes:Names.Class_name.t list ->
-  string ->
-  Type_state.t
+val build_scope_table :
+  lang:Lang.t ->
+  cfg:Index_lang_rules.t ->
+  definitions_by_qn:definition Common.SMap.t ->
+  file_funcs_index:(string, Func_info.t list) Hashtbl.t ->
+  attributes_by_module:Func_lookup.module_attributes ->
+  dunder_all:(string, unit) Hashtbl.t Common.SMap.t ->
+  classes_by_file:class_info list Common.SMap.t ->
+  class_parent_paths:
+    (Function_id.t * IL.name option list) list Common.SMap.t ->
+  file_info ->
+  file_scope option
 
 val edges_for_file :
   ctx -> file_info ->

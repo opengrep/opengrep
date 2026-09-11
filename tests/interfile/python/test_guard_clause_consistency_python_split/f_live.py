@@ -1,3 +1,5 @@
+from sink import sink
+
 def f_live(a, x):
     if a == 1:
         if a == 1:

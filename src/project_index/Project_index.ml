@@ -6,17 +6,117 @@ open Types
 
 module Log = Log_projidx.Log
 
-let module_path ~(cfg : Index_lang_rules.t) ~(project_root : Fpath.t)
-    ?(ast : G.program option) (file : Fpath.t) : Names.Module_qn.t =
-  match Option.bind ast cfg.Index_lang_rules.module_path_from_ast with
-  | Some mod_str -> Names.Module_qn.of_string mod_str
-  | None ->
-    let rel = Discover.relative_to ~project_root file in
-    let path_str = Fpath.rem_ext rel |> Fpath.normalize |> Fpath.to_string in
-    let path_str = cfg.Index_lang_rules.rewrite_module_path path_str in
-    Names.Module_qn.of_string
-      (String.concat "." (Fpath.segs (Fpath.v path_str)))
 module FA = Graph_from_AST
+
+module Function_id_map = Map.Make (struct
+  type t = Function_id.t
+  let compare = Function_id.compare
+end)
+
+let build_funcs_by_id (all_funcs : FA.func_info list)
+    : FA.func_info list Function_id_map.t =
+  List.fold_left
+    (fun (by_id : FA.func_info list Function_id_map.t) (func : FA.func_info) ->
+      match Func_info.bare_name func.FA.fn_id with
+      | None -> by_id
+      | Some (name : IL.name) ->
+        let id = Function_id.of_il_name name in
+        Function_id_map.add id
+          (func :: Option.value (Function_id_map.find_opt id by_id) ~default:[])
+          by_id)
+    Function_id_map.empty all_funcs
+
+let build_class_parent_paths ~(entries : entry list)
+    ~(funcs_by_id : FA.func_info list Function_id_map.t)
+    : (Function_id.t * IL.name option list) list Common.SMap.t =
+  List.fold_left
+    (fun (paths : (Function_id.t * IL.name option list) list Common.SMap.t)
+         (entry : entry) ->
+      match (entry.kind, entry.defining_class_id) with
+      | (K_function | K_class), _
+      | K_method, None -> paths
+      | K_method, Some (class_id : Function_id.t) -> (
+        match Function_id_map.find_opt entry.id funcs_by_id with
+        | None
+        | Some [] -> paths
+        | Some ((func : FA.func_info) :: _) -> (
+          match List_.init_and_last_opt func.FA.fn_id with
+          | None
+          | Some (_, None) -> paths
+          | Some ((parent_path : IL.name option list), Some _) ->
+            let key = Function_id.show class_id in
+            let bound =
+              Option.value (Common.SMap.find_opt key paths) ~default:[]
+            in
+            if
+              List.exists
+                (fun (((bound_id : Function_id.t), _) :
+                        Function_id.t * IL.name option list) ->
+                  Function_id.equal bound_id class_id)
+                bound
+            then paths
+            else Common.SMap.add key ((class_id, parent_path) :: bound) paths)))
+    Common.SMap.empty entries
+
+let build_definitions_by_qn ~(entries : entry list)
+    ~(funcs_by_id : FA.func_info list Function_id_map.t)
+    ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
+    : definition Common.SMap.t =
+  let functions =
+    List.fold_left
+      (fun (by_qn : definition Common.SMap.t) (entry : entry) ->
+        match entry.kind with
+        | K_class -> by_qn
+        | K_function
+        | K_method -> (
+          match Function_id_map.find_opt entry.id funcs_by_id with
+          | None -> by_qn
+          | Some (funcs : FA.func_info list) ->
+            let key = Names.Def_qn.to_string entry.qn in
+            let previous =
+              match Common.SMap.find_opt key by_qn with
+              | Some (Function_definitions earlier) -> earlier
+              | Some (Class_definition _)
+              | None -> []
+            in
+            Common.SMap.add key
+              (Function_definitions (funcs @ previous)) by_qn))
+      Common.SMap.empty entries
+  in
+  let with_classes =
+    List.fold_left
+      (fun (by_qn : definition Common.SMap.t) (entry : entry) ->
+        match entry.kind with
+        | K_function
+        | K_method -> by_qn
+        | K_class ->
+          let qn = Names.Def_qn.to_string entry.qn in
+          Common.SMap.add qn
+            (Class_definition
+               { class_file = entry.file;
+                 class_qn = Names.Class_qn.of_string qn })
+            by_qn)
+      functions entries
+  in
+  Hashtbl.fold
+    (fun (bound : Names.Module_qn.t) (_target : Names.Module_qn.t)
+         (by_qn : definition Common.SMap.t) ->
+      let bound_key = Names.Module_qn.to_string bound in
+        if Common.SMap.mem bound_key by_qn then by_qn
+        else
+          let is_known (qn : Names.Module_qn.t) : bool =
+            Common.SMap.mem (Names.Module_qn.to_string qn) by_qn
+          in
+          match Mro.chase_reexport ~reexport_map ~is_known bound with
+          | None -> by_qn
+          | Some (target : Names.Module_qn.t) -> (
+            match
+              Common.SMap.find_opt (Names.Module_qn.to_string target) by_qn
+            with
+            | None -> by_qn
+            | Some (found : definition) ->
+              Common.SMap.add bound_key found by_qn))
+    reexport_map with_classes
 
 
 (* Maximum number of files processed per parallel work unit.  Batching
@@ -94,13 +194,31 @@ let timed (name : string) (f : unit -> 'a) : 'a =
 
 let build_project_call_graph (caps : < Cap.fork >)
     ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
-    ~(ncores : int)
+    ~(ncores : int) ~(entries : entry list)
     ?(class_infos = [])
     ?(reexport_map = Hashtbl.create 0)
     (file_infos : file_info list)
     : Call_graph.G.t * class_fun_info list * Core_error.t list =
   let skip_anon (opt_ent : G.entity option) =
     not cfg.Index_lang_rules.include_anonymous_funcs && Option.is_none opt_ent
+  in
+  let indexed_entries =
+    List.filter
+      (fun (entry : entry) ->
+        not (cfg.Index_lang_rules.is_stub_file entry.file))
+      entries
+  in
+  let indexed_classes =
+    List.filter
+      (fun (ci : class_info) ->
+        not (cfg.Index_lang_rules.is_stub_file ci.ci_file))
+      class_infos
+  in
+  let indexed_files =
+    List.filter
+      (fun (fi : file_info) ->
+        not (cfg.Index_lang_rules.is_stub_file fi.fi_file))
+      file_infos
   in
   (* The map from a child's simple name to its parent's simple name resolves
      [super().X()] to the parent's method. The map records the first parent's
@@ -300,7 +418,7 @@ let build_project_call_graph (caps : < Cap.fork >)
   let type_state =
     Go_inheritance.lift_embedded_interfaces ~lang file_infos type_state
   in
-  let type_state, inherited_by_class, override_pairs =
+  let type_state, inherited_by_class, override_pairs, class_resolution_orders =
     timed "call graph: inheritance (Mro)" @@ fun () ->
     if cfg.Index_lang_rules.walks_inheritance then
       let cross_module_parents =
@@ -309,8 +427,35 @@ let build_project_call_graph (caps : < Cap.fork >)
         | `Per_directory | `Per_package -> true
       in
       Mro.inherit_into_type_state ~lang ~cross_module_parents ~reexport_map
-        ~class_infos ~func_def_file:Type_augment.func_def_file type_state
-    else (type_state, [], [])
+        ~class_infos:indexed_classes
+        ~func_def_file:Type_augment.func_def_file type_state
+    else (type_state, [], [], [])
+  in
+  let resolution_orders : Func_lookup.resolution_orders =
+    List.fold_left
+      (fun (orders : Func_lookup.resolution_orders)
+           ((class_qn : Names.Class_qn.t), (order : Names.Class_qn.t list)) ->
+        Common.SMap.add (Names.Class_qn.to_string class_qn) order orders)
+      Common.SMap.empty class_resolution_orders
+  in
+  let class_qn_by_definition : Func_lookup.class_qn_by_definition =
+    List.fold_left
+      (fun (by_name : Func_lookup.class_qn_by_definition) (ci : class_info) ->
+        let name = Function_id.show ci.ci_id in
+        Common.SMap.add name
+          ((ci.ci_id, ci.ci_qn)
+           :: Option.value (Common.SMap.find_opt name by_name) ~default:[])
+          by_name)
+      Common.SMap.empty indexed_classes
+  in
+  let classes_by_file : class_info list Common.SMap.t =
+    List.fold_left
+      (fun (by_file : class_info list Common.SMap.t) (ci : class_info) ->
+        let key = Fpath.to_string ci.ci_file in
+        Common.SMap.add key
+          (ci :: Option.value (Common.SMap.find_opt key by_file) ~default:[])
+          by_file)
+      Common.SMap.empty indexed_classes
   in
 
   (* TS/JS class-body aliases [class C { static foo = importedFn }]. *)
@@ -402,10 +547,12 @@ let build_project_call_graph (caps : < Cap.fork >)
   Log.debug (fun m -> m "Per-module func index: %d modules (Per_file only)"
     (Hashtbl.length project_funcs_by_module));
 
+  let dunder_all = Reexports.build_dunder_all ~file_infos in
+
   (* Re-export pass for [`Per_file] languages.  See [Reexports]. *)
   if cfg.Index_lang_rules.unqualified_scope = `Per_file then
     Reexports.resolve_into_module_index
-      ~project_funcs_by_module file_infos
+      ~project_funcs_by_module ~dunder_all file_infos
     |> List.iter (fun (qn, funcs) ->
          Hashtbl.replace project_funcs_by_module qn funcs);
 
@@ -452,43 +599,59 @@ let build_project_call_graph (caps : < Cap.fork >)
             Common.SMap.add file (Path_segs.rev_no_ext file) segs_by_file)
           Common.SMap.empty file_infos
       in
-      let narrowed_type_state_by_caller_dir =
-        timed "call graph: narrow type state per caller dir" @@ fun () ->
-        let caller_dirs = Pipeline.distinct_dirs_of_files file_infos in
-        let narrow_dir (dir : string) : Type_state.t =
-          Pipeline.narrowed_type_state_for_dir ~type_state ~narrowable_classes
-            dir
-        in
-        let dir_type_states =
-          if ncores <= 1 || List.compare_length_with caller_dirs 1 <= 0 then
-            List_.map narrow_dir caller_dirs
-          else
-            Domainslib_.parmap caps
-              ~num_domains:(min ncores (List.length caller_dirs))
-              ~chunksize:1
-              ~exception_handler:(fun (dir : string) (exn : Exception.t) ->
-                (dir, exn))
-              narrow_dir caller_dirs
-            |> List_.map (function
-                 | Ok dir_type_state -> dir_type_state
-                 | Error (_dir, exn) -> Exception.reraise exn)
-        in
-        List.fold_left2
-          (fun (by_caller_dir : Type_state.t Common.SMap.t) (dir : string)
-               (dir_type_state : Type_state.t) ->
-            Common.SMap.add dir dir_type_state by_caller_dir)
-          Common.SMap.empty caller_dirs dir_type_states
-      in
       Some
         { Pipeline.narrowable_classes;
-          rev_path_segs_by_file;
-          narrowed_type_state_by_caller_dir }
+          rev_path_segs_by_file }
+  in
+  let funcs_by_id = build_funcs_by_id all_funcs in
+  let definitions_by_qn =
+    timed "call graph: definitions by qualified name" (fun () ->
+      build_definitions_by_qn ~entries:indexed_entries ~funcs_by_id
+        ~reexport_map)
+  in
+  let class_parent_paths =
+    timed "call graph: class parent paths" (fun () ->
+      build_class_parent_paths ~entries:indexed_entries ~funcs_by_id)
+  in
+  let methods_by_class : Func_lookup.methods_by_class =
+    timed "call graph: methods by class" @@ fun () ->
+    Common.SMap.fold
+      (fun (qn : string) (definition : definition)
+           (by_class : Func_lookup.methods_by_class) ->
+        match definition with
+        | Class_definition _ -> by_class
+        | Function_definitions (funcs : FA.func_info list) -> (
+          match Names.Def_qn.split_last (Names.Def_qn.of_string qn) with
+          | None -> by_class
+          | Some ((owner : Names.Def_qn.t), (name : string)) ->
+            let owner_str = Names.Def_qn.to_string owner in
+            if not (Common.SMap.mem owner_str resolution_orders) then by_class
+            else
+              let class_qn = Names.Class_qn.of_string owner_str in
+              Func_lookup.Class_qn_map.add class_qn
+                (Common.SMap.add name funcs
+                   (Option.value
+                      (Func_lookup.Class_qn_map.find_opt class_qn by_class)
+                      ~default:Common.SMap.empty))
+                by_class))
+      definitions_by_qn Func_lookup.Class_qn_map.empty
   in
   let pipeline_ctx : Pipeline.ctx =
     { Pipeline.lang;
       cfg;
       type_state;
       required_files_narrowing;
+      definitions_by_qn;
+      attributes_by_module =
+        timed "call graph: attributes by module" (fun () ->
+          Func_index.build_attributes_by_module ~dunder_all ~definitions_by_qn
+            ~file_infos:indexed_files);
+      dunder_all;
+      resolution_orders;
+      class_qn_by_definition;
+      methods_by_class;
+      classes_by_file;
+      class_parent_paths;
       all_funcs;
       project_constructors;
       project_funcs_by_name;
@@ -727,9 +890,8 @@ let run_pipeline (caps : < Cap.fork >)
     in
     let ast = reshape_class_defs ast in
     let mp =
-      match Go_modules.import_path_of_dir go_modules (Fpath.parent file) with
-      | Some path -> Names.Module_qn.of_string path
-      | None -> module_path ~cfg ~project_root ~ast file
+      Module_paths.module_qn_of_file ~cfg ~go_modules ~project_root
+        ~ast:(Some ast) file
     in
     Symbols.collect_in_ast ~cfg ~lang ~module_path:mp ~file ast
   in
@@ -795,7 +957,7 @@ let run_pipeline (caps : < Cap.fork >)
   let entries_pre_mro = all_entries @ synth_from_wrappers in
   let graph, inherited_by_class, worker_failures =
     timed "call graph (edges + fixpoint)" @@ fun () ->
-    build_project_call_graph caps ~cfg ~lang ~ncores
+    build_project_call_graph caps ~cfg ~lang ~ncores ~entries:entries_pre_mro
       ~class_infos:all_classes ~reexport_map all_files
   in
   (* Inherited-method entry rows, derived from the same C3 linearisation
@@ -810,7 +972,11 @@ let run_pipeline (caps : < Cap.fork >)
         Option.map (fun (meth : IL.name) ->
           let method_name = fst meth.IL.ident in
           { id = Symbols.synth_function_id ci.ci_id method_name;
-            name = method_name; kind = K_method;
+            name = method_name;
+            qn = Names.Def_qn.concat
+                   (Names.Def_qn.of_string (Names.Class_qn.to_string ci.ci_qn))
+                   method_name;
+            kind = K_method;
             file = ci.ci_file; range = ci.ci_range;
             defining_class_id = Some ci.ci_id })
           (Func_info.bare_name func.Func_info.fn_id))

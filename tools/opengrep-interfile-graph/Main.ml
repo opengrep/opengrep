@@ -156,7 +156,8 @@ let cmd_index (project_root_str : string) (lang_str : string)
     else if dump_all then
       List.iter (fun (entry : PI.Types.entry) ->
         Printf.printf "%s\t%s\t%s\n"
-          (kind_str entry.PI.Types.kind) entry.PI.Types.name (entry_loc entry)
+          (kind_str entry.PI.Types.kind)
+          (Names.Def_qn.to_string entry.PI.Types.qn) (entry_loc entry)
       ) entries
     else if sample > 0 then begin
       Printf.printf "\nSample (%d):\n" sample;

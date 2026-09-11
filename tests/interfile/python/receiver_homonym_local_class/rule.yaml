@@ -1,0 +1,14 @@
+rules:
+  - id: receiver-homonym-local-class
+    options:
+      taint_interfile: true
+    mode: taint
+    languages:
+      - python
+    message: |
+      Taint reaches a sink across files
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+    severity: ERROR

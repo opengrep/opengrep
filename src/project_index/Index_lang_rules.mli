@@ -9,6 +9,7 @@ type wrapper = {
 
 type t = {
   is_init_file : Fpath.t -> bool;
+  is_stub_file : Fpath.t -> bool;
   rewrite_module_path : string -> string;
   module_path_from_ast : G.program -> string option;
   normalize_import_specifier : string -> string;

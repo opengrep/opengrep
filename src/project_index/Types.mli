@@ -7,10 +7,29 @@ type def_kind = K_function | K_method | K_class
 type entry = {
   id : Function_id.t;
   name : string;
+  qn : Names.Def_qn.t;
   kind : def_kind;
   file : Fpath.t;
   range : Range.t option;
   defining_class_id : Function_id.t option;
+}
+
+type definition =
+  | Function_definitions of Func_info.t list
+  | Class_definition of {
+      class_file : Fpath.t;
+      class_qn : Names.Class_qn.t;
+    }
+
+type import_kind =
+  | I_default
+  | I_named of string  (* name = local pre-alias *)
+  | I_namespace
+
+type import = {
+  im_local : string;
+  im_target : Names.Module_qn.t;
+  im_tok : Tok.t;
 }
 
 type class_info = {
@@ -20,7 +39,7 @@ type class_info = {
   ci_file : Fpath.t;
   ci_range : Range.t option;
   ci_parent_paths : string list list;
-  ci_imports : (string * Names.Module_qn.t) list;
+  ci_imports : import list;
   ci_decorator_names : string list;
 }
 
@@ -30,15 +49,10 @@ type class_fun_info = class_info * Func_info.t list
 
 type dataclass_wrapper = Index_lang_rules.wrapper
 
-type import_kind =
-  | I_default
-  | I_named of string  (* name = local pre-alias *)
-  | I_namespace
-
 type file_info = {
   fi_file : Fpath.t;
   fi_module_path : Names.Module_qn.t;
-  fi_imports : (string * Names.Module_qn.t) list;
+  fi_imports : import list;
   fi_import_specifiers : (string * string * import_kind) list;
   fi_dataclass_wrappers : dataclass_wrapper list;
   fi_ast : G.program;

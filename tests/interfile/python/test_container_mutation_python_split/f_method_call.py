@@ -1,3 +1,6 @@
+from sink import sink
+from source import source
+
 def f_method_call():
     arr = [1]
     arr.append(2)

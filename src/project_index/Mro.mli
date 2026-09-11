@@ -1,8 +1,14 @@
 open Types
 
+val chase_reexport :
+  reexport_map:(Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t ->
+  is_known:(Names.Module_qn.t -> bool) ->
+  Names.Module_qn.t ->
+  Names.Module_qn.t option
+
 (* No simple-name fallback (unsound: floods false positives). *)
 val resolve_parent_qn :
-  imports:(string * Names.Module_qn.t) list ->
+  imports:Types.import list ->
   reexport_map:(Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t ->
   known_class_qns:(Names.Class_qn.t, unit) Hashtbl.t ->
   string list -> Names.Module_qn.t option
@@ -32,3 +38,4 @@ val inherit_into_type_state :
   Type_state.t ->
   Type_state.t * class_fun_info list
   * (Graph_from_AST.func_info * Graph_from_AST.func_info) list
+  * (Names.Class_qn.t * Names.Class_qn.t list) list

@@ -12,6 +12,10 @@ val show_debug : t -> string
 
 val of_il_name : IL.name -> t
 
+val equal_il_name : IL.name -> IL.name -> bool
+
+val equal_name : t -> IL.name -> bool
+
 val tok : t -> Tok.t
 
 val of_string_and_tok : string -> Tok.t -> t

@@ -1,3 +1,5 @@
+from inner_shared_compound import inner_shared_compound
+
 def outer_shared_compound(p):
     return inner_shared_compound(p)
 

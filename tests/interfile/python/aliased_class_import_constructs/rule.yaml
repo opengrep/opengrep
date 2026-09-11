@@ -1,0 +1,17 @@
+rules:
+  - id: aliased-class-import-constructs
+    languages: [python]
+    severity: ERROR
+    message: >
+      An import binds a class under a different local name, and the call
+      [S(...)] constructs it. The constructor index is keyed on the name
+      the class itself carries, so the local name [S] finds nothing in
+      that index and the call to [Store.__init__] is only emitted when
+      the import binding is what resolves the name.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

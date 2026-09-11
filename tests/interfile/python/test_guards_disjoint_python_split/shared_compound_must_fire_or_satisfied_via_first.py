@@ -1,3 +1,6 @@
+from outer_shared_compound import outer_shared_compound
+from sink import sink
+
 def shared_compound_must_fire_or_satisfied_via_first():
     # data[0] == 1 satisfies the OR -> inner True branch.
     # ruleid: test-guards-disjoint

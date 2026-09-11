@@ -210,6 +210,14 @@ let class_method_by_bare_name ~(all_funcs : func_info list)
      | [] -> Some first)
   | None, hd :: _ -> Some hd
 
+type callback_site_resolver =
+  ?func_lookup:Func_lookup.t ->
+  ?caller_parent_path:IL.name option list ->
+  ?scope:callback_scope ->
+  ?arg:G.expr ->
+  IL.name ->
+  fn_id option
+
 (* Helper to identify a callback fn_id, checking nested functions in same scope first *)
 let identify_callback ?(all_funcs = [])
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
@@ -304,6 +312,47 @@ let identify_callback ?(all_funcs = [])
                  Log.debug (fun m -> m "HOF_EXTRACT: Callback %s not found in functions list" callback_name_str);
                  None))))
 
+let identify_callback_interfile ~(lang : Lang.t)
+    ~(type_state : Type_state.t)
+    ?(func_lookup : Func_lookup.t = Func_lookup.empty)
+    ?(caller_parent_path : IL.name option list = [])
+    ?(scope : callback_scope = Unscoped)
+    ?(arg : G.expr option)
+    (callback_name : IL.name) : fn_id option =
+  let as_reference () : fn_id option =
+    match arg with
+    | Some ({ G.e = G.DotAccess (_, _, G.FN (G.Id _)); _ } as reference) ->
+      Callee_resolution.identify_callee_interfile ~lang ~type_state
+        ~func_lookup ~caller_parent_path ~allow_constructor:false reference
+    | Some _
+    | None -> None
+  in
+  match as_reference () with
+  | Some _ as resolved -> resolved
+  | None -> (
+    match scope with
+    | In_module _
+    | Method_of _
+    | Method_by_bare_name -> None
+    | Unscoped -> (
+        let callback_name_str = fst callback_name.IL.ident in
+        let first (candidates : func_info list) : fn_id option =
+          match candidates with
+          | (f : func_info) :: _ -> Some f.fn_id
+          | [] -> None
+        in
+        let nearest =
+          nearest_scope_entries
+            (Func_lookup.resolve_in_scope func_lookup callback_name_str)
+            caller_parent_path
+        in
+        match Func_lookup.class_of_entries nearest with
+        | Some (class_qn : Names.Class_qn.t) ->
+          first
+            (Callee_resolution.constructor_of_class ~lang ~func_lookup
+               class_qn)
+        | None -> first (Func_lookup.functions_of_entries nearest)))
+
 (* [?allow_located_fake]: synthetic lambda names are located fakes — they
    carry the lambda's def position and key [Function_id] like a real token.
    Direct-call write-back and callback-argument stamping both stamp them.
@@ -347,7 +396,8 @@ let set_callee_definition ?allow_located_fake (ii : G.id_info)
    because an argument may carry multiple callbacks when it's a record/list
    containing several function references, or a variable whose [id_svalue]
    wraps such a container. See [extract_callbacks_from_arg]. *)
-let try_identify_callback_args ~lang ~all_funcs
+let try_identify_callback_args ~lang
+    ~(identify_callback : callback_site_resolver)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
     ~caller_parent_path (arg : G.argument) :
     (fn_id * Tok.t * IL.name option) list =
@@ -367,7 +417,7 @@ let try_identify_callback_args ~lang ~all_funcs
     in
     List.filter_map
       (fun (callback_name, tok, tmp_opt, scope) ->
-        identify_callback ~all_funcs ~func_lookup ~caller_parent_path ~scope
+        identify_callback ~func_lookup ~caller_parent_path ~scope ~arg:expr
           callback_name
         |> Option.map (fun fn_id ->
             set_callee_definition ~allow_located_fake:true
@@ -383,13 +433,14 @@ let try_identify_callback_args ~lang ~all_funcs
   | G.ArgKwd (_, expr) | G.ArgKwdOptional (_, expr) -> resolve_in_expr expr
   | G.ArgType _ | G.OtherArg _ -> []
 
-let extract_hof_callbacks_from_call ~lang ~method_hofs ~function_hofs ~all_funcs
+let extract_hof_callbacks_from_call ~lang ~method_hofs ~function_hofs
+    ~(identify_callback : callback_site_resolver)
     ?(func_lookup : Func_lookup.t = Func_lookup.empty)
     ~caller_parent_path (callee : G.expr)
     (args : G.arguments)
     : (fn_id * Tok.t * IL.name option) list =
   let try_arg arg =
-    try_identify_callback_args ~lang ~all_funcs ~func_lookup
+    try_identify_callback_args ~lang ~identify_callback ~func_lookup
       ~caller_parent_path arg
   in
   let try_arg_at_index idx =

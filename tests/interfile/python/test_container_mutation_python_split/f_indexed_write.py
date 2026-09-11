@@ -1,3 +1,6 @@
+from sink import sink
+from source import source
+
 def f_indexed_write():
     arr = [1]
     arr[0] = 99

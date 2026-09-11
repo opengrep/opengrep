@@ -1,3 +1,6 @@
+from outer_shared import outer_shared
+from sink import sink
+
 def shared_must_fire_inner_true():
     # len == 2 -> inner True branch, but both branches return the same x.
     # ruleid: test-guards-disjoint

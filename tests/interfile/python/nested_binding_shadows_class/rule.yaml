@@ -1,0 +1,15 @@
+rules:
+  - id: nested-binding-shadows-class
+    languages: [python]
+    severity: ERROR
+    message: >
+      The function binds the name [Handler] to the function it defines, and
+      that binding is nearer than the module-level class of the same name.
+      The call inside the function reaches the nested function.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

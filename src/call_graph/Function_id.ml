@@ -20,12 +20,13 @@ type t = {
 let normalize_file (file : Fpath.t) : string =
   Fpath.to_string (Fpath.normalize file)
 
+let fake_tok_keeps_location (id : string) : bool =
+  String.starts_with ~prefix:"_tmp_lambda" id || String.equal id "<top_level>"
+
 let compute_key ((id, tok) : IL.ident) : string * string * int * int =
   (* Lambdas/[<top_level>] bake the file into the key so vertices don't collide on name; other fake tokens keep the empty key. *)
-  let is_lambda_name = String.starts_with ~prefix:"_tmp_lambda" id in
-  let is_top_level = String.equal id "<top_level>" in
   if Tok.is_fake tok then
-    if is_lambda_name || is_top_level then
+    if fake_tok_keeps_location id then
       match Tok.loc_of_tok tok with
       | Ok loc ->
           (id, normalize_file loc.Tok.pos.file, loc.Tok.pos.line, loc.Tok.pos.column)
@@ -73,6 +74,35 @@ let show_debug (v : t) : string =
 let of_il_name (n : IL.name) : t =
   let ident = n.IL.ident in
   { ident; key = compute_key ident }
+
+let key_location ((id : string), (tok : Tok.t)) : Tok.location option =
+  if Tok.is_fake tok then
+    if fake_tok_keeps_location id then Result.to_option (Tok.loc_of_tok tok)
+    else None
+  else Some (Tok.unsafe_loc_of_tok tok)
+
+let equal_key_file (file1 : Fpath.t) (file2 : Fpath.t) : bool =
+  Fpath.equal file1 file2
+  || Fpath.equal (Fpath.normalize file1) (Fpath.normalize file2)
+
+let equal_ident (((id1 : string), _) as ident1 : IL.ident)
+    (((id2 : string), _) as ident2 : IL.ident) : bool =
+  String.equal id1 id2
+  &&
+  match key_location ident1, key_location ident2 with
+  | None, None -> true
+  | Some (loc1 : Tok.location), Some (loc2 : Tok.location) ->
+    Int.equal loc1.Tok.pos.Pos.line loc2.Tok.pos.Pos.line
+    && Int.equal loc1.Tok.pos.Pos.column loc2.Tok.pos.Pos.column
+    && equal_key_file loc1.Tok.pos.Pos.file loc2.Tok.pos.Pos.file
+  | Some _, None
+  | None, Some _ -> false
+
+let equal_il_name (name1 : IL.name) (name2 : IL.name) : bool =
+  equal_ident name1.IL.ident name2.IL.ident
+
+let equal_name (v : t) (name : IL.name) : bool =
+  equal_ident v.ident name.IL.ident
 
 let of_string_and_tok (name : string) (tok : Tok.t) : t =
   let ident = (name, tok) in

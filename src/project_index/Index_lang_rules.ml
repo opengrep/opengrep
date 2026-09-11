@@ -7,6 +7,7 @@ type wrapper = {
 
 type t = {
   is_init_file : Fpath.t -> bool;
+  is_stub_file : Fpath.t -> bool;
   rewrite_module_path : string -> string;
   module_path_from_ast : G.program -> string option;
   normalize_import_specifier : string -> string;
@@ -140,6 +141,11 @@ let strip_c_header_ext (fname : string) : string =
 let python_is_init_file (file : Fpath.t) : bool =
   Filename.basename (Fpath.to_string file) = "__init__.py"
 
+let python_is_stub_file (file : Fpath.t) : bool =
+  match Fpath.get_ext file with
+  | ".pyi" -> true
+  | _ -> false
+
 let python_rewrite_module_path (path : string) : string =
   if Filename.basename path = "__init__" then Filename.dirname path else path
 
@@ -223,6 +229,7 @@ let python_wrapper_dunders (wrapper : wrapper) : string list =
 
 let default : t = {
   is_init_file = (fun _ -> false);
+  is_stub_file = (fun _ -> false);
   rewrite_module_path = (fun s -> s);
   module_path_from_ast = (fun _ -> None);
   normalize_import_specifier = (fun s -> s);
@@ -292,53 +299,9 @@ let rust_narrow_methods_by_imports
         Type_state.set_methods state cls_name (Func_info.prefer ~keep methods)
     ) import_hint ts
 
-(* [from pkg.mod import Widget] records [("Widget", pkg.mod.Widget)] in
-   [fi_imports]; dropping the trailing class name leaves the module it came
-   from, and a file provides that module when its path ends in those segments —
-   [pkg/mod.py], or the package form [pkg/mod/__init__.py].  Python needs its
-   own hook rather than [narrow_methods_by_import_files]: [ImportFrom] carries a
-   [DottedName], which records no raw specifier, so the file-target narrowing
-   TS/JS uses has nothing to resolve.  Keyed on the imported name rather than
-   the local one, because that is the name the class is indexed under —
-   [from m import Widget as W] must still narrow [Widget]'s methods.  A bare
-   [import mod] binds a one-segment qn naming no class, and contributes
-   nothing. *)
-let python_narrow_methods_by_imports
-    ~(fi_imports : (string * Names.Module_qn.t) list)
-    ~(file_of_func : Func_info.t -> string option)
-    (ts : Type_state.t) : Type_state.t =
-  (* Imported class name paired with the module it came from, segments
-     reversed so it can be matched against a file path from the basename up. *)
-  let imported =
-    List.filter_map (fun (_local, target) ->
-      match List.rev (Names.Module_qn.parts target) with
-      | cls :: (_ :: _ as rev_module) -> Some (cls, rev_module)
-      | _ -> None)
-      fi_imports
-  in
-  let rev_module_segs (file : string) : string list =
-    match Path_segs.rev_no_ext file with
-    (* [pkg/mod/__init__.py] provides [pkg.mod], not [pkg.mod.__init__]. *)
-    | "__init__" :: rev_init -> rev_init
-    | segs -> segs
-  in
-  let keep_file (cls_name : Names.Class_name.t) (file : string) : bool =
-    let cls = Names.Class_name.to_string cls_name in
-    let rev_segs = rev_module_segs file in
-    List.exists
-      (fun (c, rev_module) ->
-         String.equal c cls && Path_segs.is_prefix rev_module rev_segs)
-      imported
-  in
-  Type_state.narrow ~keep_file ~file_of_func
-    ~classes:
-      (List.sort_uniq String.compare (List.map fst imported)
-      |> List.map Names.Class_name.of_string)
-    ts
-
 let python : t = { default with
   is_init_file = python_is_init_file;
-  narrow_methods_by_imports = python_narrow_methods_by_imports;
+  is_stub_file = python_is_stub_file;
   rewrite_module_path = python_rewrite_module_path;
   class_dunders_from_decorators = python_dataclass_dunders;
   class_dunders_from_extends = python_class_dunders_from_extends;

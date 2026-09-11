@@ -117,12 +117,16 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
     let is_init_file = cfg.Index_lang_rules.is_init_file file in
     Imports.collect_imports ~cfg ~current_module_path:module_path ~is_init_file ast
   in
-  let mk_entry ~id ~name ~kind ~range ~defining_class_id =
-    { id; name; kind; file; range; defining_class_id }
+  let mk_entry ~(id : Function_id.t) ~(name : string) ~(qn : Names.Def_qn.t)
+      ~(kind : def_kind) ~(range : Range.t option)
+      ~(defining_class_id : Function_id.t option) : entry =
+    { id; name; qn; kind; file; range; defining_class_id }
   in
-  let emit_synth_dunder ~class_id ~range name =
+  let emit_synth_dunder ~(class_id : Function_id.t) ~(class_qn : Names.Def_qn.t)
+      ~(range : Range.t option) (name : string) : unit =
     let m_id = synth_function_id class_id name in
-    entries := mk_entry ~id:m_id ~name ~kind:K_method ~range
+    entries := mk_entry ~id:m_id ~name ~qn:(Names.Def_qn.concat class_qn name)
+                 ~kind:K_method ~range
                  ~defining_class_id:(Some class_id) :: !entries
   in
   (* Scope stack threaded as the visitor's env (innermost first).  The
@@ -150,9 +154,11 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             let class_qn =
               qualified_name_of ~module_path (List.rev scope) name
             in
+            let class_qn_def = Names.Def_qn.of_string class_qn in
             let class_range = entity_range ent in
             let parent_class_id = immediate_enclosing_class_id scope in
-            entries := mk_entry ~id:class_id ~name ~kind:K_class
+            entries := mk_entry ~id:class_id ~name ~qn:class_qn_def
+                         ~kind:K_class
                          ~range:class_range
                          ~defining_class_id:parent_class_id :: !entries;
             let synthesized =
@@ -160,13 +166,17 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
               let from_ext = cfg.Index_lang_rules.class_dunders_from_extends cdef in
               List.sort_uniq String.compare (from_dec @ from_ext)
             in
-            List.iter (emit_synth_dunder ~class_id ~range:class_range)
+            List.iter
+              (emit_synth_dunder ~class_id ~class_qn:class_qn_def
+                 ~range:class_range)
               synthesized;
             (* Class-body macro methods (Ruby [attr_reader]); def-site tok from
                the symbol literal so each accessor has its own location. *)
             List.iter (fun (m_name, m_tok) ->
               let m_id = Function_id.of_string_and_tok m_name m_tok in
-              entries := mk_entry ~id:m_id ~name:m_name ~kind:K_method
+              entries := mk_entry ~id:m_id ~name:m_name
+                            ~qn:(Names.Def_qn.concat class_qn_def m_name)
+                            ~kind:K_method
                             ~range:class_range
                             ~defining_class_id:(Some class_id) :: !entries
             ) (cfg.Index_lang_rules.class_body_synth_methods cdef);
@@ -177,14 +187,22 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                  | None -> ()
                  | Some (inner_name, dunders) ->
                    let inner_id = synth_function_id class_id inner_name in
+                   let inner_qn =
+                     Names.Def_qn.of_string
+                       (qualified_name_of ~module_path (List.rev scope)
+                          inner_name)
+                   in
                    entries := mk_entry ~id:inner_id ~name:inner_name
+                                 ~qn:inner_qn
                                  ~kind:K_class
                                  ~range:class_range
                                  ~defining_class_id:parent_class_id
                               :: !entries;
                    List.iter (fun dunder ->
                      let m_id = synth_function_id inner_id dunder in
-                     entries := mk_entry ~id:m_id ~name:dunder ~kind:K_method
+                     entries := mk_entry ~id:m_id ~name:dunder
+                                   ~qn:(Names.Def_qn.concat inner_qn dunder)
+                                   ~kind:K_method
                                    ~range:class_range
                                    ~defining_class_id:(Some inner_id)
                                 :: !entries
@@ -239,7 +257,11 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
               if Option.is_some defining_class_id then K_method
               else K_function
             in
-            entries := mk_entry ~id:fn_id ~name ~kind
+            entries := mk_entry ~id:fn_id ~name
+                         ~qn:(Names.Def_qn.of_string
+                                (qualified_name_of ~module_path
+                                   (List.rev scope) name))
+                         ~kind
                          ~range:(entity_range ent)
                          ~defining_class_id :: !entries;
             let scope' = Sc_function name :: scope in
@@ -250,10 +272,15 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                  entity_simple_name ent, function_id_of_entity ent with
            | Some dunders, Some lhs_name, Some class_id ->
              let parent_class_id = immediate_enclosing_class_id scope in
-             entries := mk_entry ~id:class_id ~name:lhs_name ~kind:K_class
+             let lhs_qn =
+               Names.Def_qn.of_string
+                 (qualified_name_of ~module_path (List.rev scope) lhs_name)
+             in
+             entries := mk_entry ~id:class_id ~name:lhs_name ~qn:lhs_qn
+                          ~kind:K_class
                           ~range:(entity_range ent)
                           ~defining_class_id:parent_class_id :: !entries;
-             List.iter (emit_synth_dunder ~class_id
+             List.iter (emit_synth_dunder ~class_id ~class_qn:lhs_qn
                           ~range:(entity_range ent)) dunders
            | _ -> ());
           super#visit_definition scope (ent, def_kind)
@@ -273,16 +300,20 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
             let ns_range = entity_range ent in
             if cfg.Index_lang_rules.walks_inheritance then begin
               let ns_qn = qualified_name_of ~module_path (List.rev scope) name in
+              let ns_qn_def = Names.Def_qn.of_string ns_qn in
               let cdef = cdef_of_module_items items in
               (* A module-level [include N] ([include_module_includes_module])
                  makes N a parent of the module. *)
               let parent_paths = cfg.Index_lang_rules.class_body_extra_parents cdef in
-              entries := mk_entry ~id:ns_id ~name ~kind:K_class ~range:ns_range
+              entries := mk_entry ~id:ns_id ~name ~qn:ns_qn_def ~kind:K_class
+                           ~range:ns_range
                            ~defining_class_id:(immediate_enclosing_class_id scope)
                          :: !entries;
               List.iter (fun (m_name, m_tok) ->
                 let m_id = Function_id.of_string_and_tok m_name m_tok in
-                entries := mk_entry ~id:m_id ~name:m_name ~kind:K_method
+                entries := mk_entry ~id:m_id ~name:m_name
+                             ~qn:(Names.Def_qn.concat ns_qn_def m_name)
+                             ~kind:K_method
                              ~range:ns_range ~defining_class_id:(Some ns_id)
                            :: !entries
               ) (cfg.Index_lang_rules.class_body_synth_methods cdef);
@@ -323,10 +354,16 @@ let collect_in_ast ~(cfg : Index_lang_rules.t) ~(lang : Lang.t)
                | None -> None
              in
              let parent_class_id = immediate_enclosing_class_id scope in
-             entries := mk_entry ~id:class_id ~name:lhs_name ~kind:K_class
+             let lhs_qn =
+               Names.Def_qn.of_string
+                 (qualified_name_of ~module_path (List.rev scope) lhs_name)
+             in
+             entries := mk_entry ~id:class_id ~name:lhs_name ~qn:lhs_qn
+                          ~kind:K_class
                           ~range ~defining_class_id:parent_class_id
                         :: !entries;
-             List.iter (emit_synth_dunder ~class_id ~range) dunders
+             List.iter (emit_synth_dunder ~class_id ~class_qn:lhs_qn ~range)
+               dunders
            | _ -> ()
          end
        | _ -> ());
@@ -431,7 +468,11 @@ let dataclass_wrapper_synth_entries ~(cfg : Index_lang_rules.t)
         else begin
           Hashtbl.replace owned dunder ();
           let m_id = synth_function_id ci.ci_id dunder in
-          { id = m_id; name = dunder; kind = K_method;
+          { id = m_id; name = dunder;
+            qn = Names.Def_qn.concat
+                   (Names.Def_qn.of_string (Names.Class_qn.to_string ci.ci_qn))
+                   dunder;
+            kind = K_method;
             file = ci.ci_file; range = ci.ci_range;
             defining_class_id = Some ci.ci_id }
           :: acc

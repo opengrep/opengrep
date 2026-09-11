@@ -6,15 +6,11 @@ module FA = Graph_from_AST
    tested by re-interpreting the module qn. *)
 let chase_reexport
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
-    ~(known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t)
+    ~(is_known : Names.Module_qn.t -> bool)
     (qn : Names.Module_qn.t) : Names.Module_qn.t option =
-  let mem_as_class (mod_qn : Names.Module_qn.t) =
-    Hashtbl.mem known_class_qns
-      (Names.Class_qn.of_string (Names.Module_qn.to_string mod_qn))
-  in
   let visited : (Names.Module_qn.t, unit) Hashtbl.t = Hashtbl.create 8 in
   let rec walk current =
-    if mem_as_class current then Some current
+    if is_known current then Some current
     else if Hashtbl.mem visited current then None
     else begin
       Hashtbl.replace visited current ();
@@ -25,16 +21,20 @@ let chase_reexport
   in
   walk qn
 
-let resolve_parent_qn ~(imports : (string * Names.Module_qn.t) list)
+let resolve_parent_qn ~(imports : import list)
     ~(reexport_map : (Names.Module_qn.t, Names.Module_qn.t) Hashtbl.t)
     ~(known_class_qns : (Names.Class_qn.t, unit) Hashtbl.t)
     (path : string list) : Names.Module_qn.t option =
   match path with
   | [] -> None
   | head :: rest ->
-    (match List.assoc_opt head imports with
+    (match
+       List.find_opt
+         (fun (imp : import) -> String.equal imp.im_local head) imports
+     with
      | None -> None
-     | Some target ->
+     | Some (imp : import) ->
+       let target = imp.im_target in
        let candidate =
          if rest = [] then target
          else
@@ -42,7 +42,11 @@ let resolve_parent_qn ~(imports : (string * Names.Module_qn.t) list)
              (Names.Module_qn.to_string target ^ "."
               ^ String.concat "." rest)
        in
-       chase_reexport ~reexport_map ~known_class_qns candidate)
+       let is_known (mod_qn : Names.Module_qn.t) : bool =
+         Hashtbl.mem known_class_qns
+           (Names.Class_qn.of_string (Names.Module_qn.to_string mod_qn))
+       in
+       chase_reexport ~reexport_map ~is_known candidate)
 
 let resolve_parent_by_scope
     ~(cross_module_parents : bool)
@@ -144,7 +148,8 @@ let inherit_into_type_state
     ~(class_infos : class_info list)
     ~(func_def_file : FA.func_info -> string option)
     (ts : Type_state.t)
-    : Type_state.t * class_fun_info list * (FA.func_info * FA.func_info) list =
+    : Type_state.t * class_fun_info list * (FA.func_info * FA.func_info) list
+      * (Names.Class_qn.t * Names.Class_qn.t list) list =
   (* Each table holds at most one entry per class. *)
   let n_classes = List.length class_infos in
   let by_qn : (Names.Class_qn.t, class_info) Hashtbl.t =
@@ -254,13 +259,21 @@ let inherit_into_type_state
         result
       end
   in
-  let mro_ancestors (ci : class_info) : class_info list =
-    match linearize [] ci with _ :: rest -> rest | [] -> []
-  in
+  let state, inherited, overrides, resolution_orders =
   List.fold_left (fun ((state : Type_state.t),
                        (inherited_acc : class_fun_info list),
-                       (override_acc : (FA.func_info * FA.func_info) list))
+                       (override_acc : (FA.func_info * FA.func_info) list),
+                       (orders : (Names.Class_qn.t * Names.Class_qn.t list) list))
                       ci ->
+    let order = linearize [] ci in
+    let mro_ancestors : class_info list =
+      match order with _ :: rest -> rest | [] -> []
+    in
+    let orders =
+      (ci.ci_qn,
+       List.map (fun (ancestor : class_info) -> ancestor.ci_qn) order)
+      :: orders
+    in
     let child_simple = Names.Class_qn.bare_name ci.ci_qn in
     let child_name = Names.Class_name.of_string child_simple in
     let own =
@@ -279,7 +292,7 @@ let inherit_into_type_state
                   id_info = G.empty_id_info () }
     in
     match child_cls_il with
-    | None -> (state, inherited_acc, override_acc)
+    | None -> (state, inherited_acc, override_acc, orders)
     | Some child_cls_il ->
       let initial_names =
         List.filter_map (fun (func : FA.func_info) ->
@@ -382,14 +395,16 @@ let inherit_into_type_state
         ) (names, added, ovr) pmethods
       in
       let _, added, overrides =
-        List.fold_left collect_from (initial_names, [], [])
-          (mro_ancestors ci)
+        List.fold_left collect_from (initial_names, [], []) mro_ancestors
       in
       let override_acc = List.rev_append overrides override_acc in
       if added <> [] then
         (Type_state.add_inherited state
            (Names.Class_name.of_string child_simple) ci.ci_file added,
          (ci, added) :: inherited_acc,
-         override_acc)
-      else (state, inherited_acc, override_acc)
-  ) (ts, [], []) class_infos
+         override_acc,
+         orders)
+      else (state, inherited_acc, override_acc, orders)
+  ) (ts, [], [], []) class_infos
+  in
+  (state, inherited, overrides, List.rev resolution_orders)

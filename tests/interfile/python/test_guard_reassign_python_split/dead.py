@@ -1,3 +1,5 @@
+from sink import sink
+
 def dead(x, flag):
     if flag:
         if not flag:

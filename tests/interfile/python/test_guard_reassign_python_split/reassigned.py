@@ -1,3 +1,6 @@
+from recompute import recompute
+from sink import sink
+
 def reassigned(x, flag):
     if flag:
         flag = recompute()

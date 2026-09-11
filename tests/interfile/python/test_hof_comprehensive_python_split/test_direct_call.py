@@ -1,3 +1,5 @@
+from direct_call import direct_call
+
 def test_direct_call():
     # ruleid: test-hof-taint
     direct_call(lambda x: (

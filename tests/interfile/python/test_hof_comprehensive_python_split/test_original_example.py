@@ -1,3 +1,5 @@
+from get_history import get_history
+
 def test_original_example():
     history = get_history("name", "owner")
     items = []

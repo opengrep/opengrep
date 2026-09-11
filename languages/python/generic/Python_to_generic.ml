@@ -955,25 +955,10 @@ and decorator env (t, v1) =
               Id (x, G.empty_id_info ()),
               Option.value ~default:(Tok.unsafe_fake_bracket []) args )
       | x :: xs, args ->
-          let base = G.N (G.Id (x, G.empty_id_info ())) |> G.e in
-          let dot_access =
-            xs
-            |> List.fold_left
-                 (fun e x ->
-                   let tok = Tok.fake_tok (snd x) "." in
-                   G.DotAccess (e, tok, G.FN (G.Id (x, G.empty_id_info ())))
-                   |> G.e)
-                 base
-          in
-          pip0614_expr_attr t
-            [
-              G.E
-                (G.Call
-                   ( dot_access,
-                     args |> Option.value ~default:(Tok.unsafe_fake_bracket [])
-                   )
-                |> G.e);
-            ]
+          G.NamedAttr
+            ( t,
+              H.name_of_ids (x :: xs),
+              Option.value ~default:(Tok.unsafe_fake_bracket []) args )
       | [], _ -> raise Impossible)
   | None ->
       let v1 = expr env v1 in
