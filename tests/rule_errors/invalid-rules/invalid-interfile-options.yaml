@@ -1,0 +1,13 @@
+rules:
+- id: interfile-and-taint-interfile
+  mode: taint
+  options:
+    interfile: true
+    taint_interfile: true
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)
+  message: "interfile and taint_interfile are both set"
+  languages: [python]
+  severity: ERROR

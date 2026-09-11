@@ -1,0 +1,14 @@
+rules:
+  - id: test-effect-guards-off
+    message: Guards are inert without the guarded_taint_signatures option
+    languages:
+      - python
+    severity: WARNING
+    mode: taint
+    options:
+      taint_interfile: true
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

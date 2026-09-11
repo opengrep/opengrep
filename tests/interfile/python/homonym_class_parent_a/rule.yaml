@@ -1,0 +1,15 @@
+rules:
+  - id: homonym-class-parent-a
+    languages: [python]
+    severity: ERROR
+    message: >
+      Two packages each declare a class Widget with a different parent.
+      The inherited method a caller reaches is the parent's of the Widget
+      it imported, not of whichever same-named class the index saw last.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

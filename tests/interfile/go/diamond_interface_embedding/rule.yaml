@@ -1,0 +1,36 @@
+rules:
+  - id: diamond-interface-embedding
+    languages: [go]
+    severity: ERROR
+    message: >
+      Diamond interface embedding across four packages: `top.Top`
+      embeds `b.B` and `c.C`; both `b.B` and `c.C` embed `base.Base`,
+      which declares the method `M(s string) string`.  Top requires
+      a single M implementation (Go disallows redeclaration through
+      embedding); the only concrete implementation is in impl/.
+
+      § 4 Go states projidx builds a project-wide `embeds` map and
+      BFS-transitively gathers inherited func_infos.  In a diamond
+      the BFS visits `base.Base` via TWO paths (b.B → base.Base AND
+      c.C → base.Base).  A naive accumulator that adds without dedup
+      stores M twice under `Type_state.methods[top.Top]`, which could
+      either:
+
+        (a) emit a duplicate Dispatch edge from top.Top.M to
+            impl.Impl.M, and report the sink twice (test framework
+            usually flags an unexpected match-count mismatch); or
+        (b) cause the second add to clobber a useful func_info field,
+            making downstream interface lookup miss.
+
+      Either failure mode breaks this test; only correct dedup keeps
+      it green with exactly one finding at impl/impl.go.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.URL.Query().Get($PARAM)
+    pattern-sinks:
+      - patterns:
+          - pattern: $DB.Query($QUERY)
+          - focus-metavariable: $QUERY

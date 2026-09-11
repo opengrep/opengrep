@@ -1,3 +1,100 @@
+type fun_info = {
+  name : IL.name;
+  class_name_str : string option;
+  method_properties : AST_generic.expr list;
+  cfg : IL.fun_cfg;
+  fdef : AST_generic.function_definition;
+  is_static : bool;
+  is_lambda_assignment : bool;
+  file_ast : AST_generic.program option;
+  taint_inst : Taint_rule_inst.t option;
+}
+
+val build_info_map :
+  lang:Lang.t ->
+  ?fid_filter:(Function_id.t -> bool) ->
+  AST_generic.program ->
+  fun_info Shape_and_sig.FunctionMap.t
+
+(* Whether findings anchor on the taint source or the sink, from the
+   [taint_focus_on] / [taint_match_on] rule options. *)
+val match_on_of_xconf : Match_env.xconfig -> [ `Sink | `Source ]
+
+val pms_of_effect :
+  lang:Lang.t ->
+  match_on:[ `Sink | `Source ] ->
+  Shape_and_sig.Effect.t ->
+  Core_match.t list
+
+val pms_of_effects :
+  lang:Lang.t ->
+  match_on:[ `Sink | `Source ] ->
+  Shape_and_sig.Effects.t ->
+  Core_match.t list
+
+val get_arity :
+  AST_generic.parameter list ->
+  fun_info ->
+  Lang.t ->
+  int
+(** Effective arity, filtering language-specific implicit parameters. *)
+
+val extract_signatures :
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?call_graph:Call_graph.G.t ->
+  lang:Lang.t ->
+  db:Shape_and_sig.signature_database ->
+  taint_inst:Taint_rule_inst.t ->
+  ast:AST_generic.program ->
+  fun_info ->
+  Shape_and_sig.signature_database * Shape_and_sig.extended_sig list
+(** Extract a function's taint signature(s) into the db, returning the freshly
+    extracted signatures.  The SCC signature fixpoint replaces a function's
+    entry with these each iteration (accumulating them breaks [find_by_arity]).
+    No finding detection. *)
+
+val extract_and_check :
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?call_graph:Call_graph.G.t ->
+  ?glob_env:Taint_lval_env.t ->
+  lang:Lang.t ->
+  db:Shape_and_sig.signature_database ->
+  match_on:[ `Sink | `Source ] ->
+  taint_inst:Taint_rule_inst.t ->
+  ast:AST_generic.program ->
+  detect_findings:bool ->
+  fun_info ->
+  Shape_and_sig.signature_database * Core_match.t list
+(** Shared signature-extraction + finding-detection logic. *)
+
+val build_class_init_cfgs :
+  Lang.t ->
+  AST_generic.program ->
+  (IL.name option * IL.fun_cfg) list
+
+val check_class_inits_prebuilt :
+  Taint_rule_inst.t ->
+  (IL.name option * IL.fun_cfg) list ->
+  ?signature_db:Shape_and_sig.signature_database ->
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?call_graph:Call_graph.G.t ->
+  unit ->
+  Shape_and_sig.Effects.t
+
+val build_top_level_cfg :
+  Lang.t ->
+  AST_generic.program ->
+  IL.name * IL.fun_cfg
+
+val check_top_level_prebuilt :
+  Taint_rule_inst.t ->
+  IL.name * IL.fun_cfg ->
+  ?signature_db:Shape_and_sig.signature_database ->
+  ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
+  ?call_graph:Call_graph.G.t ->
+  unit ->
+  Shape_and_sig.Effects.t
+
 val check_fundef :
   Taint_rule_inst.t ->
   IL.name (** entity being analyzed *) ->
@@ -21,7 +118,7 @@ val check_rule :
   (Core_match.t list -> Core_match.t list) ->
   ?signature_db:Shape_and_sig.signature_database ->
   ?builtin_signature_db:Shape_and_sig.builtin_signature_database ->
-  ?shared_call_graph:(Call_graph.G.t * (AST_generic.name * AST_generic.name) list) option ->
+  ?local_ast_call_graph:Call_graph.G.t option ->
   Match_env.xconfig ->
   Xtarget.t ->
   Core_profiling.rule_profiling Core_result.match_result option * Shape_and_sig.signature_database option

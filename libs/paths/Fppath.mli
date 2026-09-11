@@ -7,7 +7,13 @@
    in error messages while fpath for actual file content access).
 *)
 
-type t = { fpath : Fpath.t; ppath : Ppath.t } [@@deriving show]
+type t = {
+  fpath : Fpath.t;
+  ppath : Ppath.t;
+  (* Absolute project root; absent only for targets built outside
+     Find_targets (e.g. in tests). *)
+  project_root : Fpath.t option;
+} [@@deriving show]
 
 (* Compare based on the original fpath *)
 val compare : t -> t -> int

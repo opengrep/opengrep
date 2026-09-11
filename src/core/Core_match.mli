@@ -52,6 +52,7 @@ and rule_id = {
 and rule_id_options  = {
   max_match_per_file : int option;
   (* maximum number of matches per file. *)
+  taint_interfile : bool;
 }
 [@@deriving show, eq]
 

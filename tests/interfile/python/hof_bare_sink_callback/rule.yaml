@@ -1,0 +1,20 @@
+rules:
+  - id: hof-bare-sink-callback
+    languages: [python]
+    severity: ERROR
+    message: >
+      Bare sink name passed as a callback across files (gap B of issue
+      #499): hof_caller.py passes the undefined `sink` into
+      hof_lib.py's apply_fn.  No signature exists to instantiate, so
+      the argument-to-parameter symbolic pass (Callback_svalue) stamps
+      `fn` with Sym `sink` — every project-wide call site agrees on the
+      binding, linked by projidx's cross-file id_resolved — and the
+      sink pattern matches fn(x) inside the callee's own file.
+    mode: taint
+    options:
+      taint_interfile: true
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

@@ -55,6 +55,12 @@ let wrap _of_a (v1, v2) =
 let bracket of_a (t1, x, t2) = (info t1, of_a x, info t2)
 let ident v = wrap string v
 let var v = wrap string v
+
+(* a variable bound to an enclosing scope's by a directive such as
+ * [global $x;] or a closure's [use ($x)] *)
+let use_outer_decl (tok : Tok.t) (id : G.ident) : G.stmt =
+  let ent = G.basic_entity ~case_insensitive:false id in
+  G.DefStmt (ent, G.UseOuterDecl tok) |> G.s
 let qualified_ident v = list ident v
 
 (* Note, Funtions and Classes are case insensitive, variables are case
@@ -204,9 +210,11 @@ let rec stmt_aux = function
       v1
       |> List_.map (fun e ->
              match e with
-             | Id [ id ] ->
-                 let ent = G.basic_entity ~case_insensitive:false id in
-                 G.DefStmt (ent, G.UseOuterDecl t) |> G.s
+             (* [global $x;] — the tree-sitter converter emits UseOuterDecl
+              * for this too; naming plants the outer binding in the
+              * function scope so later [$x = ...] rebinds the global. *)
+             | Id [ id ] -> use_outer_decl t id
+             | Var v -> use_outer_decl t (var v)
              | _ ->
                  let e = expr e in
                  G.OtherStmt (G.OS_GlobalComplex, [ G.E e ]) |> G.s)
@@ -486,24 +494,29 @@ and expr e : G.expr =
        f_return_type = rett;
        f_body = body;
       } ->
-          let _lusesTODO =
-            list
-              (fun (v1, v2) ->
-                let _v1 = bool v1 and _v2 = var v2 in
-                ())
-              l_uses
-          in
           let lambdakind =
             match lambdakind with
             | AnonLambda -> G.LambdaKind
             | ShortLambda -> G.Arrow
             | _ -> error tok "unsupported lambda variant"
           in
-
-          let body = stmt body in
+          (* [function () use ($x, &$y) { ... }]: the captured variables
+           * are the enclosing scope's, declared at the head of the body
+           * as a [use] directive for naming to bind them there. *)
+          let uses =
+            l_uses
+            |> List_.map (fun ((_is_ref : bool), (v : var)) ->
+                   use_outer_decl (Tok.fake_tok t "use") (var v))
+          in
+          let body =
+            match (uses, stmt body) with
+            | [], body -> body
+            | _, { G.s = G.Block (l, stmts, r); _ } ->
+                G.Block (l, uses @ stmts, r) |> G.s
+            | _, body -> G.Block (Tok.unsafe_fake_bracket (uses @ [ body ])) |> G.s
+          in
           let ps = parameters ps in
           let rett = option hint_type rett in
-          (* TODO: transform l_uses in UseOuterDecl preceding body *)
           G.Lambda
             {
               G.fparams = fb ps;

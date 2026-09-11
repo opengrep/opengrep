@@ -1,0 +1,17 @@
+rules:
+  - id: mutual-recursion
+    languages: [python]
+    severity: ERROR
+    message: >
+      Tainted input flows through the mutually-recursive cycle p->q->r->p
+      (each an argument-to-return passthrough) and reaches the sink.  The
+      passthrough signatures form a cyclic dependency; without an SCC signature
+      fixpoint, one cycle member is summarised before its callee and the taint
+      is lost.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

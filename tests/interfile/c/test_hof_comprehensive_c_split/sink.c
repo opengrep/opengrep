@@ -1,0 +1,2 @@
+void sink(char* s) {
+}

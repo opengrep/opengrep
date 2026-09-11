@@ -1,0 +1,20 @@
+rules:
+  - id: namespace-class-method
+    languages: [ts]
+    severity: ERROR
+    message: >
+      `req.query.q` flows into `new Svc.Handler().run(userInput)`, whose
+      body reaches `db.query`.  `Handler` is declared inside
+      `namespace Svc` in lib.ts.  For the cross-file edge into `run` to
+      exist, projidx must record the class under its namespace-qualified
+      qn `Svc.Handler` rather than dropping the `namespace` scope.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.query.$P
+    pattern-sinks:
+      - patterns:
+          - pattern: db.query($QUERY)
+          - focus-metavariable: $QUERY

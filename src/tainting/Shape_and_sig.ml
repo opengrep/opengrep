@@ -177,6 +177,7 @@ module rec Shape : sig
       [Signature.equal_with_guards]). For the dataflow fixpoint's stability
       test; identity and fusion keying keep using [equal_cell]. *)
 
+  val equal_shape : shape -> shape -> bool
   val compare_shape : shape -> shape -> int
   val show_cell : cell -> string
   val show_shape : shape -> string
@@ -189,6 +190,7 @@ end = struct
     | Fun of Signature.t
   and cell = Cell of Xtaint.t * shape
   and obj = cell Fields.t
+  [@@deriving eq]
 
   (*************************************)
   (* Equality *)
@@ -398,7 +400,7 @@ and Effect : sig
         (** See note on [taints_to_sink.guards]. *)
   }
 
-  type args_taints = (Taint.taints * Shape.shape) IL.argument list
+  type args_taints = (Taint.taints * Shape.shape) IL.argument list [@@deriving eq]
   (** The taints and shapes associated with the actual arguments in a * function
       call. *)
 
@@ -485,6 +487,8 @@ and Effect : sig
   val guards_of : t -> Effect_guard.t
   (** Return the guard stamped on an effect. *)
 
+  val compare_taints_to_return : taints_to_return -> taints_to_return -> int
+  val compare_taints_to_sink : taints_to_sink -> taints_to_sink -> int
   (* Mainly for debugging *)
   val show_sink : sink -> string
   val show_args_taints : ?truncate_guards:bool -> args_taints -> string
@@ -530,6 +534,7 @@ end = struct
   }
 
   type args_taints = (Taints.t * Shape.shape) IL.argument list
+  [@@deriving ord, eq]
 
   type t =
     | ToSink of taints_to_sink
@@ -1018,13 +1023,20 @@ end = struct
 
   let of_IL_params il_params =
     il_params
+    |> List.filter (function
+         | IL.ParamReceiver _ -> false
+         | _ -> true)
     |> List_.map (function
          | IL.Param { pname = { ident = s, _; _ }; _ } -> P s
          (* function signatures don't look into the shape of the argument. *)
          | IL.ParamRest { pname = { ident = s, _; _ }; _ } -> PRest s
-         (* Destructuring parameter: use the synthetic implicit binder's
-          * name; the signature needs only the single binder. *)
-         | IL.ParamPattern ({ pname = { ident = s, _; _ }; _ }, _) -> P s
+         | IL.ParamPattern ({ pname = { ident = s, _; _ }; _ }, pat) -> (
+             match pat with
+             | AST_generic.PatId (name, _) -> P (fst name)
+             | AST_generic.PatTyped (AST_generic.PatId (name, _), _) ->
+                 P (fst name)
+             | _ -> P s)
+         | IL.ParamReceiver _ -> Other (* filtered above *)
          | IL.ParamFixme -> Other)
 
   (*************************************)
@@ -1084,18 +1096,31 @@ type extended_sig = {
 }
 [@@deriving show]
 
-module SignatureSet = Set.Make (struct
-  type t = extended_sig
+module SignatureSet = struct
+  include Set.Make (struct
+    type t = extended_sig
 
-  let compare = fun x y ->
-    let sig_cmp = Signature.compare x.sig_ y.sig_ in
-    if sig_cmp <> 0 then sig_cmp
-    else compare_sig_arity x.arity y.arity
-end)
+    let compare = fun x y ->
+      let sig_cmp = Signature.compare x.sig_ y.sig_ in
+      if sig_cmp <> 0 then sig_cmp
+      else compare_sig_arity x.arity y.arity
+  end)
+
+  (* [equal] pairs identity-equal elements positionally (both element lists
+     are sorted by the guard-blind compare), so a parallel walk checks each
+     signature against its counterpart. Fixpoint stability tests must use
+     this: plain [equal] declares convergence while guards still refine,
+     freezing whichever member last saw the narrower guard. *)
+  let equal_with_guards s1 s2 =
+    equal s1 s2
+    && List.for_all2
+         (fun (x : extended_sig) (y : extended_sig) ->
+           Signature.equal_with_guards x.sig_ y.sig_)
+         (elements s1) (elements s2)
+end
 
 type signature_database = {
   signatures : SignatureSet.t FunctionMap.t;
-  object_mappings : (AST_generic.name * AST_generic.name) list;
 }
 
 (** Separate database for builtin function signatures.
@@ -1174,7 +1199,7 @@ let show_name (name_opt : IL.name option) =
   | None -> ""
 
 let empty_signature_database () : signature_database =
-  { signatures = FunctionMap.empty; object_mappings = [] }
+  { signatures = FunctionMap.empty }
 
 let lookup_signature (db : signature_database) (name : Function_id.t)
     (arity : int) : Signature.t option =
@@ -1182,6 +1207,12 @@ let lookup_signature (db : signature_database) (name : Function_id.t)
   | Some sigs when not (SignatureSet.is_empty sigs) ->
       find_by_arity sigs arity
   | _ -> None
+
+let lookup_all_signatures (db : signature_database) (name : Function_id.t)
+    : extended_sig list =
+  match FunctionMap.find_opt name db.signatures with
+  | Some sigs -> SignatureSet.elements sigs
+  | None -> []
 
 let add_signature (db : signature_database) (name : Function_id.t)
     (signature : extended_sig) : signature_database =
@@ -1193,16 +1224,15 @@ let add_signature (db : signature_database) (name : Function_id.t)
         | None -> Some (SignatureSet.singleton signature))
       db.signatures
   in
-  { db with signatures }
+  { signatures }
 
-let add_object_mappings (db : signature_database)
-    (mappings : (AST_generic.name * AST_generic.name) list) : signature_database
-    =
-  { db with object_mappings = mappings }
-
-let get_object_mappings (db : signature_database) :
-    (AST_generic.name * AST_generic.name) list =
-  db.object_mappings
+(* Unlike add_signature, discards any prior entries for [name]. *)
+let replace_signature (db : signature_database) (name : Function_id.t)
+    (signature : extended_sig) : signature_database =
+  let signatures =
+    FunctionMap.add name (SignatureSet.singleton signature) db.signatures
+  in
+  { signatures }
 
 let show_func_key (key : func_key) : string =
   Function_id.show_debug key

@@ -111,3 +111,30 @@ let filter_paths (paths : Rule.paths) (path : Fpath.t) : bool =
     in
     is_required
 [@@profiling]
+
+(* Note that filtering is applied on the basis of the target's origin, not the
+ * target's "file". This is because filtering should apply to the user's
+ * perception of the file, not whatever we may transform it to internally.
+ *
+ * For instance, the "file" of a target may be a tempfile which has no meaning,
+ * and is essentially randomly generated. `paths:` filtering shouldn't apply to
+ * this!
+ *
+ * Note also that `paths:` filters are relative to the root of a project [0],
+ * so if the target's file is an absolute path, we don't want to use that for
+ * filtering: instead, we'd want the origin to be the desired relative path and
+ * use that.
+ *
+ * [0]: <https://semgrep.dev/docs/writing-rules/rule-syntax/#paths>
+ *)
+let rule_applies_to_origin (paths : Rule.paths option) (origin : Origin.t) :
+    bool =
+  match paths with
+  | Some paths -> (
+      match origin with
+      | File path -> filter_paths paths path
+      | GitBlob { paths = target_paths; _ } ->
+          target_paths
+          |> List.exists (fun (_, path_at_commit) ->
+                 filter_paths paths path_at_commit))
+  | None -> true

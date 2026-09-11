@@ -1,0 +1,15 @@
+rules:
+  - id: multi-namespace-class
+    languages: [scala]
+    severity: ERROR
+    message: >
+      Collision across two braced packages in Lib.scala.  `Client extends
+      b.Base` reaches `b.Base.handle` (sink), not the benign `a.Base.handle` —
+      resolved via the per-region qn + type-driven MRO dispatch.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

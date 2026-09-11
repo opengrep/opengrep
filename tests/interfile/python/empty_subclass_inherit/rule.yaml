@@ -1,0 +1,10 @@
+rules:
+  - id: empty-subclass-inherit
+    languages: [python]
+    severity: ERROR
+    message: taint reaches a method inherited through an empty subclass
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

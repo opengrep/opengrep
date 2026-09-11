@@ -211,7 +211,15 @@ let parse_options rule_id (key : key) value =
            Logs.warn (fun m -> m "unknown rule option: %s" field_name))
          (fun () -> Rule_options_j.t_of_string s) *)
   in
-  Ok (options, Some key)
+  (* 'interfile' is an alias for 'taint_interfile', the name published
+     rules use; it selects the same analysis. *)
+  if options.Rule_options_t.interfile && options.Rule_options_t.taint_interfile
+  then
+    error_at_key rule_id key
+      "only one of interfile and taint_interfile can be set"
+  else if options.Rule_options_t.interfile then
+    Ok ({ options with Rule_options_t.taint_interfile = true }, Some key)
+  else Ok (options, Some key)
 
 (*****************************************************************************)
 (* Parsers for taint *)

@@ -79,27 +79,30 @@ let scan_both (caps : caps) ~(baseline : string) : unit =
 
 let head (caps : caps) : string = String.trim (git caps [ "rev-parse"; "HEAD" ])
 
-(* The paths a baseline scan of [root] reports, sorted, from its JSON.
-   [unknown_extensions] passes '--scan-unknown-extensions', which makes a
-   root named on the command line scanned whatever its extension. *)
-let baseline_paths ?(unknown_extensions : bool = false) (caps : caps)
-    ~(baseline : string) (root : string) : string list =
+(* The findings a scan run with [args] reports, from its JSON. *)
+let json_matches (caps : caps) (args : string list) :
+    Semgrep_output_v1_t.cli_match list =
   let exit_code, out =
     Testo.with_capture stdout (fun () ->
         without_settings (fun () ->
             Scan_subcommand.main
               (caps :> Scan_subcommand.caps)
               (Array.of_list
-                 ([
-                    "opengrep-scan"; "--experimental"; "--json"; "--quiet"; "-e";
-                    Printf.sprintf "$X = %s" sentinel; "-l"; "python";
-                  ]
-                 @ (if unknown_extensions then [ "--scan-unknown-extensions" ]
-                    else [])
-                 @ [ "--baseline-commit"; baseline; root ]))))
+                 ([ "opengrep-scan"; "--experimental"; "--json"; "--quiet" ]
+                 @ args))))
   in
   Exit_code.Check.ok exit_code;
   (Semgrep_output_v1_j.cli_output_of_string out).results
+
+(* The paths a baseline scan of [root] reports, sorted, from its JSON.
+   [unknown_extensions] passes '--scan-unknown-extensions', which makes a
+   root named on the command line scanned whatever its extension. *)
+let baseline_paths ?(unknown_extensions : bool = false) (caps : caps)
+    ~(baseline : string) (root : string) : string list =
+  json_matches caps
+    ([ "-e"; Printf.sprintf "$X = %s" sentinel; "-l"; "python" ]
+    @ (if unknown_extensions then [ "--scan-unknown-extensions" ] else [])
+    @ [ "--baseline-commit"; baseline; root ])
   |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
          Fpath.to_string m.path)
   |> List.sort String.compare
@@ -578,6 +581,47 @@ let test_empty_baseline (caps : caps) =
         "the whole file is scanned, as without a baseline" true
         (String_.contains ~term:"foo.py" output))
 
+(* 'metavariable-pattern' reads the matched file while it matches, which
+   fills the engine's cache of file contents; the message names the
+   metavariable, which reads that cache again when the findings are
+   rendered. *)
+let metavariable_pattern_rule : string =
+  {|
+rules:
+  - id: foo-call
+    languages: [python]
+    severity: INFO
+    message: "found $X"
+    patterns:
+      - pattern: foo($X)
+      - metavariable-pattern:
+          metavariable: $X
+          pattern: $Y
+|}
+
+(* The head's findings are rendered after the baseline scan, whose files
+   carry the same names in the baseline worktree. The caches that scan filled
+   must be cleared when it is over, or the head's message is built from the
+   baseline's bytes at the head's byte range: 'found ZZZZZZZZ' here, and an
+   out-of-range read when the baseline's file is the shorter of the two. *)
+let test_head_message_after_baseline (caps : caps) =
+  in_repo
+    [
+      F.File ("rules.yml", metavariable_pattern_rule);
+      F.File ("a.py", "foo(AAAAAAAA)\nfoo(ZZZZZZZZ)\n");
+    ]
+    (fun () ->
+      let baseline = head caps in
+      write "a.py" "foo(AAAAAAAA)\nfoo(BBBBBBBB)\n";
+      let (_ : string) = commit_all caps ~serial:2 "another argument" in
+      Alcotest.(check (list string))
+        "the message of the head's finding, not the baseline's"
+        [ "found BBBBBBBB" ]
+        (json_matches caps
+           [ "--config"; "rules.yml"; "--baseline-commit"; baseline; "." ]
+        |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+               m.extra.message)))
+
 (*****************************************************************************)
 (* Entry point *)
 (*****************************************************************************)
@@ -625,6 +669,8 @@ let tests (caps : caps) =
          (test_cwd_absent_from_baseline caps);
        t "an empty baseline commit scans everything"
          (test_empty_baseline caps);
+       t "the head's message after the baseline scan"
+         (test_head_message_after_baseline caps);
      ]
     @ (List.concat_map
          (fun (current : string) ->

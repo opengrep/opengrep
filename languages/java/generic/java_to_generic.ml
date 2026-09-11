@@ -638,8 +638,20 @@ and method_decl ?cl_kind { m_var; m_formals; m_throws; m_body } =
     |> List_.map (fun t -> G.OtherAttribute (("Throw", G.fake ""), [ G.T t ]))
   in
   let fbody =
+    (* Body-less in the source ([;]): interface methods, and abstract
+       methods in classes.  Both parse to an empty block; distinguish
+       them from a genuinely empty body so dispatch machinery can treat
+       them as declarations. *)
+    let is_abstract =
+      List.exists
+        (function
+          | G.KeywordAttr (G.Abstract, _) -> true
+          | _ -> false)
+        ent.G.attrs
+    in
     match (cl_kind, v4) with
     | Some (Interface, _), { s = G.Block (_, [], _); _ } -> G.FBNothing
+    | _, { s = G.Block (_, [], _); _ } when is_abstract -> G.FBNothing
     | _ -> FBStmt v4
   in
   ( { ent with G.attrs = ent.G.attrs @ throws },

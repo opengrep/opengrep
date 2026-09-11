@@ -1,0 +1,16 @@
+rules:
+  - id: local-shares-function-name
+    languages: [python]
+    severity: ERROR
+    message: >
+      Taint from source(...) reaches sink(...) via a cross-file
+      callback.  Regression test for the Callback_extraction
+      id_resolved guard: a bare-argument local must not be
+      name-matched to a project function.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

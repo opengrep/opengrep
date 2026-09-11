@@ -73,6 +73,7 @@ let pp_status ~(rules : Rule.t list) ~num_targets ~tracked_by_git
   let num_files_with_a_rule =
     lang_jobs
     |> List.concat_map (fun (job : Lang_job.t) -> job.targets)
+    |> List_.map (fun ({ target_fpath; _ } : Target_and_root.t) -> target_fpath)
     |> List_.deduplicate |> List.length
   in
   (* python: Plan.rule_count_for_product(), the rules that appear in a
@@ -138,7 +139,9 @@ let pp_status ~(rules : Rule.t list) ~num_targets ~tracked_by_git
                  let targets =
                    xxs
                    |> List.concat_map (fun (_, _, targets) -> targets)
-                   |> Assoc.group_by Fun.id
+                   |> Assoc.group_by
+                        (fun ({ target_fpath; _ } : Target_and_root.t) ->
+                          target_fpath)
                    |> List_.map (fun (target, _) -> target)
                    |> List.length
                  in

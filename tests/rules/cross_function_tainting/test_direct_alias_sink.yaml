@@ -1,0 +1,13 @@
+rules:
+  - id: test-direct-alias-sink
+    languages: [python]
+    severity: ERROR
+    message: "Taint flows through direct function-value alias"
+    mode: taint
+    options:
+      taint_intrafile: true
+      symbolic_propagation: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)

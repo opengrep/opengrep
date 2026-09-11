@@ -656,3 +656,21 @@ let unbracket (_, x, _) = x
 
 (* used only in the Scala parser for now *)
 let abstract_tok = Ab
+
+(* Absolutify a call-site token: call-graph edge labels are absolute (via
+   [Call_graph.make_paths_absolute]) but scan-file AST tokens may be relative,
+   so both sides of a comparison need absolute paths. *)
+let abs_tok (project_root : Fpath.t option) (tok : t) : t =
+  match project_root with
+  | None -> tok
+  | Some root ->
+    if is_fake tok then tok
+    else
+      let file = file_of_tok tok in
+      if Fpath.is_abs file then tok
+      else
+        let abs_file = Fpath.(root // file) |> Fpath.normalize in
+        fix_location
+          (fun (loc : location) ->
+            { loc with pos = { loc.pos with Pos.file = abs_file } })
+          tok

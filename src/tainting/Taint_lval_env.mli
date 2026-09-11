@@ -53,6 +53,7 @@ val find_lval : Lang.t -> env -> IL.lval -> cell option
 (** Find the 'cell' of an l-value. *)
 
 val find_poly :
+  lang:Lang.t ->
   env -> IL.name -> Taint.offset list -> (Taint.taints * shape) option
 (** Find the taints and shape associated to a variable (name) and an offset.
     If an offset is not being explicitly recorded, then it returns the

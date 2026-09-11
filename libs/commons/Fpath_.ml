@@ -64,6 +64,12 @@ let drop_dot_segments (path : Fpath.t) : Fpath.t =
   | [] -> path
   | segs -> Fpath.v (volume ^ String.concat Fpath.dir_sep segs)
 
+(* Normalised absolute form of a path, plus the anchor it was resolved
+   against (None if the path was already absolute). *)
+let absolutify ~(cwd : Fpath.t) (path : Fpath.t) : Fpath.t * Fpath.t option =
+  if Fpath.is_abs path then (Fpath.normalize path, None)
+  else (Fpath.(cwd // path) |> Fpath.normalize, Some cwd)
+
 module Operators = struct
   let ( / ) = Fpath.( / )
   let ( // ) = Fpath.( // )

@@ -1,0 +1,16 @@
+rules:
+  - id: homonym-class-package-init
+    languages: [python]
+    severity: ERROR
+    message: >
+      The imported class lives in a package, so the module [pkg] is provided by
+      [pkg/__init__.py] rather than by a file named [pkg.py].  Narrowing must
+      still tie the import to that file, otherwise an unimported homonym leaves
+      the method ambiguous and the cross-file flow is lost.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

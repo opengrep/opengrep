@@ -1,0 +1,13 @@
+rules:
+- id: test
+  languages:
+    - python
+  severity: ERROR
+  message: Test
+  mode: taint
+  options:
+    interfile: true
+  pattern-sources:
+    - pattern: source()
+  pattern-sinks:
+    - pattern: sink(...)

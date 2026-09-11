@@ -1,0 +1,15 @@
+rules:
+  - id: extensioned-import
+    languages: [typescript]
+    severity: ERROR
+    message: >
+      Tainted data flows through an import whose specifier carries the
+      NodeNext-style '.js' extension while the file on disk is '.ts'.
+      Specifier resolution must map './utils.js' to utils.ts.
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)

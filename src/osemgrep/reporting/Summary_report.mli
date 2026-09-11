@@ -16,6 +16,7 @@ val pp_summary :
   maturity:Maturity.t ->
   max_target_bytes:int ->
   skipped_groups:Skipped_report.skipped_targets_grouped ->
+  unplaced_warnings:int ->
   Format.formatter ->
   unit ->
   unit

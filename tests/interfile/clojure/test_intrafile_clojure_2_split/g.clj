@@ -1,0 +1,2 @@
+(defn g []
+  (f (source)))

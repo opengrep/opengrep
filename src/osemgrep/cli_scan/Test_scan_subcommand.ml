@@ -61,6 +61,100 @@ rules:
     severity: ERROR
 |}
 
+(* The sink is reached only through a call from another file, so this finding
+   comes out of interfile dispatch rather than a per-target scan. *)
+let taint_interfile_content =
+  {|
+rules:
+  - id: interfile-taint
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "cross-file taint"
+    languages: [python]
+    severity: ERROR
+|}
+
+let interfile_caller_py_content = {|
+from sinks import leak
+
+def go():
+    leak(source())
+|}
+
+let interfile_sink_py_content = {|
+def leak(v):
+    sink(v)
+|}
+
+(* Two call sites feeding the same sink: distinct sources, one sink line. *)
+let interfile_two_sources_py_content = {|
+from sinks import leak
+
+def go():
+    leak(source())
+
+def go2():
+    leak(source())
+|}
+
+(* Same taint rule but without the [taint_interfile] option: findings dedup
+   on the sink alone. *)
+let taint_intrafile_content =
+  {|
+rules:
+  - id: intrafile-taint
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "intrafile taint"
+    languages: [python]
+    severity: ERROR
+|}
+
+(* The interfile two-source shape folded into a single file. *)
+let intrafile_two_sources_py_content = {|
+def leak(v):
+    sink(v)
+
+def go():
+    leak(source())
+
+def go2():
+    leak(source())
+|}
+
+(* The baseline revision of the helper: same signature, no sink yet. *)
+let interfile_sink_py_baseline_content = {|
+def leak(v):
+    pass
+|}
+
+(* Cosmetically edited helper: the sink is untouched and stays on the same
+   line, so any finding it carries is pre-existing rather than introduced. *)
+let interfile_sink_py_touched_content = {|
+def leak(v):
+    sink(v)
+
+# unrelated trailing comment added by this commit
+|}
+
+(* Caller at the repo ROOT, importing the helper from the app/ package: the
+   companion supplying the taint sits outside the directory the scan is
+   launched from in the subdirectory tests. *)
+let interfile_caller_pkg_py_content = {|
+from app.sinks import leak
+
+def go():
+    leak(source())
+|}
+
 (* coupling: similar to cli/tests/.../targets/basic/stupid.py *)
 let stupid_py_content = {|
 def foo(a, b):
@@ -151,6 +245,12 @@ let normalize =
     Testo.mask_line ~after:"Opengrep version: " ();
     Testo.mask_pcre_pattern {|\{"version":"([^"]+)","results":\[|}
   ]
+
+(* [Testutil_git.mask_temp_git_hash] only masks the root commit's line.  A test
+   that commits a second time prints [[main <short hash>] msg], whose hash
+   varies per run and would otherwise make the snapshot unstable. *)
+let normalize_multi_commit =
+  normalize @ [ Testo.mask_line ~after:"[main " ~before:"]" () ]
 
 let without_settings f =
   Semgrep_envvars.with_envvar "SEMGREP_SETTINGS_FILE" "nosettings.yaml" f
@@ -376,6 +476,948 @@ let test_truncated_terraform_block (caps : Scan_subcommand.caps) () =
                   [|
                     "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
                   |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* [--incremental-output] suppresses the final render on the assumption that
+   every finding was already streamed per file.  Interfile dispatch produces its
+   matches outside the per-target path, so unless it streams them too they are
+   counted in the summary and the exit code but never printed. *)
+let test_interfile_incremental_output (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "--incremental-output";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* A self-recursive builder stores its own result under six fields of a
+   fresh object. Its stored return shape is a six-way tree, and every
+   fixpoint round grows it one level: cut at the depth a lookup can reach,
+   the shape stays small and the sink is found within the time limit. *)
+let test_interfile_recursive_builder_width (caps : Scan_subcommand.caps) () =
+  let builder = {|<?php
+function build($x, $n) {
+    $node = new stdClass();
+    if ($n > 0) {
+        $node->a = build($x, $n - 1);
+        $node->b = build($x, $n - 1);
+        $node->c = build($x, $n - 1);
+        $node->d = build($x, $n - 1);
+        $node->e = build($x, $n - 1);
+        $node->f = build($x, $n - 1);
+    }
+    $node->v = $x;
+    return $node;
+}
+|} in
+  let caller = {|<?php
+require_once 'build.php';
+function go() {
+    $t = build(source(), 3);
+    sink($t->a->b->v);
+}
+|} in
+  let rules = {|rules:
+  - id: builder
+    languages: [php]
+    severity: WARNING
+    message: builder
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [ F.File ("rules.yml", rules); F.File ("build.php", builder);
+          F.File ("main.php", caller) ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                        "--interfile-timeout"; "10";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "no errors" []
+            (out.errors
+            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                   Option.value e.message ~default:"error"));
+          Alcotest.(check (list string)) "the finding's file" [ "main.php" ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path))))
+
+(* Two functions sink the same text, [sink($t->a->b->v)], one from a
+   tainted build and one from a clean build, of a four-field recursive
+   builder. The finding is at the tainted sink, whatever another function
+   sinks: before the stored shapes were cut at the offset bound, the
+   second function's analysis lost it. *)
+let test_intrafile_same_sink_text_twice (caps : Scan_subcommand.caps) () =
+  let source = {|<?php
+function build($x, $n) {
+    $node = new stdClass();
+    if ($n > 0) {
+        $node->a = build($x, $n - 1);
+        $node->b = build($x, $n - 1);
+        $node->c = build($x, $n - 1);
+        $node->d = build($x, $n - 1);
+    }
+    $node->v = $x;
+    return $node;
+}
+
+function tainted() {
+    $t = build(source(), 3);
+    sink($t->a->b->v);
+}
+
+function clean() {
+    $t = build(1, 3);
+    sink($t->a->b->v);
+}
+|} in
+  let rules = {|rules:
+  - id: same-text
+    languages: [php]
+    severity: WARNING
+    message: same-text
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [ F.File ("rules.yml", rules); F.File ("main.php", source) ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list int)) "the finding's line" [ 16 ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   m.start.line))))
+
+(* Only the caller is a target; the sink is in a companion the scan did not
+   ask for. A finding is reported in target files only, and never with a
+   path outside the scanned set. *)
+let test_interfile_finding_in_non_target (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile"; "main.py";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "scanned" [ "main.py" ]
+            (out.paths.scanned |> List_.map Fpath.to_string);
+          Alcotest.(check (list string)) "findings in targets only" []
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path))))
+
+(* A rule's own [paths:] applies to an interfile rule as to any other: a
+   file the rule excludes gets no finding of that rule. *)
+let test_interfile_rule_paths (caps : Scan_subcommand.caps) () =
+  let rules = {|rules:
+  - id: excluded
+    languages: [python]
+    severity: WARNING
+    message: excluded
+    mode: taint
+    paths:
+      exclude:
+        - sinks.py
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", rules);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "no finding in an excluded file" []
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path))))
+
+(* The scanning root as given may go through a symlink. The interfile graph
+   is keyed on canonical paths; the findings must not depend on the
+   form of the path, and no target may be reported as absent from the graph. *)
+let test_interfile_symlinked_root (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+        (fun cwd ->
+          UTmp.with_temp_dir (fun dir ->
+              let link = Fpath.(dir / "repo") in
+              Unix.symlink (Fpath.to_string cwd) (Fpath.to_string link);
+              let (), stdout_output =
+                Testo.with_capture stdout (fun () ->
+                    without_settings (fun () ->
+                        Scan_subcommand.main caps
+                          [|
+                            "opengrep-scan"; "--experimental"; "--config";
+                            "rules.yml"; "--json"; "--taint-interfile";
+                            Fpath.to_string link;
+                          |])
+                    |> ignore)
+              in
+              let out =
+                Semgrep_output_v1_j.cli_output_of_string stdout_output
+              in
+              Alcotest.(check (list string)) "no errors" []
+                (out.errors
+                |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                       Option.value e.message ~default:"error"));
+              Alcotest.(check (list string)) "the finding's file"
+                [ "sinks.py" ]
+                (out.results
+                |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                       Fpath.basename m.path)))))
+
+(* A file the index parsed is covered even when it holds nothing to index:
+   an empty package file is not absent from the graph. *)
+let test_interfile_empty_file_is_covered (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", "from pkg.sinks import leak\n\ndef go():\n    leak(source())\n");
+          F.Dir
+            ( "pkg",
+              [
+                F.File ("__init__.py", "");
+                F.File ("sinks.py", interfile_sink_py_content);
+              ] );
+        ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "no errors" []
+            (out.errors
+            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                   Option.value e.message ~default:"error"));
+          Alcotest.(check (list string)) "the finding's file" [ "pkg/sinks.py" ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path))))
+
+(* Targets the index leaves out, here two files a tsconfig excludes, are
+   reported once per language and root, the files named, not once each. *)
+let test_interfile_uncovered_targets_aggregated (caps : Scan_subcommand.caps)
+    () =
+  let rules = {|rules:
+  - id: t
+    languages: [typescript]
+    severity: WARNING
+    message: t
+    mode: taint
+    pattern-sources:
+      - pattern: source(...)
+    pattern-sinks:
+      - pattern: sink(...)
+|} in
+  with_env_app_token (fun () ->
+      Testutil_git.with_git_repo
+        [
+          F.File ("rules.yml", rules);
+          F.File ("tsconfig.json", {|{ "exclude": ["gen/**"] }|});
+          F.File ("main.ts", "import { run } from \"./sinks\";\nrun(source());\n");
+          F.File ("sinks.ts", "export function run(x) { sink(x); }\n");
+          F.Dir
+            ( "gen",
+              [
+                F.File ("a.ts", "export const a = 1;\n");
+                F.File ("b.ts", "export const b = 2;\n");
+              ] );
+        ]
+        (fun _cwd ->
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list string)) "the finding's file" [ "sinks.ts" ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   Fpath.to_string m.path));
+          let messages =
+            out.errors
+            |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+                   Option.value e.message ~default:"error")
+          in
+          Alcotest.(check int) "one warning" 1 (List.length messages);
+          List.iter
+            (fun file ->
+              Alcotest.(check bool) ("names " ^ file) true
+                (List.for_all
+                   (fun (m : string) -> String_.contains m ~term:file)
+                   messages))
+            [ "gen/a.ts"; "gen/b.ts" ]))
+
+(* The scanning root given as an absolute path, and a commit that adds a
+   second sink beside a pre-existing cross-file flow. The baseline replay
+   rediscovers its targets inside the baseline worktree, so the root must
+   be taken relative to the current directory there; taken as given, it
+   names the head checkout, the replay sees both sinks, and the
+   pre-existing one is reported as new beside the added one. *)
+let test_interfile_diff_scan_absolute_root (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun cwd ->
+          UFile.write_file ~file:(Fpath.v "sinks.py")
+            "\ndef leak(v):\n    sink(v)\n    sink(v)\n";
+          Git_wrapper.add [ Fpath.v "." ];
+          Git_wrapper.commit "Add a second sink";
+          let (), stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--json"; "--taint-interfile";
+                        "--baseline-commit"; "HEAD~1"; Fpath.to_string cwd;
+                      |])
+                |> ignore)
+          in
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check (list (pair string int))) "the added sink only"
+            [ ("sinks.py", 4) ]
+            (out.results
+            |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+                   (Fpath.basename m.path, m.start.line)))))
+
+(* A chain of four calls from the source to the sink, one beyond the
+   default depth: the scan finds nothing and says why, one warning naming
+   the rule and the depth flag; at depth four it finds the sink and says
+   nothing. *)
+let test_interfile_depth_cut_warning (caps : Scan_subcommand.caps) () =
+  let chain = {|
+def f1(x):
+    f2(x)
+
+def f2(x):
+    f3(x)
+
+def f3(x):
+    f4(x)
+
+def f4(x):
+    sink(x)
+|} in
+  let caller = {|
+from chain import f1
+
+def handler():
+    f1(source())
+|} in
+  let scan (args : string list) : Semgrep_output_v1_t.cli_output =
+    with_env_app_token (fun () ->
+        Testutil_git.with_git_repo
+          [
+            F.File ("rules.yml", taint_interfile_content);
+            F.File ("main.py", caller);
+            F.File ("chain.py", chain);
+          ]
+          (fun _cwd ->
+            let (), stdout_output =
+              Testo.with_capture stdout (fun () ->
+                  without_settings (fun () ->
+                      Scan_subcommand.main caps
+                        (Array.of_list
+                           ([
+                              "opengrep-scan"; "--experimental"; "--config";
+                              "rules.yml"; "--json"; "--taint-interfile";
+                            ]
+                           @ args)))
+                  |> ignore)
+            in
+            Semgrep_output_v1_j.cli_output_of_string stdout_output))
+  in
+  let messages (out : Semgrep_output_v1_t.cli_output) =
+    out.errors
+    |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+           Option.value e.message ~default:"error")
+  in
+  let files (out : Semgrep_output_v1_t.cli_output) =
+    out.results
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           Fpath.to_string m.path)
+  in
+  let cut = scan [] in
+  Alcotest.(check (list string)) "nothing found at the default depth" []
+    (files cut);
+  Alcotest.(check int) "one warning" 1 (List.length (messages cut));
+  Alcotest.(check bool) "the warning names the rule and the depth flag" true
+    (List.for_all
+       (fun (m : string) ->
+         String_.contains m ~term:"--taint-interfile-depth"
+         && String_.contains m ~term:"interfile-taint")
+       (messages cut));
+  let deep = scan [ "--taint-interfile-depth"; "4" ] in
+  Alcotest.(check (list string)) "found at depth four" [ "chain.py" ]
+    (files deep);
+  Alcotest.(check (list string)) "no warning at depth four" [] (messages deep)
+
+(* Sources and sinks are extracted only over the scan's target files, so a
+   partial scan — one file here, but equally a diff scan or a CI changed-files
+   run — sees just one side of the flow.  Scanning only the sink file must
+   still follow the call back into the untargeted companion that supplies the
+   taint, rather than concluding from the empty source list that no flow
+   exists. *)
+let test_interfile_partial_target (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "sinks.py";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* Two distinct sources reach the same sink line: interfile dedup keys on
+   source+sink, so both findings must be reported.  [--dataflow-traces] prints
+   each finding's trace, pinning in the snapshot that the sources differ. *)
+let test_interfile_source_sink_dedup (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_two_sources_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "--dataflow-traces";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* A target counts as scanned when a rule applies to it, whether the rule
+   runs per target or through interfile dispatch; the JSON paths.scanned
+   and the byte counts of --time must be those of a plain scan. *)
+let test_interfile_paths_scanned (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          let exit_code, stdout_output =
+            Testo.with_capture stdout (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--json"; "--time";
+                        "--config"; "rules.yml"; "--taint-interfile";
+                      |]))
+          in
+          Exit_code.Check.ok exit_code;
+          let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+          Alcotest.(check int) "one interfile finding" 1 (List.length out.results);
+          (* no per-target job ran: none could have reported an error *)
+          Alcotest.(check int) "no errors" 0 (List.length out.errors);
+          Alcotest.(check (list string))
+            "both targets scanned" [ "main.py"; "sinks.py" ]
+            (out.paths.scanned |> List_.map Fpath.to_string |> List_.sort);
+          let (time : Semgrep_output_v1_t.profile) =
+            match out.time with
+            | Some time -> time
+            | None -> Alcotest.fail "no --time profile in the output"
+          in
+          time.targets
+          |> List.iter (fun (t : Semgrep_output_v1_t.target_times) ->
+                 Alcotest.(check bool)
+                   (spf "%s has a byte count" (Fpath.to_string t.path))
+                   true (t.num_bytes > 0))))
+
+(* A file the parser rejects is reported once, as the syntax error a
+   per-target scan reports at the file; the other files are analysed and
+   the cross-file flow between them is found. *)
+let interfile_broken_py_content = {|
+def broken(:
+    sink(source(
+|}
+
+let test_interfile_parse_error (caps : Scan_subcommand.caps)
+    (args : string list) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+          F.File ("broken.py", interfile_broken_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  (Array.of_list
+                     ([
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile";
+                      ]
+                     @ args)))
+          in
+          Exit_code.Check.ok exit_code))
+
+(* A scan target the index does not discover, here a gitignored file named
+   on the command line, has no node in the graph: it is reported as a
+   warning at the file, the interfile rules do not run on it, and the
+   flow between the other files is found. *)
+let test_interfile_target_absent_from_graph (caps : Scan_subcommand.caps)
+    (args : string list) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+          F.File (".gitignore", "gen/\n");
+          F.Dir ("gen", [ F.File ("extra.py", interfile_caller_py_content) ]);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  (Array.of_list
+                     ([
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile";
+                      ]
+                     @ args
+                     @ [ "main.py"; "sinks.py"; "gen/extra.py" ])))
+          in
+          Exit_code.Check.ok exit_code))
+
+(* The interfile fixture scanned with the given arguments; the captured
+   stdout and the exit code. *)
+let interfile_scan_stdout (caps : Scan_subcommand.caps)
+    ?(extra_files : F.t list = []) ?(rules = taint_interfile_content)
+    (args : string list) : Exit_code.t * string =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", rules);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+        @ extra_files
+      in
+      Testutil_git.with_git_repo repo_files (fun _cwd ->
+          Testo.with_capture stdout (fun () ->
+              without_settings (fun () ->
+                  Scan_subcommand.main caps
+                    (Array.of_list
+                       ([ "opengrep-scan"; "--experimental"; "--config"; "rules.yml" ]
+                       @ args))))))
+
+(* The JSON output of an interfile scan: the finding's path, and a
+   fingerprint that two runs agree on. *)
+let test_interfile_json_output (caps : Scan_subcommand.caps) () =
+  let scan () : Semgrep_output_v1_t.cli_match list =
+    let exit_code, stdout_output =
+      interfile_scan_stdout caps [ "--json"; "--taint-interfile" ]
+    in
+    Exit_code.Check.ok exit_code;
+    (Semgrep_output_v1_j.cli_output_of_string stdout_output).results
+  in
+  let first = scan () in
+  Alcotest.(check (list string)) "the finding's path" [ "sinks.py" ]
+    (first
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           Fpath.to_string m.path));
+  let fingerprints (results : Semgrep_output_v1_t.cli_match list) =
+    results
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) -> m.extra.fingerprint)
+  in
+  Alcotest.(check bool) "a fingerprint" true
+    (List.for_all (fun (f : string) -> not (String.equal f "")) (fingerprints first));
+  Alcotest.(check (list string)) "the same fingerprint on a second run"
+    (fingerprints first) (fingerprints (scan ()))
+
+(* The SARIF output of an interfile scan locates the finding in the sink
+   file. *)
+let test_interfile_sarif_output (caps : Scan_subcommand.caps) () =
+  let exit_code, stdout_output =
+    interfile_scan_stdout caps [ "--sarif"; "--taint-interfile" ]
+  in
+  Exit_code.Check.ok exit_code;
+  let open Yojson.Safe.Util in
+  let results =
+    Yojson.Safe.from_string stdout_output
+    |> member "runs" |> index 0 |> member "results" |> to_list
+  in
+  Alcotest.(check int) "one result" 1 (List.length results);
+  let uri =
+    List.hd results |> member "locations" |> index 0
+    |> member "physicalLocation" |> member "artifactLocation" |> member "uri"
+    |> to_string
+  in
+  Alcotest.(check string) "located in the sink file" "sinks.py" uri
+
+(* A caller excluded by .semgrepignore supplies no taint: the index uses
+   the scan's own target selection, so the flow is not reported and the
+   file is not scanned. *)
+let test_interfile_ignored_caller (caps : Scan_subcommand.caps) () =
+  let exit_code, stdout_output =
+    interfile_scan_stdout caps
+      ~extra_files:[ F.File (".semgrepignore", "main.py\n") ]
+      [ "--json"; "--taint-interfile" ]
+  in
+  Exit_code.Check.ok exit_code;
+  let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+  Alcotest.(check int) "no finding" 0 (List.length out.results);
+  Alcotest.(check (list string)) "the caller is not scanned" [ "sinks.py" ]
+    (out.paths.scanned |> List_.map Fpath.to_string)
+
+(* An interfile rule (by its own option, no CLI flag), a search rule and an
+   intrafile taint rule over the same targets: each reports its own
+   findings once, the intrafile rule sees no cross-file flow, and every
+   target is scanned. *)
+let mixed_rules_content =
+  {|
+rules:
+  - id: interfile-taint
+    mode: taint
+    options:
+      taint_interfile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "cross-file taint"
+    languages: [python]
+    severity: ERROR
+  - id: plain-sink
+    pattern: sink(...)
+    message: "a sink call"
+    languages: [python]
+    severity: WARNING
+  - id: intrafile-taint
+    mode: taint
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
+    message: "intrafile taint"
+    languages: [python]
+    severity: ERROR
+|}
+
+let test_interfile_mixed_rules (caps : Scan_subcommand.caps) () =
+  let exit_code, stdout_output =
+    interfile_scan_stdout caps ~rules:mixed_rules_content [ "--json" ]
+  in
+  Exit_code.Check.ok exit_code;
+  let out = Semgrep_output_v1_j.cli_output_of_string stdout_output in
+  Alcotest.(check (list string)) "one finding per rule that applies"
+    [ "interfile-taint"; "plain-sink" ]
+    (out.results
+    |> List_.map (fun (m : Semgrep_output_v1_t.cli_match) ->
+           Rule_ID.to_string m.check_id)
+    |> List_.sort);
+  Alcotest.(check (list string)) "both targets scanned" [ "main.py"; "sinks.py" ]
+    (out.paths.scanned |> List_.map Fpath.to_string |> List_.sort)
+
+(* The process-wide [--max-memory] bounds the interfile graph build and
+   dispatch too: exceeding it aborts the analysis of a rule, reported as an
+   out-of-memory error against that rule; the rule then runs on no
+   target. *)
+let test_interfile_limits (caps : Scan_subcommand.caps) () =
+  let scan (args : string list) : Semgrep_output_v1_t.cli_output * Exit_code.t =
+    with_env_app_token (fun () ->
+        let repo_files =
+          [
+            F.File ("rules.yml", taint_interfile_content);
+            F.File ("main.py", interfile_caller_py_content);
+            F.File ("sinks.py", interfile_sink_py_content);
+          ]
+        in
+        Testutil_git.with_git_repo repo_files (fun _cwd ->
+            let exit_code, stdout_output =
+              Testo.with_capture stdout (fun () ->
+                  without_settings (fun () ->
+                      Scan_subcommand.main caps
+                        (Array.of_list
+                           ([
+                              "opengrep-scan"; "--experimental"; "--json";
+                              "--config"; "rules.yml"; "--taint-interfile";
+                            ]
+                           @ args))))
+            in
+            (Semgrep_output_v1_j.cli_output_of_string stdout_output, exit_code)))
+  in
+  let out, exit_code = scan [ "--max-memory"; "1" ] in
+  Exit_code.Check.ok exit_code;
+  let errors =
+    out.errors
+    |> List_.map (fun (e : Semgrep_output_v1_t.cli_error) ->
+           ( Error.string_of_error_type e.type_,
+             Option.map Rule_ID.to_string e.rule_id ))
+  in
+  Alcotest.(check bool) "every error is the memory limit" true
+    (errors <> []
+    && List.for_all
+         (fun ((type_, _) : string * string option) ->
+           String.equal type_ "Out of memory")
+         errors);
+  Alcotest.(check bool) "the memory limit is reported against the rule" true
+    (List.mem ("Out of memory", Some "interfile-taint") errors)
+
+(* The intrafile counterpart of the test above: without interfile, the dedup
+   key omits the source, so the same two flows collapse into one finding. *)
+let test_intrafile_same_sink_dedup (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_intrafile_content);
+          F.File ("code.py", intrafile_two_sources_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-intrafile"; "--dataflow-traces";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* The CI shape of a partial scan: a commit adds a sink to a helper that
+   pre-existing, untouched code already feeds a source into.  Only the helper
+   is added-or-modified, so the caller carrying the source is not a target and
+   the flow is only found if companions are analysed.  The finding itself lands
+   in the changed file, so it does belong in a diff scan's output. *)
+let test_interfile_diff_scan (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_baseline_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          (* Second commit: introduce the sink, leaving main.py untouched. *)
+          UFile.write_file ~file:(Fpath.v "sinks.py") interfile_sink_py_content;
+          Git_wrapper.add [ Fpath.v "." ];
+          Git_wrapper.commit "Add the sink";
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "--baseline-commit"; "HEAD~1";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* The reverse of the diff-scan test above: the cross-file flow already exists
+   in the baseline and this commit only appends a comment, so the diff must
+   report NOTHING.  The baseline replay has to rescan enough files to reproduce
+   an interfile finding — replaying only the files that carry a match leaves out
+   the caller supplying the taint, so the baseline comes up empty and a
+   pre-existing finding is misreported as newly introduced. *)
+let test_interfile_diff_scan_preexisting (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("rules.yml", taint_interfile_content);
+          F.File ("main.py", interfile_caller_py_content);
+          F.File ("sinks.py", interfile_sink_py_content);
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          UFile.write_file ~file:(Fpath.v "sinks.py")
+            interfile_sink_py_touched_content;
+          Git_wrapper.add [ Fpath.v "." ];
+          Git_wrapper.commit "Touch the sink file";
+          let exit_code =
+            without_settings (fun () ->
+                Scan_subcommand.main caps
+                  [|
+                    "opengrep-scan"; "--experimental"; "--config"; "rules.yml";
+                    "--taint-interfile"; "--baseline-commit"; "HEAD~1";
+                  |])
+          in
+          Exit_code.Check.ok exit_code))
+
+(* A plain interfile scan launched from a repo SUBDIRECTORY: the index is
+   built from the project root discovered by walking up from the targets, so
+   the caller outside the launch directory must still be indexed and supply
+   the taint.  Discovery used to return cwd-relative paths that consumers
+   resolved against the project root — the two agree only when the scan runs
+   from the root, so from a subdirectory every file failed to read and the
+   index came out empty, silently downgrading the rule to intrafile. *)
+let test_interfile_scan_from_subdir (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("main.py", interfile_caller_pkg_py_content);
+          F.Dir
+            ( "app",
+              [
+                F.File ("rules.yml", taint_interfile_content);
+                F.File ("sinks.py", interfile_sink_py_content);
+              ] );
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          let exit_code =
+            F.with_chdir (Fpath.v "app") (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile";
+                      |]))
+          in
+          Exit_code.Check.ok exit_code))
+
+(* The diff-scan shape of the test above: the flow pre-exists and this commit
+   only appends a comment, so the diff must report NOTHING.  The baseline
+   replay must rediscover targets and project roots inside its worktree the
+   same way the head scan discovered them in the real checkout — replaying
+   bare paths with the launch cwd as the root builds the baseline graph
+   without the out-of-subdirectory caller, fails to reproduce the
+   pre-existing finding, and misreports it as newly introduced. *)
+let test_interfile_diff_scan_subdir (caps : Scan_subcommand.caps) () =
+  with_env_app_token (fun () ->
+      let repo_files =
+        [
+          F.File ("main.py", interfile_caller_pkg_py_content);
+          F.Dir
+            ( "app",
+              [
+                F.File ("rules.yml", taint_interfile_content);
+                F.File ("sinks.py", interfile_sink_py_content);
+              ] );
+        ]
+      in
+      Testutil_git.with_git_repo ~verbose:true repo_files (fun _cwd ->
+          UFile.write_file
+            ~file:(Fpath.v "app/sinks.py")
+            interfile_sink_py_touched_content;
+          Git_wrapper.add [ Fpath.v "." ];
+          Git_wrapper.commit "Touch the sink file";
+          let exit_code =
+            F.with_chdir (Fpath.v "app") (fun () ->
+                without_settings (fun () ->
+                    Scan_subcommand.main caps
+                      [|
+                        "opengrep-scan"; "--experimental"; "--config";
+                        "rules.yml"; "--taint-interfile"; "--baseline-commit";
+                        "HEAD~1";
+                      |]))
           in
           Exit_code.Check.ok exit_code))
 
@@ -1780,6 +2822,66 @@ let tests (caps : < Scan_subcommand.caps >) =
       t "incremental output with --incremental-output-postprocess"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental caps);
+      t "interfile pre-existing findings are not reported by a diff scan"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_multi_commit
+        (test_interfile_diff_scan_preexisting caps);
+      t "interfile findings when scanning from a subdirectory"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_scan_from_subdir caps);
+      t "interfile diff scan from a subdirectory reports nothing pre-existing"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_multi_commit
+        (test_interfile_diff_scan_subdir caps);
+      t "interfile findings in a diff scan"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize:normalize_multi_commit
+        (test_interfile_diff_scan caps);
+      t "interfile findings from a partial target set"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_partial_target caps);
+      t "interfile same-sink findings keep distinct sources"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_source_sink_dedup caps);
+      t "interfile targets are scanned targets"
+        (test_interfile_paths_scanned caps);
+      t "interfile parse error on one file"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_parse_error caps []);
+      t "interfile parse error on one file, JSON"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_parse_error caps [ "--json" ]);
+      t "interfile target absent from the graph"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_target_absent_from_graph caps []);
+      t "interfile target absent from the graph, JSON"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_target_absent_from_graph caps [ "--json" ]);
+      t "interfile JSON output" (test_interfile_json_output caps);
+      t "interfile recursive builder of width six"
+        (test_interfile_recursive_builder_width caps);
+      t "intrafile same sink text in two functions"
+        (test_intrafile_same_sink_text_twice caps);
+      t "interfile finding in a non-target companion"
+        (test_interfile_finding_in_non_target caps);
+      t "interfile rule paths" (test_interfile_rule_paths caps);
+      t "interfile findings through a symlinked root"
+        (test_interfile_symlinked_root caps);
+      t "interfile empty file is covered"
+        (test_interfile_empty_file_is_covered caps);
+      t "interfile uncovered targets aggregated"
+        (test_interfile_uncovered_targets_aggregated caps);
+      t "interfile diff scan with an absolute root"
+        (test_interfile_diff_scan_absolute_root caps);
+      t "interfile depth cut warning" (test_interfile_depth_cut_warning caps);
+      t "interfile SARIF output" (test_interfile_sarif_output caps);
+      t "interfile ignored caller" (test_interfile_ignored_caller caps);
+      t "interfile with search and intrafile rules"
+        (test_interfile_mixed_rules caps);
+      t "interfile limits: memory" (test_interfile_limits caps);
+      t "intrafile same-sink findings dedup to one"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_intrafile_same_sink_dedup caps);
+      t "interfile findings with --incremental-output"
+        ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
+        (test_interfile_incremental_output caps);
       t "incremental output with --incremental-output-postprocess and --disable-nosem"
         ~checked_output:(Testo.split_stdout_stderr ()) ~normalize
         (test_basic_output_nosem_incremental_disabled caps);

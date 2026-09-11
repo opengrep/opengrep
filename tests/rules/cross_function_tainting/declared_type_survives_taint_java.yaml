@@ -1,0 +1,19 @@
+rules:
+  - id: declared_type_survives_taint
+    languages: [java]
+    severity: ERROR
+    message: >
+      The typed metavariable matches the variable's declared class, not the
+      class it was constructed with, while a taint rule runs on the same file.
+    pattern: foo((Base $X))
+  - id: declared_type_survives_taint_sink
+    languages: [java]
+    severity: ERROR
+    message: Tainted value reaches the sink.
+    mode: taint
+    options:
+      taint_intrafile: true
+    pattern-sources:
+      - pattern: source()
+    pattern-sinks:
+      - pattern: sink(...)
