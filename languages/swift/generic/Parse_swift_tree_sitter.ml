@@ -1012,70 +1012,99 @@ and map_basic_literal (env : env) (x : CST.basic_literal) : G.expr =
   | `Regex_lit x -> map_regex_literal env x
   | `Nil tok -> G.L (G.Null ((* "nil" *) token env tok)) |> G.e
 
+(* Translate an operand of an operator. The operand's own range is kept tight;
+   if it is directly parenthesized (a single unlabeled tuple element) we also
+   return the paren tokens so the enclosing operator can span them. *)
+and map_operand (env : env) (x : CST.expression) : G.expr * G.tok list =
+  match x with
+  | `Choice_simple_id (`Prim_exp (`Tuple_exp (v1, None, v3, [], v5))) ->
+      let lp = (* "(" *) token env v1 in
+      let e = map_expression env v3 in
+      let rp = (* ")" *) token env v5 in
+      (e, [ lp; rp ])
+  | _ -> (map_expression env x, [])
+
+(* Same, for the right operand of binary/ternary operators, which the grammar
+   routes through [expr_hack_at_ternary_binary_suffix]. *)
+and map_suffix_operand (env : env)
+    (x : CST.expr_hack_at_ternary_binary_suffix) : G.expr * G.tok list =
+  match x with
+  | `Exp x -> map_operand env x
+  | `Expr_hack_at_tern_bin_call _ ->
+      (map_expr_hack_at_ternary_binary_suffix env x, [])
+
 and map_binary_expression (env : env) (x : CST.binary_expression) =
   let opcall (op, (_s, tok)) = G.opcall (op, tok) in
+  (* Keep each operand's range tight, folding any parens directly wrapping an
+     operand into the operator's range. *)
+  let fold (lparens, rparens) e =
+    H2.set_range_with_parens (lparens @ rparens) e;
+    e
+  in
   match x with
   | `Mult_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = map_multiplicative_operator env v2 in
-      let v3 = map_expression env v3 in
-      opcall v2 [ v1; v3 ]
+      let r, rp = map_operand env v3 in
+      fold (lp, rp) (opcall v2 [ l; r ])
   | `Addi_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = map_additive_operator env v2 in
-      let v3 = map_expression env v3 in
-      opcall v2 [ v1; v3 ]
+      let r, rp = map_operand env v3 in
+      fold (lp, rp) (opcall v2 [ l; r ])
   | `Range_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = map_range_operator env v2 in
-      let v3 = map_expr_hack_at_ternary_binary_suffix env v3 in
-      G.opcall (G.Range, v2) [ v1; v3 ]
+      let r, rp = map_suffix_operand env v3 in
+      fold (lp, rp) (G.opcall (G.Range, v2) [ l; r ])
   | `Infix_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = map_custom_operator env v2 in
-      let v3 = map_expr_hack_at_ternary_binary_suffix env v3 in
-      G.Call
-        ( G.N (H2.name_of_id v2) |> G.e,
-          Tok.unsafe_fake_bracket [ G.Arg v1; G.Arg v3 ] )
-      |> G.e
+      let r, rp = map_suffix_operand env v3 in
+      fold (lp, rp)
+        (G.Call
+           ( G.N (H2.name_of_id v2) |> G.e,
+             Tok.unsafe_fake_bracket [ G.Arg l; G.Arg r ] )
+        |> G.e)
   | `Nil_coal_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = (* nil_coalescing_operator_custom *) token env v2 in
-      let v3 = map_expr_hack_at_ternary_binary_suffix env v3 in
-      G.opcall (G.Nullish, v2) [ v1; v3 ]
+      let r, rp = map_suffix_operand env v3 in
+      fold (lp, rp) (G.opcall (G.Nullish, v2) [ l; r ])
   | `Check_exp (v1, v2, v3) ->
-      let e = map_expression env v1 in
+      let e, lp = map_operand env v1 in
       let tis = (* "is" *) token env v2 in
       let ty = map_type_ env v3 in
-      G.Call
-        ( G.IdSpecial (G.Instanceof, tis) |> G.e,
-          Tok.unsafe_fake_bracket [ G.Arg e; G.ArgType ty ] )
-      |> G.e
+      fold (lp, [])
+        (G.Call
+           ( G.IdSpecial (G.Instanceof, tis) |> G.e,
+             Tok.unsafe_fake_bracket [ G.Arg e; G.ArgType ty ] )
+        |> G.e)
   | `Equa_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = map_equality_operator env v2 in
-      let v3 = map_expr_hack_at_ternary_binary_suffix env v3 in
-      opcall v2 [ v1; v3 ]
+      let r, rp = map_suffix_operand env v3 in
+      fold (lp, rp) (opcall v2 [ l; r ])
   | `Comp_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = map_comparison_operator env v2 in
-      let v3 = map_expr_hack_at_ternary_binary_suffix env v3 in
-      opcall v2 [ v1; v3 ]
+      let r, rp = map_suffix_operand env v3 in
+      fold (lp, rp) (opcall v2 [ l; r ])
   | `Conj_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = (* conjunction_operator_custom *) token env v2 in
-      let v3 = map_expr_hack_at_ternary_binary_suffix env v3 in
-      G.opcall (G.And, v2) [ v1; v3 ]
+      let r, rp = map_suffix_operand env v3 in
+      fold (lp, rp) (G.opcall (G.And, v2) [ l; r ])
   | `Disj_exp (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = (* disjunction_operator_custom *) token env v2 in
-      let v3 = map_expr_hack_at_ternary_binary_suffix env v3 in
-      G.opcall (G.Or, v2) [ v1; v3 ]
+      let r, rp = map_suffix_operand env v3 in
+      fold (lp, rp) (G.opcall (G.Or, v2) [ l; r ])
   | `Bitw_oper (v1, v2, v3) ->
-      let v1 = map_expression env v1 in
+      let l, lp = map_operand env v1 in
       let v2 = map_bitwise_binary_operator env v2 in
-      let v3 = map_expr_hack_at_ternary_binary_suffix env v3 in
-      opcall v2 [ v1; v3 ]
+      let r, rp = map_suffix_operand env v3 in
+      fold (lp, rp) (opcall v2 [ l; r ])
 
 and apply_pattern_kinds (_env : env) (pat : G.pattern) kinds =
   List_.fold_right (fun kind pat -> G.OtherPat (kind, [ G.P pat ])) kinds pat
@@ -1120,9 +1149,11 @@ and map_bodyless_function_declaration (env : env) ~in_class
   v3
 
 and map_call_expression (env : env) ((v1, v2) : CST.call_expression) : G.expr =
-  let v1 = map_expression env v1 in
+  let v1, parens = map_operand env v1 in
   let v2 = map_call_suffix env v2 in
-  G.Call (v1, v2) |> G.e
+  let e = G.Call (v1, v2) |> G.e in
+  H2.set_range_with_parens parens e;
+  e
 
 and map_call_suffix (env : env) (v1 : CST.call_suffix) : G.arguments =
   match v1 with
@@ -1401,13 +1432,18 @@ and map_expression (env : env) (x : CST.expression) : G.expr =
       | `Bin_exp x -> map_binary_expression env x
       | `Tern_exp x -> map_ternary_expression env x
       | `Prim_exp x -> map_primary_expression env x
-      | `Assign (v1, v2, v3) -> (
-          let v1 = map_expression env v1 in
+      | `Assign (v1, v2, v3) ->
+          let l, lp = map_operand env v1 in
           let op, (_opstr, optok) = map_assignment_and_operator env v2 in
-          let v3 = map_expression env v3 in
-          match op with
-          | None -> G.Assign (v1, optok, v3) |> G.e
-          | Some op -> G.AssignOp (v1, (op, optok), v3) |> G.e)
+          let r, rp = map_operand env v3 in
+          let e =
+            (match op with
+            | None -> G.Assign (l, optok, r)
+            | Some op -> G.AssignOp (l, (op, optok), r))
+            |> G.e
+          in
+          H2.set_range_with_parens (lp @ rp) e;
+          e
       | `Exp_imme_quest (v1, v2) ->
           let v1 = map_expression env v1 in
           let _v2TODO = (* "?" *) token env v2 in
@@ -2214,8 +2250,14 @@ and map_navigation_expression (env : env) ((v1, v2) : CST.navigation_expression)
          * It's quite clear that a type can appear in this position, but the
          * generic AST expects an expression. *)
         let type_ = map_navigable_type_expression env x in
-        G.OtherExpr (("TypeExpr", Tok.unsafe_fake_tok ""), [ G.T type_ ]) |> G.e
-    | `Exp x -> map_expression env x
+        ( G.OtherExpr (("TypeExpr", Tok.unsafe_fake_tok ""), [ G.T type_ ]) |> G.e,
+          [] )
+    | `Exp x -> map_operand env x
+  in
+  let v1, parens = v1 in
+  let fold e =
+    H2.set_range_with_parens parens e;
+    e
   in
   match v2 with
   | `Dot_choice_simple_id (s1, s2) ->
@@ -2225,10 +2267,10 @@ and map_navigation_expression (env : env) ((v1, v2) : CST.navigation_expression)
         | `Simple_id x -> G.FN (map_simple_identifier env x |> H2.name_of_id)
         | `Int_lit tok -> G.FDynamic (G.L (map_integer_literal env tok) |> G.e)
       in
-      G.DotAccess (v1, s1, s2) |> G.e
+      fold (G.DotAccess (v1, s1, s2) |> G.e)
   | `Dot_semg_ellips (s1, _) ->
       let s1 = (* dot_custom *) token env s1 in
-      G.DotAccessEllipsis (v1, s1) |> G.e
+      fold (G.DotAccessEllipsis (v1, s1) |> G.e)
 
 and map_tuple_pattern_item (env : env) (x : CST.tuple_pattern_item) : G.pattern
     =
@@ -2789,12 +2831,16 @@ and map_expr_hack_at_ternary_binary_call_suffix (env : env)
 
 and map_ternary_expression (env : env)
     ((v1, v2, v3, v4, v5) : CST.ternary_expression) =
-  let v1 = map_expression env v1 in
+  (* The whole "? :" is one operator: its branches stay tight, and the parens
+     of its outer operands are folded into its range. *)
+  let v1, cparens = map_operand env v1 in
   let _v2 = (* "?" *) token env v2 in
   let v3 = map_expression env v3 in
   let _v4 = (* ":" *) token env v4 in
-  let v5 = map_expr_hack_at_ternary_binary_suffix env v5 in
-  G.Conditional (v1, v3, v5) |> G.e
+  let v5, eparens = map_suffix_operand env v5 in
+  let e = G.Conditional (v1, v3, v5) |> G.e in
+  H2.set_range_with_parens (cparens @ eparens) e;
+  e
 
 and map_throw_statement (env : env) ((v1, v2) : CST.throw_statement)
     (semi : G.sc) =

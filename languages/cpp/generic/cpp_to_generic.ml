@@ -424,77 +424,111 @@ and map_expr env x : G.expr =
       let v1 = map_special_wrap env v1 in
       v1
   | Call (v1, v2) ->
-      let v1 = map_expr env v1
+      let v1, parens = map_operand env v1
       and v2 = map_paren env (map_of_list (map_argument env)) v2 in
-      G.Call (v1, v2) |> G.e
+      let e = G.Call (v1, v2) |> G.e in
+      H.set_range_with_parens parens e;
+      e
   | CondExpr (v1, v2, v3, v4, v5) ->
-      let v1 = map_expr env v1
+      (* The whole "? :" is one operator: its branches stay tight, and the
+         parens of its outer operands are folded into its range. *)
+      let v1, cparens = map_operand env v1
       and _v2 = map_tok env v2
       and ethen = expr_option v2 (map_of_option (map_expr env) v3)
       and _v4 = map_tok env v4
-      and v5 = map_expr env v5 in
-      G.Conditional (v1, ethen, v5) |> G.e
+      and v5, eparens = map_operand env v5 in
+      let e = G.Conditional (v1, ethen, v5) |> G.e in
+      H.set_range_with_parens (cparens @ eparens) e;
+      e
   | Sequence (v1, v2, v3) ->
-      let v1 = map_expr env v1
+      let v1, lparens = map_operand env v1
       and _v2 = map_tok env v2
-      and v3 = map_expr env v3 in
-      G.Seq [ v1; v3 ] |> G.e
+      and v3, rparens = map_operand env v3 in
+      let e = G.Seq [ v1; v3 ] |> G.e in
+      H.set_range_with_parens (lparens @ rparens) e;
+      e
   | Assign (v1, v2, v3) -> (
-      let v1 = map_a_lhs env v1
+      let v1, lparens = map_operand env v1
       and v2 = map_assignOp env v2
-      and v3 =
+      and v3, rparens =
         match v3 with
-        | Left x -> map_expr env x
-        | Right x -> map_initialiser env x
+        | Left x -> map_operand env x
+        | Right x -> (map_initialiser env x, [])
       in
-      match v2 with
-      | Left teq -> G.Assign (v1, teq, v3) |> G.e
-      | Right op -> G.AssignOp (v1, op, v3) |> G.e)
+      let e =
+        match v2 with
+        | Left teq -> G.Assign (v1, teq, v3) |> G.e
+        | Right op -> G.AssignOp (v1, op, v3) |> G.e
+      in
+      H.set_range_with_parens (lparens @ rparens) e;
+      e)
   | Prefix (v1, v2) ->
-      let op, t = map_wrap env (map_fixOp env) v1 and v2 = map_expr env v2 in
-      G.special (G.IncrDecr (op, G.Prefix), t) [ v2 ]
+      let op, t = map_wrap env (map_fixOp env) v1
+      and v2, parens = map_operand env v2 in
+      let e = G.special (G.IncrDecr (op, G.Prefix), t) [ v2 ] in
+      H.set_range_with_parens parens e;
+      e
   | Postfix (v1, v2) ->
-      let v1 = map_expr env v1 and op, t = map_wrap env (map_fixOp env) v2 in
-      G.special (G.IncrDecr (op, G.Postfix), t) [ v1 ]
-  | Unary (v1, v2) -> (
+      let v1, parens = map_operand env v1
+      and op, t = map_wrap env (map_fixOp env) v2 in
+      let e = G.special (G.IncrDecr (op, G.Postfix), t) [ v1 ] in
+      H.set_range_with_parens parens e;
+      e
+  | Unary (v1, v2) ->
       let either, t = map_wrap env (map_unaryOp env) v1
-      and v2 = map_expr env v2 in
-      match either with
-      | Left op -> G.opcall (op, t) [ v2 ]
-      | Right f -> f t v2)
+      and v2, parens = map_operand env v2 in
+      let e =
+        match either with
+        | Left op -> G.opcall (op, t) [ v2 ]
+        | Right f -> f t v2
+      in
+      H.set_range_with_parens parens e;
+      e
   | Binary (v1, v2, v3) ->
-      let v1 = map_expr env v1
+      let v1, lparens = map_operand env v1
       and v2 = map_wrap env (map_binaryOp env) v2
-      and v3 = map_expr env v3 in
-      G.opcall v2 [ v1; v3 ]
+      and v3, rparens = map_operand env v3 in
+      let e = G.opcall v2 [ v1; v3 ] in
+      H.set_range_with_parens (lparens @ rparens) e;
+      e
   | ArrayAccess (v1, v2) ->
-      let v1 = map_expr env v1
+      let v1, parens = map_operand env v1
       and l, v2, r = map_bracket env (map_of_list (map_initialiser env)) v2 in
       let v2 =
         match v2 with
         | [ x ] -> x
         | xs -> Container (List, fb xs) |> G.e
       in
-      G.ArrayAccess (v1, (l, v2, r)) |> G.e
-  | DotAccess (v1, v2, v3) -> (
-      let v1 = map_expr env v1
+      let e = G.ArrayAccess (v1, (l, v2, r)) |> G.e in
+      H.set_range_with_parens parens e;
+      e
+  | DotAccess (v1, v2, v3) ->
+      let v1, parens = map_operand env v1
       and either, tdot = map_wrap env (map_dotOp env) v2
       and v3 = map_name env v3 in
-      match either with
-      | Dot -> G.DotAccess (v1, tdot, G.FN v3) |> G.e
-      | Arrow ->
-          let v1 = G.DeRef (tdot, v1) |> G.e in
-          G.DotAccess (v1, tdot, G.FN v3) |> G.e)
-  | DotStarAccess (v1, v2, v3) -> (
-      let v1 = map_expr env v1
+      let e =
+        match either with
+        | Dot -> G.DotAccess (v1, tdot, G.FN v3) |> G.e
+        | Arrow ->
+            let v1 = G.DeRef (tdot, v1) |> G.e in
+            G.DotAccess (v1, tdot, G.FN v3) |> G.e
+      in
+      H.set_range_with_parens parens e;
+      e
+  | DotStarAccess (v1, v2, v3) ->
+      let v1, parens = map_operand env v1
       and either, tdot = map_wrap env (map_dotOp env) v2
       and v3 = map_expr env v3 in
       let e = G.DeRef (tdot, v3) |> G.e in
-      match either with
-      | Dot -> G.DotAccess (v1, tdot, G.FDynamic e) |> G.e
-      | Arrow ->
-          let v1 = G.DeRef (tdot, v1) |> G.e in
-          G.DotAccess (v1, tdot, G.FDynamic e) |> G.e)
+      let e =
+        match either with
+        | Dot -> G.DotAccess (v1, tdot, G.FDynamic e) |> G.e
+        | Arrow ->
+            let v1 = G.DeRef (tdot, v1) |> G.e in
+            G.DotAccess (v1, tdot, G.FDynamic e) |> G.e
+      in
+      H.set_range_with_parens parens e;
+      e
   | Cast (v1, v2) ->
       let l, t, _r = map_paren env (map_type_ env) v1
       and v2 = map_expr env v2 in
@@ -656,6 +690,16 @@ and map_expr env x : G.expr =
       let v1 = map_todo_category env v1
       and v2 = map_of_list (map_expr env) v2 in
       G.OtherExpr (v1, v2 |> List_.map (fun e -> G.E e)) |> G.e
+
+(* Translate an operand of an operator. The operand's own range is kept tight;
+   if it is directly parenthesized we also return the paren tokens so the
+   enclosing operator can span them. *)
+and map_operand env (x : expr) : G.expr * G.tok list =
+  match x with
+  | ParenExpr v1 ->
+      let l, e, r = map_paren env (map_expr env) v1 in
+      (e, [ l; r ])
+  | _ -> (map_expr env x, [])
 
 and map_special_wrap _env (spec, tk) =
   (match spec with
@@ -839,7 +883,6 @@ and map_cast_operator _env = function
   | Reinterpret_cast -> "Reinterpret_cast"
 
 and map_a_const_expr env v = map_expr env v
-and map_a_lhs env v = map_expr env v
 
 and map_stmt env x : G.stmt =
   match x with

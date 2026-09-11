@@ -80,16 +80,22 @@ let rec map_expr env v : G.expr =
       let block = Tok.unsafe_fake_bracket (stmts @ [ G.exprstmt e ]) in
       G.stmt_to_expr (G.Block block |> G.s)
   | DotAccess (v1, v2, v3) ->
-      let e = map_expr env v1 in
+      let e, parens = map_operand env v1 in
       let tdot = map_tok env v2 in
       let fld = map_ident env v3 in
-      G.DotAccess (e, tdot, G.FN (G.Id (fld, G.empty_id_info ()))) |> G.e
+      let res =
+        G.DotAccess (e, tdot, G.FN (G.Id (fld, G.empty_id_info ()))) |> G.e
+      in
+      AST_generic_helpers.set_range_with_parens parens res;
+      res
   | ArrayAccess (v1, v2) ->
-      let e = map_expr env v1 in
+      let e, parens = map_operand env v1 in
       let idx = (map_bracket map_expr) env v2 in
-      G.ArrayAccess (e, idx) |> G.e
+      let res = G.ArrayAccess (e, idx) |> G.e in
+      AST_generic_helpers.set_range_with_parens parens res;
+      res
   | SliceAccess (v1, v2) ->
-      let e = map_expr env v1 in
+      let e, sparens = map_operand env v1 in
       let map_tuple env (v1, v2, v3) =
         let v1 = (map_option map_expr) env v1 in
         let v2 = (map_option map_expr) env v2 in
@@ -97,20 +103,28 @@ let rec map_expr env v : G.expr =
         (v1, v2, v3)
       in
       let indices = (map_bracket map_tuple) env v2 in
-      G.SliceAccess (e, indices) |> G.e
+      let res = G.SliceAccess (e, indices) |> G.e in
+      AST_generic_helpers.set_range_with_parens sparens res;
+      res
   | Call (v1, v2) ->
-      let e = map_expr env v1 in
+      let e, parens = map_operand env v1 in
       let args = (map_bracket (map_list map_argument)) env v2 in
-      G.Call (e, args) |> G.e
+      let res = G.Call (e, args) |> G.e in
+      AST_generic_helpers.set_range_with_parens parens res;
+      res
   | UnaryOp (v1, v2) ->
       let v1 = (map_wrap map_unary_op) env v1 in
-      let v2 = map_expr env v2 in
-      G.opcall v1 [ v2 ]
+      let v2, parens = map_operand env v2 in
+      let e = G.opcall v1 [ v2 ] in
+      AST_generic_helpers.set_range_with_parens parens e;
+      e
   | BinaryOp (v1, v2, v3) ->
-      let v1 = map_expr env v1 in
+      let v1, lparens = map_operand env v1 in
       let v2 = (map_wrap map_binary_op) env v2 in
-      let v3 = map_expr env v3 in
-      G.opcall v2 [ v1; v3 ]
+      let v3, rparens = map_operand env v3 in
+      let e = G.opcall v2 [ v1; v3 ] in
+      AST_generic_helpers.set_range_with_parens (lparens @ rparens) e;
+      e
   | If (v1, v2, v3, v4) ->
       let tif = map_tok env v1 in
       let cond = map_expr env v2 in
@@ -145,8 +159,10 @@ let rec map_expr env v : G.expr =
       let e = map_expr env v2 in
       G.OtherExpr (("Error", terror), [ G.E e ]) |> G.e
   | ParenExpr v ->
-      let l, e, r = (map_bracket map_expr) env v in
-      AST_generic_helpers.set_e_range l r e;
+      (* Grouping parens are dropped; the inner expression keeps its own tight
+         range. When such an expression is an operand, [map_operand] folds the
+         parens into the enclosing operator's range instead. *)
+      let _l, e, _r = (map_bracket map_expr) env v in
       e
   | Ellipsis v ->
       let tdots = map_tok env v in
@@ -191,6 +207,16 @@ and map_special _env v =
   | Self -> fun tk -> G.IdSpecial (G.Self, tk) |> G.e
   | Super -> fun tk -> G.IdSpecial (G.Super, tk) |> G.e
   | Dollar -> fun tk -> G.N (G.Id (("$", tk), G.empty_id_info ())) |> G.e
+
+(* Translate an operand of an operator. The operand's own range is kept tight;
+   if it is directly parenthesized we also return the paren tokens so the
+   enclosing operator can span them. *)
+and map_operand env (x : AST_jsonnet.expr) : G.expr * G.tok list =
+  match x with
+  | ParenExpr v ->
+      let l, e, r = (map_bracket map_expr) env v in
+      (e, [ l; r ])
+  | _ -> (map_expr env x, [])
 
 and map_argument env v : G.argument =
   match v with

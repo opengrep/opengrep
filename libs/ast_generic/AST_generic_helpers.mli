@@ -138,6 +138,13 @@ val set_e_range : Tok.t -> Tok.t -> AST_generic.expr -> unit
  * Noop if no location information for the anys is available (including if the
  * any list is empty). *)
 val set_e_range_with_anys : AST_generic.any list -> AST_generic.expr -> unit
+
+(* [set_range_with_parens toks e] extends [e]'s range to also span the tokens
+ * [toks] (typically the parentheses wrapping an operand, which are dropped from
+ * the generic AST), leaving each operand's own range tight. Noop if [toks] is
+ * empty. Used by tree-sitter translators to keep operator ranges correct
+ * without polluting the operands' ranges. *)
+val set_range_with_parens : Tok.t list -> AST_generic.expr -> unit
 val ii_of_any : AST_generic.any -> Tok.t list
 val info_of_any : AST_generic.any -> Tok.t
 
